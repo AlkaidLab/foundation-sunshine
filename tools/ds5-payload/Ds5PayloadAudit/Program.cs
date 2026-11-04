@@ -27,56 +27,37 @@ internal sealed class AuditReport
     public List<Finding> Findings { get; set; } = [];
 }
 
-internal sealed class Options
+internal sealed record Options(List<string> Inputs, string? PolicyPath, string? ReportPath)
 {
-    public List<string> Inputs { get; } = [];
-    public string? PolicyPath { get; private set; }
-    public string? ReportPath { get; private set; }
-    public bool Json { get; private set; }
-    public bool FailOnWarn { get; private set; }
-    public bool ShowHelp { get; private set; }
-
-    public static Options Parse(string[] args)
+    /// <summary>Returns null when the caller asked for help.</summary>
+    public static Options? Parse(string[] args)
     {
-        var options = new Options();
+        var inputs = new List<string>();
+        string? policy = null, report = null;
         for (var index = 0; index < args.Length; index++)
         {
             switch (args[index])
             {
-                case "--policy":
-                    options.PolicyPath = Next(args, ref index);
-                    break;
-                case "--report":
-                    options.ReportPath = Next(args, ref index);
-                    break;
-                case "--json":
-                    options.Json = true;
-                    break;
-                case "--fail-on-warn":
-                    options.FailOnWarn = true;
-                    break;
+                case "--policy": policy = Next(args, ref index); break;
+                case "--report": report = Next(args, ref index); break;
                 case "-h":
-                case "--help":
-                    options.ShowHelp = true;
-                    break;
+                case "--help": return null;
                 default:
                     if (args[index].StartsWith('-'))
                         throw new ArgumentException($"unknown option '{args[index]}'");
-                    options.Inputs.Add(args[index]);
+                    inputs.Add(args[index]);
                     break;
             }
         }
-        if (!options.ShowHelp && options.Inputs.Count == 0)
-            throw new ArgumentException("no input path was given");
-        return options;
+        if (inputs.Count == 0)
+            throw new ArgumentException("no artifact was given");
+        return new Options(inputs, policy, report);
     }
 
-    private static string Next(string[] args, ref int index)
-    {
-        if (index + 1 >= args.Length)
-            throw new ArgumentException($"option '{args[index]}' needs a value");
-        return args[++index];
-    }
+    private static string Next(string[] args, ref int index) =>
+        index + 1 < args.Length
+            ? args[++index]
+            : throw new ArgumentException($"option '{args[index]}' needs a value");
 }
 
 internal static class Program
@@ -93,7 +74,7 @@ internal static class Program
         try
         {
             var options = Options.Parse(args);
-            if (options.ShowHelp)
+            if (options is null)
             {
                 PrintUsage();
                 return 0;
@@ -106,23 +87,28 @@ internal static class Program
                 inspector.Inspect(input, findings);
             inspector.Complete(findings);
 
-            var report = BuildReport(options, policy, findings);
-            var json = JsonSerializer.Serialize(report, JsonOptions);
+            var report = new AuditReport
+            {
+                GeneratedAt = DateTimeOffset.UtcNow.ToString("O"),
+                PolicyPath = policy.Path,
+                PayloadPolicy = policy.Document.PayloadPolicy,
+                Target = policy.Document.Target,
+                Inputs = options.Inputs,
+                Summary = Summarize(findings),
+                Findings = findings,
+            };
+
             if (options.ReportPath is not null)
             {
                 var full = Path.GetFullPath(options.ReportPath);
                 var directory = Path.GetDirectoryName(full);
                 if (!string.IsNullOrEmpty(directory))
                     Directory.CreateDirectory(directory);
-                File.WriteAllText(full, json + Environment.NewLine);
+                File.WriteAllText(full, JsonSerializer.Serialize(report, JsonOptions) + Environment.NewLine);
             }
 
-            if (options.Json)
-                Console.WriteLine(json);
-            else
-                PrintSummary(report);
-
-            return ExitCode(report.Summary, options.FailOnWarn);
+            PrintSummary(report);
+            return ExitCode(report.Summary);
         }
         catch (Exception error)
         {
@@ -131,7 +117,7 @@ internal static class Program
         }
     }
 
-    private static AuditReport BuildReport(Options options, Policy policy, List<Finding> findings)
+    private static Summary Summarize(List<Finding> findings)
     {
         var summary = new Summary();
         foreach (var finding in findings)
@@ -146,37 +132,19 @@ internal static class Program
                 default: summary.Unknown++; break;
             }
         }
-
-        return new AuditReport
-        {
-            GeneratedAt = DateTimeOffset.UtcNow.ToString("O"),
-            PolicyPath = policy.Path,
-            PayloadPolicy = policy.Document.PayloadPolicy,
-            Target = policy.Document.Target,
-            Inputs = options.Inputs,
-            Summary = summary,
-            Findings = findings,
-        };
+        return summary;
     }
 
-    private static int ExitCode(Summary summary, bool failOnWarn)
-    {
-        if (summary.Deny > 0)
-            return 3;
-        if (summary.Unknown > 0 || summary.Missing > 0)
-            return 2;
-        if (failOnWarn && summary.Warn > 0)
-            return 2;
-        return 0;
-    }
+    private static int ExitCode(Summary summary) =>
+        summary.Deny > 0 ? 3 : summary.Unknown > 0 || summary.Missing > 0 ? 2 : 0;
 
     private static void PrintSummary(AuditReport report)
     {
-        Console.WriteLine($"ds5-payload-audit: policy={Value(report.PayloadPolicy)} target={Value(report.Target)} inputs={report.Inputs.Count}");
+        Console.WriteLine(
+            $"ds5-payload-audit: policy={Value(report.PayloadPolicy)} target={Value(report.Target)} inputs={report.Inputs.Count}");
         Console.WriteLine(
             $"  allow {report.Summary.Allow}  warn {report.Summary.Warn}  deny {report.Summary.Deny}  " +
-            $"unknown {report.Summary.Unknown}  missing {report.Summary.Missing}  ({report.Summary.Bytes / 1048576.0:F2} MiB)");
-
+            $"unknown {report.Summary.Unknown}  missing {report.Summary.Missing}");
         PrintGroup(report, "deny", "denied");
         PrintGroup(report, "unknown", "unknown");
         PrintGroup(report, "missing", "missing");
@@ -199,11 +167,11 @@ internal static class Program
 
     private static void PrintUsage() => Console.WriteLine(
         """
-        ds5-payload-audit <path...> [--policy <policy.json>] [--report <report.json>] [--json] [--fail-on-warn]
+        ds5-payload-audit <artifact...> [--policy <policy.json>] [--report <report.json>]
 
-        Inspects a directory, a ZIP, or a single PE/managed assembly. ZIP entries,
-        nested archives and .NET embedded resources are classified against the
-        payload policy. Inspected assemblies are never loaded.
+        Inspects a ZIP or a single PE/managed assembly. ZIP entries, nested archives
+        and .NET embedded resources are classified against the payload policy; the
+        inspected assembly is never loaded.
 
         Exit codes: 0 clean, 2 unknown or missing payload, 3 denied payload, 1 error.
         """);

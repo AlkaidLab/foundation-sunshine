@@ -32,17 +32,8 @@ internal sealed class Inspector(Policy policy)
 
     public void Inspect(string path, List<Finding> findings)
     {
-        if (Directory.Exists(path))
-        {
-            var root = Path.GetFullPath(path);
-            var files = Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories)
-                .OrderBy(static file => file, StringComparer.OrdinalIgnoreCase);
-            foreach (var file in files)
-                InspectFile(file, Path.GetRelativePath(root, file).Replace('\\', '/'), path, findings);
-            return;
-        }
         if (!File.Exists(path))
-            throw new FileNotFoundException($"input not found: {path}", path);
+            throw new FileNotFoundException($"artifact not found: {path}", path);
         InspectFile(path, Path.GetFileName(path), path, findings, isRoot: true);
     }
 

@@ -1,6 +1,6 @@
 --- a/sdk/HIDMaestro.Core/Internal/DriverBuilder.cs
 +++ b/sdk/HIDMaestro.Core/Internal/DriverBuilder.cs
-@@ -94,45 +94,17 @@ public static class DriverBuilder
+@@ -94,45 +94,23 @@ public static class DriverBuilder
      /// tree. The machine that installs these is the one that runs them.</summary>
      static readonly string[] EmbeddedFiles = new[]
      {
@@ -11,7 +11,7 @@
          "HMXInput.dll",
          "hidmaestro.inf",
          "hidmaestro_xusb.inf",
--
+ 
 -        // signtool.exe + its SXS dep tree, built for this architecture
 -        "signtool.exe",
 -        "signtool.exe.manifest",
@@ -27,6 +27,11 @@
 -        "opcservices.dll",
 -        "Microsoft.Windows.Build.Appx.OpcServices.dll.manifest",
 -
++        // The catalogs travel with the package. Staging them matters: if a
++        // signed build cannot extract them, EnsureExtracted fails before
++        // FullDeploy removes the packages that are already installed.
++        "hidmaestro.cat",
++        "hidmaestro_xusb.cat",
      };
  
 -    /// <summary>Architecture-neutral payload. Inf2Cat.exe and its
@@ -51,7 +56,7 @@
  
      /// <summary>Every file the staging directory must hold, paired with
      /// the manifest resource name it comes from.</summary>
-@@ -421,6 +393,20 @@ public static class DriverBuilder
+@@ -421,6 +399,20 @@ public static class DriverBuilder
      private const string ManifestRegPath = @"SOFTWARE\HIDMaestro";
      private const string ManifestRegValue = "InstalledManifestSha256";
  
@@ -72,7 +77,7 @@
      /// <summary>Full extract + sign + catalog + install pipeline. Returns
      /// true on success; throws <see cref="InvalidOperationException"/> with
      /// the failing tool's output on any pipeline-step failure. The
-@@ -461,10 +447,17 @@ public static class DriverBuilder
+@@ -461,10 +453,17 @@ public static class DriverBuilder
              return true;
          }
  

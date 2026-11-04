@@ -90,7 +90,7 @@ $runtimeMetadata = @{
     hidmaestro_build_version = $version
     hidmaestro_build_sha256 = $expectedSha256.ToLowerInvariant()
     payload_policy = $payloadDocument.payload_policy
-    hid_only_available = ($payloadDocument.payload_policy -ne 'composite-only-v1')
+    hid_only_driver_deployable = ($payloadDocument.payload_policy -ne 'composite-only-v1')
 } | ConvertTo-Json
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText(

@@ -18,8 +18,8 @@ $artifactPath = Resolve-RepoPath $Artifact
 $policyPath = Resolve-RepoPath $Policy
 $reportPath = Resolve-RepoPath $Report
 
-if (-not (Test-Path -LiteralPath $artifactPath)) {
-    throw "DualSense payload artifact not found: $artifactPath"
+if (-not (Test-Path -LiteralPath $artifactPath -PathType Leaf)) {
+    throw "DualSense payload artifact is not a file: $artifactPath"
 }
 if (-not (Test-Path -LiteralPath $policyPath -PathType Leaf)) {
     throw "DualSense payload policy not found: $policyPath"

@@ -81,11 +81,11 @@ if ($runtimeMetadata.payload_policy -isnot [string] -or
     $runtimeMetadata.payload_policy -notin @('legacy-v1', 'composite-only-v1', 'audited-hid-v1')) {
     throw 'DualSense sidecar runtime metadata has an invalid payload_policy'
 }
-if ($runtimeMetadata.hid_only_available -isnot [bool]) {
-    throw 'DualSense sidecar runtime metadata has an invalid hid_only_available'
+if ($runtimeMetadata.hid_only_driver_deployable -isnot [bool]) {
+    throw 'DualSense sidecar runtime metadata has an invalid hid_only_driver_deployable'
 }
-if ($runtimeMetadata.hid_only_available -ne ($runtimeMetadata.payload_policy -ne 'composite-only-v1')) {
-    throw 'DualSense sidecar HID-only availability disagrees with its payload policy'
+if ($runtimeMetadata.hid_only_driver_deployable -ne ($runtimeMetadata.payload_policy -ne 'composite-only-v1')) {
+    throw 'DualSense sidecar driver deployment capability disagrees with its payload policy'
 }
 
 New-Item -ItemType Directory -Force -Path $packageOutput | Out-Null
@@ -114,7 +114,7 @@ $packageManifest = [ordered]@{
     sha256 = $sha256
     size = $size
     payload_policy = $runtimeMetadata.payload_policy
-    hid_only_available = $runtimeMetadata.hid_only_available
+    hid_only_driver_deployable = $runtimeMetadata.hid_only_driver_deployable
 } | ConvertTo-Json
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText(

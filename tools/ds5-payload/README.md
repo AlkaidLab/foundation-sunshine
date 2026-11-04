@@ -42,8 +42,8 @@ Exit codes: 0 clean, 2 unknown or missing, 3 denied, 1 tool error.
 # Audit the release ZIP the way CI does
 .\scripts\audit-ds5-payload.ps1 -Artifact .\artifacts\Sunshine.Ds5Sidecar.x64.zip -Report .\artifacts\ds5-payload-audit.json
 
-# Point the tool at a local build directory while developing
-dotnet run --project tools/ds5-payload/Ds5PayloadAudit -- tools/sunshine-ds5-sidecar/bin/Release/net10.0-windows10.0.26100.0/win-x64 --policy tools/ds5-payload/policy.json --report .tmp/audit.json
+# Inspect a single assembly while developing
+dotnet run --project tools/ds5-payload/Ds5PayloadAudit -- tools/sunshine-ds5-sidecar/bin/Release/net10.0-windows10.0.26100.0/win-x64/HIDMaestro.Core.dll --policy tools/ds5-payload/policy.json --report .tmp/audit.json
 ~~~
 
 ## Baseline (measured 2026-11-03, component 1.4.3)
@@ -89,10 +89,16 @@ payload_policy names the stage the artifact is built for:
 - audited-hid-v1 - adds that signed package pinned by driver_package; the
   runtime only verifies and installs it. The build requires -DriverManifest.
 
-The stage also decides the capability the artifact may claim: the sidecar probe
-reports payload_policy and hid_only_available, and hid_only_available is false
-for composite-only-v1. runtime.json carries the same pair so a downloaded package
-can be judged before it is activated.
+The stage also decides what the artifact may claim. Two different questions are
+kept apart on purpose:
+
+- the probe's hid_only_available answers "can HID-only run on this machine right
+  now" (driver present, or the USB/IP transport available);
+- runtime.json's hid_only_driver_deployable answers "can this package install the
+  UMDF driver", which is exactly payload_policy != composite-only-v1.
+
+Conflating them would let a downloaded package promise a deployment it cannot
+perform, or hide a mode the machine can already run.
 
 The capability deliberately does not live in component-compatibility.json. The
 Control Panel compares that contract for JSON equality against the copy compiled
