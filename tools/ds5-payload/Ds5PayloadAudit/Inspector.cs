@@ -81,8 +81,8 @@ internal sealed class Inspector(Policy policy)
             AddEntry(input, "", displayName, "file", bytes, findings);
         if (displayName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
             ExpandZip(bytes, displayName, input, findings, depth: 1);
-        else if (IsAssemblyName(displayName))
-            TryAddResources(input, displayName, bytes, findings);
+        else if (IsAssemblyName(displayName) || LooksManaged(bytes))
+            TryAddResources(input, displayName, bytes, findings, depth: 0);
     }
 
     private void ExpandZip(byte[] bytes, string zipName, string input, List<Finding> findings, int depth)
@@ -114,15 +114,31 @@ internal sealed class Inspector(Policy policy)
                 continue;
             }
 
-            AddEntry(input, zipName, name, "zip-entry", content, findings);
-            if (depth < MaxNesting && name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
-                ExpandZip(content, $"{zipName}!{name}", input, findings, depth + 1);
-            else if (IsAssemblyName(name))
-                TryAddResources(input, $"{zipName}!{name}", content, findings);
+            var isArchive = name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase);
+            var isAssembly = LooksManaged(content);
+            // A ZIP that cannot be expanded, or an assembly stored under a name
+            // the policy allows as data, is not "allowed": it was not inspected.
+            if (isArchive && depth >= MaxNesting)
+                AddEntry(input, zipName, name, "zip-entry", content, findings,
+                    $"archive nesting limit {MaxNesting} reached; contents were not inspected");
+            else if (isAssembly && !IsAssemblyName(name))
+                AddEntry(input, zipName, name, "zip-entry", content, findings,
+                    "managed assembly stored under a non-executable name");
+            else
+                AddEntry(input, zipName, name, "zip-entry", content, findings);
+
+            if (isArchive)
+            {
+                if (depth < MaxNesting)
+                    ExpandZip(content, $"{zipName}!{name}", input, findings, depth + 1);
+            }
+            else if (isAssembly || IsAssemblyName(name))
+                TryAddResources(input, $"{zipName}!{name}", content, findings, depth);
         }
     }
 
-    private void AddEntry(string input, string container, string name, string kind, byte[] bytes, List<Finding> findings)
+    private void AddEntry(string input, string container, string name, string kind, byte[] bytes,
+        List<Finding> findings, string? notInspected = null)
     {
         var verdict = policy.Classify(name, out var rule, out var reason);
         findings.Add(new Finding
@@ -133,15 +149,17 @@ internal sealed class Inspector(Policy policy)
             Kind = kind,
             Size = bytes.LongLength,
             Sha256 = Hash(bytes),
-            Verdict = Label(verdict),
-            Group = rule?.Id,
-            Reason = reason,
+            // An object we refused to inspect is unknown even when its name would
+            // otherwise match an allowed group.
+            Verdict = notInspected is null ? Label(verdict) : "unknown",
+            Group = notInspected is null ? rule?.Id : null,
+            Reason = notInspected ?? reason,
         });
     }
 
-    private void TryAddResources(string input, string container, byte[] bytes, List<Finding> findings)
+    private void TryAddResources(string input, string container, byte[] bytes, List<Finding> findings, int depth)
     {
-        List<(string Name, int Size, string Sha)>? resources;
+        List<(string Name, int Size, string Sha, byte[]? Archive)>? resources;
         try
         {
             resources = ManagedResources.Read(bytes);
@@ -170,6 +188,18 @@ internal sealed class Inspector(Policy policy)
                 Group = rule?.Id,
                 Reason = reason,
             });
+
+            // A resource can itself be an archive; it must not hide payload the
+            // policy would reject. Too deep to expand means unknown, not allowed.
+            if (resource.Archive is null)
+                continue;
+            if (depth >= MaxNesting)
+            {
+                findings.Add(Unreadable(input, container, resource.Name, "assembly-resource",
+                    $"archive nesting limit {MaxNesting} reached; resource contents were not inspected"));
+                continue;
+            }
+            ExpandZip(resource.Archive, $"{container}!{resource.Name}", input, findings, depth + 1);
         }
     }
 
@@ -186,6 +216,25 @@ internal sealed class Inspector(Policy policy)
     private static bool IsAssemblyName(string name) =>
         name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) ||
         name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>True for a PE image with a CLI header, whatever the file is
+    /// called. A managed assembly must not hide behind a name the policy allows
+    /// as data.</summary>
+    private static bool LooksManaged(byte[] bytes)
+    {
+        if (bytes.Length < 0x40 || bytes[0] != (byte)'M' || bytes[1] != (byte)'Z')
+            return false;
+        try
+        {
+            using var stream = new MemoryStream(bytes, writable: false);
+            using var pe = new PEReader(stream);
+            return pe.HasMetadata;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     private static string Label(Verdict verdict) => verdict switch
     {
@@ -205,7 +254,7 @@ internal sealed class Inspector(Policy policy)
 /// reviewable at all.</summary>
 internal static class ManagedResources
 {
-    public static List<(string Name, int Size, string Sha)>? Read(byte[] image)
+    public static List<(string Name, int Size, string Sha, byte[]? Archive)>? Read(byte[] image)
     {
         using var stream = new MemoryStream(image, writable: false);
         using var pe = new PEReader(stream);
@@ -223,7 +272,7 @@ internal static class ManagedResources
         var block = pe.GetSectionData(directory.RelativeVirtualAddress).GetContent();
         var span = block.AsSpan();
         var reader = pe.GetMetadataReader();
-        var results = new List<(string Name, int Size, string Sha)>();
+        var results = new List<(string Name, int Size, string Sha, byte[]? Archive)>();
 
         foreach (var handle in reader.ManifestResources)
         {
@@ -241,8 +290,13 @@ internal static class ManagedResources
                 throw new InvalidDataException($"resource '{reader.GetString(resource.Name)}' length is out of range");
 
             var data = span.Slice(offset + 4, length);
+            // Keep archive resources so the caller can inspect their entries; a
+            // plain resource stays hashed and is not copied.
+            var archive = data.Length >= 4 && data[0] == 0x50 && data[1] == 0x4B && data[2] == 0x03 && data[3] == 0x04
+                ? data.ToArray()
+                : null;
             results.Add((reader.GetString(resource.Name), length,
-                Convert.ToHexString(SHA256.HashData(data)).ToLowerInvariant()));
+                Convert.ToHexString(SHA256.HashData(data)).ToLowerInvariant(), archive));
         }
 
         results.Sort(static (left, right) => string.CompareOrdinal(left.Name, right.Name));

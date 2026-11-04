@@ -2,8 +2,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Artifact,
     [string]$Policy = 'tools/ds5-payload/policy.json',
-    [string]$Report = 'build/ds5-payload-audit.json',
-    [switch]$FailOnWarn
+    [string]$Report = 'build/ds5-payload-audit.json'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -37,7 +36,6 @@ if ($LASTEXITCODE -ne 0) { throw 'DualSense payload audit tool build failed' }
 
 $tool = Join-Path $root 'tools/ds5-payload/Ds5PayloadAudit/bin/Release/net10.0/Ds5PayloadAudit.dll'
 $auditArguments = @($artifactPath, '--policy', $policyPath, '--report', $reportPath)
-if ($FailOnWarn) { $auditArguments += '--fail-on-warn' }
 
 & $dotnet $tool @auditArguments
 $exitCode = $LASTEXITCODE

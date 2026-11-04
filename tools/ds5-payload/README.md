@@ -34,7 +34,6 @@ are unpacked in memory; nothing is executed, extracted to disk or trusted.
 | missing | A required resource did not appear in any inspected assembly |
 
 Exit codes: 0 clean, 2 unknown or missing, 3 denied, 1 tool error.
---fail-on-warn also fails on warn.
 
 ## Usage
 
@@ -120,8 +119,10 @@ are uploaded, and a non-zero exit fails the job. deny, unknown and missing block
 warn does not, so the runtime catch-all below can stay visible without stopping a
 release.
 
-## Known gap (closed in M1)
+## Known gap
 
-dotnet-runtime and dotnet-runtime-metadata currently match by extension, so they
-report warn instead of allow. M1 replaces them with a manifest generated from the
-restored runtime pack, at which point --fail-on-warn can gate releases.
+dotnet-runtime and dotnet-runtime-metadata match by extension, so runtime files
+report warn instead of allow. The release gate blocks deny, unknown and missing,
+not warn: a runtime file added by a build change shows up in the report as a
+warning rather than stopping the job. Pinning an exact runtime manifest remains
+the way to close this.
