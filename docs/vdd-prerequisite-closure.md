@@ -281,8 +281,10 @@ Two behaviours keep that honest:
   signers cannot orphan the previous anchor in the stores. Uninstall attempts to
   remove all of them from both stores, but only after every VDD driver package
   has been removed. A package that is still installed keeps its trust anchor, and
-  removal is best effort: a failure keeps the record for a later attempt and is a
-  warning, not an uninstall failure.
+  removal is best effort: a failure keeps the record (and skips the registry
+  cleanup that would delete it) so a later uninstall can retry, and is a warning
+  rather than an uninstall failure. Only certificates the installation actually
+  added are recorded, so an anchor that predates it is left alone.
 
 ## Release-candidate clean-host checklist
 

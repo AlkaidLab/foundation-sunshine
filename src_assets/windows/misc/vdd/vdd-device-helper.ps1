@@ -525,7 +525,7 @@ function Remove-AllVddDevices([string] $NefconPath, [int] $WaitSeconds = $device
         }) -join ', '))
 }
 
-function Get-PublishedVddPackages([string[]] $RequiredInfNames = @()) {
+function Get-PublishedVddPackages([string[]] $RequiredInfNames = @(), [switch] $Strict) {
     # Match the exact hardware ID instead of parsing localized pnputil output.
     $infDirectory = Join-Path $env:SystemRoot 'INF'
     $packages = foreach ($inf in @(Get-ChildItem -LiteralPath $infDirectory -Filter 'oem*.inf' -File)) {
@@ -539,6 +539,9 @@ function Get-PublishedVddPackages([string[]] $RequiredInfNames = @()) {
                 -ErrorAction Stop)
         }
         catch {
+            if ($Strict) {
+                throw "Failed to inspect driver package $($inf.Name): $($_.Exception.Message)"
+            }
             if ($RequiredInfNames -icontains $inf.Name) {
                 throw "Failed to inspect active VDD package $($inf.Name): $($_.Exception.Message)"
             }
@@ -758,21 +761,25 @@ function Clear-VddRecordedCertificateThumbprints {
 
 function Remove-VddCertificate([object] $Payload) {
     $thumbprints = New-Object System.Collections.Generic.List[string]
-    $certificate = Get-VddCertificate $Payload -Installed
-    if ($certificate -and -not $thumbprints.Contains($certificate.Thumbprint)) {
-        $thumbprints.Add($certificate.Thumbprint)
-    }
+    # Only certificates this installation recorded are ours to remove: an anchor
+    # that predates the install may belong to another driver or to the admin.
     foreach ($recorded in @(Get-VddRecordedCertificateThumbprints)) {
         if (-not $thumbprints.Contains($recorded)) {
             $thumbprints.Add($recorded)
         }
     }
     if ($thumbprints.Count -eq 0) {
-        return
+        # Installs from before the record existed still need their anchor removed.
+        $certificate = Get-VddCertificate $Payload -Installed
+        if ($certificate) {
+            $thumbprints.Add($certificate.Thumbprint)
+        }
+    }
+    if ($thumbprints.Count -eq 0) {
+        return $true
     }
 
     $certutil = Join-Path $env:SystemRoot 'System32\certutil.exe'
-    $removed = $false
     $failed = $false
     foreach ($thumbprint in $thumbprints) {
         foreach ($store in @('Root', 'TrustedPublisher')) {
@@ -785,16 +792,15 @@ function Remove-VddCertificate([object] $Payload) {
                 $failed = $true
                 Write-Warning "Failed to remove the VDD signing certificate $thumbprint from $store (exit code $LASTEXITCODE)."
             }
-            else {
-                $removed = $true
-            }
         }
     }
-    # Keep the record when anything failed, so a later uninstall can retry.
-    if ($removed -and -not $failed) {
-        Clear-VddRecordedCertificateThumbprints
-        Write-Output 'Removed the VDD signing certificates from the machine trust stores.'
+    if ($failed) {
+        # Keep the record so a later uninstall can retry.
+        return $false
     }
+    Clear-VddRecordedCertificateThumbprints
+    Write-Host 'Removed the VDD signing certificates from the machine trust stores.'
+    return $true
 }
 
 function Add-VddDriverPackage([object] $Payload) {
@@ -806,13 +812,18 @@ function Add-VddDriverPackage([object] $Payload) {
         }
     }
 
+    $trustedCertificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2(
+        (Resolve-Path -LiteralPath $certificate).Path)
+    $alreadyTrusted = Test-Path -LiteralPath (Join-Path 'Cert:\LocalMachine\Root' $trustedCertificate.Thumbprint)
+
     & (Join-Path $env:SystemRoot 'System32\certutil.exe') -addstore -f root $certificate
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to import the VDD certificate (exit code $LASTEXITCODE)."
     }
-    $trustedCertificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2(
-        (Resolve-Path -LiteralPath $certificate).Path)
-    Add-VddRecordedCertificateThumbprint $trustedCertificate.Thumbprint
+    # Only a certificate this installation introduced is recorded for removal.
+    if (-not $alreadyTrusted) {
+        Add-VddRecordedCertificateThumbprint $trustedCertificate.Thumbprint
+    }
 
     Write-Output 'Staging VDD driver package...'
     & (Join-Path $env:SystemRoot 'System32\pnputil.exe') /add-driver $inf
@@ -1156,22 +1167,38 @@ function Invoke-VddUninstall([string] $Directory) {
     }
 
     # The certificate is only a trust anchor for the packages just removed. Keep
-    # it while any VDD package remains, and read it before Dist is deleted.
-    if (-not $failure -and @(Get-PublishedVddPackages).Count -eq 0) {
+    # it while any VDD package remains, and read it before Dist is deleted. A
+    # failed or unprovable cleanup keeps the record, so a later run can retry.
+    $certificateRemovalComplete = $false
+    if (-not $failure) {
+        $packagesRemain = $true
         try {
-            Remove-VddCertificate ([pscustomobject]@{
-                Paths = $paths
-                DriverDir = $paths.DriverRoot
-            })
+            $packagesRemain = @(Get-PublishedVddPackages -Strict).Count -gt 0
         }
         catch {
-            Write-Warning "Failed to remove the VDD signing certificate: $($_.Exception.Message)"
+            Write-Warning "Cannot confirm that every VDD driver package is gone: $($_.Exception.Message)"
+        }
+        if (-not $packagesRemain) {
+            try {
+                $certificateRemovalComplete = Remove-VddCertificate ([pscustomobject]@{
+                    Paths = $paths
+                    DriverDir = $paths.DriverRoot
+                })
+            }
+            catch {
+                Write-Warning "Failed to remove the VDD signing certificate: $($_.Exception.Message)"
+            }
         }
     }
 
     Write-Output 'Cleaning VDD files and registry...'
     Clear-VddTransaction ([pscustomobject]@{ Paths = $paths })
-    Remove-VddRegistry
+    if ($certificateRemovalComplete) {
+        Remove-VddRegistry
+    }
+    else {
+        Write-Warning 'Keeping the VDD registry record so a later uninstall can retry the certificate removal.'
+    }
     if (Test-Path -LiteralPath $paths.Dist) {
         Remove-Item -LiteralPath $paths.Dist -Recurse -Force
     }
