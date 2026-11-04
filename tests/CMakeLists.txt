@@ -416,6 +416,20 @@ if (WIN32)
 endif ()
 add_test(NAME session_info_unit_tests COMMAND session_info_unit_tests)
 
+add_executable(network_reachability_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
+        ${CMAKE_SOURCE_DIR}/src/public_address.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_network_reachability.cpp)
+target_include_directories(network_reachability_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(network_reachability_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
+        sunshine_project_options sunshine_coverage ${Boost_LIBRARIES})
+target_compile_options(network_reachability_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(network_reachability_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(network_reachability_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME network_reachability_unit_tests COMMAND network_reachability_unit_tests)
+
 # 版本比较: the date part of a Foundation Sunshine version, against the table shared with the panel and the Web UI
 add_executable(version_compare_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_version_compare.cpp)
