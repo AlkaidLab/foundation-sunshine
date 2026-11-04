@@ -82,7 +82,10 @@ set(SUNSHINE_HOST_SOURCES
     src/nat_discovery.cpp src/nat_discovery.h
     src/nat_discovery_probe.cpp
     src/public_address.cpp src/public_address.h
+    src/system_info.cpp src/system_info.h
     src/build_info.cpp src/build_info.h
+    src/system_info_cache.cpp
+    src/system_info_probe.cpp
     src/stat_trackers.cpp src/stat_trackers.h
     src/utility.h
     src/uuid.h

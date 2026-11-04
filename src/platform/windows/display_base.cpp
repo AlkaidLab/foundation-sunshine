@@ -1477,6 +1477,35 @@ namespace platf {
     return adapter_names;
   }
 
+  std::string
+  gpu_signature() {
+    dxgi::factory1_t factory;
+    if (FAILED(CreateDXGIFactory1(IID_IDXGIFactory1, (void **) &factory))) {
+      return {};
+    }
+
+    std::string signature;
+    dxgi::adapter_t::pointer adapter_p;
+    for (int x = 0; factory->EnumAdapters1(x, &adapter_p) != DXGI_ERROR_NOT_FOUND; ++x) {
+      dxgi::adapter_t adapter { adapter_p };
+      DXGI_ADAPTER_DESC1 desc;
+      if (FAILED(adapter->GetDesc1(&desc))) {
+        return {};
+      }
+      // The user-mode driver version changes with every driver install; without it a new driver on the same card would reuse the old answer.
+      LARGE_INTEGER driver_version {};
+      if (FAILED(adapter->CheckInterfaceSupport(IID_IDXGIDevice, &driver_version))) {
+        driver_version.QuadPart = 0;
+      }
+      char piece[160];
+      std::snprintf(piece, sizeof(piece), "%04x:%04x:%08lx%08lx:%016llx:%08x;", desc.VendorId, desc.DeviceId,
+        static_cast<unsigned long>(desc.AdapterLuid.HighPart), static_cast<unsigned long>(desc.AdapterLuid.LowPart),
+        static_cast<unsigned long long>(driver_version.QuadPart), desc.Flags);
+      signature += piece;
+    }
+    return signature;
+  }
+
   /**
    * @brief Returns if GPUs/drivers have changed since the last call to this function.
    * @return `true` if a change has occurred or if it is unknown whether a change occurred.
