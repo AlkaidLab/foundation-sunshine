@@ -75,14 +75,30 @@ internal sealed class Inspector(Policy policy)
 
         // A ZIP passed on the command line is the container under audit, not a
         // payload object. Its entries are the objects; nested archives stay
-        // classified so a smuggled ZIP is still rejected.
-        var isContainer = isRoot && displayName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase);
+        // classified so a smuggled ZIP is still rejected. Content decides, so an
+        // archive renamed to something innocuous is still opened.
+        var isZip = displayName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) || LooksLikeZip(bytes);
+        var isContainer = isRoot && isZip;
         if (!isContainer)
             AddEntry(input, "", displayName, "file", bytes, findings);
-        if (displayName.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
-            ExpandZip(bytes, displayName, input, findings, depth: 1);
+        if (isZip)
+            TryExpandZip(bytes, displayName, input, findings, depth: 1);
         else if (IsAssemblyName(displayName) || LooksManaged(bytes))
             TryAddResources(input, displayName, bytes, findings, depth: 0);
+    }
+
+    /// <summary>Expands an archive, recording a corrupt one instead of aborting
+    /// the audit: a truncated archive must still appear in the report.</summary>
+    private void TryExpandZip(byte[] bytes, string label, string input, List<Finding> findings, int depth)
+    {
+        try
+        {
+            ExpandZip(bytes, label, input, findings, depth);
+        }
+        catch (InvalidDataException error)
+        {
+            findings.Add(Unreadable(input, "", label, "zip", error.Message));
+        }
     }
 
     private void ExpandZip(byte[] bytes, string zipName, string input, List<Finding> findings, int depth)
@@ -114,7 +130,7 @@ internal sealed class Inspector(Policy policy)
                 continue;
             }
 
-            var isArchive = name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase);
+            var isArchive = name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase) || LooksLikeZip(content);
             var isAssembly = LooksManaged(content);
             // A ZIP that cannot be expanded, or an assembly stored under a name
             // the policy allows as data, is not "allowed": it was not inspected.
@@ -130,7 +146,7 @@ internal sealed class Inspector(Policy policy)
             if (isArchive)
             {
                 if (depth < MaxNesting)
-                    ExpandZip(content, $"{zipName}!{name}", input, findings, depth + 1);
+                    TryExpandZip(content, $"{zipName}!{name}", input, findings, depth + 1);
             }
             else if (isAssembly || IsAssemblyName(name))
                 TryAddResources(input, $"{zipName}!{name}", content, findings, depth);
@@ -199,7 +215,7 @@ internal sealed class Inspector(Policy policy)
                     $"archive nesting limit {MaxNesting} reached; resource contents were not inspected"));
                 continue;
             }
-            ExpandZip(resource.Archive, $"{container}!{resource.Name}", input, findings, depth + 1);
+            TryExpandZip(resource.Archive, $"{container}!{resource.Name}", input, findings, depth + 1);
         }
     }
 
@@ -212,6 +228,9 @@ internal sealed class Inspector(Policy policy)
         Verdict = "unknown",
         Reason = reason,
     };
+
+    private static bool LooksLikeZip(byte[] bytes) =>
+        bytes.Length >= 4 && bytes[0] == 0x50 && bytes[1] == 0x4B && bytes[2] == 0x03 && bytes[3] == 0x04;
 
     private static bool IsAssemblyName(string name) =>
         name.EndsWith(".dll", StringComparison.OrdinalIgnoreCase) ||

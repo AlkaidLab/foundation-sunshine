@@ -27,7 +27,10 @@ if (-not $PolicyPath) {
 $PolicyPath = (Resolve-Path -LiteralPath $PolicyPath).Path
 $payloadDocument = Get-Content -LiteralPath $PolicyPath -Raw | ConvertFrom-Json
 $payloadStage = [string]$payloadDocument.payload_policy
-if ($payloadStage -notin @('legacy-v1', 'composite-only-v1', 'audited-hid-v1')) {
+if ($payloadStage -eq 'legacy-v1') {
+    throw 'legacy-v1 describes artifacts that already shipped; build composite-only-v1 instead'
+}
+if ($payloadStage -notin @('composite-only-v1', 'audited-hid-v1')) {
     throw "Unsupported payload policy stage: $payloadStage"
 }
 $buildRoot = [IO.Path]::GetFullPath((Join-Path $root 'build'))
