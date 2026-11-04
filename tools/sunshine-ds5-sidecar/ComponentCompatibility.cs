@@ -32,10 +32,10 @@ internal static class ComponentCompatibility
     /// rejected by the startup check instead of failing later at install time.</summary>
     internal static string PayloadPolicy => Marker("FoundationPayloadPolicy") ?? "";
 
-    /// <summary>The HID-only profile needs a driver package with a catalog. A
-    /// composite-only payload ships none, so the capability must be withheld
-    /// rather than offered and then failing inside the driver builder.</summary>
-    internal static bool HidOnlyAvailable => PayloadPolicy != "composite-only-v1";
+    /// <summary>Whether this package can deploy the UMDF driver at all. Only a
+    /// stage that carries a signed catalog can; the shipped composite-only stage
+    /// cannot, so its HID-only profile runs on USB/IP instead.</summary>
+    internal static bool HidOnlyDriverDeployable => PayloadPolicy != "composite-only-v1";
 
     private static string? Marker(string key) => typeof(HMContext).Assembly
         .GetCustomAttributes<AssemblyMetadataAttribute>()

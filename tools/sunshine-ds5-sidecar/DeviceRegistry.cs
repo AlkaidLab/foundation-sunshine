@@ -41,7 +41,7 @@ internal sealed class DeviceRegistry : IDisposable
         // path also requires a matching manifest hash, and a mismatch would fail
         // closed in the middle of an attach.
         _hidOnlyProfileId =
-            ComponentCompatibility.HidOnlyAvailable ? "dualsense" : HidOnlyUsbipProfileId;
+            ComponentCompatibility.HidOnlyDriverDeployable ? "dualsense" : HidOnlyUsbipProfileId;
         _authoredHapticsAvailable = _context.GetProfile(DualSenseHapticsAudio.CompositeProfileId) is not null &&
                                     HMContext.IsUsbipBackendAvailable;
         _genshinCompatibilityAvailable = _authoredHapticsAvailable &&

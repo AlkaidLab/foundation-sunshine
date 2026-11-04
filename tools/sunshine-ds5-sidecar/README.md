@@ -13,17 +13,18 @@ Build the compatible Foundation Core patch and the sidecar:
 scripts/build-ds5-sidecar.ps1
 ```
 
-The version 1.4.2 component ZIP includes patched `HIDMaestro.Core.dll`, its
-licenses, and the complete .NET runtime. The main Sunshine package contains only
+Each component ZIP includes the patched `HIDMaestro.Core.dll`, its licenses and
+the complete .NET runtime. The main Sunshine package contains only
 the pinned ZIP download manifest. The Control Panel automatically updates older
 installed components when streaming is idle, using the existing administrator
 helper, verified staging and whole-component rollback. Optional USB/IP transport
 installation remains part of explicit install/repair, not automatic updates.
-The sidecar uses normal .NET loading and requires the v1.12.0 runtime and
-device-ownership, externally managed USB/IP and `FoundationDualSenseReports=host-clock-v1`
-markers even for `--probe`. Sunshine validates the
+The sidecar uses normal .NET loading and requires the v1.12.0 runtime and the
+device-ownership, externally managed USB/IP, `FoundationDualSenseReports=host-clock-v1`
+and `FoundationPayloadPolicy` markers even for `--probe`. Sunshine validates the
 installed component without replacing DLLs.
-The upstream SDK API, assembly version and embedded resources are preserved; see
+The upstream SDK API and assembly identity are preserved; the embedded payload is
+the policy-filtered subset described in [`../ds5-payload/README.md`](../ds5-payload/README.md). See
 [`../hidmaestro-core-patch/README.md`](../hidmaestro-core-patch/README.md).
 
 Read-only capability probe:
@@ -83,9 +84,10 @@ This adds no report-rate limiter or timer. Because it trades spinning for OS
 wakeups, CPU and report-interval tests should be repeated when changing the
 bundled runtime or enabling additional concurrent input/audio workloads.
 Disconnecting the owning pipe disposes every device created by
-that connection. Standard `dualsense` uses UMDF2; `dualsense-composite`
-enables the USB composite HID/audio profile and authored haptics PCM.
-HID-only attaches use `dualsense` with the native 273-byte descriptor and
+that connection. The shipped stage serves HID-only with `dualsense-hid-usbip`
+on the USB/IP backend; the reserved signed stage would keep `dualsense` (UMDF2).
+`dualsense-composite` enables the USB composite HID/audio profile and authored
+haptics PCM. Every HID-only profile uses the native 273-byte descriptor and
 Game Pad usage (0x05). HIDMaestro v1.12.0 no longer writes the incorrect global
 GameInput mapping for JSON profiles and removes exact legacy SDK tables
 (issue #1056), so the former Joystick usage override is unnecessary. Input
@@ -166,7 +168,7 @@ component version. The build writes FoundationPayloadPolicy into the Core, and
 the sidecar refuses to start when that marker is missing or unknown, so a
 sidecar can never be paired with a Core that was trimmed for a different stage.
 
---probe reports both fields:
+--probe reports these fields:
 
 - payload_policy: legacy-v1, composite-only-v1 or audited-hid-v1
 - hid_only_available: true when the HID-only profile can run here. A payload

@@ -91,14 +91,13 @@ if (probe)
         usbip_policy = ComponentCompatibility.TransportPolicy,
         usbip_version = ComponentCompatibility.UsbipVersion,
         pinned_microphone_runtime = DeviceRegistry.HasPinnedMicrophoneRuntime,
-        hid_usbip = context.GetProfile("dualsense-hid-usbip") is not null,
         // Which backend the HID-only profile will use on this machine.
-        hid_only_transport = ComponentCompatibility.HidOnlyAvailable ? "umdf" : "usbip",
+        hid_only_transport = ComponentCompatibility.HidOnlyDriverDeployable ? "umdf" : "usbip",
         composite_microphone_prototype_requested = enableCompositeMicrophonePrototype,
         payload_policy = payloadPolicy,
         // Runtime capability: the UMDF stage needs nothing extra, and every
         // other stage runs HID-only over USB/IP, which needs the transport.
-        hid_only_available = ComponentCompatibility.HidOnlyAvailable ||
+        hid_only_available = ComponentCompatibility.HidOnlyDriverDeployable ||
                              HMContext.IsUsbipBackendAvailable,
     }));
     return 0;
