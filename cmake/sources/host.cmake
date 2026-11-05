@@ -76,6 +76,7 @@ set(SUNSHINE_HOST_SOURCES
     src/audio.cpp src/audio.h
     src/mic_mixer.cpp src/mic_mixer.h
     src/process.cpp src/process.h
+    src/client_interface.cpp src/client_interface.h
     src/network.cpp src/network.h
     src/network_reachability.cpp src/network_reachability.h
     src/network_reachability_probe.cpp

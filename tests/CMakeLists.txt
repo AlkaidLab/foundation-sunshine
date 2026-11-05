@@ -137,6 +137,11 @@ if (WIN32)
 endif ()
 add_test(NAME log_retention_unit_tests COMMAND log_retention_unit_tests)
 
+add_executable(client_interface_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_client_interface.cpp)
+target_include_directories(client_interface_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(client_interface_unit_tests PRIVATE gtest_main Boost::boost Boost::property_tree sunshine_project_options sunshine_coverage)
+set_target_properties(client_interface_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME client_interface_unit_tests COMMAND client_interface_unit_tests)
 
 add_executable(display_scale_steps_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_display_scale_steps.cpp)
 target_include_directories(display_scale_steps_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")

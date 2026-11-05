@@ -10,6 +10,7 @@
 #include <boost/property_tree/xml_parser.hpp>
 #include <nlohmann/json.hpp>
 
+#include "src/client_interface.h"
 #include "src/file_handler.h"
 #include "src/logging.h"
 #include "src/process.h"
@@ -54,6 +55,9 @@ namespace nvhttp::apps {
   list(resp_https_t response, req_https_t request) {
     log_request(request);
 
+    // the flag of HDR below is what the encoder probe found; the list itself does not depend on it, so a probe that outlasts the bound does not hold the list back
+    startup::probe_gate().wait_for(startup::request_wait_bound);
+
     pt::ptree tree;
 
     auto g = util::fail_guard([&]() {
@@ -67,6 +71,7 @@ namespace nvhttp::apps {
 
     apps.put("<xmlattr>.status_code", 200);
 
+    const auto play_records = client_interface::read_all_play_records(client_interface::play_facts_path());
     for (auto &proc : proc::proc.get_apps()) {
       pt::ptree app;
 

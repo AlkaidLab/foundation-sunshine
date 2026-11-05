@@ -8,11 +8,13 @@
   #define __kernel_entry
 #endif
 
+#include <cstdint>
 #include <optional>
 #include <unordered_map>
 
 #include <boost/process/v1.hpp>
 
+#include "client_interface.h"
 #include "config.h"
 #include "platform/common.h"
 #include "rtsp.h"
@@ -65,6 +67,7 @@ namespace proc {
     std::string working_dir;
     std::string output;
     std::string image_path;
+    client_interface::app_facts_t fs_facts;
     std::string id;
     bool elevated;
     bool auto_detach;
@@ -110,6 +113,9 @@ namespace proc {
     get_app_name(int app_id);
     std::string
     get_app_cmd(int app_id);
+    /** Return the PID of the process started for the current app, if any. */
+    std::optional<unsigned long>
+    get_running_pid() const;
     std::string
     get_last_run_app_name();
     std::optional<rtsp_stream::synthetic_hdr_config_t>

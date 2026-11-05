@@ -189,12 +189,11 @@ namespace proc {
       BOOST_LOG(error) << "Couldn't find app with ID ["sv << app_id << ']';
       return 404;
     }
-
     _app_id = app_id;
     _app = *iter;
+    client_interface::record_session_start(_app.id);
     _app_prep_begin = std::begin(_app.prep_cmds);
     _app_prep_it = _app_prep_begin;
-
     // Apply per-app mouse mode
     platf::set_mouse_mode(_app.mouse_mode);
     // Apply the app override before the input session creates virtual pads.
@@ -407,6 +406,9 @@ namespace proc {
 
     _pipe.reset();
     bool has_run = _app_id > 0;
+    if (has_run) {
+      client_interface::record_session_end(_app.id, _app_launch_time);
+    }
     // Only show the Stopped notification if we actually have an app to stop
     // Since terminate() is always run when a new app has started
     if (proc::proc.get_last_run_app_name().length() > 0 && has_run && !stream::session::has_active_video_sessions()) {
