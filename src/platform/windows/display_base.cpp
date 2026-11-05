@@ -4,6 +4,7 @@
  */
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <initguid.h>
 #include <iterator>
 #include <thread>
@@ -670,8 +671,18 @@ namespace platf::dxgi {
           continue;
         }
 
-        dxgi::output_t::pointer output_p;
-        for (int y = 0; adapter_tmp->EnumOutputs(y, &output_p) != DXGI_ERROR_NOT_FOUND; ++y) {
+        dxgi::output_t::pointer output_p {};
+        for (int y = 0;; ++y) {
+          // Only DXGI_ERROR_NOT_FOUND ends the list; other failures leave output_p unset
+          // (a Session 0 process gets DXGI_ERROR_NOT_CURRENTLY_AVAILABLE).
+          const HRESULT enum_status = adapter_tmp->EnumOutputs(y, &output_p);
+          if (enum_status == DXGI_ERROR_NOT_FOUND) {
+            break;
+          }
+          if (FAILED(enum_status)) {
+            BOOST_LOG(warning) << "[Display Init] Failed to enumerate outputs [0x"sv << util::hex(enum_status).to_string_view() << ']';
+            break;
+          }
           dxgi::output_t output_tmp { output_p };
 
           DXGI_OUTPUT_DESC desc;
@@ -1398,7 +1409,15 @@ namespace platf {
         << ",Share Sys Mem: "sv << adapter_desc.SharedSystemMemory / 1048576 << " MiB"sv;
 
       dxgi::output_t::pointer output_p {};
-      for (int y = 0; adapter->EnumOutputs(y, &output_p) != DXGI_ERROR_NOT_FOUND; ++y) {
+      for (int y = 0;; ++y) {
+        const HRESULT enum_status = adapter->EnumOutputs(y, &output_p);
+        if (enum_status == DXGI_ERROR_NOT_FOUND) {
+          break;
+        }
+        if (FAILED(enum_status)) {
+          BOOST_LOG(warning) << "Failed to enumerate outputs [0x"sv << util::hex(enum_status).to_string_view() << ']';
+          break;
+        }
         dxgi::output_t output { output_p };
 
         DXGI_OUTPUT_DESC desc;
