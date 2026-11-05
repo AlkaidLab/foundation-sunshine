@@ -47,6 +47,7 @@ extern "C" {
 #include "pyrowave/capture_policy.h"
 #include "sync.h"
 #include "video.h"
+#include "video_idle_policy.h"
 #include "video_dolby_vision.h"
 #include "video_hdr_metadata.h"
 #include "video_probe.h"

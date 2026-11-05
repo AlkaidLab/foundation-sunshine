@@ -545,6 +545,9 @@ namespace platf::dxgi {
     close_sealed_frame_channel_handles(sealed_channel);
     m_legacyNamedChannel = false;
     m_frameChannelSelection = vdd_frame_channel::channel_selection::sealed_opened;
+    m_acquiredFrame = false;
+    m_idleFrameLogged = false;
+    m_attachedAt = std::chrono::steady_clock::now();
     BOOST_LOG(info) << "[vdd_capture] opened sealed monitor "sv << monitor_idx
                     << " "sv << m_width << "x"sv << m_height
                     << " fmt="sv << static_cast<int>(m_format)
@@ -680,6 +683,9 @@ namespace platf::dxgi {
     if (m_frameChannelSelection != vdd_frame_channel::channel_selection::forced_legacy) {
       m_frameChannelSelection = vdd_frame_channel::channel_selection::legacy_opened;
     }
+    m_acquiredFrame = false;
+    m_idleFrameLogged = false;
+    m_attachedAt = std::chrono::steady_clock::now();
     BOOST_LOG(info) << "[vdd_capture] opened monitor "sv << monitor_idx
                     << " "sv << m_width << "x"sv << m_height
                     << " fmt="sv << static_cast<int>(m_format)
@@ -846,11 +852,34 @@ namespace platf::dxgi {
     const DWORD event_count = cursor_channel_ready ? 2 : 1;
     DWORD wr = WaitForMultipleObjects(event_count, events, FALSE, ms);
     if (wr == WAIT_TIMEOUT) {
+      if (!m_acquiredFrame) {
+        // Nothing was published since this capture attached. The producer only publishes when the desktop changes, so a
+        // static desktop that was drawn before the attach never signals the frame event, and the stream would show
+        // nothing until something moves. The last published picture sits on the current slot with key 0 (the
+        // consumer before us released it there): take it once, as a normal frame. A slot that still holds an unread
+        // frame is in key 1 and its event is signalled, so this never takes the place of a real frame.
+        const auto idle_status = acquire_cursor_frame();
+        if (idle_status == capture_e::ok) {
+          out_cursor_only = false;
+          m_acquiredFrame = true;
+          if (!m_idleFrameLogged) {
+            m_idleFrameLogged = true;
+            BOOST_LOG(info) << "[vdd_capture] no frame was published after the attach; sending the last published picture of slot "sv
+                            << m_slotIndex << " ("sv
+                            << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - m_attachedAt).count()
+                            << " ms after the attach)"sv;
+          }
+        }
+        // Any other answer (the slot is busy, or the acquire failed) leaves things as they were: keep waiting.
+        return idle_status == capture_e::ok ? capture_e::ok : capture_e::timeout;
+      }
       return capture_e::timeout;
     }
     if (wr == WAIT_OBJECT_0 + 1) {
       m_cursorUpdatePending = true;
-      return acquire_cursor_frame();
+      const auto cursor_status = acquire_cursor_frame();
+      if (cursor_status == capture_e::ok) m_acquiredFrame = true;
+      return cursor_status;
     }
     if (wr != WAIT_OBJECT_0) {
       BOOST_LOG(error) << "[vdd_capture] WaitForMultipleObjects: result="sv << wr
@@ -911,6 +940,7 @@ namespace platf::dxgi {
     m_holdsKey = true;
     m_heldSlot = slot;
     m_cursorUpdatePending = false;
+    m_acquiredFrame = true;
 
     // Detect producer-side resize / format change: the metadata block can change
     // any time the swap chain is re-created. If so, signal reinit so the upper

@@ -136,36 +136,6 @@ namespace stream {
     };
   }  // namespace session
 
-  // Session information structure for API responses
-  struct session_info_t {
-    std::string client_name;
-    std::string client_uuid;
-    std::string client_address;
-    std::string state;
-    std::string stop_reason;
-    uint32_t session_id;
-    std::int64_t uptime_ms;
-    std::int64_t control_idle_ms;
-    std::int64_t video_idle_ms;
-    std::int64_t audio_idle_ms;
-    bool control_connected;
-    int width;
-    int height;
-    int fps;
-    int bitrate;  // Current bitrate in Kbps
-    bool host_audio;
-    bool enable_hdr;
-    bool enable_mic;
-    bool use_vdd;
-    bool hdr_brightness_reported;
-    std::string hdr_brightness_source;
-    float hdr_max_nits;
-    float hdr_min_nits;
-    float hdr_max_full_frame_nits;
-    std::string app_name;
-    int app_id;
-  };
-
   namespace session {
     std::shared_ptr<session_t>
     alloc(config_t &config, rtsp_stream::launch_session_t &launch_session);
