@@ -23,6 +23,7 @@
 #endif
 
 #include "src/config.h"
+#include "src/config_test_support.h"
 #include "src/confighttp/auth.h"
 #include "src/confighttp/routes.h"
 #include "src/crypto.h"
@@ -320,6 +321,7 @@ namespace {
     const std::string original_config = "vdd_edid_native_resolution = 3840x2160\nresolutions = [1920x1080,3840x2160]\nfps = [60,120]\n";
     const std::string original_xml = "<vdd_settings><edid><CustomEdid>true</CustomEdid></edid></vdd_settings>";
 
+    /** @brief Route both configuration writers to a unique fixture directory before accepting HTTPS requests. */
     void
     SetUp() override {
       ConfigHttpRoutes::SetUp();
@@ -333,10 +335,12 @@ namespace {
       std::ofstream(vdd_path, std::ios::binary | std::ios::trunc) << original_xml;
     }
 
+    /** @brief Stop requests and clear contention/staging hooks before restoring the host path. */
     void
     TearDown() override {
       ConfigHttpRoutes::TearDown();
       if (!prepared_) return;
+      config::test_support::set_save_lock_contended_hook({});
       display_device::vdd_settings::test_support::set_before_save_hook({});
       display_device::vdd_settings::test_support::set_settings_path(std::nullopt);
       config::sunshine.config_file = previous_config_;
@@ -348,6 +352,7 @@ namespace {
   };
 }  // namespace
 
+/** @brief Reject an incompatible legacy mode-list request before either file is changed. */
 TEST_F(ConfigHttpEdid, LegacyModeRemovalRejectsBeforeWritingEitherConfigFile) {
   auto client = connect();
   for (const auto &payload : {
@@ -363,6 +368,7 @@ TEST_F(ConfigHttpEdid, LegacyModeRemovalRejectsBeforeWritingEitherConfigFile) {
   }
 }
 
+/** @brief A Default preference saves without requiring or creating driver XML. */
 TEST_F(ConfigHttpEdid, DefaultWithoutVddXmlSavesSunshineWithoutCreatingXml) {
   ASSERT_TRUE(std::filesystem::remove(vdd_path));
   auto client = connect();
@@ -377,6 +383,7 @@ TEST_F(ConfigHttpEdid, DefaultWithoutVddXmlSavesSunshineWithoutCreatingXml) {
   EXPECT_FALSE(std::filesystem::exists(vdd_path));
 }
 
+/** @brief A missing fixture path must fail closed without accessing production settings. */
 TEST_F(ConfigHttpEdid, UnsetTestPathRejectsWritesWithoutFallingBackToAppdata) {
   display_device::vdd_settings::test_support::set_settings_path(std::nullopt);
   auto client = connect();
@@ -390,6 +397,7 @@ TEST_F(ConfigHttpEdid, UnsetTestPathRejectsWritesWithoutFallingBackToAppdata) {
   EXPECT_EQ(file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str()), original_xml);
 }
 
+/** @brief An explicit EDID choice persists in the host without requiring driver XML. */
 TEST_F(ConfigHttpEdid, ExplicitSizeWithoutVddXmlSavesOnlySunshine) {
   ASSERT_TRUE(std::filesystem::remove(vdd_path));
   auto client = connect();
@@ -404,6 +412,7 @@ TEST_F(ConfigHttpEdid, ExplicitSizeWithoutVddXmlSavesOnlySunshine) {
   EXPECT_FALSE(std::filesystem::exists(vdd_path));
 }
 
+/** @brief A real VDD file-sharing write denial rejects all preference request variants. */
 TEST_F(ConfigHttpEdid, XmlWriteFailureRejectsDefaultExplicitAndLegacySaves) {
   // Permit readers but deny writes to the existing test XML without changing ACLs.
   const auto blocker = CreateFileW(vdd_path.c_str(), GENERIC_READ, FILE_SHARE_READ,
@@ -424,6 +433,7 @@ TEST_F(ConfigHttpEdid, XmlWriteFailureRejectsDefaultExplicitAndLegacySaves) {
   }
 }
 
+/** @brief Selection/reset never writes an EDID preference into XML or removes custom EDID policy. */
 TEST_F(ConfigHttpEdid, SelectionAndResetStayInSunshineAndPreserveCustomEdid) {
   auto client = connect();
   for (const std::string selection : { "1920x1080", "default" }) {
@@ -441,6 +451,7 @@ TEST_F(ConfigHttpEdid, SelectionAndResetStayInSunshineAndPreserveCustomEdid) {
   }
 }
 
+/** @brief Explicit empty lists save successfully while retaining unrelated driver settings. */
 TEST_F(ConfigHttpEdid, EmptyModeListsSaveDefaultAndPreserveCustomEdid) {
   auto client = connect();
   for (const std::string empty_list : { "[]", "[ ]" }) {
@@ -459,6 +470,7 @@ TEST_F(ConfigHttpEdid, EmptyModeListsSaveDefaultAndPreserveCustomEdid) {
   }
 }
 
+/** @brief A denied host write rolls staged mode XML back to its original binary content. */
 TEST_F(ConfigHttpEdid, SunshineWriteFailureRestoresOriginalXmlBytes) {
   const auto config_path = file_handler::path_from_utf8(config::sunshine.config_file);
   // Reads/validation and the VDD write succeed; only the final host write is denied.
@@ -476,13 +488,14 @@ TEST_F(ConfigHttpEdid, SunshineWriteFailureRestoresOriginalXmlBytes) {
   EXPECT_EQ(file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str()), original_xml);
 }
 
+/** @brief Prove actual mutex contention prevents a second VDD stage until the first commit finishes. */
 TEST_F(ConfigHttpEdid, ConcurrentSavesSerializeValidationXmlAndHostCommit) {
   ASSERT_TRUE(config::update_full_config({ { "vdd_edid_native_resolution", "default" },
     { "resolutions", "[1920x1080,3840x2160]" }, { "fps", "[60]" } }));
-  std::promise<void> staged, release, second_started;
+  std::promise<void> staged, release, second_contended;
   auto staged_future = staged.get_future();
   auto release_future = release.get_future().share();
-  auto started_future = second_started.get_future();
+  auto contended_future = second_contended.get_future();
   std::atomic<unsigned> calls = 0;
   display_device::vdd_settings::test_support::set_before_save_hook([&] {
     if (calls.fetch_add(1) != 0) return;
@@ -495,17 +508,18 @@ TEST_F(ConfigHttpEdid, ConcurrentSavesSerializeValidationXmlAndHostCommit) {
     return config::update_full_config({ { "resolutions", "[1920x1080]" }, { "fps", "[60]" } }, true);
   });
   EXPECT_EQ(staged_future.wait_for(std::chrono::seconds(5)), std::future_status::ready);
-  auto second = std::async(std::launch::async, [&] {
-    second_started.set_value();
+  config::test_support::set_save_lock_contended_hook([&] { second_contended.set_value(); });
+  auto second = std::async(std::launch::async, [] {
     return config::update_full_config({ { "vdd_edid_native_resolution", "3840x2160" },
                                         { "resolutions", "[1920x1080,3840x2160]" }, { "fps", "[60]" } },
       true);
   });
-  EXPECT_EQ(started_future.wait_for(std::chrono::seconds(5)), std::future_status::ready);
-  EXPECT_EQ(second.wait_for(std::chrono::milliseconds(50)), std::future_status::timeout);
+  EXPECT_EQ(contended_future.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+  EXPECT_EQ(calls.load(), 1u);
   release.set_value();
   EXPECT_TRUE(first.get());
   EXPECT_TRUE(second.get());
+  config::test_support::set_save_lock_contended_hook({});
   display_device::vdd_settings::test_support::set_before_save_hook({});
   const auto saved = config::get_config_snapshot();
   ASSERT_TRUE(saved);
@@ -515,6 +529,27 @@ TEST_F(ConfigHttpEdid, ConcurrentSavesSerializeValidationXmlAndHostCommit) {
   EXPECT_NE(xml.find("<width>3840</width>"), std::string::npos);
   EXPECT_NE(xml.find("<CustomEdid>true</CustomEdid>"), std::string::npos);
   EXPECT_EQ(xml.find("EdidNativeResolution"), std::string::npos);
+}
+
+/** @brief Partial API requests preserve omitted lists in both host configuration and legacy mode XML. */
+TEST_F(ConfigHttpEdid, PartialApiSavesPreserveModeListsAndAcceptExplicitSelections) {
+  auto client = connect();
+  for (const auto &payload : {
+         nlohmann::json { { "sunshine_name", "partial-client" } },
+         nlohmann::json { { "vdd_edid_native_resolution", "1920x1080" } },
+         nlohmann::json { { "fps", "[60]" } } }) {
+    const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" } });
+    ASSERT_EQ(response->status_code, "200 OK");
+    EXPECT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "true");
+    const auto saved = config::get_config_snapshot();
+    ASSERT_TRUE(saved);
+    EXPECT_EQ(saved->at("resolutions"), "[1920x1080,3840x2160]");
+    EXPECT_EQ(saved->at("fps"), payload.contains("fps") ? "[60]" : "[60,120]");
+    const auto xml = file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str());
+    EXPECT_NE(xml.find("<width>3840</width>"), std::string::npos);
+    EXPECT_NE(xml.find("<g_refresh_rate>60</g_refresh_rate>"), std::string::npos);
+    EXPECT_EQ(xml.find("EdidNativeResolution"), std::string::npos);
+  }
 }
 #endif
 

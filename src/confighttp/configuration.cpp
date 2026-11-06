@@ -300,8 +300,14 @@ namespace confighttp::configuration {
         if (const auto upnp = inputTree.get_optional<std::string>("upnp"); upnp && *upnp != "enabled" && *upnp != "disabled" && *upnp != "true" && *upnp != "false") {
           throw std::invalid_argument("invalid upnp value");
         }
-        std::string resArray = inputTree.get<std::string>("resolutions", "[]");
-        std::string fpsArray = inputTree.get<std::string>("fps", "[]");
+        const auto snapshot = config::get_config_snapshot();
+        if (!snapshot) throw std::runtime_error("failed to read configuration");
+        const auto saved_list = [&](const char *key) {
+          const auto found = snapshot->find(key);
+          return found == snapshot->end() ? std::string { "[]" } : found->second;
+        };
+        std::string resArray = inputTree.get<std::string>("resolutions", saved_list("resolutions"));
+        std::string fpsArray = inputTree.get<std::string>("fps", saved_list("fps"));
         std::string gpu_name = inputTree.get<std::string>("adapter_name", "");
         const auto edid_resolution = inputTree.get_optional<std::string>("vdd_edid_native_resolution");
         if (edid_resolution &&
@@ -330,9 +336,7 @@ namespace confighttp::configuration {
           fullConfig[kv.first] = value;
         }
 
-        // Validate retained values before either configuration file is changed.
-        const auto snapshot = config::get_config_snapshot();
-        if (!snapshot) throw std::runtime_error("failed to read configuration");
+        // Validate retained values early; the save layer rechecks under its write lock.
         if (!display_device::vdd_edid::retained_selection_supported(fullConfig, *snapshot)) {
           throw std::invalid_argument("Mode-list changes removed the saved EDID native resolution or its encodable refresh rate; explicitly select a supported EDID native resolution or default");
         }

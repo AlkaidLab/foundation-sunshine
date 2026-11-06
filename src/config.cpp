@@ -22,6 +22,9 @@
 #include <boost/property_tree/ptree.hpp>
 
 #include "config.h"
+#ifdef SUNSHINE_TESTS
+  #include "config_test_support.h"
+#endif
 #include "entry_handler.h"
 #include "file_handler.h"
 #include "logging.h"
@@ -57,6 +60,10 @@ namespace config {
 
   namespace {
     std::mutex config_file_mutex;
+#ifdef SUNSHINE_TESTS
+    std::mutex save_hook_mutex;
+    std::function<void()> save_lock_contended_hook;
+#endif
     std::unordered_map<std::string, std::string> command_line_config_overrides;
 
     std::optional<std::string>
@@ -1188,6 +1195,7 @@ namespace config {
     return opts;
   }
 
+  /** @brief Apply parsed startup options to runtime settings, rejecting malformed EDID preference syntax. */
   void apply_config(std::unordered_map<std::string, std::string> &&vars) {
     for (auto &[name, val] : vars) {
       const auto log_value = (name == "file_mappings" || name == "widget_token") && !val.empty() ? "<redacted>"s : val;
@@ -1948,6 +1956,7 @@ namespace config {
     }
   }
 
+  /** @brief Overlay startup command-line policy on the latest saved settings for runtime decisions. */
   std::optional<std::map<std::string, std::string>>
   get_effective_config_snapshot() {
     auto snapshot = get_config_snapshot();
@@ -1958,10 +1967,42 @@ namespace config {
     return snapshot;
   }
 
+#ifdef SUNSHINE_TESTS
+  namespace test_support {
+    /** @brief Install a callback invoked after a full-config update encounters the held save mutex. */
+    void
+    set_save_lock_contended_hook(std::function<void()> hook) {
+      std::lock_guard lock { save_hook_mutex };
+      save_lock_contended_hook = std::move(hook);
+    }
+
+    /** @brief Swap only the in-memory startup override map and return its previous value. */
+    std::unordered_map<std::string, std::string>
+    exchange_command_line_overrides(std::unordered_map<std::string, std::string> overrides) {
+      std::lock_guard lock { config_file_mutex };
+      return std::exchange(command_line_config_overrides, std::move(overrides));
+    }
+  }  // namespace test_support
+#endif
+
   /** Validate, stage related XML, and commit while excluding all configuration writers. */
   bool
   update_full_config(const std::map<std::string, std::string> &fullConfig, bool save_vdd) {
+#ifdef SUNSHINE_TESTS
+    // Signal actual contention, not merely that the worker thread was scheduled.
+    std::unique_lock lock { config_file_mutex, std::defer_lock };
+    if (!lock.try_lock()) {
+      std::function<void()> hook;
+      {
+        std::lock_guard hook_lock { save_hook_mutex };
+        hook = save_lock_contended_hook;
+      }
+      if (hook) hook();
+      lock.lock();
+    }
+#else
     std::lock_guard lock { config_file_mutex };
+#endif
     try {
       // 不需要保存到配置文件的只读字段（API响应字段，不是配置项）
       const std::set<std::string> readonlyFields = {
@@ -2025,6 +2066,27 @@ namespace config {
         }
       }
 
+      // Omitted mode lists retain the same values used by retained-selection
+      // validation. Explicit lists, including [], are never replaced.
+      for (const auto key : { "resolutions", "fps" }) {
+        if (!fullConfig.count(key)) {
+          const auto existing = originalMap.find(key);
+          if (existing != originalMap.end()) resultMap.emplace(*existing);
+        }
+      }
+      const auto value = [&](const char *key, const char *fallback) {
+        const auto found = resultMap.find(key);
+        return found == resultMap.end() ? std::string { fallback } : found->second;
+      };
+      // Explicit selections in partial requests must also match the latest
+      // merged lists, which may have changed since the HTTP validation snapshot.
+      if (fullConfig.count("vdd_edid_native_resolution") && resultMap.count("vdd_edid_native_resolution") &&
+          !display_device::vdd_edid::supported_selection(value("vdd_edid_native_resolution", "default"),
+            value("resolutions", "[]"), value("fps", "[]"))) {
+        BOOST_LOG(warning) << "EDID native resolution is not supported by the saved mode lists";
+        return false;
+      }
+
       // 添加受保护字段（使用本地配置文件中的原有值）
       for (const auto &field : protectedFields) {
         auto it = originalMap.find(field);
@@ -2039,10 +2101,6 @@ namespace config {
       std::unique_ptr<display_device::vdd_settings::transaction> vdd_update;
       if (save_vdd) {
         vdd_update = std::make_unique<display_device::vdd_settings::transaction>();
-        const auto value = [&](const char *key, const char *fallback) {
-          const auto found = resultMap.find(key);
-          return found == resultMap.end() ? std::string { fallback } : found->second;
-        };
         if (vdd_update->save(value("resolutions", "[]"), value("fps", "[]"), value("adapter_name", "")) ==
             display_device::vdd_settings::save_result::failed) {
           BOOST_LOG(warning) << "Failed to save virtual display settings; Sunshine configuration was not saved";

@@ -520,10 +520,10 @@ namespace display_device {
         return false;
       }
 
-      // Read the saved value here so Save + a newly created session is sufficient;
+      // Read the latest saved value with startup command-line precedence;
       // config::video still describes the last applied host configuration.
       std::string native_resolution = "default";
-      if (const auto saved = config::get_config_snapshot()) {
+      if (const auto saved = config::get_effective_config_snapshot()) {
         if (const auto it = saved->find("vdd_edid_native_resolution"); it != saved->end()) {
           native_resolution = it->second;
         }

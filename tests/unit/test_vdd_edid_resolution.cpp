@@ -4,6 +4,7 @@
 #include <iterator>
 #include <stdexcept>
 
+/** @brief Exercise native-size validation, retained selections and exact create-command serialization. */
 int
 main() {
   using namespace display_device::vdd_edid;

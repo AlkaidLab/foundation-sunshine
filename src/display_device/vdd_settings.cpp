@@ -15,6 +15,7 @@
 #include <fstream>
 #include <iterator>
 #include <sstream>
+#include <utility>
 #include <vector>
 
 #ifdef SUNSHINE_TESTS
@@ -51,11 +52,13 @@ namespace display_device::vdd_settings {
 
 #ifdef SUNSHINE_TESTS
   namespace test_support {
+    /** @brief Restrict test XML access to the explicitly supplied fixture path. */
     void
     set_settings_path(const std::optional<std::filesystem::path> &path) {
       std::lock_guard lock { settings_path_mutex };
       test_settings_path = path;
     }
+    /** @brief Install a test-only stage barrier without holding the hook mutex during callbacks. */
     void
     set_before_save_hook(std::function<void()> hook) {
       std::lock_guard lock { settings_path_mutex };
