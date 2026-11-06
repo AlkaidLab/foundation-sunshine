@@ -791,7 +791,13 @@ set_target_properties(remote_usb_process_tree_helper PROPERTIES
 
 add_executable(remote_usb_host_controller_unit_tests
         ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_host_controller.cpp
-        ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_usb_host_controller.cpp)
+        ${CMAKE_SOURCE_DIR}/src/remote_usb/usbip_stale_port_sweep.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_usb_host_controller.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_usbip_stale_port_sweep.cpp)
+if (WIN32)
+    target_sources(remote_usb_host_controller_unit_tests PRIVATE
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/text_encoding.cpp)
+endif ()
 target_include_directories(remote_usb_host_controller_unit_tests PRIVATE
         "${CMAKE_SOURCE_DIR}")
 target_link_libraries(remote_usb_host_controller_unit_tests
@@ -817,7 +823,12 @@ add_test(NAME remote_usb_host_controller_unit_tests COMMAND remote_usb_host_cont
 add_executable(reverse_tunnel_probe
         ${CMAKE_SOURCE_DIR}/tests/tools/reverse_tunnel_probe.cpp
         ${CMAKE_SOURCE_DIR}/src/remote_usb/reverse_tunnel_service.cpp
-        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_host_controller.cpp)
+        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_host_controller.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_usb/usbip_stale_port_sweep.cpp)
+if (WIN32)
+    target_sources(reverse_tunnel_probe PRIVATE
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/text_encoding.cpp)
+endif ()
 target_include_directories(reverse_tunnel_probe PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(reverse_tunnel_probe PRIVATE
         Boost::asio Boost::process Boost::system Boost::log

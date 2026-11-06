@@ -141,6 +141,7 @@ set(SUNSHINE_HOST_SOURCES
     src/remote_usb/loopback_usbip_bridge.cpp src/remote_usb/loopback_usbip_bridge.h
     src/remote_usb/reverse_tunnel_service.cpp src/remote_usb/reverse_tunnel_service.h
     src/remote_usb/remote_usb_host_controller.cpp src/remote_usb/remote_usb_host_controller.h
+    src/remote_usb/usbip_stale_port_sweep.cpp
     src/remote_usb/usbip_endpoint.h
 
     # src/ai

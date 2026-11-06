@@ -18,6 +18,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -55,6 +56,8 @@ enum class usbip_host_status : std::uint8_t {
   cancelled,
   /** This build has no host-side USB/IP backend enabled. */
   unsupported,
+  /** Listing the host's imported ports failed. */
+  sweep_failed,
 };
 
 /**
@@ -81,6 +84,83 @@ struct usbip_host_result {
 
   bool ok() const noexcept { return status == usbip_host_status::ok; }
 };
+
+/** One device listed by usbip-win2's `port` command. */
+struct usbip_imported_port {
+  std::uint16_t hub_port { 0 };
+  std::string server_address;
+  std::uint16_t server_port { 0 };
+  std::string busid;
+  std::uint16_t vendor_id { 0 };
+  std::uint16_t product_id { 0 };
+  std::uint16_t remote_bus { 0 };
+  std::uint16_t remote_device { 0 };
+  bool loopback_server { false };
+};
+
+/** Outcome of one best-effort stale-port sweep. */
+struct usbip_sweep_result {
+  usbip_host_status status { usbip_host_status::invalid_argument };
+  std::string detail;
+  std::vector<std::uint16_t> detached_ports;
+  std::vector<std::uint16_t> failed_ports;
+
+  bool ok() const noexcept { return status == usbip_host_status::ok; }
+};
+
+/**
+ * Parse the text form of usbip-win2's `port` command.  Unknown lines are
+ * ignored, and an empty listing is a successful empty result.
+ */
+std::vector<usbip_imported_port>
+parse_usbip_port_output(std::string_view output);
+
+/**
+ * Identity of a loopback import that this product's own bridge creates.  A
+ * sweep recognizes a stale import only by all of these fields together, so a
+ * real device forwarded from a client (different remote device number) and the
+ * imports of other native devices are never touched.
+ */
+struct stale_port_identity {
+  std::uint16_t vendor_id { 0 };
+  std::uint16_t product_id { 0 };
+  std::string busid;
+  std::uint16_t remote_bus { 0 };
+  std::uint16_t remote_device { 0 };
+};
+
+/** The identity the native DualSense bridge advertises. */
+stale_port_identity
+ds5_stale_port_identity();
+
+/**
+ * Select the loopback imports that match `identity` and are not owned by this
+ * process (`protected_endpoints`).
+ */
+std::vector<usbip_imported_port>
+select_stale_ports(std::span<const usbip_imported_port> ports,
+                   std::span<const endpoint> protected_endpoints,
+                   const stale_port_identity &identity);
+
+/**
+ * Select imports left by this product's native DualSense bridge.
+ *
+ * The bridge advertises 054c:0ce6 on loopback with busid 1-1 and remote
+ * bus/device 001/001.  A real controller forwarded from a client has a
+ * different remote device number, and endpoints still owned by this process
+ * are excluded explicitly so a forwarded device is never detached.
+ */
+std::vector<usbip_imported_port>
+select_stale_ds5_ports(std::span<const usbip_imported_port> ports,
+                       std::span<const endpoint> protected_endpoints);
+
+/**
+ * Remember a live USB/IP lease for the lifetime of its owner.  Every stale-
+ * port sweep in this process excludes remembered endpoints, even when they
+ * belong to a different controller instance.
+ */
+void remember_protected_endpoint(const endpoint &value);
+void forget_protected_endpoint(const endpoint &value);
 
 /** Result of one bounded, argument-vector process invocation. */
 struct usbip_command_result {
@@ -147,6 +227,16 @@ public:
 
   /** Cancel, detach accepted bindings, and synchronously join workers. */
   void stop() noexcept;
+
+  /**
+   * Detach virtual hub ports left by a previous native DualSense lease.
+   * This is best effort: an unavailable helper or a failed detach is reported
+   * in the result but never prevents a later attach.
+   */
+  usbip_sweep_result sweep_stale_ds5_ports();
+
+  /** The same sweep for any native bridge identity (see stale_port_identity). */
+  usbip_sweep_result sweep_stale_ports(const stale_port_identity &identity);
 
   bool stopped() const noexcept;
   std::size_t active_operations() const noexcept;
@@ -224,6 +314,7 @@ private:
   operation_id next_operation_id_ { 1 };
   bool stopped_ { false };
   bool stop_in_progress_ { false };
+  std::mutex sweep_mutex_;
 };
 
 }  // namespace remote_usb
