@@ -1,4 +1,4 @@
-#include "src/display_device/vdd_edid_resolution.h"
+#include "src/display_device/vdd_monitor_command.h"
 
 #include <iostream>
 #include <stdexcept>
@@ -62,6 +62,24 @@ main() {
     check_retained({ { "resolutions", "[1920x1080]" }, { "vdd_edid_native_resolution", "default" } }, existing, true);
     check_retained({ { "resolutions", "[]" } }, { { "vdd_edid_native_resolution", "default" } }, true);
     check_retained({ { "resolutions", "[]" } }, {}, true);
+    const std::string guid = "{00000001-0002-0003-0405-060708090a0b}";
+    unsigned command_cases = 0;
+    auto check_command = [&](std::string_view id, float w, float h, std::string_view size, const std::string &expected) {
+      ++command_cases;
+      if (create_monitor_command(id, 1000, 0.0001f, 1000, w, h, size) != expected)
+        throw std::runtime_error("Incorrect create command, case " + std::to_string(command_cases));
+    };
+    check_command(guid, 0, 0, "default", "CREATEMONITOR " + guid + ":[1000,0.0001,1000]");
+    check_command(guid, 34.5f, 19.4f, "default", "CREATEMONITOR " + guid + ":[1000,0.0001,1000][34.5,19.4]");
+    check_command(guid, 0, 0, "3840x2160", "CREATEMONITOR " + guid + ":[1000,0.0001,1000][0,0][edid=3840x2160]");
+    check_command(guid, 34.5f, 19.4f, "2736x1824", "CREATEMONITOR " + guid + ":[1000,0.0001,1000][34.5,19.4][edid=2736x1824]");
+    check_command("", 0, 0, "default", "CREATEMONITOR");
+    check_command("", 0, 0, "3840x2160", "CREATEMONITOR :[1000,0.0001,1000][0,0][edid=3840x2160]");
+    check_command(guid, 34.5f, 0, "3840x2160", "CREATEMONITOR " + guid + ":[1000,0.0001,1000][0,0][edid=3840x2160]");
+    for (const auto invalid : { "", "4096x2160", "3840x2160][999,999]", "3840X2160" }) {
+      check_command(guid, 0, 0, invalid, "CREATEMONITOR " + guid + ":[1000,0.0001,1000]");
+    }
+    std::cout << "PASS: " << command_cases << " create-command cases\n";
     std::cout << "PASS: 19 EDID selection cases and " << retained_cases << " legacy mode-list update cases\n";
     return 0;
   }

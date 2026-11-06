@@ -318,7 +318,7 @@ namespace {
   protected:
     std::filesystem::path vdd_path;
     const std::string original_config = "vdd_edid_native_resolution = 3840x2160\nresolutions = [1920x1080,3840x2160]\nfps = [60,120]\n";
-    const std::string original_xml = "<vdd_settings><edid><EdidNativeResolution>3840x2160</EdidNativeResolution></edid></vdd_settings>";
+    const std::string original_xml = "<vdd_settings><edid><CustomEdid>true</CustomEdid></edid></vdd_settings>";
 
     void
     SetUp() override {
@@ -389,17 +389,17 @@ TEST_F(ConfigHttpEdid, UnsetTestPathRejectsWritesWithoutFallingBackToAppdata) {
   EXPECT_EQ(file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str()), original_xml);
 }
 
-TEST_F(ConfigHttpEdid, NondefaultWithoutVddXmlRejectsWithoutChangingSunshine) {
+TEST_F(ConfigHttpEdid, ExplicitSizeWithoutVddXmlSavesOnlySunshine) {
   ASSERT_TRUE(std::filesystem::remove(vdd_path));
   auto client = connect();
-  const auto payload = nlohmann::json { { "vdd_edid_native_resolution", "1920x1080" },
+  const auto payload = nlohmann::json { { "vdd_edid_native_resolution", "3840x2160" },
     { "resolutions", "[1920x1080,3840x2160]" }, { "fps", "[60,120]" } };
   const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" } });
   ASSERT_EQ(response->status_code, "200 OK");
-  const auto body = nlohmann::json::parse(response->content.string());
-  EXPECT_EQ(body.at("status"), "false");
-  EXPECT_NE(body.at("error").get<std::string>().find("VDD settings file is missing"), std::string::npos);
-  EXPECT_EQ(file_handler::read_file(config::sunshine.config_file.c_str()), original_config);
+  EXPECT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "true");
+  const auto saved = config::get_config_snapshot();
+  ASSERT_TRUE(saved);
+  EXPECT_EQ(saved->at("vdd_edid_native_resolution"), "3840x2160");
   EXPECT_FALSE(std::filesystem::exists(vdd_path));
 }
 
@@ -423,7 +423,7 @@ TEST_F(ConfigHttpEdid, XmlWriteFailureRejectsDefaultExplicitAndLegacySaves) {
   }
 }
 
-TEST_F(ConfigHttpEdid, SuccessfulSelectionAndResetUpdateBothFiles) {
+TEST_F(ConfigHttpEdid, SelectionAndResetStayInSunshineAndPreserveCustomEdid) {
   auto client = connect();
   for (const std::string selection : { "1920x1080", "default" }) {
     const auto payload = nlohmann::json { { "vdd_edid_native_resolution", selection },
@@ -435,7 +435,8 @@ TEST_F(ConfigHttpEdid, SuccessfulSelectionAndResetUpdateBothFiles) {
     ASSERT_TRUE(saved);
     EXPECT_EQ(saved->at("vdd_edid_native_resolution"), selection);
     const auto xml = file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str());
-    EXPECT_NE(xml.find("<EdidNativeResolution>" + selection + "</EdidNativeResolution>"), std::string::npos);
+    EXPECT_EQ(xml.find("EdidNativeResolution"), std::string::npos);
+    EXPECT_NE(xml.find("<CustomEdid>true</CustomEdid>"), std::string::npos);
   }
 }
 #endif

@@ -5,7 +5,7 @@
 Some games filter fullscreen choices using native EDID dimensions or aspect
 ratio even when Windows exposes additional modes. This Windows setting can
 improve compatibility. It requires a compatible ZakoVDD release implementing
-`EdidNativeResolution`; a valid custom EDID takes precedence.
+the native-size option in `CREATEMONITOR`; a valid custom EDID takes precedence.
 
 ## Select and verify a native resolution
 
@@ -42,22 +42,24 @@ list itself is not restricted by this UI setting.
 
 ## Saving and compatibility
 
-The host persists `vdd_edid_native_resolution=default|WIDTHxHEIGHT` in Sunshine
-and `vdd_settings.edid.EdidNativeResolution` in the driver XML on Web UI save.
-Default is sent explicitly to reset a prior selection; older API clients that
-omit the field leave the XML preference intact. The API validates list membership,
-dimensions and clock feasibility before persisting explicit values. If an older
-client omits the preference but changes either advertised mode list, the saved
-preference must still be supported. Otherwise the request is rejected before
-either configuration file is changed; explicitly select Default or another
-supported native size before removing its size or encodable refresh rate.
+The host persists `vdd_edid_native_resolution=default|WIDTHxHEIGHT` only in
+Sunshine's configuration. When creating a monitor, it reads the saved preference
+and passes an explicit size through `CREATEMONITOR`. Default omits the optional
+size and preserves the original EDID. No EDID preference is written to the
+driver XML or registry; a missing VDD XML does not prevent saving this choice.
 
-If no VDD settings XML exists, saving Default remains available without creating
-that file; an explicit native size requires it. If writing an existing VDD XML
-fails, the API reports an error and does not commit the Sunshine configuration.
+Older API clients that omit the field retain the saved Sunshine preference.
+The API validates list membership, dimensions and clock feasibility. If an older
+client changes either advertised mode list, the retained preference must still
+be supported. Otherwise the request is rejected before either configuration file
+is changed; explicitly select Default or another supported native size before
+removing its size or encodable refresh rate. Existing XML persistence of the
+driver's general mode/GPU settings is independent of the EDID preference.
 
-Requires a ZakoVDD release implementing `EdidNativeResolution`, bundled with
-Sunshine. No driver binary/version is replaced in this proposal. The driver
-independently checks its actual mode list and chooses an encodable supported
-refresh nearest 60 Hz. A valid custom EDID takes precedence. Mode ordering and
-the IddCx preferred index remain unchanged.
+Requires a signed ZakoVDD release supporting the optional native size in
+`CREATEMONITOR`, bundled with Sunshine. Older drivers ignore the optional group.
+No driver binary/version is replaced in this proposal. The driver independently
+checks its actual mode list and chooses an encodable supported refresh nearest
+60 Hz. A valid custom EDID takes precedence. Mode ordering and the IddCx
+preferred index remain unchanged. Internal monitor recreation retains the
+original create request, including its native-size preference.

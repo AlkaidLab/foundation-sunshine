@@ -4,6 +4,7 @@
 
 #include "vdd_ioctl.h"
 #include "vdd_mode_list.h"
+#include "vdd_monitor_command.h"
 
 #include <algorithm>
 #include <atomic>
@@ -514,46 +515,26 @@ namespace display_device {
         return false;
       }
 
-      std::wstring command = L"CREATEMONITOR";
-
-      // 如果没有提供UUID，使用上一次的UUID
-      std::string identifier_to_use = client_identifier.empty() && !last_used_client_uuid.empty() ? last_used_client_uuid : client_identifier;
-
-      if (identifier_to_use != client_identifier && !identifier_to_use.empty()) {
-        BOOST_LOG(info) << "未提供客户端标识符，使用上一次的UUID: " << identifier_to_use;
+      // Read the saved value here so Save + a newly created session is sufficient;
+      // config::video still describes the last applied host configuration.
+      std::string native_resolution = "default";
+      if (const auto saved = config::get_config_snapshot()) {
+        if (const auto it = saved->find("vdd_edid_native_resolution"); it != saved->end()) {
+          native_resolution = it->second;
+        }
       }
-
-      // 生成GUID并构建命令
-      std::string guid_str = generate_client_guid(identifier_to_use);
-      if (!guid_str.empty()) {
-        // 构建完整参数: {GUID}:[max_nits,min_nits,maxFALL][widthCm,heightCm]
-        std::ostringstream param_stream;
-        param_stream << guid_str << ":[" << hdr_brightness.max_nits << "," << hdr_brightness.min_nits << "," << hdr_brightness.max_full_nits << "]";
-
-        // 如果提供了物理尺寸，添加到参数中
-        if (physical_size.width_cm > 0.0f && physical_size.height_cm > 0.0f) {
-          param_stream << "[" << physical_size.width_cm << "," << physical_size.height_cm << "]";
-        }
-
-        std::string param_str = param_stream.str();
-
-        // 转换为宽字符并添加到命令
-        int size_needed = MultiByteToWideChar(CP_UTF8, 0, param_str.c_str(), -1, NULL, 0);
-        if (size_needed > 0) {
-          std::vector<wchar_t> param_wide(size_needed);
-          MultiByteToWideChar(CP_UTF8, 0, param_str.c_str(), -1, param_wide.data(), size_needed);
-          command += L" " + std::wstring(param_wide.data());
-        }
-
-        std::ostringstream log_stream;
-        log_stream << "创建虚拟显示器，客户端标识符: " << identifier_to_use
-                   << ", GUID: " << guid_str
-                   << ", HDR亮度范围: [" << hdr_brightness.max_nits << ", " << hdr_brightness.min_nits << ", " << hdr_brightness.max_full_nits << "]";
-        if (physical_size.width_cm > 0.0f && physical_size.height_cm > 0.0f) {
-          log_stream << ", 物理尺寸: [" << physical_size.width_cm << "cm, " << physical_size.height_cm << "cm]";
-        }
-        BOOST_LOG(info) << log_stream.str();
+      else {
+        BOOST_LOG(warning) << "Unable to read saved EDID native resolution; using default";
       }
+      const std::string identifier_to_use = client_identifier.empty() && !last_used_client_uuid.empty() ? last_used_client_uuid : client_identifier;
+      const auto guid_str = generate_client_guid(identifier_to_use);
+      const auto request = vdd_edid::create_monitor_command(guid_str, hdr_brightness.max_nits,
+        hdr_brightness.min_nits, hdr_brightness.max_full_nits,
+        physical_size.width_cm, physical_size.height_cm, native_resolution);
+      // All generated command fields are ASCII (GUID, numbers and validated size).
+      const std::wstring command(request.begin(), request.end());
+      BOOST_LOG(info) << "Creating virtual display, GUID: " << guid_str
+                      << ", EDID native resolution: " << native_resolution;
 
       // 如果使用了有效的UUID，更新上一次使用的UUID
       if (!identifier_to_use.empty()) {

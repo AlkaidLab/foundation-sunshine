@@ -3,7 +3,7 @@
 [项目首页](../../README.md) · [功能与设置](features.md) · [English](../en/vdd-edid-native-resolution.md)
 
 部分游戏会根据 EDID 中的原生分辨率或宽高比筛选全屏选项，即使 Windows 已提供更高分辨率。
-此 Windows 设置用于改善这类兼容性问题，需要支持 `EdidNativeResolution` 的 ZakoVDD 版本。
+此 Windows 设置用于改善这类兼容性问题，需要支持 `CREATEMONITOR` 原生尺寸选项 的 ZakoVDD 版本。
 有效的自定义 EDID 优先于此设置。
 
 ## 选择并确认原生分辨率
@@ -31,15 +31,18 @@ EDID 详细时序。刷新率按会话模式列表的规则取整。无效或不
 
 ## 保存与兼容性
 
-WebUI 保存时，主机将 `vdd_edid_native_resolution=default|WIDTHxHEIGHT` 写入 Sunshine，
-并将 `vdd_settings.edid.EdidNativeResolution` 写入驱动 XML。明确发送 Default 可重置旧选项；
-旧客户端省略该字段时会保留 XML 中的选择。API 会在保存明确指定的值前检查列表成员、尺寸和时钟。
-旧客户端若省略选项但修改任一公布的模式列表，保留的选项也必须仍受支持；否则在修改两个文件之前拒绝请求。
-移除选中尺寸或其可编码刷新率前，请明确选择 Default 或其他受支持尺寸。
+WebUI 仅将 `vdd_edid_native_resolution=default|WIDTHxHEIGHT` 保存到 Sunshine 配置。
+创建显示器时，主机读取已保存的选择，并通过 `CREATEMONITOR` 传递明确指定的尺寸。
+默认选项不发送可选尺寸，保留原始 EDID。不会将 EDID 首选项写入驱动 XML 或注册表；
+即使没有 VDD XML，也可以保存此选择。
 
-没有 VDD 设置 XML 时，仍可保存 Default，且不会创建该文件；明确选择原生尺寸则需要此文件。
-现有 VDD XML 写入失败时，API 会报告错误，不会提交 Sunshine 配置。
+旧 API 客户端省略该字段时，会保留 Sunshine 中已保存的选择。API 会检查列表成员、尺寸和时钟。
+旧客户端若修改任一公布的模式列表，保留的选项也必须仍受支持；否则在修改配置文件之前拒绝请求。
+移除选中尺寸或其可编码刷新率前，请明确选择默认或其他受支持尺寸。
+驱动一般模式和 GPU 设置的现有 XML 保存逻辑与 EDID 首选项相互独立。
 
-发布此功能前，需要捆绑实现 `EdidNativeResolution` 的受支持 ZakoVDD 版本。本提案不替换驱动二进制或版本。
+发布此功能前，需要捆绑支持 `CREATEMONITOR` 可选原生尺寸的已签名 ZakoVDD 版本。
+旧驱动会忽略可选参数组。本提案不替换驱动二进制或版本。
 驱动会独立检查实际模式列表，在可编码且受支持的刷新率中选择最接近 60 Hz 的值。
 有效自定义 EDID 的优先级、显示模式顺序和 IddCx 首选索引保持不变。
+驱动内部重建显示器时会保留原始创建请求，包括原生尺寸选项。
