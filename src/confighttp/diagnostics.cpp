@@ -5,6 +5,7 @@
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 
 #include "diagnostics.h"
+#include "src/audio_devices.h"
 #include "src/config.h"
 #include "src/confighttp/auth.h"
 #include "src/confighttp/common.h"

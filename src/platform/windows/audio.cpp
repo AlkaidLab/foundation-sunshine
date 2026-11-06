@@ -1774,9 +1774,14 @@ namespace platf {
 
   std::unique_ptr<deinit_t>
   init() {
+    const auto log_phase = [](const std::string &line) { BOOST_LOG(info) << line; };
+    {
+      startup::phase_t phase("platf: shaders (dxgi::init)", log_phase);
       if (dxgi::init()) {
         return nullptr;
       }
+    }
+    startup::phase_t audio_phase("platf: audio default device", log_phase);
 
     // Initialize COM
     auto co_init = std::make_unique<platf::audio::co_init_t>();

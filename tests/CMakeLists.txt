@@ -82,6 +82,18 @@ if (WIN32)
     set_target_properties(perf_frame_rate_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
 add_test(NAME perf_frame_rate_unit_tests COMMAND perf_frame_rate_unit_tests)
+# The audio endpoint list: shaping and recognition only, no audio API.
+add_executable(audio_devices_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/audio_devices.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_devices.cpp)
+target_include_directories(audio_devices_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(audio_devices_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json sunshine_project_options sunshine_coverage)
+set_target_properties(audio_devices_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(audio_devices_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME audio_devices_unit_tests COMMAND audio_devices_unit_tests)
+
 add_executable(video_idle_policy_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_video_idle_policy.cpp)
 target_include_directories(video_idle_policy_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(video_idle_policy_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
@@ -953,6 +965,7 @@ file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/tools/")
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_hdr_calibration.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_authored_ir_extended.cpp)
+list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_devices.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_host_bitrate_cap.cpp)
 # MAT harnesses have independent entrypoints and explicit test targets.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/mat-live/")
