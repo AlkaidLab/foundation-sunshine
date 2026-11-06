@@ -9,22 +9,29 @@
 #include <vector>
 
 namespace display_device::vdd_edid {
+  /** @brief Treat missing, empty and null mode-list values as omitted; an explicit [] replaces the list. */
+  inline std::string_view
+  mode_list_or(const std::map<std::string, std::string> &values, const char *key, std::string_view fallback = "[]") {
+    const auto found = values.find(key);
+    return found == values.end() || found->second.empty() || found->second == "null" ? fallback : std::string_view { found->second };
+  }
+
   /**
-   * @brief Fill missing saved mode lists from the currently advertised runtime lists.
-   * @details Existing keys, including explicit empty lists, retain their values.
+   * @brief Fill omitted saved mode lists from the currently advertised runtime lists.
+   * @details Nonempty/non-null values, including explicit empty lists, retain their values.
    *          API validation and locked persistence use the same fallback rules.
    */
   inline std::map<std::string, std::string>
   with_mode_list_defaults(std::map<std::string, std::string> saved,
     const std::vector<std::string> &runtime_resolutions, const std::vector<std::string> &runtime_fps) {
     const auto fill = [&](const char *key, const auto &items) {
-      if (saved.count(key)) return;
+      if (!mode_list_or(saved, key, "").empty()) return;
       std::string list = "[";
       for (const auto &item : items) {
         if (list.size() > 1) list += ',';
         list += item;
       }
-      saved.emplace(key, list + ']');
+      saved.insert_or_assign(key, list + ']');
     };
     fill("resolutions", runtime_resolutions);
     fill("fps", runtime_fps);
@@ -118,17 +125,15 @@ namespace display_device::vdd_edid {
     if (incoming.count("vdd_edid_native_resolution")) return true;
     const auto preference = existing.find("vdd_edid_native_resolution");
     if (preference == existing.end() || preference->second == "default") return true;
-    auto value = [](const auto &values, const char *key) -> std::string_view {
-      const auto found = values.find(key);
-      return found == values.end() ? "[]" : std::string_view { found->second };
+    const auto value = [&](const char *key) {
+      return mode_list_or(incoming, key, mode_list_or(existing, key));
     };
     bool changed = false;
     for (const auto key : { "resolutions", "fps" }) {
-      if (incoming.count(key) && value(incoming, key) != value(existing, key)) changed = true;
+      if (value(key) != mode_list_or(existing, key)) changed = true;
     }
     if (!changed) return true;
     return supported_selection(preference->second,
-      value(incoming.count("resolutions") ? incoming : existing, "resolutions"),
-      value(incoming.count("fps") ? incoming : existing, "fps"));
+      value("resolutions"), value("fps"));
   }
 }  // namespace display_device::vdd_edid

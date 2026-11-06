@@ -303,12 +303,18 @@ namespace confighttp::configuration {
         auto snapshot = config::get_config_snapshot();
         if (!snapshot) throw std::runtime_error("failed to read configuration");
         *snapshot = display_device::vdd_edid::with_mode_list_defaults(*snapshot, config::nvhttp.resolutions, config::nvhttp.fps);
+        // 将 inputTree 转换为 std::map（保证有序）
+        std::map<std::string, std::string> fullConfig;
+        for (const auto &kv : inputTree) {
+          if (kv.first == "usb_forwarding_config_version" || kv.first == "mat_live_pipe" || kv.first == "mat_live_producer") continue;
+          std::string value = inputTree.get<std::string>(kv.first);
+          fullConfig[kv.first] = value;
+        }
         const auto saved_list = [&](const char *key) {
-          const auto found = snapshot->find(key);
-          return found == snapshot->end() ? std::string { "[]" } : found->second;
+          return display_device::vdd_edid::mode_list_or(fullConfig, key, snapshot->at(key));
         };
-        std::string resArray = inputTree.get<std::string>("resolutions", saved_list("resolutions"));
-        std::string fpsArray = inputTree.get<std::string>("fps", saved_list("fps"));
+        const auto resArray = saved_list("resolutions");
+        const auto fpsArray = saved_list("fps");
         std::string gpu_name = inputTree.get<std::string>("adapter_name", "");
         const auto edid_resolution = inputTree.get_optional<std::string>("vdd_edid_native_resolution");
         if (edid_resolution &&
@@ -327,14 +333,6 @@ namespace confighttp::configuration {
           outputTree.put("status", "false");
           outputTree.put("error", "adapter_name too long (max 256)");
           return;
-        }
-
-        // 将 inputTree 转换为 std::map（保证有序）
-        std::map<std::string, std::string> fullConfig;
-        for (const auto &kv : inputTree) {
-          if (kv.first == "usb_forwarding_config_version" || kv.first == "mat_live_pipe" || kv.first == "mat_live_producer") continue;
-          std::string value = inputTree.get<std::string>(kv.first);
-          fullConfig[kv.first] = value;
         }
 
         // Validate retained values early; the save layer rechecks under its write lock.

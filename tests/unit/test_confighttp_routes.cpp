@@ -560,21 +560,71 @@ TEST_F(ConfigHttpEdid, PartialApiSavesPreserveModeListsAndAcceptExplicitSelectio
   }
 }
 
+/** @brief Empty/null API list values preserve saved modes for retained, Default and explicit native selections. */
+TEST_F(ConfigHttpEdid, EmptyAndNullModeListsPreserveHostAndXmlModes) {
+  auto client = connect();
+  for (const auto &blank : { nlohmann::json(""), nlohmann::json("null"), nlohmann::json(nullptr) }) {
+    for (const auto &preference : { "", "default", "3840x2160" }) {
+      for (const auto &key : { "both", "resolutions", "fps" }) {
+        auto payload = nlohmann::json::object();
+        if (std::string_view(key) != "fps") payload["resolutions"] = blank;
+        if (std::string_view(key) != "resolutions") payload["fps"] = blank;
+        if (*preference) payload["vdd_edid_native_resolution"] = preference;
+        SCOPED_TRACE(payload.dump());
+        std::ofstream(file_handler::path_from_utf8(config::sunshine.config_file), std::ios::binary | std::ios::trunc) << original_config;
+        std::ofstream(vdd_path, std::ios::binary | std::ios::trunc) << original_xml;
+        const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" } });
+        ASSERT_EQ(response->status_code, "200 OK");
+        ASSERT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "true");
+        const auto saved = config::get_config_snapshot();
+        ASSERT_TRUE(saved);
+        EXPECT_EQ(saved->at("resolutions"), "[1920x1080,3840x2160]");
+        EXPECT_EQ(saved->at("fps"), "[60,120]");
+        EXPECT_EQ(saved->at("vdd_edid_native_resolution"), *preference ? preference : "3840x2160");
+        const auto xml = file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str());
+        EXPECT_NE(xml.find("<width>3840</width>"), std::string::npos);
+        EXPECT_NE(xml.find("<g_refresh_rate>60</g_refresh_rate>"), std::string::npos);
+        EXPECT_NE(xml.find("<g_refresh_rate>120</g_refresh_rate>"), std::string::npos);
+        EXPECT_NE(xml.find("<CustomEdid>true</CustomEdid>"), std::string::npos);
+      }
+    }
+  }
+}
+
+/** @brief An omitted-equivalent list cannot hide an incompatible change to the other list. */
+TEST_F(ConfigHttpEdid, EmptyAndNullListsStillValidateOtherModeChanges) {
+  auto client = connect();
+  for (const auto &blank : { nlohmann::json(""), nlohmann::json("null"), nlohmann::json(nullptr) }) {
+    for (const auto &payload : {
+           nlohmann::json { { "resolutions", blank }, { "fps", "[120]" } },
+           nlohmann::json { { "resolutions", "[1920x1080]" }, { "fps", blank } } }) {
+      SCOPED_TRACE(payload.dump());
+      const auto before = config::get_config_snapshot();
+      const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" } });
+      EXPECT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "false");
+      EXPECT_EQ(config::get_config_snapshot(), before);
+      EXPECT_EQ(file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str()), original_xml);
+    }
+  }
+}
+
 /** @brief Fresh/implicit configurations use current advertised modes in early validation and locked persistence. */
 TEST_F(ConfigHttpEdid, AbsentSavedListsUseRuntimeValuesAndKeepExplicitEmptyLists) {
   auto client = connect();
-  for (const std::string saved_lists : { "", "resolutions = [3840x2160]\n", "fps = [60]\n" }) {
+  for (const std::string saved_lists : { "", "resolutions = [3840x2160]\n", "fps = [60]\n",
+         "resolutions =\nfps = null\n", "resolutions = null\nfps =\n" }) {
+    SCOPED_TRACE(saved_lists);
     std::ofstream(file_handler::path_from_utf8(config::sunshine.config_file), std::ios::binary | std::ios::trunc)
       << "vdd_edid_native_resolution = 3840x2160\n"
       << saved_lists;
     const auto response = client->request("POST", "/api/config",
-      nlohmann::json { { "vdd_edid_native_resolution", "3840x2160" } }.dump(), { { "Content-Type", "application/json" } });
+      nlohmann::json { { "vdd_edid_native_resolution", "3840x2160" }, { "resolutions", nullptr }, { "fps", "" } }.dump(), { { "Content-Type", "application/json" } });
     ASSERT_EQ(response->status_code, "200 OK");
     EXPECT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "true");
     const auto saved = config::get_config_snapshot();
     ASSERT_TRUE(saved);
-    EXPECT_EQ(saved->at("resolutions"), saved_lists.starts_with("resolutions") ? "[3840x2160]" : "[1920x1080,2736x1824,3840x2160]");
-    EXPECT_EQ(saved->at("fps"), saved_lists.starts_with("fps") ? "[60]" : "[60,120]");
+    EXPECT_EQ(saved->at("resolutions"), saved_lists.starts_with("resolutions = [") ? "[3840x2160]" : "[1920x1080,2736x1824,3840x2160]");
+    EXPECT_EQ(saved->at("fps"), saved_lists.starts_with("fps = [") ? "[60]" : "[60,120]");
     const auto xml = file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str());
     EXPECT_NE(xml.find("<width>3840</width>"), std::string::npos);
     EXPECT_NE(xml.find("<g_refresh_rate>60</g_refresh_rate>"), std::string::npos);
@@ -587,6 +637,13 @@ TEST_F(ConfigHttpEdid, AbsentSavedListsUseRuntimeValuesAndKeepExplicitEmptyLists
   ASSERT_TRUE(saved);
   EXPECT_EQ(saved->at("resolutions"), "[]");
   EXPECT_EQ(saved->at("fps"), "[]");
+  const auto preserve_empty = client->request("POST", "/api/config",
+    nlohmann::json { { "resolutions", "" }, { "fps", nullptr } }.dump(), { { "Content-Type", "application/json" } });
+  ASSERT_EQ(nlohmann::json::parse(preserve_empty->content.string()).at("status"), "true");
+  EXPECT_EQ(config::get_config_snapshot(), saved);
+  const auto xml = file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str());
+  EXPECT_EQ(xml.find("<resolution>"), std::string::npos);
+  EXPECT_EQ(xml.find("<g_refresh_rate>"), std::string::npos);
 }
 
 /** @brief The merged save path commits legacy VDD settings and upstream client-runtime synchronization together. */

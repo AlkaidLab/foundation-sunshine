@@ -127,6 +127,24 @@ TEST_F(EdidConfigSave, PartialRefreshChangePreservesResolutions) {
   EXPECT_EQ(saved->at("fps"), "[60]");
 }
 
+/** @brief Locked persistence preserves blank/null lists while accepting a compatible change to the other list. */
+TEST_F(EdidConfigSave, BlankAndNullListsPreserveLatestValuesDuringPartialChanges) {
+  for (const auto &blank : { "", "null" }) {
+    ASSERT_TRUE(config::update_full_config({ { "resolutions", blank }, { "fps", "[60]" } }));
+    auto saved = config::get_config_snapshot();
+    ASSERT_TRUE(saved);
+    EXPECT_EQ(saved->at("resolutions"), "[1920x1080,3840x2160]");
+    EXPECT_EQ(saved->at("fps"), "[60]");
+    ASSERT_TRUE(config::update_full_config({ { "resolutions", "[3840x2160]" }, { "fps", blank } }));
+    saved = config::get_config_snapshot();
+    ASSERT_TRUE(saved);
+    EXPECT_EQ(saved->at("resolutions"), "[3840x2160]");
+    EXPECT_EQ(saved->at("fps"), "[60]");
+    // Restore the original lists for the next input variant.
+    ASSERT_TRUE(config::update_full_config({ { "resolutions", "[1920x1080,3840x2160]" }, { "fps", "[60,120]" } }));
+  }
+}
+
 /** @brief Explicit empty lists remain empty instead of silently restoring old values. */
 TEST_F(EdidConfigSave, ExplicitEmptyListsAreNotRestored) {
   ASSERT_TRUE(config::update_full_config({ { "vdd_edid_native_resolution", "default" },

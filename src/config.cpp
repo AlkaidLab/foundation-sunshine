@@ -2109,13 +2109,11 @@ namespace config {
         }
       }
 
-      // Omitted mode lists retain the same values used by retained-selection
+      // Omitted/empty/null mode lists retain the same values used by retained-selection
       // validation, including runtime defaults absent from disk. Explicit lists,
       // including [], are never replaced.
       for (const auto key : { "resolutions", "fps" }) {
-        if (!fullConfig.count(key)) {
-          resultMap.emplace(key, existing_modes.at(key));
-        }
+        resultMap.try_emplace(key, existing_modes.at(key));
       }
       const auto value = [&](const char *key, const char *fallback) {
         const auto found = resultMap.find(key);

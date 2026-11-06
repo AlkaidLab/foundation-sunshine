@@ -49,8 +49,9 @@ size and preserves the original EDID. No EDID preference is written to the
 driver XML or registry; a missing VDD XML does not prevent saving this choice.
 
 Older API clients that omit the field retain the saved Sunshine preference.
-Partial saves retain omitted resolution/FPS lists; explicitly submitted lists,
-including empty lists, replace the saved values. If a list is absent from both
+Partial saves retain omitted resolution/FPS lists. Empty strings and `null`
+(JSON null or the string `"null"`) also mean omitted. Explicit lists, including
+the string `"[]"`, replace the saved values. If a list is omitted from both
 the request and saved configuration, the host's current advertised list is used.
 Startup command-line overrides
 take precedence when creating a monitor, while Save updates the on-disk choice.
