@@ -506,6 +506,11 @@ namespace display_device {
       return {};
     }
 
+    /**
+     * @brief Create a VDD using the saved host-only EDID preference and client metadata.
+     * @details Read the latest saved value rather than the last applied host config;
+     *          invalid syntax is logged and normalized before command construction.
+     */
     bool
     create_vdd_monitor(const std::string &client_identifier, const hdr_brightness_t &hdr_brightness, const physical_size_t &physical_size) {
       const auto status = get_vdd_status();
@@ -525,6 +530,10 @@ namespace display_device {
       }
       else {
         BOOST_LOG(warning) << "Unable to read saved EDID native resolution; using default";
+      }
+      if (!vdd_edid::valid_value(native_resolution)) {
+        BOOST_LOG(warning) << "Invalid saved EDID native resolution; using default";
+        native_resolution = "default";
       }
       const std::string identifier_to_use = client_identifier.empty() && !last_used_client_uuid.empty() ? last_used_client_uuid : client_identifier;
       const auto guid_str = generate_client_guid(identifier_to_use);

@@ -18,7 +18,7 @@ test('resolution config round-trips Sunshine bracket syntax', () => {
   assert.equal(serializeResolutions(parsed), '[1280x720,1920x1080]')
 })
 
-test('Windows sends custom EDID sizes and the default explicitly so the driver XML resets', async (t) => {
+test('Windows sends custom EDID sizes and Default explicitly to reset the saved host preference', async (t) => {
   const originalWindow = globalThis.window
   globalThis.window = { dispatchEvent() {} }
   t.after(() => { globalThis.window = originalWindow })

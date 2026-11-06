@@ -11,7 +11,6 @@
 #include "src/display_device/session.h"
 #include "src/display_device/to_string.h"
 #include "src/display_device/vdd_edid_resolution.h"
-#include "src/display_device/vdd_settings.h"
 #include "src/file_handler.h"
 #include "src/globals.h"
 #include "src/logging.h"
@@ -264,6 +263,11 @@ namespace confighttp::configuration {
       }
     }
 
+    /**
+     * @brief Validate a WebUI save and coordinate host/VDD persistence under one save lock.
+     * @details The configuration layer rechecks retained preferences before staging
+     *          XML and rolls it back if host persistence fails; errors reach the caller.
+     */
     void
     saveConfig(resp_https_t response, req_https_t request) {
       if (!check_content_type(response, request, "application/json")) return;
@@ -332,15 +336,11 @@ namespace confighttp::configuration {
         if (!display_device::vdd_edid::retained_selection_supported(fullConfig, *snapshot)) {
           throw std::invalid_argument("Mode-list changes removed the saved EDID native resolution or its encodable refresh rate; explicitly select a supported EDID native resolution or default");
         }
-        const auto vdd_saved = display_device::vdd_settings::save(resArray, fpsArray, gpu_name);
-        if (vdd_saved == display_device::vdd_settings::save_result::failed) {
-          throw std::runtime_error("Failed to save virtual display settings; Sunshine configuration was not saved");
-        }
 
         // 更新配置
-        if (!config::update_full_config(fullConfig)) {
+        if (!config::update_full_config(fullConfig, true)) {
           outputTree.put("status", "false");
-          outputTree.put("error", "failed to persist configuration");
+          outputTree.put("error", "Failed to persist Sunshine or virtual display settings; see host log");
           return;
         }
       }

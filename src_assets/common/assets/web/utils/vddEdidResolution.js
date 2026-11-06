@@ -1,5 +1,6 @@
 export const DEFAULT_EDID_RESOLUTION = 'default'
 
+/** Parse and normalize a configured size bounded to EDID detailed timing dimensions. */
 function parseSize(value) {
   const match = /^(\d+)[xX](\d+)$/.exec(String(value).trim())
   if (!match) return null
@@ -8,6 +9,7 @@ function parseSize(value) {
   return { width, height, value: `${width}x${height}` }
 }
 
+/** Check the driver timing/clock limits using the session mode list's FPS rounding. */
 function encodableAt(size, value) {
   if ((typeof value !== 'number' && typeof value !== 'string') || !/^\d+(\.\d+)?$/.test(String(value))) return false
   const fps = Number(value)
@@ -19,6 +21,7 @@ function encodableAt(size, value) {
   return clock > 0 && clock <= 65535
 }
 
+/** Build choices from serializable modes, preserving an unavailable saved selection. */
 export function edidResolutionOptions(resolutions = [], fps = [], selected = DEFAULT_EDID_RESOLUTION) {
   const options = [{ value: DEFAULT_EDID_RESOLUTION, reason: '' }]
   // Match useConfig's existing FPS serializer: rates outside 30..500 are
@@ -36,6 +39,7 @@ export function edidResolutionOptions(resolutions = [], fps = [], selected = DEF
   return options
 }
 
+/** Require an enabled Default/configured choice before WebUI serialization. */
 export function validEdidResolutionSelection(selected, resolutions, fps) {
   return edidResolutionOptions(resolutions, fps, selected).some(option => option.value === selected && !option.reason)
 }

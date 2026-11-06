@@ -13,6 +13,7 @@ namespace display_device::vdd_edid {
     unsigned int height;
   };
 
+  /** @brief Parse a configured size with dimensions bounded to the EDID DTD fields. */
   inline std::optional<resolution_t>
   parse_size(std::string_view value) {
     const auto separator = value.find_first_of("xX");
@@ -32,11 +33,13 @@ namespace display_device::vdd_edid {
     return size;
   }
 
+  /** @brief Accept Default or a canonical lowercase-x size suitable for a command. */
   inline bool
   valid_value(std::string_view value) {
     return value == "default" || (value.find('X') == value.npos && parse_size(value).has_value());
   }
 
+  /** @brief Visit nonempty tokens in the existing bracketed/comma-separated list format. */
   template <class Visitor>
   void
   visit_list(std::string_view list, Visitor visitor) {
@@ -51,6 +54,7 @@ namespace display_device::vdd_edid {
     }
   }
 
+  /** @brief Match the driver's preset/four-pixel timings and 16-bit 10-kHz clock bound. */
   inline bool
   timing_encodable(const resolution_t &size, unsigned int refresh) {
     // Match ZakoVDD: preserve the verified 1080p60/4K60 timings; other
@@ -61,6 +65,7 @@ namespace display_device::vdd_edid {
     return refresh > 0 && clock > 0 && clock <= 65535;
   }
 
+  /** @brief Require list membership and an encodable rate after SETMODES FPS rounding. */
   inline bool
   supported_selection(std::string_view value, std::string_view resolutions, std::string_view fps) {
     if (value == "default") return true;

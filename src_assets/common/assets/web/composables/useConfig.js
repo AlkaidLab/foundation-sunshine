@@ -639,8 +639,8 @@ export function useConfig() {
 
     const configData = deepClone(config.value)
     removeDefaultValues(configData)
-    // The driver XML is persisted separately. Send an explicit default too,
-    // otherwise selecting 1080p after 4K would leave the old XML value intact.
+    // Send Default explicitly: omission preserves the saved host preference
+    // for older API clients and must not retain a previous 4K choice on reset.
     if (platform.value === 'windows' && config.value.vdd_edid_native_resolution !== undefined) {
       configData.vdd_edid_native_resolution = config.value.vdd_edid_native_resolution
     }

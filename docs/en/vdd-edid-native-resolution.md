@@ -55,11 +55,15 @@ be supported. Otherwise the request is rejected before either configuration file
 is changed; explicitly select Default or another supported native size before
 removing its size or encodable refresh rate. Existing XML persistence of the
 driver's general mode/GPU settings is independent of the EDID preference.
+API saves validate and write both configurations under the same lock. If the
+Sunshine write fails, the original XML bytes are restored before another save
+can proceed. Empty mode lists are valid and use the driver's fallback modes.
+Rollback failures are logged; this does not provide recovery from process or
+machine failure during a save.
 
 Requires a signed ZakoVDD release supporting the optional native size in
 `CREATEMONITOR`, bundled with Sunshine. Older drivers ignore the optional group.
-No driver binary/version is replaced in this proposal. The driver independently
-checks its actual mode list and chooses an encodable supported refresh nearest
+The driver independently checks its actual mode list and chooses an encodable supported refresh nearest
 60 Hz. A valid custom EDID takes precedence. Mode ordering and the IddCx
 preferred index remain unchanged. Internal monitor recreation retains the
 original create request, including its native-size preference.

@@ -12,6 +12,11 @@
 #include <string_view>
 
 namespace display_device::vdd_edid {
+  /**
+   * @brief Build a locale-independent create command, retaining legacy parameter positions.
+   * @details Default/malformed sizes omit the third group. Explicit sizes reserve
+   *          the physical-size group even without a GUID; mode membership is checked by VDD.
+   */
   inline std::string
   create_monitor_command(std::string_view guid, float max_nits, float min_nits, float max_fall,
     float width_cm, float height_cm, std::string_view native_resolution) {

@@ -9,6 +9,7 @@
 #include <functional>
 #include <iostream>
 #include <iterator>
+#include <memory>
 #include <mutex>
 #include <system_error>
 #include <thread>
@@ -31,6 +32,7 @@
 
 #include "display_device/parsed_config.h"
 #include "display_device/vdd_edid_resolution.h"
+#include "display_device/vdd_settings.h"
 #include "platform/common.h"
 
 #ifdef _WIN32
@@ -1956,8 +1958,9 @@ namespace config {
     return snapshot;
   }
 
+  /** Validate, stage related XML, and commit while excluding all configuration writers. */
   bool
-  update_full_config(const std::map<std::string, std::string> &fullConfig) {
+  update_full_config(const std::map<std::string, std::string> &fullConfig, bool save_vdd) {
     std::lock_guard lock { config_file_mutex };
     try {
       // 不需要保存到配置文件的只读字段（API响应字段，不是配置项）
@@ -2030,6 +2033,23 @@ namespace config {
         }
       }
 
+      // The XML transaction is created only after the latest retained preference
+      // has been validated under this lock. Destroy it before releasing the lock
+      // on any error, so rollback cannot overwrite a later successful request.
+      std::unique_ptr<display_device::vdd_settings::transaction> vdd_update;
+      if (save_vdd) {
+        vdd_update = std::make_unique<display_device::vdd_settings::transaction>();
+        const auto value = [&](const char *key, const char *fallback) {
+          const auto found = resultMap.find(key);
+          return found == resultMap.end() ? std::string { fallback } : found->second;
+        };
+        if (vdd_update->save(value("resolutions", "[]"), value("fps", "[]"), value("adapter_name", "")) ==
+            display_device::vdd_settings::save_result::failed) {
+          BOOST_LOG(warning) << "Failed to save virtual display settings; Sunshine configuration was not saved";
+          return false;
+        }
+      }
+
       // 对比新配置与原始配置，相同则跳过写入
       if (resultMap != originalMap) {
         // 按字母顺序写入配置文件
@@ -2046,6 +2066,8 @@ namespace config {
       else {
         BOOST_LOG(info) << "Config unchanged, skip writing";
       }
+
+      if (vdd_update) vdd_update->commit();
 
       const auto gamepad = resultMap.find("gamepad");
       platf::set_global_gamepad_mode(gamepad == resultMap.end() ? "auto"sv : std::string_view {gamepad->second});

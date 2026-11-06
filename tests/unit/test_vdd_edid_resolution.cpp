@@ -1,6 +1,7 @@
 #include "src/display_device/vdd_monitor_command.h"
 
 #include <iostream>
+#include <iterator>
 #include <stdexcept>
 
 int
@@ -80,7 +81,7 @@ main() {
       check_command(guid, 0, 0, invalid, "CREATEMONITOR " + guid + ":[1000,0.0001,1000]");
     }
     std::cout << "PASS: " << command_cases << " create-command cases\n";
-    std::cout << "PASS: 19 EDID selection cases and " << retained_cases << " legacy mode-list update cases\n";
+    std::cout << "PASS: " << std::size(cases) << " EDID selection cases and " << retained_cases << " legacy mode-list update cases\n";
     return 0;
   }
   catch (const std::exception &error) {
