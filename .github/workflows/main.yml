@@ -134,7 +134,7 @@ jobs:
         run: |
           git submodule update --init --depth 1 third-party/moonlight-common-c
           if ($LASTEXITCODE) { throw 'MAT dependency checkout failed' }
-          ./tools/sonic-mat-live/build.ps1 -Output build/mat-smoke -TestsOnly
+          ./tools/sonic-mat-live/build.ps1 -Output build/mat-smoke
           ./tools/sonic-mat-live/test-manage-live.ps1 -Output build/mat-operator
 
   build_win:

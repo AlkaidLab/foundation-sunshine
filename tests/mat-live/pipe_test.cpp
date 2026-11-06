@@ -17,13 +17,79 @@ DeniedThread(HANDLE, LPSECURITY_ATTRIBUTES, SIZE_T, LPTHREAD_START_ROUTINE, void
 #include "../../tools/mat-live/publisher.h"
 #undef CreateRemoteThread
 #undef VirtualAllocEx
+#include "../../src/spatial_audio/mat_capture_process.h"
 #include "../../src/spatial_audio/mat_capture_reader.h"
 #include "../../src/spatial_audio/native_mat_pipe_source.h"
+#include "../../tools/sonic-mat-live/automatic_capture.h"
 #include <atomic>
 #include <iostream>
 static void
 CheckPipe(bool okay, const char *why) {
   if (!okay) throw std::runtime_error(why);
+}
+static void
+AutomaticLifetime() {
+  for (const auto &[sddl, expected] : std::vector<std::pair<const wchar_t *, bool>> {
+         { L"O:BAG:BAD:(A;;FA;;;SY)(A;;FA;;;BA)(A;;GRGX;;;BU)", true },
+         { L"O:BUG:BAD:(A;;FA;;;SY)(A;;FA;;;BA)", false },
+         { L"O:BAG:BAD:(A;;FA;;;BA)(A;;GW;;;AU)", false },
+         { L"O:BAG:BAD:(A;;FA;;;BA)(A;;WD;;;BU)", false },
+         { L"O:BAG:BA", false } }) {
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    CheckPipe(ConvertStringSecurityDescriptorToSecurityDescriptorW(sddl, SDDL_REVISION_1, &descriptor, nullptr), "Test deployment ACL");
+    PSID owner = nullptr;
+    PACL acl = nullptr;
+    BOOL present = FALSE, unused = FALSE;
+    CheckPipe(GetSecurityDescriptorOwner(descriptor, &owner, &unused) && GetSecurityDescriptorDacl(descriptor, &present, &acl, &unused), "Read test deployment ACL");
+    const bool accepted = spatial_audio::mat_protected_acl(owner, acl);
+    LocalFree(descriptor);
+    CheckPipe(accepted == expected, "Installed capture ACL policy");
+  }
+  const auto name = L"Local\\SunshineMatLiveOwner-test-" + std::to_wstring(GetCurrentProcessId());
+  HANDLE stop = CreateEventW(nullptr, TRUE, FALSE, name.c_str());
+  const auto created = native_mat_guard::created(GetCurrentProcess());
+  bool rejected = false;
+  try {
+    sonic_live::CaptureOwner wrong(GetCurrentProcessId(), created + 1, name.c_str());
+  }
+  catch (...) {
+    rejected = true;
+  }
+  CheckPipe(rejected, "Automatic capture accepted a reused owner PID");
+  {
+    sonic_live::CaptureOwner owner(GetCurrentProcessId(), created, name.c_str());
+    CheckPipe(!owner.cancelled(), "Fresh owner was cancelled");
+    owner.monitor(interrupted);
+    SetEvent(stop);
+    const auto until = GetTickCount64() + 1000;
+    while (!interrupted && GetTickCount64() < until) Sleep(1);
+    CheckPipe(interrupted && owner.cancelled(), "MAT switch stop did not reach capture");
+  }
+  InterlockedExchange(&interrupted, 0);
+  ResetEvent(stop);
+  {
+    // A real ordinary child exits; no remote threads, capture or elevation.
+    const auto image = native_mat_guard::image(GetCurrentProcess());
+    auto command = L"\"" + image + L"\" --owner-child";
+    STARTUPINFOW startup { sizeof(startup) };
+    PROCESS_INFORMATION child {};
+    CheckPipe(CreateProcessW(image.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &child), "Start lifecycle test child");
+    CloseHandle(child.hThread);
+    sonic_live::CaptureOwner owner(child.dwProcessId, native_mat_guard::created(child.hProcess), name.c_str());
+    owner.monitor(interrupted);
+    CheckPipe(WaitForSingleObject(child.hProcess, 2000) == WAIT_OBJECT_0, "Lifecycle child did not exit");
+    CloseHandle(child.hProcess);
+    const auto until = GetTickCount64() + 1000;
+    while (!interrupted && GetTickCount64() < until) Sleep(1);
+    CheckPipe(interrupted, "Owner exit did not stop MAT capture");
+  }
+  CloseHandle(stop);
+  InterlockedExchange(&interrupted, 0);
+  CheckPipe(!spatial_audio::mat_installed_image(native_mat_guard::image(GetCurrentProcess())), "Uninstalled test image trusted");
+  spatial_audio::MatCaptureProcess missing;
+  missing.start();
+  CheckPipe(!missing.error().empty(), "Uninstalled capture did not report an error");
+  missing.stop();
 }
 static void
 StartupFailureCleanup() {
@@ -310,8 +376,13 @@ RejectNativePeer(unsigned mode) {
   CheckPipe(observed.leases == 0 && observed.running == 0 && observed.last_error == error && std::string(observed.state()) == "error", "Rejected source status retained a lease/lost its error");
 }
 int
-main() {
+main(int argc, char **argv) {
+  if (argc == 2 && std::string(argv[1]) == "--owner-child") {
+    Sleep(200);
+    return 0;
+  }
   try {
+    AutomaticLifetime();
     StartupFailureCleanup();
     const fs::path programs = L"C:\\Program Files";
     const std::string hash(64, 'a');

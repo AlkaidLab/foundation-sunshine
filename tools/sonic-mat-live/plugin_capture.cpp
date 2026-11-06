@@ -1,7 +1,10 @@
+#include "automatic_capture.h"
+#include "capture_options.h"
+#include "capture_runtime_hashes.h"
+#include "components.h"
 #include "native_session.h"
 #include "plugin_bridge.h"
-#include "capture_options.h"
-#include "components.h"
+static std::wstring automaticUserSid;
 static bool
 OriginalPluginBytes(HANDLE engine) {
   constexpr DWORD rvas[] = { 0xfa3b0, 0x2fd90, 0x45be0, 0x31e00, 0x74b50, 0x733f8 };
@@ -28,6 +31,82 @@ PluginRate(HANDLE engine, uint64_t renderer) {
 }
 int
 wmain(int argc, wchar_t **argv) {
+  if (argc == 2 && std::wstring(argv[1]) == L"--wait-for-stop") {
+    // Installers first stop Sunshine, which cancels owned capture. Wait only
+    // for this installation's remaining publishers; never kill or unload them.
+    const auto image = native_mat_guard::image(GetCurrentProcess());
+    const auto deadline = GetTickCount64() + 30000;
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return 1;
+    bool okay = true;
+    PROCESSENTRY32W entry { sizeof(entry) };
+    if (Process32FirstW(snapshot, &entry)) do {
+        if (entry.th32ProcessID == GetCurrentProcessId() || _wcsicmp(entry.szExeFile, L"sunshine-plugin-mat-capture.exe")) continue;
+        HANDLE process = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ProcessID);
+        if (!process) {
+          okay = false;
+          continue;
+        }
+        if (_wcsicmp(native_mat_guard::image(process).c_str(), image.c_str()) == 0) {
+          const auto now = GetTickCount64();
+          if (WaitForSingleObject(process, now < deadline ? static_cast<DWORD>(deadline - now) : 0) != WAIT_OBJECT_0) okay = false;
+        }
+        CloseHandle(process);
+      } while (Process32NextW(snapshot, &entry));
+    CloseHandle(snapshot);
+    return okay ? 0 : 1;
+  }
+  if (argc == 6 && std::wstring(argv[1]) == L"--automatic") {
+    try {
+      const auto image = fs::path(native_mat_guard::image(GetCurrentProcess()));
+      require(spatial_audio::mat_installed_image(image), "MAT capture must be installed in a protected Program Files directory");
+      const auto pid = std::stoull(argv[2]), created = std::stoull(argv[3]);
+      require(pid && pid <= MAXDWORD && created, "MAT owner identity");
+      sonic_live::CaptureOwner owner(static_cast<DWORD>(pid), created, argv[4]);
+      const auto host = fs::path(native_mat_guard::image(owner.process()));
+      const auto expected = image.parent_path().parent_path().parent_path() / L"sunshine.exe";
+      require(_wcsicmp(host.c_str(), expected.c_str()) == 0 && spatial_audio::mat_protected_entry(host), "MAT owner must be this installation's Sunshine");
+      automaticUserSid = argv[5];
+      if (!sonic_live::report_components(mat_compat::audio_engine(), sonic_live::find_dolby_access(automaticUserSid).component)) return 3;
+      // A restart waits for its predecessor's cooperative cleanup. It never
+      // force-kills a publisher or attaches over hooks that are still active.
+      HANDLE mutex = CreateMutexW(nullptr, FALSE, L"Global\\SunshineMatCaptureLifecycle");
+      require(mutex, "MAT lifecycle mutex");
+      const auto acquired = WaitForSingleObject(mutex, 20000);
+      struct Release {
+        HANDLE handle;
+        bool acquired;
+        ~Release() {
+          if (acquired) ReleaseMutex(handle);
+          CloseHandle(handle);
+        }
+      } release { mutex, acquired == WAIT_OBJECT_0 || acquired == WAIT_ABANDONED };
+      require(release.acquired, "Previous MAT capture is still stopping");
+      sonic_live::EngineIdentity engine {};
+      try {
+        engine = sonic_live::automatic_engine();
+      }
+      catch (const std::exception &e) {
+        printf("AUTOMATIC_UNAVAILABLE %s\n", e.what());
+        return 4;
+      }
+      require(!owner.cancelled(), "MAT owner stopped before capture startup");
+      const auto tap = image.parent_path() / capture_tap_name;
+      const auto worker = image.parent_path() / capture_worker_name;
+      require(spatial_audio::mat_protected_entry(tap) && spatial_audio::mat_protected_entry(worker), "Protected installed MAT libraries");
+      std::vector<std::wstring> args { image.wstring(), L"--reattach", std::to_wstring(engine.pid), std::to_wstring(engine.created),
+        tap.wstring(), capture_tap_sha256, worker.wstring(), capture_worker_sha256, L"\\\\.\\pipe\\SunshineMatLive-active",
+        L"Local\\SunshineMatLiveStop-capture-" + std::to_wstring(GetCurrentProcessId()), L"--continuous" };
+      std::vector<wchar_t *> pointers;
+      for (auto &arg : args) pointers.push_back(arg.data());
+      owner.monitor(interrupted);
+      return wmain(static_cast<int>(pointers.size()), pointers.data());
+    }
+    catch (const std::exception &e) {
+      printf("AUTOMATIC_FAILED %s win32=%lu\n", e.what(), GetLastError());
+      return 1;
+    }
+  }
   if (argc == 4 && std::wstring(argv[1]) == L"--preflight") {
     HANDLE process = nullptr;
     int code = 1;
@@ -69,11 +148,12 @@ wmain(int argc, wchar_t **argv) {
     auto pid64 = std::stoull(argv[2]), creation = std::stoull(argv[3]);
     require(pid64 && pid64 <= MAXDWORD && creation, "Explicit audiodg identity");
     DWORD pid = (DWORD) pid64;
-    const auto dolby = sonic_live::find_dolby_access();
+    const auto dolby = sonic_live::find_dolby_access(automaticUserSid);
     require(sonic_live::report_components(mat_compat::audio_engine(), dolby.component), "Unsupported system component; see COMPONENT lines");
     engine = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ | PROCESS_VM_WRITE | PROCESS_VM_OPERATION | PROCESS_CREATE_THREAD | PROCESS_DUP_HANDLE | SYNCHRONIZE, FALSE, pid);
     require(engine && native_mat_guard::created(engine) == creation && native_mat_guard::system_engine(engine), "Pinned plugin audiodg identity/hash");
     require(OriginalPluginBytes(engine), "Original six plugin entry points");
+    require(!interrupted, "MAT capture startup cancelled");
     fs::path tap = fs::canonical(argv[4]), codec = fs::canonical(argv[6]);
     std::wstring th = argv[5], ch = argv[7];
     HANDLE tapLock = CreateFileW(tap.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr), codecLock = CreateFileW(codec.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
@@ -95,8 +175,10 @@ wmain(int argc, wchar_t **argv) {
     LocalFree(acl);
     require(stop && code != ERROR_ALREADY_EXISTS, "Fresh plugin stop event");
     bool reattach = std::wstring(argv[1]) == L"--reattach";
+    require(!interrupted, "MAT capture startup cancelled");
     auto tapBase = LoadReviewed(engine, pid, tap, std::string(th.begin(), th.end()), reattach);
     auto codecBase = LoadReviewed(engine, pid, codec, std::string(ch.begin(), ch.end()), reattach);
+    require(!interrupted, "MAT capture startup cancelled");
     map = Map(sizeof(q4::Ring));
     ring = (q4::Ring *) MapViewOfFile(map, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(*ring));
     require(ring, "Map paired plugin ring");

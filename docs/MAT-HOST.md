@@ -6,26 +6,32 @@
 
 ## 使用入口
 
-1. 按 [原生采集器说明](../tools/sonic-mat-live/README.md) 构建工具，
-   对指定 audiodg 的 PID/创建时间做 Preflight，再显式 Start。状态最初可以是
-   `WaitingForObjects`；应用产生受支持的空间对象后才会出现 `NativeReady`。
+1. 使用安装版 Sunshine，安装目录须位于受保护的 Program Files 下。
+   安装包随附采集器、对象 tap 和独立 worker，不需要另行构建或运行脚本。
 2. 在 Windows Web UI 的音频/视频页开启「MAT 音频（实验）」，保存并应用。
-   采集工具启动后提供固定的本地入口，主机自动连接，无需复制管道或程序路径。
-   开关控制主机是否使用 MAT，不会启动或提权运行采集工具。
+   Sunshine 自动启动采集器；独立运行且权限不足时弹出 Windows 授权。
+   安装服务已有所需权限时不重复提权。Dolby Access 按当前会话用户查询。
 
 3. 客户端建立会话时重新协商。一个采集器只提供一个活动 MAT 租约；重连取得新
    会话和密钥，PLAY 前旧周期被清空。客户端退出释放租约，采集器可继续等待连接。
-4. 用同一次 Start 产生的 `capture.json` 查询 Status 或执行 Stop，检查
-   `StoppedVerified`。原生故障保留日志，修正原因后再显式重新启动。
+4. 关闭开关并应用、退出或重启 Sunshine，均通知所属采集器协作停止。
+   主机意外退出也触发停止；新进程等待旧采集器退出，不强制杀死或卸载原生 DLL。
+   授权取消、组件不兼容或采集器退出在状态中显示；修正后重新应用开关重试。
+
+自动选择只接受唯一可确认的系统 audiodg；多个候选、身份不明或没有音频引擎时
+拒绝自动采集，不遍历注入、不切换端点、不启动测试信号。组件版本限制沿用下文。
+高级开发诊断仍可使用[显式管理工具](../tools/sonic-mat-live/README.md)，不属于用户操作流程。
 
 主机只需 `mat_live = true`（默认关闭）。旧 `mat_live_pipe` / `mat_live_producer`
 不再用于接入，Web UI 读取和保存配置时会去除它们。
 状态自动更新，`GET /api/mat/status` 只读主机最近观测，不连接采集管道或占用租约。
-保存的开关仍需应用后生效；首次会话连接前显示「等待采集工具」，释放后等待重新连接。
-源就绪不代表设备播放验收。外置采集器的对象输入状态仍通过其管理工具查看。
+保存的开关仍需应用后生效；首次会话连接前显示「等待空间音频」，释放后等待重新连接。
+源就绪不代表设备播放验收。
 
 自动入口只接受受信任的提升权限进程，程序必须来自 Program Files 下的
-`SunshineSonicMatLive/<exe-SHA256>/sunshine-plugin-mat-capture.exe`，并核对内容哈希。
+安装目录的 `tools/mat-capture/sunshine-plugin-mat-capture.exe`，逐级检查所有者、写权限与
+重解析点；DLL 使用内容哈希命名，由采集器内置的哈希校验。仍兼容开发工具受保护的
+`SunshineSonicMatLive/<exe-SHA256>/sunshine-plugin-mat-capture.exe` 部署。
 随后仍检查管道服务端 PID、发布器/引擎创建时间和原生描述符；只有客户端协商 MAT
 时才尝试连接。入口被冒充、未就绪或被占用时仍走现有协商失败/回退逻辑。
 

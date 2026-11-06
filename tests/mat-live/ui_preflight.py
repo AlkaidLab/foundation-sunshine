@@ -42,8 +42,12 @@ def verify_ui(opener, port, config, config_path):
         connected = kernel.ConnectNamedPipe(pipe, ctypes.byref(overlapped))
         pending = not connected and ctypes.get_last_error() == 997  # ERROR_IO_PENDING
         assert pending
+        initial = request("mat/status")
+        # This host is an uninstalled isolated copy without capture binaries.
+        # Enabling MAT must fail visibly without elevating or attaching.
+        assert initial["state"] == "error" and "Reinstall Sunshine" in initial["last_error"]
         for _ in range(10):
-            assert request("mat/status") == {"state": "unobserved", "last_error": ""}
+            assert request("mat/status") == initial
         original = config_path.read_bytes()
         for invalid in ("invalid", "3"):
             assert request("config", {**config, "mat_live": invalid})["status"] == "false"
@@ -59,7 +63,7 @@ def verify_ui(opener, port, config, config_path):
             text = config_path.read_text(encoding="utf8")
             assert "mat_live_pipe" not in text and "mat_live_producer" not in text
             # Saved changes await restart; runtime observation is independent.
-            assert request("mat/status") == {"state": "unobserved", "last_error": ""}
+            assert request("mat/status") == initial
         assert kernel.WaitForSingleObject(event, 0) == 258  # no pipe connection
     finally:
         if pending:
@@ -70,4 +74,4 @@ def verify_ui(opener, port, config, config_path):
             kernel.CloseHandle(event)
         kernel.CloseHandle(pipe)
     return {"readOnlyPolls": 10, "invalidSwitchesRejected": 2, "switchRoundTrips": 2, "legacyParametersRemoved": True,
-            "capturePipeOpened": False, "savedSettingsRequireRestart": True}
+            "capturePipeOpened": False, "savedSettingsRequireRestart": True, "uninstalledCaptureRejected": True}
