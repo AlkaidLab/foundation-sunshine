@@ -1,5 +1,18 @@
 # Native object capture to a dedicated MAT worker
 
+Windows packages bundle the publisher, tap, worker and MinHook notice under
+`tools/mat-capture`. Users enable MAT in the Web UI and apply the setting;
+Sunshine starts capture, requesting Windows elevation only when needed, and
+signals cooperative stop on shutdown. No user script or copied parameter is
+required. Automatic selection requires one unambiguous audiodg; unsupported
+components or ambiguous engines fail visibly, without changing endpoints or
+trying several engines. The following manual commands are developer diagnostics.
+
+Host builds bundle these components by default. For a MinGW-only build without
+Visual Studio, configure Sunshine with `-DSUNSHINE_BUILD_MAT_CAPTURE=OFF`.
+This omits the MAT build target and packaged capture files; normal Sunshine
+builds no longer invoke MSVC for MAT. Leave the option enabled to bundle capture.
+
 This opt-in tool captures pre-mix object passes and hands owned PCM/XYZ/gain to
 the dedicated native worker, then publishes complete IEC carrier cycles through
 the private live pipe. The selected UUYC/plugin route uses
@@ -33,10 +46,12 @@ MinHook at `c3fcafdc10146beb5919319d0683e44e3c30d537`:
 ./tools/sonic-mat-live/build.ps1 -Output ./build/mat-capture-new
 ```
 
-The build and CI share six CTests: capture options, object bridge, paired
+The build and CI share eight CTests: capture options, object bridge, compatibility, paired
 callbacks, dynamic-only and 12 static + 2 dynamic IPC, and private pipe lifecycle.
 The IPC tests run 1300 rounds with a FAKE worker and check exact type, PCM, gain,
-position and EOS. CI passes `-TestsOnly`; it never attaches to audiodg, loads a
+position and EOS. The pipe suite also checks automatic stop/owner exit and
+missing-installation failure; the package test stages files and checks embedded
+DLL identities. CI builds the runtime too; it never attaches to audiodg, loads a
 vendor encoder, starts a signal source or needs administrator privileges.
 
 Preflight and Start first print one `COMPONENT` line each for `audioeng.dll` and
