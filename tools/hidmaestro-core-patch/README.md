@@ -13,7 +13,18 @@ changes. JSON profiles receive no GameInput table. The upstream ledger captures
 and restores OEM names, preserves foreign OEM/axis settings and limits slot
 cleanup to identities created by virtual devices. It also removes old GameInput
 tables only when their entire contents match the legacy SDK template. We no
-longer disable these upstream writers or cleanup paths.
+longer disable the unrelated upstream writers or cleanup paths.
+
+Issue #1056 additionally needs the physical DualSense mapping preserved: deleting
+the legacy table can remove Windows navigation along with the unwanted scrolling.
+`dualsense-gameinput.patch` reserves identity `054C0CE600010005` from automatic
+claim, per-identity/global deletion and ledger restore. Other identities retain
+the upstream behavior. `DualSenseGameInputMapping.cs` is shared with the explicit
+repair command and tests. Only complete old, axes-corrected, navigation-corrected
+or fully corrected tables are recognized; other edits are preserved.
+The `FoundationDualSenseGameInput=preserve-v1` marker binds this protection to the
+sidecar before any SDK call. The explicit repair corrects the three axes and
+seven buttons, including A/B/X order checked against the native report encoder.
 
 `device-ownership.patch` retains the remaining stricter cleanup rules:
 
@@ -83,9 +94,3 @@ attach/detach cycles and checks that the shared tools/driver still match the
 contract and no imports remain. Failed acceptance leaves the active component
 untouched; a system-driver repair is an explicit manager operation rather than
 a component-directory rollback. Unverified newer transport versions are rejected.
-
-`dualsense-gameinput.patch` preserves the shared USB DualSense identity
-`054C0CE600010005` during claim, per-key/global legacy cleanup and ledger restore.
-Other identities keep the upstream cleanup policy. The small shared predicate is
-compiled into Core; Sidecar requires `FoundationDualSenseGameInput=preserve-v1`.
-This component does not repair existing bad mappings or create a missing mapping.

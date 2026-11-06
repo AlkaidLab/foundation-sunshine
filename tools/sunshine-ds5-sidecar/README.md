@@ -32,6 +32,50 @@ Read-only capability probe:
 dotnet Sunshine.Ds5Sidecar.dll --probe
 ```
 
+## Physical DualSense desktop mapping repair
+
+For issue #1056, the component also repairs the historical Windows GameInput
+override for USB DualSense `054C:0CE6`. This operation does not install a driver,
+create a controller or require USB/IP. The extracted complete component ZIP can
+run these commands directly; the Control Panel uses its verified installed copy
+under Controllers / Diagnostics / DualSense desktop input.
+
+```powershell
+Sunshine.Ds5Sidecar.exe --gameinput check --result mapping-report.json
+Sunshine.Ds5Sidecar.exe --gameinput repair --result repair-report.json
+Sunshine.Ds5Sidecar.exe --gameinput restore --backup-id <32-hex-ID> --result restore-report.json
+```
+
+`check` is read-only. `repair` and `restore` require elevation: end streams,
+close controller programs and unplug the DualSense first. Three axes and seven
+buttons are corrected, including A/B/X's native Square/Cross/Circle ordering.
+A user who already fixed the three axes receives only the remaining seven button
+changes. Other values, inversion, shoulders, Y and the hat are retained. Partial
+customizations are reported without modification. Missing mappings are not
+created; restoration requires a valid backup.
+
+Before changing anything, the tool persists the full original tree and a repair
+journal under `%ProgramData%\FoundationSunshine\DualSenseGameInput`, writable only
+by Administrators and SYSTEM. Backups use fixed IDs rather than arbitrary paths.
+Interrupted operations report `recovery_required`; restore accepts only matching
+before/after fields and refuses external edits. A pending operation must be
+recovered before an older backup can be restored. Restoring an original mapping can
+restore the original scrolling/button errors. Component rollback or uninstall
+does not automatically restore system mappings.
+
+After a successful change, restart Windows and verify idle behavior, navigation,
+sticks, triggers and individual buttons. A corrected registry table alone is not
+a successful WGI or Shell test; `mapping_missing` is not a zero-input pass.
+
+The registry/crash regressions run without elevation in a disposable HKCU tree:
+
+```powershell
+dotnet build tools/sunshine-ds5-sidecar/Tests/GameInputRepairTests.csproj -c Release
+dotnet tools/sunshine-ds5-sidecar/Tests/bin/Release/net10.0-windows10.0.26100.0/GameInputRepairTests.dll
+```
+
+## Device checks
+
 Deterministic protocol ABI, microphone queue/runtime-contract, four-channel
 layout, and channel-isolation checks (no elevation or virtual device required):
 
@@ -87,9 +131,8 @@ that connection. Standard `dualsense` uses UMDF2; `dualsense-composite`
 enables the USB composite HID/audio profile and authored haptics PCM.
 HID-only attaches use `dualsense` with the native 273-byte descriptor and
 Game Pad usage (0x05). HIDMaestro v1.12.0 no longer writes the incorrect global
-GameInput mapping for JSON profiles. The Core patch preserves the shared physical
-DualSense table during claim, cleanup and ledger restoration (issue #1056). Existing
-incorrect mappings remain unchanged; explicit migration is separate. Input
+GameInput mapping for JSON profiles. Shared physical DualSense tables are
+preserved for the explicit repair above (issue #1056). Input
 reports retain `alwaysArmed` for touch and motion data. Windows decides how
 to expose the device; native Game Pad usage does not guarantee a WGI Gamepad.
 The optional Genshin compatibility attach flag derives a third profile from

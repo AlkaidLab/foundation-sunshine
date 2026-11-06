@@ -11,9 +11,15 @@ var enableCompositeMicrophonePrototype = false;
 string? selfTestProfile = null;
 string? resultPath = null;
 string? audioWriterPath = null;
+string? gameInputAction = null;
+string? backupId = null;
 for (var i = 0; i < args.Length; i++)
 {
-    if (args[i] == "--pipe" && i + 1 < args.Length)
+    if (args[i] == "--gameinput" && i + 1 < args.Length)
+        gameInputAction = args[++i];
+    else if (args[i] == "--backup-id" && i + 1 < args.Length)
+        backupId = args[++i];
+    else if (args[i] == "--pipe" && i + 1 < args.Length)
         pipeName = args[++i];
     else if (args[i] == "--probe")
         probe = true;
@@ -41,6 +47,14 @@ var gameInputPatched = typeof(HMContext).Assembly.GetCustomAttributes<AssemblyMe
     attribute => attribute.Key == "FoundationDualSenseGameInput" && attribute.Value == "preserve-v1");
 if (!corePatched || !reportsPatched || !gameInputPatched || !DeviceRegistry.HasPinnedMicrophoneRuntime || !ComponentCompatibility.HasManagedTransport)
     return Fail("The Sidecar package is incomplete; reinstall the current DualSense component");
+
+if (gameInputAction != null)
+{
+    if (probe || selfCheck || selfTestProfile != null || enableCompositeMicrophonePrototype || pipeName != "sunshine-ds5-v1" || audioWriterPath != null)
+        return Fail("--gameinput cannot be combined with device or probe operations");
+    return GameInputCommand.Run(gameInputAction, backupId, resultPath);
+}
+if (backupId != null) return Fail("--backup-id requires --gameinput restore");
 
 if (selfCheck)
 {

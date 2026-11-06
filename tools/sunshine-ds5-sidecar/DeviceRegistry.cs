@@ -271,8 +271,9 @@ internal sealed class DeviceRegistry : IDisposable
 
         return profileMode switch
         {
-            // JSON profiles use the native mapping path. Shared physical DualSense
-            // tables are preserved; virtual-device lifecycle never owns or deletes them.
+            // v1.12.0 leaves JSON profiles on Windows' native mapping path
+            // without a usage override. Historical shared DualSense tables are
+            // preserved for the explicit backed-up GameInput repair command.
             0 => "dualsense",
             1 when genshinCompatibility && genshinCompatibilityAvailable =>
                 DualSenseHapticsAudio.GenshinCompatibilityProfileId,
