@@ -245,6 +245,10 @@
     "method": "GET"
   },
   {
+    "pattern": "^/api/runtime/hdr-calibration$",
+    "method": "POST"
+  },
+  {
     "pattern": "^/api/runtime/bitrate$",
     "method": "GET"
   },

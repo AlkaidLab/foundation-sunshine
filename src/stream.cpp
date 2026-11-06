@@ -37,6 +37,11 @@ extern "C" {
 // clang-format on
 }
 
+#ifndef ML_FF_HOST_SESSION_STATE
+  // Mirrors moonlight-common-c's client feature flag until the submodule carries it.
+  #define ML_FF_HOST_SESSION_STATE 0x100
+#endif
+
 #ifndef DATA_SHARDS_MAX
   #define DATA_SHARDS_MAX 255
 #endif
@@ -48,6 +53,9 @@ extern "C" {
 #include "display_device/session.h"
 #include "globals.h"
 #include "haptics/authored_ir.h"
+#include "haptics/authored_ir_extended.h"
+#include "haptics/wire.h"
+#include "nvhttp.h"
 #include "rtsp.h"
 #include "input.h"
 #include "logging.h"
@@ -92,6 +100,7 @@ extern "C" {
 #define IDX_DS5_HAPTICS_PCM 22  // Authored DualSense actuator PCM (Sunshine protocol extension)
 #define IDX_DS5_HAPTICS_IR_V2 23  // Device-independent analyzed haptics (Sunshine protocol extension)
 #define IDX_TEXT_CONTEXT 24  // Remote text focus/context update (Sunshine protocol extension)
+#define IDX_HOST_SESSION_STATE 25  // Host session lock state (Sunshine protocol extension)
 
 static const short packetTypes[] = {
   0x0305,  // Start A
@@ -119,6 +128,7 @@ static const short packetTypes[] = {
   0x550A,  // Authored DualSense haptics PCM (Sunshine protocol extension)
   0x550B,  // Device-independent DualSense haptics IR v2 (Sunshine protocol extension)
   0x550C,  // Remote text context update (Sunshine protocol extension)
+  0x550E,  // Host session lock state (Sunshine protocol extension)
 };
 
 namespace asio = boost::asio;
@@ -673,7 +683,14 @@ namespace stream {
       std::uint64_t cursor_failed_revision = 0;
       std::uint32_t cursor_send_failures = 0;
 
-      std::unique_ptr<haptics::authored_ir_session_t> authored_haptics;
+      // Last lock state delivered to a client that negotiated ML_FF_HOST_SESSION_STATE.
+      std::optional<bool> host_session_locked_sent;
+
+      // Analysis/filter/timeline history belongs to one controller, including
+      // when several pads share the same streaming connection.
+      std::unordered_map<std::uint16_t, std::unique_ptr<haptics::authored_ir_session_t>> authored_haptics;
+      std::unordered_map<std::uint16_t, std::unique_ptr<haptics::authored_ir_extended_session_t>> authored_haptics_v3;
+      bool authored_haptics_v3_init_failed = false;
       bool authored_haptics_init_failed = false;
       // One fallback session per controller: smoothing, throttle and watchdog
       // state must not bleed between pads, and the watchdog stop has to reach
@@ -1479,24 +1496,45 @@ namespace stream {
     else if (msg.type == platf::gamepad_feedback_e::ds5_haptics_pcm) {
       const bool sends_raw_pcm = (session->config.mlFeatureFlags & ML_FF_DS5_HAPTICS_PCM) != 0;
       const bool sends_authored_ir = (session->config.mlFeatureFlags & ML_FF_DS5_HAPTICS_IR_V2) != 0;
+      const bool sends_authored_ir_extended = sends_authored_ir &&
+        (session->config.mlFeatureFlags & ML_FF_DS5_HAPTICS_IR_EXTENDED) != 0;
+
+      if (msg.id >= platf::MAX_GAMEPADS) return 0;
 
       const auto &data = msg.data.ds5_haptics;
       const auto pcm_size = static_cast<std::size_t>(data.frame_count) * 4;
-      auto write_u16 = [](std::uint8_t *p, std::uint16_t v) {
-        p[0] = static_cast<std::uint8_t>(v);
-        p[1] = static_cast<std::uint8_t>(v >> 8);
+      using haptics::wire::write_u16;
+      using haptics::wire::write_u32;
+      using haptics::wire::write_u64;
+      const auto encode_ir = [&](std::span<const std::uint8_t> wire) {
+        std::array<std::uint8_t, sizeof(control_header_v2) + DS5_HAPTICS_IR_EXTENDED_STREAM_MAX_SIZE> plaintext {};
+        write_u16(plaintext.data(), packetTypes[IDX_DS5_HAPTICS_IR_V2]);
+        write_u16(plaintext.data() + 2, static_cast<std::uint16_t>(wire.size()));
+        std::ranges::copy(wire, plaintext.data() + sizeof(control_header_v2));
+        std::array<std::uint8_t,
+          sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(plaintext.size()) + crypto::cipher::tag_size>
+          encrypted_payload;
+        payload = encode_control(session,
+          std::string_view(reinterpret_cast<const char *>(plaintext.data()), sizeof(control_header_v2) + wire.size()),
+          encrypted_payload);
       };
-      auto write_u32 = [](std::uint8_t *p, std::uint32_t v) {
-        p[0] = static_cast<std::uint8_t>(v);
-        p[1] = static_cast<std::uint8_t>(v >> 8);
-        p[2] = static_cast<std::uint8_t>(v >> 16);
-        p[3] = static_cast<std::uint8_t>(v >> 24);
-      };
-      auto write_u64 = [&write_u32](std::uint8_t *p, std::uint64_t v) {
-        write_u32(p, static_cast<std::uint32_t>(v));
-        write_u32(p + 4, static_cast<std::uint32_t>(v >> 32));
-      };
-      if (!sends_raw_pcm && !sends_authored_ir) {
+      haptics::authored_ir_extended_session_t *extended_analyzer = nullptr;
+      if (sends_authored_ir_extended && !sends_raw_pcm && !session->control.authored_haptics_v3_init_failed) {
+        auto &analyzers = session->control.authored_haptics_v3;
+        auto found = analyzers.find(msg.id);
+        if (found == analyzers.end()) {
+          auto analyzer = std::make_unique<haptics::authored_ir_extended_session_t>();
+          if (!analyzer->ready()) {
+            session->control.authored_haptics_v3_init_failed = true;
+            BOOST_LOG(error) << "Unable to initialize authored haptics enhancement; falling back to IR v2"sv;
+          }
+          else {
+            found = analyzers.emplace(msg.id, std::move(analyzer)).first;
+          }
+        }
+        if (found != analyzers.end()) extended_analyzer = found->second.get();
+      }
+      if (!sends_raw_pcm && !sends_authored_ir && !sends_authored_ir_extended) {
         if (!session->control.legacy_haptics_init_failed) {
           auto [controller_session, inserted] = session->control.legacy_haptics.try_emplace(msg.id);
           if (inserted) {
@@ -1522,37 +1560,40 @@ namespace stream {
       }
       // A malformed client that declares both modes gets the lossless physical
       // route. Official clients reject this combination before connecting.
+      else if (extended_analyzer) {
+        const auto wire = extended_analyzer->process(
+          msg.id, data.flags, data.frame_count, data.sequence, data.presentation_time_us,
+          std::span<const std::uint8_t> {data.pcm.data(), pcm_size});
+        if (!wire) return 0;
+
+        // The enhanced message carries the original v2 base and its optional
+        // continuous/event extension atomically; no duplicate base is sent.
+        encode_ir(*wire);
+      }
       else if (sends_authored_ir && !sends_raw_pcm) {
-        if (!session->control.authored_haptics && !session->control.authored_haptics_init_failed) {
+        auto &analyzers = session->control.authored_haptics;
+        auto found = analyzers.find(msg.id);
+        if (found == analyzers.end() && !session->control.authored_haptics_init_failed) {
           auto authored_haptics = std::make_unique<haptics::authored_ir_session_t>();
           if (!authored_haptics->ready()) {
             session->control.authored_haptics_init_failed = true;
             BOOST_LOG(error) << "Unable to initialize authored DualSense haptics analysis"sv;
           }
           else {
-            session->control.authored_haptics = std::move(authored_haptics);
+            found = analyzers.emplace(msg.id, std::move(authored_haptics)).first;
           }
         }
-        if (!session->control.authored_haptics) {
+        if (found == analyzers.end()) {
           return 0;
         }
-        const auto wire = session->control.authored_haptics->process(
+        const auto wire = found->second->process(
           msg.id, data.flags, data.frame_count, data.sequence, data.presentation_time_us,
           std::span<const std::uint8_t> {data.pcm.data(), pcm_size});
         if (!wire) {
           return 0;
         }
 
-        std::array<std::uint8_t, sizeof(control_header_v2) + haptics::authored_ir_v2_wire_size> plaintext {};
-        auto *control = plaintext.data();
-        write_u16(control, packetTypes[IDX_DS5_HAPTICS_IR_V2]);
-        write_u16(control + 2, haptics::authored_ir_v2_wire_size);
-        std::ranges::copy(*wire, control + sizeof(control_header_v2));
-
-        std::array<std::uint8_t,
-          sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(plaintext.size()) + crypto::cipher::tag_size>
-          encrypted_payload;
-        payload = encode_control(session, util::view(plaintext), encrypted_payload);
+        encode_ir(*wire);
       }
       else {
         constexpr std::size_t wire_header_size = 28;
@@ -1773,16 +1814,18 @@ namespace stream {
     return 0;
   }
 
-  int
-  send_text_context(session_t *session, const text_context::payload_t &payload) {
-    if (!session->control.peer || session->config.controlProtocolType != 13 ||
-        payload.size() != text_context::kWireSize) {
+  /**
+   * Frame, encrypt and send a small Sunshine extension payload on the v2 control stream.
+   * Returns 0 on success, -1 on failure.
+   */
+  static int
+  send_control_payload(session_t *session, std::uint16_t type, std::string_view payload, std::string_view name) {
+    if (!session->control.peer || session->config.controlProtocolType != 13) {
       return -1;
     }
-    const std::size_t plaintext_size = sizeof(control_header_v2) + payload.size();
-    std::vector<std::uint8_t> plaintext(plaintext_size);
+    std::vector<std::uint8_t> plaintext(sizeof(control_header_v2) + payload.size());
     auto *hdr = reinterpret_cast<control_header_v2 *>(plaintext.data());
-    hdr->type = packetTypes[IDX_TEXT_CONTEXT];
+    hdr->type = type;
     hdr->payloadLength = static_cast<std::uint16_t>(payload.size());
     std::memcpy(plaintext.data() + sizeof(control_header_v2), payload.data(), payload.size());
 
@@ -1793,10 +1836,28 @@ namespace stream {
       std::string_view {reinterpret_cast<char *>(plaintext.data()), plaintext.size()},
       encrypted.data(), encrypted.size());
     if (view.empty() || session->broadcast_ref->control_server.send(view, session->control.peer)) {
-      BOOST_LOG(warning) << "Couldn't send remote text context packet"sv;
+      BOOST_LOG(warning) << "Couldn't send "sv << name << " packet"sv;
       return -1;
     }
     return 0;
+  }
+
+  int
+  send_text_context(session_t *session, const text_context::payload_t &payload) {
+    if (payload.size() != text_context::kWireSize) {
+      return -1;
+    }
+    return send_control_payload(session, packetTypes[IDX_TEXT_CONTEXT],
+      std::string_view {reinterpret_cast<const char *>(payload.data()), payload.size()},
+      "remote text context"sv);
+  }
+
+  int
+  send_host_session_state(session_t *session, bool locked) {
+    // 0x550E v1: version:u8, state:u8 (0 unlocked, 1 locked), reserved:u16.
+    const std::array<char, 4> payload {1, static_cast<char>(locked ? 1 : 0), 0, 0};
+    return send_control_payload(session, packetTypes[IDX_HOST_SESSION_STATE],
+      std::string_view {payload.data(), payload.size()}, "host session state"sv);
   }
 
   int
@@ -2387,6 +2448,8 @@ namespace stream {
     // termination when we shut down.
     auto shutdown_event = mail::man->event<bool>(mail::shutdown);
     auto broadcast_shutdown_event = mail::man->event<bool>(mail::broadcast_shutdown);
+    std::optional<bool> host_session_locked;
+    auto next_host_session_poll = std::chrono::steady_clock::time_point {};
     while (!shutdown_event->peek() && !broadcast_shutdown_event->peek()) {
       bool has_session_awaiting_peer = false;
       bool has_ds5_haptics_session = false;
@@ -2436,6 +2499,20 @@ namespace stream {
             has_session_awaiting_peer = true;
           }
           else {
+            if (session->config.mlFeatureFlags & ML_FF_HOST_SESSION_STATE) {
+              // Polled lazily so hosts without opted-in clients never query WTS.
+              if (now >= next_host_session_poll) {
+                host_session_locked = platf::query_session_locked();
+                next_host_session_poll = now + 500ms;
+              }
+              if (host_session_locked && session->control.host_session_locked_sent != host_session_locked &&
+                  send_host_session_state(session, *host_session_locked) == 0) {
+                session->control.host_session_locked_sent = host_session_locked;
+                BOOST_LOG(info) << "Host session state sent: locked="sv << *host_session_locked
+                                << ", session="sv << session->launch_session_id;
+              }
+            }
+
             // 音频触觉转普通振动也需要及时处理反馈，不能只按客户端 PCM/IR 能力判断。
             has_ds5_haptics_session |=
               input::has_ds5_audio_haptics(session->input);
@@ -4451,6 +4528,24 @@ namespace stream {
       }
       catch (...) {
         BOOST_LOG(error) << "Webhook session end event construction failed"sv;
+      }
+
+      // Persist the host-side fact that this client streamed, so the WebUI
+      // recent list survives browsers and page closures. Control-only
+      // sessions never carried media and leave no history. The write is
+      // deferred to the task pool: save_state synchronizes the state file,
+      // and join() runs under a 10-second watchdog that must not depend on
+      // filesystem latency.
+      if (!session.control_only && !session.client_cert_uuid.empty()) {
+        const auto ended_at_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::system_clock::now().time_since_epoch()
+        ).count();
+        const auto client_uuid = session.client_cert_uuid;
+        task_pool.push([client_uuid, ended_at_ms] {
+          if (!nvhttp::touch_client_last_session(client_uuid, ended_at_ms)) {
+            BOOST_LOG(debug) << "Couldn't record session end for client_uuid="sv << client_uuid;
+          }
+        });
       }
 
       BOOST_LOG(debug) << "Session ended [session_id="sv << session.launch_session_id

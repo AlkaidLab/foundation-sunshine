@@ -12,10 +12,14 @@
 #include <optional>
 #include <span>
 
+extern "C" {
+#include "third-party/moonlight-common-c/src/Ds5HapticsIrStream.h"
+}
+
 struct AhAuthoredEngine;
 
 namespace haptics {
-  constexpr std::size_t authored_ir_v2_wire_size = 72;
+  constexpr std::size_t authored_ir_v2_wire_size = DS5_HAPTICS_IR_STREAM_WIRE_SIZE;
   using authored_ir_v2_wire_t = std::array<std::uint8_t, authored_ir_v2_wire_size>;
 
   struct authored_lane_t {

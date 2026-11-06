@@ -16,6 +16,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include <nlohmann/json_fwd.hpp>
+
 #include "nvenc/nvenc_config.h"
 
 namespace config {
@@ -88,6 +90,7 @@ namespace config {
       int amd_slices_per_frame = 0;  // Slices/tiles per frame (0=client decides, 1-4=minimum)
       bool amd_avcodec_compat = false;  // Optional AVCodec-like AMF adapter; false keeps the clean standalone path.
       int amd_hevc_gop_size = -1;  // -1: driver default, 0: on-demand IDR, 1-1000: frames.
+      bool amd_vpe = false;  // Experimental AMF VideoConverter preference for SDR and HDR.
       std::optional<bool> amd_multi_hw_instance;
       // The properties below historically had aggressive hardcoded defaults that
       // forced AMF code paths FFmpeg never touches (HIGH_MOTION_QUALITY_BOOST=on,
@@ -359,4 +362,8 @@ namespace config {
    */
   bool
   save_clients_config(const std::string &clients);
+
+  /** Update only Core-owned calibration data under the existing configuration lock. */
+  bool
+  save_client_hdr_calibration(const std::string &uuid, const nlohmann::json &calibration);
 }  // namespace config

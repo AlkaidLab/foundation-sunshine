@@ -45,6 +45,27 @@ set(INSTALL_GMOCK OFF)
 add_subdirectory("${GTEST_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/googletest")
 include_directories("${GTEST_SOURCE_DIR}/googletest/include" "${GTEST_SOURCE_DIR}")
 
+# Adapter contract only: DSP fidelity belongs to the SDK, wire validation to common-c.
+add_executable(authored_ir_extended_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_authored_ir_extended.cpp
+        ${CMAKE_SOURCE_DIR}/src/haptics/authored_ir.cpp
+        ${CMAKE_SOURCE_DIR}/src/haptics/authored_ir_extended.cpp
+        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/Ds5HapticsIrStream.c)
+target_include_directories(authored_ir_extended_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(authored_ir_extended_unit_tests PRIVATE moonlight::haptics gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(authored_ir_extended_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME authored_ir_extended_unit_tests COMMAND authored_ir_extended_unit_tests)
+
+add_executable(analyze_authored_ir_extended
+        ${CMAKE_SOURCE_DIR}/tests/tools/analyze_authored_ir_extended.cpp
+        ${CMAKE_SOURCE_DIR}/src/haptics/authored_ir.cpp
+        ${CMAKE_SOURCE_DIR}/src/haptics/authored_ir_extended.cpp)
+target_include_directories(analyze_authored_ir_extended PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(analyze_authored_ir_extended PRIVATE moonlight::haptics sunshine_project_options)
+set_target_properties(analyze_authored_ir_extended PROPERTIES CXX_STANDARD 23)
+
+
+
 add_executable(perf_frame_rate_unit_tests
         ${CMAKE_SOURCE_DIR}/src/streaming/perf_recorder.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_perf_frame_rates.cpp)
@@ -165,6 +186,57 @@ if (WIN32)
     # For Windows: Prevent overriding the parent project's compiler/linker settings
     set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)  # cmake-lint: disable=C0103
 endif ()
+
+add_executable(hdr_calibration_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_hdr_calibration.cpp
+        ${CMAKE_SOURCE_DIR}/src/hdr/calibration.cpp
+        ${CMAKE_SOURCE_DIR}/src/hdr/client_display_capabilities.cpp
+        ${CMAKE_SOURCE_DIR}/src/display_device/color_profile.cpp)
+target_include_directories(hdr_calibration_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(hdr_calibration_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
+        sunshine_project_options sunshine_coverage)
+set_target_properties(hdr_calibration_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(hdr_calibration_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+    target_sources(hdr_calibration_unit_tests PRIVATE
+            ${CMAKE_SOURCE_DIR}/src/hdr/session_target.cpp
+            ${CMAKE_SOURCE_DIR}/tests/tools/test_hdr_session_target.cpp)
+    target_link_libraries(hdr_calibration_unit_tests PRIVATE sunshine::host_headers sunshine::tls
+          Boost::log Boost::format Boost::process)
+    target_compile_definitions(hdr_calibration_unit_tests PRIVATE ${SUNSHINE_DEFINITIONS})
+endif ()
+add_test(NAME hdr_calibration_unit_tests COMMAND hdr_calibration_unit_tests)
+
+# Compiles the real config.cpp update paths. These tests mutate global config
+# state and run config::parse, so they cannot join the aggregate suite.
+add_executable(config_runtime_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_config_runtime.cpp
+        ${CMAKE_SOURCE_DIR}/src/config.cpp
+        ${CMAKE_SOURCE_DIR}/src/display_device/vdd_settings.cpp
+        ${CMAKE_SOURCE_DIR}/src/file_handler.cpp
+        ${CMAKE_SOURCE_DIR}/src/display_device/parsed_config.cpp
+        ${CMAKE_SOURCE_DIR}/src/display_device/to_string.cpp
+        ${CMAKE_SOURCE_DIR}/src/hdr/calibration.cpp
+        ${CMAKE_SOURCE_DIR}/src/hdr/client_display_capabilities.cpp
+        ${CMAKE_SOURCE_DIR}/src/display_device/color_profile.cpp)
+target_include_directories(config_runtime_unit_tests PRIVATE
+        "${CMAKE_SOURCE_DIR}"
+        "${CMAKE_BINARY_DIR}")  # generated version.h
+target_link_libraries(config_runtime_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
+        sunshine_project_options sunshine_coverage
+        sunshine::host_headers sunshine::tls
+        Boost::boost Boost::log Boost::filesystem Boost::property_tree Boost::asio Boost::beast Boost::regex
+        Boost::format Boost::process)
+set_target_properties(config_runtime_unit_tests PROPERTIES CXX_STANDARD 23)
+target_compile_definitions(config_runtime_unit_tests PRIVATE ${SUNSHINE_DEFINITIONS})
+if (WIN32)
+    set_target_properties(config_runtime_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+    # windows.cmake stages AMF headers here for the host build; config.cpp's
+    # encoder-enums branch includes them on Windows.
+    target_include_directories(config_runtime_unit_tests SYSTEM PRIVATE "${CMAKE_BINARY_DIR}/amf_include")
+    target_link_libraries(config_runtime_unit_tests PRIVATE ws2_32)
+endif ()
+add_test(NAME config_runtime_unit_tests COMMAND config_runtime_unit_tests)
 
 add_executable(tray_state_unit_tests
         ${CMAKE_SOURCE_DIR}/src/tray/tray_state.cpp
@@ -569,6 +641,8 @@ file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
 # Standalone diagnostic programs under tests/tools have their own targets and
 # must not be linked into the aggregate GoogleTest executable.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/tools/")
+list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_hdr_calibration.cpp)
+list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_authored_ir_extended.cpp)
 # MAT harnesses have independent entrypoints and explicit test targets.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/mat-live/")
 # These files already run in registered standalone suites. Keep one copy of
@@ -577,6 +651,7 @@ list(REMOVE_ITEM TEST_SOURCES
         ${CMAKE_SOURCE_DIR}/tests/unit/test_ai_provider.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_client_fingerprint.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_config_overrides.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_config_runtime.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_current_capture_target.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_display_scale_steps.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_frame_contract.cpp

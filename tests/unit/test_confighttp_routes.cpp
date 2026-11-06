@@ -588,6 +588,27 @@ TEST_F(ConfigHttpEdid, AbsentSavedListsUseRuntimeValuesAndKeepExplicitEmptyLists
   EXPECT_EQ(saved->at("resolutions"), "[]");
   EXPECT_EQ(saved->at("fps"), "[]");
 }
+
+/** @brief The merged save path commits legacy VDD settings and upstream client-runtime synchronization together. */
+TEST_F(ConfigHttpEdid, SuccessfulVddSaveAlsoSynchronizesClientRuntime) {
+  const auto original_clients = config::get_clients_config();
+  auto restore = util::fail_guard([&] { config::nvhttp.clients = original_clients; });
+  config::nvhttp.clients = R"([{"uuid":"00000001-0002-0003-0405-060708090a0b","name":"merge-regression"}])";
+  auto client = connect();
+  const auto response = client->request("POST", "/api/config",
+    nlohmann::json { { "clients", "[]" }, { "vdd_edid_native_resolution", "1920x1080" } }.dump(),
+    { { "Content-Type", "application/json" } });
+  ASSERT_EQ(response->status_code, "200 OK");
+  EXPECT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "true");
+  EXPECT_EQ(config::get_clients_config(), "[]");
+  const auto saved = config::get_config_snapshot();
+  ASSERT_TRUE(saved);
+  EXPECT_EQ(saved->at("vdd_edid_native_resolution"), "1920x1080");
+  EXPECT_EQ(saved->at("clients"), "[]");
+  const auto xml = file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str());
+  EXPECT_NE(xml.find("<width>3840</width>"), std::string::npos);
+  EXPECT_EQ(xml.find("EdidNativeResolution"), std::string::npos);
+}
 #endif
 
 TEST_F(ConfigHttpRoutes, BasicCredentialsStillAuthenticateRemoteRequestsAndRejectMalformedBase64) {

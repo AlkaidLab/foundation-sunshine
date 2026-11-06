@@ -1,0 +1,10 @@
+# Content-named DLLs can coexist with the preceding version still loaded in
+# audiodg. Never unload system audio code merely to replace an installation.
+set(_mat_destination "${CMAKE_INSTALL_PREFIX}/tools/mat-capture")
+foreach(_mat_name sunshine-plugin-object-tap sunshine-sonic-mat-worker)
+    set(_mat_file "@MAT_CAPTURE_BUILD@/${_mat_name}.dll")
+    file(SHA256 "${_mat_file}" _mat_hash)
+    string(SUBSTRING "${_mat_hash}" 0 16 _mat_suffix)
+    file(INSTALL "${_mat_file}" DESTINATION "${_mat_destination}" TYPE FILE
+        RENAME "${_mat_name}-${_mat_suffix}.dll")
+endforeach ()

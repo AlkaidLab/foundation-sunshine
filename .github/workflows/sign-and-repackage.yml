@@ -212,9 +212,16 @@ jobs:
       - name: Install Inno Setup
         shell: pwsh
         run: |
-          $url = "https://jrsoftware.org/download.php/is.exe"
+          # The unversioned jrsoftware.org/download.php/is.exe link now serves an
+          # HTML page. Pin the signed release asset (6.x keeps the "Inno Setup 6"
+          # install path used below) and check its publisher before running it.
+          $url = "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe"
           $installer = "$env:TEMP\innosetup.exe"
           Invoke-WebRequest -Uri $url -OutFile $installer
+          $signature = Get-AuthenticodeSignature -FilePath $installer
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) -cne 'Pyrsys B.V.') {
+            throw "Unexpected Inno Setup installer signature: $($signature.Status) $($signature.SignerCertificate.Subject)"
+          }
           Start-Process -FilePath $installer -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-' -Wait
           echo "C:\Program Files (x86)\Inno Setup 6" >> $env:GITHUB_PATH
 
@@ -250,6 +257,10 @@ jobs:
             test -f "$ADAPTER"
             mkdir -p hash-bound-files
             mv "$ADAPTER" hash-bound-files/foundation_rtx_video_adapter.dll
+            # The capture EXE embeds these two DLL hashes; signing the DLLs
+            # after compilation would invalidate both names and trust checks.
+            mkdir -p hash-bound-files/mat-capture
+            mv unsigned-files/Sunshine/tools/mat-capture/*.dll hash-bound-files/mat-capture/
             mkdir -p unsigned-files/Sunshine/tools/sunshine-ds5-signing-staging
             cp -a build/ds5-sidecar-runtime/. unsigned-files/Sunshine/tools/sunshine-ds5-signing-staging/
             echo "Extracted files for signing:"
@@ -310,6 +321,8 @@ jobs:
           New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
           Copy-Item -LiteralPath 'hash-bound-files/foundation_rtx_video_adapter.dll' `
             -Destination $destination -Force
+          Copy-Item -Path 'hash-bound-files/mat-capture/*.dll' `
+            -Destination 'signed-files/Sunshine/tools/mat-capture/' -Force
 
       - name: Package signed DualSense component
         shell: pwsh
@@ -383,6 +396,8 @@ jobs:
           cp -fv "$SIGNED_SRC/tools/setreg.exe"             "$STAGING_DIR/tools/setreg.exe"
           cp -fv "$SIGNED_SRC/tools/audio-info.exe"         "$STAGING_DIR/tools/audio-info.exe"
           cp -fv "$SIGNED_SRC/tools/dxgi-info.exe"          "$STAGING_DIR/tools/dxgi-info.exe"
+          cp -fv "$SIGNED_SRC/tools/mat-capture/sunshine-plugin-mat-capture.exe" \
+            "$STAGING_DIR/tools/mat-capture/sunshine-plugin-mat-capture.exe"
           cp -fv "$SIGNED_SRC/assets/gui/sunshine-gui.exe"  "$STAGING_DIR/assets/gui/sunshine-gui.exe"
           cp -fv "$SIGNED_SRC/assets/gui/alkaidlab-plugin-stylus.dll" "$STAGING_DIR/assets/gui/alkaidlab-plugin-stylus.dll"
           cp -fv "$SIGNED_SRC/tools/hdr_enhanced/nvidia_rtx_video/foundation_rtx_video_adapter.dll" \

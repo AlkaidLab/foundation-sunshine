@@ -2,6 +2,7 @@
 // the report must describe whatever is installed without trusting it.
 #include "components.h"
 #include <iostream>
+#include <sddl.h>
 #include <stdexcept>
 static void
 Check(bool condition, const char *message) {
@@ -33,6 +34,19 @@ main() {
     Check(engine.support != mat_compat::Support::missing && engine.sha256.size() == 64 && engine.version != "unknown", "system audioeng.dll is described");
     Check(engine.support == (mat_compat::supported_audioeng(engine.sha256) ? mat_compat::Support::supported : mat_compat::Support::unsupported), "audioeng support follows the table");
     const auto dolby = sonic_live::find_dolby_access();
+    HANDLE token = nullptr;
+    Check(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token), "Own token");
+    DWORD size = 0;
+    GetTokenInformation(token, TokenUser, nullptr, 0, &size);
+    std::vector<BYTE> user(size);
+    Check(GetTokenInformation(token, TokenUser, user.data(), size, &size), "Own user");
+    LPWSTR sid = nullptr;
+    Check(ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER *>(user.data())->User.Sid, &sid), "Own SID");
+    const auto explicit_user = sonic_live::find_dolby_access(sid);
+    LocalFree(sid);
+    CloseHandle(token);
+    Check(explicit_user.directory == dolby.directory && explicit_user.component.sha256 == dolby.component.sha256,
+      "Explicit session user lookup differs from the current user's package catalog");
     Check(dolby.component.support == mat_compat::Support::missing || !dolby.directory.empty(), "installed Dolby Access has a directory");
     const bool ready = sonic_live::report_components(engine, dolby.component);
     Check(ready == (engine.support == mat_compat::Support::supported && dolby.component.support == mat_compat::Support::supported), "report result");

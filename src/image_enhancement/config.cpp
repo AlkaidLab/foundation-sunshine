@@ -320,6 +320,7 @@ namespace image_enhancement {
     boost::atomic_shared_ptr<const backend_use_t> validated_nr;
     std::vector<boost::weak_ptr<const backend_use_t>> users;
     std::string maintenance;
+    std::string maintenance_component;
     std::string pending_removal;
     bool maintenance_unknown = false;
 
@@ -503,6 +504,7 @@ namespace image_enhancement {
       BOOST_LOG(warning) << "Deferred enhancement removal remains pending: invalid configuration";
     }
     impl_->maintenance.clear();
+    impl_->maintenance_component.clear();
     impl_->pending_removal.clear();
     impl_->maintenance_unknown = false;
     try {
@@ -510,6 +512,9 @@ namespace image_enhancement {
       if (!maintenance.is_discarded()) {
         impl_->maintenance = maintenance.at("operation_id").get<std::string>();
         if (impl_->maintenance.empty()) throw std::runtime_error("maintenance_invalid");
+        const auto component = maintenance.at("component_id").get<std::string>();
+        if (!is_known_backend(component)) throw std::runtime_error("maintenance_invalid");
+        impl_->maintenance_component = component;
         if (maintenance.contains("pending_remove")) {
           const auto pending = maintenance.at("pending_remove").get<std::string>();
           if (!is_known_backend(pending) || maintenance.at("component_id").get<std::string>() != pending) {
@@ -647,6 +652,7 @@ namespace image_enhancement {
     boost::lock_guard gate(impl_->ownership);
     const auto settings = impl_->active.load();
     return { { "in_use", impl_->used_locked() }, { "maintenance", !impl_->maintenance.empty() || impl_->maintenance_unknown },
+      { "maintenance_component", impl_->maintenance_component },
       { "pending_removal", impl_->pending_removal },
       { "adapter_present", adapter_present && !adapter_error },
       { "nr_adapter_present", nr_adapter_present && !nr_adapter_error },
@@ -672,10 +678,12 @@ namespace image_enhancement {
       boost::lock_guard gate(impl_->ownership);
       if (impl_->used_locked() || !impl_->maintenance.empty() || impl_->maintenance_unknown) return { 409, "hdr_component_busy" };
       impl_->maintenance = token;
+      impl_->maintenance_component = id;
     }
     if (!write_document(impl_->maintenance_file, { { "operation_id", token }, { "component_id", id } })) {
       boost::lock_guard gate(impl_->ownership);
       impl_->maintenance.clear();
+      impl_->maintenance_component.clear();
       return { 500, "hdr_maintenance_failed" };
     }
     operation_id = token;
@@ -689,7 +697,8 @@ namespace image_enhancement {
   manager_t::verify_maintenance(std::string_view id, std::string_view operation_id) {
     if (!is_known_backend(id) || operation_id.empty()) return { 400, "hdr_maintenance_invalid" };
     boost::lock_guard gate(impl_->ownership);
-    if (impl_->maintenance_unknown || impl_->maintenance != operation_id) return { 409, "hdr_maintenance_mismatch" };
+    if (impl_->maintenance_unknown || impl_->maintenance != operation_id || impl_->maintenance_component != id)
+      return { 409, "hdr_maintenance_mismatch" };
     return {};
   }
 
@@ -702,7 +711,7 @@ namespace image_enhancement {
     if (!operation_lock) return { 409, "hdr_helper_running" };
     {
       boost::lock_guard gate(impl_->ownership);
-      if (impl_->maintenance_unknown || impl_->maintenance != operation_id || !impl_->pending_removal.empty())
+      if (impl_->maintenance_unknown || impl_->maintenance != operation_id || impl_->maintenance_component != id || !impl_->pending_removal.empty())
         return { 409, "hdr_maintenance_mismatch" };
     }
     try {
@@ -724,7 +733,8 @@ namespace image_enhancement {
   manager_t::inspect_maintenance(std::string_view id, std::string &operation_id) {
     if (!is_known_backend(id)) return { 404, "hdr_component_unknown" };
     boost::lock_guard gate(impl_->ownership);
-    if (impl_->maintenance_unknown || impl_->maintenance.empty()) return { 409, "hdr_maintenance_mismatch" };
+    if (impl_->maintenance_unknown || impl_->maintenance.empty() || impl_->maintenance_component != id)
+      return { 409, "hdr_maintenance_mismatch" };
     operation_id = impl_->maintenance;
     return {};
   }
@@ -739,7 +749,8 @@ namespace image_enhancement {
     if (!operation_lock) return { 409, "hdr_helper_running" };
     {
       boost::lock_guard gate(impl_->ownership);
-      if (impl_->maintenance != operation_id || impl_->maintenance_unknown) return { 409, "hdr_maintenance_mismatch" };
+      if (impl_->maintenance != operation_id || impl_->maintenance_unknown || impl_->maintenance_component != id)
+        return { 409, "hdr_maintenance_mismatch" };
       if (!impl_->pending_removal.empty()) return { 409, "hdr_removal_pending" };
     }
     // 文件可能已被安装器替换；不能重新放行维护前验证过的路径快照。
@@ -770,6 +781,7 @@ namespace image_enhancement {
     if (error) return { 500, "hdr_maintenance_failed" };
     boost::lock_guard gate(impl_->ownership);
     impl_->maintenance.clear();
+    impl_->maintenance_component.clear();
     return {};
   }
 
@@ -781,6 +793,11 @@ namespace image_enhancement {
     std::string pending_operation;
     {
       boost::lock_guard gate(impl_->ownership);
+      if (impl_->maintenance_unknown && impl_->maintenance_component.empty())
+        return { 409, "hdr_maintenance_mismatch" };
+      // A different provider cannot settle this component's runtime backup.
+      if (!impl_->maintenance_component.empty() && impl_->maintenance_component != id)
+        return { 409, "hdr_maintenance_mismatch" };
       if (!impl_->pending_removal.empty()) {
         if (impl_->maintenance_unknown || impl_->pending_removal != id) return { 409, "hdr_maintenance_mismatch" };
         pending_operation = impl_->maintenance;
@@ -802,6 +819,7 @@ namespace image_enhancement {
         }
         boost::lock_guard gate(impl_->ownership);
         impl_->maintenance.clear();
+        impl_->maintenance_component.clear();
         impl_->pending_removal.clear();
         return {};
       }
@@ -838,6 +856,7 @@ namespace image_enhancement {
     if (error) return { 500, "hdr_maintenance_failed" };
     boost::lock_guard gate(impl_->ownership);
     impl_->maintenance.clear();
+    impl_->maintenance_component.clear();
     impl_->maintenance_unknown = false;
     return {};
   }

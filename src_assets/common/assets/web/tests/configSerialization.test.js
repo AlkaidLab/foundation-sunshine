@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { resetBootstrapDataCache } from '../config/bootstrapData.js'
 
 import {
   filterValidFps,
@@ -104,4 +105,38 @@ test('boolean-like config values normalize to enabled and disabled select values
   assert.equal(normalizeEnabledDisabledValue(false), 'disabled')
   assert.equal(normalizeEnabledDisabledValue(''), '')
   assert.equal(normalizeEnabledDisabledValue(undefined), undefined)
+})
+
+test('VPE defaults off, loads boolean values, and survives settings save and reload', async (t) => {
+  const previousWindow = globalThis.window
+  globalThis.window = { dispatchEvent() {} }
+  t.after(() => {
+    globalThis.window = previousWindow
+    resetBootstrapDataCache()
+  })
+  let savedConfig = { platform: 'windows', status: true }
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    assert.equal(url, '/api/config')
+    if (options?.method === 'POST') {
+      savedConfig = { ...JSON.parse(options.body), platform: 'windows', status: true }
+      return new Response(JSON.stringify({ status: true }), { status: 200 })
+    }
+    return new Response(JSON.stringify(savedConfig), { status: 200 })
+  })
+  resetBootstrapDataCache()
+  const state = useConfig()
+  state.initTabs()
+  await state.loadConfig()
+  assert.equal(state.config.value.amd_vpe, 'disabled')
+  savedConfig.amd_vpe = true
+  resetBootstrapDataCache()
+  await state.loadConfig()
+  assert.equal(state.config.value.amd_vpe, 'enabled')
+  assert.equal(await state.save(), true)
+  assert.equal(savedConfig.amd_vpe, 'enabled')
+  state.config.value.amd_vpe = 'disabled'
+  assert.equal(await state.save(), true)
+  resetBootstrapDataCache()
+  await state.loadConfig()
+  assert.equal(state.config.value.amd_vpe, 'disabled')
 })

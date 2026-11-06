@@ -180,6 +180,15 @@ const hevcGopMode = computed({
       <div class="form-text">{{ $t('config.amd_slices_per_frame_desc') }}</div>
     </div>
 
+    <div class="mb-3" v-if="platform === 'windows'">
+      <label for="amd_vpe" class="form-label">{{ $t('config.amd_vpe') }}</label>
+      <select id="amd_vpe" class="form-select" v-model="config.amd_vpe" aria-describedby="amd_vpe_desc">
+        <option value="disabled">{{ $t('_common.disabled_def') }}</option>
+        <option value="enabled">{{ $t('_common.enabled') }}</option>
+      </select>
+      <div id="amd_vpe_desc" class="form-text">{{ $t('config.amd_vpe_desc') }}</div>
+    </div>
+
     <!-- AVCodec-compatible AMF path -->
     <div class="mb-3" v-if="platform === 'windows'">
       <label for="amd_avcodec_compat" class="form-label">{{ $t('config.amd_avcodec_compat') }}</label>

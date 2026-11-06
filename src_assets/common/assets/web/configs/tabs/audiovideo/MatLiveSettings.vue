@@ -17,5 +17,6 @@ onBeforeUnmount(dispose)
     <div class="small mt-2" role="status" aria-live="polite">
       {{ $t('config.mat_live_status') }}: {{ $t(loading && !status ? 'config.mat_live_loading' : `config.mat_live_state_${state}`) }}
     </div>
+    <div v-if="state === 'error' && status?.last_error" class="small text-muted mt-1">{{ status.last_error }}</div>
   </div>
 </template>

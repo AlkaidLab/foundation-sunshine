@@ -8,6 +8,7 @@
 #include "settings_topology.h"
 #include "src/audio.h"
 #include "src/display_device/color_profile.h"
+#include "src/hdr/session_target.h"
 #include "src/display_device/session.h"
 #include "src/display_device/to_string.h"
 #include "src/globals.h"
@@ -950,7 +951,7 @@ namespace display_device {
     }
 
     const bool client_hdr_enabled = session.enable_hdr;
-    const auto do_apply_config { [this, &pre_saved_initial_topology, &profile_setting, client_hdr_enabled](const parsed_config_t &config) -> settings_t::apply_result_t {
+    const auto do_apply_config { [this, &pre_saved_initial_topology, &profile_setting, &session, client_hdr_enabled](const parsed_config_t &config) -> settings_t::apply_result_t {
       // 检测是否为VDD模式
       const bool is_vdd_mode = config.use_vdd && *config.use_vdd;
 
@@ -1125,6 +1126,10 @@ namespace display_device {
 
       if (profile_setting.policy == color_profile::profile_policy_e::apply && is_vdd_mode) {
         BOOST_LOG(info) << "Ignoring physical-display ICC override for VDD; client luminance capabilities are programmed directly into the virtual display";
+      }
+
+      if (is_vdd_mode && !hdr::apply_vdd_calibration(session, config.device_id)) {
+        return { apply_result_t::result_e::color_profile_fail };
       }
 
       if (wants_physical_profile) {

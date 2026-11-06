@@ -14,9 +14,13 @@ set(SUNSHINE_HOST_SOURCES
 
     # src/haptics
     src/haptics/authored_ir.cpp src/haptics/authored_ir.h
+    src/haptics/authored_input.h src/haptics/wire.h
+    src/haptics/legacy_rumble.cpp
+    src/haptics/authored_ir_extended.cpp src/haptics/authored_ir_extended.h
 
     # src/hdr
     src/hdr/client_display_capabilities.cpp src/hdr/client_display_capabilities.h
+    src/hdr/calibration.cpp src/hdr/calibration.h
     src/hdr/dynamic_hdr_selection.cpp src/hdr/dynamic_hdr_selection.h
     src/hdr/session_target.cpp src/hdr/session_target.h
 

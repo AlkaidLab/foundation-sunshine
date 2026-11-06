@@ -533,6 +533,7 @@ Streaming HDR content is officially supported on Windows hosts and experimentall
     @tab{ Windows |
     - HDR streaming is supported for Intel, AMD, and NVIDIA GPUs that support encoding HEVC Main 10 or AV1 10-bit profiles.
     - We recommend calibrating the display by streaming the Windows HDR Calibration app to your client device and saving an HDR calibration profile to use while streaming.
+    - In Foundation's **Virtual Display > HDR Calibration**, keep a dedicated VDD HDR stream connected while calibrating. After calibration, select **Save for This Client** to bind the detected profile to that client and Windows account; the same button can adopt an existing profile. Reconnect to use its luminance when neither a manual brightness setting nor a client brightness report takes priority. Shared VDD mode does not adopt per-client calibrations; locking Windows retains saved calibration and pauses live verification until unlock.
     - Older games that use NVIDIA-specific NVAPI HDR rather than native Windows HDR support may not display properly in HDR.
     }
 

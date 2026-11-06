@@ -37,7 +37,9 @@ var corePatched = typeof(HMContext).Assembly.GetCustomAttributes<AssemblyMetadat
     attribute => attribute.Key == "FoundationCorePatch" && attribute.Value == "device-ownership-1");
 var reportsPatched = typeof(HMContext).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().Any(
     attribute => attribute.Key == "FoundationDualSenseReports" && attribute.Value == "host-clock-v1");
-if (!corePatched || !reportsPatched || !DeviceRegistry.HasPinnedMicrophoneRuntime || !ComponentCompatibility.HasManagedTransport)
+var gameInputPatched = typeof(HMContext).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().Any(
+    attribute => attribute.Key == "FoundationDualSenseGameInput" && attribute.Value == "preserve-v1");
+if (!corePatched || !reportsPatched || !gameInputPatched || !DeviceRegistry.HasPinnedMicrophoneRuntime || !ComponentCompatibility.HasManagedTransport)
     return Fail("The Sidecar package is incomplete; reinstall the current DualSense component");
 
 if (selfCheck)

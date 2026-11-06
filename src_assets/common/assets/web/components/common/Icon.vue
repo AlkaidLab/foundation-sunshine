@@ -16,13 +16,13 @@
 </template>
 
 <script setup>
-import { computed, h } from 'vue'
+import { h } from 'vue'
 
 const props = defineProps({
   name: {
     type: String,
     required: true,
-    validator: (value) => ['lock', 'clock', 'star'].includes(value),
+    validator: (value) => ['lock', 'clock', 'star', 'chevron-right'].includes(value),
   },
   size: {
     type: [String, Number],
@@ -39,6 +39,9 @@ const props = defineProps({
 })
 
 const iconPaths = {
+  'chevron-right': {
+    render: () => h('path', { d: 'M9 6l6 6-6 6' }),
+  },
   lock: {
     render: () => [
       h('rect', { x: 3, y: 11, width: 18, height: 11, rx: 2, ry: 2 }),
