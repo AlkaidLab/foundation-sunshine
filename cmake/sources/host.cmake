@@ -75,6 +75,7 @@ set(SUNSHINE_HOST_SOURCES
     src/input_activity.cpp src/input_activity.h
     src/audio.cpp src/audio.h
     src/audio_devices.cpp src/audio_devices.h
+    src/audio_vb_cable.cpp src/audio_vb_cable.h
     src/mic_mixer.cpp src/mic_mixer.h
     src/process.cpp src/process.h
     src/client_interface.cpp src/client_interface.h

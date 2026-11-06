@@ -94,6 +94,32 @@ if (WIN32)
 endif ()
 add_test(NAME audio_devices_unit_tests COMMAND audio_devices_unit_tests)
 
+# The VB-CABLE install and enable steps against a fake system: nothing is downloaded, installed or enabled.
+add_executable(audio_vb_cable_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/audio_vb_cable.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_vb_cable.cpp)
+target_include_directories(audio_vb_cable_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(audio_vb_cable_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json sunshine_project_options sunshine_coverage)
+set_target_properties(audio_vb_cable_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(audio_vb_cable_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME audio_vb_cable_unit_tests COMMAND audio_vb_cable_unit_tests)
+
+if (WIN32)
+    # Prints what GET /api/audio/devices answers on this machine; reads endpoints only. Not a unit test.
+    add_executable(audio_devices_dump
+            ${CMAKE_SOURCE_DIR}/tests/tools/audio_devices_dump.cpp
+            ${CMAKE_SOURCE_DIR}/src/audio_devices.cpp
+            ${CMAKE_SOURCE_DIR}/src/audio_vb_cable.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/audio_devices.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/audio_vb_cable_win.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/text_encoding.cpp)
+    target_include_directories(audio_devices_dump PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_link_libraries(audio_devices_dump PRIVATE nlohmann_json::nlohmann_json sunshine_project_options ole32 uuid oleaut32 setupapi cfgmgr32 wintrust crypt32)
+    set_target_properties(audio_devices_dump PROPERTIES CXX_STANDARD 23 LINK_SEARCH_START_STATIC 1)
+endif ()
+
 add_executable(video_idle_policy_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_video_idle_policy.cpp)
 target_include_directories(video_idle_policy_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(video_idle_policy_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
@@ -966,6 +992,7 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/tools/")
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_hdr_calibration.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_authored_ir_extended.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_devices.cpp)
+list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_vb_cable.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_host_bitrate_cap.cpp)
 # MAT harnesses have independent entrypoints and explicit test targets.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/mat-live/")
