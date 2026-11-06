@@ -140,7 +140,7 @@ else if (args[0] == "test")
             Require((int)instance.GetValue("VendorId")! == 0x054c, "instance VID missing");
         }
         // Neither Joystick nor Game Pad JSON profiles get a new table.
-        // Physical DualSense maps survive every virtual-device lifecycle path.
+        // Physical DualSense maps survive; their explicit repair preserves navigation.
         isolated.DeleteSubKeyTree(gameInputPath);
         foreach (var descriptorUsage in new[] { "05010904", "05010905" })
         {

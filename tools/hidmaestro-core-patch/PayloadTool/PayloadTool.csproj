@@ -5,4 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../DualSenseGameInputMapping.cs" Link="DualSenseGameInputMapping.cs" />
+  </ItemGroup>
 </Project>

@@ -16,6 +16,8 @@
   </Target>
   <ItemGroup>
     <Compile Include="../hidmaestro-core-patch/DualSenseClock.cs" Link="DualSenseClock.cs" />
+    <Compile Include="../hidmaestro-core-patch/DualSenseGameInputMapping.cs" Link="DualSenseGameInputMapping.cs" />
+    <Compile Remove="Tests/**/*.cs" />
     <PackageReference Include="Microsoft.Windows.CsWin32" Version="[0.3.333]" PrivateAssets="all" />
     <EmbeddedResource Include="$(CompatibilityManifestPath)" LogicalName="Foundation.ComponentCompatibility.json" />
     <None Include="$(CompatibilityManifestPath)" Link="component-compatibility.json" CopyToOutputDirectory="PreserveNewest" />

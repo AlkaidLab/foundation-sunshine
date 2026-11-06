@@ -104,3 +104,9 @@ if ($LASTEXITCODE -ne 0) { throw 'Patched Core registry and device ownership reg
 Copy-Item -LiteralPath (Join-Path $originalDirectory 'LICENSE') -Destination (Join-Path $output 'LICENSE.HIDMaestro') -Force
 Copy-Item -LiteralPath (Join-Path $originalDirectory 'THIRD-PARTY-NOTICES.txt') -Destination $output -Force
 Write-Host "Built managed Core patches: $core"
+
+# Real production repair paths, redirected to a disposable HKCU subtree; no device needed.
+& $DotnetPath build (Join-Path $root 'tools/sunshine-ds5-sidecar/Tests/GameInputRepairTests.csproj') -c Release --nologo
+if ($LASTEXITCODE -ne 0) { throw 'GameInput repair regression build failed' }
+& $DotnetPath (Join-Path $root 'tools/sunshine-ds5-sidecar/Tests/bin/Release/net10.0-windows10.0.26100.0/GameInputRepairTests.dll')
+if ($LASTEXITCODE -ne 0) { throw 'GameInput repair regressions failed' }

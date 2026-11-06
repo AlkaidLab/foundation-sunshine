@@ -49,6 +49,20 @@ internal static class DualSenseReportChecks
             down.AsSpan(16, 16).SequenceEqual(up.AsSpan(16, 16)), "motion values and sample time must be retained");
         Set("SensorTimestamp", 0u);
         require(U32(Encode(false), 28) == 0, "zero at sensor timestamp rollover must be retained");
-        Console.WriteLine($"PASS: {Path.GetFileName(profilePath)} clocks, counters, USB state, button edges and motion bytes");
+        // Check the production mapping against bytes encoded by the actual Sony
+        // profile. Raw button indices count from report byte 8, bit 4 (Square).
+        var mapping = Foundation.DualSense.DualSenseGameInputMapping.Template(true, true);
+        var buttonType = stateType.GetField("Buttons")!.FieldType;
+        foreach (var button in new[] { ("A", "A"), ("B", "B"), ("X", "X"), ("Y", "Y"),
+            ("View", "Back"), ("Menu", "Start"), ("LeftThumbstickButton", "LeftStick"), ("RightThumbstickButton", "RightStick") })
+        {
+            Set("Buttons", Enum.Parse(buttonType, button.Item2));
+            var bytes = new byte[64];
+            encode.Invoke(null, new object[] { spec, state, .5f, .5f, .5f, .5f, 0f, 0f, bytes, encoder });
+            var index = (int)mapping.Get("Gamepad\\" + button.Item1, "ButtonIndex").Value();
+            require((bytes[8 + (index + 4) / 8] & (1 << ((index + 4) % 8))) != 0,
+                "WGI mapping does not match encoded " + button.Item1);
+        }
+        Console.WriteLine($"PASS: {Path.GetFileName(profilePath)} clocks, counters, USB state, button edges, native WGI button mappings and motion bytes");
     }
 }
