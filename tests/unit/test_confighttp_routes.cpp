@@ -326,6 +326,10 @@ namespace {
     SetUp() override {
       ConfigHttpRoutes::SetUp();
       previous_config_ = config::sunshine.config_file;
+      previous_resolutions_ = config::nvhttp.resolutions;
+      previous_fps_ = config::nvhttp.fps;
+      config::nvhttp.resolutions = { "1920x1080", "2736x1824", "3840x2160" };
+      config::nvhttp.fps = { "60", "120" };
       prepared_ = true;
       vdd_path = directory / "vdd_settings.xml";
       display_device::vdd_settings::test_support::set_settings_path(vdd_path);
@@ -344,10 +348,13 @@ namespace {
       display_device::vdd_settings::test_support::set_before_save_hook({});
       display_device::vdd_settings::test_support::set_settings_path(std::nullopt);
       config::sunshine.config_file = previous_config_;
+      config::nvhttp.resolutions = std::move(previous_resolutions_);
+      config::nvhttp.fps = std::move(previous_fps_);
     }
 
   private:
     std::string previous_config_;
+    std::vector<std::string> previous_resolutions_, previous_fps_;
     bool prepared_ = false;
   };
 }  // namespace
@@ -515,6 +522,7 @@ TEST_F(ConfigHttpEdid, ConcurrentSavesSerializeValidationXmlAndHostCommit) {
       true);
   });
   EXPECT_EQ(contended_future.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+  EXPECT_EQ(second.wait_for(std::chrono::milliseconds(100)), std::future_status::timeout);
   EXPECT_EQ(calls.load(), 1u);
   release.set_value();
   EXPECT_TRUE(first.get());
@@ -550,6 +558,35 @@ TEST_F(ConfigHttpEdid, PartialApiSavesPreserveModeListsAndAcceptExplicitSelectio
     EXPECT_NE(xml.find("<g_refresh_rate>60</g_refresh_rate>"), std::string::npos);
     EXPECT_EQ(xml.find("EdidNativeResolution"), std::string::npos);
   }
+}
+
+/** @brief Fresh/implicit configurations use current advertised modes in early validation and locked persistence. */
+TEST_F(ConfigHttpEdid, AbsentSavedListsUseRuntimeValuesAndKeepExplicitEmptyLists) {
+  auto client = connect();
+  for (const std::string saved_lists : { "", "resolutions = [3840x2160]\n", "fps = [60]\n" }) {
+    std::ofstream(file_handler::path_from_utf8(config::sunshine.config_file), std::ios::binary | std::ios::trunc)
+      << "vdd_edid_native_resolution = 3840x2160\n"
+      << saved_lists;
+    const auto response = client->request("POST", "/api/config",
+      nlohmann::json { { "vdd_edid_native_resolution", "3840x2160" } }.dump(), { { "Content-Type", "application/json" } });
+    ASSERT_EQ(response->status_code, "200 OK");
+    EXPECT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "true");
+    const auto saved = config::get_config_snapshot();
+    ASSERT_TRUE(saved);
+    EXPECT_EQ(saved->at("resolutions"), saved_lists.starts_with("resolutions") ? "[3840x2160]" : "[1920x1080,2736x1824,3840x2160]");
+    EXPECT_EQ(saved->at("fps"), saved_lists.starts_with("fps") ? "[60]" : "[60,120]");
+    const auto xml = file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str());
+    EXPECT_NE(xml.find("<width>3840</width>"), std::string::npos);
+    EXPECT_NE(xml.find("<g_refresh_rate>60</g_refresh_rate>"), std::string::npos);
+  }
+  const auto clear = client->request("POST", "/api/config",
+    nlohmann::json { { "vdd_edid_native_resolution", "default" }, { "resolutions", "[]" }, { "fps", "[]" } }.dump(),
+    { { "Content-Type", "application/json" } });
+  EXPECT_EQ(nlohmann::json::parse(clear->content.string()).at("status"), "true");
+  const auto saved = config::get_config_snapshot();
+  ASSERT_TRUE(saved);
+  EXPECT_EQ(saved->at("resolutions"), "[]");
+  EXPECT_EQ(saved->at("fps"), "[]");
 }
 #endif
 

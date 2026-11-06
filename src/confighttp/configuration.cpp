@@ -300,8 +300,9 @@ namespace confighttp::configuration {
         if (const auto upnp = inputTree.get_optional<std::string>("upnp"); upnp && *upnp != "enabled" && *upnp != "disabled" && *upnp != "true" && *upnp != "false") {
           throw std::invalid_argument("invalid upnp value");
         }
-        const auto snapshot = config::get_config_snapshot();
+        auto snapshot = config::get_config_snapshot();
         if (!snapshot) throw std::runtime_error("failed to read configuration");
+        *snapshot = display_device::vdd_edid::with_mode_list_defaults(*snapshot, config::nvhttp.resolutions, config::nvhttp.fps);
         const auto saved_list = [&](const char *key) {
           const auto found = snapshot->find(key);
           return found == snapshot->end() ? std::string { "[]" } : found->second;

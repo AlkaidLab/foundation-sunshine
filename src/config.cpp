@@ -2035,7 +2035,8 @@ namespace config {
       // 使用 std::map 保证按字母顺序保存
       std::map<std::string, std::string> resultMap;
 
-      if (!display_device::vdd_edid::retained_selection_supported(fullConfig, originalMap)) {
+      const auto existing_modes = display_device::vdd_edid::with_mode_list_defaults(originalMap, nvhttp.resolutions, nvhttp.fps);
+      if (!display_device::vdd_edid::retained_selection_supported(fullConfig, existing_modes)) {
         BOOST_LOG(warning) << "Mode-list changes require an explicit supported EDID native resolution or default";
         return false;
       }
@@ -2067,11 +2068,11 @@ namespace config {
       }
 
       // Omitted mode lists retain the same values used by retained-selection
-      // validation. Explicit lists, including [], are never replaced.
+      // validation, including runtime defaults absent from disk. Explicit lists,
+      // including [], are never replaced.
       for (const auto key : { "resolutions", "fps" }) {
         if (!fullConfig.count(key)) {
-          const auto existing = originalMap.find(key);
-          if (existing != originalMap.end()) resultMap.emplace(*existing);
+          resultMap.emplace(key, existing_modes.at(key));
         }
       }
       const auto value = [&](const char *key, const char *fallback) {

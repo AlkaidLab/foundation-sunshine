@@ -6,8 +6,31 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace display_device::vdd_edid {
+  /**
+   * @brief Fill missing saved mode lists from the currently advertised runtime lists.
+   * @details Existing keys, including explicit empty lists, retain their values.
+   *          API validation and locked persistence use the same fallback rules.
+   */
+  inline std::map<std::string, std::string>
+  with_mode_list_defaults(std::map<std::string, std::string> saved,
+    const std::vector<std::string> &runtime_resolutions, const std::vector<std::string> &runtime_fps) {
+    const auto fill = [&](const char *key, const auto &items) {
+      if (saved.count(key)) return;
+      std::string list = "[";
+      for (const auto &item : items) {
+        if (list.size() > 1) list += ',';
+        list += item;
+      }
+      saved.emplace(key, list + ']');
+    };
+    fill("resolutions", runtime_resolutions);
+    fill("fps", runtime_fps);
+    return saved;
+  }
+
   struct resolution_t {
     unsigned int width;
     unsigned int height;

@@ -50,7 +50,9 @@ driver XML or registry; a missing VDD XML does not prevent saving this choice.
 
 Older API clients that omit the field retain the saved Sunshine preference.
 Partial saves retain omitted resolution/FPS lists; explicitly submitted lists,
-including empty lists, replace the saved values. Startup command-line overrides
+including empty lists, replace the saved values. If a list is absent from both
+the request and saved configuration, the host's current advertised list is used.
+Startup command-line overrides
 take precedence when creating a monitor, while Save updates the on-disk choice.
 The API validates list membership, dimensions and clock feasibility. If an older
 client changes either advertised mode list, the retained preference must still
@@ -63,6 +65,25 @@ Sunshine write fails, the original XML bytes are restored before another save
 can proceed. Empty mode lists are valid and use the driver's fallback modes.
 Rollback failures are logged; this does not provide recovery from process or
 machine failure during a save.
+
+### API request format
+
+`POST /api/config` saves a complete configuration. The EDID preference, mode
+lists and existing protected fields have preservation rules; other omitted
+unprotected fields, such as `adapter_name`, are removed and may reset host/GPU
+settings. Send the complete configuration to retain those fields.
+
+Send `resolutions` and `fps` as strings. This is a list-field fragment of a
+complete request:
+
+```json
+{"resolutions":"[1920x1080]","fps":"[60]"}
+```
+
+An explicitly empty list is the string `"[]"`; JSON arrays are not supported
+for these fields.
+
+### Driver compatibility
 
 Requires a signed ZakoVDD release supporting the optional native size in
 `CREATEMONITOR`, bundled with Sunshine. Older drivers ignore the optional group.
