@@ -37,7 +37,11 @@ var corePatched = typeof(HMContext).Assembly.GetCustomAttributes<AssemblyMetadat
     attribute => attribute.Key == "FoundationCorePatch" && attribute.Value == "device-ownership-1");
 var reportsPatched = typeof(HMContext).Assembly.GetCustomAttributes<AssemblyMetadataAttribute>().Any(
     attribute => attribute.Key == "FoundationDualSenseReports" && attribute.Value == "host-clock-v1");
-if (!corePatched || !reportsPatched || !DeviceRegistry.HasPinnedMicrophoneRuntime || !ComponentCompatibility.HasManagedTransport)
+// The payload stage is part of the component identity: a Core trimmed for one
+// stage cannot be paired with a sidecar that assumes another.
+var payloadPolicy = ComponentCompatibility.PayloadPolicy;
+var payloadPolicyKnown = payloadPolicy is "legacy-v1" or "composite-only-v1" or "audited-hid-v1";
+if (!corePatched || !reportsPatched || !payloadPolicyKnown || !DeviceRegistry.HasPinnedMicrophoneRuntime || !ComponentCompatibility.HasManagedTransport)
     return Fail("The Sidecar package is incomplete; reinstall the current DualSense component");
 
 if (selfCheck)
@@ -66,6 +70,9 @@ if (probe)
 {
     ProtocolSelfTest.RunDeterministicChecks();
     using var context = new HMContext();
+    // Register the shipped profile copies before the stock catalog, exactly as a
+    // session does, so the probe reports the profiles the runtime will use.
+    DeviceRegistry.RegisterPatchedProfiles(context);
     context.LoadDefaultProfiles();
     var standard = context.GetProfile("dualsense");
     var composite = context.GetProfile("dualsense-composite");
@@ -84,7 +91,14 @@ if (probe)
         usbip_policy = ComponentCompatibility.TransportPolicy,
         usbip_version = ComponentCompatibility.UsbipVersion,
         pinned_microphone_runtime = DeviceRegistry.HasPinnedMicrophoneRuntime,
+        // Which backend the HID-only profile will use on this machine.
+        hid_only_transport = ComponentCompatibility.HidOnlyDriverDeployable ? "umdf" : "usbip",
         composite_microphone_prototype_requested = enableCompositeMicrophonePrototype,
+        payload_policy = payloadPolicy,
+        // Runtime capability: the UMDF stage needs nothing extra, and every
+        // other stage runs HID-only over USB/IP, which needs the transport.
+        hid_only_available = ComponentCompatibility.HidOnlyDriverDeployable ||
+                             HMContext.IsUsbipBackendAvailable,
     }));
     return 0;
 }

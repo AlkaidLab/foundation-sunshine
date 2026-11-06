@@ -30,6 +30,19 @@ namespace platf::ds5 {
       boost::property_tree::ptree compatibility;
       std::ifstream contract(active_root / "component-compatibility.json", std::ios::binary);
       boost::property_tree::read_json(contract, compatibility);
+      // The payload stage travels with the component so a manager can refuse a
+      // capability the artifact does not have. Both fields stay optional: a
+      // manager that predates them writes only the digests, and rejecting such
+      // an installation before the new component ships would strand it.
+      const auto payload_policy_known = [](const std::string &stage) {
+        return stage.empty() || stage == "legacy-v1" || stage == "composite-only-v1" ||
+               stage == "audited-hid-v1";
+      };
+      const auto contract_policy = compatibility.get<std::string>("payload_policy", "");
+      const auto manifest_policy = manifest.get<std::string>("payload_policy", "");
+      const bool hid_only_agrees =
+        compatibility.get<bool>("capabilities.hid_only", true) ||
+        !manifest.get<bool>("capabilities.hid_only", true);
       if (manifest.get<std::uint32_t>("protocol", 0) != virtual_device_host::protocol::VERSION ||
           compatibility.get<std::uint32_t>("schema", 0) != 1 ||
           compatibility.get<std::string>("component_version", "").empty() ||
@@ -38,7 +51,11 @@ namespace platf::ds5 {
           compatibility.get<std::string>("usbip.policy", "") != "externally-managed-v1" ||
           compatibility.get<std::string>("usbip.version", "").empty() ||
           manifest.get<std::string>("usbip_version", "") != compatibility.get<std::string>("usbip.version") ||
-          manifest.get<std::string>("sidecar_file", "") != "Sunshine.Ds5Sidecar.exe") {
+          manifest.get<std::string>("sidecar_file", "") != "Sunshine.Ds5Sidecar.exe" ||
+          !payload_policy_known(contract_policy) ||
+          !payload_policy_known(manifest_policy) ||
+          (!manifest_policy.empty() && manifest_policy != contract_policy) ||
+          !hid_only_agrees) {
         error = "The active DualSense component manifest is incomplete or incompatible";
         return false;
       }

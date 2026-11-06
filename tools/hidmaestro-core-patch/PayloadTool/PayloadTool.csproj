@@ -5,4 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../ds5-payload/PayloadPolicy/PayloadPolicy.csproj" />
+  </ItemGroup>
 </Project>

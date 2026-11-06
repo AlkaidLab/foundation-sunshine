@@ -1,0 +1,44 @@
+{
+  "schema": 1,
+  "issue": 1194,
+  "recorded": "2026-10-29",
+  "source_baseline": {
+    "foundation_commit": "5e9ba6d525f76fbc2819458379975178990e443a",
+    "gui_submodule": "0c5d2667fde2c10601a237783e3afb819cfd0597",
+    "hidmaestro": "v1.12.0 (b4d29d9f4b1b91ced6b4755f095184b66339b8be)"
+  },
+  "releases": [
+    {
+      "tag": "v2026.1020.23431.杂鱼",
+      "component_version": "1.4.2",
+      "channel": "stable",
+      "sidecar_zip_sha256": "8a9b95c407a69b74f91916d5606bfcd04013c8dc124abc0f6c675743b57935ff",
+      "core_sha256": "eb64a7c4dcaf3def34d1eb87232677962a2da1bb85a294fbddbc6f1b82e88cc6"
+    },
+    {
+      "tag": "v2026.1029.22241.杂鱼",
+      "component_version": "1.4.3",
+      "channel": "prerelease",
+      "sidecar_zip_sha256": "60669603a3f692869051b5277d633aef1b22586a498a50cd475e187d9ad3eb33",
+      "core_sha256": "7b3a7f6aa8d0d6f51b149d72562d1985326f5220b93dda426012ef1f200aa182"
+    }
+  ],
+  "tool_resources": {
+    "HIDMaestro.Resources.Inf2Cat.exe": "b594728d38b271979367abc8060a971b8e42422738009be126710b1f5dd0fcbc",
+    "HIDMaestro.Native.x64.signtool.exe": "e7b517a6a2828af2d1fba3da60ae1e322a95141bfae192622725329630caa2b3",
+    "HIDMaestro.Native.arm64.signtool.exe": "a97d9284634d5b8a10765f46a2e7085f23c7ceb4bc29181a956c3aa45d520e23"
+  },
+  "expected": {
+    "zip_entries": 198,
+    "core_resources": 395,
+    "denied_resources": 49,
+    "denied_bytes": 59857508
+  },
+  "measured_locally_2026_11_03": {
+    "core_dll_bytes": 61417984,
+    "core_resources_bytes": 60871482,
+    "allowed_resources": 346,
+    "allowed_bytes": 1023974,
+    "denied_note": "31 native (13.32 MiB) + 10 resources (43.57 MiB) + 3 usbip arm64 + 5 VR"
+  }
+}

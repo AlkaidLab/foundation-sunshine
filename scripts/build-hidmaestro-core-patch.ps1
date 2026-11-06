@@ -2,7 +2,8 @@ param(
     [string]$PackageCache = 'build/ds5-sidecar-cache',
     [string]$OutputDirectory = 'build/hidmaestro-core-patch',
     [string]$DotnetPath = '',
-    [string]$CompatibilityManifestPath = ''
+    [string]$CompatibilityManifestPath = '',
+    [string]$PolicyPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -19,6 +20,18 @@ $CompatibilityManifestPath = (Resolve-Path -LiteralPath $CompatibilityManifestPa
 $compatibility = Get-Content -LiteralPath $CompatibilityManifestPath -Raw | ConvertFrom-Json
 if ($compatibility.schema -ne 1 -or $compatibility.usbip.policy -ne 'externally-managed-v1') {
     throw 'Unsupported shared USB/IP compatibility contract'
+}
+if (-not $PolicyPath) {
+    $PolicyPath = Join-Path $root 'tools/ds5-payload/policy.json'
+}
+$PolicyPath = (Resolve-Path -LiteralPath $PolicyPath).Path
+$payloadDocument = Get-Content -LiteralPath $PolicyPath -Raw | ConvertFrom-Json
+$payloadStage = [string]$payloadDocument.payload_policy
+if ($payloadStage -eq 'legacy-v1') {
+    throw 'legacy-v1 describes artifacts that already shipped; build composite-only-v1 instead'
+}
+if ($payloadStage -notin @('composite-only-v1', 'audited-hid-v1')) {
+    throw "Unsupported payload policy stage: $payloadStage"
 }
 $buildRoot = [IO.Path]::GetFullPath((Join-Path $root 'build'))
 $buildPrefix = $buildRoot.TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
@@ -76,7 +89,7 @@ foreach ($directory in @($sourceDirectory, $payload)) {
 }
 Expand-Archive -LiteralPath $sourceArchive -DestinationPath $sourceDirectory
 $source = Join-Path $sourceDirectory "HIDMaestro-$($pin.commit)"
-foreach ($name in @('device-ownership.patch', 'usb-audio-pacing.patch', 'managed-usbip.patch', 'dualsense-reports.patch')) {
+foreach ($name in @('device-ownership.patch', 'usb-audio-pacing.patch', 'managed-usbip.patch', 'dualsense-reports.patch', 'payload-policy.patch')) {
     $patch = Join-Path $patchRoot $name
     & git apply --check --unsafe-paths "--directory=$source" $patch
     if ($LASTEXITCODE -ne 0) { throw "Core patch $name no longer applies exactly to the pinned source" }
@@ -88,16 +101,21 @@ $payloadToolProject = Join-Path $patchRoot 'PayloadTool/PayloadTool.csproj'
 & $DotnetPath build $payloadToolProject -c Release --nologo
 if ($LASTEXITCODE -ne 0) { throw 'Core payload tool build failed' }
 $payloadTool = Join-Path $patchRoot 'PayloadTool/bin/Release/net10.0-windows10.0.26100.0/PayloadTool.dll'
-& $DotnetPath $payloadTool extract $originalCore $payload
+& $DotnetPath $payloadTool extract $originalCore $payload --policy $PolicyPath
 if ($LASTEXITCODE -ne 0) { throw 'Core resource extraction failed' }
+if ($payloadStage -eq 'audited-hid-v1') {
+    throw 'The audited-hid-v1 stage has no signed driver package provider in this repository; build composite-only-v1 instead'
+}
 & $DotnetPath build (Join-Path $patchRoot 'HIDMaestro.Core.csproj') -c Release --nologo `
     "-p:UpstreamSource=$source" "-p:PayloadDirectory=$payload" "-p:OutputPath=$output/" `
     "-p:CompatibilityManifestPath=$CompatibilityManifestPath" "-p:FoundationUsbipPolicy=$($compatibility.usbip.policy)" `
-    -p:IncludeSourceRevisionInInformationalVersion=false
+    "-p:PayloadPolicy=$payloadStage" -p:IncludeSourceRevisionInInformationalVersion=false
 if ($LASTEXITCODE -ne 0) { throw 'Patched Core build failed' }
 $core = Join-Path $output 'HIDMaestro.Core.dll'
-& $DotnetPath $payloadTool verify $originalCore $core $CompatibilityManifestPath
-if ($LASTEXITCODE -ne 0) { throw 'Patched Core changed the upstream ABI or embedded payload' }
+& $DotnetPath $payloadTool verify $originalCore $core $CompatibilityManifestPath --policy $PolicyPath
+if ($LASTEXITCODE -ne 0) { throw 'Patched Core changed the upstream ABI, the payload set or a pinned resource' }
+& $DotnetPath $payloadTool audit $core --policy $PolicyPath
+if ($LASTEXITCODE -ne 0) { throw 'Patched Core still carries resources denied by the payload policy' }
 & $DotnetPath $payloadTool test $core (Join-Path $root 'tools/sunshine-ds5-sidecar/profiles/dualsense.json') $CompatibilityManifestPath
 if ($LASTEXITCODE -ne 0) { throw 'Patched Core registry and device ownership regressions failed' }
 

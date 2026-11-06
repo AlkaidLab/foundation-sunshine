@@ -508,6 +508,16 @@ jobs:
           cp ./ds5-sidecar-package/Sunshine.Ds5Sidecar.x64.zip ../artifacts/
           cp ./ds5-sidecar-package.json ../artifacts/Sunshine.Ds5Sidecar.manifest.json
 
+      # Blocks the upload: the ZIP must not carry a tool or payload object that
+      # the reviewed policy does not allow (issue #1194).
+      - name: Audit DualSense payload
+        shell: pwsh
+        run: |
+          ./scripts/audit-ds5-payload.ps1 -Artifact ./artifacts/Sunshine.Ds5Sidecar.x64.zip -Report ./artifacts/ds5-payload-audit.json
+          if ($LASTEXITCODE -ne 0) {
+            throw "DualSense payload audit failed with exit code $LASTEXITCODE; see ds5-payload-audit.json"
+          }
+
       - name: Rename release assets
         shell: msys2 {0}
         run: |
@@ -556,6 +566,7 @@ jobs:
             artifacts/Sunshine.Ds5Sidecar.manifest.json
             artifacts/SHA256SUMS.txt
             artifacts/checksums.json
+            artifacts/ds5-payload-audit.json
           if-no-files-found: error
 
       - name: Create/Update GitHub Release

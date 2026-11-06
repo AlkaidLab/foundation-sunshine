@@ -57,6 +57,10 @@ if (
 # Rebuild only managed Core code, preserving the upstream ABI and payload.
 & (Join-Path $PSScriptRoot 'build-hidmaestro-core-patch.ps1') -PackageCache $PackageCache -DotnetPath $dotnet -CompatibilityManifestPath $CompatibilityManifestPath
 if ($LASTEXITCODE -ne 0) { throw 'HIDMaestro Core patch build failed' }
+$payloadDocument = Get-Content -LiteralPath (Join-Path $root 'tools/ds5-payload/policy.json') -Raw | ConvertFrom-Json
+if ($payloadDocument.payload_policy -eq 'composite-only-v1') {
+    Write-Warning 'Payload stage composite-only-v1: this component carries no driver catalog, so HID-only installs nowhere and runs only where the driver is already present. Make sure the release notes and the Control Panel build that ships with it reflect that (issue #1194).'
+}
 $core = Join-Path $buildRoot 'hidmaestro-core-patch/HIDMaestro.Core.dll'
 
 & $dotnet publish (Join-Path $root 'tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.csproj') `
@@ -85,6 +89,8 @@ $runtimeMetadata = @{
     target = 'win-x64-self-contained'
     hidmaestro_build_version = $version
     hidmaestro_build_sha256 = $expectedSha256.ToLowerInvariant()
+    payload_policy = $payloadDocument.payload_policy
+    hid_only_driver_deployable = ($payloadDocument.payload_policy -ne 'composite-only-v1')
 } | ConvertTo-Json
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText(

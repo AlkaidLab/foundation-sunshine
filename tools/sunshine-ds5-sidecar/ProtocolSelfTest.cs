@@ -931,8 +931,12 @@ internal static class ProtocolSelfTest
     private static void VerifyProfileSelection()
     {
         Require(DeviceRegistry.SelectProfileId(
-                0, Protocol.AttachFlags.None, true, true) == "dualsense",
+                0, Protocol.AttachFlags.None, true, true, "dualsense") == "dualsense",
             "HID-only attach profile selection");
+        Require(DeviceRegistry.SelectProfileId(
+                0, Protocol.AttachFlags.None, true, true, DeviceRegistry.HidOnlyUsbipProfileId) ==
+                DeviceRegistry.HidOnlyUsbipProfileId,
+            "HID-only USB/IP attach profile selection");
         using var stream = typeof(ProtocolSelfTest).Assembly.GetManifestResourceStream(
             "Sunshine.Ds5Sidecar.profiles.dualsense.json")
             ?? throw new InvalidOperationException("Bundled HID-only profile is missing");
@@ -943,17 +947,35 @@ internal static class ProtocolSelfTest
         Require(document.RootElement.GetProperty("extendedReport").GetProperty("alwaysArmed").GetBoolean(),
             "HID-only full input reports remain armed");
         Require(DeviceRegistry.SelectProfileId(
-                1, Protocol.AttachFlags.GenshinCompatibilityIdentity, true, true) ==
+                1, Protocol.AttachFlags.GenshinCompatibilityIdentity, true, true, "dualsense") ==
                 DualSenseHapticsAudio.GenshinCompatibilityProfileId,
             "Genshin compatibility attach profile selection");
         Require(DeviceRegistry.SelectProfileId(
-                1, Protocol.AttachFlags.None, true, true) ==
+                1, Protocol.AttachFlags.None, true, true, "dualsense") ==
                 DualSenseHapticsAudio.CompositeProfileId,
             "standard composite attach profile selection");
+        using (var usbipStream = typeof(ProtocolSelfTest).Assembly.GetManifestResourceStream(
+                   "Sunshine.Ds5Sidecar.profiles.dualsense-hid-usbip.json")
+               ?? throw new InvalidOperationException("Bundled HID-only USB/IP profile is missing"))
+        {
+            using var usbipDocument = JsonDocument.Parse(usbipStream);
+            var usbipRoot = usbipDocument.RootElement;
+            Require(usbipRoot.GetProperty("backend").GetString() == "usbip",
+                "HID-only USB/IP profile backend");
+            var configuration = usbipRoot.GetProperty("usbConfiguration");
+            var interfaces = configuration.GetProperty("interfaces");
+            Require(interfaces.GetArrayLength() == 1 &&
+                    interfaces[0].GetProperty("function").GetString() == "hid",
+                "HID-only USB/IP profile carries only the HID function");
+            Require(!configuration.TryGetProperty("audioControls", out _),
+                "HID-only USB/IP profile carries no audio controls");
+            Require(usbipRoot.GetProperty("descriptor").GetString()!.Length == 273 * 2,
+                "HID-only USB/IP report descriptor length");
+        }
         try
         {
             DeviceRegistry.SelectProfileId(
-                0, Protocol.AttachFlags.GenshinCompatibilityIdentity, true, true);
+                0, Protocol.AttachFlags.GenshinCompatibilityIdentity, true, true, "dualsense");
             Require(false, "Genshin compatibility HID attach rejection");
         }
         catch (InvalidDataException)

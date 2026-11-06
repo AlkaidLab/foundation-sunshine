@@ -15,7 +15,12 @@ internal sealed class DeviceRegistry : IDisposable
         Protocol.Capability.AdaptiveTriggers |
         Protocol.Capability.AudioPolicyViolation;
 
+    /// <summary>The same HID function on the USB/IP backend. Needs no UMDF
+    /// driver and therefore no signed catalog.</summary>
+    internal const string HidOnlyUsbipProfileId = "dualsense-hid-usbip";
+
     private readonly HMContext _context = new();
+    private readonly string _hidOnlyProfileId;
     private readonly Dictionary<byte, ControllerSession> _controllers = new();
     private readonly Action<Protocol.Message> _emit;
     private readonly bool _authoredHapticsAvailable;
@@ -27,8 +32,16 @@ internal sealed class DeviceRegistry : IDisposable
     internal DeviceRegistry(Action<Protocol.Message> emit, bool enableCompositeMicrophonePrototype = false)
     {
         _emit = emit;
-        LoadPatchedProfiles();
+        RegisterPatchedProfiles(_context);
         _context.LoadDefaultProfiles();
+        // The UMDF path belongs to payload stages that can deploy a signed
+        // catalog. Every other stage uses the same HID function on the USB/IP
+        // backend, which needs no driver at all. "A driver happens to be
+        // installed" is not enough to use the UMDF path: the installer's fast
+        // path also requires a matching manifest hash, and a mismatch would fail
+        // closed in the middle of an attach.
+        _hidOnlyProfileId =
+            ComponentCompatibility.HidOnlyDriverDeployable ? "dualsense" : HidOnlyUsbipProfileId;
         _authoredHapticsAvailable = _context.GetProfile(DualSenseHapticsAudio.CompositeProfileId) is not null &&
                                     HMContext.IsUsbipBackendAvailable;
         _genshinCompatibilityAvailable = _authoredHapticsAvailable &&
@@ -75,13 +88,23 @@ internal sealed class DeviceRegistry : IDisposable
 
         var profileId = SelectProfileId(
             payload[2], (Protocol.AttachFlags)payload[3],
-            _authoredHapticsAvailable, _genshinCompatibilityAvailable);
+            _authoredHapticsAvailable, _genshinCompatibilityAvailable, _hidOnlyProfileId);
         var profile = _context.GetProfile(profileId)
                       ?? throw new InvalidOperationException($"HIDMaestro profile '{profileId}' is missing");
+        if (payload[2] == 0)
+            Console.Error.WriteLine($"HID-only transport: {profileId}");
+        // The USB/IP HID-only path needs the transport even though it needs no
+        // driver; say that plainly instead of failing later inside the backend.
+        if (profileId == HidOnlyUsbipProfileId && !HMContext.IsUsbipBackendAvailable)
+            throw new InvalidOperationException(
+                "This component provides the HID-only profile over USB/IP, but the USB/IP transport is unavailable. " +
+                "Install or repair the transport, or use the composite profile.");
         if (!profile.RequiresUsbipBackend)
             _context.InstallDriver();
 
-        if (profile.RequiresUsbipBackend)
+        // Audio policy belongs to the composite identity, not to the transport:
+        // the HID-only USB/IP profile has no audio interfaces to protect.
+        if (DualSenseHapticsAudio.IsCompositeProfile(profile.Id))
         {
             try
             {
@@ -260,7 +283,8 @@ internal sealed class DeviceRegistry : IDisposable
     /// <summary>Rejects unsupported flags or unavailable capabilities before selecting a controller identity.</summary>
     internal static string SelectProfileId(
         byte profileMode, Protocol.AttachFlags flags,
-        bool authoredHapticsAvailable, bool genshinCompatibilityAvailable)
+        bool authoredHapticsAvailable, bool genshinCompatibilityAvailable,
+        string hidOnlyProfileId)
     {
         if ((flags & ~Protocol.AttachFlags.GenshinCompatibilityIdentity) != 0)
             throw new InvalidDataException("Unsupported DS5 attach flags");
@@ -273,7 +297,7 @@ internal sealed class DeviceRegistry : IDisposable
         {
             // v1.12.0 leaves JSON profiles on Windows' native mapping path
             // and removes exact legacy SDK tables; no usage override is needed.
-            0 => "dualsense",
+            0 => hidOnlyProfileId,
             1 when genshinCompatibility && genshinCompatibilityAvailable =>
                 DualSenseHapticsAudio.GenshinCompatibilityProfileId,
             1 when genshinCompatibility =>
@@ -287,8 +311,9 @@ internal sealed class DeviceRegistry : IDisposable
     /// <summary>Captures existing endpoints before creation so another controller cannot satisfy provisioning.</summary>
     private (HMController Controller, string? EndpointId) CreateController(HMProfile profile)
     {
-        var defaults = profile.RequiresUsbipBackend ? DefaultAudioEndpointSnapshot.Capture() : null;
-        var previous = profile.RequiresUsbipBackend
+        var audioProfile = DualSenseHapticsAudio.IsCompositeProfile(profile.Id);
+        var defaults = audioProfile ? DefaultAudioEndpointSnapshot.Capture() : null;
+        var previous = audioProfile
             ? DefaultAudioEndpointGuard.GetActiveVirtualDualSenseRenderEndpoints()
                 .ToHashSet(StringComparer.OrdinalIgnoreCase)
             : null;
@@ -383,7 +408,10 @@ internal sealed class DeviceRegistry : IDisposable
     }
 
     /// <summary>Registers pinned profiles before SDK defaults and derives the Genshin composite identity.</summary>
-    private void LoadPatchedProfiles()
+    /// <summary>Registers the embedded profile copies on a context. Static so the
+    /// probe can load exactly the profiles a session would use, including the
+    /// HID-only USB/IP profile that replaces the UMDF path.</summary>
+    internal static void RegisterPatchedProfiles(HMContext context)
     {
         // Register Sunshine's always-armed profile copies before the stock
         // catalog. HIDMaestro keeps the first profile for duplicate ids.
@@ -391,7 +419,7 @@ internal sealed class DeviceRegistry : IDisposable
         try
         {
             var assembly = typeof(DeviceRegistry).Assembly;
-            foreach (var id in new[] { "dualsense", "dualsense-composite" })
+            foreach (var id in new[] { "dualsense", "dualsense-composite", "dualsense-hid-usbip" })
             {
                 var resourceName = $"Sunshine.Ds5Sidecar.profiles.{id}.json";
                 using var stream = assembly.GetManifestResourceStream(resourceName)
@@ -411,7 +439,7 @@ internal sealed class DeviceRegistry : IDisposable
                         compatibilityProfile);
                 }
             }
-            if (_context.LoadProfilesFromDirectory(directory.FullName) < 3)
+            if (context.LoadProfilesFromDirectory(directory.FullName) < 4)
                 throw new InvalidOperationException("Patched DualSense profiles did not fully register");
         }
         catch (Exception error)

@@ -39,5 +39,8 @@
          hardware behaviour. -->
     <EmbeddedResource Include="profiles\dualsense.json" LogicalName="Sunshine.Ds5Sidecar.profiles.dualsense.json" />
     <EmbeddedResource Include="profiles\dualsense-composite.json" LogicalName="Sunshine.Ds5Sidecar.profiles.dualsense-composite.json" />
+    <!-- Issue #1194: the same HID function on the USB/IP backend, so HID-only
+         needs neither a UMDF driver nor a signed catalog. -->
+    <EmbeddedResource Include="profiles\dualsense-hid-usbip.json" LogicalName="Sunshine.Ds5Sidecar.profiles.dualsense-hid-usbip.json" />
   </ItemGroup>
 </Project>

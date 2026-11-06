@@ -1,9 +1,10 @@
 # Foundation HIDMaestro Core patch
 
-Sidecar component 1.4.2 uses HIDMaestro v1.12.0 with managed-code patches for
-device-cleanup ownership, USB audio pacing, externally managed USB/IP and
-DualSense report metadata. The v1.12.0 API, assembly/file versions and all
-official embedded resources are preserved. The complete component includes Core,
+The DualSense sidecar uses HIDMaestro v1.12.0 with managed-code patches for
+device-cleanup ownership, USB audio pacing, externally managed USB/IP, DualSense
+report metadata and payload policy. The v1.12.0 public API, assembly identity and
+every surviving embedded resource are preserved; the payload is the
+policy-filtered subset described below, not the upstream set. The complete component includes Core,
 runtime, licenses and notices; the Control Panel uses verified staging and
 whole-component rollback. Sidecar checks the exact runtime version and
 `FoundationCorePatch=device-ownership-1` before any SDK operation, even probing.
@@ -26,11 +27,16 @@ longer disable these upstream writers or cleanup paths.
   missing parent alone is insufficient.
 
 The patch applies to the exact source commit and archive digest in
-`upstream.json`. `scripts/build-hidmaestro-core-patch.ps1` extracts all embedded
-resources from the separately hash-verified official release and rebuilds only
-C# code. No upstream build targets, WDK or native-driver rebuild are needed.
-Validation compares the public API, assembly identity and every embedded
-resource against the v1.12.0 release. Registry regressions run in a redirected,
+`upstream.json`. `scripts/build-hidmaestro-core-patch.ps1` rebuilds only C# code
+from that source and takes its embedded resources from the separately
+hash-verified official release. No upstream build targets, WDK or native-driver
+rebuild are needed.
+
+Resources are chosen by `tools/ds5-payload/policy.json`: a resource is either
+absent because the policy denies it, or present and byte-identical to the
+release. Validation rejects any resource the policy does not allow and any
+changed byte, so dropping a tool is a reviewed policy change rather than a
+silent deletion. Registry regressions run in a redirected,
 disposable HKCU hive and exercise JSON mappings, exact legacy-table removal,
 foreign edits, OEM claim/release, interface cleanup and HID ownership evidence.
 They do not deploy drivers or remove PnP devices.
@@ -59,9 +65,18 @@ replacement but still permits initial installation and devnode restart.
 The single compatibility contract is the GUI submodule's
 `src-tauri/component-compatibility.json`. GUI policy, build-time upstream ABI/
 driver/installer hash checks, and the embedded Sidecar/Core contract use it.
-The original 394 resources remain byte-identical; one contract resource is added.
+Of the 394 upstream resources, 345 survive the policy byte-identical and 49 are
+denied (signing tool chain, Inf2Cat family, arm64 payload, usbip installers,
+SteamVR payload). One contract resource is added.
 The extra `FoundationUsbipPolicy=externally-managed-v1` marker prevents an older
 driver-deploying Core from being mistaken for the managed runtime.
+
+`payload-policy.patch` removes the signing and cataloguing tool trees from the
+staged payload and refuses to deploy a payload that carries no signed catalog.
+The check runs after the installer's fast path and before anything touches the
+DriverStore or the PnP tree, so a composite-only component cannot remove a
+driver that an earlier component installed and is still using. Machines that
+already have the driver keep working through the fast path.
 
 `dualsense-reports.patch` adds the profile semantic `deviceTimestamp` for a
 32-bit, 3 MHz host QPC clock. `DualSenseClock.cs` is compiled into both Core and
