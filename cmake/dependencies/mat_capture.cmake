@@ -1,6 +1,7 @@
 # The native audio ABI uses MSVC even when the host is built with MinGW.
 # Ship first-party capture code only; Dolby components remain system prerequisites.
-if (NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+option(SUNSHINE_BUILD_MAT_CAPTURE "Build and bundle Windows MAT capture components (requires MSVC)" ON)
+if (NOT SUNSHINE_BUILD_MAT_CAPTURE OR NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
     return()
 endif ()
 find_program(MAT_POWERSHELL powershell REQUIRED)

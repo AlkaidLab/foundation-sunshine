@@ -8,6 +8,11 @@ required. Automatic selection requires one unambiguous audiodg; unsupported
 components or ambiguous engines fail visibly, without changing endpoints or
 trying several engines. The following manual commands are developer diagnostics.
 
+Host builds bundle these components by default. For a MinGW-only build without
+Visual Studio, configure Sunshine with `-DSUNSHINE_BUILD_MAT_CAPTURE=OFF`.
+This omits the MAT build target and packaged capture files; normal Sunshine
+builds no longer invoke MSVC for MAT. Leave the option enabled to bundle capture.
+
 This opt-in tool captures pre-mix object passes and hands owned PCM/XYZ/gain to
 the dedicated native worker, then publishes complete IEC carrier cycles through
 the private live pipe. The selected UUYC/plugin route uses

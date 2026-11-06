@@ -4,7 +4,9 @@
 include(${CMAKE_MODULE_PATH}/packaging/FetchDriverDeps.cmake)
 
 install(TARGETS sunshine RUNTIME DESTINATION "." COMPONENT application)
+set(SUNSHINE_MAT_CAPTURE_AVAILABLE 0)
 if (TARGET sunshine_mat_capture)
+  set(SUNSHINE_MAT_CAPTURE_AVAILABLE 1)
   install(FILES "${MAT_CAPTURE_BUILD}/sunshine-plugin-mat-capture.exe"
           DESTINATION "tools/mat-capture" COMPONENT application)
   configure_file("${CMAKE_SOURCE_DIR}/cmake/packaging/install_mat_capture.cmake.in"
