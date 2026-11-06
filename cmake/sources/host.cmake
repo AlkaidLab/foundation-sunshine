@@ -146,6 +146,10 @@ set(SUNSHINE_HOST_SOURCES
     src/remote_usb/usbip_stale_port_sweep.cpp
     src/remote_usb/usbip_endpoint.h
 
+    # src/virtual_usb
+    src/virtual_usb/device.h
+    src/virtual_usb/uac1_microphone.cpp src/virtual_usb/uac1_microphone.h
+
     # src/ai
     src/ai/credential_store.cpp src/ai/credential_store.h
     src/ai/http.cpp src/ai/http.h

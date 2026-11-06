@@ -155,6 +155,13 @@ target_link_libraries(pair_link_unit_tests PRIVATE gtest_main sunshine_project_o
 set_target_properties(pair_link_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME pair_link_unit_tests COMMAND pair_link_unit_tests)
 
+add_executable(uac1_microphone_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/virtual_usb/uac1_microphone.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_uac1_microphone.cpp)
+target_include_directories(uac1_microphone_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(uac1_microphone_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(uac1_microphone_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME uac1_microphone_unit_tests COMMAND uac1_microphone_unit_tests)
 
 add_executable(config_overrides_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_config_overrides.cpp)
 target_include_directories(config_overrides_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
@@ -1020,11 +1027,16 @@ list(REMOVE_ITEM TEST_SOURCES
         ${CMAKE_SOURCE_DIR}/tests/unit/test_perf_frame_rates.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_pyrowave.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_usb_host_controller.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_usbip_stale_port_sweep.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_rtsp.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_session_auth_routes.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_session_store.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_sunshinesvc_state.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_tray_state.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_uac1_microphone.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_video_probe.cpp
-        ${CMAKE_SOURCE_DIR}/tests/unit/test_virtual_touchscreen_device.cpp)
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_virtual_touchscreen_device.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/pairing_pending_platform_stubs.cpp)
 
 set(ABR_TEST_STUB_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/abr_test_stubs.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${ABR_TEST_STUB_SOURCE})
