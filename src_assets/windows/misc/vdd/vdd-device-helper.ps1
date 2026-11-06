@@ -525,7 +525,7 @@ function Remove-AllVddDevices([string] $NefconPath, [int] $WaitSeconds = $device
         }) -join ', '))
 }
 
-function Get-PublishedVddPackages([string[]] $RequiredInfNames = @()) {
+function Get-PublishedVddPackages([string[]] $RequiredInfNames = @(), [switch] $Strict) {
     # Match the exact hardware ID instead of parsing localized pnputil output.
     $infDirectory = Join-Path $env:SystemRoot 'INF'
     $packages = foreach ($inf in @(Get-ChildItem -LiteralPath $infDirectory -Filter 'oem*.inf' -File)) {
@@ -539,6 +539,9 @@ function Get-PublishedVddPackages([string[]] $RequiredInfNames = @()) {
                 -ErrorAction Stop)
         }
         catch {
+            if ($Strict) {
+                throw "Failed to inspect driver package $($inf.Name): $($_.Exception.Message)"
+            }
             if ($RequiredInfNames -icontains $inf.Name) {
                 throw "Failed to inspect active VDD package $($inf.Name): $($_.Exception.Message)"
             }
@@ -667,6 +670,180 @@ function Set-VddConfiguration([object] $Payload) {
     }
 }
 
+# The hive is a variable so the record helpers can be exercised without an
+# elevated hive in tests; production always uses LocalMachine.
+$vddCertificateRecordRoot = [Microsoft.Win32.Registry]::LocalMachine
+$vddCertificateRecordPath = 'SOFTWARE\ZakoTech\ZakoDisplayAdapter'
+$vddCertificateRecordName = 'TrustedCertificateThumbprints'
+$vddCertificateRecordSchemaName = 'CertificateRecordSchema'
+$vddCertificateRecordSchema = 1
+
+# Reads the certificate the payload will install. The staged copy under Dist can
+# belong to the previous package, so only an uninstall may prefer it.
+function Get-VddCertificate([object] $Payload, [switch] $Installed) {
+    $candidates = @(
+        (Join-Path $Payload.DriverDir 'ZakoVDD.cer'),
+        (Join-Path $Payload.Paths.Dist 'ZakoVDD.cer'))
+    if ($Installed) {
+        $candidates = @($candidates[1], $candidates[0])
+    }
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath $candidate) {
+            $resolved = (Resolve-Path -LiteralPath $candidate).Path
+            return New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($resolved)
+        }
+    }
+    return $null
+}
+
+function Get-VddCertificateInfo([object] $Payload) {
+    $certificate = Get-VddCertificate $Payload
+    if (-not $certificate) {
+        return [pscustomobject]@{ Subject = ''; Thumbprint = ''; Trusted = $false }
+    }
+    $trusted = $false
+    foreach ($store in @('Root', 'TrustedPublisher')) {
+        if (Test-Path -LiteralPath (Join-Path ('Cert:\LocalMachine\' + $store) $certificate.Thumbprint)) {
+            $trusted = $true
+        }
+    }
+    return [pscustomobject]@{
+        Subject = $certificate.Subject
+        Thumbprint = $certificate.Thumbprint
+        Trusted = $trusted
+    }
+}
+
+# Every certificate entry this installation adds is recorded per store, so an
+# upgrade that switches signers cannot orphan the previous trust anchor, and an
+# anchor that predates the install is never removed.
+function Get-VddCertificateRecordInitialized {
+    $key = $vddCertificateRecordRoot.OpenSubKey($vddCertificateRecordPath)
+    if (-not $key) {
+        return $false
+    }
+    try {
+        return ([int] $key.GetValue($vddCertificateRecordSchemaName, 0)) -eq $vddCertificateRecordSchema
+    }
+    finally {
+        $key.Dispose()
+    }
+}
+
+function Initialize-VddCertificateRecord {
+    $key = $vddCertificateRecordRoot.CreateSubKey($vddCertificateRecordPath)
+    try {
+        $key.SetValue(
+            $vddCertificateRecordSchemaName,
+            $vddCertificateRecordSchema,
+            [Microsoft.Win32.RegistryValueKind]::DWord)
+    }
+    finally {
+        $key.Dispose()
+    }
+}
+
+function Get-VddRecordedCertificateEntries {
+    $key = $vddCertificateRecordRoot.OpenSubKey($vddCertificateRecordPath)
+    if (-not $key) {
+        return @()
+    }
+    try {
+        return @($key.GetValue($vddCertificateRecordName, @()) | Where-Object { $_ })
+    }
+    finally {
+        $key.Dispose()
+    }
+}
+
+function Add-VddRecordedCertificateEntry([string] $Store, [string] $Thumbprint) {
+    if (-not $Store -or -not $Thumbprint) {
+        return
+    }
+    $entry = $Store + ':' + $Thumbprint
+    $key = $vddCertificateRecordRoot.CreateSubKey($vddCertificateRecordPath)
+    try {
+        $recorded = @($key.GetValue($vddCertificateRecordName, @()) | Where-Object { $_ })
+        if ($recorded -inotcontains $entry) {
+            $key.SetValue(
+                $vddCertificateRecordName,
+                [string[]] ($recorded + $entry),
+                [Microsoft.Win32.RegistryValueKind]::MultiString)
+        }
+    }
+    finally {
+        $key.Dispose()
+    }
+}
+
+function Clear-VddRecordedCertificateEntries {
+    $key = $vddCertificateRecordRoot.OpenSubKey($vddCertificateRecordPath, $true)
+    if (-not $key) {
+        return
+    }
+    try {
+        $key.DeleteValue($vddCertificateRecordName, $false)
+        $key.DeleteValue($vddCertificateRecordSchemaName, $false)
+    }
+    finally {
+        $key.Dispose()
+    }
+}
+
+function Remove-VddCertificate([object] $Payload) {
+    $entries = New-Object System.Collections.Generic.List[string]
+    if ((Get-VddCertificateRecordInitialized) -or @(Get-VddRecordedCertificateEntries).Count -gt 0) {
+        # This installer wrote the record: remove exactly the store entries it
+        # added and leave every other trust anchor alone.
+        foreach ($entry in @(Get-VddRecordedCertificateEntries)) {
+            if (-not $entries.Contains($entry)) {
+                $entries.Add($entry)
+            }
+        }
+        if ($entries.Count -eq 0) {
+            return $true
+        }
+    }
+    else {
+        # An installation from before the record existed. Nothing records which
+        # store entries it created, so assume both.
+        $certificate = Get-VddCertificate $Payload -Installed
+        if (-not $certificate) {
+            return $true
+        }
+        foreach ($store in @('Root', 'TrustedPublisher')) {
+            $entries.Add($store + ':' + $certificate.Thumbprint)
+        }
+    }
+
+    $certutil = Join-Path $env:SystemRoot 'System32\certutil.exe'
+    $failed = $false
+    foreach ($entry in $entries) {
+        $separator = $entry.IndexOf(':')
+        if ($separator -le 0) {
+            continue
+        }
+        $store = $entry.Substring(0, $separator)
+        $thumbprint = $entry.Substring($separator + 1)
+        $storePath = Join-Path ('Cert:\LocalMachine\' + $store) $thumbprint
+        if (-not (Test-Path -LiteralPath $storePath)) {
+            continue
+        }
+        & $certutil -delstore $store $thumbprint | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            $failed = $true
+            Write-Warning "Failed to remove the VDD signing certificate $thumbprint from $store (exit code $LASTEXITCODE)."
+        }
+    }
+    if ($failed) {
+        # Keep the record so a later uninstall can retry.
+        return $false
+    }
+    Clear-VddRecordedCertificateEntries
+    Write-Host 'Removed the VDD signing certificates from the machine trust stores.'
+    return $true
+}
+
 function Add-VddDriverPackage([object] $Payload) {
     $certificate = Join-Path $Payload.Paths.Dist 'ZakoVDD.cer'
     $inf = Join-Path $Payload.Paths.Dist 'ZakoVDD.inf'
@@ -676,9 +853,26 @@ function Add-VddDriverPackage([object] $Payload) {
         }
     }
 
+    $trustedCertificate = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2(
+        (Resolve-Path -LiteralPath $certificate).Path)
+    $rootAlreadyTrusted = Test-Path -LiteralPath (
+        Join-Path 'Cert:\LocalMachine\Root' $trustedCertificate.Thumbprint)
+    $publisherAlreadyTrusted = Test-Path -LiteralPath (
+        Join-Path 'Cert:\LocalMachine\TrustedPublisher' $trustedCertificate.Thumbprint)
+
     & (Join-Path $env:SystemRoot 'System32\certutil.exe') -addstore -f root $certificate
     if ($LASTEXITCODE -ne 0) {
         throw "Failed to import the VDD certificate (exit code $LASTEXITCODE)."
+    }
+    # Record only the store entries this installation introduced. Windows adds the
+    # publisher entry while the package is installed, so an entry that was absent
+    # now belongs to this installation.
+    Initialize-VddCertificateRecord
+    if (-not $rootAlreadyTrusted) {
+        Add-VddRecordedCertificateEntry 'Root' $trustedCertificate.Thumbprint
+    }
+    if (-not $publisherAlreadyTrusted) {
+        Add-VddRecordedCertificateEntry 'TrustedPublisher' $trustedCertificate.Thumbprint
     }
 
     Write-Output 'Staging VDD driver package...'
@@ -914,6 +1108,12 @@ function Invoke-VddInstall(
         Write-Output ('CURRENT_VDD_STATUS=' + $decision.CurrentStatus)
         Write-Output ('CURRENT_VDD_PROBLEM=' + $(if ($device) { [int]$device.Problem } else { '' }))
         Write-Output ('BUNDLED_VDD_VERSION=' + $state.BundledVersion)
+        # The installer adds this certificate to the machine trust stores, so it
+        # must be visible before the user confirms an install.
+        $certificateInfo = Get-VddCertificateInfo $payload
+        Write-Output ('VDD_CERT_SUBJECT=' + $certificateInfo.Subject)
+        Write-Output ('VDD_CERT_THUMBPRINT=' + $certificateInfo.Thumbprint)
+        Write-Output ('VDD_CERT_TRUSTED=' + [int]$certificateInfo.Trusted)
         return
     }
 
@@ -1016,9 +1216,39 @@ function Invoke-VddUninstall([string] $Directory) {
         }
     }
 
+    # The certificate is only a trust anchor for the packages just removed. Keep
+    # it while any VDD package remains, and read it before Dist is deleted. A
+    # failed or unprovable cleanup keeps the record, so a later run can retry.
+    $certificateRemovalComplete = $false
+    if (-not $failure) {
+        $packagesRemain = $true
+        try {
+            $packagesRemain = @(Get-PublishedVddPackages -Strict).Count -gt 0
+        }
+        catch {
+            Write-Warning "Cannot confirm that every VDD driver package is gone: $($_.Exception.Message)"
+        }
+        if (-not $packagesRemain) {
+            try {
+                $certificateRemovalComplete = Remove-VddCertificate ([pscustomobject]@{
+                    Paths = $paths
+                    DriverDir = $paths.DriverRoot
+                })
+            }
+            catch {
+                Write-Warning "Failed to remove the VDD signing certificate: $($_.Exception.Message)"
+            }
+        }
+    }
+
     Write-Output 'Cleaning VDD files and registry...'
     Clear-VddTransaction ([pscustomobject]@{ Paths = $paths })
-    Remove-VddRegistry
+    if ($certificateRemovalComplete) {
+        Remove-VddRegistry
+    }
+    else {
+        Write-Warning 'Keeping the VDD registry record so a later uninstall can retry the certificate removal.'
+    }
     if (Test-Path -LiteralPath $paths.Dist) {
         Remove-Item -LiteralPath $paths.Dist -Recurse -Force
     }

@@ -619,6 +619,8 @@ $originalAddVddDriverPackage = ${function:Add-VddDriverPackage}
 $originalRemoveAllVddDevices = ${function:Remove-AllVddDevices}
 $originalRemoveVddRegistry = ${function:Remove-VddRegistry}
 $originalCleanupVddPackages = ${function:Cleanup-VddPackages}
+$originalGetPublishedVddPackages = ${function:Get-PublishedVddPackages}
+$originalRemoveVddCertificate = ${function:Remove-VddCertificate}
 $originalSetVddConfiguration = ${function:Set-VddConfiguration}
 $originalInstallVddDevice = ${function:Install-VddDevice}
 $originalRestoreVddDevice = ${function:Restore-VddDevice}
@@ -682,6 +684,13 @@ try {
     }
     function Save-VddTransaction { $script:workflowCalls += 'Journal' }
     function Clear-VddTransaction { $script:workflowCalls += 'Clear' }
+    function Get-PublishedVddPackages([string[]] $RequiredInfNames = @(), [switch] $Strict) {
+        if ($script:workflowPackagesRemain) { return @([pscustomobject]@{ InfName = 'oem42.inf' }) }
+        return @()
+    }
+    function Remove-VddCertificate([object] $Payload) {
+        return [bool] $script:workflowCertificateRemovalSucceeds
+    }
 
     $script:workflowCalls = @()
     $script:workflowDevices = @(New-TestDevice '100.0.16.6')
@@ -829,9 +838,24 @@ try {
     $script:vddRestartRequired = $false
 
     $script:workflowCalls = @()
+    $script:workflowPackagesRemain = $false
+    $script:workflowCertificateRemovalSucceeds = $true
     Invoke-VddUninstall $PSScriptRoot
     Assert-Equal -Expected 'Remove,Cleanup:,Clear,Registry' -Actual ($script:workflowCalls -join ',') `
-        -Message 'Uninstall must remove devices before packages and always clean the registry.'
+        -Message 'Uninstall must remove devices before packages and clean the registry once the certificate is gone.'
+
+    $script:workflowCalls = @()
+    $script:workflowCertificateRemovalSucceeds = $false
+    Invoke-VddUninstall $PSScriptRoot 3>$null
+    Assert-Equal -Expected 'Remove,Cleanup:,Clear' -Actual ($script:workflowCalls -join ',') `
+        -Message 'A failed certificate removal must keep the registry record for a retry.'
+
+    $script:workflowCalls = @()
+    $script:workflowCertificateRemovalSucceeds = $true
+    $script:workflowPackagesRemain = $true
+    Invoke-VddUninstall $PSScriptRoot 3>$null
+    Assert-Equal -Expected 'Remove,Cleanup:,Clear' -Actual ($script:workflowCalls -join ',') `
+        -Message 'A driver package that is still installed must keep the certificate and its record.'
 }
 finally {
     ${function:Resolve-VddPayload} = $originalResolveVddPayload
@@ -847,6 +871,8 @@ finally {
     ${function:Restore-VddDevice} = $originalRestoreVddDevice
     ${function:Save-VddTransaction} = $originalSaveVddTransaction
     ${function:Clear-VddTransaction} = $originalClearVddTransaction
+    ${function:Get-PublishedVddPackages} = $originalGetPublishedVddPackages
+    ${function:Remove-VddCertificate} = $originalRemoveVddCertificate
     Remove-Variable -Name workflowCalls -Scope Script -ErrorAction SilentlyContinue
     Remove-Variable -Name workflowDecision -Scope Script -ErrorAction SilentlyContinue
     Remove-Variable -Name workflowDevices -Scope Script -ErrorAction SilentlyContinue
@@ -854,6 +880,8 @@ finally {
     Remove-Variable -Name failWorkflowPackage -Scope Script -ErrorAction SilentlyContinue
     Remove-Variable -Name workflowRequestsRestart -Scope Script -ErrorAction SilentlyContinue
     Remove-Variable -Name workflowRestoreRequestsRestart -Scope Script -ErrorAction SilentlyContinue
+    Remove-Variable -Name workflowPackagesRemain -Scope Script -ErrorAction SilentlyContinue
+    Remove-Variable -Name workflowCertificateRemovalSucceeds -Scope Script -ErrorAction SilentlyContinue
     $script:vddRestartRequired = $false
 }
 

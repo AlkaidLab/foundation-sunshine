@@ -256,6 +256,37 @@ immediate refusal, and timeout cleanup; the production renderer build passes.
   automatically.
 - The script-backed uninstall path targets the current `Root\\ZakoVDD` package
   and reports its real result.
+- Installing the driver is preceded by a confirmation that names the signing
+  certificate, and uninstalling attempts to remove every certificate the
+  installation added.
+
+## Driver trust anchor
+
+The driver package is signed with a certificate that ships next to it as
+`ZakoVDD.cer`. Installing the package adds that certificate to the machine-wide
+Root store (Windows also records the publisher in the TrustedPublisher store),
+which makes the machine trust any kernel-mode code signed by it. Unless the
+upstream project signs release drivers with an attested certificate, this is a
+test certificate, so the trust change is part of what the user is agreeing to.
+
+Two behaviours keep that honest:
+
+- The installer probe reports the certificate subject, thumbprint and whether it
+  is already trusted (`VDD_CERT_SUBJECT`, `VDD_CERT_THUMBPRINT`,
+  `VDD_CERT_TRUSTED`). The install/repair confirmation names the certificate
+  from those facts, so the wording follows the payload instead of a hardcoded
+  subject when the upstream package is re-signed.
+- Every installation records the store entries it introduced (`Root` and
+  `TrustedPublisher`, with a schema marker) under
+  `HKLM\SOFTWARE\ZakoTech\ZakoDisplayAdapter`, so an upgrade that switches
+  signers cannot orphan the previous anchor and an anchor that predates the
+  installation is never removed. Uninstall attempts to remove the recorded
+  entries, but only after every VDD driver package has been removed. Without the
+  marker (an installation from before this change) it assumes both stores for the
+  installed certificate. A package that is still installed keeps its trust
+  anchor, and removal is best effort: a failure keeps the record (and skips the
+  registry cleanup that would delete it) so a later uninstall can retry, and is a
+  warning rather than an uninstall failure.
 
 ## Release-candidate clean-host checklist
 
