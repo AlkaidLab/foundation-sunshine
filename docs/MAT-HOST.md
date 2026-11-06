@@ -67,7 +67,8 @@ Windows 累积更新或 Dolby Access 商店更新改变这些文件后，MAT 不
 
 - 采集工具的 Preflight/Start 先输出每个组件的 `COMPONENT` 行（版本、哈希、是否支持），
   未验证时以退出码 3 结束，不挂钩也不提权；管理入口提示附上这些行反馈，
-  Status 显示 `Unsupported`。主机状态页此时仍显示「等待采集工具」。
+  Status 显示 `Unsupported`。自动采集遇到不支持的组件时同样以退出码 3 结束，
+  主机状态页显示错误及不支持的原因。
 - Dolby Access 按包族名查找当前安装目录，商店更新版本号或安装到其他盘不需要改代码；
   只要 DLL 内容仍在已验证列表即可继续使用。worker 在 audiodg 内仍校验目录形状和哈希。
 - 新版本须重新完成原生验收后，在 `mat_compat.h` 增加对应哈希。

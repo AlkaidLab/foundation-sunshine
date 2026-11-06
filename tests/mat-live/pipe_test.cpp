@@ -46,7 +46,27 @@ AutomaticLifetime() {
     CheckPipe(accepted == expected, "Installed capture ACL policy");
   }
   const auto name = L"Local\\SunshineMatLiveOwner-test-" + std::to_wstring(GetCurrentProcessId());
-  HANDLE stop = CreateEventW(nullptr, TRUE, FALSE, name.c_str());
+  PSECURITY_DESCRIPTOR descriptor = nullptr;
+  CheckPipe(ConvertStringSecurityDescriptorToSecurityDescriptorW(spatial_audio::mat_capture_stop_sddl, SDDL_REVISION_1, &descriptor, nullptr), "Owner stop ACL");
+  PACL acl = nullptr;
+  BOOL present = FALSE, unused = FALSE;
+  CheckPipe(GetSecurityDescriptorDacl(descriptor, &present, &acl, &unused) && present && acl, "Owner stop DACL");
+  bool observerFound = false;
+  for (DWORD i = 0; i < acl->AceCount; ++i) {
+    void *entry = nullptr;
+    CheckPipe(GetAce(acl, i, &entry), "Read owner stop ACL");
+    if (static_cast<ACE_HEADER *>(entry)->AceType != ACCESS_ALLOWED_ACE_TYPE) continue;
+    const auto *ace = static_cast<ACCESS_ALLOWED_ACE *>(entry);
+    if (IsWellKnownSid((PSID) &ace->SidStart, WinAuthenticatedUserSid)) {
+      CheckPipe(ace->Mask == SYNCHRONIZE, "Observers may wait but must not signal owner stop");
+      observerFound = true;
+    }
+  }
+  CheckPipe(observerFound, "Owner stop observer grant missing");
+  SECURITY_ATTRIBUTES sa { sizeof(sa), descriptor, FALSE };
+  HANDLE stop = CreateEventW(&sa, TRUE, FALSE, name.c_str());
+  LocalFree(descriptor);
+  CheckPipe(stop && SetEvent(stop) && ResetEvent(stop), "Creator must retain stop control");
   const auto created = native_mat_guard::created(GetCurrentProcess());
   bool rejected = false;
   try {

@@ -8,6 +8,7 @@
 #include <wtsapi32.h>
 
 namespace spatial_audio {
+  inline constexpr wchar_t mat_capture_stop_sddl[] = L"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x100000;;;AU)";
   class MatCaptureProcess {
     struct State {
       std::mutex mutex;
@@ -69,7 +70,7 @@ namespace spatial_audio {
           event += L"0123456789abcdef"[b & 15];
         }
         PSECURITY_DESCRIPTOR acl = nullptr;
-        if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(L"D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;0x100002;;;AU)", SDDL_REVISION_1, &acl, nullptr))
+        if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(mat_capture_stop_sddl, SDDL_REVISION_1, &acl, nullptr))
           throw std::runtime_error("MAT stop event permissions failed.");
         SECURITY_ATTRIBUTES sa { sizeof(sa), acl, FALSE };
         state->stop = CreateEventW(&sa, TRUE, FALSE, event.c_str());
