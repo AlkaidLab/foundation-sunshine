@@ -212,6 +212,7 @@ target_include_directories(config_overrides_unit_tests PRIVATE "${CMAKE_SOURCE_D
 target_link_libraries(config_overrides_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
 set_target_properties(config_overrides_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME config_overrides_unit_tests COMMAND config_overrides_unit_tests)
+
 # The published encoder snapshot and the probe reuse decision: header only, no driver or display.
 add_executable(encoder_snapshot_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_encoder_snapshot.cpp)
 target_include_directories(encoder_snapshot_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
@@ -231,6 +232,15 @@ if (WIN32)
     set_target_properties(log_retention_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
 add_test(NAME log_retention_unit_tests COMMAND log_retention_unit_tests)
+
+add_executable(default_apps_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_default_apps.cpp)
+target_sources(default_apps_unit_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/default_apps.cpp
+        ${CMAKE_SOURCE_DIR}/src/file_handler.cpp)
+target_include_directories(default_apps_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(default_apps_unit_tests PRIVATE gtest_main Boost::boost Boost::log Boost::property_tree sunshine_project_options sunshine_coverage)
+set_target_properties(default_apps_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME default_apps_unit_tests COMMAND default_apps_unit_tests)
 
 add_executable(client_interface_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_client_interface.cpp)
 target_include_directories(client_interface_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
@@ -1090,6 +1100,7 @@ list(REMOVE_ITEM TEST_SOURCES
         ${CMAKE_SOURCE_DIR}/tests/unit/test_config_runtime.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/config_runtime_stubs.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_current_capture_target.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_default_apps.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_encoder_snapshot.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_log_retention.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_launch_splash.cpp

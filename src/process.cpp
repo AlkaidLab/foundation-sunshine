@@ -27,6 +27,7 @@
 
 #include "config.h"
 #include "crypto.h"
+#include "default_apps.h"
 #include "display_device/session.h"
 #include "file_handler.h"
 #include "httpcommon.h"
@@ -1114,7 +1115,7 @@ namespace proc {
           };
         }
 
-        auto possible_ids = calculate_app_id(name, ctx.image_path, i++);
+        auto possible_ids = calculate_app_id(default_apps::id_name(app_node, name), ctx.image_path, i++);
         if (ids.count(std::get<0>(possible_ids)) == 0) {
           // Avoid using index to generate id if possible
           ctx.id = std::get<0>(possible_ids);
@@ -1129,6 +1130,12 @@ namespace proc {
         ctx.prep_cmds = std::move(prep_cmds);
         ctx.menu_cmds = std::move(menu_cmds);
         ctx.detached = std::move(detached);
+
+        bool opens_big_screen = false;
+#ifdef _WIN32
+        opens_big_screen = default_apps::opens_big_screen(app_node);
+#endif
+        ctx.fs_facts = client_interface::make_app_facts(ctx.id, ctx.cmd, opens_big_screen, ctx.image_path, app_node);
 
         apps.emplace_back(std::move(ctx));
       }

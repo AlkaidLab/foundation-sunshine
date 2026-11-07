@@ -21,6 +21,7 @@
 #include "build_info.h"
 #include "client_fingerprint.h"
 #include "confighttp.h"
+#include "default_apps.h"
 #include "display_device/session.h"
 #include "entry_handler.h"
 #include "file_handler.h"

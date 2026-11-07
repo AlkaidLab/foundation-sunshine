@@ -332,6 +332,26 @@ namespace tray_http {
       }
     }
 
+#ifdef _WIN32
+    /**
+     * @brief Opens the big screen (Foundation Desktop) in the user's session, as the tray's own "open desktop" item does.
+     * @details The same command as the Big Screen app entry and the Desktop app's open-after-connect switch: a panel that is running focuses the window it has, a second window is never opened.
+     * @return The reason it could not be opened (the panel is not installed, no user is signed in), or nothing.
+     */
+    std::optional<std::string>
+    open_big_screen() {
+      boost::filesystem::path working_dir;
+      std::error_code ec;
+      auto child = platf::run_command(false, false, "assets/gui/sunshine-gui.exe --desktop"s, working_dir, boost::this_process::environment(), nullptr, ec, nullptr);
+      if (ec) {
+        BOOST_LOG(warning) << "Couldn't open the big screen: "sv << ec.message();
+        return "Foundation Desktop could not be started: " + ec.message();
+      }
+      child.detach();
+      return std::nullopt;
+    }
+#endif
+
     nlohmann::json
     run_tray_action(
       const std::string &action,
@@ -446,6 +466,17 @@ namespace tray_http {
         config::update_config({ { "vdd_headless_create", config::video.vdd_headless_create_enabled ? "true" : "false" } });
         update_tray_vdd_state();
         return action_success(config::video.vdd_headless_create_enabled ? "Headless VDD auto-create enabled" : "Headless VDD auto-create disabled");
+      }
+
+      if (action == "open_desktop") {
+#ifdef _WIN32
+        if (const auto error = open_big_screen()) {
+          return action_error(*error);
+        }
+        return action_success("Big screen requested");
+#else
+        return action_error("The big screen is a Windows component");
+#endif
       }
 
       if (action == "clear_app") {
