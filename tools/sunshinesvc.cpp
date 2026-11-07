@@ -396,6 +396,90 @@ RunTerminationHelper(HANDLE console_token, DWORD pid) {
   return succeeded;
 }
 
+struct CoreProcess {
+  HANDLE handle = NULL;
+  DWORD process_id = 0;
+};
+
+// sunshinesvc.exe lives in <install>\\tools. Sunshine.exe is <install>\\Sunshine.exe.
+std::wstring
+InstallDirectory() {
+  std::wstring service_path(32768, L'\0');
+  const auto length = GetModuleFileNameW(NULL, service_path.data(), static_cast<DWORD>(service_path.size()));
+  if (length == 0 || length >= service_path.size()) {
+    return {};
+  }
+  service_path.resize(length);
+  const auto tools = service_path.find_last_of(L"\\/");
+  if (tools == std::wstring::npos || tools == 0) {
+    return {};
+  }
+  const auto install = service_path.find_last_of(L"\\/", tools - 1);
+  if (install == std::wstring::npos) {
+    return {};
+  }
+  return service_path.substr(0, install);
+}
+
+// Every Sunshine.exe whose image is this install, in any session. The service runs in session 0;
+// a user-mode copy runs in the console session. Both compete for the web port and the GPU
+// [dr-ms-kernel-namespaces-20261109] [dr-ms-queryfullprocessimagenamew-20261109].
+std::vector<CoreProcess>
+OpenInstallCores(const std::wstring &core_path) {
+  std::vector<CoreProcess> found;
+  if (core_path.empty()) {
+    return found;
+  }
+  const auto snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if (snapshot == INVALID_HANDLE_VALUE) {
+    return found;
+  }
+  PROCESSENTRY32W entry = {};
+  entry.dwSize = sizeof(entry);
+  if (!Process32FirstW(snapshot, &entry)) {
+    CloseHandle(snapshot);
+    return found;
+  }
+  do {
+    if (_wcsicmp(entry.szExeFile, L"sunshine.exe") != 0) {
+      continue;
+    }
+    const auto candidate = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE, FALSE, entry.th32ProcessID);
+    if (candidate == NULL) {
+      continue;
+    }
+    std::wstring image(32768, L'\0');
+    auto image_length = static_cast<DWORD>(image.size());
+    if (!QueryFullProcessImageNameW(candidate, 0, image.data(), &image_length) ||
+        !sunshinesvc::same_install_core(std::wstring_view { image.data(), image_length }, core_path)) {
+      CloseHandle(candidate);
+      continue;
+    }
+    found.push_back(CoreProcess { candidate, entry.th32ProcessID });
+  } while (Process32NextW(snapshot, &entry));
+  CloseHandle(snapshot);
+  return found;
+}
+
+// Keep the first and end the others. A second Sunshine.exe is what leaves the health check
+// unable to finish: both hold sockets and the graphics driver.
+void
+EndExtraCores(std::vector<CoreProcess> &cores, HANDLE log_file) {
+  for (std::size_t index = 1; index < cores.size(); ++index) {
+    auto &extra = cores[index];
+    const auto ended = TerminateProcess(extra.handle, 1);
+    const auto waited = WaitForSingleObject(extra.handle, 5000);
+    WriteServiceLog(log_file,
+      "Ended extra Sunshine.exe PID " + std::to_string(extra.process_id) +
+        (ended && waited == WAIT_OBJECT_0 ? " before starting the core" : "; it did not exit within 5 s"));
+    CloseHandle(extra.handle);
+    extra.handle = NULL;
+  }
+  if (!cores.empty()) {
+    cores.resize(1);
+  }
+}
+
 VOID WINAPI
 ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
   service_status_handle = RegisterServiceCtrlHandlerEx(SERVICE_NAME, HandlerEx, NULL);
@@ -557,21 +641,68 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
 
   const auto handle_gui_agent_exit = [&]() {
     DWORD exit_code = ERROR_PROCESS_ABORTED;
-    GetExitCodeProcess(gui_agent.handle, &exit_code);
+    if (!GetExitCodeProcess(gui_agent.handle, &exit_code) || exit_code == STILL_ACTIVE) {
+      // A missing status is not a menu quit. TerminateProcess does not run the
+      // agent's exit path, and STILL_ACTIVE would mean the wait raced the exit.
+      // [ms-getexitcodeprocess-20261109], [ms-terminating-a-process-20261109]
+      exit_code = ERROR_PROCESS_ABORTED;
+    }
     const auto exit_at_ms = GetTickCount64();
     const auto runtime_ms = exit_at_ms - gui_agent.acquired_at_ms;
     const auto exited_process_id = gui_agent.process_id;
     CloseGuiAgentHandle(gui_agent);
 
-    if (exit_code == ERROR_SUCCESS) {
+    std::wstring gui_directory;
+    std::wstring gui_path;
+    auto replacement = FindExistingGuiAgent(gui_agent_session_id, gui_directory, gui_path, exited_process_id);
+    const bool replacement_running = replacement.error == ERROR_SUCCESS && replacement.handle != NULL;
+    // The GUI performs a native fallback when WebView2 is absent and exits with
+    // a dedicated code. Do not turn that expected user-facing path into a
+    // service crash loop. [ds5-ms-webview2-distribution-20261109]
+    const bool suppress_missing_webview =
+      !replacement_running && exit_code == sunshinesvc::GUI_WEBVIEW2_MISSING_EXIT_CODE &&
+      gui_agent_restart_policy.note_webview2_missing(runtime_ms);
+    if (!replacement_running && exit_code != sunshinesvc::GUI_WEBVIEW2_MISSING_EXIT_CODE) {
+      gui_agent_restart_policy.reset_webview2_missing();
+    }
+    const auto action = suppress_missing_webview ? sunshinesvc::GuiAgentExitAction::suppress_launch : sunshinesvc::decide_gui_agent_exit(exit_code, replacement_running);
+
+    if (action == sunshinesvc::GuiAgentExitAction::adopt_replacement) {
+      gui_agent.handle = replacement.handle;
+      gui_agent.process_id = replacement.process_id;
+      gui_agent.acquired_at_ms = exit_at_ms;
+      gui_agent_restart_policy.resume_supervision();
+      gui_agent_retry_at_ms = 0;
+      gui_agent_last_error = ERROR_SUCCESS;
+      gui_agent_backoff.reset();
+      gui_agent_log_limiter.reset();
+      WriteServiceLog(log_file_handle,
+        "GUI agent exit in session " + std::to_string(gui_agent_session_id) +
+          " (PID " + std::to_string(exited_process_id) + ", exit code " + std::to_string(exit_code) +
+          ") left PID " + std::to_string(gui_agent.process_id) + " running; supervision attached to it");
+      return;
+    }
+    if (replacement.handle != NULL) {
+      CloseHandle(replacement.handle);
+    }
+
+    if (action == sunshinesvc::GuiAgentExitAction::suppress_launch) {
       gui_agent_restart_policy.suppress_launch();
       gui_agent_retry_at_ms = exit_at_ms + sunshinesvc::GUI_REATTACH_POLL_MS;
       gui_agent_last_error = ERROR_SUCCESS;
       gui_agent_backoff.reset();
+      if (suppress_missing_webview) {
         WriteServiceLog(log_file_handle,
-        "GUI agent exited cleanly in session " + std::to_string(gui_agent_session_id) +
+          "WebView2 Runtime missing; GUI restart suppressed after " +
+            std::to_string(sunshinesvc::GUI_WEBVIEW2_MISSING_MAX_FAILURES) +
+            " failures in session " + std::to_string(gui_agent_session_id));
+      }
+      else {
+        WriteServiceLog(log_file_handle,
+          "GUI agent quit deliberately in session " + std::to_string(gui_agent_session_id) +
             " (PID " + std::to_string(exited_process_id) +
             "); automatic launch suppressed while existing-process reattach remains active");
+      }
       return;
     }
 
@@ -612,8 +743,26 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
       continue;
     }
 
+    // One core per install. A leftover from the previous run (the service child that did not
+    // exit, or a user-mode Sunshine.exe) is supervised instead of joined by a second process.
+    const auto core_path = InstallDirectory() + L"\\Sunshine.exe";
+    auto cores = OpenInstallCores(core_path);
+    HANDLE job_handle = NULL;
+    PROCESS_INFORMATION process_info = {};
+    if (sunshinesvc::core_start_decision(!cores.empty()) == sunshinesvc::core_start_e::adopt) {
+      if (cores.size() > 1) {
+        EndExtraCores(cores, log_file_handle);
+      }
+      process_info.hProcess = cores[0].handle;
+      process_info.dwProcessId = cores[0].process_id;
+      process_info.hThread = NULL;
+      WriteServiceLog(log_file_handle,
+        "Sunshine.exe PID " + std::to_string(process_info.dwProcessId) +
+          " is already running; supervising it instead of starting another");
+    }
+    else {
       // Job objects cannot span sessions, so we must create one for each process
-    auto job_handle = CreateJobObjectForChildProcess();
+      job_handle = CreateJobObjectForChildProcess();
       if (job_handle == NULL) {
         CloseHandle(console_token);
         continue;
@@ -651,14 +800,6 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
     // needed.
     if (gui_agent.handle != NULL && WaitForSingleObject(gui_agent.handle, 0) == WAIT_OBJECT_0) {
       handle_gui_agent_exit();
-    }
-
-    if (!gui_agent_restart_policy.launch_allowed()) {
-      gui_agent_restart_policy.resume_supervision();
-      gui_agent_last_error = ERROR_SUCCESS;
-      gui_agent_retry_at_ms = 0;
-      gui_agent_backoff.reset();
-      gui_agent_log_limiter.reset();
     }
 
     // Keep the tray agent in the signed-in user's session so HKCU settings and

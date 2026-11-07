@@ -118,6 +118,29 @@ namespace platf {
   launch_gui_agent();
 
   /**
+   * @brief Start the bundled GUI agent and return a process handle.
+   * @param ec Set when the agent cannot be started. Cleared on success.
+   * @return A handle with SYNCHRONIZE and PROCESS_QUERY_LIMITED_INFORMATION,
+   *         or nullptr. The caller owns the handle. The process is not killed
+   *         when the handle is closed.
+   */
+  HANDLE
+  launch_gui_agent_process(std::error_code &ec);
+
+  /**
+   * @brief Watch the bundled GUI agent and start it again when it disappears
+   *        without a deliberate menu quit. Used when Core is not the service.
+   */
+  void
+  supervise_gui_agent();
+
+  /**
+   * @brief Stop watching. Does not terminate a running agent.
+   */
+  void
+  stop_gui_agent_supervisor();
+
+  /**
    * @brief Retrieve the current logged-in user's token.
    * @param elevated Whether to retrieve an elevated token if available.
    * @return The user's token handle, or nullptr if not available.
