@@ -382,6 +382,14 @@ if (WIN32)
     target_link_libraries(config_runtime_unit_tests PRIVATE ws2_32)
 endif ()
 add_test(NAME config_runtime_unit_tests COMMAND config_runtime_unit_tests)
+add_executable(gamepad_selection_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_gamepad_selection.cpp)
+target_include_directories(gamepad_selection_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(gamepad_selection_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+target_compile_definitions(gamepad_selection_unit_tests PUBLIC ${SUNSHINE_DEFINITIONS} ${TEST_DEFINITIONS})
+target_compile_options(gamepad_selection_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(gamepad_selection_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME gamepad_selection_unit_tests COMMAND gamepad_selection_unit_tests)
 
 add_executable(tray_state_unit_tests
         ${CMAKE_SOURCE_DIR}/src/tray/tray_state.cpp

@@ -25,6 +25,7 @@
 #include "src/globals.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
+#include "src/platform/gamepad_selection.h"
 
 // Note: HSYNTHETICPOINTERDEVICE and related functions are now included in
 // modern MinGW-w64 SDK (UCRT64). The declarations below are only needed for
@@ -490,10 +491,7 @@ namespace platf {
 
   static int
   gamepad_mode_from_preference(std::string_view preference) {
-    if (preference == "x360"sv) return 2;
-    if (preference == "ds4"sv) return 3;
-    if (preference == "ds5"sv) return 4;
-    return 1;
+    return gamepad_selection::mode_from_preference(preference);
   }
 
   void
@@ -545,8 +543,15 @@ namespace platf {
 
   static int
   selected_gamepad_mode(std::string_view client_gamepad) {
-    const bool client_declared = !client_gamepad.empty() && config::input.client_gamepad_override;
-    return client_declared ? gamepad_mode_from_preference(client_gamepad) : effective_gamepad_mode();
+    return gamepad_selection::select(
+      effective_gamepad_mode(), client_gamepad, config::input.client_gamepad_override, 0, 0);
+  }
+
+  static int
+  selected_gamepad_mode(std::string_view client_gamepad, const gamepad_arrival_t &metadata) {
+    return gamepad_selection::select(
+      effective_gamepad_mode(), client_gamepad, config::input.client_gamepad_override,
+      metadata.type, metadata.capabilities);
   }
 
   struct input_raw_t {

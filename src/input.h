@@ -7,6 +7,7 @@
 #include <functional>
 
 #include "platform/common.h"
+#include "platform/gamepad_selection.h"
 #include "thread_safe.h"
 
 namespace input {

@@ -9,9 +9,9 @@ extern "C" {
 #include <moonlight-common-c/src/Limelight.h>
 }
 
-#include <bitset>
 #include <array>
 #include <atomic>
+#include <bitset>
 #include <chrono>
 #include <cmath>
 #include <list>
@@ -210,7 +210,8 @@ namespace input {
       platf::feedback_queue_t feedback_queue,
       safe::mail_raw_t::event_t<std::chrono::steady_clock::time_point> input_activity_event,
       std::uint64_t session_id,
-      std::string client_gamepad):
+      std::string client_gamepad,
+      std::function<void()> on_pen_barrel_roll = {}):
         shortcutFlags {},
         gamepads(MAX_GAMEPADS),
 #ifdef SUNSHINE_TESTS
@@ -223,6 +224,7 @@ namespace input {
         input_activity_event { std::move(input_activity_event) },
         session_id { session_id },
         client_gamepad { std::move(client_gamepad) },
+        on_pen_barrel_roll { std::move(on_pen_barrel_roll) },
         mouse_left_button_timeout {},
         touch_port { { 0, 0, 0, 0 }, 0, 0, 0, 0, 0.0f, 0.0f, 1.0f },
         accumulated_vscroll_delta {},
@@ -247,6 +249,8 @@ namespace input {
     safe::mail_raw_t::event_t<std::chrono::steady_clock::time_point> input_activity_event;
     std::uint64_t session_id;
     std::string client_gamepad;
+    std::function<void()> on_pen_barrel_roll;
+    bool pen_barrel_roll_reported {};
 
     std::list<std::vector<uint8_t>> input_queue;
     std::mutex input_queue_lock;
@@ -259,9 +263,25 @@ namespace input {
     int32_t accumulated_hscroll_delta;
 
     std::array<std::chrono::steady_clock::time_point, MAX_GAMEPADS> last_unallocated_controller_log {};
+    /**
+     * 每个手柄槽位的只读事实（会话 API 回复用）。输入线程在分配/释放时持
+     * pad_facts_lock 写入，配置 API 经 input::pad_summary 读取。
+     */
+    std::array<platf::gamepad_selection::pad_facts_t, MAX_GAMEPADS> pad_facts {};
+    std::mutex pad_facts_lock;
   };
 
   constexpr auto CONTROLLER_WARNING_INTERVAL = 5s;
+
+  /** 槽位事实只由输入线程写入；越界编号（不可能出现）保持原样。 */
+  void
+  set_pad_facts(input_t &input, int controller_number, platf::gamepad_selection::pad_facts_t facts) {
+    if (controller_number < 0 || controller_number >= static_cast<int>(input.pad_facts.size())) {
+      return;
+    }
+    std::lock_guard lock(input.pad_facts_lock);
+    input.pad_facts[controller_number] = facts;
+  }
 
   /**
    * @brief 记录手柄未分配的告警，并按控制器编号限频。
@@ -296,6 +316,15 @@ namespace input {
       }
     }
     return false;
+  }
+
+  platf::gamepad_selection::pad_facts_t
+  pad_summary(const std::shared_ptr<input_t> &input) {
+    if (!input) {
+      return {};
+    }
+    std::lock_guard lock(input->pad_facts_lock);
+    return platf::gamepad_selection::summarize_pads(input->pad_facts.data(), input->pad_facts.size());
   }
 
   bool
@@ -1560,6 +1589,10 @@ namespace input {
       }
 
       gamepad.reset_state();
+      BOOST_LOG(info) << "Controller created by a multi-controller packet (no arrival data): controllerNumber="sv << packet->controllerNumber
+                      << " activeGamepadMask=0x"sv << std::hex << static_cast<unsigned>(static_cast<std::uint16_t>(packet->activeGamepadMask)) << std::dec
+                      << " buttons=0x"sv << std::hex << static_cast<unsigned>(static_cast<std::uint16_t>(packet->buttonFlags)) << std::dec
+                      << " sticks="sv << packet->leftStickX << ','  << packet->leftStickY << ' ' << packet->rightStickX << ',' << packet->rightStickY;
       if (platf::alloc_gamepad(
             platf_input, { id, (uint8_t) packet->controllerNumber }, {}, input->feedback_queue, input->client_gamepad)) {
         free_id(gamepadMask, id);
@@ -2200,6 +2233,7 @@ namespace input {
    */
   void
   passthrough(std::shared_ptr<input_t> &input, std::vector<std::uint8_t> &&input_data) {
+    bool report_pen_barrel_roll = false;
     {
       std::lock_guard<std::mutex> lg(input->input_queue_lock);
       if (input->input_stopped) {
@@ -2232,12 +2266,20 @@ namespace input {
         auto *packet = reinterpret_cast<pen_wire::packet_t *>(input_data.data());
         if (util::endian::little(packet->pen.header.magic) == pen_wire::magic &&
             pen_wire::valid_size(input_data.size(), packet->pen.header.size)) {
+          if (!input->pen_barrel_roll_reported) {
+            input->pen_barrel_roll_reported = true;
+            report_pen_barrel_roll = true;
+          }
           auto azimuth = pen_wire::decode_roll(packet->pen.rotation);
           auto roll = input->pen_roll_probe.select(pen_wire::decode_roll(packet->barrelRoll), azimuth);
           packet->barrelRoll = util::endian::little(roll);
         }
       }
       input->input_queue.push_back(std::move(input_data));
+    }
+    if (report_pen_barrel_roll && input->on_pen_barrel_roll) {
+      auto callback = input->on_pen_barrel_roll;
+      task_pool.push([callback = std::move(callback)]() { callback(); });
     }
     task_pool.push(passthrough_next_message, input);
   }
@@ -2325,13 +2367,14 @@ namespace input {
   }
 
   std::shared_ptr<input_t>
-  alloc(safe::mail_t mail, std::uint64_t session_id, std::string client_gamepad) {
+  alloc(safe::mail_t mail, std::uint64_t session_id, std::string client_gamepad, std::function<void()> on_pen_barrel_roll) {
     auto input = std::make_shared<input_t>(
       mail->event<input::touch_port_t>(mail::touch_port),
       mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback),
       mail->event<std::chrono::steady_clock::time_point>(mail::input_activity),
       session_id,
-      std::move(client_gamepad));
+      std::move(client_gamepad),
+      std::move(on_pen_barrel_roll));
 
     // Workaround to ensure new frames will be captured when a client connects
     task_pool.pushDelayed([]() {
