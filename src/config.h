@@ -158,6 +158,7 @@ namespace config {
   struct stream_t {
     std::chrono::milliseconds ping_timeout;
     bool stop_on_last_video_session;
+    bool launch_splash;  ///< 启动画面: the Panel shows the app's name and stage on the streamed display until its window is up
 
     std::string file_apps;
 

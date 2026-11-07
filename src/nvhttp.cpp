@@ -52,9 +52,10 @@
 #include "file_mapping/service.h"
 #include "globals.h"
 #include "hdr/session_target.h"
-#include "image_enhancement/nr_defaults.h"
 #include "http_util.h"
 #include "httpcommon.h"
+#include "image_enhancement/nr_defaults.h"
+#include "launch_splash/launch_splash.h"
 #include "logging.h"
 #include "network.h"
 #include "network_reachability.h"
@@ -603,6 +604,20 @@ namespace nvhttp {
       return;
     }
 
+    // The launch is accepted: the Panel hears about it now, before the display and encoder setup (seconds), so its window is ready when the display is.
+    // Whatever ends this request without the app taking the announcement over withdraws it.
+    bool splash_announced = false;
+    if (appid > 0) {
+      const auto &apps = proc::proc.get_apps();
+      const auto app = std::find_if(apps.begin(), apps.end(), [&](const auto &candidate) { return candidate.id == std::to_string(appid); });
+      splash_announced = app != apps.end() && launch_splash::announce(*app);
+    }
+    auto withdraw_splash = util::fail_guard([&]() {
+      if (splash_announced) {
+        launch_splash::cancel_announced();
+      }
+    });
+
     host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     const auto launch_session = make_launch_session(host_audio, args);
     if (!launch_session) {
@@ -645,6 +660,10 @@ namespace nvhttp {
         return;
       }
     }
+    const auto launch_prepared = std::chrono::steady_clock::now();
+    if (splash_announced) {
+      launch_splash::display_ready();
+    }
 
     auto encryption_mode = net::encryption_mode_for_address(request->remote_endpoint().address());
     if (!launch_session->rtsp_cipher && encryption_mode == config::ENCRYPTION_MODE_MANDATORY) {
@@ -675,6 +694,15 @@ namespace nvhttp {
       }
     }
 
+    {
+      const auto launch_started = std::chrono::steady_clock::now();
+      const auto millis = [](std::chrono::steady_clock::duration d) {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(d).count();
+      };
+      BOOST_LOG(info) << "Launch timing: display and encoder setup "sv << millis(launch_prepared - launch_begin)
+                      << " ms, application start "sv << millis(launch_started - launch_prepared)
+                      << " ms, total before the answer "sv << millis(launch_started - launch_begin) << " ms"sv;
+    }
     if (!register_launch_ticket(tree, launch_session, "gamesession")) {
       // The application was started solely for this launch request. Roll it
       // back if the bounded ticket registry cannot publish the handshake.
@@ -871,6 +899,19 @@ namespace nvhttp {
                                    net::addr_to_url_escaped_string(request->local_endpoint().address()) + ':' +
                                    std::to_string(net::map_port(rtsp_stream::RTSP_SETUP_PORT)));
     tree.put("root.resume", 1);
+    // The app already runs. The Panel shows the launch splash only if the game's window is still missing a moment after this.
+    if (const auto running_app = proc::proc.running(); running_app > 0 && !proc::proc.get_app_cmd(running_app).empty()) {
+      const auto &apps = proc::proc.get_apps();
+      const auto app = std::find_if(apps.begin(), apps.end(), [&](const auto &candidate) { return candidate.id == std::to_string(running_app); });
+      if (app != apps.end() && launch_splash::begin(*app, launch_splash::kind_e::resume)) {
+        if (const auto pid = proc::proc.get_running_pid()) {
+          launch_splash::note_started(static_cast<std::uint32_t>(*pid), true);
+        }
+      }
+    }
+    reachability::observe_client(
+      net::addr_to_normalized_string(request->remote_endpoint().address()),
+      reachability::now_epoch_seconds());
     need_to_restore_display_state = false;
 
     try {

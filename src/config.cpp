@@ -543,6 +543,7 @@ namespace config {
   stream_t stream {
     10s,  // ping_timeout
     false,  // stop_on_last_video_session
+    true,  // launch_splash
 
     APPS_JSON_PATH,
 
@@ -994,6 +995,17 @@ namespace config {
     }
 
     input = to_bool(tmp);
+  }
+
+  /// 启动画面 takes effect at the next launch: a saved value is in force at once, the way the bitrate ceiling is (a key that is gone from the file is the default, on).
+  template <class Map>
+  void
+  apply_live_launch_splash(const Map &saved) {
+    bool value = true;
+    if (const auto found = saved.find("launch_splash"); found != saved.end() && !found->second.empty()) {
+      value = to_bool(found->second);
+    }
+    stream.launch_splash = value;
   }
 
   void
@@ -1576,6 +1588,7 @@ namespace config {
       stream.ping_timeout = std::chrono::milliseconds(to);
     }
     bool_f(vars, "stop_on_last_video_session", stream.stop_on_last_video_session);
+    bool_f(vars, "launch_splash", stream.launch_splash);
 
     int_between_f(vars, "lan_encryption_mode", stream.lan_encryption_mode, { 0, 2 });
     int_between_f(vars, "wan_encryption_mode", stream.wan_encryption_mode, { 0, 2 });
@@ -2011,6 +2024,7 @@ namespace config {
         const auto gamepad = configMap.find("gamepad");
         platf::set_global_gamepad_mode(gamepad == configMap.end() ? "auto"sv : std::string_view { gamepad->second });
       }
+      if (updates.contains("launch_splash")) apply_live_launch_splash(configMap);
       BOOST_LOG(info) << "Config updated successfully";
       return true;
     }
@@ -2168,6 +2182,7 @@ namespace config {
       }
       const auto gamepad = resultMap.find("gamepad");
       platf::set_global_gamepad_mode(gamepad == resultMap.end() ? "auto"sv : std::string_view { gamepad->second });
+      apply_live_launch_splash(resultMap);
 
       return true;
     }

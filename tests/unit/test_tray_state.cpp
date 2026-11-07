@@ -235,3 +235,40 @@ TEST_F(TrayStateTest, AcknowledgesOnlyCurrentNonPairingNotification) {
   EXPECT_TRUE(tray_state::to_json().at("notification").at("active"));
   tray_state::clear_pairing_required();
 }
+
+TEST_F(TrayStateTest, PublishesTheLaunchSplashAndOnlyWhenItChanges) {
+  tray_state::launch_t launch;
+  launch.id = "100-1";
+  launch.active = true;
+  launch.app_id = "13";
+  launch.app_name = "Genshin Impact";
+  launch.stage = "waiting-window";
+  launch.display = "\\\\.\\DISPLAY3";
+  launch.pids = { 4242, 4343 };
+  launch.started_at_ms = 100;
+  launch.deadline_ms = 60100;
+
+  const auto before = tray_state::get().revision;
+  tray_state::set_launch(launch);
+  const auto after = tray_state::get().revision;
+  EXPECT_GT(after, before);
+
+  tray_state::set_launch(launch);  // the same state again: no revision, no event for the Panel
+  EXPECT_EQ(tray_state::get().revision, after);
+
+  const auto json = tray_state::to_json();
+  const auto &published = json.at("launch");
+  EXPECT_EQ(published.at("id"), "100-1");
+  EXPECT_TRUE(published.at("active").get<bool>());
+  EXPECT_EQ(published.at("app_name"), "Genshin Impact");
+  EXPECT_EQ(published.at("stage"), "waiting-window");
+  EXPECT_EQ(published.at("display"), "\\\\.\\DISPLAY3");
+  EXPECT_EQ(published.at("pids"), nlohmann::json::array({ 4242, 4343 }));
+  EXPECT_EQ(published.at("deadline_ms"), 60100);
+  EXPECT_NE(std::find(json.at("capabilities").begin(), json.at("capabilities").end(), "launch-splash-v1"), json.at("capabilities").end());
+
+  launch.active = false;
+  tray_state::set_launch(launch);
+  EXPECT_GT(tray_state::get().revision, after);
+  EXPECT_FALSE(tray_state::to_json().at("launch").at("active").get<bool>());
+}

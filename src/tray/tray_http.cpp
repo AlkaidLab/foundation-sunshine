@@ -22,8 +22,12 @@
 #include "src/entry_handler.h"
 #include "src/globals.h"
 #include "src/http_util.h"
+#include "src/launch_splash/launch_splash.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
+#ifdef _WIN32
+  #include "src/platform/run_command.h"
+#endif
 #include "src/process.h"
 #include "src/thread_pool.h"
 #include "tray_state.h"
@@ -54,6 +58,7 @@ namespace tray_http {
       resp_https_t response;
       std::atomic_bool alive { true };
       std::mutex send_mutex;
+      bool launch_splash_ack = false;  ///< the subscriber answers launch_splash_shown, so the host waits for it before starting an app
     };
 
     std::mutex tray_subscribers_mutex;
@@ -564,6 +569,11 @@ namespace tray_http {
       if (!auth(response, request)) return;
 
       auto subscriber = std::make_shared<tray_subscriber_t>();
+      {
+        const auto query = request->parse_query_string();
+        const auto ack = query.find("launch_splash_ack");
+        subscriber->launch_splash_ack = ack != query.end() && ack->second == "1";
+      }
       subscriber->response = std::move(response);
       subscriber->response->close_connection_after_response = true;
 
@@ -614,6 +624,19 @@ namespace tray_http {
           }
           operation_id = body.at("operation_id").get<std::uint64_t>();
         }
+        if (action == "launch_splash_shown") {
+          // The Panel has the launch splash on the display with its first frame painted. This answers a waiting app start, so it takes no lock of the other actions.
+          const auto launch_id = body.value("launch_id", ""s);
+          const auto number = [&](const char *key) -> std::int64_t {
+            return body.contains(key) && body.at(key).is_number_integer() ? body.at(key).get<std::int64_t>() : 0;
+          };
+          const bool taken = !launch_id.empty() && launch_splash::note_shown(launch_id, number("panel_ms"), number("prepare_ms"));
+          nlohmann::json reply = taken ? action_success("Launch splash noted") : action_error("Launch splash is stale or not waiting");
+          reply["action"] = action;
+          reply["tray_state"] = tray_state::to_json();
+          send_json(std::move(response), reply);
+          return;
+        }
         auto result = run_tray_action(action, enabled, notification_id, operation_id);
         result["action"] = action;
         result["tray_state"] = tray_state::to_json();
@@ -651,6 +674,14 @@ namespace tray_http {
     }
 
   }  // namespace
+
+  int
+  launch_splash_ack_listeners() {
+    std::lock_guard lock { tray_subscribers_mutex };
+    return static_cast<int>(std::count_if(tray_subscribers.begin(), tray_subscribers.end(), [](const auto &subscriber) {
+      return subscriber->launch_splash_ack && subscriber->alive.load(std::memory_order_acquire);
+    }));
+  }
 
   void
   register_routes(https_server_t &server, auth_fn state_auth, auth_fn action_auth) {

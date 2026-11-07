@@ -63,9 +63,8 @@ extern "C" {
 #include "haptics/authored_ir.h"
 #include "haptics/authored_ir_extended.h"
 #include "haptics/wire.h"
-#include "nvhttp.h"
-#include "rtsp.h"
 #include "input.h"
+#include "launch_splash/launch_splash.h"
 #include "logging.h"
 #include "mic_mixer.h"
 #include "network.h"
@@ -4677,6 +4676,7 @@ namespace stream {
 
         // If this is the last non-control-only session, invoke the platform callbacks
         if (unregister_video_session() == 0) {
+          launch_splash::end();  // the stream ended: a splash that is still up goes with it
           bool restore_display_state { true };
           if (proc::proc.running()) {
             tray_state::set_paused(proc::proc.get_last_run_app_name());

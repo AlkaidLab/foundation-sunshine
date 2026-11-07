@@ -349,6 +349,22 @@ namespace tray_state {
     notify_changed();
   }
 
+  void
+  set_launch(launch_t launch) {
+    {
+      std::lock_guard lock { state_mutex };
+      const auto &old = current_state.launch;
+      if (old.id == launch.id && old.active == launch.active && old.kind == launch.kind && old.app_id == launch.app_id &&
+          old.app_name == launch.app_name && old.art == launch.art && old.stage == launch.stage && old.notice == launch.notice && old.display == launch.display && old.display_ready == launch.display_ready &&
+          old.pids == launch.pids && old.started_at_ms == launch.started_at_ms && old.deadline_ms == launch.deadline_ms) {
+        return;
+      }
+      current_state.launch = std::move(launch);
+      touch_locked();
+    }
+    notify_changed();
+  }
+
   std::uint64_t
   begin_operation(const std::string &action) {
     std::uint64_t operation_id;
@@ -405,7 +421,7 @@ namespace tray_state {
       { "protocol_version", protocol_version },
       { "instance_id", instance_id() },
       { "owner", tray_owner() },
-      { "capabilities", nlohmann::json::array({ "state-v1", "events-v1", "sessions-v1", "actions-v1", "operations-v1", "notification-ack", "pairing", "vdd", "shutdown" }) },
+      { "capabilities", nlohmann::json::array({ "state-v1", "events-v1", "sessions-v1", "actions-v1", "operations-v1", "notification-ack", "pairing", "vdd", "shutdown", "launch-splash-v1", "launch-splash-shown-v1" }) },
       { "status", current_presentation.status },
       { "icon", current_presentation.icon },
       { "tooltip", current_presentation.tooltip },
@@ -431,6 +447,22 @@ namespace tray_state {
           { "message", snapshot.notification.message },
           { "icon", snapshot.notification.icon },
           { "action", snapshot.notification.action },
+        } },
+      { "launch",
+        {
+          { "id", snapshot.launch.id },
+          { "active", snapshot.launch.active },
+          { "kind", snapshot.launch.kind },
+          { "app_id", snapshot.launch.app_id },
+          { "app_name", snapshot.launch.app_name },
+          { "art", snapshot.launch.art },
+          { "stage", snapshot.launch.stage },
+          { "notice", snapshot.launch.notice },
+          { "display", snapshot.launch.display },
+          { "display_ready", snapshot.launch.display_ready },
+          { "pids", snapshot.launch.pids },
+          { "started_at_ms", snapshot.launch.started_at_ms },
+          { "deadline_ms", snapshot.launch.deadline_ms },
         } },
       { "operation",
         {

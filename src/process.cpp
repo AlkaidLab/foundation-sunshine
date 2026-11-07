@@ -36,6 +36,7 @@
 #include "stream.h"
 #include "tray/system_tray.h"
 #include "tray/tray_state.h"
+#include "launch_splash/launch_splash.h"
 #include "utility.h"
 #include "webhook/webhook.h"
 
@@ -272,6 +273,7 @@ namespace proc {
         // permission_denied is typically returned when the user impersonation fails, which can happen when user is not signed in yet.
         if (!(_app.cmd.empty() && ec == std::errc::permission_denied)) {
           BOOST_LOG(error) << "Couldn't run ["sv << cmd.do_cmd << "]: System: "sv << ec.message();
+          launch_splash::fail("prep");
           return -1;
         }
 
@@ -290,6 +292,7 @@ namespace proc {
       auto ret = child.exit_code();
       if (ret != 0) {
         BOOST_LOG(error) << '[' << cmd.do_cmd << "] exited with code ["sv << ret << ']';
+        launch_splash::fail("prep");
         return -1;
       }
     }
@@ -320,6 +323,7 @@ namespace proc {
       _process = platf::run_command(_app.elevated, true, _app.cmd, working_dir, _env, _pipe.get(), ec, &_process_group);
       if (ec) {
         BOOST_LOG(warning) << "Couldn't run ["sv << _app.cmd << "]: System: "sv << ec.message();
+        launch_splash::fail("start");
         return -1;
       }
     }
@@ -375,6 +379,8 @@ namespace proc {
   proc_t::terminate() {
     std::error_code ec;
     placebo = false;
+    launch_splash::end();
+    const bool had_process = static_cast<bool>(_process);
     terminate_process_group(_process, _process_group, _app.exit_timeout);
     _process = boost::process::v1::child();
     _process_group = boost::process::v1::group();

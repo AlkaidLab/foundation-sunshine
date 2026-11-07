@@ -406,6 +406,23 @@ if (WIN32)
     set_target_properties(tray_state_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
 add_test(NAME tray_state_unit_tests COMMAND tray_state_unit_tests)
+
+# 启动画面: the stage vocabulary, the launcher status file and the rules that end the splash are pure.
+add_executable(launch_splash_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/launch_splash/launch_splash_model.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_launch_splash.cpp)
+target_include_directories(launch_splash_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(launch_splash_unit_tests
+        PRIVATE nlohmann_json::nlohmann_json
+        gtest_main
+        sunshine_project_options sunshine_coverage)
+target_compile_options(launch_splash_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(launch_splash_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(launch_splash_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME launch_splash_unit_tests COMMAND launch_splash_unit_tests)
+
 # Session and login-throttle policy are independent of a listening server and
 # of the platform display stack, so their suite stays a focused standalone
 # target on every host.
@@ -1060,6 +1077,7 @@ list(REMOVE_ITEM TEST_SOURCES
         ${CMAKE_SOURCE_DIR}/tests/unit/test_current_capture_target.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_encoder_snapshot.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_log_retention.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_launch_splash.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_display_scale_steps.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_endpoint_refresh.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_frame_contract.cpp
