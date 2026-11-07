@@ -163,7 +163,6 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/touch_keyboard_session.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/touch_keyboard_session.cpp"
 
-        "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_device_host/microphone_client.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_mouse.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_mouse.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/dsu_server.h"
@@ -210,6 +209,8 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/windows/audio_devices.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/audio_vb_cable_win.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/mic_write.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_microphone.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_microphone.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/usbip_device_transport.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/usbip_device_transport.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/paced_reply_queue.h"

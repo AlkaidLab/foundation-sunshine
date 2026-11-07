@@ -321,6 +321,13 @@ namespace confighttp::diagnostics {
                                 { "success", result.success },
                                 { "error_code", result.error_code },
                                 { "backend", result.backend },
+                                { "mode", result.mode.empty() ? "tone" : result.mode },
+                                { "input_peak", result.input_peak },
+                                { "input_active_ms", result.input_active_ms },
+                                { "heard_seconds", result.heard_seconds },
+                                { "windows_total", result.windows_total },
+                                { "windows_good", result.windows_good },
+                                { "heard_amplitude", result.heard_amplitude },
                               });
 #else
       send_response(response, nlohmann::json {
@@ -421,6 +428,9 @@ namespace confighttp::diagnostics {
                                 { "submit_errors", status.submit_errors },
                                 { "last_error", status.last_error },
                                 { "error_code", status.error_code },
+                                { "input_peak", status.input_peak },
+                                { "input_active_ms", status.input_active_ms },
+                                { "input_frames", status.input_frames },
                               });
 #else
       send_response(response, nlohmann::json {
