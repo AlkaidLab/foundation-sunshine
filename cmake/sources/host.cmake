@@ -227,6 +227,10 @@ set(SUNSHINE_HOST_SOURCES
     src/launch_splash/launch_splash.cpp src/launch_splash/launch_splash.h
     src/launch_splash/launch_splash_model.cpp src/launch_splash/launch_splash_model.h
     src/launch_splash/shown_gate.h
+    # src/sparxie
+    src/sparxie/model.cpp src/sparxie/model.h
+    src/sparxie/stream_display.cpp src/sparxie/stream_display.h
+    src/sparxie/sha256.h
     third-party/puff/puff.c third-party/puff/puff.h
 )
 list(TRANSFORM SUNSHINE_HOST_SOURCES PREPEND "${CMAKE_SOURCE_DIR}/")
