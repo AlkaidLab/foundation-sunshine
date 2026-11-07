@@ -8,7 +8,9 @@
 #include <vector>
 #include <filesystem>
 #include "mat_compat.h"
-#pragma comment(lib, "bcrypt.lib")
+#if defined(_MSC_VER)
+  #pragma comment(lib, "bcrypt.lib")
+#endif
 namespace native_mat_guard {
   inline std::wstring
   system(const wchar_t *file) {
