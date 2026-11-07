@@ -10,6 +10,7 @@
 #include "src/config.h"
 #include "src/confighttp/auth.h"
 #include "src/confighttp/common.h"
+#include "src/confighttp/usbip_root_helper.h"
 #include "src/display_device/session.h"
 #include "src/entry_handler.h"
 #include "src/file_handler.h"
@@ -433,6 +434,91 @@ namespace confighttp::diagnostics {
     }
 
 #ifdef _WIN32
+    /**
+     * Fixed arguments only. The time limit, the single repair, and the status
+     * cache live in usbip_root_helper.h. A timeout stops this child with
+     * TerminateProcess and does not touch any other process.
+     */
+    json
+    failure_response(const usbip_root::failure_note &note) {
+      json body {
+        { "success", false },
+        { "error", note.error },
+        { "ds4_fallback", note.ds4_fallback },
+      };
+      if (note.busy) body["busy"] = true;
+      if (note.timed_out) body["timed_out"] = true;
+      return body;
+    }
+
+    json
+    run_usbip_root_helper(std::string_view action_text) {
+      const auto action = usbip_root::parse_action(action_text);
+      if (action == usbip_root::action::unknown) {
+        return json {
+          { "success", false },
+          { "error", "usbip-win2 root helper action is not allowed" },
+          { "ds4_fallback", "DS4 fallback remains active because the usbip-win2 helper action is not allowed." },
+        };
+      }
+
+      auto &gate = usbip_root::shared_gate();
+      const bool repair = action == usbip_root::action::repair;
+      if (repair) {
+        if (gate.begin_repair(usbip_root::status_budget) != usbip_root::gate<>::repair_take::granted) {
+          return failure_response(usbip_root::busy_failure());
+        }
+      }
+      else {
+        const auto ticket = gate.acquire_status(usbip_root::status_budget + usbip_root::reader_grace);
+        if (ticket.take == usbip_root::gate<>::status_take::reuse) {
+          try {
+            return json::parse(ticket.body);
+          }
+          catch (const json::exception &) {
+            gate.drop_status_cache();
+          }
+        }
+        else if (ticket.take == usbip_root::gate<>::status_take::gave_up) {
+          return failure_response(usbip_root::timeout_failure());
+        }
+        if (ticket.take != usbip_root::gate<>::status_take::start) {
+          const auto again = gate.acquire_status(usbip_root::status_budget);
+          if (again.take == usbip_root::gate<>::status_take::reuse) {
+            try {
+              return json::parse(again.body);
+            }
+            catch (const json::exception &) {
+              gate.drop_status_cache();
+            }
+          }
+          if (again.take != usbip_root::gate<>::status_take::start) {
+            return failure_response(usbip_root::timeout_failure());
+          }
+        }
+      }
+
+      struct running_t {
+        bool repair;
+        bool open { true };
+        ~running_t() {
+          if (!open) return;
+          if (repair)
+            usbip_root::shared_gate().cancel_repair();
+          else
+            usbip_root::shared_gate().cancel_status();
+        }
+      } running { repair };
+
+      json result = launch_usbip_root_helper(action);
+      if (repair)
+        gate.finish_repair(result.dump());
+      else
+        gate.finish_status(result.dump());
+      running.open = false;
+      return result;
+    }
+
     void
     getVddStatus(resp_https_t response, req_https_t request) {
       if (!authenticate(response, request)) return;
@@ -449,6 +535,20 @@ namespace confighttp::diagnostics {
                                 { "problem_code", status.problem_code },
                                 { "version_supported", false },
                               });
+    }
+#endif
+
+#ifdef _WIN32
+    void
+    getUsbipRootStatus(resp_https_t response, req_https_t request) {
+      if (!authenticate(response, request)) return;
+      send_response(response, run_usbip_root_helper("status"));
+    }
+
+    void
+    repairUsbipRoot(resp_https_t response, req_https_t request) {
+      if (!authenticate(response, request)) return;
+      send_response(response, run_usbip_root_helper("repair"));
     }
 #endif
 

@@ -213,6 +213,12 @@ target_include_directories(current_capture_target_unit_tests PRIVATE "${CMAKE_SO
 target_link_libraries(current_capture_target_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
 set_target_properties(current_capture_target_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME current_capture_target_unit_tests COMMAND current_capture_target_unit_tests)
+add_executable(usbip_root_helper_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_usbip_root_helper.cpp)
+target_include_directories(usbip_root_helper_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(usbip_root_helper_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(usbip_root_helper_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME usbip_root_helper_unit_tests COMMAND usbip_root_helper_unit_tests)
+
 
 add_executable(pen_barrel_roll_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_pen_barrel_roll.cpp)
 target_include_directories(pen_barrel_roll_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}/third-party")
