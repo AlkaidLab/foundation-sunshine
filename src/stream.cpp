@@ -68,14 +68,18 @@ extern "C" {
 #include "logging.h"
 #include "mic_mixer.h"
 #include "network.h"
+#include "nvhttp.h"
+#include "rtsp.h"
+#include "stream.h"
 #include "streaming/dynamic_param_protocol.h"
+#include "streaming/fec.h"
 #include "streaming/measured_bitrate.h"
 #include "streaming/perf_recorder.h"
-#include "stream.h"
+#include "streaming/video_pacing.h"
 #include "sync.h"
+#include "thread_safe.h"
 #include "tray/system_tray.h"
 #include "tray/tray_state.h"
-#include "thread_safe.h"
 #include "utility.h"
 #include "webhook/webhook.h"
 
@@ -3807,11 +3811,16 @@ namespace stream {
         // Generic Segmentation Offload on Linux can't do more than 64.
         send_batch_size = std::min<size_t>(64, send_batch_size);
 
-        // Don't ignore the last ratecontrol group of the previous frame
-        auto ratecontrol_frame_start = std::max(ratecontrol_next_frame_start, std::chrono::steady_clock::now());
+        const auto measured_kbps = session->measured_bitrate.kbps(steady_now_ms());
+        const auto configured_kbps = session->config.monitor.bitrate_budget->applied().encoder_kbps;
+        const auto pacing_rate_bps = streaming::video_pacing_rate_bps(measured_kbps, configured_kbps);
+        const auto pace_frame = streaming::should_pace_video_frame(
+          packet->is_idr(), encoded_bytes, static_cast<std::size_t>(std::max(0, config::video.video_pacing_threshold)));
+        // Do not carry the previous frame's schedule into an unpaced frame.
+        const auto now = std::chrono::steady_clock::now();
+        auto ratecontrol_frame_start = pace_frame ? std::max(ratecontrol_next_frame_start, now) : now;
 
         size_t ratecontrol_frame_packets_sent = 0;
-        size_t ratecontrol_group_packets_sent = 0;
 
         // RTP video timestamps use the 90 kHz media clock and the original
         // capture presentation timestamp. Frames without a capture timestamp
@@ -3908,18 +3917,11 @@ namespace stream {
               // Do pacing within the frame.
               // Also trigger pacing before the first send_batch() of the frame
               // to account for the last send_batch() of the previous frame.
-              if (ratecontrol_group_packets_sent >= ratecontrol_packets_in_1ms ||
-                  ratecontrol_frame_packets_sent == 0) {
-                auto due = ratecontrol_frame_start +
-                           std::chrono::duration_cast<std::chrono::nanoseconds>(1ms) *
-                             ratecontrol_frame_packets_sent / ratecontrol_packets_in_1ms;
-
-                auto now = std::chrono::steady_clock::now();
-                if (now < due) {
-                  timer->sleep_for(due - now);
-                }
-
-                ratecontrol_group_packets_sent = 0;
+              if (pace_frame) {
+                const auto due = ratecontrol_frame_start + streaming::video_packet_slot(
+                                                             ratecontrol_frame_packets_sent, blocksize, pacing_rate_bps);
+                const auto send_now = std::chrono::steady_clock::now();
+                if (send_now < due) timer->sleep_for(due - send_now);
               }
 
               size_t current_batch_size = x - next_shard_to_send + 1;
@@ -3972,9 +3974,9 @@ namespace stream {
           }
 
           // remember this in case the next frame comes immediately
-          ratecontrol_next_frame_start = ratecontrol_frame_start +
-                                         std::chrono::duration_cast<std::chrono::nanoseconds>(1ms) *
-                                           ratecontrol_frame_packets_sent / ratecontrol_packets_in_1ms;
+          ratecontrol_next_frame_start = pace_frame ? ratecontrol_frame_start + streaming::video_packet_slot(
+                                                                                  ratecontrol_frame_packets_sent, blocksize, pacing_rate_bps) :
+                                                      std::chrono::steady_clock::now();
 
           frame_network_latency_logger.second_point_now_and_log();
 

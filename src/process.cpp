@@ -471,9 +471,43 @@ namespace proc {
     _apps = std::move(apps);
   }
 
+  namespace {
+    // The art part of the list tag is read from the files (a few stats per application), at most once in two seconds: the tag is a function of the files, so it stays the same until
+    // a picture is written, and a client that asks often is not made to stat every application each time.
+    struct art_tag_cache_t {
+      std::mutex mutex;
+      const void *owner = nullptr;
+      std::string list_etag;
+      std::chrono::steady_clock::time_point at;
+      std::string tag;
+    };
+
+    art_tag_cache_t &
+    art_tag_cache() {
+      static art_tag_cache_t cache;
+      return cache;
+    }
+  }  // namespace
+
   std::string
   proc_t::get_apps_etag() const {
-    return _apps_etag;
+    // the play history is part of the list (FsLastPlayed, FsPlaySeconds): the file's time is part of the tag
+    const auto list_etag = client_interface::combine_list_etag(_apps_etag, client_interface::play_facts_tag());
+    // so is the art (FsArtVersion, and the hero/logo/icon/poster files behind it): a client that does not reopen the page asks for the list only when this tag changes
+    auto &cache = art_tag_cache();
+    std::lock_guard lock { cache.mutex };
+    const auto now = std::chrono::steady_clock::now();
+    if (cache.owner != this || cache.list_etag != _apps_etag || cache.at.time_since_epoch().count() == 0 || now - cache.at >= std::chrono::seconds(2)) {
+      std::string apps_art;
+      for (const auto &app : _apps) {
+        apps_art += app.id + ':' + app_art_version(app, true) + ';';
+      }
+      cache.owner = this;
+      cache.list_etag = _apps_etag;
+      cache.at = now;
+      cache.tag = std::move(apps_art);
+    }
+    return client_interface::combine_art_etag(list_etag, cache.tag);
   }
 
   const boost::process::v1::environment &
@@ -670,6 +704,63 @@ namespace proc {
     ss.write(pos, (dollar - pos));
 
     return ss.str();
+  }
+
+  std::string
+  app_art_asset_path(const ctx_t &app, std::string_view type) {
+    if (type == "poster") return validate_app_image_path(app.image_path);
+    std::string configured;
+    if (type == "hero") configured = app.fs_facts.hero_path;
+    if (type == "logo") configured = app.fs_facts.logo_path;
+    if (type == "icon") configured = app.fs_facts.icon_path;
+    if (configured.empty()) return {};
+    // only an image is served: the configured path is the host administrator's, the client asks by name
+    if (!client_interface::is_art_extension(file_handler::path_from_utf8(configured).extension().string())) return {};
+    const std::array paths {
+      file_handler::path_from_utf8(SUNSHINE_ASSETS_DIR) / file_handler::path_from_utf8(configured),
+      platf::appdata() / "covers" / file_handler::path_from_utf8(configured),
+      file_handler::path_from_utf8(configured),
+    };
+    for (const auto &path : paths) {
+      if (std::filesystem::exists(path)) return file_handler::path_to_utf8(path);
+    }
+    return {};
+  }
+
+  namespace {
+    // The poster file of a plain path as validate_app_image_path would find it (assets, covers, as given), without logging and without downloading or the desktop picture; empty when none exists.
+    std::string
+    existing_poster_quietly(const std::string &image_path) {
+      if (image_path.empty()) return DEFAULT_APP_IMAGE_PATH;
+      if (image_path == "desktop") return {};
+      const auto relative = file_handler::path_from_utf8(image_path);
+      const std::array candidates {
+        file_handler::path_from_utf8(SUNSHINE_ASSETS_DIR) / relative,
+        platf::appdata() / "covers" / relative,
+        relative,
+      };
+      std::error_code error;
+      for (const auto &path : candidates)
+        if (std::filesystem::exists(path, error)) return file_handler::path_to_utf8(path);
+      return {};
+    }
+  }  // namespace
+
+  /// The version tag of the art of an application as it is now: the configured paths' own tag plus the size and the time of every present art file, so a file replaced under
+  /// the same name is a new version (a client that was told `immutable` for a version asks again). A URL poster is not statted here: resolving it can download a picture.
+  std::string
+  app_art_version(const ctx_t &app, bool quiet) {
+    std::string files;
+    const auto append = [&files](const char *type, const std::string &path) {
+      if (path.empty()) return;
+      files += client_interface::art_file_fact(type, file_handler::path_from_utf8(path));
+    };
+    if (app.image_path.rfind("http://", 0) != 0 && app.image_path.rfind("https://", 0) != 0) {
+      // the list tag asks every couple of seconds: it takes the poster as the file system has it, and does not log a missing or unsupported poster each time
+      append("poster", quiet ? existing_poster_quietly(app.image_path) : validate_app_image_path(app.image_path));
+    }
+    for (const auto *type : { "hero", "logo", "icon" }) append(type, app_art_asset_path(app, type));
+    return client_interface::live_art_version(app.fs_facts.art_version, files);
   }
 
   std::string

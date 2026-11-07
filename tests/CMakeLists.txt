@@ -111,6 +111,7 @@ if (WIN32)
     set_target_properties(perf_frame_rate_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
 add_test(NAME perf_frame_rate_unit_tests COMMAND perf_frame_rate_unit_tests)
+
 # The audio endpoint list: shaping and recognition only, no audio API.
 add_executable(audio_devices_unit_tests
         ${CMAKE_SOURCE_DIR}/src/audio_devices.cpp
@@ -154,6 +155,20 @@ target_include_directories(video_idle_policy_unit_tests PRIVATE "${CMAKE_SOURCE_
 target_link_libraries(video_idle_policy_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
 set_target_properties(video_idle_policy_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME video_idle_policy_unit_tests COMMAND video_idle_policy_unit_tests)
+
+add_executable(video_pacing_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_video_pacing.cpp)
+target_include_directories(video_pacing_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(video_pacing_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(video_pacing_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME video_pacing_unit_tests COMMAND video_pacing_unit_tests)
+
+add_executable(poster_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/nvhttp/poster.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_poster.cpp)
+target_include_directories(poster_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(poster_unit_tests PRIVATE gtest_main OpenSSL::Crypto sunshine_project_options sunshine_coverage)
+set_target_properties(poster_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME poster_unit_tests COMMAND poster_unit_tests)
 
 add_executable(measured_bitrate_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_measured_bitrate.cpp)
 target_include_directories(measured_bitrate_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")

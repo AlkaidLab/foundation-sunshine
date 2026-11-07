@@ -168,6 +168,7 @@ set(SUNSHINE_HOST_SOURCES
     src/nvhttp/abr_api.cpp src/nvhttp/abr_api.h
     src/nvhttp/ai_api.cpp src/nvhttp/ai_api.h
     src/nvhttp/apps.cpp src/nvhttp/apps.h
+    src/nvhttp/poster.cpp src/nvhttp/poster.h
     src/nvhttp/clipboard_api.cpp src/nvhttp/clipboard_api.h
     src/nvhttp/display_control.cpp src/nvhttp/display_control.h
     src/nvhttp/display_scale.cpp src/nvhttp/display_scale.h
