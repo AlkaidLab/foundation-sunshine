@@ -229,6 +229,9 @@ set(SUNSHINE_HOST_SOURCES
     src/launch_splash/shown_gate.h
     # src/sparxie
     src/sparxie/model.cpp src/sparxie/model.h
+    src/sparxie/region.cpp src/sparxie/region.h
+    src/sparxie/storefront.cpp src/sparxie/storefront.h
+    src/sparxie/vendors.cpp src/sparxie/vendors.h
     src/sparxie/stream_display.cpp src/sparxie/stream_display.h
     src/sparxie/sha256.h
     third-party/puff/puff.c third-party/puff/puff.h
