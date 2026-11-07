@@ -1823,11 +1823,17 @@ namespace stream {
     if (!session->control.peer || session->config.controlProtocolType != 13) {
       return -1;
     }
+    if (payload.size() > std::numeric_limits<std::uint16_t>::max()) {
+      BOOST_LOG(warning) << "Refusing oversized "sv << name << " payload"sv;
+      return -1;
+    }
     std::vector<std::uint8_t> plaintext(sizeof(control_header_v2) + payload.size());
     auto *hdr = reinterpret_cast<control_header_v2 *>(plaintext.data());
     hdr->type = type;
     hdr->payloadLength = static_cast<std::uint16_t>(payload.size());
-    std::memcpy(plaintext.data() + sizeof(control_header_v2), payload.data(), payload.size());
+    if (!payload.empty()) {
+      std::memcpy(plaintext.data() + sizeof(control_header_v2), payload.data(), payload.size());
+    }
 
     std::vector<std::uint8_t> encrypted(
       sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(plaintext.size()) +

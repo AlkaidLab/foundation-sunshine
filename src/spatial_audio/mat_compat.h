@@ -36,7 +36,7 @@ namespace mat_compat {
     return false;
   }
 
-  // <drive>:\...\WindowsApps\DolbyLaboratories.DolbyAccess_<version>_x64__rz1tebttyb220\DLLs\x64\
+  /* <drive>:\...\WindowsApps\DolbyLaboratories.DolbyAccess_<version>_x64__rz1tebttyb220\DLLs\x64\ */
   // Store apps may live on any drive; the version segment changes with updates.
   inline bool
   dolby_directory_shape(std::wstring_view directory) {
