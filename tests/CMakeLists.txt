@@ -7,6 +7,11 @@ include_directories("${CMAKE_SOURCE_DIR}")
 
 enable_testing()
 
+add_executable(vdd_edid_resolution_unit_tests unit/test_vdd_edid_resolution.cpp)
+target_include_directories(vdd_edid_resolution_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+set_target_properties(vdd_edid_resolution_unit_tests PROPERTIES CXX_STANDARD 17)
+add_test(NAME vdd_edid_resolution_unit_tests COMMAND vdd_edid_resolution_unit_tests)
+
 if (WIN32)
     # Standalone MAT sender tests use a mock consumer, never an audio device.
     set(MAT_RECEIVER_TEST_SOURCES
@@ -207,6 +212,7 @@ add_test(NAME hdr_calibration_unit_tests COMMAND hdr_calibration_unit_tests)
 add_executable(config_runtime_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_config_runtime.cpp
         ${CMAKE_SOURCE_DIR}/src/config.cpp
+        ${CMAKE_SOURCE_DIR}/src/display_device/vdd_settings.cpp
         ${CMAKE_SOURCE_DIR}/src/file_handler.cpp
         ${CMAKE_SOURCE_DIR}/src/display_device/parsed_config.cpp
         ${CMAKE_SOURCE_DIR}/src/display_device/to_string.cpp
@@ -659,6 +665,7 @@ list(REMOVE_ITEM TEST_SOURCES
         ${CMAKE_SOURCE_DIR}/tests/unit/test_rtsp.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_sunshinesvc_state.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_tray_state.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_vdd_edid_resolution.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_video_probe.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_virtual_touchscreen_device.cpp)
 

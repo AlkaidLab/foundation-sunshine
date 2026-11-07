@@ -1,5 +1,6 @@
 <script setup>
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
+import { edidResolutionOptions } from '../../../utils/vddEdidResolution.js'
 import PlatformLayout from '../../../components/layout/PlatformLayout.vue'
 import VulkanHdrBridgeCard from './VulkanHdrBridgeCard.vue'
 import NvidiaVsyncCard from './NvidiaVsyncCard.vue'
@@ -14,6 +15,9 @@ const props = defineProps({
 const resolutions = ref(props.resolutions)
 const fps = ref(props.fps)
 const config = ref(props.config)
+const edidOptions = computed(() => edidResolutionOptions(resolutions.value, fps.value, config.value.vdd_edid_native_resolution))
+const invalidEdidSelection = computed(() => edidOptions.value.some(option =>
+  option.value === config.value.vdd_edid_native_resolution && option.reason))
 
 const resIn = ref('')
 const fpsIn = ref('')
@@ -181,6 +185,31 @@ function removeFps(index) {
 
           <NvidiaVsyncCard :config="config" :platform="platform" />
           <VulkanHdrBridgeCard class="mt-3" :config="config" />
+
+          <div class="mt-3">
+            <label class="form-label" for="vdd_edid_native_resolution">
+              {{ $t('config.vdd_edid_native_resolution') }}
+            </label>
+            <select
+              id="vdd_edid_native_resolution"
+              v-model="config.vdd_edid_native_resolution"
+              class="form-select"
+              aria-describedby="vdd_edid_native_resolution_desc vdd_edid_native_resolution_hint"
+            >
+              <option v-for="option in edidOptions" :key="option.value" :value="option.value" :disabled="!!option.reason">
+                {{ option.value === 'default' ? $t('config.vdd_edid_native_resolution_default') : option.value.replace('x', '×') }}{{ option.reason ? ' — ' + $t('config.vdd_edid_native_resolution_' + option.reason) : '' }}
+              </option>
+            </select>
+            <div id="vdd_edid_native_resolution_desc" class="form-text">
+              {{ $t('config.vdd_edid_native_resolution_desc') }}
+            </div>
+            <div id="vdd_edid_native_resolution_hint" class="form-text">
+              {{ $t('config.vdd_edid_native_resolution_hint') }}
+            </div>
+            <div v-if="invalidEdidSelection" class="text-danger mt-2" role="alert">
+              {{ $t('config.vdd_edid_native_resolution_invalid') }}
+            </div>
+          </div>
         </div>
       </template>
     </PlatformLayout>
