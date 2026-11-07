@@ -71,6 +71,7 @@ internal static class Protocol
         AudioPolicyViolation = 105,
         HostStatus = 106,
         MicStatus = 107,
+        HapticsState = 108,
         Error = 255,
     }
 

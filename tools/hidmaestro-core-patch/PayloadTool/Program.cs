@@ -57,6 +57,8 @@ else if (args[0] == "verify")
         a.Key == "FoundationUsbipPolicy" && a.Value == "externally-managed-v1"), "external transport policy missing");
     Require(patched.GetCustomAttributes<AssemblyMetadataAttribute>().Any(a =>
         a.Key == "FoundationDualSenseReports" && a.Value == "host-clock-v1"), "DualSense report clock patch missing");
+    Require(patched.GetCustomAttributes<AssemblyMetadataAttribute>().Any(a =>
+        a.Key == "FoundationDualSenseGameInput" && a.Value == "preserve-v1"), "DualSense mapping protection missing");
     Console.WriteLine($"SDK identity/API unchanged; {names.Length} resources byte-identical");
 }
 else if (args[0] == "test")
@@ -138,10 +140,11 @@ else if (args[0] == "test")
             Require((int)instance.GetValue("VendorId")! == 0x054c, "instance VID missing");
         }
         // Neither Joystick nor Game Pad JSON profiles get a new table.
-        // Exact legacy bytes are removed; any foreign edit protects the whole key.
+        // Physical DualSense maps survive every virtual-device lifecycle path.
         isolated.DeleteSubKeyTree(gameInputPath);
         foreach (var descriptorUsage in new[] { "05010904", "05010905" })
         {
+            isolated.DeleteSubKeyTree(gameInputPath, false);
             var profile = JsonSerializer.Deserialize(profileJson.Replace("05010905", descriptorUsage), profileType)!;
             writeGameInput.Invoke(null, new object[] { 0, profile });
             using (var absent = isolated.OpenSubKey(gameInputPath))
@@ -150,8 +153,37 @@ else if (args[0] == "test")
             using (var legacy = isolated.OpenSubKey(gameInputPath)) Require(legacy != null, "legacy fixture missing");
             writeGameInput.Invoke(null, new object[] { 0, profile });
             using (var absent = isolated.OpenSubKey(gameInputPath))
-                Require(absent == null, "exact legacy GameInput table survived");
+                Require(absent != null, "physical DualSense mapping was deleted");
         }
+        var removeOne = ledger.GetMethod("RemoveLegacyTable", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var removeAll = ledger.GetMethod("RemoveLegacyTables", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var restoreMapping = ledger.GetMethod("RestoreGameInput", BindingFlags.NonPublic | BindingFlags.Static)!;
+        var claimMapping = ledger.GetMethod("ClaimGameInput", BindingFlags.NonPublic | BindingFlags.Static)!;
+        foreach (var state in new[] { 0, 1, 2, 3 })
+        {
+            isolated.DeleteSubKeyTree(gameInputPath, false);
+            writeLegacyTable.Invoke(null, new object[] { (ushort)0x054c, (ushort)0x0ce6 });
+            if (state >= 1)
+                foreach (var field in new[] { ("RightThumbstickY", 5), ("LeftTrigger", 3), ("RightTrigger", 4) })
+                { using var key = isolated.OpenSubKey(gameInputPath + @"\Gamepad\" + field.Item1, true)!; key.SetValue("AxisIndex", field.Item2); }
+            if (state >= 2)
+                foreach (var field in new[] { ("View", 8), ("Menu", 9), ("LeftThumbstickButton", 10), ("RightThumbstickButton", 11) })
+                { using var key = isolated.OpenSubKey(gameInputPath + @"\Gamepad\" + field.Item1, true)!; key.SetValue("ButtonIndex", field.Item2); }
+            if (state == 3)
+                foreach (var field in new[] { ("A", 1), ("B", 2), ("X", 0) })
+                { using var key = isolated.OpenSubKey(gameInputPath + @"\Gamepad\" + field.Item1, true)!; key.SetValue("ButtonIndex", field.Item2); }
+            var dump = gameInput.GetMethod("Dump", BindingFlags.NonPublic | BindingFlags.Static)!;
+            var beforeDump = (string)dump.Invoke(null, new object[] { gameInputPath })!;
+            removeOne.Invoke(null, new object[] { (ushort)0x054c, (ushort)0x0ce6 });
+            removeAll.Invoke(null, null);
+            restoreMapping.Invoke(null, new object[] { "054C0CE600010005" });
+            Require(!(bool)claimMapping.Invoke(null, new object[] { (ushort)0x054c, (ushort)0x0ce6, 0 })!, "shared DualSense map claimed");
+            Require((string)dump.Invoke(null, new object[] { gameInputPath })! == beforeDump, "DualSense mapping changed during cleanup/restore/claim");
+        }
+        writeLegacyTable.Invoke(null, new object[] { (ushort)0x1234, (ushort)0x5678 });
+        removeOne.Invoke(null, new object[] { (ushort)0x1234, (ushort)0x5678 });
+        using (var other = isolated.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\GameInput\Devices\1234567800010005"))
+            Require(other == null, "unrelated legacy cleanup was disabled");
         writeLegacyTable.Invoke(null, new object[] { (ushort)0x054c, (ushort)0x0ce6 });
         using (var foreign = isolated.CreateSubKey(gameInputPath)) foreign.SetValue("ForeignEdit", 1);
         var jsonProfile = JsonSerializer.Deserialize(profileJson, profileType)!;
@@ -228,7 +260,7 @@ else if (args[0] == "test")
             Require(foreign != null && missing != null, "foreign or unowned interface removed");
             Require(owned == null, "owned interface survived cleanup");
         }
-        Console.WriteLine("PASS: JSON profiles acquire no mapping; exact legacy tables removed; foreign mappings/OEM/axes preserved; OEM claims restore safely; interface cleanup and HID ownership guards pass");
+        Console.WriteLine("PASS: JSON profiles acquire no mapping; DualSense maps preserved across cleanup/restore/claim; unrelated legacy tables removed; foreign mappings/OEM/axes preserved; OEM claims restore safely; interface cleanup and HID ownership guards pass");
     }
     finally
     {

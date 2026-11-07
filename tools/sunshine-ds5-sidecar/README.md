@@ -87,8 +87,9 @@ that connection. Standard `dualsense` uses UMDF2; `dualsense-composite`
 enables the USB composite HID/audio profile and authored haptics PCM.
 HID-only attaches use `dualsense` with the native 273-byte descriptor and
 Game Pad usage (0x05). HIDMaestro v1.12.0 no longer writes the incorrect global
-GameInput mapping for JSON profiles and removes exact legacy SDK tables
-(issue #1056), so the former Joystick usage override is unnecessary. Input
+GameInput mapping for JSON profiles. The Core patch preserves the shared physical
+DualSense table during claim, cleanup and ledger restoration (issue #1056). Existing
+incorrect mappings remain unchanged; explicit migration is separate. Input
 reports retain `alwaysArmed` for touch and motion data. Windows decides how
 to expose the device; native Game Pad usage does not guarantee a WGI Gamepad.
 The optional Genshin compatibility attach flag derives a third profile from

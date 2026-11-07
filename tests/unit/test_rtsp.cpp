@@ -269,6 +269,31 @@ TEST(LaunchSessionManager, ExpiredTicketReleasesCompatibilityLease) {
   EXPECT_TRUE(released);
 }
 
+TEST(LaunchSessionManager, FinalClaimReleaseRenewsExpiryAndReleasesSessionResources) {
+  rtsp_stream::launch_session_manager_t manager;
+  const auto now = rtsp_stream::launch_session_manager_t::clock_t::now();
+  auto session = make_session(1003, "renewed-lease", "192.0.2.3");
+  std::weak_ptr<void> resource;
+  session->nvidia_vsync_lease = std::make_shared<int>();
+  resource = session->nvidia_vsync_lease;
+  ASSERT_EQ(manager.register_session(session, 1s, now), rtsp_stream::launch_ticket_register_e::accepted);
+  auto describe = manager.claim_plaintext("192.0.2.3", now);
+  auto second = manager.claim_plaintext("192.0.2.3", now + 500ms);
+  ASSERT_TRUE(describe);
+  ASSERT_TRUE(second);
+  session.reset();
+  EXPECT_EQ(manager.prune(now + 2s), 0U);
+  EXPECT_TRUE(manager.release(1003, 1s, now + 2s));
+  describe.reset();
+  EXPECT_EQ(manager.prune(now + 3s), 0U);
+  EXPECT_TRUE(manager.release(1003, 1s, now + 3s));
+  second.reset();
+  EXPECT_EQ(manager.prune(now + 3999ms), 0U);
+  EXPECT_FALSE(resource.expired());
+  EXPECT_EQ(manager.prune(now + 4s), 1U);
+  EXPECT_TRUE(resource.expired());
+}
+
 TEST(LaunchSessionManager, ActiveStreamRetainsCompatibilityLeaseAfterHandshakeClear) {
   rtsp_stream::launch_session_manager_t manager;
   auto session = make_session(1002, "lease-cert", "192.0.2.2");

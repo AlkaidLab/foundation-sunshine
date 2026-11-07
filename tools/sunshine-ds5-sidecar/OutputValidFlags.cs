@@ -30,9 +30,8 @@ internal readonly struct OutputValidFlags
 
     internal bool Lightbar => !_has1 || (_flag1 & LightbarControl) != 0;
 
-    // The motor bytes stay ungated: their zeros can cancel a live rumble, gating
-    // them can drop a stop, and neither loss is bounded without a republishing
-    // policy this type does not own.
+    // Motor validity and explicit PCM/rumble transitions are reduced by
+    // DualSenseHapticsState, rather than treating every unclaimed zero as a stop.
     internal static OutputValidFlags From(IReadOnlyDictionary<string, object> fields)
     {
         var has0 = TryFlag(fields, "validFlag0", out var flag0);

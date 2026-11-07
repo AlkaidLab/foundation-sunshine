@@ -698,16 +698,30 @@ namespace platf {
     return startup_info;
   }
 
+  bool
+  initialize_user_registry() {
+    // Keep HKCR caching enabled: Shell association queries temporarily override
+    // that merged view. Disabling a key's cache also prevents overriding it.
+    static const bool initialized = RegDisablePredefinedCache() == ERROR_SUCCESS;
+    return initialized;
+  }
+
+  std::mutex &
+  user_registry_mutex() {
+    static std::mutex mutex;
+    return mutex;
+  }
+
   /**
-   * @brief This function overrides HKEY_CURRENT_USER and HKEY_CLASSES_ROOT using the provided token.
-   * @param token The primary token identifying the user to use, or `NULL` to restore original keys.
+   * @brief Override the merged classes view for a Shell association query.
+   * @param token The primary token identifying the user to use, or `NULL` to restore the original view.
    * @return `true` if the override or restore operation was successful.
    */
   bool
-  override_per_user_predefined_keys(HANDLE token) {
+  override_user_classes_root(HANDLE token) {
     HKEY user_classes_root = NULL;
     if (token) {
-      auto err = RegOpenUserClassesRoot(token, 0, GENERIC_ALL, &user_classes_root);
+      auto err = RegOpenUserClassesRoot(token, 0, KEY_READ, &user_classes_root);
       if (err != ERROR_SUCCESS) {
         BOOST_LOG(error) << "Failed to open classes root for target user: "sv << err;
         return false;
@@ -719,36 +733,9 @@ namespace platf {
       }
     });
 
-    HKEY user_key = NULL;
-    if (token) {
-      impersonate_current_user(token, [&]() {
-        // RegOpenCurrentUser() doesn't take a token. It assumes we're impersonating the desired user.
-        auto err = RegOpenCurrentUser(GENERIC_ALL, &user_key);
-        if (err != ERROR_SUCCESS) {
-          BOOST_LOG(error) << "Failed to open user key for target user: "sv << err;
-          user_key = NULL;
-        }
-      });
-      if (!user_key) {
-        return false;
-      }
-    }
-    auto close_user = util::fail_guard([user_key]() {
-      if (user_key) {
-        RegCloseKey(user_key);
-      }
-    });
-
     auto err = RegOverridePredefKey(HKEY_CLASSES_ROOT, user_classes_root);
     if (err != ERROR_SUCCESS) {
       BOOST_LOG(error) << "Failed to override HKEY_CLASSES_ROOT: "sv << err;
-      return false;
-    }
-
-    err = RegOverridePredefKey(HKEY_CURRENT_USER, user_key);
-    if (err != ERROR_SUCCESS) {
-      BOOST_LOG(error) << "Failed to override HKEY_CURRENT_USER: "sv << err;
-      RegOverridePredefKey(HKEY_CLASSES_ROOT, NULL);
       return false;
     }
 
@@ -960,18 +947,21 @@ namespace platf {
     std::array<WCHAR, MAX_PATH> shell_command_string;
     bool needs_cmd_escaping = false;
     {
-      // Overriding these predefined keys affects process-wide state, so serialize all calls
+      // Overriding HKCR affects process-wide state, so serialize all calls
       // to ensure the handle state is consistent while we perform the command query.
-      static std::mutex per_user_key_mutex;
-      auto lg = std::lock_guard(per_user_key_mutex);
+      auto lg = std::lock_guard(user_registry_mutex());
 
-      // Override HKEY_CLASSES_ROOT and HKEY_CURRENT_USER to ensure we query the correct class info
-      if (!override_per_user_predefined_keys(token)) {
+      if (!initialize_user_registry() || !override_user_classes_root(token)) {
         return from_utf8(raw_cmd);
       }
+      auto restore_classes_root = util::fail_guard([]() {
+        override_user_classes_root(NULL);
+      });
 
-      // Find the command string for the specified class
+      // HKCU follows the impersonated user because its cache is disabled. HKCR
+      // keeps the explicit merged user/system view established above.
       DWORD out_len = shell_command_string.size();
+      // run_command already impersonates token; nesting would revert its caller.
       res = AssocQueryStringW(ASSOCF_NOTRUNCATE, ASSOCSTR_COMMAND, lookup_string.c_str(), L"open", shell_command_string.data(), &out_len);
 
       // In some cases (UWP apps), we might not have a command for this target. If that happens,
@@ -991,9 +981,6 @@ namespace platf {
 
         res = S_OK;
       }
-
-      // Reset per-user keys back to the original value
-      override_per_user_predefined_keys(NULL);
     }
 
     if (res != S_OK) {
@@ -2468,5 +2455,33 @@ namespace platf {
       words.end());
 
     return words;
+  }
+
+  std::optional<bool>
+  query_session_locked() {
+    PWSTR buffer = nullptr;
+    DWORD size = 0;
+    if (!WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, WTSGetActiveConsoleSessionId(),
+          WTSSessionInfoEx, &buffer, &size)) {
+      return std::nullopt;
+    }
+    auto free_buffer = util::fail_guard([buffer]() { WTSFreeMemory(buffer); });
+
+    if (size < sizeof(WTSINFOEXW)) {
+      return std::nullopt;
+    }
+    const auto *info = reinterpret_cast<const WTSINFOEXW *>(buffer);
+    if (info->Level != 1) {
+      return std::nullopt;
+    }
+    // Windows 7 / Server 2008 R2 report these two values inverted; Sunshine requires Windows 10+.
+    switch (info->Data.WTSInfoExLevel1.SessionFlags) {
+      case WTS_SESSIONSTATE_LOCK:
+        return true;
+      case WTS_SESSIONSTATE_UNLOCK:
+        return false;
+      default:
+        return std::nullopt;
+    }
   }
 }  // namespace platf

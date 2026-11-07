@@ -200,6 +200,11 @@ Source: "{#MySourceDir}\zlib1.dll"; DestDir: "{app}"; Flags: ignoreversion; Comp
 ; Mandatory tools
 Source: "{#MySourceDir}\tools\sunshinesvc.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
 Source: "{#MySourceDir}\tools\qiin-tabtip.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
+#if @SUNSHINE_MAT_CAPTURE_AVAILABLE@
+Source: "{#MySourceDir}\tools\mat-capture\sunshine-plugin-mat-capture.exe"; DestDir: "{app}\tools\mat-capture"; Flags: ignoreversion; Components: application
+Source: "{#MySourceDir}\tools\mat-capture\*.dll"; DestDir: "{app}\tools\mat-capture"; Flags: onlyifdoesntexist uninsrestartdelete; Components: application
+Source: "{#MySourceDir}\tools\mat-capture\LICENSE.MinHook.txt"; DestDir: "{app}\tools\mat-capture"; Flags: ignoreversion; Components: application
+#endif
 Source: "{#MySourceDir}\tools\nefconw.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
 
 ; Pinned manifest for the separately distributed first-party DualSense runtime.
@@ -345,6 +350,7 @@ Filename: "{app}\assets\gui\{#MyAppGUIExeName}"; Parameters: "--remove-autostart
 Filename: "taskkill"; Parameters: "/f /im sunshine-gui.exe"; Flags: runhidden; RunOnceId: "KillGUI"
 Filename: "taskkill"; Parameters: "/f /im sunshine.exe"; Flags: runhidden; RunOnceId: "KillSunshine"
 Filename: "taskkill"; Parameters: "/f /im sunshinesvc.exe"; Flags: runhidden; RunOnceId: "KillSunshineSvc"
+Filename: "{app}\tools\mat-capture\sunshine-plugin-mat-capture.exe"; Parameters: "--wait-for-stop"; Flags: runhidden waituntilterminated; RunOnceId: "WaitMatCapture"; Check: FileExists(ExpandConstant('{app}\tools\mat-capture\sunshine-plugin-mat-capture.exe'))
 ; Remove system components
 Filename: "{app}\scripts\delete-firewall-rule.bat"; Flags: runhidden waituntilterminated; RunOnceId: "DelFirewall"
 Filename: "{app}\scripts\uninstall-service.bat"; Flags: runhidden waituntilterminated; RunOnceId: "UninstallService"
@@ -960,6 +966,15 @@ begin
   Exec('taskkill', '/f /im sunshine.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec('taskkill', '/f /im sunshine-gui.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec('taskkill', '/f /im sunshinesvc.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  if FileExists(ExpandConstant('{app}\tools\mat-capture\sunshine-plugin-mat-capture.exe')) then
+  begin
+    if not Exec(ExpandConstant('{app}\tools\mat-capture\sunshine-plugin-mat-capture.exe'),
+      '--wait-for-stop', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) or (ResultCode <> 0) then
+    begin
+      Result := 'MAT capture is still stopping. Retry installation after it exits.';
+      Exit;
+    end;
+  end;
   // Small delay to allow processes to release files
   Sleep(1000);
 end;

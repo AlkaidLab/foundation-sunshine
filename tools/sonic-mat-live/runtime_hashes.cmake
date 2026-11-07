@@ -1,0 +1,7 @@
+file(SHA256 "${TAP}" tap_hash)
+file(SHA256 "${WORKER}" worker_hash)
+string(SUBSTRING "${tap_hash}" 0 16 tap_suffix)
+string(SUBSTRING "${worker_hash}" 0 16 worker_suffix)
+file(WRITE "${OUTPUT}.tmp" "#pragma once\ninline constexpr wchar_t capture_tap_sha256[] = L\"${tap_hash}\";\ninline constexpr wchar_t capture_worker_sha256[] = L\"${worker_hash}\";\ninline constexpr wchar_t capture_tap_name[] = L\"sunshine-plugin-object-tap-${tap_suffix}.dll\";\ninline constexpr wchar_t capture_worker_name[] = L\"sunshine-sonic-mat-worker-${worker_suffix}.dll\";\n")
+execute_process(COMMAND "${CMAKE_COMMAND}" -E copy_if_different "${OUTPUT}.tmp" "${OUTPUT}" COMMAND_ERROR_IS_FATAL ANY)
+file(REMOVE "${OUTPUT}.tmp")

@@ -13,7 +13,7 @@
 #include <exception>
 #include <filesystem>
 #include <fstream>
-#include <cmath>
+#include <cctype>
 #include <iomanip>
 #include <limits>
 #include <memory>
@@ -29,10 +29,13 @@
 
 // lib includes
 #include <icm.h>
+#include <sddl.h>
 #include <nlohmann/json.hpp>
 
 // local includes
 #include "color_profile.h"
+#include "src/crypto.h"
+#include "src/display_device/color_profile.h"
 #include "src/logging.h"
 #include "src/platform/windows/misc.h"
 #include "windows_utils.h"
@@ -82,6 +85,8 @@ namespace display_device::win_color_profile {
       LUID,
       UINT32,
       WCS_PROFILE_MANAGEMENT_SCOPE *);
+    using get_color_directory_fn = BOOL(WINAPI *)(PCWSTR, PWSTR, PDWORD);
+    using set_use_per_user_profiles_fn = BOOL(WINAPI *)(PCWSTR, DWORD, BOOL);
 
     template <typename Function>
     Function
@@ -118,13 +123,15 @@ namespace display_device::win_color_profile {
           module, "ColorProfileGetDisplayDefault");
         get_display_user_scope = load_function<get_display_user_scope_fn>(
           module, "ColorProfileGetDisplayUserScope");
+        get_color_directory = load_function<get_color_directory_fn>(module, "GetColorDirectoryW");
+        set_use_per_user_profiles = load_function<set_use_per_user_profiles_fn>(module, "WcsSetUsePerUserProfiles");
 
         if (!add_display_association ||
             !remove_display_association ||
             !set_display_default ||
             !get_display_list ||
             !get_display_default ||
-            !get_display_user_scope) {
+            !get_display_user_scope || !get_color_directory || !set_use_per_user_profiles) {
           load_status = HRESULT_FROM_WIN32(ERROR_PROC_NOT_FOUND);
         }
       }
@@ -150,6 +157,8 @@ namespace display_device::win_color_profile {
       get_display_list_fn get_display_list { nullptr };
       get_display_default_fn get_display_default { nullptr };
       get_display_user_scope_fn get_display_user_scope { nullptr };
+      get_color_directory_fn get_color_directory { nullptr };
+      set_use_per_user_profiles_fn set_use_per_user_profiles { nullptr };
 
     private:
       HMODULE module { nullptr };
@@ -159,6 +168,7 @@ namespace display_device::win_color_profile {
     struct display_target_t {
       LUID adapter_id {};
       UINT32 source_id {};
+      std::wstring display_name;
     };
 
     struct handle_closer_t {
@@ -229,6 +239,17 @@ namespace display_device::win_color_profile {
     }
 
     HRESULT
+    associate_default(const color_profile_api_t &api, const display_target_t &target, const std::wstring &profile) {
+      auto status = api.add_display_association(WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
+        profile.c_str(), target.adapter_id, target.source_id, TRUE, TRUE);
+      if (is_already_associated(status)) {
+        status = api.set_display_default(WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
+          profile.c_str(), CPT_ICC, extended_display_color_mode, target.adapter_id, target.source_id);
+      }
+      return status;
+    }
+
+    HRESULT
     resolve_active_target(const std::string &device_id, display_target_t &target) {
       if (device_id.empty()) {
         return E_INVALIDARG;
@@ -246,12 +267,15 @@ namespace display_device::win_color_profile {
 
       target.adapter_id = path->targetInfo.adapterId;
       target.source_id = path->sourceInfo.id;
+      target.display_name = platf::from_utf8(w_utils::get_display_name(*path));
       return S_OK;
     }
 
     template <typename Callback>
     HRESULT
     run_as_profile_user(Callback &&callback) {
+      std::lock_guard registry_lock { platf::user_registry_mutex() };
+      if (!platf::initialize_user_registry()) return E_FAIL;
       HRESULT callback_status { E_UNEXPECTED };
       const auto guarded_callback = [&]() noexcept {
         try {
@@ -422,104 +446,179 @@ namespace display_device::win_color_profile {
       return S_OK;
     }
 
-    std::optional<std::uint32_t>
-    read_u32_be(const std::vector<std::uint8_t> &bytes, std::size_t offset) {
-      if (offset > bytes.size() || bytes.size() - offset < 4) return std::nullopt;
-      return (static_cast<std::uint32_t>(bytes[offset]) << 24) |
-             (static_cast<std::uint32_t>(bytes[offset + 1]) << 16) |
-             (static_cast<std::uint32_t>(bytes[offset + 2]) << 8) |
-             static_cast<std::uint32_t>(bytes[offset + 3]);
-    }
-
-    std::optional<float>
-    read_s15_fixed16(const std::vector<std::uint8_t> &bytes, std::size_t offset) {
-      const auto raw = read_u32_be(bytes, offset);
-      if (!raw) return std::nullopt;
-      return static_cast<float>(static_cast<std::int32_t>(*raw)) / 65536.0f;
-    }
-
-    std::optional<std::size_t>
-    find_tag(const std::vector<std::uint8_t> &bytes, std::uint32_t signature) {
-      const auto count = read_u32_be(bytes, 128);
-      if (!count || bytes.size() < 132 || *count > (bytes.size() - 132) / 12) return std::nullopt;
-      for (std::uint32_t index = 0; index < *count; ++index) {
-        const std::size_t entry = 132 + static_cast<std::size_t>(index) * 12;
-        const auto entry_signature = read_u32_be(bytes, entry);
-        const auto offset = read_u32_be(bytes, entry + 4);
-        const auto size = read_u32_be(bytes, entry + 8);
-        if (entry_signature && *entry_signature == signature && offset && size &&
-            *offset <= bytes.size() && *size <= bytes.size() - *offset) {
-          return static_cast<std::size_t>(*offset);
+    HRESULT
+    profile_user_sid(std::string &sid) {
+      HANDLE raw_token {};
+      if (!OpenThreadToken(GetCurrentThread(), TOKEN_QUERY, TRUE, &raw_token)) {
+        if (GetLastError() != ERROR_NO_TOKEN || !OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw_token)) {
+          return HRESULT_FROM_WIN32(GetLastError());
         }
       }
-      return std::nullopt;
+      unique_handle_t token { raw_token };
+      DWORD size {};
+      GetTokenInformation(token.get(), TokenUser, nullptr, 0, &size);
+      if (size == 0) return HRESULT_FROM_WIN32(GetLastError());
+      std::vector<std::uint8_t> buffer(size);
+      if (!GetTokenInformation(token.get(), TokenUser, buffer.data(), size, &size)) return HRESULT_FROM_WIN32(GetLastError());
+      LPWSTR raw_sid {};
+      if (!ConvertSidToStringSidW(reinterpret_cast<TOKEN_USER *>(buffer.data())->User.Sid, &raw_sid)) return HRESULT_FROM_WIN32(GetLastError());
+      unique_local_string_t cleanup { raw_sid };
+      sid = platf::to_utf8(raw_sid);
+      return sid.empty() ? E_FAIL : S_OK;
     }
 
-    std::optional<calibration_luminance_t>
-    parse_hdr_calibration_profile(const std::filesystem::path &path, std::string profile_name) {
-      std::error_code size_error;
-      const auto file_size = std::filesystem::file_size(path, size_error);
-      constexpr std::uintmax_t maximum_profile_size = 16u * 1024u * 1024u;
-      if (size_error || file_size < 156 || file_size > maximum_profile_size) return std::nullopt;
-
-      std::ifstream stream(path, std::ios::binary);
-      if (!stream) return std::nullopt;
-      std::vector<std::uint8_t> bytes(static_cast<std::size_t>(file_size));
-      if (!stream.read(reinterpret_cast<char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()))) {
-        return std::nullopt;
+    HRESULT
+    read_profile(const std::string &profile_name, calibration_result_t &result) {
+      result.stage = "profile_name";
+      if (!color_profile::is_valid_profile_basename(profile_name)) return E_INVALIDARG;
+      result.stage = "color_directory";
+      auto &api = color_profile_api();
+      if (FAILED(api.status())) return api.status();
+      std::wstring directory(MAX_PATH, L'\0');
+      DWORD bytes = static_cast<DWORD>(directory.size() * sizeof(wchar_t));
+      if (!api.get_color_directory(nullptr, directory.data(), &bytes)) {
+        if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || bytes > 64 * 1024) return HRESULT_FROM_WIN32(GetLastError());
+        directory.resize(bytes / sizeof(wchar_t));
+        if (!api.get_color_directory(nullptr, directory.data(), &bytes)) return HRESULT_FROM_WIN32(GetLastError());
       }
+      directory.resize(wcslen(directory.c_str()));
+      const auto path = std::filesystem::path { directory } / platf::from_utf8(profile_name);
+      result.stage = "profile_read";
+      std::error_code error;
+      const auto size = std::filesystem::file_size(path, error);
+      if (error) return HRESULT_FROM_WIN32(error.value());
+      if (size < 132 || size > 16 * 1024 * 1024) return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
+      std::ifstream stream(path, std::ios::binary);
+      std::vector<std::uint8_t> data(static_cast<std::size_t>(size));
+      if (!stream || !stream.read(reinterpret_cast<char *>(data.data()), static_cast<std::streamsize>(data.size()))) {
+        return HRESULT_FROM_WIN32(ERROR_READ_FAULT);
+      }
+      result.stage = "profile_parse";
+      const auto luminance = hdr::parse_calibration_luminance(data);
+      if (!luminance) return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
+      auto fingerprint = util::hex(crypto::hash(std::string_view {
+                                     reinterpret_cast<const char *>(data.data()), data.size() }),
+        true)
+                           .to_string();
+      std::transform(fingerprint.begin(), fingerprint.end(), fingerprint.begin(), [](unsigned char c) { return std::tolower(c); });
+      result.profile = hdr::calibration_profile_t { profile_name, std::move(fingerprint), *luminance };
+      result.state = calibration_result_t::state_e::detected;
+      result.stage.clear();
+      return S_OK;
+    }
 
-      constexpr std::uint32_t mhc2_signature = 0x4D484332;
-      constexpr std::uint32_t luminance_signature = 0x6C756D69;
-      const auto mhc2 = find_tag(bytes, mhc2_signature);
-      const auto luminance = find_tag(bytes, luminance_signature);
-      if (!mhc2 || !luminance || read_u32_be(bytes, *mhc2) != mhc2_signature) return std::nullopt;
-
-      const auto min_nits = read_s15_fixed16(bytes, *mhc2 + 12);
-      const auto max_nits = read_s15_fixed16(bytes, *mhc2 + 16);
-      const auto max_full_frame_nits = read_s15_fixed16(bytes, *luminance + 12);
-      if (!min_nits || !max_nits || !max_full_frame_nits ||
-          !std::isfinite(*min_nits) || !std::isfinite(*max_nits) || !std::isfinite(*max_full_frame_nits) ||
-          *min_nits < 0.0f || *max_nits < 1.0f || *max_nits > 10000.0f ||
-          *max_full_frame_nits < 1.0f || *max_full_frame_nits > *max_nits ||
-          *min_nits > *max_full_frame_nits) return std::nullopt;
-
-      return calibration_luminance_t {
-        std::move(profile_name), *max_nits, *min_nits, *max_full_frame_nits
-      };
+    void
+    finish_inspection(calibration_result_t &result, HRESULT status) {
+      result.error = static_cast<std::uint32_t>(status);
+      if (FAILED(status)) {
+        result.profile.reset();
+        result.state = status == HRESULT_FROM_WIN32(ERROR_INVALID_DATA) || status == E_INVALIDARG ?
+                         calibration_result_t::state_e::invalid :
+                         calibration_result_t::state_e::unavailable;
+      }
     }
 
   }  // namespace
 
-  std::optional<calibration_luminance_t>
+  calibration_result_t
+  read_hdr_calibration(const std::string &profile_name) {
+    std::lock_guard lock { operation_mutex };
+    calibration_result_t result;
+    result.stage = "user_context";
+    const HRESULT status = run_as_profile_user([&]() -> HRESULT {
+      result.stage = "user_identity";
+      const auto identity_status = profile_user_sid(result.user_sid);
+      if (FAILED(identity_status)) return identity_status;
+      return read_profile(profile_name, result);
+    });
+    finish_inspection(result, status);
+    return result;
+  }
+
+  calibration_result_t
   current_hdr_calibration(const std::string &device_id) {
     std::lock_guard lock { operation_mutex };
+    calibration_result_t result;
+    result.stage = "target_resolution";
     display_target_t target;
-    if (FAILED(resolve_active_target(device_id, target))) return std::nullopt;
-
-    std::wstring profile;
-    bool present = false;
-    const HRESULT status = run_as_profile_user([&]() -> HRESULT {
-      auto &api = color_profile_api();
-      if (FAILED(api.status())) return api.status();
-      WCS_PROFILE_MANAGEMENT_SCOPE scope {};
-      HRESULT operation_status = api.get_display_user_scope(target.adapter_id, target.source_id, &scope);
-      if (FAILED(operation_status)) return operation_status;
-      return get_default_profile(api, target, scope, present, profile);
-    });
-    if (FAILED(status) || !present) return std::nullopt;
-
-    const auto profile_name = platf::to_utf8(profile);
-    if (profile_name.empty()) return std::nullopt;
-    std::filesystem::path profile_path { profile };
-    if (!profile_path.is_absolute()) {
-      std::wstring system_directory(MAX_PATH, L'\0');
-      const UINT length = GetSystemDirectoryW(system_directory.data(), static_cast<UINT>(system_directory.size()));
-      if (length == 0 || length >= system_directory.size()) return std::nullopt;
-      system_directory.resize(length);
-      profile_path = std::filesystem::path { system_directory } / L"spool" / L"drivers" / L"color" / profile;
+    HRESULT status = resolve_active_target(device_id, target);
+    if (SUCCEEDED(status)) {
+      result.stage = "user_context";
+      status = run_as_profile_user([&]() -> HRESULT {
+        result.stage = "user_identity";
+        auto status = profile_user_sid(result.user_sid);
+        if (FAILED(status)) return status;
+        auto &api = color_profile_api();
+        result.stage = "color_api";
+        if (FAILED(api.status())) return api.status();
+        WCS_PROFILE_MANAGEMENT_SCOPE scope {};
+        result.stage = "profile_scope";
+        status = api.get_display_user_scope(target.adapter_id, target.source_id, &scope);
+        if (FAILED(status)) return status;
+        if (scope != WCS_PROFILE_MANAGEMENT_SCOPE_SYSTEM_WIDE && scope != WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER) return E_UNEXPECTED;
+        result.scope = static_cast<unsigned>(scope);
+        bool present = false;
+        std::wstring profile;
+        result.stage = "profile_association";
+        status = get_default_profile(api, target, scope, present, profile);
+        if (FAILED(status)) return status;
+        if (!present) {
+          result.state = calibration_result_t::state_e::absent;
+          result.stage.clear();
+          return S_OK;
+        }
+        return read_profile(platf::to_utf8(profile), result);
+      });
     }
-    return parse_hdr_calibration_profile(profile_path, profile_name);
+    finish_inspection(result, status);
+    return result;
+  }
+
+  bool
+  apply_hdr_calibration(const std::string &device_id, const hdr::calibration_binding_t &binding) {
+    std::lock_guard lock { operation_mutex };
+    display_target_t target;
+    HRESULT status = resolve_active_target(device_id, target);
+    if (SUCCEEDED(status)) {
+      status = run_as_profile_user([&]() -> HRESULT {
+        calibration_result_t checked;
+        auto status = profile_user_sid(checked.user_sid);
+        if (FAILED(status)) return status;
+        if (checked.user_sid != binding.user_sid) return E_ACCESSDENIED;
+        status = read_profile(binding.profile.profile_name, checked);
+        if (FAILED(status)) return status;
+        if (!hdr::same_calibration(*checked.profile, binding.profile)) return HRESULT_FROM_WIN32(ERROR_INVALID_DATA);
+        auto &api = color_profile_api();
+        const auto name = platf::from_utf8(binding.profile.profile_name);
+        WCS_PROFILE_MANAGEMENT_SCOPE scope {};
+        status = api.get_display_user_scope(target.adapter_id, target.source_id, &scope);
+        if (FAILED(status)) return status;
+        bool present = false;
+        std::wstring current;
+        status = get_default_profile(api, target, scope, present, current);
+        if (FAILED(status)) return status;
+        if (present && profile_names_equal(current, name)) return S_OK;
+        // This association belongs to the client's dedicated VDD and survives
+        // monitor recreation. Physical-screen overrides keep their existing undo path.
+        if (scope == WCS_PROFILE_MANAGEMENT_SCOPE_SYSTEM_WIDE) {
+          // A recreated monitor can still select its system list. Selecting a
+          // per-user default alone does not enable that list on modern WCS APIs.
+          DISPLAY_DEVICEW monitor {};
+          monitor.cb = sizeof(monitor);
+          if (target.display_name.empty() || !EnumDisplayDevicesW(target.display_name.c_str(), 0, &monitor, 0)) return E_FAIL;
+          if (!api.set_use_per_user_profiles(monitor.DeviceKey, CLASS_MONITOR, TRUE)) return HRESULT_FROM_WIN32(GetLastError());
+        }
+        status = associate_default(api, target, name);
+        if (FAILED(status)) return status;
+        status = api.get_display_user_scope(target.adapter_id, target.source_id, &scope);
+        if (FAILED(status)) return status;
+        status = get_default_profile(api, target, scope, present, current);
+        if (FAILED(status)) return status;
+        return present && profile_names_equal(current, name) ? S_OK : E_FAIL;
+      });
+    }
+    if (FAILED(status)) log_failure("client calibration", status, device_id, binding.profile.profile_name);
+    return SUCCEEDED(status);
   }
 
   void
@@ -686,25 +785,7 @@ namespace display_device::win_color_profile {
           target.source_id);
       }
 
-      HRESULT operation_status = api.add_display_association(
-        WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
-        profile.c_str(),
-        target.adapter_id,
-        target.source_id,
-        TRUE,
-        TRUE);
-      if (is_already_associated(operation_status)) {
-        BOOST_LOG(warning) << "Advanced Color profile association changed after snapshot for display "
-                           << state.device_id << "; selecting the existing association.";
-        operation_status = api.set_display_default(
-          WCS_PROFILE_MANAGEMENT_SCOPE_CURRENT_USER,
-          profile.c_str(),
-          CPT_ICC,
-          extended_display_color_mode,
-          target.adapter_id,
-          target.source_id);
-      }
-      return operation_status;
+      return associate_default(api, target, profile);
     });
 
     if (FAILED(status)) {

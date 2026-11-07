@@ -28,6 +28,7 @@
 #include "rtsp.h"
 #include "utility.h"
 #include "globals.h"
+#include "hdr/calibration.h"
 
 #include "display_device/parsed_config.h"
 #include "platform/common.h"
@@ -522,6 +523,7 @@ namespace config {
     true,  // stream audio
     true,  // stream_mic (enable microphone streaming from client)
     true,  // install_steam_drivers
+    false,  // mat_live (starts the installed capture helper when enabled)
   };
 
   stream_t stream {
@@ -1289,6 +1291,7 @@ namespace config {
     int_between_f(vars, "amd_ltr_frames", video.amd.amd_ltr_frames, { 0, 4 });
     int_between_f(vars, "amd_slices_per_frame", video.amd.amd_slices_per_frame, { 0, 4 });
     bool_f(vars, "amd_avcodec_compat", video.amd.amd_avcodec_compat);
+    bool_f(vars, "amd_vpe", video.amd.amd_vpe);
     int_between_f(vars, "amd_hevc_gop_size", video.amd.amd_hevc_gop_size, { -1, 1000 });
     bool_f(vars, "amd_multi_hw_instance", video.amd.amd_multi_hw_instance);
     // FFmpeg-aligned opt-in toggles (default nullopt = let AMD driver decide,
@@ -1496,6 +1499,7 @@ namespace config {
     bool_f(vars, "stream_audio", audio.stream);
     bool_f(vars, "stream_mic", audio.stream_mic);
     bool_f(vars, "install_steam_audio_drivers", audio.install_steam_drivers);
+    bool_f(vars, "mat_live", audio.mat_live);
 
     string_restricted_f(vars, "origin_web_ui_allowed", nvhttp.origin_web_ui_allowed, { "pc"sv, "lan"sv, "wan"sv });
 
@@ -1859,10 +1863,33 @@ namespace config {
     return 0;
   }
 
+  static void
+  sync_clients_config_locked(const std::map<std::string, std::string> &values, bool deleted = false) {
+    // A command-line override wins for the whole process lifetime, but bindings
+    // already saved for its UUIDs must survive the assignment. Otherwise a save
+    // that carries "clients" updates the runtime value, one that omits it keeps
+    // whatever is already active, and one that explicitly deletes it resets to [].
+    if (const auto override_clients = command_line_config_overrides.find("clients");
+        override_clients != command_line_config_overrides.end()) {
+      nvhttp.clients = hdr::preserve_client_calibrations(override_clients->second, nvhttp.clients);
+      return;
+    }
+    if (const auto clients = values.find("clients"); clients != values.end()) {
+      nvhttp.clients = clients->second;
+    }
+    else if (deleted) {
+      nvhttp.clients = "[]";
+    }
+  }
+
   bool
   update_config(const std::map<std::string, std::string> &updates) {
     std::lock_guard lock { config_file_mutex };
     try {
+      // update_config treats an empty/null value as an explicit deletion, unlike
+      // the full-settings save where it means "omitted".
+      const bool deleted = updates.contains("clients") &&
+                           (updates.at("clients").empty() || updates.at("clients") == "null");
       const auto file_content = read_config_file_contents();
       if (!file_content) {
         return false;
@@ -1883,14 +1910,16 @@ namespace config {
         }
         else {
           // 只有值不同时才更新
-          if (it == configMap.end() || it->second != value) {
-            configMap[key] = value;
+          const auto saved = key == "clients" ? hdr::preserve_client_calibrations(value, nvhttp.clients) : value;
+          if (it == configMap.end() || it->second != saved) {
+            configMap[key] = saved;
             hasChanged = true;
           }
         }
       }
 
       if (!hasChanged) {
+        if (updates.contains("clients")) sync_clients_config_locked(configMap, deleted);
         BOOST_LOG(info) << "Config unchanged, skip writing";
         return true;
       }
@@ -1907,6 +1936,7 @@ namespace config {
         BOOST_LOG(warning) << "Failed to write config file: " << sunshine.config_file;
         return false;
       }
+      if (updates.contains("clients")) sync_clients_config_locked(configMap, deleted);
       if (const auto gamepad_update = updates.find("gamepad"); gamepad_update != updates.end()) {
         const auto gamepad = configMap.find("gamepad");
         platf::set_global_gamepad_mode(gamepad == configMap.end() ? "auto"sv : std::string_view {gamepad->second});
@@ -1996,7 +2026,21 @@ namespace config {
         if (value.empty() || value == "null") {
           continue;
         }
-        resultMap[key] = value;
+        resultMap[key] = key == "clients" ? hdr::preserve_client_calibrations(value, nvhttp.clients) : value;
+      }
+
+      // For clients, an omitted key and an empty/null value both mean "keep the
+      // saved list": treating "" as a deletion here would drop the key from the
+      // file while the runtime list survives, and a restart would lose clients
+      // together with their calibration bindings. An explicit "[]" is non-empty
+      // and still clears.
+      const auto submitted_clients = fullConfig.find("clients");
+      if (submitted_clients == fullConfig.end() || submitted_clients->second.empty() ||
+          submitted_clients->second == "null") {
+        const auto clients = originalMap.find("clients");
+        if (clients != originalMap.end() && !clients->second.empty() && clients->second != "null") {
+          resultMap.insert(*clients);
+        }
       }
 
       // 添加受保护字段（使用本地配置文件中的原有值）
@@ -2024,6 +2068,7 @@ namespace config {
         BOOST_LOG(info) << "Config unchanged, skip writing";
       }
 
+      if (fullConfig.contains("clients")) sync_clients_config_locked(resultMap);
       const auto gamepad = resultMap.find("gamepad");
       platf::set_global_gamepad_mode(gamepad == resultMap.end() ? "auto"sv : std::string_view {gamepad->second});
 
@@ -2069,9 +2114,8 @@ namespace config {
     return false;
   }
 
-  bool
-  save_clients_config(const std::string &clients) {
-    std::lock_guard lock { config_file_mutex };
+  static bool
+  save_clients_config_locked(const std::string &clients) {
     try {
       const auto normalized_clients = nlohmann::json::parse(clients).dump();
       std::map<std::string, std::string> config_map;
@@ -2101,6 +2145,64 @@ namespace config {
     }
     catch (const std::exception &e) {
       BOOST_LOG(warning) << "Failed to save client settings: " << e.what();
+      return false;
+    }
+  }
+
+  bool
+  save_clients_config(const std::string &clients) {
+    std::lock_guard lock { config_file_mutex };
+    try {
+      return save_clients_config_locked(hdr::preserve_client_calibrations(clients, nvhttp.clients));
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(warning) << "Failed to save client settings: " << e.what();
+      return false;
+    }
+  }
+
+  bool
+  save_client_hdr_calibration(const std::string &uuid, const nlohmann::json &calibration) {
+    if (uuid.empty()) return false;
+    std::lock_guard lock { config_file_mutex };
+    try {
+      // Merge into the persisted list, not the runtime one: a command-line
+      // override shrinks nvhttp.clients to the override entries, and writing
+      // that back would drop file-only clients and their bindings.
+      std::string persisted_clients;
+      if (const auto file_content = read_config_file_contents(); file_content) {
+        const auto existing_config = parse_config(*file_content);
+        const auto clients = existing_config.find("clients");
+        if (clients != existing_config.end() && !clients->second.empty() && clients->second != "null") {
+          persisted_clients = clients->second;
+        }
+      }
+      auto clients = nlohmann::json::parse(persisted_clients.empty() ? nvhttp.clients : persisted_clients);
+      if (!clients.is_array()) return false;
+      nlohmann::json *match = nullptr;
+      for (auto &client : clients) {
+        if (!client.is_object()) continue;
+        if (client.value("uuid", std::string {}) != uuid) continue;
+        if (match) return false;
+        match = &client;
+      }
+      if (!match) {
+        clients.push_back({ { "uuid", uuid } });
+        match = &clients.back();
+      }
+      (*match)["hdrCalibration"] = calibration;
+      if (!save_clients_config_locked(clients.dump())) {
+        return false;
+      }
+      // Keep the override shape at runtime: its fields win, bindings carry over.
+      if (const auto override_clients = command_line_config_overrides.find("clients");
+          override_clients != command_line_config_overrides.end()) {
+        nvhttp.clients = hdr::preserve_client_calibrations(override_clients->second, nvhttp.clients);
+      }
+      return true;
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(warning) << "Failed to save client HDR calibration: " << e.what();
       return false;
     }
   }

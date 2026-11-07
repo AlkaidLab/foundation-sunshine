@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { $tp } from '../../../platform-i18n'
 import PlatformLayout from '../../../components/layout/PlatformLayout.vue'
 import Checkbox from '../../../components/Checkbox.vue'
@@ -12,6 +13,7 @@ const props = defineProps({
 })
 
 const config = ref(props.config)
+const { t } = useI18n()
 const hdrRuntimeStatus = ref(null)
 const hdrRuntimeStatusLoaded = ref(false)
 let hdrRuntimeStatusTimer
@@ -97,6 +99,7 @@ const hdrRuntimeBadges = computed(() => {
 const hdrRuntimeConversionLabel = computed(() => {
   const path = activeHdrPipeline.value?.conversion_path
   if (!path) return ''
+  if (path === 'amf_vpe_preferred') return t('config.amd_vpe_runtime')
   if (path === 'compute_shader_direct') return 'D3D11 Compute · Direct'
   if (path === 'compute_shader_scratch') return 'D3D11 Compute · Copy'
   return 'D3D11 Pixel Shader'

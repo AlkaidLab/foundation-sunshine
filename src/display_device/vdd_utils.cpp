@@ -3,6 +3,7 @@
 #include "vdd_utils.h"
 
 #include "vdd_ioctl.h"
+#include "vdd_mode_list.h"
 
 #include <algorithm>
 #include <atomic>
@@ -418,34 +419,20 @@ namespace display_device {
         return set_vdd_result::invalid_config;
       }
 
-      auto resolutions = settings.resolution_modes;
-      auto refresh_rates_hz = settings.refresh_rates_hz;
-      append_unique_resolution(resolutions, *config.resolution);
-      append_unique_refresh_rate(refresh_rates_hz, *session_refresh_hz);
-
-      if (resolutions.empty() || refresh_rates_hz.empty()) {
+      // Bounded by the driver's mode and command-length limits; the requested
+      // mode always fits, configured modes are left out by priority.
+      const vdd_mode_list::vdd_mode_t requested { *config.resolution, *session_refresh_hz };
+      const auto plan = vdd_mode_list::plan_modes(settings.resolution_modes, settings.refresh_rates_hz, *session_refresh_hz, &requested);
+      const auto command_string = vdd_mode_list::format_setmodes_command(plan.modes);
+      const auto mode_count = plan.modes.size();
+      if (command_string.empty()) {
         BOOST_LOG(warning) << "SETMODES skipped: full VDD mode list is empty";
         return set_vdd_result::invalid_config;
       }
-
-      std::wstringstream command;
-      command << L"SETMODES ";
-      std::size_t mode_count = 0;
-      for (const auto &resolution : resolutions) {
-        for (const auto refresh_hz : refresh_rates_hz) {
-          if (mode_count > 0) {
-            command << L",";
-          }
-          command << resolution.width << L"x" << resolution.height << L"x" << refresh_hz;
-          ++mode_count;
-        }
-      }
-
-      const auto command_string = command.str();
-      if (command_string.size() >= 2048) {
-        BOOST_LOG(warning) << "SETMODES command too large (" << command_string.size()
-                           << " wchar_t); refusing a partial mode-list update";
-        return set_vdd_result::failed;
+      if (plan.configured_left_out > 0) {
+        BOOST_LOG(info) << "VDD mode list limited to " << mode_count << " modes; " << plan.configured_left_out
+                        << " configured resolution and refresh-rate combination(s) left out (driver limit "
+                        << vdd_mode_list::kMaxTotalModes << " modes)";
       }
 
       switch (vdd_ioctl::send_command(command_string)) {
@@ -495,7 +482,8 @@ namespace display_device {
       static const std::unordered_map<std::string, physical_size_t> size_map = {
         { "small", { 13.3f, 7.5f } },  // 小型设备：约6英寸，16:9比例
         { "medium", { 34.5f, 19.4f } },  // 中型设备：约15.6英寸，16:9比例
-        { "large", { 70.8f, 39.8f } }  // 大型设备：约32英寸，16:9比例
+        { "large", { 40.7f, 22.9f } },  // 大型设备：约18.4英寸，16:9比例（1080p下推荐缩放125%）
+        { "huge", { 70.8f, 39.8f } }  // 巨型设备：约32英寸，16:9比例（1080p下推荐缩放100%）
       };
 
       try {

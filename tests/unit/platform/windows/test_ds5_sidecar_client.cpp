@@ -412,6 +412,7 @@ TEST(Ds5SidecarClientTests, FallsBackToHidOnlyWhenVirtualAudioBecomesDefault) {
 TEST(Ds5SidecarClientTests, FreeCancelsPendingRecovery) {
 
   event_namespace_scope_t events(L"cancel-recovery");
+  environment_scope_t haptics(L"SUNSHINE_DS5_TEST_HAPTICS", L"1");
   const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + events.suffix;
   const auto crash_name = L"Local\\sunshine-ds5-test-crash-once-" + events.suffix;
   const auto recovery_started_name = L"Local\\sunshine-ds5-test-recovery-started-" + events.suffix;
@@ -427,9 +428,14 @@ TEST(Ds5SidecarClientTests, FreeCancelsPendingRecovery) {
 
   auto mail = std::make_shared<safe::mail_raw_t>();
   auto feedback = mail->queue<platf::gamepad_feedback_msg_t>("ds5-cancel-recovery-test");
+  auto state = platf::ds5_haptics_state_event(mail, 0);
   platf::ds5::sidecar_client_t client;
   ASSERT_EQ(client.alloc({ 0, 0 }, std::move(feedback), false), 0);
   ASSERT_EQ(WaitForSingleObject(recovery_started_event.handle, 5000), WAIT_OBJECT_0);
+  const auto reset = state->pop(std::chrono::seconds(2));
+  ASSERT_TRUE(reset);
+  const std::array<std::uint8_t, 8> idle { 0, 0, 0x62, 0, 0, 0, 0, 0 };
+  EXPECT_EQ(reset->data.ds5_haptics_state, idle);
 
   // The transport is offline, but the sidecar still owns the controller id.
   // The input layer relies on owns() to route release to sidecar_client_t::free().
@@ -439,6 +445,54 @@ TEST(Ds5SidecarClientTests, FreeCancelsPendingRecovery) {
   const auto elapsed = std::chrono::steady_clock::now() - started;
   EXPECT_LT(elapsed, std::chrono::seconds(3));
   EXPECT_FALSE(client.owns(0));
+}
+
+TEST(Ds5SidecarClientTests, HapticsStateSurvivesPcmOverflowAndFreePublishesReset) {
+  event_namespace_scope_t events(L"haptics-overflow");
+  environment_scope_t haptics(L"SUNSHINE_DS5_TEST_HAPTICS", L"1");
+  const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + events.suffix;
+  handle_scope_t continue_event(CreateEventW(nullptr, FALSE, TRUE, continue_name.c_str()));
+  ASSERT_NE(continue_event.handle, nullptr);
+  auto mail = std::make_shared<safe::mail_raw_t>();
+  auto feedback = mail->queue<platf::gamepad_feedback_msg_t>("ds5-haptics-overflow-test");
+  auto state = platf::ds5_haptics_state_event(mail, 7);
+  platf::ds5::sidecar_client_t client;
+  ASSERT_EQ(client.alloc({ 0, 7 }, feedback, false), 0);
+  // Fill the actual bounded PCM queue twice before consuming the one-shot mode update.
+  const std::array<std::uint8_t, 4> silence {};
+  for (unsigned i = 0; i < 65; ++i) {
+    feedback->raise(platf::gamepad_feedback_msg_t::make_ds5_haptics_pcm(7, 0, 1, i, 0, silence.data(), silence.size()));
+  }
+  const auto active = state->pop(std::chrono::seconds(2));
+  ASSERT_TRUE(active);
+  EXPECT_EQ(active->id, 7);
+  const std::array<std::uint8_t, 8> expected { 2, 4, 0x62, 33, 44, 0x10, 0x23, 1 };
+  EXPECT_EQ(active->data.ds5_haptics_state, expected);
+  client.free(0); // The real close path cancels the pipe reader before destroying Sidecar.
+  const auto reset = state->pop(std::chrono::seconds(2));
+  ASSERT_TRUE(reset);
+  EXPECT_EQ(reset->id, 7);
+  const std::array<std::uint8_t, 8> idle { 0, 0, 0x62, 0, 0, 0, 0, 0 };
+  EXPECT_EQ(reset->data.ds5_haptics_state, idle);
+}
+
+TEST(Ds5SidecarClientTests, MalformedAndForeignHapticsDoNotPoisonControllerState) {
+  event_namespace_scope_t events(L"haptics-invalid");
+  environment_scope_t invalid(L"SUNSHINE_DS5_TEST_BAD_HAPTICS", L"1");
+  const auto continue_name = L"Local\\sunshine-ds5-test-continue-" + events.suffix;
+  handle_scope_t continue_event(CreateEventW(nullptr, FALSE, TRUE, continue_name.c_str()));
+  ASSERT_NE(continue_event.handle, nullptr);
+  auto mail = std::make_shared<safe::mail_raw_t>();
+  auto feedback = mail->queue<platf::gamepad_feedback_msg_t>("ds5-haptics-invalid-test");
+  auto state = platf::ds5_haptics_state_event(mail, 7);
+  auto other = platf::ds5_haptics_state_event(mail, 8);
+  platf::ds5::sidecar_client_t client;
+  ASSERT_EQ(client.alloc({ 0, 7 }, feedback, false), 0);
+  // All invalid messages precede the synchronous attach reply, so no sleeps are needed.
+  EXPECT_FALSE(state->pop(std::chrono::milliseconds(0)));
+  EXPECT_FALSE(other->pop(std::chrono::milliseconds(0)));
+  EXPECT_TRUE(client.owns(0));
+  client.free(0);
 }
 
 TEST(Ds5SidecarClientTests, ReallocatesAfterRecoveryFailure) {

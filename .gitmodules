@@ -41,13 +41,16 @@
 [submodule "third-party/AMF"]
 	path = third-party/AMF
 	url = https://github.com/GPUOpen-LibrariesAndSDKs/AMF.git
-	branch = v1.5.2
+	# Pinned release: v1.5.3 (recorded by the superproject gitlink).
 	shallow = true
 	# Headers-only consumption (we only need amf/public/include/).
 	# After clone, run:
 	#   git -C third-party/AMF sparse-checkout init --cone
 	#   git -C third-party/AMF sparse-checkout set amf/public/include
-	# To upgrade: edit branch above, then `git submodule update --remote third-party/AMF`.
+	# To upgrade: fetch/check out a release tag, then commit the updated pin and gitlink.
+	# Release tags are not remote branches, so `git submodule update --remote` cannot select them.
+	#   git -C third-party/AMF fetch --depth=1 origin tag v1.5.3
+	#   git -C third-party/AMF checkout --detach v1.5.3
 	# AMF headers are backward-compatible; single version is sufficient.
 [submodule "third-party/nvapi"]
 	path = third-party/nvapi

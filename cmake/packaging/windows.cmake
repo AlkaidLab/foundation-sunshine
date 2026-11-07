@@ -4,6 +4,17 @@
 include(${CMAKE_MODULE_PATH}/packaging/FetchDriverDeps.cmake)
 
 install(TARGETS sunshine RUNTIME DESTINATION "." COMPONENT application)
+set(SUNSHINE_MAT_CAPTURE_AVAILABLE 0)
+if (TARGET sunshine_mat_capture)
+  set(SUNSHINE_MAT_CAPTURE_AVAILABLE 1)
+  install(FILES "${MAT_CAPTURE_BUILD}/sunshine-plugin-mat-capture.exe"
+          DESTINATION "tools/mat-capture" COMPONENT application)
+  configure_file("${CMAKE_SOURCE_DIR}/cmake/packaging/install_mat_capture.cmake.in"
+      "${CMAKE_BINARY_DIR}/install_mat_capture.cmake" @ONLY)
+  install(SCRIPT "${CMAKE_BINARY_DIR}/install_mat_capture.cmake" COMPONENT application)
+  install(FILES "${MAT_CAPTURE_BUILD}/_deps/minhook-src/LICENSE.txt"
+      DESTINATION "tools/mat-capture" RENAME LICENSE.MinHook.txt COMPONENT application)
+endif ()
 
 # The first-party adapter is optional at process startup. Its MSVC runtime is
 # deliberately not bundled; the Control Panel reports when the system runtime

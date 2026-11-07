@@ -265,6 +265,18 @@ namespace safe {
     queue_t(std::uint32_t max_elements = 32):
         _max_elements { max_elements } {}
 
+    // Loss-intolerant producers must not invoke raise()'s legacy clear-on-full.
+    // Failure is explicit; existing producers retain their original behavior.
+    template <class... Args>
+    bool
+    try_raise(Args &&...args) {
+      std::lock_guard ul { _lock };
+      if (!_continue || _queue.size() >= _max_elements) return false;
+      _queue.emplace_back(std::forward<Args>(args)...);
+      _cv.notify_all();
+      return true;
+    }
+
     template <class... Args>
     void
     raise(Args &&...args) {

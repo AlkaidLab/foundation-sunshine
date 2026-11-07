@@ -147,8 +147,70 @@ TEST_F(ImageEnhancementConfigTest, MaintenanceSurvivesRestartAndRequiresItsOwner
   store = std::make_unique<image_enhancement::manager_t>(root / "hdr.json", root / "tools", catalog());
   ASSERT_TRUE(store->initialize());
   EXPECT_TRUE(store->status()["maintenance"]);
+  EXPECT_EQ(store->status()["maintenance_component"], image_enhancement::NVIDIA_RTX_VIDEO_BACKEND);
+  EXPECT_EQ(store->recover_maintenance(image_enhancement::NVIDIA_DLSSNR_BACKEND).status, 409);
   EXPECT_EQ(store->finish_maintenance(image_enhancement::NVIDIA_RTX_VIDEO_BACKEND, operation).status, 200);
   EXPECT_FALSE(store->status()["maintenance"]);
+  EXPECT_EQ(store->status()["maintenance_component"], "");
+}
+
+TEST_F(ImageEnhancementConfigTest, MaintenanceCannotBeInspectedOrReleasedByAnotherComponent) {
+  for (const auto owner : { image_enhancement::NVIDIA_RTX_VIDEO_BACKEND, image_enhancement::NVIDIA_DLSSNR_BACKEND }) {
+    const auto other = owner == image_enhancement::NVIDIA_RTX_VIDEO_BACKEND ?
+                         image_enhancement::NVIDIA_DLSSNR_BACKEND : image_enhancement::NVIDIA_RTX_VIDEO_BACKEND;
+    std::string operation;
+    ASSERT_EQ(store->begin_maintenance(owner, operation).status, 200);
+    const auto journal = image_enhancement::read_json_document(store->maintenance_path());
+    EXPECT_EQ(store->status()["maintenance_component"], owner);
+    EXPECT_EQ(store->verify_maintenance(other, operation).status, 409);
+    std::string inspected = "unchanged";
+    EXPECT_EQ(store->inspect_maintenance(other, inspected).status, 409);
+    EXPECT_EQ(inspected, "unchanged");
+    EXPECT_EQ(store->finish_maintenance(other, operation).status, 409);
+    EXPECT_EQ(store->recover_maintenance(other).status, 409);
+    EXPECT_EQ(image_enhancement::read_json_document(store->maintenance_path()), journal);
+    EXPECT_TRUE(store->status()["maintenance"]);
+    EXPECT_EQ(store->status()["maintenance_component"], owner);
+    EXPECT_EQ(store->verify_maintenance(owner, operation).status, 200);
+    ASSERT_EQ(store->inspect_maintenance(owner, inspected).status, 200);
+    EXPECT_EQ(inspected, operation);
+    ASSERT_EQ(store->recover_maintenance(owner).status, 200);
+    EXPECT_FALSE(store->status()["maintenance"]);
+    EXPECT_EQ(store->status()["maintenance_component"], "");
+    EXPECT_FALSE(std::filesystem::exists(store->maintenance_path()));
+  }
+}
+
+TEST_F(ImageEnhancementConfigTest, RecoveryPreservesJournalAndBackupWhenOwnerIsUnknown) {
+  create_nr_fixture();
+  const auto backup = root / "tools/hdr_enhanced/nvidia_dlssnr/pending-runtime";
+  std::filesystem::create_directory(backup);
+  const auto saved_runtime = backup / "nvngx_dlssnr.dll";
+  std::ofstream(saved_runtime) << "previous runtime";
+  for (const auto &journal : {
+         std::string { "{broken" },
+         nlohmann::json { { "operation_id", "interrupted" } }.dump(),
+         nlohmann::json { { "operation_id", "interrupted" }, { "component_id", "unknown" } }.dump(),
+       }) {
+    std::ofstream(store->maintenance_path(), std::ios::trunc) << journal;
+    store.reset();
+    store = std::make_unique<image_enhancement::manager_t>(root / "hdr.json", root / "tools", catalog());
+    ASSERT_TRUE(store->initialize());
+    EXPECT_TRUE(store->status()["maintenance"]);
+    EXPECT_EQ(store->status()["maintenance_component"], "");
+    for (const auto component : { image_enhancement::NVIDIA_RTX_VIDEO_BACKEND, image_enhancement::NVIDIA_DLSSNR_BACKEND }) {
+      const auto result = store->recover_maintenance(component);
+      EXPECT_EQ(result.status, 409);
+      EXPECT_EQ(result.error, "hdr_maintenance_mismatch");
+      EXPECT_TRUE(store->status()["maintenance"]);
+      std::ifstream input(store->maintenance_path());
+      std::string persisted;
+      std::getline(input, persisted, '\0');
+      EXPECT_EQ(persisted, journal);
+      EXPECT_TRUE(std::filesystem::exists(saved_runtime));
+      EXPECT_TRUE(std::filesystem::exists(root / "tools/hdr_enhanced/nvidia_dlssnr/nvngx_dlssnr.dll"));
+    }
+  }
 }
 
 TEST_F(ImageEnhancementConfigTest, DeferredRemovalCompletesOnStartupAndPreservesOtherBackend) {

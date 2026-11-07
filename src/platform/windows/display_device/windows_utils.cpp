@@ -13,6 +13,7 @@
 // local includes
 #include "display_scale_steps.h"
 #include "src/logging.h"
+#include "src/platform/common.h"
 #include "src/platform/windows/misc.h"
 #include "src/utility.h"
 #include "windows_utils.h"
@@ -20,6 +21,9 @@
 // Windows includes after "windows.h"
 #include <SetupApi.h>
 #include <wtsapi32.h>
+
+// Keep Win32-dependent helpers after the host headers above.
+#include "hdr_state_api.h"
 
 namespace display_device::w_utils {
 
@@ -569,34 +573,20 @@ namespace display_device::w_utils {
       return hdr_state_e::unknown;
     }
 
-    DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO color_info = {};
-    color_info.header.adapterId = path.targetInfo.adapterId;
-    color_info.header.id = path.targetInfo.id;
-    color_info.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO;
-    color_info.header.size = sizeof(color_info);
-
-    LONG result { DisplayConfigGetDeviceInfo(&color_info.header) };
-    if (result != ERROR_SUCCESS) {
-      BOOST_LOG(error) << get_error_string(result) << " failed to get advanced color info! ";
+    const auto state = hdr_state_api::query(path.targetInfo, DisplayConfigGetDeviceInfo);
+    if (state.status != ERROR_SUCCESS) {
+      BOOST_LOG(error) << get_error_string(state.status) << " failed to get HDR state!";
       return hdr_state_e::unknown;
     }
 
-    return color_info.advancedColorSupported ? color_info.advancedColorEnabled ? hdr_state_e::enabled : hdr_state_e::disabled : hdr_state_e::unknown;
+    return state.supported ? state.enabled ? hdr_state_e::enabled : hdr_state_e::disabled : hdr_state_e::unknown;
   }
 
   bool
   set_hdr_state(const DISPLAYCONFIG_PATH_INFO &path, bool enable) {
-    DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE color_state = {};
-    color_state.header.adapterId = path.targetInfo.adapterId;
-    color_state.header.id = path.targetInfo.id;
-    color_state.header.type = DISPLAYCONFIG_DEVICE_INFO_SET_ADVANCED_COLOR_STATE;
-    color_state.header.size = sizeof(color_state);
-
-    color_state.enableAdvancedColor = enable ? 1 : 0;
-
-    LONG result { DisplayConfigSetDeviceInfo(&color_state.header) };
+    const LONG result = hdr_state_api::set(path.targetInfo, enable, DisplayConfigGetDeviceInfo, DisplayConfigSetDeviceInfo);
     if (result != ERROR_SUCCESS) {
-      BOOST_LOG(error) << get_error_string(result) << " failed to set advanced color info!";
+      BOOST_LOG(error) << get_error_string(result) << " failed to set HDR state!";
       return false;
     }
 
@@ -954,38 +944,14 @@ namespace display_device::w_utils {
 
   bool
   is_user_session_locked() {
-    LPWSTR buffer { nullptr };
-    const auto cleanup_guard {
-      util::fail_guard([&buffer]() {
-        if (buffer) {
-          WTSFreeMemory(buffer);
-        }
-      })
-    };
-
-    DWORD buffer_size_in_bytes { 0 };
-    if (WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, WTSGetActiveConsoleSessionId(), WTSSessionInfoEx, &buffer, &buffer_size_in_bytes)) {
-      if (buffer_size_in_bytes > 0) {
-        const auto wts_info { reinterpret_cast<const WTSINFOEXW *>(buffer) };
-        if (wts_info && wts_info->Level == 1) {
-          const bool is_locked { wts_info->Data.WTSInfoExLevel1.SessionFlags == WTS_SESSIONSTATE_LOCK };
-          const auto session_flags = wts_info->Data.WTSInfoExLevel1.SessionFlags;
-          
-          BOOST_LOG(info) << "Session lock check - Locked: " << is_locked 
-                           << ", SessionFlags: " << session_flags 
-                           << " (LOCK=" << WTS_SESSIONSTATE_LOCK 
-                           << ", UNLOCK=" << WTS_SESSIONSTATE_UNLOCK << ")";
-          return is_locked;
-        }
-      }
-
-      BOOST_LOG(warning) << "Failed to get session info in is_user_session_locked.";
-    }
-    else {
-      BOOST_LOG(error) << get_error_string(GetLastError()) << " failed while calling WTSQuerySessionInformationW!";
+    const auto locked = platf::query_session_locked();
+    if (!locked) {
+      BOOST_LOG(warning) << "Failed to query the session lock state in is_user_session_locked.";
+      return false;
     }
 
-    return false;
+    BOOST_LOG(info) << "Session lock check - Locked: " << *locked;
+    return *locked;
   }
 
   bool

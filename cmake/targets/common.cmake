@@ -2,6 +2,10 @@
 # this file will also load platform specific macros
 
 add_executable(sunshine "${CMAKE_SOURCE_DIR}/src/main.cpp")
+include(${CMAKE_MODULE_PATH}/dependencies/mat_capture.cmake)
+if (TARGET sunshine_mat_capture)
+    add_dependencies(sunshine sunshine_mat_capture)
+endif ()
 target_sources(sunshine PRIVATE ${SUNSHINE_HOST_SOURCES} ${PLATFORM_TARGET_FILES})
 if(WIN32)
     target_link_libraries(sunshine PRIVATE Pyrowave::Runtime sunshine_windows_resources)
