@@ -79,6 +79,35 @@ target_link_libraries(perf_frame_rate_unit_tests PRIVATE gtest_main nlohmann_jso
         sunshine_project_options sunshine_coverage)
 set_target_properties(perf_frame_rate_unit_tests PROPERTIES CXX_STANDARD 23)
 if (WIN32)
+    # Drives the production virtual microphone session for the verification runs
+    # (attach cycles, rate, tone, latency, crash recovery).  Not a unit test.
+    add_executable(virtual_mic_harness
+            ${CMAKE_SOURCE_DIR}/tests/tools/virtual_mic_harness.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_microphone.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_microphone_selftest.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/usbip_device_transport.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/audio_default_guard.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/capture_endpoint_recorder.cpp
+            ${CMAKE_SOURCE_DIR}/src/virtual_usb/uac1_microphone.cpp
+            ${CMAKE_SOURCE_DIR}/src/remote_usb/loopback_usbip_bridge.cpp
+            ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_host_controller.cpp
+            ${CMAKE_SOURCE_DIR}/src/remote_usb/usbip_stale_port_sweep.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/text_encoding.cpp
+            ${CMAKE_SOURCE_DIR}/src/crypto.cpp)
+    target_include_directories(virtual_mic_harness PRIVATE
+            "${CMAKE_SOURCE_DIR}"
+            "${CMAKE_SOURCE_DIR}/third-party"
+            ${FFMPEG_INCLUDE_DIRS}
+            "${CMAKE_SOURCE_DIR}/third-party/build-deps/dist/${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}/include")
+    target_link_libraries(virtual_mic_harness PRIVATE
+            sunshine_project_options sunshine_crypto Boost::log nlohmann_json::nlohmann_json
+            ${Boost_LIBRARIES} ${OPENSSL_LIBRARIES} ${PLATFORM_LIBRARIES}
+            alkaidlab_usbip_core setupapi cfgmgr32 ole32 avrt winmm)
+    target_compile_options(virtual_mic_harness PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+    set_target_properties(virtual_mic_harness PROPERTIES
+            CXX_STANDARD 23
+            LINK_SEARCH_START_STATIC 1)
     set_target_properties(perf_frame_rate_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
 add_test(NAME perf_frame_rate_unit_tests COMMAND perf_frame_rate_unit_tests)
