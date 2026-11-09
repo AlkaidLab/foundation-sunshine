@@ -35,6 +35,8 @@ add_executable(sparxie_unit_tests
   ${CMAKE_CURRENT_LIST_DIR}/test_zzz_file.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_badge.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_windows_registry.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/test_art_sources.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/test_icon_file.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_cover_logo.cpp)
 target_compile_definitions(sparxie_unit_tests PRIVATE SPARXIE_FIXTURES_DIR="${CMAKE_CURRENT_LIST_DIR}/fixtures")
 target_include_directories(sparxie_unit_tests PRIVATE ${SPX_ROOT})
