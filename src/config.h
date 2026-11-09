@@ -334,13 +334,9 @@ namespace config {
   std::optional<std::map<std::string, std::string>>
   get_effective_config_snapshot();
 
-  /**
-   * @brief Validate and persist a complete configuration under the configuration lock.
-   * @param save_vdd Stage legacy VDD modes/GPU under that same lock, rolling back
-   *                 XML if the Sunshine write fails. EDID preferences remain host-only.
-   */
+  /** Validate EDID selection against effective modes and save Sunshine settings under the existing lock. */
   bool
-  update_full_config(const std::map<std::string, std::string> &fullConfig, bool save_vdd = false);
+  update_full_config(const std::map<std::string, std::string> &fullConfig);
 
   /**
    * Return a synchronized snapshot of the serialized per-client settings.

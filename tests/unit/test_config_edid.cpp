@@ -108,41 +108,23 @@ TEST_F(EdidConfigSave, ExplicitDefaultAllowsRemovalOfSelectedSize) {
   EXPECT_EQ(saved->at("resolutions"), "[1920x1080]");
 }
 
-/** @brief A legacy partial save retains the lists against which its EDID choice was validated. */
-TEST_F(EdidConfigSave, OmittedListsAndPreferenceRetainTheirLatestSavedValues) {
+/** @brief EDID validation must not change how legacy saves omit advertised mode lists. */
+TEST_F(EdidConfigSave, OmittedListsKeepLegacyPersistenceAndRetainPreference) {
   ASSERT_TRUE(config::update_full_config({ { "sunshine_name", "partial-client" } }));
   const auto saved = config::get_config_snapshot();
   ASSERT_TRUE(saved);
-  EXPECT_EQ(saved->at("resolutions"), "[1920x1080,3840x2160]");
-  EXPECT_EQ(saved->at("fps"), "[60,120]");
+  EXPECT_EQ(saved->count("resolutions"), 0u);
+  EXPECT_EQ(saved->count("fps"), 0u);
   EXPECT_EQ(saved->at("vdd_edid_native_resolution"), "3840x2160");
 }
 
-/** @brief Submitting one list never deletes the other list. */
-TEST_F(EdidConfigSave, PartialRefreshChangePreservesResolutions) {
+/** @brief A partial mode request validates its retained preference without preserving omitted lists. */
+TEST_F(EdidConfigSave, PartialRefreshChangeKeepsLegacyResolutionPersistence) {
   ASSERT_TRUE(config::update_full_config({ { "fps", "[60]" } }));
   const auto saved = config::get_config_snapshot();
   ASSERT_TRUE(saved);
-  EXPECT_EQ(saved->at("resolutions"), "[1920x1080,3840x2160]");
+  EXPECT_EQ(saved->count("resolutions"), 0u);
   EXPECT_EQ(saved->at("fps"), "[60]");
-}
-
-/** @brief Locked persistence preserves blank/null lists while accepting a compatible change to the other list. */
-TEST_F(EdidConfigSave, BlankAndNullListsPreserveLatestValuesDuringPartialChanges) {
-  for (const auto &blank : { "", "null" }) {
-    ASSERT_TRUE(config::update_full_config({ { "resolutions", blank }, { "fps", "[60]" } }));
-    auto saved = config::get_config_snapshot();
-    ASSERT_TRUE(saved);
-    EXPECT_EQ(saved->at("resolutions"), "[1920x1080,3840x2160]");
-    EXPECT_EQ(saved->at("fps"), "[60]");
-    ASSERT_TRUE(config::update_full_config({ { "resolutions", "[3840x2160]" }, { "fps", blank } }));
-    saved = config::get_config_snapshot();
-    ASSERT_TRUE(saved);
-    EXPECT_EQ(saved->at("resolutions"), "[3840x2160]");
-    EXPECT_EQ(saved->at("fps"), "[60]");
-    // Restore the original lists for the next input variant.
-    ASSERT_TRUE(config::update_full_config({ { "resolutions", "[1920x1080,3840x2160]" }, { "fps", "[60,120]" } }));
-  }
 }
 
 /** @brief Explicit empty lists remain empty instead of silently restoring old values. */

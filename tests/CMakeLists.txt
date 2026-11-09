@@ -212,7 +212,6 @@ add_test(NAME hdr_calibration_unit_tests COMMAND hdr_calibration_unit_tests)
 add_executable(config_runtime_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_config_runtime.cpp
         ${CMAKE_SOURCE_DIR}/src/config.cpp
-        ${CMAKE_SOURCE_DIR}/src/display_device/vdd_settings.cpp
         ${CMAKE_SOURCE_DIR}/src/file_handler.cpp
         ${CMAKE_SOURCE_DIR}/src/display_device/parsed_config.cpp
         ${CMAKE_SOURCE_DIR}/src/display_device/to_string.cpp

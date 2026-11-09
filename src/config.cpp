@@ -9,7 +9,6 @@
 #include <functional>
 #include <iostream>
 #include <iterator>
-#include <memory>
 #include <mutex>
 #include <system_error>
 #include <thread>
@@ -36,7 +35,6 @@
 
 #include "display_device/parsed_config.h"
 #include "display_device/vdd_edid_resolution.h"
-#include "display_device/vdd_settings.h"
 #include "platform/common.h"
 
 #ifdef _WIN32
@@ -61,10 +59,6 @@ namespace config {
 
   namespace {
     std::mutex config_file_mutex;
-#ifdef SUNSHINE_TESTS
-    std::mutex save_hook_mutex;
-    std::function<void()> save_lock_contended_hook;
-#endif
     std::unordered_map<std::string, std::string> command_line_config_overrides;
 
     std::optional<std::string>
@@ -1997,13 +1991,6 @@ namespace config {
 
 #ifdef SUNSHINE_TESTS
   namespace test_support {
-    /** @brief Install a callback invoked after a full-config update encounters the held save mutex. */
-    void
-    set_save_lock_contended_hook(std::function<void()> hook) {
-      std::lock_guard lock { save_hook_mutex };
-      save_lock_contended_hook = std::move(hook);
-    }
-
     /** @brief Swap only the in-memory startup override map and return its previous value. */
     std::unordered_map<std::string, std::string>
     exchange_command_line_overrides(std::unordered_map<std::string, std::string> overrides) {
@@ -2013,24 +2000,10 @@ namespace config {
   }  // namespace test_support
 #endif
 
-  /** Validate, stage related XML, and commit while excluding all configuration writers. */
+  /** @brief Validate the EDID preference against effective modes and persist the host configuration. */
   bool
-  update_full_config(const std::map<std::string, std::string> &fullConfig, bool save_vdd) {
-#ifdef SUNSHINE_TESTS
-    // Signal actual contention, not merely that the worker thread was scheduled.
-    std::unique_lock lock { config_file_mutex, std::defer_lock };
-    if (!lock.try_lock()) {
-      std::function<void()> hook;
-      {
-        std::lock_guard hook_lock { save_hook_mutex };
-        hook = save_lock_contended_hook;
-      }
-      if (hook) hook();
-      lock.lock();
-    }
-#else
+  update_full_config(const std::map<std::string, std::string> &fullConfig) {
     std::lock_guard lock { config_file_mutex };
-#endif
     try {
       // 不需要保存到配置文件的只读字段（API响应字段，不是配置项）
       const std::set<std::string> readonlyFields = {
@@ -2109,21 +2082,15 @@ namespace config {
         }
       }
 
-      // Omitted/empty/null mode lists retain the same values used by retained-selection
-      // validation, including runtime defaults absent from disk. Explicit lists,
-      // including [], are never replaced.
-      for (const auto key : { "resolutions", "fps" }) {
-        resultMap.try_emplace(key, existing_modes.at(key));
-      }
-      const auto value = [&](const char *key, const char *fallback) {
-        const auto found = resultMap.find(key);
-        return found == resultMap.end() ? std::string { fallback } : found->second;
+      // Resolve modes for EDID validation only. Keep legacy list persistence unchanged.
+      const auto value = [&](const char *key) {
+        return display_device::vdd_edid::mode_list_or(fullConfig, key, existing_modes.at(key));
       };
       // Explicit selections in partial requests must also match the latest
-      // merged lists, which may have changed since the HTTP validation snapshot.
+      // effective lists, which may have changed since the HTTP validation snapshot.
       if (fullConfig.count("vdd_edid_native_resolution") && resultMap.count("vdd_edid_native_resolution") &&
-          !display_device::vdd_edid::supported_selection(value("vdd_edid_native_resolution", "default"),
-            value("resolutions", "[]"), value("fps", "[]"))) {
+          !display_device::vdd_edid::supported_selection(resultMap.at("vdd_edid_native_resolution"),
+            value("resolutions"), value("fps"))) {
         BOOST_LOG(warning) << "EDID native resolution is not supported by the saved mode lists";
         return false;
       }
@@ -2133,19 +2100,6 @@ namespace config {
         auto it = originalMap.find(field);
         if (it != originalMap.end() && !it->second.empty() && it->second != "null") {
           resultMap[field] = it->second;
-        }
-      }
-
-      // The XML transaction is created only after the latest retained preference
-      // has been validated under this lock. Destroy it before releasing the lock
-      // on any error, so rollback cannot overwrite a later successful request.
-      std::unique_ptr<display_device::vdd_settings::transaction> vdd_update;
-      if (save_vdd) {
-        vdd_update = std::make_unique<display_device::vdd_settings::transaction>();
-        if (vdd_update->save(value("resolutions", "[]"), value("fps", "[]"), value("adapter_name", "")) ==
-            display_device::vdd_settings::save_result::failed) {
-          BOOST_LOG(warning) << "Failed to save virtual display settings; Sunshine configuration was not saved";
-          return false;
         }
       }
 
@@ -2165,8 +2119,6 @@ namespace config {
       else {
         BOOST_LOG(info) << "Config unchanged, skip writing";
       }
-
-      if (vdd_update) vdd_update->commit();
 
       if (fullConfig.contains("clients")) sync_clients_config_locked(resultMap);
       const auto gamepad = resultMap.find("gamepad");

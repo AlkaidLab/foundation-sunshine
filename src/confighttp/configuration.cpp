@@ -11,6 +11,7 @@
 #include "src/display_device/session.h"
 #include "src/display_device/to_string.h"
 #include "src/display_device/vdd_edid_resolution.h"
+#include "src/display_device/vdd_settings.h"
 #include "src/file_handler.h"
 #include "src/globals.h"
 #include "src/logging.h"
@@ -263,11 +264,7 @@ namespace confighttp::configuration {
       }
     }
 
-    /**
-     * @brief Validate a WebUI save and coordinate host/VDD persistence under one save lock.
-     * @details The configuration layer rechecks retained preferences before staging
-     *          XML and rolls it back if host persistence fails; errors reach the caller.
-     */
+    /** @brief Validate EDID choices before the existing, separate VDD and host saves. */
     void
     saveConfig(resp_https_t response, req_https_t request) {
       if (!check_content_type(response, request, "application/json")) return;
@@ -340,10 +337,14 @@ namespace confighttp::configuration {
           throw std::invalid_argument("Mode-list changes removed the saved EDID native resolution or its encodable refresh rate; explicitly select a supported EDID native resolution or default");
         }
 
+        // Keep the legacy XML arguments, save order and error handling unchanged.
+        display_device::vdd_settings::save(inputTree.get<std::string>("resolutions", "[]"),
+          inputTree.get<std::string>("fps", "[]"), gpu_name);
+
         // 更新配置
-        if (!config::update_full_config(fullConfig, true)) {
+        if (!config::update_full_config(fullConfig)) {
           outputTree.put("status", "false");
-          outputTree.put("error", "Failed to persist Sunshine or virtual display settings; see host log");
+          outputTree.put("error", "failed to persist configuration");
           return;
         }
       }

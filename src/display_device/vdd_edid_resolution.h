@@ -19,7 +19,7 @@ namespace display_device::vdd_edid {
   /**
    * @brief Fill omitted saved mode lists from the currently advertised runtime lists.
    * @details Nonempty/non-null values, including explicit empty lists, retain their values.
-   *          API validation and locked persistence use the same fallback rules.
+   *          HTTP and locked EDID validation share these rules; saving lists is unchanged.
    */
   inline std::map<std::string, std::string>
   with_mode_list_defaults(std::map<std::string, std::string> saved,

@@ -49,10 +49,9 @@ size and preserves the original EDID. No EDID preference is written to the
 driver XML or registry; a missing VDD XML does not prevent saving this choice.
 
 Older API clients that omit the field retain the saved Sunshine preference.
-Partial saves retain omitted resolution/FPS lists. Empty strings and `null`
-(JSON null or the string `"null"`) also mean omitted. Explicit lists, including
-the string `"[]"`, replace the saved values. If a list is omitted from both
-the request and saved configuration, the host's current advertised list is used.
+For EDID validation, missing, empty or null mode-list values use saved lists,
+falling back to the host's current advertised lists. This does not change how
+the existing API saves those lists; submit the complete configuration.
 Startup command-line overrides
 take precedence when creating a monitor, while Save updates the on-disk choice.
 The API validates list membership, dimensions and clock feasibility. If an older
@@ -61,16 +60,13 @@ be supported. Otherwise the request is rejected before either configuration file
 is changed; explicitly select Default or another supported native size before
 removing its size or encodable refresh rate. Existing XML persistence of the
 driver's general mode/GPU settings is independent of the EDID preference.
-API saves validate and write both configurations under the same lock. If the
-Sunshine write fails, the original XML bytes are restored before another save
-can proceed. Empty mode lists are valid and use the driver's fallback modes.
-Rollback failures are logged; this does not provide recovery from process or
-machine failure during a save.
+The existing XML save order and error handling are unchanged. XML rollback,
+cross-file locking and mode-list persistence improvements are a separate change.
 
 ### API request format
 
-`POST /api/config` saves a complete configuration. The EDID preference, mode
-lists and existing protected fields have preservation rules; other omitted
+`POST /api/config` saves a complete configuration. The EDID preference and
+existing protected/client fields have preservation rules; other omitted
 unprotected fields, such as `adapter_name`, are removed and may reset host/GPU
 settings. Send the complete configuration to retain those fields.
 
@@ -81,8 +77,8 @@ complete request:
 {"resolutions":"[1920x1080]","fps":"[60]"}
 ```
 
-An explicitly empty list is the string `"[]"`; JSON arrays are not supported
-for these fields.
+List fields use bracketed strings such as `"[]"`; JSON arrays are not supported.
+This option does not change the legacy XML writer's handling of empty lists.
 
 ### Driver compatibility
 
