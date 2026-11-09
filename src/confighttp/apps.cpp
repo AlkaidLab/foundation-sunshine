@@ -17,8 +17,10 @@
 #include "src/nvhttp.h"
 #include "src/platform/run_command.h"
 #include "src/process.h"
+#include "src/sparxie/runtime.h"
 #include "src/utility.h"
 #include <atomic>
+#include <chrono>
 #include <boost/property_tree/json_parser.hpp>
 #include <filesystem>
 #include <fstream>
@@ -47,9 +49,10 @@ namespace confighttp::apps {
     getApps(resp_https_t response, req_https_t request) {
       if (!authenticate(response, request)) return;
 
+      sparxie::note_app_list_opened();
       print_req(request);
 
-      std::string content = file_handler::read_file(config::stream.file_apps.c_str());
+      std::string content = sparxie::typed_apps_text(file_handler::read_file(config::stream.file_apps.c_str()));
       web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "application/json");
       response->write(content, headers);
@@ -165,6 +168,8 @@ namespace confighttp::apps {
         }
 
         file_handler::write_json(config::stream.file_apps, fileTree);
+        // the property tree writes a sparxie block with every value as a string: put the types back
+        sparxie::heal_apps_file(config::stream.file_apps);
       }
       catch (std::exception &e) {
         BOOST_LOG(warning) << "SaveApp: "sv << e.what();
@@ -230,6 +235,8 @@ namespace confighttp::apps {
           fileTree.push_back(std::make_pair("apps", newApps));
         }
         file_handler::write_json(config::stream.file_apps, fileTree);
+        // the property tree writes a sparxie block with every value as a string: put the types back
+        sparxie::heal_apps_file(config::stream.file_apps);
       }
       catch (std::exception &e) {
         BOOST_LOG(warning) << "DeleteApp: "sv << e.what();
@@ -386,6 +393,8 @@ namespace confighttp::apps {
         fileTree.push_back(std::make_pair("apps", newApps));
 
         file_handler::write_json(config::stream.file_apps, fileTree);
+        // the property tree writes a sparxie block with every value as a string: put the types back
+        sparxie::heal_apps_file(config::stream.file_apps);
       }
       catch (std::exception &e) {
         BOOST_LOG(warning) << "BatchDeleteApps: "sv << e.what();

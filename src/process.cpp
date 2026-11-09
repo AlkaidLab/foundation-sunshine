@@ -39,6 +39,7 @@
 #include "tray/tray_state.h"
 #include "launch_splash/launch_splash.h"
 #include "utility.h"
+#include "src/sparxie/runtime.h"
 #include "webhook/webhook.h"
 
 #ifdef _WIN32
@@ -235,7 +236,23 @@ namespace proc {
         break;
     }
     _env["SUNSHINE_CLIENT_AUDIO_SURROUND_PARAMS"] = launch_session->surround_params;
-
+    // Whether the client is a touch device is decided while the stream is prepared (nvhttp_stream_start.cpp) and
+    // sits on the launch session; the application only sees what is copied here. Without this line Sparxie's
+    // automatic Endfield input never learned the device and every client got the PC interface.
+    if (auto touch = launch_session->env.find("SUNSHINE_CLIENT_TOUCH"); touch != launch_session->env.end()) {
+      if (auto value = touch->to_string(); !value.empty()) {
+        _env["SUNSHINE_CLIENT_TOUCH"] = std::move(value);
+      }
+    }
+    // The launch splash: a command that starts a game shows its name and stage on the streamed display until the window is up (the Desktop has no command).
+    // A launcher that reports its own stages writes them to the file named here.
+    const bool splash_launcher_reports = launch_splash::command_reports_stages(_app.cmd);
+    if (!_app.cmd.empty()) {
+      if (const auto splash = launch_splash::begin(_app, launch_splash::kind_e::launch)) {
+        _env["SUNSHINE_LAUNCH_ID"] = splash->id;
+        _env["SUNSHINE_LAUNCH_STATUS_FILE"] = splash->status_file.string();
+      }
+    }
     if (!_app.output.empty() && _app.output != "null"sv) {
 #ifdef _WIN32
       // fopen() interprets the filename as an ANSI string on Windows, so we must convert it
@@ -321,12 +338,17 @@ namespace proc {
                                               find_working_directory(_app.cmd, _env) :
                                               boost_path_from_utf8(_app.working_dir);
       BOOST_LOG(info) << "Executing: ["sv << _app.cmd << "] in ["sv << boost_path_to_utf8(working_dir) << ']';
-      _process = platf::run_command(_app.elevated, true, _app.cmd, working_dir, _env, _pipe.get(), ec, &_process_group);
+      // the splash is on the streamed display before the game starts (the game was seen first in a 2026-11-12 test); never longer than launch_splash::shown_wait_ms
+      launch_splash::wait_shown();
+      // the game's settings and display for this stream; a game that starts directly may get size arguments for it
+      const std::string stream_arguments = sparxie::before_launch(_app.name, _app.cmd, { launch_session->width, launch_session->height, launch_session->fps });
+      _process = platf::run_command(_app.elevated, true, _app.cmd + stream_arguments, working_dir, _env, _pipe.get(), ec, &_process_group);
       if (ec) {
         BOOST_LOG(warning) << "Couldn't run ["sv << _app.cmd << "]: System: "sv << ec.message();
         launch_splash::fail("start");
         return -1;
       }
+      launch_splash::note_started(static_cast<std::uint32_t>(_process.id()), splash_launcher_reports);
     }
 
     _app_launch_time = std::chrono::steady_clock::now();
@@ -383,6 +405,8 @@ namespace proc {
     launch_splash::end();
     const bool had_process = static_cast<bool>(_process);
     terminate_process_group(_process, _process_group, _app.exit_timeout);
+    // the application ended (the game quit or the stream did): the game settings its launch wrote go back
+    if (had_process && !_app.cmd.empty()) sparxie::after_session(_app.name, _app.cmd);
     _process = boost::process::v1::child();
     _process_group = boost::process::v1::group();
 
@@ -1059,7 +1083,9 @@ namespace proc {
           ctx.image_path = parse_env_val(this_env, *image_path);
         }
 
-        ctx.elevated = elevated.value_or(false);
+        // a game application of the Sparxie component: the HoYoverse games and Sparxie itself ask for administrator rights in their manifest,
+        // so started without them CreateProcess fails with ERROR_ELEVATION_REQUIRED (740) whatever the entry says
+        ctx.elevated = elevated.value_or(false) || static_cast<bool>(app_node.get_child_optional("sparxie"s));
         ctx.auto_detach = auto_detach.value_or(true);
         ctx.wait_all = wait_all.value_or(true);
         ctx.mouse_mode = mouse_mode.value_or(0);

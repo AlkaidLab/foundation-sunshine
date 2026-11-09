@@ -18,6 +18,7 @@
 #include "src/confighttp/pairing.h"
 #include "src/confighttp/proxies.h"
 #include "src/confighttp/runtime.h"
+#include "src/confighttp/sparxie.h"
 #include "src/confighttp/systeminfo.h"
 #include "src/file_mapping/config_http.h"
 #include "src/network.h"
