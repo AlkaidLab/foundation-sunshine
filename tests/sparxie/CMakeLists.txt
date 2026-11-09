@@ -33,6 +33,7 @@ add_executable(sparxie_unit_tests
   ${CMAKE_CURRENT_LIST_DIR}/test_region.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_storefronts.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_vendors.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/test_scan.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_store.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_sparxie_contract.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_settings.cpp
