@@ -39,7 +39,9 @@ add_executable(sparxie_unit_tests
   ${CMAKE_CURRENT_LIST_DIR}/test_settings.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_hoyo_settings.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_zzz_file.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/test_apps_types.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_badge.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/test_stream_display.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_windows_registry.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_art_sources.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_icon_file.cpp
