@@ -23,7 +23,11 @@ add_executable(sparxie_unit_tests
   ${SPX_ROOT}/src/sparxie/icon_file.cpp
   ${SPX_ROOT}/src/sparxie/svg_path.cpp
   ${SPX_ROOT}/src/sparxie/platform.cpp
+  ${SPX_ROOT}/src/sparxie/zip_extract.cpp
+  ${SPX_ROOT}/src/sparxie/install.cpp
+  ${SPX_ROOT}/src/sparxie/install_platform.cpp
   ${SPX_ROOT}/third-party/puff/puff.c
+  ${CMAKE_CURRENT_LIST_DIR}/test_install.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_store.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_sparxie_contract.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_settings.cpp
@@ -57,6 +61,9 @@ add_executable(sparxie_real_install
   ${SPX_ROOT}/src/sparxie/icon_file.cpp
   ${SPX_ROOT}/src/sparxie/svg_path.cpp
   ${SPX_ROOT}/src/sparxie/platform.cpp
+  ${SPX_ROOT}/src/sparxie/zip_extract.cpp
+  ${SPX_ROOT}/src/sparxie/install.cpp
+  ${SPX_ROOT}/src/sparxie/install_platform.cpp
   ${SPX_ROOT}/third-party/puff/puff.c
 target_include_directories(sparxie_real_install PRIVATE ${SPX_ROOT})
 target_link_libraries(sparxie_real_install PRIVATE Threads::Threads)
@@ -82,6 +89,9 @@ add_executable(sparxie_ui_fixtures
   ${SPX_ROOT}/src/sparxie/icon_file.cpp
   ${SPX_ROOT}/src/sparxie/svg_path.cpp
   ${SPX_ROOT}/src/sparxie/platform.cpp
+  ${SPX_ROOT}/src/sparxie/zip_extract.cpp
+  ${SPX_ROOT}/src/sparxie/install.cpp
+  ${SPX_ROOT}/src/sparxie/install_platform.cpp
   ${SPX_ROOT}/third-party/puff/puff.c
 target_include_directories(sparxie_ui_fixtures PRIVATE ${SPX_ROOT})
 target_link_libraries(sparxie_ui_fixtures PRIVATE Threads::Threads)

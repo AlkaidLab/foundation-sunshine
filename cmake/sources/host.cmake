@@ -244,6 +244,9 @@ set(SUNSHINE_HOST_SOURCES
     src/sparxie/stream_display.cpp src/sparxie/stream_display.h
     src/sparxie/user_session.cpp src/sparxie/user_session.h
     src/sparxie/sha256.h
+    src/sparxie/zip_extract.cpp src/sparxie/zip_extract.h
+    src/sparxie/install.cpp src/sparxie/install.h
+    src/sparxie/install_platform.cpp
     third-party/puff/puff.c third-party/puff/puff.h
 )
 list(TRANSFORM SUNSHINE_HOST_SOURCES PREPEND "${CMAKE_SOURCE_DIR}/")
