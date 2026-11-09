@@ -30,6 +30,9 @@ add_executable(sparxie_unit_tests
   ${SPX_ROOT}/src/sparxie/install_platform.cpp
   ${SPX_ROOT}/third-party/puff/puff.c
   ${CMAKE_CURRENT_LIST_DIR}/test_install.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/test_region.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/test_storefronts.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/test_vendors.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_store.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_sparxie_contract.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_settings.cpp
