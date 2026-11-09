@@ -206,6 +206,7 @@ add_test(NAME hdr_calibration_unit_tests COMMAND hdr_calibration_unit_tests)
 # state and run config::parse, so they cannot join the aggregate suite.
 add_executable(config_runtime_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_config_runtime.cpp
+        ${CMAKE_SOURCE_DIR}/src/display_device/vdd_settings.cpp
         ${CMAKE_SOURCE_DIR}/src/config.cpp
         ${CMAKE_SOURCE_DIR}/src/file_handler.cpp
         ${CMAKE_SOURCE_DIR}/src/display_device/parsed_config.cpp
@@ -646,6 +647,7 @@ list(REMOVE_ITEM TEST_SOURCES
         ${CMAKE_SOURCE_DIR}/tests/unit/test_client_fingerprint.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_config_overrides.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_config_runtime.cpp
+        ${CMAKE_SOURCE_DIR}/src/display_device/vdd_settings.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_current_capture_target.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_display_scale_steps.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_frame_contract.cpp

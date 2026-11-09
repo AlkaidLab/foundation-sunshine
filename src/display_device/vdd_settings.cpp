@@ -13,8 +13,14 @@
 #include <boost/regex.hpp>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <sstream>
+#include <utility>
 #include <vector>
+
+#ifdef SUNSHINE_TESTS
+  #include <mutex>
+#endif
 
 using namespace std::literals;
 
@@ -23,6 +29,13 @@ namespace display_device::vdd_settings {
   namespace pt = boost::property_tree;
 
   namespace {
+#ifdef SUNSHINE_TESTS
+    std::mutex settings_path_mutex;
+    std::optional<fs::path> test_settings_path;
+    std::function<void()> before_save_hook;
+#endif
+
+    /** Split legacy comma-separated mode lists without interpreting their values. */
     std::vector<std::string>
     split(const std::string &str, char delimiter) {
       std::vector<std::string> tokens;
@@ -37,8 +50,89 @@ namespace display_device::vdd_settings {
 
   }  // namespace
 
-  bool
-  save(std::string resArray, std::string fpsArray, std::string gpu_name) {
+#ifdef SUNSHINE_TESTS
+  namespace test_support {
+    /** @brief Restrict test XML access to the explicitly supplied fixture path. */
+    void
+    set_settings_path(const std::optional<std::filesystem::path> &path) {
+      std::lock_guard lock { settings_path_mutex };
+      test_settings_path = path;
+    }
+    /** @brief Install a test-only stage barrier without holding the hook mutex during callbacks. */
+    void
+    set_before_save_hook(std::function<void()> hook) {
+      std::lock_guard lock { settings_path_mutex };
+      before_save_hook = std::move(hook);
+    }
+  }  // namespace test_support
+#endif
+
+  /** @brief Resolve an isolated/production path and snapshot readable XML without modifying it. */
+  transaction::transaction() {
+#ifdef SUNSHINE_TESTS
+    fs::path idd_option_path;
+    {
+      std::lock_guard lock { settings_path_mutex };
+      if (!test_settings_path) {
+        BOOST_LOG(warning) << "VDD tests require an isolated settings path";
+        return;
+      }
+      idd_option_path = *test_settings_path;
+    }
+#else
+    const auto idd_option_path = platf::appdata() / "vdd_settings.xml";
+#endif
+    path_ = idd_option_path;
+    std::error_code error;
+    const bool exists = fs::exists(path_, error);
+    if (error) {
+      BOOST_LOG(warning) << "Unable to inspect VDD configuration: " << error.message();
+      return;
+    }
+    if (!exists) {
+      state_ = save_result::missing_file;
+      return;
+    }
+    std::ifstream input(path_, std::ios::binary);
+    if (!input.is_open()) return;
+    original_.assign(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+    if (input.bad()) return;
+    state_ = save_result::saved;
+  }
+
+  /** @brief Roll back staged XML bytes before releasing the caller's configuration lock. */
+  transaction::~transaction() {
+    if (!restore_) return;
+    try {
+      // A denied write did not alter the file and need not be retried as rollback.
+      std::ifstream current(path_, std::ios::binary);
+      const std::string contents { std::istreambuf_iterator<char>(current), std::istreambuf_iterator<char>() };
+      if (current.is_open() && !current.bad() && contents == original_) return;
+      current.close();
+      std::ofstream output(path_, std::ios::binary | std::ios::trunc);
+      output.write(original_.data(), static_cast<std::streamsize>(original_.size()));
+      output.flush();
+      output.close();
+      if (!output) BOOST_LOG(error) << "Failed to restore VDD settings after configuration save failure";
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(error) << "Failed to restore VDD settings: " << e.what();
+    }
+  }
+
+  /** @brief Stage general modes/GPU while preserving unrelated XML; empty mode lists are valid. */
+  save_result
+  transaction::save(std::string resArray, std::string fpsArray, std::string gpu_name) {
+    if (state_ != save_result::saved) return state_;
+    const auto &idd_option_path = path_;
+#ifdef SUNSHINE_TESTS
+    std::function<void()> hook;
+    {
+      std::lock_guard lock { settings_path_mutex };
+      hook = before_save_hook;
+    }
+    if (hook) hook();
+#endif
     pt::ptree iddOptionTree;
     pt::ptree global_node;
     pt::ptree resolutions_nodes;
@@ -49,15 +143,16 @@ namespace display_device::vdd_settings {
 
     // 添加全局刷新率到global节点
     for (const auto &fps : split(boost::regex_replace(fpsArray, pattern, ""), delimiter)) {
-      global_node.add("g_refresh_rate", fps);
+      if (!fps.empty()) global_node.add("g_refresh_rate", fps);
     }
 
     std::string str = boost::regex_replace(resArray, pattern, "");
     boost::algorithm::trim(str);
     for (const auto &resolution : split(str, delimiter)) {
+      if (resolution.empty()) continue;
       auto index = resolution.find('x');
       if (index == std::string::npos) {
-        return false;
+        return save_result::failed;
       }
       pt::ptree res_node;
       res_node.put("width", resolution.substr(0, index));
@@ -65,14 +160,7 @@ namespace display_device::vdd_settings {
       resolutions_nodes.push_back(std::make_pair("resolution"s, res_node));
     }
 
-    // 类似于 config.cpp 中的 path_f 函数逻辑，使用相对路径
-    std::filesystem::path idd_option_path = platf::appdata() / "vdd_settings.xml";
-
     BOOST_LOG(info) << "VDD配置文件路径: " << file_handler::path_to_utf8(idd_option_path);
-
-    if (!fs::exists(idd_option_path)) {
-      return false;
-    }
 
     // 先读取现有配置文件
     pt::ptree existing_root;
@@ -146,6 +234,7 @@ namespace display_device::vdd_settings {
       boost::regex empty_lines_regex("\\n\\s*\\n");
       xml_content = boost::regex_replace(xml_content, empty_lines_regex, "\n");
 
+      restore_ = true;
       std::ofstream file(idd_option_path);
       if (!file.is_open()) {
         throw std::runtime_error("Unable to open VDD configuration file");
@@ -156,11 +245,11 @@ namespace display_device::vdd_settings {
         throw std::runtime_error("Unable to write VDD configuration file");
       }
 
-      return true;
+      return save_result::saved;
     }
     catch (std::exception &e) {
       BOOST_LOG(warning) << "写入VDD配置失败: " << e.what();
-      return false;
+      return save_result::failed;
     }
   }
 
