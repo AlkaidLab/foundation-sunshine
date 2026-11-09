@@ -1029,4 +1029,1035 @@ namespace sparxie {
     result.body = { { "ok", true }, { "installed", component_status(env).body.value("installed", false) }, { "profiles", profiles } };
     return result;
   }
+  namespace {
+    // A profile this request added to Sparxie's config goes again when the request does not end well: the profile and the application list are one change.
+    void
+    take_back_profile(HostEnv &env, const std::string &id) {
+      if (id.empty()) return;
+      StoreHooks hooks = env.store_hooks;
+      hooks.running = false;
+      remove_profiles(config_dir(env), { id }, hooks);
+    }
+    ApiResult
+    internal_failure(const std::exception &e) {
+      return failure(Status::fail(500, "internal_error", e.what()));
+    }
+    ApiResult
+    create_app_in(HostEnv &env, const json &request, std::string &made);
+    ApiResult
+    update_app_in(HostEnv &env, int index, const json &request, std::string &made);
+  }  // namespace
+  ApiResult
+  create_app(HostEnv &env, const json &request) {
+    std::string made;
+    ApiResult result;
+    try {
+      result = create_app_in(env, request, made);
+    }
+    catch (const std::exception &e) {
+      result = internal_failure(e);
+    }
+    if (!result.status.ok) {
+      try {
+        take_back_profile(env, made);
+      }
+      catch (const std::exception &) {
+      }
+    }
+    return result;
+  }
+  ApiResult
+  update_app(HostEnv &env, int index, const json &request) {
+    std::string made;
+    ApiResult result;
+    try {
+      result = update_app_in(env, index, request, made);
+    }
+    catch (const std::exception &e) {
+      result = internal_failure(e);
+    }
+    if (!result.status.ok) {
+      try {
+        take_back_profile(env, made);
+      }
+      catch (const std::exception &) {
+      }
+    }
+    return result;
+  }
+  namespace {
+  ApiResult
+  create_app_in(HostEnv &env, const json &request, std::string &made) {
+    ApiResult result;
+    const fs::path path = requested_path(request);
+    if (path.empty()) {
+      return failure(Status::fail(400, "invalid_input", "A folder or executable path is required"));
+    }
+    IdentifyResult found = identified(env, path);
+    if (!found.status.ok) {
+      return failure(found.status, { { "has_game", false } });
+    }
+    const std::string requested_region = request.value("region", std::string());
+    if (found.install.region.empty()) {
+      if (requested_region.empty() || std::find(found.install.candidates.begin(), found.install.candidates.end(), requested_region) == found.install.candidates.end()) {
+        return failure(Status::fail(400, "invalid_region", "Choose one of the remaining regions"), { { "candidates", found.install.candidates } });
+      }
+      found.install.region = requested_region;
+      found.install.candidates.clear();
+      found.install.id = found.install.game + "-" + found.install.region;
+      found.install.biz = biz_for(found.install.game, found.install.region);
+    }
+    else if (!requested_region.empty() && requested_region != found.install.region) {
+      result.status = Status::fail(400, "invalid_region", "That region does not match the install");
+      result.body = { { "ok", false }, { "error", result.status.error }, { "error_code", result.status.error_code } };
+      return result;
+    }
+    const std::string name = request.value("name", std::string());
+    if (name.empty()) {
+      result.status = Status::fail(400, "invalid_input", "An application name is required");
+      result.body = { { "ok", false }, { "error", result.status.error }, { "error_code", result.status.error_code } };
+      return result;
+    }
+    json options = request.contains("options") && request["options"].is_object() ? request["options"] : default_options();
+    if (const Status normalized = normalize_options(options); !normalized.ok) return failure(normalized);
+    const std::string mode = mode_for_input(env, mode_of(request), options, found.install.game);
+    const std::string templ = env.launch_template.empty() ? std::string(kDefaultLaunchTemplate) : env.launch_template;
+    json write_back = { { "dataDir", config_dir(env).string() }, { "dataDirProvisional", true }, { "launchTemplateProvisional", true }, { "profile", "" }, { "backup", "" } };
+    std::string profile_id;
+    bool wrote = false;
+    if (mode == "touch") {
+      if (sparxie_open(env)) {
+        result.status = Status::fail(409, "sparxie_running", "Sparxie is running, close it before writing");
+        result.body = { { "ok", false }, { "error", result.status.error }, { "error_code", result.status.error_code }, { "write_back", { { "state", "refused_running" } } } };
+        return result;
+      }
+      ProfileDraft draft;
+      draft.game = found.install.game;
+      draft.display_name = name;
+      draft.executable = found.install.exe_path;
+      draft.options = options_with_boost(options, game_boost_on(request.value("settings", json::object())));
+      draft.display_fps = resolve_target_fps(options, display_refresh_of(env));
+      const ConfigView existing = read_store(config_dir(env));
+      if (existing.status.ok)
+        draft.id = next_profile_id(existing.document, found.install.game + "-" + found.install.region + "-");
+      else
+        draft.id = found.install.game + "-" + found.install.region + "-1";
+      StoreHooks hooks = env.store_hooks;
+      hooks.running = false;
+      const WriteResult stored = add_profile(config_dir(env), draft, hooks);
+      if (!stored.status.ok) {
+        result.status = stored.status;
+        result.body = { { "ok", false }, { "error", stored.status.error }, { "error_code", stored.status.error_code }, { "write_back", { { "state", stored.state } } } };
+        return result;
+      }
+      profile_id = stored.profile;
+      made = stored.profile;
+      wrote = true;
+      write_back["state"] = stored.state;
+      write_back["profile"] = stored.profile;
+      write_back["backup"] = stored.backup;
+    }
+    else {
+      write_back["state"] = "skipped";
+    }
+    const json requested_settings = request.value("settings", json::object());
+    json launch_options = launch_options_of(requested_settings, found.install.game);
+    const json display = normalized_display(request.value("display", json()));
+    apply_display_to_launch_options(launch_options, display, found.install.game);
+    const std::string cmd = mode == "touch" ? touch_command(env, profile_id, found.install, name) : direct_command(env, found.install, launch_options);
+    const std::string restore = request.value("restore", std::string("restore")) == "keep" ? "keep" : "restore";
+    const bool custom_cover = request.value("cover", std::string("official")) == "custom";
+    // An application stores only the items the person changed (sparse overrides); every other item follows the game's own value and is never written.
+    const json settings = settings_without_game_fps(mode, options, sparse_settings(request.value("settings", json::object())));
+    json block = app_block(found.install, profile_id, mode, options, templ, settings, restore, custom_cover ? "custom" : "official");
+    block["launchOptions"] = launch_options;
+    block["display"] = display;
+    block["game"] = found.install.game;
+    mirror_display_to_options(block);
+    // the Sparxie badge on the posters of a touch application: on for the official cover, off for a cover of the person's own unless they ask for it
+    if (mode == "touch") block["badge"] = request.contains("badge") && request["badge"].is_boolean() ? request["badge"].get<bool>() : !custom_cover;
+    // the games ask for administrator rights in their manifest, so a direct start is elevated too (else Windows refuses it: 740)
+    json app = make_app(name, cmd, true, found.install, block);
+    // a cover of the person's own (a local file or an address, portrait and landscape) is kept as given and is never replaced by the official one
+    // the official poster when the refresh already has it: an application made after the last refresh showed the host's placeholder until the next one
+    if (!custom_cover) {
+      const Posters posters = official_posters(env, found.install.id, badge_wanted(block));
+      if (!posters.cover.empty()) app["image-path"] = posters.cover.string();
+      if (!posters.hero.empty()) app["hero"] = posters.hero.string();
+    }
+    if (custom_cover) {
+      if (request.contains("image-path") && request["image-path"].is_string() && !request["image-path"].get<std::string>().empty()) app["image-path"] = request["image-path"].get<std::string>();
+      if (request.contains("hero") && request["hero"].is_string() && !request["hero"].get<std::string>().empty()) app["hero"] = request["hero"].get<std::string>();
+      apply_custom_badge(env, app);
+    }
+    const int index = append_app(env, app);
+    if (index < 0) return failure(Status::fail(500, "apps_write_failed", "The application list could not be saved"));
+    result.body = { { "ok", true }, { "app", app }, { "saved", true }, { "index", index }, { "wrote", wrote }, { "write_back", write_back } };
+    return result;
+  }
+  ApiResult
+  update_app_in(HostEnv &env, int index, const json &request, std::string &made) {
+    ApiResult result;
+    json apps = read_apps(env.apps_file);
+    if (index < 0 || index >= static_cast<int>(apps["apps"].size()) || !apps["apps"][index].contains("sparxie") || !apps["apps"][index]["sparxie"].is_object()) {
+      return failure(Status::fail(404, "not_found", "That application is not a game application"));
+    }
+    json &app = apps["apps"][index];
+    json &block = app["sparxie"];
+    Install install;
+    install.id = block.value("install", std::string());
+    install.game = block.value("game", std::string());
+    install.region = block.value("region", std::string());
+    install.dir = block.value("dir", std::string());
+    install.exe_path = block.value("exe", std::string());
+    install.exe = fs::path(install.exe_path).filename().string();
+    const std::string name = request.contains("name") && request["name"].is_string() && !request["name"].get<std::string>().empty() ? request["name"].get<std::string>() : app.value("name", std::string());
+    json wanted_options = request.contains("options") && request["options"].is_object() ? request["options"] : block.value("options", json::object());
+    // an application of the first builds has no input: it is what its launch was (a direct launch is keyboard, mouse and gamepad)
+    if (!wanted_options.contains("input")) wanted_options["input"] = effective_input(block);
+    if (const Status normalized = normalize_options(wanted_options); !normalized.ok) return failure(normalized);
+    const std::string mode = mode_for_input(env, request.contains("mode") ? mode_of(request) : (block.value("mode", std::string("pc")) == "touch" ? "touch" : "pc"), wanted_options, install.game);
+    std::string profile_id = block.value("profile", std::string());
+    json write_back = { { "state", "skipped" } };
+    bool wrote = false;
+    // 提升游戏优先级 of what this save stores: Sparxie's own priority follows it, or Sparxie's runtime would put the game back to normal
+    const bool settings_sent = request.contains("settings");
+    const bool boost = game_boost_on(settings_sent ? request.value("settings", json::object()) : block.value("settings", json::object()));
+    // touch launch needs the game in Sparxie's storage: a game app that was launched directly until now gets its profile here
+    if (mode == "touch" && profile_id.empty()) {
+      if (sparxie_open(env)) return failure(Status::fail(409, "sparxie_running", "Sparxie is running, close it before writing"));
+      ProfileDraft draft;
+      draft.game = install.game;
+      draft.display_name = name;
+      draft.executable = install.exe_path;
+      draft.options = block.contains("options") && block["options"].is_object() ? block["options"] : default_options();
+      if (!draft.options.contains("input")) draft.options["input"] = wanted_options.value("input", std::string("touch"));
+      if (const Status normalized = normalize_options(draft.options); !normalized.ok) return failure(normalized);
+      draft.options = options_with_boost(draft.options, boost);
+      draft.display_fps = resolve_target_fps(draft.options, display_refresh_of(env));
+      const ConfigView existing = read_store(config_dir(env));
+      draft.id = existing.status.ok ? next_profile_id(existing.document, install.game + "-" + install.region + "-") : install.game + "-" + install.region + "-1";
+      StoreHooks hooks = env.store_hooks;
+      hooks.running = false;
+      const WriteResult stored = add_profile(config_dir(env), draft, hooks);
+      if (!stored.status.ok) return failure(stored.status, { { "write_back", { { "state", stored.state } } } });
+      profile_id = stored.profile;
+      made = stored.profile;
+      wrote = true;
+      write_back = { { "state", stored.state }, { "profile", stored.profile }, { "backup", stored.backup } };
+    }
+    // Sparxie's own options for this profile (frame-rate unlock, touch interface scale, priority): written to its config when the game app launches through it
+    if (request.contains("options") && request["options"].is_object()) {
+      json options = request["options"];
+      if (const Status normalized = normalize_options(options); !normalized.ok) return failure(normalized);
+      block["options"] = options;
+      if (mode == "touch" && !profile_id.empty() && !wrote) {
+        ProfileDraft draft;
+        draft.display_name = name;
+        draft.executable = install.exe_path;
+        draft.game = install.game;
+        draft.options = options_with_boost(options, boost);
+        draft.display_fps = resolve_target_fps(options, display_refresh_of(env));
+        StoreHooks hooks = env.store_hooks;
+        hooks.running = sparxie_open(env);
+        if (hooks.running) return failure(Status::fail(409, "sparxie_running", "Sparxie is running, close it before writing"));
+        const WriteResult stored = update_profile(config_dir(env), profile_id, draft, hooks);
+        if (!stored.status.ok) return failure(stored.status, { { "write_back", { { "state", stored.state } } } });
+        write_back = { { "state", stored.state }, { "profile", profile_id }, { "backup", stored.backup } };
+        wrote = true;
+      }
+    }
+    // a change of the settings alone: Sparxie's priority follows the boost (best effort; a Sparxie that is open keeps the old value until the next launch writes it)
+    if (!request.contains("options") && settings_sent && mode == "touch" && !profile_id.empty() && !wrote && block.contains("options") && block["options"].is_object() && !sparxie_open(env)) {
+      ProfileDraft draft;
+      draft.display_name = name;
+      draft.executable = install.exe_path;
+      draft.game = install.game;
+      draft.options = options_with_boost(block["options"], boost);
+      draft.display_fps = resolve_target_fps(block["options"], display_refresh_of(env));
+      StoreHooks hooks = env.store_hooks;
+      hooks.running = false;
+      update_profile(config_dir(env), profile_id, draft, hooks);
+    }
+    app["name"] = name;
+    const std::string templ = env.launch_template.empty() ? std::string(kDefaultLaunchTemplate) : env.launch_template;
+    json launch_options = launch_options_of(request.value("settings", json::object()), install.game);
+    // the display choice: the request's, else the stored one, else the default (follow the stream)
+    const json display = request.contains("display") ? normalized_display(request["display"]) : normalized_display(block.contains("display") ? block["display"] : json());
+    apply_display_to_launch_options(launch_options, display, install.game);
+    app["cmd"] = mode == "touch" ? touch_command(env, profile_id, install, name) : direct_command(env, install, launch_options);
+    app["elevated"] = true;
+    block["mode"] = mode;
+    block["profile"] = profile_id;
+    block["launchOptions"] = launch_options;
+    block["display"] = display;
+    mirror_display_to_options(block);
+    block["launchTemplate"] = templ;
+    // the input an application of the first builds had implicitly is stored once the application is saved
+    if (!block.contains("options") || !block["options"].is_object()) block["options"] = json::object();
+    if (!block["options"].contains("input")) block["options"]["input"] = wanted_options.value("input", std::string("touch"));
+    if (request.contains("restore")) block["restore"] = request.value("restore", std::string("restore")) == "keep" ? "keep" : "restore";
+    if (request.contains("settings")) block["settings"] = settings_without_game_fps(mode, block.value("options", json::object()), sparse_settings(request.value("settings", json::object())));
+    block.erase("settingsMode");  // the two-mode switch is gone: no changed items means the game's own settings stay
+    if (request.contains("badge") && request["badge"].is_boolean()) block["badge"] = request["badge"].get<bool>();
+    if (request.contains("cover")) {
+      const bool custom = request.value("cover", std::string("official")) == "custom";
+      block["cover"] = custom ? "custom" : "official";
+      if (custom) {
+        for (const char *key : { "image-path", "hero" }) {
+          if (!request.contains(key) || !request[key].is_string()) continue;
+          if (request[key].get<std::string>().empty())
+            app.erase(key);
+          else
+            app[key] = request[key].get<std::string>();
+        }
+      }
+      else {
+        // back to the official poster: the person's own images go, the newest official cover is the poster again
+        app.erase("hero");
+        app.erase("image-path");
+        block.erase("customImage");
+        block.erase("customHero");
+      }
+    }
+    // the posters follow the cover and the badge setting (and the launch mode: only a touch application has the badge)
+    if (request.contains("cover") || request.contains("badge") || request.contains("mode") || request.contains("options")) {
+      if (string_at(block, "cover") == "custom")
+        apply_custom_badge(env, app);
+      else
+        reconcile_official(env, app, true);
+    }
+    if (!commit_apps(env, apps)) return failure(Status::fail(500, "apps_write_failed", "The application list could not be saved"));
+    result.body = { { "ok", true }, { "app", app }, { "saved", true }, { "index", index }, { "wrote", wrote }, { "write_back", write_back } };
+    return result;
+  }
+  }  // namespace
+  ApiResult
+  import_apps(HostEnv &env, const json &request) {
+    ApiResult result;
+    if (!request.contains("ids") || !request["ids"].is_array()) {
+      result.status = Status::fail(400, "invalid_input", "ids must be an array");
+      result.body = { { "ok", false }, { "error", result.status.error }, { "error_code", result.status.error_code } };
+      return result;
+    }
+    const ConfigView store = read_store(config_dir(env));
+    if (!store.status.ok) {
+      result.status = store.status;
+      result.body = { { "ok", false }, { "error", store.status.error }, { "error_code", store.status.error_code } };
+      return result;
+    }
+    MemoryRegistry local;
+    Registry &registry = registry_of(env, local);
+    json created = json::array();
+    const std::string templ = env.launch_template.empty() ? std::string(kDefaultLaunchTemplate) : env.launch_template;
+    for (const auto &id_value : request["ids"]) {
+      const std::string id = id_value.is_string() ? id_value.get<std::string>() : std::string();
+      const json *profile = nullptr;
+      for (const auto &candidate : store.document["profiles"])
+        if (candidate.value("id", std::string()) == id) profile = &candidate;
+      if (!profile) {
+        result.status = Status::fail(404, "not_found", "A Sparxie profile was not found");
+        result.body = { { "ok", false }, { "error", result.status.error }, { "error_code", result.status.error_code } };
+        return result;
+      }
+      IdentifyResult found = identified(env, profile->value("executablePath", std::string()));
+      if (!found.status.ok) {
+        found.install.game = from_sparxie_game(profile->value("game", std::string()));
+        found.install.exe_path = profile->value("executablePath", std::string());
+        found.install.exe = fs::path(found.install.exe_path).filename().string();
+        found.install.dir = fs::path(found.install.exe_path).parent_path().string();
+        found.install.id = found.install.game.empty() ? id : found.install.game + "-open";
+      }
+      found.install.profile = id;
+      json options = profile->contains("hoyo") ? options_from_hoyo((*profile)["hoyo"]) : default_options();
+      normalize_options(options);
+      const std::string name = profile->value("displayName", id);
+      json block = app_block(found.install, id, "touch", options, templ);
+      block["badge"] = true;
+      const std::string cmd = touch_command(env, id, found.install, name);
+      json made = make_app(name, cmd, true, found.install, block);
+      const Posters posters = official_posters(env, found.install.id, true);
+      if (!posters.cover.empty()) made["image-path"] = posters.cover.string();
+      if (!posters.hero.empty()) made["hero"] = posters.hero.string();
+      created.push_back(std::move(made));
+    }
+    json apps = read_apps(env.apps_file);
+    for (const auto &app : created) apps["apps"].push_back(app);
+    commit_apps(env, apps);
+    result.body = { { "ok", true }, { "apps", created }, { "saved", true } };
+    return result;
+  }
+  ApiResult
+  acknowledge_warning(HostEnv &env) {
+    std::error_code ec;
+    fs::create_directories(env.host_data, ec);
+    std::ofstream out(env.host_data / "warning.json");
+    out << json { { "acknowledged", true } }.dump(2);
+    ApiResult result;
+    result.body = { { "ok", true }, { "warned", true }, { "statement", kStatement }, { "statement_en", kStatementEn } };
+    return result;
+  }
+  ApiResult
+  game_settings_for(HostEnv &env, const std::string &install_id, const std::string &exe, const std::string &region) {
+    ApiResult result;
+    auto install = install_by_id(env, install_id);
+    // an install the host does not store yet (the page found it by itself): read by its executable, in the region that was chosen
+    if (!install && !exe.empty() && !is_sparxie_location(env, exe)) {
+      const IdentifyResult found = identified(env, exe);
+      if (found.status.ok) {
+        install = found.install;
+        if (is_region(region) && (install->region.empty() || install->region == region)) install->region = region;
+      }
+    }
+    if (!install) {
+      result.status = Status::fail(404, "not_found", "That install is not known");
+      result.body = { { "ok", false }, { "error", result.status.error }, { "error_code", result.status.error_code } };
+      return result;
+    }
+    MemoryRegistry local;
+    const bool running = env.process_running && env.process_running({ install->exe });
+    const SettingsResult settings = read_game_settings(*install, registry_of(env, local), env.zzz_magics, [&] { return running; });
+    result.body = { { "ok", true }, { "running", settings.running }, { "values", values_json(settings.values) }, { "unavailable", settings.unavailable } };
+    // the display the games list their resolutions from (Zenless Zone Zero keeps its resolution as a position in that list): only when the host can read it
+    if (env.display_size) {
+      const auto [width, height] = env.display_size();
+      if (width > 0 && height > 0) {
+        result.body["screen"] = { { "width", width }, { "height", height } };
+        // while a stream is running the display is the one the next launch covers: the page says the size it will have
+        if (env.stream_running && env.stream_running()) result.body["stream"] = { { "width", width }, { "height", height }, { "refresh", display_refresh_of(env) } };
+      }
+    }
+    return result;
+  }
+  ApiResult
+  write_game_settings_for(HostEnv &env, const json &request) {
+    ApiResult result;
+    std::string install_id = request.value("install", std::string());
+    const json apps = read_apps(env.apps_file);
+    int app_index = request.value("app", -1);
+    if (install_id.empty() && app_index >= 0 && app_index < static_cast<int>(apps["apps"].size()))
+      install_id = apps["apps"][app_index].value("sparxie", json::object()).value("install", std::string());
+    const auto install = install_by_id(env, install_id);
+    if (!install) {
+      result.status = Status::fail(404, "not_found", "That install is not known");
+      result.body = { { "ok", false }, { "error", result.status.error }, { "error_code", result.status.error_code } };
+      return result;
+    }
+    MemoryRegistry local;
+    const bool running = env.process_running && env.process_running({ install->exe });
+    // While Sparxie's unlock owns the frame rate of this application, the game's own tier is never written, even when a request carries it.
+    json requested = request.value("values", json::object());
+    if (app_index >= 0 && app_index < static_cast<int>(apps["apps"].size()) && apps["apps"][app_index].contains("sparxie") && unlock_owns_fps(apps["apps"][app_index]["sparxie"]))
+      requested.erase("fps");
+    // `values` may hold any subset: only those fields are written, the rest keep the game's own value
+    const json chosen = sparse_settings(requested);
+    const std::set<std::string> fields = chosen_fields(chosen);
+    if (fields.empty()) {
+      result.body = { { "ok", true }, { "running", running }, { "values", json::object() }, { "applied", json::array() }, { "unavailable", json::array() } };
+      return result;
+    }
+    GameValues values = values_from_json(chosen, GameValues {});
+    const SettingsResult wrote = write_game_settings(*install, registry_of(env, local), values, env.zzz_magics, [&] { return running; }, env.host_data / "game-settings-backup", request.value("restore", std::string("restore")) == "keep" ? "keep" : "restore", fields);
+    if (!wrote.status.ok) {
+      result.status = wrote.status;
+      result.body = { { "ok", false }, { "error", wrote.status.error }, { "error_code", wrote.status.error_code }, { "running", wrote.running } };
+      return result;
+    }
+    if (app_index >= 0 && app_index < static_cast<int>(apps["apps"].size()) && apps["apps"][app_index].contains("sparxie")) {
+      json updated = apps;
+      json stored_settings = updated["apps"][app_index]["sparxie"].value("settings", json::object());
+      if (!stored_settings.is_object() || chosen_fields(stored_settings).empty()) stored_settings = json::object();
+      for (auto it = chosen.begin(); it != chosen.end(); ++it) stored_settings[it.key()] = it.value();
+      updated["apps"][app_index]["sparxie"]["settings"] = stored_settings;
+      commit_apps(env, updated);
+    }
+    result.body = { { "ok", true }, { "running", false }, { "values", chosen }, { "applied", wrote.applied }, { "unavailable", wrote.unavailable } };
+    return result;
+  }
+  ApiResult
+  set_cover(HostEnv &env, int index, const std::string &cover) {
+    ApiResult result;
+    if (cover != "official" && cover != "custom") {
+      result.status = Status::fail(400, "invalid_input", "cover must be official or custom");
+      result.body = { { "ok", false }, { "error", result.status.error }, { "error_code", result.status.error_code } };
+      return result;
+    }
+    json apps = read_apps(env.apps_file);
+    if (index < 0 || index >= static_cast<int>(apps["apps"].size()) || !apps["apps"][index].contains("sparxie")) {
+      result.status = Status::fail(404, "not_found", "That application is not a Sparxie application");
+      result.body = { { "ok", false }, { "error", result.status.error }, { "error_code", result.status.error_code } };
+      return result;
+    }
+    apps["apps"][index]["sparxie"]["cover"] = cover;
+    commit_apps(env, apps);
+    result.body = { { "ok", true }, { "index", index }, { "cover", cover } };
+    return result;
+  }
+  ApiResult
+  publish_art(HostEnv &env, const std::string &install_id, const ArtUrls &urls, const Rgba &background, const Rgba &logo, const Rgba &icon, const Rgba *finished_cover) {
+    ApiResult result;
+    // an empty or one-colour background (a decoder that returned zeros) would publish a blank cover and a blank poster over the good ones
+    if (image_is_blank(background)) {
+      if (env.warn) env.warn("the official background of " + install_id + " decoded blank; its poster and cover are left as they were");
+      result.status = Status::fail(404, "art_unavailable", "The background picture is blank");
+      result.body = { { "ok", false }, { "error", result.status.error }, { "error_code", result.status.error_code } };
+      return result;
+    }
+    Rgba cover = finished_cover ? fit_cover(*finished_cover) : Rgba {};
+    if (cover.w == 0) cover = compose_cover(background, logo);
+    const auto png = encode_png(cover);
+    if (png.empty()) {
+      result.status = Status::fail(404, "art_unavailable", "No image could be composed");
+      result.body = { { "ok", false }, { "error", result.status.error }, { "error_code", result.status.error_code } };
+      return result;
+    }
+    std::error_code ec;
+    fs::create_directories(env.covers_dir, ec);
+    const fs::path file = env.covers_dir / ("sparxie-" + install_id + "-" + urls.version + ".png");
+    std::ofstream out(file, std::ios::binary);
+    out.write(reinterpret_cast<const char *>(png.data()), static_cast<std::streamsize>(png.size()));
+    out.close();
+    // the badged copy a touch application shows (its own file name, so the clients fetch it again when the badge is switched)
+    if (const auto badged = encode_png(with_badge(cover, sparxie_mark())); !badged.empty()) write_if_changed(badged_cover_of(file), badged);
+    fs::create_directories(env.host_data / "posters" / install_id, ec);
+    write_hero(env, install_id, background, logo);
+    {
+      const Rgba banner = crop_banner(background);
+      const auto banner_png = encode_png(banner);
+      std::ofstream banner_out(env.host_data / "posters" / install_id / "banner.png", std::ios::binary);
+      banner_out.write(reinterpret_cast<const char *>(banner_png.data()), static_cast<std::streamsize>(banner_png.size()));
+    }
+    if (!icon.px.empty()) {
+      const auto icon_png = encode_png(icon);
+      std::ofstream icon_out(env.host_data / "posters" / install_id / "icon.png", std::ios::binary);
+      icon_out.write(reinterpret_cast<const char *>(icon_png.data()), static_cast<std::streamsize>(icon_png.size()));
+    }
+    json apps = read_apps(env.apps_file);
+    int updated = 0;
+    for (auto &app : apps["apps"]) {
+      if (!app.contains("sparxie") || !app["sparxie"].is_object()) continue;
+      if (app["sparxie"].value("install", std::string()) != install_id) continue;
+      app["sparxie"]["artVersion"] = urls.version;
+      app["sparxie"]["artUpdated"] = urls.version;
+      if (app["sparxie"].value("cover", std::string("official")) == "custom") continue;
+      reconcile_official(env, app, true);
+      ++updated;
+    }
+    commit_apps(env, apps);
+    result.body = { { "ok", true }, { "version", urls.version }, { "path", file.string() }, { "updated", updated } };
+    return result;
+  }
+  bool
+  publish_cover(HostEnv &env, const std::string &install_id, const std::string &version, const Rgba &background, const Rgba &logo) {
+    if (image_is_blank(background)) return false;
+    const Rgba cover = compose_cover(background, logo);
+    const auto png = encode_png(cover);
+    if (png.empty() || image_is_blank(cover)) return false;
+    std::error_code ec;
+    fs::create_directories(env.covers_dir, ec);
+    const fs::path file = env.covers_dir / ("sparxie-" + install_id + "-" + version + ".png");
+    const bool changed = write_if_changed(file, png);
+    if (const auto badged = encode_png(with_badge(cover, sparxie_mark())); !badged.empty()) write_if_changed(badged_cover_of(file), badged);
+    return changed;
+  }
+  bool
+  publish_icon(HostEnv &env, const std::string &install_id, const Rgba &icon) {
+    if (icon.px.empty()) return false;
+    const auto png = encode_png(icon);
+    if (png.empty()) return false;
+    const fs::path file = env.host_data / "posters" / install_id / "icon.png";
+    std::error_code ec;
+    if (fs::is_regular_file(file, ec)) {
+      std::ifstream in(file, std::ios::binary);
+      const std::string old((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+      if (old.size() == png.size() && std::equal(old.begin(), old.end(), png.begin(), [](char a, std::uint8_t b) { return static_cast<std::uint8_t>(a) == b; })) return false;
+    }
+    fs::create_directories(file.parent_path(), ec);
+    std::ofstream out(file, std::ios::binary);
+    out.write(reinterpret_cast<const char *>(png.data()), static_cast<std::streamsize>(png.size()));
+    return true;
+  }
+  int
+  publish_hero(HostEnv &env, const std::string &install_id, const Rgba &background, const Rgba &logo) {
+    if (!write_hero(env, install_id, background, logo)) {
+      // the poster cannot be made: a blank one already on disk must not stay (the heroes of the apps fall back to the cover)
+      json apps = read_apps(env.apps_file);
+      if (drop_blank_hero(env, apps, install_id)) commit_apps(env, apps);
+      return -1;
+    }
+    json apps = read_apps(env.apps_file);
+    int updated = 0;
+    for (auto &app : apps["apps"]) {
+      if (!app.contains("sparxie") || !app["sparxie"].is_object()) continue;
+      if (app["sparxie"].value("install", std::string()) != install_id) continue;
+      if (app["sparxie"].value("cover", std::string("official")) == "custom") continue;
+      if (reconcile_official(env, app, false)) ++updated;
+    }
+    if (updated > 0) commit_apps(env, apps);
+    return updated;
+  }
+  int
+  publish_cover_badge(HostEnv &env, const std::string &install_id) {
+    json apps = read_apps(env.apps_file);
+    const bool dropped = drop_blank_badged_cover(env, apps, install_id);
+    const bool made = ensure_cover_badge(env, install_id);
+    int updated = 0;
+    for (auto &app : apps["apps"]) {
+      if (!app.contains("sparxie") || !app["sparxie"].is_object()) continue;
+      if (app["sparxie"].value("install", std::string()) != install_id) continue;
+      if (app["sparxie"].value("cover", std::string("official")) == "custom") continue;
+      if (reconcile_official(env, app, false)) ++updated;
+    }
+    if (updated > 0 || dropped) commit_apps(env, apps);
+    return made || dropped ? std::max(updated, 1) : updated;
+  }
+  int
+  attach_official_covers(HostEnv &env) {
+    json apps = read_apps(env.apps_file);
+    int attached = 0;
+    // a blank landscape poster or badged cover (made from a background that decoded as zeros) goes at host start; the refresh composes the poster again from the cached pictures
+    {
+      std::vector<std::string> installs;
+      for (const auto &app : apps["apps"])
+        if (app.contains("sparxie") && app["sparxie"].is_object()) installs.push_back(app["sparxie"].value("install", std::string()));
+      std::sort(installs.begin(), installs.end());
+      installs.erase(std::unique(installs.begin(), installs.end()), installs.end());
+      for (const auto &install_id : installs)
+        if (!install_id.empty() && (drop_blank_hero(env, apps, install_id) | drop_blank_badged_cover(env, apps, install_id))) ++attached;
+    }
+    std::vector<std::string> badged_installs;
+    for (auto &app : apps["apps"]) {
+      if (!app.contains("sparxie") || !app["sparxie"].is_object()) continue;
+      const std::string install_id = app["sparxie"].value("install", std::string());
+      // a poster made before the badge gets its badged copy once
+      if (!install_id.empty() && std::find(badged_installs.begin(), badged_installs.end(), install_id) == badged_installs.end()) {
+        badged_installs.push_back(install_id);
+        ensure_cover_badge(env, install_id);
+      }
+      if (release_migrated_official_cover(env, app)) ++attached;
+      if (app["sparxie"].value("cover", std::string("official")) == "custom") {
+        // a custom cover only changes when the person turned the badge on for it (its badged copy follows the source image)
+        if (apply_custom_badge(env, app)) ++attached;
+        continue;
+      }
+      // an application of the first poster round has the old 6:1 strip (or the PNG of the first landscape round) as its hero: the JPEG landscape poster replaces it as soon as it
+      // exists, and only that host-made strip; a hero of the person's own is never touched
+      if (reconcile_official(env, app, false)) ++attached;
+    }
+    // Endfield's input no longer has 自动 (by the client's device): an app that still says so becomes touch when it runs through Sparxie and keyboard, mouse and gamepad otherwise,
+    // once. Its Sparxie profile follows when Sparxie is not open (the next launch writes it otherwise).
+    {
+      bool open_checked = false;
+      bool open = false;
+      for (auto &app : apps["apps"]) {
+        if (!app.contains("sparxie") || !app["sparxie"].is_object()) continue;
+        json &block = app["sparxie"];
+        if (block.value("game", std::string()) != "endfield" || !block.contains("options") || !block["options"].is_object() || block["options"].value("input", std::string()) != "auto") continue;
+        block["options"]["input"] = block.value("mode", std::string("pc")) == "touch" ? "touch" : "kbm";
+        ++attached;
+        const std::string profile_id = block.value("profile", std::string());
+        if (profile_id.empty()) continue;
+        if (!open_checked) {
+          open = sparxie_open(env);
+          open_checked = true;
+        }
+        if (open) continue;
+        ProfileDraft draft;
+        draft.game = "endfield";
+        draft.display_name = app.value("name", std::string());
+        draft.executable = block.value("exe", std::string());
+        draft.options = block["options"];
+        draft.display_fps = display_refresh_of(env);
+        StoreHooks hooks = env.store_hooks;
+        hooks.running = false;
+        update_profile(config_dir(env), profile_id, draft, hooks);
+      }
+    }
+    // A touch application made with an older launch template (the provisional `"Sparxie.exe" --profile <id>`, which only opens the Sparxie window)
+    // gets the command of the current template, once the host ships the protocol launcher the template names.
+    const std::string templ = env.launch_template.empty() ? std::string(kDefaultLaunchTemplate) : env.launch_template;
+    fs::path launcher = env.install_root / "tools" / "sparxie-launch.exe";
+    if (!fs::is_regular_file(launcher)) launcher = env.install_root / "sparxie-launch.exe";
+    const bool launcher_shipped = templ.find("{sparxie-launch}") == std::string::npos || fs::is_regular_file(launcher);
+    for (auto &app : apps["apps"]) {
+      if (!launcher_shipped) break;
+      if (!app.contains("sparxie") || !app["sparxie"].is_object()) continue;
+      json &block = app["sparxie"];
+      if (block.value("mode", std::string()) != "touch" || block.value("profile", std::string()).empty()) continue;
+      Install install;
+      install.id = block.value("install", std::string());
+      install.game = block.value("game", std::string());
+      install.region = block.value("region", std::string());
+      install.dir = block.value("dir", std::string());
+      install.exe_path = block.value("exe", std::string());
+      // also a command saved while the launcher was missing (its bare name only resolves by chance): the current template with the shipped path
+      const std::string current = touch_command(env, block.value("profile", std::string()), install, app.value("name", std::string()));
+      if (block.value("launchTemplate", std::string()) == templ && app.value("cmd", std::string()) == current) continue;
+      app["cmd"] = current;
+      block["launchTemplate"] = templ;
+      ++attached;
+    }
+    // With a Sparxie that can run a session without the touch interface, a Genshin or Star Rail application that was made as a direct launch (keyboard, mouse and gamepad, no profile yet)
+    // goes the launcher route like every other application of a Sparxie title: its Sparxie options (frame-rate unlock, target frame rate, background frame rate, priority) then apply. It
+    // keeps its options and gets the input it always had. An open Sparxie cannot be written to: the application waits for the next start.
+    if (sparxie_installed(env) && touch_ui_switch(env) && launcher_shipped) {
+      bool open_checked = false;
+      bool open = false;
+      for (auto &app : apps["apps"]) {
+        if (!app.contains("sparxie") || !app["sparxie"].is_object()) continue;
+        json &block = app["sparxie"];
+        const std::string game = block.value("game", std::string());
+        if (block.value("mode", std::string()) != "pc" || !block.value("profile", std::string()).empty() || (game != "genshin" && game != "starrail")) continue;
+        if (block.value("exe", std::string()).empty()) continue;
+        if (!open_checked) {
+          open = sparxie_open(env);
+          open_checked = true;
+        }
+        if (open) break;
+        Install install;
+        install.id = block.value("install", std::string());
+        install.game = game;
+        install.region = block.value("region", std::string());
+        install.dir = block.value("dir", std::string());
+        install.exe_path = block.value("exe", std::string());
+        install.exe = fs::path(install.exe_path).filename().string();
+        json options = block.contains("options") && block["options"].is_object() ? block["options"] : default_options();
+        if (!options.contains("input")) options["input"] = "kbm";
+        if (!normalize_options(options).ok) continue;
+        ProfileDraft draft;
+        draft.game = install.game;
+        draft.display_name = app.value("name", std::string());
+        draft.executable = install.exe_path;
+        draft.options = options;
+        draft.display_fps = resolve_target_fps(options, display_refresh_of(env));
+        const ConfigView existing = read_store(config_dir(env));
+        draft.id = existing.status.ok ? next_profile_id(existing.document, install.game + "-" + install.region + "-") : install.game + "-" + install.region + "-1";
+        StoreHooks hooks = env.store_hooks;
+        hooks.running = false;
+        const WriteResult stored = add_profile(config_dir(env), draft, hooks);
+        if (!stored.status.ok) {
+          if (env.warn) env.warn("a direct application could not be moved to the launcher (" + app.value("name", std::string()) + "): " + stored.status.error);
+          continue;
+        }
+        install.profile = stored.profile;
+        block["mode"] = "touch";
+        block["profile"] = stored.profile;
+        block["options"] = options;
+        block["launchTemplate"] = templ;
+        app["cmd"] = touch_command(env, stored.profile, install, app.value("name", std::string()));
+        app["elevated"] = true;
+        ++attached;
+      }
+    }
+    // An application that starts through sparxie-launch ends when the launcher does (the launcher ends the Broker, the SessionHost, the decoy parent and the game with its own job). Without this
+    // Sunshine also waits for every other process the app left in its job, and the app stays "running" for the client after the game is gone. (Not counted in the return value: it is
+    // part of the same repair as the command above, and is written with it.)
+    bool wait_all_set = false;
+    for (auto &app : apps["apps"]) {
+      if (!app.contains("sparxie") || !app["sparxie"].is_object() || app.contains("wait-all")) continue;
+      if (app.value("cmd", std::string()).find("sparxie-launch") == std::string::npos) continue;
+      app["wait-all"] = false;
+      wait_all_set = true;
+    }
+    if (attached > 0 || wait_all_set) commit_apps(env, apps);
+    return attached;
+  }
+  namespace {
+    // One writer of the games' settings at a time (a launch writing, a session ending and putting back), and a counter of launches so a late restore never undoes a newer launch.
+    std::mutex &
+    settings_gate() {
+      static std::mutex gate;
+      return gate;
+    }
+    std::atomic<std::uint64_t> g_launch_generation { 0 };
+    int
+    pick_app(const json &apps, const std::string &app_name, const std::string &cmd) {
+      int exact = -1, named = 0, named_at = -1, position = 0;
+      for (const auto &app : apps.value("apps", json::array())) {
+        if (app.value("name", std::string()) == app_name) {
+          ++named;
+          named_at = position;
+          if (app.value("cmd", std::string()) == cmd) exact = position;
+        }
+        ++position;
+      }
+      return exact >= 0 ? exact : named == 1 ? named_at :
+                                               -1;
+    }
+    Install
+    install_of(const json &block) {
+      Install install;
+      install.id = block.value("install", "");
+      install.game = block.value("game", "");
+      install.region = block.value("region", "");
+      install.dir = block.value("dir", "");
+      install.exe_path = block.value("exe", "");
+      install.exe = fs::path(install.exe_path).filename().string();
+      return install;
+    }
+  }  // namespace
+  std::uint64_t
+  launch_generation() { return g_launch_generation.load(); }
+  Status
+  end_session(HostEnv &env, const std::string &app_name, const std::string &cmd, std::uint64_t started_generation) {
+    const json apps = read_apps(env.apps_file);
+    const int picked = pick_app(apps, app_name, cmd);
+    if (picked < 0) return Status::success();
+    const json &app = apps["apps"][static_cast<std::size_t>(picked)];
+    if (!app.contains("sparxie") || !app["sparxie"].is_object()) return Status::success();
+    const Install install = install_of(app["sparxie"]);
+    std::lock_guard<std::mutex> lock(settings_gate());
+    if (g_launch_generation.load() != started_generation) return Status::success();  // a newer launch wrote its own settings: its end puts them back
+    if (env.process_running && env.process_running({ install.exe })) return Status::fail(409, "game_running", "The game is still running, so its settings were not put back yet");
+    MemoryRegistry local;
+    Registry &registry = registry_of(env, local);
+    reconcile_pending_settings(install, registry, env.host_data / "game-settings-backup", env.zzz_magics);
+    return Status::success();
+  }
+  bool
+  finish_session(HostEnv &env, const std::string &app_name, const std::string &cmd, std::uint64_t started_generation, std::chrono::milliseconds wait, std::chrono::milliseconds poll) {
+    const auto until = std::chrono::steady_clock::now() + wait;
+    while (true) {
+      const Status status = end_session(env, app_name, cmd, started_generation);
+      if (status.ok) return true;
+      if (status.error_code != "game_running" || std::chrono::steady_clock::now() >= until) return false;
+      std::this_thread::sleep_for(poll);
+    }
+  }
+  int
+  recover_pending_settings(HostEnv &env) {
+    int restored = 0;
+    const json apps = read_apps(env.apps_file);
+    std::set<std::string> seen;
+    for (const auto &app : apps.value("apps", json::array())) {
+      if (!app.is_object() || !app.contains("sparxie") || !app["sparxie"].is_object()) continue;
+      const Install install = install_of(app["sparxie"]);
+      if (install.game.empty() || !seen.insert(install.id).second) continue;
+      std::lock_guard<std::mutex> lock(settings_gate());
+      if (env.process_running && env.process_running({ install.exe })) continue;
+      MemoryRegistry local;
+      reconcile_pending_settings(install, registry_of(env, local), env.host_data / "game-settings-backup", env.zzz_magics);
+      ++restored;
+    }
+    return restored;
+  }
+  Status
+  prepare_launch(HostEnv &env, const std::string &app_name, const std::string &cmd, const SessionMode &session, std::string *arguments) {
+    const json apps = read_apps(env.apps_file);
+    // The running host and the file can differ by the command of one application (a save that changed it): the one application of that name is the one that starts, so its settings and display are never dropped quietly.
+    const int picked = pick_app(apps, app_name, cmd);
+    int position = -1;
+    for (const auto &app : apps.value("apps", json::array())) {
+      if (++position != picked) continue;
+      if (!app.contains("sparxie") || !app["sparxie"].is_object()) return Status::success();
+      const json &block = app["sparxie"];
+      Install install;
+      install.id = block.value("install", "");
+      install.game = block.value("game", "");
+      install.region = block.value("region", "");
+      install.dir = block.value("dir", "");
+      install.exe_path = block.value("exe", "");
+      install.exe = fs::path(install.exe_path).filename().string();
+      const bool running = env.process_running && env.process_running({ install.exe });
+      if (running) return Status::fail(409, "game_running", "The game is running, so its settings were not written");
+      std::lock_guard<std::mutex> gate(settings_gate());
+      ++g_launch_generation;  // a session that ends later puts back only what its own launch wrote
+      MemoryRegistry local;
+      Registry &registry = registry_of(env, local);
+      const fs::path backup = env.host_data / "game-settings-backup";
+      reconcile_pending_settings(install, registry, backup, env.zzz_magics);
+      const json &options = block.value("options", json::object());
+      const std::string profile = block.value("profile", std::string());
+      // A keyboard, mouse and gamepad application made before the touch-interface switch existed (or edited by hand) has a profile that still says
+      // touch: the profile follows the application's input at launch, when the installed Sparxie can run it. A refused write (Sparxie is open) leaves it.
+      if (!profile.empty() && install.game != "zzz" && block.value("mode", std::string("pc")) == "touch" && touch_ui_switch(env)) {
+        const ConfigView view = read_store(config_dir(env));
+        bool stored_touch = true;
+        bool found = false;
+        if (view.status.ok && view.document.contains("profiles") && view.document["profiles"].is_array()) {
+          for (const auto &entry : view.document["profiles"]) {
+            if (!entry.is_object() || entry.value("id", std::string()) != profile) continue;
+            found = true;
+            if (entry.contains("hoyo") && entry["hoyo"].is_object() && entry["hoyo"].contains("touchUiEnabled") && entry["hoyo"]["touchUiEnabled"].is_boolean()) stored_touch = entry["hoyo"]["touchUiEnabled"].get<bool>();
+          }
+        }
+        const bool wanted_touch = options.value("input", std::string("touch")) != "kbm";
+        if (found && stored_touch != wanted_touch) {
+          ProfileDraft draft;
+          draft.game = install.game;
+          draft.display_name = app_name;
+          draft.executable = install.exe_path;
+          draft.options = options;
+          draft.display_fps = resolve_target_fps(options, display_refresh_of(env));
+          StoreHooks hooks = env.store_hooks;
+          hooks.running = sparxie_open(env);
+          if (!hooks.running) update_profile(config_dir(env), profile, draft, hooks);
+        }
+      }
+      const bool boost = game_boost_on(block.value("settings", json::object()));
+      // The tier fps "display" follows the streamed display: its number is
+      // resolved here, at launch, so the profile Sparxie is about to read
+      // carries the rate this stream will have. A refused write (Sparxie is
+      // open, the store is unreadable) leaves the last resolved target.
+      // An Endfield session is sized by its profile (the stream's own size, or a fixed one): the display choice reaches the profile here.
+      if (!profile.empty() && ((unlock_owns_fps(block) && fps_is_display(options)) || (boost && block.value("mode", std::string()) == "touch") || (install.game == "endfield" && block.value("mode", std::string()) == "touch"))) {
+        ProfileDraft draft;
+        draft.game = install.game;
+        draft.display_name = app_name;
+        draft.executable = install.exe_path;
+        draft.options = options_with_boost(options, boost);
+        draft.display_fps = display_refresh_of(env);
+        StoreHooks hooks = env.store_hooks;
+        hooks.running = sparxie_open(env);
+        if (!hooks.running) update_profile(config_dir(env), profile, draft, hooks);
+      }
+      // Only the items this application holds (the ones the person changed) are written; every other item follows the game's own value. A block of the removed two-mode
+      // switch that still says "auto" holds nothing the person chose.
+      const json settings = block.value("settingsMode", std::string()) == "auto" ? json::object() : block.value("settings", json::object());
+      std::set<std::string> fields = chosen_fields(settings);
+      // While Sparxie's unlock owns the frame rate, the game's own tier is never one of the values this launch writes.
+      if (unlock_owns_fps(block)) fields.erase("fps");
+      GameValues values = values_from_json(settings, GameValues {});
+      // The display is its own choice (跟随串流 or 固定), whatever the settings mode: it decides the size and the window mode of every launch.
+      const DisplayChoice choice = display_choice_of(block);
+      const StreamMode stream = resolve_stream_mode(session, env.display_size ? env.display_size() : std::pair<int, int> { 0, 0 }, display_refresh_of(env));
+      const DisplayPlan plan = plan_display(install.game, choice, stream);
+      if (install.game == "endfield") {
+        // Endfield is sized through its Sparxie session; the game still applies its own saved display after it starts, so the same size and window go to its keys
+        const ScreenPlan screen = plan_screen(install.game, choice, stream);
+        if (arguments) *arguments = stream_launch_arguments(install.game, cmd, choice, stream, block.value("mode", std::string("pc")) == "touch");
+        if (screen.empty()) return Status::success();
+        return write_endfield_display(install, registry, screen.width, screen.height, screen.window, backup, block.value("restore", std::string("restore")) == "keep" ? "keep" : "restore");
+      }
+      // the same size and window go to the game on its command line (the registry above agrees); a touch application hands them to Sparxie through sparxie-launch
+      if (arguments) *arguments = stream_launch_arguments(install.game, cmd, choice, stream, block.value("mode", std::string("pc")) == "touch");
+      if (plan.writes) {
+        fields.insert("display");
+        values.display = plan.window;
+        if (!plan.resolution.empty()) {
+          fields.insert("resolution");
+          values.resolution = plan.resolution;
+        }
+        else {
+          fields.erase("resolution");
+        }
+        if (plan.resolution_index >= 0) {
+          fields.insert("resolutionIndex");
+          values.extra["resolutionIndex"] = plan.resolution_index;
+        }
+        else {
+          fields.erase("resolutionIndex");
+        }
+      }
+      if (fields.empty()) return Status::success();
+      const std::string policy = block.value("restore", std::string("restore")) == "keep" ? "keep" : "restore";
+      return write_game_settings(install, registry, values, env.zzz_magics, [] { return false; }, backup, policy, fields).status;
+    }
+    return Status::success();
+  }
+  int
+  run_launch_boost(HostEnv &env, const std::string &app_name, const std::string &cmd, std::chrono::milliseconds wait) {
+    if (!env.raise_priority) return 0;
+    const json apps = read_apps(env.apps_file);
+    for (const auto &app : apps.value("apps", json::array())) {
+      if (app.value("name", std::string()) != app_name || app.value("cmd", std::string()) != cmd) continue;
+      if (!app.contains("sparxie") || !app["sparxie"].is_object()) return 0;
+      const json &block = app["sparxie"];
+      if (!game_boost_on(block.value("settings", json::object()))) return 0;
+      const std::string exe = block.value("exe", std::string());
+      if (exe.empty()) return 0;
+      return env.raise_priority(fs::path(exe), wait);
+    }
+    return 0;
+  }
+  std::string
+  typed_apps_text(const std::string &text) {
+    if (text.find("\"sparxie\"") == std::string::npos) return text;
+    try {
+      json apps = json::parse(text);
+      if (!normalize_apps(apps)) return text;
+      return apps.dump(4);
+    }
+    catch (const std::exception &) {
+      return text;
+    }
+  }
+  void
+  heal_apps_file(const std::string &path) {
+    try {
+      std::ifstream in(path, std::ios::binary);
+      const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+      in.close();
+      const std::string typed = typed_apps_text(text);
+      if (typed == text) return;
+      const std::string temp = path + ".sparxie-tmp";
+      {
+        std::ofstream out(temp, std::ios::binary | std::ios::trunc);
+        out << typed;
+        if (!out) return;
+      }
+      std::error_code ec;
+      fs::rename(temp, path, ec);
+      if (ec) fs::remove(temp, ec);
+    }
+    catch (const std::exception &) {
+    }
+  }
+  namespace {
+    // <game>-<region>-<n>: the shape of the ids next_profile_id gives
+    bool
+    host_profile_id(const std::string &id) {
+      for (const auto game : kGames) {
+        for (const auto region : kRegions) {
+          const std::string prefix = std::string(game) + "-" + std::string(region) + "-";
+          if (id.size() <= prefix.size() || id.compare(0, prefix.size(), prefix) != 0) continue;
+          return std::all_of(id.begin() + prefix.size(), id.end(), [](unsigned char c) { return std::isdigit(c) != 0; });
+        }
+      }
+      return false;
+    }
+    // the id as a whole word of a command line (--profile <id>)
+    bool
+    command_names(const std::string &cmd, const std::string &id) {
+      for (std::size_t at = cmd.find(id); at != std::string::npos; at = cmd.find(id, at + 1)) {
+        const bool before = at == 0 || cmd[at - 1] == ' ' || cmd[at - 1] == '"' || cmd[at - 1] == '=';
+        const std::size_t end = at + id.size();
+        const bool after = end >= cmd.size() || cmd[end] == ' ' || cmd[end] == '"';
+        if (before && after) return true;
+      }
+      return false;
+    }
+  }  // namespace
+  int
+  remove_orphan_profiles(HostEnv &env) {
+    try {
+      if (env.apps_file.empty() || !fs::is_regular_file(env.apps_file) || sparxie_open(env)) return 0;
+      // the list must be read for real: an unreadable file would make every profile look unused
+      json apps;
+      {
+        std::ifstream in(env.apps_file, std::ios::binary);
+        in >> apps;
+      }
+      if (!apps.is_object() || !apps.contains("apps") || !apps["apps"].is_array()) return 0;
+      const ConfigView view = read_store(config_dir(env));
+      if (!view.status.ok) return 0;
+      std::vector<std::string> orphans;
+      for (const auto &profile : view.document.value("profiles", json::array())) {
+        const std::string id = profile.value("id", std::string());
+        if (!host_profile_id(id) || profile_taken(apps, id)) continue;
+        bool named = false;
+        for (const auto &app : apps["apps"])
+          if (app.is_object() && app.contains("cmd") && app["cmd"].is_string() && command_names(app["cmd"].get<std::string>(), id)) named = true;
+        if (!named) orphans.push_back(id);
+      }
+      if (orphans.empty()) return 0;
+      StoreHooks hooks = env.store_hooks;
+      hooks.running = false;
+      const WriteResult removed = remove_profiles(config_dir(env), orphans, hooks);
+      return removed.status.ok ? static_cast<int>(orphans.size()) : 0;
+    }
+    catch (const std::exception &) {
+      return 0;
+    }
+  }
 }  // namespace sparxie

@@ -240,6 +240,7 @@ set(SUNSHINE_HOST_SOURCES
     src/sparxie/art_sources.cpp src/sparxie/art_sources.h
     src/sparxie/icon_file.cpp src/sparxie/icon_file.h
     src/sparxie/svg_path.cpp src/sparxie/svg_path.h
+    src/sparxie/host.cpp src/sparxie/host.h
     src/sparxie/platform.cpp src/sparxie/platform.h
     src/sparxie/stream_display.cpp src/sparxie/stream_display.h
     src/sparxie/user_session.cpp src/sparxie/user_session.h
