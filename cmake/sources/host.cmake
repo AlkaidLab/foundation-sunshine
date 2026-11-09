@@ -236,6 +236,8 @@ set(SUNSHINE_HOST_SOURCES
     src/sparxie/store.cpp src/sparxie/store.h
     src/sparxie/settings.cpp src/sparxie/settings.h src/sparxie/hoyo_settings.cpp src/sparxie/hoyo_settings.h src/sparxie/ini_settings.cpp src/sparxie/ini_settings.h
     src/sparxie/zzz_file.cpp src/sparxie/zzz_file.h src/sparxie/zzz_extra.cpp
+    src/sparxie/art.cpp src/sparxie/art.h
+    src/sparxie/svg_path.cpp src/sparxie/svg_path.h
     src/sparxie/stream_display.cpp src/sparxie/stream_display.h
     src/sparxie/sha256.h
     third-party/puff/puff.c third-party/puff/puff.h
