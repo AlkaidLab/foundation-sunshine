@@ -22,6 +22,7 @@ add_executable(sparxie_unit_tests
   ${SPX_ROOT}/src/sparxie/art_sources.cpp
   ${SPX_ROOT}/src/sparxie/icon_file.cpp
   ${SPX_ROOT}/src/sparxie/svg_path.cpp
+  ${SPX_ROOT}/src/sparxie/host.cpp
   ${SPX_ROOT}/src/sparxie/platform.cpp
   ${SPX_ROOT}/src/sparxie/zip_extract.cpp
   ${SPX_ROOT}/src/sparxie/install.cpp
@@ -64,6 +65,7 @@ add_executable(sparxie_real_install
   ${SPX_ROOT}/src/sparxie/art_sources.cpp
   ${SPX_ROOT}/src/sparxie/icon_file.cpp
   ${SPX_ROOT}/src/sparxie/svg_path.cpp
+  ${SPX_ROOT}/src/sparxie/host.cpp
   ${SPX_ROOT}/src/sparxie/platform.cpp
   ${SPX_ROOT}/src/sparxie/zip_extract.cpp
   ${SPX_ROOT}/src/sparxie/install.cpp
@@ -92,6 +94,7 @@ add_executable(sparxie_ui_fixtures
   ${SPX_ROOT}/src/sparxie/art_sources.cpp
   ${SPX_ROOT}/src/sparxie/icon_file.cpp
   ${SPX_ROOT}/src/sparxie/svg_path.cpp
+  ${SPX_ROOT}/src/sparxie/host.cpp
   ${SPX_ROOT}/src/sparxie/platform.cpp
   ${SPX_ROOT}/src/sparxie/zip_extract.cpp
   ${SPX_ROOT}/src/sparxie/install.cpp
