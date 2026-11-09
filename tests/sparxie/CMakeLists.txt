@@ -22,12 +22,14 @@ add_executable(sparxie_unit_tests
   ${SPX_ROOT}/src/sparxie/art_sources.cpp
   ${SPX_ROOT}/src/sparxie/icon_file.cpp
   ${SPX_ROOT}/src/sparxie/svg_path.cpp
+  ${SPX_ROOT}/src/sparxie/platform.cpp
   ${SPX_ROOT}/third-party/puff/puff.c
   ${CMAKE_CURRENT_LIST_DIR}/test_store.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_sparxie_contract.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_settings.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_hoyo_settings.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_zzz_file.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/test_windows_registry.cpp
 target_compile_definitions(sparxie_unit_tests PRIVATE SPARXIE_FIXTURES_DIR="${CMAKE_CURRENT_LIST_DIR}/fixtures")
 target_include_directories(sparxie_unit_tests PRIVATE ${SPX_ROOT})
 target_link_libraries(sparxie_unit_tests PRIVATE GTest::gtest GTest::gtest_main Threads::Threads)
@@ -54,6 +56,7 @@ add_executable(sparxie_real_install
   ${SPX_ROOT}/src/sparxie/art_sources.cpp
   ${SPX_ROOT}/src/sparxie/icon_file.cpp
   ${SPX_ROOT}/src/sparxie/svg_path.cpp
+  ${SPX_ROOT}/src/sparxie/platform.cpp
   ${SPX_ROOT}/third-party/puff/puff.c
 target_include_directories(sparxie_real_install PRIVATE ${SPX_ROOT})
 target_link_libraries(sparxie_real_install PRIVATE Threads::Threads)
@@ -78,6 +81,7 @@ add_executable(sparxie_ui_fixtures
   ${SPX_ROOT}/src/sparxie/art_sources.cpp
   ${SPX_ROOT}/src/sparxie/icon_file.cpp
   ${SPX_ROOT}/src/sparxie/svg_path.cpp
+  ${SPX_ROOT}/src/sparxie/platform.cpp
   ${SPX_ROOT}/third-party/puff/puff.c
 target_include_directories(sparxie_ui_fixtures PRIVATE ${SPX_ROOT})
 target_link_libraries(sparxie_ui_fixtures PRIVATE Threads::Threads)
