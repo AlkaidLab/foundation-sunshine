@@ -23,7 +23,7 @@ namespace stream {
     endpoint_refresh_t(const boost::asio::ip::address &address, uint8_t stream,
       std::string_view session, const crypto::aes_t &ri_key):
         address(address), stream(stream) {
-      if (session.size() != id.size() || ri_key.size() != 16) return;
+      if (session.size() != id.size() || ri_key.size() != LI_ER_RI_KEY_SIZE) return;
       std::memcpy(id.data(), session.data(), id.size());
       valid = LiErDeriveKey(ri_key.data(), id.data(), key.data());
     }
@@ -78,13 +78,13 @@ namespace stream {
     boost::asio::ip::address address;
     uint8_t stream;
     bool valid { false };
-    std::array<unsigned char, 16> id {};
-    std::array<unsigned char, 32> key {};
+    std::array<unsigned char, LI_ER_SESSION_SIZE> id {};
+    std::array<unsigned char, LI_ER_KEY_SIZE> key {};
     std::atomic<uint16_t> confirmed_port { 0 };
     uint64_t last_probe { 0 }, pending_sequence { 0 };
     uint16_t pending_port { 0 };
-    std::array<unsigned char, 16> nonce {};
-    std::array<unsigned char, 16> confirmed_nonce {};
+    std::array<unsigned char, LI_ER_NONCE_SIZE> nonce {};
+    std::array<unsigned char, LI_ER_NONCE_SIZE> confirmed_nonce {};
     clock::time_point expires {}, last_challenge {}, last_ack {};
   };
 }

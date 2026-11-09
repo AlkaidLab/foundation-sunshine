@@ -1635,7 +1635,6 @@ namespace rtsp_stream {
           respond(sock, session, &option, 400, "Duplicate endpoint refresh version", req->sequenceNumber, {});
           return;
         }
-        args.emplace(name, val);
         auto [entry, inserted] = args.emplace(name, val);
         if (!inserted && (name == "x-ml-audio.codec" || name.starts_with("x-ml-audio.mat-"))) {
           respond(sock, session, &option, 400, "Bad Request", req->sequenceNumber, {});
