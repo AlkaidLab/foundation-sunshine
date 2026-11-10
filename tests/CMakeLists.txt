@@ -1208,6 +1208,34 @@ foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
 endforeach()
 add_test(NAME abr_unit_tests COMMAND abr_unit_tests)
 
+add_executable(app_scan_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/app_scan/scanner.cpp
+        ${CMAKE_SOURCE_DIR}/src/app_scan/libraries.cpp
+        ${CMAKE_SOURCE_DIR}/src/sparxie/model.cpp
+        ${CMAKE_SOURCE_DIR}/src/sparxie/stream_display.cpp
+        ${CMAKE_SOURCE_DIR}/src/sparxie/region.cpp
+        ${CMAKE_SOURCE_DIR}/src/sparxie/scan.cpp
+        ${CMAKE_SOURCE_DIR}/src/sparxie/storefront.cpp
+        ${CMAKE_SOURCE_DIR}/src/sparxie/vendors.cpp
+        ${CMAKE_SOURCE_DIR}/src/sparxie/hoyo_settings.cpp
+        ${CMAKE_SOURCE_DIR}/src/sparxie/zzz_extra.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_app_scan.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_app_scan_libraries.cpp)
+target_include_directories(app_scan_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(app_scan_unit_tests
+        PRIVATE ${SUNSHINE_EXTERNAL_LIBRARIES}
+        gtest_main
+        ${PLATFORM_LIBRARIES}
+        nlohmann_json::nlohmann_json
+        sunshine_project_options sunshine_coverage)
+target_compile_definitions(app_scan_unit_tests PRIVATE SUNSHINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_compile_options(app_scan_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(app_scan_unit_tests PROPERTIES CXX_STANDARD 23)
+foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
+    add_dependencies(app_scan_unit_tests ${dep})
+endforeach()
+add_test(NAME app_scan_unit_tests COMMAND app_scan_unit_tests)
+
 add_executable(input_activity_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_input_activity.cpp
         ${CMAKE_SOURCE_DIR}/src/input_activity.cpp
