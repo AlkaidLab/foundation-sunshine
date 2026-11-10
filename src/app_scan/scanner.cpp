@@ -1084,4 +1084,263 @@ namespace app_scan {
     }
     return manifest;
   }
+
+  bool
+  detect_if_game(const std::string &file_path, const std::string &name, const std::optional<std::string> &target_path) {
+    const std::string path_lower = ascii_lower(normalised_path(file_path));
+    const std::string name_lower = ascii_lower(name);
+    const std::string target_lower = target_path ? ascii_lower(normalised_path(*target_path)) : std::string {};
+
+    const bool is_exe = path_lower.ends_with(".exe") || target_lower.ends_with(".exe") ||
+                        (path_lower.ends_with(".lnk") && target_lower.ends_with(".exe"));
+    if (!is_exe && !path_lower.ends_with(".lnk")) {
+      return false;
+    }
+    if (path_lower.ends_with(".lnk") && !target_lower.empty() && !target_lower.ends_with(".exe")) {
+      return false;
+    }
+
+    static constexpr std::array<std::string_view, 93> exclude_keywords {
+      "uninstall",
+      "卸载",
+      "setup",
+      "安装",
+      "installer",
+      "update",
+      "更新",
+      "updater",
+      "patch",
+      "config",
+      "配置",
+      "settings",
+      "设置",
+      "crash",
+      "崩溃",
+      "reporter",
+      "report",
+      "helper",
+      "service",
+      "daemon",
+      "redist",
+      "redistributable",
+      "vcredist",
+      "directx",
+      "launcher_helper",
+      "bootstrapper",
+      "ue4prereqsetup",
+      "dxsetup",
+      "dotnet",
+      "chrome",
+      "firefox",
+      "edge",
+      "opera",
+      "brave",
+      "word",
+      "excel",
+      "powerpoint",
+      "outlook",
+      "onenote",
+      "access",
+      "visual studio",
+      "vscode",
+      "code",
+      "notepad",
+      "sublime",
+      "git",
+      "node",
+      "python",
+      "java",
+      "ruby",
+      "adobe",
+      "photoshop",
+      "illustrator",
+      "premiere",
+      "after effects",
+      "spotify",
+      "discord",
+      "telegram",
+      "wechat",
+      "微信",
+      "qq",
+      "obs",
+      "vlc",
+      "potplayer",
+      "media player",
+      "7-zip",
+      "winrar",
+      "bandizip",
+      "driver",
+      "nvidia",
+      "amd ",
+      "intel",
+      "antivirus",
+      "defender",
+      "kaspersky",
+      "avast",
+      "office",
+      "onedrive",
+      "teams",
+      "terminal",
+      "powershell",
+      "cmd",
+      "control panel",
+      "控制面板",
+      "explorer",
+      "task manager",
+      "任务管理器",
+      "calculator",
+      "计算器",
+      "paint",
+      "画图",
+      "snipping",
+      "截图",
+    };
+
+    for (std::string_view keyword : exclude_keywords) {
+      const std::string suffix = "\\" + std::string(keyword) + ".exe";
+      if (name_lower.find(keyword) != std::string::npos || path_lower.ends_with(suffix)) {
+        return false;
+      }
+    }
+
+    static constexpr std::array<std::string_view, 12> high_confidence {
+      "\\steamapps\\common\\",
+      "\\steam\\steamapps\\common\\",
+      "\\epic games\\",
+      "\\gog galaxy\\games\\",
+      "\\gog games\\",
+      "\\ubisoft\\ubisoft game launcher\\games\\",
+      "\\origin games\\",
+      "\\ea games\\",
+      "\\battle.net\\",
+      "\\riot games\\",
+      "\\xbox games\\",
+      "\\playnite\\",
+    };
+    for (std::string_view keyword : high_confidence) {
+      if (path_lower.find(keyword) != std::string::npos || target_lower.find(keyword) != std::string::npos) {
+        return true;
+      }
+    }
+
+    static constexpr std::array<std::string_view, 4> medium_confidence {
+      "\\program files\\games\\",
+      "\\program files\\game\\",
+      "\\program files (x86)\\games\\",
+      "\\program files (x86)\\game\\",
+    };
+    for (std::string_view keyword : medium_confidence) {
+      if (path_lower.find(keyword) != std::string::npos || target_lower.find(keyword) != std::string::npos) {
+        static constexpr std::array<std::string_view, 8> tool_indicators {
+          "tool",
+          "editor",
+          "sdk",
+          "dev",
+          "debug",
+          "server",
+          "manager",
+          "launcher",
+        };
+        const bool is_tool = std::any_of(tool_indicators.begin(), tool_indicators.end(),
+          [&](std::string_view indicator) { return name_lower.find(indicator) != std::string::npos; });
+        if (!is_tool) {
+          return true;
+        }
+      }
+    }
+
+    if (path_lower.find("\\start menu\\programs\\games\\") != std::string::npos ||
+        path_lower.find("\\开始菜单\\程序\\游戏\\") != std::string::npos) {
+      return true;
+    }
+
+    return false;
+  }
+
+  std::optional<std::string>
+  validate_scan_root(const fs::path &root) {
+    const std::string text = to_utf8(root);
+    if (text.empty()) {
+      return "directory path is empty";
+    }
+    // ms-win-naming-files: UNC names and the \\.\ and \\?\ namespaces.
+    const std::string lowered = ascii_lower(text);
+    if (lowered.starts_with("\\\\.\\") || lowered.starts_with("\\\\?\\") ||
+        lowered.starts_with("\\device\\") || lowered.starts_with("\\??\\")) {
+      return "device paths are not allowed";
+    }
+    if (lowered == "/dev" || lowered.starts_with("/dev/") ||
+        lowered == "/proc" || lowered.starts_with("/proc/") ||
+        lowered == "/sys" || lowered.starts_with("/sys/")) {
+      return "device paths are not allowed";
+    }
+    if (text.starts_with("\\\\") || text.starts_with("//")) {
+      return "UNC paths are not allowed";
+    }
+
+    std::error_code ec;
+    if (!fs::exists(root, ec)) {
+      return "directory does not exist";
+    }
+    if (!fs::is_directory(root, ec)) {
+      return "path is not a directory";
+    }
+    return std::nullopt;
+  }
+
+  std::string
+  mask_user_path(const std::string &path, const std::optional<fs::path> &home) {
+    if (!home || path.empty()) {
+      return path;
+    }
+    const std::string home_text = to_utf8(*home);
+    if (home_text.empty() || path.size() < home_text.size()) {
+      return path;
+    }
+
+    const bool matches = [&]() {
+      const std::string prefix = path.substr(0, home_text.size());
+#ifdef _WIN32
+      return equals_ignore_case(prefix, home_text);
+#else
+      return prefix == home_text;
+#endif
+    }();
+    if (!matches) {
+      return path;
+    }
+    if (path.size() == home_text.size()) {
+      return "~";
+    }
+    const char separator = path[home_text.size()];
+    if (separator != '/' && separator != '\\') {
+      return path;
+    }
+    return "~" + path.substr(home_text.size());
+  }
+
+  ScanResult
+  scan(const ScanRequest &request, const HostContext &context) {
+    ScanResult result;
+
+    const bool has_steam = std::find(request.sources.begin(), request.sources.end(), Source::steam) != request.sources.end();
+    const bool has_epic = std::find(request.sources.begin(), request.sources.end(), Source::epic) != request.sources.end();
+    const bool has_gog = std::find(request.sources.begin(), request.sources.end(), Source::gog) != request.sources.end();
+
+    if (has_steam) {
+      scan_steam(context, result);
+    }
+    if (has_epic) {
+      scan_epic(context, result);
+    }
+    if (has_gog) {
+      scan_gog(context, result);
+    }
+    if (request.directory) {
+      scan_directory(*request.directory, request.directory_limits, result);
+    }
+    scan_libraries(request, context, result);
+    dedupe_games(result.games);
+    return result;
+  }
 }  // namespace app_scan
