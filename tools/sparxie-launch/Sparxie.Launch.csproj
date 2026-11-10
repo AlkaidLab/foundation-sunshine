@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- a Windows-subsystem program: no console window ever opens; everything it says goes to its log file -->
+    <OutputType>WinExe</OutputType>
+    <!-- the host and the packaging look for tools\sparxie-launch.exe -->
+    <AssemblyName>sparxie-launch</AssemblyName>
+    <RootNamespace>Sparxie.Launch</RootNamespace>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <DebugType>none</DebugType>
+    <PublishSingleFile>true</PublishSingleFile>
+    <!-- Sparxie ships its own runtime, so a person may have no .NET installed: the launcher carries a trimmed runtime too.
+         Set -p:LaunchTrim=false to publish an untrimmed build for comparison. -->
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <LaunchTrim Condition="'$(LaunchTrim)' == ''">true</LaunchTrim>
+    <PublishTrimmed>$(LaunchTrim)</PublishTrimmed>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+  </PropertyGroup>
+</Project>

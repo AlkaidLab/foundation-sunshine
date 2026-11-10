@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.25)
 
+# The parent version, taken before project() below resets PROJECT_VERSION for this directory.
+set(SUNSHINE_PARENT_VERSION "${PROJECT_VERSION}")
 project(sunshine_tools)
 
 include_directories("${CMAKE_SOURCE_DIR}")
