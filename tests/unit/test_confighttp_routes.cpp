@@ -22,6 +22,7 @@
 #include "src/confighttp/auth.h"
 #include "src/confighttp/routes.h"
 #include "src/crypto.h"
+#include "src/display_device/vdd_settings.h"
 #include "src/file_handler.h"
 #include "src/httpcommon.h"
 #include "src/platform/common.h"
@@ -306,6 +307,166 @@ TEST_F(ConfigHttpRoutes, EveryRegisteredRouteDispatchesItsMethodPathAndCapturesO
     EXPECT_EQ(body["capture"], entry.capture);
   }
 }
+
+#ifdef _WIN32
+namespace {
+  class ConfigHttpEdid: public ConfigHttpRoutes {
+  protected:
+    std::filesystem::path vdd_path;
+    const std::string original_config = "vdd_edid_native_resolution = 3840x2160\nresolutions = [1920x1080,3840x2160]\nfps = [60,120]\n";
+    const std::string original_xml = "<vdd_settings><edid><CustomEdid>true</CustomEdid></edid></vdd_settings>";
+
+    /** @brief Route both configuration writers to a unique fixture directory before accepting HTTPS requests. */
+    void
+    SetUp() override {
+      ConfigHttpRoutes::SetUp();
+      previous_config_ = config::sunshine.config_file;
+      previous_resolutions_ = config::nvhttp.resolutions;
+      previous_fps_ = config::nvhttp.fps;
+      config::nvhttp.resolutions = { "1920x1080", "2736x1824", "3840x2160" };
+      config::nvhttp.fps = { "60", "120" };
+      prepared_ = true;
+      vdd_path = directory / "vdd_settings.xml";
+      display_device::vdd_settings::test_support::set_settings_path(vdd_path);
+      const auto config_path = directory / "sunshine.conf";
+      config::sunshine.config_file = file_handler::path_to_utf8(config_path);
+      std::ofstream(config_path, std::ios::binary) << original_config;
+      std::ofstream(vdd_path, std::ios::binary | std::ios::trunc) << original_xml;
+    }
+
+    /** @brief Stop requests before restoring fixture paths and advertised runtime lists. */
+    void
+    TearDown() override {
+      ConfigHttpRoutes::TearDown();
+      if (!prepared_) return;
+      display_device::vdd_settings::test_support::set_settings_path(std::nullopt);
+      config::sunshine.config_file = previous_config_;
+      config::nvhttp.resolutions = std::move(previous_resolutions_);
+      config::nvhttp.fps = std::move(previous_fps_);
+    }
+
+  private:
+    std::string previous_config_;
+    std::vector<std::string> previous_resolutions_, previous_fps_;
+    bool prepared_ = false;
+  };
+}  // namespace
+
+/** @brief Reject an incompatible legacy mode-list request before either file is changed. */
+TEST_F(ConfigHttpEdid, LegacyModeRemovalRejectsBeforeWritingEitherConfigFile) {
+  auto client = connect();
+  for (const auto &payload : {
+         nlohmann::json { { "resolutions", "[1920x1080]" }, { "fps", "[60,120]" } },
+         nlohmann::json { { "resolutions", "[1920x1080,3840x2160]" }, { "fps", "[120,144]" } } }) {
+    const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" } });
+    ASSERT_EQ(response->status_code, "200 OK");
+    const auto body = nlohmann::json::parse(response->content.string());
+    EXPECT_EQ(body.at("status"), "false");
+    EXPECT_NE(body.at("error").get<std::string>().find("EDID native resolution"), std::string::npos);
+    EXPECT_EQ(file_handler::read_file(config::sunshine.config_file.c_str()), original_config);
+    EXPECT_EQ(file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str()), original_xml);
+  }
+}
+
+/** @brief A Default preference saves without requiring or creating driver XML. */
+TEST_F(ConfigHttpEdid, DefaultWithoutVddXmlSavesSunshineWithoutCreatingXml) {
+  ASSERT_TRUE(std::filesystem::remove(vdd_path));
+  auto client = connect();
+  const auto payload = nlohmann::json { { "vdd_edid_native_resolution", "default" }, { "sunshine_name", "without-vdd" } };
+  const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" } });
+  ASSERT_EQ(response->status_code, "200 OK");
+  EXPECT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "true");
+  const auto saved = config::get_config_snapshot();
+  ASSERT_TRUE(saved);
+  EXPECT_EQ(saved->at("vdd_edid_native_resolution"), "default");
+  EXPECT_EQ(saved->at("sunshine_name"), "without-vdd");
+  EXPECT_FALSE(std::filesystem::exists(vdd_path));
+}
+
+/** @brief An explicit EDID choice persists in the host without requiring driver XML. */
+TEST_F(ConfigHttpEdid, ExplicitSizeWithoutVddXmlSavesOnlySunshine) {
+  ASSERT_TRUE(std::filesystem::remove(vdd_path));
+  auto client = connect();
+  const auto payload = nlohmann::json { { "vdd_edid_native_resolution", "3840x2160" },
+    { "resolutions", "[1920x1080,3840x2160]" }, { "fps", "[60,120]" } };
+  const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" } });
+  ASSERT_EQ(response->status_code, "200 OK");
+  EXPECT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "true");
+  const auto saved = config::get_config_snapshot();
+  ASSERT_TRUE(saved);
+  EXPECT_EQ(saved->at("vdd_edid_native_resolution"), "3840x2160");
+  EXPECT_FALSE(std::filesystem::exists(vdd_path));
+}
+
+/** @brief Selection/reset never writes an EDID preference into XML or removes custom EDID policy. */
+TEST_F(ConfigHttpEdid, SelectionAndResetStayInSunshineAndPreserveCustomEdid) {
+  auto client = connect();
+  for (const std::string selection : { "1920x1080", "default" }) {
+    const auto payload = nlohmann::json { { "vdd_edid_native_resolution", selection },
+      { "resolutions", "[1920x1080,3840x2160]" }, { "fps", "[60,120]" } };
+    const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" } });
+    ASSERT_EQ(response->status_code, "200 OK");
+    EXPECT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "true");
+    const auto saved = config::get_config_snapshot();
+    ASSERT_TRUE(saved);
+    EXPECT_EQ(saved->at("vdd_edid_native_resolution"), selection);
+    const auto xml = file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str());
+    EXPECT_EQ(xml.find("EdidNativeResolution"), std::string::npos);
+    EXPECT_NE(xml.find("<CustomEdid>true</CustomEdid>"), std::string::npos);
+  }
+}
+
+/** @brief An omitted-equivalent list cannot hide an incompatible change to the other list. */
+TEST_F(ConfigHttpEdid, EmptyAndNullListsStillValidateOtherModeChanges) {
+  auto client = connect();
+  for (const auto &blank : { nlohmann::json(""), nlohmann::json("null"), nlohmann::json(nullptr) }) {
+    for (const auto &payload : {
+           nlohmann::json { { "resolutions", blank }, { "fps", "[120]" } },
+           nlohmann::json { { "resolutions", "[1920x1080]" }, { "fps", blank } } }) {
+      SCOPED_TRACE(payload.dump());
+      const auto before = config::get_config_snapshot();
+      const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" } });
+      EXPECT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "false");
+      EXPECT_EQ(config::get_config_snapshot(), before);
+      EXPECT_EQ(file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str()), original_xml);
+    }
+  }
+}
+
+/** @brief Resolve blank/null lists for EDID validation without changing legacy full-configuration persistence. */
+TEST_F(ConfigHttpEdid, EffectiveModeValidationDoesNotPreserveBlankOrNullLists) {
+  auto client = connect();
+  for (const auto &blank : { nlohmann::json(""), nlohmann::json("null"), nlohmann::json(nullptr) }) {
+    std::ofstream(file_handler::path_from_utf8(config::sunshine.config_file), std::ios::binary | std::ios::trunc) << original_config;
+    const auto payload = nlohmann::json { { "vdd_edid_native_resolution", "3840x2160" },
+      { "resolutions", blank }, { "fps", blank } };
+    SCOPED_TRACE(payload.dump());
+    const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" } });
+    ASSERT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "true");
+    const auto saved = config::get_config_snapshot();
+    ASSERT_TRUE(saved);
+    EXPECT_EQ(saved->at("vdd_edid_native_resolution"), "3840x2160");
+    EXPECT_EQ(saved->count("resolutions"), 0u);
+    EXPECT_EQ(saved->count("fps"), 0u);
+    EXPECT_EQ(file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str()), original_xml);
+  }
+}
+
+/** @brief Omitted disk/request lists use advertised runtime modes only for EDID validation. */
+TEST_F(ConfigHttpEdid, MissingListsUseRuntimeValidationWithoutSavingDefaults) {
+  std::ofstream(file_handler::path_from_utf8(config::sunshine.config_file), std::ios::binary | std::ios::trunc)
+    << "vdd_edid_native_resolution = 3840x2160\n";
+  auto client = connect();
+  const auto response = client->request("POST", "/api/config",
+    nlohmann::json { { "vdd_edid_native_resolution", "2736x1824" } }.dump(), { { "Content-Type", "application/json" } });
+  ASSERT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "true");
+  const auto saved = config::get_config_snapshot();
+  ASSERT_TRUE(saved);
+  EXPECT_EQ(saved->at("vdd_edid_native_resolution"), "2736x1824");
+  EXPECT_EQ(saved->count("resolutions"), 0u);
+  EXPECT_EQ(saved->count("fps"), 0u);
+}
+#endif
 
 TEST_F(ConfigHttpRoutes, BasicCredentialsStillAuthenticateRemoteRequestsAndRejectMalformedBase64) {
   const auto old_salt = config::sunshine.salt;

@@ -21,6 +21,9 @@
 #include <boost/property_tree/ptree.hpp>
 
 #include "config.h"
+#ifdef SUNSHINE_TESTS
+  #include "config_test_support.h"
+#endif
 #include "entry_handler.h"
 #include "file_handler.h"
 #include "logging.h"
@@ -31,6 +34,7 @@
 #include "hdr/calibration.h"
 
 #include "display_device/parsed_config.h"
+#include "display_device/vdd_edid_resolution.h"
 #include "platform/common.h"
 
 #ifdef _WIN32
@@ -449,6 +453,7 @@ namespace config {
     false,  // vdd_headless_create_enabled
     false,  // vdd_reuse (default: recreate VDD for each client)
     true,  // vdd_borrowed_texture
+    "default"s,  // vdd_edid_native_resolution (preserve the original 1080p EDID)
     true,  // vdd_vulkan_hdr_bridge (automatic for HDR VDD sessions)
     {},  // nv_legacy
 
@@ -1185,6 +1190,7 @@ namespace config {
     return opts;
   }
 
+  /** @brief Apply parsed startup options to runtime settings, rejecting malformed EDID preference syntax. */
   void apply_config(std::unordered_map<std::string, std::string> &&vars) {
     for (auto &[name, val] : vars) {
       const auto log_value = (name == "file_mappings" || name == "widget_token") && !val.empty() ? "<redacted>"s : val;
@@ -1407,6 +1413,11 @@ namespace config {
     bool_f(vars, "vdd_headless_create", video.vdd_headless_create_enabled);
     bool_f(vars, "vdd_reuse", video.vdd_reuse);
     bool_f(vars, "vdd_borrowed_texture", video.vdd_borrowed_texture);
+    string_f(vars, "vdd_edid_native_resolution", video.vdd_edid_native_resolution);
+    if (!display_device::vdd_edid::valid_value(video.vdd_edid_native_resolution)) {
+      BOOST_LOG(warning) << "Invalid vdd_edid_native_resolution; using the original EDID";
+      video.vdd_edid_native_resolution = "default";
+    }
     bool_f(vars, "vdd_vulkan_hdr_bridge", video.vdd_vulkan_hdr_bridge);
 
     // Whether to composite the host mouse cursor into the captured frames.
@@ -1967,6 +1978,7 @@ namespace config {
     }
   }
 
+  /** @brief Overlay startup command-line policy on the latest saved settings for runtime decisions. */
   std::optional<std::map<std::string, std::string>>
   get_effective_config_snapshot() {
     auto snapshot = get_config_snapshot();
@@ -1977,6 +1989,18 @@ namespace config {
     return snapshot;
   }
 
+#ifdef SUNSHINE_TESTS
+  namespace test_support {
+    /** @brief Swap only the in-memory startup override map and return its previous value. */
+    std::unordered_map<std::string, std::string>
+    exchange_command_line_overrides(std::unordered_map<std::string, std::string> overrides) {
+      std::lock_guard lock { config_file_mutex };
+      return std::exchange(command_line_config_overrides, std::move(overrides));
+    }
+  }  // namespace test_support
+#endif
+
+  /** @brief Validate the EDID preference against effective modes and persist the host configuration. */
   bool
   update_full_config(const std::map<std::string, std::string> &fullConfig) {
     std::lock_guard lock { config_file_mutex };
@@ -2012,6 +2036,12 @@ namespace config {
       // 使用 std::map 保证按字母顺序保存
       std::map<std::string, std::string> resultMap;
 
+      const auto existing_modes = display_device::vdd_edid::with_mode_list_defaults(originalMap, nvhttp.resolutions, nvhttp.fps);
+      if (!display_device::vdd_edid::retained_selection_supported(fullConfig, existing_modes)) {
+        BOOST_LOG(warning) << "Mode-list changes require an explicit supported EDID native resolution or default";
+        return false;
+      }
+
       // 收集传入的配置（跳过只读字段和受保护字段）
       for (const auto &[key, value] : fullConfig) {
         // 跳过只读字段
@@ -2041,6 +2071,28 @@ namespace config {
         if (clients != originalMap.end() && !clients->second.empty() && clients->second != "null") {
           resultMap.insert(*clients);
         }
+      }
+
+      // Older API clients cannot send this preference. Preserve the on-disk
+      // value under the same lock as the write; explicit Default still resets it.
+      if (!fullConfig.count("vdd_edid_native_resolution")) {
+        const auto existing = originalMap.find("vdd_edid_native_resolution");
+        if (existing != originalMap.end()) {
+          resultMap.emplace(*existing);
+        }
+      }
+
+      // Resolve modes for EDID validation only. Keep legacy list persistence unchanged.
+      const auto value = [&](const char *key) {
+        return display_device::vdd_edid::mode_list_or(fullConfig, key, existing_modes.at(key));
+      };
+      // Explicit selections in partial requests must also match the latest
+      // effective lists, which may have changed since the HTTP validation snapshot.
+      if (fullConfig.count("vdd_edid_native_resolution") && resultMap.count("vdd_edid_native_resolution") &&
+          !display_device::vdd_edid::supported_selection(resultMap.at("vdd_edid_native_resolution"),
+            value("resolutions"), value("fps"))) {
+        BOOST_LOG(warning) << "EDID native resolution is not supported by the saved mode lists";
+        return false;
       }
 
       // 添加受保护字段（使用本地配置文件中的原有值）

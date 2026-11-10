@@ -37,6 +37,8 @@ Choose a virtual-only display, keep the physical display with a virtual extensio
 
 Supporting clients can also control rotation, Windows scaling, and session resolution. Per-client display settings do not create isolated Windows desktops.
 
+For games that restrict fullscreen choices using the monitor's native EDID, a compatible ZakoVDD driver supports selecting **EDID native resolution** in the WebUI under **Audio/Video → Virtual Display → Advanced**. The default remains 1080p; check the game's fullscreen menu after applying the choice and recreating the display. See the [EDID guide](vdd-edid-native-resolution.md) for supported sizes, session steps, and the limitation when VDD is the only display.
+
 
 ## Capture encoding and performance
 

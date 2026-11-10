@@ -6,17 +6,18 @@
 
 #include "configuration.h"
 #include "src/config.h"
-#include "src/globals.h"
 #include "src/confighttp/auth.h"
 #include "src/confighttp/common.h"
 #include "src/display_device/session.h"
 #include "src/display_device/to_string.h"
+#include "src/display_device/vdd_edid_resolution.h"
 #include "src/display_device/vdd_settings.h"
 #include "src/file_handler.h"
+#include "src/globals.h"
 #include "src/logging.h"
+#include "src/network.h"
 #include "src/nvenc/frame_budget.h"
 #include "src/nvhttp.h"
-#include "src/network.h"
 #include "src/platform/common.h"
 #include "src/utility.h"
 #include "src/video.h"
@@ -263,6 +264,7 @@ namespace confighttp::configuration {
       }
     }
 
+    /** @brief Validate EDID choices before the existing, separate VDD and host saves. */
     void
     saveConfig(resp_https_t response, req_https_t request) {
       if (!check_content_type(response, request, "application/json")) return;
@@ -295,9 +297,27 @@ namespace confighttp::configuration {
         if (const auto upnp = inputTree.get_optional<std::string>("upnp"); upnp && *upnp != "enabled" && *upnp != "disabled" && *upnp != "true" && *upnp != "false") {
           throw std::invalid_argument("invalid upnp value");
         }
-        std::string resArray = inputTree.get<std::string>("resolutions", "[]");
-        std::string fpsArray = inputTree.get<std::string>("fps", "[]");
+        auto snapshot = config::get_config_snapshot();
+        if (!snapshot) throw std::runtime_error("failed to read configuration");
+        *snapshot = display_device::vdd_edid::with_mode_list_defaults(*snapshot, config::nvhttp.resolutions, config::nvhttp.fps);
+        // 将 inputTree 转换为 std::map（保证有序）
+        std::map<std::string, std::string> fullConfig;
+        for (const auto &kv : inputTree) {
+          if (kv.first == "usb_forwarding_config_version" || kv.first == "mat_live_pipe" || kv.first == "mat_live_producer") continue;
+          std::string value = inputTree.get<std::string>(kv.first);
+          fullConfig[kv.first] = value;
+        }
+        const auto saved_list = [&](const char *key) {
+          return display_device::vdd_edid::mode_list_or(fullConfig, key, snapshot->at(key));
+        };
+        const auto resArray = saved_list("resolutions");
+        const auto fpsArray = saved_list("fps");
         std::string gpu_name = inputTree.get<std::string>("adapter_name", "");
+        const auto edid_resolution = inputTree.get_optional<std::string>("vdd_edid_native_resolution");
+        if (edid_resolution &&
+            !display_device::vdd_edid::supported_selection(*edid_resolution, resArray, fpsArray)) {
+          throw std::invalid_argument("EDID native resolution must be default or a configured size (1..4095 per dimension) with an encodable refresh rate");
+        }
 
         // Validate config field lengths to prevent abuse
         auto sunshine_name = inputTree.get<std::string>("sunshine_name", "");
@@ -312,15 +332,14 @@ namespace confighttp::configuration {
           return;
         }
 
-        display_device::vdd_settings::save(resArray, fpsArray, gpu_name);
-
-        // 将 inputTree 转换为 std::map（保证有序）
-        std::map<std::string, std::string> fullConfig;
-        for (const auto &kv : inputTree) {
-          if (kv.first == "usb_forwarding_config_version" || kv.first == "mat_live_pipe" || kv.first == "mat_live_producer") continue;
-          std::string value = inputTree.get<std::string>(kv.first);
-          fullConfig[kv.first] = value;
+        // Validate retained values early; the save layer rechecks under its write lock.
+        if (!display_device::vdd_edid::retained_selection_supported(fullConfig, *snapshot)) {
+          throw std::invalid_argument("Mode-list changes removed the saved EDID native resolution or its encodable refresh rate; explicitly select a supported EDID native resolution or default");
         }
+
+        // Keep the legacy XML arguments, save order and error handling unchanged.
+        display_device::vdd_settings::save(inputTree.get<std::string>("resolutions", "[]"),
+          inputTree.get<std::string>("fps", "[]"), gpu_name);
 
         // 更新配置
         if (!config::update_full_config(fullConfig)) {
