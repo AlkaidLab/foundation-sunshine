@@ -4302,6 +4302,12 @@ namespace stream {
       return;
     }
 
+    // Keep the refresh mapping alive for the whole audio worker, including
+    // the MAT live early-return path, then remove it on every exit path.
+    auto refresh_cleanup = util::fail_guard([&]() {
+      ref->message_queue_queue->raise(socket_e::audio, av_session_id_t { session->audio.ping_payload }, nullptr, nullptr);
+    });
+
     // Enable local prioritization and QoS tagging on audio traffic if requested by the client
     auto address = session->audio.peer.address();
     session->audio.qos = platf::enable_socket_qos(ref->audio_sock.native_handle(), address,
@@ -4351,7 +4357,6 @@ namespace stream {
     }
     BOOST_LOG(debug) << "Start capturing Audio"sv;
     audio::capture(session->mail, session->config.audio, session);
-    ref->message_queue_queue->raise(socket_e::audio, av_session_id_t { session->audio.ping_payload }, nullptr, nullptr);
   }
 
   namespace session {
