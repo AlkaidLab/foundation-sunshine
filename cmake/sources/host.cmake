@@ -196,6 +196,7 @@ set(SUNSHINE_HOST_SOURCES
     src/confighttp/login_throttle.cpp src/confighttp/login_throttle.h
     src/confighttp/assets.cpp src/confighttp/assets.h
     src/confighttp/apps.cpp src/confighttp/apps.h
+    src/confighttp/apps_scan.cpp src/confighttp/apps_scan.h
     src/confighttp/configuration.cpp src/confighttp/configuration.h
     src/confighttp/clients.cpp src/confighttp/clients.h
     src/confighttp/pair_link.cpp src/confighttp/pair_link.h

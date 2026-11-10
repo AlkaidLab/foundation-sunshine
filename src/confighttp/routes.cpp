@@ -7,6 +7,7 @@
 #include "src/clipboard_http.h"
 #include "src/config.h"
 #include "src/confighttp/apps.h"
+#include "src/confighttp/apps_scan.h"
 #include "src/confighttp/assets.h"
 #include "src/confighttp/auth.h"
 #include "src/confighttp/clients.h"
