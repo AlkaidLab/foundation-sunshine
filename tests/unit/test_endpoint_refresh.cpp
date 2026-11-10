@@ -128,3 +128,15 @@ TEST_F(EndpointRefresh, AuthenticatedProbeFloodCannotProduceAnAckForEveryPacket)
   EXPECT_TRUE(send(packet(LI_ER_PROBE, 102), old_peer));
   EXPECT_FALSE(send(packet(LI_ER_PROBE, 103), old_peer));
 }
+
+TEST_F(EndpointRefresh, RejectsInvalidSessionAndKeyLengths) {
+  protocol invalid_session { address, LI_ER_VIDEO, "short", ri };
+  EXPECT_FALSE(invalid_session.ready());
+
+  crypto::aes_t invalid_ri { LI_ER_RI_KEY_SIZE - 1, 0x11 };
+  protocol invalid_key { address, LI_ER_VIDEO, id, invalid_ri };
+  EXPECT_FALSE(invalid_key.ready());
+
+  auto request = packet(LI_ER_PROBE, 1);
+  EXPECT_FALSE(invalid_key.receive(request.data(), request.size(), old_peer, now));
+}
