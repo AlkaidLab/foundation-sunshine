@@ -164,6 +164,8 @@ Enjoying it? Leave a Star. Not that we were checking or anything.
 
 Thanks to everyone contributing code, testing, and maintenance to Foundation and upstream Sunshine.
 
+Special thanks to [chr431](https://github.com/chr431) for diagnosing UDP source-port rotation in VPN/user-space network stacks and documenting the endpoint-following direction in [#1179](https://github.com/AlkaidLab/foundation-sunshine/pull/1179).
+
 <!-- CONTRIBUTORS:START -->
 <p align="center">
   <a href="https://github.com/ReenigneArcher"><img src="https://avatars.githubusercontent.com/u/42013603?v=4&amp;s=80" width="40" height="40" alt="ReenigneArcher" title="ReenigneArcher"></a>
