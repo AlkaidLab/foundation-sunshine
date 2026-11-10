@@ -38,9 +38,13 @@ add_executable(sparxie_unit_tests
   ${CMAKE_CURRENT_LIST_DIR}/test_sparxie_contract.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_settings.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_hoyo_settings.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/test_game_boost.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_zzz_file.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_host.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_apps_types.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/test_edit_save.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/test_captured_gate.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/test_captured_real.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_badge.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_stream_display.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_windows_registry.cpp
@@ -80,12 +84,14 @@ add_executable(sparxie_real_install
   ${SPX_ROOT}/src/sparxie/install.cpp
   ${SPX_ROOT}/src/sparxie/install_platform.cpp
   ${SPX_ROOT}/third-party/puff/puff.c
+  ${CMAKE_CURRENT_LIST_DIR}/real_install.cpp)
 target_include_directories(sparxie_real_install PRIVATE ${SPX_ROOT})
 target_link_libraries(sparxie_real_install PRIVATE Threads::Threads)
 if(WIN32)
   target_link_libraries(sparxie_real_install PRIVATE winhttp windowscodecs ole32 shell32 uuid advapi32)
 endif()
 
+# Writes the host's own answers for the three titles to JSON, for the Web UI tests and the private harness (see dump_ui_fixtures.cpp)
 add_executable(sparxie_ui_fixtures
   ${SPX_ROOT}/src/sparxie/model.cpp
   ${SPX_ROOT}/src/sparxie/stream_display.cpp
@@ -110,6 +116,7 @@ add_executable(sparxie_ui_fixtures
   ${SPX_ROOT}/src/sparxie/install.cpp
   ${SPX_ROOT}/src/sparxie/install_platform.cpp
   ${SPX_ROOT}/third-party/puff/puff.c
+  ${CMAKE_CURRENT_LIST_DIR}/dump_ui_fixtures.cpp)
 target_include_directories(sparxie_ui_fixtures PRIVATE ${SPX_ROOT})
 target_link_libraries(sparxie_ui_fixtures PRIVATE Threads::Threads)
 if(WIN32)

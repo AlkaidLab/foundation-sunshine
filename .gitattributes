@@ -11,6 +11,8 @@ src_assets/common/assets/web/public/assets/locale/*.json text eol=lf
 # ensure Windows batch scripts are checked out with CRLF line endings
 *.bat text eol=crlf
 *.cmd text eol=crlf
+# captured Windows file: CRLF line ends are part of the data
+tests/sparxie/fixtures/sample-zzz-general-data-20261112.json -text whitespace=cr-at-eol
 
 # Core patch context must match the LF source archive on Windows too.
 tools/hidmaestro-core-patch/*.patch text eol=lf whitespace=-blank-at-eol
