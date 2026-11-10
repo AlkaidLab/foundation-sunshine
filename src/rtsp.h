@@ -125,6 +125,7 @@ namespace rtsp_stream {
     bool setup_control { false };
     bool setup_mic { false };
     bool control_only { false };
+    bool endpoint_auto_refresh { false };
 
     // GameStream 的 RTSP 请求可能分别使用独立 TCP 连接，
     // 但一个启动票据最多只能创建一个串流会话。

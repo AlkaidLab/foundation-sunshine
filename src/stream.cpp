@@ -3,6 +3,7 @@
  * @brief Definitions for the streaming protocols.
  */
 #include "process.h"
+#include "endpoint_refresh.h"
 #include "spatial_transport/mat_live_session.h"
 
 #include <algorithm>
@@ -30,6 +31,10 @@
 #include <boost/thread/mutex.hpp>
 
 #include "streaming/abr.h"
+
+// Limelight-internal.h includes C11 atomics. Pre-include the header outside
+// the C-linkage block so libstdc++ does not parse its C++ templates as C.
+#include <stdatomic.h>
 
 extern "C" {
 // clang-format off
@@ -428,7 +433,8 @@ namespace stream {
 
   using av_session_id_t = std::variant<asio::ip::address, std::string>;  // IP address or SS-Ping-Payload from RTSP handshake
   using message_queue_t = std::shared_ptr<safe::queue_t<std::pair<udp::endpoint, std::string>>>;
-  using message_queue_queue_t = std::shared_ptr<safe::queue_t<std::tuple<socket_e, av_session_id_t, message_queue_t>>>;
+  using endpoint_refresh_ptr = std::shared_ptr<endpoint_refresh_t>;
+  using message_queue_queue_t = std::shared_ptr<safe::queue_t<std::tuple<socket_e, av_session_id_t, message_queue_t, endpoint_refresh_ptr>>>;
 
   // return bytes written on success
   // return -1 on error
@@ -633,6 +639,7 @@ namespace stream {
       safe::mail_raw_t::event_t<video::dynamic_param_t> dynamic_param_change_events;  // 新增：动态参数调整事件
 
       std::unique_ptr<platf::deinit_t> qos;
+      endpoint_refresh_ptr endpoint_refresh;
     } video;
 
     struct {
@@ -655,6 +662,7 @@ namespace stream {
 
       bool enable_mic;
       bool mic_registered { false };
+      endpoint_refresh_ptr endpoint_refresh;
     } audio;
 
     struct {
@@ -3350,6 +3358,8 @@ namespace stream {
   recvThread(broadcast_ctx_t &ctx) {
     std::unordered_map<av_session_id_t, message_queue_t> peer_to_video_session;
     std::unordered_map<av_session_id_t, message_queue_t> peer_to_audio_session;
+    std::unordered_map<av_session_id_t, endpoint_refresh_ptr> video_refresh;
+    std::unordered_map<av_session_id_t, endpoint_refresh_ptr> audio_refresh;
 
     auto &video_sock = ctx.video_sock;
     auto &audio_sock = ctx.audio_sock;
@@ -3362,8 +3372,28 @@ namespace stream {
     std::array<std::function<void(const boost::system::error_code, size_t)>, 2> recv_funcs;
 
     // 统一处理PING包逻辑
-    auto handle_ping = [](auto &session_map, auto &peer, auto &buf, size_t bytes, std::string_view type_str) {
+    auto handle_ping = [](auto &session_map, auto &refresh_map, auto &sock, auto &peer, auto &buf, size_t bytes, std::string_view type_str) {
       try {
+        if (bytes == LI_ER_PACKET_SIZE && std::memcmp(buf.data(), "EAPR", 4) == 0) {
+          auto key = std::string { buf.data() + 8, LI_ER_SESSION_SIZE };
+          auto refresh = refresh_map.find(key);
+          if (refresh == refresh_map.end()) {
+            return;
+          }
+          const auto previous = refresh->second->port();
+          auto response = refresh->second->receive(buf.data(), bytes, peer, endpoint_refresh_t::clock::now());
+          if (response) {
+            auto reply = std::make_shared<std::pair<endpoint_refresh_t::packet_t, udp::endpoint>>(*response, peer);
+            sock.async_send_to(asio::buffer(reply->first), reply->second,
+              [reply](const boost::system::error_code &, size_t) {});
+          }
+          if (!previous && refresh->second->port()) {
+            if (auto initial = session_map.find(key); initial != session_map.end()) {
+              initial->second->raise(peer, std::string { buf.data(), bytes });
+            }
+          }
+          return;
+        }
         if (bytes == 4) {
           if (auto it = session_map.find(peer.address()); it != std::end(session_map)) {
             BOOST_LOG(debug) << "RAISE: "sv << peer.address().to_string() << ':' << peer.port() << " :: " << type_str;
@@ -3372,7 +3402,11 @@ namespace stream {
         }
         else if (bytes >= sizeof(SS_PING)) {
           auto ping = (PSS_PING) buf.data();
-          if (auto it = session_map.find(std::string { ping->payload, sizeof(ping->payload) }); it != std::end(session_map)) {
+          auto key = std::string { ping->payload, sizeof(ping->payload) };
+          if (refresh_map.contains(key)) {
+            return;  // No plaintext downgrade after negotiation.
+          }
+          if (auto it = session_map.find(key); it != std::end(session_map)) {
             BOOST_LOG(debug) << "RAISE: "sv << peer.address().to_string() << ':' << peer.port() << " :: " << type_str;
             it->second->raise(peer, std::string { buf.data(), bytes });
           }
@@ -3384,10 +3418,10 @@ namespace stream {
     };
 
     // 更新会话映射
-    auto update_session_map = [](auto &message_queue_queue, auto &video_map, auto &audio_map) {
+    auto update_session_map = [](auto &message_queue_queue, auto &video_map, auto &audio_map, auto &video_refresh, auto &audio_refresh) {
       while (message_queue_queue->peek()) {
         if (auto message_queue_opt = message_queue_queue->pop()) {
-          auto [socket_type, session_id, message_queue] = *message_queue_opt;
+          auto [socket_type, session_id, message_queue, refresh] = *message_queue_opt;
           auto &target_map = socket_type == socket_e::video ? video_map :
                                                               (socket_type == socket_e::audio ? audio_map : throw std::runtime_error("Unknown socket type"));
 
@@ -3397,12 +3431,19 @@ namespace stream {
           else {
             target_map.erase(session_id);
           }
+          auto &refresh_map = socket_type == socket_e::video ? video_refresh : audio_refresh;
+          if (refresh) {
+            refresh_map.insert_or_assign(session_id, std::move(refresh));
+          }
+          else {
+            refresh_map.erase(session_id);
+          }
         }
       }
     };
 
     // 初始化接收函数
-    auto init_recv_func = [&](auto &sock, size_t buf_idx, auto &session_map, std::string_view type_str) {
+    auto init_recv_func = [&](auto &sock, size_t buf_idx, auto &session_map, auto &refresh_map, std::string_view type_str) {
       recv_funcs[buf_idx] = [&, buf_idx, type_str](const boost::system::error_code &ec, size_t bytes) {
         auto &peer = peers[buf_idx];
 
@@ -3459,20 +3500,20 @@ namespace stream {
 
         BOOST_LOG(verbose) << "Recv: "sv << peer.address().to_string() << ':' << peer.port() << " :: " << type_str;
 
-        update_session_map(message_queue_queue, peer_to_video_session, peer_to_audio_session);
+        update_session_map(message_queue_queue, peer_to_video_session, peer_to_audio_session, video_refresh, audio_refresh);
         if (bytes == 0) {
           BOOST_LOG(warning) << "Received empty packet";
           // 即使是空包，也继续接收
         }
         else {
-          handle_ping(session_map, peer, buffers[buf_idx], bytes, type_str);
+          handle_ping(session_map, refresh_map, sock, peer, buffers[buf_idx], bytes, type_str);
         }
       };
     };
 
     try {
-      init_recv_func(video_sock, 0, peer_to_video_session, "VIDEO");
-      init_recv_func(audio_sock, 1, peer_to_audio_session, "AUDIO");
+      init_recv_func(video_sock, 0, peer_to_video_session, video_refresh, "VIDEO");
+      init_recv_func(audio_sock, 1, peer_to_audio_session, audio_refresh, "AUDIO");
 
       video_sock.async_receive_from(asio::buffer(buffers[0]), peers[0], 0, recv_funcs[0]);
       audio_sock.async_receive_from(asio::buffer(buffers[1]), peers[1], 0, recv_funcs[1]);
@@ -3524,6 +3565,25 @@ namespace stream {
       auto session = (session_t *) packet->channel_data;
       session->last_video_activity_ms.store(steady_now_ms(), std::memory_order_relaxed);
       auto lowseq = session->video.lowseq;
+      if (session->video.endpoint_refresh) {
+        auto port = session->video.endpoint_refresh->port();
+        if (port && port != session->video.peer.port()) {
+#ifdef _WIN32
+          auto address = session->video.peer.address();
+          auto refreshed_qos = platf::enable_socket_qos(sock.native_handle(), address, port,
+            platf::qos_data_type_e::video, session->config.videoQosType != 0);
+          if (refreshed_qos) {
+            // Create the new flow before releasing the old one so Windows
+            // qWAVE always has a valid QoS flow during the port transition.
+            auto previous_qos = std::move(session->video.qos);
+            session->video.qos = std::move(refreshed_qos);
+            previous_qos.reset();
+          }
+#endif
+          session->video.peer.port(port);
+          BOOST_LOG(info) << "endpoint_auto_refresh: video destination updated for session " << session->launch_session_id;
+        }
+      }
 
       std::string_view payload { (char *) packet->data(), packet->data_size() };
       std::vector<uint8_t> payload_with_replacements;
@@ -3900,6 +3960,25 @@ namespace stream {
       TUPLE_2D_REF(channel_data, packet_data, *packet);
       auto session = (session_t *) channel_data;
       session->last_audio_activity_ms.store(steady_now_ms(), std::memory_order_relaxed);
+      if (session->audio.endpoint_refresh) {
+        auto port = session->audio.endpoint_refresh->port();
+        if (port && port != session->audio.peer.port()) {
+#ifdef _WIN32
+          auto address = session->audio.peer.address();
+          auto refreshed_qos = platf::enable_socket_qos(sock.native_handle(), address, port,
+            platf::qos_data_type_e::audio, session->config.audioQosType != 0);
+          if (refreshed_qos) {
+            // Create the new flow before releasing the old one so Windows
+            // qWAVE always has a valid QoS flow during the port transition.
+            auto previous_qos = std::move(session->audio.qos);
+            session->audio.qos = std::move(refreshed_qos);
+            previous_qos.reset();
+          }
+#endif
+          session->audio.peer.port(port);
+          BOOST_LOG(info) << "endpoint_auto_refresh: audio destination updated for session " << session->launch_session_id;
+        }
+      }
 
       auto sequenceNumber = session->audio.sequenceNumber;
       auto timestamp = session->audio.timestamp;
@@ -4132,21 +4211,31 @@ namespace stream {
   recv_ping(session_t *session, decltype(broadcast_shared)::ptr_t ref, socket_e type, std::string_view expected_payload, udp::endpoint &peer, std::chrono::milliseconds timeout) {
     auto messages = std::make_shared<message_queue_t::element_type>(30);
     av_session_id_t session_id = std::string { expected_payload };
+    endpoint_refresh_ptr refresh;
+    if (session->config.endpoint_auto_refresh) {
+      refresh = std::make_shared<endpoint_refresh_t>(peer.address(), type == socket_e::video ? LI_ER_VIDEO : LI_ER_AUDIO,
+        expected_payload, session->control.cipher.key);
+      if (!refresh->ready()) {
+        return -1;
+      }
+    }
+    (type == socket_e::video ? session->video.endpoint_refresh : session->audio.endpoint_refresh) = refresh;
 
     // Only allow matches on the peer address for legacy clients
     if (!(session->config.mlFeatureFlags & ML_FF_SESSION_ID_V1)) {
-      ref->message_queue_queue->raise(type, peer.address(), messages);
+      ref->message_queue_queue->raise(type, peer.address(), messages, nullptr);
     }
-    ref->message_queue_queue->raise(type, session_id, messages);
+    ref->message_queue_queue->raise(type, session_id, messages, refresh);
+    bool validated = false;
 
     auto fg = util::fail_guard([&]() {
       messages->stop();
 
       // remove message queue from session
       if (!(session->config.mlFeatureFlags & ML_FF_SESSION_ID_V1)) {
-        ref->message_queue_queue->raise(type, peer.address(), nullptr);
+        ref->message_queue_queue->raise(type, peer.address(), nullptr, nullptr);
       }
-      ref->message_queue_queue->raise(type, session_id, nullptr);
+      ref->message_queue_queue->raise(type, session_id, nullptr, validated ? refresh : nullptr);
     });
 
     auto start_time = std::chrono::steady_clock::now();
@@ -4161,7 +4250,10 @@ namespace stream {
       }
 
       TUPLE_2D_REF(recv_peer, msg, *msg_opt);
-      if (msg.find(expected_payload) != std::string::npos) {
+      if (refresh && refresh->port()) {
+        BOOST_LOG(debug) << "Authenticated initial UDP endpoint for session " << session->launch_session_id;
+      }
+      else if (!refresh && msg.find(expected_payload) != std::string::npos) {
         // Match the new PING payload format
         BOOST_LOG(debug) << "Received ping [v2] from "sv << recv_peer.address() << ':' << recv_peer.port() << " ["sv << util::hex_vec(msg) << ']';
       }
@@ -4177,6 +4269,7 @@ namespace stream {
 
       // Update connection details.
       peer = recv_peer;
+      validated = true;
       return 0;
     }
 
@@ -4212,6 +4305,7 @@ namespace stream {
     video_config.perf_session_id = session->launch_session_id;
     video::capture(session->mail, video_config, session, session->video.dynamic_param_change_events,
       session->config.packetsize);
+    ref->message_queue_queue->raise(socket_e::video, av_session_id_t { session->video.ping_payload }, nullptr, nullptr);
   }
 
   void
@@ -4229,6 +4323,12 @@ namespace stream {
     if (error < 0) {
       return;
     }
+
+    // Keep the refresh mapping alive for the whole audio worker, including
+    // the MAT live early-return path, then remove it on every exit path.
+    auto refresh_cleanup = util::fail_guard([&]() {
+      ref->message_queue_queue->raise(socket_e::audio, av_session_id_t { session->audio.ping_payload }, nullptr, nullptr);
+    });
 
     // Enable local prioritization and QoS tagging on audio traffic if requested by the client
     auto address = session->audio.peer.address();
