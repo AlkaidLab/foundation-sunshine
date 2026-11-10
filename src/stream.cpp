@@ -3377,7 +3377,9 @@ namespace stream {
         if (bytes == LI_ER_PACKET_SIZE && std::memcmp(buf.data(), "EAPR", 4) == 0) {
           auto key = std::string { buf.data() + 8, LI_ER_SESSION_SIZE };
           auto refresh = refresh_map.find(key);
-          if (refresh == refresh_map.end()) return;
+          if (refresh == refresh_map.end()) {
+            return;
+          }
           const auto previous = refresh->second->port();
           auto response = refresh->second->receive(buf.data(), bytes, peer, endpoint_refresh_t::clock::now());
           if (response) {
@@ -3401,7 +3403,9 @@ namespace stream {
         else if (bytes >= sizeof(SS_PING)) {
           auto ping = (PSS_PING) buf.data();
           auto key = std::string { ping->payload, sizeof(ping->payload) };
-          if (refresh_map.contains(key)) return;  // No plaintext downgrade after negotiation.
+          if (refresh_map.contains(key)) {
+            return;  // No plaintext downgrade after negotiation.
+          }
           if (auto it = session_map.find(key); it != std::end(session_map)) {
             BOOST_LOG(debug) << "RAISE: "sv << peer.address().to_string() << ':' << peer.port() << " :: " << type_str;
             it->second->raise(peer, std::string { buf.data(), bytes });
@@ -3428,8 +3432,12 @@ namespace stream {
             target_map.erase(session_id);
           }
           auto &refresh_map = socket_type == socket_e::video ? video_refresh : audio_refresh;
-          if (refresh) refresh_map.insert_or_assign(session_id, std::move(refresh));
-          else refresh_map.erase(session_id);
+          if (refresh) {
+            refresh_map.insert_or_assign(session_id, std::move(refresh));
+          }
+          else {
+            refresh_map.erase(session_id);
+          }
         }
       }
     };
@@ -4185,7 +4193,9 @@ namespace stream {
     if (session->config.endpoint_auto_refresh) {
       refresh = std::make_shared<endpoint_refresh_t>(peer.address(), type == socket_e::video ? LI_ER_VIDEO : LI_ER_AUDIO,
         expected_payload, session->control.cipher.key);
-      if (!refresh->ready()) return -1;
+      if (!refresh->ready()) {
+        return -1;
+      }
     }
     (type == socket_e::video ? session->video.endpoint_refresh : session->audio.endpoint_refresh) = refresh;
 

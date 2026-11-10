@@ -23,7 +23,9 @@ namespace stream {
     endpoint_refresh_t(const boost::asio::ip::address &address, uint8_t stream,
       std::string_view session, const crypto::aes_t &ri_key):
         address(address), stream(stream) {
-      if (session.size() != id.size() || ri_key.size() != LI_ER_RI_KEY_SIZE) return;
+      if (session.size() != id.size() || ri_key.size() != LI_ER_RI_KEY_SIZE) {
+        return;
+      }
       std::memcpy(id.data(), session.data(), id.size());
       valid = LiErDeriveKey(ri_key.data(), id.data(), key.data());
     }
@@ -39,16 +41,24 @@ namespace stream {
           !LiErDecode(data, size, stream, id.data(), key.data(), &message)) return {};
 
       if (message.type == LI_ER_PROBE) {
-        if (message.sequence <= last_probe) return {};
+        if (message.sequence <= last_probe) {
+          return {};
+        }
         last_probe = message.sequence;
         if (peer.port() == port()) {
-          if (now - last_ack < std::chrono::milliseconds(250)) return {};
+          if (now - last_ack < std::chrono::milliseconds(250)) {
+            return {};
+          }
           last_ack = now;
           return encode(LI_ER_ACK, message.sequence, confirmed_nonce.data());
         }
-        if (now - last_challenge < std::chrono::milliseconds(250)) return {};
+        if (now - last_challenge < std::chrono::milliseconds(250)) {
+          return {};
+        }
         if (pending_port != peer.port() || now > expires) {
-          if (RAND_bytes(nonce.data(), static_cast<int>(nonce.size())) != 1) return {};
+          if (RAND_bytes(nonce.data(), static_cast<int>(nonce.size())) != 1) {
+            return {};
+          }
           pending_port = peer.port();
           pending_sequence = message.sequence;
           expires = now + std::chrono::seconds(2);
@@ -71,7 +81,9 @@ namespace stream {
   private:
     std::optional<packet_t> encode(uint8_t type, uint64_t sequence, const unsigned char *challenge) const {
       packet_t packet {};
-      if (!LiErEncode(packet.data(), type, stream, id.data(), key.data(), sequence, challenge)) return {};
+      if (!LiErEncode(packet.data(), type, stream, id.data(), key.data(), sequence, challenge)) {
+        return {};
+      }
       return packet;
     }
 
