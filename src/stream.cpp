@@ -3568,10 +3568,10 @@ namespace stream {
       if (session->video.endpoint_refresh) {
         auto port = session->video.endpoint_refresh->port();
         if (port && port != session->video.peer.port()) {
+#ifdef _WIN32
           auto address = session->video.peer.address();
-          auto refreshed_qos = platf::enable_socket_qos(ref->video_sock.native_handle(), address, port,
+          auto refreshed_qos = platf::enable_socket_qos(sock.native_handle(), address, port,
             platf::qos_data_type_e::video, session->config.videoQosType != 0);
-          session->video.peer.port(port);
           if (refreshed_qos) {
             // Create the new flow before releasing the old one so Windows
             // qWAVE always has a valid QoS flow during the port transition.
@@ -3579,6 +3579,8 @@ namespace stream {
             session->video.qos = std::move(refreshed_qos);
             previous_qos.reset();
           }
+#endif
+          session->video.peer.port(port);
           BOOST_LOG(info) << "endpoint_auto_refresh: video destination updated for session " << session->launch_session_id;
         }
       }
@@ -3961,10 +3963,10 @@ namespace stream {
       if (session->audio.endpoint_refresh) {
         auto port = session->audio.endpoint_refresh->port();
         if (port && port != session->audio.peer.port()) {
+#ifdef _WIN32
           auto address = session->audio.peer.address();
-          auto refreshed_qos = platf::enable_socket_qos(ref->audio_sock.native_handle(), address, port,
+          auto refreshed_qos = platf::enable_socket_qos(sock.native_handle(), address, port,
             platf::qos_data_type_e::audio, session->config.audioQosType != 0);
-          session->audio.peer.port(port);
           if (refreshed_qos) {
             // Create the new flow before releasing the old one so Windows
             // qWAVE always has a valid QoS flow during the port transition.
@@ -3972,6 +3974,8 @@ namespace stream {
             session->audio.qos = std::move(refreshed_qos);
             previous_qos.reset();
           }
+#endif
+          session->audio.peer.port(port);
           BOOST_LOG(info) << "endpoint_auto_refresh: audio destination updated for session " << session->launch_session_id;
         }
       }
