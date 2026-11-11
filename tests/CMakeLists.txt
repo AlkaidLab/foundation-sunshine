@@ -1365,3 +1365,23 @@ if (WIN32)
             CXX_STANDARD 23
             LINK_SEARCH_START_STATIC 1)
 endif ()
+
+# Crash reports: signature, meta JSON, consent, the pending folder and the upload against a local mock server
+add_executable(crash_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/crash/crash_core.cpp
+        ${CMAKE_SOURCE_DIR}/src/crash/crash_common.cpp
+        ${CMAKE_SOURCE_DIR}/src/crash/crash_win.cpp
+        ${CMAKE_SOURCE_DIR}/src/crash/crash_posix.cpp
+        ${CMAKE_SOURCE_DIR}/src/crash/crash_upload.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_crash.cpp)
+target_include_directories(crash_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(crash_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json sunshine::curl
+        sunshine_project_options sunshine_coverage Threads::Threads)
+if (WIN32)
+    target_link_libraries(crash_unit_tests PRIVATE ws2_32)
+    set_target_properties(crash_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+target_compile_options(crash_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(crash_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME crash_unit_tests COMMAND crash_unit_tests)
+set_tests_properties(crash_unit_tests PROPERTIES TIMEOUT 120)
