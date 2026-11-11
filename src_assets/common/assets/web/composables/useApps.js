@@ -575,7 +575,7 @@ export function useApps() {
   // 拖拽排序
   const restoreDefaultApps = async () => {
     try {
-      const result = AppService.restoreDefaultBuiltInApps(apps.value, platform.value)
+      const result = AppService.restoreDefaultBuiltInApps(apps.value, platform.value, translate)
 
       if (result.changed === 0) {
         showMessage(translate('apps.restore_default_apps_none'), APP_CONSTANTS.MESSAGE_TYPES.INFO)

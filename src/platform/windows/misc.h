@@ -4,6 +4,8 @@
  */
 #pragma once
 
+#include <mutex>
+
 #include <chrono>
 #include <functional>
 #include <string_view>
@@ -12,6 +14,13 @@
 #include <winnt.h>
 
 namespace platf {
+  /** Keep HKCU sensitive to the impersonated user's token. */
+  bool
+  initialize_user_registry();
+
+  /** Serializes WCS reads with legacy process-wide Shell registry overrides. */
+  std::mutex &
+  user_registry_mutex();
   void
   print_status(const std::string_view &prefix, HRESULT status);
   HDESK

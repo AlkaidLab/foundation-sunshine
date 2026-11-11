@@ -40,6 +40,7 @@
 #ifdef _WIN32
   #include "platform/windows/misc.h"
   #include "platform/windows/win_dark_mode.h"
+  #include "spatial_audio/mat_capture_process.h"
 #else
   #ifdef SUNSHINE_CLIPBOARD_HOST
     #include "clipboard_host.h"
@@ -212,6 +213,13 @@ main(int argc, char *argv[]) {
     TerminateProcess(GetCurrentProcess(),
                      static_cast<UINT>(g_final_exit_code.load(std::memory_order_acquire)));
   });
+
+  // WCS uses HKCU internally. Disable its per-process cache before any Windows
+  // component can pin it to SYSTEM, so later impersonation sees the user's ICCs.
+  if (!platf::initialize_user_registry()) {
+    std::cerr << "Failed to initialize per-user registry access" << std::endl;
+    return 1;
+  }
 
   // Avoid searching the PATH in case a user has configured their system insecurely
   // by placing a user-writable directory in the system-wide PATH variable.
@@ -534,6 +542,9 @@ main(int argc, char *argv[]) {
   // under its own mutex, so bringing it up early races with nothing. nvhttp and
   // rtsp_stream do depend on the probe (codec support flags, YUV444 support),
   // so they stay behind it.
+#ifdef _WIN32
+  if (config::audio.mat_live && config::audio.stream) spatial_audio::mat_capture_process.start();
+#endif
   std::thread configThread { confighttp::start };
 
   probe_encoders_with_watchdog();
@@ -583,6 +594,10 @@ main(int argc, char *argv[]) {
 #endif
 
   mainThreadLoop(shutdown_event);
+
+#ifdef _WIN32
+  spatial_audio::mat_capture_process.stop();
+#endif
 
   // Cover tray/HTTP requests and signals before any cleanup can block.
   lifetime::start_shutdown_watchdog();

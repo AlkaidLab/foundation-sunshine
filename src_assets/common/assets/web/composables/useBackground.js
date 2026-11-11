@@ -1,6 +1,15 @@
 import { getCurrentScope, onScopeDispose } from 'vue'
 import { translateFallback } from '../utils/localizedMessage.js'
-import { extractColors, rgbToHsl as rgbToHslValues, selectAccentColor } from '../utils/colorPalette.js'
+import {
+  extractColors,
+  rgbToHsl as rgbToHslValues,
+  selectAccentColor,
+} from '../utils/colorPalette.js'
+import {
+  DEFAULT_WALLPAPER_SEED,
+  materialSeedFromImageData,
+  materialThemeTokens,
+} from '../utils/materialTheme.js'
 
 const DEFAULT_BACKGROUND = 'https://assets.alkaidlab.com/sunshine-bg0.webp'
 const STORAGE_KEY = 'customBackground'
@@ -29,11 +38,23 @@ const clamp = (value, min, max) => Math.max(min, Math.min(max, value))
 const isLocalImage = (imageUrl) =>
   typeof imageUrl === 'string' && (imageUrl.startsWith('data:') || imageUrl.startsWith('blob:'))
 
-const loadImage = (imageUrl) =>
+const loadImage = (imageUrl, anonymous = false) =>
   new Promise((resolve, reject) => {
     const img = new Image()
-    img.onload = () => resolve(img)
-    img.onerror = () => reject(new Error(translateFallback('apps.image_load_failed')))
+    const timer = setTimeout(() => {
+      img.onload = img.onerror = null
+      img.src = ''
+      reject(new Error(translateFallback('apps.image_load_failed')))
+    }, 8000)
+    img.onload = () => {
+      clearTimeout(timer)
+      resolve(img)
+    }
+    img.onerror = () => {
+      clearTimeout(timer)
+      reject(new Error(translateFallback('apps.image_load_failed')))
+    }
+    if (anonymous && !isLocalImage(imageUrl)) img.crossOrigin = 'anonymous'
     img.src = imageUrl
   })
 
@@ -89,7 +110,10 @@ const analyzeImageColors = (img) => {
     if (!context) return createDefaultColorInfo()
 
     context.drawImage(img, 0, 0, canvas.width, canvas.height)
-    const palette = extractColors(context.getImageData(0, 0, canvas.width, canvas.height), COLOR_CONFIG.paletteSize)
+    const palette = extractColors(
+      context.getImageData(0, 0, canvas.width, canvas.height),
+      COLOR_CONFIG.paletteSize,
+    )
     const accentColor = selectAccentColor(palette)
     if (!accentColor) return createDefaultColorInfo()
 
@@ -178,6 +202,7 @@ export function useBackground(options = {}) {
     maxHeight = 1080,
     maxSizeMB = 2,
     translate = translateFallback,
+    materialColors = false,
   } = options
 
   const getCurrentBackground = () => localStorage.getItem(storageKey) ?? defaultBackground
@@ -191,9 +216,82 @@ export function useBackground(options = {}) {
   }
 
   let colorUpdateId = 0
+  let cachedMaterialImage = null
+  let cachedMaterialSeed = null
+  const previousMaterialStyles = new Map()
+  let appliedMaterialStyles = {}
+
+  const clearMaterialTheme = () => {
+    const style = document.documentElement.style
+    for (const [property, previous] of previousMaterialStyles) {
+      if (style.getPropertyValue(property) !== appliedMaterialStyles[property]) continue
+      if (previous.value) style.setProperty(property, previous.value, previous.priority)
+      else style.removeProperty(property)
+    }
+    previousMaterialStyles.clear()
+    appliedMaterialStyles = {}
+  }
+
+  const readMaterialSeed = (imageUrl) => {
+    if (cachedMaterialImage === imageUrl && cachedMaterialSeed) return cachedMaterialSeed
+    cachedMaterialImage = imageUrl
+    cachedMaterialSeed =
+      imageUrl === DEFAULT_BACKGROUND
+        ? Promise.resolve(DEFAULT_WALLPAPER_SEED)
+        : loadImage(imageUrl, true).then((image) => {
+            const canvas = document.createElement('canvas')
+            const scale = Math.min(1, THUMBNAIL_MAX_SIZE / Math.max(image.width, image.height))
+            canvas.width = Math.max(1, Math.round(image.width * scale))
+            canvas.height = Math.max(1, Math.round(image.height * scale))
+            const context = canvas.getContext('2d', { willReadFrequently: true })
+            if (!context) throw new Error('Canvas is unavailable')
+            context.drawImage(image, 0, 0, canvas.width, canvas.height)
+            return materialSeedFromImageData(
+              context.getImageData(0, 0, canvas.width, canvas.height),
+            )
+          })
+    return cachedMaterialSeed
+  }
+
+  const applyMaterialTheme = async (imageUrl, updateId) => {
+    try {
+      const seed = await readMaterialSeed(imageUrl)
+      if (updateId !== colorUpdateId) return
+      if (seed === null) return clearMaterialTheme()
+      const root = document.documentElement
+      const tokens = materialThemeTokens(seed, root.getAttribute('data-bs-theme') === 'dark')
+      for (const [property, value] of Object.entries(tokens)) {
+        if (!previousMaterialStyles.has(property)) {
+          previousMaterialStyles.set(property, {
+            value: root.style.getPropertyValue(property),
+            priority: root.style.getPropertyPriority(property),
+          })
+        }
+        root.style.setProperty(property, value)
+        // CSSOM can normalize color and gradient serialization.
+        appliedMaterialStyles[property] = root.style.getPropertyValue(property)
+      }
+    } catch {
+      if (updateId === colorUpdateId) {
+        cachedMaterialSeed = null
+        clearMaterialTheme()
+      }
+    }
+  }
+
+  if (getCurrentScope()) {
+    onScopeDispose(() => {
+      colorUpdateId++
+      clearMaterialTheme()
+    })
+  }
 
   const refreshTextColorTheme = async (imageUrl) => {
     const updateId = ++colorUpdateId
+    if (materialColors) {
+      if (isDevMode() || !imageUrl) return clearMaterialTheme()
+      return applyMaterialTheme(imageUrl, updateId)
+    }
     if (!isLocalImage(imageUrl)) {
       resetTextColorTheme()
       return
@@ -212,6 +310,7 @@ export function useBackground(options = {}) {
       colorUpdateId++
       document.body.style.background = ''
       resetTextColorTheme()
+      clearMaterialTheme()
       return
     }
     document.body.style.background = `url(${imageUrl}) center/cover fixed no-repeat`
@@ -310,8 +409,13 @@ export function useBackground(options = {}) {
       drop: (e) => handleDrop(e, onError),
     }
 
-    Object.entries(handlers).forEach(([event, handler]) => document.addEventListener(event, handler))
-    return () => Object.entries(handlers).forEach(([event, handler]) => document.removeEventListener(event, handler))
+    Object.entries(handlers).forEach(([event, handler]) =>
+      document.addEventListener(event, handler),
+    )
+    return () =>
+      Object.entries(handlers).forEach(([event, handler]) =>
+        document.removeEventListener(event, handler),
+      )
   }
 
   const clearBackground = () => {
@@ -322,7 +426,10 @@ export function useBackground(options = {}) {
 
   // 监听主题切换
   if (typeof document !== 'undefined') {
-    const handleThemeChange = () => setTimeout(recheckBackgroundBrightness, 100)
+    const handleThemeChange = () => {
+      if (materialColors) recheckBackgroundBrightness()
+      else setTimeout(recheckBackgroundBrightness, 100)
+    }
     const observerConfig = { attributes: true, attributeFilter: ['data-bs-theme'] }
     const observer = new MutationObserver(handleThemeChange)
     observer.observe(document.documentElement, observerConfig)
@@ -335,14 +442,18 @@ export function useBackground(options = {}) {
     // 监听背景旁路切换
     const onBackgroundBypass = (e) => {
       if (e.detail?.enabled) {
+        colorUpdateId++
         document.body.style.background = ''
+        clearMaterialTheme()
       } else {
         loadBackground()
       }
     }
     window.addEventListener('sunshine-background-bypass', onBackgroundBypass)
     if (getCurrentScope()) {
-      onScopeDispose(() => window.removeEventListener('sunshine-background-bypass', onBackgroundBypass))
+      onScopeDispose(() =>
+        window.removeEventListener('sunshine-background-bypass', onBackgroundBypass),
+      )
     }
   }
 

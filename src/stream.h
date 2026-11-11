@@ -53,6 +53,7 @@ namespace stream {
     int minRequiredFecPackets;
     std::shared_ptr<video_fec::controller_t> fec_control;
     bool fec_feedback = false;
+    bool endpoint_auto_refresh = false;
     int mlFeatureFlags;
     int controlProtocolType;
     int audioQosType;
@@ -177,6 +178,10 @@ namespace stream {
     state(session_t &session);
 
     bool belongs_to_client(const session_t &session, const std::string &uuid);
+
+    // Resolve only RUNNING video sessions authenticated by this certificate.
+    streaming::capture_target_result_t
+    current_capture_for_client(const std::string &client_cert_uuid);
 
     bool
     has_active_video_sessions();

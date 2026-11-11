@@ -15,6 +15,10 @@
 #include "src/logging.h"
 #include "src/platform/common.h"
 #include "src/rtsp.h"
+#include "src/spatial_audio/mat_live_status.h"
+#ifdef _WIN32
+  #include "src/spatial_audio/mat_capture_process.h"
+#endif
 #include <algorithm>
 #include <atomic>
 #include <boost/algorithm/string.hpp>
@@ -406,6 +410,41 @@ namespace confighttp::diagnostics {
     }
 #endif
 
+    void
+    getMatLiveStatus(resp_https_t response, req_https_t request) {
+      if (!authenticate(response, request)) return;
+      const auto snapshot = spatial_audio::mat_live_status.snapshot();
+      const char *state = snapshot.state();
+      std::string error = snapshot.last_error;
+#ifdef _WIN32
+      if (const auto capture_error = spatial_audio::mat_capture_process.error(); !snapshot.leases && !capture_error.empty()) {
+        state = "error";
+        error = capture_error;
+      }
+#endif
+      if (!config::audio.mat_live) {
+        state = "disabled";
+      }
+      else if (!config::audio.stream) {
+        state = "audio_disabled";
+      }
+#ifndef _WIN32
+      state = "unsupported";
+#endif
+      // Observe session activity and the owned helper; never probe the capture pipe here.
+      const json output {
+        { "state", state },
+        { "last_error", error },
+      };
+      const web::CaseInsensitiveMultimap headers {
+        { "Content-Type", "application/json" },
+        { "Cache-Control", "no-store" },
+        { "X-Frame-Options", "DENY" },
+        { "Content-Security-Policy", "frame-ancestors 'none';" },
+      };
+      response->write(output.dump(), headers);
+    }
+
   }  // namespace
 
   void
@@ -417,6 +456,7 @@ namespace confighttp::diagnostics {
     server.resource["^/api/reset-display-device-persistence$"]["POST"] = resetDisplayDevicePersistence;
     server.resource["^/api/microphone/test$"]["POST"] = testMicrophone;
     server.resource["^/api/microphone/status$"]["GET"] = getMicrophoneStatus;
+    server.resource["^/api/mat/status$"]["GET"] = getMatLiveStatus;
     // Virtual display status is cross-platform (the Linux backend reports
     // its own readiness); the Vulkan HDR bridge stays Windows-only.
     server.resource["^/api/vdd/status$"]["GET"] = getVddStatus;

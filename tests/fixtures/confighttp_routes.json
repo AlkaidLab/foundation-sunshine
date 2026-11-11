@@ -56,6 +56,10 @@
     "method": "GET"
   },
   {
+    "pattern": "^/api/mat/status$",
+    "method": "GET"
+  },
+  {
     "pattern": "^/api/apps$",
     "method": "POST"
   },
@@ -238,6 +242,10 @@
   {
     "pattern": "^/api/runtime/hdr-calibration$",
     "method": "GET"
+  },
+  {
+    "pattern": "^/api/runtime/hdr-calibration$",
+    "method": "POST"
   },
   {
     "pattern": "^/api/runtime/bitrate$",

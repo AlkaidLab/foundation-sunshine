@@ -3,6 +3,8 @@
  * @brief Definitions for the streaming protocols.
  */
 #include "process.h"
+#include "endpoint_refresh.h"
+#include "spatial_transport/mat_live_session.h"
 
 #include <algorithm>
 #include <bit>
@@ -30,11 +32,20 @@
 
 #include "streaming/abr.h"
 
+// Limelight-internal.h includes C11 atomics. Pre-include the header outside
+// the C-linkage block so libstdc++ does not parse its C++ templates as C.
+#include <stdatomic.h>
+
 extern "C" {
 // clang-format off
 #include <moonlight-common-c/src/Limelight-internal.h>
 // clang-format on
 }
+
+#ifndef ML_FF_HOST_SESSION_STATE
+  // Mirrors moonlight-common-c's client feature flag until the submodule carries it.
+  #define ML_FF_HOST_SESSION_STATE 0x100
+#endif
 
 #ifndef DATA_SHARDS_MAX
   #define DATA_SHARDS_MAX 255
@@ -47,6 +58,9 @@ extern "C" {
 #include "display_device/session.h"
 #include "globals.h"
 #include "haptics/authored_ir.h"
+#include "haptics/authored_ir_extended.h"
+#include "haptics/wire.h"
+#include "nvhttp.h"
 #include "rtsp.h"
 #include "input.h"
 #include "logging.h"
@@ -91,6 +105,7 @@ extern "C" {
 #define IDX_DS5_HAPTICS_PCM 22  // Authored DualSense actuator PCM (Sunshine protocol extension)
 #define IDX_DS5_HAPTICS_IR_V2 23  // Device-independent analyzed haptics (Sunshine protocol extension)
 #define IDX_TEXT_CONTEXT 24  // Remote text focus/context update (Sunshine protocol extension)
+#define IDX_HOST_SESSION_STATE 25  // Host session lock state (Sunshine protocol extension)
 
 static const short packetTypes[] = {
   0x0305,  // Start A
@@ -118,6 +133,7 @@ static const short packetTypes[] = {
   0x550A,  // Authored DualSense haptics PCM (Sunshine protocol extension)
   0x550B,  // Device-independent DualSense haptics IR v2 (Sunshine protocol extension)
   0x550C,  // Remote text context update (Sunshine protocol extension)
+  0x550E,  // Host session lock state (Sunshine protocol extension)
 };
 
 namespace asio = boost::asio;
@@ -417,7 +433,8 @@ namespace stream {
 
   using av_session_id_t = std::variant<asio::ip::address, std::string>;  // IP address or SS-Ping-Payload from RTSP handshake
   using message_queue_t = std::shared_ptr<safe::queue_t<std::pair<udp::endpoint, std::string>>>;
-  using message_queue_queue_t = std::shared_ptr<safe::queue_t<std::tuple<socket_e, av_session_id_t, message_queue_t>>>;
+  using endpoint_refresh_ptr = std::shared_ptr<endpoint_refresh_t>;
+  using message_queue_queue_t = std::shared_ptr<safe::queue_t<std::tuple<socket_e, av_session_id_t, message_queue_t, endpoint_refresh_ptr>>>;
 
   // return bytes written on success
   // return -1 on error
@@ -622,6 +639,7 @@ namespace stream {
       safe::mail_raw_t::event_t<video::dynamic_param_t> dynamic_param_change_events;  // 新增：动态参数调整事件
 
       std::unique_ptr<platf::deinit_t> qos;
+      endpoint_refresh_ptr endpoint_refresh;
     } video;
 
     struct {
@@ -638,10 +656,13 @@ namespace stream {
       util::buffer_t<uint8_t *> shards_p;
 
       audio_fec_packet_t fec_packet;
+      std::atomic<uint64_t> mat_sent { 0 };
+      std::atomic_bool mat_send_failed { false };
       std::unique_ptr<platf::deinit_t> qos;
 
       bool enable_mic;
       bool mic_registered { false };
+      endpoint_refresh_ptr endpoint_refresh;
     } audio;
 
     struct {
@@ -657,6 +678,7 @@ namespace stream {
       std::uint32_t seq;
 
       platf::feedback_queue_t feedback_queue;
+      std::array<platf::ds5_haptics_state_event_t, 16> ds5_haptics_states;
       safe::mail_raw_t::event_t<video::hdr_info_t> hdr_queue;
       safe::mail_raw_t::event_t<std::pair<std::uint32_t, std::uint32_t>> resolution_change_queue;  // width, height
 
@@ -669,7 +691,14 @@ namespace stream {
       std::uint64_t cursor_failed_revision = 0;
       std::uint32_t cursor_send_failures = 0;
 
-      std::unique_ptr<haptics::authored_ir_session_t> authored_haptics;
+      // Last lock state delivered to a client that negotiated ML_FF_HOST_SESSION_STATE.
+      std::optional<bool> host_session_locked_sent;
+
+      // Analysis/filter/timeline history belongs to one controller, including
+      // when several pads share the same streaming connection.
+      std::unordered_map<std::uint16_t, std::unique_ptr<haptics::authored_ir_session_t>> authored_haptics;
+      std::unordered_map<std::uint16_t, std::unique_ptr<haptics::authored_ir_extended_session_t>> authored_haptics_v3;
+      bool authored_haptics_v3_init_failed = false;
       bool authored_haptics_init_failed = false;
       // One fallback session per controller: smoothing, throttle and watchdog
       // state must not bleed between pads, and the watchdog stop has to reach
@@ -1453,27 +1482,67 @@ namespace stream {
 
       payload = encode_control(session, util::view(plaintext), encrypted_payload);
     }
+    else if (msg.type == platf::gamepad_feedback_e::ds5_haptics_state) {
+      if ((session->config.mlFeatureFlags & ML_FF_DS5_HAPTICS_STATE) == 0) {
+        return 0;
+      }
+      // v1, reserved, controller:u16le, eight-byte absolute actuator state.
+      std::array<std::uint8_t, sizeof(control_header_v2) + 12> plaintext {};
+      auto *control = reinterpret_cast<control_header_v2 *>(plaintext.data());
+      control->type = util::endian::little<std::uint16_t>(0x550D);
+      control->payloadLength = util::endian::little<std::uint16_t>(12);
+      auto *wire = plaintext.data() + sizeof(control_header_v2);
+      wire[0] = 1;
+      wire[2] = static_cast<std::uint8_t>(msg.id);
+      wire[3] = static_cast<std::uint8_t>(msg.id >> 8);
+      std::ranges::copy(msg.data.ds5_haptics_state, wire + 4);
+      std::array<std::uint8_t,
+        sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(plaintext.size()) + crypto::cipher::tag_size>
+        encrypted_payload;
+      payload = encode_control(session, util::view(plaintext), encrypted_payload);
+    }
     else if (msg.type == platf::gamepad_feedback_e::ds5_haptics_pcm) {
       const bool sends_raw_pcm = (session->config.mlFeatureFlags & ML_FF_DS5_HAPTICS_PCM) != 0;
       const bool sends_authored_ir = (session->config.mlFeatureFlags & ML_FF_DS5_HAPTICS_IR_V2) != 0;
+      const bool sends_authored_ir_extended = sends_authored_ir &&
+        (session->config.mlFeatureFlags & ML_FF_DS5_HAPTICS_IR_EXTENDED) != 0;
+
+      if (msg.id >= platf::MAX_GAMEPADS) return 0;
 
       const auto &data = msg.data.ds5_haptics;
       const auto pcm_size = static_cast<std::size_t>(data.frame_count) * 4;
-      auto write_u16 = [](std::uint8_t *p, std::uint16_t v) {
-        p[0] = static_cast<std::uint8_t>(v);
-        p[1] = static_cast<std::uint8_t>(v >> 8);
+      using haptics::wire::write_u16;
+      using haptics::wire::write_u32;
+      using haptics::wire::write_u64;
+      const auto encode_ir = [&](std::span<const std::uint8_t> wire) {
+        std::array<std::uint8_t, sizeof(control_header_v2) + DS5_HAPTICS_IR_EXTENDED_STREAM_MAX_SIZE> plaintext {};
+        write_u16(plaintext.data(), packetTypes[IDX_DS5_HAPTICS_IR_V2]);
+        write_u16(plaintext.data() + 2, static_cast<std::uint16_t>(wire.size()));
+        std::ranges::copy(wire, plaintext.data() + sizeof(control_header_v2));
+        std::array<std::uint8_t,
+          sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(plaintext.size()) + crypto::cipher::tag_size>
+          encrypted_payload;
+        payload = encode_control(session,
+          std::string_view(reinterpret_cast<const char *>(plaintext.data()), sizeof(control_header_v2) + wire.size()),
+          encrypted_payload);
       };
-      auto write_u32 = [](std::uint8_t *p, std::uint32_t v) {
-        p[0] = static_cast<std::uint8_t>(v);
-        p[1] = static_cast<std::uint8_t>(v >> 8);
-        p[2] = static_cast<std::uint8_t>(v >> 16);
-        p[3] = static_cast<std::uint8_t>(v >> 24);
-      };
-      auto write_u64 = [&write_u32](std::uint8_t *p, std::uint64_t v) {
-        write_u32(p, static_cast<std::uint32_t>(v));
-        write_u32(p + 4, static_cast<std::uint32_t>(v >> 32));
-      };
-      if (!sends_raw_pcm && !sends_authored_ir) {
+      haptics::authored_ir_extended_session_t *extended_analyzer = nullptr;
+      if (sends_authored_ir_extended && !sends_raw_pcm && !session->control.authored_haptics_v3_init_failed) {
+        auto &analyzers = session->control.authored_haptics_v3;
+        auto found = analyzers.find(msg.id);
+        if (found == analyzers.end()) {
+          auto analyzer = std::make_unique<haptics::authored_ir_extended_session_t>();
+          if (!analyzer->ready()) {
+            session->control.authored_haptics_v3_init_failed = true;
+            BOOST_LOG(error) << "Unable to initialize authored haptics enhancement; falling back to IR v2"sv;
+          }
+          else {
+            found = analyzers.emplace(msg.id, std::move(analyzer)).first;
+          }
+        }
+        if (found != analyzers.end()) extended_analyzer = found->second.get();
+      }
+      if (!sends_raw_pcm && !sends_authored_ir && !sends_authored_ir_extended) {
         if (!session->control.legacy_haptics_init_failed) {
           auto [controller_session, inserted] = session->control.legacy_haptics.try_emplace(msg.id);
           if (inserted) {
@@ -1499,37 +1568,40 @@ namespace stream {
       }
       // A malformed client that declares both modes gets the lossless physical
       // route. Official clients reject this combination before connecting.
+      else if (extended_analyzer) {
+        const auto wire = extended_analyzer->process(
+          msg.id, data.flags, data.frame_count, data.sequence, data.presentation_time_us,
+          std::span<const std::uint8_t> {data.pcm.data(), pcm_size});
+        if (!wire) return 0;
+
+        // The enhanced message carries the original v2 base and its optional
+        // continuous/event extension atomically; no duplicate base is sent.
+        encode_ir(*wire);
+      }
       else if (sends_authored_ir && !sends_raw_pcm) {
-        if (!session->control.authored_haptics && !session->control.authored_haptics_init_failed) {
+        auto &analyzers = session->control.authored_haptics;
+        auto found = analyzers.find(msg.id);
+        if (found == analyzers.end() && !session->control.authored_haptics_init_failed) {
           auto authored_haptics = std::make_unique<haptics::authored_ir_session_t>();
           if (!authored_haptics->ready()) {
             session->control.authored_haptics_init_failed = true;
             BOOST_LOG(error) << "Unable to initialize authored DualSense haptics analysis"sv;
           }
           else {
-            session->control.authored_haptics = std::move(authored_haptics);
+            found = analyzers.emplace(msg.id, std::move(authored_haptics)).first;
           }
         }
-        if (!session->control.authored_haptics) {
+        if (found == analyzers.end()) {
           return 0;
         }
-        const auto wire = session->control.authored_haptics->process(
+        const auto wire = found->second->process(
           msg.id, data.flags, data.frame_count, data.sequence, data.presentation_time_us,
           std::span<const std::uint8_t> {data.pcm.data(), pcm_size});
         if (!wire) {
           return 0;
         }
 
-        std::array<std::uint8_t, sizeof(control_header_v2) + haptics::authored_ir_v2_wire_size> plaintext {};
-        auto *control = plaintext.data();
-        write_u16(control, packetTypes[IDX_DS5_HAPTICS_IR_V2]);
-        write_u16(control + 2, haptics::authored_ir_v2_wire_size);
-        std::ranges::copy(*wire, control + sizeof(control_header_v2));
-
-        std::array<std::uint8_t,
-          sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(plaintext.size()) + crypto::cipher::tag_size>
-          encrypted_payload;
-        payload = encode_control(session, util::view(plaintext), encrypted_payload);
+        encode_ir(*wire);
       }
       else {
         constexpr std::size_t wire_header_size = 28;
@@ -1750,18 +1822,26 @@ namespace stream {
     return 0;
   }
 
-  int
-  send_text_context(session_t *session, const text_context::payload_t &payload) {
-    if (!session->control.peer || session->config.controlProtocolType != 13 ||
-        payload.size() != text_context::kWireSize) {
+  /**
+   * Frame, encrypt and send a small Sunshine extension payload on the v2 control stream.
+   * Returns 0 on success, -1 on failure.
+   */
+  static int
+  send_control_payload(session_t *session, std::uint16_t type, std::string_view payload, std::string_view name) {
+    if (!session->control.peer || session->config.controlProtocolType != 13) {
       return -1;
     }
-    const std::size_t plaintext_size = sizeof(control_header_v2) + payload.size();
-    std::vector<std::uint8_t> plaintext(plaintext_size);
+    if (payload.size() > std::numeric_limits<std::uint16_t>::max()) {
+      BOOST_LOG(warning) << "Refusing oversized "sv << name << " payload"sv;
+      return -1;
+    }
+    std::vector<std::uint8_t> plaintext(sizeof(control_header_v2) + payload.size());
     auto *hdr = reinterpret_cast<control_header_v2 *>(plaintext.data());
-    hdr->type = packetTypes[IDX_TEXT_CONTEXT];
+    hdr->type = type;
     hdr->payloadLength = static_cast<std::uint16_t>(payload.size());
-    std::memcpy(plaintext.data() + sizeof(control_header_v2), payload.data(), payload.size());
+    if (!payload.empty()) {
+      std::memcpy(plaintext.data() + sizeof(control_header_v2), payload.data(), payload.size());
+    }
 
     std::vector<std::uint8_t> encrypted(
       sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(plaintext.size()) +
@@ -1770,10 +1850,28 @@ namespace stream {
       std::string_view {reinterpret_cast<char *>(plaintext.data()), plaintext.size()},
       encrypted.data(), encrypted.size());
     if (view.empty() || session->broadcast_ref->control_server.send(view, session->control.peer)) {
-      BOOST_LOG(warning) << "Couldn't send remote text context packet"sv;
+      BOOST_LOG(warning) << "Couldn't send "sv << name << " packet"sv;
       return -1;
     }
     return 0;
+  }
+
+  int
+  send_text_context(session_t *session, const text_context::payload_t &payload) {
+    if (payload.size() != text_context::kWireSize) {
+      return -1;
+    }
+    return send_control_payload(session, packetTypes[IDX_TEXT_CONTEXT],
+      std::string_view {reinterpret_cast<const char *>(payload.data()), payload.size()},
+      "remote text context"sv);
+  }
+
+  int
+  send_host_session_state(session_t *session, bool locked) {
+    // 0x550E v1: version:u8, state:u8 (0 unlocked, 1 locked), reserved:u16.
+    const std::array<char, 4> payload {1, static_cast<char>(locked ? 1 : 0), 0, 0};
+    return send_control_payload(session, packetTypes[IDX_HOST_SESSION_STATE],
+      std::string_view {payload.data(), payload.size()}, "host session state"sv);
   }
 
   int
@@ -2364,6 +2462,8 @@ namespace stream {
     // termination when we shut down.
     auto shutdown_event = mail::man->event<bool>(mail::shutdown);
     auto broadcast_shutdown_event = mail::man->event<bool>(mail::broadcast_shutdown);
+    std::optional<bool> host_session_locked;
+    auto next_host_session_poll = std::chrono::steady_clock::time_point {};
     while (!shutdown_event->peek() && !broadcast_shutdown_event->peek()) {
       bool has_session_awaiting_peer = false;
       bool has_ds5_haptics_session = false;
@@ -2413,13 +2513,43 @@ namespace stream {
             has_session_awaiting_peer = true;
           }
           else {
+            if (session->config.mlFeatureFlags & ML_FF_HOST_SESSION_STATE) {
+              // Polled lazily so hosts without opted-in clients never query WTS.
+              if (now >= next_host_session_poll) {
+                host_session_locked = platf::query_session_locked();
+                next_host_session_poll = now + 500ms;
+              }
+              if (host_session_locked && session->control.host_session_locked_sent != host_session_locked &&
+                  send_host_session_state(session, *host_session_locked) == 0) {
+                session->control.host_session_locked_sent = host_session_locked;
+                BOOST_LOG(info) << "Host session state sent: locked="sv << *host_session_locked
+                                << ", session="sv << session->launch_session_id;
+              }
+            }
+
             // 音频触觉转普通振动也需要及时处理反馈，不能只按客户端 PCM/IR 能力判断。
             has_ds5_haptics_session |=
               input::has_ds5_audio_haptics(session->input);
             auto &feedback_queue = session->control.feedback_queue;
+            const auto send_pending_state = [session](unsigned controller) {
+              if (controller >= session->control.ds5_haptics_states.size()) return;
+              // An empty event's pop(0ms) still waits on its condition variable, at least a
+              // timer tick on Windows; doing that for every controller on every control-loop
+              // pass delayed input by tens of milliseconds. Only pop a state that is there.
+              auto &state_event = session->control.ds5_haptics_states[controller];
+              if (!state_event->peek()) return;
+              if (auto state = state_event->pop(0ms)) {
+                send_feedback_msg(session, *state);
+              }
+            };
+            for (unsigned controller = 0; controller < session->control.ds5_haptics_states.size(); ++controller) {
+              send_pending_state(controller);
+            }
             while (feedback_queue->peek()) {
               auto feedback_msg = feedback_queue->pop();
 
+              // A state may arrive after the initial poll; apply it ahead of this controller's PCM/rumble.
+              send_pending_state(feedback_msg->id);
               send_feedback_msg(session, *feedback_msg);
             }
 
@@ -3228,6 +3358,8 @@ namespace stream {
   recvThread(broadcast_ctx_t &ctx) {
     std::unordered_map<av_session_id_t, message_queue_t> peer_to_video_session;
     std::unordered_map<av_session_id_t, message_queue_t> peer_to_audio_session;
+    std::unordered_map<av_session_id_t, endpoint_refresh_ptr> video_refresh;
+    std::unordered_map<av_session_id_t, endpoint_refresh_ptr> audio_refresh;
 
     auto &video_sock = ctx.video_sock;
     auto &audio_sock = ctx.audio_sock;
@@ -3240,8 +3372,28 @@ namespace stream {
     std::array<std::function<void(const boost::system::error_code, size_t)>, 2> recv_funcs;
 
     // 统一处理PING包逻辑
-    auto handle_ping = [](auto &session_map, auto &peer, auto &buf, size_t bytes, std::string_view type_str) {
+    auto handle_ping = [](auto &session_map, auto &refresh_map, auto &sock, auto &peer, auto &buf, size_t bytes, std::string_view type_str) {
       try {
+        if (bytes == LI_ER_PACKET_SIZE && std::memcmp(buf.data(), "EAPR", 4) == 0) {
+          auto key = std::string { buf.data() + 8, LI_ER_SESSION_SIZE };
+          auto refresh = refresh_map.find(key);
+          if (refresh == refresh_map.end()) {
+            return;
+          }
+          const auto previous = refresh->second->port();
+          auto response = refresh->second->receive(buf.data(), bytes, peer, endpoint_refresh_t::clock::now());
+          if (response) {
+            auto reply = std::make_shared<std::pair<endpoint_refresh_t::packet_t, udp::endpoint>>(*response, peer);
+            sock.async_send_to(asio::buffer(reply->first), reply->second,
+              [reply](const boost::system::error_code &, size_t) {});
+          }
+          if (!previous && refresh->second->port()) {
+            if (auto initial = session_map.find(key); initial != session_map.end()) {
+              initial->second->raise(peer, std::string { buf.data(), bytes });
+            }
+          }
+          return;
+        }
         if (bytes == 4) {
           if (auto it = session_map.find(peer.address()); it != std::end(session_map)) {
             BOOST_LOG(debug) << "RAISE: "sv << peer.address().to_string() << ':' << peer.port() << " :: " << type_str;
@@ -3250,7 +3402,11 @@ namespace stream {
         }
         else if (bytes >= sizeof(SS_PING)) {
           auto ping = (PSS_PING) buf.data();
-          if (auto it = session_map.find(std::string { ping->payload, sizeof(ping->payload) }); it != std::end(session_map)) {
+          auto key = std::string { ping->payload, sizeof(ping->payload) };
+          if (refresh_map.contains(key)) {
+            return;  // No plaintext downgrade after negotiation.
+          }
+          if (auto it = session_map.find(key); it != std::end(session_map)) {
             BOOST_LOG(debug) << "RAISE: "sv << peer.address().to_string() << ':' << peer.port() << " :: " << type_str;
             it->second->raise(peer, std::string { buf.data(), bytes });
           }
@@ -3262,10 +3418,10 @@ namespace stream {
     };
 
     // 更新会话映射
-    auto update_session_map = [](auto &message_queue_queue, auto &video_map, auto &audio_map) {
+    auto update_session_map = [](auto &message_queue_queue, auto &video_map, auto &audio_map, auto &video_refresh, auto &audio_refresh) {
       while (message_queue_queue->peek()) {
         if (auto message_queue_opt = message_queue_queue->pop()) {
-          auto [socket_type, session_id, message_queue] = *message_queue_opt;
+          auto [socket_type, session_id, message_queue, refresh] = *message_queue_opt;
           auto &target_map = socket_type == socket_e::video ? video_map :
                                                               (socket_type == socket_e::audio ? audio_map : throw std::runtime_error("Unknown socket type"));
 
@@ -3275,12 +3431,19 @@ namespace stream {
           else {
             target_map.erase(session_id);
           }
+          auto &refresh_map = socket_type == socket_e::video ? video_refresh : audio_refresh;
+          if (refresh) {
+            refresh_map.insert_or_assign(session_id, std::move(refresh));
+          }
+          else {
+            refresh_map.erase(session_id);
+          }
         }
       }
     };
 
     // 初始化接收函数
-    auto init_recv_func = [&](auto &sock, size_t buf_idx, auto &session_map, std::string_view type_str) {
+    auto init_recv_func = [&](auto &sock, size_t buf_idx, auto &session_map, auto &refresh_map, std::string_view type_str) {
       recv_funcs[buf_idx] = [&, buf_idx, type_str](const boost::system::error_code &ec, size_t bytes) {
         auto &peer = peers[buf_idx];
 
@@ -3337,20 +3500,20 @@ namespace stream {
 
         BOOST_LOG(verbose) << "Recv: "sv << peer.address().to_string() << ':' << peer.port() << " :: " << type_str;
 
-        update_session_map(message_queue_queue, peer_to_video_session, peer_to_audio_session);
+        update_session_map(message_queue_queue, peer_to_video_session, peer_to_audio_session, video_refresh, audio_refresh);
         if (bytes == 0) {
           BOOST_LOG(warning) << "Received empty packet";
           // 即使是空包，也继续接收
         }
         else {
-          handle_ping(session_map, peer, buffers[buf_idx], bytes, type_str);
+          handle_ping(session_map, refresh_map, sock, peer, buffers[buf_idx], bytes, type_str);
         }
       };
     };
 
     try {
-      init_recv_func(video_sock, 0, peer_to_video_session, "VIDEO");
-      init_recv_func(audio_sock, 1, peer_to_audio_session, "AUDIO");
+      init_recv_func(video_sock, 0, peer_to_video_session, video_refresh, "VIDEO");
+      init_recv_func(audio_sock, 1, peer_to_audio_session, audio_refresh, "AUDIO");
 
       video_sock.async_receive_from(asio::buffer(buffers[0]), peers[0], 0, recv_funcs[0]);
       audio_sock.async_receive_from(asio::buffer(buffers[1]), peers[1], 0, recv_funcs[1]);
@@ -3402,6 +3565,25 @@ namespace stream {
       auto session = (session_t *) packet->channel_data;
       session->last_video_activity_ms.store(steady_now_ms(), std::memory_order_relaxed);
       auto lowseq = session->video.lowseq;
+      if (session->video.endpoint_refresh) {
+        auto port = session->video.endpoint_refresh->port();
+        if (port && port != session->video.peer.port()) {
+#ifdef _WIN32
+          auto address = session->video.peer.address();
+          auto refreshed_qos = platf::enable_socket_qos(sock.native_handle(), address, port,
+            platf::qos_data_type_e::video, session->config.videoQosType != 0);
+          if (refreshed_qos) {
+            // Create the new flow before releasing the old one so Windows
+            // qWAVE always has a valid QoS flow during the port transition.
+            auto previous_qos = std::move(session->video.qos);
+            session->video.qos = std::move(refreshed_qos);
+            previous_qos.reset();
+          }
+#endif
+          session->video.peer.port(port);
+          BOOST_LOG(info) << "endpoint_auto_refresh: video destination updated for session " << session->launch_session_id;
+        }
+      }
 
       std::string_view payload { (char *) packet->data(), packet->data_size() };
       std::vector<uint8_t> payload_with_replacements;
@@ -3778,6 +3960,25 @@ namespace stream {
       TUPLE_2D_REF(channel_data, packet_data, *packet);
       auto session = (session_t *) channel_data;
       session->last_audio_activity_ms.store(steady_now_ms(), std::memory_order_relaxed);
+      if (session->audio.endpoint_refresh) {
+        auto port = session->audio.endpoint_refresh->port();
+        if (port && port != session->audio.peer.port()) {
+#ifdef _WIN32
+          auto address = session->audio.peer.address();
+          auto refreshed_qos = platf::enable_socket_qos(sock.native_handle(), address, port,
+            platf::qos_data_type_e::audio, session->config.audioQosType != 0);
+          if (refreshed_qos) {
+            // Create the new flow before releasing the old one so Windows
+            // qWAVE always has a valid QoS flow during the port transition.
+            auto previous_qos = std::move(session->audio.qos);
+            session->audio.qos = std::move(refreshed_qos);
+            previous_qos.reset();
+          }
+#endif
+          session->audio.peer.port(port);
+          BOOST_LOG(info) << "endpoint_auto_refresh: audio destination updated for session " << session->launch_session_id;
+        }
+      }
 
       auto sequenceNumber = session->audio.sequenceNumber;
       auto timestamp = session->audio.timestamp;
@@ -3787,8 +3988,9 @@ namespace stream {
       auto &shards_p = session->audio.shards_p;
 
       // 检查客户端是否启用了音频加密
-      bool audio_encryption_enabled = (session->config.encryptionFlagsEnabled & SS_ENC_AUDIO) != 0;
-      if (sequenceNumber == 0) {
+      const bool live_mat = session->config.audio.codec == audio::CODEC_MAT_LIVE;
+      bool audio_encryption_enabled = !live_mat && (session->config.encryptionFlagsEnabled & SS_ENC_AUDIO) != 0;
+      if (sequenceNumber == 0 && !live_mat) {
         // 只在第一个包时记录一次，避免日志过多
         BOOST_LOG(info) << "Audio encryption status: encryptionFlagsEnabled=0x" 
                         << std::hex << session->config.encryptionFlagsEnabled << std::dec
@@ -3796,19 +3998,20 @@ namespace stream {
                         << ", will " << (audio_encryption_enabled ? "ENCRYPT" : "NOT encrypt") << " audio data";
       }
 
+      if (sequenceNumber == 0 && live_mat) BOOST_LOG(info) << "MAT live packets authenticated with AES-128-GCM / counter64";
       size_t plaintext_size = packet_data.size();
       
       // 验证 cipher 是否已初始化
-      if (sequenceNumber == 0) {
+      if (sequenceNumber == 0 && !live_mat) {
         bool cipher_initialized = (session->audio.cipher.key.size() > 0);
         BOOST_LOG(info) << "Audio cipher status: initialized=" << (cipher_initialized ? "yes" : "no")
                         << ", key_size=" << session->audio.cipher.key.size();
       }
-      
+
       auto bytes = encode_audio(audio_encryption_enabled, packet_data,
         shards_p[sequenceNumber % RTPA_DATA_SHARDS], iv, session->audio.cipher);
-      
-      if (sequenceNumber == 0) {
+
+      if (sequenceNumber == 0 && !live_mat) {
         // 验证加密是否真的执行了
         if (audio_encryption_enabled) {
           // 加密后的大小应该大于等于明文（因为 PKCS5 填充）
@@ -3847,7 +4050,8 @@ namespace stream {
           session->audio.peer.port(),
           session->localAddress,
         };
-        platf::send(send_info);
+        const bool audio_sent = platf::send(send_info);
+        if (!audio_sent && audio::is_mat_codec(session->config.audio.codec)) session->audio.mat_send_failed.store(true);
 
         auto &fec_packet = session->audio.fec_packet;
         // initialize the FEC header at the beginning of the FEC block
@@ -3874,15 +4078,18 @@ namespace stream {
               session->audio.peer.port(),
               session->localAddress,
             };
-            platf::send(send_info);
+            const bool parity_sent = platf::send(send_info);
+            if (!parity_sent && audio::is_mat_codec(session->config.audio.codec)) session->audio.mat_send_failed.store(true);
             BOOST_LOG(verbose) << "Audio FEC ["sv << (sequenceNumber & ~(RTPA_DATA_SHARDS - 1)) << ' ' << x << "] ::  send..."sv;
           }
         }
       }
       catch (const std::exception &e) {
         BOOST_LOG(error) << "Broadcast audio failed "sv << e.what();
+        if (audio::is_mat_codec(session->config.audio.codec)) session->audio.mat_send_failed.store(true);
         std::this_thread::sleep_for(100ms);
       }
+      if (audio::is_mat_codec(session->config.audio.codec)) session->audio.mat_sent.fetch_add(1, std::memory_order_release);
     }
 
     shutdown_event->raise(true);
@@ -4004,21 +4211,31 @@ namespace stream {
   recv_ping(session_t *session, decltype(broadcast_shared)::ptr_t ref, socket_e type, std::string_view expected_payload, udp::endpoint &peer, std::chrono::milliseconds timeout) {
     auto messages = std::make_shared<message_queue_t::element_type>(30);
     av_session_id_t session_id = std::string { expected_payload };
+    endpoint_refresh_ptr refresh;
+    if (session->config.endpoint_auto_refresh) {
+      refresh = std::make_shared<endpoint_refresh_t>(peer.address(), type == socket_e::video ? LI_ER_VIDEO : LI_ER_AUDIO,
+        expected_payload, session->control.cipher.key);
+      if (!refresh->ready()) {
+        return -1;
+      }
+    }
+    (type == socket_e::video ? session->video.endpoint_refresh : session->audio.endpoint_refresh) = refresh;
 
     // Only allow matches on the peer address for legacy clients
     if (!(session->config.mlFeatureFlags & ML_FF_SESSION_ID_V1)) {
-      ref->message_queue_queue->raise(type, peer.address(), messages);
+      ref->message_queue_queue->raise(type, peer.address(), messages, nullptr);
     }
-    ref->message_queue_queue->raise(type, session_id, messages);
+    ref->message_queue_queue->raise(type, session_id, messages, refresh);
+    bool validated = false;
 
     auto fg = util::fail_guard([&]() {
       messages->stop();
 
       // remove message queue from session
       if (!(session->config.mlFeatureFlags & ML_FF_SESSION_ID_V1)) {
-        ref->message_queue_queue->raise(type, peer.address(), nullptr);
+        ref->message_queue_queue->raise(type, peer.address(), nullptr, nullptr);
       }
-      ref->message_queue_queue->raise(type, session_id, nullptr);
+      ref->message_queue_queue->raise(type, session_id, nullptr, validated ? refresh : nullptr);
     });
 
     auto start_time = std::chrono::steady_clock::now();
@@ -4033,7 +4250,10 @@ namespace stream {
       }
 
       TUPLE_2D_REF(recv_peer, msg, *msg_opt);
-      if (msg.find(expected_payload) != std::string::npos) {
+      if (refresh && refresh->port()) {
+        BOOST_LOG(debug) << "Authenticated initial UDP endpoint for session " << session->launch_session_id;
+      }
+      else if (!refresh && msg.find(expected_payload) != std::string::npos) {
         // Match the new PING payload format
         BOOST_LOG(debug) << "Received ping [v2] from "sv << recv_peer.address() << ':' << recv_peer.port() << " ["sv << util::hex_vec(msg) << ']';
       }
@@ -4049,6 +4269,7 @@ namespace stream {
 
       // Update connection details.
       peer = recv_peer;
+      validated = true;
       return 0;
     }
 
@@ -4084,6 +4305,7 @@ namespace stream {
     video_config.perf_session_id = session->launch_session_id;
     video::capture(session->mail, video_config, session, session->video.dynamic_param_change_events,
       session->config.packetsize);
+    ref->message_queue_queue->raise(socket_e::video, av_session_id_t { session->video.ping_payload }, nullptr, nullptr);
   }
 
   void
@@ -4102,11 +4324,59 @@ namespace stream {
       return;
     }
 
+    // Keep the refresh mapping alive for the whole audio worker, including
+    // the MAT live early-return path, then remove it on every exit path.
+    auto refresh_cleanup = util::fail_guard([&]() {
+      ref->message_queue_queue->raise(socket_e::audio, av_session_id_t { session->audio.ping_payload }, nullptr, nullptr);
+    });
+
     // Enable local prioritization and QoS tagging on audio traffic if requested by the client
     auto address = session->audio.peer.address();
     session->audio.qos = platf::enable_socket_qos(ref->audio_sock.native_handle(), address,
       session->audio.peer.port(), platf::qos_data_type_e::audio, session->config.audioQosType != 0);
 
+    if (session->config.audio.codec == audio::CODEC_MAT_LIVE) {
+      auto shutdown = session->mail->event<bool>(mail::shutdown);
+      auto packets = mail::man->queue<audio::packet_t>(mail::audio_packets);
+      uint64_t submitted = 0;
+      const auto cancelled = [&] { return shutdown->peek() || global_shutdown_event->peek(); };
+      try {
+        spatial_audio::require(bool(session->config.audio.mat_live), "Missing native MAT source lease");
+        auto timer = platf::create_high_precision_timer();
+        spatial_audio::require(timer && bool(*timer), "Live MAT pacing timer unavailable");
+        // Keep at most one FEC data group outstanding. Waiting after every
+        // fragment would make the scheduler round 333us pacing into 1ms ticks.
+        const auto acknowledged = [&](uint64_t minimum) {
+          const auto deadline = std::chrono::steady_clock::now() + 60ms;
+          while (session->audio.mat_sent.load(std::memory_order_acquire) < minimum) {
+            spatial_audio::require(!cancelled() && std::chrono::steady_clock::now() < deadline, "Live MAT broadcast deadline/cancel");
+            timer->sleep_for(50us);
+          }
+          spatial_audio::require(!session->audio.mat_send_failed.load(), "Live MAT UDP send failed");
+        };
+        const auto emit = [&](const uint8_t *data, size_t n) {
+          spatial_audio::require(!cancelled(), "Live MAT cancelled");
+          if (submitted >= 4) acknowledged(submitted - 3);
+          audio::buffer_t packet(n);
+          std::memcpy(packet.begin(), data, n);
+          spatial_audio::require(packets->try_raise(session, std::move(packet)), "Live MAT send queue full/stopped");
+          ++submitted;
+        };
+        const auto wait = [&](std::chrono::nanoseconds delay) {
+          if (delay > 0ns) timer->sleep_for(std::min(delay, 10ms + 0ns));
+        };
+        const auto cycles = spatial_transport::live_session(*session->config.audio.mat_live,
+          session->audio.cipher.key.data(), session->audio.cipher.key.size(), emit, wait, cancelled);
+        acknowledged(submitted);
+        BOOST_LOG(info) << "Native MAT capture ended cleanly: " << cycles << " cycles";
+        shutdown->view();
+      }
+      catch (const std::exception &e) {
+        if (!cancelled()) spatial_audio::mat_live_status.failed(e.what());
+        BOOST_LOG(::error) << "Live MAT stopped: " << e.what();
+      }
+      return;
+    }
     BOOST_LOG(debug) << "Start capturing Audio"sv;
     audio::capture(session->mail, session->config.audio, session);
   }
@@ -4212,6 +4482,31 @@ namespace stream {
     bool
     belongs_to_client(const session_t &session, const std::string &uuid) {
       return !uuid.empty() && session.client_cert_uuid == uuid;
+    }
+
+    streaming::capture_target_result_t
+    current_capture_for_client(const std::string &client_cert_uuid) {
+      if (client_cert_uuid.empty()) {
+        return {};
+      }
+      // try_ref() avoids recreating the broadcast context when no stream is active.
+      auto broadcast_ref = broadcast_shared.try_ref();
+      if (!broadcast_ref) {
+        return {};
+      }
+
+      std::vector<streaming::capture_session_t> sessions;
+      {
+        auto lg = broadcast_ref->control_server._sessions.lock();
+        for (const auto session : *broadcast_ref->control_server._sessions) {
+          if (session) {
+            sessions.push_back({ session->client_cert_uuid,
+              session->lifecycle.state() == state_e::RUNNING,
+              session->control_only, session->config.monitor.capture_target });
+          }
+        }
+      }
+      return streaming::select_current_capture(sessions, client_cert_uuid);
     }
 
     void
@@ -4339,6 +4634,24 @@ namespace stream {
       }
       catch (...) {
         BOOST_LOG(error) << "Webhook session end event construction failed"sv;
+      }
+
+      // Persist the host-side fact that this client streamed, so the WebUI
+      // recent list survives browsers and page closures. Control-only
+      // sessions never carried media and leave no history. The write is
+      // deferred to the task pool: save_state synchronizes the state file,
+      // and join() runs under a 10-second watchdog that must not depend on
+      // filesystem latency.
+      if (!session.control_only && !session.client_cert_uuid.empty()) {
+        const auto ended_at_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+          std::chrono::system_clock::now().time_since_epoch()
+        ).count();
+        const auto client_uuid = session.client_cert_uuid;
+        task_pool.push([client_uuid, ended_at_ms] {
+          if (!nvhttp::touch_client_last_session(client_uuid, ended_at_ms)) {
+            BOOST_LOG(debug) << "Couldn't record session end for client_uuid="sv << client_uuid;
+          }
+        });
       }
 
       BOOST_LOG(debug) << "Session ended [session_id="sv << session.launch_session_id
@@ -4526,9 +4839,13 @@ namespace stream {
       session->hdr_target_source = launch_session.hdr_target_source;
 
       session->config = config;
+      session->config.monitor.capture_target = std::make_shared<streaming::capture_target_t>();
 
       session->control.connect_data = launch_session.control_connect_data;
       session->control.feedback_queue = mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback);
+      for (unsigned controller = 0; controller < session->control.ds5_haptics_states.size(); ++controller) {
+        session->control.ds5_haptics_states[controller] = platf::ds5_haptics_state_event(mail, controller);
+      }
       session->control.hdr_queue = mail->event<video::hdr_info_t>(mail::hdr);
       session->control.resolution_change_queue = mail->event<std::pair<std::uint32_t, std::uint32_t>>(mail::resolution_change);
       session->control.legacy_input_enc_iv = launch_session.iv;

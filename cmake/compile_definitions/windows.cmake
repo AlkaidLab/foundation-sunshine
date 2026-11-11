@@ -117,6 +117,8 @@ set(AMF_SDK_STAGE "${CMAKE_BINARY_DIR}/amf_include")
 if(NOT EXISTS "${AMF_SDK_SRC}/core/Version.h")
     message(FATAL_ERROR "AMF submodule not initialized. Run: git submodule update --init third-party/AMF")
 endif()
+# Restage headers automatically when the AMF submodule changes SDK versions.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${AMF_SDK_SRC}/core/Version.h")
 file(MAKE_DIRECTORY "${AMF_SDK_STAGE}/AMF")
 file(COPY "${AMF_SDK_SRC}/core" "${AMF_SDK_SRC}/components"
         DESTINATION "${AMF_SDK_STAGE}/AMF")

@@ -42,6 +42,19 @@ test('restoreDefaultBuiltInApps restores matching defaults and appends missing a
   assert.equal(result.apps.at(-1).name, 'Xbox Game')
 })
 
+test('default menu command names follow the UI language', () => {
+  const zhNames = { 'apps.default_menu_cmd_touch_keyboard': '触摸键盘', 'apps.default_menu_cmd_desktop_pet': '桌宠' }
+  const menuNames = (apps) => apps[0]['menu-cmd'].map((cmd) => cmd.name)
+
+  assert.deepEqual(menuNames(AppService.getDefaultBuiltInApps('windows')), ['Touch Keyboard', 'Desktop Pet'])
+  assert.deepEqual(menuNames(AppService.getDefaultBuiltInApps('windows', (key) => zhNames[key] || key)), ['触摸键盘', '桌宠'])
+  // A missing translation returns the key itself; keep the English name then
+  assert.deepEqual(menuNames(AppService.getDefaultBuiltInApps('windows', (key) => key)), ['Touch Keyboard', 'Desktop Pet'])
+
+  const restored = AppService.restoreDefaultBuiltInApps([], 'windows', (key) => zhNames[key] || key)
+  assert.deepEqual(menuNames(restored.apps), ['触摸键盘', '桌宠'])
+})
+
 test('restoreDefaultBuiltInApps leaves unknown platforms unchanged', () => {
   const apps = [{ name: 'Moonlight', cmd: 'moonlight.exe' }]
   const result = AppService.restoreDefaultBuiltInApps(apps, 'unknown')

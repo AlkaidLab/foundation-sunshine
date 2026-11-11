@@ -66,6 +66,7 @@ namespace platf::virtual_device_host::protocol {
     audio_policy_violation = 105,
     host_status = 106,
     mic_status = 107,
+    haptics_state = 108,
     error = 255,
   };
 

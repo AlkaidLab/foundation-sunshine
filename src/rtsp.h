@@ -21,6 +21,9 @@
 namespace stream::session {
   enum class stop_reason_e : int;
 }
+namespace spatial_transport {
+  struct LiveSession;
+}
 
 namespace rtsp_stream {
   constexpr auto RTSP_SETUP_PORT = 21;
@@ -122,6 +125,7 @@ namespace rtsp_stream {
     bool setup_control { false };
     bool setup_mic { false };
     bool control_only { false };
+    bool endpoint_auto_refresh { false };
 
     // GameStream 的 RTSP 请求可能分别使用独立 TCP 连接，
     // 但一个启动票据最多只能创建一个串流会话。
@@ -132,6 +136,9 @@ namespace rtsp_stream {
     /// 200 response and its idempotent retries alike.
     int negotiated_dynamic_hdr_format { 0 };
     std::string negotiated_dynamic_hdr_fallback;
+    bool mat_live_described { false };
+    bool mat_live_selected { false };
+    std::shared_ptr<spatial_transport::LiveSession> mat_live;
   };
 
   launch_ticket_register_e

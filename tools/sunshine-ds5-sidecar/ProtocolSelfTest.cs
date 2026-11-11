@@ -572,6 +572,7 @@ internal static class ProtocolSelfTest
         VerifySensorTimestampEncoding();
         VerifyOutputValidityFlags();
         VerifyOutputValidityGating();
+        VerifyHapticControlState();
     }
 
     private static void VerifyStandardAxisState()
@@ -1313,6 +1314,43 @@ internal static class ProtocolSelfTest
                 release.Payload[2] == (AdaptiveTriggerState.LeftFlag | AdaptiveTriggerState.RightFlag) &&
                 release.Payload.AsSpan(3).IndexOfAnyExcept((byte)0) == -1,
             "a programmed release reaches the client");
+    }
+
+    private static void VerifyHapticControlState()
+    {
+        var state = new DualSenseHapticsState();
+        var effect = new byte[47];
+        effect[0] = 3;
+        effect[2] = 120;
+        effect[3] = 80;
+        Require(state.TryUpdate(effect, out var first) && first[0] == 3 &&
+                state.Left == 80 && state.Right == 120, "haptic v1 rumble snapshot");
+        effect[0] = 0;
+        effect[2] = effect[3] = 0;
+        Require(state.TryUpdate(effect, out var pcm) && pcm[0] == 0 &&
+                pcm[3] == 120 && pcm[4] == 80 && state.Left == 0 && state.Right == 0,
+            "unclaimed motor bytes preserved while PCM transition stops legacy output");
+        Require(!state.TryUpdate(effect, out _), "haptic state duplicate suppression");
+        effect[0] = 2;
+        effect[38] = 4;
+        Require(state.TryUpdate(effect, out var v2) && v2[1] == 4 && state.Left == 0,
+            "v2 zero stop retains compatible mode");
+        effect[1] = 0x62;
+        effect[9] = 0x10;
+        effect[36] = 0x23;
+        effect[39] = 0xff;
+        Require(state.TryUpdate(effect, out var controls) && controls[2] == 0x62 &&
+                controls[5] == 0x10 && controls[6] == 0x23 && controls[7] == 1,
+            "claimed haptic power/reduction/filter controls");
+        effect[1] = 4; // A subsequent LED-only update does not erase those controls.
+        effect[9] = effect[36] = effect[39] = 0;
+        Require(!state.TryUpdate(effect, out _), "unclaimed control bytes cannot overwrite state");
+        Require(!state.TryUpdate(new byte[46], out _), "haptic control size validation");
+        Require(state.TryReset(out var reset) && reset[0] == 0 && reset[1] == 0 &&
+                reset[2] == 0x62 && reset[3] == 0 && reset[4] == 0 && reset[5] == 0 &&
+                reset[6] == 0 && reset[7] == 0 && state.Left == 0 && state.Right == 0,
+            "controller retirement clears authoritative mode and motors");
+        Require(!state.TryReset(out _), "haptic reset duplicate suppression");
     }
 
     private static OutputValidFlags Flags(byte flag0, byte flag1) =>

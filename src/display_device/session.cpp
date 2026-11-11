@@ -9,6 +9,7 @@
 #include "parsed_config.h"
 #include "session.h"
 #include "src/globals.h"
+#include "src/hdr/session_target.h"
 #include "src/platform/common.h"
 #ifdef _WIN32
   #include "src/platform/windows/display_device/session_listener.h"
@@ -147,7 +148,7 @@ namespace display_device {
     if (!config::video.vdd_keep_enabled) {
       // Only this session's own display: another client may still be streaming
       // onto its own virtual display.
-      vdd_utils::destroy_vdd_monitor_nolog(session_t::get().current_vdd_owner_id);
+      vdd_utils::destroy_vdd_monitor_nolog(session_t::get().current_vdd_identifier);
     }
   }
 
@@ -562,11 +563,29 @@ namespace display_device {
           return false;
         }
 
+        auto retry_session = rtsp_stream::launch_session_t {};
+        retry_session.client_name = client_name;
+        retry_session.client_cert_uuid = client_cert_uuid;
+        retry_session.enable_hdr = enable_hdr;
+        retry_session.use_vdd = should_prepare_vdd;
+        retry_session.hdr_target_source = hdr_target_source;
+        if (!client_cert_uuid.empty()) {
+          retry_session.env["SUNSHINE_CLIENT_CERT_UUID"] = client_cert_uuid;
+        }
+        retry_session.hdr_capabilities = hdr_capabilities;
+
         // 延迟任务不能在会话准备或采集期间重建显示路径。NVHTTP 准备计数覆盖
         // configure_display 返回到 RTSP ticket 发布之间的窗口；ticket 和活跃
         // 会话计数覆盖后续握手及串流生命周期。之后才进入的请求会阻塞在本锁上。
         if (rtsp_stream::session_starting_or_active()) {
-          BOOST_LOG(warning) << "[Display Deferred Retry] Active-session guard triggered; skipping display changes and deferring them to the next session start";
+          // Unlocking must not rebuild an active capture path. Restore only the
+          // ICC on the same prepared VDD, if this callback still owns it.
+          if (should_prepare_vdd && client_cert_uuid == current_vdd_identifier && config_copy.device_id == current_vdd_device_id) {
+            if (!hdr::apply_vdd_calibration(retry_session, config_copy.device_id)) {
+              BOOST_LOG(warning) << "[Display Deferred Retry] Could not restore the client HDR calibration; reconnect to retry";
+            }
+          }
+          BOOST_LOG(debug) << "[Display Deferred Retry] Skipping topology changes for an active session";
           return true;
         }
 
@@ -582,15 +601,6 @@ namespace display_device {
           }
         }
 
-        auto retry_session = rtsp_stream::launch_session_t {};
-        retry_session.client_name = client_name;
-        retry_session.client_cert_uuid = client_cert_uuid;
-        retry_session.enable_hdr = enable_hdr;
-        retry_session.hdr_target_source = hdr_target_source;
-        if (!client_cert_uuid.empty()) {
-          retry_session.env["SUNSHINE_CLIENT_CERT_UUID"] = client_cert_uuid;
-        }
-        retry_session.hdr_capabilities = hdr_capabilities;
         if (!settings.apply_config(config_copy, retry_session, pre_saved_initial_topology)) {
           BOOST_LOG(warning) << "[Display Deferred Retry] Applying display settings failed; stopping retries while allowing the stream to continue";
           // WARNING! After call to the method below, this lambda function is no longer valid!
@@ -691,7 +701,7 @@ namespace display_device {
     const bool created = vdd_utils::create_vdd_monitor(vdd_identifier, vdd_utils::hdr_brightness_t { 1000.0f, 0.001f, 1000.0f }, physical_size);
     if (created) {
       // Remember what the display was created as, so the destroy paths resolve.
-      current_vdd_owner_id = vdd_identifier;
+      current_vdd_identifier = vdd_identifier;
     }
     return created;
   }
@@ -705,9 +715,10 @@ namespace display_device {
   session_t::destroy_vdd_monitor() {
     // The owner, not the client id: shared mode creates the display under a
     // fixed identifier, so only that one resolves back to this monitor.
-    const std::string owner_id = current_vdd_owner_id;
+    const std::string owner_id = current_vdd_identifier;
     current_vdd_client_id.clear();
-    current_vdd_owner_id.clear();
+    current_vdd_identifier.clear();
+    current_vdd_device_id.clear();
     current_vdd_hdr_brightness.reset();
     // Scoped to the display this session owns: with one client this is the same
     // call as before, and with two it no longer takes the other one down.
@@ -826,39 +837,30 @@ namespace display_device {
 #endif
 
     std::string rebuild_old_vdd_id;
-    const bool client_changed = !current_vdd_client_id.empty() &&
-                                !current_client_id.empty() &&
-                                current_vdd_client_id != current_client_id;
+    const bool identity_changed = current_vdd_identifier != vdd_identifier;
     const bool hdr_capabilities_changed = !current_vdd_hdr_brightness ||
-                                          !current_vdd_hdr_brightness->nearly_equal(hdr_brightness);
+                                          (session.hdr_target_source == hdr::target_source_e::client_report ?
+                                              !current_vdd_hdr_brightness->nearly_equal(hdr_brightness) :
+                                              *current_vdd_hdr_brightness != hdr_brightness);
 
-    // An existing VDD must be rebuilt when its advertised HDR capabilities no
-    // longer match this session. A shared VDD may otherwise be reused across
-    // clients when the effective capabilities are identical.
-    if (!device_zako.empty() && (client_changed || hdr_capabilities_changed)) {
-      const bool reuse_vdd = config::video.vdd_reuse;
+    // Reuse requires the same driver identity and HDR capabilities. The shared
+    // identity stays constant across clients; changing shared/dedicated mode
+    // must rebuild even when the client and brightness remain the same.
+    if (!device_zako.empty() && (identity_changed || hdr_capabilities_changed)) {
+      BOOST_LOG(info) << "Rebuilding VDD to refresh session identity or HDR luminance capabilities"
+                      << " (identity: " << current_vdd_identifier << " -> " << vdd_identifier
+                      << ", HDR capabilities changed: " << hdr_capabilities_changed << ")";
+      const auto old_vdd_id = device_zako;
+      destroy_vdd_monitor();
+      device_zako.clear();
+      rebuild_old_vdd_id = old_vdd_id;
 
-      if (reuse_vdd && !hdr_capabilities_changed) {
-        BOOST_LOG(info) << "共享VDD模式，复用现有VDD（客户端: " << current_vdd_client_id << " -> " << current_client_id << "）";
-        current_vdd_client_id = current_client_id;
-        current_vdd_owner_id = vdd_identifier;
+      if (!config::video.vdd_keep_enabled) {
+        BOOST_LOG(debug) << "从initial拓扑中移除VDD: " << old_vdd_id;
+        settings.remove_vdd_from_initial_topology(old_vdd_id);
       }
-      else {
-        BOOST_LOG(info) << "Rebuilding VDD to refresh session identity or HDR luminance capabilities"
-                        << " (client: " << current_vdd_client_id << " -> " << current_client_id
-                        << ", HDR capabilities changed: " << hdr_capabilities_changed << ")";
-        const auto old_vdd_id = device_zako;
-        destroy_vdd_monitor();
-        device_zako.clear();
-        rebuild_old_vdd_id = old_vdd_id;
 
-        if (!config::video.vdd_keep_enabled) {
-          BOOST_LOG(debug) << "从initial拓扑中移除VDD: " << old_vdd_id;
-          settings.remove_vdd_from_initial_topology(old_vdd_id);
-        }
-
-        std::this_thread::sleep_for(500ms);
-      }
+      std::this_thread::sleep_for(500ms);
     }
 
     std::string mode_rebuild_old_vdd_id;
@@ -955,7 +957,8 @@ namespace display_device {
     config.device_id = device_zako;
     config::video.output_name = device_zako;
     current_vdd_client_id = current_client_id;
-    current_vdd_owner_id = vdd_identifier;
+    current_vdd_identifier = vdd_identifier;
+    current_vdd_device_id = device_zako;
     current_vdd_hdr_brightness = hdr_brightness;
     BOOST_LOG(info) << "成功配置VDD设备: " << device_zako;
 
@@ -968,13 +971,20 @@ namespace display_device {
     restore_state_impl();
   }
 
+  session_t::vdd_context_t
+  session_t::vdd_context() {
+    std::lock_guard lock { mutex };
+    if (current_vdd_identifier != current_vdd_client_id) return {};
+    return { current_vdd_client_id, current_vdd_device_id };
+  }
+
   void
   session_t::reset_persistence() {
     std::lock_guard lock { mutex };
     settings.reset_persistence();
     stop_timer_and_clear_vdd_state();
     current_vdd_client_id.clear();
-    current_vdd_owner_id.clear();
+    current_vdd_identifier.clear();
   }
 
   void

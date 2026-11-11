@@ -271,8 +271,8 @@ internal sealed class DeviceRegistry : IDisposable
 
         return profileMode switch
         {
-            // v1.12.0 leaves JSON profiles on Windows' native mapping path
-            // and removes exact legacy SDK tables; no usage override is needed.
+            // JSON profiles use the native mapping path. Shared physical DualSense
+            // tables are preserved; virtual-device lifecycle never owns or deletes them.
             0 => "dualsense",
             1 when genshinCompatibility && genshinCompatibilityAvailable =>
                 DualSenseHapticsAudio.GenshinCompatibilityProfileId,

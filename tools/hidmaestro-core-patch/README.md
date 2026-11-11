@@ -83,3 +83,9 @@ attach/detach cycles and checks that the shared tools/driver still match the
 contract and no imports remain. Failed acceptance leaves the active component
 untouched; a system-driver repair is an explicit manager operation rather than
 a component-directory rollback. Unverified newer transport versions are rejected.
+
+`dualsense-gameinput.patch` preserves the shared USB DualSense identity
+`054C0CE600010005` during claim, per-key/global legacy cleanup and ledger restore.
+Other identities keep the upstream cleanup policy. The small shared predicate is
+compiled into Core; Sidecar requires `FoundationDualSenseGameInput=preserve-v1`.
+This component does not repair existing bad mappings or create a missing mapping.

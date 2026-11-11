@@ -3,6 +3,8 @@
 set(SUNSHINE_HOST_SOURCES
     # third-party
     third-party/moonlight-common-c/src/RtspParser.c
+    third-party/moonlight-common-c/src/EndpointRefreshProtocol.c
+    third-party/moonlight-common-c/src/EndpointRefreshProtocol.h
     third-party/nanors/deps/obl/oblas_common.c
     third-party/nanors/deps/obl/oblas_lite.c
     third-party/nanors/rs.c
@@ -14,9 +16,13 @@ set(SUNSHINE_HOST_SOURCES
 
     # src/haptics
     src/haptics/authored_ir.cpp src/haptics/authored_ir.h
+    src/haptics/authored_input.h src/haptics/wire.h
+    src/haptics/legacy_rumble.cpp
+    src/haptics/authored_ir_extended.cpp src/haptics/authored_ir_extended.h
 
     # src/hdr
     src/hdr/client_display_capabilities.cpp src/hdr/client_display_capabilities.h
+    src/hdr/calibration.cpp src/hdr/calibration.h
     src/hdr/dynamic_hdr_selection.cpp src/hdr/dynamic_hdr_selection.h
     src/hdr/session_target.cpp src/hdr/session_target.h
 
@@ -29,6 +35,7 @@ set(SUNSHINE_HOST_SOURCES
     src/display_device/vdd_capability.cpp src/display_device/vdd_capability.h
     src/display_device/vdd_utils.cpp src/display_device/vdd_utils.h
     src/display_device/vdd_ioctl.cpp src/display_device/vdd_ioctl.h
+    src/display_device/vdd_mode_list.h
     src/display_device/vdd_settings.cpp src/display_device/vdd_settings.h
     src/display_device/display_device.h
     src/display_device/vdd_control_ioctl.h
@@ -40,6 +47,7 @@ set(SUNSHINE_HOST_SOURCES
     src/vdd_client_identity.cpp src/vdd_client_identity.h
     src/config.cpp src/config.h
     src/entry_handler.cpp src/entry_handler.h
+    src/endpoint_refresh.h
     src/file_handler.cpp src/file_handler.h
     src/globals.cpp src/globals.h
     src/logging.cpp src/logging.h

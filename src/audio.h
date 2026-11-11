@@ -10,6 +10,9 @@
 #include "utility.h"
 
 #include <bitset>
+namespace spatial_transport {
+  struct LiveSession;
+}
 
 namespace audio {
   // Audio codec values negotiated via the "x-ml-audio.codec" RTSP attribute.
@@ -20,7 +23,10 @@ namespace audio {
     CODEC_AC3 = 1,
     CODEC_EAC3 = 2,
     CODEC_PCM_S16 = 3,  ///< Raw signed 16-bit interleaved LPCM (no compression)
+    CODEC_MAT_LIVE = 7,  ///< Native live MAT; authenticated 64-bit packet counter
   };
+  inline bool
+  is_mat_codec(int codec) { return codec == CODEC_MAT_LIVE; }
 
   enum stream_config_e : int {
     STEREO,  ///< Stereo
@@ -53,6 +59,7 @@ namespace audio {
   extern opus_stream_config_t stream_configs[MAX_STREAM_CONFIG];
 
   struct config_t {
+    std::shared_ptr<spatial_transport::LiveSession> mat_live;
     enum flags_e : int {
       HIGH_QUALITY,  ///< High quality audio
       HOST_AUDIO,  ///< Host audio
