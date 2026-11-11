@@ -241,6 +241,13 @@ jobs:
           RELEASE_TAG: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
         run: .\scripts\build-ds5-sidecar.ps1 -ReleaseTag $env:RELEASE_TAG
 
+      # The Web UI imports foundation-ui from a sibling checkout named ds5-ui-m3e (package.json: "file:../ds5-ui-m3e").
+      - name: Fetch foundation-ui
+        shell: pwsh
+        run: |
+          git clone --depth 1 https://github.com/AlkaidLab/foundation-ui "$env:GITHUB_WORKSPACE/../ds5-ui-m3e"
+          npm ci --omit=dev --omit=peer --prefix "$env:GITHUB_WORKSPACE/../ds5-ui-m3e"
+
       - name: Build Web UI
         shell: pwsh
         run: |

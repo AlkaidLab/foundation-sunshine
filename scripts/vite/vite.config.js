@@ -1,8 +1,10 @@
 import fs from 'fs'
 import { resolve } from 'path'
+import { foundationUiAliases } from './foundationUi.js'
 import { defineConfig } from 'vite'
 import { ViteEjsPlugin } from './vite-plugin-ejs.js'
 import vue from '@vitejs/plugin-vue'
+import { fileURLToPath } from 'url'
 import process from 'process'
 
 /**
@@ -29,15 +31,23 @@ if (process.env.SUNSHINE_BUILD_HOMEBREW) {
 }
 
 const header = fs.readFileSync(resolve(assetsSrcPath, 'template_header.html'))
+// the first frame of the sign-in page: an inline script (login-boot.js) with the bundled default record (login-boot-defaults.json, made by tools gen-login-boot-defaults from a real first start)
+const bootDefaults = fs.existsSync(resolve(assetsSrcPath, 'login-boot-defaults.json')) ? fs.readFileSync(resolve(assetsSrcPath, 'login-boot-defaults.json'), 'utf8').trim() : 'null'
+const bootScript = fs.readFileSync(resolve(assetsSrcPath, 'login-boot.js'), 'utf8').replace('/*DEFAULTS*/null', () => bootDefaults)
 
 // https://vitejs.dev/config/
+// foundation-ui is the shared Material 3 Expressive package (sibling checkout, see its README).
+const foundationUi = process.env.FOUNDATION_UI_DIR || fileURLToPath(new URL('../../../ds5-ui-m3e', import.meta.url))
+
 export default defineConfig({
   resolve: {
-    alias: {
-      vue: 'vue/dist/vue.esm-bundler.js',
-    },
+    dedupe: ['vue'],
+    alias: [
+      { find: /^vue$/, replacement: 'vue/dist/vue.esm-bundler.js' },
+      ...foundationUiAliases(foundationUi),
+    ],
   },
-  plugins: [vue(), ViteEjsPlugin({ header })],
+  plugins: [vue({ template: { compilerOptions: { isCustomElement: (tag) => tag.startsWith('md-') } } }), ViteEjsPlugin({ header, bootScript })],
   root: resolve(assetsSrcPath),
   preview: {
     port: 3000,
@@ -50,12 +60,15 @@ export default defineConfig({
     chunkSizeWarningLimit: 1000,
     // Vite 8 使用 rolldown 内核：多入口 HTML 必须放在 rolldownOptions.input
     // 放到 rollupOptions.input 会被忽略，导致除 index.html 外其它页面 404
+    // Source: ds5-vite-build-20261031, Multi-Page App and build.rolldownOptions.
     rolldownOptions: {
       input: {
         apps: resolve(assetsSrcPath, 'apps.html'),
         downloads: resolve(assetsSrcPath, 'downloads.html'),
         config: resolve(assetsSrcPath, 'config.html'),
+        dualsense: resolve(assetsSrcPath, 'dualsense.html'),
         index: resolve(assetsSrcPath, 'index.html'),
+        login: resolve(assetsSrcPath, 'login.html'),
         password: resolve(assetsSrcPath, 'password.html'),
         pin: resolve(assetsSrcPath, 'pin.html'),
         troubleshooting: resolve(assetsSrcPath, 'troubleshooting.html'),
@@ -95,6 +108,6 @@ export default defineConfig({
   },
   // 优化依赖预构建
   optimizeDeps: {
-    include: ['vue', 'vue-i18n', 'bootstrap', '@popperjs/core', 'marked', 'nanoid', 'vuedraggable-es'],
+    include: ['vue', 'vue-i18n', 'marked', 'nanoid', 'vuedraggable-es'],
   },
 })
