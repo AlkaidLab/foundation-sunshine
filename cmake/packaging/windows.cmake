@@ -112,6 +112,19 @@ if(VIGEMBUS_AVAILABLE)
           DESTINATION "scripts/gamepad"
           COMPONENT gamepad)
 endif()
+set(GENERATED_USBIP_INSTALL_SCRIPT "${CMAKE_BINARY_DIR}/generated/install-usbip.bat")
+configure_file(
+        "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/usbip/install-usbip.bat.in"
+        "${GENERATED_USBIP_INSTALL_SCRIPT}"
+        @ONLY)
+install(FILES "${GENERATED_USBIP_INSTALL_SCRIPT}"
+        DESTINATION "scripts"
+        COMPONENT usbip)
+if(USBIP_AVAILABLE)
+  install(FILES "${USBIP_INSTALLER}"
+          DESTINATION "scripts/usbip"
+          COMPONENT usbip)
+endif()
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/vsink/"
         DESTINATION "scripts"
         COMPONENT vsink)
@@ -180,6 +193,12 @@ if(VMOUSE_DRIVER_AVAILABLE)
 endif()
 
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/helper/"
+        DESTINATION "tools"
+        COMPONENT assets)
+install(FILES "${CMAKE_SOURCE_DIR}/tools/driver-reboot-check.ps1"
+        DESTINATION "tools"
+        COMPONENT assets)
+install(FILES "${CMAKE_SOURCE_DIR}/tools/usbip-win2-root.ps1"
         DESTINATION "tools"
         COMPONENT assets)
 

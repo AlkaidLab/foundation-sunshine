@@ -52,6 +52,7 @@ $originalInvokeNefcon = ${function:Invoke-Nefcon}
 $originalGetVddDevices = ${function:Get-VddDevices}
 $originalTestVddControlInterfaceAvailable = ${function:Test-VddControlInterfaceAvailable}
 $originalWaitUntil = ${function:Wait-Until}
+$originalTestVddDeviceRebootRequired = ${function:Test-VddDeviceRebootRequired}
 try {
     $script:installNefconCalls = 0
     $script:readinessChecks = 0
@@ -96,7 +97,46 @@ try {
     $script:installTestDevice = New-TestDevice '100.0.16.6' 'ERROR'
     $timeoutResult = Install-VddDeviceFromInf $HelperScript $HelperScript '100.0.16.6'
     Assert-Equal -Expected $vddDeviceRestartRequired -Actual $timeoutResult -Message `
-        'A timed-out device bound to the expected version must require a restart.'
+        'A timed-out bound device after a bind that returned 3010 (bRebootRequired) must require a restart.'
+
+    # Without a real Windows restart signal a timed-out bound device is a failure.
+    $script:bindExitCode = 0
+    function Invoke-Nefcon([string] $Path, [string[]] $Arguments) {
+        $script:installNefconCalls++
+        if ($Arguments[0] -eq '--install-driver') { return $script:bindExitCode }
+        return 0
+    }
+    $script:rebootProperty = $false
+    function Test-VddDeviceRebootRequired([string] $InstanceId) { return $script:rebootProperty }
+    $script:vddStagingRestartSignal = $false
+    $script:installTestDevice = New-TestDevice '100.0.16.6' 'ERROR'
+    $noSignalFailed = $false
+    try {
+        [void] (Install-VddDeviceFromInf $HelperScript $HelperScript '100.0.16.6')
+    }
+    catch {
+        $noSignalFailed = $_.Exception.Message -like '*did not become ready within 120 s*problem code 10*no pending restart*'
+    }
+    Assert-Equal -Expected $true -Actual $noSignalFailed -Message `
+        'A timed-out bound device without a Windows restart signal must fail, not ask for a restart.'
+    Assert-Equal -Expected $false -Actual $script:vddRestartRequired -Message `
+        'A timeout without a restart signal must not request a restart.'
+
+    $script:installTestDevice.Problem = 14
+    Assert-Equal -Expected $vddDeviceRestartRequired -Actual (Install-VddDeviceFromInf $HelperScript $HelperScript '100.0.16.6') `
+        -Message 'CM_PROB_NEED_RESTART (14) on the bound device is a real restart signal.'
+
+    $script:installTestDevice.Problem = 10
+    $script:rebootProperty = $true
+    Assert-Equal -Expected $vddDeviceRestartRequired -Actual (Install-VddDeviceFromInf $HelperScript $HelperScript '100.0.16.6') `
+        -Message 'DEVPKEY_Device_IsRebootRequired on the bound device is a real restart signal.'
+
+    $script:rebootProperty = $false
+    $script:vddStagingRestartSignal = $true
+    Assert-Equal -Expected $vddDeviceRestartRequired -Actual (Install-VddDeviceFromInf $HelperScript $HelperScript '100.0.16.6') `
+        -Message 'pnputil /add-driver 3010 is a real restart signal.'
+    $script:vddStagingRestartSignal = $false
+    $script:bindExitCode = 3010
 
     $script:vddRestartRequired = $false
     $script:installTestDevice = New-TestDevice '100.0.16.5' 'ERROR'
@@ -117,12 +157,16 @@ finally {
     ${function:Get-VddDevices} = $originalGetVddDevices
     ${function:Test-VddControlInterfaceAvailable} = $originalTestVddControlInterfaceAvailable
     ${function:Wait-Until} = $originalWaitUntil
+    ${function:Test-VddDeviceRebootRequired} = $originalTestVddDeviceRebootRequired
     Remove-Variable -Name installNefconCalls -Scope Script -ErrorAction SilentlyContinue
     Remove-Variable -Name readinessChecks -Scope Script -ErrorAction SilentlyContinue
     Remove-Variable -Name controlInterfaceChecks -Scope Script -ErrorAction SilentlyContinue
     Remove-Variable -Name receivedWaitSeconds -Scope Script -ErrorAction SilentlyContinue
     Remove-Variable -Name forceWaitTimeout -Scope Script -ErrorAction SilentlyContinue
     Remove-Variable -Name installTestDevice -Scope Script -ErrorAction SilentlyContinue
+    Remove-Variable -Name bindExitCode -Scope Script -ErrorAction SilentlyContinue
+    Remove-Variable -Name rebootProperty -Scope Script -ErrorAction SilentlyContinue
+    $script:vddStagingRestartSignal = $false
     $script:vddRestartRequired = $false
 }
 

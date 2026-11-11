@@ -1,0 +1,45 @@
+@echo off
+set "PATH=%SystemRoot%\System32;%SystemRoot%;%SystemRoot%\System32\Wbem;%SystemRoot%\System32\WindowsPowerShell\v1.0"
+setlocal enabledelayedexpansion
+
+rem Installs the pinned usbip-win2 transport (USB/IP for the native DualSense path). The same release and digest
+rem as the panel's src-tauri/component-compatibility.json. Exit codes: 0 ready, 3010 restart recommended, else failed.
+rem The exit code is also written to result-usbip.txt next to this script, for the installer's progress events.
+call :main %*
+set "STEP_RC=!ERRORLEVEL!"
+> "%~dp0result-usbip.txt" echo !STEP_RC!
+exit /b !STEP_RC!
+
+:main
+if /I "%~1"=="--verify-only" set "VERIFY_ONLY=1"
+
+rem Already installed at this version: leave it alone (a reinstall detaches attached USB devices).
+powershell -NoProfile -Command "$k='HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall','HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'; $f=Get-ItemProperty ($k|ForEach-Object{$_+'\*'}) -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like 'USBip*' -and $_.DisplayVersion -eq '@USBIP_VERSION@' }; if ($f) { exit 2 } else { exit 1 }"
+if %ERRORLEVEL% EQU 2 (
+  echo usbip-win2 @USBIP_VERSION@ is already installed.
+  exit /b 0
+)
+
+set "installer=%~dp0usbip\@USBIP_ASSET_NAME@"
+set "expected_sha256=@USBIP_SHA256@"
+
+if not exist "%installer%" (
+  echo ERROR: Bundled usbip-win2 installer not found: "%installer%"
+  exit /b 1
+)
+
+for /f "usebackq tokens=*" %%H in (`powershell -NoProfile -Command "(Get-FileHash -Algorithm SHA256 -LiteralPath $env:installer).Hash"`) do set "actual_sha256=%%H"
+if /I not "!actual_sha256!"=="!expected_sha256!" (
+  echo ERROR: Bundled usbip-win2 installer failed SHA256 verification.
+  echo Expected: !expected_sha256!
+  echo Actual:   !actual_sha256!
+  exit /b 1
+)
+
+if defined VERIFY_ONLY (
+  echo Bundled usbip-win2 installer verified successfully.
+  exit /b 0
+)
+
+"%installer%" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /RESTARTEXITCODE=3010 /SP-
+exit /b %ERRORLEVEL%

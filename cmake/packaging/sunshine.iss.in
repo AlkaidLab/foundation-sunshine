@@ -276,6 +276,8 @@ Source: "{#MySourceDir}\tools\device-toggler.exe"; DestDir: "{app}\tools"; Flags
 Source: "{#MySourceDir}\tools\DevManView.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: assets
 Source: "{#MySourceDir}\tools\restart64.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: assets
 Source: "{#MySourceDir}\tools\SetDpi.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: assets
+Source: "{#MySourceDir}\tools\usbip-win2-root.ps1"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: assets
+Source: "{#MySourceDir}\tools\driver-reboot-check.ps1"; DestDir: "{app}\tools"; Flags: ignoreversion skipifsourcedoesntexist; Components: assets
 Source: "{#MySourceDir}\tools\setreg.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: assets
 
 ; Autostart script
@@ -336,14 +338,23 @@ Root: HKLM64; Subkey: "SOFTWARE\AlkaidLab\Sunshine"; ValueType: string; ValueNam
 [Run]
 ; Post-install: drop explicit ACEs (inherit from parent) + clear READONLY
 ; attribute on files & dirs. The latter is what fixes the rare "Sunshine
-Filename: "{cmd}"; Parameters: "/c icacls ""{app}"" /reset /T /C > ""{tmp}\sunshine-icacls-reset.log"" 2>&1 & attrib -R ""{app}\*.*"" /S /D > ""{tmp}\sunshine-attrib-clear.log"" 2>&1"; StatusMsg: "{cm:StatusResetPermissions}"; Flags: runhidden waituntilterminated; Check: ShouldRepairInstallPermissions
-Filename: "{app}\scripts\update-path.bat"; Parameters: "add"; StatusMsg: "{cm:StatusUpdatePath}"; Flags: runhidden waituntilterminated
-Filename: "{app}\scripts\migrate-config.bat"; StatusMsg: "{cm:StatusMigrateConfig}"; Flags: runhidden waituntilterminated
-Filename: "{app}\scripts\add-firewall-rule.bat"; StatusMsg: "{cm:StatusFirewall}"; Flags: runhidden waituntilterminated; Components: firewall
-Filename: "{app}\scripts\install-gamepad.bat"; StatusMsg: "{cm:StatusInstallGamepad}"; Flags: runhidden waituntilterminated; Components: gamepad
-Filename: "{app}\scripts\vmouse\install-vmouse.bat"; StatusMsg: "{cm:StatusInstallVmouse}"; Flags: runhidden waituntilterminated; Components: vmouse
-Filename: "{app}\scripts\install-service.bat"; Parameters: "{code:GetServiceInstallParameters}"; StatusMsg: "{cm:StatusInstallService}"; Flags: runhidden waituntilterminated; AfterInstall: VerifyServiceInstalled
-Filename: "{app}\scripts\autostart-service.bat"; StatusMsg: "{cm:StatusAutostart}"; Flags: runhidden waituntilterminated; Components: autostart; Check: ShouldConfigureServiceAutostart
+Filename: "{cmd}"; Parameters: "/c icacls ""{app}"" /reset /T /C > ""{tmp}\sunshine-icacls-reset.log"" 2>&1 & attrib -R ""{app}\*.*"" /S /D > ""{tmp}\sunshine-attrib-clear.log"" 2>&1"; StatusMsg: "{cm:StatusResetPermissions}"; Flags: runhidden waituntilterminated; Check: ShouldRepairInstallPermissions; BeforeInstall: EvtPermissions
+Filename: "{app}\scripts\update-path.bat"; Parameters: "add"; StatusMsg: "{cm:StatusUpdatePath}"; Flags: runhidden waituntilterminated; BeforeInstall: EvtPath
+Filename: "{app}\scripts\migrate-config.bat"; StatusMsg: "{cm:StatusMigrateConfig}"; Flags: runhidden waituntilterminated; BeforeInstall: EvtConfig
+; Maintenance installs remove components that were selected before but are
+; unchecked now. The program, settings and paired clients stay in {app}.
+Filename: "{app}\scripts\delete-firewall-rule.bat"; StatusMsg: "{cm:StatusFirewall}"; Flags: runhidden waituntilterminated; Check: ShouldRemoveComponent('firewall')
+Filename: "{app}\scripts\uninstall-vdd.bat"; StatusMsg: "{cm:StatusInstallVDD}"; Flags: runhidden waituntilterminated; Check: ShouldRemoveComponent('vdd')
+Filename: "{app}\scripts\uninstall-gamepad.bat"; StatusMsg: "{cm:StatusInstallGamepad}"; Flags: runhidden waituntilterminated; Check: ShouldRemoveComponent('gamepad')
+Filename: "{app}\scripts\vmouse\uninstall-vmouse.bat"; StatusMsg: "{cm:StatusInstallVmouse}"; Flags: runhidden waituntilterminated; Check: ShouldRemoveComponent('vmouse')
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\tools\usbip-win2-root.ps1"" -Action uninstall"; StatusMsg: "{cm:StatusInstallUsbipRoot}"; Flags: runhidden waituntilterminated; Check: ShouldRemoveComponent('usbip')
+Filename: "{app}\scripts\add-firewall-rule.bat"; StatusMsg: "{cm:StatusFirewall}"; Flags: runhidden waituntilterminated; Components: firewall; BeforeInstall: EvtFirewall; AfterInstall: EvtFirewallDone
+Filename: "{app}\scripts\install-gamepad.bat"; StatusMsg: "{cm:StatusInstallGamepad}"; Flags: runhidden waituntilterminated; Components: gamepad; BeforeInstall: EvtGamepad; AfterInstall: EvtGamepadDone
+Filename: "{app}\scripts\install-usbip.bat"; StatusMsg: "{cm:StatusInstallUsbip}"; Flags: runhidden waituntilterminated; Components: usbip; BeforeInstall: EvtUsbip; AfterInstall: EvtUsbipDone
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\tools\usbip-win2-root.ps1"" -Action install"; StatusMsg: "{cm:StatusInstallUsbipRoot}"; Flags: runhidden waituntilterminated; Check: ShouldRunUsbipRootInstall
+Filename: "{app}\scripts\vmouse\install-vmouse.bat"; StatusMsg: "{cm:StatusInstallVmouse}"; Flags: runhidden waituntilterminated; Components: vmouse; BeforeInstall: EvtVmouse; AfterInstall: EvtVmouseDone
+Filename: "{app}\scripts\install-service.bat"; Parameters: "{code:GetServiceInstallParameters}"; StatusMsg: "{cm:StatusInstallService}"; Flags: runhidden waituntilterminated; AfterInstall: VerifyServiceInstalled; BeforeInstall: EvtServiceStart
+Filename: "{app}\scripts\autostart-service.bat"; StatusMsg: "{cm:StatusAutostart}"; Flags: runhidden waituntilterminated; Components: autostart; Check: ShouldConfigureServiceAutostart; BeforeInstall: EvtAutostart; AfterInstall: EvtAutostartDone
 
 ; Finish page actions - user selectable
 Filename: "{cm:DocumentationURL}"; Description: "{cm:FinishOpenDocs}"; Flags: postinstall shellexec runasoriginaluser unchecked nowait skipifsilent
@@ -377,6 +388,7 @@ Filename: "{app}\scripts\delete-firewall-rule.bat"; Flags: runhidden waituntilte
 Filename: "{app}\scripts\uninstall-service.bat"; Flags: runhidden waituntilterminated; RunOnceId: "UninstallService"
 Filename: "{app}\scripts\uninstall-vdd.bat"; Flags: runhidden waituntilterminated; RunOnceId: "UninstallVDD"
 Filename: "{app}\scripts\vmouse\uninstall-vmouse.bat"; Flags: runhidden waituntilterminated; RunOnceId: "UninstallVmouse"
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\tools\usbip-win2-root.ps1"" -Action uninstall"; Flags: runhidden waituntilterminated; RunOnceId: "UninstallUsbipRoot"
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--restore-nvprefs-undo"; Flags: runhidden waituntilterminated; RunOnceId: "RestoreNV"
 Filename: "{app}\scripts\update-path.bat"; Parameters: "remove"; Flags: runhidden waituntilterminated; RunOnceId: "RemovePath"
 
@@ -623,6 +635,10 @@ begin
     Log('VDD installation and control-interface verification succeeded.');
     EmitInstallerEvent('install-vdd', 'done', 'StatusInstallVDD', 0);
   end
+  // 3010 only comes with a real Windows restart signal (vdd-device-helper.ps1 Get-VddWindowsRestartSignal:
+  // ERROR_SUCCESS_REBOOT_REQUIRED from the bind or staging, CM_PROB_NEED_RESTART, DEVPKEY_Device_IsRebootRequired).
+  // A device that is bound but not ready in time without one makes the helper exit 1: VDDResultCode 101 below, the
+  // engine exits 101 and the shell shows the driver failure page with 修复安装.
   else if ResultCode = 3010 then
   begin
     VDDResultCode := 3010;
@@ -1055,6 +1071,55 @@ begin
     if RebootReasons <> '' then
       RebootReasons := RebootReasons + ',';
     RebootReasons := RebootReasons + Name;
+  end;
+end;
+
+// A restart is requested only when a driver step returned 3010, or Windows itself reports a pending
+// restart on one of our drivers. The decision and its reasons go to the event log ('reboot').
+procedure DecideRestart();
+var
+  ResultCode: Integer;
+  OutFile, Names: String;
+  Lines: TArrayOfString;
+  I: Integer;
+begin
+  if RebootChecked then
+    Exit;
+  RebootChecked := True;
+  RebootReasons := '';
+  if VDDResultCode = 3010 then
+    AddRebootReason('vdd');
+  if GamepadResult = 3010 then
+    AddRebootReason('vigem');
+  if UsbipResult = 3010 then
+    AddRebootReason('usbip');
+  OutFile := ExpandConstant('{tmp}\sunshine-reboot-check.txt');
+  DeleteFile(OutFile);
+  if FileExists(ExpandConstant('{app}\tools\driver-reboot-check.ps1')) then
+  begin
+    if Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+            '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{app}\tools\driver-reboot-check.ps1') + '" -Out "' + OutFile + '"',
+            '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and LoadStringsFromFile(OutFile, Lines) then
+    begin
+      for I := 0 to GetArrayLength(Lines) - 1 do
+      begin
+        Names := Trim(Lines[I]);
+        if Pos('vdd', Names) > 0 then AddRebootReason('vdd');
+        if Pos('vigem', Names) > 0 then AddRebootReason('vigem');
+        if Pos('vmouse', Names) > 0 then AddRebootReason('vmouse');
+        if Pos('usbip', Names) > 0 then AddRebootReason('usbip');
+      end;
+    end;
+  end;
+  if RebootReasons = '' then
+  begin
+    Log('Restart decision: not needed.');
+    EmitInstallerEvent('reboot', 'done', 'none', 0);
+  end
+  else
+  begin
+    Log('Restart decision: needed for ' + RebootReasons + '.');
+    EmitInstallerEvent('reboot', 'done', RebootReasons, 3010);
   end;
 end;
 

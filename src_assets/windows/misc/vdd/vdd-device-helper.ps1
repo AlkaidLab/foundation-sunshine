@@ -29,6 +29,15 @@ $deviceTimeoutSeconds = 120
 $targetedRemovalTimeoutSeconds = 10
 $win32ErrorTimeout = 1460
 $script:vddRestartRequired = $false
+# A restart is only ever reported for a real Windows signal:
+# ERROR_SUCCESS_REBOOT_REQUIRED (3010) from pnputil /add-driver or from the driver bind (bRebootRequired of
+# UpdateDriverForPlugAndPlayDevices / DiInstallDriver), the device problem CM_PROB_NEED_RESTART (14), or
+# DEVPKEY_Device_IsRebootRequired. A device that is bound but not ready in time without such a signal is a failure.
+# Authority: installer-ms-error-success-reboot-required-20261109, installer-ms-updatedriverforpnp-20261109,
+# installer-ms-cm-prob-need-restart-20261109, installer-ms-pnputil-return-values-20261109 (DEVPKEY_Device_IsRebootRequired:
+# devpkey.h; no Microsoft Learn reference page found 2026-11-09, also read by tools\driver-reboot-check.ps1).
+$script:vddStagingRestartSignal = $false
+$cmProbNeedRestart = 14
 $vddDeviceReady = 'Ready'
 $vddDeviceRestartRequired = 'RestartRequired'
 $vddControlInterfaceGuid = 'DA9F8C2B-7E4F-49A1-9D4E-6F2B0E1A0C4D'
@@ -688,8 +697,27 @@ function Add-VddDriverPackage([object] $Payload) {
         throw "Failed to stage the VDD driver package (exit code $pnputilExitCode)."
     }
     if ($pnputilExitCode -eq 3010) {
+        $script:vddStagingRestartSignal = $true
         Write-Output 'VDD driver package staged; Windows reports that a reboot is required.'
     }
+}
+
+function Test-VddDeviceRebootRequired([string] $InstanceId) {
+    try {
+        return [bool]((Get-PnpDeviceProperty -InstanceId $InstanceId -KeyName 'DEVPKEY_Device_IsRebootRequired' -ErrorAction Stop).Data -eq $true)
+    }
+    catch {
+        return $false
+    }
+}
+
+# The Windows signal that the device waits for a restart, or '' when there is none.
+function Get-VddWindowsRestartSignal([object] $Device, [bool] $BindReportedRestart) {
+    if ($BindReportedRestart) { return 'the driver bind returned ERROR_SUCCESS_REBOOT_REQUIRED (3010)' }
+    if ($script:vddStagingRestartSignal) { return 'pnputil /add-driver returned ERROR_SUCCESS_REBOOT_REQUIRED (3010)' }
+    if ($Device -and [int]$Device.Problem -eq $cmProbNeedRestart) { return 'device problem CM_PROB_NEED_RESTART (14)' }
+    if ($Device -and (Test-VddDeviceRebootRequired $Device.InstanceId)) { return 'DEVPKEY_Device_IsRebootRequired' }
+    return ''
 }
 
 function Install-VddDeviceFromInf(
@@ -735,8 +763,14 @@ function Install-VddDeviceFromInf(
         $devices = @(Get-VddDevices)
         if ($devices.Count -eq 1 -and
             (Test-VddDeviceBound $devices[0] $ExpectedVersion)) {
-            Write-Warning 'The expected VDD package is bound, but the device or control interface is not ready. A Windows restart is required.'
-            return $vddDeviceRestartRequired
+            $signal = Get-VddWindowsRestartSignal $devices[0] $restartSuggested
+            if ($signal) {
+                Write-Warning "The expected VDD package is bound, but the device or control interface is not ready; Windows reports a pending restart: $signal."
+                return $vddDeviceRestartRequired
+            }
+            throw ("VDD $ExpectedVersion is bound, but the device or its control interface did not become ready within " +
+                "$deviceTimeoutSeconds s (device status $($devices[0].Status), problem code $($devices[0].Problem)); " +
+                'Windows reports no pending restart, so this is a failure, not a restart.')
         }
 
         $readiness = if ($RequireControlInterface) { ' with its control interface' } else { '' }
