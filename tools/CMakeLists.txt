@@ -62,7 +62,12 @@ target_link_libraries(audio-info
         sunshine_project_options)
 target_compile_options(audio-info PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
 
-add_executable(sunshinesvc sunshinesvc.cpp)
+add_executable(sunshinesvc sunshinesvc.cpp
+        ${CMAKE_SOURCE_DIR}/src/crash/crash_core.cpp
+        ${CMAKE_SOURCE_DIR}/src/crash/crash_common.cpp
+        ${CMAKE_SOURCE_DIR}/src/crash/crash_win.cpp
+        ${CMAKE_SOURCE_DIR}/src/crash/crash_posix.cpp)
+target_compile_definitions(sunshinesvc PRIVATE SUNSHINESVC_VERSION="${SUNSHINE_PARENT_VERSION}")
 set_target_properties(sunshinesvc PROPERTIES CXX_STANDARD 23)
 target_link_libraries(sunshinesvc
         PRIVATE Threads::Threads
