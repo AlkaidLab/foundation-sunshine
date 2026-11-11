@@ -4896,8 +4896,40 @@ namespace stream {
       tray_state::add_session(
         session.launch_session_id,
         session.client_name,
-        session.highly_suspected_unknown_client
-      );
+        session.highly_suspected_unknown_client);
+
+      // Usage statistics: the dimensions of the stream (allow-listed values only; no names), and the sums of its quality from here on.
+      if (!session.control_only) {
+        try {
+          telemetry::stream_info_t info;
+          info.session_id = session.launch_session_id;
+          info.client_uuid = session.client_cert_uuid;
+          if (const auto paired = nvhttp::find_paired_client(session.client_cert_uuid)) {
+            info.client_family = std::string(client_family::to_string(paired->family.family));
+            info.client_os = paired->family.os;
+          }
+          info.video_format = session.config.monitor.videoFormat;
+          info.width = session.config.monitor.width;
+          info.height = session.config.monitor.height;
+          info.fps = session.config.monitor.framerate;
+          info.hdr = session.config.monitor.dynamicRange > 0;
+          info.mic = session.audio.enable_mic;
+          info.vdd = session.use_vdd;
+          info.app_name = session.app_name;
+          info.app_cmd = proc::proc.get_app_cmd(session.app_id);
+          // a Sparxie application names its game in the sparxie block of its apps.json entry (a catalogue id, never text); any other application has none
+          {
+            const auto sparxie = telemetry::sparxie_app_of_apps(file_handler::read_file(config::stream.file_apps.c_str()), std::to_string(session.app_id));
+            info.sparxie_app = sparxie.is_sparxie;
+            info.sparxie_game = sparxie.game;
+          }
+          info.altp = false;  // ALTP is not a stream transport on this branch line; when it is, this is the one place to set it
+          telemetry::stream_started(info);
+        }
+        catch (...) {
+          // statistics never decide whether a stream starts
+        }
+      }
 
       // 仅控制流会话不触发 streaming_will_start 回调，因为它们不传输视频/音频
       // 但它们仍然需要被计入 running_sessions，以便正确管理会话

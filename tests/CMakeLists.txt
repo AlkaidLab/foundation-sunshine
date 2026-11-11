@@ -423,6 +423,33 @@ if (WIN32)
     target_link_libraries(config_runtime_unit_tests PRIVATE ws2_32)
 endif ()
 add_test(NAME config_runtime_unit_tests COMMAND config_runtime_unit_tests)
+
+# The configuration-upgrade suite runs on its own so the global defaults it
+# compares against are the ones a start-up has before any settings file is read.
+add_executable(config_upgrade_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/config_runtime_stubs.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_config_upgrade.cpp
+        ${CONFIG_RUNTIME_SUPPORT_SOURCES})
+target_include_directories(config_upgrade_unit_tests PRIVATE
+        "${CMAKE_SOURCE_DIR}"
+        "${CMAKE_BINARY_DIR}")  # generated version.h
+target_link_libraries(config_upgrade_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
+        sunshine_project_options sunshine_coverage
+        alkaidlab_stun_codec
+        sunshine::host_headers sunshine::tls
+        Boost::boost Boost::log Boost::filesystem Boost::property_tree Boost::asio Boost::beast Boost::regex
+        Boost::format Boost::process)
+set_target_properties(config_upgrade_unit_tests PROPERTIES CXX_STANDARD 23)
+target_compile_definitions(config_upgrade_unit_tests PRIVATE
+        SUNSHINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+        ${SUNSHINE_DEFINITIONS})
+if (WIN32)
+    set_target_properties(config_upgrade_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+    target_include_directories(config_upgrade_unit_tests SYSTEM PRIVATE "${CMAKE_BINARY_DIR}/amf_include")
+    target_link_libraries(config_upgrade_unit_tests PRIVATE ws2_32)
+endif ()
+add_test(NAME config_upgrade_unit_tests COMMAND config_upgrade_unit_tests)
+
 add_executable(gamepad_selection_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_gamepad_selection.cpp)
 target_include_directories(gamepad_selection_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
@@ -1167,6 +1194,7 @@ list(REMOVE_ITEM TEST_SOURCES
         ${CMAKE_SOURCE_DIR}/tests/unit/test_client_fingerprint.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_config_overrides.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_config_runtime.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_config_upgrade.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/config_runtime_stubs.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_current_capture_target.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_default_apps.cpp

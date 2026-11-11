@@ -500,6 +500,11 @@ main(int argc, char *argv[]) {
   SetConsoleCtrlHandler(ConsoleCtrlHandler, TRUE);
 #endif
 
+#ifdef _WIN32
+  // The Windows host offers Big Screen once to an apps.json that is older than the entry (default_apps.h); Foundation Desktop is a Windows component.
+  default_apps::migrate_file(config::stream.file_apps, config::sunshine.locale);
+#endif
+
   proc::refresh(config::stream.file_apps);
 
   if (!image_enhancement::manager().initialize()) {
