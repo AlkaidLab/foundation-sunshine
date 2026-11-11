@@ -571,6 +571,23 @@ if (WIN32)
 endif ()
 add_test(NAME network_reachability_unit_tests COMMAND network_reachability_unit_tests)
 
+# Telemetry v1: event shapes, scrubbing, consent, queue limits, retry and a fake stream session (no network, no host)
+add_executable(telemetry_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/telemetry/events.cpp
+        ${CMAKE_SOURCE_DIR}/src/telemetry/queue.cpp
+        ${CMAKE_SOURCE_DIR}/src/telemetry/stream_stats.cpp
+        ${CMAKE_SOURCE_DIR}/src/telemetry/service.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_telemetry.cpp)
+target_include_directories(telemetry_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(telemetry_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
+        sunshine_project_options sunshine_coverage)
+target_compile_options(telemetry_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(telemetry_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(telemetry_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME telemetry_unit_tests COMMAND telemetry_unit_tests)
+
 # 版本比较: the date part of a Foundation Sunshine version, against the table shared with the panel and the Web UI
 add_executable(version_compare_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_version_compare.cpp)
@@ -1081,10 +1098,13 @@ file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
 # Standalone diagnostic programs under tests/tools have their own targets and
 # must not be linked into the aggregate GoogleTest executable.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/tools/")
+# The Sparxie host tests have their own target (tests/sparxie/CMakeLists.txt: sparxie_unit_tests, with the fixtures directory it needs); the aggregate executable cannot compile them.
+list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/sparxie/")
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_hdr_calibration.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_authored_ir_extended.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_devices.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_vb_cable.cpp)
+list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_telemetry.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_host_bitrate_cap.cpp)
 # MAT harnesses have independent entrypoints and explicit test targets.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/mat-live/")
