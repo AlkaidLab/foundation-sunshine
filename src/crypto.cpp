@@ -4,10 +4,14 @@
  */
 #include "crypto.h"
 
+#include <algorithm>
+#include <cctype>
 #include <limits>
+#include <string>
 
 #include <openssl/pem.h>
 #include <openssl/rsa.h>
+#include <openssl/x509v3.h>
 
 namespace crypto {
   using asn1_string_t = util::safe_ptr<ASN1_STRING, ASN1_STRING_free>;
@@ -491,7 +495,9 @@ namespace crypto {
     const ASN1_BIT_STRING *asn1 = nullptr;
     X509_get0_signature(&asn1, nullptr, x.get());
 
-    return { (const char *) asn1->data, (std::size_t) asn1->length };
+    // The structure is opaque from OpenSSL 4 on; the accessors work with both.
+    return { reinterpret_cast<const char *>(ASN1_STRING_get0_data(asn1)),
+      static_cast<std::size_t>(ASN1_STRING_length(asn1)) };
   }
 
   std::string
@@ -570,12 +576,42 @@ namespace crypto {
 
     X509_set_pubkey(x509.get(), pkey.get());
 
-    auto name = X509_get_subject_name(x509.get());
-    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
+    // A separate name object keeps this independent of the accessor's
+    // constness, which OpenSSL 4 changed.
+    util::safe_ptr<X509_NAME, X509_NAME_free> name { X509_NAME_new() };
+    X509_NAME_add_entry_by_txt(name.get(), "CN", MBSTRING_ASC,
       (const std::uint8_t *) cn.data(), cn.size(),
       -1, 0);
 
-    X509_set_issuer_name(x509.get(), name);
+    X509_set_subject_name(x509.get(), name.get());
+    X509_set_issuer_name(x509.get(), name.get());
+
+    // A common name is not a hostname any more: RFC 6125 deprecated the CN
+    // fallback, OpenSSL 4 refuses it outright (verify error 62, "hostname
+    // mismatch") and browsers dropped it years ago. When the caller handed us
+    // something that can actually be a host, repeat it in a subjectAltName so
+    // hostname verification has a field to look at. Names with spaces (the
+    // game-stream host label) are left alone: they can never match a host.
+    const bool host_like = !cn.empty() && std::none_of(cn.begin(), cn.end(), [](char c) {
+      return !(std::isalnum(static_cast<unsigned char>(c)) || c == '.' || c == '-' || c == '_');
+    });
+    if (host_like) {
+      // subjectAltName has to be a GeneralNames sequence, so build the entry
+      // through X509V3_EXT_i2d instead of handing over a bare IA5 string.
+      util::safe_ptr<GENERAL_NAMES, GENERAL_NAMES_free> names { sk_GENERAL_NAME_new_null() };
+      asn1_string_t san_value { ASN1_IA5STRING_new() };
+      if (names && san_value &&
+          ASN1_STRING_set(san_value.get(), cn.data(), static_cast<int>(cn.size())) == 1) {
+        auto *entry = GENERAL_NAME_new();
+        GENERAL_NAME_set0_value(entry, GEN_DNS, san_value.release());
+        sk_GENERAL_NAME_push(names.get(), entry);
+        if (auto *san = X509V3_EXT_i2d(NID_subject_alt_name, 0, names.get())) {
+          X509_add_ext(x509.get(), san, -1);
+          X509_EXTENSION_free(san);
+        }
+      }
+    }
+
     X509_sign(x509.get(), pkey.get(), EVP_sha256());
 
     return { pem(x509), pem(pkey) };

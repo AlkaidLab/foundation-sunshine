@@ -126,6 +126,16 @@ if(NOT TARGET Boost::format AND TARGET Boost::headers)
     target_link_libraries(Boost::format INTERFACE Boost::headers)
 endif()
 
+# Boost.Optional is header-only as well, and a CONFIG package only defines
+# Boost::optional when it was requested as a component. Upstream's
+# vdd_mode_list test links it directly, so provide the same header-only
+# fallback instead of making the dependency list carry a component nothing
+# else needs.
+if(NOT TARGET Boost::optional AND TARGET Boost::headers)
+    add_library(Boost::optional INTERFACE IMPORTED)
+    target_link_libraries(Boost::optional INTERFACE Boost::headers)
+endif()
+
 # Keep the historical Boost::boost spelling available to dependencies
 # while sharing the modern Boost::headers implementation.
 if(TARGET Boost::headers AND NOT TARGET Boost::boost)
