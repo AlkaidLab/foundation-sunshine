@@ -760,3 +760,795 @@ pace() {
   }
   S.last_end = now_s();
 }
+
+void
+present_frame() {
+  const double now = now_s();
+  tick(now);
+  render_frame();
+  const size_t signature = spec_signature();
+  if (signature != S.spec_sig) {
+    S.spec_sig = signature;
+    sync_controls();
+  }
+  const double before = S.last_end;
+  pace();
+  // Only frames that followed each other directly count: the gap after an idle stretch is not a dropped frame.
+  if (g_bench && before > 0 && now - before < 0.05) S.bench_interval_ms.push_back((S.last_end - before) * 1000.0);
+}
+
+void
+go(pg page) {
+  if (g_web) {
+    S.v.page = page;
+    return;
+  }
+  const pg previous = S.drawn_v.page;
+  S.v.page = page;
+  S.focus_visible = false;  // a new page starts with the ring hidden; Tab shows it
+  if (previous != page) begin_transition(previous, page);
+  S.scroll_target = S.v.scroll;
+  flush_now();
+  apply_page_focus();
+}
+
+void
+apply_page_focus() {
+  // Focus the primary action so the keyboard works at once; the ring itself appears on Tab.
+  for (int slot = 0; slot < 3; ++slot) {
+    if (IsWindowVisible(S.controls[slot]) && IsWindowEnabled(S.controls[slot])) {
+      SetFocus(S.controls[slot]);
+      return;
+    }
+  }
+}
+
+std::wstring
+component_list() {
+  // tile order: vdd, gamepad, usbip, vmouse, firewall, autostart, tools, then the desktop shortcut task
+  static const wchar_t *names[] = { L"vdd", L"gamepad", L"usbip", L"vmouse", L"firewall", L"autostart", L"tools" };
+  bool all = true;
+  for (int i = 0; i < kTileCount; ++i) all = all && S.v.tiles[i];
+  g_run.tasks = all ? L"" : (S.v.tiles[7] ? L"desktopicon" : L"none");
+  if (all) return {};
+  std::wstring list = L"application,assets,gui";
+  for (int i = 0; i < 7; ++i)
+    if (S.v.tiles[i]) list += std::wstring(L",") + names[i];
+  return list;
+}
+
+void
+begin_install() {
+  g_run.id = make_run_id();
+  g_run.directory = program_data() + L"\\" + kRunRoot + L"\\" + g_run.id;
+  g_run.events = g_run.directory + L"\\events.jsonl";
+  g_run.result = g_run.directory + L"\\install-result.json";
+  g_run.components = component_list();
+  // Authority: installer-ms-shellexecuteex-20261107 (SHELLEXECUTEINFO/runas)
+  // and installer-ms-application-manifests-20261107 (UAC elevation model).
+  // The elevated worker runs from a copy with a neutral name: the engine stops "sunshine.exe"
+  // by image name, and a package that is itself called Sunshine.exe must survive that.
+  wchar_t temp_dir[MAX_PATH + 2] {};
+  GetTempPathW(MAX_PATH, temp_dir);
+  g_run.worker_copy = std::wstring(temp_dir) + L"FoundationSunshine-setup-" + g_run.id + L".exe";
+  std::wstring worker_path = g_run.self;
+  if (CopyFileW(g_run.self.c_str(), g_run.worker_copy.c_str(), FALSE))
+    worker_path = g_run.worker_copy;
+  else
+    g_run.worker_copy.clear();
+  std::wstring parameters = L"--worker --run-id " + g_run.id + L" --shell-pid " + std::to_wstring(GetCurrentProcessId());
+  if (!g_run.components.empty()) parameters += L" --components " + g_run.components;
+  if (!g_run.tasks.empty()) parameters += L" --tasks " + g_run.tasks;
+  SHELLEXECUTEINFOW execute {};
+  execute.cbSize = sizeof(execute);
+  execute.fMask = SEE_MASK_NOCLOSEPROCESS;
+  execute.lpVerb = L"runas";
+  execute.hwnd = g_uac_owner;
+  execute.lpFile = worker_path.c_str();
+  execute.lpParameters = parameters.c_str();
+  execute.nShow = SW_HIDE;
+  S.v.uac_cancelled = false;
+  S.v.panel_failed = false;
+  S.v.opening = false;
+  S.v.finished = false;
+  for (auto &x : S.v.subs) x = { -1, sstate::pending };
+  S.v.last_detail = d_none;
+  if (!ShellExecuteExW(&execute)) {
+    if (GetLastError() == ERROR_CANCELLED) {
+      S.v.uac_cancelled = true;
+      go(pg::welcome);
+    }
+    else {
+      S.v.exit_code = static_cast<int>(GetLastError());
+      S.v.failure = fail_kind::generic;
+      go(pg::failed);
+    }
+    return;
+  }
+  S.worker = execute.hProcess;
+  S.events_size = 0;
+  go(pg::uac);
+  SetTimer(S.window, kTimer, 200, nullptr);  // the worker is polled five times a second; frames are paced separately
+}
+
+void
+finish_run(const std::string &result_json, DWORD fallback_code) {
+  std::string state = json_str(result_json, "state");
+  long code = json_int(result_json, "result_code", static_cast<long>(fallback_code));
+  if (result_json.empty()) {
+    state = "unknown";
+    code = static_cast<long>(fallback_code);
+  }
+  S.v.finished = true;
+  S.v.exit_code = static_cast<int>(code);
+  if (S.worker) {
+    CloseHandle(S.worker);
+    S.worker = nullptr;
+  }
+  if (state == "success" || state == "needs-reboot") S.v.webview2_missing = !webview2_runtime_present();
+  if (state == "success") {
+    // The success page waits for "Start your streaming journey"; nothing is opened on its own.
+    S.v.opening = false;
+    S.v.panel_failed = false;
+    go(pg::done);
+  }
+  else if (state == "needs-reboot") {
+    // A restart is optional on the done page (the weak "Restart PC" button); nothing is said about it. The first-run
+    // guide still resumes after a sign-in when a real Windows pending-restart signal was reported. The virtual
+    // display alone (reasons == "vdd") does not set the RunOnce entry.
+    if (S.v.reboot_reasons != "vdd") write_restart_resume();
+    S.v.opening = false;
+    S.v.panel_failed = false;
+    go(pg::done);
+  }
+  else if (state == "component-failed") {
+    S.v.failure = fail_kind::driver;
+    go(pg::failed);
+  }
+  else if (state == "service-failed") {
+    S.v.failure = fail_kind::service;
+    go(pg::failed);
+  }
+  else if (state == "cancelled") {
+    S.v.uac_cancelled = true;
+    go(pg::welcome);
+  }
+  else {
+    S.v.failure = fail_kind::generic;
+    go(pg::failed);
+  }
+}
+
+void
+poll_run() {
+  if (S.v.page != pg::uac && S.v.page != pg::installing) return;
+  const std::string events = read_file(g_run.events);
+  if (!events.empty()) {
+    const bool changed = events.size() != S.events_size;
+    S.events_size = events.size();
+    apply_events(S.v, events);
+    if (S.v.page == pg::uac) {
+      S.v.page = pg::installing;
+      begin_transition(S.drawn_v.page, pg::installing);
+    }
+    if (changed) S.dirty = true;
+  }
+  std::string result = read_file(g_run.result);
+  DWORD exit_code = 0;
+  bool exited = false;
+  if (result.empty() && S.worker && WaitForSingleObject(S.worker, 0) == WAIT_OBJECT_0) {
+    GetExitCodeProcess(S.worker, &exit_code);
+    exited = true;
+    result = read_file(g_run.result);  // the result may land just before the process ends
+  }
+  if (!result.empty() || exited) {
+    finish_run(result, exit_code);
+    return;
+  }
+}
+
+void
+click(int id) {
+  if (id >= kTileBase && id < kTileBase + kTileCount) {
+    if (component_min_build(id - kTileBase) > windows_build()) return;  // not offered on this Windows (os_limits)
+    S.v.tiles[id - kTileBase] = !S.v.tiles[id - kTileBase];
+    refresh();
+    return;
+  }
+  if (id == kSelectAll) {
+    bool all = true;
+    for (int i = 0; i < kTileCount; ++i) all = all && S.v.tiles[i];
+    for (int i = 0; i < kTileCount; ++i) S.v.tiles[i] = !all;
+    refresh();
+    return;
+  }
+  switch (S.v.page) {
+    case pg::welcome:
+      if (id == kBtnPrimary)
+        begin_install();
+      else if (id == kBtnSecond)
+        go(pg::components);
+      else if (id == kBtnThird)
+        DestroyWindow(S.window);
+      break;
+    case pg::components:
+      if (id == kBtnPrimary)
+        begin_install();
+      else if (id == kBtnSecond)
+        go(S.v.maintenance ? pg::maintenance : pg::welcome);
+      break;
+    case pg::maintenance:
+      if (id == kBtnPrimary)
+        begin_install();
+      else if (id == kBtnSecond)
+        go(pg::components);
+      else if (id == kBtnThird) {
+        if (S.uninstall_string.empty() || !installer_maintenance::start_uninstaller(S.uninstall_string))
+          return;
+        DestroyWindow(S.window);
+      }
+      break;
+    case pg::installing:
+      if (id == kBtnPrimary) ShowWindow(S.window, SW_MINIMIZE);
+      break;
+    case pg::failed:
+      if (id == kBtnPrimary) {
+        begin_install();
+      }
+      else if (id == kBtnSecond) {
+        copy_details();
+      }
+      else if (id == kBtnThird) {
+        ShellExecuteW(nullptr, L"open", g_run.directory.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+      }
+      break;
+    case pg::done:
+      if (id == kBtnPrimary && S.v.webview2_missing) {
+        ShellExecuteW(nullptr, L"open", L"https://localhost:47990", nullptr, nullptr, SW_SHOWNORMAL);
+        break;
+      }
+      if (id == kBtnPrimary) {
+        S.v.panel_failed = !launch_panel();
+        S.v.opening = !S.v.panel_failed;
+        S.opening_since = GetTickCount64();
+        go(pg::done);
+      }
+      else {
+        restart_windows();  // the weak button; Windows asks open apps to close, and the user can cancel there
+      }
+      break;
+    default:
+      break;
+  }
+}
+
+void
+draw_control(const DRAWITEMSTRUCT &item) {
+  // Buttons remain native child controls for keyboard and screen-reader exposure. Their
+  // pixels are composed by the parent Direct2D surface in render_frame().
+  (void) item;
+}
+
+// Scroll the components list so row `i` (and its group header) is fully in view.
+void
+reveal_row(const int i) {
+  const float top = S.row_y[i];
+  const float bottom = (i == 0 || i == 7 ? S.row_y[i] + 30 + S.row_h : S.row_y[i] + S.row_h);
+  if (top < S.scroll_target)
+    S.scroll_target = top;
+  else if (bottom > S.scroll_target + S.view_h)
+    S.scroll_target = bottom - S.view_h;
+  S.scroll_target = std::clamp(S.scroll_target, 0.f, S.max_scroll);
+}
+
+void
+focus_row(const int i) {
+  reveal_row(i);
+  refresh();
+  SetFocus(S.controls[3 + i]);
+}
+
+// Up/Down/Home/End move between rows (and scroll them into view); Page Up/Down scroll by a page.
+bool
+list_key(const WPARAM key) {
+  if (S.v.page != pg::components) return false;
+  const HWND focus = GetFocus();
+  int row = -1;
+  for (int i = 0; i < kTileCount; ++i)
+    if (S.controls[3 + i] == focus) row = i;
+  if (key == VK_PRIOR || key == VK_NEXT) {
+    S.scroll_target = std::clamp(S.scroll_target + (key == VK_NEXT ? 1 : -1) * (S.view_h - S.row_h), 0.f, S.max_scroll);
+    refresh();
+    return true;
+  }
+  if (row < 0 && key != VK_HOME && key != VK_END) return false;
+  int target = row;
+  if (key == VK_UP)
+    target = std::max(0, row - 1);
+  else if (key == VK_DOWN)
+    target = std::min(kTileCount - 1, row + 1);
+  else if (key == VK_HOME)
+    target = 0;
+  else if (key == VK_END)
+    target = kTileCount - 1;
+  else
+    return false;
+  focus_row(target);
+  return true;
+}
+
+// Keep the window on the screen at 150 % and 200 % scaling: never larger than the work area.
+float
+fitting_scale(const float wanted) {
+  RECT work {};
+  SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+  const float by_width = static_cast<float>(work.right - work.left) / (kW + 16);
+  const float by_height = static_cast<float>(work.bottom - work.top) / (kH + 48);
+  return std::max(1.f, std::min(wanted, std::min(by_width, by_height)));
+}
+
+void
+fit_window(HWND window, bool center) {
+  using adjust_fn = BOOL(WINAPI *)(LPRECT, DWORD, BOOL, DWORD, UINT);
+  static adjust_fn adjust = proc<adjust_fn>(L"user32.dll", "AdjustWindowRectExForDpi");
+  RECT rect { 0, 0, static_cast<LONG>(kW * S.scale), static_cast<LONG>(kH * S.scale) };
+  const DWORD style = static_cast<DWORD>(GetWindowLongPtrW(window, GWL_STYLE));
+  const DWORD ex = static_cast<DWORD>(GetWindowLongPtrW(window, GWL_EXSTYLE));
+  if (adjust)
+    adjust(&rect, style, FALSE, ex, static_cast<UINT>(S.scale * 96));
+  else
+    AdjustWindowRectEx(&rect, style, FALSE, ex);
+  const int w = rect.right - rect.left, h = rect.bottom - rect.top;
+  RECT work {};
+  SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+  RECT now {};
+  GetWindowRect(window, &now);
+  const int x = center ? work.left + (work.right - work.left - w) / 2 : now.left;
+  const int y = center ? work.top + (work.bottom - work.top - h) / 2 : now.top;
+  SetWindowPos(window, nullptr, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+WNDPROC g_button_proc = nullptr;
+
+// Owner-drawn rows: draw_control paints every pixel, so the BUTTON class erase (its light
+// background brush) is only a flash before WM_DRAWITEM. Skip it.
+LRESULT CALLBACK
+row_button_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+  if (message == WM_ERASEBKGND) return 1;
+  // The buttons are child windows for the keyboard and screen readers only; their pixels are the parent's Direct2D
+  // frame (the parent has no WS_CLIPCHILDREN, so it draws through them). A child that painted nothing over a clipped
+  // parent was a see-through hole: it must not paint at all, only validate.
+  if (message == WM_PAINT) {
+    PAINTSTRUCT paint {};
+    BeginPaint(window, &paint);
+    EndPaint(window, &paint);
+    return 0;
+  }
+  // The rows and buttons are child windows, so the pointer events arrive here and not at the page: they drive
+  // the hover and press state layers (animated by the frame loop, 120 ms / 80 ms).
+  const int slot = slot_of_id(GetDlgCtrlID(window));
+  switch (message) {
+    case WM_MOUSEMOVE:
+      if (slot >= 0 && S.hover_slot != slot) {
+        S.hover_slot = slot;
+        S.dirty = true;
+        TRACKMOUSEEVENT track { sizeof(track), TME_LEAVE, window, 0 };
+        TrackMouseEvent(&track);
+      }
+      break;
+    case WM_MOUSELEAVE:
+      if (S.hover_slot == slot) {
+        S.hover_slot = -1;
+        S.dirty = true;
+      }
+      break;
+    case WM_LBUTTONDOWN:
+    case WM_LBUTTONDBLCLK:
+      S.focus_visible = false;
+      S.dirty = true;
+      if (slot >= 0) {
+        S.press_slot = slot;
+        S.dirty = true;
+      }
+      break;
+    case WM_LBUTTONUP:
+    case WM_CAPTURECHANGED:
+      if (S.press_slot == slot) {
+        S.press_slot = -1;
+        S.dirty = true;
+      }
+      break;
+    case WM_ENABLE:
+      S.dirty = true;
+      break;
+  }
+  return CallWindowProcW(g_button_proc, window, message, wparam, lparam);
+}
+
+LRESULT CALLBACK
+window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+  switch (message) {
+    case WM_NCCALCSIZE:
+      // Keep the client area full size; the title area below is a composed control.
+      return 0;
+    case WM_NCHITTEST: {
+      POINT point { GET_X_LPARAM(lparam), GET_Y_LPARAM(lparam) };
+      ScreenToClient(window, &point);
+      RECT client {};
+      GetClientRect(window, &client);
+      if (point.y >= 0 && point.y < 40) {
+        if (point.x >= client.right - 80) return HTCLIENT;
+        return HTCAPTION;
+      }
+      return HTCLIENT;
+    }
+    case WM_LBUTTONDOWN:
+    case WM_RBUTTONDOWN:
+      S.focus_visible = false;
+      S.dirty = true;
+      break;
+    case WM_LBUTTONUP: {
+      RECT client {};
+      GetClientRect(window, &client);
+      const int x = GET_X_LPARAM(lparam), y = GET_Y_LPARAM(lparam);
+      if (y < 40 && x >= client.right - 80 && x < client.right - 40) {
+        ShowWindow(window, SW_MINIMIZE);
+        return 0;
+      }
+      if (y < 40 && x >= client.right - 40) {
+        SendMessageW(window, WM_CLOSE, 0, 0);
+        return 0;
+      }
+      break;
+    }
+    case WM_GETMINMAXINFO: {
+      auto *info = reinterpret_cast<MINMAXINFO *>(lparam);
+      RECT work {};
+      SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+      const int width = static_cast<int>(kW * S.scale), height = static_cast<int>(kH * S.scale);
+      info->ptMinTrackSize = { width, height };
+      info->ptMaxTrackSize = { width, height };
+      (void) work;
+      return 0;
+    }
+    case WM_SYSKEYDOWN:
+      if (wparam == VK_SPACE) {
+        HMENU menu = GetSystemMenu(window, FALSE);
+        POINT point {};
+        GetCursorPos(&point);
+        TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_TOPALIGN, point.x, point.y, 0, window, nullptr);
+        return 0;
+      }
+      break;
+    case WM_CREATE: {
+      S.window = window;
+      S.start_tick = GetTickCount64();
+      S.start_s = now_s();
+      for (int slot = 0; slot < kSlots; ++slot) {
+        const int id = slot_id(slot);
+        S.controls[slot] = CreateWindowW(L"BUTTON", L"", WS_CHILD | WS_TABSTOP | BS_OWNERDRAW, 0, 0, 10, 10, window,
+          reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), nullptr, nullptr);
+        const auto previous = reinterpret_cast<WNDPROC>(
+          SetWindowLongPtrW(S.controls[slot], GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(row_button_proc)));
+        if (!g_button_proc) g_button_proc = previous;
+      }
+      S.title_buttons[0] = CreateWindowW(L"BUTTON", L"Minimize", WS_CHILD | WS_TABSTOP | BS_OWNERDRAW, 0, 0, 10, 10, window,
+        reinterpret_cast<HMENU>(static_cast<INT_PTR>(kTitleMinimise)), nullptr, nullptr);
+      S.title_buttons[1] = CreateWindowW(L"BUTTON", L"Close", WS_CHILD | WS_TABSTOP | BS_OWNERDRAW, 0, 0, 10, 10, window,
+        reinterpret_cast<HMENU>(static_cast<INT_PTR>(kTitleClose)), nullptr, nullptr);
+      for (HWND title_button : S.title_buttons) {
+        const auto previous = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(title_button, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(row_button_proc)));
+        if (!g_button_proc) g_button_proc = previous;
+      }
+      return 0;
+    }
+    case WM_COMMAND:
+      if (HIWORD(wparam) == BN_CLICKED) {
+        if (LOWORD(wparam) == kTitleMinimise)
+          ShowWindow(window, SW_MINIMIZE);
+        else if (LOWORD(wparam) == kTitleClose)
+          SendMessageW(window, WM_CLOSE, 0, 0);
+        else
+          click(LOWORD(wparam));
+      }
+      return 0;
+    case WM_DRAWITEM:
+      draw_control(*reinterpret_cast<DRAWITEMSTRUCT *>(lparam));
+      return TRUE;
+    case WM_TIMER:
+      if (wparam == kTimer) {
+        poll_run();
+        if (S.v.page != pg::uac && S.v.page != pg::installing) KillTimer(window, kTimer);
+      }
+      return 0;
+    case WM_DPICHANGED: {
+      S.scale = fitting_scale(static_cast<float>(HIWORD(wparam)) / 96.f);
+      const RECT *suggested = reinterpret_cast<RECT *>(lparam);
+      SetWindowPos(window, nullptr, suggested->left, suggested->top, suggested->right - suggested->left,
+        suggested->bottom - suggested->top, SWP_NOZORDER | SWP_NOACTIVATE);
+      release_target();
+      S.tcache.clear();
+      refresh();
+      return 0;
+    }
+    case WM_MOUSEWHEEL:
+      if (S.v.page == pg::components && S.max_scroll > 0) {
+        // Preserve partial high-resolution wheel deltas and ease toward the target.
+        S.scroll_target -= static_cast<float>(GET_WHEEL_DELTA_WPARAM(wparam)) / WHEEL_DELTA * S.row_h;
+        S.scroll_target = std::clamp(S.scroll_target, 0.f, S.max_scroll);
+        refresh();
+        return 0;
+      }
+      return DefWindowProcW(window, message, wparam, lparam);
+    case WM_SETTINGCHANGE:
+    case WM_SYSCOLORCHANGE:
+    case WM_THEMECHANGED:
+      refresh_environment();
+      refresh();
+      return 0;
+    case WM_ERASEBKGND:
+      return 1;
+    case WM_PAINT: {
+      // The window is validated and one frame is requested; the frame loop draws it (a second draw here is what doubled the cost).
+      PAINTSTRUCT paint {};
+      BeginPaint(window, &paint);
+      EndPaint(window, &paint);
+      S.dirty = true;
+      return 0;
+    }
+    case WM_SIZE:
+    case WM_SHOWWINDOW: {
+      S.dirty = true;
+      return DefWindowProcW(window, message, wparam, lparam);
+    }
+    case WM_CLOSE:
+      // Once the elevated worker runs, the window can be hidden but not abandoned mid-install.
+      if (S.v.page == pg::uac || S.v.page == pg::installing) {
+        ShowWindow(window, SW_MINIMIZE);
+        return 0;
+      }
+      DestroyWindow(window);
+      return 0;
+    case WM_DESTROY:
+      KillTimer(window, kTimer);
+      release_target();
+      S.tcache.clear();
+      if (S.brand_source) {
+        S.brand_source->Release();
+        S.brand_source = nullptr;
+      }
+      if (S.wic) {
+        S.wic->Release();
+        S.wic = nullptr;
+      }
+      if (S.write) {
+        S.write->Release();
+        S.write = nullptr;
+      }
+      if (S.d2d) {
+        S.d2d->Release();
+        S.d2d = nullptr;
+      }
+      CoUninitialize();
+      PostQuitMessage(0);
+      return 0;
+    default:
+      return DefWindowProcW(window, message, wparam, lparam);
+  }
+  return DefWindowProcW(window, message, wparam, lparam);
+}
+
+WPARAM g_exit_code = 0;
+
+// One message: the list keys and the Return/Escape shortcuts first, then the normal dispatch.
+void
+handle_message(MSG &message) {
+  if (message.message == WM_KEYDOWN &&
+      (message.wParam == VK_TAB || message.wParam == VK_UP || message.wParam == VK_DOWN || message.wParam == VK_LEFT || message.wParam == VK_RIGHT ||
+        message.wParam == VK_HOME || message.wParam == VK_END || message.wParam == VK_PRIOR || message.wParam == VK_NEXT || message.wParam == VK_SPACE ||
+        message.wParam == VK_RETURN)) {
+    S.focus_visible = true;
+    S.dirty = true;
+  }
+  if (message.message == WM_KEYDOWN &&
+      (message.wParam == VK_UP || message.wParam == VK_DOWN || message.wParam == VK_HOME || message.wParam == VK_END ||
+        message.wParam == VK_PRIOR || message.wParam == VK_NEXT) &&
+      list_key(message.wParam)) {
+    return;
+  }
+  if (message.message == WM_KEYDOWN && (message.wParam == VK_RETURN || message.wParam == VK_ESCAPE)) {
+    if (message.wParam == VK_RETURN) {
+      const int id = GetDlgCtrlID(message.hwnd);
+      const bool ours = GetParent(message.hwnd) == S.window && id != 0;
+      if (ours && IsWindowEnabled(message.hwnd))
+        click(id);
+      else
+        click(kBtnPrimary);
+    }
+    else {
+      switch (S.v.page) {
+        case pg::welcome:
+          click(kBtnThird);
+          break;
+        case pg::components:
+          click(kBtnSecond);
+          break;
+        case pg::done:
+          DestroyWindow(S.window);  // Escape closes the window; it never restarts the PC
+          break;
+        default:
+          break;
+      }
+    }
+    return;
+  }
+  if (IsDialogMessageW(S.window, &message)) return;
+  TranslateMessage(&message);
+  DispatchMessageW(&message);
+}
+
+int
+bench_main();
+
+int
+shell_main() {
+  using ctx_fn = BOOL(WINAPI *)(HANDLE);
+  static ctx_fn set_dpi = proc<ctx_fn>(L"user32.dll", "SetProcessDpiAwarenessContext");
+  if (set_dpi) set_dpi(reinterpret_cast<HANDLE>(-4));  // per-monitor v2
+  {
+    // 1 ms timer resolution: the pacing fallback sleeps, and a default 15.6 ms tick would turn a 15 ms sleep into 31 ms.
+    using period_fn = UINT(WINAPI *)(UINT);
+    static period_fn begin_period = proc<period_fn>(L"winmm.dll", "timeBeginPeriod");
+    if (begin_period) begin_period(1);
+  }
+  CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+  D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &S.d2d);
+  DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), reinterpret_cast<IUnknown **>(&S.write));
+  CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&S.wic));
+  g_run.self = module_path();
+  load_brand();
+  if (!installer_maintenance::populate_view(S.v, &S.uninstall_string)) {
+    const std::wstring dir = install_dir();
+    S.v.upgrade = !dir.empty() && GetFileAttributesW((dir + L"\\sunshine.exe").c_str()) != INVALID_FILE_ATTRIBUTES;
+  }
+  apply_os_limits(S.v);
+  refresh_environment();
+  WNDCLASSW window_class {};
+  window_class.lpfnWndProc = window_proc;
+  window_class.hInstance = GetModuleHandleW(nullptr);
+  window_class.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+  window_class.lpszClassName = kWindowClass;
+  RegisterClassW(&window_class);
+  HWND window = CreateWindowExW(WS_EX_APPWINDOW, kWindowClass, kWindowTitle,
+    WS_OVERLAPPED | WS_SYSMENU | WS_MINIMIZEBOX, CW_USEDEFAULT, CW_USEDEFAULT, 800, 600,
+    nullptr, nullptr, window_class.hInstance, nullptr);
+  if (!window) return 1;
+  S.scale = fitting_scale(window_scale(window));
+  refresh_environment();
+  fit_window(window, true);
+  if (g_bench) {
+    SetWindowPos(window, nullptr, -32000, -32000, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    ShowWindow(window, SW_SHOWNOACTIVATE);
+  }
+  flush_now();
+  {
+    // The display's refresh interval, for the pacing fallback.
+    using timing_fn = HRESULT(WINAPI *)(HWND, DWM_TIMING_INFO *);
+    static timing_fn get_timing = proc<timing_fn>(L"dwmapi.dll", "DwmGetCompositionTimingInfo");
+    DWM_TIMING_INFO info {};
+    info.cbSize = sizeof(info);
+    if (get_timing && SUCCEEDED(get_timing(nullptr, &info)) && info.rateRefresh.uiNumerator > 0 && info.rateRefresh.uiDenominator > 0)
+      S.refresh_s = static_cast<double>(info.rateRefresh.uiDenominator) / static_cast<double>(info.rateRefresh.uiNumerator);
+    if (S.refresh_s < 1.0 / 400.0 || S.refresh_s > 1.0 / 20.0) S.refresh_s = 1.0 / 60.0;
+  }
+  if (!g_bench) ShowWindow(window, SW_SHOW);
+  UpdateWindow(window);
+  apply_page_focus();
+  if (!g_selftest_out.empty()) return selftest_window(window);
+  if (g_bench) {
+    const int result = bench_main();
+    DestroyWindow(window);
+    return result;
+  }
+  KillTimer(window, kTimer);
+  // The frame loop. Idle: GetMessage blocks, no wakeups at all. While anything moves (a page change, a hover
+  // layer, a scroll glide, the progress spinner) it draws one frame per display refresh: EndDraw of the window
+  // target returns at the vertical blank, and pace() covers the cases where it does not. Messages are always
+  // served first, so input is never starved by drawing.
+  for (;;) {
+    MSG message {};
+    if (frame_wanted()) {
+      bool quit = false;
+      while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+        if (message.message == WM_QUIT) {
+          quit = true;
+          break;
+        }
+        handle_message(message);
+      }
+      if (quit) {
+        g_exit_code = message.wParam;
+        break;
+      }
+      if (frame_wanted()) present_frame();
+    }
+    else {
+      const BOOL got = GetMessageW(&message, nullptr, 0, 0);
+      if (got <= 0) {
+        g_exit_code = message.wParam;
+        break;
+      }
+      handle_message(message);
+      if (S.dirty) present_frame();
+    }
+  }
+  if (S.worker) CloseHandle(S.worker);
+  if (!g_run.worker_copy.empty()) DeleteFileW(g_run.worker_copy.c_str());
+  return static_cast<int>(g_exit_code);
+}
+
+void
+pump_bench_for(DWORD milliseconds) {
+  // The same loop as the window's, for a fixed time: messages first, then a paced frame when something moves.
+  const ULONGLONG until = GetTickCount64() + milliseconds;
+  while (GetTickCount64() < until) {
+    MSG message {};
+    while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) {
+      if (message.message == WM_QUIT) return;
+      handle_message(message);
+    }
+    if (frame_wanted())
+      present_frame();
+    else
+      Sleep(2);
+  }
+}
+
+int
+bench_main() {
+  const pg pages[] = { pg::welcome, pg::components, pg::uac, pg::installing, pg::failed, pg::done };
+  for (const pg page : pages) {
+    if (page == pg::installing) S.v.last_detail = d_files;
+    go(page);
+    pump_bench_for(360);
+  }
+  go(pg::components);
+  S.scroll_target = S.max_scroll;
+  pump_bench_for(700);
+  S.scroll_target = 0;
+  pump_bench_for(700);
+  for (int i = 0; i < kTileCount; ++i) {
+    S.hover_slot = 3 + i;
+    S.dirty = true;
+    pump_bench_for(160);
+  }
+  S.hover_slot = -1;
+  S.dirty = true;
+  pump_bench_for(160);
+  const auto stats = [](std::vector<double> v, double refresh_ms, const char *prefix) {
+    std::sort(v.begin(), v.end());
+    const auto pct = [&](double p) { return v.empty() ? 0.0 : v[static_cast<size_t>(p * (v.size() - 1))]; };
+    size_t slow = 0;
+    for (const double x : v)
+      if (x > refresh_ms * 1.5) ++slow;
+    const std::string k(prefix);
+    return "\"" + k + "frames\":" + std::to_string(v.size()) + ",\"" + k + "fps\":" + std::to_string(v.empty() ? 0.0 : 1000.0 / pct(0.5)) + ",\"" + k +
+           "p50_ms\":" + std::to_string(pct(0.50)) + ",\"" + k + "p95_ms\":" + std::to_string(pct(0.95)) + ",\"" + k + "p99_ms\":" +
+           std::to_string(pct(0.99)) + ",\"" + k + "max_ms\":" + std::to_string(v.empty() ? 0.0 : v.back()) + ",\"" + k + "over_1_5x_refresh\":" + std::to_string(slow);
+  };
+  FILETIME creation {}, exit {}, kernel {}, user {};
+  GetProcessTimes(GetCurrentProcess(), &creation, &exit, &kernel, &user);
+  ULARGE_INTEGER kernel_ticks {}, user_ticks {};
+  kernel_ticks.LowPart = kernel.dwLowDateTime;
+  kernel_ticks.HighPart = kernel.dwHighDateTime;
+  user_ticks.LowPart = user.dwLowDateTime;
+  user_ticks.HighPart = user.dwHighDateTime;
+  const double cpu_ms = static_cast<double>(kernel_ticks.QuadPart + user_ticks.QuadPart) / 10000.0;
+  const double refresh_ms = S.refresh_s * 1000.0;
+  // "render_*": cost of drawing and presenting one frame. "interval_*": time between two presented frames (what the eye sees).
+  const std::string json = "{" + stats(S.bench_frame_ms, refresh_ms, "render_") + "," + stats(S.bench_interval_ms, refresh_ms, "interval_") +
+                           ",\"refresh_ms\":" + std::to_string(refresh_ms) + ",\"target_is_window\":" + (S.bench_bitmap ? "false" : "true") +
+                           ",\"cpu_ms\":" + std::to_string(cpu_ms) + "}\n";
+  const std::wstring output = g_bench_output.empty() ? L"installer-bench.json" : g_bench_output;
+  return write_text_atomic(output, json) ? 0 : 4;
+}
