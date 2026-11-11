@@ -1,0 +1,293 @@
+/*
+  Web UI shell on the shared Material 3 Expressive package: the navigation is a fixed rail (bottom bar when narrow),
+  every page's content sits in a centred column, and the remaining page-specific content gets its type,
+  headings and spacing from the same tokens (colour, shape and control skins come from foundation-ui/all.css).
+*/
+html.m-web-shell body { margin: 0; background: var(--m-page); color: var(--md-sys-color-on-surface); font: var(--m-body-large); height: 100vh; height: 100dvh; overflow: hidden; }
+html.m-web-shell body::after { display: none; }
+html[data-sunshine-gui='true'] body { padding: 0 !important; background: var(--m-page); color: var(--md-sys-color-on-surface); font: var(--m-body-large); }
+.m-web { height: 100vh; height: 100dvh; }
+.m-web .m-scene .m-app { min-height: 0; background: transparent; }
+html.m-has-wallpaper .m-web .m-scene, html.m-has-wallpaper .m-web .m-page__bar { background: transparent; }
+.m-web-utils { display: flex; align-items: center; justify-content: center; gap: 4px; }
+.m-web-utils__cell { position: relative; display: inline-flex; }
+.m-web-utils--rail { flex-direction: column; padding: 4px 0 8px; }
+.m-scene--expanded .m-web-utils--rail { flex-direction: row; }
+/* In bottom bar mode there is no rail: the account button (theme and account in one menu) sits in the caption bar. */
+.m-web-utils--bar { display: flex; }
+/* the caption bar of a phone: the sizes of its buttons (four icons of one size, touching, no empty slot for the status bell, the connect button a plain icon) are m3e's layout.css, the same in the control panel;
+   the Web UI keeps its own grid (brand, search, actions) and the width of its account cell */
+@media (max-width: 599.98px) {
+  .m-web .web-caption { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .m-web .web-caption__brand { min-width: 0; overflow: hidden; padding-inline-start: 12px; }
+  .web-caption__search { padding: 0; }
+  .web-caption .m-web-utils__cell { width: 44px; }
+}
+
+/* One column for every page, as wide as the pane up to its maximum and centred beyond it (the same column as the page title and content of the pages); wide pages (tables, editors) get a wider one. */
+.home-page > .container, .home-page > .container-fluid, .clients-content, .pin-page .client-page-content, .password-page > .container, .troubleshooting-page > .container,
+.ds5-page, .apps-page > .container-fluid, .page-config > .container, .page-config > .container-fluid, .page-config > form {
+  width: min(100%, 1024px); max-width: 1024px; margin-inline: auto; padding-inline: 32px; padding-top: 8px; padding-bottom: 64px;
+}
+.apps-page > .container-fluid, .page-config > .container, .page-config > .container-fluid, .clients-content { width: min(100%, 1104px); max-width: 1104px; }
+@media (max-width: 599.98px) { .home-page > .container, .clients-content, .pin-page .client-page-content, .password-page > .container, .troubleshooting-page > .container, .ds5-page, .apps-page > .container-fluid { padding-inline: 12px; padding-top: 48px; } }
+
+h1, h2, h3, h4, h5, h6, .page-title, .clients-page-title { color: var(--md-sys-color-on-surface) !important; font-family: var(--md-ref-typeface-brand); letter-spacing: 0; }
+.page-title, .clients-page-title { font: var(--m-display-small-emphasized) !important; margin-bottom: 8px; }
+h1 { font-size: 2.25rem; font-weight: 500; }
+h2 { font: var(--m-headline-small-emphasized); } h3 { font: var(--m-title-large-emphasized); }
+.text-muted, .page-subtitle, .page-lead { color: var(--md-sys-color-on-surface-variant) !important; }
+a { color: var(--md-sys-color-primary-text); }
+::selection { background: color-mix(in srgb, var(--md-sys-color-primary) 28%, transparent); }
+// scrollbars are drawn by foundation-ui css/scrollbar.css (thin, wider under the pointer, persistent where something scrolls)
+
+/* The wallpaper is drawn by foundation-ui (the .m-wp layers and the scrim of html); the page only keeps its own surfaces transparent. */
+html.m-has-wallpaper body { background: transparent; }
+
+/* The DualSense preview widgets (colour well, trigger and curve previews) read these names. */
+.ds5-b {
+  --ds5-text: var(--md-sys-color-on-surface); --ds5-muted: var(--md-sys-color-on-surface-variant); --ds5-card-bg: var(--m-card);
+  --ds5-border: var(--md-sys-color-outline-variant); --ds5-border-strong: var(--md-sys-color-outline);
+  --ds5-sep: color-mix(in srgb, var(--md-sys-color-outline-variant) 65%, transparent);
+  --ds5-hover: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); --ds5-sunken: color-mix(in srgb, var(--md-sys-color-on-surface) 5%, transparent);
+  --ds5-fill: var(--md-sys-color-primary); --ds5-track: var(--md-sys-color-surface-container-highest); --ds5-thumb: var(--md-sys-color-on-primary); --ds5-thumb-on: var(--md-sys-color-on-primary);
+  --ds5-focus: var(--md-sys-color-primary); --ds5-input-bg: transparent; --ds5-segment-bg: var(--md-sys-color-surface-container-highest);
+  --ds5-segment-on-bg: var(--md-sys-color-primary); --ds5-segment-on-text: var(--md-sys-color-on-primary); --ds5-segment-on-shadow: none;
+  --ds5-radius: 28px; --ds5-control-radius: 12px;
+}
+.ds5-b .ds5-preview { margin-top: 8px; padding: 16px; border-radius: 28px; background: var(--m-card); }
+html[data-sunshine-gui='true'] body::after { display: none; }
+
+/* The Web UI pages read the old --ui-* names; they now resolve to the shared Material tokens (one source of colour). */
+html[data-bs-theme] {
+  --ui-page-bg: var(--md-sys-color-surface); --ui-overlay: color-mix(in srgb, var(--md-sys-color-scrim) 40%, transparent);
+  --ui-nav-bg: var(--md-sys-color-surface-container-low); --ui-surface: var(--m-card); --ui-surface-strong: var(--md-sys-color-surface-container-high);
+  --ui-surface-hover: var(--md-sys-color-surface-container-highest); --ui-border: var(--md-sys-color-outline-variant); --ui-border-strong: var(--md-sys-color-outline);
+  --ui-text-primary: var(--md-sys-color-on-surface); --ui-text-secondary: var(--md-sys-color-on-surface-variant);
+  --ui-text-muted: color-mix(in srgb, var(--md-sys-color-on-surface-variant) 85%, transparent);
+  --ui-accent: var(--md-sys-color-primary); --ui-accent-text: var(--md-sys-color-primary); --ui-accent-contrast: var(--md-sys-color-on-primary);
+  --ui-accent-soft: color-mix(in srgb, var(--md-sys-color-primary-container) 55%, transparent); --ui-accent-secondary: var(--md-sys-color-secondary);
+  --ui-success: var(--md-sys-color-success); --ui-success-text: var(--md-sys-color-success); --ui-success-soft: var(--md-sys-color-success-container); --ui-success-border: color-mix(in srgb, var(--md-sys-color-success) 35%, transparent);
+  --ui-warning: var(--md-sys-color-warning); --ui-warning-text: var(--md-sys-color-warning); --ui-warning-soft: var(--md-sys-color-warning-container); --ui-warning-border: color-mix(in srgb, var(--md-sys-color-warning) 38%, transparent);
+  --ui-danger: var(--md-sys-color-error); --ui-danger-text: var(--md-sys-color-error); --ui-danger-soft: var(--md-sys-color-error-container); --ui-danger-border: color-mix(in srgb, var(--md-sys-color-error) 35%, transparent);
+  --ui-info: var(--md-sys-color-tertiary); --ui-info-text: var(--md-sys-color-tertiary); --ui-info-soft: var(--md-sys-color-tertiary-container); --ui-info-border: color-mix(in srgb, var(--md-sys-color-tertiary) 35%, transparent);
+  --ui-radius-sm: 12px; --ui-radius-md: 20px; --ui-radius-lg: 28px;
+  --ui-shadow-sm: 0 1px 2px color-mix(in srgb, var(--md-sys-color-shadow) 14%, transparent); --ui-shadow-md: 0 8px 24px color-mix(in srgb, var(--md-sys-color-shadow) 16%, transparent); --ui-shadow-lg: 0 16px 40px color-mix(in srgb, var(--md-sys-color-shadow) 22%, transparent);
+}
+
+/* ---- Home tiles ---- */
+.home-cell { display: contents; }
+.home-cell > .m-tile { height: 100%; }
+.home-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-meta { font: var(--m-body-medium); opacity: .86; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-tagline { margin: 4px 0 0; font: var(--m-body-medium); opacity: .75; }
+.home-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-empty { display: flex; align-items: center; gap: 8px; font: var(--m-body-medium); opacity: .6; }
+.home-empty .m-icon { font-size: 22px; }
+.home-dev { flex: none; width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%; font-size: 20px; background: color-mix(in srgb, currentColor 12%, transparent); }
+.home-dev--on { background: var(--md-sys-color-success); color: var(--md-sys-color-on-success); }
+.home-dev--off { opacity: .45; }
+.home-devs { gap: 6px; }
+.home-more { align-self: center; font: var(--m-label-large); opacity: .75; }
+.home-who { display: flex; flex-direction: column; min-width: 0; }
+.home-who b { font: var(--m-title-medium-emphasized); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-who span { font: var(--m-body-medium); opacity: .8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; font: var(--m-label-large); }
+.home-counts { gap: 20px; align-items: flex-end; }
+.home-counts .m-num { font-size: 32px; }
+.home-last { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-glyph { font-size: 40px; align-self: flex-start; }
+.home-glyphs { display: flex; gap: 10px; opacity: .85; } .home-glyphs .m-icon { font-size: 24px; }
+.m-sheet-stack { display: flex; flex-direction: column; gap: 12px; }
+.m-promos { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+.home-cookie { position: absolute; right: 24px; top: 64px; width: 120px; height: 120px; display: grid; place-items: center; clip-path: var(--m-shape-cookie); background: color-mix(in srgb, currentColor 13%, transparent); } .home-cookie .m-icon { font-size: 56px; }
+.home-cookie--on { background: var(--md-sys-color-success); color: var(--md-sys-color-on-success); }
+.home-empty--big { flex: 1; flex-direction: column; justify-content: center; text-align: center; gap: 10px; } .home-empty--big .m-icon { font-size: 56px; }
+
+/* ---- Clients ---- */
+.pin-pairing { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 8px; }
+@media (max-width: 599.98px) { .pin-pairing { grid-template-columns: 1fr; } }
+.pin-filter { display: flex; flex-direction: column; gap: 12px; margin-bottom: 12px; }
+.pin-filter__kind { overflow-x: auto; scrollbar-width: none; }
+.pin-group + .pin-group { margin-top: 16px; }
+.pin-group__title { display: flex; align-items: baseline; gap: 8px; margin: 0 0 8px; padding: 0 4px; font: var(--m-title-small); color: var(--md-sys-color-primary-text); }
+.pin-count { font: var(--m-label-medium); color: color-mix(in srgb, var(--md-sys-color-on-surface-variant) 55%, var(--md-sys-color-on-surface)); }
+.pin-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 6px 12px; }
+.pin-row { border-radius: 20px; background: var(--m-card); min-height: 0; }
+.pin-row .m-split-item__main { padding: 8px 12px; gap: 12px; }
+.pin-row .m-split-item__gear { width: 48px; }
+.pin-row__main { cursor: default; } .pin-row__main:hover { background: transparent; }
+.pin-row__live { color: var(--md-sys-color-success); }
+.pin-row__switch { flex: none; align-self: center; margin: 0 12px 0 4px; }
+.pin-pair { display: flex; flex-direction: column; gap: 20px; }
+.pin-pair__pin, .pin-pair__qr { display: flex; flex-direction: column; align-items: center; gap: 20px; }
+.pin-pair__hint { margin: 0; text-align: center; font: var(--m-body-medium); color: var(--md-sys-color-on-surface-variant); }
+.pin-pair__name { width: 100%; }
+.pin-pair__error { margin: 0; text-align: center; font: var(--m-body-medium); color: var(--md-sys-color-error); }
+.pin-pair__qrpin { margin: 0; } .pin-pair__qrpin b { font: var(--m-title-large-emphasized); letter-spacing: .2em; margin-left: 8px; }
+.pair-qr-image { width: 240px; max-width: 100%; height: auto; padding: 8px; border-radius: 20px; background: #fff; }
+.pin-pill { flex: 1; min-height: 56px; border-radius: 28px; }
+.pin-device { display: flex; flex-direction: column; gap: 16px; }
+.pin-device__head { display: flex; align-items: center; gap: 12px; } .pin-device__head .m-field { flex: 1; }
+
+/* ---- Downloads ---- */
+.dl-page .m-page { --m-column: min(100%, 1040px); }
+.dl-page--all .m-page { --m-column: min(100%, 1200px); }
+.dl-links { display: flex; flex-wrap: wrap; gap: 8px; }
+.dl-links--project { padding: 0 4px; }
+.dl-grid--partners { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+.dl-partner { cursor: default; } .dl-partner:hover { background: var(--m-card); transform: none; }
+.dl-partner .dl-links { margin-top: 10px; }
+.dl-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
+.dl-card { position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 8px; padding: 16px 16px 12px; border-radius: 28px; background: var(--m-card); color: var(--md-sys-color-on-surface); text-align: left; transition: transform var(--m-spring-fast-spatial-duration) var(--m-spring-fast-spatial), background-color 150ms linear; }
+.dl-card__main { all: unset; box-sizing: border-box; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; cursor: pointer; border-radius: 16px; } .dl-card__main:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 4px; }
+.dl-card:hover { background: color-mix(in srgb, var(--md-sys-color-primary) 8%, var(--m-card)); transform: translateY(-2px); }
+.dl-card:active { border-radius: 20px; }
+.dl-card:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 2px; }
+.dl-card__mark { width: 64px; height: 64px; display: grid; place-items: center; margin-bottom: 10px; clip-path: var(--m-shape-cookie); background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); font-size: 28px; }
+.dl-card__name { font: var(--m-title-medium-emphasized); }
+.dl-card__product { font: var(--m-body-medium); color: var(--md-sys-color-on-surface-variant); }
+/* the box reserves room for the tags of every card of a row (tagsReserve, min-height); the tags keep their own height and sit at the top: a wrapped flex line is stretched to fill the box otherwise, and a one-line tag (Windows · x64 / ARM64) became a tall pill */
+.dl-card__tags { display: flex; flex-wrap: wrap; align-items: flex-start; align-content: flex-start; gap: 6px; min-height: 22px; margin-top: 6px; }
+.dl-tag { padding: 2px 10px; border-radius: 9999px; font: var(--m-label-small); background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface-variant); }
+.dl-card__tags { max-width: 100%; }
+/* a system tag is one line (the macOS one reads "macOS · Apple Silicon / Intel"); one that is still too long for the card wraps inside its chip instead of being cut with an ellipsis; the chip is a 12 px rounded box so a wrapped one is not a stadium */
+.dl-card__tags .dl-tag { max-width: 100%; min-width: 0; overflow-wrap: anywhere; border-radius: 12px; }
+.dl-tag--new { background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
+.dl-step { font: var(--m-title-medium-emphasized); }
+.dl-features { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.dl-features li { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 9999px; background: var(--md-sys-color-surface-container-highest); font: var(--m-label-large); }
+
+/* ---- Applications ---- */
+.apps-tools { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+.apps-filter { flex: 1; min-width: 0; height: 48px; }
+.apps-filter input { font-size: 16px; }
+.apps-scan { display: flex; flex-direction: column; gap: 8px; padding: 12px 16px; margin-bottom: 12px; border-radius: 20px; background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
+.apps-scan__copy { display: flex; align-items: center; gap: 8px; font: var(--m-label-large); }
+.apps-scan__copy small { opacity: .75; } .apps-scan__copy b { margin-left: auto; font-variant-numeric: tabular-nums; }
+.apps-batch { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin-bottom: 12px; padding: 8px 12px 8px 20px; border-radius: 28px; background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+.apps-batch__count { display: inline-flex; align-items: center; gap: 8px; margin-right: auto; font: var(--m-label-large); }
+.apps-tag { display: inline-flex; align-items: center; gap: 2px; min-width: 24px; height: 24px; padding: 0 5px; justify-content: center; border-radius: 12px; font-style: normal; font-size: 16px; background: color-mix(in srgb, var(--md-sys-color-surface) 80%, transparent); color: var(--md-sys-color-on-surface-variant); }
+.apps-tag b { font: var(--m-label-small); white-space: nowrap; }
+.apps-row.is-selected { background: var(--md-sys-color-secondary-container); }
+.apps-row.is-over { outline: 2px dashed var(--md-sys-color-primary); outline-offset: -2px; }
+.apps-row__main { min-width: 0; }
+.apps-row__main:focus-visible, .apps-row .m-split-item__gear:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: -2px; }
+.apps-row__art { flex: none; width: 48px; height: 48px; display: grid; place-items: center; overflow: hidden; border-radius: 12px; background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); font-size: 24px; }
+.apps-row__art img { width: 100%; height: 100%; object-fit: cover; }
+.apps-row__cmd { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 12px; }
+.apps-row__tags { display: inline-flex; gap: 4px; flex: none; }
+.apps-row__tags .apps-tag { background: var(--md-sys-color-surface-container-highest); }
+.apps-row__check { flex: none; font-size: 24px; color: var(--md-sys-color-primary-text); }
+.m-cover__text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 11px; }
+/* foundation-ui uses a live blur for selection checks; embedded WebView2 app cards must stay self-painted. */
+.apps-page .m-cover__check { backdrop-filter: none; }
+.apps-pill { flex: 1; min-height: 56px; border-radius: 28px; }
+.apps-sheet { display: flex; flex-direction: column; gap: 12px; }
+.apps-sheet__lead { margin: 0; font: var(--m-body-medium); color: var(--md-sys-color-on-surface-variant); }
+.apps-sheet__eg { font: var(--m-label-large); }
+.apps-code { padding: 2px 8px; border-radius: 8px; background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); font-size: 12px; }
+.apps-pre { margin: 0; padding: 12px 16px; overflow: auto; border-radius: 16px; background: var(--md-sys-color-surface-container-highest); font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+.app-sheet.m-sheet--end, .cover-sheet.m-sheet--end, .scan-sheet.m-sheet--end { width: min(720px, 100vw); }
+.cover-sheet.m-sheet--end { width: min(640px, 100vw); }
+@media (max-width: 599.98px) { .app-sheet.m-sheet--end, .cover-sheet.m-sheet--end, .scan-sheet.m-sheet--end { width: 100%; } }
+.apps-editor { display: flex; flex-direction: column; gap: 8px; }
+.apps-pathrow { display: flex; align-items: center; gap: 4px; }
+.apps-pathrow .m-field { flex: 1; }
+.apps-examples { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-height: 0; min-width: 0; padding-block: 8px; }
+.apps-examples__head { display: inline-flex; align-items: center; gap: 4px; font: var(--m-label-medium); color: var(--md-sys-color-on-surface-variant); }
+.apps-examples__tags { display: flex; flex-wrap: wrap; gap: 6px; max-width: 100%; min-width: 0; }
+.cmd-tag { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 9999px; background: var(--md-sys-color-surface-container-highest); font-size: 11px; max-width: 100%; }
+.cmd-tag code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--md-sys-color-primary-text); }
+.cmd-tag-desc { white-space: nowrap; color: var(--md-sys-color-on-surface-variant); }
+.apps-status { display: inline-flex; align-items: center; gap: 6px; margin-right: auto; font: var(--m-label-medium); color: var(--md-sys-color-success); }
+.apps-status.is-bad { color: var(--md-sys-color-warning); }
+.apps-status .m-icon { font-size: 18px; flex: none; }
+.m-sheet__actions .apps-status { min-width: 0; }
+.cmd-table .m-icon-btn { width: 32px; height: 32px; }
+
+/* ---- Configuration ---- */
+.cfg-hit { border-radius: inherit; }
+.cfg-tags { display: flex; flex-direction: column; gap: 12px; padding: 12px 16px; border-radius: 28px; background: var(--m-card); }
+.cfg-tags__list { display: flex; flex-wrap: wrap; gap: 8px; }
+.cfg-tags__empty { margin: 0; font: var(--m-body-medium); color: var(--md-sys-color-on-surface-variant); }
+.cfg-tag { display: inline-flex; align-items: center; gap: 6px; padding: 4px 4px 4px 14px; border-radius: 9999px; font: var(--m-label-large); background: var(--md-sys-color-secondary-container); color: var(--md-sys-color-on-secondary-container); }
+.cfg-tag--alt { background: var(--md-sys-color-tertiary-container); color: var(--md-sys-color-on-tertiary-container); }
+.cfg-tag__text { font-variant-numeric: tabular-nums; }
+.cfg-tag__remove { width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: 50%; background: transparent; color: inherit; font-size: 18px; cursor: pointer; }
+.cfg-tag__remove:hover { background: color-mix(in srgb, currentColor 14%, transparent); }
+.cfg-add { display: flex; align-items: center; gap: 8px; max-width: 360px; }
+.cfg-add .m-field { flex: 1; }
+.cfg-legend { display: block; margin: 0 0 8px; padding: 0 16px; font: var(--m-title-small); color: var(--md-sys-color-primary-text); }
+.tag-fade-enter-active, .tag-fade-leave-active { transition: transform var(--m-spring-fast-spatial-duration) var(--m-spring-fast-spatial), opacity 150ms linear; }
+.tag-fade-enter-from, .tag-fade-leave-to { opacity: 0; transform: scale(.8); }
+.m-banner code, .m-footer code, .m-footer a { overflow-wrap: anywhere; }
+.m-footer code, .m-banner code, .m-item__text code { color: inherit; background: color-mix(in srgb, currentColor 10%, transparent); padding: 1px 6px; border-radius: 6px; font-size: .92em; }
+
+.pin-pair__wait { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 4px 0 8px; font: var(--m-label-large); color: var(--md-sys-color-on-surface-variant); }
+
+.m-chipgroup { display: flex; gap: 2px; margin: 0 0 8px; } .m-chipgroup__chip { padding: 8px 16px; font: var(--m-label-large); background: var(--md-sys-color-surface-container-high); color: var(--md-sys-color-on-surface-variant); border-radius: 6px; } .m-chipgroup__chip:first-child { border-radius: 20px 6px 6px 20px; } .m-chipgroup__chip:last-child { border-radius: 6px 20px 20px 6px; } .m-chipgroup__chip.is-on { background: var(--md-sys-color-primary-container); color: var(--md-sys-color-on-primary-container); }
+.dl-types { margin-bottom: 8px; }
+
+/* ---- applications: the tools row, the add button, the rows, the editor in sections ---- */
+.apps-tools { flex-wrap: wrap; row-gap: 8px; } .apps-filter { flex: 1 1 260px; }
+// the page's two buttons are in the dock of the scene (MSceneFab), which keeps them at the bottom end of the content pane
+.apps-page { padding-bottom: 24px; }
+.scan-result__select { position: sticky; top: 0; z-index: 2; padding: 4px 0; background: var(--md-sys-color-surface-container-low, var(--md-sys-color-surface)); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font: var(--m-label-large); } .scan-result__select > span { display: inline-flex; align-items: center; gap: 8px; margin-right: auto; } .scan-result__select .m-icon { font-size: 20px; }
+.scan-row__check { all: unset; box-sizing: border-box; flex: none; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; cursor: pointer; color: var(--md-sys-color-on-surface-variant); } .scan-row__check:hover { background: color-mix(in srgb, var(--md-sys-color-on-surface) 8%, transparent); } .scan-row__check:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 2px; } .scan-row.is-picked .scan-row__check { color: var(--md-sys-color-primary-text); }
+.apps-live { display: inline-flex; align-items: center; gap: 6px; margin-left: 10px; height: 20px; padding: 0 9px 0 7px; border-radius: 10px; background: var(--md-sys-color-primary); color: var(--md-sys-color-on-primary); font: var(--m-label-small); font-style: normal; vertical-align: middle; } .apps-live b { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.apps-row__art { width: 56px; height: 56px; border-radius: 16px; }
+.apps-row .m-item__title { display: inline-flex; align-items: center; }
+.app-sheet.m-sheet--end.m-sheet--wide { width: min(760px, 100vw); }
+.apps-editor__tabs { position: sticky; top: -1px; z-index: 3; padding: 0 0 12px; background: var(--md-sys-color-surface-container-low, var(--md-sys-color-surface)); }
+.apps-editor__panel { display: flex; flex-direction: column; gap: 8px; }
+.apps-gate { display: flex; flex-direction: column; align-items: center; gap: 10px; text-align: center; padding: 40px 24px; border-radius: 28px; background: var(--m-card, var(--md-sys-color-surface-container)); }
+.apps-gate > .m-icon { font-size: 40px; color: var(--md-sys-color-primary-text); } .apps-gate h3 { margin: 0; font: var(--m-title-medium); } .apps-gate p { margin: 0; max-width: 46ch; font: var(--m-body-medium); color: var(--md-sys-color-on-surface-variant); }
+
+.dl-card__qr { margin: auto 0 0; display: flex; flex-direction: column; align-items: center; gap: 4px; } .dl-card__qr img { display: block; width: 88px; height: 88px; border-radius: 12px; background: #fff; padding: 2px; box-sizing: content-box; } .dl-card__qr figcaption { font: var(--m-label-small); color: var(--md-sys-color-on-surface-variant); }
+.dl-card__qr-slot { display: block; width: 92px; height: 92px; min-height: 0; border-radius: 12px; }
+.dl-card__links { display: flex; gap: 4px; flex-wrap: wrap; margin-top: auto; padding-top: 4px; }
+/* the QR code sits on the links at the bottom of the card, so it is at the same height in every card of a row whatever the tags above it need (a card of a partner client has one tag line less); the links follow it, no free space between them */
+.dl-card__qr ~ .dl-card__links { margin-top: 0; }
+.dl-link { all: unset; box-sizing: border-box; display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px 0 8px; border-radius: 16px; cursor: pointer; font: var(--m-label-large); color: var(--md-sys-color-primary-text); } .dl-link .m-icon { font-size: 18px; }
+.dl-link:hover { background: color-mix(in srgb, var(--md-sys-color-primary) 10%, transparent); } .dl-link:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 0; }
+.dl-tag--plain { background: transparent; padding-left: 0; color: var(--md-sys-color-on-surface-variant); }
+
+.dl-card__tags .m-ctag { margin-right: 2px; }
+
+/* the popup of a client card: title and content share one left column; a phone gets the full-width sheet of MDialog */
+.dl-dialog { max-width: min(720px, calc(100vw - 32px)); }
+.dl-dialog__body { display: flex; flex-direction: column; align-items: stretch; gap: 16px; text-align: left; }
+.dl-dialog__tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; } .dl-dialog__tags:empty { display: none; }
+.dl-dialog__group { display: flex; flex-direction: column; gap: 8px; }
+.dl-dialog__os { margin: 0; font: var(--m-title-small); color: var(--md-sys-color-on-surface-variant); }
+.dl-dialog__skeleton { display: flex; flex-direction: column; gap: 8px; } .dl-dialog__skeleton .m-skeleton { display: block; height: 66px; border-radius: 18px; }
+.dl-dialog__failed { margin: 0; font: var(--m-body-medium); color: var(--md-sys-color-on-surface-variant); }
+.dl-dialog__links { display: flex; flex-wrap: wrap; gap: 8px; }
+.dl-dialog__links .dl-link { background: var(--md-sys-color-surface-container-highest); padding: 0 14px 0 10px; }
+.dl-dialog .m-dialog__body ul { padding-left: 0; }
+.dl-dialog .m-footer { margin: 0; padding: 0; }
+.dl-dialog .m-dialog__body .m-assets { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.dl-dialog .m-dialog__body .dl-features { flex-direction: row; flex-wrap: wrap; gap: 8px; }
+@media (max-width: 600px) {
+  .dl-dialog { max-width: 100vw; min-width: 0; width: 100vw; margin: auto 0 0; }
+  .dl-dialog .m-dialog__panel { border-radius: 28px 28px 0 0; max-height: 92dvh; padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
+}
+
+
+// A settings page that only just fills the window did scroll for a few pixels: 主机设置 › 常规 is 856 px tall with the 48 px tail of .m-page, 4 px more than the 852 px pane of a 1440x900 window, so a scrollbar showed for nothing.
+// The tail is 40 px here: a page of this height stays still, and a longer page still ends with a clear gap under its last row.
+.cfg-page .m-page { padding-bottom: 40px; }
+
+/* touch (foundation-ui css/touch.css): the download links are a finger high (hit slop) and their rows far enough apart for it */
+@media (pointer: coarse) { .dl-links, .dl-card__links { gap: 16px 8px; } .dl-card__qr figcaption { font-size: 12px; } }
+@media (any-pointer: coarse) {
+  .dl-link { position: relative; }
+  .dl-link::after { content: ''; position: absolute; inset-block: min(0px, calc((100% - var(--m-hit, 48px)) / 2)); inset-inline: min(0px, calc((100% - var(--m-hit, 48px)) / 2)); }
+}
+
+/* the cover section: the portrait and the landscape cover side by side on a wide page, stacked on a narrow one */
+.cover-pair { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+@media (min-width: 900px) { .cover-pair { grid-template-columns: minmax(0, 380px) minmax(0, 1fr); align-items: start; } }
+/* the previews of an official Sparxie cover: the heights of the two frames are equal (2:3 and 16:9 widths are 3 : 8 once the card padding is counted: 29 : 71) */
+@media (min-width: 900px) { .cover-pair--preview { grid-template-columns: minmax(0, 29fr) minmax(0, 71fr); } }
