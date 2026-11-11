@@ -32,6 +32,7 @@ extern "C" {
 
 // lib includes
 #include "cbs.h"
+#include "crash/crash.h"
 #include "config.h"
 #include "streaming/perf_recorder.h"
 #include "display_device/display_device.h"
@@ -3690,7 +3691,12 @@ namespace video {
       if (needs_bitrate_rebuild) current_img = std::move(dummy_img);
     }
 
+    auto last_encode_time = std::chrono::steady_clock::now();
+    // A frame that takes this long is a hang worth a report (crash/crash.h); the wait for the next capture is bounded by the frame time
+    crash::watched_thread_t crash_watch("video-encode", 15000);
+
     while (true) {
+      crash::busy_scope_t crash_busy(crash_watch.slot);
       // Break out of the encoding loop if any of the following are true:
       // a) The stream is ending
       // b) Sunshine is quitting
@@ -3817,12 +3823,17 @@ namespace video {
       // This allows the stream framerate to match the render framerate for VRR support
       // However, if minimum_fps_target is set, or input activity boost is active, we still encode
       // to maintain a temporary minimum FPS floor for better visual input feedback.
-      if (config::video.variable_refresh_rate && !has_new_frame && !requested_idr_frame) {
-        // Only skip if minimum_fps_target is 0 (disabled) and input activity boost is inactive.
-        if (config::video.minimum_fps_target == 0 && !input_boost_active) {
-          continue;
-        }
-        // If minimum_fps_target is set or boost is active, we'll encode anyway to maintain minimum FPS.
+      // The first frame of the session and a repeat after vrr_idle_keepalive of silence are never skipped: with nothing
+      // moving on the display the client would otherwise receive no video packet at all and give up.
+      if (vrr_may_skip_encode(
+            config::video.variable_refresh_rate,
+            has_new_frame,
+            requested_idr_frame,
+            config::video.minimum_fps_target,
+            input_boost_active,
+            static_cast<std::uint64_t>(frame_nr - 1),
+            std::chrono::steady_clock::now() - last_encode_time)) {
+        continue;
       }
 
       std::optional<encoder_rebuild_context_t> rebuild_context;
@@ -3837,6 +3848,7 @@ namespace video {
       }
 
       session->request_normal_frame();
+      last_encode_time = std::chrono::steady_clock::now();
       perf::record_encode_submission(config.perf_session_id, !has_new_frame || replayed_frame);
     }
   }

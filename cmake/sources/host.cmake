@@ -88,6 +88,7 @@ set(SUNSHINE_HOST_SOURCES
     src/public_address.cpp src/public_address.h
     src/system_info.cpp src/system_info.h
     src/build_info.cpp src/build_info.h
+    src/crash/crash.h src/crash/crash_core.cpp src/crash/crash_core.h src/crash/crash_state.h
     src/system_info_cache.cpp
     src/system_info_probe.cpp
     src/stat_trackers.cpp src/stat_trackers.h

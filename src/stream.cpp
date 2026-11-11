@@ -55,6 +55,7 @@ extern "C" {
 #endif
 
 #include "client_fingerprint.h"
+#include "crash/crash.h"
 #include "config.h"
 #include "streaming/fec.h"
 #include "display_device/display_device.h"
@@ -3613,7 +3614,10 @@ namespace stream {
 
     auto ratecontrol_next_frame_start = std::chrono::steady_clock::now();
 
+    crash::watched_thread_t crash_watch("video-broadcast", 20000);
+
     while (auto packet = packets->pop()) {
+      crash::busy_scope_t crash_busy(crash_watch.slot);
       if (shutdown_event->peek()) {
         break;
       }
@@ -4027,7 +4031,10 @@ namespace stream {
     // Audio traffic is sent on this thread
     platf::adjust_thread_priority(platf::thread_priority_e::high);
 
+    crash::watched_thread_t crash_watch("audio-broadcast", 20000);
+
     while (auto packet = packets->pop()) {
+      crash::busy_scope_t crash_busy(crash_watch.slot);
       if (shutdown_event->peek()) {
         break;
       }

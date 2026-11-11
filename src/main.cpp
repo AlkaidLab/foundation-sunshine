@@ -21,6 +21,7 @@
 #include "build_info.h"
 #include "client_fingerprint.h"
 #include "confighttp.h"
+#include "crash/crash.h"
 #include "default_apps.h"
 #include "display_device/session.h"
 #include "entry_handler.h"
@@ -283,10 +284,25 @@ main(int argc, char *argv[]) {
     }
   }
 
+  // Crash, abort and hang reports (crash/crash.h): installed before anything else can fail, pointed at the real config file once it is known.
+  {
+    crash::options_t crash_options;
+    crash_options.version = PROJECT_VER;
+    crash_options.config_dir = platf::appdata();
+  #ifdef _WIN32
+    crash_options.os_version = platf::windows_version();
+  #else
+    crash_options.os_version = "linux";
+  #endif
+    crash::install(crash_options);
+  }
+
   // parse config file
   if (config::parse(argc, argv)) {
     return 0;
   }
+  crash::set_config_file(file_handler::path_from_utf8(config::sunshine.config_file));
+
 #ifdef _WIN32
   // A second process of this installation exits before it binds a port or probes an encoder.
   // Session 0 (the service) and a console session share the global namespace, so one mutex
@@ -370,6 +386,15 @@ main(int argc, char *argv[]) {
 
     return fn->second(argv[0], config::sunshine.cmd.argc, config::sunshine.cmd.argv);
   }
+
+  // The second and later passes of the uploader find what a crash left; the first waits out the start. SUNSHINE_TEST_CRASH makes this process
+  // fail on purpose (tests only), after the handlers and the consent are in place.
+  crash::start_uploader();
+  crash::run_test_switch();
+  // The start is one busy stretch of the main thread: a driver call that never returns here shows up as a "hang" report.
+  crash::watched_thread_t crash_main_watch("main-startup", 300000);
+  std::optional<crash::busy_scope_t> crash_startup_busy;
+  crash_startup_busy.emplace(crash_main_watch.slot);
 
   // Adding this guard here first as it also performs recovery after crash,
   // otherwise people could theoretically end up without display output.
@@ -670,6 +695,8 @@ main(int argc, char *argv[]) {
   }
 #endif
 
+  telemetry::host_ready();
+  crash_startup_busy.reset();
   mainThreadLoop(shutdown_event);
 
 #ifdef _WIN32
