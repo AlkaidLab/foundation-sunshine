@@ -34,7 +34,9 @@
 #include "process.h"
 #include "pyrowave/runtime.h"
 #include "startup_gate.h"
+#include "stream.h"
 #include "telemetry/hooks.h"
+#include "telemetry/telemetry.h"
 #include "tray/system_tray.h"
 #include "upnp.h"
 #include "version.h"
@@ -307,6 +309,22 @@ main(int argc, char *argv[]) {
   // if anything is logged prior to this point, it will appear in stdout, but not in the log viewer in the UI
   // the version should be printed to the log before anything else
   BOOST_LOG(info) << PROJECT_NAME << " version: " << PROJECT_VER;
+
+  // Usage statistics, error counts and stream quality (docs/privacy_telemetry.md). Each kind is sent only while its own choice is on; nothing here can fail the start.
+  telemetry::start();
+  telemetry::set_session_probe([] {
+    std::vector<telemetry::session_probe_t> probes;
+    for (const auto &info : stream::session::get_all_sessions_info()) {
+      telemetry::session_probe_t probe;
+      probe.session_id = info.session_id;
+      if (info.rtt_ms) probe.rtt_ms = *info.rtt_ms;
+      probe.loss_pct = info.packet_loss;
+      probe.dropped_frames = info.dropped_frames;
+      probe.measured_kbps = info.measured_bitrate_kbps;
+      probes.push_back(probe);
+    }
+    return probes;
+  });
 
 #ifdef _WIN32
   // Cache the result of is_running_as_system() check once at startup

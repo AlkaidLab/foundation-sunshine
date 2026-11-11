@@ -21,6 +21,7 @@
 #include "src/confighttp/runtime.h"
 #include "src/confighttp/sparxie.h"
 #include "src/confighttp/systeminfo.h"
+#include "src/confighttp/telemetry.h"
 #include "src/file_mapping/config_http.h"
 #include "src/network.h"
 #include "src/text_context/http.h"

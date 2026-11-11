@@ -171,6 +171,7 @@ set(SUNSHINE_HOST_SOURCES
     src/telemetry/stream_stats.cpp src/telemetry/stream_stats.h
     src/telemetry/service.cpp src/telemetry/service.h
     src/telemetry/transport.cpp src/telemetry/transport.h
+    src/telemetry/telemetry.cpp src/telemetry/telemetry.h
     src/telemetry/hooks.h
 
     # src/nvhttp
@@ -263,5 +264,6 @@ set(SUNSHINE_HOST_SOURCES
     src/sparxie/install_platform.cpp
     third-party/puff/puff.c third-party/puff/puff.h
     src/confighttp/sparxie.cpp src/confighttp/sparxie.h
+    src/confighttp/telemetry.cpp src/confighttp/telemetry.h
 )
 list(TRANSFORM SUNSHINE_HOST_SOURCES PREPEND "${CMAKE_SOURCE_DIR}/")

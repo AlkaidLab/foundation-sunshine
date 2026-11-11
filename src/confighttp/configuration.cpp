@@ -19,6 +19,8 @@
 #include "src/nvhttp.h"
 #include "src/network.h"
 #include "src/platform/common.h"
+#include "src/stream.h"
+#include "src/telemetry/telemetry.h"
 #include "src/utility.h"
 #include "src/video.h"
 #include "version.h"
@@ -336,6 +338,21 @@ namespace confighttp::configuration {
           outputTree.put("status", "false");
           outputTree.put("error", "failed to persist configuration");
           return;
+        }
+        // the two telemetry choices take effect at once: what the off kind had waiting is dropped
+        telemetry::consent_changed();
+        if (saved_before) telemetry::settings_changed(*saved_before, fullConfig);
+        // the language of the host changed: the built-in applications show their names in it (a name the person changed stays)
+        const auto locale_now = fullConfig.find("locale");
+        if (locale_now != fullConfig.end() && !locale_now->second.empty() && locale_now->second != previous_locale) {
+          confighttp::apps::retitle_defaults(locale_now->second);
+        }
+
+        // The bitrate ceiling takes effect now: update_full_config set it in this process, the running sessions take it before the answer goes out (so the tray, which waits for it, can say it is applied).
+        {
+          const auto changed = stream::session::apply_host_bitrate_cap();
+          outputTree.put("max_bitrate_in_force", config::host_max_bitrate_kbps());
+          outputTree.put("sessions_updated", static_cast<int>(changed.size()));
         }
       }
       catch (std::exception &e) {

@@ -88,6 +88,8 @@ extern "C" {
 #include "platform/common.h"
 #include "touch_keyboard_session.h"
 #include "text_context/bridge.h"
+#include "telemetry/telemetry.h"
+
 
 #define IDX_START_A 0
 #define IDX_START_B 1
