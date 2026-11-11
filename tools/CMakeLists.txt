@@ -6,6 +6,43 @@ project(sunshine_tools)
 
 include_directories("${CMAKE_SOURCE_DIR}")
 
+if(WIN32)
+    find_program(SPARXIE_LAUNCH_DOTNET dotnet)
+    if(SPARXIE_LAUNCH_DOTNET)
+        set(SPARXIE_LAUNCH_PUBLISH_DIR "${CMAKE_CURRENT_BINARY_DIR}/sparxie-launch-publish")
+        # cmake/packaging/windows.cmake installs from it in the parent scope
+        set(SPARXIE_LAUNCH_PUBLISH_DIR "${SPARXIE_LAUNCH_PUBLISH_DIR}" PARENT_SCOPE)
+        file(GLOB SPARXIE_LAUNCH_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/sparxie-launch/*.cs")
+        add_custom_command(
+            OUTPUT "${SPARXIE_LAUNCH_PUBLISH_DIR}/sparxie-launch.exe"
+            COMMAND "${CMAKE_COMMAND}" -E make_directory "${SPARXIE_LAUNCH_PUBLISH_DIR}"
+            COMMAND "${SPARXIE_LAUNCH_DOTNET}" publish "${CMAKE_CURRENT_SOURCE_DIR}/sparxie-launch/Sparxie.Launch.csproj"
+                    --configuration "$<CONFIG>" --output "${SPARXIE_LAUNCH_PUBLISH_DIR}"
+                    --nologo --verbosity minimal
+            DEPENDS
+                "${CMAKE_CURRENT_SOURCE_DIR}/sparxie-launch/Sparxie.Launch.csproj"
+                ${SPARXIE_LAUNCH_SOURCES}
+            VERBATIM)
+        add_custom_target(sparxie-launch-publish DEPENDS "${SPARXIE_LAUNCH_PUBLISH_DIR}/sparxie-launch.exe")
+        # The launcher's own checks: a self-contained test program (no test framework, no package restore). It runs only
+        # when the build enables tests; it never ships.
+        if(BUILD_TESTS)
+            file(GLOB SPARXIE_LAUNCH_TEST_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/sparxie-launch-tests/*.cs")
+            add_custom_target(sparxie-launch-tests
+                COMMAND "${SPARXIE_LAUNCH_DOTNET}" run --project "${CMAKE_CURRENT_SOURCE_DIR}/sparxie-launch-tests/Sparxie.Launch.Tests.csproj"
+                        --configuration Release --nologo --verbosity quiet
+                DEPENDS ${SPARXIE_LAUNCH_SOURCES} ${SPARXIE_LAUNCH_TEST_SOURCES}
+                VERBATIM)
+            add_test(NAME sparxie_launch_tests
+                COMMAND "${SPARXIE_LAUNCH_DOTNET}" run --project "${CMAKE_CURRENT_SOURCE_DIR}/sparxie-launch-tests/Sparxie.Launch.Tests.csproj"
+                        --configuration Release --nologo --verbosity quiet)
+            set_tests_properties(sparxie_launch_tests PROPERTIES TIMEOUT 300)
+        endif()
+    else()
+        message(WARNING "dotnet was not found; touch profile launch helper will not be published")
+    endif()
+endif()
+
 add_executable(dxgi-info dxgi.cpp)
 set_target_properties(dxgi-info PROPERTIES CXX_STANDARD 23)
 target_link_libraries(dxgi-info
