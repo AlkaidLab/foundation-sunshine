@@ -168,6 +168,7 @@ set(SUNSHINE_HOST_SOURCES
     # src/telemetry
     src/telemetry/events.cpp src/telemetry/events.h
     src/telemetry/queue.cpp src/telemetry/queue.h
+    src/telemetry/stream_stats.cpp src/telemetry/stream_stats.h
     src/telemetry/transport.cpp src/telemetry/transport.h
     src/telemetry/hooks.h
 
