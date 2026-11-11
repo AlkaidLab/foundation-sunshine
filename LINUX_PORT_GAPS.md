@@ -1,8 +1,8 @@
 # Linux 移植遗留差距清单
 
 - **基线**：`linux-migration` 分支（包版本跟随二进制版本戳，如
-  `2026.1022.161750.430c3c02-1`；2026-10-22 已并入上游 `origin/master` `3c194184`，
-  上一个同步点是 `ed415026`）
+  `2026.1111.075157.<commit>-1`；2026-11-11 已并入上游 `origin/master` `6d41627e`，
+  同步链 `ed415026` → `7a0995e2` → `c211d711` → `0219abe2` → `6d41627e`）
 - **对照**：fork Windows 版（AlkaidLab master `3d76d35d`）的全部增强功能
 - **用途**：**结论清单**（2026-10-22 起）。可做的都已落地或已评估收束；每项含代码位置、证据与
   **重启判据**（什么条件变化才值得重新开启）
@@ -534,6 +534,43 @@ registry 里 `zwlr_foreign_toplevel_manager_v1` 与 `ext_foreign_toplevel_list_v
   Linux 的 `explicit_vdd` 分支（`ZAKO_DEVICE_ID`/`ZAKO_NAME`）完好保留。
 - **验收**：Linux 客户端指定虚拟屏仍走 VDD 目标。
 
+### 5.6 ⏸ DualSense 触觉链在 Linux 无投递端（2026-11-11 上游同步引入）
+
+- **上游**：#1186 保留 actuator 模式与控制状态、#1187 不阻塞轮询、#1192 IR v2 可选增强、
+  #1199/#1224 authored evidence 与弱触回召。consumer 在**共享层**：`src/stream.cpp:1506-1507`
+  按 `ML_FF_DS5_HAPTICS_IR_V2` 决定是否发 authored IR，`src/haptics/{authored_ir,authored_ir_extended,
+  legacy_rumble,wire}.{h,cpp}` 全在 `cmake/sources/host.cmake`，Linux 同样编译，
+  `authored_ir_extended_unit_tests` 在 Linux 通过。
+- **Linux 断点**：`src/platform/linux/input/inputtino.cpp:131` 的 `gamepad_is_ds5()`
+  硬编码 `return false`（同文件 `gamepad_has_ds5_audio_haptics()` 亦然），所以共享层永远认为
+  Linux 上没有 DS5，`sends_authored_ir` 恒 false。这不是疏忽而是能力缺失：
+  `third-party/inputtino/include/inputtino/input.hpp:378-455` 的 `PS5Joypad` 只有
+  `set_on_rumble` / `set_on_led` / `set_on_trigger_effect` / `place_finger` / `set_motion` /
+  `set_battery`，**没有** actuator PCM 或 haptics 状态接口。
+- **本分支与上游一致的部分**：`inputtino_gamepad.cpp:46` 确实会造 `PS5Joypad`
+  （054C:0CE6），DS5 的触控板、运动、电池、扳机效果、LED 都在用——缺的只是"音频触觉"这一路。
+- **重启判据**：inputtino（或我们自己写的 uhid 写端）能发出 DualSense actuator PCM（48 kHz
+  stereo S16LE，240 帧内）时，把 `gamepad_is_ds5` 改成按 `joypad` 的 `variant` 判定、把
+  `gamepad_has_ds5_audio_haptics` 改成按能力位判定，即可让共享层自然打开。
+- **验收**：Linux 客户端（Moonlight 支持 DS5 haptics IR v2 的版本）协商后，日志出现
+  authored IR 会话，且虚拟 DualSense 的 actuator 有实际输出。
+
+### 5.7 ⏸ Dolby MAT 实况采集仅 Windows（2026-11-11 上游同步引入）
+
+- **上游**：#1177 新增 `src/spatial_audio/*`（`mat_compat.h`、`mat_capture_protocol.h`、
+  `encoded_audio_source.h`、`mat_auto_source.h`…）、`src/spatial_transport/*`，并在
+  `src/rtsp.cpp` 里按 `config::audio.mat_live` 广告 `x-ss-audio.mat-live:*`；#1221 把采集助手打进
+  安装包并由 MAT 开关启动。
+- **Linux 行为**：`src/spatial_transport/mat_live_session.h:25-45` 的 `prepare_live()` 整体在
+  `#if defined(_WIN32)` 内，**非 Windows 直接 `return {}`** → `session.mat_live` 恒空 →
+  RTSP 不广告该能力，客户端走原有音频路径。`config::audio.mat_live` 默认 `false`
+  （`src/config.cpp:535`），启动助手的 `mat_capture_process.start()` 也在 `src/main.cpp` 的
+  Windows 分支里。属**正确降级**，不是坏行为。
+- **为什么不可移植**：MAT（Dolby Atmos over HDMI）在 Linux 没有等价的"内嵌 PCM 直通 + 认证分片"
+  采集端；PipeWire 能拿到的是已解码音频，`MatLiveCrypto`/分片协议要的正是编码流。
+- **重启判据**：出现 Linux 侧的 MAT/Atmos 编码流采集端（例如从 HDMI HBR 直通里抓 eARC 帧，或
+  ALSA 提供 `MAT` IEC61937 完整帧）时再谈；届时只需实现 `EncodedAudioSource` 的一个 Linux 子类。
+
 ---
 
 ## 六、仍未完成（诚实清单）
@@ -742,3 +779,59 @@ Windows 没有这两层：绝对触控天然覆盖整个虚拟桌面。于是本
 **诚实边界**：本机没有 Moonlight 客户端可做端到端手势验证（uinput 节点是 `0600 root:root`，
 合成器靠 logind `TakeDevice` 打开，探针只能证明设备声明了 BTN_TOUCH + `INPUT_PROP_DIRECT` +
 16 槽位）。真机两指手势的确认在用户侧。
+
+---
+
+## 八、2026-11-11 上游同步（`0219abe2..6d41627e`，25 个提交）
+
+同步点：`6d41627e`（`feat(endpoint): support authenticated UDP endpoint refresh (#1227)`），
+252 文件 / +18947 −2168。本节只记录**这次同步里与 Linux 有关**的结论。
+
+### 8.1 ✅ 冲突解决（5 个文件）
+
+- `src/display_device/vdd_utils.cpp`：上游在 Windows 半边内联了 `get_client_physical_size()` 的
+  `size_map` 并新增 `"huge"`、把 `"large"` 改成 40.7×22.9；本分支早已把该表抽成共享的
+  `client_physical_size_for_class()`，因此删掉上游内联副本、把两个新数值并入共享表。
+  WebUI 侧上游仍只暴露 small/medium/large（`views/Pin.vue`），本分支保持"只加后端映射"以免
+  出现上游没有的 UI 选项。
+- `src/display_device/session.{h,cpp}`：上游独立引入了 `current_vdd_identifier` +
+  `current_vdd_device_id`，注释写明「friendly names cannot establish ownership」——与本分支
+  review 修复里的 `current_vdd_owner_id` 是同一语义。取上游的两字段模型，删掉本分支那个；
+  共享↔独占切换的重建由上游 `identity_changed` 逻辑接管，本分支原来的
+  `if (reuse_vdd && !hdr_capabilities_changed)` 分支随之删除。
+- `src/confighttp/diagnostics.cpp`：并集——注册上游新的 `/api/mat/status`，保留本分支
+  「`/api/vdd/status` 去门控」的实现（上游仍是 Windows-only）。
+- `src/main.cpp`：MAT 采集头留在 `#ifdef _WIN32` 块内，非 Windows 半边保留 `clipboard_host.h`。
+- `tests/unit/test_config_runtime.cpp`：上游只写了 Windows 桩（`VDD_NAME`/`ZAKO_NAME`/
+  `enum_available_devices_checked`），Linux 半边的 `parsed_config.cpp` 还要
+  `find_one_of_the_available_devices()`，补 `#else` 桩（Windows 分支字节不变）。
+
+### 8.2 ✅ OpenSSL 4 适配（工具链变化，非上游引入）
+
+本机 OpenSSL 于 2026-10-24 升到 **4.1.0**，`src/crypto.cpp` 因此编不过、两个 beast TLS 用例也红了：
+
+- `ASN1_BIT_STRING` 变不完整类型 → `signature()` 改用 `ASN1_STRING_get0_data/_length`。
+- `X509_get_subject_name()` 返回 `const X509_NAME *` → 自建 `X509_NAME` 再
+  `X509_set_subject_name/issuer_name`。
+- **CN 回退被彻底移除**（`openssl verify -verify_hostname localhost` 对 CN-only 自签证书报
+  `error 62 … hostname mismatch`，只比链则 OK）→ `gen_creds()` 在 CN 形如主机名时补
+  `subjectAltName: DNS:<cn>`。注意 SAN 必须是 GeneralNames 序列，直接用
+  `X509_EXTENSION_create_by_NID(..., IA5STRING)` 会产出畸形证书
+  （`ossl_x509v3_cache_extensions:invalid certificate`）。
+- 副作用：`BeastHttp.ClientVerifiesTlsHostnameAndUsesExplicitTrustAnchors` 与
+  `…CaClientCertificatePolicyAndServerHostnameVerificationWorkTogether` 恢复通过——它们此前红
+  正是因为证书没有 SAN。
+
+### 8.3 ✅ Boost 组件 target 兜底
+
+上游新测试 `vdd_mode_list_unit_tests` 链接 `Boost::optional`，而 Arch 的 Boost CONFIG 包未请求该
+组件时不导出 target → `cmake/dependencies/Boost_Sunshine.cmake` 里补上与本分支早先给
+`Boost::format` 加的同形 imported-target 兜底。
+
+### 8.4 本次同步带来的新缺口
+
+只有 §5.6（DS5 触觉投递端）与 §5.7（MAT 实况采集）两项，均为**平台能力缺失**、当前行为是优雅降级。
+其余上游新特性在 Linux 侧已自动落地：`#1227` 的认证 UDP endpoint refresh（随
+`third-party/moonlight-common-c` `a7895e84` 到位，`endpoint_refresh` 测试在 Linux 通过）、
+`#1206` 向客户端上报会话锁定状态、`#1205` HDR 校准隔离与锁屏重连恢复、`#1188` DPI 改向当前采集
+（Linux 侧目标是 kmsgrab/wlgrab 的 `display_t`，逻辑在共享层）、`#1207` 的 `huge` 设备尺寸。

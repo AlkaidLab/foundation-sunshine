@@ -1093,16 +1093,63 @@ Linux 后端没有"有序拓扑"这个原语，每个合成器给的是**每输�
 **HDR 全链路边界**：**可用** = PQ 静态元数据透传、HDR10+、DV P8.1、HDR Vivid（均见 §6.3）；
 **不可用** = HLG（kmsgrab 不支持 HLG EOTF 输入）、DV P8.4（需 HLG 基层）。
 
+### 6.34 2026-11-11 上游同步（`0219abe2..6d41627e`，25 个提交）
+
+同步点 `6d41627e`（认证 UDP endpoint refresh #1227），252 文件 / +18947 −2168。冲突 5 处，全部
+以"取上游语义 + 保留本分支的平台中立性"为原则解决，细节见 `LINUX_PORT_GAPS.md` §八：
+
+- `vdd_utils.cpp` 的 `get_client_physical_size()`：删上游在 Windows 半边内联的表，把 `"huge"`
+  与新的 `"large"` 数值并入共享的 `client_physical_size_for_class()`。
+- `session.{h,cpp}`：上游独立解决了"友好名无法确立归属"，引入
+  `current_vdd_identifier`/`current_vdd_device_id`；本分支早先的 `current_vdd_owner_id` 让位，
+  共享↔独占重建由上游 `identity_changed` 接管。
+- `confighttp/diagnostics.cpp` 并集注册 `/api/mat/status` 与本分支去门控的 `/api/vdd/status`；
+  `main.cpp` 的 MAT 头留在 Windows 块内。
+- `tests/unit/test_config_runtime.cpp` 补 Linux 桩（上游只给了 Windows 半边）。
+
+**工具链适配（本机 OpenSSL 于 2026-10-24 升到 4.1.0）**——`src/crypto.cpp` 三处：
+
+| 破坏点 | 适配 |
+| --- | --- |
+| `ASN1_BIT_STRING` 变不完整类型 | `signature()` 改用 `ASN1_STRING_get0_data/_length` |
+| `X509_get_subject_name()` 返回 const | 自建 `X509_NAME` 再 `X509_set_subject_name/issuer_name` |
+| CN 回退被移除 | `gen_creds()` 在 CN 形如主机名时补 `subjectAltName: DNS:<cn>` |
+
+第三项同时解释了为什么 `BeastHttp.ClientVerifiesTlsHostnameAndUsesExplicitTrustAnchors` 与
+`…CaClientCertificatePolicyAndServerHostnameVerificationWorkTogether` 在升级后转红：证书只有 CN，
+`openssl verify -verify_hostname localhost` 直接报 `error 62 … hostname mismatch`（只比链则 OK）。
+SAN 必须构造成 GeneralNames 序列——用 `X509_EXTENSION_create_by_NID(..., IA5STRING)` 会产出
+`ossl_x509v3_cache_extensions:invalid certificate` 的畸形证书。
+
+另：上游新测试 `vdd_mode_list_unit_tests` 链接 `Boost::optional`，Arch 的 Boost CONFIG 包未请求该
+组件时不导出 target，`cmake/dependencies/Boost_Sunshine.cmake` 补了与本分支给 `Boost::format`
+的同形 imported-target 兜底。子模块随之推进：`moonlight-common-c` `a7895e84`（endpoint refresh）、
+AMF `57ee0cfb`、`moonlight-audio-haptics` `c4f1b8c4`。
+
+验证：`ninja -C build` 通过；`test_sunshine` **675 例 / 670 通过 / 5 跳过 / 0 断言失败**；
+`ctest` **31 个套件、30 通过**（唯一红仍是 `EncoderTest` 的 `SetUpTestSuite`，缺 `cap_sys_admin`）；
+`beast_http_unit_tests` 23/23；`python3 tools/audit-windows-parity.py 04b9b161..HEAD` 落入 Windows
+区域 0 行、Linux-only 源泄漏 0。
+
+本次同步给 Linux 带来两个**平台能力缺失**（不是回归，行为是优雅降级）：
+DS5 音频触觉没有投递端（inputtino `PS5Joypad` 无 actuator PCM 接口，`gamepad_is_ds5()` 恒 false）、
+Dolby MAT 实况采集 `prepare_live()` 在非 Windows 直接返回空——见 `LINUX_PORT_GAPS.md` §5.6/§5.7。
+
 ---
 
 ## 九、测试基线
 
-2026-10-22（并入上游 `c211d711` 之后），CUDA=ON 构建树：
+2026-11-11（并入上游 `6d41627e` + OpenSSL 4 适配之后），CUDA=ON 构建树：
 
 ```
-ctest: 24 个套件，23 通过，1 失败（test_sunshine）
-test_sunshine: 665 用例，660 通过，5 跳过，0 失败
+ctest: 31 个套件，30 通过，1 失败（test_sunshine）
+test_sunshine: 675 用例，670 通过，5 跳过，0 失败
 ```
+
+套件数从 24 涨到 31 是上游新增（`authored_ir_extended_unit_tests`、`display_scale_steps_unit_tests`、
+`vdd_mode_list_unit_tests`、`current_capture_target_unit_tests`、`hdr_calibration_unit_tests`、
+`config_runtime_unit_tests`、`config_overrides_unit_tests`）加本分支的 `perf_frame_rate_unit_tests`；
+用例 +10 也全部来自上游这批提交。
 
 **用例层面全绿**。ctest 里 `test_sunshine` 仍报红，唯一原因是下面那个 `SetUpTestSuite` 夹具，
 不是用例失败。三个时间点的用例数（都是同一构建树里的 `test_sunshine`）：
@@ -1114,7 +1161,8 @@ test_sunshine: 665 用例，660 通过，5 跳过，0 失败
 | `8c095703` | 第二轮 review 修复之后 | 653 / 648 |
 | `fe0d2338` | 并入上游 `0219abe2`（#1175）+ 主屏归属对齐 | 660 / 655 |
 | 本次（第四轮 review 修复之后） | 客户域会话模式等 4 项修复 | 665 / 660 |
-| 第五轮 review 修复之后 | 设备归属、跨卡编号、PulseAudio 判空与两处打包缺陷（当前） | 665 / 660 |
+| 第五轮 review 修复之后 | 设备归属、跨卡编号、PulseAudio 判空与两处打包缺陷 | 665 / 660 |
+| 并入上游 `6d41627e`（#1227）+ OpenSSL 4 适配（当前） | 25 个上游提交 + `crypto.cpp` 的 SAN/API 适配 | 675 / 670 |
 
 从 843 降到 650 是上游 `c211d711`（#1176 测试清理）删掉重复、空跑与外网用例
 所致——`tests/unit/test_audio.cpp`、`test_mouse.cpp`、`test_entry_handler.cpp`、

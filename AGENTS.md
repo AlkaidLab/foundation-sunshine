@@ -24,9 +24,9 @@ cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
   -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
   -DCMAKE_CUDA_COMPILER_LAUNCHER=sccache -DBUILD_TESTS=ON
 ninja -C build sunshine
-cd build && ctest          # baseline: 24 suites, 23 pass; the single Encoder SetUpTestSuite
+cd build && ctest          # baseline: 31 suites, 30 pass; the single Encoder SetUpTestSuite
                            # failure inside test_sunshine is headless-only (needs cap_sys_admin)
-                           # (665 cases, 660 pass, 5 skip, 0 assertion failures)
+                           # (675 cases, 670 pass, 5 skip, 0 assertion failures)
 ```
 
 CUDA is the default (`SUNSHINE_ENABLE_CUDA` defaults to ON on Linux; a missing
@@ -117,6 +117,16 @@ User installs packages themselves (sudo needs a password).
 - kscreen-doctor exits 0 on failures (`Output ... not found`, `applying config
   failed!`) — verdicts must parse the output text, never the exit code alone.
 - `BOOST_LOG` `"...sv"` literals need `using namespace std::string_view_literals`.
+- OpenSSL on this box is 4.x, which broke three things at once and will break them again on a
+  fresh checkout: `ASN1_BIT_STRING` is opaque (use `ASN1_STRING_get0_data/_length`),
+  `X509_get_subject_name()` returns a **const** name (build your own `X509_NAME` instead of
+  `X509_NAME_add_entry_by_txt` on it), and the CN fallback for hostname verification is gone
+  (`openssl verify -verify_hostname localhost` on a CN-only self-signed cert reports
+  `error 62 … hostname mismatch` while a chain-only check passes). `crypto::gen_creds()`
+  therefore emits a `subjectAltName` when the CN looks like a host. Build that extension as a
+  GeneralNames sequence via `X509V3_EXT_i2d`; handing an IA5 string to
+  `X509_EXTENSION_create_by_NID` produces a cert OpenSSL refuses to parse
+  (`ossl_x509v3_cache_extensions:invalid certificate`).
 - Only one sunshine instance at a time (ports 47984/47989/47990/48010).
 
 ## Windows parity conventions (enforced — the user audits these)
