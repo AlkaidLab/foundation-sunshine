@@ -140,3 +140,25 @@ TEST(ClientResolutionChangeTests, NormalizeRejectsOutOfRangeSizes) {
   EXPECT_FALSE(stream::normalize_client_resolution_request(std::numeric_limits<int>::max(), 1080));
   EXPECT_FALSE(stream::normalize_client_resolution_request(std::numeric_limits<int>::min(), 1080));
 }
+
+TEST(ClientResolutionChangeTests, RefusesAScaledSessionEvenWhenItsDisplayLaterShowsTheStreamSize) {
+  // Resumed without a mode change: capture starts encoding the 2560x1440 display at 1280x720, a 0.5 scale it keeps.
+  const bool encodes_1to1 = video::encodes_display_1to1(1280, 720, 2560, 1440);
+  EXPECT_FALSE(encodes_1to1);
+  // The display later lands on 1280x720. Applying a requested 1600x900 would then encode 800x450.
+  EXPECT_FALSE(stream::client_resolution_request_exact(encodes_1to1, std::make_pair(1280, 720), 1280, 720));
+}
+
+TEST(ClientResolutionChangeTests, AcceptsA1to1SessionWhileItsDisplayShowsTheStreamSize) {
+  EXPECT_TRUE(stream::client_resolution_request_exact(video::encodes_display_1to1(1280, 720, 1280, 720), std::make_pair(1280, 720), 1280, 720));
+
+  // A landscape stream of a portrait display is encoded 1:1 with width and height swapped.
+  const bool rotated = video::encodes_display_1to1(1920, 1080, 1080, 1920);
+  EXPECT_TRUE(rotated);
+  EXPECT_TRUE(stream::client_resolution_request_exact(rotated, std::make_pair(1080, 1920), 1920, 1080));
+}
+
+TEST(ClientResolutionChangeTests, RefusesWhileTheDisplayDoesNotShowTheStreamSize) {
+  EXPECT_FALSE(stream::client_resolution_request_exact(true, std::make_pair(2560, 1440), 1280, 720));
+  EXPECT_FALSE(stream::client_resolution_request_exact(true, std::nullopt, 1280, 720));
+}

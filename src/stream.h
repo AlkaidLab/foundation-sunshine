@@ -69,6 +69,15 @@ namespace stream {
   std::optional<std::pair<int, int>>
   normalize_client_resolution_request(int width, int height);
 
+  /**
+   * @brief Whether a client-requested display size would become the stream size unchanged.
+   * @param encodes_display_1to1 Latched by the capture loop when capture starts (false until then); see
+   *        video::encodes_display_1to1(). A scaled session stays scaled whatever its display shows later.
+   * @param shown_size Current mode of the capture display, or nullopt if it could not be read.
+   */
+  bool
+  client_resolution_request_exact(bool encodes_display_1to1, const std::optional<std::pair<int, int>> &shown_size, int stream_width, int stream_height);
+
   struct session_t;
   struct config_t {
     audio::config_t audio;

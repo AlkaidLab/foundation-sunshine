@@ -185,6 +185,13 @@ namespace stream {
     return std::make_pair(width, height);
   }
 
+  bool
+  client_resolution_request_exact(bool encodes_display_1to1, const std::optional<std::pair<int, int>> &shown_size, int stream_width, int stream_height) {
+    return encodes_display_1to1 && shown_size &&
+           ((shown_size->first == stream_width && shown_size->second == stream_height) ||
+            (shown_size->first == stream_height && shown_size->second == stream_width));
+  }
+
   namespace {
     boost::atomic_flag global_cancel_pending = BOOST_ATOMIC_FLAG_INIT;
 
@@ -2164,15 +2171,13 @@ namespace stream {
         return std::make_pair(static_cast<int>(mode->second.resolution.width), static_cast<int>(mode->second.resolution.height));
       };
 
-      // The capture loop keeps its launch-time client/display scale ratio, so a client-driven size is only
-      // exact while the capture display still shows this stream's size: the launch mode (or the last
-      // client-driven change) was applied 1:1 and the host display has not changed underneath.
-      const auto shown_size = capture_display_size();
-      if (!shown_size ||
-          !((shown_size->first == old_width && shown_size->second == old_height) ||
-            (shown_size->first == old_height && shown_size->second == old_width))) {
+      // The capture loop keeps the client/display scale ratio it chose when capture started, so a client-driven size
+      // is only exact while that ratio is 1:1 and the capture display still shows this stream's size: the launch mode
+      // (or the last client-driven change) was applied and the host display has not changed underneath.
+      const auto &encodes_1to1 = session->config.monitor.stream_encodes_display_1to1;
+      if (!client_resolution_request_exact(encodes_1to1 && encodes_1to1->load(), capture_display_size(), old_width, old_height)) {
         BOOST_LOG(info) << "Ignoring client resolution change request: the capture display does not show the stream resolution "
-                        << old_width << "x" << old_height;
+                        << old_width << "x" << old_height << " at a 1:1 scale";
         return;
       }
 
@@ -4944,6 +4949,7 @@ namespace stream {
       session->config = config;
       session->config.monitor.capture_target = std::make_shared<streaming::capture_target_t>();
       session->config.monitor.client_resolution_target = std::make_shared<video::pending_display_size_t>();
+      session->config.monitor.stream_encodes_display_1to1 = std::make_shared<std::atomic<bool>>(false);
 
       session->control.connect_data = launch_session.control_connect_data;
       session->control.feedback_queue = mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback);

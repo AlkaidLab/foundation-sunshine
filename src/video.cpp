@@ -315,6 +315,12 @@ namespace video {
     };
   }
 
+  bool
+  encodes_display_1to1(int stream_width, int stream_height, int display_width, int display_height) {
+    return (stream_width == display_width && stream_height == display_height) ||
+           (stream_width == display_height && stream_height == display_width);
+  }
+
   input_activity_boost_policy_t
   make_input_activity_boost_policy(const input_activity_boost_config_t &config) {
     input_activity_boost_policy_t policy {};
@@ -4422,6 +4428,13 @@ namespace video {
       if (last_display_width == 0 && last_display_height == 0) {
         last_display_width = current_width;
         last_display_height = current_height;
+
+        // The scale chosen here is kept for the session, so a client-requested display size only becomes the stream
+        // size when it is 1:1. Window capture never follows display changes.
+        if (config.stream_encodes_display_1to1) {
+          config.stream_encodes_display_1to1->store(
+            !is_window_capture && encodes_display_1to1(config.width, config.height, current_width, current_height));
+        }
 
         // Check if display orientation matches client request
         const bool display_is_portrait = (current_height > current_width);

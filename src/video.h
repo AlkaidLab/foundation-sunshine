@@ -11,6 +11,7 @@
 
 #include <boost/smart_ptr/shared_ptr.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <functional>
@@ -201,6 +202,15 @@ namespace video {
   std::function<bool()>
   make_deferred_display_stop(std::shared_ptr<pending_display_size_t> target, int width, int height);
 
+  /**
+   * @brief Whether capture that starts with this stream and display size encodes the display 1:1.
+   *
+   * The capture loop fixes its stream/display scale when capture starts, swapping width and height when the
+   * orientations differ, and keeps it for the session. Only at 1:1 does a later display size become the stream size.
+   */
+  bool
+  encodes_display_1to1(int stream_width, int stream_height, int display_width, int display_height);
+
   /* Encoding configuration requested by remote client */
   struct config_t {
     int width;  // Video width in pixels
@@ -270,6 +280,8 @@ namespace video {
     std::shared_ptr<streaming::capture_target_t> capture_target;
     // Shared with the control stream for the session; only set by client-requested resolution changes.
     std::shared_ptr<pending_display_size_t> client_resolution_target;
+    // Shared with the control stream for the session; latched by the capture loop when capture starts.
+    std::shared_ptr<std::atomic<bool>> stream_encodes_display_1to1;
 
     platf::frame_pipeline_policy_t
     effective_frame_pipeline_policy() const {
