@@ -893,8 +893,6 @@
     "usb_forwarding_port_hint": "0: otomatik (ana bağlantı noktası + 7; genellikle 47996). Geçersiz kılmak için 1024–65535 girin. İstemciler ana bilgisayarın gerçek bağlantı noktasını bulur.",
     "variable_refresh_rate": "Değişken Yenileme Hızı (VRR)",
     "variable_refresh_rate_desc": "VRR desteği için video akışı kare hızının render kare hızıyla eşleşmesine izin ver. Etkinleştirildiğinde, kodlama yalnızca yeni kareler mevcut olduğunda gerçekleşir ve akışın gerçek render kare hızını takip etmesine olanak tanır.",
-    "vdd_borrowed_texture": "Kopyasız kare aktarımı",
-    "vdd_borrowed_texture_desc": "Zako Direct'in geçerli VDD kare dokusunu geçici olarak kullanmasına ve dönüştürmeden sonra geri vermesine izin verir. Önerilir; aktarım engellenirse veya desteklenmezse kopyalama yoluna döner.",
     "vdd_driver_browser_hint": "Ana makinede Sunshine uygulamasını açın, VDD ayarlarına gidin ve sürücüyü yükleyin ya da onarın.",
     "vdd_driver_desktop_hint": "Birlikte verilen sürücüyü buradan yükleyin veya onarın. Sunshine devam etmeden önce sürücüyü denetler.",
     "vdd_driver_install_repair": "Yükle / Onar",

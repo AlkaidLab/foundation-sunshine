@@ -895,8 +895,6 @@
     "usb_forwarding_port_hint": "0：自動（主要連接埠 + 7，通常為 47996）。輸入 1024–65535 以覆寫。用戶端會從主機取得實際連接埠。",
     "variable_refresh_rate": "可變刷新率 (VRR)",
     "variable_refresh_rate_desc": "允許視訊流幀率與渲染幀率匹配以支援 VRR。啟用後，僅在有新幀可用時進行編碼，允許流跟隨實際渲染幀率。",
-    "vdd_borrowed_texture": "零拷貝借幀",
-    "vdd_borrowed_texture_desc": "讓 Zako Direct 借用目前 VDD 幀紋理，轉換完成後立即歸還。推薦開啟；交接受阻或不支援時會自動回退到複製路徑。",
     "vdd_driver_browser_hint": "請在主機上開啟 Sunshine 桌面端，進入 VDD 設定安裝或修復驅動程式。",
     "vdd_driver_desktop_hint": "可在這裡安裝或修復隨附驅動；Sunshine 會在繼續前完成驗證。",
     "vdd_driver_install_repair": "安裝 / 修復",

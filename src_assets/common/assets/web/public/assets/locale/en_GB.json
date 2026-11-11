@@ -893,8 +893,6 @@
     "usb_forwarding_port_hint": "0: automatic (main port + 7; normally 47996). Set 1024–65535 to override. Clients discover the actual port from the host.",
     "variable_refresh_rate": "Variable Refresh Rate (VRR)",
     "variable_refresh_rate_desc": "Allow video stream framerate to match render framerate for VRR support. When enabled, encoding only occurs when new frames are available, allowing the stream to follow the actual render framerate.",
-    "vdd_borrowed_texture": "Zero-copy frame handoff",
-    "vdd_borrowed_texture_desc": "Let Zako Direct borrow the current VDD frame texture and return it after conversion. Recommended; it falls back to the copy path if the handoff is blocked or unsupported.",
     "vdd_driver_browser_hint": "Open the Sunshine desktop app on the host, go to VDD settings, and install or repair the driver.",
     "vdd_driver_desktop_hint": "Install or repair the bundled driver here. Sunshine will verify it before continuing.",
     "vdd_driver_install_repair": "Install / Repair",

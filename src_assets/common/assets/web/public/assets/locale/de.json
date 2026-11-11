@@ -893,8 +893,6 @@
     "usb_forwarding_port_hint": "0: automatisch (Hauptport + 7; normalerweise 47996). Mit 1024–65535 überschreiben. Die Clients ermitteln den tatsächlichen Port des Hosts.",
     "variable_refresh_rate": "Variable Bildwiederholrate (VRR)",
     "variable_refresh_rate_desc": "Erlauben Sie, dass die Bildwiederholrate des Videostreams mit der Render-Bildwiederholrate für VRR-Unterstützung übereinstimmt. Wenn aktiviert, erfolgt die Kodierung nur, wenn neue Frames verfügbar sind, sodass der Stream der tatsächlichen Render-Bildwiederholrate folgen kann.",
-    "vdd_borrowed_texture": "Frame-Übergabe ohne Kopieren",
-    "vdd_borrowed_texture_desc": "Erlaubt Zako Direct, die aktuelle VDD-Frame-Textur auszuleihen und nach der Konvertierung zurückzugeben. Empfohlen; fällt auf den Kopierpfad zurück, wenn die Übergabe blockiert oder nicht unterstützt wird.",
     "vdd_driver_browser_hint": "Öffnen Sie auf dem Host die Sunshine-Desktop-App, wechseln Sie zu den VDD-Einstellungen und installieren oder reparieren Sie den Treiber.",
     "vdd_driver_desktop_hint": "Installieren oder reparieren Sie hier den mitgelieferten Treiber. Sunshine überprüft ihn, bevor der Vorgang fortgesetzt wird.",
     "vdd_driver_install_repair": "Installieren / Reparieren",

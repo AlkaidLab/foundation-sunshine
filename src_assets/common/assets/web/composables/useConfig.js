@@ -76,7 +76,6 @@ const DEFAULT_TABS = [
       install_steam_audio_drivers: 'enabled',
       output_name: '',
       hdr_luminance_analysis: 'auto',
-      vdd_borrowed_texture: 'enabled',
       vdd_vulkan_hdr_bridge: 'enabled',
       nvenc_vdd_force_vsync: 'disabled',
       display_device_prep: 'no_operation',

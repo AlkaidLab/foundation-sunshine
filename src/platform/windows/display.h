@@ -869,13 +869,11 @@ namespace platf::dxgi {
     vdd_capture_t dup;
     unsigned int monitor_idx = 0;
     ID3D11Texture2D *current_frame = nullptr;  // Owned ref from dup.next_frame (via AddRef), released in release_snapshot
-    bool vdd_borrow_enabled = false;
     std::chrono::steady_clock::time_point vdd_borrow_cooldown_until {};
     std::chrono::steady_clock::time_point vdd_borrow_last_telemetry {};
     UINT64 vdd_borrow_attempts = 0;
     UINT64 vdd_borrow_successes = 0;
     UINT64 vdd_borrow_fallbacks = 0;
-    UINT64 vdd_borrow_disabled_frames = 0;
     UINT64 vdd_borrow_cooldown_frames = 0;
     UINT64 vdd_borrow_cooldown_events = 0;
     UINT64 vdd_borrow_deferred_frames = 0;

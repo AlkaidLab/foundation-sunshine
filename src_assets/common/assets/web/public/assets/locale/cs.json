@@ -893,8 +893,6 @@
     "usb_forwarding_port_hint": "0: automaticky (hlavní port + 7; obvykle 47996). Pro přepsání zadejte 1024–65535. Klienti zjistí skutečný port z hostitele.",
     "variable_refresh_rate": "Variabilní obnovovací frekvence (VRR)",
     "variable_refresh_rate_desc": "Povolit framerate video streamu, aby odpovídal framerate renderování pro podporu VRR. Je-li povoleno, kódování probíhá pouze tehdy, když jsou k dispozici nové snímky, což umožňuje streamu sledovat skutečný framerate renderování.",
-    "vdd_borrowed_texture": "Předání snímku bez kopírování",
-    "vdd_borrowed_texture_desc": "Umožní Zako Direct zapůjčit si aktuální texturu snímku VDD a po převodu ji vrátit. Doporučeno; pokud je předání blokováno nebo nepodporováno, použije se kopírovací cesta.",
     "vdd_driver_browser_hint": "Otevřete na hostiteli desktopovou aplikaci Sunshine, přejděte do nastavení VDD a ovladač nainstalujte nebo opravte.",
     "vdd_driver_desktop_hint": "Zde nainstalujte nebo opravte přibalený ovladač. Sunshine jej před pokračováním ověří.",
     "vdd_driver_install_repair": "Instalovat / Opravit",

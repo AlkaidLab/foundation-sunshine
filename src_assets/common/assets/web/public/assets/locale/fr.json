@@ -893,8 +893,6 @@
     "usb_forwarding_port_hint": "0 : automatique (port principal + 7 ; généralement 47996). Saisissez 1024–65535 pour le remplacer. Les clients découvrent le port réel de l’hôte.",
     "variable_refresh_rate": "Taux de rafraîchissement variable (VRR)",
     "variable_refresh_rate_desc": "Permettre au taux d'images du flux vidéo de correspondre au taux d'images de rendu pour la prise en charge VRR. Lorsqu'il est activé, l'encodage ne se produit que lorsque de nouvelles images sont disponibles, permettant au flux de suivre le taux d'images de rendu réel.",
-    "vdd_borrowed_texture": "Transfert d'image sans copie",
-    "vdd_borrowed_texture_desc": "Permet à Zako Direct d'emprunter la texture de l'image VDD actuelle et de la restituer après conversion. Recommandé ; revient au chemin avec copie si le transfert est bloqué ou non pris en charge.",
     "vdd_driver_browser_hint": "Ouvrez l'application de bureau Sunshine sur l'hôte, accédez aux paramètres VDD, puis installez ou réparez le pilote.",
     "vdd_driver_desktop_hint": "Installez ou réparez ici le pilote fourni. Sunshine le vérifiera avant de continuer.",
     "vdd_driver_install_repair": "Installer / Réparer",

@@ -893,8 +893,6 @@
     "usb_forwarding_port_hint": "0: automatiskt (huvudport + 7; normalt 47996). Ange 1024–65535 för att åsidosätta. Klienterna hittar värdens faktiska port.",
     "variable_refresh_rate": "Variabel uppdateringsfrekvens (VRR)",
     "variable_refresh_rate_desc": "Tillåt videoströmmens bildfrekvens att matcha renderingsbildfrekvensen för VRR-stöd. När aktiverat sker kodning endast när nya bildrutor är tillgängliga, vilket gör att strömmen kan följa den faktiska renderingsbildfrekvensen.",
-    "vdd_borrowed_texture": "Bildruteöverlämning utan kopiering",
-    "vdd_borrowed_texture_desc": "Låter Zako Direct tillfälligt använda den aktuella VDD-bildrutans textur och lämna tillbaka den efter konvertering. Rekommenderas; reservvägen med kopiering används om överlämningen blockeras eller inte stöds.",
     "vdd_driver_browser_hint": "Öppna Sunshine-appen på värddatorn, gå till VDD-inställningarna och installera eller reparera drivrutinen.",
     "vdd_driver_desktop_hint": "Installera eller reparera den medföljande drivrutinen här. Sunshine kontrollerar drivrutinen innan du fortsätter.",
     "vdd_driver_install_repair": "Installera / reparera",

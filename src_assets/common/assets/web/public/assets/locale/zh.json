@@ -895,8 +895,6 @@
     "usb_forwarding_port_hint": "0：自动（主端口 +7，通常为 47996）。填写 1024–65535 可覆盖；客户端从主机获取实际端口。",
     "variable_refresh_rate": "可变刷新率 (VRR)",
     "variable_refresh_rate_desc": "允许视频流帧率与渲染帧率匹配以支持 VRR。启用后，仅在有新帧可用时进行编码，允许流跟随实际渲染帧率。",
-    "vdd_borrowed_texture": "零拷贝借帧",
-    "vdd_borrowed_texture_desc": "让 Zako Direct 借用当前 VDD 帧纹理，转换完成后立即归还。推荐开启；交接受阻或不支持时会自动回退到复制路径。",
     "vdd_driver_browser_hint": "请在主机上打开 Sunshine 桌面端，进入 VDD 设置安装或修复驱动。",
     "vdd_driver_desktop_hint": "可在这里安装或修复随附驱动；Sunshine 会在继续前完成验证。",
     "vdd_driver_install_repair": "安装 / 修复",

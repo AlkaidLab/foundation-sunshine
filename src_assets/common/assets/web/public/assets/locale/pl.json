@@ -893,8 +893,6 @@
     "usb_forwarding_port_hint": "0: automatycznie (główny port + 7; zwykle 47996). Aby zastąpić wartość, wpisz 1024–65535. Klienci wykrywają rzeczywisty port hosta.",
     "variable_refresh_rate": "Zmienna częstotliwość odświeżania (VRR)",
     "variable_refresh_rate_desc": "Pozwól, aby liczba klatek strumienia wideo odpowiadała liczbie klatek renderowania dla obsługi VRR. Po włączeniu kodowanie odbywa się tylko wtedy, gdy dostępne są nowe klatki, co pozwala strumieniowi podążać za rzeczywistą liczbą klatek renderowania.",
-    "vdd_borrowed_texture": "Przekazanie ramki z zerową kopią",
-    "vdd_borrowed_texture_desc": "Pozwól Zako Direct pożyczyć aktualną teksturę ramki VDD i zwrócić ją po konwersji. Zalecony; wraca do ścieżki kopiowania, jeśli przekazywanie jest zablokowane lub nieobsługiwane.",
     "vdd_driver_browser_hint": "Otwórz aplikację komputerową Sunshine na hoście, przejdź do ustawień VDD i zainstaluj lub napraw sterownik.",
     "vdd_driver_desktop_hint": "Zainstaluj lub napraw dołączony sterownik tutaj. Sunshine sprawdzi to przed kontynuowaniem.",
     "vdd_driver_install_repair": "Zainstaluj/napraw",
