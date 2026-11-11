@@ -221,6 +221,8 @@ set(SUNSHINE_HOST_SOURCES
     src/confighttp/routes.cpp src/confighttp/routes.h
     src/confighttp/types.h
     src/confighttp/asset_paths.h
+    # src/doctor
+    src/doctor/doctor.cpp src/doctor/doctor.h
     src/doctor/doctor_os.cpp src/doctor/doctor_os.h
 
     # src/app_scan

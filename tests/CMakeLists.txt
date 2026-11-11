@@ -361,10 +361,17 @@ add_executable(hdr_calibration_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_hdr_calibration.cpp
         ${CMAKE_SOURCE_DIR}/src/hdr/calibration.cpp
         ${CMAKE_SOURCE_DIR}/src/hdr/client_display_capabilities.cpp
-        ${CMAKE_SOURCE_DIR}/src/display_device/color_profile.cpp)
-target_include_directories(hdr_calibration_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+        ${CMAKE_SOURCE_DIR}/src/display_device/color_profile.cpp
+        ${CMAKE_SOURCE_DIR}/src/doctor/doctor.cpp
+        ${CMAKE_SOURCE_DIR}/src/nat_discovery.cpp
+        ${CMAKE_SOURCE_DIR}/src/public_address.cpp
+        ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
+        ${CMAKE_SOURCE_DIR}/src/build_info.cpp)
+target_include_directories(hdr_calibration_unit_tests PRIVATE
+        "${CMAKE_SOURCE_DIR}"
+        "${CMAKE_BINARY_DIR}")  # generated build_info_defs.h and version.h
 target_link_libraries(hdr_calibration_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
-        sunshine_project_options sunshine_coverage)
+        sunshine_project_options sunshine_coverage alkaidlab_stun_codec)
 set_target_properties(hdr_calibration_unit_tests PROPERTIES CXX_STANDARD 23)
 if (WIN32)
     set_target_properties(hdr_calibration_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
@@ -387,7 +394,16 @@ set(CONFIG_RUNTIME_SUPPORT_SOURCES
         ${CMAKE_SOURCE_DIR}/src/display_device/to_string.cpp
         ${CMAKE_SOURCE_DIR}/src/hdr/calibration.cpp
         ${CMAKE_SOURCE_DIR}/src/hdr/client_display_capabilities.cpp
-        ${CMAKE_SOURCE_DIR}/src/display_device/color_profile.cpp)
+        ${CMAKE_SOURCE_DIR}/src/display_device/color_profile.cpp
+        ${CMAKE_SOURCE_DIR}/src/doctor/doctor.cpp
+        ${CMAKE_SOURCE_DIR}/src/public_address.cpp
+        ${CMAKE_SOURCE_DIR}/src/nat_discovery.cpp
+        ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
+        ${CMAKE_SOURCE_DIR}/src/build_info.cpp)
+add_executable(config_runtime_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/config_runtime_stubs.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_config_runtime.cpp
+        ${CONFIG_RUNTIME_SUPPORT_SOURCES})
 target_include_directories(config_runtime_unit_tests PRIVATE
         "${CMAKE_SOURCE_DIR}"
         "${CMAKE_BINARY_DIR}")  # generated version.h
