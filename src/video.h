@@ -668,6 +668,61 @@ namespace video {
    *
    * @warning This is only safe to call when there is no client actively streaming.
    */
+  /**
+   * @brief Drop the memo of the last successful probe, so the next launch probes again.
+   * @note The temporary option swap of a recovery attempt calls it around itself: a probe made with other options must not be reused by a launch with the normal ones.
+   */
+  void
+  forget_encoder_probe_result();
+
   int
   probe_encoders(std::optional<probe_target_t> target = std::nullopt);
+
+  /** One codec of a health-check probe. */
+  struct doctor_codec_result_t {
+    bool tested = false;
+    bool passed = false;
+    bool hdr = false;
+    bool yuv444 = false;
+  };
+
+  /** A read-only re-probe of one encoder backend, for the health check (体检). */
+  struct doctor_encoder_result_t {
+    std::string name;
+    bool ran = false;
+    std::string skipped_reason;  ///< "busy" (another probe held the lock past the wait), "no_display", "unknown"
+    bool usable = false;
+    std::string failure;  ///< "display", "unsupported_gpu", "h264_session"
+    doctor_codec_result_t h264, hevc, av1;
+    std::int64_t elapsed_ms = 0;
+  };
+
+  /** Names of the encoder backends of this build, in probe order. */
+  std::vector<std::string>
+  encoder_backend_names();
+
+  /**
+   * @brief Probes one backend the way the startup probe does, on a copy of the encoder, testing every codec.
+   * @details The chosen encoder, the codec modes and the probe result of the host are left alone. It holds
+   *          the probe lock (waiting up to 12 s for it), so a stream start waits for at most one backend;
+   *          the caller checks for streams.
+   */
+  doctor_encoder_result_t
+  doctor_probe_encoder(const std::string &name);
+
+  struct doctor_capture_result_t {
+    bool ran = false;
+    std::string skipped_reason;  ///< "busy", "no_display"
+    bool ok = false;
+    std::string method;  ///< the capture backend that ran: config capture, its probe stand-in, or "auto"
+    std::string display;
+    int width = 0;
+    int height = 0;
+    std::int64_t first_frame_ms = 0;
+    std::string failure;  ///< "open", "error", "no_frame"
+  };
+
+  /** Opens the configured display with the configured capture method and waits for one frame; the frame is dropped. */
+  doctor_capture_result_t
+  doctor_probe_capture(std::chrono::milliseconds budget);
 }  // namespace video

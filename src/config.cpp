@@ -24,17 +24,18 @@
 #include "config.h"
 #include "entry_handler.h"
 #include "file_handler.h"
-#include "logging.h"
-#include "nvhttp.h"
-#include "rtsp.h"
-#include "utility.h"
 #include "globals.h"
 #include "hdr/calibration.h"
+#include "logging.h"
 #include "nat_discovery.h"
+#include "nvhttp.h"
 #include "public_address.h"
+#include "rtsp.h"
 #include "streaming/bitrate.h"
+#include "utility.h"
 
 #include "display_device/parsed_config.h"
+#include "doctor/doctor.h"
 #include "platform/common.h"
 
 #ifdef _WIN32
@@ -1199,6 +1200,7 @@ namespace config {
           break;
         default:
           BOOST_LOG(warning) << "config: Unrecognized flag: ["sv << *line << ']' << std::endl;
+          doctor::record_config_problem("Unrecognized flag [" + std::string(1, *line) + "]");
           ret = -1;
       }
 
@@ -1780,8 +1782,9 @@ namespace config {
       vars.erase(it);
     }
 
+    for (auto &[var, _] : vars) {
+      doctor::record_config_problem("Unrecognized configurable option [" + var + "]");
       if (sunshine.min_log_level <= 3) {
-      for (auto &[var, _] : vars) {
         std::cout << "Warning: Unrecognized configurable option ["sv << var << ']' << std::endl;
       }
     }

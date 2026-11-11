@@ -560,6 +560,7 @@ if (WIN32)
     set_target_properties(frame_contract_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
 add_test(NAME frame_contract_unit_tests COMMAND frame_contract_unit_tests)
+
 add_executable(session_info_unit_tests
         ${CMAKE_SOURCE_DIR}/src/session_info.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_session_info.cpp)
@@ -604,6 +605,30 @@ if (WIN32)
 endif ()
 add_test(NAME telemetry_unit_tests COMMAND telemetry_unit_tests)
 
+# 体检: the evaluators, the runner, the JSON and the read-only OS probes
+add_executable(doctor_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/doctor/doctor.cpp
+        ${CMAKE_SOURCE_DIR}/src/doctor/doctor_os.cpp
+        ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
+        ${CMAKE_SOURCE_DIR}/src/public_address.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_doctor.cpp)
+target_include_directories(doctor_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+# with feat/build-identity merged the doctor reads the build identity: its source and the generated build_info_defs.h / version.h
+if (EXISTS "${CMAKE_SOURCE_DIR}/src/build_info.cpp")
+    target_sources(doctor_unit_tests PRIVATE ${CMAKE_SOURCE_DIR}/src/build_info.cpp)
+    target_include_directories(doctor_unit_tests PRIVATE "${CMAKE_BINARY_DIR}")
+endif ()
+target_link_libraries(doctor_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
+        sunshine_project_options sunshine_coverage ${Boost_LIBRARIES})
+if (WIN32)
+    target_link_libraries(doctor_unit_tests PRIVATE ole32 uuid mmdevapi strmiids setupapi advapi32)
+    target_compile_definitions(doctor_unit_tests PRIVATE INITGUID)
+    set_target_properties(doctor_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+target_compile_options(doctor_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(doctor_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME doctor_unit_tests COMMAND doctor_unit_tests)
+
 # 版本比较: the date part of a Foundation Sunshine version, against the table shared with the panel and the Web UI
 add_executable(version_compare_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_version_compare.cpp)
@@ -642,6 +667,14 @@ add_test(NAME system_info_unit_tests COMMAND system_info_unit_tests)
 add_executable(build_info_unit_tests
         ${CMAKE_SOURCE_DIR}/src/build_info.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_build_info.cpp)
+target_include_directories(build_info_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}" "${CMAKE_BINARY_DIR}")
+target_link_libraries(build_info_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
+        sunshine_project_options sunshine_coverage)
+set_target_properties(build_info_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(build_info_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME build_info_unit_tests COMMAND build_info_unit_tests)
 # The binary FILEVERSION encoding: HHMMSS above 65535 is split, every field fits 16 bits.
 add_test(NAME rc_version_encoding COMMAND ${CMAKE_COMMAND} -P ${CMAKE_SOURCE_DIR}/tests/cmake/test_rc_version.cmake)
 # A git archive tree (no .git) records its commit from cmake/prep/build_identity_archive.txt (export-subst).

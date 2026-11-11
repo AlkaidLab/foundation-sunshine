@@ -409,5 +409,77 @@
   {
     "pattern": "^/api/network/listeners$",
     "method": "GET"
+  },
+  {
+    "pattern": "^/api/network/reachability$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/network/overview$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/doctor$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/system/info$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/version$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/pairing/pending$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/pairing/pending/([A-Za-z0-9_-]{1,64})$",
+    "method": "DELETE"
+  },
+  {
+    "pattern": "^/api/pairing/pin$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/login/?$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/auth/login$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/auth/logout$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/auth/session$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/auth/sessions$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/auth/sessions$",
+    "method": "DELETE"
+  },
+  {
+    "pattern": "^/api/auth/sessions/([A-Za-z0-9_-]+)$",
+    "method": "DELETE"
+  },
+  {
+    "pattern": "^/api/auth/setup$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/auth/password$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/auth/password/reset$",
+    "method": "POST"
   }
 ]

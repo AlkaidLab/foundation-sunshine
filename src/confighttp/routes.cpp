@@ -14,6 +14,7 @@
 #include "src/confighttp/common.h"
 #include "src/confighttp/configuration.h"
 #include "src/confighttp/diagnostics.h"
+#include "src/confighttp/doctor.h"
 #include "src/confighttp/integrations.h"
 #include "src/confighttp/network.h"
 #include "src/confighttp/pairing.h"
@@ -38,6 +39,7 @@ namespace confighttp {
     confighttp::configuration::register_routes(server);
     confighttp::clients::register_routes(server);
     confighttp::diagnostics::register_routes(server);
+    confighttp::doctor::register_routes(server);
     confighttp::runtime::register_routes(server);
     confighttp::integrations::register_routes(server);
     confighttp::network::register_routes(server);
