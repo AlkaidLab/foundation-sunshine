@@ -34,6 +34,7 @@
 #include "process.h"
 #include "pyrowave/runtime.h"
 #include "startup_gate.h"
+#include "telemetry/hooks.h"
 #include "tray/system_tray.h"
 #include "upnp.h"
 #include "version.h"
@@ -684,6 +685,9 @@ main(int argc, char *argv[]) {
   httpThread.join();
   configThread.join();
   rtspThread.join();
+
+  // the sessions have ended: the last events go to the disk queue (no wait for the network) and the sender stops
+  telemetry::stop();
 
   task_pool.stop();
   task_pool.join();

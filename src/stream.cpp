@@ -4718,6 +4718,7 @@ namespace stream {
 
       session.nvidia_vsync_lease.reset();
       perf::end_session(session.launch_session_id);
+      telemetry::stream_ended(session.launch_session_id, stop_reason_name(session.lifecycle.snapshot().stop_reason));
 
       // Clean up ABR state for this client
       abr::cleanup(session.client_name);

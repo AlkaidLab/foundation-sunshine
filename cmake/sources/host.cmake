@@ -165,6 +165,12 @@ set(SUNSHINE_HOST_SOURCES
     src/webhook/webhook_format.cpp src/webhook/webhook_format.h
     src/webhook/webhook.cpp src/webhook/webhook.h
 
+    # src/telemetry
+    src/telemetry/events.cpp src/telemetry/events.h
+    src/telemetry/queue.cpp src/telemetry/queue.h
+    src/telemetry/transport.cpp src/telemetry/transport.h
+    src/telemetry/hooks.h
+
     # src/nvhttp
     src/nvhttp/abr_api.cpp src/nvhttp/abr_api.h
     src/nvhttp/ai_api.cpp src/nvhttp/ai_api.h

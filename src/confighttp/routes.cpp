@@ -39,6 +39,9 @@ namespace confighttp {
     confighttp::diagnostics::register_routes(server);
     confighttp::runtime::register_routes(server);
     confighttp::integrations::register_routes(server);
+    confighttp::network::register_routes(server);
+    confighttp::systeminfo::register_routes(server);
+    confighttp::telemetry_api::register_routes(server);
     confighttp::proxies::register_routes(server);
     file_mapping::config_http::register_routes(server);
     ai::http::register_routes(server);
