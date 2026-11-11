@@ -160,25 +160,6 @@ function removeFps(index) {
             <label class="section-title">{{ $t('tabs.advanced') }}</label>
           </div>
 
-          <div class="form-check form-switch">
-            <input
-              id="vdd_borrowed_texture"
-              v-model="config.vdd_borrowed_texture"
-              class="form-check-input"
-              type="checkbox"
-              role="switch"
-              aria-describedby="vdd_borrowed_texture_desc"
-              true-value="enabled"
-              false-value="disabled"
-            />
-            <label class="form-check-label" for="vdd_borrowed_texture">
-              {{ $t('config.vdd_borrowed_texture') }}
-            </label>
-          </div>
-          <div id="vdd_borrowed_texture_desc" class="form-text">
-            {{ $t('config.vdd_borrowed_texture_desc') }}
-          </div>
-
           <NvidiaVsyncCard :config="config" :platform="platform" />
           <VulkanHdrBridgeCard class="mt-3" :config="config" />
         </div>
