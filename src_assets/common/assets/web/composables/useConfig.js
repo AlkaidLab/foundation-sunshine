@@ -1,9 +1,10 @@
 import { ref } from 'vue'
-import { trackEvents } from '../config/firebase.js'
-import { getBootstrapConfig } from '../config/bootstrapData.js'
+import { trackEvents } from '../config/telemetry.js'
+import { hostData, keepKey } from './hostData.js'
 import { apiFetch, apiJson } from '../utils/apiFetch.js'
 import { deepClone, safeJsonParse } from '../utils/helpers.js'
 import { validateListenerSettings } from '../utils/listenerSettings.js'
+import { setRestartPlatform } from './restartKeys.js'
 
 // 平台相关的标签页排除规则
 const PLATFORM_EXCLUSIONS = {
@@ -30,9 +31,11 @@ const DEFAULT_TABS = [
       locale: 'en',
       sunshine_name: '',
       min_log_level: 2,
+      sleep_mode: 0,
       global_prep_cmd: '[]',
       notify_pre_releases: 'disabled',
       stop_on_last_video_session: 'disabled',
+      launch_splash: 'enabled',
     },
   },
   {
@@ -72,7 +75,7 @@ const DEFAULT_TABS = [
       virtual_sink: '',
       mat_live: 'disabled',
       keep_sink_default: false,
-      microphone_redirect_backend: 'vb_cable',
+      microphone_redirect_backend: 'auto',
       stream_mic: true,
       install_steam_audio_drivers: 'enabled',
       output_name: '',
@@ -103,6 +106,7 @@ const DEFAULT_TABS = [
       port: 47989,
       origin_web_ui_allowed: 'lan',
       external_ip: '',
+      external_endpoints: '',
       lan_encryption_mode: 0,
       wan_encryption_mode: 1,
       close_verify_safe: 'disabled',
@@ -349,6 +353,10 @@ const createRisk = (
 /**
  * 配置管理组合式函数
  */
+// The last answer of the host's configuration is kept by hostData (composables/hostData.js); these stay for the code that reads it directly.
+export const CONFIG_CACHE_KEY = keepKey('config')
+export const readCachedConfig = () => hostData.peek('config')
+
 export function useConfig() {
   const validationError = ref('')
   const saveError = ref('')
@@ -427,32 +435,49 @@ export function useConfig() {
     resolutions.value = parseResolutions(config.value.resolutions)
     global_prep_cmd.value = safeParseJSON(config.value.global_prep_cmd)
 
-    config.value.global_prep_cmd = config.value.global_prep_cmd || []
+    // keep the same form the page compares and sends ("[]"), so a host that leaves the key out does not look like an edit
+    config.value.global_prep_cmd = JSON.stringify(global_prep_cmd.value)
   }
 
   /**
    * 加载配置
    */
+  // Stale-while-revalidate (the Web UI in the panel is as smooth as a native app, no blank page or spinner for data on this computer): the last answer of the host is kept
+  // (CONFIG_CACHE_KEY) and the page draws from it at once; the fresh answer replaces it in place when it arrives, unless the person has already edited something in between.
+  const applyConfigData = (data) => {
+    platform.value = data.platform || ''
+    setRestartPlatform(platform.value)
+    filterTabsByPlatform(platform.value)
+
+    const { platform: _, status, version, usb_forwarding_config_version, ...configData } = data
+    configData.amd_avcodec_compat = normalizeEnabledDisabledValue(configData.amd_avcodec_compat)
+    configData.amd_vpe = normalizeEnabledDisabledValue(configData.amd_vpe)
+    configData.amd_hevc_gop_size = parseHevcGopSize(configData.amd_hevc_gop_size) ?? -1
+    configData.fec_auto = normalizeEnabledDisabledValue(configData.fec_auto)
+    configData.mat_live = normalizeEnabledDisabledValue(configData.mat_live)
+    configData.nvenc_manage_driver_settings = normalizeEnabledDisabledValue(configData.nvenc_manage_driver_settings)
+    configData.nvenc_vdd_force_vsync = normalizeEnabledDisabledValue(configData.nvenc_vdd_force_vsync)
+    config.value = configData
+
+    fillDefaultValues()
+    parseSpecialFields()
+    saveSnapshots()
+  }
+
   const loadConfig = async () => {
+    let drewFromCache = false
+    let drawn = ''
+    if (!config.value) {
+      const cached = hostData.peek('config')
+      if (cached) {
+        try { applyConfigData(cached); drewFromCache = true; drawn = JSON.stringify(config.value) } catch (error) { console.error('The kept configuration could not be used:', error) }
+      }
+    }
     try {
-      const data = await getBootstrapConfig()
-
-      platform.value = data.platform || ''
-      filterTabsByPlatform(platform.value)
-
-      const { platform: _, status, version, usb_forwarding_config_version, ...configData } = data
-      configData.amd_avcodec_compat = normalizeEnabledDisabledValue(configData.amd_avcodec_compat)
-      configData.amd_vpe = normalizeEnabledDisabledValue(configData.amd_vpe)
-      configData.amd_hevc_gop_size = parseHevcGopSize(configData.amd_hevc_gop_size) ?? -1
-      configData.fec_auto = normalizeEnabledDisabledValue(configData.fec_auto)
-      configData.mat_live = normalizeEnabledDisabledValue(configData.mat_live)
-      configData.nvenc_manage_driver_settings = normalizeEnabledDisabledValue(configData.nvenc_manage_driver_settings)
-      configData.nvenc_vdd_force_vsync = normalizeEnabledDisabledValue(configData.nvenc_vdd_force_vsync)
-      config.value = configData
-
-      fillDefaultValues()
-      parseSpecialFields()
-      saveSnapshots()
+      const data = await hostData.refresh('config')
+      // an edit made on the kept values is the person's: the fresh answer does not take it away (the next load, after a save, applies it)
+      if (drewFromCache && JSON.stringify(config.value) !== drawn) return
+      applyConfigData(data)
     } catch (error) {
       console.error('Failed to load config:', error)
     }
@@ -545,7 +570,7 @@ export function useConfig() {
     const sensitiveFileKeys = ['credentials_file', 'pkey', 'cert', 'file_state']
     const changedSensitiveFiles = sensitiveFileKeys.filter((key) => valueChanged(currentConfig, key))
     if (changedSensitiveFiles.length > 0) {
-      addRisk(risks, createRisk('sensitive_files_changed', 'high', { currentValue: changedSensitiveFiles.join(', ') }))
+      addRisk(risks, createRisk('sensitive_files_changed', 'high', { currentValue: changedSensitiveFiles.map((key) => `${key} → ${currentConfig[key] || 'default'}`).join('  ·  ') }))
     }
 
     if (
@@ -754,6 +779,12 @@ export function useConfig() {
   /**
    * 检测是否有未保存的更改
    */
+  // a key written to the host on its own (the public address of the remote access card): the page's model and its saved copy both take the value, so the page does not call it a change
+  const markKeySaved = (key, value) => {
+    if (config.value) config.value[key] = value
+    if (snapshots.value.config) snapshots.value.config[key] = value
+  }
+
   const hasUnsavedChanges = () => {
     if (!config.value || !snapshots.value.config) {
       return false
@@ -768,7 +799,43 @@ export function useConfig() {
     return !configsAreEqual(tempConfig, snapshots.value.config)
   }
 
+  // the edits as a list for the window's unsaved state: every key whose value is not the one the host has, in the form the page compares
+  const currentForCompare = () => {
+    const current = deepClone(config.value)
+    current.resolutions = serializeResolutions(resolutions.value)
+    current.fps = serializeFps(filterValidFps(fps.value))
+    current.global_prep_cmd = JSON.stringify(global_prep_cmd.value)
+    return current
+  }
+  const changedEntries = () => {
+    if (!config.value || !snapshots.value.config) return []
+    const current = currentForCompare()
+    const original = snapshots.value.config
+    const out = []
+    for (const key of new Set([...Object.keys(current), ...Object.keys(original)])) {
+      if (!isEqual(current[key], original[key])) out.push({ key, before: original[key], after: current[key] })
+    }
+    return out
+  }
+  const setKey = (key, value) => {
+    if (key === 'resolutions') resolutions.value = parseResolutions(value)
+    else if (key === 'fps') fps.value = safeParseJSON(value)
+    else if (key === 'global_prep_cmd') global_prep_cmd.value = safeParseJSON(value)
+    if (value === undefined) delete config.value[key]
+    else config.value[key] = deepClone(value)
+  }
+  const revertKey = (key) => { if (config.value && snapshots.value.config) setKey(key, snapshots.value.config[key]) }
+  const restoreEntries = (entries) => { if (config.value) for (const e of entries) setKey(e.key, e.after) }
+  const isLoaded = () => !!config.value && !!snapshots.value.config
+  const pendingRisks = () => getRiskyChanges('save')
+
   return {
+    changedEntries,
+    revertKey,
+    setKey,
+    restoreEntries,
+    isLoaded,
+    pendingRisks,
     validationError,
     saveError,
     platform,
@@ -787,5 +854,6 @@ export function useConfig() {
     getRiskyChanges,
     handleHash,
     hasUnsavedChanges,
+    markKeySaved,
   }
 }

@@ -125,6 +125,17 @@ export async function openExternalUrl(url, windowObject = globalThis.window) {
   return Boolean(openedWindow);
 }
 
+/**
+ * 打开 Windows 设备管理器（仅控制面板内的框架里可用；它不会启用或更改任何设备）
+ * @param {Window} [windowObject] 当前窗口
+ * @returns {Promise<boolean>} 是否已打开
+ */
+export async function openDeviceManager(windowObject = globalThis.window) {
+  const invoke = windowObject?.__TAURI__?.core?.invoke;
+  if (typeof invoke !== 'function') return false;
+  return (await invoke('open_device_manager')) !== false;
+}
+
 const installedExternalLinkHandlers = new WeakMap();
 
 /**

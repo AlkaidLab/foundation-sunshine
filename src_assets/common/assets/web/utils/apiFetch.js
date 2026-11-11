@@ -45,6 +45,7 @@ export async function apiJson(url, options = {}) {
     const error = new Error(getApiErrorMessage(data, response))
     error.status = response.status
     error.code = typeof data?.error_code === 'string' ? data.error_code : ''
+    error.data = data
     throw error
   }
 

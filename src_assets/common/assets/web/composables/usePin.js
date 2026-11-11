@@ -1,5 +1,5 @@
 import { ref } from 'vue'
-import { getBootstrapConfig } from '../config/bootstrapData.js'
+import { hostData } from './hostData.js'
 import { apiJson, apiPostJson } from '../utils/apiFetch.js'
 
 const EDITABLE_CLIENT_FIELDS = ['name', 'hdrProfile', 'deviceSize', 'hdrBrightnessMode', 'hdrBrightnessMaxNits', 'hdrBrightnessMinNits', 'hdrBrightnessMaxFullFrameNits']
@@ -57,16 +57,19 @@ export function usePin(translate = (_key, { error }) => `Client name saved, but 
   }
 
   const persistedClient = (client) => {
-    const { hdrBrightnessRuntime: _runtime, enabled: _enabled, streaming: _streaming, ...settings } = client
+    const { hdrBrightnessRuntime: _runtime, enabled: _enabled, streaming: _streaming, deviceSizeSet: _sizeSet, ...settings } = client
     return settings
   }
 
+  // when the list was last read from the host: the page's "updated" stamp
+  const clientsAt = ref(0)
   const refreshClients = async () => {
     loading.value = true
     try {
       const data = await apiJson('/api/clients/list')
 
       if (!isSuccessfulStatus(data.status) || !Array.isArray(data.named_certs)) throw new Error('Invalid client list response')
+      clientsAt.value = Date.now()
 
       const tmpClients = parseClients()
       clients.value = data.named_certs.map((client) => {
@@ -75,7 +78,8 @@ export function usePin(translate = (_key, { error }) => `Client name saved, but 
         const merged = { ...(stored ? persistedClient(stored) : {}), ...(draft ? persistedClient(draft) : {}), ...client }
         merged.enabled = client.enabled !== false
         merged.hdrProfile ??= ''
-        // 如果客户端没有deviceSize，设置默认值为medium
+        // 如果客户端没有deviceSize，设置默认值为medium (deviceSizeSet: the size was chosen, not defaulted; the list shows a chosen size even when it is the default)
+        merged.deviceSizeSet = !!merged.deviceSize
         if (!merged.deviceSize) {
           merged.deviceSize = 'medium'
         }
@@ -220,7 +224,7 @@ export function usePin(translate = (_key, { error }) => `Client name saved, but 
 
   const loadConfig = async () => {
     try {
-      const data = await getBootstrapConfig()
+      const data = await hostData.refresh('config')
       config.value = data
       pairingDeviceName.value = data.pair_name ?? ''
     } catch (error) {
@@ -255,6 +259,7 @@ export function usePin(translate = (_key, { error }) => `Client name saved, but 
     pairingDeviceName,
     config,
     clients,
+    clientsAt,
     hdrProfileList,
     hasIccFileList,
     loading,
