@@ -4,7 +4,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$repository = 'qiin2333/sunshine-control-panel'
+$repository = 'AlkaidLab/foundation-panel'
 $entry = git ls-tree HEAD src_assets/common/sunshine-control-panel
 if ($LASTEXITCODE -ne 0 -or $entry -notmatch '^160000 commit ([0-9a-f]{40})\s') {
     throw 'Unable to resolve the committed Panel submodule'

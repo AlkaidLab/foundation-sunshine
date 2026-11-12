@@ -78,7 +78,7 @@
 	branch = master
 [submodule "src_assets/common/sunshine-control-panel"]
 	path = src_assets/common/sunshine-control-panel
-	url = https://github.com/qiin2333/sunshine-control-panel.git
+	url = https://github.com/AlkaidLab/foundation-panel.git
 	branch = main
 [submodule "third-party/moonlight-audio-haptics"]
 	path = third-party/moonlight-audio-haptics
