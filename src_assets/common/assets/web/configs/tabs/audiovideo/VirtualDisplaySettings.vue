@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import PlatformLayout from '../../../components/layout/PlatformLayout.vue'
 import VulkanHdrBridgeCard from './VulkanHdrBridgeCard.vue'
 import NvidiaVsyncCard from './NvidiaVsyncCard.vue'
+import { normalizeResolution, RESOLUTION_INPUT_PATTERN } from '../../../utils/resolutionInput.js'
 
 const props = defineProps({
   platform: String,
@@ -24,8 +25,9 @@ const MIN_FPS_VALUE = 1
 const MAX_FPS_VALUE = 480
 
 function addResolution() {
-  if (resIn.value && resolutions.value.length < MAX_RESOLUTIONS) {
-    resolutions.value.push(resIn.value)
+  const value = normalizeResolution(resIn.value)
+  if (value && resolutions.value.length < MAX_RESOLUTIONS) {
+    resolutions.value.push(value)
     resIn.value = ''
   }
 }
@@ -102,7 +104,7 @@ function removeFps(index) {
           type="text"
           v-model="resIn"
           required
-          pattern="[0-9]+x[0-9]+"
+          :pattern="RESOLUTION_INPUT_PATTERN"
           class="form-control add-input"
           placeholder="1920x1080"
         />
