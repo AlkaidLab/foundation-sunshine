@@ -1,901 +1,217 @@
 <script setup>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import QRCode from 'qrcode'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { MButton, MChipSet, MClientCard, MClientTag, MDialog, MFooter, MGroup, MIcon, MItem, MPage, MSection } from 'foundation-ui/vue'
+import { CLIENTS, CLIENT_OS, OS_ICON, clientSections, clientTags, clientTexts, clientUrl, clientsForOs, connectTexts, mirrorName, readOs, writeOs, osChipName, osName, osOfClient } from 'foundation-ui/clients'
+import { MClientAssets, useReleaseAssets } from 'foundation-ui/vue'
+import { fetchReleaseAssetTypes } from '../utils/clientReleaseDownloads.js'
+import { extraLinks, fileGroups, targetName, useClientDialog } from '../utils/clientDialog.js'
 import { downloadMessages } from '../i18n/downloads/index.js'
 import english from '../i18n/downloads/en.json'
-import Navbar from '../components/layout/Navbar.vue'
-import ConfirmDialog from '../components/common/ConfirmDialog.vue'
 import { openExternalUrl } from '../utils/helpers.js'
 import { CLIENT_DEVICE_GROUPS, CLIENT_FEATURE_ICONS, CLIENT_PLATFORMS } from '../config/clientDownloads.js'
-
+import { PARTNER_CARDS, PROJECT_LINKS, communityTexts, linkLabel, resolveLink } from '../config/communityLinks.js'
 
 const { locale } = useI18n({ useScope: 'global' })
 const { t, tm, rt } = useI18n({ useScope: 'local', messages: downloadMessages, fallbackLocale: 'en' })
-const isEmbeddedGui = window.isTauri === true && window.parent !== window
-const selectedPlatform = ref(CLIENT_PLATFORMS[0])
-const selectedGroup = ref(CLIENT_DEVICE_GROUPS[0])
-const groupPlatforms = computed(() => selectedGroup.value.platforms.map((id) => CLIENT_PLATFORMS.find((platform) => platform.id === id)))
-const downloadClient = ref(CLIENT_PLATFORMS[0])
-const supportsQr = (client) => ['android', 'harmony', 'ios'].includes(client.id)
-const showQr = computed(() => supportsQr(downloadClient.value))
-const selectedClients = computed(() => [selectedPlatform.value, ...(selectedPlatform.value.alternatives || [])]
-  .sort((first, second) => Number(Boolean(second.recommended)) - Number(Boolean(first.recommended))))
-const menuElements = ref([])
-const showDownload = ref(false)
-const downloadPending = ref(false)
-const qrCode = ref('')
-const downloadUrls = ref(null)
-const openFailed = ref(false)
-let downloadRequestId = 0
+const { t: tg } = useI18n({ useScope: 'global' })
+// other links of a client: a title of the global messages (or a name that is the same in every language) and a short destination
+const linkTitle = (link) => (link.titleKey ? tg(link.titleKey) : link.title)
+const linkDetail = (link) => (link.detailKey ? tg(link.detailKey) : link.detail)
 
+const GROUP_ICONS = { phone: 'mobile', computer: 'desktop_windows', tv: 'tv', other: 'sports_esports' }
+const groups = computed(() => CLIENT_DEVICE_GROUPS.map((group) => ({
+  ...group,
+  platforms: group.platforms.map((id) => CLIENT_PLATFORMS.find((platform) => platform.id === id)),
+})))
+
+// The list comes from the one client list of the package (foundation-ui/clients): the clients of the Foundation team first, then the partners', in a fixed order.
+// Without a filter: the two sections. Filtered by a system: one list of what runs on it, the team's clients first.
+const ids = new Set(['all', ...CLIENT_OS])
+const queryOs = new URLSearchParams(window.location.search).get('os')
+const queryPlatform = new URLSearchParams(window.location.search).get('platform')
+const queryType = new URLSearchParams(window.location.search).get('type')
+const TYPE_OS = { phone: 'android', tablet: 'ios', computer: 'windows', tv: 'tv' }
+const osOfPlatform = (id) => CLIENT_OS.find((os) => clientsForOs(os).some((x) => x.target.platform === id))
+const osFilter = ref(ids.has(queryOs) ? queryOs : osOfPlatform(queryPlatform) || TYPE_OS[queryType] || readOs())
+watch(osFilter, (v) => { if (v !== 'all') writeOs(v) })
+const ui = computed(() => clientTexts(locale.value))
+const osOptions = computed(() => [{ value: 'all', label: ui.value.all, icon: 'apps' }, ...CLIENT_OS.map((os) => ({ value: os, label: osChipName(os, locale.value), icon: OS_ICON[os] }))])
+// the files of a client are read once per product (the website's release metadata, CNB first for Chinese) and listed in the popup of its card
+const releases = useReleaseAssets()
+const conn = computed(() => connectTexts(locale.value))
+const qrMatrix = (text) => QRCode.create(text, { errorCorrectionLevel: 'M' }).modules
+const targetPlatform = (target) => CLIENT_PLATFORMS.find((platform) => platform.id === target.platform)
+const partnerCard = (target) => PARTNER_CARDS.find((card) => card.id === target.platform)
+// one card per client in the full list; one card per target of the chosen system in the filtered one
+const clientCard = (client, target, partner) => ({ key: `${client.id}:${target?.platform || ''}`, client, target, partner })
+const sections = computed(() => {
+  if (osFilter.value !== 'all') return [{ id: 'list', cards: clientsForOs(osFilter.value).map(({ client, target }) => clientCard(client, target, client.group === 'partner')) }]
+  const { first, partner } = clientSections()
+  return [{ id: 'first', title: ui.value.first, cards: first.map((client) => clientCard(client, null, false)) }, { id: 'partner', title: ui.value.partner, cards: partner.map((client) => clientCard(client, null, true)) }]
+})
+const cardName = (card) => card.client.label || card.client.name
+const cardProduct = (card) => (card.target ? targetName(card.target, locale.value) : osOfClient(card.client).map((os) => osName(os, locale.value)).join(' · '))
+const CARD_ICON = { 'macos-enhanced': 'laptop_mac', 'vplus-desktop': 'desktop_windows', 'vplus-android': 'android', 'vplus-harmony': 'mobile', voidlink: 'mobile', crown: 'android', baozi: 'mobile' }
+// A card of a system shows the shared Material symbol for that system.
+const cardIcon = (card) => (card.target && targetPlatform(card.target)?.icon) || CARD_ICON[card.client.id] || 'devices'
+// the tags of a card come from the release data of its client (the metadata or the GitHub release), read when the page opens and again when the language changes
+const releaseAssets = reactive({})
+const loadAssets = () => { for (const file of new Set(CLIENTS.map((c) => c.product).filter(Boolean))) fetchReleaseAssetTypes(file, isChinese.value ? 'zh' : 'en').then((assets) => { releaseAssets[file] = assets }) }
+// the card of a client with release data keeps room for its tags (one line per system, the official tag first) whether they are read yet or not, so nothing below it moves when they arrive
+const tagsReserve = (card) => (card.client.product ? { minHeight: `${28 + (card.target ? 1 : card.client.targets.length) * 28}px` } : undefined)
+const tagsOf = (card) => clientTags(card.client, (c) => releaseAssets[c.product], locale.value, card.target || null)
+// a phone scans the card: the QR code of the download or store link of the client's phone system, made when the page opens
+const PHONE = new Set(['android', 'ios', 'harmony', 'crown', 'baozi'])
+const cardQr = reactive({})
+const phoneTarget = (card) => card.target ? (PHONE.has(card.target.platform) ? card.target : null) : card.client.targets.find((t) => PHONE.has(t.platform)) || null
+const qrKey = (card) => { const t = phoneTarget(card); return t ? `${t.platform}:${isChinese.value ? 'zh' : 'en'}` : '' }
+const qrUrlOf = async (target) => {
+  const partner = partnerCard(target)
+  if (partner) return partner.links[0].url
+  const platform = targetPlatform(target)
+  const language = isChinese.value ? 'zh' : 'en'
+  const urls = platform.resolveDownloadUrls ? await platform.resolveDownloadUrls(language) : platform.getDownloadUrls(language)
+  return urls.primary
+}
+const loadQr = async () => {
+  const { default: QRCode } = await import('qrcode')
+  for (const section of sections.value) for (const card of section.cards) {
+    const key = qrKey(card)
+    if (!key || cardQr[key]) continue
+    cardQr[key] = 'pending'
+    try { cardQr[key] = await QRCode.toDataURL(await qrUrlOf(phoneTarget(card)), { errorCorrectionLevel: 'M', margin: 2, width: 176 }) } catch { cardQr[key] = 'failed' }
+  }
+}
+const qrOf = (card) => { const v = cardQr[qrKey(card)]; return v && v !== 'pending' && v !== 'failed' ? v : '' }
+const linksOf = (client) => [{ id: 'project', label: client.links.host === 'gitee' ? 'Gitee' : 'GitHub', icon: 'code', url: client.links.project }, { id: 'releases', label: ui.value.releases, icon: 'history', url: client.links.releases }]
 const isChinese = computed(() => String(locale.value).toLowerCase().startsWith('zh'))
 const copy = computed(() => ({
-  ...Object.fromEntries(Object.keys(english.ui).filter(key => !Array.isArray(english.ui[key])).map(key => [key, t(`ui.${key}`)])),
-  setupTitles: tm('ui.setupTitles').map(message => rt(message)),
-  setupSteps: tm('ui.setupSteps').map(message => rt(message)),
+  ...Object.fromEntries(Object.keys(english.ui).filter((key) => !Array.isArray(english.ui[key])).map((key) => [key, t(`ui.${key}`)])),
+  setupTitles: tm('ui.setupTitles').map((message) => rt(message)),
+  setupSteps: tm('ui.setupSteps').map((message) => rt(message)),
 }))
 
-const platformName = (platform) => t(`${platform.platforms ? 'groups' : 'platforms'}.${platform.id}${platform.platforms ? '' : '.name'}`)
-const productName = (platform) => t(`platforms.${platform.id}.product`)
-const platformDetail = (platform) => t(`platforms.${platform.id}.detail`)
 const clientIntroduction = (client) => {
   const key = `platforms.${client.id}`
   const captions = english.platforms[client.id].captions ? tm(`${key}.captions`) : []
   return {
-    description: t(`${key}.description`),
-    features: tm(`${key}.features`).map(message => rt(message)),
-    captions: Array.isArray(captions) ? captions.map(message => rt(message)) : [],
+    features: tm(`${key}.features`).map((message) => rt(message)),
+    captions: Array.isArray(captions) ? captions.map((message) => rt(message)) : [],
     note: t(`${key}.note`),
   }
 }
-const platformIcon = (platform) => [
-  ['fa-mobile-screen-button', 'fa-tv', 'fa-vr-cardboard'].includes(platform.icon) ? 'fas' : 'fab',
-  platform.icon,
-]
-const featureIcon = (client, index) => CLIENT_FEATURE_ICONS[client.id][index] || 'fa-check'
-const availableUrls = (client) => client.getDownloadUrls(isChinese.value ? 'zh' : 'en')
-const closeMenus = () => menuElements.value.forEach((menu) => { menu.open = false })
-const onOutsideClick = (event) => {
-  if (!menuElements.value.some((menu) => menu.contains(event.target))) closeMenus()
+const featureIcon = (client, index) => CLIENT_FEATURE_ICONS[client.id][index] || 'check'
+
+const community = computed(() => communityTexts(locale.value))
+const openLink = (url) => openExternalUrl(url).catch((error) => console.error('Failed to open link:', error))
+
+// The popup of a card: that client's files (read once per product, the popup fills in place when they arrive), and the pages that are not files
+const loaded = reactive({})
+const loadReleases = () => { for (const product of new Set(CLIENTS.map((c) => c.product).filter(Boolean))) releases.load(product).then(() => { loaded[product] = true }) }
+// the card that opened the popup gets the focus back
+const focusCard = (key) => nextTick(() => { for (const el of document.querySelectorAll('[data-card]')) if (el.dataset.card === key) el.focus() })
+const { card: dialogCard, groups: dialogGroups, open: openDialog, close: closeDialog } = useClientDialog({ assetsOf: (client) => releases.assetsOf(client), loadedOf: (client) => !!loaded[client.product], locale, restoreFocus: focusCard })
+// the platform of the card (the single target of the list, or the card's own) gives the feature list and the note
+const cardPlatform = (card) => {
+  const target = card.target || (card.client.targets.length === 1 ? card.client.targets[0] : null)
+  const platform = target && targetPlatform(target)
+  return platform && target.client ? [platform, ...(platform.alternatives || [])].find((c) => c.id === target.client) || platform : platform
 }
-const onMenuKeydown = (event) => {
-  if (event.key !== 'Escape') return
-  const openMenu = menuElements.value.find((menu) => menu.open)
-  if (!openMenu) return
-  closeMenus()
-  openMenu.querySelector('summary')?.focus()
-}
-const downloadLabel = computed(() => {
-  if (downloadClient.value.kind === 'store') return copy.value.openStore
-  return /\/releases\/(?:latest\/)?download\//.test(downloadUrls.value?.primary || '')
-    ? copy.value.download : copy.value.openPage
+const dialogIntro = computed(() => {
+  const platform = dialogCard.value && cardPlatform(dialogCard.value)
+  return platform && english.platforms[platform.id] && CLIENT_FEATURE_ICONS[platform.id] ? { platform, ...clientIntroduction(platform) } : null
 })
-
-const selectPlatform = (platform) => {
-  closeMenus()
-  closeDownload()
-  selectedPlatform.value = platform
-}
-
-const selectGroup = (group) => {
-  selectedGroup.value = group
-  selectPlatform(CLIENT_PLATFORMS.find((platform) => platform.id === group.platforms[0]))
-}
-
-const openDownload = async (platform, channel = 'primary') => {
-  closeMenus()
-  const requestId = ++downloadRequestId
-  downloadClient.value = platform
-  const language = isChinese.value ? 'zh' : 'en'
-  showDownload.value = true
-  downloadPending.value = true
-  qrCode.value = ''
-  downloadUrls.value = null
-  openFailed.value = false
-
-  try {
-    const urls = platform.resolveDownloadUrls
-      ? await platform.resolveDownloadUrls(language)
-      : platform.getDownloadUrls(language)
-    if (requestId !== downloadRequestId) return
-    downloadUrls.value = channel === 'alternate'
-      ? { primary: urls.alternate, alternate: urls.primary }
-      : urls
-    if (!supportsQr(platform)) return
-    const { default: QRCode } = await import('qrcode')
-    if (requestId !== downloadRequestId) return
-    const qr = await QRCode.toDataURL(downloadUrls.value.primary, {
-      errorCorrectionLevel: 'M',
-      margin: 4,
-      width: 256,
-    })
-    if (requestId === downloadRequestId) qrCode.value = qr
-  } catch (error) {
-    console.error('Failed to prepare client download:', error)
-  } finally {
-    if (requestId === downloadRequestId) downloadPending.value = false
-  }
-}
-
-const download = async () => {
-  if (!downloadUrls.value?.primary) return
-  const requestId = downloadRequestId
-  openFailed.value = false
-  try {
-    const opened = await openExternalUrl(downloadUrls.value.primary)
-    if (requestId === downloadRequestId) openFailed.value = opened === false
-  } catch (error) {
-    if (requestId === downloadRequestId) openFailed.value = true
-    console.error('Failed to open client download URL:', error)
-  }
-}
-
-const closeDownload = () => {
-  ++downloadRequestId
-  showDownload.value = false
-  downloadPending.value = false
-  downloadUrls.value = null
-  qrCode.value = ''
-  openFailed.value = false
-}
-watch(locale, () => {
-  closeMenus()
-  closeDownload()
-})
-onMounted(() => {
-  document.addEventListener('click', onOutsideClick)
-  document.addEventListener('keydown', onMenuKeydown)
-})
-onBeforeUnmount(() => {
-  closeDownload()
-  document.removeEventListener('click', onOutsideClick)
-  document.removeEventListener('keydown', onMenuKeydown)
-})
+const dialogExtras = computed(() => (dialogCard.value ? extraLinks(dialogCard.value, { platformOf: targetPlatform, partnerOf: partnerCard }) : []))
+const extraTitle = (link) => (link.title || link.titleKey ? linkTitle(link) : linkLabel(community.value, link))
+const extraDetail = (link) => (link.detail || link.detailKey ? linkDetail(link) : '')
+const pageLabel = computed(() => (dialogCard.value?.client.targets.some((t) => targetPlatform(t)?.kind === 'store') ? copy.value.openStore : copy.value.openPage))
+// /downloads?platform=android opens the popup of that platform's first client (the home's download card links here)
+const openWanted = () => { const card = sections.value.flatMap((section) => section.cards).find((c) => c.target?.platform === queryPlatform); if (card) openDialog(card) }
+// The list without a filter (the cards of MClientCard): each card carries its recommended build and one download, the other builds in the card's menu; the details stay in the popup of the card.
+// The primary build follows the system the visitor chose last (readOs), else the client's first system. A card without a file of its own (a store, a partner's page) opens that page.
+const primaryOs = readOs()
+const groupsOf = (card) => fileGroups(card, { assets: releases.assetsOf(card.client), loaded: !!loaded[card.client.product], locale: locale.value })
+const extrasOf = (card) => extraLinks(card, { platformOf: targetPlatform, partnerOf: partnerCard })
+const fallbackLabel = (card) => (card.client.targets.some((t) => targetPlatform(t)?.kind === 'store') ? copy.value.openStore : copy.value.openPage)
+const fallbackGo = (card) => { const links = extrasOf(card); if (links.length === 1) openLink(links[0].url); else if (!links.length) openLink(clientUrl(card.client, locale.value)); else openDialog(card) }
+const showsQr = (card) => !!phoneTarget(card) && cardQr[qrKey(card)] !== 'failed'
+watch(locale, () => { loadAssets(); void loadQr() })
+onMounted(() => { loadAssets(); loadReleases(); void loadQr(); if (queryPlatform) openWanted() })
+watch([osFilter], () => { void loadQr() })
 </script>
 
 <template>
-  <div class="clients-page">
-    <Navbar v-show="!isEmbeddedGui" />
-
-    <main id="content" class="clients-content container">
-      <h1 class="clients-page-title">
-        <i class="fas fa-download" aria-hidden="true"></i>
-        <span>{{ copy.title }}</span>
-      </h1>
-      <section class="clients-guide" aria-labelledby="clients-guide-title">
-        <div class="clients-selector">
-          <div class="clients-step-heading">
-            <h2 id="clients-guide-title"><i class="fas fa-laptop" aria-hidden="true"></i>{{ copy.step }}</h2>
-          </div>
-          <div class="clients-device-groups" role="group" :aria-label="copy.step">
-            <button
-              v-for="group in CLIENT_DEVICE_GROUPS"
-              :key="group.id"
-              class="clients-platform clients-device-group"
-              :class="{ 'clients-platform-active': selectedGroup.id === group.id }"
-              type="button"
-              :aria-pressed="selectedGroup.id === group.id"
-              @click="selectGroup(group)"
-            >
-              <i :class="['fas', group.icon, 'clients-device-icon']" aria-hidden="true"></i>
-              <span class="clients-device-name">{{ platformName(group) }}</span>
-              <i v-if="selectedGroup.id === group.id" class="fas fa-check clients-device-check" aria-hidden="true"></i>
+  <div class="dl-page" :class="{ 'dl-page--all': osFilter === 'all' }">
+    <MPage :title="copy.title">
+      <!-- the system filter: all (two sections) or one system (one list, the team's clients first) -->
+      <MChipSet class="dl-types" :model-value="osFilter" :label="ui.os" :options="osOptions" @update:model-value="(v) => (osFilter = v)" />
+      <MSection v-for="section in sections" :key="section.id" :title="section.title">
+        <p v-if="section.id === 'first'" class="dl-by">{{ ui.firstBy }}</p>
+        <div v-if="osFilter === 'all'" class="m-cgrid">
+          <MClientCard v-for="card in section.cards" :key="card.key" :card-key="card.key" :name="cardName(card)" :icon="cardIcon(card)" :systems="cardProduct(card)" :groups="groupsOf(card)" :primary-os="primaryOs"
+            :version="releases.versionOf(card.client)" :texts="conn" :qr="qrMatrix" :fallback-label="fallbackLabel(card)" @open="openDialog(card)" @open-url="openLink" @primary-fallback="fallbackGo(card)">
+            <template #tag><MClientTag :official="!card.partner" :locale="locale" /></template>
+            <template v-if="showsQr(card)" #qr><img v-if="qrOf(card)" :src="qrOf(card)" :alt="ui.scan" :title="ui.scan" width="72" height="72"><span v-else class="m-skeleton" aria-hidden="true" /></template>
+            <template #foot><button v-for="link in linksOf(card.client)" :key="link.id" type="button" class="dl-link" @click="openLink(link.url)"><MIcon :name="link.icon" />{{ link.label }}</button></template>
+          </MClientCard>
+        </div>
+        <div v-else class="dl-grid">
+          <article v-for="card in section.cards" :key="card.key" class="dl-card">
+            <button type="button" class="dl-card__main" :data-card="card.key" aria-haspopup="dialog" @click="openDialog(card)">
+              <span class="dl-card__mark"><MIcon :name="cardIcon(card)" /></span>
+              <span class="dl-card__name">{{ cardName(card) }}</span>
+              <span class="dl-card__tags" :style="tagsReserve(card)">
+                <MClientTag :official="!card.partner" :locale="locale" />
+                <span v-for="tag in tagsOf(card)" :key="tag" class="dl-tag" :title="tag">{{ tag }}</span>
+                <span v-if="!tagsOf(card).length" class="dl-tag dl-tag--plain">{{ cardProduct(card) }}</span>
+              </span>
             </button>
-          </div>
-          <div class="clients-system-row">
-            <h3 class="clients-system-label">{{ copy.system }}</h3>
-            <div class="clients-platforms" role="group" :aria-label="copy.system" :style="{ '--platform-count': groupPlatforms.length }">
-              <button
-                v-for="platform in groupPlatforms"
-                :key="platform.id"
-                class="clients-platform"
-                :class="{ 'clients-platform-active': selectedPlatform.id === platform.id }"
-                type="button"
-                :aria-pressed="selectedPlatform.id === platform.id"
-                @click="selectPlatform(platform)"
-              >
-                <i :class="platformIcon(platform)" aria-hidden="true"></i>
-                <span>{{ platformName(platform) }}</span>
-                <span v-if="platform.isNew" class="clients-new-badge clients-platform-new">{{ copy.newLabel }}</span>
-              </button>
-            </div>
-          </div>
+            <figure v-if="phoneTarget(card) && cardQr[qrKey(card)] !== 'failed'" class="dl-card__qr"><img v-if="qrOf(card)" :src="qrOf(card)" :alt="ui.scan" width="88" height="88"><span v-else class="dl-card__qr-slot m-skeleton" aria-hidden="true" /><figcaption :style="qrOf(card) ? undefined : { visibility: 'hidden' }">{{ ui.scan }}</figcaption></figure>
+            <span class="dl-card__links"><button v-for="link in linksOf(card.client)" :key="link.id" type="button" class="dl-link" @click="openLink(link.url)"><MIcon :name="link.icon" />{{ link.label }}</button></span>
+          </article>
         </div>
-        <div class="clients-results">
-          <h2 class="visually-hidden">{{ copy.clientLabel }}</h2>
-          <div class="clients-result-cards">
-            <article v-for="client in selectedClients" :key="client.id" class="clients-card">
-              <div class="clients-card-header">
-                <span class="clients-product-mark" aria-hidden="true"><i :class="platformIcon(client)"></i></span>
-                <div class="clients-card-copy">
-                  <div class="clients-product-title">
-                    <h3 class="clients-product-heading">{{ productName(client) }}</h3>
-                    <div class="clients-card-labels">
-                      <span v-if="client.recommended" class="clients-recommended-label">{{ copy.recommended }}</span>
-                      <span v-if="client.id === 'macos-enhanced'" class="clients-edition-label">{{ copy.enhanced }}</span>
-                      <span v-if="client.edition === 'standard'" class="clients-edition-label">{{ copy.standard }}</span>
-                      <span v-if="client.friendLink" class="clients-friend-label">{{ copy.friendLink }}</span>
-                      <span v-if="client.isNew && !client.platformNew" class="clients-new-badge">{{ copy.newLabel }}</span>
-                    </div>
-                  </div>
-                  <p class="clients-core-value">{{ clientIntroduction(client).description }}</p>
-                  <p class="clients-platform-detail">{{ platformDetail(client) }}</p>
-                </div>
-              </div>
-              <div class="clients-card-actions">
-                <button type="button" class="btn btn-primary clients-primary-button" @click="openDownload(client)">
-                  <i class="fas fa-download" aria-hidden="true"></i>{{ copy.getApp }}
-                </button>
-                <details v-if="client.project || client.release || availableUrls(client).alternate" ref="menuElements" class="clients-more">
-                  <summary>{{ copy.more }} <i class="fas fa-chevron-down" aria-hidden="true"></i></summary>
-                  <div class="clients-more-menu">
-                    <a v-if="client.project" :href="client.project" target="_blank" rel="noopener noreferrer" @click="closeMenus">{{ copy.project }} ↗</a>
-                    <a v-if="client.release" :href="client.release" target="_blank" rel="noopener noreferrer" @click="closeMenus">{{ copy.releases }} ↗</a>
-                    <a v-if="availableUrls(client).alternate" :href="availableUrls(client).alternate" @click.prevent="openDownload(client, 'alternate')">{{ copy.mirror }} ↗</a>
-                  </div>
-                </details>
-              </div>
-              <ul class="clients-features" :style="{ '--feature-count': clientIntroduction(client).features.length }">
-                <li v-for="(feature, index) in clientIntroduction(client).features" :key="feature" class="clients-feature" :title="clientIntroduction(client).captions?.[index]">
-                  <i :class="['fas', featureIcon(client, index)]" aria-hidden="true"></i>
-                  <span>{{ feature }}</span>
-                </li>
-              </ul>
-              <p v-if="clientIntroduction(client).note" class="clients-card-note">{{ clientIntroduction(client).note }}</p>
-            </article>
-          </div>
-        </div>
-        <div class="clients-setup">
-          <div class="clients-setup-heading">
-            <h2><i class="fas fa-gamepad" aria-hidden="true"></i>{{ copy.setup }}</h2>
-          </div>
-          <ol>
-            <li v-for="(step, index) in copy.setupSteps" :key="index">
-              <span class="clients-step-number" aria-hidden="true">{{ index + 1 }}</span>
-              <span class="clients-step-copy"><strong>{{ copy.setupTitles[index] }}</strong><span>{{ step }}</span></span>
-              <i v-if="index < copy.setupSteps.length - 1" class="fas fa-chevron-right clients-step-arrow" aria-hidden="true"></i>
-            </li>
-          </ol>
-        </div>
-      </section>
-    </main>
+      </MSection>
 
-    <ConfirmDialog
-      :show="showDownload"
-      dialog-id="client-download"
-      :title="productName(downloadClient)"
-      title-icon="fas fa-download"
-      :close-label="copy.close"
-      max-width="420px"
-      @close="closeDownload"
-    >
-      <div class="clients-download-body">
-        <p>{{ platformDetail(downloadClient) }}</p>
-        <div v-if="downloadPending" class="clients-download-pending" :class="{ 'clients-qr-placeholder': showQr }" aria-live="polite">
-          {{ copy.resolving }}
+      <MSection :title="copy.setup">
+        <MGroup>
+          <MItem v-for="(title, index) in copy.setupTitles" :key="index" :title="title" :text="copy.setupSteps[index]">
+            <template #lead><span class="m-lead-circle m-lead-circle--secondary dl-step">{{ index + 1 }}</span></template>
+          </MItem>
+        </MGroup>
+      </MSection>
+
+      <MSection :title="community.project">
+        <div class="dl-links dl-links--project">
+          <MButton v-for="link in PROJECT_LINKS" :key="link.id" variant="tonal" :icon="link.icon" @click="openLink(resolveLink(link, locale))">{{ linkLabel(community, link) }}</MButton>
         </div>
-        <img v-else-if="qrCode" class="clients-qr" :src="qrCode" :alt="copy.scan" width="160" height="160" />
-        <p v-if="qrCode" class="clients-qr-hint">{{ copy.scan }}</p>
-        <p v-else-if="!downloadPending && !downloadUrls" role="alert">{{ copy.resolveFailed }}</p>
-        <p v-else-if="!downloadPending && showQr" class="clients-qr-failed">{{ copy.failed }}</p>
-        <p v-if="!showQr && !downloadPending && downloadUrls">{{ copy.desktopHint }}</p>
-        <div v-if="openFailed" class="clients-open-error" role="alert">
-          <p>{{ copy.openFailed }}</p>
-          <input class="form-control" type="text" readonly :value="downloadUrls.primary" :aria-label="copy.downloadAddress" @focus="$event.target.select()" />
-        </div>
+      </MSection>
+    </MPage>
+
+    <!-- the files of the clicked client; nothing of them is on the page before the click -->
+    <MDialog class="dl-dialog" :model-value="!!dialogCard" :title="dialogCard ? cardName(dialogCard) : ''" @update:model-value="(open) => !open && closeDialog()">
+      <div v-if="dialogCard" class="dl-dialog__body">
+        <p class="dl-dialog__tags"><MClientTag :official="!dialogCard.partner" :locale="locale" /></p>
+        <section v-for="group in dialogGroups" :key="group.os" class="dl-dialog__group">
+          <h3 v-if="dialogGroups.length > 1" class="dl-dialog__os">{{ group.name }}</h3>
+          <MClientAssets v-if="group.state === 'ready'" :rows="group.rows" :texts="conn" :qr="qrMatrix" :mirror="mirrorName(locale)" :version="releases.versionOf(dialogCard.client)" @open-url="openLink" />
+          <div v-else-if="group.state === 'loading'" class="dl-dialog__skeleton" role="status" :aria-label="conn.loadingFiles"><span class="m-skeleton" /><span class="m-skeleton" /></div>
+          <p v-else class="dl-dialog__failed" role="alert">{{ copy.filesFailed }}</p>
+        </section>
+        <MGroup v-if="dialogExtras.length">
+          <MItem v-for="link in dialogExtras" :key="link.url" action :icon="link.icon || 'open_in_new'" :title="extraTitle(link)" :text="extraDetail(link) || undefined" @click="openLink(link.url)"><template #trail><MIcon name="open_in_new" /></template></MItem>
+        </MGroup>
+        <MButton v-else-if="!dialogGroups.length" variant="tonal" icon="open_in_new" @click="openLink(clientUrl(dialogCard.client, locale))">{{ pageLabel }}</MButton>
+        <ul v-if="dialogIntro" class="dl-features" :aria-label="cardName(dialogCard)">
+          <li v-for="(feature, index) in dialogIntro.features" :key="feature" :title="dialogIntro.captions[index]"><MIcon :name="featureIcon(dialogIntro.platform, index)" /><span>{{ feature }}</span></li>
+        </ul>
+        <MFooter v-if="dialogIntro?.note">{{ dialogIntro.note }}</MFooter>
+        <span class="dl-dialog__links"><button v-for="link in linksOf(dialogCard.client)" :key="link.id" type="button" class="dl-link" @click="openLink(link.url)"><MIcon :name="link.icon" />{{ link.label }}</button></span>
       </div>
       <template #actions>
-        <button type="button" class="btn btn-primary clients-primary-button clients-modal-download" :disabled="downloadPending || !downloadUrls?.primary" @click="download">
-          <i class="fas fa-download" aria-hidden="true"></i>
-          {{ downloadLabel }}
-        </button>
+        <MButton variant="text" @click="closeDialog">{{ copy.close }}</MButton>
       </template>
-    </ConfirmDialog>
+    </MDialog>
   </div>
 </template>
-
-<style lang="less">
-@import '../styles/global.less';
-
-.confirm-dialog-panel[aria-labelledby='client-download-title'] {
-  background: linear-gradient(var(--ui-surface-strong), var(--ui-surface-strong)), var(--ui-page-bg);
-  box-shadow: var(--ui-shadow-lg);
-}
-</style>
-
-<style scoped>
-.clients-page,
-.clients-download-body {
-  --clients-copy-color: color-mix(in srgb, var(--ui-text-secondary) 80%, var(--ui-text-primary));
-  --clients-meta-color: color-mix(in srgb, var(--ui-text-secondary) 90%, var(--ui-text-primary));
-}
-
-.clients-page {
-  min-height: 100vh;
-  color: var(--ui-text-primary);
-}
-
-.clients-content {
-  max-width: 1180px;
-  padding-top: 1.25rem;
-  padding-bottom: 1.5rem;
-}
-
-.clients-page-title {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  margin: 0 0 1.25rem;
-  color: var(--ui-text-primary);
-  font-size: clamp(1.625rem, 3vw, 2rem);
-  font-weight: 650;
-  line-height: 1.3;
-}
-
-.clients-page-title i {
-  color: var(--ui-accent);
-  font-size: 0.85em;
-}
-
-.clients-guide {
-  container-type: inline-size;
-  container-name: client-selector;
-  padding: 1rem;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-lg);
-  background: var(--ui-surface);
-  box-shadow: var(--ui-shadow-md);
-}
-
-.clients-step-heading {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0.3rem 0.75rem;
-  margin-bottom: 0.75rem;
-}
-
-.clients-step-heading h2,
-.clients-setup h2,
-.clients-system-label {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin: 0;
-  color: var(--ui-text-primary);
-  font-size: 1rem;
-  font-weight: 600;
-  line-height: 1.4;
-}
-
-.clients-step-heading h2 i,
-.clients-setup h2 i {
-  color: var(--ui-accent-text);
-}
-
-.clients-device-groups {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.65rem;
-}
-
-.clients-platform {
-  --clients-option-base: color-mix(in srgb, var(--ui-page-bg) 75%, transparent);
-  position: relative;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: center;
-  gap: 0.45rem;
-  min-width: 0;
-  min-height: 38px;
-  padding: 0.45rem 0.75rem;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-sm);
-  background: linear-gradient(var(--ui-surface-strong), var(--ui-surface-strong)), var(--clients-option-base);
-  -webkit-backdrop-filter: blur(10px);
-  backdrop-filter: blur(10px);
-  color: var(--ui-text-primary);
-  font: inherit;
-  font-size: 0.875rem;
-  font-weight: 500;
-  line-height: 1.4;
-  cursor: pointer;
-  transition: border-color 0.15s ease, background-color 0.15s ease;
-}
-
-.clients-platform:not(.clients-platform-active):hover {
-  border-color: var(--ui-border-strong);
-  background: linear-gradient(var(--ui-surface-hover), var(--ui-surface-hover)), var(--clients-option-base);
-}
-
-.clients-platform-active {
-  border-color: var(--ui-accent);
-  background: linear-gradient(var(--ui-accent-soft), var(--ui-accent-soft)),
-    linear-gradient(var(--ui-surface-strong), var(--ui-surface-strong)), var(--clients-option-base);
-  box-shadow: inset 0 0 0 1px var(--ui-accent-soft);
-  color: var(--ui-accent-text);
-}
-
-.clients-device-group {
-  flex-wrap: nowrap;
-  justify-content: center;
-  gap: 0.75rem;
-  min-height: 56px;
-  padding: 0.75rem;
-  text-align: left;
-}
-
-.clients-device-icon {
-  flex: 0 0 30px;
-  font-size: 1.5rem;
-  text-align: center;
-}
-
-.clients-device-name {
-  min-width: 0;
-  font-size: 1rem;
-  font-weight: 600;
-}
-
-.clients-device-check {
-  position: absolute;
-  top: 6px;
-  right: 7px;
-  color: var(--ui-accent-text);
-  font-size: 0.65rem;
-}
-
-.clients-system-row {
-  display: grid;
-  gap: 0.6rem;
-  margin-top: 1rem;
-}
-
-.clients-platforms {
-  display: grid;
-  grid-template-columns: repeat(var(--platform-count), minmax(0, 1fr));
-  gap: 0.65rem;
-  max-width: 38rem;
-}
-
-.clients-new-badge {
-  display: inline-flex;
-  flex-shrink: 0;
-  padding: 3px 5px;
-  border-radius: 4px;
-  background: #c62828;
-  color: white;
-  font-size: 0.75rem;
-  font-weight: 600;
-  line-height: 1;
-}
-
-.clients-platform-new {
-  pointer-events: none;
-}
-
-.clients-results {
-  margin-top: 1rem;
-}
-
-.clients-result-cards {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 0.75rem;
-}
-
-.clients-card {
-  position: relative;
-  min-width: 0;
-  padding: 1rem;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-md);
-  background: var(--ui-surface-strong);
-}
-
-.clients-card:has(.clients-more[open]) {
-  z-index: 2;
-}
-
-.clients-card-header {
-  display: flex;
-  align-items: flex-start;
-  gap: 1rem;
-}
-
-.clients-product-mark {
-  display: grid;
-  flex: 0 0 54px;
-  height: 54px;
-  place-items: center;
-  border-radius: var(--ui-radius-md);
-  background: var(--ui-accent-soft);
-  color: var(--ui-accent-text);
-  font-size: 1.65rem;
-}
-
-.clients-card-copy {
-  min-width: 0;
-}
-
-.clients-product-title {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.45rem 0.75rem;
-}
-
-.clients-product-heading {
-  margin: 0;
-  color: var(--ui-text-primary);
-  font-size: 1.375rem;
-  font-weight: 650;
-  letter-spacing: -0.025em;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-}
-
-.clients-card-labels {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.45rem;
-}
-
-.clients-edition-label,
-.clients-friend-label,
-.clients-recommended-label {
-  padding: 3px 6px;
-  border: 1px solid var(--ui-border);
-  border-radius: 4px;
-  color: var(--clients-copy-color);
-  font-size: 0.75rem;
-  line-height: 1.3;
-}
-
-.clients-recommended-label {
-  border-color: var(--ui-border-strong);
-  background: var(--ui-accent-soft);
-  color: var(--ui-accent-text);
-  font-weight: 600;
-}
-
-.clients-edition-label,
-.clients-friend-label {
-  background: var(--ui-surface);
-}
-
-.clients-core-value {
-  margin: 0.45rem 0 0;
-  color: var(--clients-copy-color);
-  font-size: 0.9375rem;
-  line-height: 1.65;
-}
-
-.clients-platform-detail {
-  margin: 0.3rem 0 0;
-  color: var(--clients-meta-color);
-  font-size: 0.8125rem;
-  line-height: 1.6;
-}
-
-.clients-card-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.5rem 1rem;
-  margin: 0.75rem 0 0 70px;
-}
-
-.clients-primary-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  min-height: 40px;
-  padding: 0.5rem 1.25rem;
-  border-radius: var(--ui-radius-sm);
-  font-family: inherit;
-  font-size: 0.9375rem;
-  font-weight: 600;
-}
-
-.clients-primary-button.btn-primary {
-  --clients-button-bg: color-mix(in srgb, var(--ui-accent) 60%, var(--ui-text-primary));
-  border-color: var(--clients-button-bg);
-  background: var(--clients-button-bg);
-  color: var(--ui-accent-contrast);
-}
-
-.clients-primary-button.btn-primary:not(:disabled):is(:hover, :focus-visible, :active) {
-  border-color: var(--clients-button-bg);
-  background: var(--clients-button-bg);
-  color: var(--ui-accent-contrast);
-  box-shadow: 0 0 0 3px var(--ui-accent-soft);
-}
-
-.clients-card-actions > .clients-primary-button {
-  min-width: 150px;
-}
-
-.clients-more {
-  position: relative;
-}
-
-.clients-more summary {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  min-height: 40px;
-  padding: 0.4rem 0.2rem;
-  border-radius: var(--ui-radius-sm);
-  color: var(--ui-accent-text);
-  font-size: 0.875rem;
-  font-weight: 500;
-  list-style: none;
-  cursor: pointer;
-}
-
-.clients-more summary:hover {
-  color: var(--ui-text-primary);
-}
-
-.clients-more summary::-webkit-details-marker {
-  display: none;
-}
-
-.clients-more-menu {
-  position: absolute;
-  z-index: 10;
-  top: calc(100% + 4px);
-  left: 0;
-  display: grid;
-  min-width: 9rem;
-  padding: 5px;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-sm);
-  background: linear-gradient(var(--ui-surface-strong), var(--ui-surface-strong)), var(--ui-page-bg);
-  box-shadow: var(--ui-shadow-md);
-  backdrop-filter: blur(20px);
-}
-
-.clients-more-menu a {
-  padding: 8px;
-  border-radius: 4px;
-  color: var(--ui-text-primary);
-  font-size: 0.875rem;
-  text-decoration: none;
-  white-space: nowrap;
-}
-
-.clients-more-menu a:hover {
-  background: var(--ui-surface-hover);
-}
-
-.clients-features {
-  display: grid;
-  grid-template-columns: repeat(var(--feature-count), minmax(0, 1fr));
-  gap: 0.6rem;
-  margin: 0.85rem 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.clients-feature {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-width: 0;
-  min-height: 36px;
-  padding: 0.45rem 0.65rem;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-sm);
-  background: var(--ui-accent-soft);
-  color: var(--ui-text-primary);
-  font-size: 0.875rem;
-  font-weight: 500;
-  line-height: 1.5;
-}
-
-.clients-feature i {
-  flex-shrink: 0;
-  color: var(--ui-accent-text);
-  font-size: 1rem;
-}
-
-.clients-card-note {
-  margin: 0.65rem 0 0;
-  color: var(--clients-meta-color);
-  font-size: 0.8125rem;
-  line-height: 1.6;
-}
-
-.clients-setup {
-  margin-top: 1.1rem;
-  padding: 1rem;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-md);
-  background: var(--ui-surface-strong);
-}
-
-.clients-setup-heading {
-  margin-bottom: 0.8rem;
-}
-
-.clients-setup ol {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 1.5rem;
-  list-style: none;
-  padding: 0;
-  margin: 0;
-}
-
-.clients-setup li {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 0.65rem;
-  min-width: 0;
-  padding: 0.75rem;
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-sm);
-  background: var(--ui-surface);
-}
-
-.clients-step-number {
-  display: grid;
-  flex: 0 0 38px;
-  height: 38px;
-  place-items: center;
-  border-radius: 50%;
-  background: var(--ui-accent-soft);
-  color: var(--ui-accent-text);
-  font-size: 1.25rem;
-  font-weight: 600;
-}
-
-.clients-step-copy {
-  display: grid;
-  gap: 0.2rem;
-  min-width: 0;
-  font-size: 0.8125rem;
-  line-height: 1.6;
-  color: var(--clients-copy-color);
-}
-
-.clients-step-copy strong {
-  color: var(--ui-text-primary);
-  font-size: 0.875rem;
-  font-weight: 600;
-}
-
-.clients-step-arrow {
-  position: absolute;
-  right: -1rem;
-  color: var(--ui-text-muted);
-  font-size: 0.75rem;
-}
-
-.clients-download-body {
-  text-align: center;
-}
-
-.clients-download-body p {
-  margin: 0.4rem 0;
-  color: var(--clients-copy-color);
-  font-size: 0.9375rem;
-  line-height: 1.6;
-}
-
-.clients-download-pending {
-  padding: 1rem 0;
-  color: var(--ui-text-secondary);
-}
-
-.clients-qr,
-.clients-qr-placeholder {
-  display: grid;
-  width: min(160px, 100%);
-  aspect-ratio: 1;
-  height: auto;
-  margin: 1rem auto 0.5rem;
-  place-items: center;
-  background: white;
-}
-
-.clients-qr-placeholder {
-  color: #46566b;
-  font-size: 0.85rem;
-}
-
-.clients-modal-download {
-  width: 100%;
-}
-
-.clients-platform:focus-visible,
-.clients-primary-button:focus-visible,
-.clients-more summary:focus-visible,
-.clients-more-menu a:focus-visible {
-  outline: 2px solid var(--ui-accent);
-  outline-offset: 3px;
-}
-
-@container client-selector (max-width: 820px) {
-  .clients-features {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-}
-
-@container client-selector (max-width: 660px) {
-  .clients-device-groups {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .clients-platforms {
-    max-width: none;
-  }
-
-  .clients-setup ol {
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0.8rem;
-  }
-
-  .clients-step-arrow {
-    display: none;
-  }
-}
-
-@media (max-width: 576px) {
-  .clients-content {
-    padding: 1rem 0.75rem;
-  }
-
-  .clients-guide {
-    padding: 0.75rem;
-  }
-
-  .clients-card {
-    padding: 0.75rem;
-  }
-
-  .clients-setup {
-    padding: 0.75rem;
-  }
-
-  .clients-card-header {
-    gap: 0.65rem;
-  }
-
-  .clients-product-mark {
-    flex-basis: 42px;
-    height: 42px;
-    font-size: 1.35rem;
-  }
-
-  .clients-product-heading {
-    font-size: 1.25rem;
-  }
-
-  .clients-card-actions {
-    margin-left: 0;
-  }
-
-  .clients-platforms .clients-platform {
-    padding-inline: 0.35rem;
-  }
-
-  .clients-feature {
-    padding: 0.45rem;
-    font-size: 0.8125rem;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .clients-platform {
-    transition: none;
-  }
-}
-</style>

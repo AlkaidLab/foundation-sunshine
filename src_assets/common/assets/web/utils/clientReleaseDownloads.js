@@ -128,7 +128,8 @@ const isValidReleaseMetadata = data =>
   Boolean(data?.channels?.latest && Array.isArray(data.channels.latest.assets))
 
 const metadataCache = new Map()
-const METADATA_CACHE_TTL_MS = 10 * 60 * 1000
+// kept for 30 minutes, and the request goes through the HTTP cache (the browser revalidates with the ETag and honours Cache-Control): a page load is not a request each time
+const METADATA_CACHE_TTL_MS = 30 * 60 * 1000
 
 const fetchMetadata = async productKey => {
   const url = getReleaseMetadataUrl(productKey)
@@ -138,7 +139,7 @@ const fetchMetadata = async productKey => {
   if (cached && Date.now() - cached.timestamp < METADATA_CACHE_TTL_MS) return cached.data
 
   const response = await fetch(url, {
-    cache: 'no-store',
+    cache: 'default',
     signal: AbortSignal.timeout(8000),
     headers: { Accept: 'application/json' },
   })
@@ -248,4 +249,33 @@ export const resolveReleaseDownloadUrls = async (productKey, device = 'windows',
 export const buildCnbUrl = (repositoryKey, assetName) => {
   const repository = CNB_RELEASE_REPOSITORIES[repositoryKey]
   return repository && assetName ? cnbReleaseUrl(repository, assetName) : null
+}
+
+// The assets of the latest release of a client as { type, name } (the types of the release metadata), for the architecture tags of the download page. Chinese pages read
+// the website's release metadata (like the downloads do), the others the GitHub releases, whose asset names are put into the same types.
+const PRODUCT_OF_FILE = Object.freeze({ 'moonlight-vplus-pc': 'moonlightPc', 'moonlight-vplus': 'androidVplus', 'moonlight-macos-enhanced': 'macos-enhanced' })
+const TYPE_PATTERNS = [
+  [/(?:setup|installer).*\.exe$/i, 'windows-x64-installer'], [/portable-arm64|portable.*arm64/i, 'windows-arm64-portable'], [/portable-x64|portable.*x64/i, 'windows-x64-portable'],
+  [/arm64\.dmg$/i, 'macos-arm64-dmg'], [/universal.*\.dmg$/i, 'macos-universal-dmg'], [/(?:x86_64|x64)\.dmg$/i, 'macos-x64-dmg'],
+  [/aarch64\.appimage$/i, 'linux-arm64-appimage'], [/(?:x86_64|x64)\.appimage$/i, 'linux-x64-appimage'], [/steamlink.*\.zip$/i, 'steam-link-zip'], [/\.apk$/i, 'android-apk'],
+]
+export const assetTypeOfName = (name) => TYPE_PATTERNS.find(([pattern]) => pattern.test(String(name || '')))?.[1] || 'file-other'
+const assetTypesCache = new Map()
+export async function fetchReleaseAssetTypes(metadataFile, lang = 'zh') {
+  const productKey = PRODUCT_OF_FILE[metadataFile]
+  if (!productKey) return []
+  const key = `${productKey}:${lang === 'zh' ? 'zh' : 'en'}`
+  if (assetTypesCache.has(key)) return assetTypesCache.get(key)
+  let assets = []
+  try {
+    if (lang === 'zh') assets = (await fetchMetadata(productKey)).channels.latest.assets.map((a) => ({ type: a.type, name: a.name }))
+    else {
+      const response = await fetch(`https://api.github.com/repos/${GITHUB_RELEASE_REPOSITORIES[productKey]}/releases?per_page=20`, { cache: 'no-store', signal: AbortSignal.timeout(8000), headers: { Accept: 'application/vnd.github+json' } })
+      const releases = response.ok ? await response.json() : []
+      const release = Array.isArray(releases) ? releases.find((item) => !item.draft && !item.prerelease && !PRE_RELEASE_PATTERN.test(item.tag_name || '')) : null
+      assets = (release?.assets || []).map((a) => ({ type: assetTypeOfName(a.name), name: a.name }))
+    }
+  } catch { assets = [] }
+  if (assets.length) assetTypesCache.set(key, assets)
+  return assets
 }

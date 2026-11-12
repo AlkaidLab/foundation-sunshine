@@ -128,18 +128,26 @@
     },
     "macos-enhanced": {
       "captions": [
-        "Justera ljusstyrka, färg och bildvisning",
-        "Lokala inmatningsmetoder, genvägsöversättning och styrplatta",
-        "Equalizer, hörlurskorrigering och surroundalternativ",
-        "Justera bild, ljud och värdinställningar under strömning"
+        "HDR på kompatibla skärmar",
+        "Välbekanta skrivbordskontroller",
+        "Synkronisera text och bilder",
+        "Skicka lokal röst till speldatorn",
+        "Öppna delade mappar på värden",
+        "Justera strömningsinställningar och musläge",
+        "Host haptics, adaptive triggers, lightbar colour and gyroscope",
+        "Lokala inmatningsmetoder, genvägsöversättning och styrplatta"
       ],
       "description": "Förbättra strömningen med ett inbyggt Mac-gränssnitt, lokal textinmatning och styrplatta. Justera HDR, hörlursljud och strömningsinställningar.",
       "detail": "Utökad inbyggd klient för macOS",
       "features": [
-        "HDR- och färgkontroller",
-        "Mac-inmatning och styrplatta",
-        "Hörlurs- och ljudjustering",
-        "Kontroller under strömning"
+        "HDR-bild",
+        "Tangentbord och handkontroller",
+        "Dubbelriktat urklipp",
+        "Fjärrmikrofon",
+        "Delade värdfiler",
+        "Kontroller under strömning",
+        "DualSense haptics, triggers and motion",
+        "Mac-inmatning och styrplatta"
       ],
       "name": "macOS",
       "note": "macOS 12+, Apple Silicon och Intel. Urklipp, mikrofon och värdkontroller kräver värdstöd.",
@@ -197,6 +205,7 @@
     "downloadAddress": "Nedladdningsadress",
     "enhanced": "Utökad",
     "failed": "QR-koden är inte tillgänglig. Använd nedladdningsknappen.",
+    "filesFailed": "Nedladdningslistan kunde inte läsas",
     "friendLink": "Partnerlänk",
     "getApp": "Hämta app",
     "mirror": "Alternativ nedladdning",
