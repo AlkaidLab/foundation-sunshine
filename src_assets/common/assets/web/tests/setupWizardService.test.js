@@ -1,7 +1,8 @@
+import './helpers/foundationUi.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { saveSetupWizardLocale } from '../services/setupWizardService.js'
+const { saveSetupWizardLocale } = await import('../services/setupWizardService.js')
 
 test('setup wizard language save preserves the current configuration', async () => {
   const originalFetch = globalThis.fetch
