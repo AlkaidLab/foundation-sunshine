@@ -19,6 +19,12 @@
 #include <vector>
 
 #include "src/config.h"
+#include "src/config_test_support.h"
+#include "src/display_device/vdd_settings.h"
+#include "src/file_handler.h"
+#ifdef _WIN32
+  #include <windows.h>
+#endif
 #include "src/confighttp/auth.h"
 #include "src/confighttp/routes.h"
 #include "src/crypto.h"
@@ -306,6 +312,281 @@ TEST_F(ConfigHttpRoutes, EveryRegisteredRouteDispatchesItsMethodPathAndCapturesO
     EXPECT_EQ(body["capture"], entry.capture);
   }
 }
+
+#ifdef _WIN32
+namespace {
+  class ConfigHttpVddSave: public ConfigHttpRoutes {
+  protected:
+    std::filesystem::path vdd_path;
+    const std::string original_config = "resolutions = [1920x1080,3840x2160]\nfps = [60,120]\n";
+    const std::string original_xml = "<vdd_settings><edid><CustomEdid>true</CustomEdid></edid></vdd_settings>";
+
+    /** @brief Route both configuration writers to a unique fixture directory before accepting HTTPS requests. */
+    void
+    SetUp() override {
+      ConfigHttpRoutes::SetUp();
+      previous_config_ = config::sunshine.config_file;
+      previous_resolutions_ = config::nvhttp.resolutions;
+      previous_fps_ = config::nvhttp.fps;
+      config::nvhttp.resolutions = { "1920x1080", "2736x1824", "3840x2160" };
+      config::nvhttp.fps = { "60", "120" };
+      prepared_ = true;
+      vdd_path = directory / "vdd_settings.xml";
+      display_device::vdd_settings::test_support::set_settings_path(vdd_path);
+      const auto config_path = directory / "sunshine.conf";
+      config::sunshine.config_file = file_handler::path_to_utf8(config_path);
+      std::ofstream(config_path, std::ios::binary) << original_config;
+      std::ofstream(vdd_path, std::ios::binary | std::ios::trunc) << original_xml;
+    }
+
+    /** @brief Stop requests and clear contention/staging hooks before restoring the host path. */
+    void
+    TearDown() override {
+      ConfigHttpRoutes::TearDown();
+      if (!prepared_) return;
+      config::test_support::set_save_lock_contended_hook({});
+      display_device::vdd_settings::test_support::set_before_save_hook({});
+      display_device::vdd_settings::test_support::set_settings_path(std::nullopt);
+      config::sunshine.config_file = previous_config_;
+      config::nvhttp.resolutions = std::move(previous_resolutions_);
+      config::nvhttp.fps = std::move(previous_fps_);
+    }
+
+  private:
+    std::string previous_config_;
+    std::vector<std::string> previous_resolutions_, previous_fps_;
+    bool prepared_ = false;
+  };
+}  // namespace
+
+/** @brief A missing fixture path must fail closed without accessing production settings. */
+TEST_F(ConfigHttpVddSave, UnsetTestPathRejectsWritesWithoutFallingBackToAppdata) {
+  display_device::vdd_settings::test_support::set_settings_path(std::nullopt);
+  auto client = connect();
+  const auto payload = nlohmann::json { { "adapter_name", "" },
+    { "resolutions", "[1920x1080,3840x2160]" }, { "fps", "[60,120]" } };
+  const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" } });
+  ASSERT_EQ(response->status_code, "200 OK");
+  const auto body = nlohmann::json::parse(response->content.string());
+  EXPECT_EQ(body.at("status"), "false");
+  EXPECT_EQ(file_handler::read_file(config::sunshine.config_file.c_str()), original_config);
+  EXPECT_EQ(file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str()), original_xml);
+}
+
+/** @brief Missing VDD XML does not prevent saving host configuration. */
+TEST_F(ConfigHttpVddSave, MissingVddXmlSavesOnlySunshine) {
+  ASSERT_TRUE(std::filesystem::remove(vdd_path));
+  auto client = connect();
+  const auto payload = nlohmann::json { { "adapter_name", "" },
+    { "resolutions", "[1920x1080,3840x2160]" }, { "fps", "[60,120]" } };
+  const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" } });
+  ASSERT_EQ(response->status_code, "200 OK");
+  EXPECT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "true");
+  const auto saved = config::get_config_snapshot();
+  ASSERT_TRUE(saved);
+  EXPECT_FALSE(std::filesystem::exists(vdd_path));
+}
+
+/** @brief A real VDD file-sharing write denial leaves host settings unchanged. */
+TEST_F(ConfigHttpVddSave, XmlWriteFailureRejectsHostSave) {
+  // Permit readers but deny writes to the existing test XML without changing ACLs.
+  const auto blocker = CreateFileW(vdd_path.c_str(), GENERIC_READ, FILE_SHARE_READ,
+    nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  ASSERT_NE(blocker, INVALID_HANDLE_VALUE);
+  auto release = util::fail_guard([&] { CloseHandle(blocker); });
+  auto client = connect();
+  {
+    auto payload = nlohmann::json { { "resolutions", "[1920x1080,3840x2160]" }, { "fps", "[60,120]" } };
+    const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" } });
+    ASSERT_EQ(response->status_code, "200 OK");
+    const auto body = nlohmann::json::parse(response->content.string());
+    EXPECT_EQ(body.at("status"), "false");
+    EXPECT_NE(body.at("error").get<std::string>().find("Failed to persist Sunshine or virtual display settings"), std::string::npos);
+    EXPECT_EQ(file_handler::read_file(config::sunshine.config_file.c_str()), original_config);
+    EXPECT_EQ(file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str()), original_xml);
+  }
+}
+
+/** @brief Explicit empty lists save successfully while retaining unrelated driver settings. */
+TEST_F(ConfigHttpVddSave, EmptyModeListsPreserveUnrelatedXml) {
+  auto client = connect();
+  for (const std::string empty_list : { "[]", "[ ]" }) {
+    const auto payload = nlohmann::json { { "adapter_name", "" },
+      { "resolutions", empty_list }, { "fps", empty_list } };
+    const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" } });
+    ASSERT_EQ(response->status_code, "200 OK");
+    EXPECT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "true");
+    const auto saved = config::get_config_snapshot();
+    ASSERT_TRUE(saved);
+    EXPECT_EQ(saved->at("resolutions"), empty_list);
+    const auto xml = file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str());
+    EXPECT_EQ(xml.find("<resolution>"), std::string::npos);
+    EXPECT_EQ(xml.find("<g_refresh_rate>"), std::string::npos);
+    EXPECT_NE(xml.find("<CustomEdid>true</CustomEdid>"), std::string::npos);
+  }
+}
+
+/** @brief A denied host write rolls staged mode XML back to its original binary content. */
+TEST_F(ConfigHttpVddSave, SunshineWriteFailureRestoresOriginalXmlBytes) {
+  const auto config_path = file_handler::path_from_utf8(config::sunshine.config_file);
+  // Reads/validation and the VDD write succeed; only the final host write is denied.
+  const auto blocker = CreateFileW(config_path.c_str(), GENERIC_READ, FILE_SHARE_READ,
+    nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+  ASSERT_NE(blocker, INVALID_HANDLE_VALUE);
+  auto release = util::fail_guard([&] { CloseHandle(blocker); });
+  auto client = connect();
+  const auto payload = nlohmann::json { { "adapter_name", "" },
+    { "resolutions", "[1920x1080]" }, { "fps", "[60]" } };
+  const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" } });
+  ASSERT_EQ(response->status_code, "200 OK");
+  EXPECT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "false");
+  EXPECT_EQ(file_handler::read_file(config::sunshine.config_file.c_str()), original_config);
+  EXPECT_EQ(file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str()), original_xml);
+}
+
+/** @brief Prove actual mutex contention prevents a second VDD stage until the first commit finishes. */
+TEST_F(ConfigHttpVddSave, ConcurrentSavesSerializeXmlAndHostCommit) {
+  ASSERT_TRUE(config::update_full_config({ { "adapter_name", "" },
+    { "resolutions", "[1920x1080,3840x2160]" }, { "fps", "[60]" } }));
+  std::promise<void> staged, release, second_contended;
+  auto staged_future = staged.get_future();
+  auto release_future = release.get_future().share();
+  auto contended_future = second_contended.get_future();
+  std::atomic<unsigned> calls = 0;
+  display_device::vdd_settings::test_support::set_before_save_hook([&] {
+    if (calls.fetch_add(1) != 0) return;
+    staged.set_value();
+    if (release_future.wait_for(std::chrono::seconds(5)) != std::future_status::ready) {
+      throw std::runtime_error("test did not release staged VDD save");
+    }
+  });
+  auto first = std::async(std::launch::async, [] {
+    return config::update_full_config({ { "resolutions", "[1920x1080]" }, { "fps", "[60]" } }, true);
+  });
+  EXPECT_EQ(staged_future.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+  config::test_support::set_save_lock_contended_hook([&] { second_contended.set_value(); });
+  auto second = std::async(std::launch::async, [] {
+    return config::update_full_config({ { "adapter_name", "" },
+                                        { "resolutions", "[1920x1080,3840x2160]" }, { "fps", "[60]" } },
+      true);
+  });
+  EXPECT_EQ(contended_future.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+  EXPECT_EQ(second.wait_for(std::chrono::milliseconds(100)), std::future_status::timeout);
+  EXPECT_EQ(calls.load(), 1u);
+  release.set_value();
+  EXPECT_TRUE(first.get());
+  EXPECT_TRUE(second.get());
+  config::test_support::set_save_lock_contended_hook({});
+  display_device::vdd_settings::test_support::set_before_save_hook({});
+  const auto saved = config::get_config_snapshot();
+  ASSERT_TRUE(saved);
+  EXPECT_EQ(saved->at("resolutions"), "[1920x1080,3840x2160]");
+  const auto xml = file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str());
+  EXPECT_NE(xml.find("<width>3840</width>"), std::string::npos);
+  EXPECT_NE(xml.find("<CustomEdid>true</CustomEdid>"), std::string::npos);
+  EXPECT_EQ(xml.find("EdidNativeResolution"), std::string::npos);
+}
+
+/** @brief Partial API requests preserve omitted lists in both host configuration and legacy mode XML. */
+TEST_F(ConfigHttpVddSave, PartialApiSavesPreserveModeLists) {
+  auto client = connect();
+  for (const auto &payload : {
+         nlohmann::json { { "sunshine_name", "partial-client" } },
+         nlohmann::json { { "adapter_name", "" } },
+         nlohmann::json { { "fps", "[60]" } } }) {
+    const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" } });
+    ASSERT_EQ(response->status_code, "200 OK");
+    EXPECT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "true");
+    const auto saved = config::get_config_snapshot();
+    ASSERT_TRUE(saved);
+    EXPECT_EQ(saved->at("resolutions"), "[1920x1080,3840x2160]");
+    EXPECT_EQ(saved->at("fps"), payload.contains("fps") ? "[60]" : "[60,120]");
+    const auto xml = file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str());
+    EXPECT_NE(xml.find("<width>3840</width>"), std::string::npos);
+    EXPECT_NE(xml.find("<g_refresh_rate>60</g_refresh_rate>"), std::string::npos);
+    EXPECT_EQ(xml.find("EdidNativeResolution"), std::string::npos);
+  }
+}
+
+/** @brief Fresh/implicit configurations persist matching runtime mode defaults to both files. */
+TEST_F(ConfigHttpVddSave, AbsentSavedListsUseRuntimeValuesAndKeepExplicitEmptyLists) {
+  auto client = connect();
+  for (const std::string saved_lists : { "", "resolutions = [3840x2160]\n", "fps = [60]\n",
+         "resolutions =\nfps = null\n", "resolutions = null\nfps =\n" }) {
+    SCOPED_TRACE(saved_lists);
+    std::ofstream(file_handler::path_from_utf8(config::sunshine.config_file), std::ios::binary | std::ios::trunc)
+      << saved_lists;
+    const auto response = client->request("POST", "/api/config",
+      nlohmann::json { { "adapter_name", "" }, { "resolutions", nullptr }, { "fps", "" } }.dump(), { { "Content-Type", "application/json" } });
+    ASSERT_EQ(response->status_code, "200 OK");
+    EXPECT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "true");
+    const auto saved = config::get_config_snapshot();
+    ASSERT_TRUE(saved);
+    EXPECT_EQ(saved->at("resolutions"), saved_lists.starts_with("resolutions = [") ? "[3840x2160]" : "[1920x1080,2736x1824,3840x2160]");
+    EXPECT_EQ(saved->at("fps"), saved_lists.starts_with("fps = [") ? "[60]" : "[60,120]");
+    const auto xml = file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str());
+    EXPECT_NE(xml.find("<width>3840</width>"), std::string::npos);
+    EXPECT_NE(xml.find("<g_refresh_rate>60</g_refresh_rate>"), std::string::npos);
+  }
+  const auto clear = client->request("POST", "/api/config",
+    nlohmann::json { { "adapter_name", "" }, { "resolutions", "[]" }, { "fps", "[]" } }.dump(),
+    { { "Content-Type", "application/json" } });
+  EXPECT_EQ(nlohmann::json::parse(clear->content.string()).at("status"), "true");
+  const auto saved = config::get_config_snapshot();
+  ASSERT_TRUE(saved);
+  EXPECT_EQ(saved->at("resolutions"), "[]");
+  EXPECT_EQ(saved->at("fps"), "[]");
+  const auto preserve_empty = client->request("POST", "/api/config",
+    nlohmann::json { { "resolutions", "" }, { "fps", nullptr } }.dump(), { { "Content-Type", "application/json" } });
+  ASSERT_EQ(nlohmann::json::parse(preserve_empty->content.string()).at("status"), "true");
+  EXPECT_EQ(config::get_config_snapshot(), saved);
+  const auto xml = file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str());
+  EXPECT_EQ(xml.find("<resolution>"), std::string::npos);
+  EXPECT_EQ(xml.find("<g_refresh_rate>"), std::string::npos);
+}
+
+/** @brief A successful VDD/host save retains upstream client-runtime synchronization. */
+TEST_F(ConfigHttpVddSave, SuccessfulVddSaveAlsoSynchronizesClientRuntime) {
+  const auto original_clients = config::get_clients_config();
+  auto restore = util::fail_guard([&] { config::nvhttp.clients = original_clients; });
+  config::nvhttp.clients = R"([{"uuid":"00000001-0002-0003-0405-060708090a0b","name":"merge-regression"}])";
+  auto client = connect();
+  const auto response = client->request("POST", "/api/config",
+    nlohmann::json { { "clients", "[]" }, { "adapter_name", "" } }.dump(),
+    { { "Content-Type", "application/json" } });
+  ASSERT_EQ(response->status_code, "200 OK");
+  EXPECT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "true");
+  EXPECT_EQ(config::get_clients_config(), "[]");
+  const auto saved = config::get_config_snapshot();
+  ASSERT_TRUE(saved);
+  EXPECT_EQ(saved->at("clients"), "[]");
+  const auto xml = file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str());
+  EXPECT_NE(xml.find("<width>3840</width>"), std::string::npos);
+  EXPECT_EQ(xml.find("EdidNativeResolution"), std::string::npos);
+} /** @brief Blank/null values retain the same saved modes in the host file and legacy XML. */
+TEST_F(ConfigHttpVddSave, EmptyAndNullModeListsPreserveHostAndXmlModes) {
+  auto client = connect();
+  for (const auto &blank : { nlohmann::json(""), nlohmann::json("null"), nlohmann::json(nullptr) }) {
+    for (const auto &key : { "both", "resolutions", "fps" }) {
+      auto payload = nlohmann::json::object();
+      if (std::string_view(key) != "fps") payload["resolutions"] = blank;
+      if (std::string_view(key) != "resolutions") payload["fps"] = blank;
+      SCOPED_TRACE(payload.dump());
+      std::ofstream(file_handler::path_from_utf8(config::sunshine.config_file), std::ios::binary | std::ios::trunc) << original_config;
+      const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" } });
+      ASSERT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "true");
+      const auto saved = config::get_config_snapshot();
+      ASSERT_TRUE(saved);
+      EXPECT_EQ(saved->at("resolutions"), "[1920x1080,3840x2160]");
+      EXPECT_EQ(saved->at("fps"), "[60,120]");
+      const auto xml = file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str());
+      EXPECT_NE(xml.find("<width>3840</width>"), std::string::npos);
+      EXPECT_NE(xml.find("<g_refresh_rate>120</g_refresh_rate>"), std::string::npos);
+      EXPECT_NE(xml.find("<CustomEdid>true</CustomEdid>"), std::string::npos);
+    }
+  }
+}
+#endif
 
 TEST_F(ConfigHttpRoutes, BasicCredentialsStillAuthenticateRemoteRequestsAndRejectMalformedBase64) {
   const auto old_salt = config::sunshine.salt;

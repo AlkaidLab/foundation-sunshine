@@ -9,6 +9,7 @@
 #include <functional>
 #include <iostream>
 #include <iterator>
+#include <memory>
 #include <mutex>
 #include <system_error>
 #include <thread>
@@ -21,6 +22,9 @@
 #include <boost/property_tree/ptree.hpp>
 
 #include "config.h"
+#ifdef SUNSHINE_TESTS
+  #include "config_test_support.h"
+#endif
 #include "entry_handler.h"
 #include "file_handler.h"
 #include "logging.h"
@@ -31,6 +35,8 @@
 #include "hdr/calibration.h"
 
 #include "display_device/parsed_config.h"
+#include "display_device/vdd_mode_lists.h"
+#include "display_device/vdd_settings.h"
 #include "platform/common.h"
 
 #ifdef _WIN32
@@ -55,6 +61,10 @@ namespace config {
 
   namespace {
     std::mutex config_file_mutex;
+#ifdef SUNSHINE_TESTS
+    std::mutex save_hook_mutex;
+    std::function<void()> save_lock_contended_hook;
+#endif
     std::unordered_map<std::string, std::string> command_line_config_overrides;
 
     std::optional<std::string>
@@ -1975,9 +1985,36 @@ namespace config {
     return snapshot;
   }
 
+#ifdef SUNSHINE_TESTS
+  namespace test_support {
+    /** @brief Install a callback invoked after a full-config update encounters the held save mutex. */
+    void
+    set_save_lock_contended_hook(std::function<void()> hook) {
+      std::lock_guard lock { save_hook_mutex };
+      save_lock_contended_hook = std::move(hook);
+    }
+
+  }  // namespace test_support
+#endif
+
+  /** Validate, stage related XML, and commit while excluding all configuration writers. */
   bool
-  update_full_config(const std::map<std::string, std::string> &fullConfig) {
+  update_full_config(const std::map<std::string, std::string> &fullConfig, bool save_vdd) {
+#ifdef SUNSHINE_TESTS
+    // Signal actual contention, not merely that the worker thread was scheduled.
+    std::unique_lock lock { config_file_mutex, std::defer_lock };
+    if (!lock.try_lock()) {
+      std::function<void()> hook;
+      {
+        std::lock_guard hook_lock { save_hook_mutex };
+        hook = save_lock_contended_hook;
+      }
+      if (hook) hook();
+      lock.lock();
+    }
+#else
     std::lock_guard lock { config_file_mutex };
+#endif
     try {
       // 不需要保存到配置文件的只读字段（API响应字段，不是配置项）
       const std::set<std::string> readonlyFields = {
@@ -2009,6 +2046,7 @@ namespace config {
 
       // 使用 std::map 保证按字母顺序保存
       std::map<std::string, std::string> resultMap;
+      const auto existing_modes = display_device::vdd_modes::with_mode_list_defaults(originalMap, nvhttp.resolutions, nvhttp.fps);
 
       // 收集传入的配置（跳过只读字段和受保护字段）
       for (const auto &[key, value] : fullConfig) {
@@ -2041,11 +2079,33 @@ namespace config {
         }
       }
 
+      // Omitted/empty/null mode lists retain saved values, using advertised
+      // runtime defaults when absent from disk. Explicit lists, including [],
+      // are never replaced.
+      for (const auto key : { "resolutions", "fps" }) {
+        resultMap.try_emplace(key, existing_modes.at(key));
+      }
+      const auto value = [&](const char *key, const char *fallback) {
+        const auto found = resultMap.find(key);
+        return found == resultMap.end() ? std::string { fallback } : found->second;
+      };
       // 添加受保护字段（使用本地配置文件中的原有值）
       for (const auto &field : protectedFields) {
         auto it = originalMap.find(field);
         if (it != originalMap.end() && !it->second.empty() && it->second != "null") {
           resultMap[field] = it->second;
+        }
+      }
+
+      // Stage XML under the same lock as the host write. Roll back before
+      // releasing the lock so an error cannot overwrite a later successful save.
+      std::unique_ptr<display_device::vdd_settings::transaction> vdd_update;
+      if (save_vdd) {
+        vdd_update = std::make_unique<display_device::vdd_settings::transaction>();
+        if (vdd_update->save(value("resolutions", "[]"), value("fps", "[]"), value("adapter_name", "")) ==
+            display_device::vdd_settings::save_result::failed) {
+          BOOST_LOG(warning) << "Failed to save virtual display settings; Sunshine configuration was not saved";
+          return false;
         }
       }
 
@@ -2065,6 +2125,8 @@ namespace config {
       else {
         BOOST_LOG(info) << "Config unchanged, skip writing";
       }
+
+      if (vdd_update) vdd_update->commit();
 
       if (fullConfig.contains("clients")) sync_clients_config_locked(resultMap);
       const auto gamepad = resultMap.find("gamepad");

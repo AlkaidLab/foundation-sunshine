@@ -70,6 +70,9 @@ Regular Windows builds download an available GUI release bundle. For testing an 
 
 ## Verify the change
 
+For configuration API mode-list semantics and XML failure handling, see
+[saving legacy VDD settings](vdd-settings-persistence.md).
+
 | Change | What to confirm |
 | --- | --- |
 | Capture or encoding | Actual capture method, encoder, format, and fallback during a real connection; frame rate and latency when relevant |

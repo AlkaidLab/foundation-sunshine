@@ -330,8 +330,12 @@ namespace config {
   std::optional<std::map<std::string, std::string>>
   get_effective_config_snapshot();
 
+  /**
+   * @brief Persist host configuration, optionally staging legacy VDD modes/GPU under the same lock.
+   * @param save_vdd Restore original XML bytes if host persistence fails; missing XML is a no-op.
+   */
   bool
-  update_full_config(const std::map<std::string, std::string> &fullConfig);
+  update_full_config(const std::map<std::string, std::string> &fullConfig, bool save_vdd = false);
 
   /**
    * Return a synchronized snapshot of the serialized per-client settings.
