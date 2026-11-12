@@ -115,7 +115,7 @@ src_assets/common/assets/web/
 │   └── useTheme.js          # 主题管理
 │
 ├── config/                  # 配置文件
-│   ├── firebase.js          # Firebase 配置
+│   ├── telemetry.js         # 使用统计、体验数字与错误事件（经主机发送，不加载任何第三方脚本）
 │   └── i18n.js              # 国际化配置
 │
 ├── services/                # API 服务
@@ -451,7 +451,7 @@ import { onMounted } from 'vue'
 import Navbar from '../components/layout/Navbar.vue'
 import ExampleCard from '../components/ExampleCard.vue'
 import { useExample } from '../composables/useExample.js'
-import { trackEvents } from '../config/firebase.js'
+import { trackEvents } from '../config/telemetry.js'
 
 const {
   items,
@@ -479,7 +479,7 @@ onMounted(async () => {
 // composables/useExample.js
 import { ref, computed } from 'vue'
 import { ExampleService } from '../services/exampleService.js'
-import { trackEvents } from '../config/firebase.js'
+import { trackEvents } from '../config/telemetry.js'
 
 export function useExample() {
   const items = ref([])
@@ -537,20 +537,18 @@ const i18n = createI18n({
 })
 ```
 
-### Firebase 配置
+### 使用统计与错误事件
 
 ```javascript
-// config/firebase.js
-import { initFirebase, trackEvents } from './config/firebase.js'
+// config/telemetry.js：事件交给本页所属的主机（POST /api/telemetry/events），由主机加上安装标识后发往开发者自己的服务器
+import { trackEvents, setTelemetryContext } from './config/telemetry.js'
 
-// 初始化
-initFirebase()
-
-// 使用
-trackEvents.pageView('page_name')
-trackEvents.userAction('action_name', { data })
-trackEvents.gpuReported({ platform: 'windows', adapters: [...] })
+trackEvents.pageView('page_name')       // panel_page：到首帧的时间
+trackEvents.userAction('action_name')   // feature_used：web.action_name（固定词，不带名称）
+trackEvents.errorOccurred('code', message) // error：消息先去除个人信息
 ```
+
+不加载 Firebase 或 Google Analytics；两个开关（使用统计 `telemetry_consent`、错误报告 `telemetry_errors`）见 `docs/privacy_telemetry.md`。
 
 **可用事件**:
 - `pageView(pageName)` - 页面访问
@@ -937,7 +935,7 @@ import { AppService } from '../services/appService.js'
 import { debounce } from '../utils/helpers.js'
 
 // 配置
-import { trackEvents } from '../config/firebase.js'
+import { trackEvents } from '../config/telemetry.js'
 ```
 
 ### 常用 Composables
@@ -996,7 +994,7 @@ import { trackEvents } from '../config/firebase.js'
 - ✅ 修复 CJS Node API 弃用警告（添加 `"type": "module"`）
 - ✅ 添加生产环境预览功能
 - ✅ 优化预览模式下的 API 错误处理
-- ✅ 添加 GPU 信息上报功能（Firebase Analytics）
+- ✅ 添加 GPU 信息上报功能（Firebase Analytics；已由主机的使用统计取代，见 docs/privacy_telemetry.md）
 - ✅ 改进国际化配置的错误处理
 - ✅ 跨平台环境变量支持（使用 `cross-env`）
 

@@ -1,0 +1,412 @@
+{
+  "cgnat": {
+    "reasons": [
+      "no_igd"
+    ],
+    "state": "unknown"
+  },
+  "checked_at": "2026-11-04T09:13:21Z",
+  "firewall": {
+    "blocked": [],
+    "ports": [
+      {
+        "firewall": "unknown",
+        "listening": false,
+        "on_demand": false,
+        "port": 47984,
+        "proto": "tcp",
+        "role": "https"
+      },
+      {
+        "firewall": "unknown",
+        "listening": false,
+        "on_demand": false,
+        "port": 47989,
+        "proto": "tcp",
+        "role": "http"
+      },
+      {
+        "firewall": "unknown",
+        "listening": false,
+        "on_demand": false,
+        "port": 47990,
+        "proto": "tcp",
+        "role": "web"
+      },
+      {
+        "firewall": "unknown",
+        "listening": false,
+        "on_demand": false,
+        "port": 48010,
+        "proto": "tcp",
+        "role": "rtsp"
+      },
+      {
+        "firewall": "unknown",
+        "listening": false,
+        "on_demand": true,
+        "port": 47998,
+        "proto": "udp",
+        "role": "video"
+      },
+      {
+        "firewall": "unknown",
+        "listening": false,
+        "on_demand": true,
+        "port": 47999,
+        "proto": "udp",
+        "role": "control"
+      },
+      {
+        "firewall": "unknown",
+        "listening": false,
+        "on_demand": true,
+        "port": 48000,
+        "proto": "udp",
+        "role": "audio"
+      },
+      {
+        "firewall": "unknown",
+        "listening": false,
+        "on_demand": true,
+        "port": 48001,
+        "proto": "udp",
+        "role": "microphone"
+      }
+    ],
+    "state": "unknown"
+  },
+  "hairpin": {
+    "identity_match": false,
+    "ok": false,
+    "target": "",
+    "tried": false
+  },
+  "interfaces": [
+    {
+      "addresses": [
+        {
+          "address": "192.0.2.20",
+          "family": "ipv4",
+          "prefix_length": 24,
+          "scope": "private"
+        },
+        {
+          "address": "fd00:db8:1:2:ea90:3588:aec9:7ff6",
+          "deprecated": false,
+          "family": "ipv6",
+          "lifetime": "stable",
+          "prefix_length": 64,
+          "scope": "ula"
+        },
+        {
+          "address": "fe80::2297:5111:11c0:20",
+          "deprecated": false,
+          "family": "ipv6",
+          "lifetime": "stable",
+          "prefix_length": 64,
+          "scope": "link-local"
+        }
+      ],
+      "description": "",
+      "egress": true,
+      "mesh": "none",
+      "name": "enp6s0",
+      "up": true,
+      "virtual": false
+    },
+    {
+      "addresses": [
+        {
+          "address": "100.72.0.84",
+          "family": "ipv4",
+          "prefix_length": 32,
+          "scope": "shared"
+        },
+        {
+          "address": "fd7a:115c:a1e0::84",
+          "deprecated": false,
+          "family": "ipv6",
+          "lifetime": "stable",
+          "prefix_length": 128,
+          "scope": "ula"
+        },
+        {
+          "address": "fe80::5c7c:5871:9711:84",
+          "deprecated": false,
+          "family": "ipv6",
+          "lifetime": "stable",
+          "prefix_length": 64,
+          "scope": "link-local"
+        }
+      ],
+      "description": "",
+      "egress": false,
+      "mesh": "tailscale",
+      "name": "tailscale0",
+      "up": true,
+      "virtual": false
+    },
+    {
+      "addresses": [
+        {
+          "address": "11.77.163.1",
+          "family": "ipv4",
+          "prefix_length": 24,
+          "scope": "global"
+        }
+      ],
+      "description": "",
+      "egress": false,
+      "mesh": "none",
+      "name": "br-48e27b925fa5",
+      "up": true,
+      "virtual": true
+    }
+  ],
+  "ipv4": {
+    "consistent": true,
+    "local_address": "192.0.2.20",
+    "nat": {
+      "filtering": "unknown",
+      "filtering_reason": "not_tested",
+      "mapped_address_varies": false,
+      "mapping": "endpoint-independent",
+      "method": "rfc5780",
+      "present": true,
+      "reasons": [],
+      "tests": [
+        {
+          "mapped": {
+            "address": "203.0.113.56",
+            "port": 53402
+          },
+          "target": "111.206.174.3:3478",
+          "test": "I"
+        },
+        {
+          "mapped": {
+            "address": "203.0.113.56",
+            "port": 53402
+          },
+          "target": "111.206.174.2:3478",
+          "test": "II"
+        }
+      ]
+    },
+    "notes": [],
+    "on_interface": false,
+    "public_address": "203.0.113.56",
+    "seen_addresses": [
+      "203.0.113.56"
+    ],
+    "servers": [
+      {
+        "address": "111.206.174.3",
+        "answered": true,
+        "error": "",
+        "mapped": {
+          "address": "203.0.113.56",
+          "port": 53402
+        },
+        "other_address": {
+          "address": "111.206.174.2",
+          "port": 3479
+        },
+        "rtt_ms": 86,
+        "server": "111.206.174.3:3478"
+      },
+      {
+        "address": "223.86.125.12",
+        "answered": true,
+        "error": "",
+        "mapped": {
+          "address": "203.0.113.56",
+          "port": 53402
+        },
+        "other_address": {
+          "address": "223.86.125.12",
+          "port": 18001
+        },
+        "rtt_ms": 71,
+        "server": "223.86.125.12:18000"
+      },
+      {
+        "address": "106.12.71.140",
+        "answered": true,
+        "error": "",
+        "mapped": {
+          "address": "203.0.113.56",
+          "port": 53402
+        },
+        "other_address": null,
+        "rtt_ms": 54,
+        "server": "106.12.71.140:3478"
+      },
+      {
+        "address": "120.132.47.20",
+        "answered": true,
+        "error": "",
+        "mapped": {
+          "address": "203.0.113.56",
+          "port": 53402
+        },
+        "other_address": null,
+        "rtt_ms": 59,
+        "server": "120.132.47.20:3478"
+      },
+      {
+        "address": "162.159.207.0",
+        "answered": true,
+        "error": "",
+        "mapped": {
+          "address": "203.0.113.56",
+          "port": 53402
+        },
+        "other_address": null,
+        "rtt_ms": 176,
+        "server": "162.159.207.0:3478"
+      },
+      {
+        "address": "",
+        "answered": false,
+        "error": "other_family",
+        "mapped": null,
+        "other_address": null,
+        "rtt_ms": 0,
+        "server": "[2606:4700:49::]:3478"
+      },
+      {
+        "address": "",
+        "answered": false,
+        "error": "other_family",
+        "mapped": null,
+        "other_address": null,
+        "rtt_ms": 0,
+        "server": "[240e:c2:1800:16:4000::15]:3478"
+      }
+    ],
+    "source": "stun",
+    "stun": true,
+    "stun_address": "203.0.113.56"
+  },
+  "ipv6": {
+    "consistent": true,
+    "local_address": "",
+    "nat": {
+      "filtering": "unknown",
+      "filtering_reason": "not_tested",
+      "mapped_address_varies": false,
+      "mapping": "unknown",
+      "method": "none",
+      "present": null,
+      "reasons": [],
+      "tests": []
+    },
+    "notes": [],
+    "on_interface": false,
+    "public_address": "",
+    "seen_addresses": [],
+    "servers": [
+      {
+        "address": "",
+        "answered": false,
+        "error": "other_family",
+        "mapped": null,
+        "other_address": null,
+        "rtt_ms": 0,
+        "server": "111.206.174.3:3478"
+      },
+      {
+        "address": "",
+        "answered": false,
+        "error": "other_family",
+        "mapped": null,
+        "other_address": null,
+        "rtt_ms": 0,
+        "server": "223.86.125.12:18000"
+      },
+      {
+        "address": "",
+        "answered": false,
+        "error": "other_family",
+        "mapped": null,
+        "other_address": null,
+        "rtt_ms": 0,
+        "server": "106.12.71.140:3478"
+      },
+      {
+        "address": "",
+        "answered": false,
+        "error": "other_family",
+        "mapped": null,
+        "other_address": null,
+        "rtt_ms": 0,
+        "server": "120.132.47.20:3478"
+      },
+      {
+        "address": "",
+        "answered": false,
+        "error": "other_family",
+        "mapped": null,
+        "other_address": null,
+        "rtt_ms": 0,
+        "server": "162.159.207.0:3478"
+      },
+      {
+        "address": "2606:4700:49::",
+        "answered": false,
+        "error": "no_route",
+        "mapped": null,
+        "other_address": null,
+        "rtt_ms": 0,
+        "server": "[2606:4700:49::]:3478"
+      },
+      {
+        "address": "240e:c2:1800:16:4000::15",
+        "answered": false,
+        "error": "no_route",
+        "mapped": null,
+        "other_address": null,
+        "rtt_ms": 0,
+        "server": "[240e:c2:1800:16:4000::15]:3478"
+      }
+    ],
+    "source": "none",
+    "stun": false,
+    "stun_address": ""
+  },
+  "reachability": {
+    "check_verdict": "unreachable",
+    "ipv4": {
+      "reasons": [
+        "not_listening:tcp/47984",
+        "not_listening:tcp/47989",
+        "not_listening:tcp/48010"
+      ],
+      "verdict": "unreachable"
+    },
+    "ipv6": {
+      "reasons": [
+        "ipv6_no_global"
+      ],
+      "verdict": "unreachable"
+    }
+  },
+  "reachability_checked_at": "2026-11-04T09:13:22Z",
+  "stun_enabled": true,
+  "upnp": {
+    "available": false,
+    "mappings": [],
+    "protocol": "none",
+    "wan_ip": "",
+    "wan_ip_class": "unknown"
+  },
+  "upstream_nat": {
+    "reasons": [
+      "no_igd"
+    ],
+    "state": "unknown"
+  },
+  "version": 1
+}

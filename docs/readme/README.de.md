@@ -4,10 +4,12 @@
 
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/hero-dark.png">
-  <img src="../../assets/readme/hero.png" width="800" alt="Foundation Sunshine — HDR Game-Streaming-Host für Windows mit virtuellen Displays, ein Sunshine-Fork für Moonlight">
-</picture>
+<p><picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/hero-dark.en.png">
+  <img src="../../assets/readme/hero.en.png" width="800" alt="Foundation Sunshine — HDR Game-Streaming-Host für Windows mit virtuellen Displays, ein Sunshine-Fork für Moonlight">
+</picture></p>
+
+<p align="center"><a href="https://github.com/AlkaidLab/foundation-sunshine/releases/latest"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/b1-dark.de.webp"><img src="../../assets/readme/b1.de.webp" alt="Host herunterladen" height="56"></picture></a>&nbsp;&nbsp;<a href="#clients-moonlight"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/b2-dark.de.webp"><img src="../../assets/readme/b2.de.webp" alt="Client herunterladen" height="56"></picture></a>&nbsp;&nbsp;<a href="#schnellstart"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/b3-dark.de.webp"><img src="../../assets/readme/b3.de.webp" alt="Installieren &amp; verbinden" height="56"></picture></a></p>
 
 [![Build](https://img.shields.io/github/actions/workflow/status/AlkaidLab/foundation-sunshine/main.yml?branch=master&label=Build)](https://github.com/AlkaidLab/foundation-sunshine/actions/workflows/main.yml) [![Latest release](https://img.shields.io/github/v/release/AlkaidLab/foundation-sunshine?include_prereleases&sort=date&label=Latest)](https://github.com/AlkaidLab/foundation-sunshine/releases) [![Downloads](https://img.shields.io/github/downloads/AlkaidLab/foundation-sunshine/total?label=Downloads)](https://github.com/AlkaidLab/foundation-sunshine/releases) [![GitHub Stars](https://img.shields.io/github/stars/AlkaidLab/foundation-sunshine?style=flat&label=Stars)](https://github.com/AlkaidLab/foundation-sunshine) [![License](https://img.shields.io/badge/License-GPL--3.0-blue)](https://github.com/AlkaidLab/foundation-sunshine/blob/master/LICENSE)
 
@@ -19,29 +21,84 @@ Foundation Sunshine ist ein kostenloses, quelloffenes Remote- und Game-Streaming
 
 Von dynamischem HDR und Bildschirmkalibrierung bis zu latenzarmer Aufnahme und Hardware-Encoding hält Foundation Bild und Eingabe nah am lokalen Erlebnis. Raumklang und Mikrofon-Weiterleitung, natives DualSense-Feedback, Zwischenablage und Dateifreigaben laufen parallel zur Sitzung; eine eigenständige Desktop-GUI bündelt Einstellungen, Gerätekomponenten und Spielebibliotheken an einem Ort.
 
-**[Host (Sunshine) herunterladen](https://github.com/AlkaidLab/foundation-sunshine/releases/latest)** · **[Client (Moonlight) herunterladen](#clients-moonlight)** · **[Installation und erste Verbindung](#schnellstart)**
+<div align="center">
+
+<p align="center"><picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/show-dark.en.webp">
+  <img src="../../assets/readme/show.en.webp" alt="Foundation Sunshine im Überblick: Serifen-Überschrift, schräg gestelltes Control Panel und Smartphone sowie Widgets für HDR, Bildrate, Host-Latenz, DualSense-Haptikverstärkung und Smartphone-Verwaltung, alle mit weißem Sticker-Rand." width="952">
+</picture></p>
+
+</div>
 
 [Funktionen](#funktionen) · [Dokumentation (Englisch)](../en/README.md) · [FAQ (Englisch)](../en/faq.md) · [Entwicklung (Englisch)](../en/development.md) · [Mitwirken](../contributing.en.md)
 - [Upgrade (Englisch)](../en/upgrading.md): reguläre und Test-Releases, Konfiguration sichern und ein Update prüfen.
 
-## Funktionen
+## <picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/h-shots-dark.webp"><img src="../../assets/readme/h-shots.webp" height="50" alt=""></picture>&nbsp;Screenshots
+
+<table>
+<tr>
+<td align="center" valign="top">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/panel-library-dark.webp">
+  <img src="../../assets/readme/panel-library.webp" alt="Desktop-GUI: Spielebibliothek">
+</picture><br>
+<sub>Desktop-GUI · Spielebibliothek</sub>
+</td>
+<td align="center" valign="top">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/panel-appearance-dark.webp">
+  <img src="../../assets/readme/panel-appearance.webp" alt="Desktop-GUI: Personalisierung">
+</picture><br>
+<sub>Desktop-GUI · Personalisierung</sub>
+</td>
+</tr>
+<tr>
+<td align="center" valign="top">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/web-encoders-dark.webp">
+  <img src="../../assets/readme/web-encoders.webp" alt="Webinterface: Encoding und Bitrate">
+</picture><br>
+<sub>Webinterface · Einstellungen</sub>
+</td>
+<td align="center" valign="top">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/web-home-dark.webp">
+  <img src="../../assets/readme/web-home.webp" alt="Webinterface: Übersicht">
+</picture><br>
+<sub>Webinterface · Übersicht</sub>
+</td>
+</tr>
+</table>
+
+<p align="center"><a href="SCREENSHOTS.en.md">Weitere Screenshots (Englisch) →</a></p>
+
+## <picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/h-highlights-dark.webp"><img src="../../assets/readme/h-highlights.webp" height="50" alt=""></picture>&nbsp;Funktionen
+
+<p align="center"><a href="../en/features.md#hdr-and-color"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-1-dark.de.webp"><img src="../../assets/readme/strip-1.de.webp" width="464" alt="Bild und Displays: Dynamisches HDR, virtuelle Displays"></picture></a>
+<a href="../en/features.md#capture-encoding-and-performance"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-2-dark.de.webp"><img src="../../assets/readme/strip-2.de.webp" width="464" alt="Aufnahme und Encoding: Niedrige Latenz, Hardware-Encoding"></picture></a>
+<a href="../en/features.md#audio-and-microphone-forwarding"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-3-dark.de.webp"><img src="../../assets/readme/strip-3.de.webp" width="464" alt="Audio und Mikrofon: Raumklang und Mikrofon-Weiterleitung"></picture></a>
+<a href="../en/features.md#desktop-control-panel"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-4-dark.de.webp"><img src="../../assets/readme/strip-4.de.webp" width="464" alt="Desktop-GUI: Spiele, Displays, Komponenten an einem Ort"></picture></a>
+<a href="../en/features.md#dualsense-and-virtual-controllers"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-5-dark.de.webp"><img src="../../assets/readme/strip-5.de.webp" width="464" alt="Eingabe und Controller: Touchpad, Stift, natives DualSense"></picture></a>
+<a href="../en/features.md"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-6-dark.de.webp"><img src="../../assets/readme/strip-6.de.webp" width="464" alt="Integration: Zwischenablage, Ordner, Sitzungssteuerung"></picture></a></p>
 
 - **Bild und Displays:** Szenenadaptives HDR, HDR10+ / HDR Vivid und Dolby-Vision-Erweiterungen mit Helligkeitskalibrierung. [ZakoDisplay](https://github.com/qiin2333/zako-vdd) bietet HDR-Virtual-Displays und mehrere Bildschirm-Layouts ohne physischen Monitor.
 - **Aufnahme und Encoding:** NVIDIA NVENC, AMD AMF und Intel Quick Sync mit Optimierungen für niedrigere Latenz und flüssigere Sitzungen; Zako Direct greift direkt auf die Frames des virtuellen Displays zu.
 - **Audio und Mikrofon-Weiterleitung:** Bis zu 7.1.4 Raumklang, PCM / AC3 / E-AC3, Mikrofon-Weiterleitung, durchgehendes Audio bei Stille und Kompensation von Paketverlusten.
 - **Eigenständige Desktop-GUI:** Spielebibliotheken, Displays, Gerätekomponenten, Laufzeitstatus und Updates verwalten, inklusive Log-Diagnose und optionaler KI-Unterstützung.
-- **Eingabe und Controller:** Präzisions-Touchpads, Stift-Eingabe und Client-Cursor; nach der Installation der DualSense-Komponente im Gerätezentrum stehen adaptive Trigger und Haptik unterstützter Spiele auch aus der Ferne zur Verfügung.
+- **Eingabe und Controller:** Präzisions-Touchpads, Stift-Eingabe und Client-Cursor; native DualSense-Unterstützung ist eingebaut, adaptive Trigger, Haptik und weiteres Feedback begleiten die Sitzung.
 - **Integration und Sitzungssteuerung:** Zwischenablage in beide Richtungen, geteilte Ordner, USB-Weiterleitung, Anpassungen während der Sitzung, adaptive Bitrate, Host-Befehle und Sitzungssteuerung.
 
 Voraussetzungen und Aktivierung: [Features and setup (Englisch)](../en/features.md) — außerdem gibt es viele kleine Details zu entdecken.
 
-## Downloads
+## <picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/h-download-dark.webp"><img src="../../assets/readme/h-download.webp" height="50" alt=""></picture>&nbsp;Downloads
 
 Alternativ lassen sich Downloads auf der [Website](https://www.alkaidlab.com/) oder der [China-Website](https://www.alkaidlab.cn/) nach Gerät suchen. Auf beiden Geräten wird je eine Anwendung installiert: **Foundation Sunshine auf dem PC, der gesteuert werden soll, und ein Moonlight-Client auf dem Gerät, von dem aus gesteuert wird.**
 
 ### Host (Sunshine)
 
 **Auf dem Windows-PC installieren, der gesteuert werden soll.**
+
+<p align="center"><a href="https://github.com/AlkaidLab/foundation-sunshine/releases/latest"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/dl-host-dark.en.webp"><img src="../../assets/readme/dl-host.en.webp" height="56" alt="Host herunterladen: Windows-Installer (Sunshine)"></picture></a></p>
 
 Wenn Foundation Sunshine hilft, gerne einen [⭐ Star](https://github.com/AlkaidLab/foundation-sunshine) vergeben.
 
@@ -55,10 +112,9 @@ Erforderlich sind Windows 10 22H2 oder neuer sowie eine AMD-, Intel- oder NVIDIA
 
 **Empfohlen werden die unten genannten Clients.** HDR-, Display-, Audio- und Eingabe-Erweiterungen von Foundation benötigen Unterstützung im Client; andere Clients können Funktionen verpassen oder Kompatibilitätsprobleme verursachen. Diese Clients werden von AlkaidLab-Mitgliedern gepflegt.
 
-- **Windows / Linux:** [Moonlight V+ for PC](https://github.com/qiin2333/moonlight-qt/releases)
-- **macOS:** [Moonlight macOS Enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced/releases) · [Moonlight V+ for PC](https://github.com/qiin2333/moonlight-qt/releases)
-- **Android / Android TV:** [Moonlight V+](https://github.com/qiin2333/moonlight-vplus/releases/latest)
-- **HarmonyOS:** [Moonlight V+ (AppGallery)](https://appgallery.huawei.com/app/detail?id=com.alkaidlab.sdream)
+<p align="center"><a href="https://github.com/qiin2333/moonlight-qt/releases"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/dl-win-dark.en.webp"><img src="../../assets/readme/dl-win.en.webp" height="56" alt="Windows / Linux: Moonlight V+ for PC"></picture></a>&nbsp;&nbsp;<a href="https://github.com/skyhua0224/moonlight-macos-enhanced/releases"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/dl-mac-dark.en.webp"><img src="../../assets/readme/dl-mac.en.webp" height="56" alt="macOS: Moonlight macOS Enhanced"></picture></a>&nbsp;&nbsp;<a href="https://github.com/qiin2333/moonlight-vplus/releases/latest"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/dl-android-dark.en.webp"><img src="../../assets/readme/dl-android.en.webp" height="56" alt="Android / Android TV: Moonlight V+"></picture></a>&nbsp;&nbsp;<a href="https://appgallery.huawei.com/app/detail?id=com.alkaidlab.sdream"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/dl-harmony-dark.en.webp"><img src="../../assets/readme/dl-harmony.en.webp" height="56" alt="HarmonyOS: Moonlight V+"></picture></a></p>
+
+Unter macOS lässt sich auch [Moonlight V+ for PC](https://github.com/qiin2333/moonlight-qt/releases) verwenden.
 
 #### Partner-Clients
 
@@ -67,14 +123,46 @@ Erforderlich sind Windows 10 22H2 oder neuer sowie eine AMD-, Intel- oder NVIDIA
 - **Crown Edition · Android:** [Download](https://github.com/WACrown/moonlight-android/releases) · [Info](https://github.com/WACrown/moonlight-android#readme)
 - **Baozi Edition · HarmonyOS:** [Projekt und Downloads](https://gitee.com/smdsbz/moonlight-ohos)
 
-## Schnellstart
+## <picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/h-start-dark.webp"><img src="../../assets/readme/h-start.webp" height="50" alt=""></picture>&nbsp;Schnellstart
 
 1. **Host installieren:** Installer aus dem Release herunterladen und ausführen; benötigte Komponenten anhaken, **Zako Display Driver** für virtuelle Displays behalten. Danach im Desktop-Panel dem Assistenten für Sprache, GPU und Display folgen. Ohne physischen Monitor zuerst den Treiber für virtuelle Displays prüfen und die Foundation-Anzeige wählen.
+
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/step-installer-dark.webp">
+     <img src="../../assets/readme/step-installer.webp" width="560" alt="Installer: Komponenten auswählen">
+   </picture>
+
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/step-wizard-language-dark.webp">
+     <img src="../../assets/readme/step-wizard-language.webp" width="560" alt="Einrichtungsassistent: Sprache">
+   </picture>
+
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/step-wizard-display-dark.webp">
+     <img src="../../assets/readme/step-wizard-display.webp" width="560" alt="Einrichtungsassistent: GPU und Display">
+   </picture>
+
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/step-account-dark.webp">
+     <img src="../../assets/readme/step-account.webp" width="560" alt="Einrichtungsassistent: WebUI-Konto">
+   </picture>
+
 2. **Client installieren:** Den passenden Moonlight-Client für das Gerät installieren; Details stehen in der englischen Anleitung.
 3. **PC hinzufügen und koppeln:** Den PC im Client auswählen; erscheint er nicht, die IPv4-Adresse per `ipconfig` ermitteln und manuell eintragen. Die PIN des Clients im Sunshine-Webinterface unter **PIN** eingeben.
+
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/web-pin-dark.webp">
+     <img src="../../assets/readme/web-pin.webp" width="560" alt="Webinterface: PIN-Kopplung">
+   </picture>
+
 4. **Erste Bildqualität:** 1080p, 60 FPS, 20 Mbps (bei instabilem Netz 10 Mbps), Codec automatisch, HDR zunächst aus, Audio Stereo / Opus.
 5. **Zuerst den Desktop testen:** Maus, Fenster und Ton prüfen, bevor HDR, Auflösung oder virtuelle Displays angepasst werden.
 6. **Optional Spiele hinzufügen:** Steam/Epic/GOG-Scan in der Desktop-GUI nutzen oder Anwendungen manuell hinzufügen.
+
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/step-scan-dark.webp">
+     <img src="../../assets/readme/step-scan.webp" width="560" alt="Desktop-GUI: Scan-Ergebnisse">
+   </picture>
 
 **Erste Videoeinstellungen:**
 
@@ -87,7 +175,7 @@ Erforderlich sind Windows 10 22H2 oder neuer sowie eine AMD-, Intel- oder NVIDIA
 | HDR | Zunächst aus | Standard ist SDR; HDR erst nach erfolgreichem Test aktivieren |
 | Audio | Stereo / Opus | Zuerst Ton prüfen, dann Raumklang oder andere Formate |
 
-## Dokumentation und Support
+## <picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/h-help-dark.webp"><img src="../../assets/readme/h-help.webp" height="50" alt=""></picture>&nbsp;Dokumentation und Support
 
 - [Dokumentation (Englisch)](../en/README.md): Installation, Funktionen, FAQ und Entwicklung nach Aufgabe sortiert.
 - [FAQ (Englisch)](../en/faq.md): Ruckeln, Verbindungs- und Audioprobleme.
