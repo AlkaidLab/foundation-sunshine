@@ -108,6 +108,7 @@ set(SUNSHINE_HOST_SOURCES
     # src/ds5
     src/ds5/config.cpp src/ds5/config.h
     src/ds5/config_api.cpp src/ds5/config_api.h
+    src/ds5/tuning_profile.cpp src/ds5/tuning_profile.h
     src/ds5/tuning_runtime.h
     src/ds5/tuning_descriptors.inc
 
