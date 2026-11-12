@@ -1,10 +1,11 @@
-import { computed, reactive, ref } from 'vue'
+import { computed, reactive, ref, shallowRef } from 'vue'
 import { translateFallback } from '../utils/localizedMessage.js'
 import { AppService } from '../services/appService.js'
 import { APP_CONSTANTS, ENV_VARS_CONFIG } from '../utils/constants.js'
 import { debounce, deepClone } from '../utils/helpers.js'
-import { apiPostJson } from '../utils/apiFetch.js'
-import { trackEvents } from '../config/firebase.js'
+import { apiFetch, apiPostJson } from '../utils/apiFetch.js'
+import { SCAN_SOURCE_LABELS, SCAN_SOURCES, mapHostGame, readScan, scanBody, sparxiePlan } from '../utils/hostScan.js'
+import { trackEvents } from '../config/telemetry.js'
 import {
   applyGameLibraryOverrides,
   GAME_LIBRARY_SKILL_IDS,
@@ -112,12 +113,10 @@ export function useApps() {
   })
   const scanOptions = reactive({
     scope: 'libraries',
-    platforms: {
-      steam: true,
-      epic: true,
-      gog: true,
-    },
+    platforms: Object.fromEntries(SCAN_SOURCES.map((id) => [id, true])),
     extractIcons: true,
+    /** a folder of the host (typed where there is no folder dialog, as in a browser) */
+    directory: '',
   })
   const enabledGameLibrarySkillIds = ref(loadEnabledGameLibrarySkillIds())
   const deleteConfirmIndex = ref(null)
@@ -155,18 +154,14 @@ export function useApps() {
     if (!scanProgress.active || scanProgress.indeterminate || !scanProgress.total) return 0
     return Math.max(0, Math.min(100, Math.round((scanProgress.current / scanProgress.total) * 100)))
   })
-  const scanPlatformOptions = [
-    { id: 'steam', label: 'Steam' },
-    { id: 'epic', label: 'Epic Games' },
-    { id: 'gog', label: 'GOG' },
-  ]
+  const scanPlatformOptions = SCAN_SOURCES.map((id) => ({ id, label: SCAN_SOURCE_LABELS[id] || id, icon: id === 'sparxie' ? 'touch_app' : 'sports_esports' }))
 
   // 消息图标映射
   const MESSAGE_ICONS = {
-    success: 'fa-check-circle',
-    error: 'fa-exclamation-circle',
-    warning: 'fa-exclamation-triangle',
-    info: 'fa-info-circle',
+    success: 'check_circle',
+    error: 'error',
+    warning: 'warning',
+    info: 'info',
   }
 
   const showMessage = (msg, type = APP_CONSTANTS.MESSAGE_TYPES.SUCCESS) => {
@@ -309,6 +304,10 @@ export function useApps() {
 
   const runConfiguredScan = async () => {
     if (scanOptions.scope === 'directory') {
+      if (!window.__TAURI__?.dialog?.open && !scanOptions.directory.trim()) {
+        showMessage(translate('apps.scan_options.directory_missing'), APP_CONSTANTS.MESSAGE_TYPES.WARNING)
+        return
+      }
       showScanOptions.value = false
       await scanDirectory(scanOptions.extractIcons)
       return
@@ -347,11 +346,13 @@ export function useApps() {
     ...overrides,
   })
 
-  let translate = translateFallback
+  // the translator is reactive: the labels of the scan sheet are drawn before `init` hands over the page's own translator, and a plain variable left them in English
+  const translator = shallowRef(translateFallback)
+  const translate = (key, params) => translator.value(key, params)
 
   // 初始化
   const init = (t) => {
-    translate = t
+    translator.value = t
     envVars.value = Object.fromEntries(
       Object.entries(ENV_VARS_CONFIG).map(([key, translationKey]) => [key, t(translationKey)])
     )
@@ -628,35 +629,67 @@ export function useApps() {
       : appList
   }
 
+  // The scan runs on the host (POST /api/apps/scan), the same for the browser and the control panel. A host without the API (404) leaves the control panel its native scan; a browser says the scan is unavailable.
+  let hostScanSupported = null
+  const canScan = () => hostScanSupported !== false || isTauriEnv()
+  const callHostScan = async (options) => {
+    try {
+      const response = await apiFetch('/api/apps/scan', { method: 'POST', body: scanBody(options) })
+      const data = await response.json().catch(() => null)
+      const read = readScan(response.status, data)
+      if (read.unsupported) hostScanSupported = false
+      else if (read.ok) hostScanSupported = true
+      return read
+    } catch { return { ok: false, status: 0 } }
+  }
+  const showHostScan = (read, label) => {
+    if (!read.games.length) {
+      scannedApps.value = []
+      showScanResult.value = true
+      showMessage(translate('apps.scan_result_no_apps'), APP_CONSTANTS.MESSAGE_TYPES.INFO)
+      return
+    }
+    const overriddenApps = withScanKeys(applyGameLibraryOverrides(read.games))
+    scannedApps.value = overriddenApps
+    showScanResult.value = true
+    const parts = Object.entries(read.counts).map(([platform, n]) => `${platform} ${n}`)
+    const notes = read.warnings.map((code) => {
+      const key = `apps.scan_warnings.${code}`
+      const text = translate(key)
+      return text && text !== key ? text : translate('apps.scan_warnings.unknown')
+    }).filter(Boolean)
+    showMessage(`${translate('apps.feedback.found', { count: read.games.length })} (${parts.join(', ')})${notes.length ? ` · ${notes[0]}` : ''}`, APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
+    asyncEnhanceAndUpdateCovers(overriddenApps, enabledGameLibrarySkillIds.value)
+    return label
+  }
+  const hostScanFailed = (read) => {
+    if (read.busy) showMessage(translate('apps.scan_options.busy'), APP_CONSTANTS.MESSAGE_TYPES.WARNING)
+    else showMessage(read.error || translate('apps.feedback.scan_failed'), APP_CONSTANTS.MESSAGE_TYPES.ERROR)
+  }
+
   // 扫描目录功能
   const scanDirectory = async (extractIcons = true) => {
     const tauri = window.__TAURI__
-    if (!tauri?.core?.invoke) {
-      showMessage(translate('apps.feedback.scan_unavailable'), APP_CONSTANTS.MESSAGE_TYPES.WARNING)
-      return
-    }
-
-    if (!tauri?.dialog?.open) {
-      showMessage(translate('apps.file_selection.dialog_unavailable'), APP_CONSTANTS.MESSAGE_TYPES.ERROR)
-      return
-    }
-
     try {
-      const selectedDir = await tauri.dialog.open({
-        directory: true,
-        multiple: false,
-        title: translate('apps.file_selection.select_directory'),
-      })
-
-      if (!selectedDir) return
+      // the folder: the control panel's dialog where there is one, else the path typed in the options
+      let selectedDir = scanOptions.directory.trim()
+      if (tauri?.dialog?.open) {
+        selectedDir = await tauri.dialog.open({ directory: true, multiple: false, title: translate('apps.file_selection.select_directory') })
+        if (!selectedDir) return
+      }
+      if (!selectedDir) { showMessage(translate('apps.scan_options.directory_missing'), APP_CONSTANTS.MESSAGE_TYPES.WARNING); return }
 
       isScanning.value = true
       showMessage(`${translate('apps.scan_options.directory_scan')}…`, APP_CONSTANTS.MESSAGE_TYPES.INFO)
 
-      const foundApps = await tauri.core.invoke('scan_directory_for_apps', {
-        directory: selectedDir,
-        extractIcons,
-      })
+      if (hostScanSupported !== false) {
+        const read = await callHostScan({ directory: selectedDir })
+        if (read.ok) { showHostScan(read); trackEvents.userAction('directory_scanned', { count: read.games.length, extractIcons: false, via: 'host' }); return }
+        if (!read.unsupported) { hostScanFailed(read); return }
+      }
+      if (!tauri?.core?.invoke) { showMessage(translate('apps.feedback.scan_unavailable'), APP_CONSTANTS.MESSAGE_TYPES.WARNING); return }
+
+      const foundApps = await tauri.core.invoke('scan_directory_for_apps', { directory: selectedDir, extractIcons })
 
       if (foundApps.length === 0) {
         scannedApps.value = []
@@ -685,16 +718,26 @@ export function useApps() {
   // 扫描游戏平台库（Steam/Epic/GOG）
   const scanGameLibraries = async (options = {}) => {
     const tauri = window.__TAURI__
-    if (!tauri?.core?.invoke) {
-      showMessage(translate('apps.feedback.scan_unavailable'), APP_CONSTANTS.MESSAGE_TYPES.WARNING)
-      return
-    }
-
     try {
       isScanning.value = true
       showMessage(`${translate('apps.scan_library')}…`, APP_CONSTANTS.MESSAGE_TYPES.INFO)
 
       const requestedPlatforms = options.platforms || scanPlatformOptions.map((platformOption) => platformOption.id)
+
+      if (hostScanSupported !== false) {
+        const read = await callHostScan({ platforms: requestedPlatforms })
+        if (read.ok) {
+          showHostScan(read)
+          trackEvents.userAction('game_libraries_scanned', { ...read.counts, total: read.games.length, via: 'host' })
+          return
+        }
+        if (!read.unsupported) { hostScanFailed(read); return }
+      }
+      if (!tauri?.core?.invoke) {
+        showMessage(translate('apps.feedback.scan_unavailable'), APP_CONSTANTS.MESSAGE_TYPES.WARNING)
+        return
+      }
+
       const result = await tauri.core.invoke('scan_game_libraries', {
         platforms: requestedPlatforms,
       })
@@ -927,8 +970,29 @@ export function useApps() {
     trackEvents.userAction('scanned_app_edit', { name: scannedApp.name })
   }
 
+  const saveSparxiePlan = async (plan) => {
+    if (plan.kind === 'touch') {
+      const response = await apiFetch('/api/sparxie/import', { method: 'POST', body: { ids: [plan.id] } })
+      const data = await response.json().catch(() => null)
+      if (!response.ok || data?.ok === false) throw new Error(data?.error || '')
+      return
+    }
+    const response = await apiFetch('/api/sparxie/apps', { method: 'POST', body: { path: plan.path, name: plan.name, mode: 'pc', region: plan.region } })
+    const data = await response.json().catch(() => null)
+    if (!response.ok || data?.ok === false) throw new Error(data?.error || '')
+  }
+
   const quickAddScannedApp = async (scannedApp) => {
     try {
+      const plan = sparxiePlan(scannedApp)
+      if (plan) {
+        await saveSparxiePlan(plan)
+        await loadApps()
+        removeScannedApp(scannedApp)
+        showMessage(translate('apps.feedback.added', { name: scannedApp.name }), APP_CONSTANTS.MESSAGE_TYPES.SUCCESS)
+        trackEvents.userAction('scanned_app_quick_added', { name: scannedApp.name, via: 'sparxie' })
+        return
+      }
       const localizedApp = await localizeScannedAppCover(scannedApp)
       const appToAdd = createAppFromScanned(localizedApp)
 
@@ -947,35 +1011,45 @@ export function useApps() {
     }
   }
 
-  const addAllScannedApps = async () => {
-    if (scannedApps.value.length === 0) return
+  // Adds the scanned applications the person chose (all of them without a list); the others stay in the result
+  const scannedKey = (app, index) => app.source_path || `${app.name}|${app.cmd}|${index}`
+  const addAllScannedApps = async (only = null) => {
+    const chosen = Array.isArray(only) ? only : scannedApps.value
+    if (chosen.length === 0) return
 
     try {
       isSaving.value = true
-      const scannedAppSnapshot = [...scannedApps.value]
+      const scannedAppSnapshot = [...chosen]
+      const chosenKeys = new Set(scannedAppSnapshot.map((app) => scannedKey(app, 0)))
+      const sparxieOnes = scannedAppSnapshot.filter((app) => sparxiePlan(app))
+      const plainOnes = scannedAppSnapshot.filter((app) => !sparxiePlan(app))
+      for (const app of sparxieOnes) await saveSparxiePlan(sparxiePlan(app))
       const localizedScannedApps = await mapWithConcurrency(
-        scannedAppSnapshot,
+        plainOnes,
         COVER_LOCALIZATION_CONCURRENCY,
         localizeScannedAppCover
       )
       const appsToAdd = localizedScannedApps.map(createAppFromScanned)
 
-      apps.value.push(...appsToAdd)
-      await AppService.saveApps(apps.value, null)
-      scannedAppSnapshot.forEach((scannedApp, index) => rememberGameLibraryApp(scannedApp, appsToAdd[index]))
+      if (appsToAdd.length) {
+        apps.value.push(...appsToAdd)
+        await AppService.saveApps(apps.value, null)
+        plainOnes.forEach((scannedApp, index) => rememberGameLibraryApp(scannedApp, appsToAdd[index]))
+      }
       await loadApps()
 
       const coverLocalizationFailureCount = localizedScannedApps.filter(didCoverLocalizationFail).length
+      const addedCount = appsToAdd.length + sparxieOnes.length
       showMessage(
         coverLocalizationFailureCount > 0
-          ? translate('apps.feedback.added_count_cover_failed', { count: appsToAdd.length, failed: coverLocalizationFailureCount })
-          : translate('apps.feedback.added_count', { count: appsToAdd.length }),
+          ? translate('apps.feedback.added_count_cover_failed', { count: addedCount, failed: coverLocalizationFailureCount })
+          : translate('apps.feedback.added_count', { count: addedCount }),
         coverLocalizationFailureCount > 0 ? APP_CONSTANTS.MESSAGE_TYPES.WARNING : APP_CONSTANTS.MESSAGE_TYPES.SUCCESS
       )
-      trackEvents.userAction('scanned_apps_batch_added', { count: appsToAdd.length })
+      trackEvents.userAction('scanned_apps_batch_added', { count: addedCount })
 
-      scannedApps.value = []
-      showScanResult.value = false
+      scannedApps.value = scannedApps.value.filter((app) => !chosenKeys.has(scannedKey(app, 0)))
+      if (scannedApps.value.length === 0) showScanResult.value = false
     } catch (error) {
       console.error('批量添加应用失败:', error)
       showMessage(translate('apps.feedback.add_failed'), APP_CONSTANTS.MESSAGE_TYPES.ERROR)
@@ -1046,6 +1120,7 @@ export function useApps() {
     confirmBatchDelete,
     save,
     restoreDefaultApps,
+    originalApps,
     hasUnsavedChanges,
     onDragStart,
     onDragEnd,
@@ -1058,6 +1133,7 @@ export function useApps() {
     closeScanResult,
     removeScannedApp,
     isTauriEnv,
+    canScan,
     isGameLibrarySkillEnabled,
     toggleGameLibrarySkill,
     getGameLibrarySkillIcon,
