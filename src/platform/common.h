@@ -163,7 +163,8 @@ namespace platf {
     static gamepad_feedback_msg_t
     make_ds5_haptics_pcm(std::uint16_t id, std::uint8_t flags, std::uint16_t frame_count,
       std::uint32_t sequence, std::uint64_t presentation_time_us,
-                         const std::uint8_t *pcm, std::size_t pcm_size) {
+      const std::uint8_t *pcm, std::size_t pcm_size,
+      const std::uint8_t *speaker_pcm = nullptr, bool haptics_enabled = true) {
       gamepad_feedback_msg_t msg {};
       msg.type = gamepad_feedback_e::ds5_haptics_pcm;
       msg.id = id;
@@ -173,6 +174,9 @@ namespace platf {
       msg.data.ds5_haptics.presentation_time_us = presentation_time_us;
       const auto expected_size = static_cast<std::size_t>(msg.data.ds5_haptics.frame_count) * 4;
       std::copy_n(pcm, std::min(expected_size, pcm_size), msg.data.ds5_haptics.pcm.begin());
+      msg.data.ds5_haptics.haptics_enabled = haptics_enabled;
+      msg.data.ds5_haptics.has_speaker = speaker_pcm != nullptr;
+      if (speaker_pcm != nullptr) std::copy_n(speaker_pcm, expected_size, msg.data.ds5_haptics.speaker_pcm.begin());
       return msg;
     }
 
@@ -225,6 +229,11 @@ namespace platf {
         std::uint32_t sequence;
         std::uint64_t presentation_time_us;
         std::array<std::uint8_t, 240 * 2 * sizeof(std::int16_t)> pcm;
+        /// The pad's speaker channels (left, right per frame) of the same frames; valid when has_speaker.
+        std::array<std::uint8_t, 240 * 2 * sizeof(std::int16_t)> speaker_pcm;
+        bool has_speaker;
+        /// False when the haptics path is switched off: pcm is then silence and only the speaker part is real.
+        bool haptics_enabled;
       } ds5_haptics;
       std::array<std::uint8_t, 8> ds5_haptics_state;
     } data;

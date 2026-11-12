@@ -161,6 +161,8 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/windows/input.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_sidecar_client.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_sidecar_client.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_pad_audio.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_pad_audio.cpp"
         "${CMAKE_SOURCE_DIR}/src/touch_keyboard_session.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/touch_keyboard_session.cpp"
 
