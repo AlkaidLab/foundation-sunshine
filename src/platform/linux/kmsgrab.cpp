@@ -12,13 +12,19 @@
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 
+#include <algorithm>
+#include <cctype>
 #include <filesystem>
+#include <fstream>
+#include <map>
 #include <thread>
 
 #include "src/config.h"
+#include "src/display_device/vdd_utils.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
 #include "src/round_robin.h"
+#include "src/streaming/frame_rate_tracker.h"
 #include "src/utility.h"
 #include "src/video.h"
 
@@ -151,6 +157,9 @@ namespace platf {
       std::uint32_t type;
       std::uint32_t index;
 
+      // Connector-style name, e.g. "DP-1"
+      std::string name;
+
       // Monitor index in the global list
       std::uint32_t monitor_index;
 
@@ -220,6 +229,29 @@ namespace platf {
 
       BOOST_LOG(error) << "Unknown Monitor connector type ["sv << string << "]: Please report this to the GitHub issue tracker"sv;
       return DRM_MODE_CONNECTOR_Unknown;
+    }
+
+    /**
+     * @brief Inverse of from_view(): the sysfs/wayland-style name prefix for
+     *        a DRM connector type, e.g. DisplayPort -> "DP".
+     */
+    std::string_view
+    connector_type_prefix(std::uint32_t type) {
+#define _PREFIX(x, y) \
+  if (type == DRM_MODE_CONNECTOR_##y) return x##sv
+
+      _PREFIX("DP", DisplayPort);
+      _PREFIX("HDMI-A", HDMIA);
+      _PREFIX("HDMI-B", HDMIB);
+      _PREFIX("eDP", eDP);
+      _PREFIX("VGA", VGA);
+      _PREFIX("DVI-I", DVII);
+      _PREFIX("DVI-D", DVID);
+      _PREFIX("DVI-A", DVIA);
+      _PREFIX("VIRTUAL", VIRTUAL);
+#undef _PREFIX
+
+      return "Unknown"sv;
     }
 
     class plane_it_t: public round_robin_util::it_wrap_t<plane_t::element_type, plane_it_t> {
@@ -552,6 +584,7 @@ namespace platf {
           monitor_t {
             connector.type,
             connector.index,
+            std::string { connector_type_prefix(connector.type) } + '-' + std::to_string(connector.index),
           });
       }
 
@@ -598,6 +631,54 @@ namespace platf {
       BOOST_LOG(debug) << ss.str();
     }
 
+    /**
+     * @brief Starting connector counter for every card, in enumeration order.
+     *
+     * @details @ref kms_display_names() keeps **one** `conn_type_count_t` for all
+     *          the cards it visits, so on a two-GPU machine the second card's
+     *          DisplayPort can be advertised as "DP-2". Resolving such a name
+     *          back to a CRTC therefore needs the identical numbering, which
+     *          means replaying the same card order and the same skip rules --
+     *          numbering each card from one would rename every connector after
+     *          the first and make the advertised names unresolvable.
+     *
+     * @param card_dir Directory holding the DRM nodes ("/dev/dri").
+     * @param hwdevice_type Capture memory type; decides which cards are skipped.
+     * @return Map of card node name ("card1") to the counter value that card
+     *         starts at. Cards that enumeration skips are absent.
+     */
+    std::map<std::string, kms::conn_type_count_t>
+    connector_numbering(const fs::path &card_dir, mem_type_e hwdevice_type) {
+      std::map<std::string, kms::conn_type_count_t> numbering;
+      kms::conn_type_count_t running;
+
+      std::error_code ec;
+      for (auto &entry : fs::directory_iterator { card_dir, ec }) {
+        const auto filestring = entry.path().filename().generic_string();
+        if (filestring.size() < 4 || std::string_view { filestring }.substr(0, 4) != "card"sv) {
+          continue;
+        }
+
+        kms::card_t card;
+        if (card.init(entry.path().c_str())) {
+          continue;
+        }
+
+        // Same filter and same exception as kms_display_names().
+        if (hwdevice_type == mem_type_e::cuda && !card.is_nvidia() && config::video.encoder != "nvenc") {
+          continue;
+        }
+
+        numbering.emplace(filestring, running);
+
+        // monitors() is what advances the counter; the connectors themselves
+        // are irrelevant here.
+        card.monitors(running);
+      }
+
+      return numbering;
+    }
+
     class display_t: public platf::display_t {
     public:
       display_t(mem_type_e mem_type):
@@ -610,12 +691,40 @@ namespace platf {
         int monitor_index = util::from_view(display_name);
         int monitor = 0;
 
+        // The wizard's GPU selection (adapter_name holds a kernel driver
+        // name like "nvidia") narrows the capture to matching cards.
+        std::string preferred_adapter = config::video.adapter_name;
+        boost::algorithm::trim(preferred_adapter);
+
+        // Displays are named after their DRM connector ("eDP-1", "DP-1", ...).
+        // When a virtual display session is live, the virtual connector takes
+        // priority; otherwise a non-numeric display_name selects the connector
+        // by name and a numeric one keeps the legacy enumeration index.
+        const auto vdd_connector = display_device::vdd_utils::live_virtual_display_connector();
+        // The connector name above is card-local; on a multi-GPU machine another
+        // card can expose the same name, so pin the search to the owner.
+        const auto vdd_card = display_device::vdd_utils::live_virtual_display_card();
+        const bool name_is_index = !display_name.empty() && std::all_of(display_name.begin(), display_name.end(), ::isdigit);
+        const std::string target_connector = !vdd_connector.empty() ? vdd_connector :
+          (name_is_index ? std::string {} : display_name);
+
         fs::path card_dir { "/dev/dri"sv };
+
+        // The advertised names come from kms_display_names(), whose counter runs
+        // across all cards. Replaying that numbering is what makes a name from
+        // the monitor list resolve to the connector it was built from.
+        const auto numbering = connector_numbering(card_dir, mem_type);
+
         for (auto &entry : fs::directory_iterator { card_dir }) {
           auto file = entry.path().filename();
 
           auto filestring = file.generic_string();
           if (filestring.size() < 4 || std::string_view { filestring }.substr(0, 4) != "card"sv) {
+            continue;
+          }
+
+          if (!vdd_card.empty() && filestring != vdd_card) {
+            BOOST_LOG(debug) << file << " does not host the virtual display ("sv << vdd_card << ')';
             continue;
           }
 
@@ -633,6 +742,116 @@ namespace platf {
             }
           }
 
+          // `adapter_name` carries two different things: the wizard stores a
+          // driver name ("nvidia", "amdgpu") for the KMS/Vulkan paths, while the
+          // VAAPI init overwrites it with a render node ("/dev/dri/renderD128").
+          // Both have to narrow this loop, otherwise the user's GPU choice is
+          // silently ignored. entry.path() is the /dev/dri node itself, so the
+          // driver lives under /sys/class/drm instead.
+          if (!preferred_adapter.empty()) {
+            const auto card_name = file.string();
+            const auto sysfs_card = fs::path { "/sys/class/drm" } / card_name;
+
+            if (preferred_adapter.front() == '/') {
+              // Render node: compare the PCI device both nodes belong to. The
+              // render node is a device node, so its `device` link only exists in
+              // sysfs -- resolving it through /dev is what used to make this
+              // branch silently give up and keep every card.
+              std::error_code card_ec;
+              const auto card_pci = fs::canonical(sysfs_card / "device", card_ec);
+              if (card_ec) {
+                BOOST_LOG(debug) << "Could not resolve the sysfs device of "sv << file << "; not filtering"sv;
+              }
+              else {
+                const auto node_name = fs::path { preferred_adapter }.filename();
+                std::error_code node_ec;
+                const auto node_pci = fs::canonical(fs::path { "/sys/class/drm" } / node_name / "device", node_ec);
+                if (node_ec) {
+                  BOOST_LOG(debug) << "Could not resolve the device behind ["sv << preferred_adapter << "]; not filtering"sv;
+                }
+                else if (card_pci != node_pci) {
+                  BOOST_LOG(debug) << file << " is not the device behind ["sv << preferred_adapter << ']';
+                  continue;
+                }
+              }
+            }
+            else {
+              std::error_code driver_ec;
+              const auto driver = fs::read_symlink(sysfs_card / "device" / "driver", driver_ec);
+              if (!driver_ec && driver.filename().string() != preferred_adapter) {
+                BOOST_LOG(debug) << file << " does not match the configured adapter ["sv << preferred_adapter << ']';
+                continue;
+              }
+            }
+          }
+
+          std::map<std::uint32_t, std::string> crtc_to_connector_name;
+          {
+            // Two numbering schemes meet here, and the target decides which one
+            // applies:
+            //  - a connector named by the monitor list was built by
+            //    kms_display_names() with one counter shared by all the cards,
+            //    so it is only resolvable with the same shared numbering;
+            //  - a virtual display is named by vdd_utils as a bare connector
+            //    ("DP-1", the name the sysfs node itself carries), which is
+            //    card-local, and the owning card has already been pinned above.
+            // Each rebuild restarts from the same base so the retry loop cannot
+            // shift the very names it is retrying for.
+            const auto base = [&]() {
+              if (!vdd_connector.empty()) {
+                return kms::conn_type_count_t {};
+              }
+
+              auto it = numbering.find(filestring);
+              return it != numbering.end() ? it->second : kms::conn_type_count_t {};
+            }();
+
+            auto build_map = [&]() {
+              crtc_to_connector_name.clear();
+              auto conn_type_count = base;
+              for (auto &conn : card.monitors(conn_type_count)) {
+                if (conn.crtc_id) {
+                  crtc_to_connector_name.emplace(conn.crtc_id, std::string(kms::connector_type_prefix(conn.type)) + '-' + std::to_string(conn.index));
+                }
+              }
+            };
+
+            build_map();
+
+            // A freshly created virtual display may not have its CRTC
+            // assigned by the compositor yet; give it a moment instead of
+            // failing the whole session 200ms after the connector came up.
+            // If the connector is not even connected anymore, fail fast.
+            if (!target_connector.empty()) {
+              auto target_present = [&]() {
+                return std::any_of(std::begin(crtc_to_connector_name), std::end(crtc_to_connector_name),
+                  [&](const auto &entry) { return entry.second == target_connector; });
+              };
+
+              for (int attempt = 0; attempt < 2 && !target_present(); ++attempt) {
+                bool still_connected = false;
+                for (auto &status_path : std::filesystem::directory_iterator { "/sys/class/drm" }) {
+                  auto n = status_path.path().filename().string();
+                  if (n.rfind("card", 0) == 0 && n.find('-') != std::string::npos &&
+                      n.substr(n.find('-') + 1) == target_connector) {
+                    std::ifstream sf { status_path.path() / "status" };
+                    std::string v;
+                    std::getline(sf, v);
+                    still_connected = v == "connected";
+                    break;
+                  }
+                }
+                if (!still_connected) {
+                  BOOST_LOG(debug) << "Connector ["sv << target_connector << "] is gone; not waiting"sv;
+                  break;
+                }
+                BOOST_LOG(debug) << "Connector ["sv << target_connector << "] has no CRTC yet, retrying ("sv << attempt + 1 << "/2)"sv;
+                std::this_thread::sleep_for(std::chrono::milliseconds { 250 });
+                build_map();
+              }
+            }
+          }
+
           auto end = std::end(card);
           for (auto plane = std::begin(card); plane != end; ++plane) {
             // Skip unused planes
@@ -644,7 +863,16 @@ namespace platf {
               continue;
             }
 
-            if (monitor != monitor_index) {
+            bool selected;
+            if (!target_connector.empty()) {
+              auto pos = crtc_to_connector_name.find(plane->crtc_id);
+              selected = pos != std::end(crtc_to_connector_name) && pos->second == target_connector;
+            }
+            else {
+              selected = monitor == monitor_index;
+            }
+
+            if (!selected) {
               ++monitor;
               continue;
             }
@@ -1082,6 +1310,10 @@ namespace platf {
         plane_t plane = drmModeGetPlane(card.fd.el, plane_id);
         frame_timestamp = std::chrono::steady_clock::now();
 
+        if (plane) {
+          observe_scanout(plane->fb_id);
+        }
+
         auto fb = card.fb(plane.get());
         if (!fb) {
           // This can happen if the display is being reconfigured while streaming
@@ -1150,6 +1382,38 @@ namespace platf {
       cursor_t captured_cursor {};
 
       card_t card;
+
+      /**
+       * The pipeline-FPS view compares the rate at which the *source* produces
+       * frames with what capture, encode submission and encoded output manage.
+       *
+       * On KMS the source-side signal is the framebuffer the CRTC's plane is
+       * scanned out from: a new buffer means the compositor published a new
+       * frame, exactly like a DXGI present or a WGC arrival, and an unchanged
+       * buffer means a static screen that produced nothing. The vblank counters
+       * (drmCrtcGetSequence / drmWaitVBlank) would read as an absolute refresh
+       * rate, but the NVIDIA driver answers EOPNOTSUPP to both, so they cannot
+       * be the primary signal.
+       */
+      std::shared_ptr<perf::capture_source_counter_t>
+      frame_rate_source() const override {
+        if (!source_counter) {
+          auto counter = std::make_shared<perf::capture_source_counter_t>();
+          counter->kind.store(perf::capture_source_kind_e::drm_fb_flips, std::memory_order_relaxed);
+          source_counter = std::move(counter);
+        }
+        return source_counter;
+      }
+
+      /// Called by refresh() with the plane's current framebuffer.
+      void
+      observe_scanout(std::uint32_t fb_id) const {
+        scanout.observe(fb_id, source_counter);
+      }
+
+    private:
+      mutable std::shared_ptr<perf::capture_source_counter_t> source_counter;
+      mutable perf::scanout_tracker_t scanout;
     };
 
     class display_ram_t: public display_t {
@@ -1707,12 +1971,21 @@ namespace platf {
           it->second.monitor_index = count;
         }
 
+        // Name displays after their connector; the session layer and clients
+        // match on these names, and kmsgrab_t::init() resolves them back.
+        if (it != std::end(crtc_to_monitor) && !it->second.name.empty()) {
+          display_names.emplace_back(it->second.name);
+        }
+        else {
+          display_names.emplace_back(std::to_string(count));
+        }
+
         kms::env_width = std::max(kms::env_width, (int) (crtc->x + crtc->width));
         kms::env_height = std::max(kms::env_height, (int) (crtc->y + crtc->height));
 
         kms::print(plane.get(), fb.get(), crtc.get());
 
-        display_names.emplace_back(std::to_string(count++));
+        ++count;
       }
 
       cds.emplace_back(kms::card_descriptor_t {

@@ -117,6 +117,21 @@ namespace platf {
       return device_info_map_t {};
     }
   }  // namespace display_device
+#else
+  // globals.cpp and the Linux display backend are not linked here either. The
+  // Linux branch of parsed_config.cpp recognises the fork client's fixed
+  // virtual-display placeholder and resolves a requested id against the live
+  // backend, so provide the same two names and an empty enumeration.
+  const std::string ZAKO_NAME = "Zako HDR";
+  const std::string ZAKO_DEVICE_ID = "23172";
+
+  namespace display_device {
+    std::string
+    find_one_of_the_available_devices(const std::string &device_id) {
+      (void) device_id;
+      return {};
+    }
+  }  // namespace display_device
 #endif
 
 namespace logging {

@@ -9,6 +9,9 @@
 #endif
 
 // standard includes
+#include <cstdlib>
+#include <cstring>
+#include <cstdio>
 #include <fstream>
 #include <iostream>
 
@@ -91,6 +94,31 @@ namespace dyn {
 }  // namespace dyn
 namespace platf {
   using ifaddr_t = util::safe_ptr<ifaddrs, freeifaddrs>;
+
+  std::vector<std::string>
+  adapter_names() {
+    // One entry per GPU model, keyed by the kernel driver backing the DRM
+    // card (nvidia / amdgpu / i915 / ...). The Windows implementation lists
+    // DXGI adapters at the same granularity.
+    std::vector<std::string> names;
+    std::error_code ec;
+    for (const auto &entry : fs::directory_iterator { "/sys/class/drm", ec }) {
+      const auto name = entry.path().filename().string();
+      if (name.rfind("card", 0) != 0 || name.find('-') != std::string::npos) {
+        continue;
+      }
+      std::error_code link_ec;
+      const auto driver = fs::read_symlink(entry.path() / "device" / "driver", link_ec);
+      if (link_ec) {
+        continue;
+      }
+      const std::string adapter = driver.filename().string();
+      if (std::find(names.begin(), names.end(), adapter) == names.end()) {
+        names.emplace_back(adapter);
+      }
+    }
+    return names;
+  }
 
   ifaddr_t
   get_ifaddrs() {
@@ -363,6 +391,20 @@ namespace platf {
     }
     executable[len] = '\0';
 
+    // A package upgrade replaces the versioned binary file we were started
+    // from; exec the stable launcher path (argv[0]) instead so a restart
+    // picks up the new build rather than failing on the deleted inode.
+    if (access(executable, X_OK) != 0) {
+      char **argv = lifetime::get_argv();
+      const char *fallback = (argv && argv[0]) ? argv[0] : nullptr;
+      if (!fallback || std::strchr(fallback, '/') == nullptr || access(fallback, X_OK) != 0) {
+        BOOST_LOG(fatal) << "Cannot restart: executable ["sv << executable << "] is gone and no usable fallback path"sv;
+        _exit(EXIT_FAILURE);
+      }
+      BOOST_LOG(warning) << "Executable ["sv << executable << "] was replaced by an upgrade; restarting via ["sv << fallback << "]"sv;
+      std::snprintf(executable, sizeof(executable), "%s", fallback);
+    }
+
     // ASIO doesn't use O_CLOEXEC, so we have to close all fds ourselves
     int openmax = (int) sysconf(_SC_OPEN_MAX);
     for (int fd = STDERR_FILENO + 1; fd < openmax; fd++) {
@@ -372,7 +414,9 @@ namespace platf {
     // Re-exec ourselves with the same arguments
     if (execv(executable, lifetime::get_argv()) < 0) {
       BOOST_LOG(fatal) << "execv() failed: "sv << errno;
-      return;
+      // Returning would unwind through static destruction, which hangs;
+      // exit immediately and let the service manager restart us.
+      _exit(errno);
     }
   }
 

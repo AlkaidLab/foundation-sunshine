@@ -4,13 +4,18 @@
  */
 #pragma once
 
+#include <chrono>
+#include <set>
+
 #include <boost/locale.hpp>
 #include <inputtino/input.hpp>
 #include <libevdev/libevdev.h>
 
 #include "src/config.h"
+#include "src/dsu_server.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
+#include "src/platform/linux/kwin_input_device.h"
 #include "src/utility.h"
 
 using namespace std::literals;
@@ -48,7 +53,54 @@ namespace platf {
       }
     }
 
-    ~input_raw_t() = default;
+    ~input_raw_t() {
+      if (dsu_server) {
+        dsu_server->stop();
+      }
+    }
+
+    /**
+     * @brief Start the DSU server on the first motion event.
+     * @details Lazy for the same reason as on Windows: most sessions never
+     *          carry motion, and an idle UDP socket plus its thread is not
+     *          worth opening for them. `enable_dsu_server` is the gate.
+     */
+    void
+    init_dsu_server() {
+      if (dsu_server) {
+        return;
+      }
+      // A failed bind must not be retried on every motion event: motion arrives
+      // hundreds of times a second and each attempt creates a socket, binds, and
+      // logs. It must not be abandoned for the session either, because the port
+      // is often held by another instance that may exit later. So: retry, but at
+      // most once per interval.
+      const auto now = std::chrono::steady_clock::now();
+      if (now < next_dsu_attempt) {
+        return;
+      }
+      next_dsu_attempt = now + kDsuRetryInterval;
+
+      auto server = std::make_unique<dsu_server_t>(config::input.dsu_server_port);
+      if (server->start()) {
+        BOOST_LOG(error) << "DSU server failed to start; emulators will not see motion data (retrying in "
+                         << std::chrono::duration_cast<std::chrono::seconds>(kDsuRetryInterval).count() << "s)";
+        return;
+      }
+      dsu_server = std::move(server);
+    }
+
+    /**
+     * @brief Warn once when the DSU server is enabled but did not start.
+     */
+    void
+    log_dsu_uninitialized() {
+      if (dsu_uninitialized_warning_logged) {
+        return;
+      }
+      dsu_uninitialized_warning_logged = true;
+      BOOST_LOG(warning) << "DSU server is enabled but not running; motion data is dropped";
+    }
 
     // All devices are wrapped in Result because it might be that we aren't able to create them (ex: udev permission denied)
     inputtino::Result<inputtino::Mouse> mouse;
@@ -59,6 +111,14 @@ namespace platf {
      * The pointer is shared because that state will be shared with background threads that deal with rumble and LED
      */
     std::vector<std::shared_ptr<joypad_state>> gamepads;
+
+    /// Null unless `enable_dsu_server` is set and the socket bound.
+    std::unique_ptr<dsu_server_t> dsu_server;
+    /// How long to wait before the next bind attempt after a failed one.
+    static constexpr std::chrono::seconds kDsuRetryInterval { 30 };
+    /// Earliest time the next `init_dsu_server()` may try to bind again.
+    std::chrono::steady_clock::time_point next_dsu_attempt {};
+    bool dsu_uninitialized_warning_logged = false;
   };
 
   struct client_input_raw_t: public client_input_t {
@@ -82,6 +142,11 @@ namespace platf {
       if (!pen) {
         BOOST_LOG(warning) << "Unable to create virtual pen tablet: " << pen.getErrorMessage();
       }
+      // KWin guesses an output for a freshly created touch device, and on a machine with an
+      // internal panel that guess is the internal one — which is usually the display we are
+      // *not* streaming. Touch events for a device with no usable output are dropped, so ask
+      // KWin for the mapping we actually need (see kwin_input_device.h).
+      kwin_input::sync_our_touch_devices(config::video.output_name);
     }
 
     input_raw_t *global;
@@ -92,6 +157,14 @@ namespace platf {
     // for each client.
     inputtino::Result<inputtino::TouchScreen> touch;
     inputtino::Result<inputtino::PenTablet> pen;
+
+    /**
+     * Client pointer ids that currently have a contact down on `touch`.
+     * @details The device is stateful (MT-B slots) and only the client knows which pointers
+     *          are down, so the host has to remember the set to translate CANCEL_ALL and the
+     *          pointer-table overflow into releases of exactly the contacts it placed.
+     */
+    std::set<std::uint32_t> active_touch_pointers;
   };
 
   inline float

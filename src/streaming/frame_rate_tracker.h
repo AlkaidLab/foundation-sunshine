@@ -8,6 +8,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <memory>
 #include <optional>
 
 namespace perf {
@@ -65,6 +66,12 @@ namespace perf {
     dxgi_updates,
     wgc_arrivals,
     vdd_published,
+    // Linux/KMS: the framebuffer the scanned-out plane points at changed, i.e.
+    // the compositor published a new frame. Same meaning as a DXGI present, so
+    // a static desktop reports zero source updates. (The vblank counters would
+    // give an absolute refresh rate, but the NVIDIA driver answers EOPNOTSUPP
+    // to both drmCrtcGetSequence and drmWaitVBlank.)
+    drm_fb_flips,
   };
 
   // One counter per display lifetime. Source updates never take recorder_mutex;
@@ -99,6 +106,37 @@ namespace perf {
   private:
     std::optional<std::uint64_t> last_sequence;
     std::uint64_t last_generation = 0;
+  };
+
+  /**
+   * @brief Turn DRM framebuffer changes into source ticks.
+   * @details A plane reports which buffer it scans out, not a frame count: a new
+   *          framebuffer means a new frame was queued, and an unchanged one
+   *          means the screen was static. The first observation only
+   *          establishes a baseline, because nothing tells us how long that
+   *          buffer had already been on screen. This lives here rather than in
+   *          the KMS capture device so the rule itself is testable.
+   */
+  class scanout_tracker_t {
+  public:
+    void observe(std::uint32_t fb_id, const std::shared_ptr<capture_source_counter_t> &counter) {
+      if (!fb_id) {
+        return;
+      }
+      if (last_fb && *last_fb != fb_id && counter) {
+        // One flip, one tick: the counter measures queued frames, not elapsed
+        // refresh periods.
+        counter->record(1);
+      }
+      last_fb = fb_id;
+    }
+
+    void reset() {
+      last_fb.reset();
+    }
+
+  private:
+    std::optional<std::uint32_t> last_fb;
   };
 
   // Source, capture delivery, encode submission, encoded output, repeat submission.

@@ -11,8 +11,10 @@
 #include "src/globals.h"
 #include "src/hdr/session_target.h"
 #include "src/platform/common.h"
-#include "src/platform/windows/display_device/session_listener.h"
-#include "src/platform/windows/display_device/windows_utils.h"
+#ifdef _WIN32
+  #include "src/platform/windows/display_device/session_listener.h"
+  #include "src/platform/windows/display_device/windows_utils.h"
+#endif
 #ifdef _WIN32
   #include "src/platform/windows/vulkan_hdr_bridge_session.h"
 #endif
@@ -144,7 +146,9 @@ namespace display_device {
     // 兜底：退出时如果 VDD 仍存在且 vdd_keep_enabled=false，直接销毁
     // 使用 nolog 版本，因为析构时 boost::log 可能已被销毁
     if (!config::video.vdd_keep_enabled) {
-      vdd_utils::destroy_vdd_monitor_nolog();
+      // Only this session's own display: another client may still be streaming
+      // onto its own virtual display.
+      vdd_utils::destroy_vdd_monitor_nolog(session_t::get().current_vdd_identifier);
     }
   }
 
@@ -363,9 +367,25 @@ namespace display_device {
 
   session_t::vdd_stage_result_e
   session_t::apply_vdd_display_stage(const parsed_config_t &config,
-    const boost::optional<device_info_map_t> &pre_vdd_devices) {
+    const boost::optional<device_info_map_t> &pre_vdd_devices,
+    std::string_view client_identifier) {
+    // The parsed configuration names a display, but with more than one virtual
+    // display present that name is ambiguous: both carry the same friendly name,
+    // and only the owner can say which connector is theirs. Publishing and
+    // verifying modes against the wrong monitor reports success for a device the
+    // session is not streaming, so resolve it here as well.
+    std::string vdd_device_id = config.device_id;
+#ifndef _WIN32
+    if (const auto owned = vdd_utils::owned_virtual_display_connector(client_identifier);
+      !owned.empty() && owned != vdd_device_id) {
+      BOOST_LOG(debug) << "Resolved the virtual display device for this session: "
+                       << vdd_device_id << " -> " << owned;
+      vdd_device_id = owned;
+    }
+#endif
+
     if (config.vdd_prep != parsed_config_t::vdd_prep_e::no_operation &&
-        !vdd_utils::apply_vdd_prep(config.device_id, config.vdd_prep, pre_vdd_devices)) {
+        !vdd_utils::apply_vdd_prep(vdd_device_id, config.vdd_prep, pre_vdd_devices)) {
       return vdd_stage_result_e::topology_failed;
     }
 
@@ -373,7 +393,7 @@ namespace display_device {
     // 锁屏场景会在解锁后执行本阶段；SYSTEM+RDP 不进入本阶段。
     if (config.resolution && config.refresh_rate) {
       const display_mode_t requested_mode {*config.resolution, *config.refresh_rate};
-      if (!vdd_utils::wait_for_mode_publication(config.device_id, requested_mode)) {
+      if (!vdd_utils::wait_for_mode_publication(vdd_device_id, requested_mode, client_identifier)) {
         BOOST_LOG(error) << "VDD monitor did not publish "
                          << to_string(*config.resolution) << "@" << to_string(*config.refresh_rate);
         return vdd_stage_result_e::modes_failed;
@@ -454,6 +474,11 @@ namespace display_device {
 
     // 在创建 VDD 可能使 Windows 自动激活显示器、Sunshine 应用目标布局之前保存拓扑。
     boost::optional<active_topology_t> pre_saved_initial_topology = pending_vdd_.initial_topology;
+    // Only a snapshot taken in this call is known to be free of the virtual
+    // display: a carried-over one may have been captured while a VDD existed
+    // ("topology may be corrupted"), and restoring that would reintroduce a
+    // display that does not exist.
+    bool pre_saved_topology_is_pre_vdd = false;
     if (should_prepare_vdd) {
       const bool vdd_already_exists = !display_device::find_device_by_friendlyname(ZAKO_NAME).empty();
       if (will_disable_physical_displays) {
@@ -472,6 +497,7 @@ namespace display_device {
       else if (!is_system_rdp_vdd_session) {
         pending_vdd_.initial_topology = get_current_topology();
         pre_saved_initial_topology = pending_vdd_.initial_topology;
+        pre_saved_topology_is_pre_vdd = true;
         BOOST_LOG(debug) << "Pre-saved initial topology before VDD creation: " << to_string(*pre_saved_initial_topology);
       }
 
@@ -491,6 +517,30 @@ namespace display_device {
                               "Failed to update the VDD mode list" :
                               "Failed to prepare the VDD device");
         restore_state_impl(revert_reason_e::config_cleanup);
+
+        // restore_state_impl takes its "no session config" branch here, because
+        // current_use_vdd is only set after prepare_vdd succeeds: it removes the
+        // VDD and nothing else. A failed prepare can already have switched the
+        // physical outputs off (display_off) before it gave up, which would leave
+        // the desktop on a display that does not exist. Put the pre-VDD topology
+        // back so a failed attempt costs the client a retry, not the user's
+        // screen.
+        if (pre_saved_initial_topology && pre_saved_topology_is_pre_vdd && !is_system_rdp_vdd_session) {
+          const auto current_topology = get_current_topology();
+          if (!is_topology_the_same(*pre_saved_initial_topology, current_topology)) {
+            if (is_topology_valid(*pre_saved_initial_topology) &&
+                set_topology(*pre_saved_initial_topology)) {
+              BOOST_LOG(info) << "Restored the pre-VDD topology after the failed VDD preparation: "
+                              << to_string(*pre_saved_initial_topology);
+            }
+            else {
+              BOOST_LOG(warning) << "Could not restore the pre-VDD topology ("
+                                 << to_string(*pre_saved_initial_topology)
+                                 << "); the display layout may need to be fixed by hand";
+            }
+          }
+        }
+
         return {
           modes_failed ? configure_result_t::result_e::modes_fail : configure_result_t::result_e::vdd_create_failed,
           modes_failed ? "Sunshine could not configure the requested virtual display mode." : "Sunshine could not create the virtual display.",
@@ -531,6 +581,9 @@ namespace display_device {
                            enable_hdr = session.enable_hdr,
                            hdr_target_source = session.hdr_target_source,
                            hdr_capabilities = session.hdr_capabilities,
+                           vdd_owner = config::video.vdd_reuse
+                             ? std::string { "shared_vdd" }
+                             : get_client_id_from_session(session),
                            pre_saved_initial_topology,
                            pre_vdd_devices = pending_vdd_.pre_vdd_devices,
                            should_prepare_vdd,
@@ -567,7 +620,7 @@ namespace display_device {
         }
 
         if (should_prepare_vdd) {
-          const auto vdd_stage_result = apply_vdd_display_stage(config_copy, pre_vdd_devices);
+          const auto vdd_stage_result = apply_vdd_display_stage(config_copy, pre_vdd_devices, vdd_owner);
           if (vdd_stage_result == vdd_stage_result_e::modes_failed) {
             BOOST_LOG(warning) << "[Display Deferred Retry] The rebuilt VDD has not published the requested mode yet; retrying later";
             return false;
@@ -613,7 +666,13 @@ namespace display_device {
     cancel_pending_display_retry();
 
     if (should_prepare_vdd) {
-      const auto vdd_stage_result = apply_vdd_display_stage(*parsed_config, pending_vdd_.pre_vdd_devices);
+      // The identifier this session's virtual display is created under, so the
+      // mode-publication check looks at this client's display rather than
+      // whichever one the shared session fields describe.
+      const std::string vdd_owner = config::video.vdd_reuse
+        ? std::string { "shared_vdd" }
+        : get_client_id_from_session(session);
+      const auto vdd_stage_result = apply_vdd_display_stage(*parsed_config, pending_vdd_.pre_vdd_devices, vdd_owner);
       if (vdd_stage_result == vdd_stage_result_e::topology_failed) {
         restore_state_impl(revert_reason_e::config_cleanup);
         return {
@@ -669,7 +728,12 @@ namespace display_device {
     const std::string vdd_identifier = config::video.vdd_reuse
       ? "shared_vdd"
       : client_name;
-    return vdd_utils::create_vdd_monitor(vdd_identifier, vdd_utils::hdr_brightness_t { 1000.0f, 0.001f, 1000.0f }, physical_size);
+    const bool created = vdd_utils::create_vdd_monitor(vdd_identifier, vdd_utils::hdr_brightness_t { 1000.0f, 0.001f, 1000.0f }, physical_size);
+    if (created) {
+      // Remember what the display was created as, so the destroy paths resolve.
+      current_vdd_identifier = vdd_identifier;
+    }
+    return created;
   }
 
   bool
@@ -679,11 +743,16 @@ namespace display_device {
 
   bool
   session_t::destroy_vdd_monitor() {
+    // The owner, not the client id: shared mode creates the display under a
+    // fixed identifier, so only that one resolves back to this monitor.
+    const std::string owner_id = current_vdd_identifier;
     current_vdd_client_id.clear();
     current_vdd_identifier.clear();
     current_vdd_device_id.clear();
     current_vdd_hdr_brightness.reset();
-    return vdd_utils::destroy_vdd_monitor();
+    // Scoped to the display this session owns: with one client this is the same
+    // call as before, and with two it no longer takes the other one down.
+    return vdd_utils::destroy_vdd_monitor(owner_id);
   }
 
   bool
@@ -699,7 +768,8 @@ namespace display_device {
   session_t::vdd_mode_update_e
   session_t::update_vdd_resolution(const parsed_config_t &config,
     const vdd_utils::VddSettings &vdd_settings,
-    const std::string &vdd_device_id) {
+    const std::string &vdd_device_id,
+    std::string_view client_identifier) {
     if (!config.resolution || !config.refresh_rate) {
       BOOST_LOG(debug) << "VDD session mode update skipped: resolution or refresh rate is not set";
       return vdd_mode_update_e::failed;
@@ -707,7 +777,7 @@ namespace display_device {
 
     const auto new_setting = to_string(*config.resolution) + "@" + to_string(*config.refresh_rate);
 
-    const auto setmodes_result = vdd_utils::set_vdd_session_mode(config, vdd_settings);
+    const auto setmodes_result = vdd_utils::set_vdd_session_mode(config, vdd_settings, client_identifier);
     switch (setmodes_result) {
       case vdd_utils::set_vdd_result::ok: {
         BOOST_LOG(info) << "VDD会话模式列表更新完成（未写入XML）: " << new_setting;
@@ -775,10 +845,28 @@ namespace display_device {
       }
     }
 
+    // The display this session owns: shared mode reuses one fixed identity, and
+    // every path that rebuilds or recovers a display must name the same owner,
+    // otherwise it would take down a display belonging to another client.
+    const std::string vdd_identifier = config::video.vdd_reuse ? std::string { "shared_vdd" } : current_client_id;
+
     auto device_zako = display_device::find_device_by_friendlyname(ZAKO_NAME);
+#ifndef _WIN32
+    // Every virtual display carries the same friendly name, so the lookup above
+    // can name the *other* client's monitor. The mode checks below publish and
+    // verify modes for whatever device they are handed, so resolve the
+    // connector this owner actually created instead of trusting the name.
+    if (const auto owned = vdd_utils::owned_virtual_display_connector(vdd_identifier);
+      !owned.empty() && owned != device_zako) {
+      if (!device_zako.empty()) {
+        BOOST_LOG(debug) << "Resolved the virtual display by owner " << vdd_identifier
+                         << ": " << device_zako << " -> " << owned;
+      }
+      device_zako = owned;
+    }
+#endif
 
     std::string rebuild_old_vdd_id;
-    const std::string vdd_identifier = config::video.vdd_reuse ? "shared_vdd" : current_client_id;
     const bool identity_changed = current_vdd_identifier != vdd_identifier;
     const bool hdr_capabilities_changed = !current_vdd_hdr_brightness ||
                                           (session.hdr_target_source == hdr::target_source_e::client_report ?
@@ -809,14 +897,14 @@ namespace display_device {
     // Update VDD resolution configuration
     if (auto vdd_settings = vdd_utils::prepare_vdd_settings(config);
       config.resolution && config.refresh_rate) {
-      const auto mode_update = update_vdd_resolution(config, vdd_settings, device_zako);
+      const auto mode_update = update_vdd_resolution(config, vdd_settings, device_zako, vdd_identifier);
       if (mode_update == vdd_mode_update_e::failed) {
         return vdd_stage_result_e::modes_failed;
       }
 
       if (mode_update == vdd_mode_update_e::recreate_monitor) {
         mode_rebuild_old_vdd_id = device_zako;
-        if (!vdd_utils::destroy_vdd_monitor()) {
+        if (!vdd_utils::destroy_vdd_monitor(vdd_identifier)) {
           BOOST_LOG(error) << "Failed to destroy the VDD monitor for an IOCTL mode-list rebuild";
           return vdd_stage_result_e::create_failed;
         }
@@ -854,7 +942,7 @@ namespace display_device {
       // /disable_enable 强拔 adapter，会留 CM_PROB_PHANTOM monitor，下一次
       // CREATEMONITOR 用新 GUID 会与 phantom 同 HardwareId 冲突，监视器永远attach 不上。
       BOOST_LOG(error) << "VDD设备初始化失败，尝试通过 IOCTL DESTROY+CREATE 恢复";
-      vdd_utils::destroy_vdd_monitor();
+      vdd_utils::destroy_vdd_monitor(vdd_identifier);
       std::this_thread::sleep_for(500ms);
 
       if (!try_recover_vdd_device(current_client_id, session.client_name, hdr_brightness, device_zako)) {
@@ -926,6 +1014,7 @@ namespace display_device {
     settings.reset_persistence();
     stop_timer_and_clear_vdd_state();
     current_vdd_client_id.clear();
+    current_vdd_identifier.clear();
   }
 
   void

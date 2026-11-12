@@ -27,8 +27,10 @@ namespace credential_store {
   };
 
   /**
-   * The path is used for the DPAPI-protected blob on Windows. Other platforms
-   * read SUNSHINE_LLM_API_KEY and do not persist credentials.
+   * The path is used for the DPAPI-protected blob on Windows. On Linux the
+   * secret lives in the keyring (Secret Service) when libsecret is available
+   * and the path is ignored; either way SUNSHINE_LLM_API_KEY is honoured as a
+   * read-only fallback.
    */
   read_result_t
   read_llm_api_key(const std::filesystem::path &path);

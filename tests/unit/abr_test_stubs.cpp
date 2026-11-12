@@ -3,6 +3,10 @@
 #include "src/ai/proxy.h"
 #include "src/config.h"
 
+#ifndef _WIN32
+  #include "src/platform/linux/foreground_app.h"
+#endif
+
 boost::log::sources::severity_logger<int> verbose;
 boost::log::sources::severity_logger<int> debug;
 boost::log::sources::severity_logger<int> info;
@@ -40,3 +44,16 @@ namespace ai {
   }
 
 }  // namespace ai
+
+#ifndef _WIN32
+// abr.cpp's Linux foreground lookup goes through the compositor-specific
+// backend (KWin D-Bus script / niri CLI), which needs a live session and is not
+// part of this compile/link target. Stub the cached report so the target links;
+// the Linux behaviour itself is covered by the foreground_app test target.
+namespace platf::foreground_app {
+  info_t
+  detect() {
+    return {};
+  }
+}  // namespace platf::foreground_app
+#endif

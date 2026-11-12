@@ -3,7 +3,7 @@
  * @brief Structured host-side USB/IP attach and detach orchestration.
  *
  * The tunnel exposes a short-lived loopback USB/IP endpoint.  This controller
- * is the only layer allowed to turn that endpoint into a usbip-win2 command;
+ * is the only layer allowed to turn that endpoint into a usbip helper command;
  * callers never have to concatenate a shell command or parse an arbitrary
  * process lifetime.
  */
@@ -35,7 +35,10 @@ struct usbip_host_request {
 
 struct usbip_host_binding {
   endpoint server_endpoint;
-  /** usbip-win2 virtual hub port returned by `attach --terse`. */
+  /** Imported virtual-hub port, always reported 1-based so both backends share
+   *  one representation.  usbip-win2 returns it directly from `attach --terse`;
+   *  the Linux vhci port is derived from sysfs and stored as `port + 1` because
+   *  vhci numbers its ports from zero. */
   std::uint16_t hub_port { 0 };
   /** Controller-issued attach operation ID; rejects stale detach after reuse. */
   std::uint64_t binding_id { 0 };
@@ -60,16 +63,18 @@ enum class usbip_host_status : std::uint8_t {
 /**
  * Host-side command dialect selected by the controller.
  *
- * `automatic` is the production default: it enables usbip-win2 only on
- * Windows.  Other platforms deliberately resolve to `unsupported` until a
- * native host backend is implemented, so a generic `usbip` executable cannot
- * be mistaken for a compatible implementation.  A caller may explicitly
- * select `usbip_win2` (for example, an integration test or a packaged
- * compatibility layer).
+ * `automatic` is the production default and resolves to the platform profile:
+ * `usbip_win2` on Windows, `usbip_linux` elsewhere.  The Linux profile speaks
+ * the usbip-utils argument contract (`--tcp-port` before the subcommand,
+ * `attach -r/-b`, `detach -p`) and recovers the imported port from the vhci
+ * sysfs status because the tool prints nothing useful.  A caller may select
+ * either dialect explicitly (an integration test, a compatibility layer);
+ * `unsupported` disables host-side USB/IP entirely.
  */
 enum class usbip_host_backend : std::uint8_t {
   automatic,
   usbip_win2,
+  usbip_linux,
   unsupported,
 };
 
@@ -110,6 +115,9 @@ using usbip_reader_thread_factory =
 struct usbip_host_controller_config {
   /** Empty selects the platform default (`usbip.exe` on Windows). */
   std::string executable;
+  /** usbip-utils only: vhci status file used to recover the imported port.
+   *  Empty selects the kernel default for the first controller. */
+  std::string vhci_status_path;
   usbip_host_backend backend { usbip_host_backend::automatic };
   std::chrono::milliseconds attach_timeout { std::chrono::seconds(10) };
   std::chrono::milliseconds detach_timeout { std::chrono::seconds(5) };
@@ -157,7 +165,9 @@ public:
   /** The backend resolved from configuration and the current build target. */
   usbip_host_backend backend() const noexcept;
 
-  /** Whether attach/detach can be dispatched on this controller. */
+  /** Whether attach/detach can be dispatched on this controller.  The Linux
+   *  profile additionally requires a readable vhci status file, because
+   *  without one an attach result could never be detached again. */
   bool backend_supported() const noexcept;
 
 private:
@@ -224,6 +234,8 @@ private:
   operation_id next_operation_id_ { 1 };
   bool stopped_ { false };
   bool stop_in_progress_ { false };
+  /** Linux profile only: the vhci status file could be opened at construction. */
+  bool linux_vhci_ready_ { false };
 };
 
 }  // namespace remote_usb

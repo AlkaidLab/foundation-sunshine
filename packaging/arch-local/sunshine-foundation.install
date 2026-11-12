@@ -1,0 +1,74 @@
+# sunshine.install
+# Arch Linux pacman 安装脚本钩子
+# 负责 setcap、udev 规则重载，并提示（不自动执行）input 组加入。
+
+do_setcap() {
+  local target
+  target="$(readlink -f /usr/bin/sunshine)"
+  if [ ! -x "$target" ]; then
+    echo "错误: $target 不存在，包可能不完整（/usr/bin/sunshine 指向的带版本号二进制缺失）。" >&2
+    echo "请重新打包后安装: cd packaging/arch-local && makepkg -f && sudo pacman -U ./sunshine-foundation-*.pkg.tar.zst" >&2
+    return 1
+  fi
+  # cap_sys_admin: KMS capture.
+  # cap_dac_read_search/cap_dac_override: connector EDID overrides and
+  #   status writes under /sys/kernel/debug.
+  # cap_sys_ptrace: borrow the compositor's DRM master (pidfd_getfd) for the
+  #   virtual display CRTC assignment.
+  setcap cap_sys_admin,cap_dac_read_search,cap_dac_override,cap_sys_ptrace+p "$target"
+}
+
+do_udev_reload() {
+  # 先加载模块，确保设备节点存在
+  modprobe uinput || true
+  modprobe uhid || true
+
+  # 重新加载 udev 规则并触发设备事件
+  udevadm control --reload-rules
+  udevadm trigger --sysname-match=uinput
+  udevadm trigger --sysname-match=uhid
+}
+
+do_input_group_hint() {
+  # udev 规则已经通过 TAG+="uaccess" 给活动 seat 会话授权，桌面用户无需做任何事。
+  # 'input' 组只对非 seat 会话（SSH、无头服务）有意义，而且是永久性的全设备授权，
+  # 因此这里只提示，不代替用户执行。
+  local target_user="${SUDO_USER:-}"
+
+  if [ -z "$target_user" ] || ! id "$target_user" &>/dev/null; then
+    return 0
+  fi
+
+  if id -nG "$target_user" | grep -qw "input"; then
+    return 0
+  fi
+
+  echo "提示: 用户 '$target_user' 不在 'input' 组中。"
+  echo "      桌面（seat）会话不需要它——udev 规则已通过 uaccess 授权。"
+  echo "      仅在 SSH 或无头环境下需要时，请手动执行:"
+  echo "        sudo usermod -aG input $target_user"
+  echo "      之后重新登录（或重启）生效。"
+}
+
+post_install() {
+  do_setcap
+  do_udev_reload
+  do_input_group_hint
+
+  echo "Foundation Sunshine installed."
+  echo "Run directly:        sunshine"
+  echo "Or via user service: systemctl --user enable --now sunshine"
+  echo "Web UI: https://localhost:47990  (config in ~/.config/sunshine)"
+}
+
+post_upgrade() {
+  do_setcap
+  do_udev_reload
+  do_input_group_hint
+}
+
+post_remove() {
+  echo "Sunshine 已移除。"
+  echo "注意: 用户可能仍在 'input' 组中。如果需要，可手动移除:"
+  echo "  sudo gpasswd -d <用户名> input"
+}

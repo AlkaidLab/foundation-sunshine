@@ -1,9 +1,14 @@
 /**
- * @file src/platform/windows/dsu_server.cpp
+ * @file src/dsu_server.cpp
  * @brief DSU Server实现文件，用于接收客户端连接并发送Switch Pro手柄的运动传感器数据
+ *
+ * The protocol is cemuhook's DSU encapsulation, which is platform neutral: one
+ * UDP socket, plain structs, and a CRC32. The motion source is the Moonlight
+ * client's own sensor stream (LI_MOTION_TYPE_ACCEL / LI_MOTION_TYPE_GYRO), so
+ * every platform that accepts client motion can serve it.
  */
 
-#include "dsu_server.h"
+#include "src/dsu_server.h"
 #include "src/logging.h"
 #include <iomanip>
 #include <sstream>
@@ -50,6 +55,7 @@ namespace platf {
       // 设置socket为非阻塞模式，匹配cemuhook的行为
       socket_.non_blocking(true);
 
+#if defined(_WIN32)
       // 修复Windows UDP socket的10054错误（远程主机强制关闭连接）
       // 这是Windows的已知bug，需要禁用连接重置
       BOOL bNewBehavior = FALSE;
@@ -58,6 +64,7 @@ namespace platf {
       WSAIoctl(native_socket, SIO_UDP_CONNRESET, &bNewBehavior, sizeof(bNewBehavior),
         NULL, 0, &dwBytesReturned, NULL, NULL);
       BOOST_LOG(debug) << "DSU服务器已禁用Windows UDP连接重置 (SIO_UDP_CONNRESET)";
+#endif
 
       // 尝试绑定端口
       boost::asio::ip::udp::endpoint endpoint(boost::asio::ip::udp::v4(), port_);

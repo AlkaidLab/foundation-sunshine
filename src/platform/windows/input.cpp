@@ -15,7 +15,7 @@
 
 #include <ViGEm/Client.h>
 
-#include "dsu_server.h"
+#include "src/dsu_server.h"
 #include "ds5/ds5_sidecar_client.h"
 #include "src/ds5/config.h"
 #include "keylayout.h"

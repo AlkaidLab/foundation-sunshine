@@ -12,7 +12,10 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <limits>
+#include <set>
+#include <sstream>
 #include <system_error>
 #include <utility>
 
@@ -39,6 +42,54 @@ constexpr std::uint16_t kMaxHubPort = 255;
 /* Once the helper exited, the pipes reach EOF as soon as the last writer is
  * gone; this only bounds how long a surviving writer may delay that. */
 constexpr auto kReaderDrainGrace = 500ms;
+
+/* usbip-utils never prints the imported port, so the Linux profile reads the
+ * vhci controller's status attribute instead.  The first controller is enough:
+ * `usbip detach -p` only ever addresses that one. */
+constexpr const char *kLinuxVhciStatusPath = "/sys/devices/platform/vhci_hcd.0/status";
+
+/* `status` is one line per vhci port:
+ *   hs  0000 004 000 00000000 000000 1-1
+ * with the fields hub, port, sta, spd, devid, sockfd, local_busid.  Any sta
+ * other than VDEV_ST_NULL (4) means the slot is claimed by an import. */
+std::optional<std::set<std::uint32_t>>
+read_vhci_used_ports(const std::string &path) {
+  std::ifstream status(path);
+  if (!status) {
+    return std::nullopt;
+  }
+  std::set<std::uint32_t> used;
+  std::string line;
+  // The first line is the column header.
+  std::getline(status, line);
+  while (std::getline(status, line)) {
+    std::istringstream fields(line);
+    std::string hub;
+    std::string port;
+    std::string sta;
+    if (!(fields >> hub >> port >> sta)) {
+      continue;
+    }
+    std::uint32_t port_number = 0;
+    std::uint32_t status_bits = 0;
+    const auto port_parsed = std::from_chars(port.data(), port.data() + port.size(), port_number, 10);
+    const auto sta_parsed = std::from_chars(sta.data(), sta.data() + sta.size(), status_bits, 10);
+    if (port_parsed.ec != std::errc {} || sta_parsed.ec != std::errc {}) {
+      continue;
+    }
+    if (status_bits != 4u) {
+      used.insert(port_number);
+    }
+  }
+  return used;
+}
+
+/* Serializes the "snapshot, attach, snapshot" window so two concurrent imports
+ * cannot attribute the same new port to themselves. */
+std::mutex &linux_attach_mutex() {
+  static std::mutex mutex;
+  return mutex;
+}
 
 #ifdef _WIN32
 /*
@@ -184,6 +235,16 @@ resolve_executable(std::string executable) {
   return executable;
 }
 
+bool
+helper_available(const std::string &executable) {
+  const std::filesystem::path requested(executable);
+  std::error_code error;
+  if (requested.has_parent_path()) {
+    return std::filesystem::is_regular_file(requested, error);
+  }
+  return !bp::search_path(executable).empty();
+}
+
 std::string
 platform_default_executable() {
 #ifdef _WIN32
@@ -198,10 +259,7 @@ platform_default_backend() noexcept {
 #ifdef _WIN32
   return usbip_host_backend::usbip_win2;
 #else
-  /* The generic Linux usbip CLI has a different protocol/argument contract
-   * from usbip-win2.  Keep it disabled until a native profile is implemented
-   * instead of reporting a misleading attach success. */
-  return usbip_host_backend::unsupported;
+  return usbip_host_backend::usbip_linux;
 #endif
 }
 
@@ -482,6 +540,19 @@ usbip_host_controller::usbip_host_controller(usbip_host_controller_config config
                : config_.backend;
   if (config_.executable.empty()) {
     config_.executable = default_executable();
+  }
+  if (backend_ == usbip_host_backend::usbip_linux) {
+    if (config_.vhci_status_path.empty()) {
+      config_.vhci_status_path = kLinuxVhciStatusPath;
+    }
+    /* Without a readable status the imported port could never be recovered, so
+     * the profile reports itself unsupported rather than attaching devices
+     * nothing could detach again.  The helper is probed too: usbip-utils is a
+     * separate package, and an absent binary is a deployment fact, not a
+     * per-attach failure. */
+    const bool helper_present = injected_runner || helper_available(config_.executable);
+    linux_vhci_ready_ =
+      helper_present && read_vhci_used_ports(config_.vhci_status_path).has_value();
   }
   if (config_.attach_timeout <= std::chrono::milliseconds::zero()) {
     config_.attach_timeout = 1ms;
@@ -1087,7 +1158,10 @@ usbip_host_controller::backend() const noexcept {
 
 bool
 usbip_host_controller::backend_supported() const noexcept {
-  return backend_ == usbip_host_backend::usbip_win2;
+  if (backend_ == usbip_host_backend::usbip_win2) {
+    return true;
+  }
+  return backend_ == usbip_host_backend::usbip_linux && linux_vhci_ready_;
 }
 
 usbip_host_result
@@ -1106,17 +1180,44 @@ usbip_host_controller::run_attach(const std::shared_ptr<operation> &operation) {
     return result;
   }
 
-  /* usbip-win2 parses --tcp-port as a global option, before the subcommand.
-   * `-t` belongs to the attach command's terse switch and treating it as a
-   * port silently changes the argument stream (and is rejected by newer
-   * clients).  Keep the complete argv explicit so no shell quoting is ever
-   * involved. */
-  const std::vector<std::string> arguments {
-    "--tcp-port", std::to_string(request.server_endpoint.port),
-    "attach", "--remote", request.server_endpoint.address,
-    "--bus-id", request.server_endpoint.busid,
-    "--once", "--terse"
+  /* Both helpers parse --tcp-port as a global option, before the subcommand.
+   * `-t` belongs to the usbip-win2 attach command's terse switch and treating
+   * it as a port silently changes the argument stream (and is rejected by
+   * newer clients).  Keep the complete argv explicit so no shell quoting is
+   * ever involved; only the attach spelling differs between the dialects. */
+  const bool linux_profile = backend_ == usbip_host_backend::usbip_linux;
+  std::vector<std::string> arguments {
+    "--tcp-port", std::to_string(request.server_endpoint.port)
   };
+  if (linux_profile) {
+    /* usbip-utils: there is no terse output and no --once; the kernel vhci
+     * driver owns the socket once the tool hands it over. */
+    for (const auto *value: {"attach", "-r", request.server_endpoint.address.c_str(),
+                             "-b", request.server_endpoint.busid.c_str()}) {
+      arguments.emplace_back(value);
+    }
+  }
+  else {
+    for (const auto *value: {"attach", "--remote", request.server_endpoint.address.c_str(),
+                             "--bus-id", request.server_endpoint.busid.c_str(),
+                             "--once", "--terse"}) {
+      arguments.emplace_back(value);
+    }
+  }
+
+  std::unique_lock<std::mutex> linux_guard(linux_attach_mutex(), std::defer_lock);
+  std::set<std::uint32_t> claimed_before;
+  if (linux_profile) {
+    linux_guard.lock();
+    const auto before = read_vhci_used_ports(config_.vhci_status_path);
+    if (!before) {
+      result.status = usbip_host_status::attach_failed;
+      result.detail = "unable to read the vhci status before attaching";
+      return result;
+    }
+    claimed_before = *before;
+  }
+
   usbip_command_result command;
   try {
     command = config_.command_runner(
@@ -1139,7 +1240,55 @@ usbip_host_controller::run_attach(const std::shared_ptr<operation> &operation) {
     return result;
   }
   if (command.cancelled || command.timed_out || command.exit_code < 0 || command.exit_code != 0) {
-    return map_command_failure(command, usbip_host_status::attach_failed, operation->id);
+    auto failure = map_command_failure(command, usbip_host_status::attach_failed, operation->id);
+    if (linux_profile &&
+        failure.detail.find("Permission denied") != std::string::npos) {
+      /* The vhci attach attribute is root-writable only, and the packaged
+       * service runs as the session user.  Say so instead of leaving the caller
+       * with a bare helper stderr. */
+      failure.detail += " (the vhci attach attribute is writable by root only)";
+    }
+    return failure;
+  }
+
+  if (linux_profile) {
+    /* The helper printed nothing useful; the kernel claimed a vhci slot as a
+     * side effect.  Its probe finishes just after the tool returns, so poll for
+     * a short bounded window before declaring the attach unidentifiable. */
+    std::uint32_t claimed = 0;
+    bool found = false;
+    for (int attempt = 0; attempt < 20; ++attempt) {
+      const auto after = read_vhci_used_ports(config_.vhci_status_path);
+      if (after) {
+        std::vector<std::uint32_t> fresh;
+        std::set_difference(after->begin(), after->end(), claimed_before.begin(),
+                            claimed_before.end(), std::back_inserter(fresh));
+        if (!fresh.empty()) {
+          claimed = fresh.front();
+          found = true;
+          break;
+        }
+      }
+      std::this_thread::sleep_for(50ms);
+    }
+    if (!found) {
+      result.status = usbip_host_status::attach_failed;
+      result.detail = "usbip attach did not claim a vhci port";
+      return result;
+    }
+    if (claimed + 1 > kMaxHubPort) {
+      result.status = usbip_host_status::attach_failed;
+      result.detail = "vhci port is outside the representable range";
+      return result;
+    }
+    result.status = usbip_host_status::ok;
+    /* vhci numbers its ports from zero, the binding is 1-based. */
+    result.binding = usbip_host_binding {
+      request.server_endpoint,
+      static_cast<std::uint16_t>(claimed + 1),
+      operation->id,
+    };
+    return result;
   }
 
   const auto hub_port = parse_hub_port(command.standard_output);
@@ -1171,9 +1320,12 @@ usbip_host_controller::run_detach(const std::shared_ptr<operation> &operation) {
     result.detail = "invalid usbip detach binding";
     return result;
   }
-  const std::vector<std::string> arguments {
-    "detach", "--port", std::to_string(operation->binding.hub_port)
-  };
+  const std::vector<std::string> arguments =
+    backend_ == usbip_host_backend::usbip_linux
+      ? std::vector<std::string> { "detach", "-p",
+                                  std::to_string(operation->binding.hub_port - 1) }
+      : std::vector<std::string> { "detach", "--port",
+                                  std::to_string(operation->binding.hub_port) };
   usbip_command_result command;
   try {
     command = config_.command_runner(

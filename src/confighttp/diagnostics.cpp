@@ -9,9 +9,11 @@
 #include "src/confighttp/auth.h"
 #include "src/confighttp/common.h"
 #include "src/display_device/session.h"
+#include "src/display_device/vdd_utils.h"
 #include "src/entry_handler.h"
 #include "src/file_handler.h"
 #include "src/logging.h"
+#include "src/platform/common.h"
 #include "src/rtsp.h"
 #include "src/spatial_audio/mat_live_status.h"
 #ifdef _WIN32
@@ -25,7 +27,6 @@
 #include <filesystem>
 #include <fstream>
 #ifdef _WIN32
-  #include "src/display_device/vdd_utils.h"
   #include "src/platform/windows/mic_write.h"
   #include "src/platform/windows/vulkan_hdr_bridge_session.h"
 #endif
@@ -357,7 +358,8 @@ namespace confighttp::diagnostics {
 #endif
     }
 
-#ifdef _WIN32
+    // Cross-platform: on Linux the virtual display backend reports its own
+    // readiness through the same status surface.
     void
     getVddStatus(resp_https_t response, req_https_t request) {
       if (!authenticate(response, request)) return;
@@ -375,7 +377,6 @@ namespace confighttp::diagnostics {
                                 { "version_supported", false },
                               });
     }
-#endif
 
 #ifdef _WIN32
     void
@@ -456,9 +457,9 @@ namespace confighttp::diagnostics {
     server.resource["^/api/microphone/test$"]["POST"] = testMicrophone;
     server.resource["^/api/microphone/status$"]["GET"] = getMicrophoneStatus;
     server.resource["^/api/mat/status$"]["GET"] = getMatLiveStatus;
-#ifdef _WIN32
+    // Virtual display status is cross-platform (the Linux backend reports
+    // its own readiness); the Vulkan HDR bridge stays Windows-only.
     server.resource["^/api/vdd/status$"]["GET"] = getVddStatus;
-#endif
 #ifdef _WIN32
     server.resource["^/api/vulkan-hdr-bridge$"]["GET"] = getVulkanHdrBridgeStatus;
 #endif

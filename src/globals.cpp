@@ -10,8 +10,10 @@ bool display_cursor = true;
 
 #ifdef _WIN32
 nvprefs::nvprefs_interface nvprefs_instance;
+std::string zako_device_id;
+#endif
+
 const std::string VDD_NAME = "ZakoHDR";
 const std::string ZAKO_NAME = "Zako HDR";
-std::string zako_device_id;
+const std::string ZAKO_DEVICE_ID = "23172";
 bool is_running_as_system_user = false;
-#endif

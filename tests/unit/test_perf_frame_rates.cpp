@@ -404,3 +404,80 @@ TEST(PerfFrameRateCollection, LateSourceMetadataCannotPrimeOrIncrementTheNewWind
   EXPECT_EQ(source.frames, 120u);
   perf::set_frame_rate_subscription("metadata-test", false);
 }
+
+// The KMS capture path ticks its source counter on framebuffer flips (the
+// vblank counters answer EOPNOTSUPP on NVIDIA), so a 60 fps stream on a
+// higher-refresh output shows the gap instead of an empty source column.
+TEST_F(PerfFrameRates, ReportsDrmFbFlipsAsTheSourceKind) {
+  constexpr auto id = 91009u;
+  begin(id);
+  const auto start = std::chrono::steady_clock::now();
+  auto source = std::make_shared<perf::capture_source_counter_t>();
+  source->kind = perf::capture_source_kind_e::drm_fb_flips;
+  for (int i = 0; i < 60; ++i) perf::record_capture_frame(id, source, start);
+  // One flip, one tick -- exactly what observe_scanout() does.
+  for (int i = 0; i < 144; ++i) source->record(1);
+  for (int i = 0; i < 60; ++i) perf::record_encode_submission(id, false);
+  for (int i = 0; i < 60; ++i) perf::record_encoded_frame(id);
+
+  const auto rates = rates_for(id, start + 1s);
+  EXPECT_EQ(rates["source_kind"], "drm_fb_flips");
+  EXPECT_EQ(rates["source"]["fps"], 144.0);
+  EXPECT_EQ(rates["capture"]["fps"], 60.0);
+  perf::end_session(id);
+}
+
+// The counter only accepts writes while a collection window is open, so these
+// two tests drive it with an explicit epoch instead of a whole session.
+class PerfScanoutTracker : public ::testing::Test {
+protected:
+  void SetUp() override {
+    epoch = perf::frame_rate_collection_epoch();
+  }
+
+  void TearDown() override {
+    perf::frame_rate_collection_generation.store(epoch, std::memory_order_release);
+  }
+
+  std::uint64_t epoch = 0;
+};
+
+// A plane only reports which buffer it scans out, so the first value cannot be
+// a frame: nothing says how long it had already been on screen.
+TEST_F(PerfScanoutTracker, BaselinesTheFirstFramebuffer) {
+  perf::scanout_tracker_t tracker;
+  auto counter = std::make_shared<perf::capture_source_counter_t>();
+  tracker.observe(7, counter);
+  EXPECT_EQ(counter->frames.load(), 0u);
+}
+
+// Re-reporting the same buffer means the screen was static, so it must not
+// inflate the source rate up to the refresh rate of the display. The counter
+// only ticks inside an open collection window, so one is opened here.
+TEST_F(PerfScanoutTracker, CountsOnlyNewFramebuffers) {
+  perf::set_frame_rate_subscription("scanout-test", true);
+  const std::uint64_t window = perf::frame_rate_collection_epoch();
+  ASSERT_NE(window, 0u);
+
+  perf::scanout_tracker_t tracker;
+  auto counter = std::make_shared<perf::capture_source_counter_t>();
+  tracker.observe(7, counter);
+  EXPECT_EQ(counter->frames.load(), 0u);
+
+  // Same buffer twice: a static screen, no frame.
+  tracker.observe(7, counter);
+  EXPECT_EQ(counter->frames.load(), 0u);
+
+  tracker.observe(8, counter);
+  EXPECT_EQ(counter->frames.load(), 1u);
+  tracker.observe(8, counter);
+  EXPECT_EQ(counter->frames.load(), 1u);
+  tracker.observe(9, counter);
+  EXPECT_EQ(counter->frames.load(), 2u);
+
+  // A missing buffer is not a flip either.
+  tracker.observe(0, counter);
+  EXPECT_EQ(counter->frames.load(), 2u);
+
+  perf::set_frame_rate_subscription("scanout-test", false);
+}

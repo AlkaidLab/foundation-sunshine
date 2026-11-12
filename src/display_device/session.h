@@ -4,6 +4,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 // lib includes
 #include <boost/atomic.hpp>
 // local includes
@@ -286,13 +287,23 @@ namespace display_device {
      * @brief 执行依赖可访问交互式 Windows 会话的 VDD 显示操作。
      */
     static vdd_stage_result_e
-    apply_vdd_display_stage(const parsed_config_t &config, const boost::optional<device_info_map_t> &pre_vdd_devices);
+    apply_vdd_display_stage(const parsed_config_t &config, const boost::optional<device_info_map_t> &pre_vdd_devices,
+      std::string_view client_identifier);
 
     settings_t settings; /**< A class for managing display device settings. */
     std::mutex mutex; /**< A mutex for ensuring thread-safety. */
     std::string current_vdd_client_id; /**< Current client ID associated with VDD monitor. */
-    std::string current_vdd_identifier; /**< Identity passed to the driver when creating this monitor. */
-    std::string current_vdd_device_id;
+    /**
+     * @brief The identity the current VDD monitor was created with.
+     * @details Shared mode creates the display as @c "shared_vdd" while
+     *          @ref current_vdd_client_id keeps the real client id, and both
+     *          backends resolve a monitor by that identity (the Linux backend
+     *          through the EDID serial derived from it, Windows through the
+     *          driver). Destroying by the client id would therefore miss, and
+     *          every rebuild path must name the same owner.
+     */
+    std::string current_vdd_identifier;
+    std::string current_vdd_device_id; /**< Device id the driver returned for that monitor. */
     std::optional<vdd_utils::hdr_brightness_t> current_vdd_hdr_brightness; /**< HDR capabilities currently programmed into VDD. */
     std::string original_output_name; /**< Original output_name value before VDD device ID was set. */
     boost::optional<parsed_config_t::device_prep_e> current_device_prep; /**< Current device preparation mode, respecting client overrides. */
@@ -323,7 +334,8 @@ namespace display_device {
     vdd_mode_update_e
     update_vdd_resolution(const parsed_config_t &config,
       const vdd_utils::VddSettings &vdd_settings,
-      const std::string &vdd_device_id);
+      const std::string &vdd_device_id,
+      std::string_view client_identifier);
 
     /**
      * @brief Clear VDD session state.

@@ -16,8 +16,11 @@
 // local includes
 #include "src/config.h"
 #include "src/logging.h"
+#include "src/mic_mixer.h"
 #include "src/platform/common.h"
 #include "src/thread_safe.h"
+
+#include "mic_queue.h"
 
 namespace platf {
   using namespace std::literals;
@@ -206,6 +209,60 @@ namespace platf {
         std::uint32_t surround714 = PA_INVALID_INDEX;
       } index;
 
+      // Virtual microphone for client -> host redirection: a null-sink whose
+      // monitor source host applications can record from. The name is canonical
+      // here so the module args, the playback stream and the monitor lookup
+      // cannot drift apart.
+      static constexpr auto k_mic_sink_name = "sink-sunshine-virtual-mic";
+      // User-visible sink description. Windows has no counterpart to match: its
+      // capture device is named by the VB-Cable driver, so this stays the
+      // Linux-side label for the same role.
+      static constexpr auto k_mic_sink_description = "Sunshine-Virtual-Microphone";
+      std::uint32_t mic_sink_index = PA_INVALID_INDEX;
+      util::safe_ptr<pa_simple, pa_simple_free> mic_play;
+      // Default source in effect before the redirect switched it, restored on
+      // release (the Linux counterpart of the Windows default-capture-device
+      // swap).
+      std::string mic_previous_default_source;
+      // Staging queue plus writer thread: write_mic_pcm() must not block on the
+      // sink (see mic_queue.h), and the writer reports a fatal error for the
+      // next write_mic_pcm() call to hand back to the session.
+      mic_queue::queue_t mic_queue;
+      std::thread mic_writer;
+      std::atomic<int> mic_write_error { 0 };
+
+      /**
+       * @brief Absorb the blocking pa_simple_write() off the shared mic thread.
+       * @details Exits when the queue is stopped (device release) or when a
+       *          write fails; the failure is recorded for write_mic_pcm() to
+       *          report with the documented return code.
+       */
+      void
+      mic_writer_loop() {
+        std::vector<std::int16_t> frame;
+        while (mic_queue.pop(frame)) {
+          if (!mic_play || frame.empty()) {
+            continue;
+          }
+
+          int status = 0;
+          if (pa_simple_write(mic_play.get(), frame.data(), frame.size() * sizeof(std::int16_t), &status)) {
+            // A terminated/killed device asks the caller to reinitialize (-2);
+            // anything else is a generic error (-1). Oversized frames cannot
+            // come from the mixer, and are reported as a drop if they ever do.
+            if (status == PA_ERR_TOOLARGE) {
+              BOOST_LOG(warning) << "pa_simple_write() dropped an oversized virtual microphone frame"sv;
+              continue;
+            }
+
+            const int code = (status == PA_ERR_CONNECTIONTERMINATED || status == PA_ERR_KILLED) ? -2 : -1;
+            BOOST_LOG(error) << "pa_simple_write() to the virtual microphone failed: "sv << pa_strerror(status);
+            mic_write_error.store(code);
+            return;
+          }
+        }
+      }
+
       std::unique_ptr<safe::event_t<ctx_event_e>> events;
       std::unique_ptr<std::function<void(ctx_t::pointer)>> events_cb;
 
@@ -281,6 +338,13 @@ namespace platf {
             alarm.get()),
         };
 
+        // libpulse returns null (and never runs the callback) while the context
+        // is not ready; the alarm has no timeout, so waiting would hang forever.
+        if (!op) {
+          BOOST_LOG(error) << "Couldn't create load-module operation: "sv << pa_strerror(pa_context_errno(ctx.get()));
+          return PA_INVALID_INDEX;
+        }
+
         alarm->wait();
         return *alarm->status();
       }
@@ -296,6 +360,11 @@ namespace platf {
         op_t op {
           pa_context_unload_module(ctx.get(), i, success_cb, alarm.get())
         };
+
+        if (!op) {
+          BOOST_LOG(error) << "Couldn't create unload-module operation: "sv << pa_strerror(pa_context_errno(ctx.get()));
+          return -1;
+        }
 
         alarm->wait();
 
@@ -447,9 +516,72 @@ namespace platf {
         };
 
         op_t server_op { pa_context_get_server_info(ctx.get(), cb<pa_server_info *>, &server_f) };
+        if (!server_op) {
+          // Returning the empty name is the documented "no default" answer and
+          // matches the failure path of the callback above.
+          BOOST_LOG(error) << "Couldn't create server-info operation: "sv << pa_strerror(pa_context_errno(ctx.get()));
+          return sink_name;
+        }
+
         alarm->wait();
         // No need to check status. If it failed just return default name.
         return sink_name;
+      }
+
+      std::string
+      get_default_source_name() {
+        std::string source_name;
+        auto alarm = safe::make_alarm<int>();
+
+        cb_simple_t<pa_server_info *> server_f = [&](ctx_t::pointer ctx, const pa_server_info *server_info) {
+          if (!server_info) {
+            BOOST_LOG(error) << "Couldn't get pulseaudio server info: "sv << pa_strerror(pa_context_errno(ctx));
+            alarm->ring(-1);
+            return;
+          }
+
+          if (server_info->default_source_name) {
+            source_name = server_info->default_source_name;
+          }
+          alarm->ring(0);
+        };
+
+        op_t server_op { pa_context_get_server_info(ctx.get(), cb<pa_server_info *>, &server_f) };
+        if (!server_op) {
+          BOOST_LOG(error) << "Couldn't create server-info operation: "sv << pa_strerror(pa_context_errno(ctx.get()));
+          return source_name;
+        }
+
+        alarm->wait();
+        return source_name;
+      }
+
+      bool
+      set_default_source_name(const std::string &source_name) {
+        if (source_name.empty()) {
+          return false;
+        }
+
+        auto alarm = safe::make_alarm<int>();
+
+        op_t op {
+          pa_context_set_default_source(ctx.get(), source_name.c_str(), success_cb, alarm.get())
+        };
+
+        if (!op) {
+          BOOST_LOG(warning) << "Couldn't create set default-source operation: "sv << pa_strerror(pa_context_errno(ctx.get()));
+          return false;
+        }
+
+        alarm->wait();
+
+        if (*alarm->status()) {
+          BOOST_LOG(warning) << "Couldn't set the default pulseaudio source to ["sv << source_name
+                             << "]: "sv << pa_strerror(pa_context_errno(ctx.get()));
+          return false;
+        }
+
+        return true;
       }
 
       std::string
@@ -542,28 +674,175 @@ namespace platf {
 
       int
       write_mic_pcm(const std::int16_t *samples, std::size_t frame_count) override {
-        // Microphone redirect to the host is not implemented on Linux yet.
-        (void) samples;
-        (void) frame_count;
-        return -1;
+        if (!mic_play) {
+          return -1;
+        }
+        if (!samples || frame_count == 0) {
+          return 0;
+        }
+
+        // A fatal writer error is surfaced here so the caller keeps its
+        // reinitialize contract (and -2 still releases the sink).
+        if (const int error = mic_write_error.exchange(0); error != 0) {
+          if (error == -2) {
+            release_mic_redirect_device();
+          }
+          return error;
+        }
+
+        // Never block the shared mixer thread on the sink: the writer thread
+        // owns the blocking write and a full queue is the documented drop
+        // (the Linux equivalent of the Windows endpoint padding check).
+        if (!mic_queue.push(samples, frame_count)) {
+          return 0;
+        }
+
+        // Matches the Windows backend: report the number of bytes handed over.
+        return static_cast<int>(frame_count * sizeof(std::int16_t));
       }
 
       int
       init_mic_redirect_device() override {
-        // No host-side virtual mic on Linux.
-        return -1;
+        // Honour the shared key exactly as the Windows backend does:
+        // "disabled" refuses the redirect. The USB/IP backend has no Linux
+        // counterpart, so "auto"/"usbip_experimental" fall back to this
+        // null-sink path (the Linux equivalent of the VB-Cable backend).
+        if (config::audio.microphone_redirect_backend == "disabled") {
+          BOOST_LOG(info) << "Client microphone redirection backend is disabled"sv;
+          return -1;
+        }
+
+        if (mic_sink_index != PA_INVALID_INDEX && mic_play) {
+          return 0;
+        }
+
+        release_mic_redirect_device();
+
+        // A null-sink doubles as the virtual microphone: host applications
+        // record from its monitor source, and whatever this process plays
+        // into the sink shows up there.
+        const std::string args =
+          std::string { "rate=" } + std::to_string(mic_mixer::sample_rate) +
+          " sink_name=" + k_mic_sink_name +
+          " format=float channels=1 channel_map=mono "
+          "sink_properties=device.description=" + std::string { k_mic_sink_description };
+        auto alarm = safe::make_alarm<int>();
+
+        op_t op {
+          pa_context_load_module(
+            ctx.get(),
+            "module-null-sink",
+            args.c_str(),
+            cb_i,
+            alarm.get()),
+        };
+
+        if (!op) {
+          BOOST_LOG(error) << "Couldn't create load-module operation: "sv << pa_strerror(pa_context_errno(ctx.get()));
+          return -1;
+        }
+
+        alarm->wait();
+        mic_sink_index = static_cast<std::uint32_t>(*alarm->status());
+        if (mic_sink_index == PA_INVALID_INDEX) {
+          BOOST_LOG(error) << "Couldn't load the virtual microphone null-sink: "sv << pa_strerror(pa_context_errno(ctx.get()));
+          return -1;
+        }
+
+        pa_sample_spec ss { PA_SAMPLE_S16LE, mic_mixer::sample_rate, 1 };
+        pa_channel_map pa_map;
+        pa_channel_map_init_mono(&pa_map);
+
+        pa_buffer_attr pa_attr = {
+          .maxlength = uint32_t(-1),
+          .tlength = uint32_t(-1),
+          .prebuf = uint32_t(-1),
+          .minreq = uint32_t(-1),
+          .fragsize = uint32_t(-1)
+        };
+
+        int status;
+        mic_play.reset(
+          pa_simple_new(nullptr, "sunshine", pa_stream_direction_t::PA_STREAM_PLAYBACK, k_mic_sink_name, "sunshine-mic-write", &ss, &pa_map, &pa_attr, &status));
+
+        if (!mic_play) {
+          BOOST_LOG(error) << "Couldn't open the virtual microphone playback stream: "sv << pa_strerror(status);
+          unload_null(mic_sink_index);
+          mic_sink_index = PA_INVALID_INDEX;
+          return -1;
+        }
+
+        // Host applications record from the default source unless the user picks
+        // one explicitly, so point the default at our monitor source while the
+        // redirect is active and put the previous one back on release - the
+        // Linux counterpart of the Windows backend switching the default capture
+        // device to VB-Cable and restoring it. Any PulseAudio/PipeWire session
+        // supports this, so it is not desktop-specific.
+        const auto monitor_name = get_monitor_name(k_mic_sink_name);
+        if (!monitor_name.empty()) {
+          const auto previous = get_default_source_name();
+          if (previous != monitor_name && set_default_source_name(monitor_name)) {
+            mic_previous_default_source = previous;
+            if (previous.empty()) {
+              BOOST_LOG(info) << "Client microphone redirect: default source is now "sv << monitor_name;
+            }
+            else {
+              BOOST_LOG(info) << "Client microphone redirect: default source is now "sv << monitor_name
+                              << " (was "sv << previous << ")"sv;
+            }
+          }
+          else if (previous == monitor_name) {
+            // Already ours (e.g. a previous run left it); nothing to restore.
+            mic_previous_default_source.clear();
+          }
+        }
+
+        BOOST_LOG(info) << "Virtual microphone ready ("sv << k_mic_sink_name << ")"sv;
+
+        // Start the staging writer last: it takes over the blocking writes that
+        // write_mic_pcm() must not perform on the shared mixer thread.
+        mic_queue.reset();
+        mic_write_error.store(0);
+        mic_writer = std::thread([this] { mic_writer_loop(); });
+        return 0;
       }
 
       void
       release_mic_redirect_device() override {
-        // Nothing to release.
+        // Stop and join the writer before the stream it writes to goes away.
+        mic_queue.stop();
+        if (mic_writer.joinable()) {
+          mic_writer.join();
+        }
+        mic_write_error.store(0);
+
+        mic_play.reset();
+
+        if (mic_sink_index != PA_INVALID_INDEX) {
+          unload_null(mic_sink_index);
+          mic_sink_index = PA_INVALID_INDEX;
+        }
+
+        if (!mic_previous_default_source.empty()) {
+          if (set_default_source_name(mic_previous_default_source)) {
+            BOOST_LOG(info) << "Client microphone redirect: default source restored to "sv
+                            << mic_previous_default_source;
+          }
+          mic_previous_default_source.clear();
+        }
       }
 
       ~server_t() override {
+        mic_queue.stop();
+        if (mic_writer.joinable()) {
+          mic_writer.join();
+        }
+
         unload_null(index.stereo);
         unload_null(index.surround51);
         unload_null(index.surround71);
         unload_null(index.surround714);
+        unload_null(mic_sink_index);
 
         if (worker.joinable()) {
           pa_context_disconnect(ctx.get());

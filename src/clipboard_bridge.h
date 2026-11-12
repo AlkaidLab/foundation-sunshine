@@ -23,6 +23,7 @@
  */
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -43,6 +44,40 @@ namespace clipboard_bridge {
   /// GCM tag, and sequence number overhead.
   constexpr std::size_t kMaxPayloadBytes = 65500;
 
+  // ---------------------------------------------------------------------------
+  // Wire format of one clipboard frame: version, kind, token (LE32), length
+  // (LE32), then the payload. The user-session GUI agent is the reference
+  // implementation of this layout (sunshine-control-panel,
+  // src-tauri/src/clipboard.rs); these constants are the C++ mirror so no
+  // provider re-spells the numbers.
+  // ---------------------------------------------------------------------------
+  constexpr std::uint8_t kWireVersion = 1;
+  constexpr std::uint8_t kKindText = 1;
+  constexpr std::uint8_t kKindPng = 2;
+  constexpr std::uint8_t kKindRef = 3;
+  constexpr std::uint8_t kKindFileOffer = 4;
+
+  /// Header size of the frame above.
+  constexpr std::size_t kFrameHeaderBytes = 10;
+
+  /// Payloads up to this size travel inline; larger ones go through the blob
+  /// store as a kKindRef frame (the agent's INLINE_THRESHOLD).
+  constexpr std::size_t kInlineThresholdBytes = 60'000;
+
+  /// MIME strings used for out-of-band blobs. They are part of the wire
+  /// contract - a peer maps the descriptor's mime onto how the payload is
+  /// applied (the agent's MIME_TEXT/MIME_PNG) - so they are spelled once here.
+  constexpr auto kMimeText = "text/plain; charset=utf-8";
+  constexpr auto kMimePng = "image/png";
+
+  /// A kKindRef payload is a JSON descriptor {id, mime, size}; the agent
+  /// rejects ids outside these bounds.
+  constexpr std::size_t kMaxRefIdLength = 128;
+
+  /// How long a value written by a peer is remembered to suppress its echo
+  /// (the agent's ECHO_TTL).
+  constexpr auto kEchoTtl = std::chrono::seconds { 5 };
+
   using inbound_sink_fn = std::function<void(session_id, const payload_t &)>;
 
   struct outbound_msg_t {
@@ -57,6 +92,10 @@ namespace clipboard_bridge {
     // ---- Inbound: stream.cpp -> GUI ----
     void on_inbound(session_id sid, payload_t bytes);
     void set_inbound_sink(inbound_sink_fn cb);
+    /// Register an additional inbound consumer (e.g. the Linux host-side
+    /// clipboard provider). Listeners stay installed until process shutdown;
+    /// the GUI sink above remains the single dynamically-swapped consumer.
+    void add_inbound_listener(inbound_sink_fn cb);
 
     // ---- Outbound: GUI -> stream sessions ----
     /// Enqueue a payload to be sent on the next controlBroadcastThread tick.

@@ -43,6 +43,17 @@
   // lib includes
   #include "tray/src/tray.h"
 
+#ifndef _WIN32
+  // The Linux tray is the Qt implementation (QApplication lives on the main
+  // thread), so menu callbacks can raise modal message boxes directly.
+  // NB: avoid QCoreApplication::instance() here - the inline access to the
+  // protected `self` symbol needs a copy relocation that a non-PIE link
+  // cannot satisfy against libQt6Core.
+  #include <QDir>
+  #include <QFileDialog>
+  #include <QMessageBox>
+#endif
+
   // local includes
   #include "src/confighttp.h"
   #include "src/display_device/session.h"
@@ -50,7 +61,9 @@
   #include "src/file_handler.h"
   #include "src/logging.h"
   #include "src/platform/common.h"
+#ifdef _WIN32
   #include "src/platform/windows/misc.h"
+#endif
   #include "src/process.h"
   #include "src/display_device/display_device.h"
   #include "src/entry_handler.h"
@@ -64,6 +77,40 @@ using namespace std::literals;
 // system_tray namespace
 namespace system_tray {
   static std::atomic<bool> tray_initialized = false;
+
+#ifndef _WIN32
+  /**
+   * @brief Modal Qt message box, the Linux counterpart of MessageBoxW.
+   * @details Menu callbacks run on the tray's QApplication thread, so a
+   *          nested dialog event loop is the standard Qt pattern here.
+   * @returns true for YES, false for NO or dismissal. OK-style boxes return true.
+   */
+  bool
+  show_message_box(const std::string &title, const std::string &text, const bool yesno, const bool as_warning = false) {
+    const auto qtitle = QString::fromUtf8(title.c_str());
+    const auto qtext = QString::fromUtf8(text.c_str());
+    if (yesno) {
+      // Windows uses MB_YESNO without MB_DEFBUTTON2, i.e. the default button is
+      // Yes; QMessageBox::question defaults to No, so both the button order and
+      // the default are set explicitly here. The warning icon is honoured for
+      // yes/no boxes too (the Windows reset-display prompt uses MB_ICONWARNING).
+      QMessageBox box { QMessageBox::Question, qtitle, qtext, QMessageBox::Yes | QMessageBox::No, nullptr };
+      if (as_warning) {
+        box.setIcon(QMessageBox::Warning);
+      }
+      box.setDefaultButton(QMessageBox::Yes);
+      return box.exec() == QMessageBox::Yes;
+    }
+    if (as_warning) {
+      QMessageBox::warning(nullptr, qtitle, qtext);
+    }
+    else {
+      QMessageBox::information(nullptr, qtitle, qtext);
+    }
+    return true;
+  }
+#endif
+
 
   // Threading variables for all platforms
   static std::thread tray_thread;
@@ -175,16 +222,24 @@ namespace system_tray {
   }
 
   // 更新所有菜单项的文本
+  static void
+  update_vdd_menu_text();
+
   void
   update_menu_texts() {
     init_localized_strings();
+
+    // One layout for both platforms: [0] Open, [1] separator, [2] Foundation
+    // Display, [3] Advanced Settings, [4] separator, [5] Language, [6]
+    // separator, [7] Star Project, [8] Visit Project, [9] separator,
+    // [10] Restart, [11] Quit. The Advanced Settings submenu is present on
+    // Linux now that its configuration operations are implemented there.
     tray_menus[0].text = s_open_sunshine.c_str();
     tray_menus[2].text = s_vdd_base_display.c_str();
-    update_vdd_submenu_text();  // 更新 VDD 子菜单文本
-  #ifdef _WIN32
+    update_vdd_submenu_text();
+    update_vdd_menu_text();
     tray_menus[3].text = s_advanced_settings.c_str();
     update_advanced_settings_menu_text();
-  #endif
     tray_menus[5].text = s_language.c_str();
     tray_menus[5].submenu[0].text = s_chinese.c_str();
     tray_menus[5].submenu[1].text = s_english.c_str();
@@ -192,13 +247,8 @@ namespace system_tray {
     tray_menus[7].text = s_star_project.c_str();
     tray_menus[8].text = s_visit_project.c_str();
     tray_visit_project_submenu_text();
-  #ifdef _WIN32
     tray_menus[10].text = s_restart.c_str();
     tray_menus[11].text = s_quit.c_str();
-  #else
-    tray_menus[9].text = s_restart.c_str();
-    tray_menus[10].text = s_quit.c_str();
-  #endif
   }
 
   auto tray_open_ui_cb = [](struct tray_menu *item) {
@@ -228,6 +278,11 @@ namespace system_tray {
     const auto message = system_tray_i18n::utf8_to_wstring(
       system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_PREREQUISITE_MSG));
     MessageBoxW(nullptr, message.c_str(), title.c_str(), MB_OK | MB_ICONWARNING);
+#else
+    show_message_box(
+      system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_PREREQUISITE_TITLE),
+      system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_PREREQUISITE_MSG),
+      false, true);
 #endif
     launch_ui();
     return false;
@@ -307,6 +362,14 @@ namespace system_tray {
         BOOST_LOG(info) << "User cancelled enabling VDD keep-enabled mode";
         return;
       }
+#else
+      if (!show_message_box(
+            system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_PERSISTENT_CONFIRM_TITLE),
+            system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_PERSISTENT_CONFIRM_MSG),
+            true)) {
+        BOOST_LOG(info) << "User cancelled enabling VDD keep-enabled mode";
+        return;
+      }
 #endif
       config::video.vdd_keep_enabled = true;
       BOOST_LOG(info) << "Enabled VDD keep-enabled mode (Auto-creation removed)";
@@ -333,6 +396,14 @@ namespace system_tray {
       std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_HEADLESS_CREATE_CONFIRM_TITLE));
       std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_HEADLESS_CREATE_CONFIRM_MSG));
       if (MessageBoxW(NULL, message.c_str(), title.c_str(), MB_YESNO | MB_ICONQUESTION) != IDYES) {
+        BOOST_LOG(info) << "User cancelled enabling headless VDD create";
+        return;
+      }
+#else
+      if (!show_message_box(
+            system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_HEADLESS_CREATE_CONFIRM_TITLE),
+            system_tray_i18n::get_localized_string(system_tray_i18n::KEY_VDD_HEADLESS_CREATE_CONFIRM_MSG),
+            true)) {
         BOOST_LOG(info) << "User cancelled enabling headless VDD create";
         return;
       }
@@ -365,8 +436,14 @@ namespace system_tray {
       BOOST_LOG(info) << "User cancelled clearing cache"sv;
     }
   #else
-    // 非 Windows 平台，直接关闭
-    BOOST_LOG(info) << "Closing application from system tray"sv;
+    if (!show_message_box(
+          system_tray_i18n::get_localized_string(system_tray_i18n::KEY_CLOSE_APP_CONFIRM_TITLE),
+          system_tray_i18n::get_localized_string(system_tray_i18n::KEY_CLOSE_APP_CONFIRM_MSG),
+          true)) {
+      BOOST_LOG(info) << "User cancelled clearing cache"sv;
+      return;
+    }
+    BOOST_LOG(info) << "Clearing cache (terminating application) from system tray"sv;
     proc::proc.terminate();
   #endif
   };
@@ -392,7 +469,13 @@ namespace system_tray {
       BOOST_LOG(info) << "User cancelled resetting display device config"sv;
     }
   #else
-    // 非 Windows 平台，直接重置
+    if (!show_message_box(
+          system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_DISPLAY_CONFIRM_TITLE),
+          system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_DISPLAY_CONFIRM_MSG),
+          true, true)) {
+      BOOST_LOG(info) << "User cancelled resetting display device config"sv;
+      return;
+    }
     BOOST_LOG(info) << "Resetting display device config from system tray"sv;
     display_device::session_t::get().reset_persistence();
   #endif
@@ -439,6 +522,10 @@ namespace system_tray {
   #endif
   };
 
+  // Defined further down; wakes the tray event loop from the shutdown path.
+  int
+  end_tray();
+
   auto tray_quit_cb = [](struct tray_menu *item) {
     BOOST_LOG(info) << "Quitting from system tray"sv;
 
@@ -468,8 +555,19 @@ namespace system_tray {
       return;
     }
   #else
-    // For non-Windows platforms, just exit normally
+    // Linux has no GUI companion process, so the shared quit message's
+    // "(This will also close the Sunshine GUI application.)" would be wrong.
+    if (!show_message_box(
+          system_tray_i18n::get_localized_string(system_tray_i18n::KEY_QUIT_TITLE),
+          system_tray_i18n::get_localized_string(system_tray_i18n::KEY_QUIT_MESSAGE_NO_GUI),
+          true)) {
+      BOOST_LOG(info) << "User cancelled quitting from system tray"sv;
+      return;
+    }
+    // Raise the shutdown event, then wake the tray event loop parked on the
+    // main thread - otherwise the graceful shutdown path never runs.
     lifetime::exit_sunshine(0, true);
+    end_tray();
   #endif
   };
 
@@ -782,8 +880,77 @@ namespace system_tray {
       }
     }
   #else
-    // 非Windows平台的实现（可以后续添加）
-    BOOST_LOG(info) << "[tray_import_config] Config import not implemented for this platform yet";
+    // Qt file dialog on the tray's QApplication thread. Same flow as Windows:
+    // validate the path and the contents, back the current configuration up,
+    // replace it atomically, then offer a restart so it takes effect.
+    const auto dialog_title = QString::fromUtf8(
+      system_tray_i18n::get_localized_string(system_tray_i18n::KEY_FILE_DIALOG_SELECT_IMPORT).c_str());
+    const std::string filter_utf8 =
+      system_tray_i18n::get_localized_string(system_tray_i18n::KEY_FILE_DIALOG_CONFIG_FILES) + " (*.conf);;*";
+
+    const auto selected = QFileDialog::getOpenFileName(
+      nullptr, dialog_title, QDir::homePath(), QString::fromUtf8(filter_utf8.c_str()));
+    if (selected.isEmpty()) {
+      BOOST_LOG(info) << "[tray_import_config] No file selected"sv;
+      return;
+    }
+
+    const std::string file_path = selected.toStdString();
+    const auto show_import_error = [](const std::string &message) {
+      show_message_box(
+        system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_TITLE),
+        message, false, true);
+    };
+
+    if (!is_safe_config_path(file_path)) {
+      BOOST_LOG(error) << "[tray_import_config] Config import rejected: unsafe file path: " << file_path;
+      show_import_error(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_EXCEPTION));
+      return;
+    }
+
+    try {
+      const std::string config_content = file_handler::read_file(file_path.c_str());
+      if (!is_safe_config_content(config_content)) {
+        BOOST_LOG(error) << "[tray_import_config] Config import rejected: unsafe content: " << file_path;
+        show_import_error(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_EXCEPTION));
+        return;
+      }
+
+      // Back up the current configuration before touching it.
+      const std::string backup_path = config::sunshine.config_file + ".backup";
+      const std::string current_config = file_handler::read_file(config::sunshine.config_file.c_str());
+      if (!current_config.empty() && file_handler::write_file(backup_path.c_str(), current_config) != 0) {
+        BOOST_LOG(error) << "[tray_import_config] Failed to create a backup, aborting the import"sv;
+        show_import_error(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_WRITE));
+        return;
+      }
+
+      // Write a temporary file first so the replacement is atomic.
+      const std::string temp_path = config::sunshine.config_file + ".tmp";
+      if (file_handler::write_file(temp_path.c_str(), config_content) != 0) {
+        BOOST_LOG(error) << "[tray_import_config] Failed to write the temporary configuration"sv;
+        show_import_error(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_WRITE));
+        return;
+      }
+
+      std::filesystem::rename(
+        file_handler::path_from_utf8(temp_path), file_handler::path_from_utf8(config::sunshine.config_file));
+      BOOST_LOG(info) << "[tray_import_config] Configuration imported from: " << file_path;
+
+      if (show_message_box(
+            system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_SUCCESS_TITLE),
+            system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_SUCCESS_MSG),
+            true)) {
+        BOOST_LOG(info) << "[tray_import_config] Restarting to apply the imported configuration"sv;
+        platf::restart();
+      }
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(error) << "[tray_import_config] Exception during config import: " << e.what();
+      std::error_code ec;
+      std::filesystem::remove(file_handler::path_from_utf8(config::sunshine.config_file + ".tmp"), ec);
+      show_import_error(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_EXCEPTION));
+    }
   #endif
   };
 
@@ -1010,7 +1177,76 @@ namespace system_tray {
       }
     }
   #else
-    BOOST_LOG(info) << "[tray_export_config] Config export not implemented for this platform yet";
+    const auto dialog_title = QString::fromUtf8(
+      system_tray_i18n::get_localized_string(system_tray_i18n::KEY_FILE_DIALOG_SAVE_EXPORT).c_str());
+    const std::string filter_utf8 =
+      system_tray_i18n::get_localized_string(system_tray_i18n::KEY_FILE_DIALOG_CONFIG_FILES) + " (*.conf)";
+    const std::string default_name =
+      config::sunshine.config_file.empty()
+        ? "sunshine.conf"
+        : std::filesystem::path(config::sunshine.config_file).filename().string();
+
+    const auto selected = QFileDialog::getSaveFileName(
+      nullptr, dialog_title, QDir::homePath() + "/" + QString::fromStdString(default_name),
+      QString::fromUtf8(filter_utf8.c_str()));
+    if (selected.isEmpty()) {
+      BOOST_LOG(info) << "[tray_export_config] No file selected"sv;
+      return;
+    }
+
+    const std::string file_path = selected.toStdString();
+    const auto show_export_error = [](const std::string &message) {
+      show_message_box(
+        system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_TITLE),
+        message, false, true);
+    };
+
+    // Same guard rails as Windows: a regular .conf file, never a symlink.
+    try {
+      const auto target = file_handler::path_from_utf8(file_path);
+      if (target.extension() != ".conf" ||
+          (std::filesystem::exists(target) && std::filesystem::is_symlink(target))) {
+        BOOST_LOG(warning) << "[tray_export_config] Config export rejected: " << file_path;
+        show_export_error(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_PATH));
+        return;
+      }
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(error) << "[tray_export_config] Path validation error during export: " << e.what();
+      show_export_error(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_PATH));
+      return;
+    }
+
+    const std::string config_content = file_handler::read_file(config::sunshine.config_file.c_str());
+    if (config_content.empty()) {
+      BOOST_LOG(error) << "[tray_export_config] No configuration to export"sv;
+      show_export_error(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_NO_CONFIG));
+      return;
+    }
+
+    const std::string temp_path = file_path + ".tmp";
+    if (file_handler::write_file(temp_path.c_str(), config_content) != 0) {
+      BOOST_LOG(error) << "[tray_export_config] Failed to write the temporary configuration"sv;
+      show_export_error(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_WRITE));
+      return;
+    }
+
+    try {
+      std::filesystem::rename(file_handler::path_from_utf8(temp_path), file_handler::path_from_utf8(file_path));
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(error) << "[tray_export_config] Failed to move the temporary file: " << e.what();
+      std::error_code ec;
+      std::filesystem::remove(file_handler::path_from_utf8(temp_path), ec);
+      show_export_error(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_WRITE));
+      return;
+    }
+
+    BOOST_LOG(info) << "[tray_export_config] Configuration exported to: " << file_path;
+    show_message_box(
+      system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_SUCCESS_TITLE),
+      system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_SUCCESS_MSG),
+      false);
   #endif
   };
 
@@ -1085,7 +1321,46 @@ namespace system_tray {
       }
     }
   #else
-    BOOST_LOG(info) << "Config reset not implemented for this platform yet";
+    if (!show_message_box(
+          system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_CONFIRM_TITLE),
+          system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_CONFIRM_MSG),
+          true, true)) {
+      BOOST_LOG(info) << "User cancelled resetting the configuration"sv;
+      return;
+    }
+
+    try {
+      // Back up first, then truncate: an empty configuration means defaults.
+      const std::string backup_path = config::sunshine.config_file + ".backup";
+      const std::string current_config = file_handler::read_file(config::sunshine.config_file.c_str());
+      if (!current_config.empty()) {
+        file_handler::write_file(backup_path.c_str(), current_config);
+      }
+
+      std::ofstream config_file(file_handler::path_from_utf8(config::sunshine.config_file));
+      if (config_file.is_open()) {
+        config_file.close();
+        BOOST_LOG(info) << "[tray_reset_config] Configuration reset successfully"sv;
+        show_message_box(
+          system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_SUCCESS_TITLE),
+          system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_SUCCESS_MSG),
+          false);
+      }
+      else {
+        BOOST_LOG(error) << "[tray_reset_config] Failed to reset the configuration file"sv;
+        show_message_box(
+          system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_ERROR_TITLE),
+          system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_ERROR_MSG),
+          false, true);
+      }
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(error) << "[tray_reset_config] Exception during config reset: " << e.what();
+      show_message_box(
+        system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_ERROR_TITLE),
+        system_tray_i18n::get_localized_string(system_tray_i18n::KEY_RESET_ERROR_EXCEPTION),
+        false, true);
+    }
   #endif
   };
 
@@ -1093,10 +1368,10 @@ namespace system_tray {
   struct tray_menu tray_menus[] = {
     { .text = "Open Sunshine", .cb = tray_open_ui_cb },
     { .text = "-" },
-  #ifdef _WIN32
+    // Foundation Display is available on Linux too: the vdd_utils backend
+    // (native EDID override) implements the same operations.
     { .text = "Foundation Display", .submenu = vdd_submenu },
     { .text = "Advanced Settings", .submenu = advanced_settings_submenu },
-  #endif
     { .text = "-" },
     { .text = "Language",
       .submenu =
@@ -1206,13 +1481,14 @@ namespace system_tray {
   #endif
 
     // 初始化 VDD 子菜单 (创建, 关闭, 保持启用, 无显示器时自动创建)
-    vdd_submenu[0] = { .text = s_vdd_create.c_str(), .cb = tray_vdd_create_cb };
-    vdd_submenu[1] = { .text = s_vdd_close.c_str(), .cb = tray_vdd_destroy_cb };
-    vdd_submenu[2] = { .text = s_vdd_persistent.c_str(), .checked = 0, .cb = tray_vdd_persistent_cb };
-    vdd_submenu[3] = { .text = s_vdd_headless_create.c_str(), .checked = 0, .cb = tray_vdd_headless_create_cb };
+    // checkbox=1 makes the checked flag render on the Qt tray (Windows draws
+    // MFS_CHECKED from `checked` alone, Linux needs the explicit flag).
+    vdd_submenu[0] = { .text = s_vdd_create.c_str(), .checkbox = 1, .cb = tray_vdd_create_cb };
+    vdd_submenu[1] = { .text = s_vdd_close.c_str(), .checkbox = 1, .cb = tray_vdd_destroy_cb };
+    vdd_submenu[2] = { .text = s_vdd_persistent.c_str(), .checked = 0, .checkbox = 1, .cb = tray_vdd_persistent_cb };
+    vdd_submenu[3] = { .text = s_vdd_headless_create.c_str(), .checked = 0, .checkbox = 1, .cb = tray_vdd_headless_create_cb };
     vdd_submenu[4] = { .text = nullptr };
 
-  #ifdef _WIN32
     advanced_settings_submenu[0] = { .text = s_import_config.c_str(), .cb = tray_import_config_cb };
     advanced_settings_submenu[1] = { .text = s_export_config.c_str(), .cb = tray_export_config_cb };
     advanced_settings_submenu[2] = { .text = s_reset_to_default.c_str(), .cb = tray_reset_config_cb };
@@ -1220,7 +1496,6 @@ namespace system_tray {
     advanced_settings_submenu[4] = { .text = s_close_app.c_str(), .cb = tray_close_app_cb };
     advanced_settings_submenu[5] = { .text = s_reset_display_device_config.c_str(), .cb = tray_reset_display_device_config_cb };
     advanced_settings_submenu[6] = { .text = nullptr };
-  #endif
 
     // 初始化访问项目地址子菜单
     visit_project_submenu[0] = { .text = s_visit_project_sunshine.c_str(), .cb = tray_visit_project_sunshine_cb };
@@ -1244,6 +1519,40 @@ namespace system_tray {
     // 初始化时更新访问项目地址子菜单文本
     tray_visit_project_submenu_text();
     tray_update(&tray);
+
+#ifndef _WIN32
+    // A shutdown or restart raised off the main thread (tray restart, WebUI
+    // restart, ...) would never wake the tray event loop parked on the main
+    // thread, leaving the process hung here instead of shutting down. Watch
+    // the shutdown event and wake the loop, exactly like the quit menu does.
+    int end_tray();  // defined below this file
+    std::thread([]() {
+      mail::man->event<bool>(mail::shutdown)->view();
+      end_tray();
+    }).detach();
+
+    // Streaming sessions create/destroy the virtual display outside this
+    // thread's control, and a VDD left live by a previous process only gets
+    // adopted lazily; poll so the create/close items reflect reality.
+    std::thread([]() {
+      bool last_active = is_vdd_active();
+      bool last_keep_enabled = config::video.vdd_keep_enabled;
+      while (true) {
+        std::this_thread::sleep_for(std::chrono::seconds { 2 });
+        if (!tray_initialized) {
+          continue;
+        }
+        const bool active = is_vdd_active();
+        const bool keep_enabled = config::video.vdd_keep_enabled;
+        if (active != last_active || keep_enabled != last_keep_enabled) {
+          last_active = active;
+          last_keep_enabled = keep_enabled;
+          update_vdd_menu_text();
+          tray_update(&tray);
+        }
+      }
+    }).detach();
+#endif
 
     tray_initialized = true;
     return 0;

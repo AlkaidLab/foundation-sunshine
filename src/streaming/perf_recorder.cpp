@@ -297,6 +297,9 @@ namespace perf {
         case capture_source_kind_e::vdd_published:
           source_kind = "vdd_published";
           break;
+        case capture_source_kind_e::drm_fb_flips:
+          source_kind = "drm_fb_flips";
+          break;
         default:
           break;
       }

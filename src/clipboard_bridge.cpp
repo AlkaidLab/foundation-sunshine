@@ -16,6 +16,7 @@ namespace clipboard_bridge {
   struct bridge_t::impl_t {
     mutable std::mutex mu;
     inbound_sink_fn inbound_sink;
+    std::vector<inbound_sink_fn> listeners;
     std::deque<outbound_msg_t> outbox;
     std::unordered_set<session_id> active_sessions;
     std::chrono::steady_clock::time_point last_gui_alive {};
@@ -35,12 +36,19 @@ namespace clipboard_bridge {
   void
   bridge_t::on_inbound(session_id sid, payload_t bytes) {
     inbound_sink_fn cb;
+    std::vector<inbound_sink_fn> listeners;
     {
       std::lock_guard<std::mutex> lk(_impl->mu);
       cb = _impl->inbound_sink;
+      listeners = _impl->listeners;
     }
     if (cb) {
       cb(sid, bytes);
+    }
+    for (const auto &listener : listeners) {
+      if (listener) {
+        listener(sid, bytes);
+      }
     }
   }
 
@@ -48,6 +56,12 @@ namespace clipboard_bridge {
   bridge_t::set_inbound_sink(inbound_sink_fn cb) {
     std::lock_guard<std::mutex> lk(_impl->mu);
     _impl->inbound_sink = std::move(cb);
+  }
+
+  void
+  bridge_t::add_inbound_listener(inbound_sink_fn cb) {
+    std::lock_guard<std::mutex> lk(_impl->mu);
+    _impl->listeners.push_back(std::move(cb));
   }
 
   void
@@ -95,7 +109,9 @@ namespace clipboard_bridge {
   bool
   bridge_t::gui_alive() const {
     std::lock_guard<std::mutex> lk(_impl->mu);
-    if (!_impl->inbound_sink) {
+    // A host-side provider counts as a clipboard sink too: clients should
+    // see the capability advertised whenever any provider can service it.
+    if (!_impl->inbound_sink && _impl->listeners.empty()) {
       return false;
     }
     const auto now = std::chrono::steady_clock::now();

@@ -9,6 +9,7 @@
 
 extern "C" {
 #include <libavcodec/avcodec.h>
+#include <libavutil/pixdesc.h>
 #include <va/va.h>
 #include <va/va_drm.h>
 #if !VA_CHECK_VERSION(1, 9, 0)

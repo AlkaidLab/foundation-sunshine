@@ -64,11 +64,15 @@ namespace {
     throw_if_false(X509_gmtime_adj(X509_get_notAfter(x509.get()), 3600) != nullptr, "failed to set notAfter");
     throw_if_false(X509_set_pubkey(x509.get(), pkey.get()) == 1, "failed to set public key");
 
-    auto *name = X509_get_subject_name(x509.get());
-    throw_if_false(name != nullptr, "failed to get certificate subject");
+    // OpenSSL 4 hands out the subject name as `const X509_NAME *`, while
+    // X509_NAME_add_entry_by_txt() needs it mutable. Build the name separately
+    // and install it, which works unchanged on OpenSSL 3 and 4.
+    using x509_name_ptr = std::unique_ptr<X509_NAME, decltype(&X509_NAME_free)>;
+    x509_name_ptr name { X509_NAME_new(), X509_NAME_free };
+    throw_if_false(static_cast<bool>(name), "failed to create certificate subject");
     throw_if_false(
       X509_NAME_add_entry_by_txt(
-        name,
+        name.get(),
         "CN",
         MBSTRING_ASC,
         reinterpret_cast<const unsigned char *>("localhost"),
@@ -76,7 +80,8 @@ namespace {
         -1,
         0) == 1,
       "failed to set certificate subject");
-    throw_if_false(X509_set_issuer_name(x509.get(), name) == 1, "failed to set certificate issuer");
+    throw_if_false(X509_set_subject_name(x509.get(), name.get()) == 1, "failed to set certificate subject");
+    throw_if_false(X509_set_issuer_name(x509.get(), name.get()) == 1, "failed to set certificate issuer");
     throw_if_false(X509_sign(x509.get(), pkey.get(), EVP_sha256()) > 0, "failed to sign certificate");
 
     const auto cert_file = cert.string();
