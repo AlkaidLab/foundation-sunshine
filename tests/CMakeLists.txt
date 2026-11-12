@@ -291,6 +291,12 @@ target_link_libraries(ds5_haptics_wire_unit_tests PRIVATE gtest_main sunshine_pr
 set_target_properties(ds5_haptics_wire_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME ds5_haptics_wire_unit_tests COMMAND ds5_haptics_wire_unit_tests)
 
+add_executable(ds5_control_extension_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_ds5_control_extension.cpp)
+target_include_directories(ds5_control_extension_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(ds5_control_extension_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(ds5_control_extension_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME ds5_control_extension_unit_tests COMMAND ds5_control_extension_unit_tests)
+
 add_executable(ds5_button_map_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_ds5_button_map.cpp)
 target_include_directories(ds5_button_map_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(ds5_button_map_unit_tests PRIVATE gtest_main alkaidlab_ds5_core sunshine_project_options sunshine_coverage)
