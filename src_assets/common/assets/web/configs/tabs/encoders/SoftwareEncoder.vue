@@ -1,60 +1,29 @@
 <script setup>
-import { ref } from 'vue'
+import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { MGroup, MSection } from 'foundation-ui/vue'
+import CfgExpert from '../../../components/cfg/CfgExpert.vue'
+import CfgSteps from '../../../components/cfg/CfgSteps.vue'
+import CfgChoice from '../../../components/cfg/CfgChoice.vue'
+import CfgField from '../../../components/cfg/CfgField.vue'
+import { localeOptions } from '../../../utils/cfgOptions.js'
 
-const props = defineProps([
-  'platform',
-  'config'
-])
-
-const config = ref(props.config)
+defineProps(['platform', 'config'])
+const { t } = useI18n()
+const presets = computed(() => localeOptions(t, 'config.sw_preset', ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow', 'slower', 'veryslow']))
+const tunes = computed(() => localeOptions(t, 'config.sw_tune', ['film', 'animation', 'grain', 'stillimage', 'fastdecode', 'zerolatency']))
 </script>
 
 <template>
-  <div id="software-encoder" class="config-page">
-    <div class="mb-3">
-      <label for="sw_preset" class="form-label">{{ $t('config.sw_preset') }}</label>
-      <select id="sw_preset" class="form-select" v-model="config.sw_preset">
-        <option value="ultrafast">{{ $t('config.sw_preset_ultrafast') }}</option>
-        <option value="superfast">{{ $t('config.sw_preset_superfast') }}</option>
-        <option value="veryfast">{{ $t('config.sw_preset_veryfast') }}</option>
-        <option value="faster">{{ $t('config.sw_preset_faster') }}</option>
-        <option value="fast">{{ $t('config.sw_preset_fast') }}</option>
-        <option value="medium">{{ $t('config.sw_preset_medium') }}</option>
-        <option value="slow">{{ $t('config.sw_preset_slow') }}</option>
-        <option value="slower">{{ $t('config.sw_preset_slower') }}</option>
-        <option value="veryslow">{{ $t('config.sw_preset_veryslow') }}</option>
-      </select>
-      <div class="form-text">{{ $t('config.sw_preset_desc') }}</div>
-    </div>
-
-    <div class="mb-3">
-      <label for="sw_tune" class="form-label">{{ $t('config.sw_tune') }}</label>
-      <select id="sw_tune" class="form-select" v-model="config.sw_tune">
-        <option value="film">{{ $t('config.sw_tune_film') }}</option>
-        <option value="animation">{{ $t('config.sw_tune_animation') }}</option>
-        <option value="grain">{{ $t('config.sw_tune_grain') }}</option>
-        <option value="stillimage">{{ $t('config.sw_tune_stillimage') }}</option>
-        <option value="fastdecode">{{ $t('config.sw_tune_fastdecode') }}</option>
-        <option value="zerolatency">{{ $t('config.sw_tune_zerolatency') }}</option>
-      </select>
-      <div class="form-text">{{ $t('config.sw_tune_desc') }}</div>
-    </div>
-
-    <div class="mb-3">
-      <label for="min_threads" class="form-label">{{ $t('config.min_threads') }}</label>
-      <input
-        id="min_threads"
-        v-model="config.min_threads"
-        class="form-control"
-        type="number"
-        min="1"
-        placeholder="2"
-      />
-      <div class="form-text">{{ $t('config.min_threads_desc') }}</div>
-    </div>
-  </div>
+  <MSection>
+    <MGroup>
+      <CfgSteps :config="config" k="sw_preset" :options="presets" def="superfast" icon="speed" />
+    </MGroup>
+  </MSection>
+  <MSection :title="$t('tabs.advanced')">
+    <MGroup>
+      <CfgExpert control="seg" :config="config" k="sw_tune" :options="tunes" />
+      <CfgExpert control="slider" :config="config" k="min_threads" />
+    </MGroup>
+  </MSection>
 </template>
-
-<style scoped>
-
-</style>
