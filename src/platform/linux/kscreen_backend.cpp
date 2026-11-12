@@ -45,7 +45,11 @@ namespace platf::kscreen {
   }
 
   bool
-  probe_allowed() {
+  probe_allowed(bool ignore_cooldown) {
+    if (ignore_cooldown) {
+      return true;
+    }
+
     return now().time_since_epoch().count() >= probe_after.load(std::memory_order_relaxed);
   }
 

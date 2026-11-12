@@ -1633,21 +1633,41 @@ namespace display_device::vdd_utils {
     }
 
     /**
+     * @brief Outcome of a single compositor query.
+     * @details `absent` is evidence ("the compositor answered and did not list
+     *          the connector"); `unavailable` is the absence of evidence (the
+     *          query failed or timed out). Only the former may feed a decision:
+     *          a probe that never answered says nothing about what the
+     *          compositor sees, and a status forced connector takes seconds to
+     *          surface while the query itself stalls behind the compositor's
+     *          own re-enumeration.
+     */
+    enum class compositor_probe_e {
+      seen,
+      absent,
+      unavailable,
+    };
+
+    /**
      * @brief Whether the compositor currently exposes the connector as an
      *        output. kscreen-doctor is the only observable; sessions without
      *        KScreen cannot be queried and callers fall back to the DRM-level
      *        signals.
+     * @details The cooldown is bypassed here on purpose: when this runs, the
+     *          caller has just written a connector event and is waiting for the
+     *          compositor to react. A slow probe of our own must never arm the
+     *          cooldown that hides the compositor's answer for the next 20 s.
      */
-    bool
-    kscreen_sees_connector(const std::string &connector) {
-      if (!platf::kscreen::session_supports_kscreen() || !platf::kscreen::probe_allowed()) {
-        return false;
+    compositor_probe_e
+    probe_compositor_connector(const std::string &connector) {
+      if (!platf::kscreen::session_supports_kscreen() || !platf::kscreen::probe_allowed(true)) {
+        return compositor_probe_e::unavailable;
       }
 
       const auto result = platf::kscreen::run("-o", platf::kscreen::kProbeTimeout);
       if (result.exit_code != 0) {
         platf::kscreen::note_unavailable(result.exit_code < 0 ? "kscreen-doctor did not respond" : "kscreen-doctor failed");
-        return false;
+        return compositor_probe_e::unavailable;
       }
       platf::kscreen::note_available();
 
@@ -1664,11 +1684,23 @@ namespace display_device::vdd_utils {
         std::string tag, index, name;
         fields >> tag >> index >> name;
         if (name == connector) {
-          return true;
+          return compositor_probe_e::seen;
         }
       }
-      return false;
+      return compositor_probe_e::absent;
     }
+
+    /**
+     * @brief What a compositor wait learned.
+     * @details `probed` distinguishes "the compositor never listed it" from
+     *          "the compositor never answered"; a decision to give up needs the
+     *          former, otherwise a single slow query turns into a failed
+     *          stream.
+     */
+    struct compositor_wait_t {
+      bool seen { false };
+      bool probed { false };
+    };
 
     /**
      * @brief Wait for the compositor to surface a freshly (re)connected
@@ -1682,22 +1714,41 @@ namespace display_device::vdd_utils {
      *          to die on an output kscreen never lists. Give the compositor
      *          the first chance; the CRTC steal is the fallback for
      *          compositors that ignore status-forced connectors.
+     * @details The card event is re-sent while waiting: KWin coalesces changes
+     *          that arrive while it is already re-enumerating, and a single
+     *          event lost that way costs the whole connector.
      */
-    bool
-    wait_for_compositor_output(const std::string &connector, std::chrono::milliseconds timeout) {
+    compositor_wait_t
+    wait_for_compositor_output(const std::string &connector, const std::string &card, std::chrono::milliseconds timeout) {
       if (!platf::kscreen::session_supports_kscreen()) {
-        return false;
+        return {};
       }
 
+      constexpr auto renotify_interval = std::chrono::milliseconds { 2500 };
       const auto deadline = std::chrono::steady_clock::now() + timeout;
+      auto next_renotify = std::chrono::steady_clock::now() + renotify_interval;
+      compositor_wait_t wait;
+
       while (true) {
-        if (kscreen_sees_connector(connector)) {
-          return true;
+        switch (probe_compositor_connector(connector)) {
+          case compositor_probe_e::seen:
+            return { true, true };
+          case compositor_probe_e::absent:
+            wait.probed = true;
+            break;
+          case compositor_probe_e::unavailable:
+            break;
         }
-        if (std::chrono::steady_clock::now() >= deadline) {
-          return false;
+
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline) {
+          return wait;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds { 200 });
+        if (!card.empty() && now >= next_renotify) {
+          notify_compositor(card);
+          next_renotify = now + renotify_interval;
+        }
+        std::this_thread::sleep_for(kCompositorProbeInterval);
       }
     }
 
@@ -2673,11 +2724,9 @@ namespace display_device::vdd_utils {
     // explicitly, because it ignores the connector-level event the cycle
     // emits (see notify_compositor).
     const bool compositor_observable = platf::kscreen::session_supports_kscreen();
-    bool compositor_live = wait_for_compositor_output(connector, std::chrono::milliseconds { 2000 });
-    if (!compositor_live && compositor_observable) {
-      notify_compositor(card);
-      compositor_live = wait_for_compositor_output(connector, std::chrono::milliseconds { 2000 });
-    }
+    const auto compositor_wait = wait_for_compositor_output(
+      connector, card, compositor_observable ? kCompositorSurfaceBudget : std::chrono::milliseconds { 2500 });
+    bool compositor_live = compositor_wait.seen;
     if (!compositor_live && !compositor_observable && !connector_has_crtc(card, connector)) {
       force_crtc_assignment("/dev/dri/" + card, connector);
     }
@@ -3062,17 +3111,15 @@ namespace display_device::vdd_utils {
     // for good. Compositor first; the steal only exists for compositors that
     // cannot be observed at all.
     const bool compositor_observable = platf::kscreen::session_supports_kscreen();
-    bool compositor_live = wait_for_compositor_output(connector, std::chrono::milliseconds { 2500 });
+    // Re-notification and the generous budget both live inside the wait: a
+    // status-forced connector takes seconds to surface while the compositor
+    // re-enumerates, and a single lost or coalesced card event used to cost the
+    // whole connector.
+    auto compositor_wait = wait_for_compositor_output(
+      connector, card, compositor_observable ? kCompositorSurfaceBudget : std::chrono::milliseconds { 2500 });
     bool crtc_assigned = connector_has_crtc(card, connector);
 
-    if (!compositor_live && compositor_observable) {
-      // The card event may have been coalesced with the status write; ask
-      // again before concluding the compositor will never see the connector.
-      notify_compositor(card);
-      compositor_live = wait_for_compositor_output(connector, std::chrono::milliseconds { 2500 });
-    }
-
-    if (!compositor_live && !compositor_observable && !crtc_assigned) {
+    if (!compositor_wait.seen && !compositor_observable && !crtc_assigned) {
       for (int attempt = 0; attempt < 4 && !crtc_assigned; ++attempt) {
         force_crtc_assignment("/dev/dri/" + card, connector);
         enable_output_via_compositor(connector);
@@ -3086,41 +3133,58 @@ namespace display_device::vdd_utils {
         // The steal may have landed inside the compositor's one-shot
         // activation of this connector event. Recycling the connector hands
         // it a fresh attempt; the EDID override survives the cycle.
-        compositor_live = wait_for_compositor_output(connector, std::chrono::milliseconds { 1000 });
-        if (!compositor_live) {
+        const auto recycled_wait = wait_for_compositor_output(connector, card, std::chrono::milliseconds { 1000 });
+        compositor_wait.seen = recycled_wait.seen;
+        if (!compositor_wait.seen) {
           BOOST_LOG(warning) << "vdd: recycling "sv << connector
                              << " so the compositor retries its activation"sv;
           write_text_file(status_path, "off");
           wait_for_status(status_path, "disconnected", 10, std::chrono::milliseconds { 200 });
           write_text_file(status_path, "on");
           wait_for_status(status_path, "connected", 10, std::chrono::milliseconds { 300 });
-          notify_compositor(card);
-          compositor_live = wait_for_compositor_output(connector, std::chrono::milliseconds { 2500 });
+          const auto retry_wait = wait_for_compositor_output(connector, card, std::chrono::milliseconds { 2500 });
+          compositor_wait.seen = retry_wait.seen;
         }
       }
     }
 
-    if (compositor_live) {
-      // No-op when the compositor already enabled the output; needed for
-      // compositors that surface new outputs disabled.
-      enable_output_via_compositor(connector);
-    }
-    else if (compositor_observable) {
-      // The compositor is observable and still does not see the connector.
-      // `connector_has_crtc` is not evidence to the contrary here: a connector
-      // left "enabled" while disconnected keeps its encoder from an earlier
-      // run, and KScreen cannot address an output it never listed. Returning
-      // true would only move the failure to the mode set with a bogus "live"
-      // log in front of it; fail where the cause is visible.
-      BOOST_LOG(error) << "vdd: compositor never surfaced "sv << connector
-                       << "; refusing to create a virtual display it cannot use"sv;
-      return false;
-    }
-    else if (crtc_assigned) {
-      enable_output_via_compositor(connector);
-    }
-    else {
-      BOOST_LOG(warning) << "vdd: compositor did not assign a CRTC to "sv << connector << " in time"sv;
+    switch (compositor_verdict(compositor_observable, compositor_wait.seen, compositor_wait.probed)) {
+      case compositor_verdict_e::live:
+        // No-op when the compositor already enabled the output; needed for
+        // compositors that surface new outputs disabled.
+        enable_output_via_compositor(connector);
+        break;
+
+      case compositor_verdict_e::refuse:
+        // The compositor answered and still does not list the connector.
+        // `connector_has_crtc` is not evidence to the contrary here: a
+        // connector left "enabled" while disconnected keeps its encoder from an
+        // earlier run, and KScreen cannot address an output it never listed.
+        // Returning true would only move the failure to the mode set with a
+        // bogus "live" log in front of it; fail where the cause is visible.
+        BOOST_LOG(error) << "vdd: compositor never surfaced "sv << connector
+                         << "; refusing to create a virtual display it cannot use"sv;
+        return false;
+
+      case compositor_verdict_e::unverified:
+        if (compositor_observable) {
+          // Not one probe got an answer within the whole budget (the compositor
+          // is busy, wedged, or the helper keeps timing out). That is not
+          // evidence against the connector: the DRM-level state says it is up,
+          // so let the capture path decide instead of failing a stream on a
+          // missing answer.
+          BOOST_LOG(warning) << "vdd: could not get an answer from the compositor about "sv << connector
+                             << " within "sv
+                             << std::chrono::duration_cast<std::chrono::seconds>(kCompositorSurfaceBudget).count()
+                             << "s; continuing with the DRM-level connector state"sv;
+        }
+        if (crtc_assigned) {
+          enable_output_via_compositor(connector);
+        }
+        else if (!compositor_observable) {
+          BOOST_LOG(warning) << "vdd: compositor did not assign a CRTC to "sv << connector << " in time"sv;
+        }
+        break;
     }
 
     // Hand the finished display to the record that owns it. `active_edid_opts`

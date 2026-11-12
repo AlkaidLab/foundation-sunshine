@@ -48,9 +48,15 @@ namespace platf::kscreen {
 
   /**
    * @brief Whether a probe may be attempted now (cooldown not armed).
+   * @param ignore_cooldown Bypass the cooldown. A caller that owns the connector
+   *        event it just emitted (a virtual display it is still bringing up)
+   *        must not be blinded by a cooldown armed by its own slow probe: the
+   *        cooldown exists to stop unrelated status queries from spawning a
+   *        wedged helper over and over, not to hide the answer from the one
+   *        place that has to wait for it.
    */
   bool
-  probe_allowed();
+  probe_allowed(bool ignore_cooldown = false);
 
   /**
    * @brief Record an unavailable backend: arm the cooldown and log once.

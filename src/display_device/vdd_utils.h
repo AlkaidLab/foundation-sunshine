@@ -136,6 +136,53 @@ namespace display_device::vdd_utils {
   inline constexpr auto kModePublicationInitialPoll = std::chrono::milliseconds { 50 };
   inline constexpr auto kModePublicationMaxPoll = std::chrono::milliseconds { 500 };
 
+  // How long a status-forced connector may take before the compositor lists it
+  // as an output. A compositor that just got a card change event re-enumerates
+  // its DRM resources first, which on a busy session can take seconds: the
+  // observed worst case on KWin 6.8 with a single GPU was 6.5s to 14s, against
+  // a normal 24ms kscreen-doctor round trip. Giving up earlier fails the whole
+  // stream (and leaves the physical outputs switched off), so the budget is
+  // generous; the wait returns as soon as the compositor answers.
+  inline constexpr auto kCompositorSurfaceBudget = std::chrono::seconds { 15 };
+
+  // Interval between two compositor queries while waiting. Each query forks
+  // kscreen-doctor and makes it talk to the compositor we are already waiting
+  // for, so it must not be as tight as a pure state check.
+  inline constexpr auto kCompositorProbeInterval = std::chrono::milliseconds { 400 };
+
+  /**
+   * @brief What the compositor evidence allows us to conclude about a connector
+   *        that was just forced on.
+   * @details The distinction that matters is between "the compositor answered
+   *          and did not list the connector" and "the compositor never
+   *          answered": only the first is evidence. Treating a missing answer
+   *          as evidence is what turns one slow query — the compositor
+   *          re-enumerating right after our own uevent — into a failed stream.
+   */
+  enum class compositor_verdict_e {
+    live,       ///< The compositor lists the connector.
+    refuse,     ///< It answered and does not list it: the output cannot be used.
+    unverified, ///< No answer: nothing is known against the connector.
+  };
+
+  /**
+   * @brief Fold the probe outcome into a decision.
+   * @param compositor_observable Whether this session's compositor can be asked.
+   * @param seen Whether the compositor listed the connector.
+   * @param probed Whether at least one query got an answer.
+   * @return `live`, `refuse` or `unverified`.
+   */
+  inline compositor_verdict_e
+  compositor_verdict(bool compositor_observable, bool seen, bool probed) {
+    if (seen) {
+      return compositor_verdict_e::live;
+    }
+    if (!compositor_observable) {
+      return compositor_verdict_e::unverified;
+    }
+    return probed ? compositor_verdict_e::refuse : compositor_verdict_e::unverified;
+  }
+
   // HDR亮度范围结构
   struct hdr_brightness_t {
     float max_nits = 1000.0f;

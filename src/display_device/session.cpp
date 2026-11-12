@@ -474,6 +474,11 @@ namespace display_device {
 
     // 在创建 VDD 可能使 Windows 自动激活显示器、Sunshine 应用目标布局之前保存拓扑。
     boost::optional<active_topology_t> pre_saved_initial_topology = pending_vdd_.initial_topology;
+    // Only a snapshot taken in this call is known to be free of the virtual
+    // display: a carried-over one may have been captured while a VDD existed
+    // ("topology may be corrupted"), and restoring that would reintroduce a
+    // display that does not exist.
+    bool pre_saved_topology_is_pre_vdd = false;
     if (should_prepare_vdd) {
       const bool vdd_already_exists = !display_device::find_device_by_friendlyname(ZAKO_NAME).empty();
       if (will_disable_physical_displays) {
@@ -492,6 +497,7 @@ namespace display_device {
       else if (!is_system_rdp_vdd_session) {
         pending_vdd_.initial_topology = get_current_topology();
         pre_saved_initial_topology = pending_vdd_.initial_topology;
+        pre_saved_topology_is_pre_vdd = true;
         BOOST_LOG(debug) << "Pre-saved initial topology before VDD creation: " << to_string(*pre_saved_initial_topology);
       }
 
@@ -511,6 +517,30 @@ namespace display_device {
                               "Failed to update the VDD mode list" :
                               "Failed to prepare the VDD device");
         restore_state_impl(revert_reason_e::config_cleanup);
+
+        // restore_state_impl takes its "no session config" branch here, because
+        // current_use_vdd is only set after prepare_vdd succeeds: it removes the
+        // VDD and nothing else. A failed prepare can already have switched the
+        // physical outputs off (display_off) before it gave up, which would leave
+        // the desktop on a display that does not exist. Put the pre-VDD topology
+        // back so a failed attempt costs the client a retry, not the user's
+        // screen.
+        if (pre_saved_initial_topology && pre_saved_topology_is_pre_vdd && !is_system_rdp_vdd_session) {
+          const auto current_topology = get_current_topology();
+          if (!is_topology_the_same(*pre_saved_initial_topology, current_topology)) {
+            if (is_topology_valid(*pre_saved_initial_topology) &&
+                set_topology(*pre_saved_initial_topology)) {
+              BOOST_LOG(info) << "Restored the pre-VDD topology after the failed VDD preparation: "
+                              << to_string(*pre_saved_initial_topology);
+            }
+            else {
+              BOOST_LOG(warning) << "Could not restore the pre-VDD topology ("
+                                 << to_string(*pre_saved_initial_topology)
+                                 << "); the display layout may need to be fixed by hand";
+            }
+          }
+        }
+
         return {
           modes_failed ? configure_result_t::result_e::modes_fail : configure_result_t::result_e::vdd_create_failed,
           modes_failed ? "Sunshine could not configure the requested virtual display mode." : "Sunshine could not create the virtual display.",
