@@ -280,6 +280,19 @@ if (WIN32)
 endif ()
 add_test(NAME ds5_tuning_unit_tests COMMAND ds5_tuning_unit_tests)
 
+add_executable(ds5_haptics_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/haptics/authored_ir.cpp
+        ${CMAKE_SOURCE_DIR}/src/haptics/legacy_rumble.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_ds5_haptics.cpp)
+target_include_directories(ds5_haptics_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(ds5_haptics_unit_tests PRIVATE gtest_main moonlight::haptics
+        sunshine_project_options sunshine_coverage)
+set_target_properties(ds5_haptics_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(ds5_haptics_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME ds5_haptics_unit_tests COMMAND ds5_haptics_unit_tests)
+
 add_executable(ds5_feature_reports_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_ds5_feature_reports.cpp)
 target_include_directories(ds5_feature_reports_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(ds5_feature_reports_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)

@@ -1,7 +1,8 @@
 /** Legacy ERM rendering policy; independent of the v2 wire adapter. */
 #include "authored_ir.h"
-#include "src/ds5/config.h"
-#include "src/logging.h"
+#include "src/ds5/rumble_shape.h"
+#include "src/ds5/tuning_runtime.h"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -11,14 +12,9 @@ namespace haptics {
   namespace {
     constexpr std::uint8_t source_stream_start = 0x01;
     constexpr std::uint8_t source_discontinuity = 0x04;
-    constexpr auto legacy_emit_period = std::chrono::milliseconds(20);
     // Some clients dispatch rumble on a slower timer and keep only the newest
     // queued packet. Hold short synthesized pulses long enough that a stop
     // packet cannot replace the only nonzero dispatch.
-    constexpr auto legacy_min_active_hold = std::chrono::milliseconds(80);
-    constexpr auto legacy_watchdog_timeout = std::chrono::milliseconds(100);
-    constexpr float legacy_gate_open = 0.020f;
-    constexpr float legacy_gate_close = 0.010f;
     constexpr float legacy_gate_hold_seconds = 0.060f;
     constexpr float legacy_output_floor = 0.030f;
     constexpr float legacy_low_band_trim = 1.15f;
@@ -65,6 +61,7 @@ namespace haptics {
       return static_cast<std::uint16_t>(std::lround(
         std::clamp(value, 0.0f, 1.0f) * std::numeric_limits<std::uint16_t>::max()));
     }
+
   }  // namespace
 
   bool
@@ -86,6 +83,36 @@ namespace haptics {
     _last_input = now;
     _have_input = true;
 
+    // The switch and the channel gains mean exactly what they mean in
+    // apply_rumble: one acquire-consistent snapshot, shared through
+    // rumble_shape() so the two paths cannot drift apart.  Off stops the
+    // motors outright -- one stop packet ends a running effect, a held pulse
+    // included, which the short-release replay would otherwise keep alive --
+    // and the session then stays quiet.  Every gate and release tracker
+    // resets, so turning rumble back on starts from a closed gate with no
+    // stale hold budget instead of picking up where the effect left off.
+    const auto shape = ds5::tuning::runtime::rumble_shape();
+    if (!shape.enabled) {
+      const bool had_output = _last_low != 0 || _last_high != 0;
+      _smoothed_low = 0.0f;
+      _smoothed_high = 0.0f;
+      _low_gate = {};
+      _high_gate = {};
+      _active_since = {};
+      _last_nonzero_low = 0;
+      _last_nonzero_high = 0;
+      _short_release_low = false;
+      _short_release_high = false;
+      _last_low = 0;
+      _last_high = 0;
+      if (!had_output) return std::nullopt;
+      _last_emit = now;
+      return legacy_rumble_t { controller_id, 0, 0 };
+    }
+
+    const auto timing = ds5::tuning::runtime::rumble_tuning();
+    const auto hold = std::chrono::milliseconds(timing.hold_ms);
+
     const bool force_emit = (source_flags & (source_stream_start | source_discontinuity)) != 0;
     if (force_emit) {
       _smoothed_low = 0.0f;
@@ -100,7 +127,12 @@ namespace haptics {
       _short_release_high = false;
     }
 
-    const bool must_stop = (frame->flags & AH_AUTHORED_FRAME_STREAM_END) != 0;
+    bool must_stop = (frame->flags & AH_AUTHORED_FRAME_STREAM_END) != 0;
+    if (timing.max_duration_ms != 0u &&
+        _active_since != std::chrono::steady_clock::time_point {} &&
+        now - _active_since >= std::chrono::milliseconds(timing.max_duration_ms)) {
+      must_stop = true;
+    }
     float low_energy = 0.0f;
     float high_energy = 0.0f;
     if ((frame->flags & AH_AUTHORED_FRAME_SILENT) == 0) {
@@ -118,38 +150,42 @@ namespace haptics {
 
     // The heavier low motor keeps body slightly longer; the lighter high motor
     // tracks texture and impacts quickly. Time-based coefficients keep this
-    // independent of the sidecar's chunk boundaries.
+    // independent of the transport's chunk boundaries.
     const auto duration_seconds = static_cast<float>(std::max(frame->source_frame_count, 1u)) / 48000.0f;
-    // The immutable snapshot was fully validated before publication. Load it
-    // once so both motor lanes use one coherent revision without per-packet
-    // file access, parsing, locking, or duplicated range handling.
-    const auto settings = ds5_config::current();
-    if (_tuning_revision != settings.revision) {
+    // Read once per packet from the live tuning, so the report path takes no lock
+    // and touches no file. Defaults give the gate 0.020, curve 0.5 and strength 1.0
+    // this path always had; the curve slider scales that square-root response, and
+    // each motor's own gain scales its shaped drive the way apply_rumble scales a
+    // game rumble report.
+    const auto gate_open = shape.noise_gate;
+    const auto gate_close = gate_open * 0.5f;
+    const auto curve = 0.5f * shape.curve;
+    const auto strength = shape.strength;
+    if (gate_open != _applied_gate) {
+      // A new threshold starts from a closed gate, so old hysteresis cannot hold a motor on.
       _low_gate = {};
       _high_gate = {};
-      _tuning_revision = settings.revision;
-      BOOST_LOG(debug) << "Controller " << controller_id
-                       << " adopted legacy haptics tuning revision " << settings.revision;
+      _applied_gate = gate_open;
     }
-    const auto gate_open = static_cast<float>(settings.legacy_noise_gate);
-    const auto gate_close = gate_open * 0.5f;
-    const auto curve = static_cast<float>(settings.legacy_curve);
-    const auto strength = static_cast<float>(settings.legacy_strength);
     if (must_stop) {
       _low_gate = {};
       _high_gate = {};
       _short_release_low = false;
       _short_release_high = false;
     }
-    const auto low_target = must_stop ? 0.0f : shaped(low_energy, legacy_low_makeup_gain, _low_gate, duration_seconds, gate_open, gate_close, curve, strength);
-    const auto high_target = must_stop ? 0.0f : shaped(high_energy, legacy_high_makeup_gain, _high_gate, duration_seconds, gate_open, gate_close, curve, strength);
+    const auto low_target = must_stop ?
+                              0.0f :
+                              shape.low_gain * shaped(low_energy, legacy_low_makeup_gain, _low_gate, duration_seconds, gate_open, gate_close, curve, strength);
+    const auto high_target = must_stop ?
+                               0.0f :
+                               shape.high_gain * shaped(high_energy, legacy_high_makeup_gain, _high_gate, duration_seconds, gate_open, gate_close, curve, strength);
 
     // A force clear is only appropriate when a target drops out during the
     // minimum hold window. Effects that were already active beyond that
     // window must use the configured release tail instead.
     const bool within_min_hold =
       _active_since != std::chrono::steady_clock::time_point {} &&
-      now - _active_since < legacy_min_active_hold;
+      now - _active_since < hold;
     if (must_stop || low_target > 0.0f) {
       _short_release_low = false;
     }
@@ -173,7 +209,7 @@ namespace haptics {
     _smoothed_high = must_stop ? 0.0f : smooth(_smoothed_high, high_target, legacy_high_attack_seconds, legacy_high_release_seconds);
     const bool hold_expired =
       _active_since != std::chrono::steady_clock::time_point {} &&
-      now - _active_since >= legacy_min_active_hold;
+      now - _active_since >= hold;
     if (hold_expired && _short_release_low && low_target <= 0.0f) _smoothed_low = 0.0f;
     if (hold_expired && _short_release_high && high_target <= 0.0f) _smoothed_high = 0.0f;
     if (low_target <= 0.0f && _smoothed_low < legacy_output_floor) _smoothed_low = 0.0f;
@@ -187,7 +223,7 @@ namespace haptics {
       _last_nonzero_high = high;
     }
     else if (!must_stop && _active_since != std::chrono::steady_clock::time_point {} &&
-             now - _active_since < legacy_min_active_hold) {
+             now - _active_since < hold) {
       low = _last_nonzero_low;
       high = _last_nonzero_high;
     }
@@ -203,7 +239,8 @@ namespace haptics {
     const bool silent_hold = low == 0 && high == 0 && _last_low == 0 && _last_high == 0;
     if (!must_stop && !force_emit &&
         (silent_hold ||
-          (_last_emit != std::chrono::steady_clock::time_point {} && now - _last_emit < legacy_emit_period))) {
+          (_last_emit != std::chrono::steady_clock::time_point {} &&
+            now - _last_emit < std::chrono::milliseconds(timing.effective_interval_ms)))) {
       return std::nullopt;
     }
 
@@ -215,7 +252,8 @@ namespace haptics {
 
   std::optional<legacy_rumble_t>
   legacy_rumble_session_t::poll(std::chrono::steady_clock::time_point now) {
-    if (!_have_input || now - _last_input < legacy_watchdog_timeout) {
+    const auto watchdog = std::chrono::milliseconds(ds5::tuning::runtime::rumble_tuning().watchdog_ms);
+    if (!_have_input || now - _last_input < watchdog) {
       return std::nullopt;
     }
     const bool had_output = _last_low != 0 || _last_high != 0;
