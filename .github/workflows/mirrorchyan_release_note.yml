@@ -1,0 +1,53 @@
+name: mirrorchyan_release_note
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to update (empty for the latest release)'
+        type: string
+        default: ''
+        required: false
+  release:
+    types: [published, edited]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  mirrorchyan:
+    if: ${{ github.repository_owner == 'AlkaidLab' }}
+    runs-on: macos-latest
+    steps:
+      - name: Resolve release channel
+        id: release
+        uses: actions/github-script@v7
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name }}
+        with:
+          script: |
+            const target = { owner: 'AlkaidLab', repo: 'foundation-sunshine' };
+            let release;
+            if (process.env.RELEASE_TAG) {
+              release = (await github.rest.repos.getReleaseByTag({ ...target, tag: process.env.RELEASE_TAG })).data;
+            } else {
+              const { data } = await github.rest.repos.listReleases({ ...target, per_page: 100 });
+              release = data.find(item => !item.draft);
+            }
+            if (!release || release.draft) {
+              throw new Error('No published release found');
+            }
+            core.setOutput('tag', release.tag_name);
+            core.setOutput('channel', release.prerelease ? 'beta' : 'stable');
+
+      - uses: MirrorChyan/release-note-action@v1
+        with:
+          mirrorchyan_rid: foundation-sunshine
+          version_name: ${{ steps.release.outputs.tag }}
+          channel: ${{ steps.release.outputs.channel }}
+
+          owner: AlkaidLab
+          repo: foundation-sunshine
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          upload_token: ${{ secrets.MirrorChyanUploadToken }}
