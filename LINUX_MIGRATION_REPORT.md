@@ -1135,15 +1135,49 @@ AMF `57ee0cfb`、`moonlight-audio-haptics` `c4f1b8c4`。
 DS5 音频触觉没有投递端（inputtino `PS5Joypad` 无 actuator PCM 接口，`gamepad_is_ds5()` 恒 false）、
 Dolby MAT 实况采集 `prepare_live()` 在非 Windows 直接返回空——见 `LINUX_PORT_GAPS.md` §5.6/§5.7。
 
+### 6.35 探测冷却把"没采到证据"当成"合成器拒绝"（6.33 闸门的自伤）
+
+§6.33 给虚拟屏创建的判据是"合成器必须列出该 output，否则拒绝建屏"。这条判据本身是对的，
+但它把**查询失败**与**查询结果为空**当成了同一件事，于是自己把自己憋死：
+
+- `kscreen_backend.h` 的 `kProbeTimeout = 1500ms`，正常 `kscreen-doctor -o` 只要 **23ms**；但
+  `notify_compositor()` 刚写完 `/sys/class/drm/<card>/uevent`，KWin 正在重枚举 DRM 资源，
+  这一次查询会卡过 1.5s。
+- 超时后 `note_unavailable()` 武装 `kRetryCooldown = 20s`（`kscreen_backend.cpp`），而
+  `kscreen_sees_connector()` 开头就查 `probe_allowed()` —— 冷却期内**一次都不探，直接返回 false**。
+- 于是 `wait_for_compositor_output()` 的整段预算（2s + 2.5s）是在"瞎子等"，结论必然是
+  `compositor never surfaced DP-2` → `/launch` 失败，客户端只看到一句"启动串流失败"。
+  实测现场：`11:46:24.300` 一次超时把冷却武装到 `11:46:44.3`，第二次尝试
+  `11:46:37→42.6` 全程落在冷却里；而 KScreen 在 6.5–14s 之后确实列出了这块假屏。
+
+修复（本轮）：
+
+| 问题 | 处理 |
+| --- | --- |
+| 查询失败 = 没有证据 | 探测改成三态 `compositor_probe_e { seen, absent, unavailable }` |
+| 冷却期盲等 | `probe_allowed(ignore_cooldown)`；创建路径永远不被自己武装的冷却挡住 |
+| 只在两段预算间补一次 uevent | `wait_for_compositor_output()` 内部每 2.5s 重发 `notify_compositor()` |
+| 预算太短 | 创建路径改为单段 `kCompositorSurfaceBudget = 15s`（`kCompositorProbeInterval = 400ms`） |
+| 拒绝条件过宽 | 新增纯函数 `vdd_utils::compositor_verdict(observable, seen, probed)`：只有"答了但没列出"才 `refuse`；"从没答上"降级为 `unverified`，让采集路径去判 |
+| 失败留下残局 | `prepare_vdd` 失败分支在 `restore_state_impl()` 之后用本次真正保存的 `pre_saved_initial_topology` 把拓扑放回去（`pre_saved_topology_is_pre_vdd` 只认本次快照，避免把"含 VDD 的旧拓扑"装回来） |
+
+顺带修掉 `tests/unit/test_file_mapping_ws_network.cpp` 在 OpenSSL 4 下的编译失败
+（`X509_get_subject_name()` 返回 const，`X509_NAME_add_entry_by_txt()` 要非 const → 自建 `X509_NAME`），
+这个文件此前因为 `.o` 陈旧一直没有被重新编译，所以 §6.34 那轮没暴露。
+
+验证：`ninja -C build` 通过；`test_sunshine` **680 例 / 672 通过 / 8 跳过 / 0 断言失败**
+（新增 `tests/unit/test_vdd_compositor_verdict.cpp` 5 例）；`ctest` 31 套件 30 通过。
+真实合成器侧的恢复时序无法在无头环境复现，需要用户在 Plasma 会话里重连确认。
+
 ---
 
 ## 九、测试基线
 
-2026-11-11（并入上游 `6d41627e` + OpenSSL 4 适配之后），CUDA=ON 构建树：
+2026-11-12（修完 6.35 的探测冷却与拓扑回滚之后），CUDA=ON 构建树：
 
 ```
 ctest: 31 个套件，30 通过，1 失败（test_sunshine）
-test_sunshine: 675 用例，670 通过，5 跳过，0 失败
+test_sunshine: 680 用例，672 通过，8 跳过，0 失败
 ```
 
 套件数从 24 涨到 31 是上游新增（`authored_ir_extended_unit_tests`、`display_scale_steps_unit_tests`、
@@ -1162,7 +1196,8 @@ test_sunshine: 675 用例，670 通过，5 跳过，0 失败
 | `fe0d2338` | 并入上游 `0219abe2`（#1175）+ 主屏归属对齐 | 660 / 655 |
 | 本次（第四轮 review 修复之后） | 客户域会话模式等 4 项修复 | 665 / 660 |
 | 第五轮 review 修复之后 | 设备归属、跨卡编号、PulseAudio 判空与两处打包缺陷 | 665 / 660 |
-| 并入上游 `6d41627e`（#1227）+ OpenSSL 4 适配（当前） | 25 个上游提交 + `crypto.cpp` 的 SAN/API 适配 | 675 / 670 |
+| 并入上游 `6d41627e`（#1227）+ OpenSSL 4 适配 | 25 个上游提交 + `crypto.cpp` 的 SAN/API 适配 | 675 / 670 |
+| 修完 6.35 探测冷却/拓扑回滚（当前） | 三态探测、冷却旁路、15s 预算、失败回滚拓扑 | 680 / 672 |
 
 从 843 降到 650 是上游 `c211d711`（#1176 测试清理）删掉重复、空跑与外网用例
 所致——`tests/unit/test_audio.cpp`、`test_mouse.cpp`、`test_entry_handler.cpp`、
