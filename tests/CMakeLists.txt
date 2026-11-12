@@ -273,6 +273,18 @@ target_link_libraries(ds5_feature_reports_unit_tests PRIVATE gtest_main sunshine
 set_target_properties(ds5_feature_reports_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME ds5_feature_reports_unit_tests COMMAND ds5_feature_reports_unit_tests)
 
+add_executable(ds5_rumble_policy_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_ds5_rumble_policy.cpp)
+target_include_directories(ds5_rumble_policy_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(ds5_rumble_policy_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(ds5_rumble_policy_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME ds5_rumble_policy_unit_tests COMMAND ds5_rumble_policy_unit_tests)
+
+add_executable(ds5_rumble_test_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_ds5_rumble_test.cpp)
+target_include_directories(ds5_rumble_test_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(ds5_rumble_test_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(ds5_rumble_test_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME ds5_rumble_test_unit_tests COMMAND ds5_rumble_test_unit_tests)
+
 add_executable(usbip_root_helper_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_usbip_root_helper.cpp)
 target_include_directories(usbip_root_helper_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(usbip_root_helper_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
