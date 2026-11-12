@@ -110,6 +110,8 @@ namespace platf {
     target_t gp;
     feedback_queue_t feedback_queue;
     bool back_as_touchpad_click = false;
+    // The gamepad_selection pad_type_* name of the emulated pad; empty while the slot is free.
+    std::string_view virtual_type;
 
     union {
       XUSB_REPORT x360;
@@ -274,6 +276,8 @@ namespace platf {
       gamepad.client_relative_index = id.clientRelativeIndex;
       gamepad.last_report_ts = std::chrono::steady_clock::now();
       gamepad.back_as_touchpad_click = back_as_touchpad_click;
+      gamepad.virtual_type = gp_type == Xbox360Wired ? gamepad_selection::pad_type_xbox360 :
+                                                       gamepad_selection::pad_type_dualshock4;
 
       // Establish a connect to the ViGEm driver if we don't have one yet
       if (!client) {

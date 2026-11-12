@@ -418,6 +418,15 @@ namespace platf {
     std::uint8_t percentage;
   };
 
+  /** @brief Headset and microphone facts reported by a DualSense client (control message 0x5516). */
+  struct gamepad_ds5_status_t {
+    gamepad_id_t id;
+    std::uint32_t valid_mask;  ///< ds5::control_extension::in_* bits
+    std::uint8_t headset_present;
+    std::uint8_t microphone_present;
+    std::uint8_t microphone_muted;
+  };
+
   struct touch_input_t {
     std::uint8_t eventType;
     std::uint16_t rotation;  // Degrees (0..360) or LI_ROT_UNKNOWN
@@ -1279,6 +1288,14 @@ namespace platf {
   gamepad_battery(input_t &input, const gamepad_battery_t &battery);
 
   /**
+   * @brief Pass the headset and microphone state of a DualSense client to the virtual controller.
+   * @param input The global input context.
+   * @param status The state reported with control message 0x5516. Platforms without a virtual
+   *               DualSense ignore it.
+   */
+  void
+  gamepad_ds5_status(input_t &input, const gamepad_ds5_status_t &status);
+
   /**
    * @brief Create a new virtual gamepad.
    * @param input The global input context.
@@ -1302,6 +1319,16 @@ namespace platf {
   bool
   gamepad_is_ds5(input_t &input, int nr);
 
+  /**
+   * @brief The virtual pad type the platform created for an allocated gamepad.
+   * @param input The global platform input context.
+   * @param nr The global gamepad index.
+   * @return A gamepad_selection pad_type_* name ("ds4", "ds5", "x360"); empty
+   *         when the index is not allocated or the platform does not name its
+   *         virtual pads in that vocabulary.
+   */
+  std::string_view
+  gamepad_virtual_type(input_t &input, int nr);
 
   /**
    * @brief 检查已分配的 DualSense 音频触觉会话是否仍可用。
