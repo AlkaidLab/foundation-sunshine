@@ -32,7 +32,7 @@ export const GAME_LIBRARY_AGENT_CAPABILITIES = [
   {
     skillId: SCAN_OVERRIDE_MEMORY_SKILL_ID,
     stage: 'memory',
-    icon: 'fa-clock-rotate-left',
+    icon: 'history',
     label: 'Confirmed overrides',
     labels: {
       zh: '\u5df2\u786e\u8ba4\u8986\u76d6',
@@ -44,7 +44,7 @@ export const GAME_LIBRARY_AGENT_CAPABILITIES = [
   {
     skillId: GAME_TITLE_NORMALIZE_SKILL_ID,
     stage: 'metadata',
-    icon: 'fa-wand-magic-sparkles',
+    icon: 'wand_stars',
     label: 'AI name cleanup',
     labels: {
       zh: 'AI \u540d\u79f0\u6e05\u6d17',
@@ -55,7 +55,7 @@ export const GAME_LIBRARY_AGENT_CAPABILITIES = [
   {
     skillId: COVER_SELECTION_SKILL_ID,
     stage: 'asset',
-    icon: 'fa-image',
+    icon: 'image',
     label: 'AI cover matching',
     labels: {
       zh: 'AI \u5c01\u9762\u5339\u914d',
