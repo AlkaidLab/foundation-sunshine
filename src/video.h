@@ -19,6 +19,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "hdr/client_display_capabilities.h"
@@ -210,6 +211,14 @@ namespace video {
    */
   bool
   encodes_display_1to1(int stream_width, int stream_height, int display_width, int display_height);
+
+  /**
+   * @brief Display size the capture loop reports to the client (0x5507) when capture starts.
+   * @return nullopt for window capture: it keeps the negotiated size whatever the monitor's size or orientation
+   *         and never follows display changes, so the monitor size does not describe the stream.
+   */
+  std::optional<std::pair<std::uint32_t, std::uint32_t>>
+  capture_start_display_report(bool is_window_capture, int display_width, int display_height);
 
   /* Encoding configuration requested by remote client */
   struct config_t {

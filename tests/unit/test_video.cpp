@@ -293,6 +293,13 @@ namespace {
   const auto pending_t0 = pending_clock::time_point {} + std::chrono::hours(1);
 }  // namespace
 
+TEST(CaptureStartReportTests, WindowCaptureDoesNotReportTheMonitorSize) {
+  // On a portrait monitor window capture keeps the negotiated landscape size, so a client that applies the
+  // display-capture scale to the reported monitor size would reset to the wrong stream size.
+  EXPECT_EQ(video::capture_start_display_report(true, 1080, 1920), std::nullopt);
+  EXPECT_EQ(video::capture_start_display_report(false, 1080, 1920), std::make_pair(1080u, 1920u));
+}
+
 TEST(PendingDisplaySizeTests, FollowsEveryDisplayChangeWithoutATarget) {
   video::pending_display_size_t pending;
   EXPECT_FALSE(pending.pending(pending_t0));
