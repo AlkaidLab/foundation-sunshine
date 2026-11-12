@@ -267,6 +267,19 @@ target_include_directories(current_capture_target_unit_tests PRIVATE "${CMAKE_SO
 target_link_libraries(current_capture_target_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
 set_target_properties(current_capture_target_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME current_capture_target_unit_tests COMMAND current_capture_target_unit_tests)
+add_executable(ds5_tuning_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/ds5/tuning_profile.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_ds5_tuning.cpp)
+target_include_directories(ds5_tuning_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(ds5_tuning_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
+        sunshine_project_options sunshine_coverage)
+target_compile_definitions(ds5_tuning_unit_tests PRIVATE DS5_TUNING_TEST_NATIVE_PATH=1)
+set_target_properties(ds5_tuning_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(ds5_tuning_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME ds5_tuning_unit_tests COMMAND ds5_tuning_unit_tests)
+
 add_executable(ds5_feature_reports_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_ds5_feature_reports.cpp)
 target_include_directories(ds5_feature_reports_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(ds5_feature_reports_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
