@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="auto">
+  <head>
+    <%- String(header).replace('initial-scale=1.0', 'initial-scale=1.0, viewport-fit=cover') %>
+    <style>html, body { margin: 0; }</style>
+    <script><%- bootScript %></script>
+  </head>
+
+  <body id="app" v-cloak>
+    <!-- Vue 应用挂载点 -->
+  </body>
+
+  <script type="module">
+    import { createApp } from 'vue'
+    import { initApp } from './init'
+    import Login from './views/Login.vue'
+
+    const app = createApp(Login)
+    initApp(app)
+  </script>
+</html>
