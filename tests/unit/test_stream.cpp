@@ -75,6 +75,7 @@ namespace {
   config::video_t
   client_resolution_change_config() {
     auto video = config::video;
+    video.capture_target = "display";
     video.allow_client_resolution_change = true;
     video.dynamic_resolution_follow_display = true;
     video.resolution_change = static_cast<int>(display_device::parsed_config_t::resolution_change_e::automatic);
@@ -104,6 +105,13 @@ TEST(ClientResolutionChangeTests, EnabledOnlyWithOptInFollowDisplayAutomaticReso
   video.resolution_change = static_cast<int>(display_device::parsed_config_t::resolution_change_e::manual);
   EXPECT_FALSE(stream::client_resolution_change_enabled(video, true));
   video.resolution_change = static_cast<int>(display_device::parsed_config_t::resolution_change_e::no_operation);
+  EXPECT_FALSE(stream::client_resolution_change_enabled(video, true));
+}
+
+TEST(ClientResolutionChangeTests, NotEnabledForWindowCapture) {
+  // Window capture never follows the display, so a client-requested display size would never reach the stream.
+  auto video = client_resolution_change_config();
+  video.capture_target = "window";
   EXPECT_FALSE(stream::client_resolution_change_enabled(video, true));
 }
 

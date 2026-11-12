@@ -56,7 +56,8 @@ namespace stream {
    * control-stream handler so the two cannot drift. Besides the opt-in, the capture loop only
    * resizes the encoder and notifies the client (0x5507) when it follows the host display, and
    * client-driven sizes are only exact when the launch mode was applied 1:1 (automatic resolution
-   * change with SOPS); otherwise its fixed scale ratio distorts them.
+   * change with SOPS); otherwise its fixed scale ratio distorts them. Window capture never follows
+   * the display, so it is excluded too.
    * Always false off Windows, where live display mode switching is not implemented.
    */
   bool

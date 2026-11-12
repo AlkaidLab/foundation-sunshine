@@ -162,6 +162,7 @@ namespace stream {
     return video_config.allow_client_resolution_change &&
            video_config.dynamic_resolution_follow_display &&
            video_config.resolution_change == static_cast<int>(display_device::parsed_config_t::resolution_change_e::automatic) &&
+           video_config.capture_target != "window" &&
            session_enable_sops;
 #else
     // Live display mode switching is only implemented on Windows.

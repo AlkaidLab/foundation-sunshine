@@ -321,6 +321,14 @@ namespace video {
            (stream_width == display_height && stream_height == display_width);
   }
 
+  std::optional<std::pair<std::uint32_t, std::uint32_t>>
+  capture_start_display_report(bool is_window_capture, int display_width, int display_height) {
+    if (is_window_capture) {
+      return std::nullopt;
+    }
+    return std::make_pair(static_cast<std::uint32_t>(display_width), static_cast<std::uint32_t>(display_height));
+  }
+
   input_activity_boost_policy_t
   make_input_activity_boost_policy(const input_activity_boost_config_t &config) {
     input_activity_boost_policy_t policy {};
@@ -4462,9 +4470,9 @@ namespace video {
         config.width = compute_aligned_resolution(current_width, initial_scale_x);
         config.height = compute_aligned_resolution(current_height, initial_scale_y);
 
-        resolution_change_event->raise(std::make_pair(
-          static_cast<std::uint32_t>(current_width),
-          static_cast<std::uint32_t>(current_height)));
+        if (const auto report = capture_start_display_report(is_window_capture, current_width, current_height)) {
+          resolution_change_event->raise(*report);
+        }
 
         if (orientation_mismatch) {
           idr_events->raise(true);
