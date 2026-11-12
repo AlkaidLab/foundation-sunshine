@@ -1,405 +1,176 @@
 <template>
-  <div class="modal fade" id="editAppModal" tabindex="-1" aria-labelledby="editAppModalLabel" ref="modalElement">
-    <div class="modal-dialog modal-xl">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h5 class="modal-title" id="editAppModalLabel">
-            <i class="fas fa-edit me-2"></i>
-            {{ isNewApp ? t('apps.add_new') : t('apps.edit') }}
-          </h5>
-          <button type="button" class="btn-close" data-bs-dismiss="modal" :aria-label="t('_common.close')"></button>
-        </div>
-        <div class="modal-body">
-          <input type="file" ref="fileInput" style="display: none" />
-          <input type="file" ref="dirInput" style="display: none" webkitdirectory />
+  <MPage wide class="app-page" :title="pageTitle" back :back-label="t('apps.applications_title')" @back="requestClose">
+    <input ref="fileInput" type="file" class="visually-hidden" tabindex="-1" aria-hidden="true" />
+    <input ref="dirInput" type="file" class="visually-hidden" tabindex="-1" aria-hidden="true" webkitdirectory />
 
-          <form v-if="formData" @submit.prevent="saveApp">
-            <div class="accordion" id="appFormAccordion">
-              <AccordionItem
-                id="basicInfo"
-                icon="fa-info-circle"
-                :title="t('apps.basic_info')"
-                parent-id="appFormAccordion"
-                :show="true"
-              >
-                <FormField
-                  id="appName"
-                  :label="t('apps.app_name')"
-                  :hint="t('apps.app_name_desc')"
-                  :validation="validation.name"
-                  :value="formData.name"
-                  required
-                >
-                  <input
-                    type="text"
-                    class="form-control form-control-enhanced"
-                    id="appName"
-                    v-model="formData.name"
-                    :class="getFieldClass('name')"
-                    @blur="validateField('name')"
-                    required
-                  />
-                </FormField>
-
-                <FormField
-                  id="appOutput"
-                  :label="t('apps.output_name')"
-                  :hint="t('apps.output_desc')"
-                  :validation="validation.output"
-                >
-                  <input
-                    type="text"
-                    class="form-control form-control-enhanced monospace"
-                    id="appOutput"
-                    v-model="formData.output"
-                    :class="getFieldClass('output')"
-                    @blur="validateField('output')"
-                  />
-                </FormField>
-
-                <FormField
-                  id="appCmd"
-                  :label="t('apps.cmd')"
-                  :validation="validation.cmd"
-                  :value="formData.cmd"
-                >
-                  <template #default>
-                    <div class="input-group">
-                      <input
-                        type="text"
-                        class="form-control form-control-enhanced monospace"
-                        id="appCmd"
-                        v-model="formData.cmd"
-                        :class="getFieldClass('cmd')"
-                        @blur="validateField('cmd')"
-                        @input="handleCmdInput"
-                        :placeholder="getPlaceholderText('cmd')"
-                      />
-                      <button
-                        class="btn btn-outline-secondary"
-                        type="button"
-                        @click="selectFile('cmd')"
-                        :title="getButtonTitle('file')"
-                      >
-                        <i class="fas fa-folder-open"></i>
-                      </button>
-                    </div>
-                  </template>
-                  <template #hint>
-                    {{ t('apps.cmd_desc') }}<br />
-                    <strong>{{ t('_common.note') }}</strong> {{ t('apps.cmd_note') }}<br />
-                    <div class="cmd-examples">
-                      <div class="cmd-examples-header"><i class="fas fa-lightbulb me-1"></i>{{ t('apps.cmd_examples_title') }}</div>
-                      <div class="cmd-examples-tags">
-                        <span class="cmd-tag">
-                          <code>cmd /c "start xbox:"</code>
-                          <span class="cmd-tag-desc">Xbox Game</span>
-                        </span>
-                        <span class="cmd-tag">
-                          <code>steam://open/bigpicture</code>
-                          <span class="cmd-tag-desc">Steam Big Picture</span>
-                        </span>
-                        <span class="cmd-tag">
-                          <code>cmd /c "start ms-gamebar:"</code>
-                          <span class="cmd-tag-desc">Xbox Game Bar</span>
-                        </span>
-                        <span class="cmd-tag">
-                          <code>cmd /c "start playnite://playnite/showMainWindow"</code>
-                          <span class="cmd-tag-desc">Playnite</span>
-                        </span>
-                        <span class="cmd-tag">
-                          <code>"C:\Program Files\...\game.exe"</code>
-                          <span class="cmd-tag-desc">{{ t('apps.launch_program_directly') }}</span>
-                        </span>
-                      </div>
-                    </div>
-                  </template>
-                </FormField>
-
-                <FormField
-                  id="appWorkingDir"
-                  :label="t('apps.working_dir')"
-                  :hint="t('apps.working_dir_desc')"
-                  :validation="validation['working-dir']"
-                >
-                  <div class="input-group">
-                    <input
-                      type="text"
-                      class="form-control form-control-enhanced monospace"
-                      id="appWorkingDir"
-                      v-model="formData['working-dir']"
-                      :class="getFieldClass('working-dir')"
-                      @blur="validateField('working-dir')"
-                      :placeholder="getPlaceholderText('working-dir')"
-                    />
-                    <button
-                      class="btn btn-outline-secondary"
-                      type="button"
-                      @click="selectDirectory('working-dir')"
-                      :title="getButtonTitle('directory')"
-                    >
-                      <i class="fas fa-folder-open"></i>
-                    </button>
-                  </div>
-                </FormField>
-              </AccordionItem>
-
-              <AccordionItem id="commands" icon="fa-terminal" :title="t('apps.command_settings')" parent-id="appFormAccordion">
-                <div class="form-group-enhanced">
-                  <div class="form-check form-switch">
-                    <input
-                      type="checkbox"
-                      class="form-check-input"
-                      id="excludeGlobalPrepSwitch"
-                      v-model="formData['exclude-global-prep-cmd']"
-                      :true-value="'true'"
-                      :false-value="'false'"
-                    />
-                    <label class="form-check-label" for="excludeGlobalPrepSwitch">
-                      {{ t('apps.global_prep_name') }}
-                    </label>
-                  </div>
-                  <div class="field-hint">{{ t('apps.global_prep_desc') }}</div>
-                </div>
-
-                <div class="form-group-enhanced">
-                  <label class="form-label-enhanced">{{ t('apps.cmd_prep_name') }}</label>
-                  <div class="field-hint mb-3">{{ t('apps.cmd_prep_desc') }}</div>
-                  <CommandTable
-                    :commands="formData['prep-cmd']"
-                    :platform="platform"
-                    type="prep"
-                    @add-command="addPrepCommand"
-                    @remove-command="removePrepCommand"
-                    @order-changed="handlePrepCommandOrderChanged"
-                  />
-                </div>
-
-                <div class="form-group-enhanced">
-                  <label class="form-label-enhanced">{{ t('apps.menu_cmd_name') }}</label>
-                  <div class="field-hint mb-3">{{ t('apps.menu_cmd_desc') }}</div>
-                  <CommandTable
-                    :commands="formData['menu-cmd']"
-                    :platform="platform"
-                    type="menu"
-                    @add-command="addMenuCommand"
-                    @remove-command="removeMenuCommand"
-                    @test-command="testMenuCommand"
-                    @order-changed="handleMenuCommandOrderChanged"
-                  />
-                </div>
-
-                <div class="form-group-enhanced">
-                  <label class="form-label-enhanced">{{ t('apps.detached_cmds') }}</label>
-                  <div class="field-hint mb-3">
-                    {{ t('apps.detached_cmds_desc') }}<br>
-                    <strong>{{ t('_common.note') }}</strong> {{ t('apps.detached_cmds_note') }}
-                  </div>
-                  <CommandTable
-                    :commands="formData.detached"
-                    :platform="platform"
-                    type="detached"
-                    @add-command="addDetachedCommand"
-                    @remove-command="removeDetachedCommand"
-                    @order-changed="handleDetachedCommandOrderChanged"
-                  />
-                </div>
-              </AccordionItem>
-
-              <AccordionItem
-                v-if="isWindows"
-                id="rtxHdr"
-                icon="fa-sun"
-                :title="t('apps.rtx_hdr')"
-                parent-id="appFormAccordion"
-              >
-                <FormField id="appRtxHdrMode" :label="t('apps.rtx_hdr_mode')" :hint="t('apps.rtx_hdr_desc')">
-                  <select id="appRtxHdrMode" class="form-select form-control-enhanced" v-model="formData['rtx-hdr'].mode">
-                    <option value="inherit">{{ t('apps.rtx_hdr_inherit') }}</option>
-                    <option value="on">{{ t('apps.rtx_hdr_on') }}</option>
-                    <option value="off">{{ t('apps.rtx_hdr_off') }}</option>
-                  </select>
-                </FormField>
-
-                <template v-if="formData['rtx-hdr'].mode === 'on'">
-                  <FormField id="appRtxHdrContrast" :label="t('apps.rtx_hdr_contrast')">
-                    <input id="appRtxHdrContrast" type="number" min="-100" max="100" class="form-control form-control-enhanced" v-model.number="formData['rtx-hdr'].contrast" />
-                  </FormField>
-                  <FormField id="appRtxHdrSaturation" :label="t('apps.rtx_hdr_saturation')">
-                    <input id="appRtxHdrSaturation" type="number" min="-100" max="100" class="form-control form-control-enhanced" v-model.number="formData['rtx-hdr'].saturation" />
-                  </FormField>
-                  <FormField id="appRtxHdrMiddleGray" :label="t('apps.rtx_hdr_middle_gray')">
-                    <input id="appRtxHdrMiddleGray" type="number" min="10" max="100" class="form-control form-control-enhanced" v-model.number="formData['rtx-hdr']['middle-gray']" />
-                  </FormField>
-                  <FormField id="appRtxHdrPeakNits" :label="t('apps.rtx_hdr_peak_nits')">
-                    <input id="appRtxHdrPeakNits" type="number" min="400" max="1000" step="50" class="form-control form-control-enhanced" v-model.number="formData['rtx-hdr']['peak-nits']" />
-                  </FormField>
-                </template>
-              </AccordionItem>
-
-              <AccordionItem v-if="isWindows" id="dlssnr" icon="fa-wand-magic-sparkles" title="DLSS NR" parent-id="appFormAccordion">
-                <FormField id="appDlssnrMode" :label="t('apps.dlssnr_mode')" :hint="t('apps.dlssnr_desc')">
-                  <select id="appDlssnrMode" class="form-select form-control-enhanced" v-model="formData.dlssnr.mode">
-                    <option value="inherit">{{ t('apps.rtx_hdr_inherit') }}</option>
-                    <option value="on">{{ t('apps.rtx_hdr_on') }}</option>
-                    <option value="off">{{ t('apps.rtx_hdr_off') }}</option>
-                  </select>
-                </FormField>
-                <template v-if="formData.dlssnr.mode === 'on'">
-                  <FormField id="appDlssnrIntensity" :label="t('apps.dlssnr_intensity')">
-                    <input id="appDlssnrIntensity" type="number" min="0" max="1" step="0.05" class="form-control form-control-enhanced" v-model.number="formData.dlssnr.intensity" />
-                  </FormField>
-                  <FormField id="appDlssnrStyle" :label="t('apps.dlssnr_style')">
-                    <input id="appDlssnrStyle" type="number" min="0" max="4" step="1" class="form-control form-control-enhanced" v-model.number="formData.dlssnr.style" />
-                  </FormField>
-                  <CheckboxField id="appDlssnrUi" v-model="formData.dlssnr['ui-correction']" :label="t('apps.dlssnr_ui')" />
-                  <FormField id="appDlssnrMotion" :label="t('apps.dlssnr_motion')" :hint="t('apps.dlssnr_motion_hint')">
-                    <select id="appDlssnrMotion" class="form-select form-control-enhanced" v-model.number="formData.dlssnr['motion-quality']">
-                      <option :value="0">{{ t('apps.dlssnr_motion_off') }}</option>
-                      <option :value="1">{{ t('apps.dlssnr_motion_fast') }}</option>
-                      <option :value="2">{{ t('apps.dlssnr_motion_balanced') }}</option>
-                      <option :value="3">{{ t('apps.dlssnr_motion_quality') }}</option>
-                    </select>
-                  </FormField>
-                </template>
-              </AccordionItem>
-
-              <AccordionItem id="advanced" icon="fa-cogs" :title="t('apps.advanced_options')" parent-id="appFormAccordion">
-                <CheckboxField
-                  v-if="isWindows"
-                  id="appElevation"
-                  v-model="formData.elevated"
-                  :label="t('_common.run_as')"
-                  :hint="t('apps.run_as_desc')"
-                />
-
-                <FormField
-                  v-if="isWindows"
-                  id="gamepadMode"
-                  :label="t('apps.gamepad_mode')"
-                  :hint="t('apps.gamepad_mode_desc')"
-                >
-                  <select
-                    id="gamepadMode"
-                    class="form-select form-control-enhanced"
-                    v-model="formData.gamepad"
-                  >
-                    <option
-                      v-for="mode in PER_APP_GAMEPAD_MODES"
-                      :key="mode.value"
-                      :value="mode.value"
-                    >
-                      {{ t(mode.labelKey) }}
-                    </option>
-                  </select>
-                </FormField>
-
-                <div
-                  v-if="isWindows && formData.gamepad === 'ds5'"
-                  class="alert alert-warning mt-2 mb-3"
-                  role="note"
-                >
-                  <i class="fas fa-info-circle me-2" aria-hidden="true"></i>
-                  {{ t('config.gamepad_ds5_component_hint_windows') }}
-                </div>
-
-                <FormField
-                  v-if="isWindows"
-                  id="mouseMode"
-                  :label="t('apps.mouse_mode')"
-                  :hint="t('apps.mouse_mode_desc')"
-                >
-                  <select
-                    id="mouseMode"
-                    class="form-select form-control-enhanced"
-                    v-model="formData['mouse-mode']"
-                  >
-                    <option :value="0">{{ t('apps.mouse_mode_auto') }}</option>
-                    <option :value="1">{{ t('apps.mouse_mode_vmouse') }}</option>
-                    <option :value="2">{{ t('apps.mouse_mode_sendinput') }}</option>
-                  </select>
-                </FormField>
-
-                <CheckboxField
-                  id="autoDetach"
-                  v-model="formData['auto-detach']"
-                  :label="t('apps.auto_detach')"
-                  :hint="t('apps.auto_detach_desc')"
-                />
-
-                <CheckboxField
-                  id="waitAll"
-                  v-model="formData['wait-all']"
-                  :label="t('apps.wait_all')"
-                  :hint="t('apps.wait_all_desc')"
-                />
-
-                <FormField
-                  id="exitTimeout"
-                  :label="t('apps.exit_timeout')"
-                  :hint="t('apps.exit_timeout_desc')"
-                  :validation="validation['exit-timeout']"
-                >
-                  <input
-                    type="number"
-                    class="form-control form-control-enhanced"
-                    id="exitTimeout"
-                    v-model="formData['exit-timeout']"
-                    min="0"
-                    :class="getFieldClass('exit-timeout')"
-                    @blur="validateField('exit-timeout')"
-                  />
-                </FormField>
-              </AccordionItem>
-
-              <AccordionItem id="image" icon="fa-image" :title="t('apps.image_settings')" parent-id="appFormAccordion">
-                <ImageSelector
-                  :image-path="formData['image-path']"
-                  :app-name="formData.name"
-                  @update-image="updateImage"
-                  @image-error="handleImageError"
-                />
-              </AccordionItem>
-            </div>
-          </form>
-        </div>
-        <div class="modal-footer modal-footer-enhanced">
-          <div class="save-status">
-            <span v-if="isFormValid" class="text-success"> <i class="fas fa-check-circle me-1"></i>{{ t('apps.form_valid') }} </span>
-            <span v-else class="text-warning"> <i class="fas fa-exclamation-triangle me-1"></i>{{ t('apps.form_invalid') }} </span>
-            <div v-if="imageError" class="text-danger mt-1">
-              <i class="fas fa-exclamation-circle me-1"></i>{{ imageError }}
-            </div>
-          </div>
-          <div>
-            <button type="button" class="btn btn-secondary me-2" @click="closeModal">
-              <i class="fas fa-times me-1"></i>{{ t('_common.cancel') }}
-            </button>
-            <button type="button" class="btn btn-primary" @click="saveApp" :disabled="disabled || !isFormValid">
-              <i class="fas fa-save me-1"></i>{{ t('_common.save') }}
-            </button>
-          </div>
-        </div>
+    <form v-if="formData" class="apps-editor apps-editor--page" @submit.prevent="saveApp">
+      <!-- the hero: the poster of the application (the cover), editable below under 封面 -->
+      <div class="apps-hero" :class="{ 'is-empty': !heroUrl }" :style="heroUrl ? { backgroundImage: `url(${heroUrl})` } : undefined">
+        <MIcon v-if="!heroUrl" class="apps-hero__glyph" name="image" />
+        <span class="apps-hero__fill" />
+        <MButton class="apps-hero__edit" variant="tonal" size="sm" icon="image" @click="toCover">{{ t('apps.change_cover') }}</MButton>
       </div>
-    </div>
-  </div>
+
+      <!-- the program that was chosen is one of a game that has its own way to be added: say so, and offer it (never converted by itself) -->
+      <MBanner v-if="gameHint" class="apps-gamehint" tone="info" icon="sports_esports">
+        {{ gameHint.text }}
+        <template #actions><MButton variant="text" size="sm" @click="emit('to-game', gameHint.path)">{{ spxCopy.gameHintAction }}</MButton></template>
+      </MBanner>
+
+      <!-- name, command, run as administrator -->
+      <MSection>
+        <MGroup>
+          <MFieldItem v-model="formData.name" :label="t('apps.app_name')" :error="errorOf('name')" required />
+          <div class="m-item m-item--field apps-pathrow">
+            <MField v-model="formData.cmd" :label="t('apps.cmd')" :supporting="t('apps.cmd_desc')" :error="errorOf('cmd')" :placeholder="getPlaceholderText('cmd')" />
+            <MIconButton icon="folder_open" :label="getButtonTitle('file')" @click="selectFile('cmd')" />
+          </div>
+          <div class="m-item apps-examples">
+            <span class="apps-examples__head">{{ t('apps.cmd_examples_title') }}<MInfo :text="t('apps.cmd_note')" /></span>
+            <span class="apps-examples__tags">
+              <span v-for="example in COMMAND_EXAMPLES" :key="example.code" class="cmd-tag"><code>{{ example.code }}</code><span class="cmd-tag-desc">{{ example.label || t('apps.launch_program_directly') }}</span></span>
+            </span>
+          </div>
+          <MSwitchItem v-if="isWindows" :model-value="isOn(formData.elevated)" :title="t('_common.run_as')" :text="t('apps.run_as_desc')" @update:model-value="(v) => setFlag('elevated', v)" />
+          <MChoiceItem v-model="formData['fs-kind']" :title="t('apps.fs_kind')" :options="fsKindOptions" :cancel-label="t('_common.cancel')" />
+        </MGroup>
+      </MSection>
+
+      <!-- the cover -->
+      <MSection id="apps-cover" :title="t('apps.image_settings')">
+        <div class="cover-pair">
+        <ImageSelector kind="poster" :title="t('apps.cover_portrait')" :image-path="formData['image-path']" :app-name="formData.name" @update-image="updateImage" @image-error="handleImageError" />
+        <ImageSelector kind="hero" :title="t('apps.cover_landscape')" :image-path="formData.hero" :app-name="formData.name" @update-image="updateHero" @image-error="handleImageError" />
+        </div>
+      </MSection>
+
+      <!-- launch -->
+      <MSection :title="t('apps.section_launch')">
+        <MGroup>
+          <div class="m-item m-item--field apps-pathrow">
+            <MField v-model="formData['working-dir']" :label="t('apps.working_dir')" :supporting="t('apps.working_dir_desc')" :error="errorOf('working-dir')" :placeholder="getPlaceholderText('working-dir')" />
+            <MIconButton icon="folder_open" :label="getButtonTitle('directory')" @click="selectDirectory('working-dir')" />
+          </div>
+          <MFieldItem v-model="formData.output" :label="t('apps.output_name')" :supporting="t('apps.output_desc')" :error="errorOf('output')" />
+        </MGroup>
+      </MSection>
+      <MSection :title="t('apps.behaviour')">
+        <MGroup>
+          <MSwitchItem :model-value="isOn(formData['auto-detach'])" :title="t('apps.auto_detach')" :text="t('apps.auto_detach_desc')" @update:model-value="(v) => setFlag('auto-detach', v)" />
+          <MSwitchItem :model-value="isOn(formData['wait-all'])" :title="t('apps.wait_all')" :text="t('apps.wait_all_desc')" @update:model-value="(v) => setFlag('wait-all', v)" />
+          <MFieldItem v-model="formData['exit-timeout']" type="number" min="0" :label="t('apps.exit_timeout')" :supporting="t('apps.exit_timeout_desc')" :error="errorOf('exit-timeout')" />
+        </MGroup>
+      </MSection>
+
+      <!-- prepare commands: before the stream, and the menu of the client -->
+      <MSection :title="t('apps.command_settings')">
+        <MGroup>
+          <MSwitchItem :model-value="isOn(formData['exclude-global-prep-cmd'])" :title="t('apps.global_prep_name')" :text="t('apps.global_prep_desc')" @update:model-value="(v) => setFlag('exclude-global-prep-cmd', v)" />
+        </MGroup>
+      </MSection>
+      <MSection :title="t('apps.cmd_prep_name')">
+        <template #action><MInfo :text="t('apps.cmd_prep_desc')" /></template>
+        <CommandTable :commands="formData['prep-cmd']" :platform="platform" type="prep" @add-command="addPrepCommand" @remove-command="removePrepCommand" @order-changed="handlePrepCommandOrderChanged" />
+      </MSection>
+      <MSection :title="t('apps.menu_cmd_name')">
+        <template #action><MInfo :text="t('apps.menu_cmd_desc')" /></template>
+        <CommandTable :commands="formData['menu-cmd']" :platform="platform" type="menu" @add-command="addMenuCommand" @remove-command="removeMenuCommand" @test-command="testMenuCommand" @order-changed="handleMenuCommandOrderChanged" />
+      </MSection>
+
+      <!-- advanced (expert): shown after the person confirms, or at once when the application already uses one of them -->
+      <div v-if="!showAdvanced" class="apps-gate">
+        <MIcon name="tune" />
+        <h3>{{ t('apps.advanced_gate_title') }}</h3>
+        <p>{{ t('apps.advanced_gate_body') }}</p>
+        <MButton variant="tonal" icon="lock_open" @click="confirmAdvanced = true">{{ t('apps.advanced_gate_show') }}</MButton>
+      </div>
+      <template v-else>
+        <MSection v-if="isWindows" :title="t('apps.advanced_options')">
+          <MGroup>
+            <MChoiceItem v-if="isWindows" v-model="formData.gamepad" :title="t('apps.gamepad_mode')" :options="gamepadOptions" :cancel-label="t('_common.cancel')" />
+            <MChoiceItem v-if="isWindows" v-model="formData['mouse-mode']" :title="t('apps.mouse_mode')" :options="mouseOptions" :cancel-label="t('_common.cancel')" />
+          </MGroup>
+          <MBanner v-if="isWindows && formData.gamepad === 'ds5'" tone="info" icon="info">{{ t('config.gamepad_ds5_hint_windows') }}</MBanner>
+          <MFooter v-if="isWindows">{{ t('apps.gamepad_mode_desc') }}</MFooter>
+          <MFooter v-if="isWindows">{{ t('apps.mouse_mode_desc') }}</MFooter>
+        </MSection>
+        <MSection :title="t('apps.detached_cmds')">
+          <template #action><MInfo :text="`${t('apps.detached_cmds_desc')} ${t('_common.note')} ${t('apps.detached_cmds_note')}`" /></template>
+          <CommandTable :commands="formData.detached" :platform="platform" type="detached" @add-command="addDetachedCommand" @remove-command="removeDetachedCommand" @order-changed="handleDetachedCommandOrderChanged" />
+        </MSection>
+        <MSection v-if="isWindows" :title="t('apps.rtx_hdr')">
+          <MGroup>
+            <MChoiceItem v-model="formData['rtx-hdr'].mode" :title="t('apps.rtx_hdr_mode')" :options="modeOptions" :cancel-label="t('_common.cancel')" />
+            <template v-if="formData['rtx-hdr'].mode === 'on'">
+              <MFieldItem v-model="formData['rtx-hdr'].contrast" type="number" :label="t('apps.rtx_hdr_contrast')" min="-100" max="100" />
+              <MFieldItem v-model="formData['rtx-hdr'].saturation" type="number" :label="t('apps.rtx_hdr_saturation')" min="-100" max="100" />
+              <MFieldItem v-model="formData['rtx-hdr']['middle-gray']" type="number" :label="t('apps.rtx_hdr_middle_gray')" min="10" max="100" />
+              <MFieldItem v-model="formData['rtx-hdr']['peak-nits']" type="number" :label="t('apps.rtx_hdr_peak_nits')" min="400" max="1000" step="50" />
+            </template>
+          </MGroup>
+          <MFooter>{{ t('apps.rtx_hdr_desc') }}</MFooter>
+        </MSection>
+        <MSection v-if="isWindows" title="DLSS NR">
+          <MGroup>
+            <MChoiceItem v-model="formData.dlssnr.mode" :title="t('apps.dlssnr_mode')" :options="modeOptions" :cancel-label="t('_common.cancel')" />
+            <template v-if="formData.dlssnr.mode === 'on'">
+              <MFieldItem v-model="formData.dlssnr.intensity" type="number" :label="t('apps.dlssnr_intensity')" min="0" max="1" step="0.05" />
+              <MFieldItem v-model="formData.dlssnr.style" type="number" :label="t('apps.dlssnr_style')" min="0" max="4" step="1" />
+              <MSwitchItem :model-value="isOn(formData.dlssnr['ui-correction'])" :title="t('apps.dlssnr_ui')" @update:model-value="(v) => (formData.dlssnr['ui-correction'] = v ? 'true' : 'false')" />
+              <MChoiceItem v-model="formData.dlssnr['motion-quality']" :title="t('apps.dlssnr_motion')" :options="motionOptions" :cancel-label="t('_common.cancel')" />
+            </template>
+          </MGroup>
+          <MFooter>{{ t('apps.dlssnr_desc') }}</MFooter>
+        </MSection>
+      </template>
+
+      <!-- the save bar of the page -->
+      <div class="apps-savebar" role="toolbar">
+        <span class="apps-status" :class="{ 'is-bad': !isFormValid || !!imageError }" role="status">
+          <MIcon :name="isFormValid && !imageError ? 'check_circle' : 'warning'" fill />{{ imageError || (isFormValid ? t('apps.form_valid') : t('apps.form_invalid')) }}
+        </span>
+        <span class="apps-savebar__fill" />
+        <MButton variant="text" @click="requestClose">{{ t('_common.cancel') }}</MButton>
+        <MButton icon="save" :loading="disabled" :disabled="!isFormValid || unchanged" @click="saveApp">{{ t('_common.save') }}</MButton>
+      </div>
+    </form>
+  </MPage>
+
+  <MDialog v-model="confirmAdvanced" :title="t('apps.advanced_gate_confirm_title')" icon="warning">
+    <p>{{ t('apps.advanced_gate_confirm_body') }}</p>
+    <template #actions>
+      <MButton variant="text" @click="confirmAdvanced = false">{{ t('_common.cancel') }}</MButton>
+      <MButton @click="advancedConfirmed = true; confirmAdvanced = false">{{ t('apps.advanced_gate_confirm') }}</MButton>
+    </template>
+  </MDialog>
+
+  <MDialog v-model="confirmDiscard" :title="t('apps.discard_title')" icon="warning">
+    <p>{{ t('apps.discard_body') }}</p>
+    <template #actions>
+      <MButton variant="text" @click="confirmDiscard = false">{{ t('apps.keep_editing') }}</MButton>
+      <MButton variant="danger" @click="closeModal">{{ t('apps.discard') }}</MButton>
+    </template>
+  </MDialog>
 </template>
 
 <script setup>
+import { useNotify } from 'foundation-ui/notify'
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { validateField as validateFieldHelper, validateAppForm } from '../utils/validation.js'
 import { nanoid } from 'nanoid'
 import CommandTable from './CommandTable.vue'
 import ImageSelector from './ImageSelector.vue'
-import AccordionItem from './AccordionItem.vue'
-import FormField from './FormField.vue'
-import CheckboxField from './CheckboxField.vue'
+import { MBanner, MButton, MChip, MChoiceItem, MDialog, MField, MFieldItem, MFooter, MGroup, MIcon, MIconButton, MInfo, MPage, MSection, MSwitchItem } from 'foundation-ui/vue'
 import { createFileSelector } from '../utils/fileSelection.js'
 import { apiPostJson } from '../utils/apiFetch.js'
 import { deepClone } from '../utils/helpers.js'
 import { PER_APP_GAMEPAD_MODES } from '../utils/gamepadModes.js'
 import { normalizeDlssnrConfig } from '../utils/dlssnr.js'
+import { useSparxie } from '../composables/useSparxie.js'
+import { useSparxieCopy } from '../composables/useSparxieCopy.js'
+import { DEFAULT_CATALOG } from '../utils/sparxie/model.js'
+import { getImagePreviewUrl } from '../utils/imageUtils.js'
 
 const DEFAULT_FORM_DATA = Object.freeze({
   dlssnr: normalizeDlssnrConfig(),
@@ -418,6 +189,8 @@ const DEFAULT_FORM_DATA = Object.freeze({
   'menu-cmd': [],
   detached: [],
   'image-path': '',
+  hero: '',
+  'fs-kind': '',
   'working-dir': '',
   'rtx-hdr': {
     mode: 'inherit',
@@ -443,20 +216,61 @@ const props = defineProps({
   disabled: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['close', 'save-app'])
+const emit = defineEmits(['close', 'save-app', 'to-game'])
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
-const modalElement = ref(null)
+const open = ref(true)
+const confirmDiscard = ref(false)
+const initialSnapshot = ref('')
 const fileInput = ref(null)
 const dirInput = ref(null)
 const formData = ref(null)
 const validation = ref({})
 const imageError = ref('')
-const modalInstance = ref(null)
 const fileSelector = ref(null)
 
 const isWindows = computed(() => props.platform === 'windows')
+
+// the editor is four sections; the advanced one (expert options) opens after a confirmation, or at once when the application already uses one of them
+const section = ref('basic')
+const confirmAdvanced = ref(false)
+const advancedConfirmed = ref(false)
+const usesAdvanced = computed(() => {
+  const f = formData.value
+  if (!f) return false
+  return !!(f.gamepad || Number(f['mouse-mode']) || (f.detached && f.detached.length) || (f['rtx-hdr'] && f['rtx-hdr'].mode && f['rtx-hdr'].mode !== 'inherit') || (f.dlssnr && f.dlssnr.mode && f.dlssnr.mode !== 'inherit'))
+})
+const showAdvanced = computed(() => advancedConfirmed.value || usesAdvanced.value)
+// a section with a field that does not validate shows an error icon on its tab
+// A program that belongs to a game the page 添加游戏 knows (its executable is on the host's list) is offered that way: a banner, one tap to take the path over. The host names the game and the region.
+const spx = useSparxie()
+const spxCopy = useSparxieCopy()
+const exeOfCmd = (cmd) => { const m = /^\s*"([^"]+\.exe)"/i.exec(String(cmd || '')) || /^\s*(\S+\.exe)\b/i.exec(String(cmd || '')); return m ? m[1] : '' }
+const hint = ref(null)
+let hintSeq = 0
+watch(() => formData.value?.cmd, async (cmd) => {
+  const exe = exeOfCmd(cmd)
+  const mine = ++hintSeq
+  if (!exe || !spx.available.value || !isNewApp.value) { hint.value = null; return }
+  const file = exe.split(/[\\/]/).pop().toLowerCase()
+  try {
+    const { catalog } = await spx.client().games()
+    const title = Object.entries(catalog).find(([id, row]) => (row.exes.length ? row.exes : DEFAULT_CATALOG[id]?.exes || []).some((n) => n.toLowerCase() === file))
+    if (!title) { if (mine === hintSeq) hint.value = null; return }
+    const found = await spx.client().identify(exe)
+    if (mine !== hintSeq) return
+    hint.value = found.install ? { path: exe, game: found.install.game, region: found.install.region, name: (title[1].name && /^zh/i.test(locale.value) ? title[1].name : title[1].nameEn) || title[1].name || title[0] } : null
+  } catch { if (mine === hintSeq) hint.value = null }
+})
+const gameHint = computed(() => (hint.value ? { path: hint.value.path, text: spxCopy.value.gameHint(hint.value.name, hint.value.region ? spxCopy.value.regions[hint.value.region] : '') } : null))
+// the hero shows the poster of the application (its own image)
+const heroUrl = computed(() => {
+  const img = formData.value?.hero || formData.value?.['image-path']
+  return img ? getImagePreviewUrl(String(img).replace(/"/g, '')) : ''
+})
+const pageTitle = computed(() => (isNewApp.value ? t('apps.add_new') : formData.value?.name || t('apps.edit')))
+const toCover = () => document.getElementById('apps-cover')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
 const isNewApp = computed(() => !props.app || props.app.index === -1)
 const isFormValid = computed(() => {
   // name 字段是必填的，必须验证通过
@@ -472,28 +286,9 @@ const showMessage = (message, type = 'info') => {
   if (window.showToast) {
     window.showToast(message, type)
   } else if (type === 'error') {
-    alert(message)
+    useNotify().snack(message)
   } else {
     console.info(message)
-  }
-}
-
-const initializeModal = () => {
-  if (modalInstance.value || !modalElement.value) return
-
-  const Modal = window.bootstrap?.Modal
-  if (!Modal) {
-    console.warn('Bootstrap Modal not available')
-    return
-  }
-
-  try {
-    modalInstance.value = new Modal(modalElement.value, {
-      backdrop: 'static',
-      keyboard: false,
-    })
-  } catch (error) {
-    console.warn('Modal initialization failed:', error)
   }
 }
 
@@ -519,6 +314,12 @@ const ensureDefaultValues = () => {
   }
   if (!formData.value['working-dir']) {
     formData.value['working-dir'] = ''
+  }
+  if (formData.value['fs-kind'] === undefined) {
+    formData.value['fs-kind'] = ''
+  }
+  if (formData.value.hero === undefined) {
+    formData.value.hero = ''
   }
 
   if (isWindows.value && formData.value.elevated === undefined) {
@@ -552,6 +353,7 @@ const initializeForm = (app) => {
   ensureDefaultValues()
   validation.value = {}
   imageError.value = ''
+  initialSnapshot.value = JSON.stringify(formData.value)
   // 立即验证所有字段，确保表单状态正确
   nextTick(() => {
     // 验证必填字段 name（总是验证）
@@ -566,26 +368,29 @@ const initializeForm = (app) => {
   })
 }
 
-const showModal = () => {
-  if (!modalInstance.value) initializeModal()
-  modalInstance.value?.show()
-}
-
 const resetFileSelection = () => {
   fileSelector.value?.resetState()
   fileSelector.value?.cleanupFileInputs(fileInput.value, dirInput.value)
 }
 
+const isDirty = () => !!formData.value && JSON.stringify(formData.value) !== initialSnapshot.value
+// 保存 of an existing application waits for a change (a new application can always be saved); it is off again when the change is undone
+const unchanged = computed(() => !isNewApp.value && !!formData.value && JSON.stringify(formData.value) === initialSnapshot.value)
+
+// Cancel, Escape or the scrim: ask before throwing away edits
+const requestClose = () => {
+  if (isDirty()) confirmDiscard.value = true
+  else closeModal()
+}
+
 const closeModal = () => {
-  modalInstance.value?.hide()
-  setTimeout(() => {
-    resetFileSelection()
-    emit('close')
-  }, 300)
+  confirmDiscard.value = false
+  open.value = false
+  resetFileSelection()
+  emit('close')
 }
 
 const cleanup = () => {
-  modalInstance.value?.dispose()
   resetFileSelection()
 }
 
@@ -604,14 +409,45 @@ const handleCmdInput = () => {
   }
 }
 
-const getFieldClass = (fieldName) => {
+const errorOf = (fieldName) => {
   const v = validation.value[fieldName]
-  if (!v) return ''
-  return {
-    'is-invalid': !v.isValid,
-    'is-valid': v.isValid && formData.value[fieldName],
-  }
+  return v && v.isValid === false ? v.message || t('apps.form_invalid') : ''
 }
+
+const isOn = (value) => value === true || value === 'true'
+const setFlag = (key, on) => { formData.value[key] = on ? 'true' : 'false' }
+
+const COMMAND_EXAMPLES = [
+  { code: 'cmd /c "start xbox:"', label: 'Xbox Game' },
+  { code: 'steam://open/bigpicture', label: 'Steam Big Picture' },
+  { code: 'cmd /c "start ms-gamebar:"', label: 'Xbox Game Bar' },
+  { code: 'cmd /c "start playnite://playnite/showMainWindow"', label: 'Playnite' },
+  { code: '"C:\\Program Files\\...\\game.exe"', label: '' },
+]
+const modeOptions = computed(() => [
+  { value: 'inherit', label: t('apps.rtx_hdr_inherit') },
+  { value: 'on', label: t('apps.rtx_hdr_on') },
+  { value: 'off', label: t('apps.rtx_hdr_off') },
+])
+const motionOptions = computed(() => [
+  { value: 0, label: t('apps.dlssnr_motion_off'), text: t('apps.dlssnr_motion_hint') },
+  { value: 1, label: t('apps.dlssnr_motion_fast') },
+  { value: 2, label: t('apps.dlssnr_motion_balanced') },
+  { value: 3, label: t('apps.dlssnr_motion_quality') },
+])
+const gamepadOptions = computed(() => PER_APP_GAMEPAD_MODES.map((mode) => ({ value: mode.value, label: t(mode.labelKey) })))
+const mouseOptions = computed(() => [
+  { value: 0, label: t('apps.mouse_mode_auto') },
+  { value: 1, label: t('apps.mouse_mode_vmouse') },
+  { value: 2, label: t('apps.mouse_mode_sendinput') },
+])
+const fsKindOptions = computed(() => [
+  { value: '', label: t('apps.fs_kind_auto') },
+  { value: 'bigscreen', label: t('apps.fs_kind_bigscreen') },
+  { value: 'desktop', label: t('apps.fs_kind_desktop') },
+  { value: 'game', label: t('apps.fs_kind_game') },
+  { value: 'tool', label: t('apps.fs_kind_tool') },
+])
 
 const createCommand = (type) => {
   const baseCmd = type === 'prep' ? { do: '', undo: '' } : { id: nanoid(10), name: '', cmd: '' }
@@ -686,6 +522,12 @@ const updateImage = (imagePath) => {
   imageError.value = ''
 }
 
+// the landscape cover: either cover may be set, both, or none
+const updateHero = (imagePath) => {
+  formData.value.hero = imagePath
+  imageError.value = ''
+}
+
 const handleImageError = (error) => {
   imageError.value = error
 }
@@ -719,7 +561,7 @@ const saveApp = async () => {
   formData.value.dlssnr = normalizeDlssnrConfig(formData.value.dlssnr)
   const formValidation = validateAppForm(formData.value, t)
   if (!formValidation.isValid) {
-    if (formValidation.errors.length) alert(formValidation.errors[0])
+    if (formValidation.errors.length) useNotify().snack(formValidation.errors[0])
     return
   }
 
@@ -727,6 +569,9 @@ const saveApp = async () => {
   if (editedApp['image-path']) {
     editedApp['image-path'] = editedApp['image-path'].toString().replace(/"/g, '')
   }
+  if (!editedApp['fs-kind']) delete editedApp['fs-kind']
+  if (editedApp.hero) editedApp.hero = editedApp.hero.toString().replace(/"/g, '')
+  else delete editedApp.hero
 
   emit('save-app', editedApp)
 }
@@ -736,133 +581,88 @@ watch(
   (newApp) => {
     if (newApp) {
       initializeForm(newApp)
-      nextTick(showModal)
+      open.value = true
     }
   },
   { immediate: true }
 )
 
 onMounted(() => {
-  nextTick(() => {
-    initializeModal()
-    initializeFileSelector()
-  })
+  window.scrollTo(0, 0)
+  nextTick(initializeFileSelector)
+})
+
+// Live validation while typing (the fields have no blur event)
+watch(() => formData.value?.name, () => formData.value && validateField('name'))
+watch(() => formData.value?.output, () => formData.value && validateField('output'))
+watch(() => formData.value?.['working-dir'], () => formData.value && validateField('working-dir'))
+watch(() => formData.value?.['exit-timeout'], () => formData.value && validateField('exit-timeout'))
+watch(() => formData.value?.cmd, () => {
+  if (!formData.value) return
+  if (formData.value.cmd && formData.value.cmd.trim()) validateField('cmd')
+  else handleCmdInput()
 })
 
 onBeforeUnmount(cleanup)
 </script>
 
+
 <style lang="less" scoped>
-.modal-body {
-  max-height: calc(100vh - 200px);
-  overflow-y: auto;
-
-  /* 滚动条美化 */
-  &::-webkit-scrollbar {
-    width: 6px;
-  }
-
-  &::-webkit-scrollbar-track {
-    background: transparent;
-    border-radius: 3px;
-  }
-
-  &::-webkit-scrollbar-thumb {
-    background: var(--ui-border-strong);
-    border-radius: 3px;
-    transition: background 0.2s ease;
-
-    &:hover {
-      background: var(--ui-accent);
-    }
-  }
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
 }
 
-.modal-footer-enhanced {
-  border-top: 1px solid var(--ui-border);
-  padding: 1rem 1.5rem;
+// the page of an application: the hero (the poster), the groups, the save bar at the bottom of the page
+.apps-hero {
+  position: relative;
+  min-height: 190px;
+  margin-bottom: 8px;
+  padding: 16px;
   display: flex;
+  align-items: flex-end;
   justify-content: space-between;
+  gap: 12px;
+  overflow: hidden;
+  border-radius: 28px;
+  background: linear-gradient(135deg, var(--md-sys-color-primary-container), var(--md-sys-color-tertiary-container)) center / cover;
+  background-size: cover;
+  background-position: center 22%;
+}
+.apps-hero.is-empty { align-items: flex-end; }
+.apps-hero__glyph { position: absolute; left: 50%; top: 50%; translate: -50% -50%; font-size: 56px; opacity: 0.55; color: var(--md-sys-color-on-primary-container); }
+.apps-hero__chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.apps-hero__fill { flex: 1; }
+.apps-savebar {
+  position: sticky;
+  bottom: 12px;
+  z-index: 6;
+  display: flex;
   align-items: center;
-  
-  background: var(--ui-surface);
+  gap: 8px;
+  margin-top: 16px;
+  padding: 10px 12px 10px 20px;
+  border-radius: 28px;
+  background: var(--md-sys-color-surface-container-high);
+  box-shadow: 0 2px 10px rgb(0 0 0 / 0.18);
 }
+.apps-savebar__fill { flex: 1; }
 
-.save-status {
-  font-size: 0.875rem;
-  color: var(--ui-text-muted);
+// motion: the page rises with the default spatial spring when it opens, the groups one after another (capped, so a long page does not make the last one wait); the groups of the advanced part,
+// which come into the DOM when the person confirms, pop in the same way. The reduced-motion setting shortens all of it (foundation-ui motion.css).
+@keyframes apps-rise {
+  from { opacity: 0; transform: translateY(16px) scale(0.985); }
 }
-
-.is-invalid {
-  border-color: var(--ui-danger);
+.apps-editor--page > * {
+  animation: apps-rise var(--m-spring-default-spatial-duration, 400ms) var(--m-spring-default-spatial, ease-out) backwards;
 }
-
-.is-valid {
-  border-color: var(--ui-success);
-}
-
-.monospace {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-}
-
-.cmd-examples {
-  margin-top: 0.5rem;
-  padding: 0.75rem;
-  border-radius: var(--ui-radius-md);
-  background: var(--ui-surface);
-  border: 1px solid var(--ui-border);
-
-  &-header {
-    font-size: 0.75rem;
-    font-weight: 600;
-    margin-bottom: 0.5rem;
-    
-    color: var(--ui-accent);
-  }
-
-  &-tags {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-    line-height: 1.5;
-  }
-}
-
-.cmd-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-  padding: 0.375rem 0.625rem;
-  border-radius: var(--ui-radius-sm);
-  font-size: 0.75rem;
-  transition: all 0.2s ease;
-  
-  background: var(--ui-surface-strong);
-  border: 1px solid var(--ui-border);
-
-  &:hover {
-    transform: translateY(-1px);
-    background: var(--ui-surface-hover);
-    border-color: var(--ui-border-strong);
-    box-shadow: var(--ui-shadow-sm);
-  }
-
-  code {
-    font-family: monospace;
-    font-size: 0.7rem;
-    padding: 0.125rem 0.5rem;
-    border-radius: 5px;
-    border: none;
-    
-    background: var(--ui-accent-soft);
-    color: var(--ui-accent);
-  }
-
-  &-desc {
-    font-size: 0.7rem;
-    white-space: nowrap;
-    
-    color: var(--ui-text-muted);
-  }
-}
+.apps-editor--page > :nth-child(2) { animation-delay: 35ms; }
+.apps-editor--page > :nth-child(3) { animation-delay: 70ms; }
+.apps-editor--page > :nth-child(4) { animation-delay: 105ms; }
+.apps-editor--page > :nth-child(5) { animation-delay: 140ms; }
+.apps-editor--page > :nth-child(6) { animation-delay: 175ms; }
+.apps-editor--page > :nth-child(n + 7) { animation-delay: 210ms; }
 </style>
