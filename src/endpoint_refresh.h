@@ -52,17 +52,19 @@ namespace stream {
           last_ack = now;
           return encode(LI_ER_ACK, message.sequence, confirmed_nonce.data());
         }
+        // A valid probe authenticates the new NAT mapping. Media must not wait
+        // for the optional challenge response, which may be lost on the path.
+        confirmed_port.store(peer.port(), std::memory_order_release);
         if (now - last_challenge < std::chrono::milliseconds(250)) {
           return {};
         }
-        if (pending_port != peer.port() || now > expires) {
-          if (RAND_bytes(nonce.data(), static_cast<int>(nonce.size())) != 1) {
-            return {};
-          }
-          pending_port = peer.port();
-          pending_sequence = message.sequence;
-          expires = now + std::chrono::seconds(2);
+        if (RAND_bytes(nonce.data(), static_cast<int>(nonce.size())) != 1) {
+          return {};
         }
+        pending_port = peer.port();
+        pending_sequence = message.sequence;
+        expires = now + std::chrono::seconds(2);
+        confirmed_nonce = nonce;
         last_challenge = now;
         return encode(LI_ER_CHALLENGE, pending_sequence, nonce.data());
       }
