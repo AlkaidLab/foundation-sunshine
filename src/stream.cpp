@@ -7,11 +7,13 @@
 #include "spatial_transport/mat_live_session.h"
 
 #include <algorithm>
+#include <atomic>
 #include <bit>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <future>
+#include <memory>
 #include <optional>
 #include <queue>
 #include <unordered_map>
@@ -3374,7 +3376,15 @@ namespace stream {
     // 统一处理PING包逻辑
     auto handle_ping = [](auto &session_map, auto &refresh_map, auto &sock, auto &peer, auto &buf, size_t bytes, std::string_view type_str) {
       try {
-        if (bytes == LI_ER_PACKET_SIZE && std::memcmp(buf.data(), "EAPR", 4) == 0) {
+        if (bytes >= 4 && std::memcmp(buf.data(), "EAPR", 4) == 0) {
+          BOOST_LOG(debug) << "Received endpoint auth packet: " << type_str
+                          << ", bytes=" << bytes
+                          << ", from=" << peer.address().to_string() << ':' << peer.port();
+          if (bytes != LI_ER_PACKET_SIZE) {
+            BOOST_LOG(debug) << "Endpoint auth packet ignored: invalid length, expected="
+                               << LI_ER_PACKET_SIZE << ", actual=" << bytes;
+            return;
+          }
           auto key = std::string { buf.data() + 8, LI_ER_SESSION_SIZE };
           auto refresh = refresh_map.find(key);
           if (refresh == refresh_map.end()) {
@@ -3382,12 +3392,23 @@ namespace stream {
           }
           const auto previous = refresh->second->port();
           auto response = refresh->second->receive(buf.data(), bytes, peer, endpoint_refresh_t::clock::now());
+          const auto current = refresh->second->port();
+          if (current != previous) {
+            BOOST_LOG(info) << "Endpoint auth packet validated: " << type_str
+                            << ", destination port " << previous << " -> " << current
+                            << ", from=" << peer.address().to_string() << ':' << peer.port();
+          }
           if (response) {
             auto reply = std::make_shared<std::pair<endpoint_refresh_t::packet_t, udp::endpoint>>(*response, peer);
             sock.async_send_to(asio::buffer(reply->first), reply->second,
-              [reply](const boost::system::error_code &, size_t) {});
+              [reply, type_str](const boost::system::error_code &ec, size_t) {
+                if (ec) {
+                  BOOST_LOG(debug) << "Endpoint auth response send failed: " << type_str
+                                   << ", error=" << ec.message();
+                }
+              });
           }
-          if (!previous && refresh->second->port()) {
+          if (!previous && current) {
             if (auto initial = session_map.find(key); initial != session_map.end()) {
               initial->second->raise(peer, std::string { buf.data(), bytes });
             }
@@ -3565,8 +3586,9 @@ namespace stream {
       auto session = (session_t *) packet->channel_data;
       session->last_video_activity_ms.store(steady_now_ms(), std::memory_order_relaxed);
       auto lowseq = session->video.lowseq;
-      if (session->video.endpoint_refresh) {
-        auto port = session->video.endpoint_refresh->port();
+      auto endpoint_refresh = std::atomic_load_explicit(&session->video.endpoint_refresh, std::memory_order_acquire);
+      if (endpoint_refresh) {
+        auto port = endpoint_refresh->port();
         if (port && port != session->video.peer.port()) {
 #ifdef _WIN32
           auto address = session->video.peer.address();
@@ -3578,6 +3600,10 @@ namespace stream {
             auto previous_qos = std::move(session->video.qos);
             session->video.qos = std::move(refreshed_qos);
             previous_qos.reset();
+          }
+          else if (session->config.videoQosType != 0) {
+            BOOST_LOG(warning) << "endpoint_auto_refresh: video destination changed to " << port
+                               << " without a refreshed qWAVE flow";
           }
 #endif
           session->video.peer.port(port);
@@ -3960,8 +3986,9 @@ namespace stream {
       TUPLE_2D_REF(channel_data, packet_data, *packet);
       auto session = (session_t *) channel_data;
       session->last_audio_activity_ms.store(steady_now_ms(), std::memory_order_relaxed);
-      if (session->audio.endpoint_refresh) {
-        auto port = session->audio.endpoint_refresh->port();
+      auto endpoint_refresh = std::atomic_load_explicit(&session->audio.endpoint_refresh, std::memory_order_acquire);
+      if (endpoint_refresh) {
+        auto port = endpoint_refresh->port();
         if (port && port != session->audio.peer.port()) {
 #ifdef _WIN32
           auto address = session->audio.peer.address();
@@ -3973,6 +4000,10 @@ namespace stream {
             auto previous_qos = std::move(session->audio.qos);
             session->audio.qos = std::move(refreshed_qos);
             previous_qos.reset();
+          }
+          else if (session->config.audioQosType != 0) {
+            BOOST_LOG(warning) << "endpoint_auto_refresh: audio destination changed to " << port
+                               << " without a refreshed qWAVE flow";
           }
 #endif
           session->audio.peer.port(port);
@@ -4219,7 +4250,12 @@ namespace stream {
         return -1;
       }
     }
-    (type == socket_e::video ? session->video.endpoint_refresh : session->audio.endpoint_refresh) = refresh;
+    if (type == socket_e::video) {
+      std::atomic_store_explicit(&session->video.endpoint_refresh, refresh, std::memory_order_release);
+    }
+    else {
+      std::atomic_store_explicit(&session->audio.endpoint_refresh, refresh, std::memory_order_release);
+    }
 
     // Only allow matches on the peer address for legacy clients
     if (!(session->config.mlFeatureFlags & ML_FF_SESSION_ID_V1)) {
@@ -4230,6 +4266,15 @@ namespace stream {
 
     auto fg = util::fail_guard([&]() {
       messages->stop();
+
+      if (!validated) {
+        if (type == socket_e::video) {
+          std::atomic_store_explicit(&session->video.endpoint_refresh, endpoint_refresh_ptr {}, std::memory_order_release);
+        }
+        else {
+          std::atomic_store_explicit(&session->audio.endpoint_refresh, endpoint_refresh_ptr {}, std::memory_order_release);
+        }
+      }
 
       // remove message queue from session
       if (!(session->config.mlFeatureFlags & ML_FF_SESSION_ID_V1)) {
@@ -4293,6 +4338,11 @@ namespace stream {
       return;
     }
 
+    auto refresh_cleanup = util::fail_guard([&]() {
+      std::atomic_store_explicit(&session->video.endpoint_refresh, endpoint_refresh_ptr {}, std::memory_order_release);
+      ref->message_queue_queue->raise(socket_e::video, av_session_id_t { session->video.ping_payload }, nullptr, nullptr);
+    });
+
     // Enable local prioritization and QoS tagging on video traffic if requested by the client
     auto address = session->video.peer.address();
     session->video.qos = platf::enable_socket_qos(ref->video_sock.native_handle(), address,
@@ -4305,7 +4355,6 @@ namespace stream {
     video_config.perf_session_id = session->launch_session_id;
     video::capture(session->mail, video_config, session, session->video.dynamic_param_change_events,
       session->config.packetsize);
-    ref->message_queue_queue->raise(socket_e::video, av_session_id_t { session->video.ping_payload }, nullptr, nullptr);
   }
 
   void
@@ -4327,6 +4376,7 @@ namespace stream {
     // Keep the refresh mapping alive for the whole audio worker, including
     // the MAT live early-return path, then remove it on every exit path.
     auto refresh_cleanup = util::fail_guard([&]() {
+      std::atomic_store_explicit(&session->audio.endpoint_refresh, endpoint_refresh_ptr {}, std::memory_order_release);
       ref->message_queue_queue->raise(socket_e::audio, av_session_id_t { session->audio.ping_payload }, nullptr, nullptr);
     });
 
