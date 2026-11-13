@@ -68,6 +68,7 @@ extern "C" {
 #include "network.h"
 #include "streaming/perf_recorder.h"
 #include "stream.h"
+#include "usb_stream_tunnel.h"
 #include "sync.h"
 #include "tray/system_tray.h"
 #include "tray/tray_state.h"
@@ -627,6 +628,7 @@ namespace stream {
 
     struct {
       std::string ping_payload;
+      std::shared_ptr<usb_stream_tunnel::video_channel> direct_usb;
 
       int lowseq;
       udp::endpoint peer;
@@ -3767,7 +3769,9 @@ namespace stream {
         const auto timestamp = video_rtp_timestamp(presentation_time, video_epoch);
 
         auto blockIndex = 0;
+        bool usb_video_failed = false;
         std::for_each(fec_blocks_begin, fec_blocks_end, [&](std::string_view &current_payload) {
+          if (usb_video_failed) return;
           auto packets = (current_payload.size() + (blocksize - 1)) / blocksize;
 
           for (int x = 0; x < packets; ++x) {
@@ -3873,8 +3877,23 @@ namespace stream {
               batch_info.block_count = current_batch_size;
 
               frame_send_batch_latency_logger.first_point_now();
+              if (session->video.direct_usb) {
+                std::vector<char> batch;
+                batch.reserve(current_batch_size * (shards.blocksize + shards.prefixsize + 2));
+                for (size_t y = next_shard_to_send; y <= static_cast<size_t>(x); ++y) {
+                  auto prefix = shards.prefixsize ? std::string_view(shards.prefix(y), shards.prefixsize) : std::string_view {};
+                  if (!usb_stream_tunnel::append_video_datagram(batch, prefix, {shards.data(y), shards.blocksize})) {
+                    usb_video_failed = true;
+                    break;
+                  }
+                }
+                if (usb_video_failed || !session->video.direct_usb->enqueue(std::move(batch))) {
+                  usb_video_failed = true;
+                  return;
+                }
+              }
               // Use a batched send if it's supported on this platform
-              if (!platf::send_batch(batch_info)) {
+              else if (!platf::send_batch(batch_info)) {
                 // Batched send is not available, so send each packet individually
                 BOOST_LOG(verbose) << "Falling back to unbatched send"sv;
                 for (auto y = 0; y < current_batch_size; y++) {
@@ -3917,6 +3936,10 @@ namespace stream {
           lowseq += shards.size();
         });
 
+        if (usb_video_failed) {
+          session::stop(*session, session::stop_reason_e::video_ended);
+          continue;
+        }
         session->video.lowseq = lowseq;
       }
       catch (const std::exception &e) {
@@ -4288,15 +4311,22 @@ namespace stream {
     while_starting_do_nothing(session->lifecycle);
 
     auto ref = broadcast_shared.ref();
-    auto error = recv_ping(session, ref, socket_e::video, session->video.ping_payload, session->video.peer, config::stream.ping_timeout);
-    if (error < 0) {
-      return;
-    }
+    if (!session->video.direct_usb) {
+      auto error = recv_ping(session, ref, socket_e::video, session->video.ping_payload, session->video.peer, config::stream.ping_timeout);
+      if (error < 0) return;
 
-    // Enable local prioritization and QoS tagging on video traffic if requested by the client
-    auto address = session->video.peer.address();
-    session->video.qos = platf::enable_socket_qos(ref->video_sock.native_handle(), address,
-      session->video.peer.port(), platf::qos_data_type_e::video, session->config.videoQosType != 0);
+      // Enable local prioritization and QoS tagging for network video.
+      auto address = session->video.peer.address();
+      session->video.qos = platf::enable_socket_qos(ref->video_sock.native_handle(), address,
+        session->video.peer.port(), platf::qos_data_type_e::video, session->config.videoQosType != 0);
+    }
+    else {
+      if (!session->video.direct_usb->wait_for_reader(config::stream.ping_timeout)) {
+        BOOST_LOG(warning) << "Direct USB video reader did not start";
+        return;
+      }
+      BOOST_LOG(info) << "Direct USB video active for session " << session->launch_session_id;
+    }
 
     BOOST_LOG(debug) << "Start capturing Video"sv;
     // Debug: Log the display_name before calling video::capture
@@ -4305,7 +4335,9 @@ namespace stream {
     video_config.perf_session_id = session->launch_session_id;
     video::capture(session->mail, video_config, session, session->video.dynamic_param_change_events,
       session->config.packetsize);
-    ref->message_queue_queue->raise(socket_e::video, av_session_id_t { session->video.ping_payload }, nullptr, nullptr);
+    if (!session->video.direct_usb) {
+      ref->message_queue_queue->raise(socket_e::video, av_session_id_t { session->video.ping_payload }, nullptr, nullptr);
+    }
   }
 
   void
@@ -4476,6 +4508,7 @@ namespace stream {
                       << " [client_uuid="sv << session.client_cert_uuid
                       << ", reason="sv << stop_reason_name(reason) << ']';
 
+      if (session.video.direct_usb) session.video.direct_usb->close();
       session.shutdown_event->raise(true);
     }
 
@@ -4858,6 +4891,7 @@ namespace stream {
       session->video.dynamic_param_change_events = mail->event<video::dynamic_param_t>(mail::dynamic_param_change);
       session->video.lowseq = 0;
       session->video.ping_payload = launch_session.av_ping_payload;
+      session->video.direct_usb = launch_session.direct_usb_video;
       if (config.encryptionFlagsEnabled & SS_ENC_VIDEO) {
         BOOST_LOG(info) << "Video encryption enabled"sv;
         session->video.cipher = crypto::cipher::gcm_t {

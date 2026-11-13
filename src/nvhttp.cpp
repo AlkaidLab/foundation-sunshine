@@ -77,6 +77,7 @@
 #include "tray/system_tray.h"
 #include "utility.h"
 #include "uuid.h"
+#include "usb_stream_tunnel.h"
 #include "video.h"
 #include "webhook/webhook.h"
 
@@ -536,6 +537,23 @@ namespace nvhttp {
     response->write(data.str());
   }
 
+  static bool bind_direct_usb_video(const req_https_t &request, rtsp_stream::launch_session_t &session, pt::ptree &tree) {
+    const auto [first, last] = request->header.equal_range(std::string(usb_stream_tunnel::video_launch_header));
+    if (first == last) return true;
+    if (session.client_cert_uuid.empty() || !is_client_enabled(session.client_cert_uuid)) {
+      tree.put("root.<xmlattr>.status_code", 403);
+      tree.put("root.<xmlattr>.status_message", "Direct USB video requires an enabled paired client");
+      return false;
+    }
+    if (std::next(first) == last) session.direct_usb_video = usb_stream_tunnel::claim_video(first->second);
+    if (!session.direct_usb_video) {
+      tree.put("root.<xmlattr>.status_code", 400);
+      tree.put("root.<xmlattr>.status_message", "Direct USB video token is invalid, expired or already used");
+      return false;
+    }
+    return true;
+  }
+
   void
   launch(bool &host_audio, resp_https_t response, req_https_t request) {
     print_req<SunshineHTTPS>(request);
@@ -612,6 +630,10 @@ namespace nvhttp {
     if (!client_cert_uuid.empty()) {
       launch_session->client_cert_uuid = client_cert_uuid;
       launch_session->env["SUNSHINE_CLIENT_CERT_UUID"] = client_cert_uuid;
+    }
+    if (!bind_direct_usb_video(request, *launch_session, tree)) {
+      tree.put("root.gamesession", 0);
+      return;
     }
     hdr::resolve_session_target(*launch_session);
     if (launch_session->highly_suspected_unknown_client) {
@@ -799,6 +821,10 @@ namespace nvhttp {
       launch_session->client_cert_uuid = client_cert_uuid;
       launch_session->env["SUNSHINE_CLIENT_CERT_UUID"] = client_cert_uuid;
     }
+    if (!bind_direct_usb_video(request, *launch_session, tree)) {
+      tree.put("root.resume", 0);
+      return;
+    }
     hdr::resolve_session_target(*launch_session);
     if (launch_session->highly_suspected_unknown_client) {
       BOOST_LOG(warning) << "Resume request highly resembles a known unauthorized client fork"
@@ -977,6 +1003,20 @@ namespace nvhttp {
     bool host_audio {};
 
     auto bind_address = net::get_bind_address(address_family);
+#ifdef _WIN32
+    // Match the listener's address family and configured local bind address.
+    auto tunnel_address = bind_address;
+    if (tunnel_address.empty() || tunnel_address == "0.0.0.0") tunnel_address = "127.0.0.1";
+    if (tunnel_address == "::") tunnel_address = "::1";
+    std::jthread usb_stream_tunnel_worker {
+      usb_stream_tunnel::run, http::unique_id, config::nvhttp.sunshine_name, tunnel_address,
+      usb_stream_tunnel::ports_t { port_http, port_https, net::map_port(rtsp_stream::RTSP_SETUP_PORT),
+        net::map_port(stream::VIDEO_STREAM_PORT), net::map_port(stream::CONTROL_PORT),
+        net::map_port(stream::AUDIO_STREAM_PORT), net::map_port(stream::MIC_STREAM_PORT) },
+      [] { return uuid_util::uuid_t::generate().string(); }
+    };
+#endif
+
     auto is_client_paired = [](std::string_view client_uuid) {
       if (client_uuid.empty()) {
         return false;

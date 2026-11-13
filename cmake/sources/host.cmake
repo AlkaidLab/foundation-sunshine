@@ -1,6 +1,7 @@
 # Explicit host inventory shared by the application and its test variant.
 # Header entries retain IDE visibility; main.cpp belongs to the application.
 set(SUNSHINE_HOST_SOURCES
+    src/usb_stream_tunnel.cpp src/usb_stream_tunnel.h
     # third-party
     third-party/moonlight-common-c/src/RtspParser.c
     third-party/moonlight-common-c/src/EndpointRefreshProtocol.c

@@ -25,6 +25,10 @@ namespace spatial_transport {
   struct LiveSession;
 }
 
+namespace usb_stream_tunnel {
+  class video_channel;
+}
+
 namespace rtsp_stream {
   constexpr auto RTSP_SETUP_PORT = 21;
 
@@ -59,6 +63,7 @@ namespace rtsp_stream {
     uint32_t control_connect_data;
     std::string client_cert_uuid;
     std::string rtsp_peer_address;
+    std::shared_ptr<usb_stream_tunnel::video_channel> direct_usb_video;
     bool highly_suspected_unknown_client {false};
 
     boost::process::v1::environment env;
