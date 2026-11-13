@@ -55,6 +55,10 @@ namespace stream {
         // A valid probe authenticates the new NAT mapping. Media must not wait
         // for the optional challenge response, which may be lost on the path.
         confirmed_port.store(peer.port(), std::memory_order_release);
+        // Drop the previous port's pending challenge before the rate limit can
+        // return. A delayed response must not move media back to that port.
+        pending_port = 0;
+        last_ack = now;
         if (now - last_challenge < std::chrono::milliseconds(250)) {
           return {};
         }

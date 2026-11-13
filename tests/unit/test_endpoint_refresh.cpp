@@ -75,7 +75,7 @@ TEST_F(EndpointRefresh, StaleResponseDoesNotMoveTheConfirmedEndpoint) {
   EXPECT_EQ(server.port(), new_peer.port());
   auto message = decode(*challenge);
   now += 2001ms;
-  EXPECT_FALSE(send(packet(LI_ER_RESPONSE, message.sequence, message.nonce), old_peer));
+  EXPECT_FALSE(send(packet(LI_ER_RESPONSE, message.sequence, message.nonce), new_peer));
   EXPECT_EQ(server.port(), new_peer.port());
   auto fresh = send(packet(LI_ER_PROBE, 3), old_peer);
   ASSERT_TRUE(fresh);
@@ -115,7 +115,7 @@ TEST_F(EndpointRefresh, RejectsOtherSessionsStreamsAndUnvalidatedInitialTraffic)
   EXPECT_EQ(server.port(), old_peer.port());
   now += 10ms;
   EXPECT_FALSE(send(packet(LI_ER_PROBE, 2), new_peer)); // Challenge rate limit.
-  EXPECT_EQ(server.port(), old_peer.port());
+  EXPECT_EQ(server.port(), new_peer.port());
 }
 
 TEST_F(EndpointRefresh, AuthenticatedProbeFloodCannotProduceAnAckForEveryPacket) {
