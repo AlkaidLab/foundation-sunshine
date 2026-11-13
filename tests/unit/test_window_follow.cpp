@@ -4,29 +4,13 @@
  */
 #include <src/input.h>
 #include <src/video.h>
+#include <src/video_touch_port.h>
 
 #include "../tests_common.h"
 
 #ifdef _WIN32
   #include <src/platform/windows/display.h>
 #endif
-
-// Internal seams used by video.cpp. They are intentionally small, pure helpers
-// so the virtual-screen math can be checked without a Windows capture device.
-namespace video {
-  input::touch_port_t
-  make_touch_port_for_rect(
-    const config_t &config,
-    int target_width,
-    int target_height,
-    int target_offset_x,
-    int target_offset_y,
-    int env_width,
-    int env_height);
-
-  bool
-  touch_ports_equal(const input::touch_port_t &lhs, const input::touch_port_t &rhs);
-}  // namespace video
 
 namespace {
   video::config_t
@@ -41,7 +25,7 @@ namespace {
 TEST(WindowFollowTouchPort, NormalDisplayMappingIsUnchanged) {
   const auto config = stream_config(1280, 720);
   const auto port = video::make_touch_port_for_rect(
-    config, 1920, 1080, 0, 0, 1920, 1080);
+    config.width, config.height, 1920, 1080, 0, 0, 1920, 1080);
 
   EXPECT_EQ(port.offset_x, 0);
   EXPECT_EQ(port.offset_y, 0);
@@ -61,7 +45,7 @@ TEST(WindowFollowTouchPort, UsesWindowVirtualScreenRectangle) {
   // window's virtual-screen position, not the monitor opened by DXGI.
   const auto config = stream_config(1280, 720);
   const auto port = video::make_touch_port_for_rect(
-    config, 960, 540, 1920, 0, 3840, 1080);
+    config.width, config.height, 960, 540, 1920, 0, 3840, 1080);
 
   EXPECT_EQ(port.offset_x, 1920);
   EXPECT_EQ(port.offset_y, 0);
@@ -77,7 +61,7 @@ TEST(WindowFollowTouchPort, UsesWindowVirtualScreenRectangle) {
 TEST(WindowFollowTouchPort, KeepsLetterboxOffsetsForWindowAspect) {
   const auto config = stream_config(1920, 1080);
   const auto port = video::make_touch_port_for_rect(
-    config, 800, 800, 100, 200, 2560, 1440);
+    config.width, config.height, 800, 800, 100, 200, 2560, 1440);
 
   EXPECT_EQ(port.offset_x, 100);
   EXPECT_EQ(port.offset_y, 200);
@@ -93,7 +77,7 @@ TEST(WindowFollowTouchPort, PreservesPhysicalOffsetsForMultiMonitorAndDpi) {
   // helper must pass them through without applying a second DPI scale.
   const auto config = stream_config(2560, 1440);
   const auto port = video::make_touch_port_for_rect(
-    config, 1280, 720, 3840, -720, 5120, 2160);
+    config.width, config.height, 1280, 720, 3840, -720, 5120, 2160);
 
   EXPECT_EQ(port.offset_x, 3840);
   EXPECT_EQ(port.offset_y, -720);
@@ -107,7 +91,7 @@ TEST(WindowFollowTouchPort, PreservesPhysicalOffsetsForMultiMonitorAndDpi) {
 TEST(WindowFollowTouchPort, ChangeDetectionCoversEveryPublishedField) {
   const auto config = stream_config(1280, 720);
   const auto base = video::make_touch_port_for_rect(
-    config, 1920, 1080, 0, 0, 1920, 1080);
+    config.width, config.height, 1920, 1080, 0, 0, 1920, 1080);
   EXPECT_TRUE(video::touch_ports_equal(base, base));
 
   auto moved = base;

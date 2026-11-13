@@ -1,4 +1,6 @@
-﻿# 会话级窗口跟随捕获（Plan4）
+# 会话级窗口跟随捕获（Plan4）
+
+[项目首页](../../README.md) · [文档目录](README.md) · [English](../en/capture-window-follow.md)
 
 ## 是什么
 
@@ -22,6 +24,10 @@
    - `pid`：跟随指定进程的窗口。
 5. 捕获过程中每 ~250ms 检查一次目标变化：前台切换到另一个合格窗口、目标窗口关闭/最小化、或窗口重新出现时，返回 `reinit` 让捕获线程重建。
 6. 如果当前找不到合格窗口，捕获回退到显示器画面，并持续重试；窗口出现后自动切回窗口捕获（并通知客户端）。
+
+### 窗口几何与绝对输入
+
+窗口捕获期间，Sunshine 会按窗口当前的虚拟屏幕矩形（`DwmGetWindowAttribute` / `GetWindowRect`，并裁剪到虚拟桌面范围）持续更新触摸/笔输入端口；窗口跨屏、改变大小或位于不同 DPI 缩放的显示器上时，绝对鼠标/触摸/笔输入的坐标仍保持对齐。
 
 > 与原来的"全局窗口捕获"（`capture_target=window` + `window_title`）的区别：那是**全局配置、所有会话生效、需要重启**；本功能是**会话级、运行时生效、只影响一个会话**。
 
@@ -164,7 +170,7 @@ git revert <plan4-commit>...       # 按从新到旧的顺序逐个反向应用
 
 ```powershell
 git restore -- src cmake tests/fixtures/confighttp_routes.json `
-  docs/zh-CN/capture-window-follow.md PLAN4-WINDOW-FOLLOW.md
+  docs/en/capture-window-follow.md docs/zh-CN/capture-window-follow.md
 ```
 
 没有配置迁移，回滚后无需任何清理。

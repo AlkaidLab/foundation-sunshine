@@ -1210,6 +1210,14 @@ namespace platf {
       }
     });
 
+    // Plan4: grant the launched application (and the game it launches) the
+    // ability to bring its window to the foreground. Sunshine starts apps from
+    // the background, and Windows' foreground lock would otherwise keep the
+    // previous foreground window (for example a remote agent/browser) on top.
+    // Mouse and gamepad input follow the foreground window, so this is required
+    // for the streamed session to control the game.
+    AllowSetForegroundWindow(ASFW_ANY);
+
     BOOL ret;
     if (is_running_as_system()) {
       // Duplicate the current user's token

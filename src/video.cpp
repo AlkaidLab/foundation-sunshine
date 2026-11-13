@@ -45,6 +45,7 @@ extern "C" {
 #include "video_dolby_vision.h"
 #include "video_hdr_metadata.h"
 #include "video_probe.h"
+#include "video_touch_port.h"
 
 #ifdef _WIN32
   #include "nvenc/win/nvenc_dynamic_factory.h"
@@ -61,12 +62,9 @@ extern "C" {
 using namespace std::literals;
 namespace video {
 
-  // Defined below; encode_run() re-publishes these when a captured window moves.
+  // Defined below; encode_run() re-publishes this when a captured window moves.
   input::touch_port_t
   make_port(platf::display_t *display, const config_t &config);
-
-  bool
-  touch_ports_equal(const input::touch_port_t &lhs, const input::touch_port_t &rhs);
 
   namespace {
     std::mutex hdr_pipeline_status_mutex;
@@ -3895,61 +3893,6 @@ namespace video {
   }
 
   input::touch_port_t
-  make_touch_port_for_rect(
-    const config_t &config,
-    int target_width,
-    int target_height,
-    int target_offset_x,
-    int target_offset_y,
-    int env_width,
-    int env_height) {
-    const float wd = static_cast<float>(target_width);
-    const float hd = static_cast<float>(target_height);
-
-    const float wt = static_cast<float>(config.width);
-    const float ht = static_cast<float>(config.height);
-
-    const auto scalar = std::fminf(wt / wd, ht / hd);
-
-    const auto w2 = scalar * wd;
-    const auto h2 = scalar * hd;
-
-    const auto offsetX = (static_cast<float>(config.width) - w2) * 0.5f;
-    const auto offsetY = (static_cast<float>(config.height) - h2) * 0.5f;
-
-    return input::touch_port_t {
-      {
-        target_offset_x,
-        target_offset_y,
-        config.width,
-        config.height,
-      },
-      env_width,
-      env_height,
-      target_width,
-      target_height,
-      offsetX,
-      offsetY,
-      1.0f / scalar,
-    };
-  }
-
-  bool
-  touch_ports_equal(const input::touch_port_t &lhs, const input::touch_port_t &rhs) {
-    return lhs.offset_x == rhs.offset_x &&
-           lhs.offset_y == rhs.offset_y &&
-           lhs.width == rhs.width &&
-           lhs.height == rhs.height &&
-           lhs.env_width == rhs.env_width &&
-           lhs.env_height == rhs.env_height &&
-           lhs.display_width == rhs.display_width &&
-           lhs.display_height == rhs.display_height &&
-           lhs.client_offsetX == rhs.client_offsetX &&
-           lhs.client_offsetY == rhs.client_offsetY &&
-           lhs.scalar_inv == rhs.scalar_inv;
-  }
-
-  input::touch_port_t
   make_port(platf::display_t *display, const config_t &config) {
     int target_width = display->width;
     int target_height = display->height;
@@ -3977,7 +3920,7 @@ namespace video {
 #endif
 
     return make_touch_port_for_rect(
-      config,
+      config.width, config.height,
       target_width, target_height,
       target_offset_x, target_offset_y,
       env_width, env_height);

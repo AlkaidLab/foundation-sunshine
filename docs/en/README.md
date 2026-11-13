@@ -8,6 +8,7 @@ Choose a guide by the task you need to complete. First installation stays in the
 | --- | --- | --- |
 | Install and connect | [Install and connect](../readme/README.en.md#quick-start) | Complete README instructions, from installation to Desktop and games. |
 | Configure enhancements | [Configure enhancements](features.md) | HDR, displays, capture, controllers, audio, and GUI with setup instructions. |
+| Stream one window | [Session-scoped window-follow capture](capture-window-follow.md) | Follow a windowed game in one session from a local control client; HTTP API and Playnite plugin integration. |
 | Resolve a problem | [Resolve a problem](faq.md) | Troubleshooting by symptom, including unwanted scrolling after DS5 installation. |
 | Upgrade or try a test release | [Upgrade or try a test release](upgrading.md) | Choose a release, preserve configuration, install, and check it. |
 | Start development | [Start development](development.md) | Code structure, host and GUI relationship, build and verification entry points. |
