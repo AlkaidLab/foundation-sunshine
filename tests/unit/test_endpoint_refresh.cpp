@@ -128,6 +128,26 @@ TEST_F(EndpointRefresh, AuthenticatedProbeFloodCannotProduceAnAckForEveryPacket)
   EXPECT_FALSE(send(packet(LI_ER_PROBE, 103), old_peer));
 }
 
+TEST_F(EndpointRefresh, ReportsProbeGapsAndOnlyCountsActualPortChanges) {
+  connect();
+  auto initial = server.stats();
+  EXPECT_EQ(initial.valid_probes, 1U);
+  EXPECT_EQ(initial.sequence_gap_estimate, 0U);
+  EXPECT_EQ(initial.port_changes, 0U);
+
+  now += 500ms;
+  EXPECT_TRUE(send(packet(LI_ER_PROBE, 3), old_peer));
+  EXPECT_FALSE(send(packet(LI_ER_PROBE, 2), old_peer));
+
+  now += 500ms;
+  EXPECT_TRUE(send(packet(LI_ER_PROBE, 4), new_peer));
+  auto stats = server.stats();
+  EXPECT_EQ(stats.valid_probes, 3U);
+  EXPECT_EQ(stats.sequence_gap_estimate, 1U);
+  EXPECT_EQ(stats.stale_probes, 1U);
+  EXPECT_EQ(stats.port_changes, 1U);
+}
+
 TEST_F(EndpointRefresh, RejectsInvalidSessionAndKeyLengths) {
   protocol invalid_session { address, LI_ER_VIDEO, "short", ri };
   EXPECT_FALSE(invalid_session.ready());

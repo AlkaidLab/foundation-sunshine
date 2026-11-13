@@ -16,6 +16,7 @@
 #include <memory>
 #include <optional>
 #include <queue>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -731,6 +732,28 @@ namespace stream {
     // 标识这是仅控制流会话（只作为输入设备，不传输视频/音频）
     bool control_only { false };
   };
+
+  static void
+  log_endpoint_refresh_summary(const session_t &session, std::string_view type,
+                               const endpoint_refresh_stats_t &stats) {
+    const auto observed_probes = stats.valid_probes + stats.sequence_gap_estimate;
+    const auto estimated_loss = observed_probes == 0 ?
+      std::string { "unknown" } :
+      std::to_string(static_cast<unsigned int>((stats.sequence_gap_estimate * 100u) / observed_probes)) + "%";
+    BOOST_LOG(info) << "endpoint_auto_refresh: " << type << " summary"
+                    << ", client=" << session.client_name
+                    << ", session=" << session.launch_session_id
+                    << ", valid_probes=" << stats.valid_probes
+                    << ", sequence_gap_estimate=" << stats.sequence_gap_estimate
+                    << ", estimated_probe_loss=" << estimated_loss
+                    << ", stale_probes=" << stats.stale_probes
+                    << ", invalid_packets=" << stats.invalid_packets
+                    << ", challenges=" << stats.challenges_generated
+                    << ", responses_validated=" << stats.responses_validated
+                    << ", acknowledgements=" << stats.acknowledgements_generated
+                    << ", response_send_failures=" << stats.response_send_failures
+                    << ", port_changes=" << stats.port_changes;
+  }
 
   namespace session {
     // 高位表示显示设备正在重配置，低 31 位记录已登记的视频会话数。
@@ -3401,8 +3424,9 @@ namespace stream {
           if (response) {
             auto reply = std::make_shared<std::pair<endpoint_refresh_t::packet_t, udp::endpoint>>(*response, peer);
             sock.async_send_to(asio::buffer(reply->first), reply->second,
-              [reply, type_str](const boost::system::error_code &ec, size_t) {
+              [reply, refresh_state = refresh->second, type_str](const boost::system::error_code &ec, size_t) {
                 if (ec) {
+                  refresh_state->record_response_send_failure();
                   BOOST_LOG(debug) << "Endpoint auth response send failed: " << type_str
                                    << ", error=" << ec.message();
                 }
@@ -4265,6 +4289,9 @@ namespace stream {
     bool validated = false;
 
     auto fg = util::fail_guard([&]() {
+      if (!validated && refresh) {
+        log_endpoint_refresh_summary(*session, type == socket_e::video ? "video" : "audio", refresh->stats());
+      }
       messages->stop();
 
       if (!validated) {
@@ -4339,6 +4366,9 @@ namespace stream {
     }
 
     auto refresh_cleanup = util::fail_guard([&]() {
+      if (auto refresh = session->video.endpoint_refresh.load(std::memory_order_acquire)) {
+        log_endpoint_refresh_summary(*session, "video", refresh->stats());
+      }
       session->video.endpoint_refresh.store(endpoint_refresh_ptr {}, std::memory_order_release);
       ref->message_queue_queue->raise(socket_e::video, av_session_id_t { session->video.ping_payload }, nullptr, nullptr);
     });
@@ -4376,6 +4406,9 @@ namespace stream {
     // Keep the refresh mapping alive for the whole audio worker, including
     // the MAT live early-return path, then remove it on every exit path.
     auto refresh_cleanup = util::fail_guard([&]() {
+      if (auto refresh = session->audio.endpoint_refresh.load(std::memory_order_acquire)) {
+        log_endpoint_refresh_summary(*session, "audio", refresh->stats());
+      }
       session->audio.endpoint_refresh.store(endpoint_refresh_ptr {}, std::memory_order_release);
       ref->message_queue_queue->raise(socket_e::audio, av_session_id_t { session->audio.ping_payload }, nullptr, nullptr);
     });
