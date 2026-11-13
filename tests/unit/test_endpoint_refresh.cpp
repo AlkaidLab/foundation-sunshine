@@ -100,6 +100,16 @@ TEST_F(EndpointRefresh, LostCommitAckCanBeRecoveredWithoutAnotherMigration) {
   EXPECT_EQ(server.port(), new_peer.port());
 }
 
+TEST_F(EndpointRefresh, CountsProbeSequenceGapsWithoutEstimatingUdpLoss) {
+  connect();
+  now += 500ms;
+
+  ASSERT_TRUE(send(packet(LI_ER_PROBE, 4), old_peer));
+  const auto stats = server.stats();
+  EXPECT_EQ(stats.valid_probes, 2U);
+  EXPECT_EQ(stats.probe_sequence_gaps, 2U);
+}
+
 TEST_F(EndpointRefresh, RejectsOtherSessionsStreamsAndUnvalidatedInitialTraffic) {
   auto request = packet(LI_ER_PROBE, 1);
   auto wrong = request;
