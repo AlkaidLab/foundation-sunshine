@@ -1314,6 +1314,8 @@ target_sources(${PROJECT_NAME} PRIVATE
         ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/PyrowaveReassembly.c)
 if (WIN32)
     target_link_libraries(${PROJECT_NAME} PRIVATE Pyrowave::Runtime sunshine_windows_resources)
+    # ds5_native_client.cpp is part of the host sources and needs the core headers and libraries.
+    target_link_libraries(${PROJECT_NAME} PRIVATE alkaidlab_ds5_core alkaidlab_usbip_core)
 endif ()
 # The network overview in the host sources uses the STUN codec on every platform.
 target_link_libraries(${PROJECT_NAME} PRIVATE alkaidlab_stun_codec)
