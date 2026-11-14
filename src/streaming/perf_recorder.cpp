@@ -3,7 +3,9 @@
  * @brief Runtime performance snapshot recorder.
  */
 #include "perf_recorder.h"
+
 #include "measured_bitrate.h"
+#include "src/telemetry/hooks.h"
 
 #include <algorithm>
 #include <array>
@@ -460,6 +462,9 @@ namespace perf {
   }
 
   void record_pipeline_sample(std::uint32_t session_id, const pipeline_sample_t &sample, std::chrono::steady_clock::time_point now) {
+    // telemetry's own per-session sums (stream_quality): a null hook until telemetry runs, and never a wait
+    if (sample.encode_ms) telemetry::hooks::encode_ms(session_id, *sample.encode_ms);
+    if (sample.capture_to_convert_ms) telemetry::hooks::capture_ms(session_id, *sample.capture_to_convert_ms);
     std::lock_guard lock { recorder_mutex };
 
     auto it = sessions.find(session_id);
@@ -535,6 +540,7 @@ namespace perf {
   }
 
   void record_encoded_frame(std::uint32_t session_id) {
+    telemetry::hooks::frame_encoded(session_id);
     const auto generation = frame_rate_collection_epoch();
     if (!generation) return;
     std::lock_guard lock { recorder_mutex };

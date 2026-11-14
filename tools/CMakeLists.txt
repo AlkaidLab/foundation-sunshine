@@ -62,7 +62,12 @@ target_link_libraries(audio-info
         sunshine_project_options)
 target_compile_options(audio-info PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
 
-add_executable(sunshinesvc sunshinesvc.cpp)
+add_executable(sunshinesvc sunshinesvc.cpp
+        ${CMAKE_SOURCE_DIR}/src/crash/crash_core.cpp
+        ${CMAKE_SOURCE_DIR}/src/crash/crash_common.cpp
+        ${CMAKE_SOURCE_DIR}/src/crash/crash_win.cpp
+        ${CMAKE_SOURCE_DIR}/src/crash/crash_posix.cpp)
+target_compile_definitions(sunshinesvc PRIVATE SUNSHINESVC_VERSION="${SUNSHINE_PARENT_VERSION}")
 set_target_properties(sunshinesvc PROPERTIES CXX_STANDARD 23)
 target_link_libraries(sunshinesvc
         PRIVATE Threads::Threads
@@ -94,6 +99,39 @@ if(MINGW)
         -s  # Strip symbols
         -Wl,--gc-sections  # 移除未使用的section
     )
+endif()
+
+if(WIN32)
+    # The package version comes from PROJECT_VERSION here: CPACK_PACKAGE_VERSION is set by packaging/common.cmake,
+    # which is included after this directory, so it is still empty at this point.
+    string(REGEX REPLACE "^v" "" SUNSHINE_INSTALLER_VERSION "${SUNSHINE_PARENT_VERSION}")  # project(sunshine_tools) resets PROJECT_VERSION
+    configure_file(
+        ${CMAKE_CURRENT_SOURCE_DIR}/installer_version.h.in
+        ${CMAKE_CURRENT_BINARY_DIR}/installer_version.h
+        @ONLY)
+    add_executable(sunshine-installer-shell WIN32
+        installer_shell.cpp
+        installer_shell_ui.inc
+        installer_preview.inc
+        installer_web.inc
+        installer_json.h
+        installer_d2d.h
+        installer_state.h
+        installer_maintenance.h
+        installer_ui.h
+        installer_icon.inc)
+    set_target_properties(sunshine-installer-shell PROPERTIES
+        CXX_STANDARD 23
+        CXX_STANDARD_REQUIRED ON)
+    target_compile_definitions(sunshine-installer-shell PRIVATE UNICODE _UNICODE)
+    target_include_directories(sunshine-installer-shell PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+    target_link_libraries(sunshine-installer-shell
+        PRIVATE d2d1 dwrite windowscodecs dwmapi shell32 advapi32 user32 ole32 uuid)
+    target_compile_options(sunshine-installer-shell PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
+    if(MINGW)
+        # static: the installer must start on a PC that has none of the MSYS2 runtime DLLs
+        target_link_options(sunshine-installer-shell PRIVATE -municode -static)
+    endif()
 endif()
 
 # 测试工具：test_args - 仅用于开发测试，不会被打包

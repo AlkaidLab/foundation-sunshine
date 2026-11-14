@@ -34,7 +34,8 @@ DefaultGroupName={#MyAppName}
 PrivilegesRequired=admin
 ; 输出设置
 OutputDir=@CPACK_PACKAGE_DIRECTORY@
-OutputBaseFilename=Sunshine
+; The Inno engine is embedded in the native shell after compilation.
+OutputBaseFilename=Sunshine-engine
 ; 压缩
 Compression=lzma2/ultra64
 SolidCompression=yes
@@ -52,8 +53,13 @@ VersionInfoDescription=Foundation Sunshine Game Streaming Server
 VersionInfoProductName={#MyAppName}
 ; 其他
 LicenseFile={#MyLicenseFile}
-; Use our validated InstallDir registry value instead of Inno Setup's implicit previous app dir.
-UsePreviousAppDir=no
+; Updates must reuse the registered application directory. The shell validates the
+; directory first, and this directive keeps silent and interactive engine runs on
+; the same path as the existing installation.
+UsePreviousAppDir=yes
+; Preserve the previous type and component selection for /SILENT and /VERYSILENT
+; updates when the shell does not pass an explicit /COMPONENTS list.
+UsePreviousSetupType=yes
 ; 最小 Windows 版本 (Windows 10)
 MinVersion=10.0
 ; 64 位安装
@@ -80,10 +86,11 @@ Name: "chinesesimplified"; MessagesFile: "@CMAKE_SOURCE_DIR@\cmake\packaging\Chi
 english.ComponentApplication=Sunshine main application
 english.ComponentAssets=Required assets (shaders, web UI)
 english.ComponentGUI=Sunshine GUI and tray agent (required)
-english.ComponentVDD=Zako Virtual Display Driver (HDR)
+english.ComponentVDD=Foundation Virtual Display (HDR)
 english.ComponentAutostart=Launch on system startup
 english.ComponentFirewall=Add firewall exclusions
 english.ComponentGamepad=Virtual Gamepad (ViGEmBus)
+english.ComponentUsbip=USB/IP (usbip-win2)
 english.ComponentVmouse=Virtual Mouse Driver (UMDF)
 english.ComponentTools=Diagnostic tools (dxgi-info, audio-info)
 english.TypeRecommended=Recommended (virtual display + firewall + autostart)
@@ -93,6 +100,7 @@ english.TypeCustom=Custom installation
 english.ComponentVDDDesc=Required for headless/remote streaming without a physical monitor. Enables HDR passthrough.
 english.ComponentFirewallDesc=Allows Moonlight clients to discover and connect to this PC over the network.
 english.ComponentAutostartDesc=Sunshine will start automatically when Windows boots. Recommended for always-on streaming.
+english.ComponentUsbipDesc=The USB/IP transport the native DualSense path needs. Also registers the ALKAIDUSB root device.
 english.ComponentGamepadDesc=Emulates Xbox controller for games. Install only if you need gamepad input from the client.
 english.ComponentVmouseDesc=Provides smooth absolute mouse positioning. Install if cursor feels laggy.
 english.ComponentToolsDesc=dxgi-info, audio-info for troubleshooting display and audio issues.
@@ -101,7 +109,9 @@ english.StatusUpdatePath=Updating system PATH...
 english.StatusMigrateConfig=Migrating configuration files...
 english.StatusFirewall=Configuring firewall rules...
 english.StatusInstallVDD=Installing virtual display driver...
+english.StatusInstallUsbip=Installing USB/IP (usbip-win2)...
 english.StatusInstallGamepad=Installing virtual gamepad...
+english.StatusInstallUsbipRoot=Registering the usbip-win2 controller root device...
 english.StatusInstallVmouse=Installing virtual mouse driver...
 english.StatusInstallService=Installing system service...
 english.StatusAutostart=Configuring autostart...
@@ -123,10 +133,11 @@ english.StatusStoppingProcesses=Stopping running Sunshine processes...
 chinesesimplified.ComponentApplication=Sunshine 主程序
 chinesesimplified.ComponentAssets=必要资源（着色器、Web UI）
 chinesesimplified.ComponentGUI=Sunshine GUI 与托盘代理（必需）
-chinesesimplified.ComponentVDD=Zako 虚拟显示驱动（HDR）
+chinesesimplified.ComponentVDD=基地虚拟显示器（HDR）
 chinesesimplified.ComponentAutostart=开机自动启动
 chinesesimplified.ComponentFirewall=添加防火墙规则
 chinesesimplified.ComponentGamepad=虚拟手柄（ViGEmBus）
+chinesesimplified.ComponentUsbip=USB/IP（usbip-win2）
 chinesesimplified.ComponentVmouse=虚拟鼠标驱动（UMDF）
 chinesesimplified.ComponentTools=诊断工具（dxgi-info、audio-info）
 chinesesimplified.TypeRecommended=推荐安装（虚拟显示器 + 防火墙 + 开机自启）
@@ -136,6 +147,7 @@ chinesesimplified.TypeCustom=自定义安装
 chinesesimplified.ComponentVDDDesc=无头/远程串流必装。无需外接显示器即可串流，支持 HDR 直通。
 chinesesimplified.ComponentFirewallDesc=允许 Moonlight 客户端通过网络发现并连接本机。
 chinesesimplified.ComponentAutostartDesc=Windows 启动时自动运行 Sunshine。推荐常驻串流使用。
+chinesesimplified.ComponentUsbipDesc=原生 DualSense 需要的 USB/IP 传输，同时登记 ALKAIDUSB 根设备。
 chinesesimplified.ComponentGamepadDesc=模拟 Xbox 手柄。仅需要从客户端传入手柄输入时安装。
 chinesesimplified.ComponentVmouseDesc=提供平滑的绝对定位鼠标。如鼠标延迟可尝试安装。
 chinesesimplified.ComponentToolsDesc=dxgi-info、audio-info 等，用于排查显示和音频问题。
@@ -143,8 +155,10 @@ chinesesimplified.StatusResetPermissions=正在重置文件权限...
 chinesesimplified.StatusUpdatePath=正在更新系统 PATH...
 chinesesimplified.StatusMigrateConfig=正在迁移配置文件...
 chinesesimplified.StatusFirewall=正在配置防火墙规则...
-chinesesimplified.StatusInstallVDD=正在安装虚拟显示驱动...
+chinesesimplified.StatusInstallVDD=正在安装基地虚拟显示器...
+chinesesimplified.StatusInstallUsbip=正在安装 USB/IP（usbip-win2）...
 chinesesimplified.StatusInstallGamepad=正在安装虚拟手柄...
+chinesesimplified.StatusInstallUsbipRoot=正在注册 usbip-win2 手柄根设备...
 chinesesimplified.StatusInstallVmouse=正在安装虚拟鼠标驱动...
 chinesesimplified.StatusInstallService=正在安装系统服务...
 chinesesimplified.StatusAutostart=正在配置自动启动...
@@ -156,7 +170,7 @@ chinesesimplified.MsgOldNSISFailed=无法完全移除旧版安装。%n请手动�
 chinesesimplified.MsgOldNSISStaleRegistry=旧版本的文件已经不存在，但注册表中仍残留旧版的卸载信息。%n是否清理残留的注册表项并继续安装？
 chinesesimplified.MsgOldNSISCleanupFailed=清理旧版注册表项失败。%n请手动删除 HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine 后重试。
 chinesesimplified.MsgServiceInstallFailed=无法安装或验证 Sunshine 服务。%n%n程序文件已经装好并会保留。请重启后以管理员身份运行 "{app}\scripts\install-service.bat"，或在 Sunshine 管理界面里使用修复功能。详细信息见 TEMP 目录下的安装日志。
-chinesesimplified.MsgVDDInstallFailed=无法安装或验证虚拟显示驱动。%n%nSunshine 已安装但尚未启动。请检查 TEMP 目录中的安装日志，然后在 Sunshine 管理界面中使用修复功能。
+chinesesimplified.MsgVDDInstallFailed=无法安装或验证基地虚拟显示器。%n%nSunshine 已安装但尚未启动。请检查 TEMP 目录中的安装日志，然后在 Sunshine 管理界面中使用修复功能。
 chinesesimplified.MsgUninstallGamepad=是否移除虚拟手柄（ViGEmBus）？
 chinesesimplified.MsgUninstallData=是否删除 %1 中的所有数据？%n（包括配置文件、封面图片和设置）
 chinesesimplified.StatusStoppingService=正在停止 Sunshine 服务...
@@ -172,11 +186,14 @@ Name: "custom"; Description: "{cm:TypeCustom}"; Flags: iscustom
 Name: "application"; Description: "{cm:ComponentApplication}"; Types: recommended full compact custom; Flags: fixed
 Name: "assets"; Description: "{cm:ComponentAssets}"; Types: recommended full compact custom; Flags: fixed
 Name: "gui"; Description: "{cm:ComponentGUI}"; Types: recommended full compact custom; Flags: fixed
-Name: "vdd"; Description: "{cm:ComponentVDD} — {cm:ComponentVDDDesc}"; Types: recommended full; ExtraDiskSpaceRequired: 2097152
+; Per-component minimum Windows 10 builds (docs/windows-compatibility.md): the VDD packages are UMDF 2.25 / IddCx 1.2
+; (Windows 10 1803, 17134), usbip-win2 needs Windows 10 1903 (18362). Below that the component is not offered.
+Name: "vdd"; Description: "{cm:ComponentVDD} — {cm:ComponentVDDDesc}"; Types: recommended full; ExtraDiskSpaceRequired: 2097152; MinVersion: 10.0.17134
 Name: "firewall"; Description: "{cm:ComponentFirewall} — {cm:ComponentFirewallDesc}"; Types: recommended full compact
 Name: "autostart"; Description: "{cm:ComponentAutostart} — {cm:ComponentAutostartDesc}"; Types: recommended full
 Name: "gamepad"; Description: "{cm:ComponentGamepad} — {cm:ComponentGamepadDesc}"; Types: recommended full
-Name: "vmouse"; Description: "{cm:ComponentVmouse} — {cm:ComponentVmouseDesc}"; Types: recommended full
+Name: "usbip"; Description: "{cm:ComponentUsbip} — {cm:ComponentUsbipDesc}"; Types: recommended full; MinVersion: 10.0.18362
+Name: "vmouse"; Description: "{cm:ComponentVmouse} — {cm:ComponentVmouseDesc}"; Types: full
 Name: "tools"; Description: "{cm:ComponentTools} — {cm:ComponentToolsDesc}"; Types: recommended full
 
 [Tasks]
@@ -209,6 +226,8 @@ Source: "{#MySourceDir}\tools\nefconw.exe"; DestDir: "{app}\tools"; Flags: ignor
 
 ; Pinned manifest for the separately distributed first-party DualSense runtime.
 Source: "{#MySourceDir}\tools\ds5-sidecar-package.json"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
+; the protocol launcher of the Sparxie touch applications (published from tools/sparxie-launch when the build has dotnet)
+Source: "{#MySourceDir}\tools\sparxie-launch.exe"; DestDir: "{app}\tools"; Flags: ignoreversion skipifsourcedoesntexist; Components: application
 
 ; Optional HDR adapter shipped with Sunshine. List first-party files explicitly
 ; so a stale local staging directory cannot add a vendor runtime to the package.
@@ -257,6 +276,8 @@ Source: "{#MySourceDir}\tools\device-toggler.exe"; DestDir: "{app}\tools"; Flags
 Source: "{#MySourceDir}\tools\DevManView.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: assets
 Source: "{#MySourceDir}\tools\restart64.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: assets
 Source: "{#MySourceDir}\tools\SetDpi.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: assets
+Source: "{#MySourceDir}\tools\usbip-win2-root.ps1"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: assets
+Source: "{#MySourceDir}\tools\driver-reboot-check.ps1"; DestDir: "{app}\tools"; Flags: ignoreversion skipifsourcedoesntexist; Components: assets
 Source: "{#MySourceDir}\tools\setreg.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: assets
 
 ; Autostart script
@@ -275,6 +296,8 @@ Source: "{#MySourceDir}\scripts\uninstall-vdd.bat"; DestDir: "{app}\scripts"; Fl
 Source: "{#MySourceDir}\scripts\driver\*"; DestDir: "{app}\scripts\driver"; Flags: ignoreversion recursesubdirs
 
 ; Gamepad scripts
+Source: "{#MySourceDir}\scripts\install-usbip.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion skipifsourcedoesntexist; Components: usbip
+Source: "{#MySourceDir}\scripts\usbip\*"; DestDir: "{app}\scripts\usbip"; Flags: ignoreversion recursesubdirs skipifsourcedoesntexist; Components: usbip
 Source: "{#MySourceDir}\scripts\install-gamepad.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#MySourceDir}\scripts\uninstall-gamepad.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#MySourceDir}\scripts\gamepad\*"; DestDir: "{app}\scripts\gamepad"; Flags: ignoreversion recursesubdirs skipifsourcedoesntexist; Components: gamepad
@@ -315,14 +338,23 @@ Root: HKLM64; Subkey: "SOFTWARE\AlkaidLab\Sunshine"; ValueType: string; ValueNam
 [Run]
 ; Post-install: drop explicit ACEs (inherit from parent) + clear READONLY
 ; attribute on files & dirs. The latter is what fixes the rare "Sunshine
-Filename: "{cmd}"; Parameters: "/c icacls ""{app}"" /reset /T /C > ""{tmp}\sunshine-icacls-reset.log"" 2>&1 & attrib -R ""{app}\*.*"" /S /D > ""{tmp}\sunshine-attrib-clear.log"" 2>&1"; StatusMsg: "{cm:StatusResetPermissions}"; Flags: runhidden waituntilterminated; Check: ShouldRepairInstallPermissions
-Filename: "{app}\scripts\update-path.bat"; Parameters: "add"; StatusMsg: "{cm:StatusUpdatePath}"; Flags: runhidden waituntilterminated
-Filename: "{app}\scripts\migrate-config.bat"; StatusMsg: "{cm:StatusMigrateConfig}"; Flags: runhidden waituntilterminated
-Filename: "{app}\scripts\add-firewall-rule.bat"; StatusMsg: "{cm:StatusFirewall}"; Flags: runhidden waituntilterminated; Components: firewall
-Filename: "{app}\scripts\install-gamepad.bat"; StatusMsg: "{cm:StatusInstallGamepad}"; Flags: runhidden waituntilterminated; Components: gamepad
-Filename: "{app}\scripts\vmouse\install-vmouse.bat"; StatusMsg: "{cm:StatusInstallVmouse}"; Flags: runhidden waituntilterminated; Components: vmouse
-Filename: "{app}\scripts\install-service.bat"; Parameters: "{code:GetServiceInstallParameters}"; StatusMsg: "{cm:StatusInstallService}"; Flags: runhidden waituntilterminated; AfterInstall: VerifyServiceInstalled
-Filename: "{app}\scripts\autostart-service.bat"; StatusMsg: "{cm:StatusAutostart}"; Flags: runhidden waituntilterminated; Components: autostart; Check: ShouldConfigureServiceAutostart
+Filename: "{cmd}"; Parameters: "/c icacls ""{app}"" /reset /T /C > ""{tmp}\sunshine-icacls-reset.log"" 2>&1 & attrib -R ""{app}\*.*"" /S /D > ""{tmp}\sunshine-attrib-clear.log"" 2>&1"; StatusMsg: "{cm:StatusResetPermissions}"; Flags: runhidden waituntilterminated; Check: ShouldRepairInstallPermissions; BeforeInstall: EvtPermissions
+Filename: "{app}\scripts\update-path.bat"; Parameters: "add"; StatusMsg: "{cm:StatusUpdatePath}"; Flags: runhidden waituntilterminated; BeforeInstall: EvtPath
+Filename: "{app}\scripts\migrate-config.bat"; StatusMsg: "{cm:StatusMigrateConfig}"; Flags: runhidden waituntilterminated; BeforeInstall: EvtConfig
+; Maintenance installs remove components that were selected before but are
+; unchecked now. The program, settings and paired clients stay in {app}.
+Filename: "{app}\scripts\delete-firewall-rule.bat"; StatusMsg: "{cm:StatusFirewall}"; Flags: runhidden waituntilterminated; Check: ShouldRemoveComponent('firewall')
+Filename: "{app}\scripts\uninstall-vdd.bat"; StatusMsg: "{cm:StatusInstallVDD}"; Flags: runhidden waituntilterminated; Check: ShouldRemoveComponent('vdd')
+Filename: "{app}\scripts\uninstall-gamepad.bat"; StatusMsg: "{cm:StatusInstallGamepad}"; Flags: runhidden waituntilterminated; Check: ShouldRemoveComponent('gamepad')
+Filename: "{app}\scripts\vmouse\uninstall-vmouse.bat"; StatusMsg: "{cm:StatusInstallVmouse}"; Flags: runhidden waituntilterminated; Check: ShouldRemoveComponent('vmouse')
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\tools\usbip-win2-root.ps1"" -Action uninstall"; StatusMsg: "{cm:StatusInstallUsbipRoot}"; Flags: runhidden waituntilterminated; Check: ShouldRemoveComponent('usbip')
+Filename: "{app}\scripts\add-firewall-rule.bat"; StatusMsg: "{cm:StatusFirewall}"; Flags: runhidden waituntilterminated; Components: firewall; BeforeInstall: EvtFirewall; AfterInstall: EvtFirewallDone
+Filename: "{app}\scripts\install-gamepad.bat"; StatusMsg: "{cm:StatusInstallGamepad}"; Flags: runhidden waituntilterminated; Components: gamepad; BeforeInstall: EvtGamepad; AfterInstall: EvtGamepadDone
+Filename: "{app}\scripts\install-usbip.bat"; StatusMsg: "{cm:StatusInstallUsbip}"; Flags: runhidden waituntilterminated; Components: usbip; BeforeInstall: EvtUsbip; AfterInstall: EvtUsbipDone
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\tools\usbip-win2-root.ps1"" -Action install"; StatusMsg: "{cm:StatusInstallUsbipRoot}"; Flags: runhidden waituntilterminated; Check: ShouldRunUsbipRootInstall
+Filename: "{app}\scripts\vmouse\install-vmouse.bat"; StatusMsg: "{cm:StatusInstallVmouse}"; Flags: runhidden waituntilterminated; Components: vmouse; BeforeInstall: EvtVmouse; AfterInstall: EvtVmouseDone
+Filename: "{app}\scripts\install-service.bat"; Parameters: "{code:GetServiceInstallParameters}"; StatusMsg: "{cm:StatusInstallService}"; Flags: runhidden waituntilterminated; AfterInstall: VerifyServiceInstalled; BeforeInstall: EvtServiceStart
+Filename: "{app}\scripts\autostart-service.bat"; StatusMsg: "{cm:StatusAutostart}"; Flags: runhidden waituntilterminated; Components: autostart; Check: ShouldConfigureServiceAutostart; BeforeInstall: EvtAutostart; AfterInstall: EvtAutostartDone
 
 ; Finish page actions - user selectable
 Filename: "{cm:DocumentationURL}"; Description: "{cm:FinishOpenDocs}"; Flags: postinstall shellexec runasoriginaluser unchecked nowait skipifsilent
@@ -356,6 +388,7 @@ Filename: "{app}\scripts\delete-firewall-rule.bat"; Flags: runhidden waituntilte
 Filename: "{app}\scripts\uninstall-service.bat"; Flags: runhidden waituntilterminated; RunOnceId: "UninstallService"
 Filename: "{app}\scripts\uninstall-vdd.bat"; Flags: runhidden waituntilterminated; RunOnceId: "UninstallVDD"
 Filename: "{app}\scripts\vmouse\uninstall-vmouse.bat"; Flags: runhidden waituntilterminated; RunOnceId: "UninstallVmouse"
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\tools\usbip-win2-root.ps1"" -Action uninstall"; Flags: runhidden waituntilterminated; RunOnceId: "UninstallUsbipRoot"
 Filename: "{app}\{#MyAppExeName}"; Parameters: "--restore-nvprefs-undo"; Flags: runhidden waituntilterminated; RunOnceId: "RestoreNV"
 Filename: "{app}\scripts\update-path.bat"; Parameters: "remove"; Flags: runhidden waituntilterminated; RunOnceId: "RemovePath"
 
@@ -399,10 +432,171 @@ var
   ServiceVerifyFailed: Boolean;
   // 0 = ready/not selected, 101 = failed, 3010 = reboot required.
   VDDResultCode: Integer;
+  InstallRunDir: String;
+  InstallRunId: String;
+  InstallEventSequence: Integer;
+  InstallProgressPermille: Integer;
+  GamepadResult, UsbipResult: Integer;
+  RebootChecked: Boolean;
+  RebootReasons: String;
+
+function InstallerParameterValue(Name: String): String;
+// Authority: installer-inno-script-functions-20261107 (GetCmdTail,
+// SaveStringToFile); installer-inno-command-line-20261107 (silent switches).
+var
+  Tail, Needle, UpperTail, UpperNeedle: String;
+  StartPos, EndPos: Integer;
+begin
+  Result := '';
+  Tail := GetCmdTail();
+  UpperTail := Uppercase(Tail);
+  UpperNeedle := Uppercase('/' + Name + '=');
+  StartPos := Pos(UpperNeedle, UpperTail);
+  if StartPos = 0 then
+    Exit;
+  StartPos := StartPos + Length(UpperNeedle);
+  EndPos := StartPos;
+  while (EndPos <= Length(Tail)) and (Tail[EndPos] <> ' ') and (Tail[EndPos] <> #9) do
+    EndPos := EndPos + 1;
+  Result := Copy(Tail, StartPos, EndPos - StartPos);
+  if (Length(Result) >= 2) and (Result[1] = '"') and (Result[Length(Result)] = '"') then
+    Result := Copy(Result, 2, Length(Result) - 2);
+end;
+
+procedure EmitInstallerEvent(Phase, State, MessageKey: String; ResultCode: Integer);
+var
+  Line: String;
+begin
+  if InstallRunDir = '' then
+    Exit;
+  InstallEventSequence := InstallEventSequence + 1;
+  Line := '{"schema":1,"run":"' + InstallRunId + '","seq":' + IntToStr(InstallEventSequence) +
+          ',"phase":"' + Phase + '","state":"' + State + '","result_code":' + IntToStr(ResultCode) +
+          ',"message_key":"' + MessageKey + '"}' + #13#10;
+  SaveStringToFile(AddBackslash(InstallRunDir) + 'events.jsonl', AnsiString(Line), True);
+end;
+
+// The steps this run takes, for the shell's overall progress (the 'plan' event; step ids as the shell names them).
+// Optional steps that only run when needed (permissions repair, removals) are not planned; the shell adds a step
+// that reports without being planned.
+function PlannedInstallerSteps(): String;
+begin
+  Result := 'worker,engine,wizard,prepare,files,path,config';
+  if WizardIsComponentSelected('vdd') then Result := Result + ',vdd';
+  if WizardIsComponentSelected('gamepad') then Result := Result + ',gamepad';
+  if WizardIsComponentSelected('usbip') then Result := Result + ',usbip';
+  if WizardIsComponentSelected('vmouse') then Result := Result + ',vmouse';
+  if WizardIsComponentSelected('firewall') then Result := Result + ',firewall';
+  Result := Result + ',service';
+  if WizardIsComponentSelected('autostart') then Result := Result + ',autostart';
+end;
+
+// Progress of the file copy as a 'permille' field on the running 'install' event, at most every 2 %.
+// Authority: installer-inno-curinstallprogresschanged-20261109.
+procedure CurInstallProgressChanged(CurProgress, MaxProgress: Integer);
+var
+  Permille: Integer;
+begin
+  if (InstallRunDir = '') or (MaxProgress <= 0) then
+    Exit;
+  Permille := Round((CurProgress * 1.0) / MaxProgress * 1000);
+  if Permille > 1000 then Permille := 1000;
+  if Permille < InstallProgressPermille + 20 then
+    Exit;
+  InstallProgressPermille := Permille;
+  InstallEventSequence := InstallEventSequence + 1;
+  SaveStringToFile(AddBackslash(InstallRunDir) + 'events.jsonl', AnsiString('{"schema":1,"run":"' + InstallRunId +
+    '","seq":' + IntToStr(InstallEventSequence) + ',"phase":"install","state":"running","result_code":0,' +
+    '"message_key":"InstallProgress","permille":' + IntToStr(Permille) + '}' + #13#10), True);
+end;
+
+// Phase events for the installer shell (one JSON line each; see EmitInstallerEvent). They only
+// report progress; they do not change what the [Run] entries do or in which order.
+procedure EvtPermissions(); begin EmitInstallerEvent('permissions', 'running', 'StatusResetPermissions', 0); end;
+procedure EvtPath(); begin EmitInstallerEvent('path', 'running', 'StatusUpdatePath', 0); end;
+procedure EvtConfig(); begin EmitInstallerEvent('config', 'running', 'StatusMigrateConfig', 0); end;
+procedure EvtFirewall(); begin EmitInstallerEvent('firewall', 'running', 'StatusFirewall', 0); end;
+procedure EvtFirewallDone(); begin EmitInstallerEvent('firewall', 'done', 'StatusFirewall', 0); end;
+procedure EvtGamepad(); begin EmitInstallerEvent('gamepad', 'running', 'StatusInstallGamepad', 0); end;
+procedure EvtUsbip(); begin EmitInstallerEvent('usbip', 'running', 'StatusInstallUsbip', 0); end;
+
+// The helper scripts leave their exit code in scripts\result-<name>.txt: 0 done, 3010 needs a restart, else failed.
+function TakeStepResult(Name: String): Integer;
+var
+  Path: String;
+  Lines: TArrayOfString;
+begin
+  Result := -1;
+  Path := ExpandConstant('{app}\scripts\result-' + Name + '.txt');
+  if FileExists(Path) then
+  begin
+    if LoadStringsFromFile(Path, Lines) and (GetArrayLength(Lines) > 0) then
+      Result := StrToIntDef(Trim(Lines[0]), -1);
+    DeleteFile(Path);
+  end;
+end;
+
+procedure EmitStepResult(Phase, Key: String; Code: Integer);
+begin
+  if Code = 0 then
+    EmitInstallerEvent(Phase, 'done', Key, 0)
+  else if Code = 3010 then
+    EmitInstallerEvent(Phase, 'needs-reboot', Key, 3010)
+  else
+    EmitInstallerEvent(Phase, 'failed', Key, Code);
+end;
+
+procedure EvtGamepadDone();
+begin
+  GamepadResult := TakeStepResult('gamepad');
+  EmitStepResult('gamepad', 'StatusInstallGamepad', GamepadResult);
+end;
+
+procedure EvtUsbipDone();
+begin
+  UsbipResult := TakeStepResult('usbip');
+  EmitStepResult('usbip', 'StatusInstallUsbip', UsbipResult);
+end;
+
+procedure EvtVmouse(); begin EmitInstallerEvent('vmouse', 'running', 'StatusInstallVmouse', 0); end;
+procedure EvtVmouseDone(); begin EmitInstallerEvent('vmouse', 'done', 'StatusInstallVmouse', 0); end;
+procedure EvtServiceStart(); begin EmitInstallerEvent('service', 'running', 'StatusInstallService', 0); end;
+procedure EvtAutostart(); begin EmitInstallerEvent('autostart', 'running', 'StatusAutostart', 0); end;
+procedure EvtAutostartDone(); begin EmitInstallerEvent('autostart', 'done', 'StatusAutostart', 0); end;
 
 function VDDComponentSelected(): Boolean;
 begin
   Result := WizardIsComponentSelected('vdd');
+end;
+
+function ShouldRunUsbipRootInstall(): Boolean;
+begin
+  // An existing install must migrate even when the user changes optional
+  // component selection during an upgrade. New installs only create the node
+  // when the USB/IP component (usbip-win2) is selected.
+  // usbip-win2 needs Windows 10 1903 (18362): an older system never gets the node, migration or not.
+  Result := ((GetWindowsVersion and $FFFF) >= 18362) and (ExistingInnoInstall or WizardIsComponentSelected('usbip'));
+end;
+
+// Authority: installer-inno-components-params-20261107; installer-inno-uninstall-regkey-20261107.
+function PreviousComponentSelected(Name: String): Boolean;
+var
+  Selected: String;
+begin
+  Result := RegQueryStringValue(HKLM64,
+    'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{B16E5C0D-7B8A-4E3B-9F1A-2D4C6E8F0A1B}_is1',
+    'Inno Setup: Selected Components', Selected);
+  if not Result then
+    Result := RegQueryStringValue(HKLM32,
+      'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{B16E5C0D-7B8A-4E3B-9F1A-2D4C6E8F0A1B}_is1',
+      'Inno Setup: Selected Components', Selected);
+  Result := Result and (Pos(Lowercase(Name), Lowercase(Selected)) > 0);
+end;
+
+function ShouldRemoveComponent(Name: String): Boolean;
+begin
+  Result := ExistingInnoInstall and PreviousComponentSelected(Name) and
+            (not WizardIsComponentSelected(Name));
 end;
 
 function GetServiceInstallParameters(Param: String): String;
@@ -427,6 +621,7 @@ begin
     Exit;
 
   WizardForm.StatusLabel.Caption := CustomMessage('StatusInstallVDD');
+  EmitInstallerEvent('install-vdd', 'running', 'StatusInstallVDD', 0);
   Params := '--preserve-healthy-existing';
   ResultCode := -1;
   if not Exec(ExpandConstant('{app}\scripts\install-vdd.bat'), Params, '',
@@ -438,16 +633,23 @@ begin
   else if ResultCode = 0 then
   begin
     Log('VDD installation and control-interface verification succeeded.');
+    EmitInstallerEvent('install-vdd', 'done', 'StatusInstallVDD', 0);
   end
+  // 3010 only comes with a real Windows restart signal (vdd-device-helper.ps1 Get-VddWindowsRestartSignal:
+  // ERROR_SUCCESS_REBOOT_REQUIRED from the bind or staging, CM_PROB_NEED_RESTART, DEVPKEY_Device_IsRebootRequired).
+  // A device that is bound but not ready in time without one makes the helper exit 1: VDDResultCode 101 below, the
+  // engine exits 101 and the shell shows the driver failure page with 修复安装.
   else if ResultCode = 3010 then
   begin
     VDDResultCode := 3010;
     Log('VDD installation requires a Windows restart; Sunshine will not start in this boot.');
+    EmitInstallerEvent('install-vdd', 'needs-reboot', 'StatusInstallVDD', 3010);
   end
   else
   begin
     VDDResultCode := 101;
     Log('VDD installation or verification failed with exit code ' + IntToStr(ResultCode) + '.');
+    EmitInstallerEvent('install-vdd', 'failed', 'StatusInstallVDD', 101);
   end;
 
   if (VDDResultCode = 101) and (not WizardSilent) then
@@ -462,6 +664,10 @@ procedure InitializeWizard();
 var
   WelcomeLeft: Integer;
 begin
+  InstallRunDir := InstallerParameterValue('SUNSHINE_RUN_DIR');
+  InstallRunId := InstallerParameterValue('SUNSHINE_RUN_ID');
+  InstallEventSequence := 0;
+  EmitInstallerEvent('wizard', 'running', 'WizardStarted', 0);
   // ── Main form tweaks ──
   WizardForm.Color := $FAF6F2;
 
@@ -759,6 +965,7 @@ var
   Found: Boolean;
   Lines: TArrayOfString;
 begin
+  EmitInstallerEvent('service', 'running', 'StatusInstallService', 0);
   ExpectedPath := ExpandConstant('{app}\tools\sunshinesvc.exe');
   Lower := Lowercase(ExpectedPath);
 
@@ -790,7 +997,10 @@ begin
       Found := RegQueryStringValue(HKLM64, 'SYSTEM\CurrentControlSet\Services\SunshineService',
                                    'ImagePath', ImagePath);
     if Found and (Pos(Lower, Lowercase(ImagePath)) > 0) then
+    begin
+      EmitInstallerEvent('service', 'done', 'StatusInstallService', 0);
       Exit;  // happy path
+    end;
     Sleep(500);
   end;
 
@@ -809,6 +1019,7 @@ begin
       if Pos(Lower, Lowercase(Line)) > 0 then
       begin
         DeleteFile(TmpFile);
+        EmitInstallerEvent('service', 'done', 'StatusInstallService', 0);
         Exit;
       end;
     end;
@@ -837,6 +1048,7 @@ begin
   //
   // The exit code still reports the failure — see GetCustomSetupExitCode().
   ServiceVerifyFailed := True;
+  EmitInstallerEvent('service', 'failed', 'StatusInstallService', 100);
   Log('Service verification failed. ' + Detail);
   // MsgBox() ignores /SILENT (only /SUPPRESSMSGBOXES auto-answers it), so an
   // unattended install without that switch would sit here forever now that we
@@ -852,14 +1064,81 @@ end;
 // otherwise report a broken install as successful. Codes 100/101 are outside
 // Inno's own range (1-8), while 3010 is the standard Windows reboot-required
 // result consumed by unattended updaters.
+procedure AddRebootReason(Name: String);
+begin
+  if Pos(Name, RebootReasons) = 0 then
+  begin
+    if RebootReasons <> '' then
+      RebootReasons := RebootReasons + ',';
+    RebootReasons := RebootReasons + Name;
+  end;
+end;
+
+// A restart is requested only when a driver step returned 3010, or Windows itself reports a pending
+// restart on one of our drivers. The decision and its reasons go to the event log ('reboot').
+procedure DecideRestart();
+var
+  ResultCode: Integer;
+  OutFile, Names: String;
+  Lines: TArrayOfString;
+  I: Integer;
+begin
+  if RebootChecked then
+    Exit;
+  RebootChecked := True;
+  RebootReasons := '';
+  if VDDResultCode = 3010 then
+    AddRebootReason('vdd');
+  if GamepadResult = 3010 then
+    AddRebootReason('vigem');
+  if UsbipResult = 3010 then
+    AddRebootReason('usbip');
+  OutFile := ExpandConstant('{tmp}\sunshine-reboot-check.txt');
+  DeleteFile(OutFile);
+  if FileExists(ExpandConstant('{app}\tools\driver-reboot-check.ps1')) then
+  begin
+    if Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+            '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{app}\tools\driver-reboot-check.ps1') + '" -Out "' + OutFile + '"',
+            '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and LoadStringsFromFile(OutFile, Lines) then
+    begin
+      for I := 0 to GetArrayLength(Lines) - 1 do
+      begin
+        Names := Trim(Lines[I]);
+        if Pos('vdd', Names) > 0 then AddRebootReason('vdd');
+        if Pos('vigem', Names) > 0 then AddRebootReason('vigem');
+        if Pos('vmouse', Names) > 0 then AddRebootReason('vmouse');
+        if Pos('usbip', Names) > 0 then AddRebootReason('usbip');
+      end;
+    end;
+  end;
+  if RebootReasons = '' then
+  begin
+    Log('Restart decision: not needed.');
+    EmitInstallerEvent('reboot', 'done', 'none', 0);
+  end
+  else
+  begin
+    Log('Restart decision: needed for ' + RebootReasons + '.');
+    EmitInstallerEvent('reboot', 'done', RebootReasons, 3010);
+  end;
+end;
+
 function GetCustomSetupExitCode(): Integer;
 begin
-  if VDDResultCode <> 0 then
-    Result := VDDResultCode
+  DecideRestart();
+  if VDDResultCode = 101 then
+    Result := 101
   else if ServiceVerifyFailed then
     Result := 100
+  else if RebootReasons <> '' then
+    Result := 3010
   else
     Result := 0;
+end;
+
+procedure DeinitializeSetup();
+begin
+  EmitInstallerEvent('installer', 'done', 'InstallerFinished', GetCustomSetupExitCode());
 end;
 
 // Initialization: handle old NSIS upgrade
@@ -955,15 +1234,35 @@ begin
 end;
 
 // Stop services and processes before installation to avoid locked files
+// The installer shell passes its own pid so an installer package that is itself called
+// Sunshine.exe is not stopped together with the installed Sunshine.
+function SunshineKillParameters(): String;
+var
+  ShellPid: String;
+  I: Integer;
+  Digits: Boolean;
+begin
+  Result := '/f /im sunshine.exe';
+  ShellPid := InstallerParameterValue('SUNSHINE_SHELL_PID');
+  Digits := ShellPid <> '';
+  for I := 1 to Length(ShellPid) do
+    if (ShellPid[I] < '0') or (ShellPid[I] > '9') then
+      Digits := False;
+  if Digits then
+    Result := Result + ' /fi "PID ne ' + ShellPid + '"';
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResultCode: Integer;
 begin
   Result := '';
+  EmitInstallerEvent('prepare', 'running', 'PrepareToInstall', 0);
+
   // Stop the Sunshine service
   Exec('net', 'stop SunshineService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   // Kill any running processes
-  Exec('taskkill', '/f /im sunshine.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('taskkill', SunshineKillParameters(), '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec('taskkill', '/f /im sunshine-gui.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec('taskkill', '/f /im sunshinesvc.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   if FileExists(ExpandConstant('{app}\tools\mat-capture\sunshine-plugin-mat-capture.exe')) then
@@ -982,6 +1281,12 @@ end;
 // Clean up portable scripts during install
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
+  if CurStep = ssInstall then
+  begin
+    EmitInstallerEvent('plan', 'running', PlannedInstallerSteps(), 0);
+    InstallProgressPermille := -20;
+    EmitInstallerEvent('install', 'running', 'InstallStarted', 0);
+  end;
   if CurStep = ssPostInstall then
   begin
     // Upgrade older VDDs and make driver readiness a hard gate before the
@@ -991,12 +1296,14 @@ begin
     // Delete portable scripts in installed version
     DeleteFile(ExpandConstant('{app}\install_portable.bat'));
     DeleteFile(ExpandConstant('{app}\uninstall_portable.bat'));
+    EmitInstallerEvent('install', 'done', 'InstallFinished', GetCustomSetupExitCode());
   end;
 end;
 
 function NeedRestart(): Boolean;
 begin
-  Result := VDDResultCode = 3010;
+  DecideRestart();
+  Result := RebootReasons <> '';
 end;
 
 // Custom uninstall: ask about gamepad and data removal

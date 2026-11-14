@@ -88,6 +88,8 @@ set(SUNSHINE_HOST_SOURCES
     src/public_address.cpp src/public_address.h
     src/system_info.cpp src/system_info.h
     src/build_info.cpp src/build_info.h
+    src/crash/crash.h src/crash/crash_core.cpp src/crash/crash_core.h src/crash/crash_state.h
+    src/crash/crash_common.cpp src/crash/crash_win.cpp src/crash/crash_posix.cpp src/crash/crash_upload.cpp
     src/system_info_cache.cpp
     src/system_info_probe.cpp
     src/stat_trackers.cpp src/stat_trackers.h
@@ -165,6 +167,15 @@ set(SUNSHINE_HOST_SOURCES
     src/webhook/webhook_format.cpp src/webhook/webhook_format.h
     src/webhook/webhook.cpp src/webhook/webhook.h
 
+    # src/telemetry
+    src/telemetry/events.cpp src/telemetry/events.h
+    src/telemetry/queue.cpp src/telemetry/queue.h
+    src/telemetry/stream_stats.cpp src/telemetry/stream_stats.h
+    src/telemetry/service.cpp src/telemetry/service.h
+    src/telemetry/transport.cpp src/telemetry/transport.h
+    src/telemetry/telemetry.cpp src/telemetry/telemetry.h
+    src/telemetry/hooks.h
+
     # src/nvhttp
     src/nvhttp/abr_api.cpp src/nvhttp/abr_api.h
     src/nvhttp/ai_api.cpp src/nvhttp/ai_api.h
@@ -201,6 +212,7 @@ set(SUNSHINE_HOST_SOURCES
     src/confighttp/clients.cpp src/confighttp/clients.h
     src/confighttp/pair_link.cpp src/confighttp/pair_link.h
     src/confighttp/diagnostics.cpp src/confighttp/diagnostics.h
+    src/confighttp/doctor.cpp src/confighttp/doctor.h
     src/confighttp/network.cpp src/confighttp/network.h
     src/confighttp/systeminfo.cpp src/confighttp/systeminfo.h
     src/confighttp/runtime.cpp src/confighttp/runtime.h
@@ -210,6 +222,12 @@ set(SUNSHINE_HOST_SOURCES
     src/confighttp/routes.cpp src/confighttp/routes.h
     src/confighttp/types.h
     src/confighttp/asset_paths.h
+
+    # src/doctor
+    src/doctor/doctor.cpp src/doctor/doctor.h
+    src/doctor/doctor_checks.cpp src/doctor/doctor_checks.h
+    src/doctor/doctor_os.cpp src/doctor/doctor_os.h
+
     # src/app_scan
     src/app_scan/scanner.cpp src/app_scan/libraries.cpp src/app_scan/scanner.h
 
@@ -255,5 +273,6 @@ set(SUNSHINE_HOST_SOURCES
     src/sparxie/install_platform.cpp
     third-party/puff/puff.c third-party/puff/puff.h
     src/confighttp/sparxie.cpp src/confighttp/sparxie.h
+    src/confighttp/telemetry.cpp src/confighttp/telemetry.h
 )
 list(TRANSFORM SUNSHINE_HOST_SOURCES PREPEND "${CMAKE_SOURCE_DIR}/")

@@ -54,20 +54,13 @@ install(TARGETS audio-info RUNTIME DESTINATION "tools" COMPONENT audio)
 install(TARGETS sunshinesvc RUNTIME DESTINATION "tools" COMPONENT application)
 install(TARGETS qiin-tabtip RUNTIME DESTINATION "tools" COMPONENT application)
 
-# The optional self-contained runtime is a separate release asset. The main
-# package carries only its pinned download manifest, keeping the feature
-# installable without adding the complete .NET runtime to every Sunshine copy.
-set(DS5_SIDECAR_PACKAGE_MANIFEST "${CMAKE_BINARY_DIR}/ds5-sidecar-package.json" CACHE FILEPATH
-    "Path to the pinned Sunshine DualSense sidecar package manifest")
-if(EXISTS "${DS5_SIDECAR_PACKAGE_MANIFEST}")
-  install(FILES "${DS5_SIDECAR_PACKAGE_MANIFEST}"
+# The touch application command uses this host-owned protocol launcher. It is
+# published from tools/sparxie-launch when the Windows SDK build has dotnet.
+if(TARGET sparxie-launch-publish)
+  add_dependencies(sunshine sparxie-launch-publish)
+  install(DIRECTORY "${SPARXIE_LAUNCH_PUBLISH_DIR}/"
           DESTINATION "tools"
-          RENAME "ds5-sidecar-package.json"
           COMPONENT application)
-  set(SUNSHINE_DS5_SIDECAR_PACKAGE_AVAILABLE ON)
-else()
-  message(STATUS "DualSense sidecar package manifest was not generated; optional component install will be unavailable")
-  set(SUNSHINE_DS5_SIDECAR_PACKAGE_AVAILABLE OFF)
 endif()
 
 # Shared tool: nefconw.exe (used by VDD and vmouse install scripts)
@@ -118,6 +111,19 @@ if(VIGEMBUS_AVAILABLE)
   install(FILES "${VIGEMBUS_INSTALLER}"
           DESTINATION "scripts/gamepad"
           COMPONENT gamepad)
+endif()
+set(GENERATED_USBIP_INSTALL_SCRIPT "${CMAKE_BINARY_DIR}/generated/install-usbip.bat")
+configure_file(
+        "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/usbip/install-usbip.bat.in"
+        "${GENERATED_USBIP_INSTALL_SCRIPT}"
+        @ONLY)
+install(FILES "${GENERATED_USBIP_INSTALL_SCRIPT}"
+        DESTINATION "scripts"
+        COMPONENT usbip)
+if(USBIP_AVAILABLE)
+  install(FILES "${USBIP_INSTALLER}"
+          DESTINATION "scripts/usbip"
+          COMPONENT usbip)
 endif()
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/vsink/"
         DESTINATION "scripts"
@@ -187,6 +193,12 @@ if(VMOUSE_DRIVER_AVAILABLE)
 endif()
 
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/helper/"
+        DESTINATION "tools"
+        COMPONENT assets)
+install(FILES "${CMAKE_SOURCE_DIR}/tools/driver-reboot-check.ps1"
+        DESTINATION "tools"
+        COMPONENT assets)
+install(FILES "${CMAKE_SOURCE_DIR}/tools/usbip-win2-root.ps1"
         DESTINATION "tools"
         COMPONENT assets)
 
@@ -263,11 +275,7 @@ set(CPACK_COMPONENT_GAMEPAD_DESCRIPTION "Scripts to install and uninstall Virtua
 set(CPACK_COMPONENT_GAMEPAD_GROUP "Scripts")
 
 # include specific packaging
-if(SUNSHINE_DS5_SIDECAR_PACKAGE_AVAILABLE)
-  include(${CMAKE_MODULE_PATH}/packaging/windows_innosetup.cmake)
-else()
-  message(STATUS "Inno Setup targets are disabled because the DualSense sidecar package manifest is missing")
-endif()
+include(${CMAKE_MODULE_PATH}/packaging/windows_innosetup.cmake)
 # Legacy NSIS/WiX (kept for reference, no longer used)
 # include(${CMAKE_MODULE_PATH}/packaging/windows_nsis.cmake)
 # include(${CMAKE_MODULE_PATH}/packaging/windows_wix.cmake)

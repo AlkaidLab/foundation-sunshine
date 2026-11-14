@@ -32,6 +32,7 @@ extern "C" {
 
 // lib includes
 #include "cbs.h"
+#include "crash/crash.h"
 #include "config.h"
 #include "streaming/perf_recorder.h"
 #include "display_device/display_device.h"
@@ -86,6 +87,69 @@ namespace video {
       }
 #endif
       return std::nullopt;
+    }
+
+    /** Serialises the startup/stream probe with the health check's probes. */
+    std::timed_mutex &
+    probe_mutex() {
+      static std::timed_mutex mutex;
+      return mutex;
+    }
+
+    /** How long a health-check probe waits for the GPU: one backend of another probe. */
+    constexpr auto doctor_probe_wait = 12s;
+
+    /** Every active display with its mode and HDR state, so a launch that changes either one is not mistaken for the last one. */
+    std::string
+    desktop_facts() {
+      const auto devices { display_device::enum_available_devices() };
+      std::unordered_set<std::string> active_ids;
+      for (const auto &[id, device] : devices) {
+        if (device.device_state == display_device::device_state_e::active ||
+            device.device_state == display_device::device_state_e::primary) {
+          active_ids.insert(id);
+        }
+      }
+      const auto modes = active_ids.empty() ? display_device::device_display_mode_map_t {} : display_device::get_current_display_modes(active_ids);
+      std::ostringstream out;
+      for (const auto &[id, device] : devices) {
+        if (!active_ids.count(id)) {
+          continue;
+        }
+        out << id << ' ' << device.display_name << ' ';
+        if (const auto mode = modes.find(id); mode != modes.end()) {
+          out << mode->second.resolution.width << 'x' << mode->second.resolution.height << '@'
+              << mode->second.refresh_rate.numerator << '/' << mode->second.refresh_rate.denominator;
+        }
+        else {
+          out << "mode?";
+        }
+        out << ' ' << display_device::to_string(device.hdr_state) << ';';
+      }
+      return out.str();
+    }
+
+    /** The options whose change can change what the probe finds. config::video is only rewritten by parse and by the temporary swap, which forgets the memo. */
+    std::string
+    probe_options_digest() {
+      std::ostringstream out;
+      out << "encoder=" << config::video.encoder << ";hevc=" << config::video.hevc_mode << ";av1=" << config::video.av1_mode
+          << ";adapter=" << config::video.adapter_name << ";output=" << config::video.output_name << ";hdr_prep=" << config::video.hdr_prep
+          << ";target=" << config::video.capture_target;
+      return out.str();
+    }
+
+    /** True when at least one display is active, or when the platform cannot tell; writes nothing. */
+    bool
+    any_display_active() {
+      const auto devices { display_device::enum_available_devices() };
+      if (devices.empty()) {
+        return true;
+      }
+      return std::any_of(std::begin(devices), std::end(devices), [](const auto &device) {
+        return device.second.device_state == display_device::device_state_e::active ||
+               device.second.device_state == display_device::device_state_e::primary;
+      });
     }
 
     /**
@@ -3690,7 +3754,12 @@ namespace video {
       if (needs_bitrate_rebuild) current_img = std::move(dummy_img);
     }
 
+    auto last_encode_time = std::chrono::steady_clock::now();
+    // A frame that takes this long is a hang worth a report (crash/crash.h); the wait for the next capture is bounded by the frame time
+    crash::watched_thread_t crash_watch("video-encode", 15000);
+
     while (true) {
+      crash::busy_scope_t crash_busy(crash_watch.slot);
       // Break out of the encoding loop if any of the following are true:
       // a) The stream is ending
       // b) Sunshine is quitting
@@ -3817,12 +3886,17 @@ namespace video {
       // This allows the stream framerate to match the render framerate for VRR support
       // However, if minimum_fps_target is set, or input activity boost is active, we still encode
       // to maintain a temporary minimum FPS floor for better visual input feedback.
-      if (config::video.variable_refresh_rate && !has_new_frame && !requested_idr_frame) {
-        // Only skip if minimum_fps_target is 0 (disabled) and input activity boost is inactive.
-        if (config::video.minimum_fps_target == 0 && !input_boost_active) {
-          continue;
-        }
-        // If minimum_fps_target is set or boost is active, we'll encode anyway to maintain minimum FPS.
+      // The first frame of the session and a repeat after vrr_idle_keepalive of silence are never skipped: with nothing
+      // moving on the display the client would otherwise receive no video packet at all and give up.
+      if (vrr_may_skip_encode(
+            config::video.variable_refresh_rate,
+            has_new_frame,
+            requested_idr_frame,
+            config::video.minimum_fps_target,
+            input_boost_active,
+            static_cast<std::uint64_t>(frame_nr - 1),
+            std::chrono::steady_clock::now() - last_encode_time)) {
+        continue;
       }
 
       std::optional<encoder_rebuild_context_t> rebuild_context;
@@ -3837,6 +3911,7 @@ namespace video {
       }
 
       session->request_normal_frame();
+      last_encode_time = std::chrono::steady_clock::now();
       perf::record_encode_submission(config.perf_session_id, !has_new_frame || replayed_frame);
     }
   }
@@ -5068,8 +5143,136 @@ namespace video {
     return true;
   }
 
+  bool
+  validate_encoder(
+    encoder_t &encoder,
+    bool expect_failure,
+    const std::optional<std::string> &probe_capture_override,
+    const std::string &probe_display_name) {
+    return validate_encoder_detailed(encoder, expect_failure, probe_capture_override, probe_display_name, nullptr, false);
+  }
+
+  std::vector<std::string>
+  encoder_backend_names() {
+    std::vector<std::string> names;
+    for (const auto *encoder : encoders) {
+      names.emplace_back(encoder->name);
+    }
+    return names;
+  }
+
+  doctor_encoder_result_t
+  doctor_probe_encoder(const std::string &name) {
+    doctor_encoder_result_t result;
+    result.name = name;
+    const auto found = std::find_if(encoders.begin(), encoders.end(), [&](const encoder_t *encoder) { return encoder->name == name; });
+    if (found == encoders.end()) {
+      result.skipped_reason = "unknown";
+      return result;
+    }
+    std::unique_lock lock { probe_mutex(), doctor_probe_wait };
+    if (!lock.owns_lock()) {
+      result.skipped_reason = "busy";
+      return result;
+    }
+    // A probe with no active display locks DXGI on Windows 11 24H2 (see allow_encoder_probing).
+    if (!any_display_active()) {
+      result.skipped_reason = "no_display";
+      return result;
+    }
+    const auto begin = std::chrono::steady_clock::now();
+    const auto capture_override = capture_override_for_encoder_probe();
+    const auto display_name = display_device::get_display_name(config::video.output_name);
+    // The copy keeps the host's own capability flags untouched.
+    encoder_t probe = **found;
+    std::string failure;
+    result.ran = true;
+    result.usable = validate_encoder_detailed(probe, false, capture_override, display_name, &failure, true);
+    result.failure = result.usable ? std::string {} : (failure.empty() ? std::string { "h264_session" } : failure);
+    auto codec = [](const auto &flags, bool tested) {
+      doctor_codec_result_t out;
+      out.tested = tested;
+      out.passed = tested && flags[encoder_t::PASSED];
+      out.hdr = out.passed && flags[encoder_t::DYNAMIC_RANGE];
+      out.yuv444 = out.passed && flags[encoder_t::YUV444];
+      return out;
+    };
+    const bool more_codecs = result.usable && !(probe.flags & H264_ONLY);
+    result.h264 = codec(probe.h264, true);
+    result.hevc = codec(probe.hevc, more_codecs);
+    result.av1 = codec(probe.av1, more_codecs);
+    if (!result.usable) result.h264.passed = false;
+    result.elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - begin).count();
+    return result;
+  }
+
+  doctor_capture_result_t
+  doctor_probe_capture(std::chrono::milliseconds budget) {
+    doctor_capture_result_t result;
+    std::unique_lock lock { probe_mutex(), doctor_probe_wait };
+    if (!lock.owns_lock()) {
+      result.skipped_reason = "busy";
+      return result;
+    }
+    if (!any_display_active()) {
+      result.skipped_reason = "no_display";
+      return result;
+    }
+    result.ran = true;
+    const auto chosen_for_doctor = current_encoder();
+    const encoder_t *encoder = chosen_for_doctor ? chosen_for_doctor.get() : encoders.front();
+    config_t config { 1920, 1080, 60, 1000, 1, 1, 0, 0, 0, 0, 0 };
+    result.method = config::video.capture.empty() ? std::string { "auto" } : config::video.capture;
+    // The VDD producer only publishes frames during a stream; capture through its probe stand-in, like the encoder probe.
+    if (const auto stand_in = capture_override_for_encoder_probe()) {
+      config.capture_backend_override = *stand_in;
+      result.method += " → " + *stand_in;
+    }
+    result.display = display_device::get_display_name(config::video.output_name);
+    const auto begin = std::chrono::steady_clock::now();
+    auto disp = platf::display(encoder->platform_formats->dev_type, result.display, config);
+    if (!disp) {
+      result.failure = "open";
+      return result;
+    }
+    result.width = disp->width;
+    result.height = disp->height;
+    auto img = disp->alloc_img();
+    if (!img) {
+      result.failure = "error";
+      return result;
+    }
+    const auto deadline = begin + budget;
+    bool captured = false;
+    auto push = [&](std::shared_ptr<platf::img_t> &&frame, bool frame_captured) -> bool {
+      if (frame_captured && frame) {
+        captured = true;
+        result.first_frame_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - begin).count();
+        return false;
+      }
+      return std::chrono::steady_clock::now() < deadline;
+    };
+    auto pull = [&img](std::shared_ptr<platf::img_t> &img_out) -> bool {
+      img_out = img;
+      img_out->frame_timestamp.reset();
+      img_out->pipeline_trace.reset();
+      return true;
+    };
+    bool cursor = false;
+    const auto status = disp->capture(push, pull, &cursor);
+    result.ok = captured;
+    if (!captured) result.failure = status == platf::capture_e::error ? "error" : "no_frame";
+    return result;
+  }
+
+  void
+  forget_encoder_probe_result() {
+    probe_memo.forget();
+  }
+
   int
   probe_encoders(std::optional<probe_target_t> target) {
+    std::lock_guard probe_lock { probe_mutex() };
     last_encoder_probe_result = {
       probe_error_e::none,
       "Encoder probe succeeded.",

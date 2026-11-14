@@ -21,6 +21,7 @@
 #include "build_info.h"
 #include "client_fingerprint.h"
 #include "confighttp.h"
+#include "crash/crash.h"
 #include "default_apps.h"
 #include "display_device/session.h"
 #include "entry_handler.h"
@@ -34,6 +35,9 @@
 #include "process.h"
 #include "pyrowave/runtime.h"
 #include "startup_gate.h"
+#include "stream.h"
+#include "telemetry/hooks.h"
+#include "telemetry/telemetry.h"
 #include "tray/system_tray.h"
 #include "upnp.h"
 #include "version.h"
@@ -280,10 +284,25 @@ main(int argc, char *argv[]) {
     }
   }
 
+  // Crash, abort and hang reports (crash/crash.h): installed before anything else can fail, pointed at the real config file once it is known.
+  {
+    crash::options_t crash_options;
+    crash_options.version = PROJECT_VER;
+    crash_options.config_dir = platf::appdata();
+  #ifdef _WIN32
+    crash_options.os_version = platf::windows_version();
+  #else
+    crash_options.os_version = "linux";
+  #endif
+    crash::install(crash_options);
+  }
+
   // parse config file
   if (config::parse(argc, argv)) {
     return 0;
   }
+  crash::set_config_file(file_handler::path_from_utf8(config::sunshine.config_file));
+
 #ifdef _WIN32
   // A second process of this installation exits before it binds a port or probes an encoder.
   // Session 0 (the service) and a console session share the global namespace, so one mutex
@@ -306,6 +325,22 @@ main(int argc, char *argv[]) {
   // if anything is logged prior to this point, it will appear in stdout, but not in the log viewer in the UI
   // the version should be printed to the log before anything else
   BOOST_LOG(info) << PROJECT_NAME << " version: " << PROJECT_VER;
+
+  // Usage statistics, error counts and stream quality (docs/privacy_telemetry.md). Each kind is sent only while its own choice is on; nothing here can fail the start.
+  telemetry::start();
+  telemetry::set_session_probe([] {
+    std::vector<telemetry::session_probe_t> probes;
+    for (const auto &info : stream::session::get_all_sessions_info()) {
+      telemetry::session_probe_t probe;
+      probe.session_id = info.session_id;
+      if (info.rtt_ms) probe.rtt_ms = *info.rtt_ms;
+      probe.loss_pct = info.packet_loss;
+      probe.dropped_frames = info.dropped_frames;
+      probe.measured_kbps = info.measured_bitrate_kbps;
+      probes.push_back(probe);
+    }
+    return probes;
+  });
 
 #ifdef _WIN32
   // Cache the result of is_running_as_system() check once at startup
@@ -351,6 +386,15 @@ main(int argc, char *argv[]) {
 
     return fn->second(argv[0], config::sunshine.cmd.argc, config::sunshine.cmd.argv);
   }
+
+  // The second and later passes of the uploader find what a crash left; the first waits out the start. SUNSHINE_TEST_CRASH makes this process
+  // fail on purpose (tests only), after the handlers and the consent are in place.
+  crash::start_uploader();
+  crash::run_test_switch();
+  // The start is one busy stretch of the main thread: a driver call that never returns here shows up as a "hang" report.
+  crash::watched_thread_t crash_main_watch("main-startup", 300000);
+  std::optional<crash::busy_scope_t> crash_startup_busy;
+  crash_startup_busy.emplace(crash_main_watch.slot);
 
   // Adding this guard here first as it also performs recovery after crash,
   // otherwise people could theoretically end up without display output.
@@ -454,6 +498,11 @@ main(int argc, char *argv[]) {
 #ifdef _WIN32
   // Terminate gracefully on Windows when console window is closed
   SetConsoleCtrlHandler(ConsoleCtrlHandler, TRUE);
+#endif
+
+#ifdef _WIN32
+  // The Windows host offers Big Screen once to an apps.json that is older than the entry (default_apps.h); Foundation Desktop is a Windows component.
+  default_apps::migrate_file(config::stream.file_apps, config::sunshine.locale);
 #endif
 
   proc::refresh(config::stream.file_apps);
@@ -651,6 +700,8 @@ main(int argc, char *argv[]) {
   }
 #endif
 
+  telemetry::host_ready();
+  crash_startup_busy.reset();
   mainThreadLoop(shutdown_event);
 
 #ifdef _WIN32
@@ -684,6 +735,9 @@ main(int argc, char *argv[]) {
   httpThread.join();
   configThread.join();
   rtspThread.join();
+
+  // the sessions have ended: the last events go to the disk queue (no wait for the network) and the sender stops
+  telemetry::stop();
 
   task_pool.stop();
   task_pool.join();

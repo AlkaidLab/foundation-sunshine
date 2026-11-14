@@ -461,6 +461,115 @@ namespace confighttp::diagnostics {
       return body;
     }
 
+    struct helper_output {
+      boost::process::v1::ipstream pipe;
+    };
+
+    json
+    launch_usbip_root_helper(usbip_root::action action) {
+      namespace bp = boost::process::v1;
+      const auto script = platf::appdata().parent_path() / "tools" / "usbip-win2-root.ps1";
+      if (!std::filesystem::is_regular_file(script)) {
+        return json {
+          { "success", false },
+          { "error", "usbip-win2 root helper is not installed" },
+          { "ds4_fallback", "DS4 fallback remains active because the usbip-win2 helper is unavailable." },
+        };
+      }
+
+      const auto powershell = bp::search_path("powershell.exe");
+      if (powershell.empty()) {
+        return json {
+          { "success", false },
+          { "error", "Windows PowerShell is unavailable" },
+          { "ds4_fallback", "DS4 fallback remains active because Windows PowerShell is unavailable." },
+        };
+      }
+
+      auto captured = std::make_shared<helper_output>();
+      std::error_code launch_error;
+      bp::child process(
+        powershell,
+        usbip_root::fixed_powershell_arguments[0],
+        usbip_root::fixed_powershell_arguments[1],
+        usbip_root::fixed_powershell_arguments[2],
+        usbip_root::fixed_powershell_arguments[3],
+        script.string(),
+        "-Action",
+        usbip_root::action_argument(action),
+        bp::std_out > captured->pipe,
+        bp::std_err > bp::null,
+        launch_error);
+      if (launch_error || !process.valid()) {
+        return json {
+          { "success", false },
+          { "error", launch_error ? launch_error.message() : "helper process is invalid" },
+          { "ds4_fallback", "DS4 fallback remains active because the usbip-win2 helper could not start." },
+        };
+      }
+
+      int exit_code = 1;
+      bool have_exit = false;
+      const auto ran = usbip_root::read_bounded(
+        captured->pipe,
+        captured,
+        usbip_root::budget_for(action),
+        [&](unsigned long milliseconds) {
+          const auto handle = process.native_handle();
+          if (handle == nullptr || handle == INVALID_HANDLE_VALUE) return usbip_root::wait_outcome::failed;
+          const auto code = ::WaitForSingleObject(handle, static_cast<::DWORD>(milliseconds));
+          if (code == WAIT_OBJECT_0) {
+            std::error_code wait_error;
+            process.wait(wait_error);
+            if (!wait_error) {
+              exit_code = process.exit_code();
+              have_exit = true;
+            }
+            return usbip_root::wait_outcome::exited;
+          }
+          if (code == WAIT_TIMEOUT) return usbip_root::wait_outcome::timed_out;
+          return usbip_root::wait_outcome::failed;
+        },
+        [&] {
+          const auto handle = process.native_handle();
+          if (handle == nullptr || handle == INVALID_HANDLE_VALUE) return;
+          ::TerminateProcess(handle, 1);
+          const auto reaped = ::WaitForSingleObject(handle, static_cast<::DWORD>(usbip_root::wait_milliseconds(usbip_root::reap_budget)));
+          if (reaped == WAIT_OBJECT_0) {
+            std::error_code wait_error;
+            process.wait(wait_error);
+          }
+          else {
+            process.detach();
+          }
+        },
+        usbip_root::reader_grace);
+
+      if (usbip_root::should_terminate(ran.outcome)) return failure_response(usbip_root::timeout_failure());
+      if (ran.last_line.empty()) {
+        return json {
+          { "success", have_exit && exit_code == 0 },
+          { "exit_code", exit_code },
+          { "error", "usbip-win2 root helper returned no status" },
+          { "ds4_fallback", "DS4 fallback remains active because the usbip-win2 helper returned no status." },
+        };
+      }
+      try {
+        auto result = json::parse(ran.last_line);
+        result["success"] = have_exit && exit_code == 0 && result.value("root_present", false);
+        result["exit_code"] = exit_code;
+        return result;
+      }
+      catch (const json::exception &exception) {
+        return json {
+          { "success", false },
+          { "exit_code", exit_code },
+          { "error", std::string("invalid helper status: ") + exception.what() },
+          { "ds4_fallback", "DS4 fallback remains active because the usbip-win2 helper status was invalid." },
+        };
+      }
+    }
+
     json
     run_usbip_root_helper(std::string_view action_text) {
       const auto action = usbip_root::parse_action(action_text);

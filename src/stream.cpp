@@ -55,6 +55,7 @@ extern "C" {
 #endif
 
 #include "client_fingerprint.h"
+#include "crash/crash.h"
 #include "config.h"
 #include "streaming/fec.h"
 #include "display_device/display_device.h"
@@ -88,6 +89,8 @@ extern "C" {
 #include "platform/common.h"
 #include "touch_keyboard_session.h"
 #include "text_context/bridge.h"
+#include "telemetry/telemetry.h"
+
 
 #define IDX_START_A 0
 #define IDX_START_B 1
@@ -3611,7 +3614,10 @@ namespace stream {
 
     auto ratecontrol_next_frame_start = std::chrono::steady_clock::now();
 
+    crash::watched_thread_t crash_watch("video-broadcast", 20000);
+
     while (auto packet = packets->pop()) {
+      crash::busy_scope_t crash_busy(crash_watch.slot);
       if (shutdown_event->peek()) {
         break;
       }
@@ -4025,7 +4031,10 @@ namespace stream {
     // Audio traffic is sent on this thread
     platf::adjust_thread_priority(platf::thread_priority_e::high);
 
+    crash::watched_thread_t crash_watch("audio-broadcast", 20000);
+
     while (auto packet = packets->pop()) {
+      crash::busy_scope_t crash_busy(crash_watch.slot);
       if (shutdown_event->peek()) {
         break;
       }
@@ -4718,6 +4727,7 @@ namespace stream {
 
       session.nvidia_vsync_lease.reset();
       perf::end_session(session.launch_session_id);
+      telemetry::stream_ended(session.launch_session_id, stop_reason_name(session.lifecycle.snapshot().stop_reason));
 
       // Clean up ABR state for this client
       abr::cleanup(session.client_name);
@@ -4886,8 +4896,40 @@ namespace stream {
       tray_state::add_session(
         session.launch_session_id,
         session.client_name,
-        session.highly_suspected_unknown_client
-      );
+        session.highly_suspected_unknown_client);
+
+      // Usage statistics: the dimensions of the stream (allow-listed values only; no names), and the sums of its quality from here on.
+      if (!session.control_only) {
+        try {
+          telemetry::stream_info_t info;
+          info.session_id = session.launch_session_id;
+          info.client_uuid = session.client_cert_uuid;
+          if (const auto paired = nvhttp::find_paired_client(session.client_cert_uuid)) {
+            info.client_family = std::string(client_family::to_string(paired->family.family));
+            info.client_os = paired->family.os;
+          }
+          info.video_format = session.config.monitor.videoFormat;
+          info.width = session.config.monitor.width;
+          info.height = session.config.monitor.height;
+          info.fps = session.config.monitor.framerate;
+          info.hdr = session.config.monitor.dynamicRange > 0;
+          info.mic = session.audio.enable_mic;
+          info.vdd = session.use_vdd;
+          info.app_name = session.app_name;
+          info.app_cmd = proc::proc.get_app_cmd(session.app_id);
+          // a Sparxie application names its game in the sparxie block of its apps.json entry (a catalogue id, never text); any other application has none
+          {
+            const auto sparxie = telemetry::sparxie_app_of_apps(file_handler::read_file(config::stream.file_apps.c_str()), std::to_string(session.app_id));
+            info.sparxie_app = sparxie.is_sparxie;
+            info.sparxie_game = sparxie.game;
+          }
+          info.altp = false;  // ALTP is not a stream transport on this branch line; when it is, this is the one place to set it
+          telemetry::stream_started(info);
+        }
+        catch (...) {
+          // statistics never decide whether a stream starts
+        }
+      }
 
       // 仅控制流会话不触发 streaming_will_start 回调，因为它们不传输视频/音频
       // 但它们仍然需要被计入 running_sessions，以便正确管理会话

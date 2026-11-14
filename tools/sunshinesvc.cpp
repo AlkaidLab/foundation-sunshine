@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "sunshinesvc_log.h"
+#include "src/crash/crash.h"
 #include "sunshinesvc_state.h"
 
 // PROC_THREAD_ATTRIBUTE_JOB_LIST is currently missing from MinGW headers
@@ -950,6 +951,17 @@ main(int argc, char *argv[]) {
     }
   }
   SetCurrentDirectoryW(module_path);
+
+  // A crash of the service wrapper itself leaves a report next to the host's own (the host uploads it; this process has no uploader)
+  {
+    crash::options_t crash_options;
+  #ifdef SUNSHINESVC_VERSION
+    crash_options.version = SUNSHINESVC_VERSION;
+  #endif
+    crash_options.os_version = "Windows";
+    crash_options.config_dir = std::filesystem::path(module_path) / L"config";
+    crash::install(crash_options);
+  }
 
   // Trigger our ServiceMain()
   return StartServiceCtrlDispatcher(service_table);

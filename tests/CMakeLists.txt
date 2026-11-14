@@ -361,10 +361,17 @@ add_executable(hdr_calibration_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_hdr_calibration.cpp
         ${CMAKE_SOURCE_DIR}/src/hdr/calibration.cpp
         ${CMAKE_SOURCE_DIR}/src/hdr/client_display_capabilities.cpp
-        ${CMAKE_SOURCE_DIR}/src/display_device/color_profile.cpp)
-target_include_directories(hdr_calibration_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+        ${CMAKE_SOURCE_DIR}/src/display_device/color_profile.cpp
+        ${CMAKE_SOURCE_DIR}/src/doctor/doctor.cpp
+        ${CMAKE_SOURCE_DIR}/src/nat_discovery.cpp
+        ${CMAKE_SOURCE_DIR}/src/public_address.cpp
+        ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
+        ${CMAKE_SOURCE_DIR}/src/build_info.cpp)
+target_include_directories(hdr_calibration_unit_tests PRIVATE
+        "${CMAKE_SOURCE_DIR}"
+        "${CMAKE_BINARY_DIR}")  # generated build_info_defs.h and version.h
 target_link_libraries(hdr_calibration_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
-        sunshine_project_options sunshine_coverage)
+        sunshine_project_options sunshine_coverage alkaidlab_stun_codec)
 set_target_properties(hdr_calibration_unit_tests PROPERTIES CXX_STANDARD 23)
 if (WIN32)
     set_target_properties(hdr_calibration_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
@@ -387,7 +394,16 @@ set(CONFIG_RUNTIME_SUPPORT_SOURCES
         ${CMAKE_SOURCE_DIR}/src/display_device/to_string.cpp
         ${CMAKE_SOURCE_DIR}/src/hdr/calibration.cpp
         ${CMAKE_SOURCE_DIR}/src/hdr/client_display_capabilities.cpp
-        ${CMAKE_SOURCE_DIR}/src/display_device/color_profile.cpp)
+        ${CMAKE_SOURCE_DIR}/src/display_device/color_profile.cpp
+        ${CMAKE_SOURCE_DIR}/src/doctor/doctor.cpp
+        ${CMAKE_SOURCE_DIR}/src/public_address.cpp
+        ${CMAKE_SOURCE_DIR}/src/nat_discovery.cpp
+        ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
+        ${CMAKE_SOURCE_DIR}/src/build_info.cpp)
+add_executable(config_runtime_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/config_runtime_stubs.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_config_runtime.cpp
+        ${CONFIG_RUNTIME_SUPPORT_SOURCES})
 target_include_directories(config_runtime_unit_tests PRIVATE
         "${CMAKE_SOURCE_DIR}"
         "${CMAKE_BINARY_DIR}")  # generated version.h
@@ -407,6 +423,33 @@ if (WIN32)
     target_link_libraries(config_runtime_unit_tests PRIVATE ws2_32)
 endif ()
 add_test(NAME config_runtime_unit_tests COMMAND config_runtime_unit_tests)
+
+# The configuration-upgrade suite runs on its own so the global defaults it
+# compares against are the ones a start-up has before any settings file is read.
+add_executable(config_upgrade_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/config_runtime_stubs.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_config_upgrade.cpp
+        ${CONFIG_RUNTIME_SUPPORT_SOURCES})
+target_include_directories(config_upgrade_unit_tests PRIVATE
+        "${CMAKE_SOURCE_DIR}"
+        "${CMAKE_BINARY_DIR}")  # generated version.h
+target_link_libraries(config_upgrade_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
+        sunshine_project_options sunshine_coverage
+        alkaidlab_stun_codec
+        sunshine::host_headers sunshine::tls
+        Boost::boost Boost::log Boost::filesystem Boost::property_tree Boost::asio Boost::beast Boost::regex
+        Boost::format Boost::process)
+set_target_properties(config_upgrade_unit_tests PROPERTIES CXX_STANDARD 23)
+target_compile_definitions(config_upgrade_unit_tests PRIVATE
+        SUNSHINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+        ${SUNSHINE_DEFINITIONS})
+if (WIN32)
+    set_target_properties(config_upgrade_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+    target_include_directories(config_upgrade_unit_tests SYSTEM PRIVATE "${CMAKE_BINARY_DIR}/amf_include")
+    target_link_libraries(config_upgrade_unit_tests PRIVATE ws2_32)
+endif ()
+add_test(NAME config_upgrade_unit_tests COMMAND config_upgrade_unit_tests)
+
 add_executable(gamepad_selection_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_gamepad_selection.cpp)
 target_include_directories(gamepad_selection_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
@@ -544,6 +587,7 @@ if (WIN32)
     set_target_properties(frame_contract_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
 add_test(NAME frame_contract_unit_tests COMMAND frame_contract_unit_tests)
+
 add_executable(session_info_unit_tests
         ${CMAKE_SOURCE_DIR}/src/session_info.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_session_info.cpp)
@@ -570,6 +614,47 @@ if (WIN32)
     set_target_properties(network_reachability_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
 add_test(NAME network_reachability_unit_tests COMMAND network_reachability_unit_tests)
+
+# Telemetry v1: event shapes, scrubbing, consent, queue limits, retry and a fake stream session (no network, no host)
+add_executable(telemetry_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/telemetry/events.cpp
+        ${CMAKE_SOURCE_DIR}/src/telemetry/queue.cpp
+        ${CMAKE_SOURCE_DIR}/src/telemetry/stream_stats.cpp
+        ${CMAKE_SOURCE_DIR}/src/telemetry/service.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_telemetry.cpp)
+target_include_directories(telemetry_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(telemetry_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
+        sunshine_project_options sunshine_coverage)
+target_compile_options(telemetry_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(telemetry_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(telemetry_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME telemetry_unit_tests COMMAND telemetry_unit_tests)
+
+# 体检: the evaluators, the runner, the JSON and the read-only OS probes
+add_executable(doctor_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/doctor/doctor.cpp
+        ${CMAKE_SOURCE_DIR}/src/doctor/doctor_os.cpp
+        ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
+        ${CMAKE_SOURCE_DIR}/src/public_address.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_doctor.cpp)
+target_include_directories(doctor_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+# with feat/build-identity merged the doctor reads the build identity: its source and the generated build_info_defs.h / version.h
+if (EXISTS "${CMAKE_SOURCE_DIR}/src/build_info.cpp")
+    target_sources(doctor_unit_tests PRIVATE ${CMAKE_SOURCE_DIR}/src/build_info.cpp)
+    target_include_directories(doctor_unit_tests PRIVATE "${CMAKE_BINARY_DIR}")
+endif ()
+target_link_libraries(doctor_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
+        sunshine_project_options sunshine_coverage ${Boost_LIBRARIES})
+if (WIN32)
+    target_link_libraries(doctor_unit_tests PRIVATE ole32 uuid mmdevapi strmiids setupapi advapi32)
+    target_compile_definitions(doctor_unit_tests PRIVATE INITGUID)
+    set_target_properties(doctor_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+target_compile_options(doctor_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(doctor_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME doctor_unit_tests COMMAND doctor_unit_tests)
 
 # 版本比较: the date part of a Foundation Sunshine version, against the table shared with the panel and the Web UI
 add_executable(version_compare_unit_tests
@@ -609,6 +694,14 @@ add_test(NAME system_info_unit_tests COMMAND system_info_unit_tests)
 add_executable(build_info_unit_tests
         ${CMAKE_SOURCE_DIR}/src/build_info.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_build_info.cpp)
+target_include_directories(build_info_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}" "${CMAKE_BINARY_DIR}")
+target_link_libraries(build_info_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
+        sunshine_project_options sunshine_coverage)
+set_target_properties(build_info_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(build_info_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME build_info_unit_tests COMMAND build_info_unit_tests)
 # The binary FILEVERSION encoding: HHMMSS above 65535 is split, every field fits 16 bits.
 add_test(NAME rc_version_encoding COMMAND ${CMAKE_COMMAND} -P ${CMAKE_SOURCE_DIR}/tests/cmake/test_rc_version.cmake)
 # A git archive tree (no .git) records its commit from cmake/prep/build_identity_archive.txt (export-subst).
@@ -1081,10 +1174,13 @@ file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
 # Standalone diagnostic programs under tests/tools have their own targets and
 # must not be linked into the aggregate GoogleTest executable.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/tools/")
+# The Sparxie host tests have their own target (tests/sparxie/CMakeLists.txt: sparxie_unit_tests, with the fixtures directory it needs); the aggregate executable cannot compile them.
+list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/sparxie/")
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_hdr_calibration.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_authored_ir_extended.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_devices.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_vb_cable.cpp)
+list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_telemetry.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_host_bitrate_cap.cpp)
 # MAT harnesses have independent entrypoints and explicit test targets.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/mat-live/")
@@ -1098,6 +1194,7 @@ list(REMOVE_ITEM TEST_SOURCES
         ${CMAKE_SOURCE_DIR}/tests/unit/test_client_fingerprint.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_config_overrides.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_config_runtime.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_config_upgrade.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/config_runtime_stubs.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_current_capture_target.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_default_apps.cpp
@@ -1345,3 +1442,23 @@ if (WIN32)
             CXX_STANDARD 23
             LINK_SEARCH_START_STATIC 1)
 endif ()
+
+# Crash reports: signature, meta JSON, consent, the pending folder and the upload against a local mock server
+add_executable(crash_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/crash/crash_core.cpp
+        ${CMAKE_SOURCE_DIR}/src/crash/crash_common.cpp
+        ${CMAKE_SOURCE_DIR}/src/crash/crash_win.cpp
+        ${CMAKE_SOURCE_DIR}/src/crash/crash_posix.cpp
+        ${CMAKE_SOURCE_DIR}/src/crash/crash_upload.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_crash.cpp)
+target_include_directories(crash_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(crash_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json sunshine::curl
+        sunshine_project_options sunshine_coverage Threads::Threads)
+if (WIN32)
+    target_link_libraries(crash_unit_tests PRIVATE ws2_32)
+    set_target_properties(crash_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+target_compile_options(crash_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(crash_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME crash_unit_tests COMMAND crash_unit_tests)
+set_tests_properties(crash_unit_tests PROPERTIES TIMEOUT 120)

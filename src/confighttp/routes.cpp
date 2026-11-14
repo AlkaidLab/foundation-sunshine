@@ -14,6 +14,7 @@
 #include "src/confighttp/common.h"
 #include "src/confighttp/configuration.h"
 #include "src/confighttp/diagnostics.h"
+#include "src/confighttp/doctor.h"
 #include "src/confighttp/integrations.h"
 #include "src/confighttp/network.h"
 #include "src/confighttp/pairing.h"
@@ -21,6 +22,7 @@
 #include "src/confighttp/runtime.h"
 #include "src/confighttp/sparxie.h"
 #include "src/confighttp/systeminfo.h"
+#include "src/confighttp/telemetry.h"
 #include "src/file_mapping/config_http.h"
 #include "src/network.h"
 #include "src/text_context/http.h"
@@ -37,8 +39,12 @@ namespace confighttp {
     confighttp::configuration::register_routes(server);
     confighttp::clients::register_routes(server);
     confighttp::diagnostics::register_routes(server);
+    confighttp::doctor::register_routes(server);
     confighttp::runtime::register_routes(server);
     confighttp::integrations::register_routes(server);
+    confighttp::network::register_routes(server);
+    confighttp::systeminfo::register_routes(server);
+    confighttp::telemetry_api::register_routes(server);
     confighttp::proxies::register_routes(server);
     file_mapping::config_http::register_routes(server);
     ai::http::register_routes(server);
