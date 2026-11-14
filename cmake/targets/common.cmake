@@ -77,15 +77,14 @@ target_link_libraries(sunshine PRIVATE
         ${SUNSHINE_EXTERNAL_LIBRARIES} ${EXTRA_LIBS}
         sunshine_project_options sunshine_crypto sunshine_ai_provider sunshine_ai_stream
         alkaidlab_ds5_core alkaidlab_usbip_core alkaidlab_stun_codec)
+# The adapter definitions and trust-header directories are per source file (see the end of this file), not per target:
+# only three files read them, and a target-wide definition would give every translation unit a different command line
+# whenever the adapters are on or off, so a compiler cache filled by one kind of build could not serve the other.
 if (TARGET sunshine_rtx_video_adapter)
     add_dependencies(sunshine sunshine_rtx_video_adapter)
-    target_include_directories(sunshine PRIVATE "${RTX_VIDEO_TRUST_INCLUDE}")
-    target_compile_definitions(sunshine PRIVATE SUNSHINE_RTX_VIDEO_ADAPTER)
 endif ()
 if (TARGET sunshine_dlssnr_adapter)
     add_dependencies(sunshine sunshine_dlssnr_adapter)
-    target_include_directories(sunshine PRIVATE "${DLSSNR_TRUST_INCLUDE}")
-    target_compile_definitions(sunshine PRIVATE SUNSHINE_DLSSNR_ADAPTER)
 endif ()
 target_compile_definitions(sunshine PUBLIC ${SUNSHINE_DEFINITIONS})
 set_target_properties(sunshine PROPERTIES CXX_STANDARD 23
@@ -115,13 +114,9 @@ if(SUNSHINE_SHARED_HOST_OBJECTS_ENABLED)
     endforeach()
     if (TARGET sunshine_rtx_video_adapter)
         add_dependencies(sunshine_host_objects sunshine_rtx_video_adapter)
-        target_include_directories(sunshine_host_objects PRIVATE "${RTX_VIDEO_TRUST_INCLUDE}")
-        target_compile_definitions(sunshine_host_objects PRIVATE SUNSHINE_RTX_VIDEO_ADAPTER)
     endif ()
     if (TARGET sunshine_dlssnr_adapter)
         add_dependencies(sunshine_host_objects sunshine_dlssnr_adapter)
-        target_include_directories(sunshine_host_objects PRIVATE "${DLSSNR_TRUST_INCLUDE}")
-        target_compile_definitions(sunshine_host_objects PRIVATE SUNSHINE_DLSSNR_ADAPTER)
     endif ()
     target_compile_definitions(sunshine_host_objects PUBLIC ${SUNSHINE_DEFINITIONS})
     set_target_properties(sunshine_host_objects PROPERTIES CXX_STANDARD 23)
@@ -178,5 +173,20 @@ set_source_files_properties("${CMAKE_SOURCE_DIR}/third-party/ViGEmClient/src/ViG
         PROPERTIES
         COMPILE_DEFINITIONS "UNICODE=1;ERROR_INVALID_DEVICE_OBJECT_PARAMETER=650"
         COMPILE_FLAGS ${VIGEM_COMPILE_FLAGS})
+
+# Adapter definitions: set only on the files that read them, in the directories that compile them.
+set(_alk_src "${CMAKE_SOURCE_DIR}/src")
+if (TARGET sunshine_rtx_video_adapter)
+    foreach(_f "${_alk_src}/image_enhancement/config.cpp" "${_alk_src}/platform/windows/image_enhancement/rtx_hdr/adapter_loader.cpp")
+        set_property(SOURCE "${_f}" DIRECTORY "${CMAKE_SOURCE_DIR}" ${TEST_DIR} APPEND PROPERTY COMPILE_DEFINITIONS SUNSHINE_RTX_VIDEO_ADAPTER)
+        set_property(SOURCE "${_f}" DIRECTORY "${CMAKE_SOURCE_DIR}" ${TEST_DIR} APPEND PROPERTY INCLUDE_DIRECTORIES "${RTX_VIDEO_TRUST_INCLUDE}")
+    endforeach()
+endif ()
+if (TARGET sunshine_dlssnr_adapter)
+    foreach(_f "${_alk_src}/image_enhancement/config.cpp" "${_alk_src}/platform/windows/image_enhancement/dlss_nr/adapter_loader.cpp")
+        set_property(SOURCE "${_f}" DIRECTORY "${CMAKE_SOURCE_DIR}" ${TEST_DIR} APPEND PROPERTY COMPILE_DEFINITIONS SUNSHINE_DLSSNR_ADAPTER)
+        set_property(SOURCE "${_f}" DIRECTORY "${CMAKE_SOURCE_DIR}" ${TEST_DIR} APPEND PROPERTY INCLUDE_DIRECTORIES "${DLSSNR_TRUST_INCLUDE}")
+    endforeach()
+endif ()
 
 sunshine_configure_debug_sources("${TEST_DIR}")
