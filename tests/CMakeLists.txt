@@ -104,7 +104,9 @@ if (WIN32)
     set_target_properties(ds5_native_usbip_smoke PROPERTIES
             CXX_STANDARD 23
             LINK_SEARCH_START_STATIC 1)
+    # Exit code 77 = skipped: the smoke needs the usbip-win2 client (and its driver) installed on the host.
     add_test(NAME ds5_native_usbip_smoke COMMAND ds5_native_usbip_smoke 30000)
+    set_tests_properties(ds5_native_usbip_smoke PROPERTIES SKIP_RETURN_CODE 77)
 endif ()
 
 if (WIN32)

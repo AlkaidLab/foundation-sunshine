@@ -1002,6 +1002,21 @@ namespace {
       period_us, submitted.size(), latencies.size(), reads.size(), pick(0.50), pick(0.95), pick(0.99),
       latencies.empty() ? -1.0 : latencies.back());
   }
+
+  /* The attach path starts usbip.exe: found on PATH, or in the machine-wide directory usbip-win2's installer uses
+   * (the same two places the host controller probes). */
+  bool
+  usbip_client_installed() {
+    char found[MAX_PATH] {};
+    if (SearchPathA(nullptr, "usbip.exe", nullptr, MAX_PATH, found, nullptr) != 0) return true;
+    for (const char *variable: { "ProgramW6432", "ProgramFiles" }) {
+      const char *program_files = std::getenv(variable);
+      if (!program_files || !*program_files) continue;
+      std::error_code error;
+      if (std::filesystem::is_regular_file(std::filesystem::path(program_files) / "USBip" / "usbip.exe", error)) return true;
+    }
+    return false;
+  }
 }  // namespace
 
 int
@@ -1010,6 +1025,11 @@ main(int argc, char **argv) {
     platf::ds5::native_client_t client;
     std::puts("SWEEP_ON_START_DONE");
     return 0;
+  }
+  if (!usbip_client_installed()) {
+    /* ctest reads 77 as "skipped": a host without usbip-win2 cannot attach a virtual DualSense. */
+    std::puts("SKIP usbip.exe (usbip-win2) is not installed on this host");
+    return 77;
   }
   const auto hold_ms = argc > 1 ? std::strtoul(argv[1], nullptr, 10) : 30000u;
   /* ds5_native_usbip_smoke <hold_ms> [latency <duration_ms>] */
