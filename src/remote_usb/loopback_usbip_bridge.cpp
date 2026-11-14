@@ -8,11 +8,13 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <condition_variable>
 #include <cstddef>
 #include <cstdint>
-#include <condition_variable>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <fstream>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -34,6 +36,52 @@ namespace remote_usb {
 
     namespace asio = boost::asio;
     using tcp = asio::ip::tcp;
+
+    std::string
+    close_reason_name(close_reason reason) {
+      switch (reason) {
+        case close_reason::stopped:
+          return "stopped";
+        case close_reason::peer_disconnected:
+          return "peer_disconnected";
+        case close_reason::protocol_error:
+          return "protocol_error";
+        case close_reason::transport_rejected:
+          return "transport_rejected";
+        case close_reason::queue_limit:
+          return "queue_limit";
+        case close_reason::internal_error:
+          return "internal_error";
+      }
+      return "unknown";
+    }
+
+    void
+    trace_bridge(std::string_view kind, close_reason reason, const std::vector<std::uint8_t> *wire = nullptr) {
+      static std::mutex trace_mutex;
+      static std::ofstream trace;
+      static bool initialized = false;
+      std::lock_guard lock(trace_mutex);
+      if (!initialized) {
+        initialized = true;
+        if (const auto *path = std::getenv("ALK_DS5_USBIP_TRACE"); path && *path) {
+          trace.open(path, std::ios::out | std::ios::app);
+        }
+      }
+      if (!trace.is_open()) return;
+      trace << "BRIDGE " << kind << " close_reason=" << close_reason_name(reason);
+      if (wire != nullptr) {
+        static constexpr char digits[] = "0123456789abcdef";
+        trace << " header=";
+        const auto count = std::min<std::size_t>(48u, wire->size());
+        for (std::size_t index = 0; index < count; ++index) {
+          const auto byte = (*wire)[index];
+          trace << digits[byte >> 4] << digits[byte & 0x0fu];
+        }
+      }
+      trace << '\n';
+      trace.flush();
+    }
 
     constexpr std::uint16_t kUsbipVersion = 0x0111;
     constexpr std::uint16_t kOpRequestImport = 0x8003;
@@ -65,15 +113,20 @@ namespace remote_usb {
 
     /*
      * The documented USB/IP wire value for a non-isochronous URB is -1.  Some
- * older peers (and the Linux kernel in a few paths) use zero instead, so the
- * bridge accepts both representations while continuing to reject a positive
- * packet count (isochronous transfers are deliberately unsupported here).
+     * older peers (and the Linux kernel in a few paths) use zero instead.  A
+     * positive count is an isochronous transfer and is validated below against
+     * the bounded USB/IP descriptor area.
      */
     constexpr std::int32_t kNonIsoNumberOfPackets = -1;
 
     bool
     is_non_iso_number_of_packets(std::int32_t value) noexcept {
       return value == kNonIsoNumberOfPackets || value == 0;
+    }
+
+    bool
+    is_iso_number_of_packets(std::int32_t value) noexcept {
+      return value > 0 && value <= 1024;
     }
 
     std::uint16_t
@@ -159,27 +212,6 @@ namespace remote_usb {
       return boost::system::errc::make_error_code(boost::system::errc::device_or_resource_busy);
     }
 
-/* USB/IP has no authentication field.  Use an unguessable per-listener busid
- * so a local process that discovers the ephemeral port still cannot import the
- * device without the endpoint returned to the launching helper. */
-std::string
-make_opaque_busid() {
-  static std::atomic<std::uint64_t> serial { 0 };
-  auto random_part = crypto::rand_alphabet(16, "0123456789abcdef");
-  if (random_part.size() != 16) {
-    throw std::runtime_error("remote_usb: failed to generate opaque busid");
-  }
-
-  std::string value = "usbip-" + random_part;
-  value.reserve(30);
-  const auto suffix = serial.fetch_add(1, std::memory_order_relaxed);
-  static constexpr char hex[] = "0123456789abcdef";
-  for (int shift = 28; shift >= 0; shift -= 4) {
-    value.push_back(hex[(suffix >> shift) & 0x0fu]);
-  }
-  return value;
-}
-
     struct parsed_request {
       enum class kind {
         submit,
@@ -192,6 +224,8 @@ make_opaque_busid() {
       std::uint32_t direction { 0 };
       std::uint32_t endpoint { 0 };
       std::int32_t transfer_buffer_length { 0 };
+      std::int32_t number_of_packets { 0 };
+      std::int32_t interval { 0 };
       std::uint32_t unlink_seqnum { 0 };
     };
 
@@ -201,6 +235,7 @@ make_opaque_busid() {
       std::uint32_t direction { 0 };
       std::uint32_t endpoint { 0 };
       std::int32_t transfer_buffer_length { 0 };
+      std::int32_t number_of_packets { 0 };
       std::uint32_t unlink_seqnum { 0 };
     };
 
@@ -225,19 +260,45 @@ make_opaque_busid() {
         const auto start_frame = read_i32_be(wire.data() + 28);
         const auto number_of_packets = read_i32_be(wire.data() + 32);
         const auto interval = read_i32_be(wire.data() + 36);
+        out.number_of_packets = number_of_packets;
+        out.interval = interval;
         if (out.transfer_buffer_length < 0 ||
             static_cast<std::size_t>(out.transfer_buffer_length) > kMaxTransferSize ||
-        start_frame != 0 || !is_non_iso_number_of_packets(number_of_packets) || interval < 0) {
+            start_frame < 0 || interval < 0 ||
+            (!is_non_iso_number_of_packets(number_of_packets) && !is_iso_number_of_packets(number_of_packets))) {
           return false;
         }
 
         const auto transfer_length = static_cast<std::size_t>(out.transfer_buffer_length);
+        const auto iso_count = is_iso_number_of_packets(number_of_packets) ?
+                                 static_cast<std::size_t>(number_of_packets) :
+                                 0u;
+        const auto descriptor_bytes = iso_count * 16u;
         if (out.direction == 0) {
-      if (wire.size() != kPduHeaderSize + transfer_length) {
+          if (wire.size() != kPduHeaderSize + transfer_length + descriptor_bytes) {
             return false;
           }
-    } else if (wire.size() != kPduHeaderSize) {
+        }
+        else if (wire.size() != kPduHeaderSize + descriptor_bytes) {
           return false;
+        }
+
+        if (iso_count != 0u) {
+          std::uint64_t total = 0;
+          const auto *descriptors = wire.data() + kPduHeaderSize +
+                                    (out.direction == 0 ? transfer_length : 0u);
+          for (std::size_t index = 0; index < iso_count; ++index) {
+            const auto *descriptor = descriptors + index * 16u;
+            const auto offset = read_u32_be(descriptor);
+            const auto length = read_u32_be(descriptor + 4);
+            if (static_cast<std::uint64_t>(offset) + length > transfer_length) {
+              return false;
+            }
+            total += length;
+          }
+          if (total != transfer_length) {
+            return false;
+          }
         }
 
         const auto *setup = wire.data() + 40;
@@ -246,7 +307,8 @@ make_opaque_busid() {
               read_u16_le(setup + 6) != static_cast<std::uint16_t>(transfer_length)) {
             return false;
           }
-    } else if (!all_zero(setup, 8)) {
+        }
+        else if (!all_zero(setup, 8)) {
           return false;
         }
         return true;
@@ -255,11 +317,10 @@ make_opaque_busid() {
       if (command == kCmdUnlink) {
         out.type = parsed_request::kind::unlink;
         out.unlink_seqnum = read_u32_be(wire.data() + 20);
-    /* USB/IP reserves direction and endpoint for UNLINK and requires zero. */
-    if (out.direction != 0 || out.endpoint != 0 ||
-        wire.size() != kPduHeaderSize || out.unlink_seqnum == 0 ||
-        out.unlink_seqnum == out.seqnum ||
-        !all_zero(wire.data() + 24, kPduHeaderSize - 24)) {
+        /* usbip-win2 carries submit metadata in the reserved UNLINK tail.  The
+         * target sequence and complete framing are the only fields needed here;
+         * rejecting the tail closes a healthy session during normal cancellation. */
+        if (wire.size() != kPduHeaderSize || out.unlink_seqnum == 0 || out.unlink_seqnum == out.seqnum) {
           return false;
         }
         return true;
@@ -304,16 +365,26 @@ make_opaque_busid() {
       const auto start_frame = read_i32_be(wire.data() + 28);
       const auto number_of_packets = read_i32_be(wire.data() + 32);
       const auto error_count = read_i32_be(wire.data() + 36);
-  if (actual_length < 0 || start_frame != 0 ||
-      !is_non_iso_number_of_packets(number_of_packets) || error_count < 0 ||
+      if (actual_length < 0 || start_frame < 0 ||
+          (!is_non_iso_number_of_packets(number_of_packets) &&
+            !is_iso_number_of_packets(number_of_packets)) ||
+          error_count < 0 ||
           actual_length > request.transfer_buffer_length ||
           static_cast<std::size_t>(actual_length) > kMaxTransferSize ||
+          (!is_iso_number_of_packets(request.number_of_packets) &&
+            number_of_packets != request.number_of_packets && number_of_packets != 0 &&
+            request.number_of_packets != 0) ||
+          (is_iso_number_of_packets(request.number_of_packets) &&
+            number_of_packets != request.number_of_packets) ||
           !all_zero(wire.data() + 40, 8)) {
         return false;
       }
 
       const auto payload_size = request.direction == 1 ? static_cast<std::size_t>(actual_length) : 0;
-  return wire.size() == kPduHeaderSize + payload_size;
+      const auto descriptor_size = is_iso_number_of_packets(number_of_packets) ?
+                                     static_cast<std::size_t>(number_of_packets) * 16u :
+                                     0u;
+      return wire.size() == kPduHeaderSize + payload_size + descriptor_size;
     }
 
     bool
@@ -411,7 +482,8 @@ make_opaque_busid() {
       }
       try {
         io.run();
-    } catch (...) {
+      }
+      catch (...) {
         boost::system::error_code ignored;
         socket.close(ignored);
         acceptor.close(ignored);
@@ -626,7 +698,8 @@ make_opaque_busid() {
       if (imported_callback) {
         try {
           imported_callback();
-      } catch (...) {
+        }
+        catch (...) {
           close_session(close_reason::internal_error);
           return;
         }
@@ -668,7 +741,8 @@ make_opaque_busid() {
       try {
         pending_pdu.assign(data_header.begin(), data_header.end());
         pending_pdu.resize(kPduHeaderSize);
-    } catch (...) {
+      }
+      catch (...) {
         close_session(close_reason::internal_error);
         return;
       }
@@ -696,14 +770,20 @@ make_opaque_busid() {
       if (command == kCmdSubmit) {
         const auto direction = read_u32_be(pending_pdu.data() + 12);
         const auto length = read_i32_be(pending_pdu.data() + 24);
-      if (direction > 1 || length < 0 || static_cast<std::size_t>(length) > kMaxTransferSize) {
+        const auto packet_count = read_i32_be(pending_pdu.data() + 32);
+        if (direction > 1 || length < 0 || static_cast<std::size_t>(length) > kMaxTransferSize ||
+            (!is_non_iso_number_of_packets(packet_count) && !is_iso_number_of_packets(packet_count))) {
           close_session(close_reason::protocol_error);
           return;
         }
+        const auto descriptor_bytes = is_iso_number_of_packets(packet_count) ?
+                                        static_cast<std::size_t>(packet_count) * 16u :
+                                        0u;
         if (direction == 0 && length != 0) {
           try {
-          pending_pdu.resize(kPduHeaderSize + static_cast<std::size_t>(length));
-        } catch (...) {
+            pending_pdu.resize(kPduHeaderSize + static_cast<std::size_t>(length) + descriptor_bytes);
+          }
+          catch (...) {
             close_session(close_reason::internal_error);
             return;
           }
@@ -711,6 +791,36 @@ make_opaque_busid() {
           asio::async_read(
             socket,
             asio::buffer(pending_pdu.data() + kPduHeaderSize, static_cast<std::size_t>(length)),
+            [self, session_generation, descriptor_bytes, length](const boost::system::error_code &read_error, std::size_t) {
+              if (read_error || descriptor_bytes == 0u) {
+                self->handle_complete_pdu(session_generation, read_error);
+                return;
+              }
+              asio::async_read(
+                self->socket,
+                asio::buffer(self->pending_pdu.data() + kPduHeaderSize + static_cast<std::size_t>(length),
+                  descriptor_bytes),
+                [self, session_generation](const boost::system::error_code &descriptor_error, std::size_t) {
+                  self->handle_complete_pdu(session_generation, descriptor_error);
+                });
+            });
+          return;
+        }
+        if (descriptor_bytes != 0u) {
+          try {
+            pending_pdu.resize(kPduHeaderSize + (direction == 0 ? static_cast<std::size_t>(length) : 0u) +
+                               descriptor_bytes);
+          }
+          catch (...) {
+            close_session(close_reason::internal_error);
+            return;
+          }
+          const auto self = shared_from_this();
+          asio::async_read(
+            socket,
+            asio::buffer(pending_pdu.data() + kPduHeaderSize +
+                           (direction == 0 ? static_cast<std::size_t>(length) : 0u),
+              descriptor_bytes),
             [self, session_generation](const boost::system::error_code &read_error, std::size_t) {
               self->handle_complete_pdu(session_generation, read_error);
             });
@@ -733,6 +843,7 @@ make_opaque_busid() {
 
       parsed_request request;
       if (!parse_request(pending_pdu, request)) {
+        trace_bridge("request_rejected", close_reason::protocol_error, &pending_pdu);
         close_session(close_reason::protocol_error);
         return;
       }
@@ -743,6 +854,7 @@ make_opaque_busid() {
       meta.direction = request.direction;
       meta.endpoint = request.endpoint;
       meta.transfer_buffer_length = request.transfer_buffer_length;
+      meta.number_of_packets = request.number_of_packets;
       meta.unlink_seqnum = request.unlink_seqnum;
       bool reject_request = false;
       close_reason reject_reason = close_reason::queue_limit;
@@ -770,11 +882,13 @@ make_opaque_busid() {
           if (sequence_in_use) {
             reject_reason = close_reason::protocol_error;
           }
-      } else {
+        }
+        else {
           outstanding.emplace(request_key, meta);
         }
       }
       if (reject_request) {
+        trace_bridge("request_rejected", reject_reason, &pending_pdu);
         close_session(reject_reason);
         return;
       }
@@ -787,11 +901,38 @@ make_opaque_busid() {
       bool accepted = false;
       try {
         accepted = request_callback(std::move(pending_pdu));
-    } catch (...) {
+      }
+      catch (...) {
         close_session(close_reason::internal_error);
         return;
       }
       if (!accepted) {
+        trace_bridge("request_rejected", close_reason::transport_rejected, &pending_pdu);
+        if (request.type == parsed_request::kind::submit) {
+          const auto iso_count = is_iso_number_of_packets(request.number_of_packets) ?
+                                   static_cast<std::size_t>(request.number_of_packets) :
+                                   0u;
+          std::vector<std::uint8_t> error_reply(kPduHeaderSize + iso_count * 16u, 0);
+          write_u32_be(error_reply.data(), kRetSubmit);
+          write_u32_be(error_reply.data() + 4, request.seqnum);
+          write_u32_be(error_reply.data() + 20, static_cast<std::uint32_t>(-32));
+          write_u32_be(error_reply.data() + 32, iso_count == 0u ? 0u : static_cast<std::uint32_t>(iso_count));
+          write_u32_be(error_reply.data() + 36, 0u);
+          if (send_reply(std::move(error_reply))) {
+            begin_data_read(session_generation);
+            return;
+          }
+        }
+        if (request.type == parsed_request::kind::unlink) {
+          std::vector<std::uint8_t> error_reply(kPduHeaderSize, 0);
+          write_u32_be(error_reply.data(), kRetUnlink);
+          write_u32_be(error_reply.data() + 4, request.seqnum);
+          write_u32_be(error_reply.data() + 20, static_cast<std::uint32_t>(-104));
+          if (send_reply(std::move(error_reply))) {
+            begin_data_read(session_generation);
+            return;
+          }
+        }
         close_session(close_reason::transport_rejected);
         return;
       }
@@ -802,12 +943,11 @@ make_opaque_busid() {
     send_devlist_reply(std::uint64_t session_generation) {
       const auto interface_count = device.interfaces.size();
       /*
-     * USB/IP clients only need an opaque device path for the control reply.
-     * Never forward the platform path supplied by the remote capability
-     * (for example /sys/... or a Windows device node) to a local process.
-     * The busid is stable for this bridge and is sufficient for usbip-win2.
+       * usbip-win2 consumes the topology path while creating the UDE devnode.
+       * Replacing it with the busid makes the import report successful while
+       * preventing HID/UAC child enumeration.
        */
-    const auto &path = device.busid;
+      const auto &path = device.path;
       auto wire = std::make_shared<std::vector<std::uint8_t>>(
         kOpCommonSize + 4 + kDeviceSize + interface_count * kInterfaceSize, 0);
       write_u16_be(wire->data(), kUsbipVersion);
@@ -827,7 +967,7 @@ make_opaque_busid() {
 
     void
     send_import_reply(std::uint32_t status, std::uint64_t session_generation) {
-    const auto &path = device.busid;
+      const auto &path = device.path;
       const auto size = status == kOpStatusOk ? kOpCommonSize + kDeviceSize : kOpCommonSize;
       auto wire = std::make_shared<std::vector<std::uint8_t>>(size, 0);
       write_u16_be(wire->data(), kUsbipVersion);
@@ -907,27 +1047,34 @@ make_opaque_busid() {
             const auto cancelled = cancelled_submits.find(seqnum);
             if (cancelled == cancelled_submits.end()) {
               malformed = true;
-          } else if (!valid_ret_submit_wire(*packet, cancelled->second, canonical_header)) {
+            }
+            else if (!valid_ret_submit_wire(*packet, cancelled->second, canonical_header)) {
               malformed = true;
-          } else {
+            }
+            else {
               cancelled_submits.erase(cancelled);
               dropped_cancelled_reply = true;
             }
-        } else {
+          }
+          else {
             malformed = true;
           }
-      } else {
+        }
+        else {
           const auto &request = found->second;
           if (command == kRetSubmit && request.type == parsed_request::kind::submit) {
             if (!valid_ret_submit_wire(*packet, request, canonical_header)) {
               malformed = true;
-          } else {
+            }
+            else {
               outstanding.erase(found);
             }
-        } else if (command == kRetUnlink && request.type == parsed_request::kind::unlink) {
+          }
+          else if (command == kRetUnlink && request.type == parsed_request::kind::unlink) {
             if (!valid_ret_unlink_wire(*packet, request, canonical_header)) {
               malformed = true;
-          } else {
+            }
+            else {
               /* RET_UNLINK completes both the unlink command and its target.
                * Keep a bounded copy of the target metadata so a racing
                * RET_SUBMIT can be validated and ignored instead of poisoning
@@ -943,14 +1090,13 @@ make_opaque_busid() {
               }
               outstanding.erase(found);
             }
-        } else {
+          }
+          else {
             malformed = true;
           }
         }
 
-      if (!malformed && !dropped_cancelled_reply && (write_queue.size() >= kMaxQueuedReplies ||
-                         queued_bytes > kMaxQueuedBytes ||
-                         packet->size() > kMaxQueuedBytes - queued_bytes)) {
+        if (!malformed && !dropped_cancelled_reply && (write_queue.size() >= kMaxQueuedReplies || queued_bytes > kMaxQueuedBytes || packet->size() > kMaxQueuedBytes - queued_bytes)) {
           malformed = true;
           malformed_reason = close_reason::queue_limit;
         }
@@ -1063,6 +1209,7 @@ make_opaque_busid() {
 
     void
     close_session(close_reason reason) {
+      trace_bridge("closed", reason);
       std::function<void(close_reason)> closed_callback;
       bool notify = false;
       {
@@ -1091,7 +1238,8 @@ make_opaque_busid() {
       if (notify && closed_callback) {
         try {
           closed_callback(reason);
-      } catch (...) {
+        }
+        catch (...) {
           // A user callback must not terminate the I/O thread.
         }
       }
@@ -1151,7 +1299,8 @@ make_opaque_busid() {
        * stop can still wait on it; only then is it safe to start a fresh bridge. */
       if (state_->thread_finished()) {
         state_.reset();
-    } else {
+      }
+      else {
         error = busy_error();
         return std::nullopt;
       }
@@ -1165,13 +1314,6 @@ make_opaque_busid() {
 
     auto state = std::make_shared<impl>();
     state->device = std::move(device);
-  try {
-    state->device.busid = make_opaque_busid();
-  } catch (...) {
-    error = boost::system::errc::make_error_code(
-      boost::system::errc::resource_unavailable_try_again);
-    return std::nullopt;
-  }
     state->callback_set = std::move(callback_set);
     state->endpoint_info.busid = state->device.busid;
 
@@ -1206,7 +1348,8 @@ make_opaque_busid() {
     try {
       state->start_accept();
       state->thread = std::thread([state]() { state->run(); });
-  } catch (...) {
+    }
+    catch (...) {
       state->running_flag.store(false);
       state->stop_requested.store(true);
       boost::system::error_code ignored;

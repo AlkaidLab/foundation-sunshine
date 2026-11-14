@@ -38,13 +38,14 @@
 #include <openssl/ssl.h>
 
 // local includes
+#include "ai/http_stream.h"
+#include "ai/proxy.h"
 #include "client_fingerprint.h"
+#include "client_interface.h"
 #include "config.h"
 #include "confighttp.h"
-#include "ai/proxy.h"
-#include "ai/http_stream.h"
-#include "display_device/session.h"
 #include "display_device/parsed_config.h"
+#include "display_device/session.h"
 #include "display_device/vdd_capability.h"
 #include "file_handler.h"
 #include "file_mapping/file_mapping_http.h"
@@ -56,6 +57,7 @@
 #include "httpcommon.h"
 #include "logging.h"
 #include "network.h"
+#include "network_reachability.h"
 #include "nvhttp.h"
 #include "nvhttp/abr_api.h"
 #include "nvhttp/ai_api.h"
@@ -519,7 +521,7 @@ namespace nvhttp {
     tree.put("root.currentgame", current_appid);
     tree.put("root.state", current_appid > 0 ? "SUNSHINE_SERVER_BUSY" : "SUNSHINE_SERVER_FREE");
     tree.put("root.appListEtag", proc::proc.get_apps_etag());
-
+    client_interface::append_serverinfo(tree, pair_status == 1);
     // AI capability: inform client if AI proxy is available
     tree.put("root.AiCapability", ai::isAiEnabled() ? 1 : 0);
 

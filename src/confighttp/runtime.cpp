@@ -45,10 +45,10 @@ namespace confighttp::runtime {
 
       print_req(request);
 
-      if (!require_localhost(response, request, "getting runtime sessions")) {
-        return;
-      }
-
+      // authenticate() already enforces the Web UI address policy, session
+      // credentials, and CSRF rules. A read-only session snapshot therefore
+      // follows the same authenticated Web UI boundary from the LAN
+      // [lt3-rfc6265bis-20261107] [lt3-w3c-fetch-metadata-20261107].
       try {
         // 获取所有活动会话信息
         auto sessions_info = stream::session::get_all_sessions_info();

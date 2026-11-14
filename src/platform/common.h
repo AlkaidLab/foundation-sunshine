@@ -950,6 +950,15 @@ namespace platf {
   std::vector<std::string>
   adapter_names();
 
+#ifdef _WIN32
+  /**
+   * @brief What identifies the installed GPUs and their drivers: vendor, device, LUID and user-mode driver version of every adapter, in enumeration order.
+   * @return Empty when the adapters cannot be enumerated; the encoder probe then never reuses a previous result.
+   */
+  std::string
+  gpu_signature();
+#endif
+
   /**
    * @brief Check if GPUs/drivers have changed since the last call to this function.
    * @return `true` if a change has occurred or if it is unknown whether a change occurred.

@@ -43,6 +43,7 @@ set(SUNSHINE_HOST_SOURCES
     # src
     src/upnp.cpp src/upnp.h
     src/cbs.cpp
+    src/client_family.cpp src/client_family.h
     src/client_fingerprint.cpp src/client_fingerprint.h
     src/config.cpp src/config.h
     src/entry_handler.cpp src/entry_handler.h
@@ -73,10 +74,21 @@ set(SUNSHINE_HOST_SOURCES
     src/input.cpp src/input.h
     src/input_activity.cpp src/input_activity.h
     src/audio.cpp src/audio.h
+    src/audio_devices.cpp src/audio_devices.h
+    src/audio_vb_cable.cpp src/audio_vb_cable.h
     src/mic_mixer.cpp src/mic_mixer.h
     src/process.cpp src/process.h
+    src/client_interface.cpp src/client_interface.h
     src/network.cpp src/network.h
+    src/network_reachability.cpp src/network_reachability.h
+    src/network_reachability_probe.cpp
+    src/nat_discovery.cpp src/nat_discovery.h
+    src/nat_discovery_probe.cpp
+    src/public_address.cpp src/public_address.h
+    src/system_info.cpp src/system_info.h
     src/build_info.cpp src/build_info.h
+    src/system_info_cache.cpp
+    src/system_info_probe.cpp
     src/stat_trackers.cpp src/stat_trackers.h
     src/utility.h
     src/uuid.h
@@ -131,7 +143,12 @@ set(SUNSHINE_HOST_SOURCES
     src/remote_usb/loopback_usbip_bridge.cpp src/remote_usb/loopback_usbip_bridge.h
     src/remote_usb/reverse_tunnel_service.cpp src/remote_usb/reverse_tunnel_service.h
     src/remote_usb/remote_usb_host_controller.cpp src/remote_usb/remote_usb_host_controller.h
+    src/remote_usb/usbip_stale_port_sweep.cpp
     src/remote_usb/usbip_endpoint.h
+
+    # src/virtual_usb
+    src/virtual_usb/device.h
+    src/virtual_usb/uac1_microphone.cpp src/virtual_usb/uac1_microphone.h
 
     # src/ai
     src/ai/credential_store.cpp src/ai/credential_store.h
@@ -158,6 +175,8 @@ set(SUNSHINE_HOST_SOURCES
     src/nvhttp/network_probe.cpp src/nvhttp/network_probe.h
     src/nvhttp/network_probe_limiter.cpp src/nvhttp/network_probe_limiter.h
     src/nvhttp/pairing.cpp src/nvhttp/pairing.h
+    src/nvhttp/pairing_pending.cpp src/nvhttp/pairing_pending.h
+    src/nvhttp/preset_pin.cpp
     src/nvhttp/sessions.cpp src/nvhttp/sessions.h
 
     # src/streaming
@@ -170,13 +189,20 @@ set(SUNSHINE_HOST_SOURCES
     # src/confighttp
     src/confighttp/common.cpp src/confighttp/common.h
     src/confighttp/auth.cpp src/confighttp/auth.h
+    src/confighttp/local_auth_token.cpp src/confighttp/local_auth_token.h
+    src/confighttp/session_store.cpp src/confighttp/session_store.h
+    src/confighttp/login_throttle.cpp src/confighttp/login_throttle.h
     src/confighttp/assets.cpp src/confighttp/assets.h
     src/confighttp/apps.cpp src/confighttp/apps.h
     src/confighttp/configuration.cpp src/confighttp/configuration.h
     src/confighttp/clients.cpp src/confighttp/clients.h
+    src/confighttp/pair_link.cpp src/confighttp/pair_link.h
     src/confighttp/diagnostics.cpp src/confighttp/diagnostics.h
+    src/confighttp/network.cpp src/confighttp/network.h
+    src/confighttp/systeminfo.cpp src/confighttp/systeminfo.h
     src/confighttp/runtime.cpp src/confighttp/runtime.h
     src/confighttp/integrations.cpp src/confighttp/integrations.h
+    src/confighttp/pairing.cpp src/confighttp/pairing.h
     src/confighttp/proxies.cpp src/confighttp/proxies.h
     src/confighttp/routes.cpp src/confighttp/routes.h
     src/confighttp/types.h

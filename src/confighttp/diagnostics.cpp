@@ -5,9 +5,12 @@
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 
 #include "diagnostics.h"
+#include "src/audio_devices.h"
+#include "src/audio_vb_cable.h"
 #include "src/config.h"
 #include "src/confighttp/auth.h"
 #include "src/confighttp/common.h"
+#include "src/confighttp/usbip_root_helper.h"
 #include "src/display_device/session.h"
 #include "src/entry_handler.h"
 #include "src/file_handler.h"
@@ -20,6 +23,10 @@
 #include <algorithm>
 #include <atomic>
 #include <boost/algorithm/string.hpp>
+#ifdef _WIN32
+  #include <boost/process/v1.hpp>
+  #include <boost/process/v1/pipe.hpp>
+#endif
 #include <boost/property_tree/json_parser.hpp>
 #include <chrono>
 #include <filesystem>
@@ -27,6 +34,7 @@
 #ifdef _WIN32
   #include "src/display_device/vdd_utils.h"
   #include "src/platform/windows/mic_write.h"
+  #include "src/platform/windows/misc.h"
   #include "src/platform/windows/vulkan_hdr_bridge_session.h"
 #endif
 
@@ -211,7 +219,7 @@ namespace confighttp::diagnostics {
       }
 
       web::CaseInsensitiveMultimap headers;
-      headers.emplace("Content-Type", "text/plain");
+      headers.emplace("Content-Type", "text/plain; charset=utf-8");
       headers.emplace("X-Log-Size", std::to_string(snapshot->file_size));
       headers.emplace("X-Frame-Options", "DENY");
       headers.emplace("Content-Security-Policy", "frame-ancestors 'none';");
@@ -313,6 +321,13 @@ namespace confighttp::diagnostics {
                                 { "success", result.success },
                                 { "error_code", result.error_code },
                                 { "backend", result.backend },
+                                { "mode", result.mode.empty() ? "tone" : result.mode },
+                                { "input_peak", result.input_peak },
+                                { "input_active_ms", result.input_active_ms },
+                                { "heard_seconds", result.heard_seconds },
+                                { "windows_total", result.windows_total },
+                                { "windows_good", result.windows_good },
+                                { "heard_amplitude", result.heard_amplitude },
                               });
 #else
       send_response(response, nlohmann::json {
@@ -320,6 +335,74 @@ namespace confighttp::diagnostics {
                                 { "error_code", "MIC_TEST_UNSUPPORTED" },
                               });
 #endif
+    }
+
+    /**
+     * GET /api/audio/devices: the render and capture endpoints of the host, the known virtual devices flagged,
+     * and whether VB-CABLE is installed. Windows only (MMDevice); other systems answer `supported: false`.
+     */
+    void
+    getAudioDevices(resp_https_t response, req_https_t request) {
+      if (!authenticate(response, request)) return;
+
+#ifdef _WIN32
+      std::vector<audio_devices::endpoint_t> endpoints;
+      if (!audio_devices::enumerate_endpoints(endpoints)) {
+        send_response(response, nlohmann::json {
+                                  { "success", false },
+                                  { "version", audio_devices::JSON_VERSION },
+                                  { "supported", true },
+                                  { "error_code", "AUDIO_ENUMERATOR_UNAVAILABLE" },
+                                });
+        return;
+      }
+      // the device tree tells a disabled driver from a missing one; when it cannot be read the endpoints decide alone
+      std::vector<audio_devices::driver_t> drivers;
+      const bool drivers_read = audio_devices::enumerate_vb_cable_drivers(drivers);
+      auto json = audio_devices::to_json(endpoints, drivers_read ? &drivers : nullptr);
+      json["vb_cable"]["job"] = audio_devices::vb_cable::status_json(audio_devices::vb_cable::runner().status());
+      send_response(response, json);
+#else
+      send_response(response, audio_devices::unsupported_json());
+#endif
+    }
+
+    /**
+     * POST /api/audio/vb-cable/install and /enable, body {"confirm": true}: download and install VB-CABLE, or enable its
+     * disabled device. The job runs on a thread of its own; its progress is `vb_cable.job` of GET /api/audio/devices.
+     * Nothing starts without the confirmation of the person (the UI asks first); the answer says whether a job started.
+     */
+    void
+    startVbCableJob(resp_https_t response, req_https_t request, bool install) {
+      if (!authenticate(response, request)) return;
+      nlohmann::json body;
+      if (!read_json_body(response, request, body)) return;
+#ifdef _WIN32
+      if (!body.is_object() || body.value("confirm", false) != true) {
+        send_response(response, nlohmann::json { { "success", false }, { "error_code", "VB_CONFIRM_REQUIRED" } });
+        return;
+      }
+      using namespace audio_devices::vb_cable;
+      const bool started = runner().start(install ? "install" : "enable", [install](const progress_t &progress) {
+        auto environment = make_system_environment();
+        const auto result = install ? audio_devices::vb_cable::install(*environment, progress) : audio_devices::vb_cable::enable(*environment, progress);
+        BOOST_LOG(info) << "VB-CABLE "sv << (install ? "install"sv : "enable"sv) << (result.ok ? " finished"sv : " failed: "sv) << result.error_code << ' ' << result.detail;
+        return result;
+      });
+      send_response(response, nlohmann::json { { "success", started }, { "started", started }, { "error_code", started ? "" : std::string(error::busy) } });
+#else
+      send_response(response, nlohmann::json { { "success", false }, { "error_code", "VB_UNSUPPORTED" } });
+#endif
+    }
+
+    void
+    installVbCable(resp_https_t response, req_https_t request) {
+      startVbCableJob(response, request, true);
+    }
+
+    void
+    enableVbCable(resp_https_t response, req_https_t request) {
+      startVbCableJob(response, request, false);
     }
 
     void
@@ -345,6 +428,9 @@ namespace confighttp::diagnostics {
                                 { "submit_errors", status.submit_errors },
                                 { "last_error", status.last_error },
                                 { "error_code", status.error_code },
+                                { "input_peak", status.input_peak },
+                                { "input_active_ms", status.input_active_ms },
+                                { "input_frames", status.input_frames },
                               });
 #else
       send_response(response, nlohmann::json {
@@ -358,6 +444,91 @@ namespace confighttp::diagnostics {
     }
 
 #ifdef _WIN32
+    /**
+     * Fixed arguments only. The time limit, the single repair, and the status
+     * cache live in usbip_root_helper.h. A timeout stops this child with
+     * TerminateProcess and does not touch any other process.
+     */
+    json
+    failure_response(const usbip_root::failure_note &note) {
+      json body {
+        { "success", false },
+        { "error", note.error },
+        { "ds4_fallback", note.ds4_fallback },
+      };
+      if (note.busy) body["busy"] = true;
+      if (note.timed_out) body["timed_out"] = true;
+      return body;
+    }
+
+    json
+    run_usbip_root_helper(std::string_view action_text) {
+      const auto action = usbip_root::parse_action(action_text);
+      if (action == usbip_root::action::unknown) {
+        return json {
+          { "success", false },
+          { "error", "usbip-win2 root helper action is not allowed" },
+          { "ds4_fallback", "DS4 fallback remains active because the usbip-win2 helper action is not allowed." },
+        };
+      }
+
+      auto &gate = usbip_root::shared_gate();
+      const bool repair = action == usbip_root::action::repair;
+      if (repair) {
+        if (gate.begin_repair(usbip_root::status_budget) != usbip_root::gate<>::repair_take::granted) {
+          return failure_response(usbip_root::busy_failure());
+        }
+      }
+      else {
+        const auto ticket = gate.acquire_status(usbip_root::status_budget + usbip_root::reader_grace);
+        if (ticket.take == usbip_root::gate<>::status_take::reuse) {
+          try {
+            return json::parse(ticket.body);
+          }
+          catch (const json::exception &) {
+            gate.drop_status_cache();
+          }
+        }
+        else if (ticket.take == usbip_root::gate<>::status_take::gave_up) {
+          return failure_response(usbip_root::timeout_failure());
+        }
+        if (ticket.take != usbip_root::gate<>::status_take::start) {
+          const auto again = gate.acquire_status(usbip_root::status_budget);
+          if (again.take == usbip_root::gate<>::status_take::reuse) {
+            try {
+              return json::parse(again.body);
+            }
+            catch (const json::exception &) {
+              gate.drop_status_cache();
+            }
+          }
+          if (again.take != usbip_root::gate<>::status_take::start) {
+            return failure_response(usbip_root::timeout_failure());
+          }
+        }
+      }
+
+      struct running_t {
+        bool repair;
+        bool open { true };
+        ~running_t() {
+          if (!open) return;
+          if (repair)
+            usbip_root::shared_gate().cancel_repair();
+          else
+            usbip_root::shared_gate().cancel_status();
+        }
+      } running { repair };
+
+      json result = launch_usbip_root_helper(action);
+      if (repair)
+        gate.finish_repair(result.dump());
+      else
+        gate.finish_status(result.dump());
+      running.open = false;
+      return result;
+    }
+
     void
     getVddStatus(resp_https_t response, req_https_t request) {
       if (!authenticate(response, request)) return;
@@ -374,6 +545,20 @@ namespace confighttp::diagnostics {
                                 { "problem_code", status.problem_code },
                                 { "version_supported", false },
                               });
+    }
+#endif
+
+#ifdef _WIN32
+    void
+    getUsbipRootStatus(resp_https_t response, req_https_t request) {
+      if (!authenticate(response, request)) return;
+      send_response(response, run_usbip_root_helper("status"));
+    }
+
+    void
+    repairUsbipRoot(resp_https_t response, req_https_t request) {
+      if (!authenticate(response, request)) return;
+      send_response(response, run_usbip_root_helper("repair"));
     }
 #endif
 
@@ -455,9 +640,14 @@ namespace confighttp::diagnostics {
     server.resource["^/api/reset-display-device-persistence$"]["POST"] = resetDisplayDevicePersistence;
     server.resource["^/api/microphone/test$"]["POST"] = testMicrophone;
     server.resource["^/api/microphone/status$"]["GET"] = getMicrophoneStatus;
+    server.resource["^/api/audio/devices$"]["GET"] = getAudioDevices;
+    server.resource["^/api/audio/vb-cable/install$"]["POST"] = installVbCable;
+    server.resource["^/api/audio/vb-cable/enable$"]["POST"] = enableVbCable;
     server.resource["^/api/mat/status$"]["GET"] = getMatLiveStatus;
 #ifdef _WIN32
     server.resource["^/api/vdd/status$"]["GET"] = getVddStatus;
+    server.resource["^/api/usbip-root/status$"]["GET"] = getUsbipRootStatus;
+    server.resource["^/api/usbip-root/repair$"]["POST"] = repairUsbipRoot;
 #endif
 #ifdef _WIN32
     server.resource["^/api/vulkan-hdr-bridge$"]["GET"] = getVulkanHdrBridgeStatus;

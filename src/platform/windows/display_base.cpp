@@ -4,6 +4,7 @@
  */
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <initguid.h>
 #include <iterator>
 #include <thread>
@@ -670,8 +671,18 @@ namespace platf::dxgi {
           continue;
         }
 
-        dxgi::output_t::pointer output_p;
-        for (int y = 0; adapter_tmp->EnumOutputs(y, &output_p) != DXGI_ERROR_NOT_FOUND; ++y) {
+        dxgi::output_t::pointer output_p {};
+        for (int y = 0;; ++y) {
+          // Only DXGI_ERROR_NOT_FOUND ends the list; other failures leave output_p unset
+          // (a Session 0 process gets DXGI_ERROR_NOT_CURRENTLY_AVAILABLE).
+          const HRESULT enum_status = adapter_tmp->EnumOutputs(y, &output_p);
+          if (enum_status == DXGI_ERROR_NOT_FOUND) {
+            break;
+          }
+          if (FAILED(enum_status)) {
+            BOOST_LOG(warning) << "[Display Init] Failed to enumerate outputs [0x"sv << util::hex(enum_status).to_string_view() << ']';
+            break;
+          }
           dxgi::output_t output_tmp { output_p };
 
           DXGI_OUTPUT_DESC desc;
@@ -1398,7 +1409,15 @@ namespace platf {
         << ",Share Sys Mem: "sv << adapter_desc.SharedSystemMemory / 1048576 << " MiB"sv;
 
       dxgi::output_t::pointer output_p {};
-      for (int y = 0; adapter->EnumOutputs(y, &output_p) != DXGI_ERROR_NOT_FOUND; ++y) {
+      for (int y = 0;; ++y) {
+        const HRESULT enum_status = adapter->EnumOutputs(y, &output_p);
+        if (enum_status == DXGI_ERROR_NOT_FOUND) {
+          break;
+        }
+        if (FAILED(enum_status)) {
+          BOOST_LOG(warning) << "Failed to enumerate outputs [0x"sv << util::hex(enum_status).to_string_view() << ']';
+          break;
+        }
         dxgi::output_t output { output_p };
 
         DXGI_OUTPUT_DESC desc;
@@ -1475,6 +1494,35 @@ namespace platf {
     }
 
     return adapter_names;
+  }
+
+  std::string
+  gpu_signature() {
+    dxgi::factory1_t factory;
+    if (FAILED(CreateDXGIFactory1(IID_IDXGIFactory1, (void **) &factory))) {
+      return {};
+    }
+
+    std::string signature;
+    dxgi::adapter_t::pointer adapter_p;
+    for (int x = 0; factory->EnumAdapters1(x, &adapter_p) != DXGI_ERROR_NOT_FOUND; ++x) {
+      dxgi::adapter_t adapter { adapter_p };
+      DXGI_ADAPTER_DESC1 desc;
+      if (FAILED(adapter->GetDesc1(&desc))) {
+        return {};
+      }
+      // The user-mode driver version changes with every driver install; without it a new driver on the same card would reuse the old answer.
+      LARGE_INTEGER driver_version {};
+      if (FAILED(adapter->CheckInterfaceSupport(IID_IDXGIDevice, &driver_version))) {
+        driver_version.QuadPart = 0;
+      }
+      char piece[160];
+      std::snprintf(piece, sizeof(piece), "%04x:%04x:%08lx%08lx:%016llx:%08x;", desc.VendorId, desc.DeviceId,
+        static_cast<unsigned long>(desc.AdapterLuid.HighPart), static_cast<unsigned long>(desc.AdapterLuid.LowPart),
+        static_cast<unsigned long long>(driver_version.QuadPart), desc.Flags);
+      signature += piece;
+    }
+    return signature;
   }
 
   /**

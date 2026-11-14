@@ -19,6 +19,7 @@ extern "C" {
 #include <unordered_map>
 
 #include "config.h"
+#include "display_device/vdd_utils.h"
 #include "globals.h"
 #include "input.h"
 #include "text_context/bridge.h"

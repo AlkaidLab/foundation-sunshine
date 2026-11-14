@@ -79,9 +79,82 @@ target_link_libraries(perf_frame_rate_unit_tests PRIVATE gtest_main nlohmann_jso
         sunshine_project_options sunshine_coverage)
 set_target_properties(perf_frame_rate_unit_tests PROPERTIES CXX_STANDARD 23)
 if (WIN32)
+    # Drives the production virtual microphone session for the verification runs
+    # (attach cycles, rate, tone, latency, crash recovery).  Not a unit test.
+    add_executable(virtual_mic_harness
+            ${CMAKE_SOURCE_DIR}/tests/tools/virtual_mic_harness.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_microphone.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_microphone_selftest.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/usbip_device_transport.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/audio_default_guard.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/capture_endpoint_recorder.cpp
+            ${CMAKE_SOURCE_DIR}/src/virtual_usb/uac1_microphone.cpp
+            ${CMAKE_SOURCE_DIR}/src/remote_usb/loopback_usbip_bridge.cpp
+            ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_host_controller.cpp
+            ${CMAKE_SOURCE_DIR}/src/remote_usb/usbip_stale_port_sweep.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/text_encoding.cpp
+            ${CMAKE_SOURCE_DIR}/src/crypto.cpp)
+    target_include_directories(virtual_mic_harness PRIVATE
+            "${CMAKE_SOURCE_DIR}"
+            "${CMAKE_SOURCE_DIR}/third-party"
+            ${FFMPEG_INCLUDE_DIRS}
+            "${CMAKE_SOURCE_DIR}/third-party/build-deps/dist/${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}/include")
+    target_link_libraries(virtual_mic_harness PRIVATE
+            sunshine_project_options sunshine_crypto Boost::log nlohmann_json::nlohmann_json
+            ${Boost_LIBRARIES} ${OPENSSL_LIBRARIES} ${PLATFORM_LIBRARIES}
+            alkaidlab_usbip_core setupapi cfgmgr32 ole32 avrt winmm)
+    target_compile_options(virtual_mic_harness PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+    set_target_properties(virtual_mic_harness PROPERTIES
+            CXX_STANDARD 23
+            LINK_SEARCH_START_STATIC 1)
     set_target_properties(perf_frame_rate_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
 add_test(NAME perf_frame_rate_unit_tests COMMAND perf_frame_rate_unit_tests)
+# The audio endpoint list: shaping and recognition only, no audio API.
+add_executable(audio_devices_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/audio_devices.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_devices.cpp)
+target_include_directories(audio_devices_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(audio_devices_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json sunshine_project_options sunshine_coverage)
+set_target_properties(audio_devices_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(audio_devices_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME audio_devices_unit_tests COMMAND audio_devices_unit_tests)
+
+# The VB-CABLE install and enable steps against a fake system: nothing is downloaded, installed or enabled.
+add_executable(audio_vb_cable_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/audio_vb_cable.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_vb_cable.cpp)
+target_include_directories(audio_vb_cable_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(audio_vb_cable_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json sunshine_project_options sunshine_coverage)
+set_target_properties(audio_vb_cable_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(audio_vb_cable_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME audio_vb_cable_unit_tests COMMAND audio_vb_cable_unit_tests)
+
+if (WIN32)
+    # Prints what GET /api/audio/devices answers on this machine; reads endpoints only. Not a unit test.
+    add_executable(audio_devices_dump
+            ${CMAKE_SOURCE_DIR}/tests/tools/audio_devices_dump.cpp
+            ${CMAKE_SOURCE_DIR}/src/audio_devices.cpp
+            ${CMAKE_SOURCE_DIR}/src/audio_vb_cable.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/audio_devices.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/audio_vb_cable_win.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/text_encoding.cpp)
+    target_include_directories(audio_devices_dump PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_link_libraries(audio_devices_dump PRIVATE nlohmann_json::nlohmann_json sunshine_project_options ole32 uuid oleaut32 setupapi cfgmgr32 wintrust crypt32)
+    set_target_properties(audio_devices_dump PROPERTIES CXX_STANDARD 23 LINK_SEARCH_START_STATIC 1)
+endif ()
+
+add_executable(video_idle_policy_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_video_idle_policy.cpp)
+target_include_directories(video_idle_policy_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(video_idle_policy_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(video_idle_policy_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME video_idle_policy_unit_tests COMMAND video_idle_policy_unit_tests)
+
 add_executable(measured_bitrate_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_measured_bitrate.cpp)
 target_include_directories(measured_bitrate_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(measured_bitrate_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
@@ -102,6 +175,22 @@ target_link_libraries(dynamic_param_protocol_unit_tests PRIVATE gtest_main sunsh
 set_target_properties(dynamic_param_protocol_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME dynamic_param_protocol_unit_tests COMMAND dynamic_param_protocol_unit_tests)
 
+add_executable(pair_link_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/confighttp/pair_link.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_pair_link.cpp)
+target_include_directories(pair_link_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(pair_link_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage Boost::asio
+        $<$<PLATFORM_ID:Windows>:ws2_32>)
+set_target_properties(pair_link_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME pair_link_unit_tests COMMAND pair_link_unit_tests)
+
+add_executable(uac1_microphone_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/virtual_usb/uac1_microphone.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_uac1_microphone.cpp)
+target_include_directories(uac1_microphone_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(uac1_microphone_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(uac1_microphone_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME uac1_microphone_unit_tests COMMAND uac1_microphone_unit_tests)
 
 add_executable(config_overrides_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_config_overrides.cpp)
 target_include_directories(config_overrides_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
@@ -128,6 +217,11 @@ if (WIN32)
 endif ()
 add_test(NAME log_retention_unit_tests COMMAND log_retention_unit_tests)
 
+add_executable(client_interface_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_client_interface.cpp)
+target_include_directories(client_interface_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(client_interface_unit_tests PRIVATE gtest_main Boost::boost Boost::property_tree sunshine_project_options sunshine_coverage)
+set_target_properties(client_interface_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME client_interface_unit_tests COMMAND client_interface_unit_tests)
 
 add_executable(display_scale_steps_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_display_scale_steps.cpp)
 target_include_directories(display_scale_steps_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
@@ -148,6 +242,12 @@ target_include_directories(current_capture_target_unit_tests PRIVATE "${CMAKE_SO
 target_link_libraries(current_capture_target_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
 set_target_properties(current_capture_target_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME current_capture_target_unit_tests COMMAND current_capture_target_unit_tests)
+add_executable(usbip_root_helper_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_usbip_root_helper.cpp)
+target_include_directories(usbip_root_helper_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(usbip_root_helper_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(usbip_root_helper_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME usbip_root_helper_unit_tests COMMAND usbip_root_helper_unit_tests)
+
 
 add_executable(pen_barrel_roll_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_pen_barrel_roll.cpp)
 target_include_directories(pen_barrel_roll_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}/third-party")
@@ -298,6 +398,48 @@ if (WIN32)
     set_target_properties(tray_state_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
 add_test(NAME tray_state_unit_tests COMMAND tray_state_unit_tests)
+# Session and login-throttle policy are independent of a listening server and
+# of the platform display stack, so their suite stays a focused standalone
+# target on every host.
+add_executable(session_store_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/confighttp/session_store.cpp
+        ${CMAKE_SOURCE_DIR}/src/confighttp/login_throttle.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_session_store.cpp)
+target_include_directories(session_store_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(session_store_unit_tests PRIVATE gtest_main
+        sunshine_project_options sunshine_coverage sunshine_crypto)
+target_compile_options(session_store_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(session_store_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(session_store_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME session_store_unit_tests COMMAND session_store_unit_tests)
+
+# Exercise the auth handlers over a real TLS listener without linking the
+# platform display and streaming stacks. The test file supplies the small set
+# of globals those handlers read.
+add_executable(session_auth_routes_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_session_auth_routes.cpp
+        ${CMAKE_SOURCE_DIR}/src/confighttp/auth.cpp
+        ${CMAKE_SOURCE_DIR}/src/confighttp/local_auth_token.cpp
+        ${CMAKE_SOURCE_DIR}/src/confighttp/common.cpp
+        ${CMAKE_SOURCE_DIR}/src/confighttp/session_store.cpp
+        ${CMAKE_SOURCE_DIR}/src/confighttp/login_throttle.cpp
+        ${CMAKE_SOURCE_DIR}/src/http/server.cpp
+        ${CMAKE_SOURCE_DIR}/src/http/client.cpp
+        ${CMAKE_SOURCE_DIR}/src/http/types.cpp
+        ${CMAKE_SOURCE_DIR}/src/http/tls_trust.cpp)
+target_include_directories(session_auth_routes_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(session_auth_routes_unit_tests PRIVATE ${SUNSHINE_EXTERNAL_LIBRARIES} gtest_main
+        sunshine_project_options sunshine_coverage sunshine_crypto ${PLATFORM_LIBRARIES})
+target_compile_definitions(session_auth_routes_unit_tests PRIVATE ${SUNSHINE_DEFINITIONS})
+target_compile_options(session_auth_routes_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(session_auth_routes_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(session_auth_routes_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME session_auth_routes_unit_tests COMMAND session_auth_routes_unit_tests)
+set_tests_properties(session_auth_routes_unit_tests PROPERTIES TIMEOUT 60)
 
 add_executable(sunshinesvc_state_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_sunshinesvc_state.cpp)
@@ -365,6 +507,20 @@ if (WIN32)
 endif ()
 add_test(NAME session_info_unit_tests COMMAND session_info_unit_tests)
 
+add_executable(network_reachability_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
+        ${CMAKE_SOURCE_DIR}/src/public_address.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_network_reachability.cpp)
+target_include_directories(network_reachability_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(network_reachability_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
+        sunshine_project_options sunshine_coverage ${Boost_LIBRARIES})
+target_compile_options(network_reachability_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(network_reachability_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(network_reachability_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME network_reachability_unit_tests COMMAND network_reachability_unit_tests)
+
 # 版本比较: the date part of a Foundation Sunshine version, against the table shared with the panel and the Web UI
 add_executable(version_compare_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_version_compare.cpp)
@@ -380,6 +536,25 @@ if (WIN32)
 endif ()
 add_test(NAME version_compare_unit_tests COMMAND version_compare_unit_tests)
 
+add_executable(system_info_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/system_info.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_system_info.cpp)
+target_include_directories(system_info_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(system_info_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
+        sunshine_project_options sunshine_coverage)
+target_compile_options(system_info_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(system_info_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(system_info_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+else ()
+    target_sources(system_info_unit_tests PRIVATE
+            ${CMAKE_SOURCE_DIR}/src/system_info_probe.cpp
+            ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
+            ${CMAKE_SOURCE_DIR}/src/public_address.cpp)
+    target_link_libraries(system_info_unit_tests PRIVATE ${Boost_LIBRARIES})
+endif ()
+add_test(NAME system_info_unit_tests COMMAND system_info_unit_tests)
+
 # Build identity: the compiled record (generated build_info_defs.h and version.h in the build tree) and its JSON contract.
 add_executable(build_info_unit_tests
         ${CMAKE_SOURCE_DIR}/src/build_info.cpp
@@ -388,6 +563,46 @@ add_executable(build_info_unit_tests
 add_test(NAME rc_version_encoding COMMAND ${CMAKE_COMMAND} -P ${CMAKE_SOURCE_DIR}/tests/cmake/test_rc_version.cmake)
 # A git archive tree (no .git) records its commit from cmake/prep/build_identity_archive.txt (export-subst).
 add_test(NAME build_info_archive COMMAND ${CMAKE_COMMAND} -P ${CMAKE_SOURCE_DIR}/tests/cmake/test_build_info_archive.cmake WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+
+add_executable(network_reachability_sample
+        ${CMAKE_SOURCE_DIR}/tests/tools/network_reachability_sample.cpp
+        ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
+        ${CMAKE_SOURCE_DIR}/src/public_address.cpp
+        ${CMAKE_SOURCE_DIR}/src/network_reachability_probe.cpp)
+target_include_directories(network_reachability_sample PRIVATE
+        "${CMAKE_SOURCE_DIR}"
+        "${CMAKE_SOURCE_DIR}/third-party")
+target_link_libraries(network_reachability_sample PRIVATE nlohmann_json::nlohmann_json
+        sunshine_project_options Boost::boost ${Boost_LIBRARIES} ${OPENSSL_LIBRARIES}
+        ${PLATFORM_LIBRARIES} ${MINIUPNP_LIBRARIES})
+target_compile_options(network_reachability_sample PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(network_reachability_sample PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    target_compile_definitions(network_reachability_sample PRIVATE MINIUPNPC_STATICLIB MINIUPNP_STATICLIB)
+    target_link_libraries(network_reachability_sample PRIVATE oleaut32 iphlpapi)
+    set_target_properties(network_reachability_sample PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+
+add_executable(network_overview_sample
+        ${CMAKE_SOURCE_DIR}/tests/tools/network_overview_sample.cpp
+        ${CMAKE_SOURCE_DIR}/src/nat_discovery.cpp
+        ${CMAKE_SOURCE_DIR}/src/nat_discovery_probe.cpp
+        ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
+        ${CMAKE_SOURCE_DIR}/src/public_address.cpp
+        ${CMAKE_SOURCE_DIR}/src/network_reachability_probe.cpp)
+target_include_directories(network_overview_sample PRIVATE
+        "${CMAKE_SOURCE_DIR}"
+        "${CMAKE_SOURCE_DIR}/third-party")
+target_link_libraries(network_overview_sample PRIVATE nlohmann_json::nlohmann_json alkaidlab_stun_codec
+        sunshine_project_options Boost::boost ${Boost_LIBRARIES} ${OPENSSL_LIBRARIES}
+        ${PLATFORM_LIBRARIES} ${MINIUPNP_LIBRARIES})
+target_compile_options(network_overview_sample PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(network_overview_sample PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    target_compile_definitions(network_overview_sample PRIVATE MINIUPNPC_STATICLIB MINIUPNP_STATICLIB)
+    target_link_libraries(network_overview_sample PRIVATE oleaut32 iphlpapi)
+    set_target_properties(network_overview_sample PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
 
 add_executable(system_load_unit_tests
         ${CMAKE_SOURCE_DIR}/src/system_load.cpp
@@ -656,7 +871,13 @@ set_target_properties(remote_usb_process_tree_helper PROPERTIES
 
 add_executable(remote_usb_host_controller_unit_tests
         ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_host_controller.cpp
-        ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_usb_host_controller.cpp)
+        ${CMAKE_SOURCE_DIR}/src/remote_usb/usbip_stale_port_sweep.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_usb_host_controller.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_usbip_stale_port_sweep.cpp)
+if (WIN32)
+    target_sources(remote_usb_host_controller_unit_tests PRIVATE
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/text_encoding.cpp)
+endif ()
 target_include_directories(remote_usb_host_controller_unit_tests PRIVATE
         "${CMAKE_SOURCE_DIR}")
 target_link_libraries(remote_usb_host_controller_unit_tests
@@ -682,7 +903,12 @@ add_test(NAME remote_usb_host_controller_unit_tests COMMAND remote_usb_host_cont
 add_executable(reverse_tunnel_probe
         ${CMAKE_SOURCE_DIR}/tests/tools/reverse_tunnel_probe.cpp
         ${CMAKE_SOURCE_DIR}/src/remote_usb/reverse_tunnel_service.cpp
-        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_host_controller.cpp)
+        ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_host_controller.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_usb/usbip_stale_port_sweep.cpp)
+if (WIN32)
+    target_sources(reverse_tunnel_probe PRIVATE
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/text_encoding.cpp)
+endif ()
 target_include_directories(reverse_tunnel_probe PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(reverse_tunnel_probe PRIVATE
         Boost::asio Boost::process Boost::system Boost::log
@@ -738,6 +964,66 @@ set(TEST_DEFINITIONS)  # list will be appended as needed
 # this indicates we're building tests in case sunshine needs to adjust some code or add private tests
 list(APPEND TEST_DEFINITIONS SUNSHINE_TESTS)
 
+# Focused pending-pairing suite. It links the pairing registry, the Web UI
+# route module and their direct dependencies instead of the full host graph.
+add_executable(pairing_pending_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/tests_main.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_pairing_pending.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/pairing_pending_platform_stubs.cpp
+        ${CMAKE_SOURCE_DIR}/src/client_family.cpp
+        ${CMAKE_SOURCE_DIR}/src/nvhttp/pairing.cpp
+        ${CMAKE_SOURCE_DIR}/src/nvhttp/pairing_pending.cpp
+        ${CMAKE_SOURCE_DIR}/src/nvhttp/preset_pin.cpp
+        ${CMAKE_SOURCE_DIR}/src/confighttp/pairing.cpp
+        ${CMAKE_SOURCE_DIR}/src/confighttp/auth.cpp
+        ${CMAKE_SOURCE_DIR}/src/confighttp/local_auth_token.cpp
+        ${CMAKE_SOURCE_DIR}/src/confighttp/common.cpp
+        ${CMAKE_SOURCE_DIR}/src/confighttp/login_throttle.cpp
+        ${CMAKE_SOURCE_DIR}/src/confighttp/session_store.cpp
+        ${CMAKE_SOURCE_DIR}/src/file_handler.cpp
+        ${CMAKE_SOURCE_DIR}/src/globals.cpp
+        ${CMAKE_SOURCE_DIR}/src/httpcommon.cpp
+        ${CMAKE_SOURCE_DIR}/src/logging.cpp
+        ${CMAKE_SOURCE_DIR}/src/network.cpp
+        ${CMAKE_SOURCE_DIR}/src/tray/tray_state.cpp)
+if (WIN32)
+    target_sources(pairing_pending_unit_tests PRIVATE
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/text_encoding.cpp)
+endif ()
+target_include_directories(pairing_pending_unit_tests PRIVATE
+        "${CMAKE_SOURCE_DIR}"
+        "${CMAKE_BINARY_DIR}"
+        "${CMAKE_SOURCE_DIR}/third-party"
+        "${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/enet/include"
+        "${CMAKE_SOURCE_DIR}/third-party/nanors"
+        "${CMAKE_SOURCE_DIR}/third-party/nanors/deps/obl"
+        "${CMAKE_SOURCE_DIR}/third-party/nvenc-headers/1301/include"
+        "${FFMPEG_PREPARED_BINARIES}/include")
+target_link_libraries(pairing_pending_unit_tests PRIVATE
+        sunshine_http sunshine_crypto
+        Boost::log Boost::format Boost::filesystem Boost::thread Boost::system
+        Boost::property_tree Boost::program_options Boost::process
+        Boost::locale Boost::atomic Boost::chrono Boost::date_time
+        Boost::container Boost::context Boost::random Boost::charconv
+        nlohmann_json::nlohmann_json
+        enet
+        "${FFMPEG_PREPARED_BINARIES}/lib/libavutil.a"
+        gtest_main
+        sunshine_project_options sunshine_coverage)
+if (WIN32)
+    target_link_libraries(pairing_pending_unit_tests PRIVATE
+            ${PLATFORM_LIBRARIES} bcrypt iphlpapi)
+else ()
+    target_link_libraries(pairing_pending_unit_tests PRIVATE m)
+endif ()
+target_compile_definitions(pairing_pending_unit_tests PRIVATE
+        ${SUNSHINE_DEFINITIONS} ${TEST_DEFINITIONS})
+target_compile_options(pairing_pending_unit_tests PRIVATE
+        $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(pairing_pending_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME pairing_pending_unit_tests COMMAND pairing_pending_unit_tests)
+set_tests_properties(pairing_pending_unit_tests PROPERTIES TIMEOUT 120)
+
 file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
         ${CMAKE_SOURCE_DIR}/tests/*.h
         ${CMAKE_SOURCE_DIR}/tests/*.cpp)
@@ -747,6 +1033,8 @@ file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/tools/")
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_hdr_calibration.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_authored_ir_extended.cpp)
+list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_devices.cpp)
+list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_vb_cable.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_host_bitrate_cap.cpp)
 # MAT harnesses have independent entrypoints and explicit test targets.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/mat-live/")
@@ -756,6 +1044,7 @@ list(REMOVE_ITEM TEST_SOURCES
         ${CMAKE_SOURCE_DIR}/tests/unit/test_ai_provider.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_build_info.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_version_compare.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_client_family.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_client_fingerprint.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_config_overrides.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_config_runtime.cpp
@@ -773,20 +1062,22 @@ list(REMOVE_ITEM TEST_SOURCES
         ${CMAKE_SOURCE_DIR}/tests/unit/test_perf_frame_rates.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_pyrowave.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_usb_host_controller.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_usbip_stale_port_sweep.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_rtsp.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_session_auth_routes.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_session_store.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_sunshinesvc_state.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_tray_state.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_uac1_microphone.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_video_probe.cpp
-        ${CMAKE_SOURCE_DIR}/tests/unit/test_virtual_touchscreen_device.cpp)
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_virtual_touchscreen_device.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/pairing_pending_platform_stubs.cpp)
 
 set(ABR_TEST_STUB_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/abr_test_stubs.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${ABR_TEST_STUB_SOURCE})
 if (WIN32)
     # Windows-only suites include fake APIs or backend paths of their own.
     list(REMOVE_ITEM TEST_SOURCES
-            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_ds5_component_manifest.cpp
-            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_ds5_sidecar_client.cpp
-            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_microphone_client.cpp
             ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_nvprefs.cpp
             ${CMAKE_SOURCE_DIR}/tests/unit/test_credential_store.cpp
             ${CMAKE_SOURCE_DIR}/tests/unit/test_sunshinesvc_log.cpp
@@ -916,70 +1207,28 @@ foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
     add_dependencies(client_fingerprint_unit_tests ${dep})
 endforeach()
 
+add_executable(client_family_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_client_family.cpp
+        ${CMAKE_SOURCE_DIR}/src/client_family.cpp)
+target_include_directories(client_family_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(client_family_unit_tests
+        PRIVATE gtest_main nlohmann_json::nlohmann_json
+        sunshine_project_options sunshine_coverage)
+target_compile_definitions(client_family_unit_tests PRIVATE
+        CLIENT_FAMILY_FIXTURE="${CMAKE_SOURCE_DIR}/tests/fixtures/client_families.json")
+target_compile_options(client_family_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(client_family_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME client_family_unit_tests COMMAND client_family_unit_tests)
+foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
+    add_dependencies(client_family_unit_tests ${dep})
+endforeach()
+
 if (WIN32)
-    add_executable(ds5_fake_sidecar
-            ${CMAKE_SOURCE_DIR}/tests/tools/ds5_fake_sidecar.cpp)
-    target_link_libraries(ds5_fake_sidecar PRIVATE
-            sunshine_project_options sunshine_coverage)
-    set_target_properties(ds5_fake_sidecar PROPERTIES
-            CXX_STANDARD 23
-            LINK_SEARCH_START_STATIC 1)
-    add_executable(ds5_sidecar_client_unit_tests
-            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_ds5_sidecar_client.cpp
-            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_ds5_component_manifest.cpp
-            ${CMAKE_SOURCE_DIR}/tests/tools/ds5_sidecar_test_stubs.cpp
-            ${CMAKE_SOURCE_DIR}/src/ds5/config.cpp
-            ${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_sidecar_client.cpp)
-    target_link_libraries(ds5_sidecar_client_unit_tests PRIVATE sunshine::host_headers
-            sunshine_project_options sunshine_coverage)
-    target_include_directories(ds5_sidecar_client_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
-    target_link_libraries(ds5_sidecar_client_unit_tests
-            PRIVATE Boost::log
-            Boost::format
-            Boost::property_tree
-            nlohmann_json::nlohmann_json
-            gtest_main)
-    target_compile_definitions(ds5_sidecar_client_unit_tests PRIVATE
-            SUNSHINE_DS5_FAKE_SIDECAR_PATH="$<TARGET_FILE:ds5_fake_sidecar>"
-            SUNSHINE_DS5_SIDECAR_TEST_HOOK)
-    target_compile_options(ds5_sidecar_client_unit_tests PRIVATE
-            $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
-    set_target_properties(ds5_sidecar_client_unit_tests PROPERTIES
-            CXX_STANDARD 23
-            LINK_SEARCH_START_STATIC 1)
-    add_dependencies(ds5_sidecar_client_unit_tests ds5_fake_sidecar)
-    add_test(NAME ds5_sidecar_client_unit_tests COMMAND ds5_sidecar_client_unit_tests)
-
-    add_executable(microphone_client_unit_tests
-            ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_microphone_client.cpp
-            ${CMAKE_SOURCE_DIR}/tests/tools/ds5_sidecar_test_stubs.cpp
-            ${CMAKE_SOURCE_DIR}/src/ds5/config.cpp
-            ${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_sidecar_client.cpp
-            ${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_device_host/microphone_client.cpp)
-    target_link_libraries(microphone_client_unit_tests PRIVATE sunshine::host_headers
-            sunshine_project_options sunshine_coverage)
-    target_include_directories(microphone_client_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
-    target_link_libraries(microphone_client_unit_tests
-            PRIVATE Boost::log
-            Boost::format
-            Boost::property_tree
-            nlohmann_json::nlohmann_json
-            gtest_main)
-    target_compile_definitions(microphone_client_unit_tests PRIVATE
-            SUNSHINE_DS5_FAKE_SIDECAR_PATH="$<TARGET_FILE:ds5_fake_sidecar>"
-            SUNSHINE_DS5_SIDECAR_TEST_HOOK)
-    target_compile_options(microphone_client_unit_tests PRIVATE
-            $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
-    set_target_properties(microphone_client_unit_tests PROPERTIES
-            CXX_STANDARD 23
-            LINK_SEARCH_START_STATIC 1)
-    add_dependencies(microphone_client_unit_tests ds5_fake_sidecar)
-    add_test(NAME microphone_client_unit_tests COMMAND microphone_client_unit_tests)
-
     # prefer static libraries since we're linking statically
     # this fixes libcurl linking errors when using non MSYS2 version of CMake
     set_target_properties(${PROJECT_NAME} PROPERTIES LINK_SEARCH_START_STATIC 1)
     set_target_properties(abr_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+    set_target_properties(client_family_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
     set_target_properties(client_fingerprint_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
 

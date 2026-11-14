@@ -831,6 +831,12 @@ namespace platf::dxgi {
     std::chrono::steady_clock::time_point m_nextCursorAttachAttempt {};
     UINT32 m_cursorAttachFailures = 0;
     bool m_cursorUpdatePending = false;
+    // Whether a desktop frame (or the last published picture, see next_frame) was handed out since this capture
+    // attached. A static desktop publishes nothing, so a capture that attaches after the picture was drawn has to ask
+    // for the last picture once instead of waiting for a change that may never come.
+    bool m_acquiredFrame = false;
+    std::chrono::steady_clock::time_point m_attachedAt {};
+    bool m_idleFrameLogged = false;
     UINT32 m_lastSeenCursorShapeId = 0xFFFFFFFFu;
     UINT32 m_lastSeenCursorPositionId = 0xFFFFFFFFu;
 

@@ -4773,7 +4773,19 @@ namespace stream {
 
     int
     start(session_t &session, const std::string &addr_string) {
-      session.input = input::alloc(session.mail, session.launch_session_id, session.client_gamepad);
+      session.input = input::alloc(
+        session.mail,
+        session.launch_session_id,
+        session.client_gamepad,
+        [client_uuid = session.client_cert_uuid]() {
+          if (client_uuid.empty()) {
+            return;
+          }
+          client_family::observation_t observation;
+          observation.now = client_family::unix_now();
+          observation.add("input.penBarrelRoll", "1");
+          nvhttp::observe_client_family(client_uuid, observation);
+        });
 
       session.broadcast_ref = broadcast_shared.ref();
       if (!session.broadcast_ref) {
@@ -5166,6 +5178,12 @@ namespace stream {
           info.client_name = session_p->client_name;
           info.client_uuid = session_p->client_cert_uuid;
           info.session_id = session_p->launch_session_id;
+          if (const auto paired = nvhttp::find_paired_client(session_p->client_cert_uuid)) {
+            info.client_family = std::string(client_family::to_string(paired->family.family));
+            info.client_official = client_family::official(paired->family.family);
+            info.client_os = paired->family.os;
+            info.client_version = paired->family.version;
+          }
 
           const auto lifecycle = session_p->lifecycle.snapshot();
           info.stop_reason = stop_reason_name(lifecycle.stop_reason);

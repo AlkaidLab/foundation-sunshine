@@ -5,6 +5,7 @@
 #include "confighttp.h"
 #include "ai/http_stream.h"
 #include "config.h"
+#include "confighttp/local_auth_token.h"
 #include "confighttp/routes.h"
 #include "confighttp/types.h"
 #include "globals.h"
@@ -22,6 +23,13 @@ namespace confighttp {
   void
   start() {
     auto shutdown_event = mail::man->event<bool>(mail::shutdown);
+
+    if (!local_auth_token::initialize()) {
+      BOOST_LOG(error) << "Local Web UI credential initialization failed; local API requests will require another credential";
+    }
+    else {
+      local_auth_token::start_monitor();
+    }
 
     auto port_https = net::map_port(PORT_HTTPS);
     auto address_family = net::af_from_enum_string(config::sunshine.address_family);
@@ -156,6 +164,7 @@ namespace confighttp {
     // Wait for any event
     shutdown_event->view();
 
+    local_auth_token::stop_monitor();
     ai::http::shutdown_streams();
     image_enhancement::api::shutdown();
     server.stop();
