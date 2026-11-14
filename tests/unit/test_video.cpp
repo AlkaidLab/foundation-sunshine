@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <memory>
 
 namespace {
 
@@ -285,4 +286,150 @@ TEST(HdrPipelineStatus, LiveControlsValidateAndPreserveNewerRequests) {
   EXPECT_EQ(video::request_nr_enabled(id, false), 202);
   EXPECT_FLOAT_EQ(video::requested_nr_settings(id)->intensity, 0.5f);
   video::unregister_hdr_pipeline_status(id);
+}
+
+namespace {
+  using pending_clock = video::pending_display_size_t::clock;
+  const auto pending_t0 = pending_clock::time_point {} + std::chrono::hours(1);
+}  // namespace
+
+TEST(CaptureStartReportTests, WindowCaptureDoesNotReportTheMonitorSize) {
+  // On a portrait monitor window capture keeps the negotiated landscape size, so a client that applies the
+  // display-capture scale to the reported monitor size would reset to the wrong stream size.
+  EXPECT_EQ(video::capture_start_display_report(true, 1080, 1920), std::nullopt);
+  EXPECT_EQ(video::capture_start_display_report(false, 1080, 1920), std::make_pair(1080u, 1920u));
+}
+
+TEST(PendingDisplaySizeTests, FollowsEveryDisplayChangeWithoutATarget) {
+  video::pending_display_size_t pending;
+  EXPECT_FALSE(pending.pending(pending_t0));
+  EXPECT_FALSE(pending.defers(3840, 2160, pending_t0));
+}
+
+TEST(PendingDisplaySizeTests, SkipsIntermediateModesUntilTheTargetIsReached) {
+  video::pending_display_size_t pending;
+  pending.set(1600, 900, pending_t0);
+
+  // A recreated virtual display first comes up at its default mode.
+  EXPECT_TRUE(pending.defers(3840, 2160, pending_t0 + std::chrono::seconds(1)));
+  EXPECT_TRUE(pending.pending(pending_t0 + std::chrono::seconds(1)));
+
+  // Reaching the target is followed and consumes it, so later host display changes are followed again.
+  EXPECT_FALSE(pending.defers(1600, 900, pending_t0 + std::chrono::seconds(2)));
+  EXPECT_FALSE(pending.pending(pending_t0 + std::chrono::seconds(2)));
+  EXPECT_FALSE(pending.defers(3840, 2160, pending_t0 + std::chrono::seconds(3)));
+}
+
+TEST(PendingDisplaySizeTests, ExpiresSoItCannotFreezeDisplayFollowing) {
+  video::pending_display_size_t pending;
+  pending.set(1600, 900, pending_t0);
+
+  const auto before_deadline = pending_t0 + video::pending_display_size_t::timeout - std::chrono::milliseconds(1);
+  EXPECT_TRUE(pending.pending(before_deadline));
+  EXPECT_TRUE(pending.defers(3840, 2160, before_deadline));
+
+  const auto at_deadline = pending_t0 + video::pending_display_size_t::timeout;
+  EXPECT_FALSE(pending.pending(at_deadline));
+  EXPECT_FALSE(pending.defers(3840, 2160, at_deadline));
+}
+
+TEST(PendingDisplaySizeTests, FollowsTheAppliedModeWhenTheDriverRoundsTheRequest) {
+  video::pending_display_size_t pending;
+  pending.set(1462, 910, pending_t0);
+
+  // The driver rounded the requested size: wait for the applied mode, never for one that will not appear.
+  pending.settle(1464, 910);
+  EXPECT_TRUE(pending.defers(3840, 2160, pending_t0));
+  EXPECT_TRUE(pending.defers(1462, 910, pending_t0));
+  EXPECT_FALSE(pending.defers(1464, 910, pending_t0));
+  EXPECT_FALSE(pending.pending(pending_t0));
+}
+
+TEST(PendingDisplaySizeTests, KeepsTheDeadlineWhenSettling) {
+  video::pending_display_size_t pending;
+  pending.set(1462, 910, pending_t0);
+  pending.settle(1464, 910);
+
+  EXPECT_FALSE(pending.pending(pending_t0 + video::pending_display_size_t::timeout));
+}
+
+TEST(PendingDisplaySizeTests, KeepsTheTargetWhenTheAppliedModeMatches) {
+  video::pending_display_size_t pending;
+  pending.set(1462, 910, pending_t0);
+
+  pending.settle(1462, 910);
+  EXPECT_TRUE(pending.pending(pending_t0));
+  EXPECT_TRUE(pending.defers(3840, 2160, pending_t0));
+  EXPECT_FALSE(pending.defers(1462, 910, pending_t0));
+}
+
+TEST(PendingDisplaySizeTests, MatchesTheOrientationExactly) {
+  video::pending_display_size_t pending;
+  pending.set(2160, 3840, pending_t0);
+
+  // A recreated virtual display coming up in landscape is still an intermediate mode for a portrait request.
+  EXPECT_TRUE(pending.defers(3840, 2160, pending_t0));
+  EXPECT_FALSE(pending.defers(2160, 3840, pending_t0));
+  EXPECT_FALSE(pending.pending(pending_t0));
+}
+
+TEST(PendingDisplaySizeTests, ClearStopsSkippingDisplayChanges) {
+  video::pending_display_size_t pending;
+  pending.set(1600, 900, pending_t0);
+  pending.clear();
+
+  EXPECT_FALSE(pending.pending(pending_t0));
+  EXPECT_FALSE(pending.defers(3840, 2160, pending_t0));
+}
+
+TEST(PendingDisplaySizeTests, ANewerRequestReplacesTheTarget) {
+  video::pending_display_size_t pending;
+  pending.set(1600, 900, pending_t0);
+  pending.set(1462, 910, pending_t0);
+
+  EXPECT_TRUE(pending.defers(1600, 900, pending_t0));
+  EXPECT_FALSE(pending.defers(1462, 910, pending_t0));
+}
+TEST(PendingDisplaySizeTests, DeferredStopFollowsWhenSettleRetargetsToTheSkippedMode) {
+  auto target = std::make_shared<video::pending_display_size_t>();
+  target->set(1462, 910);
+
+  // The capture loop sees the driver's rounded mode before configure_display() returns, so it skips it.
+  ASSERT_TRUE(target->defers(1464, 910));
+  const auto stop = video::make_deferred_display_stop(target, 1464, 910);
+  EXPECT_FALSE(stop());
+
+  // The control thread then learns the applied mode. The display will not change again, so the encoder
+  // must stop on its own to follow the size it skipped instead of waiting for the deadline.
+  target->settle(1464, 910);
+  EXPECT_TRUE(stop());
+  EXPECT_FALSE(target->pending());
+  EXPECT_FALSE(target->defers(1464, 910));
+}
+
+TEST(PendingDisplaySizeTests, DeferredStopWaitsWhileTheDisplayShowsAnIntermediateMode) {
+  auto target = std::make_shared<video::pending_display_size_t>();
+  target->set(1600, 900);
+
+  ASSERT_TRUE(target->defers(3840, 2160));
+  const auto stop = video::make_deferred_display_stop(target, 3840, 2160);
+  EXPECT_FALSE(stop());
+
+  // The requested mode applied, but the capture display still shows the intermediate one: keep waiting
+  // for the display change (which reinitializes capture) rather than following 3840x2160.
+  target->settle(1600, 900);
+  EXPECT_FALSE(stop());
+  EXPECT_TRUE(target->pending());
+}
+
+TEST(PendingDisplaySizeTests, DeferredStopFollowsWhenTheTargetIsClearedOrExpires) {
+  auto cleared = std::make_shared<video::pending_display_size_t>();
+  cleared->set(1600, 900);
+  const auto stop_cleared = video::make_deferred_display_stop(cleared, 3840, 2160);
+  cleared->clear();
+  EXPECT_TRUE(stop_cleared());
+
+  auto expired = std::make_shared<video::pending_display_size_t>();
+  expired->set(1600, 900, video::pending_display_size_t::clock::now() - video::pending_display_size_t::timeout);
+  EXPECT_TRUE(video::make_deferred_display_stop(expired, 3840, 2160)());
 }
