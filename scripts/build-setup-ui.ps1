@@ -16,8 +16,10 @@ $work = Join-Path (Split-Path $ui -Parent) 'panel-setup-ui'
 if (Test-Path -LiteralPath $work) { Remove-Item -Recurse -Force -LiteralPath $work }
 $panel = Join-Path $repo 'src_assets/common/sunshine-control-panel'
 if (-not (Test-Path -LiteralPath (Join-Path $panel 'installer-ui/Cargo.toml'))) { throw 'The Panel submodule is not checked out' }
+# Without the pages root the build silently falls back to a placeholder page: refuse that.
+if (-not (Test-Path -LiteralPath (Join-Path $ui 'src/vue/installer/MInstaller.vue'))) { throw "foundation-ui at $ui has no installer pages (src/vue/installer/MInstaller.vue)" }
 New-Item -ItemType Directory -Path $work | Out-Null
-robocopy $panel $work /E /XD .git node_modules target dist-installer /NFL /NDL /NJH /NJS /NP | Out-Null
+robocopy $panel $work /E /XD .git node_modules target dist-installer /XF .git /NFL /NDL /NJH /NJS /NP | Out-Null
 if ($LASTEXITCODE -ge 8) { throw "robocopy failed: $LASTEXITCODE" }
 $global:LASTEXITCODE = 0
 
