@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="auto">
+  <head>
+    <%- header %>
+  </head>
+
+  <body id="app" v-cloak>
+    <!-- Vue application mount point -->
+  </body>
+
+  <script type="module">
+    import { createApp } from 'vue'
+    import { initApp } from './init'
+    import DualSense from './views/WebShell.vue'
+
+    const app = createApp(DualSense)
+    initApp(app)
+  </script>
+</html>

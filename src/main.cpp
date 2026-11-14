@@ -44,8 +44,6 @@
 #include "video.h"
 #include "webhook/webhook.h"
 #include "webhook/webhook_auth.h"
-#include "ds5/config.h"
-#include "image_enhancement/config.h"
 
 #ifdef _WIN32
   #include "platform/windows/misc.h"

@@ -106,8 +106,6 @@ set(SUNSHINE_HOST_SOURCES
     src/round_robin.h
 
     # src/ds5
-    src/ds5/config.cpp src/ds5/config.h
-    src/ds5/config_api.cpp src/ds5/config_api.h
     src/ds5/tuning_profile.cpp src/ds5/tuning_profile.h
     src/ds5/tuning_runtime.h
     src/ds5/tuning_descriptors.inc
@@ -212,6 +210,7 @@ set(SUNSHINE_HOST_SOURCES
     src/confighttp/apps.cpp src/confighttp/apps.h
     src/confighttp/apps_scan.cpp src/confighttp/apps_scan.h
     src/confighttp/configuration.cpp src/confighttp/configuration.h
+    src/confighttp/dualsense.cpp src/confighttp/dualsense.h
     src/confighttp/clients.cpp src/confighttp/clients.h
     src/confighttp/pair_link.cpp src/confighttp/pair_link.h
     src/confighttp/diagnostics.cpp src/confighttp/diagnostics.h
