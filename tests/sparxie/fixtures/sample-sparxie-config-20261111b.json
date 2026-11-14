@@ -1,0 +1,77 @@
+{
+  "desktop": {
+    "afterLaunch": null,
+    "closeAction": null,
+    "debugMode": false,
+    "lastProfileByGame": {
+      "Genshin": "genshin-cn-1"
+    },
+    "selectedGame": null,
+    "theme": "System"
+  },
+  "profiles": [
+    {
+      "displayName": "原神触屏",
+      "executablePath": "C:\\Games\\mihoyo\\Genshin\\YuanShen.exe",
+      "game": "genshin",
+      "hoyo": {
+        "backgroundFps": 10,
+        "backgroundFpsLimitEnabled": true,
+        "fpsUnlockEnabled": false,
+        "genshinFollowInGamePreset": false,
+        "genshinPreset30Fps": 60,
+        "genshinPreset60Fps": 1000,
+        "genshinTouchUiScaleOverrideEnabled": false,
+        "genshinTouchUiScalePercent": 400,
+        "processPriority": "normal",
+        "targetFps": 120
+      },
+      "id": "genshin-cn-1"
+    },
+    {
+      "displayName": "星铁触屏",
+      "executablePath": "C:\\Games\\mihoyo\\StarRail\\StarRail.exe",
+      "game": "starRail",
+      "hoyo": {
+        "backgroundFps": 10,
+        "backgroundFpsLimitEnabled": true,
+        "fpsUnlockEnabled": false,
+        "genshinFollowInGamePreset": false,
+        "genshinPreset30Fps": 60,
+        "genshinPreset60Fps": 1000,
+        "genshinTouchUiScaleOverrideEnabled": false,
+        "genshinTouchUiScalePercent": 400,
+        "processPriority": "normal",
+        "targetFps": 120
+      },
+      "id": "starrail-cn-1"
+    },
+    {
+      "displayName": "绝区零触屏",
+      "executablePath": "C:\\Games\\mihoyo\\ZZZ\\ZenlessZoneZero.exe",
+      "game": "zenlessZoneZero",
+      "hoyo": null,
+      "id": "zzz-cn-1"
+    },
+    {
+      "displayName": "星穹铁道",
+      "executablePath": "C:\\Games\\mihoyo\\StarRail\\StarRail.exe",
+      "game": "starRail",
+      "hoyo": {
+        "backgroundFps": 10,
+        "backgroundFpsLimitEnabled": true,
+        "fpsUnlockEnabled": true,
+        "genshinFollowInGamePreset": false,
+        "genshinPreset30Fps": 60,
+        "genshinPreset60Fps": 1000,
+        "genshinTouchUiScaleOverrideEnabled": false,
+        "genshinTouchUiScalePercent": 400,
+        "processPriority": "normal",
+        "targetFps": 120
+      },
+      "id": "starrail-cn-2"
+    }
+  ],
+  "schemaVersion": 1,
+  "selectedProfileId": "genshin-cn-1"
+}

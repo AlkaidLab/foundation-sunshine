@@ -712,7 +712,7 @@ namespace system_tray {
         if (!is_safe_config_content(config_content)) {
           BOOST_LOG(error) << "[tray_import_config] Config import rejected: unsafe content: " << file_path;
           std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_TITLE));
-          std::wstring message = L"配置文件内容无效、太大或格式错误。\n最大文件大小：1MB";
+          std::wstring message = L"配置文件内容无效、太大或格式错误。\n最大文件大小：1 MB";
           MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
           return;
         }

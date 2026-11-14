@@ -27,6 +27,7 @@
 
 #include "config.h"
 #include "crypto.h"
+#include "default_apps.h"
 #include "display_device/session.h"
 #include "file_handler.h"
 #include "httpcommon.h"
@@ -36,7 +37,9 @@
 #include "stream.h"
 #include "tray/system_tray.h"
 #include "tray/tray_state.h"
+#include "launch_splash/launch_splash.h"
 #include "utility.h"
+#include "src/sparxie/runtime.h"
 #include "webhook/webhook.h"
 
 #ifdef _WIN32
@@ -233,7 +236,23 @@ namespace proc {
         break;
     }
     _env["SUNSHINE_CLIENT_AUDIO_SURROUND_PARAMS"] = launch_session->surround_params;
-
+    // Whether the client is a touch device is decided while the stream is prepared (nvhttp_stream_start.cpp) and
+    // sits on the launch session; the application only sees what is copied here. Without this line Sparxie's
+    // automatic Endfield input never learned the device and every client got the PC interface.
+    if (auto touch = launch_session->env.find("SUNSHINE_CLIENT_TOUCH"); touch != launch_session->env.end()) {
+      if (auto value = touch->to_string(); !value.empty()) {
+        _env["SUNSHINE_CLIENT_TOUCH"] = std::move(value);
+      }
+    }
+    // The launch splash: a command that starts a game shows its name and stage on the streamed display until the window is up (the Desktop has no command).
+    // A launcher that reports its own stages writes them to the file named here.
+    const bool splash_launcher_reports = launch_splash::command_reports_stages(_app.cmd);
+    if (!_app.cmd.empty()) {
+      if (const auto splash = launch_splash::begin(_app, launch_splash::kind_e::launch)) {
+        _env["SUNSHINE_LAUNCH_ID"] = splash->id;
+        _env["SUNSHINE_LAUNCH_STATUS_FILE"] = splash->status_file.string();
+      }
+    }
     if (!_app.output.empty() && _app.output != "null"sv) {
 #ifdef _WIN32
       // fopen() interprets the filename as an ANSI string on Windows, so we must convert it
@@ -272,6 +291,7 @@ namespace proc {
         // permission_denied is typically returned when the user impersonation fails, which can happen when user is not signed in yet.
         if (!(_app.cmd.empty() && ec == std::errc::permission_denied)) {
           BOOST_LOG(error) << "Couldn't run ["sv << cmd.do_cmd << "]: System: "sv << ec.message();
+          launch_splash::fail("prep");
           return -1;
         }
 
@@ -290,6 +310,7 @@ namespace proc {
       auto ret = child.exit_code();
       if (ret != 0) {
         BOOST_LOG(error) << '[' << cmd.do_cmd << "] exited with code ["sv << ret << ']';
+        launch_splash::fail("prep");
         return -1;
       }
     }
@@ -317,11 +338,17 @@ namespace proc {
                                               find_working_directory(_app.cmd, _env) :
                                               boost_path_from_utf8(_app.working_dir);
       BOOST_LOG(info) << "Executing: ["sv << _app.cmd << "] in ["sv << boost_path_to_utf8(working_dir) << ']';
-      _process = platf::run_command(_app.elevated, true, _app.cmd, working_dir, _env, _pipe.get(), ec, &_process_group);
+      // the splash is on the streamed display before the game starts (the game was seen first in a 2026-11-12 test); never longer than launch_splash::shown_wait_ms
+      launch_splash::wait_shown();
+      // the game's settings and display for this stream; a game that starts directly may get size arguments for it
+      const std::string stream_arguments = sparxie::before_launch(_app.name, _app.cmd, { launch_session->width, launch_session->height, launch_session->fps });
+      _process = platf::run_command(_app.elevated, true, _app.cmd + stream_arguments, working_dir, _env, _pipe.get(), ec, &_process_group);
       if (ec) {
         BOOST_LOG(warning) << "Couldn't run ["sv << _app.cmd << "]: System: "sv << ec.message();
+        launch_splash::fail("start");
         return -1;
       }
+      launch_splash::note_started(static_cast<std::uint32_t>(_process.id()), splash_launcher_reports);
     }
 
     _app_launch_time = std::chrono::steady_clock::now();
@@ -375,7 +402,11 @@ namespace proc {
   proc_t::terminate() {
     std::error_code ec;
     placebo = false;
+    launch_splash::end();
+    const bool had_process = static_cast<bool>(_process);
     terminate_process_group(_process, _process_group, _app.exit_timeout);
+    // the application ended (the game quit or the stream did): the game settings its launch wrote go back
+    if (had_process && !_app.cmd.empty()) sparxie::after_session(_app.name, _app.cmd);
     _process = boost::process::v1::child();
     _process_group = boost::process::v1::group();
 
@@ -465,9 +496,43 @@ namespace proc {
     _apps = std::move(apps);
   }
 
+  namespace {
+    // The art part of the list tag is read from the files (a few stats per application), at most once in two seconds: the tag is a function of the files, so it stays the same until
+    // a picture is written, and a client that asks often is not made to stat every application each time.
+    struct art_tag_cache_t {
+      std::mutex mutex;
+      const void *owner = nullptr;
+      std::string list_etag;
+      std::chrono::steady_clock::time_point at;
+      std::string tag;
+    };
+
+    art_tag_cache_t &
+    art_tag_cache() {
+      static art_tag_cache_t cache;
+      return cache;
+    }
+  }  // namespace
+
   std::string
   proc_t::get_apps_etag() const {
-    return _apps_etag;
+    // the play history is part of the list (FsLastPlayed, FsPlaySeconds): the file's time is part of the tag
+    const auto list_etag = client_interface::combine_list_etag(_apps_etag, client_interface::play_facts_tag());
+    // so is the art (FsArtVersion, and the hero/logo/icon/poster files behind it): a client that does not reopen the page asks for the list only when this tag changes
+    auto &cache = art_tag_cache();
+    std::lock_guard lock { cache.mutex };
+    const auto now = std::chrono::steady_clock::now();
+    if (cache.owner != this || cache.list_etag != _apps_etag || cache.at.time_since_epoch().count() == 0 || now - cache.at >= std::chrono::seconds(2)) {
+      std::string apps_art;
+      for (const auto &app : _apps) {
+        apps_art += app.id + ':' + app_art_version(app, true) + ';';
+      }
+      cache.owner = this;
+      cache.list_etag = _apps_etag;
+      cache.at = now;
+      cache.tag = std::move(apps_art);
+    }
+    return client_interface::combine_art_etag(list_etag, cache.tag);
   }
 
   const boost::process::v1::environment &
@@ -664,6 +729,63 @@ namespace proc {
     ss.write(pos, (dollar - pos));
 
     return ss.str();
+  }
+
+  std::string
+  app_art_asset_path(const ctx_t &app, std::string_view type) {
+    if (type == "poster") return validate_app_image_path(app.image_path);
+    std::string configured;
+    if (type == "hero") configured = app.fs_facts.hero_path;
+    if (type == "logo") configured = app.fs_facts.logo_path;
+    if (type == "icon") configured = app.fs_facts.icon_path;
+    if (configured.empty()) return {};
+    // only an image is served: the configured path is the host administrator's, the client asks by name
+    if (!client_interface::is_art_extension(file_handler::path_from_utf8(configured).extension().string())) return {};
+    const std::array paths {
+      file_handler::path_from_utf8(SUNSHINE_ASSETS_DIR) / file_handler::path_from_utf8(configured),
+      platf::appdata() / "covers" / file_handler::path_from_utf8(configured),
+      file_handler::path_from_utf8(configured),
+    };
+    for (const auto &path : paths) {
+      if (std::filesystem::exists(path)) return file_handler::path_to_utf8(path);
+    }
+    return {};
+  }
+
+  namespace {
+    // The poster file of a plain path as validate_app_image_path would find it (assets, covers, as given), without logging and without downloading or the desktop picture; empty when none exists.
+    std::string
+    existing_poster_quietly(const std::string &image_path) {
+      if (image_path.empty()) return DEFAULT_APP_IMAGE_PATH;
+      if (image_path == "desktop") return {};
+      const auto relative = file_handler::path_from_utf8(image_path);
+      const std::array candidates {
+        file_handler::path_from_utf8(SUNSHINE_ASSETS_DIR) / relative,
+        platf::appdata() / "covers" / relative,
+        relative,
+      };
+      std::error_code error;
+      for (const auto &path : candidates)
+        if (std::filesystem::exists(path, error)) return file_handler::path_to_utf8(path);
+      return {};
+    }
+  }  // namespace
+
+  /// The version tag of the art of an application as it is now: the configured paths' own tag plus the size and the time of every present art file, so a file replaced under
+  /// the same name is a new version (a client that was told `immutable` for a version asks again). A URL poster is not statted here: resolving it can download a picture.
+  std::string
+  app_art_version(const ctx_t &app, bool quiet) {
+    std::string files;
+    const auto append = [&files](const char *type, const std::string &path) {
+      if (path.empty()) return;
+      files += client_interface::art_file_fact(type, file_handler::path_from_utf8(path));
+    };
+    if (app.image_path.rfind("http://", 0) != 0 && app.image_path.rfind("https://", 0) != 0) {
+      // the list tag asks every couple of seconds: it takes the poster as the file system has it, and does not log a missing or unsupported poster each time
+      append("poster", quiet ? existing_poster_quietly(app.image_path) : validate_app_image_path(app.image_path));
+    }
+    for (const auto *type : { "hero", "logo", "icon" }) append(type, app_art_asset_path(app, type));
+    return client_interface::live_art_version(app.fs_facts.art_version, files);
   }
 
   std::string
@@ -961,7 +1083,9 @@ namespace proc {
           ctx.image_path = parse_env_val(this_env, *image_path);
         }
 
-        ctx.elevated = elevated.value_or(false);
+        // a game application of the Sparxie component: the HoYoverse games and Sparxie itself ask for administrator rights in their manifest,
+        // so started without them CreateProcess fails with ERROR_ELEVATION_REQUIRED (740) whatever the entry says
+        ctx.elevated = elevated.value_or(false) || static_cast<bool>(app_node.get_child_optional("sparxie"s));
         ctx.auto_detach = auto_detach.value_or(true);
         ctx.wait_all = wait_all.value_or(true);
         ctx.mouse_mode = mouse_mode.value_or(0);
@@ -1017,7 +1141,7 @@ namespace proc {
           };
         }
 
-        auto possible_ids = calculate_app_id(name, ctx.image_path, i++);
+        auto possible_ids = calculate_app_id(default_apps::id_name(app_node, name), ctx.image_path, i++);
         if (ids.count(std::get<0>(possible_ids)) == 0) {
           // Avoid using index to generate id if possible
           ctx.id = std::get<0>(possible_ids);
@@ -1032,6 +1156,12 @@ namespace proc {
         ctx.prep_cmds = std::move(prep_cmds);
         ctx.menu_cmds = std::move(menu_cmds);
         ctx.detached = std::move(detached);
+
+        bool opens_big_screen = false;
+#ifdef _WIN32
+        opens_big_screen = default_apps::opens_big_screen(app_node);
+#endif
+        ctx.fs_facts = client_interface::make_app_facts(ctx.id, ctx.cmd, opens_big_screen, ctx.image_path, app_node);
 
         apps.emplace_back(std::move(ctx));
       }

@@ -137,6 +137,7 @@ namespace config {
     std::string capture_compute_shader;  // GPU frame conversion: "auto", "on", "off"
     bool wgc_disable_secure_desktop;  // Auto-disable UAC secure desktop when using WGC capture
     bool dynamic_resolution_follow_display;  // If true, follow mid-stream host display resolution changes and notify client via extension; if false, keep initial stream resolution and let scaler handle changes (compatible with legacy clients like PSVita Moonlight that don't implement the extension)
+    int video_pacing_threshold;  // Minimum encoded frame size in bytes for UDP pacing; 0 disables the additional pacing path
   };
 
   struct audio_t {
@@ -158,6 +159,7 @@ namespace config {
   struct stream_t {
     std::chrono::milliseconds ping_timeout;
     bool stop_on_last_video_session;
+    bool launch_splash;  ///< 启动画面: the Panel shows the app's name and stage on the streamed display until its window is up
 
     std::string file_apps;
 

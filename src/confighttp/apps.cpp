@@ -8,6 +8,7 @@
 #include "src/config.h"
 #include "src/confighttp/auth.h"
 #include "src/confighttp/common.h"
+#include "src/default_apps.h"
 #include "src/file_handler.h"
 #include "src/http/types.h"
 #include "src/httpcommon.h"
@@ -16,8 +17,10 @@
 #include "src/nvhttp.h"
 #include "src/platform/run_command.h"
 #include "src/process.h"
+#include "src/sparxie/runtime.h"
 #include "src/utility.h"
 #include <atomic>
+#include <chrono>
 #include <boost/property_tree/json_parser.hpp>
 #include <filesystem>
 #include <fstream>
@@ -46,9 +49,10 @@ namespace confighttp::apps {
     getApps(resp_https_t response, req_https_t request) {
       if (!authenticate(response, request)) return;
 
+      sparxie::note_app_list_opened();
       print_req(request);
 
-      std::string content = file_handler::read_file(config::stream.file_apps.c_str());
+      std::string content = sparxie::typed_apps_text(file_handler::read_file(config::stream.file_apps.c_str()));
       web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "application/json");
       response->write(content, headers);
@@ -164,6 +168,8 @@ namespace confighttp::apps {
         }
 
         file_handler::write_json(config::stream.file_apps, fileTree);
+        // the property tree writes a sparxie block with every value as a string: put the types back
+        sparxie::heal_apps_file(config::stream.file_apps);
       }
       catch (std::exception &e) {
         BOOST_LOG(warning) << "SaveApp: "sv << e.what();
@@ -229,6 +235,8 @@ namespace confighttp::apps {
           fileTree.push_back(std::make_pair("apps", newApps));
         }
         file_handler::write_json(config::stream.file_apps, fileTree);
+        // the property tree writes a sparxie block with every value as a string: put the types back
+        sparxie::heal_apps_file(config::stream.file_apps);
       }
       catch (std::exception &e) {
         BOOST_LOG(warning) << "DeleteApp: "sv << e.what();
@@ -385,6 +393,8 @@ namespace confighttp::apps {
         fileTree.push_back(std::make_pair("apps", newApps));
 
         file_handler::write_json(config::stream.file_apps, fileTree);
+        // the property tree writes a sparxie block with every value as a string: put the types back
+        sparxie::heal_apps_file(config::stream.file_apps);
       }
       catch (std::exception &e) {
         BOOST_LOG(warning) << "BatchDeleteApps: "sv << e.what();
@@ -500,6 +510,67 @@ namespace confighttp::apps {
 
       proc::proc.terminate();
       outputTree.put("status", true);
+    }
+
+    /**
+     * Launch through the same process path as a streaming session. The Panel
+     * uses this route so service-hosted processes receive the active user's
+     * token, command parser and configured working directory.
+     * Sources: ds5-ms-shellexecuteexw-20261109 and
+     * ds5-ms-createprocessasuserw-20261109.
+     */
+    void
+    launchApp(resp_https_t response, req_https_t request) {
+      if (!check_content_type(response, request, "application/json")) return;
+      if (!authenticate(response, request)) return;
+
+      pt::ptree outputTree;
+      auto g = util::fail_guard([&]() {
+        std::ostringstream data;
+        pt::write_json(data, outputTree);
+        response->write(data.str());
+      });
+
+      try {
+        std::stringstream ss;
+        ss << request->content.rdbuf();
+        pt::ptree input;
+        pt::read_json(ss, input);
+        const auto app_id = input.get<int>("appId", 0);
+        if (app_id <= 0) {
+          outputTree.put("status", false);
+          outputTree.put("error", "Invalid application id");
+          return;
+        }
+
+        if (proc::proc.running() > 0) {
+          outputTree.put("status", false);
+          outputTree.put("error", "Another application is already running");
+          return;
+        }
+
+        auto session = std::make_shared<rtsp_stream::launch_session_t>();
+        session->client_name = "Big Screen";
+        const auto error = proc::proc.execute(app_id, std::move(session));
+        if (error != 0) {
+          outputTree.put("status", false);
+          outputTree.put("error", "Failed to launch application");
+          outputTree.put("code", error);
+          return;
+        }
+
+        outputTree.put("status", true);
+        outputTree.put("appId", app_id);
+        outputTree.put("appName", proc::proc.get_app_name(app_id));
+        if (const auto pid = proc::proc.get_running_pid()) {
+          outputTree.put("pid", *pid);
+        }
+      }
+      catch (const std::exception &error) {
+        BOOST_LOG(warning) << "LaunchApp: invalid request: " << error.what();
+        outputTree.put("status", false);
+        outputTree.put("error", "Invalid launch request");
+      }
     }
 
     /**
@@ -738,6 +809,24 @@ namespace confighttp::apps {
     }
 
   }  // namespace
+
+  void
+  retitle_defaults(std::string_view locale) {
+    // the same gate as the saves of the application list: a save that is running finishes first (a short wait), then the names are rewritten
+    bool expected = false;
+    for (int attempt = 0; attempt < 50 && !apps_writing.compare_exchange_strong(expected, true); ++attempt) {
+      expected = false;
+      std::this_thread::sleep_for(100ms);
+    }
+    if (!apps_writing.load()) {
+      BOOST_LOG(warning) << "Default apps: the application list is being saved; names were not changed to ["sv << locale << ']';
+      return;
+    }
+    auto writing_guard = util::fail_guard([]() { apps_writing = false; });
+    if (default_apps::retitle_file(config::stream.file_apps, locale)) {
+      proc::refresh(config::stream.file_apps);
+    }
+  }
 
   void
   register_routes(https_server_t &server) {

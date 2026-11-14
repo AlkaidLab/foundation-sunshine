@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The dummy Endfield.exe of the decoy-parent tests: a Windows-subsystem program (like the real game; a console program does not start under a suspended parent). -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <AssemblyName>FakeGame</AssemblyName>
+    <RootNamespace>FakeGame</RootNamespace>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+</Project>

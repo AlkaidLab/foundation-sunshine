@@ -21,6 +21,7 @@
 #include "build_info.h"
 #include "client_fingerprint.h"
 #include "confighttp.h"
+#include "default_apps.h"
 #include "display_device/session.h"
 #include "entry_handler.h"
 #include "file_handler.h"
@@ -59,7 +60,30 @@ namespace {
   // Captures the value main() ends up returning so the atexit terminator can use it.
   // Defaults to 0 (success) for the common case where main returns lifetime::desired_exit_code.
   std::atomic<int> g_final_exit_code { 0 };
+  // Held for the life of the process. Closing it would drop the single-instance mutex.
+  HANDLE host_instance_mutex = nullptr;
+
+  bool
+  another_installation_instance() {
+    wchar_t module_path[32768];
+    const auto length = GetModuleFileNameW(nullptr, module_path, 32768);
+    if (length == 0 || length >= 32768) {
+      return false;
     }
+    const auto name = sunshinesvc::instance_mutex_name(std::wstring_view { module_path, length });
+    SetLastError(ERROR_SUCCESS);
+    host_instance_mutex = CreateMutexW(nullptr, FALSE, name.c_str());
+    const auto claim = sunshinesvc::instance_claim(host_instance_mutex != nullptr, GetLastError());
+    if (claim != sunshinesvc::instance_claim_e::other_running) {
+      return false;
+    }
+    if (host_instance_mutex != nullptr) {
+      CloseHandle(host_instance_mutex);
+      host_instance_mutex = nullptr;
+    }
+    return true;
+  }
+}  // namespace
 #endif
 
 using namespace std::literals;
@@ -260,6 +284,18 @@ main(int argc, char *argv[]) {
   if (config::parse(argc, argv)) {
     return 0;
   }
+#ifdef _WIN32
+  // A second process of this installation exits before it binds a port or probes an encoder.
+  // Session 0 (the service) and a console session share the global namespace, so one mutex
+  // covers both [dr-ms-kernel-namespaces-20261109] [dr-ms-createmutexw-20261109].
+  // It also exits before it opens the log: the running process has sunshine.log open, and a start keeps the previous log as sunshine.log.1 and writes a fresh
+  // one, so a second process that got that far would push the real previous log out of the kept set and truncate the log of the running one.
+  // A command (--creds, --help ...) runs next to the running host and returns before the host starts, so it does not claim the instance.
+  if (config::sunshine.cmd.name.empty() && another_installation_instance()) {
+    std::cerr << "Another Sunshine from this installation is already running; this process exits without opening ports or probing encoders." << std::endl;
+    return 0;
+  }
+#endif
 
   auto log_deinit_guard = logging::init(config::sunshine.min_log_level, config::sunshine.log_file, config::sunshine.restore_log);
   if (!log_deinit_guard) {
@@ -581,13 +617,11 @@ main(int argc, char *argv[]) {
   input_deinit_guard = input_init.get();
 
 #if defined(_WIN32) && defined(SUNSHINE_GUI_TRAY) && SUNSHINE_GUI_TRAY >= 1
-  // The service wrapper owns user-session agent startup in service mode.
-  // Standalone and portable runs need to reconcile the same bundled agent here.
+  // The service wrapper owns user-session agent startup in service mode, and
+  // it restarts the agent when the process is killed. Standalone and portable
+  // runs are not SYSTEM, so Core watches the agent itself.
   if (!platf::is_running_as_system()) {
-    const auto gui_agent_error = platf::launch_gui_agent();
-    if (gui_agent_error) {
-      BOOST_LOG(warning) << "Failed to launch bundled GUI agent: "sv << gui_agent_error.message();
-    }
+    platf::supervise_gui_agent();
   }
 #endif
 
@@ -626,6 +660,10 @@ main(int argc, char *argv[]) {
   // Cover tray/HTTP requests and signals before any cleanup can block.
   lifetime::start_shutdown_watchdog();
   BOOST_LOG(info) << "Shutdown requested; allowing up to 10 seconds for cleanup"sv;
+
+#if defined(_WIN32) && defined(SUNSHINE_GUI_TRAY) && SUNSHINE_GUI_TRAY >= 1
+  platf::stop_gui_agent_supervisor();
+#endif
 
   client_fingerprint_deinit_guard.reset();
 

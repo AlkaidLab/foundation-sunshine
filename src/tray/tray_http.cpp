@@ -22,8 +22,12 @@
 #include "src/entry_handler.h"
 #include "src/globals.h"
 #include "src/http_util.h"
+#include "src/launch_splash/launch_splash.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
+#ifdef _WIN32
+  #include "src/platform/run_command.h"
+#endif
 #include "src/process.h"
 #include "src/thread_pool.h"
 #include "tray_state.h"
@@ -54,6 +58,7 @@ namespace tray_http {
       resp_https_t response;
       std::atomic_bool alive { true };
       std::mutex send_mutex;
+      bool launch_splash_ack = false;  ///< the subscriber answers launch_splash_shown, so the host waits for it before starting an app
     };
 
     std::mutex tray_subscribers_mutex;
@@ -327,6 +332,26 @@ namespace tray_http {
       }
     }
 
+#ifdef _WIN32
+    /**
+     * @brief Opens the big screen (Foundation Desktop) in the user's session, as the tray's own "open desktop" item does.
+     * @details The same command as the Big Screen app entry and the Desktop app's open-after-connect switch: a panel that is running focuses the window it has, a second window is never opened.
+     * @return The reason it could not be opened (the panel is not installed, no user is signed in), or nothing.
+     */
+    std::optional<std::string>
+    open_big_screen() {
+      boost::filesystem::path working_dir;
+      std::error_code ec;
+      auto child = platf::run_command(false, false, "assets/gui/sunshine-gui.exe --desktop"s, working_dir, boost::this_process::environment(), nullptr, ec, nullptr);
+      if (ec) {
+        BOOST_LOG(warning) << "Couldn't open the big screen: "sv << ec.message();
+        return "Foundation Desktop could not be started: " + ec.message();
+      }
+      child.detach();
+      return std::nullopt;
+    }
+#endif
+
     nlohmann::json
     run_tray_action(
       const std::string &action,
@@ -441,6 +466,17 @@ namespace tray_http {
         config::update_config({ { "vdd_headless_create", config::video.vdd_headless_create_enabled ? "true" : "false" } });
         update_tray_vdd_state();
         return action_success(config::video.vdd_headless_create_enabled ? "Headless VDD auto-create enabled" : "Headless VDD auto-create disabled");
+      }
+
+      if (action == "open_desktop") {
+#ifdef _WIN32
+        if (const auto error = open_big_screen()) {
+          return action_error(*error);
+        }
+        return action_success("Big screen requested");
+#else
+        return action_error("The big screen is a Windows component");
+#endif
       }
 
       if (action == "clear_app") {
@@ -564,6 +600,11 @@ namespace tray_http {
       if (!auth(response, request)) return;
 
       auto subscriber = std::make_shared<tray_subscriber_t>();
+      {
+        const auto query = request->parse_query_string();
+        const auto ack = query.find("launch_splash_ack");
+        subscriber->launch_splash_ack = ack != query.end() && ack->second == "1";
+      }
       subscriber->response = std::move(response);
       subscriber->response->close_connection_after_response = true;
 
@@ -614,6 +655,19 @@ namespace tray_http {
           }
           operation_id = body.at("operation_id").get<std::uint64_t>();
         }
+        if (action == "launch_splash_shown") {
+          // The Panel has the launch splash on the display with its first frame painted. This answers a waiting app start, so it takes no lock of the other actions.
+          const auto launch_id = body.value("launch_id", ""s);
+          const auto number = [&](const char *key) -> std::int64_t {
+            return body.contains(key) && body.at(key).is_number_integer() ? body.at(key).get<std::int64_t>() : 0;
+          };
+          const bool taken = !launch_id.empty() && launch_splash::note_shown(launch_id, number("panel_ms"), number("prepare_ms"));
+          nlohmann::json reply = taken ? action_success("Launch splash noted") : action_error("Launch splash is stale or not waiting");
+          reply["action"] = action;
+          reply["tray_state"] = tray_state::to_json();
+          send_json(std::move(response), reply);
+          return;
+        }
         auto result = run_tray_action(action, enabled, notification_id, operation_id);
         result["action"] = action;
         result["tray_state"] = tray_state::to_json();
@@ -651,6 +705,14 @@ namespace tray_http {
     }
 
   }  // namespace
+
+  int
+  launch_splash_ack_listeners() {
+    std::lock_guard lock { tray_subscribers_mutex };
+    return static_cast<int>(std::count_if(tray_subscribers.begin(), tray_subscribers.end(), [](const auto &subscriber) {
+      return subscriber->launch_splash_ack && subscriber->alive.load(std::memory_order_acquire);
+    }));
+  }
 
   void
   register_routes(https_server_t &server, auth_fn state_auth, auth_fn action_auth) {

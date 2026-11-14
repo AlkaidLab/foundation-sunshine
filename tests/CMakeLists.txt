@@ -111,6 +111,7 @@ if (WIN32)
     set_target_properties(perf_frame_rate_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
 add_test(NAME perf_frame_rate_unit_tests COMMAND perf_frame_rate_unit_tests)
+
 # The audio endpoint list: shaping and recognition only, no audio API.
 add_executable(audio_devices_unit_tests
         ${CMAKE_SOURCE_DIR}/src/audio_devices.cpp
@@ -155,6 +156,20 @@ target_link_libraries(video_idle_policy_unit_tests PRIVATE gtest_main sunshine_p
 set_target_properties(video_idle_policy_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME video_idle_policy_unit_tests COMMAND video_idle_policy_unit_tests)
 
+add_executable(video_pacing_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_video_pacing.cpp)
+target_include_directories(video_pacing_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(video_pacing_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(video_pacing_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME video_pacing_unit_tests COMMAND video_pacing_unit_tests)
+
+add_executable(poster_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/nvhttp/poster.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_poster.cpp)
+target_include_directories(poster_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(poster_unit_tests PRIVATE gtest_main OpenSSL::Crypto sunshine_project_options sunshine_coverage)
+set_target_properties(poster_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME poster_unit_tests COMMAND poster_unit_tests)
+
 add_executable(measured_bitrate_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_measured_bitrate.cpp)
 target_include_directories(measured_bitrate_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(measured_bitrate_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
@@ -197,6 +212,7 @@ target_include_directories(config_overrides_unit_tests PRIVATE "${CMAKE_SOURCE_D
 target_link_libraries(config_overrides_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
 set_target_properties(config_overrides_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME config_overrides_unit_tests COMMAND config_overrides_unit_tests)
+
 # The published encoder snapshot and the probe reuse decision: header only, no driver or display.
 add_executable(encoder_snapshot_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_encoder_snapshot.cpp)
 target_include_directories(encoder_snapshot_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
@@ -216,6 +232,15 @@ if (WIN32)
     set_target_properties(log_retention_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
 add_test(NAME log_retention_unit_tests COMMAND log_retention_unit_tests)
+
+add_executable(default_apps_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_default_apps.cpp)
+target_sources(default_apps_unit_tests PRIVATE
+        ${CMAKE_SOURCE_DIR}/src/default_apps.cpp
+        ${CMAKE_SOURCE_DIR}/src/file_handler.cpp)
+target_include_directories(default_apps_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(default_apps_unit_tests PRIVATE gtest_main Boost::boost Boost::log Boost::property_tree sunshine_project_options sunshine_coverage)
+set_target_properties(default_apps_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME default_apps_unit_tests COMMAND default_apps_unit_tests)
 
 add_executable(client_interface_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_client_interface.cpp)
 target_include_directories(client_interface_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
@@ -382,6 +407,14 @@ if (WIN32)
     target_link_libraries(config_runtime_unit_tests PRIVATE ws2_32)
 endif ()
 add_test(NAME config_runtime_unit_tests COMMAND config_runtime_unit_tests)
+add_executable(gamepad_selection_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_gamepad_selection.cpp)
+target_include_directories(gamepad_selection_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(gamepad_selection_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+target_compile_definitions(gamepad_selection_unit_tests PUBLIC ${SUNSHINE_DEFINITIONS} ${TEST_DEFINITIONS})
+target_compile_options(gamepad_selection_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(gamepad_selection_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME gamepad_selection_unit_tests COMMAND gamepad_selection_unit_tests)
 
 add_executable(tray_state_unit_tests
         ${CMAKE_SOURCE_DIR}/src/tray/tray_state.cpp
@@ -398,6 +431,23 @@ if (WIN32)
     set_target_properties(tray_state_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
 add_test(NAME tray_state_unit_tests COMMAND tray_state_unit_tests)
+
+# 启动画面: the stage vocabulary, the launcher status file and the rules that end the splash are pure.
+add_executable(launch_splash_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/launch_splash/launch_splash_model.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_launch_splash.cpp)
+target_include_directories(launch_splash_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(launch_splash_unit_tests
+        PRIVATE nlohmann_json::nlohmann_json
+        gtest_main
+        sunshine_project_options sunshine_coverage)
+target_compile_options(launch_splash_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(launch_splash_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(launch_splash_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME launch_splash_unit_tests COMMAND launch_splash_unit_tests)
+
 # Session and login-throttle policy are independent of a listening server and
 # of the platform display stack, so their suite stays a focused standalone
 # target on every host.
@@ -1050,8 +1100,10 @@ list(REMOVE_ITEM TEST_SOURCES
         ${CMAKE_SOURCE_DIR}/tests/unit/test_config_runtime.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/config_runtime_stubs.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_current_capture_target.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_default_apps.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_encoder_snapshot.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_log_retention.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_launch_splash.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_display_scale_steps.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_endpoint_refresh.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_frame_contract.cpp
@@ -1155,6 +1207,34 @@ foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
     add_dependencies(abr_unit_tests ${dep})  # compile these before abr_unit_tests
 endforeach()
 add_test(NAME abr_unit_tests COMMAND abr_unit_tests)
+
+add_executable(app_scan_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/app_scan/scanner.cpp
+        ${CMAKE_SOURCE_DIR}/src/app_scan/libraries.cpp
+        ${CMAKE_SOURCE_DIR}/src/sparxie/model.cpp
+        ${CMAKE_SOURCE_DIR}/src/sparxie/stream_display.cpp
+        ${CMAKE_SOURCE_DIR}/src/sparxie/region.cpp
+        ${CMAKE_SOURCE_DIR}/src/sparxie/scan.cpp
+        ${CMAKE_SOURCE_DIR}/src/sparxie/storefront.cpp
+        ${CMAKE_SOURCE_DIR}/src/sparxie/vendors.cpp
+        ${CMAKE_SOURCE_DIR}/src/sparxie/hoyo_settings.cpp
+        ${CMAKE_SOURCE_DIR}/src/sparxie/zzz_extra.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_app_scan.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_app_scan_libraries.cpp)
+target_include_directories(app_scan_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(app_scan_unit_tests
+        PRIVATE ${SUNSHINE_EXTERNAL_LIBRARIES}
+        gtest_main
+        ${PLATFORM_LIBRARIES}
+        nlohmann_json::nlohmann_json
+        sunshine_project_options sunshine_coverage)
+target_compile_definitions(app_scan_unit_tests PRIVATE SUNSHINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+target_compile_options(app_scan_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(app_scan_unit_tests PROPERTIES CXX_STANDARD 23)
+foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
+    add_dependencies(app_scan_unit_tests ${dep})
+endforeach()
+add_test(NAME app_scan_unit_tests COMMAND app_scan_unit_tests)
 
 add_executable(input_activity_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_input_activity.cpp

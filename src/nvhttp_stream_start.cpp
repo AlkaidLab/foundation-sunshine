@@ -716,6 +716,10 @@ namespace nvhttp::stream_start {
         touch_effective = launch_session.touch_keyboard == 1;
       }
       touch_kb::start_session(touch_effective);
+      // The same intent tells an application what the launching client is: Sparxie's Endfield session follows it for its automatic input
+      // (a touch-family client that did not declare an intent counts as a touch device here, without the keyboard group)
+      const bool touch_client = touch_effective || (launch_session.touch_keyboard < 0 && launch_session.touch_family);
+      launch_session.env["SUNSHINE_CLIENT_TOUCH"] = touch_client ? "true" : "false";
     }
 #endif
     auto_recovery_result_t recovery_result;

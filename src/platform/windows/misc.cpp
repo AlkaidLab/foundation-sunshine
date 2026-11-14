@@ -1271,8 +1271,9 @@ namespace platf {
     return create_boost_child_from_results(ret, cmd, ec, process_info);
   }
 
-  std::error_code
-  launch_gui_agent() {
+  HANDLE
+  launch_gui_agent_process(std::error_code &ec) {
+    ec.clear();
     std::wstring executable(32768, L'\0');
     const auto executable_length = GetModuleFileNameW(
       nullptr,
@@ -1303,11 +1304,31 @@ namespace platf {
 
     auto environment = boost::this_process::environment();
     auto working_dir = gui_dir;
-    std::error_code ec;
     const auto command = "\"" + to_utf8(gui_path.wstring()) + "\" --hidden";
     auto child = run_command(false, false, command, working_dir, environment, nullptr, ec, nullptr);
-    if (!ec) {
-      child.detach();
+    if (ec) {
+      return nullptr;
+    }
+    const auto process_id = static_cast<DWORD>(child.id());
+    HANDLE handle = nullptr;
+    if (process_id != 0) {
+      handle = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, process_id);
+    }
+    child.detach();
+    if (handle == nullptr) {
+      const auto error = GetLastError();
+      ec = { static_cast<int>(error == ERROR_SUCCESS ? ERROR_INVALID_HANDLE : error), std::system_category() };
+      return nullptr;
+    }
+    return handle;
+  }
+
+  std::error_code
+  launch_gui_agent() {
+    std::error_code ec;
+    const auto handle = launch_gui_agent_process(ec);
+    if (handle != nullptr) {
+      CloseHandle(handle);
     }
     return ec;
   }

@@ -79,6 +79,7 @@ set(SUNSHINE_HOST_SOURCES
     src/mic_mixer.cpp src/mic_mixer.h
     src/process.cpp src/process.h
     src/client_interface.cpp src/client_interface.h
+    src/default_apps.cpp src/default_apps.h
     src/network.cpp src/network.h
     src/network_reachability.cpp src/network_reachability.h
     src/network_reachability_probe.cpp
@@ -168,6 +169,7 @@ set(SUNSHINE_HOST_SOURCES
     src/nvhttp/abr_api.cpp src/nvhttp/abr_api.h
     src/nvhttp/ai_api.cpp src/nvhttp/ai_api.h
     src/nvhttp/apps.cpp src/nvhttp/apps.h
+    src/nvhttp/poster.cpp src/nvhttp/poster.h
     src/nvhttp/clipboard_api.cpp src/nvhttp/clipboard_api.h
     src/nvhttp/display_control.cpp src/nvhttp/display_control.h
     src/nvhttp/display_scale.cpp src/nvhttp/display_scale.h
@@ -194,6 +196,7 @@ set(SUNSHINE_HOST_SOURCES
     src/confighttp/login_throttle.cpp src/confighttp/login_throttle.h
     src/confighttp/assets.cpp src/confighttp/assets.h
     src/confighttp/apps.cpp src/confighttp/apps.h
+    src/confighttp/apps_scan.cpp src/confighttp/apps_scan.h
     src/confighttp/configuration.cpp src/confighttp/configuration.h
     src/confighttp/clients.cpp src/confighttp/clients.h
     src/confighttp/pair_link.cpp src/confighttp/pair_link.h
@@ -207,6 +210,8 @@ set(SUNSHINE_HOST_SOURCES
     src/confighttp/routes.cpp src/confighttp/routes.h
     src/confighttp/types.h
     src/confighttp/asset_paths.h
+    # src/app_scan
+    src/app_scan/scanner.cpp src/app_scan/libraries.cpp src/app_scan/scanner.h
 
     # src/text_context
     src/text_context/bridge.cpp src/text_context/bridge.h
@@ -221,6 +226,34 @@ set(SUNSHINE_HOST_SOURCES
     src/tray/system_tray_i18n.cpp src/tray/system_tray_i18n.h
     src/tray/tray_http.cpp src/tray/tray_http.h
     src/tray/tray_state.cpp src/tray/tray_state.h
+    # src/launch_splash
+    src/launch_splash/launch_splash.cpp src/launch_splash/launch_splash.h
+    src/launch_splash/launch_splash_model.cpp src/launch_splash/launch_splash_model.h
+    src/launch_splash/shown_gate.h
+    # src/sparxie
+    src/sparxie/model.cpp src/sparxie/model.h
+    src/sparxie/region.cpp src/sparxie/region.h
+    src/sparxie/storefront.cpp src/sparxie/storefront.h
+    src/sparxie/vendors.cpp src/sparxie/vendors.h
+    src/sparxie/scan.cpp src/sparxie/scan.h
+    src/sparxie/store.cpp src/sparxie/store.h
+    src/sparxie/settings.cpp src/sparxie/settings.h src/sparxie/hoyo_settings.cpp src/sparxie/hoyo_settings.h src/sparxie/ini_settings.cpp src/sparxie/ini_settings.h
+    src/sparxie/zzz_file.cpp src/sparxie/zzz_file.h src/sparxie/zzz_extra.cpp
+    src/sparxie/art.cpp src/sparxie/art.h
+    src/sparxie/art_sources.cpp src/sparxie/art_sources.h
+    src/sparxie/icon_file.cpp src/sparxie/icon_file.h
+    src/sparxie/svg_path.cpp src/sparxie/svg_path.h
+    src/sparxie/host.cpp src/sparxie/host.h
+    src/sparxie/host_refresh.cpp
+    src/sparxie/platform.cpp src/sparxie/platform.h
+    src/sparxie/runtime.cpp src/sparxie/runtime.h
+    src/sparxie/stream_display.cpp src/sparxie/stream_display.h
+    src/sparxie/user_session.cpp src/sparxie/user_session.h
+    src/sparxie/sha256.h
+    src/sparxie/zip_extract.cpp src/sparxie/zip_extract.h
+    src/sparxie/install.cpp src/sparxie/install.h
+    src/sparxie/install_platform.cpp
     third-party/puff/puff.c third-party/puff/puff.h
+    src/confighttp/sparxie.cpp src/confighttp/sparxie.h
 )
 list(TRANSFORM SUNSHINE_HOST_SOURCES PREPEND "${CMAKE_SOURCE_DIR}/")

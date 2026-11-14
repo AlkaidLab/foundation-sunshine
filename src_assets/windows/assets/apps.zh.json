@@ -2,8 +2,10 @@
   "env": {},
   "apps": [
     {
-      "name": "Desktop",
+      "name": "桌面",
+      "default-id": "desktop",
       "image-path": "desktop",
+      "hero": "desktop-hero.png",
       "exclude-global-prep-cmd": "false",
       "elevated": "",
       "auto-detach": "true",
@@ -25,18 +27,47 @@
       ]
     },
     {
-      "name": "Steam Big Picture",
+      "name": "大屏",
+      "default-id": "big-screen",
+      "image-path": "bigscreen.png",
+      "hero": "bigscreen-hero.png",
+      "fs-kind": "bigscreen",
+      "fs-default": "true",
+      "exclude-global-prep-cmd": "false",
+      "auto-detach": "true",
+      "wait-all": "true",
+      "exit-timeout": "5",
+      "detached": [
+        ".\\assets\\gui\\sunshine-gui.exe --desktop"
+      ],
+      "prep-cmd": [
+        {
+          "do": "",
+          "undo": ".\\assets\\gui\\sunshine-gui.exe --close-desktop",
+          "elevated": "false"
+        }
+      ]
+    },
+    {
+      "name": "Steam Big Picture 模式",
+      "default-id": "steam",
       "cmd": "steam://open/bigpicture",
       "auto-detach": "true",
       "wait-all": "true",
-      "image-path": "steam.png"
+      "image-path": "steam.png",
+      "hero": "steam-hero.png"
     },
     {
-      "name": "Xbox Game",
-      "cmd": "cmd \/c \"start xbox:\"",
+      "name": "Xbox 游戏",
+      "default-id": "xbox",
+      "cmd": "cmd /c \"start xbox:\"",
       "auto-detach": "true",
       "wait-all": "true",
-      "image-path": "box.png"
+      "image-path": "box.png",
+      "hero": "box-hero.png"
     }
+  ],
+  "default-apps-seen": [
+    "big-screen"
   ]
 }

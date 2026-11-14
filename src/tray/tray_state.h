@@ -51,6 +51,23 @@ namespace tray_state {
     bool highly_suspected_unknown_client = false;
   };
 
+  /// The launch splash the GUI agent draws (src/launch_splash). `id` stays after the launch ends, with active false, so the agent closes the splash of that id.
+  struct launch_t {
+    std::string id;
+    bool active = false;
+    std::string kind = "launch";
+    std::string app_id;
+    std::string app_name;
+    std::string art;  ///< a picture file the agent may read for the backdrop, or empty
+    std::string stage = "starting";
+    std::string notice;
+    std::string display;  ///< the Windows display the stream captures (\\.\DISPLAYn), or empty for the primary one
+    bool display_ready = true;  ///< false while the display is being set up: the agent readies its window and does not show it yet
+    std::vector<std::uint32_t> pids;
+    std::int64_t started_at_ms = 0;
+    std::int64_t deadline_ms = 0;
+  };
+
   struct state_t {
     status_e status = status_e::idle;
     std::string icon = "default";
@@ -61,6 +78,7 @@ namespace tray_state {
     vdd_state_t vdd;
     notification_t notification;
     operation_t operation;
+    launch_t launch;
     std::vector<client_session_t> sessions;
     std::uint64_t revision = 0;
     std::int64_t updated_at_ms = 0;
@@ -117,6 +135,10 @@ namespace tray_state {
 
   void
   clear_sessions();
+
+  /// Publishes the state of the launch splash. Nothing is published (no revision, no event) when it equals the one already there.
+  void
+  set_launch(launch_t launch);
 
   std::uint64_t
   begin_operation(const std::string &action);

@@ -526,6 +526,7 @@ namespace config {
     "auto"s,  // capture_compute_shader (automatic capability and benefit detection)
     false,  // wgc_disable_secure_desktop (disabled by default for security)
     true,  // dynamic_resolution_follow_display (default: on; matches existing behavior. Set false for legacy clients like PSVita Moonlight.)
+    64 * 1024,  // video_pacing_threshold (protect small-queue paths from large frame bursts)
   };
 
   audio_t audio {
@@ -543,6 +544,7 @@ namespace config {
   stream_t stream {
     10s,  // ping_timeout
     false,  // stop_on_last_video_session
+    true,  // launch_splash
 
     APPS_JSON_PATH,
 
@@ -996,6 +998,17 @@ namespace config {
     input = to_bool(tmp);
   }
 
+  /// 启动画面 takes effect at the next launch: a saved value is in force at once, the way the bitrate ceiling is (a key that is gone from the file is the default, on).
+  template <class Map>
+  void
+  apply_live_launch_splash(const Map &saved) {
+    bool value = true;
+    if (const auto found = saved.find("launch_splash"); found != saved.end() && !found->second.empty()) {
+      value = to_bool(found->second);
+    }
+    stream.launch_splash = value;
+  }
+
   void
   int_between_f(std::unordered_map<std::string, std::string> &vars, const std::string &name, std::optional<int> &input, const std::pair<int, int> &range) {
     std::optional<int> temp;
@@ -1431,6 +1444,7 @@ namespace config {
     }
     bool_f(vars, "wgc_disable_secure_desktop", video.wgc_disable_secure_desktop);
     bool_f(vars, "dynamic_resolution_follow_display", video.dynamic_resolution_follow_display);
+    int_between_f(vars, "video_pacing_threshold", video.video_pacing_threshold, { 0, 16 * 1024 * 1024 });
     bool_f(vars, "vdd_keep_enabled", video.vdd_keep_enabled);
     bool_f(vars, "vdd_headless_create", video.vdd_headless_create_enabled);
     bool_f(vars, "vdd_reuse", video.vdd_reuse);
@@ -1576,6 +1590,7 @@ namespace config {
       stream.ping_timeout = std::chrono::milliseconds(to);
     }
     bool_f(vars, "stop_on_last_video_session", stream.stop_on_last_video_session);
+    bool_f(vars, "launch_splash", stream.launch_splash);
 
     int_between_f(vars, "lan_encryption_mode", stream.lan_encryption_mode, { 0, 2 });
     int_between_f(vars, "wan_encryption_mode", stream.wan_encryption_mode, { 0, 2 });
@@ -2011,6 +2026,7 @@ namespace config {
         const auto gamepad = configMap.find("gamepad");
         platf::set_global_gamepad_mode(gamepad == configMap.end() ? "auto"sv : std::string_view { gamepad->second });
       }
+      if (updates.contains("launch_splash")) apply_live_launch_splash(configMap);
       BOOST_LOG(info) << "Config updated successfully";
       return true;
     }
@@ -2168,6 +2184,7 @@ namespace config {
       }
       const auto gamepad = resultMap.find("gamepad");
       platf::set_global_gamepad_mode(gamepad == resultMap.end() ? "auto"sv : std::string_view { gamepad->second });
+      apply_live_launch_splash(resultMap);
 
       return true;
     }

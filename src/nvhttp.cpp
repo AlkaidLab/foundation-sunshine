@@ -52,9 +52,10 @@
 #include "file_mapping/service.h"
 #include "globals.h"
 #include "hdr/session_target.h"
-#include "image_enhancement/nr_defaults.h"
 #include "http_util.h"
 #include "httpcommon.h"
+#include "image_enhancement/nr_defaults.h"
+#include "launch_splash/launch_splash.h"
 #include "logging.h"
 #include "network.h"
 #include "network_reachability.h"
@@ -130,6 +131,37 @@ namespace nvhttp {
   find_arg(const args_t &args, const char *name) {
     const auto it = args.find(name);
     return it == args.end() ? std::nullopt : std::make_optional<std::string_view>(it->second);
+  }
+
+  client_family::observation_t
+  make_family_observation(const args_t &args, const args_t &headers) {
+    client_family::observation_t observation;
+    observation.now = client_family::unix_now();
+    for (const auto &[name, value] : headers) {
+      client_family::add_header(observation, name, value);
+    }
+    for (const auto &[name, value] : args) {
+      client_family::add_query(observation, name, value);
+    }
+    return observation;
+  }
+
+  // VoidLink is the phone and tablet client: when the request does not say whether the client is a touch device,
+  // this family answers for Sparxie's automatic Endfield input (SUNSHINE_CLIENT_TOUCH).
+  bool
+  request_is_touch_family(const args_t &args, const args_t &headers) {
+    return client_family::identify(make_family_observation(args, headers)).family == client_family::family_e::voidlink;
+  }
+
+  // /launch and /resume carry no device name in the standard exchange, so a session that came without one takes the
+  // name stored with the paired certificate that authenticated it.
+  void
+  resolve_session_client_name(rtsp_stream::launch_session_t &session) {
+    if (session.client_cert_uuid.empty()) {
+      return;
+    }
+    const auto paired = find_paired_client(session.client_cert_uuid);
+    session.client_name = client_family::session_client_name(session.client_name, paired ? std::string_view { paired->name } : std::string_view {});
   }
 
   std::shared_ptr<rtsp_stream::launch_session_t>
@@ -437,6 +469,30 @@ namespace nvhttp {
   serverinfo(std::shared_ptr<typename web::ServerBase<T>::Response> response, std::shared_ptr<typename web::ServerBase<T>::Request> request) {
     print_req<T>(request);
 
+    // the codec support below is what the encoder probe found: the probe is still running for a short time after the port opens
+    if (!startup::probe_gate().wait_for(startup::request_wait_bound)) {
+      pt::ptree starting;
+      starting.put("root.<xmlattr>.status_code", 503);
+      starting.put("root.<xmlattr>.status_message", startup::starting_message());
+      std::ostringstream data;
+      pt::write_xml(data, starting);
+      response->write(data.str());
+      response->close_connection_after_response = true;
+      return;
+    }
+
+    // A paired serverinfo poll may carry the same user agent as pairing. Use
+    // it to enrich the family record without moving last_seen; only an
+    // actual family/version/OS change is persisted.
+    if constexpr (std::is_same_v<SunshineHTTPS, T>) {
+      const auto client_uuid = request->client_uuid;
+      if (!client_uuid.empty()) {
+        auto observation = make_family_observation(request->parse_query_string(), request->header);
+        observation.now = 0;
+        observe_client_family(client_uuid, observation);
+      }
+    }
+
     int pair_status = 0;
     if constexpr (std::is_same_v<SunshineHTTPS, T>) {
       auto args = request->parse_query_string();
@@ -603,6 +659,20 @@ namespace nvhttp {
       return;
     }
 
+    // The launch is accepted: the Panel hears about it now, before the display and encoder setup (seconds), so its window is ready when the display is.
+    // Whatever ends this request without the app taking the announcement over withdraws it.
+    bool splash_announced = false;
+    if (appid > 0) {
+      const auto &apps = proc::proc.get_apps();
+      const auto app = std::find_if(apps.begin(), apps.end(), [&](const auto &candidate) { return candidate.id == std::to_string(appid); });
+      splash_announced = app != apps.end() && launch_splash::announce(*app);
+    }
+    auto withdraw_splash = util::fail_guard([&]() {
+      if (splash_announced) {
+        launch_splash::cancel_announced();
+      }
+    });
+
     host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     const auto launch_session = make_launch_session(host_audio, args);
     if (!launch_session) {
@@ -621,7 +691,10 @@ namespace nvhttp {
     if (!client_cert_uuid.empty()) {
       launch_session->client_cert_uuid = client_cert_uuid;
       launch_session->env["SUNSHINE_CLIENT_CERT_UUID"] = client_cert_uuid;
+      resolve_session_client_name(*launch_session);
+      observe_client_family(client_cert_uuid, make_family_observation(args, request->header));
     }
+    launch_session->touch_family = request_is_touch_family(args, request->header);
     hdr::resolve_session_target(*launch_session);
     if (launch_session->highly_suspected_unknown_client) {
       BOOST_LOG(warning) << "Launch request highly resembles a known unauthorized client fork"
@@ -644,6 +717,10 @@ namespace nvhttp {
 
         return;
       }
+    }
+    const auto launch_prepared = std::chrono::steady_clock::now();
+    if (splash_announced) {
+      launch_splash::display_ready();
     }
 
     auto encryption_mode = net::encryption_mode_for_address(request->remote_endpoint().address());
@@ -675,6 +752,15 @@ namespace nvhttp {
       }
     }
 
+    {
+      const auto launch_started = std::chrono::steady_clock::now();
+      const auto millis = [](std::chrono::steady_clock::duration d) {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(d).count();
+      };
+      BOOST_LOG(info) << "Launch timing: display and encoder setup "sv << millis(launch_prepared - launch_begin)
+                      << " ms, application start "sv << millis(launch_started - launch_prepared)
+                      << " ms, total before the answer "sv << millis(launch_started - launch_begin) << " ms"sv;
+    }
     if (!register_launch_ticket(tree, launch_session, "gamesession")) {
       // The application was started solely for this launch request. Roll it
       // back if the bounded ticket registry cannot publish the handshake.
@@ -823,7 +909,10 @@ namespace nvhttp {
     if (!client_cert_uuid.empty()) {
       launch_session->client_cert_uuid = client_cert_uuid;
       launch_session->env["SUNSHINE_CLIENT_CERT_UUID"] = client_cert_uuid;
+      resolve_session_client_name(*launch_session);
+      observe_client_family(client_cert_uuid, make_family_observation(args, request->header));
     }
+    launch_session->touch_family = request_is_touch_family(args, request->header);
     hdr::resolve_session_target(*launch_session);
     if (launch_session->highly_suspected_unknown_client) {
       BOOST_LOG(warning) << "Resume request highly resembles a known unauthorized client fork"
@@ -871,6 +960,19 @@ namespace nvhttp {
                                    net::addr_to_url_escaped_string(request->local_endpoint().address()) + ':' +
                                    std::to_string(net::map_port(rtsp_stream::RTSP_SETUP_PORT)));
     tree.put("root.resume", 1);
+    // The app already runs. The Panel shows the launch splash only if the game's window is still missing a moment after this.
+    if (const auto running_app = proc::proc.running(); running_app > 0 && !proc::proc.get_app_cmd(running_app).empty()) {
+      const auto &apps = proc::proc.get_apps();
+      const auto app = std::find_if(apps.begin(), apps.end(), [&](const auto &candidate) { return candidate.id == std::to_string(running_app); });
+      if (app != apps.end() && launch_splash::begin(*app, launch_splash::kind_e::resume)) {
+        if (const auto pid = proc::proc.get_running_pid()) {
+          launch_splash::note_started(static_cast<std::uint32_t>(*pid), true);
+        }
+      }
+    }
+    reachability::observe_client(
+      net::addr_to_normalized_string(request->remote_endpoint().address()),
+      reachability::now_epoch_seconds());
     need_to_restore_display_state = false;
 
     try {

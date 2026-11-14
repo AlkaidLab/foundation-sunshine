@@ -165,6 +165,16 @@ namespace proc {
 
   std::string
   validate_app_image_path(std::string app_image_path);
+
+  /// The file of one kind of art ("poster", "hero", "logo", "icon") of an application as it exists now; empty when the application has none (or the configured file is not an image).
+  std::string
+  app_art_asset_path(const ctx_t &app, std::string_view type);
+
+  /// The version tag of the art of an application as it is now: the configured paths' own tag plus the size and the time of every present art file, so a file replaced under
+  /// the same name is a new version. A URL poster is not statted here: resolving it can download a picture.
+  /// `quiet` (the application list tag) finds the poster without logging a missing one.
+  std::string
+  app_art_version(const ctx_t &app, bool quiet = false);
   void
   refresh(const std::string &file_name);
   std::optional<proc::proc_t>
