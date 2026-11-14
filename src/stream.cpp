@@ -736,22 +736,11 @@ namespace stream {
   static void
   log_endpoint_refresh_summary(const session_t &session, std::string_view type,
                                const endpoint_refresh_stats_t &stats) {
-    const auto observed_probes = stats.valid_probes + stats.sequence_gap_estimate;
-    const auto estimated_loss = observed_probes == 0 ?
-      std::string { "unknown" } :
-      std::to_string(static_cast<unsigned int>((stats.sequence_gap_estimate * 100u) / observed_probes)) + "%";
     BOOST_LOG(info) << "endpoint_auto_refresh: " << type << " summary"
                     << ", client=" << session.client_name
                     << ", session=" << session.launch_session_id
-                    << ", valid_probes=" << stats.valid_probes
-                    << ", sequence_gap_estimate=" << stats.sequence_gap_estimate
-                    << ", estimated_probe_loss=" << estimated_loss
-                    << ", stale_probes=" << stats.stale_probes
-                    << ", invalid_packets=" << stats.invalid_packets
-                    << ", challenges=" << stats.challenges_generated
-                    << ", responses_validated=" << stats.responses_validated
-                    << ", acknowledgements=" << stats.acknowledgements_generated
-                    << ", response_send_failures=" << stats.response_send_failures
+                    << ", probes_received=" << stats.valid_probes
+                    << ", probe_sequence_gaps=" << stats.probe_sequence_gaps
                     << ", port_changes=" << stats.port_changes;
   }
 

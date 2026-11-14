@@ -15,7 +15,9 @@
 namespace stream {
   struct endpoint_refresh_stats_t {
     std::uint64_t valid_probes {};
-    std::uint64_t sequence_gap_estimate {};
+    // Number of sequence values missing between two accepted probes. This is
+    // an application-level gap count, not an end-to-end UDP loss rate.
+    std::uint64_t probe_sequence_gaps {};
     std::uint64_t stale_probes {};
     std::uint64_t invalid_packets {};
     std::uint64_t challenges_generated {};
@@ -51,7 +53,7 @@ namespace stream {
     endpoint_refresh_stats_t stats() const noexcept {
       return {
         valid_probes.load(std::memory_order_relaxed),
-        sequence_gap_estimate.load(std::memory_order_relaxed),
+        probe_sequence_gaps.load(std::memory_order_relaxed),
         stale_probes.load(std::memory_order_relaxed),
         invalid_packets.load(std::memory_order_relaxed),
         challenges_generated.load(std::memory_order_relaxed),
@@ -80,7 +82,7 @@ namespace stream {
           return {};
         }
         if (last_probe != 0 && message.sequence > last_probe && message.sequence - last_probe > 1) {
-          sequence_gap_estimate.fetch_add(message.sequence - last_probe - 1, std::memory_order_relaxed);
+          probe_sequence_gaps.fetch_add(message.sequence - last_probe - 1, std::memory_order_relaxed);
         }
         last_probe = message.sequence;
         valid_probes.fetch_add(1, std::memory_order_relaxed);
@@ -148,7 +150,7 @@ namespace stream {
     std::array<unsigned char, LI_ER_KEY_SIZE> key {};
     std::atomic<uint16_t> confirmed_port { 0 };
     std::atomic<std::uint64_t> valid_probes { 0 };
-    std::atomic<std::uint64_t> sequence_gap_estimate { 0 };
+    std::atomic<std::uint64_t> probe_sequence_gaps { 0 };
     std::atomic<std::uint64_t> stale_probes { 0 };
     std::atomic<std::uint64_t> invalid_packets { 0 };
     std::atomic<std::uint64_t> challenges_generated { 0 };
