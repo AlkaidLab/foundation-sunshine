@@ -101,11 +101,6 @@ TEST(WindowsTextEncoding, FormatsSystemMessagesAsUtf8) {
 
 TEST(WindowsTextEncoding, FileLogKeepsSystemMessagesUtf8) {
   namespace fs = std::filesystem;
-  // The logger converts a non-UTF-8 line with the host ANSI code page. The legacy bytes below are GBK, so the
-  // expected conversion only holds on a host whose ANSI code page is GBK (936); other code pages map them differently.
-  if (GetACP() != 936) {
-    GTEST_SKIP() << "the ANSI code page is " << GetACP() << ", not GBK (936)";
-  }
   const auto path = fs::temp_directory_path() / "m3e-logs-windows-system.log";
   auto backend = boost::make_shared<boost::log::sinks::text_file_backend>(
     boost::log::keywords::file_name = path.string(),
@@ -129,7 +124,11 @@ TEST(WindowsTextEncoding, FileLogKeepsSystemMessagesUtf8) {
   ASSERT_FALSE(bytes.empty());
   EXPECT_TRUE(platf::is_valid_utf8(bytes));
   EXPECT_NE(bytes.find("Windows system message"), std::string::npos);
-  EXPECT_NE(bytes.find(legacy_utf8), std::string::npos);
+  // The logger converts a non-UTF-8 line with the host ANSI code page. The legacy bytes are GBK, so the exact text
+  // below only results on a host whose ANSI code page is GBK (936); every other check above holds on any code page.
+  if (GetACP() == 936) {
+    EXPECT_NE(bytes.find(legacy_utf8), std::string::npos);
+  }
 }
 
 #endif
