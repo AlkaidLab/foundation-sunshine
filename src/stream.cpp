@@ -57,9 +57,11 @@ extern "C" {
 #include "client_fingerprint.h"
 #include "crash/crash.h"
 #include "config.h"
-#include "streaming/fec.h"
+#include "file_handler.h"
 #include "display_device/display_device.h"
 #include "display_device/session.h"
+#include "ds5/control_extension.h"
+#include "ds5/haptics_wire.h"
 #include "globals.h"
 #include "haptics/authored_ir.h"
 #include "haptics/authored_ir_extended.h"
@@ -87,10 +89,16 @@ extern "C" {
 #include "clipboard_bridge.h"
 #include "cursor_channel.h"
 #include "platform/common.h"
-#include "touch_keyboard_session.h"
 #include "text_context/bridge.h"
+#include "touch_keyboard_session.h"
 #include "telemetry/telemetry.h"
 
+/* Older client headers predate the optional absolute-actuator feedback flag.
+ * The native Windows path still forwards the extension when advertised,
+ * while keeping the host buildable with those headers. */
+#ifndef ML_FF_DS5_HAPTICS_STATE
+  #define ML_FF_DS5_HAPTICS_STATE 0u
+#endif
 
 #define IDX_START_A 0
 #define IDX_START_B 1
@@ -117,6 +125,8 @@ extern "C" {
 #define IDX_DS5_HAPTICS_IR_V2 23  // Device-independent analyzed haptics (Sunshine protocol extension)
 #define IDX_TEXT_CONTEXT 24  // Remote text focus/context update (Sunshine protocol extension)
 #define IDX_HOST_SESSION_STATE 25  // Host session lock state (Sunshine protocol extension)
+#define IDX_DS5_OUTPUT_EXTENSION 26  // DualSense LEDs, volumes, microphone mute, routing, brightness (host to client)
+#define IDX_DS5_INPUT_STATUS 27  // DualSense headset and microphone facts (client to host)
 
 static const short packetTypes[] = {
   0x0305,  // Start A
@@ -145,6 +155,8 @@ static const short packetTypes[] = {
   0x550B,  // Device-independent DualSense haptics IR v2 (Sunshine protocol extension)
   0x550C,  // Remote text context update (Sunshine protocol extension)
   0x550E,  // Host session lock state (Sunshine protocol extension)
+  0x5515,  // DualSense output extension, host to client (negotiated by x-ml-general.ds5Extensions)
+  0x5516,  // DualSense input status, client to host (negotiated by x-ss-general.ds5Extensions)
 };
 
 namespace asio = boost::asio;
@@ -1531,6 +1543,33 @@ namespace stream {
         encrypted_payload;
       payload = encode_control(session, util::view(plaintext), encrypted_payload);
     }
+    else if (msg.type == platf::gamepad_feedback_e::ds5_output_extension) {
+      // Only a client that offered output=1 receives 0x5515; to every other client the message is
+      // not sent at all, so an old client sees no change.
+      if (!ds5::control_extension::accepts_output(session->config.ds5ExtensionMask)) {
+        return 0;
+      }
+      const auto &data = msg.data.ds5_output_extension;
+      const ds5::control_extension::output_t fields {
+        msg.id, data.valid_mask, data.player_led_mask, data.mute_led, data.speaker_volume, data.headphone_volume,
+        data.mic_volume, data.mic_mute, data.audio_routing, data.lightbar_brightness
+      };
+      const auto body = ds5::control_extension::encode(fields);
+      if (!body) {
+        BOOST_LOG(warning) << "DualSense output extension rejected before sending (invalid field)"sv;
+        return 0;
+      }
+      std::array<std::uint8_t, sizeof(control_header_v2) + ds5::control_extension::output_body_bytes> plaintext {};
+      auto *control = reinterpret_cast<control_header_v2 *>(plaintext.data());
+      control->type = util::endian::little<std::uint16_t>(packetTypes[IDX_DS5_OUTPUT_EXTENSION]);
+      control->payloadLength = util::endian::little<std::uint16_t>(ds5::control_extension::output_body_bytes);
+      std::ranges::copy(*body, plaintext.data() + sizeof(control_header_v2));
+      std::array<std::uint8_t,
+        sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(plaintext.size()) + crypto::cipher::tag_size>
+        encrypted_payload;
+      payload = encode_control(session, util::view(plaintext), encrypted_payload);
+      BOOST_LOG(debug) << "DualSense output extension: controller "sv << msg.id << " valid 0x"sv << util::hex(data.valid_mask).to_string_view();
+    }
     else if (msg.type == platf::gamepad_feedback_e::ds5_haptics_pcm) {
       const bool sends_raw_pcm = (session->config.mlFeatureFlags & ML_FF_DS5_HAPTICS_PCM) != 0;
       const bool sends_authored_ir = (session->config.mlFeatureFlags & ML_FF_DS5_HAPTICS_IR_V2) != 0;
@@ -1541,20 +1580,45 @@ namespace stream {
 
       const auto &data = msg.data.ds5_haptics;
       const auto pcm_size = static_cast<std::size_t>(data.frame_count) * 4;
+      // Legacy rumble and authored IR need real haptics; a frame that carries only the speaker part is for pad-audio.
+      if (!data.haptics_enabled && !(sends_raw_pcm && ds5::control_extension::accepts_pad_audio(session->config.ds5ExtensionMask))) {
+        return 0;
+      }
       using haptics::wire::write_u16;
       using haptics::wire::write_u32;
       using haptics::wire::write_u64;
+      // Keep both buffers in this function's scope: encode_control returns a
+      // view into one of them, and the send below occurs after the encoder
+      // callback returns.
+      std::array<std::uint8_t, sizeof(control_header_v2) + DS5_HAPTICS_IR_EXTENDED_STREAM_MAX_SIZE> ir_plaintext {};
+      std::array<std::uint8_t,
+        sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(ir_plaintext.size()) + crypto::cipher::tag_size>
+        ir_encrypted_payload;
       const auto encode_ir = [&](std::span<const std::uint8_t> wire) {
-        std::array<std::uint8_t, sizeof(control_header_v2) + DS5_HAPTICS_IR_EXTENDED_STREAM_MAX_SIZE> plaintext {};
-        write_u16(plaintext.data(), packetTypes[IDX_DS5_HAPTICS_IR_V2]);
-        write_u16(plaintext.data() + 2, static_cast<std::uint16_t>(wire.size()));
-        std::ranges::copy(wire, plaintext.data() + sizeof(control_header_v2));
-        std::array<std::uint8_t,
-          sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(plaintext.size()) + crypto::cipher::tag_size>
-          encrypted_payload;
+        write_u16(ir_plaintext.data(), packetTypes[IDX_DS5_HAPTICS_IR_V2]);
+        write_u16(ir_plaintext.data() + 2, static_cast<std::uint16_t>(wire.size()));
+        std::ranges::copy(wire, ir_plaintext.data() + sizeof(control_header_v2));
         payload = encode_control(session,
-          std::string_view(reinterpret_cast<const char *>(plaintext.data()), sizeof(control_header_v2) + wire.size()),
-          encrypted_payload);
+          std::string_view(reinterpret_cast<const char *>(ir_plaintext.data()), sizeof(control_header_v2) + wire.size()),
+          ir_encrypted_payload);
+      };
+      static std::atomic<std::uint64_t> route_raw { 0 }, route_ir_sent { 0 }, route_ir_none { 0 }, route_legacy_in { 0 }, route_legacy_out { 0 };
+      static std::atomic<std::int64_t> route_last_log_ms { 0 };
+      static std::atomic<std::uint64_t> route_last_total { 0 };
+      auto note_route = [&](std::atomic<std::uint64_t> &counter) {
+        ++counter;
+        const auto total = route_raw + route_ir_sent + route_ir_none + route_legacy_in;
+        const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+        auto last = route_last_log_ms.load();
+        if (now_ms - last >= 5000 && total != route_last_total.load() && route_last_log_ms.compare_exchange_strong(last, now_ms)) {
+          route_last_total = total;
+          BOOST_LOG(info) << "DualSense audio haptics routes: mode="sv << (sends_raw_pcm ? "raw PCM" : sends_authored_ir_extended ? "authored IR extended" :
+                                                                                                     sends_authored_ir            ? "authored IR v2" :
+                                                                                                                                    "legacy rumble")
+                          << " raw-pcm-chunks="sv << route_raw.load() << " ir-frames-sent="sv << route_ir_sent.load()
+                          << " ir-chunks-without-frame="sv << route_ir_none.load() << " legacy-chunks="sv << route_legacy_in.load()
+                          << " legacy-rumble-sent="sv << route_legacy_out.load();
+        }
       };
       haptics::authored_ir_extended_session_t *extended_analyzer = nullptr;
       if (sends_authored_ir_extended && !sends_raw_pcm && !session->control.authored_haptics_v3_init_failed) {
@@ -1572,6 +1636,7 @@ namespace stream {
         if (found != analyzers.end()) extended_analyzer = found->second.get();
       }
       if (!sends_raw_pcm && !sends_authored_ir && !sends_authored_ir_extended) {
+        note_route(route_legacy_in);
         if (!session->control.legacy_haptics_init_failed) {
           auto [controller_session, inserted] = session->control.legacy_haptics.try_emplace(msg.id);
           if (inserted) {
@@ -1602,7 +1667,11 @@ namespace stream {
         const auto wire = extended_analyzer->process(
           msg.id, data.flags, data.frame_count, data.sequence, data.presentation_time_us,
           std::span<const std::uint8_t> { data.pcm.data(), pcm_size });
-        if (!wire) return 0;
+        if (!wire) {
+          note_route(route_ir_none);
+          return 0;
+        }
+        note_route(route_ir_sent);
 
         // The enhanced message carries the original v2 base and its optional
         // continuous/event extension atomically; no duplicate base is sent.
@@ -1628,34 +1697,30 @@ namespace stream {
           msg.id, data.flags, data.frame_count, data.sequence, data.presentation_time_us,
           std::span<const std::uint8_t> { data.pcm.data(), pcm_size });
         if (!wire) {
+          note_route(route_ir_none);
           return 0;
         }
+        note_route(route_ir_sent);
 
         encode_ir(*wire);
       }
       else {
-        constexpr std::size_t wire_header_size = 28;
-        std::vector<std::uint8_t> plaintext(sizeof(control_header_v2) + wire_header_size + pcm_size);
+        note_route(route_raw);
+        const bool pad_audio = data.has_speaker && ds5::control_extension::accepts_pad_audio(session->config.ds5ExtensionMask);
+        if (!pad_audio && !data.haptics_enabled) {
+          // The haptics path is off and this client has no use for the speaker channels.
+          return 0;
+        }
+        const auto body = ds5::haptics_wire::build_pcm_body(data.flags, msg.id, data.frame_count, data.sequence,
+          data.presentation_time_us, data.pcm.data(), pad_audio ? data.speaker_pcm.data() : nullptr);
+        std::vector<std::uint8_t> plaintext(sizeof(control_header_v2) + body.size());
         auto *control = plaintext.data();
         write_u16(control, packetTypes[IDX_DS5_HAPTICS_PCM]);
-        write_u16(control + 2, static_cast<std::uint16_t>(wire_header_size + pcm_size));
-        auto *wire = control + sizeof(control_header_v2);
-        wire[0] = 1;
-        wire[1] = data.flags;
-        write_u16(wire + 2, wire_header_size);
-        write_u16(wire + 4, msg.id);
-        write_u16(wire + 6, data.frame_count);
-        write_u32(wire + 8, data.sequence);
-        write_u64(wire + 12, data.presentation_time_us);
-        write_u32(wire + 20, 48000);
-        wire[24] = 2;
-        wire[25] = 16;
-        wire[26] = wire[27] = 0;
-        std::copy_n(data.pcm.begin(), pcm_size, wire + wire_header_size);
+        write_u16(control + 2, static_cast<std::uint16_t>(body.size()));
+        std::copy(body.begin(), body.end(), control + sizeof(control_header_v2));
 
         std::array<std::uint8_t,
-          sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(
-            sizeof(control_header_v2) + wire_header_size + 240 * 4) + crypto::cipher::tag_size>
+          sizeof(control_encrypted_t) + crypto::cipher::round_to_pkcs7_padded(sizeof(control_header_v2) + ds5::haptics_wire::header_bytes + 240 * 8) + crypto::cipher::tag_size>
           encrypted_payload;
         payload = encode_control(session,
           std::string_view(reinterpret_cast<const char *>(plaintext.data()), plaintext.size()),
@@ -2159,6 +2224,25 @@ namespace stream {
       BOOST_LOG(info) << "Dynamic stream resolution updated: " << new_width << "x" << new_height
                       << (is_rotation ? " (rotation detected)" : "");
     };
+
+    // DualSense input status (headset, microphone presence, microphone mute) from a client that
+    // was told input-status=1. A client without the extension never sends it; a body that is not
+    // exactly the documented form is dropped whole.
+    server->map(packetTypes[IDX_DS5_INPUT_STATUS], [](session_t *session, const std::string_view &payload) {
+      if (!ds5::control_extension::accepts_input_status(session->config.ds5ExtensionMask)) {
+        return;
+      }
+      const auto status = ds5::control_extension::decode_input_status(
+        reinterpret_cast<const std::uint8_t *>(payload.data()), payload.size());
+      if (!status) {
+        BOOST_LOG(warning) << "Dropped malformed DualSense input status ("sv << payload.size() << " bytes)"sv;
+        return;
+      }
+      BOOST_LOG(debug) << "DualSense input status: controller "sv << status->controller << " valid 0x"sv
+                       << util::hex(status->valid_mask).to_string_view();
+      input::ds5_input_status(session->input, status->controller, status->valid_mask, status->headset_present,
+        status->microphone_present, status->microphone_muted);
+    });
 
     server->map(0x5510, [](session_t *session, const std::string_view &payload) {
       if (!session->config.fec_feedback || session->config.monitor.videoFormat == LI_PYROWAVE_VIDEO_FORMAT || payload.size() != 12) return;
@@ -5298,6 +5382,13 @@ namespace stream {
           info.hdr_max_nits = session_p->hdr_capabilities.max_nits;
           info.hdr_min_nits = session_p->hdr_capabilities.min_nits;
           info.hdr_max_full_frame_nits = session_p->hdr_capabilities.max_full_frame_nits;
+
+          // The active virtual pad of the client's PlayStation controller, as the input layer allocated it.
+          if (session_p->input) {
+            const auto pads = input::pad_summary(session_p->input);
+            info.gamepad_type = std::string(pads.virtual_type);
+            info.gamepad_dualsense_identity = pads.dualsense_identity;
+          }
 
           // Get app information
           try {

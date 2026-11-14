@@ -159,8 +159,10 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/windows/win_dark_mode.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/win_dark_mode.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/input.cpp"
-        "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_sidecar_client.h"
-        "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_sidecar_client.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_native_client.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_native_client.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_pad_audio.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_pad_audio.cpp"
         "${CMAKE_SOURCE_DIR}/src/touch_keyboard_session.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/touch_keyboard_session.cpp"
 

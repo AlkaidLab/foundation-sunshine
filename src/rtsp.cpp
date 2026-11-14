@@ -36,9 +36,9 @@ extern "C" {
 
 // local includes
 #include "clipboard_bridge.h"
-#include "text_context/bridge.h"
 #include "config.h"
 #include "cursor_channel.h"
+#include "ds5/control_extension.h"
 #include "globals.h"
 #include "hdr/dynamic_hdr_selection.h"
 #include "input.h"
@@ -1260,6 +1260,10 @@ namespace rtsp_stream {
 #endif
     }
 
+    // DualSense control extensions (0x5515 output, 0x5516 input status). The namespace is a
+    // versioned string, not a capability bit; a client that does not know it ignores the line.
+    ss << "a=" << ds5::control_extension::host_attribute << ':' << ds5::control_extension::host_answer << std::endl;
+
     // Always request new control stream encryption if the client supports it
     uint32_t encryption_flags_supported = SS_ENC_CONTROL_V2 | SS_ENC_AUDIO | SS_ENC_MIC;
     uint32_t encryption_flags_requested = SS_ENC_CONTROL_V2;
@@ -1831,6 +1835,14 @@ namespace rtsp_stream {
       config.packetsize = getArg("x-nv-video[0].packetSize"sv);
       config.minRequiredFecPackets = getArg("x-nv-vqos[0].fec.minRequiredFecPackets"sv);
       config.mlFeatureFlags = getArg("x-ml-general.featureFlags"sv);
+      // The client offers its DualSense extensions in x-ml-general.ds5Extensions. Without the
+      // attribute the mask stays empty and neither new message is ever sent or accepted.
+      if (const auto offered = args.find(ds5::control_extension::client_attribute); offered != args.end()) {
+        config.ds5ExtensionMask = ds5::control_extension::parse_sdp_value(offered->second);
+      }
+      else {
+        config.ds5ExtensionMask = 0;
+      }
       if (auto refresh = args.find("x-ml-general.endpointAutoRefreshVersion"sv); refresh != args.end()) {
         if (refresh->second != "1" || !session.rtsp_cipher || config.controlProtocolType != 13 ||
             (config.mlFeatureFlags & (ML_FF_SESSION_ID_V1 | ML_FF_ENDPOINT_AUTO_REFRESH)) !=

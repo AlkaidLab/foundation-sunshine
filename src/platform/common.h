@@ -111,6 +111,7 @@ namespace platf {
     set_adaptive_triggers,  ///< Set adaptive triggers
     ds5_haptics_pcm,  ///< Authored DualSense actuator PCM (48 kHz, stereo, S16LE)
     ds5_haptics_state,  ///< Absolute actuator mode and claimed control groups
+    ds5_output_extension,  ///< Player and mute LEDs, volumes, microphone mute, routing, lightbar brightness (0x5515)
   };
 
   struct gamepad_feedback_msg_t {
@@ -163,7 +164,8 @@ namespace platf {
     static gamepad_feedback_msg_t
     make_ds5_haptics_pcm(std::uint16_t id, std::uint8_t flags, std::uint16_t frame_count,
       std::uint32_t sequence, std::uint64_t presentation_time_us,
-                         const std::uint8_t *pcm, std::size_t pcm_size) {
+      const std::uint8_t *pcm, std::size_t pcm_size,
+      const std::uint8_t *speaker_pcm = nullptr, bool haptics_enabled = true) {
       gamepad_feedback_msg_t msg {};
       msg.type = gamepad_feedback_e::ds5_haptics_pcm;
       msg.id = id;
@@ -173,6 +175,9 @@ namespace platf {
       msg.data.ds5_haptics.presentation_time_us = presentation_time_us;
       const auto expected_size = static_cast<std::size_t>(msg.data.ds5_haptics.frame_count) * 4;
       std::copy_n(pcm, std::min(expected_size, pcm_size), msg.data.ds5_haptics.pcm.begin());
+      msg.data.ds5_haptics.haptics_enabled = haptics_enabled;
+      msg.data.ds5_haptics.has_speaker = speaker_pcm != nullptr;
+      if (speaker_pcm != nullptr) std::copy_n(speaker_pcm, expected_size, msg.data.ds5_haptics.speaker_pcm.begin());
       return msg;
     }
 
@@ -182,6 +187,19 @@ namespace platf {
       msg.type = gamepad_feedback_e::ds5_haptics_state;
       msg.id = id;
       std::copy_n(state, 8, msg.data.ds5_haptics_state.begin());
+      return msg;
+    }
+
+    static gamepad_feedback_msg_t
+    make_ds5_output_extension(std::uint16_t id, std::uint32_t valid_mask, std::uint8_t player_led_mask,
+      std::uint8_t mute_led, std::uint8_t speaker_volume, std::uint8_t headphone_volume,
+      std::uint8_t mic_volume, std::uint8_t mic_mute, std::uint8_t audio_routing,
+      std::uint8_t lightbar_brightness) {
+      gamepad_feedback_msg_t msg {};
+      msg.type = gamepad_feedback_e::ds5_output_extension;
+      msg.id = id;
+      msg.data.ds5_output_extension = { valid_mask, player_led_mask, mute_led, speaker_volume, headphone_volume,
+        mic_volume, mic_mute, audio_routing, lightbar_brightness };
       return msg;
     }
 
@@ -225,8 +243,25 @@ namespace platf {
         std::uint32_t sequence;
         std::uint64_t presentation_time_us;
         std::array<std::uint8_t, 240 * 2 * sizeof(std::int16_t)> pcm;
+        /// The pad's speaker channels (left, right per frame) of the same frames; valid when has_speaker.
+        std::array<std::uint8_t, 240 * 2 * sizeof(std::int16_t)> speaker_pcm;
+        bool has_speaker;
+        /// False when the haptics path is switched off: pcm is then silence and only the speaker part is real.
+        bool haptics_enabled;
       } ds5_haptics;
       std::array<std::uint8_t, 8> ds5_haptics_state;
+
+      struct {
+        std::uint32_t valid_mask;
+        std::uint8_t player_led_mask;
+        std::uint8_t mute_led;
+        std::uint8_t speaker_volume;
+        std::uint8_t headphone_volume;
+        std::uint8_t mic_volume;
+        std::uint8_t mic_mute;
+        std::uint8_t audio_routing;
+        std::uint8_t lightbar_brightness;
+      } ds5_output_extension;
     } data;
   };
 
@@ -416,6 +451,15 @@ namespace platf {
     gamepad_id_t id;
     std::uint8_t state;
     std::uint8_t percentage;
+  };
+
+  /** @brief Headset and microphone facts reported by a DualSense client (control message 0x5516). */
+  struct gamepad_ds5_status_t {
+    gamepad_id_t id;
+    std::uint32_t valid_mask;  ///< ds5::control_extension::in_* bits
+    std::uint8_t headset_present;
+    std::uint8_t microphone_present;
+    std::uint8_t microphone_muted;
   };
 
   struct touch_input_t {
@@ -1279,6 +1323,14 @@ namespace platf {
   gamepad_battery(input_t &input, const gamepad_battery_t &battery);
 
   /**
+   * @brief Pass the headset and microphone state of a DualSense client to the virtual controller.
+   * @param input The global input context.
+   * @param status The state reported with control message 0x5516. Platforms without a virtual
+   *               DualSense ignore it.
+   */
+  void
+  gamepad_ds5_status(input_t &input, const gamepad_ds5_status_t &status);
+
   /**
    * @brief Create a new virtual gamepad.
    * @param input The global input context.
@@ -1302,6 +1354,16 @@ namespace platf {
   bool
   gamepad_is_ds5(input_t &input, int nr);
 
+  /**
+   * @brief The virtual pad type the platform created for an allocated gamepad.
+   * @param input The global platform input context.
+   * @param nr The global gamepad index.
+   * @return A gamepad_selection pad_type_* name ("ds4", "ds5", "x360"); empty
+   *         when the index is not allocated or the platform does not name its
+   *         virtual pads in that vocabulary.
+   */
+  std::string_view
+  gamepad_virtual_type(input_t &input, int nr);
 
   /**
    * @brief 检查已分配的 DualSense 音频触觉会话是否仍可用。

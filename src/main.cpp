@@ -44,8 +44,6 @@
 #include "video.h"
 #include "webhook/webhook.h"
 #include "webhook/webhook_auth.h"
-#include "ds5/config.h"
-#include "image_enhancement/config.h"
 
 #ifdef _WIN32
   #include "platform/windows/misc.h"
@@ -510,25 +508,6 @@ main(int argc, char *argv[]) {
   if (!image_enhancement::manager().initialize()) {
     BOOST_LOG(warning) << "HDR enhancement configuration or selected component is unavailable; optional processing is disabled";
   }
-
-#ifdef _WIN32
-  ds5_config::load_result_t ds5_settings_result {
-    ds5_config::load_status_t::INVALID,
-    {}
-  };
-  try {
-    ds5_settings_result = ds5_config::load(
-      ds5_config::path_for(file_handler::path_from_utf8(config::sunshine.config_file))
-    );
-  }
-  catch (...) {
-  }
-  if (ds5_settings_result.status == ds5_config::load_status_t::INVALID ||
-      !ds5_config::configure(std::move(ds5_settings_result.settings))) {
-    BOOST_LOG(error) << "DualSense configuration is invalid; using default DualSense settings"sv;
-    ds5_config::configure({});
-  }
-#endif
 
   // If any of the following fail, we log an error and continue event though sunshine will not function correctly.
   // This allows access to the UI to fix configuration problems or view the logs.

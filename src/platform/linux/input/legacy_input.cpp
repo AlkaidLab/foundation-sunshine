@@ -1601,6 +1601,12 @@ namespace platf {
     return false;
   }
 
+  std::string_view
+  gamepad_virtual_type(input_t &, int) {
+    // The generic uinput pad is not named in the DS4/DualSense vocabulary used by the session API.
+    return {};
+  }
+
   bool
   gamepad_has_ds5_audio_haptics(input_t &) {
     return false;
@@ -2116,6 +2122,11 @@ namespace platf {
   void
   gamepad_battery(input_t &input, const gamepad_battery_t &battery) {
     // Unimplemented
+  }
+
+  void
+  gamepad_ds5_status(input_t &input, const gamepad_ds5_status_t &status) {
+    // No virtual DualSense on this path.
   }
 
   /**

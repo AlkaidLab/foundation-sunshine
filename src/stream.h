@@ -56,6 +56,8 @@ namespace stream {
     bool fec_feedback = false;
     bool endpoint_auto_refresh = false;
     int mlFeatureFlags;
+    /// ds5::control_extension::mask_* directions the client offered in x-ml-general.ds5Extensions.
+    std::uint32_t ds5ExtensionMask = 0;
     int controlProtocolType;
     int audioQosType;
     int videoQosType;

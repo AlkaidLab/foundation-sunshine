@@ -79,6 +79,35 @@ target_link_libraries(perf_frame_rate_unit_tests PRIVATE gtest_main nlohmann_jso
         sunshine_project_options sunshine_coverage)
 set_target_properties(perf_frame_rate_unit_tests PROPERTIES CXX_STANDARD 23)
 if (WIN32)
+    add_executable(ds5_native_usbip_smoke
+            ${CMAKE_SOURCE_DIR}/tests/tools/ds5_native_usbip_smoke.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_native_client.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_pad_audio.cpp
+            ${CMAKE_SOURCE_DIR}/src/remote_usb/loopback_usbip_bridge.cpp
+            ${CMAKE_SOURCE_DIR}/src/remote_usb/remote_usb_host_controller.cpp
+            ${CMAKE_SOURCE_DIR}/src/remote_usb/usbip_stale_port_sweep.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/text_encoding.cpp
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/audio_default_guard.cpp
+            ${CMAKE_SOURCE_DIR}/src/ds5/tuning_profile.cpp
+            ${CMAKE_SOURCE_DIR}/src/crypto.cpp)
+    target_include_directories(ds5_native_usbip_smoke PRIVATE
+            "${CMAKE_SOURCE_DIR}"
+            "${CMAKE_SOURCE_DIR}/third-party"
+            ${FFMPEG_INCLUDE_DIRS}
+            "${CMAKE_SOURCE_DIR}/third-party/build-deps/dist/${CMAKE_SYSTEM_NAME}-${CMAKE_SYSTEM_PROCESSOR}/include")
+    target_link_libraries(ds5_native_usbip_smoke PRIVATE
+            sunshine_project_options sunshine_crypto Boost::log nlohmann_json::nlohmann_json
+            ${Boost_LIBRARIES} ${OPENSSL_LIBRARIES} ${PLATFORM_LIBRARIES}
+            alkaidlab_ds5_core alkaidlab_usbip_core setupapi ole32)
+    target_compile_options(ds5_native_usbip_smoke PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+    set_target_properties(ds5_native_usbip_smoke PROPERTIES
+            CXX_STANDARD 23
+            LINK_SEARCH_START_STATIC 1)
+    add_test(NAME ds5_native_usbip_smoke COMMAND ds5_native_usbip_smoke 30000)
+endif ()
+
+if (WIN32)
     # Drives the production virtual microphone session for the verification runs
     # (attach cycles, rate, tone, latency, crash recovery).  Not a unit test.
     add_executable(virtual_mic_harness
@@ -108,6 +137,9 @@ if (WIN32)
     set_target_properties(virtual_mic_harness PROPERTIES
             CXX_STANDARD 23
             LINK_SEARCH_START_STATIC 1)
+endif ()
+
+if (WIN32)
     set_target_properties(perf_frame_rate_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
 add_test(NAME perf_frame_rate_unit_tests COMMAND perf_frame_rate_unit_tests)
@@ -267,12 +299,82 @@ target_include_directories(current_capture_target_unit_tests PRIVATE "${CMAKE_SO
 target_link_libraries(current_capture_target_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
 set_target_properties(current_capture_target_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME current_capture_target_unit_tests COMMAND current_capture_target_unit_tests)
+
+add_executable(ds5_tuning_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/ds5/tuning_profile.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_ds5_tuning.cpp)
+target_include_directories(ds5_tuning_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(ds5_tuning_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
+        sunshine_project_options sunshine_coverage)
+target_compile_definitions(ds5_tuning_unit_tests PRIVATE DS5_TUNING_TEST_NATIVE_PATH=1)
+set_target_properties(ds5_tuning_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(ds5_tuning_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME ds5_tuning_unit_tests COMMAND ds5_tuning_unit_tests)
+
+include("${CMAKE_CURRENT_LIST_DIR}/ds5_matrix.cmake")
+
+add_executable(ds5_haptics_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/haptics/authored_ir.cpp
+        ${CMAKE_SOURCE_DIR}/src/haptics/legacy_rumble.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_ds5_haptics.cpp)
+target_include_directories(ds5_haptics_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(ds5_haptics_unit_tests PRIVATE gtest_main moonlight::haptics
+        sunshine_project_options sunshine_coverage)
+set_target_properties(ds5_haptics_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(ds5_haptics_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME ds5_haptics_unit_tests COMMAND ds5_haptics_unit_tests)
+
+add_executable(ds5_feature_reports_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_ds5_feature_reports.cpp)
+target_include_directories(ds5_feature_reports_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(ds5_feature_reports_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(ds5_feature_reports_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME ds5_feature_reports_unit_tests COMMAND ds5_feature_reports_unit_tests)
+
+add_executable(ds5_rumble_policy_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_ds5_rumble_policy.cpp)
+target_include_directories(ds5_rumble_policy_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(ds5_rumble_policy_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(ds5_rumble_policy_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME ds5_rumble_policy_unit_tests COMMAND ds5_rumble_policy_unit_tests)
+
+add_executable(ds5_rumble_test_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_ds5_rumble_test.cpp)
+target_include_directories(ds5_rumble_test_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(ds5_rumble_test_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(ds5_rumble_test_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME ds5_rumble_test_unit_tests COMMAND ds5_rumble_test_unit_tests)
+
 add_executable(usbip_root_helper_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_usbip_root_helper.cpp)
 target_include_directories(usbip_root_helper_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(usbip_root_helper_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
 set_target_properties(usbip_root_helper_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME usbip_root_helper_unit_tests COMMAND usbip_root_helper_unit_tests)
 
+add_executable(ds5_arrival_policy_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_ds5_arrival_policy.cpp)
+target_include_directories(ds5_arrival_policy_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(ds5_arrival_policy_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(ds5_arrival_policy_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME ds5_arrival_policy_unit_tests COMMAND ds5_arrival_policy_unit_tests)
+
+add_executable(ds5_haptics_wire_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_ds5_haptics_wire.cpp)
+target_include_directories(ds5_haptics_wire_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(ds5_haptics_wire_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(ds5_haptics_wire_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME ds5_haptics_wire_unit_tests COMMAND ds5_haptics_wire_unit_tests)
+
+add_executable(ds5_control_extension_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_ds5_control_extension.cpp)
+target_include_directories(ds5_control_extension_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(ds5_control_extension_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(ds5_control_extension_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME ds5_control_extension_unit_tests COMMAND ds5_control_extension_unit_tests)
+
+add_executable(ds5_button_map_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_ds5_button_map.cpp)
+target_include_directories(ds5_button_map_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(ds5_button_map_unit_tests PRIVATE gtest_main alkaidlab_ds5_core sunshine_project_options sunshine_coverage)
+set_target_properties(ds5_button_map_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME ds5_button_map_unit_tests COMMAND ds5_button_map_unit_tests)
 
 add_executable(pen_barrel_roll_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_pen_barrel_roll.cpp)
 target_include_directories(pen_barrel_roll_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}/third-party")
@@ -1247,6 +1349,8 @@ target_sources(${PROJECT_NAME} PRIVATE
         ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/PyrowaveReassembly.c)
 if (WIN32)
     target_link_libraries(${PROJECT_NAME} PRIVATE Pyrowave::Runtime sunshine_windows_resources)
+    # ds5_native_client.cpp is part of the host sources and needs the core headers and libraries.
+    target_link_libraries(${PROJECT_NAME} PRIVATE alkaidlab_ds5_core alkaidlab_usbip_core)
 endif ()
 # The network overview in the host sources uses the STUN codec on every platform.
 target_link_libraries(${PROJECT_NAME} PRIVATE alkaidlab_stun_codec)
