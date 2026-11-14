@@ -111,6 +111,7 @@ namespace platf {
     set_adaptive_triggers,  ///< Set adaptive triggers
     ds5_haptics_pcm,  ///< Authored DualSense actuator PCM (48 kHz, stereo, S16LE)
     ds5_haptics_state,  ///< Absolute actuator mode and claimed control groups
+    ds5_output_extension,  ///< Player and mute LEDs, volumes, microphone mute, routing, lightbar brightness (0x5515)
   };
 
   struct gamepad_feedback_msg_t {
@@ -189,6 +190,19 @@ namespace platf {
       return msg;
     }
 
+    static gamepad_feedback_msg_t
+    make_ds5_output_extension(std::uint16_t id, std::uint32_t valid_mask, std::uint8_t player_led_mask,
+      std::uint8_t mute_led, std::uint8_t speaker_volume, std::uint8_t headphone_volume,
+      std::uint8_t mic_volume, std::uint8_t mic_mute, std::uint8_t audio_routing,
+      std::uint8_t lightbar_brightness) {
+      gamepad_feedback_msg_t msg {};
+      msg.type = gamepad_feedback_e::ds5_output_extension;
+      msg.id = id;
+      msg.data.ds5_output_extension = { valid_mask, player_led_mask, mute_led, speaker_volume, headphone_volume,
+        mic_volume, mic_mute, audio_routing, lightbar_brightness };
+      return msg;
+    }
+
     gamepad_feedback_e type;
     std::uint16_t id;
 
@@ -236,6 +250,18 @@ namespace platf {
         bool haptics_enabled;
       } ds5_haptics;
       std::array<std::uint8_t, 8> ds5_haptics_state;
+
+      struct {
+        std::uint32_t valid_mask;
+        std::uint8_t player_led_mask;
+        std::uint8_t mute_led;
+        std::uint8_t speaker_volume;
+        std::uint8_t headphone_volume;
+        std::uint8_t mic_volume;
+        std::uint8_t mic_mute;
+        std::uint8_t audio_routing;
+        std::uint8_t lightbar_brightness;
+      } ds5_output_extension;
     } data;
   };
 

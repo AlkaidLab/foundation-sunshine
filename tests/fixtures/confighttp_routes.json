@@ -20,6 +20,10 @@
     "method": "GET"
   },
   {
+    "pattern": "^/dualsense/?$",
+    "method": "GET"
+  },
+  {
     "pattern": "^/password/?$",
     "method": "GET"
   },
@@ -124,14 +128,16 @@
     "method": "POST"
   },
   {
-    "pattern": "^/api/dualsense/config$",
-    "method": "GET",
-    "windows": true
+    "pattern": "^/api/dualsense/tuning$",
+    "method": "GET"
   },
   {
-    "pattern": "^/api/dualsense/config$",
-    "method": "POST",
-    "windows": true
+    "pattern": "^/api/dualsense/tuning$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/dualsense/rumble-test$",
+    "method": "POST"
   },
   {
     "pattern": "^/api/configLocale$",
