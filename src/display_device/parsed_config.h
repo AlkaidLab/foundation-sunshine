@@ -29,7 +29,7 @@ namespace display_device {
       ensure_active, /**< Activate the device if needed. */
       ensure_primary, /**< Activate the device if needed and make it a primary display. */
       ensure_only_display, /**< Deactivate other displays and turn on the specified one only. */
-      ensure_secondary /**< Stream on the display as a secondary (extended) display. In VDD mode, physical stays primary+ VDD secondary. */
+      ensure_secondary /**< Stream on the display as a secondary (extended) display. In VDD mode, physical stays primary + VDD secondary when a physical display exists; headless VDD is the sole display. */
     };
 
     /**
@@ -126,7 +126,7 @@ namespace display_device {
     enum class vdd_prep_e : int {
       no_operation, /**< Do nothing to physical displays. */
       vdd_as_primary, /**< VDD as primary display, physical displays as secondary (extend mode). */
-      vdd_as_secondary, /**< Physical displays as primary, VDD as secondary (extend mode). */
+      vdd_as_secondary, /**< Physical displays as primary, VDD as secondary (extend mode); VDD is primary when no physical display exists. */
       display_off /**< Turn off physical displays, only VDD remains active. */
     };
 

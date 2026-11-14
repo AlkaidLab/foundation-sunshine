@@ -3389,7 +3389,7 @@ namespace stream {
     auto handle_ping = [](auto &session_map, auto &refresh_map, auto &sock, auto &peer, auto &buf, size_t bytes, std::string_view type_str) {
       try {
         if (bytes >= 4 && std::memcmp(buf.data(), "EAPR", 4) == 0) {
-          BOOST_LOG(debug) << "Received endpoint auth packet: " << type_str
+          BOOST_LOG(verbose) << "Received endpoint auth packet: " << type_str
                           << ", bytes=" << bytes
                           << ", from=" << peer.address().to_string() << ':' << peer.port();
           if (bytes != LI_ER_PACKET_SIZE) {
