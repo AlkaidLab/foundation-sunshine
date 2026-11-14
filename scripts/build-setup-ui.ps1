@@ -12,6 +12,8 @@ $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $ui = (Resolve-Path -LiteralPath $FoundationUi).Path
+# A relative -Output means relative to the caller's directory: resolve it before Push-Location changes the location.
+$Output = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Output)
 $work = Join-Path (Split-Path $ui -Parent) 'panel-setup-ui'
 if (Test-Path -LiteralPath $work) { Remove-Item -Recurse -Force -LiteralPath $work }
 $panel = Join-Path $repo 'src_assets/common/sunshine-control-panel'

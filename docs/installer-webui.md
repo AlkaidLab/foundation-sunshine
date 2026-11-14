@@ -108,8 +108,10 @@ Unchanged: `/VERYSILENT` or `/SILENT` goes straight to `worker_main()` before an
    pages), then `cargo build --release --manifest-path installer-ui/Cargo.toml` in `msvc-env.cmd`. Output:
    `installer-ui/target/release/foundation-setup-ui.exe`, or `%CARGO_TARGET_DIR%`.
 2. Host repo: the CMake target `sunshine-installer-shell` as before.
-3. `append_installer_payload.py <shell> <engine> <output> --ui foundation-setup-ui.exe`. The footer keeps the V1 keys
-   first, so an older shell still finds the engine. Without `--ui`, the package is the native installer.
+3. `append_installer_payload.py <shell> <engine> <output> --ui foundation-setup-ui.exe --wv2 MicrosoftEdgeWebview2Setup.exe`.
+   The bootstrapper is the same pinned, signature-checked file CI uses: `scripts/fetch-installer-inputs.ps1 -Destination <new dir>`
+   downloads it (pinned by sha256 in `scripts/installer-inputs.json`) to `<dir>/MicrosoftEdgeWebview2Setup.exe`. The footer keeps
+   the V1 keys first, so an older shell still finds the engine. Without `--ui`, the package is the native installer.
 
 ### CI (`.github/workflows/main.yml`, job Windows)
 
