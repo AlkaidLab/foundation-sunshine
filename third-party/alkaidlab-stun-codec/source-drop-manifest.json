@@ -1,0 +1,31 @@
+{
+  "name": "stun-codec",
+  "platform_module": "network/stun-wire",
+  "abi": 1,
+  "license": "Apache-2.0",
+  "notice": "NOTICE",
+  "include": [
+    "include/alkaidlab/network/stun_codec.h"
+  ],
+  "source": [
+    "src/stun_codec.c"
+  ],
+  "tests": [
+    "tests/stun_codec_test.c"
+  ],
+  "requires": [
+    "OpenSSL::Crypto"
+  ],
+  "source_keys": [
+    "rfc8489-20261104",
+    "rfc5780-20261104"
+  ],
+  "source_commit": "2f10b2d92e2d66c37ad2733e9e1ff93d73e3d024",
+  "files": {
+    "include/alkaidlab/network/stun_codec.h": "6a00658508cd63c2b5fe2330f8d4740df52f6fdaa0870c0df02aa545b12d9b20",
+    "src/stun_codec.c": "f80340d000df431ce2fe6e08c9ae85f070cac6469572f8e06bcf2686611838d6",
+    "tests/stun_codec_test.c": "915480cddf38c23c3eb08cb4d0af82c374033b1fc5d7607f9e43863a5cbbf07b",
+    "LICENSE": "16d5fe03e25b6022876abc17c32aa6072107f9e8f1bbc1f8510ff0f142af3fef",
+    "NOTICE": "38c0a9bbe9f1f084be4acc501000f902c5b7916e8d579a8de79148884bb251f2"
+  }
+}

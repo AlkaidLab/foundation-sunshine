@@ -30,4 +30,11 @@ namespace pyrowave {
   [[nodiscard]] bool
   is_server_runtime_available() noexcept;
 
+  /**
+   * Start the runtime probe on its own thread at host start, so the first RTSP DESCRIBE does not pay for creating the
+   * Vulkan device on the RTSP thread (a slow DESCRIBE holds every other RTSP request behind it). Returns at once.
+   */
+  void
+  prewarm_server_runtime() noexcept;
+
 }  // namespace pyrowave

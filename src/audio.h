@@ -9,7 +9,9 @@
 #include "thread_safe.h"
 #include "utility.h"
 
+#include <atomic>
 #include <bitset>
+#include <memory>
 namespace spatial_transport {
   struct LiveSession;
 }
@@ -86,6 +88,10 @@ namespace audio {
     stream_params_t customStreamParams;
 
     std::bitset<MAX_FLAGS> flags;
+    // Shared with the session control API so a running capture can rebuild its
+    // source when host playback is toggled. A missing pointer keeps the
+    // negotiated session value for older callers.
+    std::shared_ptr<std::atomic_bool> host_audio_enabled;
   };
 
   struct audio_ctx_t {

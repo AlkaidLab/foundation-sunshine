@@ -4,6 +4,7 @@
  */
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -89,6 +90,15 @@ namespace rtsp_stream {
     // host attaches the virtual USB touchscreen and applies the touch
     // keyboard AutoInvoke registry key group for the session.
     int touch_keyboard { -1 };
+    // The client's product family is a touch device (VoidLink runs on phones and tablets). It only answers the
+    // application's question "is this a touch client" (SUNSHINE_CLIENT_TOUCH) when touch_keyboard is undeclared;
+    // it never switches the touch keyboard registry group on.
+    bool touch_family { false };
+
+    // When this launch session was made (the /launch or /resume request), and when the last RTSP step on it ended.
+    // The RTSP handler logs the time of every step against these two, so a slow connect shows which step took it.
+    std::chrono::steady_clock::time_point created { std::chrono::steady_clock::now() };
+    std::chrono::steady_clock::time_point last_rtsp_step { std::chrono::steady_clock::now() };
     // Client-declared controller emulation type for this session (Sunshine
     // protocol extension carried on the /launch and /resume query string).
     // Empty = undeclared: the host-side selection chain applies as before.

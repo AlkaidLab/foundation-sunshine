@@ -58,6 +58,8 @@ set(SUNSHINE_HOST_SOURCES
     src/confighttp.cpp src/confighttp.h
     src/widget_http.cpp src/widget_http.h
     src/rtsp.cpp src/rtsp.h
+    src/session_info.cpp src/session_info.h
+    src/system_load.cpp src/system_load.h src/system_load_stub.cpp
     src/stream.cpp src/stream.h
     src/clipboard_bridge.cpp src/clipboard_bridge.h
     src/cursor_channel.cpp src/cursor_channel.h
@@ -74,6 +76,7 @@ set(SUNSHINE_HOST_SOURCES
     src/mic_mixer.cpp src/mic_mixer.h
     src/process.cpp src/process.h
     src/network.cpp src/network.h
+    src/build_info.cpp src/build_info.h
     src/stat_trackers.cpp src/stat_trackers.h
     src/utility.h
     src/uuid.h
@@ -192,5 +195,6 @@ set(SUNSHINE_HOST_SOURCES
     src/tray/system_tray_i18n.cpp src/tray/system_tray_i18n.h
     src/tray/tray_http.cpp src/tray/tray_http.h
     src/tray/tray_state.cpp src/tray/tray_state.h
+    third-party/puff/puff.c third-party/puff/puff.h
 )
 list(TRANSFORM SUNSHINE_HOST_SOURCES PREPEND "${CMAKE_SOURCE_DIR}/")

@@ -8,7 +8,9 @@
 #include <algorithm>
 #include <cstdint>
 #include <iostream>
+#include <string>
 #include <system_error>
+#include <vector>
 
 // local includes
 #include "display_scale_steps.h"
@@ -980,6 +982,10 @@ namespace display_device::w_utils {
 
   bool
   togglePnpDeviceByFriendlyName(const std::string &friendlyName, const bool &stat) {
+    // The caller passes a UTF-8 name (the display settings are UTF-8 end to
+    // end). Comparing it with the ANSI property buffer never matched a
+    // Chinese device name, so read the wide property and compare wide text.
+    const std::wstring wanted_name = platf::from_utf8(friendlyName);
     HDEVINFO deviceInfoSet = SetupDiGetClassDevs(NULL, NULL, NULL, DIGCF_PRESENT | DIGCF_ALLCLASSES);
     if (deviceInfoSet == INVALID_HANDLE_VALUE) {
       std::cerr << "Failed to get device information set." << std::endl;
@@ -991,9 +997,9 @@ namespace display_device::w_utils {
 
     bool deviceFound = false;
     for (DWORD i = 0; SetupDiEnumDeviceInfo(deviceInfoSet, i, &deviceInfoData); ++i) {
-      TCHAR deviceFriendlyName[256];
-      if (SetupDiGetDeviceRegistryProperty(deviceInfoSet, &deviceInfoData, SPDRP_FRIENDLYNAME, NULL, (PBYTE) deviceFriendlyName, sizeof(deviceFriendlyName), NULL)) {
-        if (friendlyName == deviceFriendlyName) {
+      std::vector<wchar_t> deviceFriendlyName(1024, L'\0');
+      if (SetupDiGetDeviceRegistryPropertyW(deviceInfoSet, &deviceInfoData, SPDRP_FRIENDLYNAME, NULL, reinterpret_cast<PBYTE>(deviceFriendlyName.data()), static_cast<DWORD>(deviceFriendlyName.size() * sizeof(wchar_t)), NULL)) {
+        if (!wanted_name.empty() && wanted_name == deviceFriendlyName.data()) {
           deviceFound = true;
           break;
         }

@@ -230,17 +230,10 @@ namespace platf {
 
   void
   print_status(const std::string_view &prefix, HRESULT status) {
-    char err_string[1024];
-
-    DWORD bytes = FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-      nullptr,
-      status,
-      MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-      err_string,
-      sizeof(err_string),
-      nullptr);
-
-    BOOST_LOG(error) << prefix << ": "sv << std::string_view { err_string, bytes };
+    // FormatMessageW returns UTF-16 from the system message table. The ANSI
+    // form returned the text in the process code page, which is not UTF-8 on a
+    // Chinese Windows and made the log line unreadable in the viewer.
+    BOOST_LOG(error) << prefix << ": "sv << format_message_utf8(static_cast<DWORD>(status));
   }
 
   bool
@@ -459,7 +452,17 @@ namespace platf {
           return {};
       }
     }
-  }
+  }  // namespace
+
+  namespace {
+    // Registers the failure logging of the text encoding helpers (text_encoding.cpp).
+    [[maybe_unused]] const bool text_encoding_logging_installed = [] {
+      text_encoding_failure_hook = [](const char *what, DWORD winerr) {
+        BOOST_LOG(error) << what << ": "sv << winerr;
+      };
+      return true;
+    }();
+  }  // namespace
 
   std::string
   windows_version() {
@@ -832,12 +835,14 @@ namespace platf {
             continue;
           }
 
-          // If not found in provided env, try the current process environment
-          // Use GetEnvironmentVariableA for Windows (case-insensitive)
-          char sys_val_buf[32768];
-          DWORD sys_len = GetEnvironmentVariableA(var_name.c_str(), sys_val_buf, sizeof(sys_val_buf));
-          if (sys_len > 0 && sys_len < sizeof(sys_val_buf)) {
-            result += sys_val_buf;
+          // If not found in provided env, try the current process environment.
+          // The command text is UTF-8, so the variable name and its value go
+          // through the wide API; the ANSI value was in the system code page.
+          const std::wstring wide_name = from_utf8(var_name);
+          std::wstring sys_val_buf(32768, L'\0');
+          DWORD sys_len = wide_name.empty() ? 0 : GetEnvironmentVariableW(wide_name.c_str(), sys_val_buf.data(), static_cast<DWORD>(sys_val_buf.size()));
+          if (sys_len > 0 && sys_len < sys_val_buf.size()) {
+            result += to_utf8(std::wstring(sys_val_buf.data(), sys_len));
             i = end + 1;
             continue;
           }
@@ -1274,10 +1279,12 @@ namespace platf {
       executable.data(),
       static_cast<DWORD>(executable.size()));
     if (executable_length == 0) {
-      return { static_cast<int>(GetLastError()), std::system_category() };
+      ec = { static_cast<int>(GetLastError()), std::system_category() };
+      return nullptr;
     }
     if (executable_length >= executable.size()) {
-      return { ERROR_INSUFFICIENT_BUFFER, std::system_category() };
+      ec = { ERROR_INSUFFICIENT_BUFFER, std::system_category() };
+      return nullptr;
     }
     executable.resize(executable_length);
 
@@ -1286,10 +1293,12 @@ namespace platf {
     const auto gui_path = gui_dir / L"sunshine-gui.exe";
     const auto attributes = GetFileAttributesW(gui_path.c_str());
     if (attributes == INVALID_FILE_ATTRIBUTES) {
-      return { static_cast<int>(GetLastError()), std::system_category() };
+      ec = { static_cast<int>(GetLastError()), std::system_category() };
+      return nullptr;
     }
     if (attributes & FILE_ATTRIBUTE_DIRECTORY) {
-      return std::make_error_code(std::errc::no_such_file_or_directory);
+      ec = std::make_error_code(std::errc::no_such_file_or_directory);
+      return nullptr;
     }
 
     auto environment = boost::this_process::environment();
@@ -2292,60 +2301,54 @@ namespace platf {
     return qpc_tick_magnitude_to_duration(tick_magnitude, negative, frequency);
   }
 
-  std::wstring
-  from_utf8(const std::string &string) {
-    // No conversion needed if the string is empty
-    if (string.empty()) {
-      return {};
-    }
-
-    // Get the output size required to store the string
-    auto output_size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, string.data(), string.size(), nullptr, 0);
-    if (output_size == 0) {
-      auto winerr = GetLastError();
-      BOOST_LOG(error) << "Failed to get UTF-16 buffer size: "sv << winerr;
-      return {};
-    }
-
-    // Perform the conversion
-    std::wstring output(output_size, L'\0');
-    output_size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, string.data(), string.size(), output.data(), output.size());
-    if (output_size == 0) {
-      auto winerr = GetLastError();
-      BOOST_LOG(error) << "Failed to convert string to UTF-16: "sv << winerr;
-      return {};
-    }
-
-    return output;
-  }
-
   std::string
-  to_utf8(const std::wstring &string) {
-    // No conversion needed if the string is empty
-    if (string.empty()) {
-      return {};
+  format_message_utf8(DWORD message_id, DWORD language_id) {
+    // HRESULT_FROM_WIN32 keeps the Win32 code in the low word; the system
+    // message table is indexed by that code, not by the full HRESULT.
+    DWORD table_id = message_id;
+    if ((message_id & 0xFFFF0000u) == 0x80070000u) {
+      table_id = message_id & 0xFFFFu;
     }
 
-    // Get the output size required to store the string
-    auto output_size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, string.data(), string.size(),
-      nullptr, 0, nullptr, nullptr);
-    if (output_size == 0) {
-      auto winerr = GetLastError();
-      BOOST_LOG(error) << "Failed to get UTF-8 buffer size: "sv << winerr;
-      return {};
+    wchar_t stack_buffer[1024];
+    DWORD length = FormatMessageW(
+      FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+      nullptr,
+      table_id,
+      language_id,
+      stack_buffer,
+      static_cast<DWORD>(std::size(stack_buffer)),
+      nullptr);
+
+    std::wstring message;
+    if (length > 0) {
+      message.assign(stack_buffer, length);
+    }
+    else {
+      LPWSTR allocated = nullptr;
+      length = FormatMessageW(
+        FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS | FORMAT_MESSAGE_ALLOCATE_BUFFER,
+        nullptr,
+        table_id,
+        language_id,
+        reinterpret_cast<LPWSTR>(&allocated),
+        1024,
+        nullptr);
+      if (length > 0 && allocated != nullptr) {
+        message.assign(allocated, length);
+        LocalFree(allocated);
+      }
     }
 
-    // Perform the conversion
-    std::string output(output_size, '\0');
-    output_size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, string.data(), string.size(),
-      output.data(), output.size(), nullptr, nullptr);
-    if (output_size == 0) {
-      auto winerr = GetLastError();
-      BOOST_LOG(error) << "Failed to convert string to UTF-8: "sv << winerr;
-      return {};
+    while (!message.empty() && (message.back() == L'\r' || message.back() == L'\n' || message.back() == L' ' || message.back() == L'\t')) {
+      message.pop_back();
     }
-
-    return output;
+    if (message.empty()) {
+      std::ostringstream fallback;
+      fallback << "unknown system message 0x" << std::hex << std::uppercase << message_id;
+      return fallback.str();
+    }
+    return to_utf8(message);
   }
 
   std::string

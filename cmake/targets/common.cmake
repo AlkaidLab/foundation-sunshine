@@ -8,7 +8,7 @@ if (TARGET sunshine_mat_capture)
 endif ()
 target_sources(sunshine PRIVATE ${SUNSHINE_HOST_SOURCES} ${PLATFORM_TARGET_FILES})
 if(WIN32)
-    target_link_libraries(sunshine PRIVATE Pyrowave::Runtime sunshine_windows_resources)
+    target_link_libraries(sunshine PRIVATE Pyrowave::Runtime sunshine_windows_resources winhttp windowscodecs ole32 shell32)
     install(FILES "${CMAKE_SOURCE_DIR}/third-party/pyrowave/LICENSE"
             DESTINATION "tools/pyrowave" RENAME "LICENSE.pyrowave" COMPONENT application)
     install(FILES "${CMAKE_SOURCE_DIR}/third-party/pyrowave/NOTICE.md"
@@ -53,7 +53,8 @@ endif()
 
 target_link_libraries(sunshine PRIVATE
         ${SUNSHINE_EXTERNAL_LIBRARIES} ${EXTRA_LIBS}
-        sunshine_project_options sunshine_crypto sunshine_ai_provider sunshine_ai_stream)
+        sunshine_project_options sunshine_crypto sunshine_ai_provider sunshine_ai_stream
+        alkaidlab_ds5_core alkaidlab_usbip_core alkaidlab_stun_codec)
 if (TARGET sunshine_rtx_video_adapter)
     add_dependencies(sunshine sunshine_rtx_video_adapter)
     target_include_directories(sunshine PRIVATE "${RTX_VIDEO_TRUST_INCLUDE}")

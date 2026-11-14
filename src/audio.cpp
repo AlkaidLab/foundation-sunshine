@@ -33,13 +33,16 @@ namespace audio {
   using sample_queue_t = std::shared_ptr<safe::queue_t<std::vector<float>>>;
 
   namespace {
-    void free_avcodec_ctx(AVCodecContext *ctx) {
+    void
+    free_avcodec_ctx(AVCodecContext *ctx) {
       avcodec_free_context(&ctx);
     }
-    void free_avframe(AVFrame *f) {
+    void
+    free_avframe(AVFrame *f) {
       av_frame_free(&f);
     }
-    void free_avpacket(AVPacket *p) {
+    void
+    free_avpacket(AVPacket *p) {
       av_packet_free(&p);
     }
     using avcodec_ctx_t = util::safe_ptr<AVCodecContext, free_avcodec_ctx>;
@@ -48,7 +51,8 @@ namespace audio {
 
     // Format an FFmpeg error code into a Boost.Log error line. Centralised so
     // callers don't sprinkle 4-line ebuf/av_strerror snippets everywhere.
-    void log_av_error(const char *codec_name, const char *what, int err) {
+    void
+    log_av_error(const char *codec_name, const char *what, int err) {
       char ebuf[128] {};
       av_strerror(err, ebuf, sizeof(ebuf));
       BOOST_LOG(error) << codec_name << ' ' << what << ": "sv << ebuf;
@@ -57,7 +61,8 @@ namespace audio {
     // Build an AVChannelLayout for the supported speaker counts. Returns
     // true on success; on failure the layout is left zero-initialised and
     // false is returned so the caller can bail with a sensible log.
-    bool make_channel_layout(int channels, AVChannelLayout &out) {
+    bool
+    make_channel_layout(int channels, AVChannelLayout &out) {
       switch (channels) {
         case 2:
           out = AV_CHANNEL_LAYOUT_STEREO;
@@ -77,8 +82,9 @@ namespace audio {
     // during flush. Returns false on a fatal libav error (caller should
     // packets->stop() and exit); true otherwise (including on EAGAIN/EOF).
     template <typename Packets>
-    bool drain_packets(AVCodecContext *ctx, AVPacket *pkt, Packets &packets,
-                       void *channel_data, const char *codec_name) {
+    bool
+    drain_packets(AVCodecContext *ctx, AVPacket *pkt, Packets &packets,
+      void *channel_data, const char *codec_name) {
       while (true) {
         int err = avcodec_receive_packet(ctx, pkt);
         if (err == AVERROR(EAGAIN) || err == AVERROR_EOF) {
@@ -98,7 +104,8 @@ namespace audio {
     // Pack a signed 16-bit sample as two little-endian bytes. Used by the
     // PCM_S16 path so we don't reinterpret_cast a uint8_t buffer to int16_t*
     // (alignment + endian UB) and to keep the inner loop one line.
-    inline void write_s16le(uint8_t *dst, int16_t v) {
+    inline void
+    write_s16le(uint8_t *dst, int16_t v) {
       const uint16_t u = static_cast<uint16_t>(v);
       dst[0] = static_cast<uint8_t>(u & 0xFF);
       dst[1] = static_cast<uint8_t>((u >> 8) & 0xFF);
@@ -111,10 +118,11 @@ namespace audio {
   // codec is already negotiated via RTSP, so the caller MUST stop the audio
   // stream on failure -- silently downgrading to Opus would feed the client's
   // AC3 decoder Opus bytes and produce noise.
-  static bool encodeThreadFFmpeg(sample_queue_t samples,
-                                 const opus_stream_config_t &stream,
-                                 const config_t &config,
-                                 void *channel_data) {
+  static bool
+  encodeThreadFFmpeg(sample_queue_t samples,
+    const opus_stream_config_t &stream,
+    const config_t &config,
+    void *channel_data) {
     auto packets = mail::man->queue<packet_t>(mail::audio_packets);
 
     enum AVCodecID codec_id = (config.codec == CODEC_EAC3) ? AV_CODEC_ID_EAC3 : AV_CODEC_ID_AC3;
@@ -150,8 +158,8 @@ namespace audio {
     int bit_rate = config.bitrate;
     if (bit_rate <= 0) {
       bit_rate = (stream.channelCount >= 6) ? 448000 :
-                 (stream.channelCount == 2)  ? 192000 :
-                                                96000;
+                 (stream.channelCount == 2) ? 192000 :
+                                              96000;
     }
     // Clamp against codec spec maximum so a malicious / mis-configured client
     // can't ask for a bitrate that would produce a frame larger than the
@@ -162,7 +170,7 @@ namespace audio {
     //                           (well under spec's 6.144 Mbps; matches the
     //                            kEac3MaxFrameBytes entry in stream.cpp's
     //                            audio_payload table — keep them in sync).
-    constexpr int kAc3MaxBitrate  = 640000;
+    constexpr int kAc3MaxBitrate = 640000;
     constexpr int kEac3MaxBitrate = 384000;
     const int spec_max = (codec_id == AV_CODEC_ID_EAC3) ? kEac3MaxBitrate : kAc3MaxBitrate;
     if (bit_rate > spec_max) {
@@ -263,11 +271,15 @@ namespace audio {
     return true;
   }
 
-  static int start_audio_control(audio_ctx_t &ctx);
-  static void stop_audio_control(audio_ctx_t &);
-  static void apply_surround_params(opus_stream_config_t &stream, const stream_params_t &params);
+  static int
+  start_audio_control(audio_ctx_t &ctx);
+  static void
+  stop_audio_control(audio_ctx_t &);
+  static void
+  apply_surround_params(opus_stream_config_t &stream, const stream_params_t &params);
 
-  int map_stream(int channels, bool quality);
+  int
+  map_stream(int channels, bool quality);
 
   constexpr auto SAMPLE_RATE = 48000;
 
@@ -342,10 +354,11 @@ namespace audio {
 
   // Raw LPCM passthrough thread: float [-1,1] -> s16 LE, no encoder
   // involved. packetDuration is forced to 5 ms by the client SDP path.
-  static void encodePcmThread(sample_queue_t samples,
-                              const opus_stream_config_t &stream,
-                              const config_t &config,
-                              void *channel_data) {
+  static void
+  encodePcmThread(sample_queue_t samples,
+    const opus_stream_config_t &stream,
+    const config_t &config,
+    void *channel_data) {
     auto packets = mail::man->queue<packet_t>(mail::audio_packets);
     const int frame_samples = config.packetDuration * stream.sampleRate / 1000;
     const int channels = stream.channelCount;
@@ -357,14 +370,16 @@ namespace audio {
                     << (frame_samples * 1000 / config.packetDuration * channels * 2 * 8 / 1000) << " kbps)"sv;
 
     while (auto sample = samples->pop()) {
-      buffer_t packet {static_cast<std::size_t>(pcm_bytes)};
+      buffer_t packet { static_cast<std::size_t>(pcm_bytes) };
       const float *src = sample->data();
       auto *out = packet.begin();
       const int total = frame_samples * channels;
       for (int i = 0; i < total; ++i) {
         float v = src[i];
-        if (v > 1.0f) v = 1.0f;
-        else if (v < -1.0f) v = -1.0f;
+        if (v > 1.0f)
+          v = 1.0f;
+        else if (v < -1.0f)
+          v = -1.0f;
         write_s16le(out + i * 2, static_cast<int16_t>(v * 32767.0f));
       }
       packets->raise(channel_data, std::move(packet));
@@ -373,21 +388,21 @@ namespace audio {
 
   // Opus encoder thread (default audio codec). Bit-exact behaviour as the
   // pre-split implementation; only moved out of the dispatcher.
-  static void encodeOpusThread(sample_queue_t samples,
-                               const opus_stream_config_t &stream,
-                               const config_t &config,
-                               void *channel_data) {
+  static void
+  encodeOpusThread(sample_queue_t samples,
+    const opus_stream_config_t &stream,
+    const config_t &config,
+    void *channel_data) {
     auto packets = mail::man->queue<packet_t>(mail::audio_packets);
 
-    opus_t opus {opus_multistream_encoder_create(
+    opus_t opus { opus_multistream_encoder_create(
       stream.sampleRate,
       stream.channelCount,
       stream.streams,
       stream.coupledStreams,
       stream.mapping,
       OPUS_APPLICATION_RESTRICTED_LOWDELAY,
-      nullptr
-    )};
+      nullptr) };
 
     opus_multistream_encoder_ctl(opus.get(), OPUS_SET_BITRATE(stream.bitrate));
     opus_multistream_encoder_ctl(opus.get(), OPUS_SET_VBR(0));
@@ -410,7 +425,7 @@ namespace audio {
 
     const int frame_size = config.packetDuration * stream.sampleRate / 1000;
     while (auto sample = samples->pop()) {
-      buffer_t packet {1400};
+      buffer_t packet { 1400 };
 
       int bytes = opus_multistream_encode_float(opus.get(), sample->data(), frame_size, std::begin(packet), packet.size());
       if (bytes < 0) {
@@ -428,7 +443,8 @@ namespace audio {
   // Each per-codec function owns its own packet-queue handle, init logging
   // and error path, so adding a new codec is just a new case below + a new
   // worst-case entry in stream.cpp's audio_payload table.
-  void encodeThread(sample_queue_t samples, config_t config, void *channel_data) {
+  void
+  encodeThread(sample_queue_t samples, config_t config, void *channel_data) {
     platf::adjust_thread_priority(platf::thread_priority_e::high);
     auto stream = stream_configs[map_stream(config.channels, config.flags[config_t::HIGH_QUALITY])];
     if (config.codec == CODEC_OPUS && config.flags[config_t::CUSTOM_SURROUND_PARAMS]) {
@@ -460,7 +476,8 @@ namespace audio {
     }
   }
 
-  void capture(safe::mail_t mail, config_t config, void *channel_data) {
+  void
+  capture(safe::mail_t mail, config_t config, void *channel_data) {
     auto shutdown_event = mail->event<bool>(mail::shutdown);
     if (!config::audio.stream) {
       BOOST_LOG(info) << "Audio streaming is disabled in configuration";
@@ -494,67 +511,80 @@ namespace audio {
       return;
     }
 
-    // Order of priority:
-    // 1. Virtual sink
-    // 2. Audio sink
-    // 3. Host
-    std::string *sink = &ref->sink.host;
-    if (!config::audio.sink.empty()) {
-      sink = &config::audio.sink;
+    const auto host_audio_enabled = config.host_audio_enabled;
+    auto host_audio = [&]() {
+      return host_audio_enabled ? host_audio_enabled->load(std::memory_order_acquire) : config.flags[config_t::HOST_AUDIO];
+    };
+
+    // Select and open the capture endpoint each time the host-playback switch changes.
+    // The platform audio control owns the sink names; rebuilding the microphone is the
+    // supported live operation and avoids changing a different session's default sink.
+    auto open_microphone = [&](bool play_on_host, int &capture_channels, const std::uint8_t *&capture_mapping) {
+      std::string *sink = &ref->sink.host;
+      if (!config::audio.sink.empty()) sink = &config::audio.sink;
+      capture_channels = stream.channelCount;
+      capture_mapping = stream.mapping;
+      if (ref->sink.null && (!play_on_host || sink->empty())) {
+        auto &null = *ref->sink.null;
+        switch (stream.channelCount) {
+          case 2:
+            sink = &null.stereo;
+            break;
+          case 6:
+            sink = &null.surround51;
+            break;
+          case 8:
+            sink = &null.surround71;
+            break;
+          case 12:
+            if (!null.surround714.empty()) {
+              sink = &null.surround714;
+              if (!null.surround71.empty() && !control->is_sink_format_supported(null.surround714)) {
+                BOOST_LOG(info) << "Virtual audio sink doesn't support 7.1.4, capturing 7.1 with silent height channels"sv;
+                sink = &null.surround71;
+                capture_channels = 8;
+                capture_mapping = platf::speaker::map_surround71;
+              }
+            }
+            break;
+        }
+      }
+      const auto frame_size = config.packetDuration * stream.sampleRate / 1000;
+      const bool continuous_audio = config.flags[config_t::CONTINUOUS_AUDIO];
+      const std::string capture_sink = config::audio.sink.empty() ? std::string {} : *sink;
+      return control->microphone(capture_mapping, capture_channels, stream.sampleRate, frame_size, continuous_audio, capture_sink);
+    };
+
+    if (!ref->sink_flag->exchange(true, std::memory_order_acquire)) {
+      const bool play_on_host = host_audio();
+      std::string *sink = &ref->sink.host;
+      if (!play_on_host && ref->sink.null) {
+        switch (stream.channelCount) {
+          case 2:
+            sink = &ref->sink.null->stereo;
+            break;
+          case 6:
+            sink = &ref->sink.null->surround51;
+            break;
+          case 8:
+            sink = &ref->sink.null->surround71;
+            break;
+          case 12:
+            if (!ref->sink.null->surround714.empty()) sink = &ref->sink.null->surround714;
+            break;
+        }
+      }
+      ref->restore_sink = ref->sink.host != *sink;
+      if (ref->restore_sink || (config::audio.keep_sink_default && !sink->empty())) {
+        const auto sink_status = control->set_sink(*sink);
+        if (sink_status && ref->restore_sink) return;
+      }
     }
 
     int capture_channels = stream.channelCount;
     const std::uint8_t *capture_mapping = stream.mapping;
-
-    // Prefer the virtual sink if host playback is disabled or there's no other sink
-    if (ref->sink.null && (!config.flags[config_t::HOST_AUDIO] || sink->empty())) {
-      auto &null = *ref->sink.null;
-      switch (stream.channelCount) {
-        case 2:
-          sink = &null.stereo;
-          break;
-        case 6:
-          sink = &null.surround51;
-          break;
-        case 8:
-          sink = &null.surround71;
-          break;
-        case 12:
-          if (!null.surround714.empty()) {
-            sink = &null.surround714;
-            if (!null.surround71.empty() && !control->is_sink_format_supported(null.surround714)) {
-              BOOST_LOG(info) << "Virtual audio sink doesn't support 7.1.4, capturing 7.1 with silent height channels"sv;
-              sink = &null.surround71;
-              capture_channels = 8;
-              capture_mapping = platf::speaker::map_surround71;
-            }
-          }
-          break;
-      }
-    }
-
-    // Only the first to start a session may change the default sink
-    if (!ref->sink_flag->exchange(true, std::memory_order_acquire)) {
-      // If the selected sink is different than the current one, change sinks.
-      ref->restore_sink = ref->sink.host != *sink;
-      // Record the selected sink even when it already is the default so forced
-      // retention can restore it after another application changes the default.
-      if (ref->restore_sink || (config::audio.keep_sink_default && !sink->empty())) {
-        const auto sink_status = control->set_sink(*sink);
-        // If this was already the active default, a policy failure must not
-        // prevent an otherwise valid audio capture from starting.
-        if (sink_status && ref->restore_sink) {
-          return;
-        }
-      }
-    }
-
-    auto frame_size = config.packetDuration * stream.sampleRate / 1000;
-    bool continuous_audio = config.flags[config_t::CONTINUOUS_AUDIO];
-    // An explicitly configured sink remains the capture endpoint across default-device
-    // changes. An empty sink keeps the existing behavior of following the current default.
-    const std::string capture_sink = config::audio.sink.empty() ? std::string {} : *sink;
-    auto mic = control->microphone(capture_mapping, capture_channels, stream.sampleRate, frame_size, continuous_audio, capture_sink);
+    bool applied_host_audio = host_audio();
+    auto mic = open_microphone(applied_host_audio, capture_channels, capture_mapping);
     if (!mic) {
       BOOST_LOG(error) << "Audio capture: failed to initialize microphone";
       return;
@@ -568,7 +598,7 @@ namespace audio {
     platf::adjust_thread_priority(platf::thread_priority_e::critical);
 
     auto samples = std::make_shared<sample_queue_t::element_type>(30);
-    std::thread thread {encodeThread, samples, config, channel_data};
+    std::thread thread { encodeThread, samples, config, channel_data };
 
     auto fg = util::fail_guard([&]() {
       samples->stop();
@@ -577,9 +607,20 @@ namespace audio {
       shutdown_event->view();
     });
 
+    const int frame_size = config.packetDuration * stream.sampleRate / 1000;
     int samples_per_frame = frame_size * capture_channels;
 
     while (!shutdown_event->peek()) {
+      const bool desired_host_audio = host_audio();
+      if (desired_host_audio != applied_host_audio) {
+        mic.reset();
+        applied_host_audio = desired_host_audio;
+        mic = open_microphone(applied_host_audio, capture_channels, capture_mapping);
+        if (!mic) {
+          BOOST_LOG(warning) << "Audio capture: failed to apply host playback change"sv;
+          continue;
+        }
+      }
       std::vector<float> sample_buffer;
       sample_buffer.resize(samples_per_frame);
 
@@ -593,7 +634,7 @@ namespace audio {
           BOOST_LOG(info) << "Reinitializing audio capture"sv;
           mic.reset();
           do {
-            mic = control->microphone(capture_mapping, capture_channels, stream.sampleRate, frame_size, continuous_audio, capture_sink);
+            mic = open_microphone(applied_host_audio, capture_channels, capture_mapping);
             if (!mic) {
               BOOST_LOG(warning) << "Couldn't re-initialize audio input"sv;
             }
@@ -614,7 +655,7 @@ namespace audio {
 
       samples->raise(std::move(sample_buffer));
     }
-    
+
     BOOST_LOG(info) << "Audio capture sampling loop ended (shutdown requested)";
   }
 
@@ -623,21 +664,25 @@ namespace audio {
     auto control_shared = safe::make_shared<audio_ctx_t>(start_audio_control, stop_audio_control);
   }
 
-  audio_ctx_ref_t get_audio_ctx_ref() {
+  audio_ctx_ref_t
+  get_audio_ctx_ref() {
     return control_shared.ref();
   }
 
   // 检查音频上下文是否有活动的引用，不触发构造
-  bool has_audio_ctx_ref() {
+  bool
+  has_audio_ctx_ref() {
     return control_shared.has_ref();
   }
 
   // 单步原子获取已存在的引用，避免 has_audio_ctx_ref + get_audio_ctx_ref 之间的 TOCTOU
-  audio_ctx_ref_t try_get_audio_ctx_ref() {
+  audio_ctx_ref_t
+  try_get_audio_ctx_ref() {
     return control_shared.try_ref();
   }
 
-  bool is_audio_ctx_sink_available(const audio_ctx_t &ctx) {
+  bool
+  is_audio_ctx_sink_available(const audio_ctx_t &ctx) {
     if (!ctx.control) {
       return false;
     }
@@ -650,7 +695,8 @@ namespace audio {
     return ctx.control->is_sink_available(sink);
   }
 
-  int map_stream(int channels, bool quality) {
+  int
+  map_stream(int channels, bool quality) {
     int shift = quality ? 1 : 0;
     switch (channels) {
       case 2:
@@ -671,7 +717,8 @@ namespace audio {
     return STEREO;
   }
 
-  int start_audio_control(audio_ctx_t &ctx) {
+  int
+  start_audio_control(audio_ctx_t &ctx) {
     auto fg = util::fail_guard([]() {
       BOOST_LOG(warning) << "There will be no audio"sv;
     });
@@ -698,8 +745,8 @@ namespace audio {
     return 0;
   }
 
-  void stop_audio_control(audio_ctx_t &ctx) {
-
+  void
+  stop_audio_control(audio_ctx_t &ctx) {
     // 检查 control 是否存在，如果不存在则无法恢复 sink
     if (!ctx.control) {
       BOOST_LOG(debug) << "Audio control not available, skipping sink restoration";
@@ -725,14 +772,16 @@ namespace audio {
     }
   }
 
-  void apply_surround_params(opus_stream_config_t &stream, const stream_params_t &params) {
+  void
+  apply_surround_params(opus_stream_config_t &stream, const stream_params_t &params) {
     stream.channelCount = params.channelCount;
     stream.streams = params.streams;
     stream.coupledStreams = params.coupledStreams;
     stream.mapping = params.mapping;
   }
 
-  int init_mic_redirect_device() {
+  int
+  init_mic_redirect_device() {
     // 单步原子获取：仅当音频上下文已存在时使用，绝不重新触发 start_audio_control。
     auto ref = try_get_audio_ctx_ref();
     if (!ref) {
@@ -746,7 +795,8 @@ namespace audio {
     return ref->control->init_mic_redirect_device();
   }
 
-  void release_mic_redirect_device() {
+  void
+  release_mic_redirect_device() {
     // 单步原子获取：仅当音频上下文已存在时释放设备，避免在已停止后再创建上下文。
     auto ref = try_get_audio_ctx_ref();
     if (!ref) {
@@ -760,7 +810,8 @@ namespace audio {
     ref->control->release_mic_redirect_device();
   }
 
-  int write_mic_pcm(const std::int16_t *samples, std::size_t frame_count) {
+  int
+  write_mic_pcm(const std::int16_t *samples, std::size_t frame_count) {
     // 单步原子获取：避免对已经释放的音频上下文做 check-then-act。
     auto ref = try_get_audio_ctx_ref();
     if (!ref) {

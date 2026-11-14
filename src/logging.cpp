@@ -25,6 +25,11 @@
 // local includes
 #include "logging.h"
 #include "file_handler.h"
+#include "log_retention.h"
+
+#ifdef _WIN32
+  #include "src/platform/windows/misc.h"
+#endif
 
 extern "C" {
 #include <libavutil/log.h>
@@ -159,7 +164,7 @@ namespace logging {
 
   void
   formatter(const boost::log::record_view &view, boost::log::formatting_ostream &os) {
-    constexpr const char *message = "Message";
+    constexpr const char *message_attribute = "Message";
     constexpr const char *severity = "Severity";
 
     auto log_level = view.attribute_values()[severity].extract<int>().get();
@@ -198,8 +203,18 @@ namespace logging {
     auto t = std::chrono::system_clock::to_time_t(now);
     auto lt = *std::localtime(&t);
 
+    const auto message_value = view.attribute_values()[message_attribute].extract<std::string>();
+    std::string message = message_value ? message_value.get() : std::string {};
+#ifdef _WIN32
+    // A third-party library or a CRT error string can still hand us the legacy
+    // ANSI code page. The file and both streams are UTF-8, so keep valid UTF-8
+    // and convert only a line that is not.
+    if (!platf::is_valid_utf8(message)) {
+      message = platf::to_utf8_best_effort(message, GetACP());
+    }
+#endif
     os << "["sv << std::put_time(&lt, "%Y-%m-%d %H:%M:%S.") << boost::format("%03u") % ms.count() << "]: "sv
-       << log_type << view.attribute_values()[message].extract<std::string>();
+       << log_type << message;
   }
 
   /**
@@ -236,6 +251,17 @@ namespace logging {
     // 转写现有日志文件
     if (config::sunshine.restore_log) {
       archive_existing_log(log_file);
+    }
+    else {
+      // The default start used to delete or truncate the previous log, and the service restart after a crash is seconds away: the log of the crashed run was gone.
+      // The previous run's log is kept as sunshine.log.1 (older runs shift up, five are kept): the file itself after a crash or kill, or the newest file the log
+      // sink moved into logs_archive when the run stopped cleanly (an upgrade or a restart).
+      const auto previous_log = file_handler::path_from_utf8(log_file);
+      std::error_code retain_error;
+      log_retention::retain_previous_run(previous_log, previous_log.parent_path() / "logs_archive", log_retention::default_keep, retain_error);
+      if (retain_error) {
+        BOOST_LOG(warning) << "Could not keep the previous log completely: " << retain_error.message();
+      }
     }
 
     // File sink with rotation support

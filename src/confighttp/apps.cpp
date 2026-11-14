@@ -26,8 +26,10 @@
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <thread>
 
 using namespace std::literals;
+using namespace std::chrono_literals;
 using json = nlohmann::json;
 
 namespace confighttp::apps {
@@ -744,6 +746,7 @@ namespace confighttp::apps {
     server.resource["^/api/apps/([0-9]+)$"]["DELETE"] = deleteApp;
     server.resource["^/api/apps/batch-delete$"]["POST"] = batchDeleteApps;
     server.resource["^/api/apps/close$"]["POST"] = closeApp;
+    server.resource["^/api/apps/launch$"]["POST"] = launchApp;
     server.resource["^/api/covers/upload$"]["POST"] = uploadCover;
     server.resource["^/api/apps/test-menu-cmd$"]["POST"] = testMenuCmd;
   }

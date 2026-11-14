@@ -162,7 +162,7 @@ namespace platf {
 
     static gamepad_feedback_msg_t
     make_ds5_haptics_pcm(std::uint16_t id, std::uint8_t flags, std::uint16_t frame_count,
-                         std::uint32_t sequence, std::uint64_t presentation_time_us,
+      std::uint32_t sequence, std::uint64_t presentation_time_us,
                          const std::uint8_t *pcm, std::size_t pcm_size) {
       gamepad_feedback_msg_t msg {};
       msg.type = gamepad_feedback_e::ds5_haptics_pcm;
@@ -346,7 +346,7 @@ namespace platf {
 
   // These values must match moonlight-common-c's LI_FF_* constants. Existing
   // low bits are frozen legacy assignments; new fork-only capabilities use
-  // the high-bit registry documented in common-c/docs/fork-protocol-registry.md.
+  // the high-bit registry documented in common-c/docs/protocol-extension-registry.md.
   namespace platform_caps {
     typedef uint32_t caps_t;
 
@@ -360,8 +360,9 @@ namespace platf {
     constexpr caps_t ds5_haptics_pcm = 0x80;  // Native DualSense authored haptics PCM
     constexpr caps_t dynamic_sdr_white = 0x100;  // Reserved legacy SDR white updates; never advertised
     constexpr caps_t remote_text_context = 0x200;  // InputPane/UIA text context updates
-    constexpr caps_t endpoint_auto_refresh = 0x8000;  // Authenticated UDP endpoint migration v1
     constexpr caps_t host_session_state = 0x800;  // Session lock state updates (0x550E)
+    constexpr caps_t bitrate_callback = 0x4000;  // Host-to-client runtime bitrate updates (0x5506); registry: LI_FF_BITRATE_CALLBACK
+    constexpr caps_t endpoint_auto_refresh = 0x8000;  // Authenticated UDP endpoint migration v1
   };  // namespace platform_caps
 
   struct gamepad_state_t {
@@ -547,9 +548,9 @@ namespace platf {
     /// Kept in sync with video::hdr_metadata::hdr10plus_percentages by a static_assert there.
     static constexpr size_t HDR10PLUS_PERCENTILES = 9;
 
-    float min_maxrgb = 0.0f;    ///< Minimum of max(R,G,B) across all pixels (nits)
-    float max_maxrgb = 0.0f;    ///< Maximum of max(R,G,B) across all pixels (nits)
-    float avg_maxrgb = 0.0f;    ///< Arithmetic mean of max(R,G,B) in linear light (nits), for HDR10+
+    float min_maxrgb = 0.0f;  ///< Minimum of max(R,G,B) across all pixels (nits)
+    float max_maxrgb = 0.0f;  ///< Maximum of max(R,G,B) across all pixels (nits)
+    float avg_maxrgb = 0.0f;  ///< Arithmetic mean of max(R,G,B) in linear light (nits), for HDR10+
     /// Arithmetic mean of the PQ-coded max(R,G,B), in normalized PQ signal space, for
     /// HDR Vivid. Accumulated per pixel by the analyzer, like avg_maxrgb, and
     /// deliberately derived from neither its result nor the histogram: PQ is concave,
@@ -570,9 +571,9 @@ namespace platf {
     float percentile_99 = 0.0f;
     /// maxRGB (nits) at each HDR10+ percentage, ordered like hdr10plus_percentages.
     float distribution_maxrgb[HDR10PLUS_PERCENTILES] = {};
-    float analysis_max_nits = 0.0f; ///< Upper luminance bound used by the analyzer
-    uint64_t sample_sequence = 0;   ///< Increments only when a new GPU readback completes
-    bool valid = false;         ///< Whether stats are available (false on first frame)
+    float analysis_max_nits = 0.0f;  ///< Upper luminance bound used by the analyzer
+    uint64_t sample_sequence = 0;  ///< Increments only when a new GPU readback completes
+    bool valid = false;  ///< Whether stats are available (false on first frame)
   };
 
   struct encode_device_t {
@@ -582,7 +583,8 @@ namespace platf {
     convert(platf::img_t &img) = 0;
 
     // Packet-level confirmation, independent of the PQ/HLG transfer function.
-    virtual void report_dolby_vision_output(bool injected, bool enabled) {}
+    virtual void
+    report_dolby_vision_output(bool injected, bool enabled) {}
 
     video::sunshine_colorspace_t colorspace;
 
@@ -1268,6 +1270,7 @@ namespace platf {
   gamepad_battery(input_t &input, const gamepad_battery_t &battery);
 
   /**
+  /**
    * @brief Create a new virtual gamepad.
    * @param input The global input context.
    * @param id The gamepad ID.
@@ -1278,7 +1281,7 @@ namespace platf {
    */
   int
   alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata,
-                feedback_queue_t feedback_queue, std::string_view client_gamepad);
+    feedback_queue_t feedback_queue, std::string_view client_gamepad);
   void
   free_gamepad(input_t &input, int nr);
   /**
@@ -1289,6 +1292,7 @@ namespace platf {
    */
   bool
   gamepad_is_ds5(input_t &input, int nr);
+
 
   /**
    * @brief 检查已分配的 DualSense 音频触觉会话是否仍可用。

@@ -8,13 +8,13 @@
 // standard includes
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cctype>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
-#include <limits>
 #include <filesystem>
+#include <limits>
 #include <memory>
 #include <shared_mutex>
 #include <sstream>
@@ -26,11 +26,11 @@
 
 // lib includes
 #include "src/http/server.h"
-#include <boost/atomic.hpp>
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/ssl/context.hpp>
 #include <boost/asio/ssl/context_base.hpp>
+#include <boost/atomic.hpp>
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
@@ -73,6 +73,7 @@
 #include "process.h"
 #include "remote_usb/reverse_tunnel_service.h"
 #include "rtsp.h"
+#include "startup_gate.h"
 #include "stream.h"
 #include "tray/system_tray.h"
 #include "utility.h"
@@ -94,7 +95,7 @@ namespace nvhttp {
     "/favicon.ico", "/favicon.png", "/favicon.svg"
   };
 
-  boost::atomic<uint32_t> session_id_counter {0};
+  boost::atomic<uint32_t> session_id_counter { 0 };
   using https_server_t = web::Server<SunshineHTTPS>;
   using http_server_t = web::Server<web::HTTP>;
 
@@ -294,8 +295,8 @@ namespace nvhttp {
 
   bool
   register_launch_ticket(pt::ptree &tree,
-                         const std::shared_ptr<rtsp_stream::launch_session_t> &launch_session,
-                         std::string_view result_node) {
+    const std::shared_ptr<rtsp_stream::launch_session_t> &launch_session,
+    std::string_view result_node) {
     const auto result = rtsp_stream::launch_session_raise(launch_session);
     if (result == rtsp_stream::launch_ticket_register_e::denied) {
       tree.put("root.<xmlattr>.status_code", 403);
@@ -311,8 +312,8 @@ namespace nvhttp {
     const auto busy = result == rtsp_stream::launch_ticket_register_e::client_busy;
     tree.put("root.<xmlattr>.status_code", busy ? 409 : 503);
     tree.put("root.<xmlattr>.status_message",
-             busy ? "A streaming handshake is already in progress for this client" :
-                    "The host has no capacity for another pending streaming handshake");
+      busy ? "A streaming handshake is already in progress for this client" :
+             "The host has no capacity for another pending streaming handshake");
     tree.put(std::string { "root." } + std::string { result_node }, 0);
     BOOST_LOG(warning) << "Unable to register RTSP launch ticket for client "sv
                        << launch_session->client_name << ": result="sv << static_cast<int>(result);
@@ -389,8 +390,7 @@ namespace nvhttp {
         ", PARAMS: "sv,
         query_params,
         safe_query_parameters,
-        "&"sv
-      );
+        "&"sv);
     }
     BOOST_LOG(debug) << log_stream.str();
   }
@@ -514,7 +514,6 @@ namespace nvhttp {
       }
     }
     tree.put("root.ServerCodecModeSupport", codec_mode_flags);
-
     auto current_appid = proc::proc.running();
     tree.put("root.PairStatus", pair_status);
     tree.put("root.currentgame", current_appid);
@@ -542,6 +541,7 @@ namespace nvhttp {
 
     print_request_ip<SunshineHTTPS>(request, "Launch request");
 
+    const auto launch_begin = std::chrono::steady_clock::now();
     pt::ptree tree;
     bool need_to_restore_display_state { false };
     auto g = util::fail_guard([&]() {
@@ -559,6 +559,13 @@ namespace nvhttp {
         display_device::session_t::get().restore_state();
       }
     });
+
+    // a stream needs the encoder probe and the input devices; both finish within seconds of the start
+    if (!startup::await_stream_ready()) {
+      tree.put("root.<xmlattr>.status_code", 503);
+      tree.put("root.<xmlattr>.status_message", startup::starting_message());
+      return;
+    }
 
     auto args = request->parse_query_string();
     if (
@@ -681,6 +688,10 @@ namespace nvhttp {
                                    std::to_string(net::map_port(rtsp_stream::RTSP_SETUP_PORT)));
     tree.put("root.gamesession", 1);
 
+    reachability::observe_client(
+      net::addr_to_normalized_string(request->remote_endpoint().address()),
+      reachability::now_epoch_seconds());
+
     try {
       std::map<std::string, std::string> extra_data {
         { "resolution", std::to_string(launch_session->width) + "x" + std::to_string(launch_session->height) },
@@ -690,8 +701,7 @@ namespace nvhttp {
       if (launch_session->highly_suspected_unknown_client) {
         extra_data.emplace(
           "client_integrity_warning",
-          client_fingerprint::suspicious_client_code
-        );
+          client_fingerprint::suspicious_client_code);
       }
       webhook::send_event_async(webhook::event_t {
         .type = webhook::event_type_t::NV_APP_LAUNCH,
@@ -742,6 +752,12 @@ namespace nvhttp {
       }
     });
 
+    if (!startup::await_stream_ready()) {
+      tree.put("root.<xmlattr>.status_code", 503);
+      tree.put("root.<xmlattr>.status_message", startup::starting_message());
+      return;
+    }
+
     auto current_appid = proc::proc.running();
     if (current_appid == 0) {
       tree.put("root.resume", 0);
@@ -773,7 +789,14 @@ namespace nvhttp {
     // Newer Moonlight clients send localAudioPlayMode on /resume too,
     // so we should use it if it's present in the args and there are
     // no active sessions we could be interfering with.
-    const bool no_active_sessions { rtsp_stream::session_count() == 0 };
+    // A session whose ticket is published but whose RTSP handshake is not done yet (or whose launch is still being
+    // prepared) is not in session_count() yet, but it owns the display: preparing it again here destroys the virtual display
+    // that client is about to capture (a second client's resume did exactly that on 2026-11-12 15:10).
+    const bool session_starting { rtsp_stream::session_starting_or_active() && rtsp_stream::session_count() == 0 };
+    const bool no_active_sessions { rtsp_stream::session_count() == 0 && !session_starting };
+    if (session_starting) {
+      BOOST_LOG(info) << "Resume while another session is starting: keeping its display and encoder setup"sv;
+    }
     if (no_active_sessions && args.find("localAudioPlayMode"s) != std::end(args)) {
       host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     }
@@ -858,8 +881,7 @@ namespace nvhttp {
       if (launch_session->highly_suspected_unknown_client) {
         extra_data.emplace(
           "client_integrity_warning",
-          client_fingerprint::suspicious_client_code
-        );
+          client_fingerprint::suspicious_client_code);
       }
       webhook::send_event_async(webhook::event_t {
         .type = webhook::event_type_t::NV_APP_RESUME,
@@ -944,7 +966,6 @@ namespace nvhttp {
     response->close_connection_after_response = true;
   }
 
-
   void
   setup(const std::string &pkey, const std::string &cert) {
     pairing::set_credentials(pkey, cert);
@@ -1014,8 +1035,7 @@ namespace nvhttp {
         tunnel_config.bind_address = bind_address.empty() ? "0.0.0.0" : bind_address;
         // Resolve after the main port has been parsed. Its validated range
         // reserves +21 for RTSP, so +7 cannot overflow a uint16_t.
-        tunnel_config.port = config::nvhttp.usb_forwarding_port != 0
-          ? config::nvhttp.usb_forwarding_port : net::map_port(7);
+        tunnel_config.port = config::nvhttp.usb_forwarding_port != 0 ? config::nvhttp.usb_forwarding_port : net::map_port(7);
         tunnel_config.session_token = usb_forwarding_token;
         tunnel_config.certificate_file = config::nvhttp.cert;
         tunnel_config.private_key_file = config::nvhttp.pkey;
@@ -1025,8 +1045,8 @@ namespace nvhttp {
         // Optional USB forwarding must never claim a core TCP listener first.
         const auto tunnel_port = tunnel_config.port;
         const bool reserved_port = tunnel_port == port_http || tunnel_port == port_https ||
-          tunnel_port == net::map_port(confighttp::PORT_HTTPS) ||
-          tunnel_port == net::map_port(rtsp_stream::RTSP_SETUP_PORT);
+                                   tunnel_port == net::map_port(confighttp::PORT_HTTPS) ||
+                                   tunnel_port == net::map_port(rtsp_stream::RTSP_SETUP_PORT);
         if (!reserved_port) {
           usb_forwarding_available = reverse_tunnel_service.start(std::move(tunnel_config));
         }
@@ -1119,7 +1139,8 @@ namespace nvhttp {
           { "enabled", config::nvhttp.usb_forwarding_enabled },
           { "available", usb_forwarding_available },
           { "reason", !config::nvhttp.usb_forwarding_enabled ? "disabled" :
-                        usb_forwarding_available ? "ready" : "unavailable" },
+                      usb_forwarding_available               ? "ready" :
+                                                               "unavailable" },
         };
         if (usb_forwarding_available) {
           body["port"] = reverse_tunnel_service.bound_port();

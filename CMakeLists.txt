@@ -38,6 +38,8 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # set version info for this build
 include(${CMAKE_MODULE_PATH}/prep/build_version.cmake)
+# build identity: full commit, channel, UTC build time, variant, package
+include(${CMAKE_MODULE_PATH}/prep/build_info.cmake)
 
 # cmake build flags
 include(${CMAKE_MODULE_PATH}/prep/options.cmake)
@@ -62,6 +64,12 @@ include(${CMAKE_MODULE_PATH}/macros/common.cmake)
 
 # load dependencies
 include(${CMAKE_MODULE_PATH}/dependencies/common.cmake)
+
+# Standalone DS5 and USB/IP semantic cores. These plain-C libraries have no
+# dependency on the Platform Runtime or Module SDK.
+add_subdirectory("${CMAKE_SOURCE_DIR}/third-party/alkaidlab-ds5-core")
+# STUN wire codec of the Platform (core/network/stun), used by the network overview.
+add_subdirectory("${CMAKE_SOURCE_DIR}/third-party/alkaidlab-stun-codec")
 
 # Explicit inventories are shared by the host and its test variant.
 include(${CMAKE_MODULE_PATH}/sources/host.cmake)

@@ -5,6 +5,7 @@
 #define INITGUID
 
 // platform includes
+#include "src/startup_gate.h"
 #include <audioclient.h>
 #include <avrt.h>
 #include <chrono>
@@ -255,7 +256,7 @@ namespace platf::audio {
   class co_init_t: public deinit_t {
   public:
     co_init_t():
-        status {CoInitializeEx(nullptr, COINIT_MULTITHREADED | COINIT_SPEED_OVER_MEMORY)} {
+        status { CoInitializeEx(nullptr, COINIT_MULTITHREADED | COINIT_SPEED_OVER_MEMORY) } {
     }
 
     ~co_init_t() override {
@@ -500,7 +501,8 @@ namespace platf::audio {
           const auto remaining = sample_size - (sample_buf_pos - std::begin(sample_buf));
           std::fill_n(sample_buf_pos, remaining, 0.0f);
           sample_buf_pos += remaining;
-        } else if (capture_result != capture_e::ok) {
+        }
+        else if (capture_result != capture_e::ok) {
           return capture_result;
         }
       }
@@ -1064,7 +1066,7 @@ namespace platf::audio {
       }
       else {
         BOOST_LOG(warning) << "Couldn't set ["sv << sink << "] to role ["sv << role << "]: 0x"sv
-                          << util::hex(status).to_string_view();
+                           << util::hex(status).to_string_view();
       }
     }
 
@@ -1341,7 +1343,8 @@ namespace platf::audio {
         "Sunshine is keeping the virtual audio device selected for host audio streaming. Stop the stream before switching playback devices.");
       task_pool.pushDelayed([notification_id]() {
         tray_state::clear_notification_if(notification_id);
-      }, std::chrono::seconds(10));
+      },
+        std::chrono::seconds(10));
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
       system_tray::show_notification(
         "Audio device kept for streaming",
@@ -1771,9 +1774,9 @@ namespace platf {
 
   std::unique_ptr<deinit_t>
   init() {
-    if (dxgi::init()) {
-      return nullptr;
-    }
+      if (dxgi::init()) {
+        return nullptr;
+      }
 
     // Initialize COM
     auto co_init = std::make_unique<platf::audio::co_init_t>();

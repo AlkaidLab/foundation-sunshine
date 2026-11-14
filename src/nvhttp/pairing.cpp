@@ -220,7 +220,8 @@ namespace nvhttp {
           named_cert_nodes.push_back(std::make_pair(""s, named_cert_node));
         }
       };
-      if (snapshot) serialize_devices(*snapshot);
+      if (snapshot)
+        serialize_devices(*snapshot);
       else {
         std::shared_lock<std::shared_mutex> cl(client_state_mutex);
         serialize_devices(client_root);
@@ -969,7 +970,8 @@ namespace nvhttp {
       return false;
     }
     const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-      std::chrono::system_clock::now().time_since_epoch()).count();
+      std::chrono::system_clock::now().time_since_epoch())
+                          .count();
     // A mark left by a run with a fast clock sits far beyond the corrected
     // host clock; accept a fresh end instead of rejecting every session
     // until real time catches up. One hour absorbs ordinary skew.

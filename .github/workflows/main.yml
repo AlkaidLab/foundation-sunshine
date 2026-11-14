@@ -293,6 +293,13 @@ jobs:
           BRANCH: ${{ github.head_ref || github.ref_name }}
           BUILD_VERSION: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
           COMMIT: ${{ needs.setup_release.outputs.release_commit }}
+          # Build identity (cmake/prep/build_info.cmake): master builds carry the full commit too. A published build is a
+          # pre-release (beta); PRs and manual runs are dev builds. One build makes both packages, so the package stays auto.
+          SUNSHINE_BUILD_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          SUNSHINE_BUILD_BRANCH: ${{ github.head_ref || github.ref_name }}
+          SUNSHINE_BUILD_CHANNEL: ${{ needs.setup_release.outputs.publish_release == 'true' && 'beta' || 'dev' }}
+          SUNSHINE_BUILD_BUILDER: ci
+          SUNSHINE_BUILD_CI_RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           # ccache.exe is a native binary, so it reads the Windows-style path
           # straight out of the environment even under the msys2 shell.
           CCACHE_DIR: ${{ github.workspace }}\.ccache

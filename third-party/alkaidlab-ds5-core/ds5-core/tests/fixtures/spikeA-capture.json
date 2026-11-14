@@ -1,0 +1,72 @@
+{
+  "capture": "Spike A usbip-win2 0.9.8.1 evidence",
+  "retrieved": "2026-10-31",
+  "source_files": [
+    "spikeA/uac1_usbip_server.py",
+    "spikeA/evidence/windows_session_probe.txt",
+    "spikeA/evidence/run1.jsonl",
+    "spikeA/evidence/run3.jsonl"
+  ],
+  "facts": {
+    "configuration_descriptor_bytes": 227,
+    "hid_report_descriptor_bytes": 273,
+    "usb_input_report_bytes": 64,
+    "usb_output_report_common_bytes": 48,
+    "usb_output_report_bytes": 63,
+    "feature_reports": {
+      "0x05": 41,
+      "0x09": 20,
+      "0x20": 64
+    },
+    "audio_out": {
+      "channels": 4,
+      "sample_rate_hz": 48000,
+      "bytes_per_packet": 384,
+      "packets_per_urb": 10,
+      "interval": 4
+    },
+    "audio_in": {
+      "channels": 2,
+      "sample_rate_hz": 48000,
+      "bytes_per_packet": 192,
+      "packets_per_urb": 10,
+      "interval": 4
+    },
+    "uac_feature_units": {
+      "speaker": 2,
+      "microphone": 5
+    },
+    "uac_feature_values": {
+      "speaker_min": -25600,
+      "speaker_max": 0,
+      "speaker_res": 256,
+      "microphone_min": 0,
+      "microphone_max": 12288,
+      "microphone_res": 122
+    }
+  },
+  "files": {
+    "cfg_desc.hex": "8e09c84d642ca1449b66ea87b88abd001ff80844a384694d3cd0d7b83161d79b",
+    "hid_report_desc.hex": "f88ffc5cc4e470eb2eceb526cde2c915a1ce6af3545e33d86d508ff4244d0fa3",
+    "spikeA-feature-05.hex": "5978b0ea58d8caeea72544ac24b29737ab794cc8b34791b3f4bf28db9eb06a7c",
+    "spikeA-feature-09.hex": "ac8952c4d994432b512f19ed2046002a62b1d6201b19740160bcfe59157209ce",
+    "spikeA-feature-20.hex": "a288c77da804ddca83316ab49acc86c384e2270fa5e433e212e4a8b0efbc0157",
+    "spikeA-input-usb.hex": "2cfbb460e456fa9f93873bafdd8e62da6424ba3fe75233ea2c124aad4aaecf56",
+    "spikeA-output-usb-63.hex": "8fa740efabcf98b67872b5487c47a0e5887f1f4ab93386e0bfa09934732de5c7",
+    "spikeA-input-extended-synthetic.hex": "9093b8991dd4da22fc866b8e69de0dd5d2e2529744f571dd84a61cb4ee32deef",
+    "spikeA-bt-input-synthetic.hex": "2816dc87b07e1b706122ef15d8776d0ae064012332d5fc6b5f239249b02aa47b",
+    "spikeA-bt-output-synthetic.hex": "18f67ff5de18a6cd500ac028e893df98d58922c282743bd8c2596bb103140205"
+  },
+  "fixture_status": {
+    "spikeA-input-usb.hex": "captured from the Spike A emulated device: windows_session_probe.txt input report",
+    "spikeA-feature-05.hex": "captured from the Spike A emulated device: windows_session_probe.txt feature report",
+    "spikeA-feature-09.hex": "captured from the Spike A emulated device: windows_session_probe.txt feature report",
+    "spikeA-feature-20.hex": "captured from the Spike A emulated device: windows_session_probe.txt feature report",
+    "cfg_desc.hex": "spike-derived: descriptor bytes used by the working Spike A server; not a raw host capture",
+    "hid_report_desc.hex": "spike-derived: descriptor bytes used by the working Spike A server; not a raw host capture",
+    "spikeA-output-usb-63.hex": "synthetic: source-defined 63-byte shape; no 63-byte capture exists",
+    "spikeA-bt-input-synthetic.hex": "synthetic: normalized from captured USB input; no Bluetooth capture exists",
+    "spikeA-bt-output-synthetic.hex": "synthetic: source-defined Bluetooth common payload; no Bluetooth capture exists",
+    "spikeA-input-extended-synthetic.hex": "synthetic: independent values derived from the captured USB shape for parser coverage"
+  }
+}

@@ -64,6 +64,10 @@
     "method": "POST"
   },
   {
+    "pattern": "^/api/apps/scan$",
+    "method": "POST"
+  },
+  {
     "pattern": "^/api/config$",
     "method": "GET"
   },
@@ -171,6 +175,16 @@
     "windows": true
   },
   {
+    "pattern": "^/api/usbip-root/status$",
+    "method": "GET",
+    "windows": true
+  },
+  {
+    "pattern": "^/api/usbip-root/repair$",
+    "method": "POST",
+    "windows": true
+  },
+  {
     "pattern": "^/api/vulkan-hdr-bridge$",
     "method": "GET",
     "windows": true
@@ -235,6 +249,10 @@
   {
     "pattern": "^/api/runtime/sessions/stop$",
     "method": "POST"
+  },
+  {
+    "pattern": "^/api/runtime/system$",
+    "method": "GET"
   },
   {
     "pattern": "^/api/runtime/hdr$",

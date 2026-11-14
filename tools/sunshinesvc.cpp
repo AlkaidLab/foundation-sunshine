@@ -5,6 +5,7 @@
 #define WIN32_LEAN_AND_MEAN
 // MinGW's ToolHelp header depends on the Windows base types.
 // clang-format off
+#include <utility>
 #include <Windows.h>
 #include <TlHelp32.h>
 // clang-format on
@@ -12,6 +13,7 @@
 #include <wtsapi32.h>
 
 #include <algorithm>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -187,7 +189,7 @@ ResolveGuiAgentPath(std::wstring &gui_directory, std::wstring &gui_path) {
 }
 
 GuiAgentLookup
-OpenExistingGuiAgent(DWORD console_session_id, const std::wstring &gui_path) {
+OpenExistingGuiAgent(DWORD console_session_id, const std::wstring &gui_path, DWORD exclude_process_id = 0) {
   GuiAgentLookup result;
   const auto snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
   if (snapshot == INVALID_HANDLE_VALUE) {
@@ -213,22 +215,30 @@ OpenExistingGuiAgent(DWORD console_session_id, const std::wstring &gui_path) {
   }
 
   while (true) {
-    if (_wcsicmp(entry.szExeFile, L"sunshine-gui.exe") == 0) {
+    if (_wcsicmp(entry.szExeFile, L"sunshine-gui.exe") == 0 && entry.th32ProcessID != exclude_process_id) {
       DWORD session_id = 0;
       if (ProcessIdToSessionId(entry.th32ProcessID, &session_id) && session_id == console_session_id) {
-        const auto candidate = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ProcessID);
+        auto candidate = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, entry.th32ProcessID);
         if (candidate != NULL) {
           std::wstring candidate_path(32768, L'\0');
           DWORD candidate_path_length = static_cast<DWORD>(candidate_path.size());
           if (QueryFullProcessImageNameW(candidate, 0, candidate_path.data(), &candidate_path_length)) {
             candidate_path.resize(candidate_path_length);
             if (_wcsicmp(candidate_path.c_str(), gui_path.c_str()) == 0) {
-              result.handle = candidate;
-              result.process_id = entry.th32ProcessID;
-              break;
+              if (WaitForSingleObject(candidate, 0) == WAIT_OBJECT_0) {
+                CloseHandle(candidate);
+                candidate = NULL;
+              }
+              else {
+                result.handle = candidate;
+                result.process_id = entry.th32ProcessID;
+                break;
+              }
             }
           }
-          CloseHandle(candidate);
+          if (candidate != NULL) {
+            CloseHandle(candidate);
+          }
         }
       }
     }
@@ -247,13 +257,13 @@ OpenExistingGuiAgent(DWORD console_session_id, const std::wstring &gui_path) {
 }
 
 GuiAgentLookup
-FindExistingGuiAgent(DWORD console_session_id, std::wstring &gui_directory, std::wstring &gui_path) {
+FindExistingGuiAgent(DWORD console_session_id, std::wstring &gui_directory, std::wstring &gui_path, DWORD exclude_process_id = 0) {
   GuiAgentLookup result;
   result.error = ResolveGuiAgentPath(gui_directory, gui_path);
   if (result.error != ERROR_SUCCESS) {
     return result;
   }
-  return OpenExistingGuiAgent(console_session_id, gui_path);
+  return OpenExistingGuiAgent(console_session_id, gui_path, exclude_process_id);
 }
 
 DWORD
@@ -558,10 +568,10 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
       gui_agent_retry_at_ms = exit_at_ms + sunshinesvc::GUI_REATTACH_POLL_MS;
       gui_agent_last_error = ERROR_SUCCESS;
       gui_agent_backoff.reset();
-      WriteServiceLog(log_file_handle,
+        WriteServiceLog(log_file_handle,
         "GUI agent exited cleanly in session " + std::to_string(gui_agent_session_id) +
-          " (PID " + std::to_string(exited_process_id) +
-          "); automatic launch suppressed while existing-process reattach remains active");
+            " (PID " + std::to_string(exited_process_id) +
+            "); automatic launch suppressed while existing-process reattach remains active");
       return;
     }
 
@@ -577,8 +587,10 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
     }
   };
 
-  // Loop every 3 seconds until the stop event is set or Sunshine.exe is running
-  while (WaitForSingleObject(stop_event, 3000) != WAIT_OBJECT_0) {
+  // Loop every 3 seconds until the stop event is set or Sunshine.exe is running. The first pass is at once: the loop used to wait 3 s before it tried at all, and
+  // every start of the service (every boot) lost them (service 12:53:00, Sunshine.exe 12:53:04). A console session that is not there yet is picked up at the next pass.
+  DWORD loop_wait_ms = 0;
+  while (WaitForSingleObject(stop_event, std::exchange(loop_wait_ms, 3000)) != WAIT_OBJECT_0) {
     auto console_session_id = WTSGetActiveConsoleSessionId();
     if (console_session_id == 0xFFFFFFFF) {
       // No console session yet
@@ -600,37 +612,37 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
       continue;
     }
 
-    // Job objects cannot span sessions, so we must create one for each process
+      // Job objects cannot span sessions, so we must create one for each process
     auto job_handle = CreateJobObjectForChildProcess();
-    if (job_handle == NULL) {
-      CloseHandle(console_token);
-      continue;
-    }
+      if (job_handle == NULL) {
+        CloseHandle(console_token);
+        continue;
+      }
 
-    // Start Sunshine.exe inside our job object
-    UpdateProcThreadAttribute(startup_info.lpAttributeList,
-      0,
-      PROC_THREAD_ATTRIBUTE_JOB_LIST,
-      &job_handle,
-      sizeof(job_handle),
-      NULL,
-      NULL);
+      // Start Sunshine.exe inside our job object
+      UpdateProcThreadAttribute(startup_info.lpAttributeList,
+        0,
+        PROC_THREAD_ATTRIBUTE_JOB_LIST,
+        &job_handle,
+        sizeof(job_handle),
+        NULL,
+        NULL);
 
-    PROCESS_INFORMATION process_info;
-    if (!CreateProcessAsUserW(console_token,
-          L"Sunshine.exe",
-          NULL,
-          NULL,
-          NULL,
-          TRUE,
-          CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT,
-          NULL,
-          NULL,
-          (LPSTARTUPINFOW) &startup_info,
-          &process_info)) {
-      CloseHandle(console_token);
-      CloseHandle(job_handle);
-      continue;
+      if (!CreateProcessAsUserW(console_token,
+            L"Sunshine.exe",
+            NULL,
+            NULL,
+            NULL,
+            TRUE,
+            CREATE_UNICODE_ENVIRONMENT | CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT,
+            NULL,
+            NULL,
+            (LPSTARTUPINFOW) &startup_info,
+            &process_info)) {
+        CloseHandle(console_token);
+        CloseHandle(job_handle);
+        continue;
+      }
     }
 
     // The GUI may have exited after the previous Core stopped, while no inner
@@ -737,10 +749,14 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
       }
     } while (still_running);
 
-    CloseHandle(process_info.hThread);
+    if (process_info.hThread != NULL) {
+      CloseHandle(process_info.hThread);
+    }
     CloseHandle(process_info.hProcess);
     CloseHandle(console_token);
-    CloseHandle(job_handle);
+    if (job_handle != NULL) {
+      CloseHandle(job_handle);
+    }
   }
 
   CloseGuiAgentHandle(gui_agent);

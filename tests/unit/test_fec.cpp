@@ -2,6 +2,8 @@
 #include "src/streaming/fec.h"
 #include <gtest/gtest.h>
 #include <limits>
+#include <memory>
+#include <vector>
 
 TEST(VideoFec, PreferenceParserRejectsInvalidAndOutOfRangeInput) {
   for (const auto input : { "", "4x", "-3", "101", "999999999999999999999", " 1", "+1" })
@@ -298,4 +300,77 @@ TEST(VideoFecBudget, HysteresisCannotPreventEnablingMinimumProtection) {
   ASSERT_TRUE(next);
   EXPECT_EQ(next->fec_percentage, 1);
   EXPECT_EQ(next->encoder_kbps, 9900);
+}
+
+
+// ---- the host's bitrate ceiling is live (tray 码率上限): a running session's budget follows it ----
+
+TEST(HostBitrateCeiling, TextMeansAWholeNumberOfKbpsAndZeroForAnythingElse) {
+  EXPECT_EQ(streaming::parse_bitrate_ceiling_kbps("50000"), 50000);
+  EXPECT_EQ(streaming::parse_bitrate_ceiling_kbps("0"), 0);
+  for (const auto text : { "", "auto", "-5", "12.5", " 7", "7 ", "1e3", "99999999999999999999" })
+    EXPECT_EQ(streaming::parse_bitrate_ceiling_kbps(text), 0) << text;
+}
+
+TEST(HostBitrateCeiling, ALoweredCeilingBringsARunningSessionDownAtOnce) {
+  streaming::bitrate_budget_t budget(80000, 0, 0, 0, 0, false);  // no ceiling when it was made
+  ASSERT_EQ(budget.total(), 80000);
+  EXPECT_EQ(budget.set_maximum(30000), 30000);
+  EXPECT_EQ(budget.total(), 30000);
+  // the encoding thread sees it through pending() like any other request
+  const auto next = budget.pending(1000);
+  ASSERT_TRUE(next);
+  EXPECT_EQ(next->total_kbps, 30000);
+  EXPECT_EQ(next->encoder_kbps, 30000);
+  budget.commit(*next);
+  EXPECT_EQ(budget.applied().total_kbps, 30000);
+}
+
+TEST(HostBitrateCeiling, ASessionBelowTheNewCeilingIsLeftAlone) {
+  streaming::bitrate_budget_t budget(20000, 0, 0, 0, 0, false);
+  EXPECT_EQ(budget.set_maximum(30000), 20000);
+  EXPECT_FALSE(budget.pending(1000));
+}
+
+TEST(HostBitrateCeiling, ARaisedOrRemovedCeilingGivesBackWhatTheClientLastAskedFor) {
+  streaming::bitrate_budget_t budget(80000, 40000, 0, 0, 0, false);  // made under a 40 Mbps ceiling, the client wanted 80
+  ASSERT_EQ(budget.total(), 40000);
+  EXPECT_EQ(budget.set_maximum(60000), 60000);  // min(asked 80000, new ceiling 60000)
+  EXPECT_EQ(budget.set_maximum(100000), 80000);  // above what was asked: what was asked
+  EXPECT_EQ(budget.set_maximum(0), 80000);  // 0 = automatic, no ceiling
+  EXPECT_EQ(budget.maximum(), 0);
+}
+
+TEST(HostBitrateCeiling, WhatTheAbrAsksForIsHeldToTheCeilingAndRemembered) {
+  streaming::bitrate_budget_t budget(50000, 0, 0, 0, 0, false);
+  budget.set_maximum(30000);
+  EXPECT_EQ(budget.request(45000), 30000);  // the ABR wants up: the ceiling holds
+  EXPECT_EQ(budget.request(20000), 20000);  // and down: it follows
+  EXPECT_EQ(budget.set_maximum(25000), 20000);  // a ceiling above the session changes nothing
+  EXPECT_EQ(budget.set_maximum(0), 20000);  // what the ABR last asked, not the first request
+}
+
+TEST(HostBitrateCeiling, EverySessionFollowsTheSameCeilingEachToItsOwnRequest) {
+  std::vector<std::shared_ptr<streaming::bitrate_budget_t>> sessions;
+  for (const int asked : { 12000, 45000, 90000 }) sessions.push_back(std::make_shared<streaming::bitrate_budget_t>(asked, 0, 0, 0, 0, false));
+  const auto totals = [&] { std::vector<int> t; for (const auto &s : sessions) t.push_back(s->total()); return t; };
+  EXPECT_EQ(totals(), (std::vector<int> { 12000, 45000, 90000 }));
+  for (const auto &s : sessions) s->set_maximum(30000);
+  EXPECT_EQ(totals(), (std::vector<int> { 12000, 30000, 30000 }));
+  for (const auto &s : sessions) s->set_maximum(60000);
+  EXPECT_EQ(totals(), (std::vector<int> { 12000, 45000, 60000 }));
+  for (const auto &s : sessions) s->set_maximum(0);
+  EXPECT_EQ(totals(), (std::vector<int> { 12000, 45000, 90000 }));
+}
+
+TEST(HostBitrateCeiling, TheFecAllowanceAndTheReservesStillComeOutOfTheNewTotal) {
+  streaming::bitrate_budget_t budget(60000, 0, 512, 500, 20, false);
+  const auto before = budget.applied();
+  budget.set_maximum(30000);
+  const auto next = budget.pending(1000);
+  ASSERT_TRUE(next);
+  EXPECT_EQ(next->total_kbps, 30000);
+  EXPECT_LT(next->encoder_kbps, 30000);  // repair, audio and overhead are inside the total
+  EXPECT_LT(next->encoder_kbps, before.encoder_kbps);
+  EXPECT_EQ(next->fec_percentage, 20U);
 }

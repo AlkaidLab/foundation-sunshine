@@ -399,7 +399,7 @@ namespace video {
           name { std::move(name) }, value { std::move(value) } {}
     };
 
-    const std::unique_ptr<const encoder_platform_formats_t> platform_formats;
+    const std::shared_ptr<const encoder_platform_formats_t> platform_formats;  ///< shared: a copy of the encoder (the health check probes one) uses the same formats
 
     struct codec_t {
       std::vector<option_t> common_options;

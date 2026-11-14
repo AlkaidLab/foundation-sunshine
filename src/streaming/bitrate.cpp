@@ -1,6 +1,7 @@
 #include "bitrate.h"
 
 #include <algorithm>
+#include <charconv>
 #include <cstdlib>
 #include <limits>
 
@@ -14,6 +15,24 @@ namespace streaming {
   }  // namespace
 
   int
+  parse_bitrate_ceiling_kbps(std::string_view text) {
+    int value = 0;
+    const auto *first = text.data(), *last = text.data() + text.size();
+    const auto [end, error] = std::from_chars(first, last, value);
+    if (error != std::errc {} || end != last || value < 0) return 0;
+    return value;
+  }
+
+  bitrate_range_t
+  abr_range_under_ceiling(int client_min, int client_max, int preset_min, int preset_max, int ceiling) {
+    ceiling = std::max(0, ceiling);
+    int max_kbps = client_max > 0 ? (ceiling > 0 ? std::min(client_max, ceiling) : client_max) : (ceiling > 0 ? ceiling : std::max(0, preset_max));
+    int min_kbps = client_min > 0 ? client_min : std::max(0, preset_min);
+    if (max_kbps > 0 && min_kbps > max_kbps) min_kbps = max_kbps;
+    return { min_kbps, max_kbps };
+  }
+
+  int
   encoder_bitrate(int budget, unsigned percentage) {
     return clamp_bitrate(static_cast<std::int64_t>(budget) * 100 / (100 + std::min(percentage, 255U)));
   }
@@ -24,8 +43,8 @@ namespace streaming {
   }
 
   bitrate_budget_t::bitrate_budget_t(int total, int maximum, int audio, int overhead, unsigned fec, bool automatic):
-      maximum_(maximum), audio_(std::max(0, audio)), overhead_(std::max(0, overhead)),
-      requested_total_(maximum > 0 ? std::clamp(total, 1, maximum) : std::max(1, total)),
+      maximum_(std::max(0, maximum)), audio_(std::max(0, audio)), overhead_(std::max(0, overhead)),
+      requested_total_(maximum > 0 ? std::clamp(total, 1, maximum) : std::max(1, total)), wanted_total_(std::max(1, total)),
       requested_fec_(std::min(fec, 255U)), window_fec_(requested_fec_), automatic_(automatic), applied_(allocate()) {}
 
   bitrate_allocation_t
@@ -38,8 +57,23 @@ namespace streaming {
   int
   bitrate_budget_t::request(int total) {
     std::lock_guard lock(mutex_);
-    requested_total_ = maximum_ > 0 ? std::clamp(total, 1, maximum_) : std::max(1, total);
+    wanted_total_ = std::max(1, total);
+    requested_total_ = maximum_ > 0 ? std::clamp(wanted_total_, 1, maximum_) : wanted_total_;
     return requested_total_;
+  }
+
+  int
+  bitrate_budget_t::set_maximum(int maximum) {
+    std::lock_guard lock(mutex_);
+    maximum_ = std::max(0, maximum);
+    requested_total_ = maximum_ > 0 ? std::clamp(wanted_total_, 1, maximum_) : wanted_total_;
+    return requested_total_;
+  }
+
+  int
+  bitrate_budget_t::maximum() const {
+    std::lock_guard lock(mutex_);
+    return maximum_;
   }
 
   int

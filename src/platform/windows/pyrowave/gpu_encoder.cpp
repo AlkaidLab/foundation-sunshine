@@ -103,7 +103,7 @@ namespace platf::pyrowave_windows {
           frame_rate_num_ { frame_rate_num },
           frame_rate_den_ { frame_rate_den },
           bitrate_kbps_ {
-            video::cap_initial_encoder_bitrate(config.bitrate, ::config::video.max_bitrate, 0)
+            video::cap_initial_encoder_bitrate(config.bitrate, ::config::host_max_bitrate_kbps(), 0)
           },
            conversion_ { dxgi::make_shared_yuv_encode_device(display, config) } {
         if (packet_boundary == 0 || packet_boundary > LI_PYROWAVE_MAX_PACKET_SIZE ||

@@ -7,7 +7,10 @@
 #include "process.h"
 
 #include <algorithm>
+#include <array>
+#include <chrono>
 #include <filesystem>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -39,10 +42,8 @@
 #ifdef _WIN32
   // from_utf8() string conversion function
   #include "platform/windows/misc.h"
-
   // _SH constants for _wfsopen()
   #include <share.h>
-
   #define STB_IMAGE_IMPLEMENTATION
   #include "stb_image.h"
   #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -55,7 +56,8 @@ namespace proc {
   using namespace std::literals;
   namespace pt = boost::property_tree;
 
-  uint32_t calculate_crc32(const std::string &input);
+  uint32_t
+  calculate_crc32(const std::string &input);
 
   proc_t proc;
 
@@ -144,7 +146,8 @@ namespace proc {
 #else
       parts = boost::program_options::split_unix(cmd);
 #endif
-    } catch (boost::escaped_list_error &err) {
+    }
+    catch (boost::escaped_list_error &err) {
       BOOST_LOG(error) << "Boost failed to parse command ["sv << cmd << "] because " << err.what();
       return boost::filesystem::path();
     }
@@ -175,16 +178,13 @@ namespace proc {
     // Now that we have a complete path, we can just use parent_path()
     return cmd_path.parent_path();
   }
-
   int
   proc_t::execute(int app_id, std::shared_ptr<rtsp_stream::launch_session_t> launch_session) {
     // Ensure starting from a clean slate
     terminate();
-
     auto iter = std::find_if(_apps.begin(), _apps.end(), [&app_id](const auto app) {
       return app.id == std::to_string(app_id);
     });
-
     if (iter == _apps.end()) {
       BOOST_LOG(error) << "Couldn't find app with ID ["sv << app_id << ']';
       return 404;
@@ -200,7 +200,6 @@ namespace proc {
     // Apply the app override before the input session creates virtual pads.
     // The global Sunshine setting remains unchanged.
     platf::set_gamepad_mode(_app.gamepad_mode);
-
     // Add Stream-specific environment variables
     // These variables are dynamically set for each streaming session and will be passed
     // to the launched application. They should be preserved during refresh() if an app is running.
@@ -241,7 +240,6 @@ namespace proc {
       // fopen() interprets the filename as an ANSI string on Windows, so we must convert it
       // to UTF-16 and use the wchar_t variants for proper Unicode log file path support.
       auto woutput = platf::from_utf8(_app.output);
-
       // Use _SH_DENYNO to allow us to open this log file again for writing even if it is
       // still open from a previous execution. This is required to handle the case of a
       // detached process executing again while the previous process is still running.
@@ -250,13 +248,11 @@ namespace proc {
       _pipe.reset(fopen(_app.output.c_str(), "a"));
 #endif
     }
-
     std::error_code ec;
     // Executed when returning from function
     auto fg = util::fail_guard([&]() {
       terminate();
     });
-
     for (; _app_prep_it != std::end(_app.prep_cmds); ++_app_prep_it) {
       auto &cmd = *_app_prep_it;
 
@@ -429,8 +425,7 @@ namespace proc {
           .type = webhook::event_type_t::NV_APP_TERMINATE,
           .timestamp = webhook::get_current_timestamp(),
           .app_name = _app.name,
-          .app_id = _app_id
-        });
+          .app_id = _app_id });
       }
       catch (...) {
         BOOST_LOG(error) << "Webhook app termination event construction failed"sv;
@@ -460,7 +455,7 @@ namespace proc {
     for (const auto &app : apps) {
       combined_info += app.id + app.name;
     }
-    
+
     // Use CRC32 for the tag, same as used elsewhere
     auto crc = calculate_crc32(combined_info);
     _apps_etag = std::to_string(crc);
@@ -516,6 +511,14 @@ namespace proc {
     return iter == _apps.end() ? std::string() : iter->cmd;
   }
 
+  std::optional<unsigned long>
+  proc_t::get_running_pid() const {
+    if (!_process.valid()) {
+      return std::nullopt;
+    }
+    return _process.id();
+  }
+
   std::string
   proc_t::get_last_run_app_name() {
     return _app.name;
@@ -566,7 +569,8 @@ namespace proc {
         BOOST_LOG(info) << "Executing cmd ["sv << cmd << "]"sv;
         child.detach();
       }
-    } else {
+    }
+    else {
       BOOST_LOG(warning) << "Couldn't find cmd ["sv << cmd_id << "]"sv;
       for (auto &cmd : _app.menu_cmds) {
         BOOST_LOG(warning) << "Menu cmd: ["sv << cmd.id << "]"sv;
@@ -670,7 +674,7 @@ namespace proc {
     if (app_image_path.find("http://") == 0 || app_image_path.find("https://") == 0) {
       try {
         std::string original_url = app_image_path;
-        
+
         // 移除查询参数
         size_t query_start = app_image_path.find('?');
         if (query_start != std::string::npos) {
@@ -678,23 +682,23 @@ namespace proc {
         }
 
         // 从URL提取文件名
-        auto hash = std::hash<std::string>{}(original_url);
+        auto hash = std::hash<std::string> {}(original_url);
         auto ext = std::filesystem::path(app_image_path).extension().string();
-        
+
         // 安全检查：验证文件扩展名
         std::string ext_lower = ext;
         std::transform(ext_lower.begin(), ext_lower.end(), ext_lower.begin(), ::tolower);
-        if (ext_lower != ".png" && ext_lower != ".jpg" && ext_lower != ".jpeg" && 
+        if (ext_lower != ".png" && ext_lower != ".jpg" && ext_lower != ".jpeg" &&
             ext_lower != ".bmp" && ext_lower != ".webp" && ext_lower != ".ico") {
           BOOST_LOG(warning) << "Blocked download of non-image extension: " << ext;
-          return DEFAULT_APP_IMAGE_PATH; 
+          return DEFAULT_APP_IMAGE_PATH;
         }
 
         std::string filename = "url_" + std::to_string(hash) + (ext.empty() ? ".png" : ext);
-        
+
         // 保存到本地 covers 目录 (User requested to save to covers instead of assets)
         auto local_path = platf::appdata() / "covers" / filename;
-        
+
         // 如果文件不存在则下载
         if (!std::filesystem::exists(local_path)) {
           BOOST_LOG(info) << "Downloading image from URL: " << original_url;
@@ -703,9 +707,10 @@ namespace proc {
             return DEFAULT_APP_IMAGE_PATH;
           }
         }
-        
+
         app_image_path = file_handler::path_to_utf8(local_path);
-      } catch (const std::exception& e) {
+      }
+      catch (const std::exception &e) {
         BOOST_LOG(warning) << "Error processing image URL: " << e.what();
         return DEFAULT_APP_IMAGE_PATH;
       }
@@ -744,13 +749,13 @@ namespace proc {
       // 3. 检查绝对路径
       app_image_path
     };
-    
-    for (const auto& path : paths_to_check) {
+
+    for (const auto &path : paths_to_check) {
       if (!path.empty() && std::filesystem::exists(file_handler::path_from_utf8(path))) {
         return path;
       }
     }
-    
+
     // 如果所有路径都不存在，返回默认图像
     BOOST_LOG(warning) << "Couldn't find app image at path ["sv << app_image_path << ']';
     return DEFAULT_APP_IMAGE_PATH;
@@ -806,8 +811,8 @@ namespace proc {
     to_hash.push_back(app_name);
 
     // Fix for unstable AppID when wallpaper changes:
-    // If the image path is "desktop", use the literal string "desktop" for hashing 
-    // instead of the resolved wallpaper path/content. This ensures the AppID 
+    // If the image path is "desktop", use the literal string "desktop" for hashing
+    // instead of the resolved wallpaper path/content. This ensures the AppID
     // remains constant even if the user changes their wallpaper.
     if (app_image_path == "desktop") {
       to_hash.push_back("desktop");
@@ -849,7 +854,6 @@ namespace proc {
 
       auto &apps_node = tree.get_child("apps"s);
       auto &env_vars = tree.get_child("env"s);
-
       auto this_env = boost::this_process::environment();
 
       for (auto &[name, val] : env_vars) {
@@ -1048,12 +1052,12 @@ namespace proc {
     if (proc_opt) {
       // 如果当前有应用正在运行，需要保留动态环境变量（SUNSHINE_*）
       // 这些变量是在 execute() 中动态添加的，不应该被配置文件中的环境变量覆盖
-      // 
+      //
       // 环境变量构成说明：
       // 1. 系统环境变量：从 boost::this_process::environment() 获取（PATH、HOME 等）
       // 2. 配置文件环境变量：从 apps.json 的 env 节点读取（用户自定义）
       // 3. SUNSHINE_* 动态变量：在 execute() 时设置（串流会话相关）
-      // 
+      //
       // refresh() 时的行为：
       // - 系统环境变量和配置文件环境变量会被重新读取（反映最新状态）
       // - SUNSHINE_* 变量会被保留（确保正在运行的进程正常工作）
@@ -1061,7 +1065,7 @@ namespace proc {
         // 保存当前环境变量中的 SUNSHINE_* 动态变量
         const boost::process::v1::environment &current_env = proc.get_env();
         boost::process::v1::environment new_env = proc_opt->get_env();
-        
+
         // 将当前环境变量中的 SUNSHINE_* 变量复制到新环境变量中
         for (const auto &entry : current_env) {
           const std::string &var_name = entry.get_name();
@@ -1069,7 +1073,7 @@ namespace proc {
             new_env[var_name] = entry.to_string();
           }
         }
-        
+
         proc.set_env(std::move(new_env));
       }
       else {

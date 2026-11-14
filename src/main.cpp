@@ -10,6 +10,7 @@
 #include <fstream>
 #include <future>
 #include <iostream>
+#include <optional>
 #include <thread>
 #include <utility>
 
@@ -17,6 +18,7 @@
 #include <rs.h>
 
 // local includes
+#include "build_info.h"
 #include "client_fingerprint.h"
 #include "confighttp.h"
 #include "display_device/session.h"
@@ -24,10 +26,13 @@
 #include "file_handler.h"
 #include "globals.h"
 #include "httpcommon.h"
+#include "image_enhancement/config.h"
 #include "logging.h"
 #include "main.h"
 #include "nvhttp.h"
 #include "process.h"
+#include "pyrowave/runtime.h"
+#include "startup_gate.h"
 #include "tray/system_tray.h"
 #include "upnp.h"
 #include "version.h"
@@ -48,12 +53,13 @@
     #define WIN32_LEAN_AND_MEAN
   #endif
   #include <windows.h>
+  #include "../tools/sunshinesvc_state.h"
 
 namespace {
   // Captures the value main() ends up returning so the atexit terminator can use it.
   // Defaults to 0 (success) for the common case where main returns lifetime::desired_exit_code.
   std::atomic<int> g_final_exit_code { 0 };
-}
+    }
 #endif
 
 using namespace std::literals;
@@ -207,7 +213,7 @@ main(int argc, char *argv[]) {
   // code and can restart Sunshine as usual.
   std::atexit([]() {
     TerminateProcess(GetCurrentProcess(),
-                     static_cast<UINT>(g_final_exit_code.load(std::memory_order_acquire)));
+      static_cast<UINT>(g_final_exit_code.load(std::memory_order_acquire)));
   });
 
   // WCS uses HKCU internally. Disable its per-process cache before any Windows
@@ -238,6 +244,13 @@ main(int argc, char *argv[]) {
   mail::man = std::make_shared<safe::mail_raw_t>();
   for (int i = 1; i < argc; ++i) {
     if (std::string_view(argv[i]) == "--version"sv) {
+      // `--version --json`: the build identity (build_info.h), one JSON object on stdout
+      for (int j = 1; j < argc; ++j) {
+        if (std::string_view(argv[j]) == "--json"sv) {
+          std::cout << build_info::to_json(build_info::current()).dump() << std::endl;
+          return 0;
+        }
+      }
       std::cout << PROJECT_NAME << " version: " << PROJECT_VER << std::endl;
       return 0;
     }
@@ -435,22 +448,45 @@ main(int argc, char *argv[]) {
   // If any of the following fail, we log an error and continue event though sunshine will not function correctly.
   // This allows access to the UI to fix configuration problems or view the logs.
 
-  auto platf_deinit_guard = platf::init();
+  // Every phase of the start writes its duration (`[startup] <phase> <ms> ms (at +<ms> ms)`): the first second and a half after nvprefs used to log nothing.
+  const auto log_phase = [](const std::string &line) { BOOST_LOG(info) << line; };
+
+  std::unique_ptr<platf::deinit_t> platf_deinit_guard;
+  {
+    startup::phase_t phase("platf::init", log_phase);
+    platf_deinit_guard = platf::init();
+  }
   if (!platf_deinit_guard) {
     BOOST_LOG(error) << "Platform failed to initialize"sv;
   }
 
-  auto proc_deinit_guard = proc::init();
+  std::unique_ptr<platf::deinit_t> proc_deinit_guard;
+  {
+    startup::phase_t phase("proc::init", log_phase);
+    proc_deinit_guard = proc::init();
+  }
   if (!proc_deinit_guard) {
     BOOST_LOG(error) << "Proc failed to initialize"sv;
   }
 
   reed_solomon_init();
-  auto input_deinit_guard = input::init();
 
-  if (input::probe_gamepads()) {
-    BOOST_LOG(warning) << "No gamepad input is available"sv;
-  }
+  // The PyroWave runtime probe creates a Vulkan device; run it now beside the other start-up work instead of inside the
+  // first RTSP DESCRIBE (which also serves every other RTSP request on the same thread).
+  pyrowave::prewarm_server_runtime();
+
+  // The input devices (the HID enumeration of the virtual mouse, the gamepad back ends) are opened beside the encoder probe, not before it: neither needs the other,
+  // and a stream waits for both (startup::await_stream_ready). The guard keeps the place it had, so the order of the tear-down is the one it was.
+  std::unique_ptr<platf::deinit_t> input_deinit_guard;
+  auto input_init = std::async(std::launch::async, [&log_phase]() {
+    startup::phase_t phase("input::init", log_phase);
+    auto guard = input::init();
+    if (input::probe_gamepads()) {
+      BOOST_LOG(warning) << "No gamepad input is available"sv;
+    }
+    startup::input_gate().open();
+    return guard;
+  });
 
   if (http::init()) {
     BOOST_LOG(fatal) << "HTTP interface failed to initialize"sv;
@@ -497,8 +533,7 @@ main(int argc, char *argv[]) {
   };
   try {
     webhook_auth_result = webhook::auth::load(
-      webhook::auth::path_for(config::sunshine.config_file)
-    );
+      webhook::auth::path_for(config::sunshine.config_file));
   }
   catch (...) {
     // Treat path construction failures exactly like an invalid Webhook file.
@@ -533,10 +568,17 @@ main(int argc, char *argv[]) {
 #endif
   std::thread configThread { confighttp::start };
 
-  probe_encoders_with_watchdog();
-
+  // The servers of the clients open before the probe: a client that asks while the probe runs waits for it (startup::probe_gate) and is told that the host is
+  // starting when a stuck driver call outlasts the bound. rtsp only answers a session that /launch made, and /launch waits for the probe and the input devices.
   std::thread httpThread { nvhttp::start };
   std::thread rtspThread { rtsp_stream::start };
+
+  {
+    startup::phase_t phase("encoder probe", log_phase);
+    probe_encoders_with_watchdog();
+  }
+  startup::probe_gate().open();
+  input_deinit_guard = input_init.get();
 
 #if defined(_WIN32) && defined(SUNSHINE_GUI_TRAY) && SUNSHINE_GUI_TRAY >= 1
   // The service wrapper owns user-session agent startup in service mode.

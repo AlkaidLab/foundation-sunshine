@@ -3,6 +3,7 @@
  * @brief Runtime performance snapshot recorder.
  */
 #include "perf_recorder.h"
+#include "measured_bitrate.h"
 
 #include <algorithm>
 #include <array>
@@ -337,6 +338,9 @@ namespace perf {
       item["height"] = session.metadata.height;
       item["fps"] = session.metadata.fps;
       item["bitrate_kbps"] = session.metadata.bitrate_kbps;
+      const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+      item["measured_bitrate_kbps"] = streaming::measured_bitrate_kbps(
+        session.metadata.session_id, now_ms > 0 ? static_cast<std::uint64_t>(now_ms) : 0);
       item["encoder"] = session.metadata.encoder;
       item["capture"] = session.metadata.capture;
       item["uptime_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>((session.active ? now : session.ended_at) - session.started_at).count();

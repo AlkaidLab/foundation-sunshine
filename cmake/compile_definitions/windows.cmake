@@ -151,8 +151,10 @@ endif()
 set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/windows/publish.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/ftime_compat.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/system_load_win.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/misc.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/misc.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/text_encoding.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/win_dark_mode.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/win_dark_mode.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/input.cpp"
@@ -246,13 +248,18 @@ list(PREPEND PLATFORM_LIBRARIES
         nlohmann_json::nlohmann_json
         ntdll
         ole32
+        pdh
         PowrProf
         setupapi
+        cfgmgr32
         shlwapi
         synchronization.lib
         userenv
+        uuid
+        wintrust
         ws2_32
         wsock32
+        wlanapi
         wtsapi32
 )
 
