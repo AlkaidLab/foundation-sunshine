@@ -86,6 +86,8 @@ namespace display_device::win_color_profile {
       UINT32,
       WCS_PROFILE_MANAGEMENT_SCOPE *);
     using get_color_directory_fn = BOOL(WINAPI *)(PCWSTR, PWSTR, PDWORD);
+    // CLASS_MONITOR from icm.h is the multi-character constant 'mntr'; spelled out as the DWORD the API takes.
+    constexpr DWORD kClassMonitor = 0x6D6E7472;
     using set_use_per_user_profiles_fn = BOOL(WINAPI *)(PCWSTR, DWORD, BOOL);
 
     template <typename Function>
@@ -606,7 +608,7 @@ namespace display_device::win_color_profile {
           DISPLAY_DEVICEW monitor {};
           monitor.cb = sizeof(monitor);
           if (target.display_name.empty() || !EnumDisplayDevicesW(target.display_name.c_str(), 0, &monitor, 0)) return E_FAIL;
-          if (!api.set_use_per_user_profiles(monitor.DeviceKey, CLASS_MONITOR, TRUE)) return HRESULT_FROM_WIN32(GetLastError());
+          if (!api.set_use_per_user_profiles(monitor.DeviceKey, kClassMonitor, TRUE)) return HRESULT_FROM_WIN32(GetLastError());
         }
         status = associate_default(api, target, name);
         if (FAILED(status)) return status;

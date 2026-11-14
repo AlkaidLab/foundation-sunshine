@@ -20,6 +20,7 @@
   #include <atomic>
   #include <chrono>
   #include <cmath>
+  #include <cstdint>
   #include <cstdio>
   #include <cstdlib>
   #include <filesystem>
@@ -1128,7 +1129,7 @@ main(int argc, char **argv) {
   for (unsigned index = 1; index < extra_pads; ++index) {
     auto queue = mail->queue<platf::gamepad_feedback_msg_t>("ds5-native-usbip-smoke-pad-" + std::to_string(index));
     extra_queues.push_back(queue);
-    const auto result = client.alloc({ static_cast<int>(index), static_cast<int>(index) }, std::move(queue), true);
+    const auto result = client.alloc({ static_cast<int>(index), static_cast<std::uint8_t>(index) }, std::move(queue), true);
     std::printf("PADS alloc index=%u %s\n", index, result == 0 ? "ok" : "FAIL");
   }
   std::atomic_bool second_done { false };

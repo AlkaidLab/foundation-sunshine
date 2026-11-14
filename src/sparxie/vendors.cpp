@@ -252,9 +252,9 @@ namespace sparxie {
 
   std::vector<LauncherGame>
   hypergryph_launcher_games(const std::vector<LauncherInstall> &launchers) {
-    // Every game sits one level below the launcher's games folder (games\
-    // Endfield Game\Endfield.exe, games\Arknights Endfield\Endfield.exe,
-    // games\Arknights\Arknights.exe), so each games folder is listed once
+    // Every game sits one level below the launcher's games folder (games/
+    // Endfield Game/Endfield.exe, games/Arknights Endfield/Endfield.exe,
+    // games/Arknights/Arknights.exe), so each games folder is listed once
     // and every known game executable directly inside a title folder is a row.
     std::vector<LauncherGame> out;
     for (const auto &launcher : launchers) {

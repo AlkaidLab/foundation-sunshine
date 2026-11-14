@@ -153,10 +153,14 @@ namespace confighttp::apps_scan {
         if (auto profile = folder(FOLDERID_Profile)) context.home = profile;
         if (auto local = folder(FOLDERID_LocalAppData)) context.local_app_data = local;
         if (auto roaming = folder(FOLDERID_RoamingAppData)) context.roaming_app_data = roaming;
+        // Packaged (UWP/Store) games live below the machine-wide Program Files known folder, which is not always on C:.
+        const auto program_files = folder(FOLDERID_ProgramFiles);
         CloseHandle(token);
-        const auto windows_apps = app_scan::from_utf8("C:\Program Files\WindowsApps");
-        std::error_code ec;
-        if (std::filesystem::is_directory(windows_apps, ec)) context.package_roots.push_back(windows_apps);
+        if (program_files) {
+          const auto windows_apps = *program_files / L"WindowsApps";
+          std::error_code ec;
+          if (std::filesystem::is_directory(windows_apps, ec)) context.package_roots.push_back(windows_apps);
+        }
       }
 #endif
       std::filesystem::path sparxie_exe;

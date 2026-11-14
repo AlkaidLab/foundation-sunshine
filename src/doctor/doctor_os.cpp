@@ -8,7 +8,9 @@
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
+#include <string>
 #include <system_error>
+#include <utility>
 
 #ifdef _WIN32
   #ifndef WIN32_LEAN_AND_MEAN
@@ -69,6 +71,17 @@ namespace doctor::os {
       std::string out(static_cast<std::size_t>(size - 1), '\0');
       WideCharToMultiByte(CP_UTF8, 0, text, -1, out.data(), size, nullptr, nullptr);
       return out;
+    }
+
+    // std::filesystem::u8path is deprecated since C++20; a UTF-8 string becomes a native path through UTF-16.
+    fs::path
+    utf8_path(const std::string &text) {
+      if (text.empty()) return {};
+      const int size = MultiByteToWideChar(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), nullptr, 0);
+      if (size <= 0) return fs::path(text);
+      std::wstring wide(static_cast<std::size_t>(size), L'\0');
+      MultiByteToWideChar(CP_UTF8, 0, text.c_str(), static_cast<int>(text.size()), wide.data(), size);
+      return fs::path(std::move(wide));
     }
 
     std::optional<std::wstring>
@@ -235,9 +248,9 @@ namespace doctor::os {
   writable(const std::string &path) {
     access_t result;
     std::error_code ec;
-    result.checked = fs::exists(fs::u8path(path), ec);
+    result.checked = fs::exists(utf8_path(path), ec);
     // Windows ACLs decide; the folder's read-only bit is the part a plain status can see.
-    result.ok = result.checked && (fs::status(fs::u8path(path), ec).permissions() & fs::perms::owner_write) != fs::perms::none;
+    result.ok = result.checked && (fs::status(utf8_path(path), ec).permissions() & fs::perms::owner_write) != fs::perms::none;
     return result;
   }
 
