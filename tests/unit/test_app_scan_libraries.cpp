@@ -3,6 +3,7 @@
 #include <fstream>
 #include <gtest/gtest.h>
 #include <map>
+#include <nlohmann/json.hpp>
 #include <string>
 namespace {
   namespace fs = std::filesystem;
@@ -258,7 +259,12 @@ TEST(AppScanLibraryTest, SparxieAbsentIsNotAnErrorAndProfilesOfferBothLaunches) 
   const std::string hyp = ksep({ "Software", "miHoYo", "HYP", "1_1", "hk4e_cn" });
   registry.user_values[hyp]["GameInstallPath"] = app_scan::to_utf8(dir);
   tree.make_file("component/Sparxie.exe", "MZ");
-  const std::string config = std::string("{\"schemaVersion\":1,\"profiles\":[{\"id\":\"genshin-cn-1\",\"displayName\":\"原神\",\"game\":\"genshin\",\"executablePath\":\"") + app_scan::to_utf8(exe) + "\"}]}";
+  // A Windows path holds backslashes, which must be escaped to stay valid JSON.
+  const std::string config = nlohmann::json {
+    { "schemaVersion", 1 },
+    { "profiles", nlohmann::json::array({ { { "id", "genshin-cn-1" }, { "displayName", "原神" }, { "game", "genshin" },
+                                            { "executablePath", app_scan::to_utf8(exe) } } }) }
+  }.dump();
   tree.make_file("sparxie-data/config.json", config);
   context.sparxie_exe = tree.path() / "component/Sparxie.exe";
   context.sparxie_data = tree.path() / "sparxie-data";

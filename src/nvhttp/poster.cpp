@@ -6,6 +6,8 @@
 
 // fs-stb-image-api-20261112: use the bundled stb loader/writer APIs; no new
 // image dependency is introduced for preview generation.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"  // the static stb implementation carries entry points this file never calls
 #define STBI_ONLY_PNG
 #define STBI_ONLY_JPEG
 #define STB_IMAGE_STATIC
@@ -14,6 +16,7 @@
 #define STB_IMAGE_WRITE_STATIC
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "../stb_image_write.h"
+#pragma GCC diagnostic pop
 
 #include <algorithm>
 #include <array>

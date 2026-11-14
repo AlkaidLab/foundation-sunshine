@@ -1,11 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { fileURLToPath } from 'node:url'
 import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
 // The rule of a text field lives in foundation-ui (fields.css). The Web UI's fields are MField / MFieldItem (they carry the container), and its native inputs are .m-input:
 // no page paints a field itself.
-const root = new URL('..', import.meta.url).pathname
+const root = fileURLToPath(new URL('..', import.meta.url))
 const walk = async (dir) => (await Promise.all((await readdir(dir, { withFileTypes: true })).map(async (e) => (e.name === 'node_modules' || e.name === 'tests' ? [] : e.isDirectory() ? walk(join(dir, e.name)) : e.name.endsWith('.vue') ? [join(dir, e.name)] : [])))).flat()
 const files = await walk(root)
 

@@ -19,8 +19,10 @@ function(identity_of content out_commit out_branch out_dirty)
     unset(ENV{SUNSHINE_BUILD_BRANCH})
     unset(ENV{COMMIT})
     unset(ENV{BRANCH})
-    # git runs in ${root}, which is not a repository: the archive file is the only source
-    set(ENV{GIT_CEILING_DIRECTORIES} "${root}/..")
+    # ${root} is not a repository, but it may sit inside one (the build directory of a checkout). GIT_DIR names a
+    # directory that does not exist, so git reports "not a git repository" whatever the platform's handling of
+    # GIT_CEILING_DIRECTORIES: the archive file is the only source.
+    set(ENV{GIT_DIR} "${root}/no-git-dir")
     include("${repo}/cmake/prep/build_info.cmake")
     set(${out_commit} "${BUILD_INFO_COMMIT}" PARENT_SCOPE)
     set(${out_branch} "${BUILD_INFO_BRANCH}" PARENT_SCOPE)
@@ -45,4 +47,5 @@ identity_of("$Format:%H$\n$Format:%D$\n" commit branch dirty)
 if(NOT commit STREQUAL "")
     message(SEND_ERROR "placeholders were read as a commit: ${commit}")
 endif()
+unset(ENV{GIT_DIR})
 file(REMOVE_RECURSE "${root}")

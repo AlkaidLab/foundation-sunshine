@@ -1096,10 +1096,9 @@ TEST(TelemetryScrubVectors, EveryVectorHoldsForTheTextAndTheLogScrubber) {
     const std::string name = v["name"];
     for (int which = 0; which < 2; ++which) {
       const auto out = which == 0 ? scrub_text(input, 400) : scrub_log_message(input, 400);
-      for (const auto &f : v["forbidden"]) EXPECT_EQ(out.find(f.get<std::string>()), std::string::npos) << (which ? "log: " : "text: ") << name << " leaked  << f.get<std::string>() <<  -> " << out;
-      // the log scrubber also drops what a person chose between quotes or brackets, so only the text scrubber has to keep every required word
-      if (which == 0)
-        for (const auto &r : v["required"]) EXPECT_NE(out.find(r.get<std::string>()), std::string::npos) << name << " lost  << r.get<std::string>() <<  -> " << out;
+      for (const auto &f : v["forbidden"]) EXPECT_EQ(out.find(f.get<std::string>()), std::string::npos) << (which ? "log: " : "text: ") << name << " leaked \"" << f.get<std::string>() << "\" -> " << out;
+      // the vector contract: every implementation, the text and the log scrubber alike, keeps every `required` string
+      for (const auto &r : v["required"]) EXPECT_NE(out.find(r.get<std::string>()), std::string::npos) << (which ? "log: " : "text: ") << name << " lost \"" << r.get<std::string>() << "\" -> " << out;
     }
   }
 }

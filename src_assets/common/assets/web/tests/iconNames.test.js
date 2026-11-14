@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ICONS } from 'foundation-ui/icons'
 
@@ -9,18 +9,19 @@ import { ICONS } from 'foundation-ui/icons'
 // Google symbol set the design system builds its glyphs from; every icon name the Web UI draws must be
 // one of these, or the icon component renders nothing (source index: ds5-material-symbols-round-codepoints-20261105).
 const SHIPPED = new Set(Object.keys(ICONS))
-const WEB_ROOT = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '')
+const WEB_ROOT = fileURLToPath(new URL('..', import.meta.url)).replace(/[\\/]$/, '')
 
 // Words quoted inside icon maps and icon expressions that are not icon names: the device kinds of the
 // reverse map in utils/clientList.js and the values compared in template conditions.
 const NOT_ICON_WORDS = new Set(['phone', 'tablet', 'computer', 'tv', 'steam', 'headset', 'reachable', 'sparxie'])
 
-const skipDir = /(^|\/)(node_modules|tests?|fixtures|dist|build|public)(\/|$)/
+// matched against a directory's own name, never the absolute path: a checkout below a folder called build must still be scanned
+const skipDir = /^(node_modules|tests?|fixtures|dist|build|public)$/
 const sources = []
 const walk = (dir) => {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name)
-    if (entry.isDirectory()) { if (!skipDir.test(path)) walk(path) } else if (/\.(js|vue)$/.test(entry.name)) sources.push(path)
+    if (entry.isDirectory()) { if (!skipDir.test(entry.name)) walk(path) } else if (/\.(js|vue)$/.test(entry.name)) sources.push(path)
   }
 }
 walk(WEB_ROOT)
@@ -60,7 +61,7 @@ const quoted = (text) => [...text.matchAll(/['"]([a-z][a-z0-9_]*)['"]/g)].map((m
 
 for (const file of sources) {
   const source = readFileSync(file, 'utf8')
-  const relative = file.slice(WEB_ROOT.length + 1)
+  const relative = file.slice(WEB_ROOT.length + 1).split(sep).join('/')
   // a name written as the icon of something: icon: 'name', icon="name", <MIcon name="name">
   for (const match of source.matchAll(/(?<![:\w-])(?:icon|iconName|arrowIcon|titleIcon|trailIcon|leadIcon|statusIcon)\s*[:=]\s*['"]([a-z][a-z0-9_]*)['"]/g)) record(match[1], relative, 'icon property')
   for (const match of source.matchAll(/(?<![:\w-])(?:icon|title-icon|trail-icon|lead-icon|icon-name)=['"]([a-z][a-z0-9_]*)['"]/g)) record(match[1], relative, 'icon attribute')

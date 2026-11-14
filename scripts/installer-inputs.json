@@ -1,0 +1,14 @@
+{
+  "gui": {
+    "repository": "AlkaidLab/foundation-panel",
+    "tag": "v1.0.0",
+    "commit": "9a80a0be44b4ea38cb262f85719a8e2b64603d81",
+    "asset": "sunshine-gui-windows-x64.zip",
+    "sha256": "3d6b75e2a5239b67585886f8fb6413e4d78ed691260379f5cdadc1e5bffa45a5"
+  },
+  "webview2": {
+    "url": "https://go.microsoft.com/fwlink/p/?LinkId=2124703",
+    "sha256": "cf2f2445fef0c5c14e372045f84998771eeb8bb01d59be4afd00692fa160082e",
+    "signer": "Microsoft Corporation"
+  }
+}

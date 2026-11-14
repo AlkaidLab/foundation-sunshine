@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { fileURLToPath } from 'node:url'
 import fs from 'node:fs'
 import path from 'node:path'
 
@@ -8,7 +9,7 @@ import path from 'node:path'
 // one fails this test until it is added here AND to webui-permissions.json (the panel's capabilityAudit.test.js checks that list against the file).
 const WEBUI_INVOKES = ['scan_directory_for_apps', 'scan_game_libraries', 'list_display_modes', 'set_display_mode', 'get_current_dpi', 'set_desktop_dpi', 'is_sunshine_running_in_user_mode', 'toggle_sunshine_mode',
   'launch_windows_hdr_calibration', 'set_vdd_keep_enabled', 'set_vdd_headless_create_enabled', 'refresh_sunshine_target', 'open_external_url', 'open_device_manager', 'save_text_file']
-const root = new URL('../', import.meta.url).pathname
+const root = fileURLToPath(new URL('../', import.meta.url))
 const walk = (dir, out = []) => {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     if (['node_modules', 'tests', 'public'].includes(e.name)) continue

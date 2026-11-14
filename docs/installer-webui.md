@@ -108,5 +108,16 @@ Unchanged: `/VERYSILENT` or `/SILENT` goes straight to `worker_main()` before an
    pages), then `cargo build --release --manifest-path installer-ui/Cargo.toml` in `msvc-env.cmd`. Output:
    `installer-ui/target/release/foundation-setup-ui.exe`, or `%CARGO_TARGET_DIR%`.
 2. Host repo: the CMake target `sunshine-installer-shell` as before.
-3. `append_installer_payload.py <shell> <engine> <output> --ui foundation-setup-ui.exe`. The footer keeps the V1 keys
-   first, so an older shell still finds the engine. Without `--ui`, the package is the native installer.
+3. `append_installer_payload.py <shell> <engine> <output> --ui foundation-setup-ui.exe --wv2 MicrosoftEdgeWebview2Setup.exe`.
+   The bootstrapper is the same pinned, signature-checked file CI uses: `scripts/fetch-installer-inputs.ps1 -Destination <new dir>`
+   downloads it (pinned by sha256 in `scripts/installer-inputs.json`) to `<dir>/MicrosoftEdgeWebview2Setup.exe`. The footer keeps
+   the V1 keys first, so an older shell still finds the engine. Without `--ui`, the package is the native installer.
+
+### CI (`.github/workflows/main.yml`, job Windows)
+
+The workflow makes the same package: `scripts/build-setup-ui.ps1` builds the setup UI from the committed Panel submodule;
+`scripts/fetch-installer-inputs.ps1` downloads the Panel GUI bundle and Microsoft's WebView2 bootstrapper, pinned by tag and
+sha256 in `scripts/installer-inputs.json` (the pinned Panel commit must equal the submodule, so a submodule bump fails the
+job until the pin moves with it; the bootstrapper must also carry Microsoft's signature). ISCC writes
+`Sunshine-engine.exe`; the step "Assemble installer" wraps it with `append_installer_payload.py --ui --wv2` and checks
+the footer hashes. Only the full installer name contains "Windows".

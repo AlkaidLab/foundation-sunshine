@@ -1002,8 +1002,6 @@ namespace sparxie {
   }
   ApiResult
   list_profiles(HostEnv &env) {
-    MemoryRegistry local;
-    Registry &registry = registry_of(env, local);
     const ConfigView store = read_store(config_dir(env));
     ApiResult result;
     if (!store.status.ok && fs::exists(config_dir(env) / "config.json")) {
@@ -1346,8 +1344,6 @@ namespace sparxie {
       result.body = { { "ok", false }, { "error", store.status.error }, { "error_code", store.status.error_code } };
       return result;
     }
-    MemoryRegistry local;
-    Registry &registry = registry_of(env, local);
     json created = json::array();
     const std::string templ = env.launch_template.empty() ? std::string(kDefaultLaunchTemplate) : env.launch_template;
     for (const auto &id_value : request["ids"]) {

@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { fileURLToPath } from 'node:url'
 import { createSSRApp, h } from 'vue'
 import { renderToString } from 'vue/server-renderer'
 import { $tp, setPlatformHint, setPlatformI18n, usePlatformI18n } from '../platform-i18n.js'
@@ -61,7 +62,7 @@ test('the injected platform of the settings page still wins over the hint', asyn
 test('no source reads inject(name).value without a default: a page that does not provide it would crash', async () => {
   const { readdirSync, readFileSync, statSync } = await import('node:fs')
   const { join } = await import('node:path')
-  const root = new URL('..', import.meta.url).pathname
+  const root = fileURLToPath(new URL('..', import.meta.url))
   const hits = []
   const walk = (dir) => {
     for (const name of readdirSync(dir)) {

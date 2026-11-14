@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { dirname, join, relative, sep } from 'node:path'
+import { basename, dirname, join, relative, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 // The one mascot of the product is the yellow lion girl. No other character's name may be in shipped source (the name Gura and the
@@ -29,12 +29,13 @@ function* walk(dir) {
   }
 }
 const files = () => DIRS.flatMap((d) => { const p = join(ROOT, d); try { return statSync(p).isDirectory() ? [...walk(p)] : [p] } catch { return [] } })
-const self = fileURLToPath(import.meta.url)
+// This gate and its twin in the control panel (src_assets/common/sunshine-control-panel) hold the names and hashes they search for.
+const isGate = (file) => basename(file) === 'mascotSweep.test.js'
 
 test('no other character is named in shipped source', () => {
   const hits = []
   for (const file of files()) {
-    if (file === self || IMAGE.test(file) || /\.(woff2?|ttf|exe|dll|node|zip|bin)$/i.test(file) || statSync(file).size > 3 * 1024 * 1024) continue
+    if (isGate(file) || IMAGE.test(file) || /\.(woff2?|ttf|exe|dll|node|zip|bin)$/i.test(file) || statSync(file).size > 3 * 1024 * 1024) continue
     const text = readFileSync(file, 'utf8')
     if (text.includes('\0')) continue
     text.split('\n').forEach((line, i) => { if (NAME.test(line)) hits.push(`${relative(ROOT, file).split(sep).join('/')}:${i + 1}: ${line.trim().slice(0, 100)}`) })
@@ -52,7 +53,7 @@ test('no shipped image is one of the known pictures of another character, and th
   assert.deepEqual(found, [])
   const urls = []
   for (const file of files()) {
-    if (file === self || IMAGE.test(file) || statSync(file).size > 3 * 1024 * 1024) continue
+    if (isGate(file) || IMAGE.test(file) || statSync(file).size > 3 * 1024 * 1024) continue
     if (/sunshine-bg0|t\.alcy\.cc|109527119_p1/.test(readFileSync(file, 'utf8'))) urls.push(relative(ROOT, file))
   }
   assert.deepEqual(urls, [])

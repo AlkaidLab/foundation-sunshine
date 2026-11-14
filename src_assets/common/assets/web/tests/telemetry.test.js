@@ -92,7 +92,7 @@ test('a turned-off choice drops what was waiting', async () => {
       const again = await import(`../config/telemetry.js?${Math.random()}`)
       again.trackEvents.userAction('queued_before_off')
       globalThis.localStorage.setItem('foundation-ui.telemetry.consent', 'off')
-      window.dispatchEvent(Object.assign(new Event('foundation-telemetry-consent'), { detail: 'off' }))
+      globalThis.window.dispatchEvent(Object.assign(new Event('foundation-telemetry-consent'), { detail: 'off' }))
       await again.flushTelemetry()
       assert.equal(calls.length, 0)
     } finally { delete globalThis.window }

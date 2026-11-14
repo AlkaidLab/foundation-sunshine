@@ -50,7 +50,8 @@ jobs:
       release_version: ${{ steps.setup_release_auto.outputs.release_version || steps.setup_release_manual.outputs.release_version }}
     permissions:
       contents: write  # read does not work to check squash and merge details
-    runs-on: ubuntu-latest
+    # Pinned: the ubuntu-latest label migrates to Ubuntu 26 (actions/runner-images#14748); move this on purpose, not by label.
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -77,7 +78,7 @@ jobs:
       - name: Filter bot contributors
         id: filter_release_contributors
         if: steps.setup_release_auto.outputs.release_body != ''
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           RELEASE_BODY: ${{ steps.setup_release_auto.outputs.release_body }}
         with:
@@ -145,15 +146,23 @@ jobs:
       actions: write  # prune stale ccache entries after saving this run's
     runs-on: windows-latest
     steps:
+      # Several Web UI tests match source text with \n in their patterns: check the sources out with LF on Windows too.
+      - name: Keep LF line endings
+        shell: bash
+        run: git config --global core.autocrlf false
+
       - name: Checkout
         uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           submodules: recursive
         env:
-          GIT_CONFIG_COUNT: '1'
+          GIT_CONFIG_COUNT: '2'
           GIT_CONFIG_KEY_0: core.longpaths
           GIT_CONFIG_VALUE_0: 'true'
+          # About fifty submodules: fetch them in parallel instead of one by one.
+          GIT_CONFIG_KEY_1: submodule.fetchJobs
+          GIT_CONFIG_VALUE_1: '8'
 
       - name: Setup Dependencies Windows
         uses: msys2/setup-msys2@v2
@@ -231,15 +240,20 @@ jobs:
           cache-dependency-path: package-lock.json
 
       # The Web UI imports foundation-ui from a sibling checkout named ds5-ui-m3e (package.json: "file:../ds5-ui-m3e").
+      # A full install: the checkout resolves vue and the SFC compiler from its own node_modules, and both are dev/peer
+      # dependencies there. pwsh does not stop on a failing native command by itself; the preference below does.
       - name: Fetch foundation-ui
         shell: pwsh
         run: |
+          $PSNativeCommandUseErrorActionPreference = $true
           git clone --depth 1 https://github.com/AlkaidLab/foundation-ui "$env:GITHUB_WORKSPACE/../ds5-ui-m3e"
-          npm ci --omit=dev --omit=peer --prefix "$env:GITHUB_WORKSPACE/../ds5-ui-m3e"
+          npm ci --prefix "$env:GITHUB_WORKSPACE/../ds5-ui-m3e"
 
       - name: Build Web UI
         shell: pwsh
         run: |
+          # A failing native command fails the step (PowerShell 7.4+; the runner already sets ErrorActionPreference=Stop).
+          $PSNativeCommandUseErrorActionPreference = $true
           npm ci
           npm run lint:webui
           npm run test:webui
@@ -247,6 +261,17 @@ jobs:
           $env:SUNSHINE_SOURCE_ASSETS_DIR = "${{ github.workspace }}\src_assets"
           $env:SUNSHINE_ASSETS_DIR = "${{ github.workspace }}\build"
           npm run build
+
+      # The installer's setup UI: pages (foundation-ui) and Tauri window, built from the committed Panel submodule, so it is
+      # the Panel build boundary the pinned GUI below belongs to (scripts/build-setup-ui.ps1, docs/installer-webui.md).
+      - name: Build installer setup UI
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          ./scripts/build-setup-ui.ps1 `
+            -FoundationUi "$env:GITHUB_WORKSPACE/../ds5-ui-m3e" `
+            -Output "$env:RUNNER_TEMP/installer-inputs/foundation-setup-ui.exe"
+          "SETUP_UI_EXE=$env:RUNNER_TEMP/installer-inputs/foundation-setup-ui.exe" >> $env:GITHUB_ENV
 
       - name: Cache compiler objects
         uses: actions/cache/restore@v6
@@ -262,6 +287,17 @@ jobs:
           key: ccache-windows-${{ github.run_id }}
           restore-keys: |
             ccache-windows-
+
+      # The Panel bundle and the WebView2 bootstrapper, pinned by tag/sha256 in scripts/installer-inputs.json and verified (never
+      # "latest"). The pinned Panel commit must be the committed submodule. A manual run with gui_run_id replaces the GUI below.
+      - name: Fetch pinned installer inputs
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $dest = "$env:RUNNER_TEMP/installer-inputs/pinned"
+          ./scripts/fetch-installer-inputs.ps1 -Destination $dest
+          "GUI_BUNDLE_DIR=$dest/gui" >> $env:GITHUB_ENV
+          "WEBVIEW2_BOOTSTRAPPER=$dest/MicrosoftEdgeWebview2Setup.exe" >> $env:GITHUB_ENV
 
       - name: Fetch paired GUI artifact
         if: github.event_name == 'workflow_dispatch' && inputs.gui_run_id != ''
@@ -311,6 +347,9 @@ jobs:
         run: |
           mkdir -p build
           ccache --zero-stats
+          # The msys2 shell starts with a minimal PATH, so the runner's .NET SDK (C:\Program Files\dotnet) is invisible to CMake
+          # and tools/sparxie-launch would silently not be built or shipped.
+          export PATH="$PATH:/c/Program Files/dotnet"
           gui_options=()
           if [[ -n "${GUI_BUNDLE_DIR:-}" ]]; then
             gui_options=(-DFETCH_GUI=OFF "-DGUI_DIR=$GUI_BUNDLE_DIR")
@@ -346,7 +385,7 @@ jobs:
           CCACHE_COMPILERCHECK: content
         run: |
           ninja -C build
-          ccache --show-stats
+          ccache --show-stats --verbose
 
       - name: Run native tests
         shell: msys2 {0}
@@ -496,13 +535,30 @@ jobs:
             echo "Side-loaded HDR files and mutable trust metadata must not be included in the main portable package"
             exit 1
           fi
-            echo "The optional DualSense runtime leaked into the main portable package"
-            exit 1
-          fi
 
-          # move
-          mv ./cpack_artifacts/Sunshine.exe ../artifacts/sunshine-windows-installer.exe
+          # The engine is not the download: "Assemble installer" wraps it in the shell.
+          test -f ./cpack_artifacts/Sunshine-engine.exe
           mv ./cpack_artifacts/Sunshine.zip ../artifacts/sunshine-windows-portable.zip
+
+      # The user-facing installer, the same package tools/append_installer_payload.py makes for a local build
+      # (cmake/packaging/windows_innosetup.cmake): [shell][setup UI][WebView2 bootstrapper][Inno engine][footer].
+      - name: Assemble installer
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $shell = 'build/tools/sunshine-installer-shell.exe'
+          $engine = 'build/cpack_artifacts/Sunshine-engine.exe'
+          $output = 'artifacts/sunshine-windows-installer.exe'
+          python tools/append_installer_payload.py $shell $engine $output --ui $env:SETUP_UI_EXE --wv2 $env:WEBVIEW2_BOOTSTRAPPER
+          # Read the footer back: every section is present and carries the hash of the file it was made from.
+          $bytes = [IO.File]::ReadAllBytes($output)
+          $tail = [Text.Encoding]::ASCII.GetString($bytes, [Math]::Max(0, $bytes.Length - 2048), [Math]::Min(2048, $bytes.Length))
+          $footer = $tail.Substring($tail.LastIndexOf("ALKAID-SHELL-PAYLOAD-V1"))
+          foreach ($section in @(@('', $engine), @('ui-', $env:SETUP_UI_EXE), @('wv2-', $env:WEBVIEW2_BOOTSTRAPPER))) {
+            $hash = (Get-FileHash -LiteralPath $section[1] -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($footer -notmatch "(?m)^$($section[0])sha256=$hash\r?$") { throw "Installer footer lacks $($section[0])sha256=$hash" }
+          }
+          Write-Output $footer
 
       - name: Rename release assets
         shell: msys2 {0}

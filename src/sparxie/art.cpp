@@ -3,6 +3,8 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-function"  // the static stb implementation carries entry points this file never calls
 #define STB_IMAGE_WRITE_STATIC
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "src/stb_image_write.h"
@@ -13,6 +15,7 @@
 #define STBI_ONLY_PNG
 #define STBI_ONLY_JPEG
 #include "src/stb_image.h"
+#pragma GCC diagnostic pop
 #include "src/sparxie/badge_mark.inc"
 namespace sparxie {
   namespace {
@@ -884,7 +887,6 @@ namespace sparxie {
   }
   bool
   art_due(ArtSchedule &schedule, std::chrono::system_clock::time_point now, ArtReason reason) {
-    using clock = std::chrono::system_clock;
     if (reason == ArtReason::manual) return true;
     if (reason == ArtReason::host_start) {
       if (schedule.host_started) return false;

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Net.Http.Headers;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
@@ -172,6 +173,11 @@ internal static class CrashReport
     internal static string Stem(long unixSeconds, string kind, int pid) => $"{unixSeconds}-sparxie-launch-{new string(kind.Select(c => char.IsAsciiLetterOrDigit(c) || c == '-' ? c : '_').ToArray())}-p{pid:x8}";
 
     /// <summary>Frames of an exception: the assembly file and (metadata token &lt;&lt; 32 | IL offset), innermost exception first (the root cause).</summary>
+    // StackFrame.GetMethod() is the one API that returns the metadata token of the frame's method; DiagnosticMethodInfo (its trim-safe
+    // successor) carries names only, and the symbolizer needs the token. The frames are of code that is running, so the method is present in
+    // the trimmed image the token is read from (the published sparxie-launch.exe is the file the symbols are archived for); a frame whose
+    // method cannot be had is recorded as "unknown" below.
+    [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = "Frames are of running code; a missing method is recorded as unknown. Names alone cannot be symbolized without the metadata token.")]
     internal static List<Frame> FramesOf(Exception exception)
     {
         while (exception.InnerException is { } inner) exception = inner;

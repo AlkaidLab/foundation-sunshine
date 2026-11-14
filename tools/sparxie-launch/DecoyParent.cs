@@ -221,8 +221,13 @@ internal sealed class DecoyParent : IDisposable
         if (WinVerifyTrustFile(executablePath) != 0) return false;
         try
         {
+            // SYSLIB0057 steers file-path certificate loading to X509CertificateLoader, which reads DER/PKCS#7/PKCS#12 files but not the
+            // Authenticode signature embedded in a PE image, so it is not a replacement here. CreateFromSignedFile is the managed call that
+            // returns the signer of a signed image, and the signatures were just verified by WinVerifyTrust above.
+#pragma warning disable SYSLIB0057
             using var certificate = X509Certificate.CreateFromSignedFile(executablePath);
             using var gameCertificate = X509Certificate.CreateFromSignedFile(gameExecutablePath);
+#pragma warning restore SYSLIB0057
             return CryptographicOperations.FixedTimeEquals(SHA256.HashData(certificate.GetRawCertData()), SHA256.HashData(gameCertificate.GetRawCertData()));
         }
         catch (Exception ex) when (ex is CryptographicException or IOException) { return false; }

@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { fileURLToPath } from 'node:url'
 import fs from 'node:fs'
 import path from 'node:path'
 import { hostData, HOST_TOPICS, keepKey } from '../composables/hostData.js'
@@ -7,12 +8,13 @@ import { resetBootstrapDataCache } from '../config/bootstrapData.js'
 
 // Gate: the first render of a page waits on no request. Host data comes through composables/hostData.js only (the one module the dedicated host channel will replace),
 // and a topic has a kept answer that is read synchronously.
-const root = new URL('../', import.meta.url).pathname
+const root = fileURLToPath(new URL('../', import.meta.url))
 const walk = (dir, out = []) => { for (const e of fs.readdirSync(dir, { withFileTypes: true })) { if (['node_modules', 'tests', 'public'].includes(e.name)) continue; const f = path.join(dir, e.name); if (e.isDirectory()) walk(f, out); else if (/\.(vue|js)$/.test(e.name)) out.push(f) } return out }
 const memoryStorage = () => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)) } }
 
 test('no page or composable reads the host\'s configuration except through hostData', () => {
-  const offenders = walk(root).filter((f) => !/composables\/hostData\.js$|config\/bootstrapData\.js$/.test(f) && /getBootstrapConfig\s*\(/.test(fs.readFileSync(f, 'utf8'))).map((f) => path.relative(root, f))
+  const posix = (f) => f.split(path.sep).join('/')
+  const offenders = walk(root).filter((f) => !/composables\/hostData\.js$|config\/bootstrapData\.js$/.test(posix(f)) && /getBootstrapConfig\s*\(/.test(fs.readFileSync(f, 'utf8'))).map((f) => posix(path.relative(root, f)))
   assert.deepEqual(offenders, [], 'read host data with hostData.peek/refresh/subscribe')
 })
 
