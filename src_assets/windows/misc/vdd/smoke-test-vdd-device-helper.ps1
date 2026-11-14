@@ -15,6 +15,23 @@ function Assert-Equal($Expected, $Actual, [string] $Message) {
     }
 }
 
+# Runs a script block and keeps what it wrote to the warning stream apart from its output. A case that must produce a
+# warning asserts it with Assert-WarningLike; the log of a passing run then holds no warning that is the expected result.
+function Invoke-CapturingWarnings([scriptblock] $Script) {
+    $warnings = [System.Collections.Generic.List[string]]::new()
+    $output = [System.Collections.Generic.List[object]]::new()
+    & $Script 3>&1 | ForEach-Object {
+        if ($_ -is [System.Management.Automation.WarningRecord]) { $warnings.Add($_.Message) } else { $output.Add($_) }
+    }
+    return [pscustomobject]@{ Output = $output.ToArray(); Warnings = $warnings.ToArray() }
+}
+
+function Assert-WarningLike([string[]] $Warnings, [string] $Pattern, [string] $Message) {
+    if (-not ($Warnings | Where-Object { $_ -like $Pattern })) {
+        throw "$Message`nExpected a warning like: $Pattern`nWarnings: $($Warnings -join ' | ')"
+    }
+}
+
 function New-TestDevice(
     [string] $Version,
     [string] $Status = 'OK',
@@ -95,9 +112,12 @@ try {
 
     $script:forceWaitTimeout = $true
     $script:installTestDevice = New-TestDevice '100.0.16.6' 'ERROR'
-    $timeoutResult = Install-VddDeviceFromInf $HelperScript $HelperScript '100.0.16.6'
+    $timeout = Invoke-CapturingWarnings { Install-VddDeviceFromInf $HelperScript $HelperScript '100.0.16.6' }
+    $timeoutResult = $timeout.Output | Select-Object -Last 1
     Assert-Equal -Expected $vddDeviceRestartRequired -Actual $timeoutResult -Message `
         'A timed-out bound device after a bind that returned 3010 (bRebootRequired) must require a restart.'
+    Assert-WarningLike $timeout.Warnings '*Windows reports a pending restart*' `
+        'A restart signal on a bound device that is not ready must be warned about.'
 
     # Without a real Windows restart signal a timed-out bound device is a failure.
     $script:bindExitCode = 0
@@ -123,18 +143,24 @@ try {
         'A timeout without a restart signal must not request a restart.'
 
     $script:installTestDevice.Problem = 14
-    Assert-Equal -Expected $vddDeviceRestartRequired -Actual (Install-VddDeviceFromInf $HelperScript $HelperScript '100.0.16.6') `
+    $signal = Invoke-CapturingWarnings { Install-VddDeviceFromInf $HelperScript $HelperScript '100.0.16.6' }
+    Assert-Equal -Expected $vddDeviceRestartRequired -Actual ($signal.Output | Select-Object -Last 1) `
         -Message 'CM_PROB_NEED_RESTART (14) on the bound device is a real restart signal.'
+    Assert-WarningLike $signal.Warnings '*CM_PROB_NEED_RESTART*' 'The restart signal must be named in the warning.'
 
     $script:installTestDevice.Problem = 10
     $script:rebootProperty = $true
-    Assert-Equal -Expected $vddDeviceRestartRequired -Actual (Install-VddDeviceFromInf $HelperScript $HelperScript '100.0.16.6') `
+    $signal = Invoke-CapturingWarnings { Install-VddDeviceFromInf $HelperScript $HelperScript '100.0.16.6' }
+    Assert-Equal -Expected $vddDeviceRestartRequired -Actual ($signal.Output | Select-Object -Last 1) `
         -Message 'DEVPKEY_Device_IsRebootRequired on the bound device is a real restart signal.'
+    Assert-WarningLike $signal.Warnings '*DEVPKEY_Device_IsRebootRequired*' 'The restart signal must be named in the warning.'
 
     $script:rebootProperty = $false
     $script:vddStagingRestartSignal = $true
-    Assert-Equal -Expected $vddDeviceRestartRequired -Actual (Install-VddDeviceFromInf $HelperScript $HelperScript '100.0.16.6') `
+    $signal = Invoke-CapturingWarnings { Install-VddDeviceFromInf $HelperScript $HelperScript '100.0.16.6' }
+    Assert-Equal -Expected $vddDeviceRestartRequired -Actual ($signal.Output | Select-Object -Last 1) `
         -Message 'pnputil /add-driver 3010 is a real restart signal.'
+    Assert-WarningLike $signal.Warnings '*pnputil /add-driver*' 'The restart signal must be named in the warning.'
     $script:vddStagingRestartSignal = $false
     $script:bindExitCode = 3010
 
@@ -321,8 +347,10 @@ try {
         return $LiteralPath -like '*oem42.inf'
     }
 
-    $foundPackages = @(Get-PublishedVddPackages `
-        -RequiredInfNames @('oem42.inf'))
+    $scan = Invoke-CapturingWarnings { Get-PublishedVddPackages -RequiredInfNames @('oem42.inf') }
+    $foundPackages = @($scan.Output)
+    Assert-WarningLike $scan.Warnings '*Skipping unreadable unrelated INF oem40.inf*' `
+        'An unreadable unrelated INF must be reported when it is skipped.'
     Assert-Equal -Expected 1 -Actual $foundPackages.Count -Message 'An unreadable unrelated INF must not abort the package scan.'
     Assert-Equal -Expected 'oem42.inf' -Actual $foundPackages[0].InfName -Message 'The readable VDD package must still be detected.'
     Assert-Equal -Expected 'Root\ZakoVDD,ZakoVDD' -Actual ($script:lastInfPatterns -join ',') `
@@ -839,28 +867,36 @@ try {
 
     $script:workflowCalls = @()
     $script:failWorkflowInstall = $true
-    $installFailed = $false
-    try {
-        Invoke-VddInstall $PSScriptRoot 'Run'
+    $script:installFailed = $false
+    $failedInstall = Invoke-CapturingWarnings {
+        try {
+            Invoke-VddInstall $PSScriptRoot 'Run'
+        }
+        catch {
+            $script:installFailed = $_.Exception.Message -like '*simulated install failure*'
+        }
     }
-    catch {
-        $installFailed = $_.Exception.Message -like '*simulated install failure*'
-    }
-    Assert-Equal -Expected $true -Actual $installFailed -Message 'A failed driver replacement must report the original failure.'
+    Assert-Equal -Expected $true -Actual $script:installFailed -Message 'A failed driver replacement must report the original failure.'
+    Assert-WarningLike $failedInstall.Warnings '*the previous working driver was restored*' `
+        'A restored driver after a failed replacement must be reported.'
     Assert-Equal -Expected 'Stage,Configure,Package,Journal,Remove,Install,Restore,Clear' -Actual ($script:workflowCalls -join ',') `
         -Message 'A failed driver replacement must restore the previous healthy driver.'
 
     $script:workflowCalls = @()
     $script:workflowRestoreRequestsRestart = $true
     $script:vddRestartRequired = $false
-    $rollbackPendingThrew = $false
-    try {
-        Invoke-VddInstall $PSScriptRoot 'Run'
+    $script:rollbackPendingThrew = $false
+    $pendingRollback = Invoke-CapturingWarnings {
+        try {
+            Invoke-VddInstall $PSScriptRoot 'Run'
+        }
+        catch {
+            $script:rollbackPendingThrew = $true
+        }
     }
-    catch {
-        $rollbackPendingThrew = $true
-    }
-    Assert-Equal -Expected $false -Actual $rollbackPendingThrew -Message `
+    Assert-WarningLike $pendingRollback.Warnings '*restoring the previous driver requires a Windows restart*' `
+        'A reboot-pending rollback must be reported.'
+    Assert-Equal -Expected $false -Actual $script:rollbackPendingThrew -Message `
         'A reboot-pending rollback must propagate 3010 instead of the original install failure.'
     Assert-Equal -Expected 'Stage,Configure,Package,Journal,Remove,Install,Restore' `
         -Actual ($script:workflowCalls -join ',') `
