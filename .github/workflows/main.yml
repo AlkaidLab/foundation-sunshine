@@ -151,9 +151,12 @@ jobs:
           ref: ${{ github.sha }}
           submodules: recursive
         env:
-          GIT_CONFIG_COUNT: '1'
+          GIT_CONFIG_COUNT: '2'
           GIT_CONFIG_KEY_0: core.longpaths
           GIT_CONFIG_VALUE_0: 'true'
+          # About fifty submodules: fetch them in parallel instead of one by one.
+          GIT_CONFIG_KEY_1: submodule.fetchJobs
+          GIT_CONFIG_VALUE_1: '8'
 
       - name: Setup Dependencies Windows
         uses: msys2/setup-msys2@v2
@@ -346,7 +349,7 @@ jobs:
           CCACHE_COMPILERCHECK: content
         run: |
           ninja -C build
-          ccache --show-stats
+          ccache --show-stats --verbose
 
       - name: Run native tests
         shell: msys2 {0}
