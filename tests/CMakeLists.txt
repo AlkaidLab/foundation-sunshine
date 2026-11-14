@@ -1345,10 +1345,19 @@ if (WIN32)
             ${TRUEHDR_ADAPTER_LOADER_TEST_SOURCE})
 endif ()
 
-set(SUNSHINE_SOURCES
-        ${SUNSHINE_HOST_SOURCES}
-        ${PLATFORM_TARGET_FILES}
-        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/Ds5HapticsIrStream.c)
+if(SUNSHINE_SHARED_HOST_OBJECTS_ENABLED)
+    # The host sources are compiled once (sunshine_host_objects); only the files that depend on test-only
+    # definitions are compiled again here, with them.
+    set(SUNSHINE_SOURCES
+            ${SUNSHINE_SEAM_SOURCES}
+            $<TARGET_OBJECTS:sunshine_host_objects>
+            ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/Ds5HapticsIrStream.c)
+else()
+    set(SUNSHINE_SOURCES
+            ${SUNSHINE_HOST_SOURCES}
+            ${PLATFORM_TARGET_FILES}
+            ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/Ds5HapticsIrStream.c)
+endif()
 
 add_executable(${PROJECT_NAME} ${TEST_SOURCES})
 target_sources(${PROJECT_NAME} PRIVATE
