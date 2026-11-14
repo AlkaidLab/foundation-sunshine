@@ -77,7 +77,7 @@
 
 <table>
 <tr>
-<td align="center" valign="top">
+<td width="50%" align="center" valign="top">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/panel-tray-dark.webp">
   <img src="../../assets/readme/panel-tray.webp" width="320" alt="托盘快捷面板">

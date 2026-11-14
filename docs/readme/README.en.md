@@ -36,14 +36,14 @@ From dynamic HDR and display calibration to low-latency capture and hardware enc
 
 <table>
 <tr>
-<td align="center" valign="top">
+<td width="50%" align="center" valign="top">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/panel-library-dark.webp">
   <img src="../../assets/readme/panel-library.webp" alt="Desktop control panel: game library">
 </picture><br>
 <sub>Desktop control panel · Game library</sub>
 </td>
-<td align="center" valign="top">
+<td width="50%" align="center" valign="top">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/panel-appearance-dark.webp">
   <img src="../../assets/readme/panel-appearance.webp" alt="Desktop control panel: personalization">
@@ -52,14 +52,14 @@ From dynamic HDR and display calibration to low-latency capture and hardware enc
 </td>
 </tr>
 <tr>
-<td align="center" valign="top">
+<td width="50%" align="center" valign="top">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/web-encoders-dark.webp">
   <img src="../../assets/readme/web-encoders.webp" alt="Web management UI: encoding and bitrate">
 </picture><br>
 <sub>Web management UI · Settings</sub>
 </td>
-<td align="center" valign="top">
+<td width="50%" align="center" valign="top">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/web-home-dark.webp">
   <img src="../../assets/readme/web-home.webp" alt="Web management UI: overview">
@@ -73,12 +73,12 @@ From dynamic HDR and display calibration to low-latency capture and hardware enc
 
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/h-highlights-dark.webp"><img src="../../assets/readme/h-highlights.webp" height="50" alt=""></picture>&nbsp;Highlights
 
-<p align="center"><a href="../en/features.md#hdr-and-color"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-1-dark.en.webp"><img src="../../assets/readme/strip-1.en.webp" width="464" alt="Video and displays: Dynamic HDR and virtual displays"></picture></a>
-<a href="../en/features.md#capture-encoding-and-performance"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-2-dark.en.webp"><img src="../../assets/readme/strip-2.en.webp" width="464" alt="Capture and encoding: Low-latency capture, hardware encoding"></picture></a>
-<a href="../en/features.md#audio-and-microphone-forwarding"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-3-dark.en.webp"><img src="../../assets/readme/strip-3.en.webp" width="464" alt="Audio and microphone: Surround sound and mic forwarding"></picture></a>
-<a href="../en/features.md#desktop-control-panel"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-4-dark.en.webp"><img src="../../assets/readme/strip-4.en.webp" width="464" alt="Desktop control panel: Games, displays, components in one place"></picture></a>
-<a href="../en/features.md#dualsense-and-virtual-controllers"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-5-dark.en.webp"><img src="../../assets/readme/strip-5.en.webp" width="464" alt="Input and controllers: Touchpad, pen and native DualSense"></picture></a>
-<a href="../en/features.md"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-6-dark.en.webp"><img src="../../assets/readme/strip-6.en.webp" width="464" alt="Desktop integration: Clipboard, file sharing, session control"></picture></a></p>
+<p align="center"><a href="../en/features.md#hdr-and-color"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-1-dark.en.webp"><img src="../../assets/readme/strip-1.en.webp" width="380" alt="Video and displays: Dynamic HDR and virtual displays"></picture></a>&nbsp;
+<a href="../en/features.md#capture-encoding-and-performance"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-2-dark.en.webp"><img src="../../assets/readme/strip-2.en.webp" width="380" alt="Capture and encoding: Low-latency capture, hardware encoding"></picture></a><br>
+<a href="../en/features.md#audio-and-microphone-forwarding"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-3-dark.en.webp"><img src="../../assets/readme/strip-3.en.webp" width="380" alt="Audio and microphone: Surround sound and mic forwarding"></picture></a>&nbsp;
+<a href="../en/features.md#desktop-control-panel"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-4-dark.en.webp"><img src="../../assets/readme/strip-4.en.webp" width="380" alt="Desktop control panel: Games, displays, components in one place"></picture></a><br>
+<a href="../en/features.md#dualsense-and-virtual-controllers"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-5-dark.en.webp"><img src="../../assets/readme/strip-5.en.webp" width="380" alt="Input and controllers: Touchpad, pen and native DualSense"></picture></a>&nbsp;
+<a href="../en/features.md"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-6-dark.en.webp"><img src="../../assets/readme/strip-6.en.webp" width="380" alt="Desktop integration: Clipboard, file sharing, session control"></picture></a></p>
 
 - **Video and displays:** Scene-adaptive HDR, HDR10+ / HDR Vivid and Dolby Vision extensions, with brightness calibration. [ZakoDisplay](https://github.com/qiin2333/zako-vdd) provides HDR virtual displays and multiple display layouts without a physical monitor.
 - **Capture and encoding:** NVIDIA NVENC, AMD AMF, and Intel Quick Sync, with capture and encoding optimizations for lower latency and smoother sessions. Zako Direct takes virtual display frames directly to reduce capture-stage copies.
