@@ -126,6 +126,7 @@ TEST(WindowsTextEncoding, FileLogKeepsSystemMessagesUtf8) {
   EXPECT_NE(bytes.find("Windows system message"), std::string::npos);
   // The logger converts a non-UTF-8 line with the host ANSI code page. The legacy bytes are GBK, so the exact text
   // below only results on a host whose ANSI code page is GBK (936); every other check above holds on any code page.
+  EXPECT_NE(bytes.find("Legacy tool output: "), std::string::npos);
   if (GetACP() == 936) {
     EXPECT_NE(bytes.find(legacy_utf8), std::string::npos);
   }
