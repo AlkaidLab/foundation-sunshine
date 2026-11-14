@@ -496,9 +496,6 @@ jobs:
             echo "Side-loaded HDR files and mutable trust metadata must not be included in the main portable package"
             exit 1
           fi
-            echo "The optional DualSense runtime leaked into the main portable package"
-            exit 1
-          fi
 
           # move
           mv ./cpack_artifacts/Sunshine.exe ../artifacts/sunshine-windows-installer.exe
