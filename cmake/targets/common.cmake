@@ -14,9 +14,11 @@ endif ()
 # The other uses of SUNSHINE_TESTS are declarations in headers (input.h, logging_severity.h, nvhttp.h,
 # nvhttp/pairing_pending.h, webhook/webhook.h): they add names, never members or layouts, so a translation unit that
 # compiles without them is ODR-safe next to one that compiles with them.
+# A coverage build keeps the separate test compilation: the shared objects are not built with the coverage flags of
+# sunshine_coverage, and linking the test target against it cannot instrument objects that were already compiled.
 option(SUNSHINE_SHARE_HOST_OBJECTS "Compile the host sources once for sunshine and test_sunshine" ON)
 set(SUNSHINE_SHARED_HOST_OBJECTS_ENABLED OFF)
-if(WIN32 AND SUNSHINE_SHARE_HOST_OBJECTS AND (BUILD_TESTS OR BUILD_TRAY_TESTS))
+if(WIN32 AND SUNSHINE_SHARE_HOST_OBJECTS AND (BUILD_TESTS OR BUILD_TRAY_TESTS) AND NOT SUNSHINE_TESTS_ENABLE_COVERAGE)
     set(SUNSHINE_SHARED_HOST_OBJECTS_ENABLED ON)
     set(_sunshine_seam_regex
         ".*/src/(input|logging|nvhttp/pairing|nvhttp/pairing_pending|webhook/webhook|nvenc/win/nvenc_dynamic_factory|nvenc/win/impl/nvenc_dynamic_factory_1301|platform/windows/display_vram|platform/windows/pre_encode_filter)\\.cpp$")
