@@ -1383,6 +1383,10 @@ target_link_libraries(${PROJECT_NAME}
         gtest
         ${PLATFORM_LIBRARIES}
         sunshine_project_options sunshine_coverage sunshine_crypto sunshine_ai_provider sunshine_ai_stream)
+if (WIN32)
+    # src/sparxie/platform.cpp downloads through WinHTTP, as the sunshine target links it.
+    target_link_libraries(${PROJECT_NAME} PRIVATE winhttp)
+endif ()
 target_compile_definitions(${PROJECT_NAME} PUBLIC
         SUNSHINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
         ${SUNSHINE_DEFINITIONS}
