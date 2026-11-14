@@ -269,6 +269,11 @@ add_executable(default_apps_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_defau
 target_sources(default_apps_unit_tests PRIVATE
         ${CMAKE_SOURCE_DIR}/src/default_apps.cpp
         ${CMAKE_SOURCE_DIR}/src/file_handler.cpp)
+if (WIN32)
+    # file_handler.cpp converts paths with platf::from_utf8/to_utf8.
+    target_sources(default_apps_unit_tests PRIVATE
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/text_encoding.cpp)
+endif ()
 target_include_directories(default_apps_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(default_apps_unit_tests PRIVATE gtest_main Boost::boost Boost::log Boost::format Boost::property_tree sunshine_project_options sunshine_coverage)
 set_target_properties(default_apps_unit_tests PROPERTIES CXX_STANDARD 23)
