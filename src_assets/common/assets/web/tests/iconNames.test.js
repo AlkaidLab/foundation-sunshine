@@ -15,12 +15,13 @@ const WEB_ROOT = fileURLToPath(new URL('..', import.meta.url)).replace(/[\\/]$/,
 // reverse map in utils/clientList.js and the values compared in template conditions.
 const NOT_ICON_WORDS = new Set(['phone', 'tablet', 'computer', 'tv', 'steam', 'headset', 'reachable', 'sparxie'])
 
-const skipDir = /(^|\/)(node_modules|tests?|fixtures|dist|build|public)(\/|$)/
+// matched against a directory's own name, never the absolute path: a checkout below a folder called build must still be scanned
+const skipDir = /^(node_modules|tests?|fixtures|dist|build|public)$/
 const sources = []
 const walk = (dir) => {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name)
-    if (entry.isDirectory()) { if (!skipDir.test(path.split(sep).join('/'))) walk(path) } else if (/\.(js|vue)$/.test(entry.name)) sources.push(path)
+    if (entry.isDirectory()) { if (!skipDir.test(entry.name)) walk(path) } else if (/\.(js|vue)$/.test(entry.name)) sources.push(path)
   }
 }
 walk(WEB_ROOT)
