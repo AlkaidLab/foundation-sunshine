@@ -145,6 +145,11 @@ jobs:
       actions: write  # prune stale ccache entries after saving this run's
     runs-on: windows-latest
     steps:
+      # Several Web UI tests match source text with \n in their patterns: check the sources out with LF on Windows too.
+      - name: Keep LF line endings
+        shell: bash
+        run: git config --global core.autocrlf false
+
       - name: Checkout
         uses: actions/checkout@v7
         with:
@@ -234,15 +239,20 @@ jobs:
           cache-dependency-path: package-lock.json
 
       # The Web UI imports foundation-ui from a sibling checkout named ds5-ui-m3e (package.json: "file:../ds5-ui-m3e").
+      # A full install: the checkout resolves vue and the SFC compiler from its own node_modules, and both are dev/peer
+      # dependencies there. pwsh does not stop on a failing native command by itself; the preference below does.
       - name: Fetch foundation-ui
         shell: pwsh
         run: |
+          $PSNativeCommandUseErrorActionPreference = $true
           git clone --depth 1 https://github.com/AlkaidLab/foundation-ui "$env:GITHUB_WORKSPACE/../ds5-ui-m3e"
-          npm ci --omit=dev --omit=peer --prefix "$env:GITHUB_WORKSPACE/../ds5-ui-m3e"
+          npm ci --prefix "$env:GITHUB_WORKSPACE/../ds5-ui-m3e"
 
       - name: Build Web UI
         shell: pwsh
         run: |
+          # A failing native command fails the step (PowerShell 7.4+; the runner already sets ErrorActionPreference=Stop).
+          $PSNativeCommandUseErrorActionPreference = $true
           npm ci
           npm run lint:webui
           npm run test:webui

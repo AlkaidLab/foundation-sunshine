@@ -1,11 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { fileURLToPath } from 'node:url'
 import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
 // Every page is one column (foundation-ui layout.css): the title and the content share its left edge, the pane's inset under the column's maximum and centred above it. The Web UI sets the width of a page's own column (--m-column) and nothing about its title row, and no page centres itself;
 // a page in the panel's frame also has no margin of the document around it (it moved every framed title 8 px right and down).
-const web = new URL('../', import.meta.url).pathname
+const web = fileURLToPath(new URL('../', import.meta.url))
 const files = []
 const walk = async (dir) => {
   for (const e of await readdir(dir, { withFileTypes: true })) {
