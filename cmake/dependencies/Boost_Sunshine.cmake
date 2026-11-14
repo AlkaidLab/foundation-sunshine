@@ -3,6 +3,34 @@
 #
 include_guard(GLOBAL)
 
+if(NOT COMMAND sunshine_source_group_filter_installed)
+    macro(sunshine_source_group_filter_installed)
+    endmacro()
+    function(source_group)
+        get_property(_sunshine_filter GLOBAL PROPERTY SUNSHINE_FILTER_SOURCE_GROUP_TREE)
+        if(NOT _sunshine_filter OR NOT ARGV0 STREQUAL "TREE")
+            _source_group(${ARGN})
+            return()
+        endif()
+        cmake_parse_arguments(_sunshine_sg "" "TREE;PREFIX" "FILES" ${ARGN})
+        set(_sunshine_sg_kept "")
+        foreach(_sunshine_sg_file IN LISTS _sunshine_sg_FILES)
+            cmake_path(IS_PREFIX _sunshine_sg_TREE "${_sunshine_sg_file}" NORMALIZE _sunshine_sg_inside)
+            if(_sunshine_sg_inside)
+                list(APPEND _sunshine_sg_kept "${_sunshine_sg_file}")
+            endif()
+        endforeach()
+        if(_sunshine_sg_kept)
+            if(DEFINED _sunshine_sg_PREFIX)
+                _source_group(TREE "${_sunshine_sg_TREE}" PREFIX "${_sunshine_sg_PREFIX}" FILES ${_sunshine_sg_kept})
+            else()
+                _source_group(TREE "${_sunshine_sg_TREE}" FILES ${_sunshine_sg_kept})
+            endif()
+        endif()
+    endfunction()
+endif()
+
+
 set(BOOST_VERSION "1.92.0")
 set(BOOST_RELEASE_VERSION "1.92.0")
 set(BOOST_COMPONENTS
@@ -95,7 +123,13 @@ if(NOT Boost_FOUND)
         )
     endif()
 
+    # CMake 4.5 rejects a source_group(TREE) entry whose file lies outside the
+    # tree; Boost.Locale 1.92 lists include/boost/locale.hpp under the tree
+    # include/boost/locale. source_group only shapes IDE folders, so while Boost
+    # is configured, files outside their TREE are left out of the grouping.
+    set_property(GLOBAL PROPERTY SUNSHINE_FILTER_SOURCE_GROUP_TREE ON)
     FetchContent_MakeAvailable(Boost)
+    set_property(GLOBAL PROPERTY SUNSHINE_FILTER_SOURCE_GROUP_TREE OFF)
     set(FETCH_CONTENT_BOOST_USED TRUE)
 
     add_definitions(-DBOOST_SYSTEM_USE_UTF8)
