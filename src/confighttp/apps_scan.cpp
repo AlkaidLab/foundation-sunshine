@@ -140,27 +140,29 @@ namespace confighttp::apps_scan {
       context.local_app_data = environment_path("LOCALAPPDATA");
       context.roaming_app_data = environment_path("APPDATA");
 #ifdef _WIN32
+      const auto known_folder = [](REFKNOWNFOLDERID id, HANDLE token) -> std::optional<std::filesystem::path> {
+        PWSTR wide = nullptr;
+        if (FAILED(SHGetKnownFolderPath(id, KF_FLAG_DONT_VERIFY, token, &wide)) || !wide) return std::nullopt;
+        std::filesystem::path path(wide);
+        CoTaskMemFree(wide);
+        return path;
+      };
       // The service token is not the signed-in person. Known folders come from
       // that person's token; the scan itself runs while impersonating them.
+      // Without that token (Sunshine started by the person, not by the service) the per-user folders stay as the environment gave them.
       if (HANDLE token = platf::retrieve_users_token(false)) {
-        const auto folder = [&](REFKNOWNFOLDERID id) -> std::optional<std::filesystem::path> {
-          PWSTR wide = nullptr;
-          if (FAILED(SHGetKnownFolderPath(id, KF_FLAG_DONT_VERIFY, token, &wide)) || !wide) return std::nullopt;
-          std::filesystem::path path(wide);
-          CoTaskMemFree(wide);
-          return path;
-        };
-        if (auto profile = folder(FOLDERID_Profile)) context.home = profile;
-        if (auto local = folder(FOLDERID_LocalAppData)) context.local_app_data = local;
-        if (auto roaming = folder(FOLDERID_RoamingAppData)) context.roaming_app_data = roaming;
-        // Packaged (UWP/Store) games live below the machine-wide Program Files known folder, which is not always on C:.
-        const auto program_files = folder(FOLDERID_ProgramFiles);
+        if (auto profile = known_folder(FOLDERID_Profile, token)) context.home = profile;
+        if (auto local = known_folder(FOLDERID_LocalAppData, token)) context.local_app_data = local;
+        if (auto roaming = known_folder(FOLDERID_RoamingAppData, token)) context.roaming_app_data = roaming;
         CloseHandle(token);
-        if (program_files) {
-          const auto windows_apps = *program_files / L"WindowsApps";
-          std::error_code ec;
-          if (std::filesystem::is_directory(windows_apps, ec)) context.package_roots.push_back(windows_apps);
-        }
+      }
+      // Packaged (UWP/Store) games live below the machine-wide Program Files known folder, which is not always on C:.
+      // It is the same for every user (SHGetKnownFolderPath: a null token is the caller's own), so it is asked outside the
+      // branch above and also works when no user token can be had.
+      if (const auto program_files = known_folder(FOLDERID_ProgramFiles, nullptr)) {
+        const auto windows_apps = *program_files / L"WindowsApps";
+        std::error_code ec;
+        if (std::filesystem::is_directory(windows_apps, ec)) context.package_roots.push_back(windows_apps);
       }
 #endif
       std::filesystem::path sparxie_exe;
