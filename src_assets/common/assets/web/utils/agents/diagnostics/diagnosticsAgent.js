@@ -34,7 +34,7 @@ export const DIAGNOSTICS_CAPABILITIES = [
   {
     skillId: LOG_SEVERITY_SKILL_ID,
     stage: 'log-analysis',
-    icon: 'fa-chart-simple',
+    icon: 'bar_chart',
     label: 'Log severity summary',
     labels: {
       zh: '日志严重度摘要',
@@ -45,7 +45,7 @@ export const DIAGNOSTICS_CAPABILITIES = [
   {
     skillId: LOG_PATTERN_SKILL_ID,
     stage: 'log-analysis',
-    icon: 'fa-magnifying-glass-chart',
+    icon: 'troubleshoot',
     label: 'Log pattern detection',
     labels: {
       zh: '日志模式检测',
@@ -56,7 +56,7 @@ export const DIAGNOSTICS_CAPABILITIES = [
   {
     skillId: LOG_REMEDIATION_SKILL_ID,
     stage: 'log-analysis',
-    icon: 'fa-screwdriver-wrench',
+    icon: 'build',
     label: 'Log remediation suggestions',
     labels: {
       zh: '日志修复建议',

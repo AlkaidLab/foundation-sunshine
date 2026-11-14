@@ -128,18 +128,26 @@
     },
     "macos-enhanced": {
       "captions": [
-        "Parlaklık, renk ve görüntü sunumunu ayarlayın",
-        "Yerel giriş yöntemleri, kısayol dönüştürme ve izleme dörtgeni",
-        "Ekolayzır, kulaklık düzeltmesi ve çevresel ses seçenekleri",
-        "Yayın sırasında görüntü, ses ve ana bilgisayar ayarlarını değiştirin"
+        "Uyumlu ekranlarda HDR",
+        "Alışılmış masaüstü kontrolleri",
+        "Metin ve görüntüleri eşitleyin",
+        "Yerel sesi oyun bilgisayarına gönderin",
+        "Ana bilgisayarın paylaşılan klasörlerine erişin",
+        "Yayın ayarlarını ve fare modunu değiştirin",
+        "Host haptics, adaptive triggers, lightbar colour and gyroscope",
+        "Yerel giriş yöntemleri, kısayol dönüştürme ve izleme dörtgeni"
       ],
       "description": "Yerel Mac arayüzü, yerel metin girişi ve izleme dörtgeniyle yayını geliştirin. HDR görüntüyü, kulaklık sesini ve yayın ayarlarını düzenleyin.",
       "detail": "macOS için yerel geliştirilmiş istemci",
       "features": [
-        "HDR ve renk ayarları",
-        "Mac girişi ve izleme dörtgeni",
-        "Kulaklık ve ses ayarları",
-        "Yayın içi kontroller"
+        "HDR görüntü",
+        "Klavye ve kumandalar",
+        "Çift yönlü pano",
+        "Uzak mikrofon",
+        "Ana bilgisayarın paylaşılan dosyaları",
+        "Yayın içi kontroller",
+        "DualSense haptics, triggers and motion",
+        "Mac girişi ve izleme dörtgeni"
       ],
       "name": "macOS",
       "note": "macOS 12+, Apple Silicon ve Intel. Pano, mikrofon ve ana bilgisayar kontrolleri ana bilgisayar desteği gerektirir.",
@@ -197,6 +205,7 @@
     "downloadAddress": "İndirme adresi",
     "enhanced": "Geliştirilmiş",
     "failed": "QR kodu kullanılamıyor. İndirme düğmesini kullanın.",
+    "filesFailed": "İndirme listesi okunamadı",
     "friendLink": "Dost bağlantı",
     "getApp": "Uygulamayı al",
     "mirror": "Alternatif indirme",

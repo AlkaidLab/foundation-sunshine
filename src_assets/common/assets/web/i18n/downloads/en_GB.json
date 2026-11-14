@@ -128,18 +128,26 @@
     },
     "macos-enhanced": {
       "captions": [
-        "Tune brightness, color and video presentation",
-        "Local input methods, shortcut translation and trackpad controls",
-        "Equalizer, headphone correction and surround options",
-        "Adjust video, audio and host settings while streaming"
+        "HDR10, Dolby Vision and HDR10+, with colour controls",
+        "Familiar desktop controls",
+        "Sync text and images",
+        "Send local voice input to your gaming PC",
+        "Access shared host folders",
+        "Adjust stream settings and mouse mode",
+        "Host haptics, adaptive triggers, lightbar colour and gyroscope",
+        "Local input methods, shortcut translation and trackpad controls"
       ],
       "description": "Enhance streaming with a native Mac interface, local text input and trackpad controls. Tune HDR video, headphone audio and stream settings to your preferences.",
       "detail": "Native enhanced client for macOS",
       "features": [
-        "HDR and color controls",
-        "Mac input and trackpad",
-        "Headphone and audio tuning",
-        "In-stream controls"
+        "HDR video",
+        "Keyboard and controllers",
+        "Two-way clipboard",
+        "Remote microphone",
+        "Shared host files",
+        "In-stream controls",
+        "DualSense haptics, triggers and motion",
+        "Mac input and trackpad"
       ],
       "name": "macOS",
       "note": "macOS 12+, Apple Silicon and Intel. Clipboard, microphone and host controls require host support.",
@@ -197,6 +205,7 @@
     "downloadAddress": "Download address",
     "enhanced": "Enhanced",
     "failed": "The QR code is unavailable. Use the download button instead.",
+    "filesFailed": "The download list could not be read",
     "friendLink": "Friend link",
     "getApp": "Get App",
     "mirror": "Alternate download",

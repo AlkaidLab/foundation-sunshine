@@ -1,0 +1,70 @@
+/* The game settings editor (SparxieSettings): one card per group of the game's settings menu, a grid of compact controls inside. The grids are as wide as the card allows, so the same page
+   is three columns on a desktop window, two on a tablet and one on a phone, and in the Panel's frame at its own width; nothing is measured in a script. Material 3 tokens only. */
+.gs-card { display: flex; flex-direction: column; gap: 16px; margin-top: 12px; padding: 16px 16px 18px; border-radius: var(--md-sys-shape-corner-extra-large); background: var(--m-card); color: var(--md-sys-color-on-surface); content-visibility: auto; contain-intrinsic-size: auto 420px; container-type: inline-size; container-name: gs; }
+.gs-card__title { margin: 0 0 -2px 2px; font: var(--m-title-small); color: var(--md-sys-color-primary-text); letter-spacing: 0; }
+.gs-grid { display: grid; gap: 14px 12px; align-items: start; }
+.gs-grid--pick { grid-template-columns: repeat(auto-fill, minmax(min(100%, 208px), 1fr)); }
+.gs-grid--slide { grid-template-columns: repeat(auto-fill, minmax(min(100%, 248px), 1fr)); gap: 18px 24px; }
+.gs-grid--tog { grid-template-columns: repeat(auto-fill, minmax(min(100%, 240px), 1fr)); gap: 8px; }
+.gs-grid--type { grid-template-columns: repeat(auto-fill, minmax(min(100%, 248px), 1fr)); }
+.gs-grid--one.gs-grid--slide { grid-template-columns: 1fr; }
+.gs-grid--pick > .gs-seg.is-wide { grid-column: 1 / -1; }
+.gs-args-cell { grid-column: 1 / -1; }
+.gs-lab { font: var(--m-label-large); color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
+.gs-hint { font: var(--m-body-small, var(--m-body-medium)); color: var(--md-sys-color-on-surface-variant); overflow-wrap: anywhere; }
+.gs-noted { grid-column: span 2; }
+
+/* switch tile: the whole tile is the target */
+.gs-tile { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 56px; padding: 8px 10px 8px 16px; box-sizing: border-box; border-radius: 16px; background: var(--md-sys-color-surface-container-high); position: relative; isolation: isolate; overflow: clip; }
+.gs-tile--switch { cursor: pointer; }
+.gs-tile--switch::before { content: ''; position: absolute; inset: 0; z-index: -1; background: currentColor; opacity: 0; border-radius: inherit; transition: opacity 120ms linear; }
+.gs-tile--switch:hover::before { opacity: var(--m-state-hover, 0.08); }
+.gs-tile__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.gs-tile__name { font: var(--m-body-large); overflow-wrap: anywhere; }
+.gs-tile--lock { justify-content: flex-start; opacity: 0.6; }
+.gs-tile--lock .m-icon { flex: none; color: var(--md-sys-color-on-surface-variant); }
+.is-off.gs-tile, .gs-tile.is-off, .gs-seg.is-off, .gs-slide.is-off, .gs-num.is-off, .gs-args.is-off { opacity: 0.38; pointer-events: none; }
+
+.gs-seg, .gs-slide { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.gs-slide { gap: 4px; }
+.gs-slide__head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.gs-slide__val { font: var(--m-label-large); font-variant-numeric: tabular-nums; color: var(--md-sys-color-primary-text); }
+.gs-num .m-fieldrow, .gs-args .m-fieldrow { width: 100%; }
+.gs-num .m-field, .gs-args .m-field { width: 100%; }
+.gs-args .m-field { --md-outlined-text-field-input-text-font: var(--m-font-mono, ui-monospace, monospace); }
+
+.gs-sel { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.gs-sel__btn {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 44px; padding: 0 8px 0 14px; margin: 0; box-sizing: border-box; border: 0; border-radius: 14px; cursor: pointer;
+  font: var(--m-body-large); color: var(--md-sys-color-on-surface); text-align: left; background: var(--md-sys-color-surface-container-high); position: relative; isolation: isolate; overflow: clip;
+  transition: border-radius var(--m-spring-fast-spatial-duration, 200ms) var(--m-spring-fast-spatial, ease), background-color var(--m-spring-default-effects-duration, 160ms) var(--m-spring-default-effects, linear);
+}
+.gs-sel__btn::before { content: ''; position: absolute; inset: 0; z-index: -1; background: currentColor; opacity: 0; border-radius: inherit; transition: opacity 120ms linear; }
+.gs-sel__btn:hover::before { opacity: var(--m-state-hover, 0.08); }
+.gs-sel__btn:focus-visible { outline: 2px solid var(--md-sys-color-primary); outline-offset: 2px; }
+.gs-sel__btn:active { border-radius: 10px; }
+.gs-sel.is-open .gs-sel__btn { border-radius: 14px 14px 6px 6px; }
+.gs-sel__btn:disabled { opacity: 0.38; cursor: default; }
+.gs-sel__val { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gs-sel__arrow { flex: none; color: var(--md-sys-color-on-surface-variant); transition: transform 200ms cubic-bezier(0.2, 0, 0, 1); }
+.gs-sel.is-open .gs-sel__arrow { transform: rotate(180deg); }
+.gs-sel__tick { width: 24px; display: inline-grid; place-items: center; color: var(--md-sys-color-primary-text); }
+.gs-sel__now { font: var(--m-label-medium, var(--m-body-medium)); color: var(--md-sys-color-primary-text); }
+.gs-menu { max-height: min(60vh, 420px); }
+@media (prefers-reduced-motion: reduce) { .gs-sel__arrow, .gs-sel__btn { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .gs-tile--switch::before { transition: none; } }
+
+/* a phone: two menus side by side, segments and typed values on the whole width */
+@container gs (max-width: 460px) {
+  .gs-grid--pick { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .gs-grid--pick > .gs-seg, .gs-grid--pick > .gs-noted { grid-column: 1 / -1; }
+}
+@container gs (max-width: 643px) { .gs-noted { grid-column: 1 / -1; } }
+/* the mark of an item: follows the game, or changed (with the way back) */
+.gs-mark { display: inline-flex; align-items: center; gap: 4px; margin-inline-start: 8px; font: var(--m-label-small, var(--m-body-small)); color: var(--md-sys-color-on-surface-variant); vertical-align: middle; }
+.gs-mark.is-held { color: var(--md-sys-color-primary); }
+.gs-mark__back { display: inline-flex; align-items: center; justify-content: center; inline-size: 24px; block-size: 24px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: inherit; cursor: pointer; }
+.gs-mark__back:hover { background: color-mix(in srgb, currentColor 12%, transparent); }
+.gs-mark__back .m-icon { font-size: 18px; }
+.gs-mark-row { display: flex; align-items: center; min-block-size: 20px; }
+.gs-lab-row { display: flex; align-items: center; flex-wrap: wrap; }

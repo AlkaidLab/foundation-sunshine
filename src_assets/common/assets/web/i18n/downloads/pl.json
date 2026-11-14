@@ -128,18 +128,26 @@
     },
     "macos-enhanced": {
       "captions": [
-        "Dostosuj jasność, kolory i obraz",
-        "Lokalne metody wprowadzania, tłumaczenie skrótów i gładzik",
-        "Korektor, korekcja słuchawek i dźwięk przestrzenny",
-        "Zmieniaj obraz, dźwięk i hosta podczas transmisji"
+        "HDR na zgodnych ekranach",
+        "Znane sterowanie pulpitem",
+        "Synchronizuj tekst i obrazy",
+        "Przesyłaj lokalny głos do komputera do gier",
+        "Uzyskaj dostęp do udostępnionych folderów hosta",
+        "Dostosuj transmisję i tryb myszy",
+        "Host haptics, adaptive triggers, lightbar colour and gyroscope",
+        "Lokalne metody wprowadzania, tłumaczenie skrótów i gładzik"
       ],
       "description": "Rozszerz strumieniowanie o natywny interfejs Maca, lokalny tekst i gładzik. Dostosuj HDR, dźwięk słuchawek i transmisję.",
       "detail": "Natywny rozszerzony klient dla macOS",
       "features": [
-        "Ustawienia HDR i kolorów",
-        "Wprowadzanie na Macu i gładzik",
-        "Ustawienia słuchawek i dźwięku",
-        "Sterowanie podczas transmisji"
+        "Obraz HDR",
+        "Klawiatura i pady",
+        "Dwukierunkowy schowek",
+        "Zdalny mikrofon",
+        "Udostępnione pliki hosta",
+        "Sterowanie podczas transmisji",
+        "DualSense haptics, triggers and motion",
+        "Wprowadzanie na Macu i gładzik"
       ],
       "name": "macOS",
       "note": "macOS 12+, Apple Silicon i Intel. Schowek, mikrofon i sterowanie hostem wymagają jego obsługi.",
@@ -197,6 +205,7 @@
     "downloadAddress": "Adres pobierania",
     "enhanced": "Rozszerzona",
     "failed": "Kod QR jest niedostępny. Użyj przycisku pobierania.",
+    "filesFailed": "Nie udało się wczytać listy plików do pobrania",
     "friendLink": "Link partnerski",
     "getApp": "Pobierz aplikację",
     "mirror": "Alternatywne pobieranie",

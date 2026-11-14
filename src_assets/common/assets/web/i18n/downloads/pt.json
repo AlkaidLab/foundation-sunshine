@@ -128,18 +128,26 @@
     },
     "macos-enhanced": {
       "captions": [
-        "Ajuste brilho, cor e apresentação do vídeo",
-        "Métodos de entrada locais, adaptação de atalhos e trackpad",
-        "Equalizador, correção de auscultadores e opções surround",
-        "Ajuste vídeo, áudio e anfitrião durante a transmissão"
+        "HDR em ecrãs compatíveis",
+        "Controlos de ambiente de trabalho familiares",
+        "Sincronize texto e imagens",
+        "Envie a voz local para o PC de jogo",
+        "Aceda às pastas partilhadas do anfitrião",
+        "Ajuste a transmissão e o modo do rato",
+        "Host haptics, adaptive triggers, lightbar colour and gyroscope",
+        "Métodos de entrada locais, adaptação de atalhos e trackpad"
       ],
       "description": "Melhore a transmissão com uma interface Mac nativa, entrada de texto local e trackpad. Ajuste HDR, áudio de auscultadores e definições da transmissão.",
       "detail": "Cliente nativo melhorado para macOS",
       "features": [
-        "Controlos HDR e de cor",
-        "Entrada Mac e trackpad",
-        "Ajustes de auscultadores e áudio",
-        "Controlos durante a transmissão"
+        "Vídeo HDR",
+        "Teclado e comandos",
+        "Área de transferência bidirecional",
+        "Microfone remoto",
+        "Ficheiros partilhados do anfitrião",
+        "Controlos durante a transmissão",
+        "DualSense haptics, triggers and motion",
+        "Entrada Mac e trackpad"
       ],
       "name": "macOS",
       "note": "macOS 12+, Apple Silicon e Intel. Área de transferência, microfone e controlos do anfitrião requerem o seu suporte.",
@@ -197,6 +205,7 @@
     "downloadAddress": "Endereço de transferência",
     "enhanced": "Melhorada",
     "failed": "O código QR não está disponível. Use o botão de transferência.",
+    "filesFailed": "Não foi possível ler a lista de transferências",
     "friendLink": "Ligação parceira",
     "getApp": "Obter aplicação",
     "mirror": "Transferência alternativa",

@@ -1,5 +1,6 @@
 <script setup>
 import { onMounted } from 'vue'
+import { MBanner, MButton } from 'foundation-ui/vue'
 import { useVddStatus } from '../../composables/useVddStatus.js'
 
 defineProps({
@@ -29,40 +30,18 @@ onMounted(refreshVddStatus)
 </script>
 
 <template>
-  <div v-if="active && !vddReady" class="alert alert-warning mt-2 mb-3 vdd-prerequisite-notice">
-    <div class="d-flex align-items-start gap-2">
-      <i class="fas fa-exclamation-triangle mt-1"></i>
-      <div class="flex-grow-1">
-        <strong>{{ $t('config.vdd_driver_required') }}</strong>
-        <div class="small mt-1">
-          {{ canManageVdd ? $t('config.vdd_driver_desktop_hint') : $t('config.vdd_driver_browser_hint') }}
-        </div>
-        <div role="status" aria-live="polite" aria-atomic="true">
-          <div v-if="vddStatusError" class="small mt-1">{{ vddStatusError }}</div>
-          <div v-else-if="vddStatus.state !== 'unknown'" class="small mt-1">
-            {{ $t(`config.vdd_driver_state_${vddStatus.state}`) }}
-          </div>
-        </div>
-        <div class="d-flex gap-2 mt-2">
-          <button
-            v-if="canManageVdd"
-            type="button"
-            class="btn btn-sm btn-warning"
-            :disabled="vddInstalling || vddStatusLoading"
-            @click="installOrRepair"
-          >
-            {{ vddInstalling ? $t('config.vdd_driver_installing') : $t('config.vdd_driver_install_repair') }}
-          </button>
-          <button
-            type="button"
-            class="btn btn-sm btn-outline-secondary"
-            :disabled="vddInstalling || vddStatusLoading"
-            @click="refreshVddStatus"
-          >
-            {{ $t('config.vdd_driver_recheck') }}
-          </button>
-        </div>
-      </div>
+  <MBanner v-if="active && !vddReady" class="vdd-prerequisite-notice" tone="warn" icon="warning">
+    <strong>{{ $t('config.vdd_driver_required') }}</strong>
+    <div>{{ canManageVdd ? $t('config.vdd_driver_desktop_hint') : $t('config.vdd_driver_browser_hint') }}</div>
+    <div role="status" aria-live="polite" aria-atomic="true">
+      <template v-if="vddStatusError">{{ vddStatusError }}</template>
+      <template v-else-if="vddStatus.state !== 'unknown'">{{ $t($te(`config.vdd_driver_state_${vddStatus.state}`) ? `config.vdd_driver_state_${vddStatus.state}` : 'config.vdd_driver_state_unknown') }}</template>
     </div>
-  </div>
+    <template #actions>
+      <MButton v-if="canManageVdd" variant="text" size="sm" :loading="vddInstalling" :disabled="vddStatusLoading" @click="installOrRepair">
+        {{ vddInstalling ? $t('config.vdd_driver_installing') : $t('config.vdd_driver_install_repair') }}
+      </MButton>
+      <MButton variant="text" size="sm" :disabled="vddInstalling || vddStatusLoading" @click="refreshVddStatus">{{ $t('config.vdd_driver_recheck') }}</MButton>
+    </template>
+  </MBanner>
 </template>

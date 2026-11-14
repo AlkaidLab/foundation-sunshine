@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "checked_at": "2026-11-03T01:54:56Z",
+  "ports": [
+    { "proto": "tcp", "port": 47984, "role": "https", "listening": true, "bound": ["0.0.0.0"], "firewall": "allowed", "on_demand": false },
+    { "proto": "tcp", "port": 47989, "role": "http", "listening": true, "bound": ["0.0.0.0"], "firewall": "allowed", "on_demand": false },
+    { "proto": "tcp", "port": 47990, "role": "web", "listening": true, "bound": ["0.0.0.0"], "firewall": "allowed", "on_demand": false },
+    { "proto": "tcp", "port": 48010, "role": "rtsp", "listening": true, "bound": ["0.0.0.0"], "firewall": "allowed", "on_demand": false },
+    { "proto": "udp", "port": 47998, "role": "video", "listening": true, "bound": ["0.0.0.0"], "firewall": "allowed", "on_demand": true },
+    { "proto": "udp", "port": 47999, "role": "control", "listening": true, "bound": ["0.0.0.0"], "firewall": "allowed", "on_demand": true },
+    { "proto": "udp", "port": 48000, "role": "audio", "listening": true, "bound": ["0.0.0.0"], "firewall": "allowed", "on_demand": true },
+    { "proto": "udp", "port": 48001, "role": "microphone", "listening": true, "bound": ["0.0.0.0"], "firewall": "allowed", "on_demand": true }
+  ],
+  "public": {
+    "verdict": "verified",
+    "reasons": ["hairpin_verified"],
+    "host_public_ip": null,
+    "router": {
+      "protocol": "upnp-igd",
+      "wan_ip": "203.0.113.9",
+      "wan_ip_class": "public",
+      "mappings": [
+        { "proto": "tcp", "port": 47984, "present": true, "internal": "192.0.2.10" },
+        { "proto": "tcp", "port": 47989, "present": true, "internal": "192.0.2.10" },
+        { "proto": "tcp", "port": 47990, "present": true, "internal": "192.0.2.10" },
+        { "proto": "tcp", "port": 48010, "present": true, "internal": "192.0.2.10" },
+        { "proto": "udp", "port": 47998, "present": true, "internal": "192.0.2.10" },
+        { "proto": "udp", "port": 47999, "present": true, "internal": "192.0.2.10" },
+        { "proto": "udp", "port": 48000, "present": true, "internal": "192.0.2.10" },
+        { "proto": "udp", "port": 48001, "present": true, "internal": "192.0.2.10" }
+      ]
+    },
+    "hairpin": { "tried": true, "ok": true, "port": 59995, "identity_match": true, "target": "203.0.113.9" },
+    "endpoints": [
+      {
+        "input": "home.example.ddns.net:60000",
+        "host": "home.example.ddns.net",
+        "kind": "hostname",
+        "port": 60000,
+        "port_explicit": true,
+        "https_port": 59995,
+        "resolved": ["203.0.113.9", "2001:db8::1"],
+        "scope": "public",
+        "matches_wan": true,
+        "state": "reached",
+        "error": null,
+        "tested": { "address": "203.0.113.9", "port": 59995, "latency_ms": 14 },
+        "attempts": [
+          { "address": "203.0.113.9", "port": 59995, "connected": true, "identity_match": true, "error": null, "latency_ms": 14 },
+          { "address": "2001:db8::1", "port": 59995, "connected": false, "identity_match": false, "error": "refused", "latency_ms": 4 }
+        ],
+        "reasons": []
+      },
+      {
+        "input": "100.100.1.2",
+        "host": "100.100.1.2",
+        "kind": "ip",
+        "port": 47989,
+        "port_explicit": false,
+        "https_port": 47984,
+        "resolved": ["100.100.1.2"],
+        "scope": "mesh",
+        "matches_wan": false,
+        "state": "reached",
+        "error": null,
+        "tested": { "address": "100.100.1.2", "port": 47984, "latency_ms": 2 },
+        "attempts": [
+          { "address": "100.100.1.2", "port": 47984, "connected": true, "identity_match": true, "error": null, "latency_ms": 2 }
+        ],
+        "reasons": ["scope_mesh"]
+      },
+      {
+        "input": "gone.example.net",
+        "host": "gone.example.net",
+        "kind": "hostname",
+        "port": 47989,
+        "port_explicit": false,
+        "https_port": 47984,
+        "resolved": [],
+        "scope": "unknown",
+        "matches_wan": false,
+        "state": "failed",
+        "error": "dns_failed",
+        "tested": null,
+        "attempts": [],
+        "reasons": []
+      }
+    ],
+    "configured_address": {
+      "value": "home.example.ddns.net",
+      "kind": "hostname",
+      "resolved": ["203.0.113.9"],
+      "matches_wan": true,
+      "reasons": [],
+      "hint": ""
+    },
+    "evidence": [
+      { "kind": "client-connected-from-public", "address": "198.51.100.0/24", "at": "2026-11-01T18:22:07Z" }
+    ]
+  },
+  "mesh": {
+    "adapters": [
+      { "kind": "tailscale", "name": "tailscale0", "addresses": ["100.100.1.2", "fd7a:115c:a1e0::2"], "up": true }
+    ],
+    "verdict": "likely",
+    "reasons": ["mesh_adapter_up"],
+    "listening_on_mesh": true,
+    "web_ui_origin_allows_mesh": true,
+    "evidence": []
+  }
+}

@@ -165,7 +165,7 @@ const unregister = registerGameLibrarySkillExtension({
     },
   },
   capability: {
-    icon: 'fa-vial',
+    icon: 'science',
     label: 'Example annotation',
     labels: { zh: '示例标注' },
     defaultEnabled: false,

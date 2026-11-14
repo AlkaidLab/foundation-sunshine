@@ -59,15 +59,33 @@ This preserves client names and handles multiple concurrent clients without a
 second polling loop.
 
 On Windows, the service wrapper starts the packaged GUI agent in the active
-signed-in user's session after Core starts. Failed launches are retried while
-Core remains alive, and the GUI's single-instance guard absorbs duplicate
-logon and service-start attempts. A zero GUI process exit code suppresses
-service-initiated launches for the current Core lifecycle. The wrapper still
-performs a low-frequency lookup for an instance started outside the service,
-such as an elevated or updater-launched replacement, and resumes normal process
-supervision after attaching to it. A new Core lifecycle or active console
-session also restores service-initiated launches. Nonzero exits remain crashes
-and are restarted with bounded backoff.
+signed-in user's session after Core starts. A standalone or portable Core
+process, which is not the SYSTEM service, watches that same agent. Failed
+launches are retried while Core remains alive, and the GUI's single-instance
+guard absorbs duplicate logon and service-start attempts.
+
+The agent disappearing is not itself a user quit. `GetExitCodeProcess` reports
+the value passed to `ExitProcess` or `TerminateProcess`, or the value returned
+from the process entry point. Task Manager and the taskbar End task end the
+process from outside. That does not run the tray menu, and exit code 0 from
+that path is not a menu quit. `RegisterApplicationRestart` does not cover it
+either: Windows offers a restart only after an unhandled exception or a hang,
+only with the user's consent, and only after the process has run for at least
+60 seconds.
+
+The agent signals a deliberate quit itself, with exit code `0x5351`, from the
+tray menu command that exits Sunshine and from the updater handoff. That code
+suppresses automatic launches for the current Core lifecycle. The supervisor
+still looks, at a low frequency, for an instance started outside it (the
+elevated replacement, or the GUI the installer starts) and resumes supervision
+after attaching to it. A new Core lifecycle or active console session also
+restores automatic launches.
+
+Any other exit, including 0, restores the tray. If another agent for this
+install is already running in the session, the supervisor attaches to it.
+Otherwise it starts `--hidden` again with bounded backoff. Exit code 0 while
+a replacement is already running is the elevated-restart handoff and the
+single-instance duplicate, not a second launch.
 
 The GUI keeps its tray while Core is unavailable. It switches to a distinct
 disconnected presentation, disables Core-dependent commands, and keeps local

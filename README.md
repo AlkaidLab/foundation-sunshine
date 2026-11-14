@@ -2,10 +2,12 @@
 
 <div align="center">
 
-<picture>
+<p><picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/readme/hero-dark.png">
   <img src="assets/readme/hero.png" width="800" alt="Foundation Sunshine：让游戏串流更优雅。低延迟、HDR、虚拟显示器。">
-</picture>
+</picture></p>
+
+<p align="center"><a href="https://github.com/AlkaidLab/foundation-sunshine/releases/latest"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/b1-dark.webp"><img src="assets/readme/b1.webp" alt="下载被控端" height="56"></picture></a>&nbsp;&nbsp;<a href="#控制端moonlight"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/b2-dark.webp"><img src="assets/readme/b2.webp" alt="下载控制端" height="56"></picture></a>&nbsp;&nbsp;<a href="#快速开始"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/b3-dark.webp"><img src="assets/readme/b3.webp" alt="安装与首次连接" height="56"></picture></a></p>
 
 [![Build](https://img.shields.io/github/actions/workflow/status/AlkaidLab/foundation-sunshine/main.yml?branch=master&label=Build)](https://github.com/AlkaidLab/foundation-sunshine/actions/workflows/main.yml) [![Latest release](https://img.shields.io/github/v/release/AlkaidLab/foundation-sunshine?include_prereleases&sort=date&label=Latest)](https://github.com/AlkaidLab/foundation-sunshine/releases) [![Downloads](https://img.shields.io/github/downloads/AlkaidLab/foundation-sunshine/total?label=Downloads)](https://github.com/AlkaidLab/foundation-sunshine/releases) [![GitHub Stars](https://img.shields.io/github/stars/AlkaidLab/foundation-sunshine?style=flat&label=Stars)](https://github.com/AlkaidLab/foundation-sunshine) [![License](https://img.shields.io/badge/License-GPL--3.0-blue)](https://github.com/AlkaidLab/foundation-sunshine/blob/master/LICENSE)
 
@@ -19,22 +21,75 @@ Foundation Sunshine 是基于 [Sunshine](https://github.com/LizardByte/Sunshine)
 
 从动态 HDR、屏幕校准到低延迟捕获与硬件编码，Foundation 让远程画面和操作更贴近本地体验。环绕声与麦克风透传、DualSense 原生反馈、剪贴板和文件共享也能随连接使用；独立桌面 GUI 提供更优质的用户体验，将这些原本繁琐的设置、设备组件和游戏库集中管理。
 
-**[下载被控端（Sunshine）](https://github.com/AlkaidLab/foundation-sunshine/releases/latest)** · **[下载控制端（Moonlight）](#控制端moonlight)** · **[安装与首次连接](#快速开始)**
+<div align="center">
+
+<p align="center"><picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/show-dark.webp">
+  <img src="assets/readme/show.webp" alt="Foundation Sunshine 展示图：衬线大标题，倾斜的控制面板和手机以及 HDR、帧率、主机延迟、DualSense 触觉增益、手机管理小组件，全部带白色贴纸描边。" width="952">
+</picture></p>
+
+</div>
 
 [项目亮点](#项目亮点) · [功能与设置](docs/zh-CN/features.md) · [FAQ](docs/zh-CN/faq.md) · [开发文档](docs/zh-CN/development.md) · [贡献指南](docs/contributing.md)
 
-## 项目亮点
+## <picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/h-shots-dark.webp"><img src="assets/readme/h-shots.webp" height="50" alt=""></picture>&nbsp;应用截图
+
+<table>
+<tr>
+<td align="center" valign="top">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/panel-library-dark.webp">
+  <img src="assets/readme/panel-library.webp" alt="桌面控制面板：游戏库">
+</picture><br>
+<sub>桌面控制面板 · 游戏库</sub>
+</td>
+<td align="center" valign="top">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/panel-appearance-dark.webp">
+  <img src="assets/readme/panel-appearance.webp" alt="桌面控制面板：个性化">
+</picture><br>
+<sub>桌面控制面板 · 个性化</sub>
+</td>
+</tr>
+<tr>
+<td align="center" valign="top">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/web-encoders-dark.webp">
+  <img src="assets/readme/web-encoders.webp" alt="网页管理界面：编码与码率">
+</picture><br>
+<sub>网页管理界面 · 设置</sub>
+</td>
+<td align="center" valign="top">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/web-home-dark.webp">
+  <img src="assets/readme/web-home.webp" alt="网页管理界面：概览">
+</picture><br>
+<sub>网页管理界面 · 概览</sub>
+</td>
+</tr>
+</table>
+
+<p align="center"><a href="docs/readme/SCREENSHOTS.md">更多截图 →</a></p>
+
+## <picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/h-highlights-dark.webp"><img src="assets/readme/h-highlights.webp" height="50" alt=""></picture>&nbsp;项目亮点
+
+<p align="center"><a href="docs/zh-CN/features.md#hdr-与色彩"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/strip-1-dark.webp"><img src="assets/readme/strip-1.webp" width="464" alt="画面与显示：动态 HDR 与虚拟显示器"></picture></a>
+<a href="docs/zh-CN/features.md#捕获-编码与性能"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/strip-2-dark.webp"><img src="assets/readme/strip-2.webp" width="464" alt="捕获与编码：低延迟捕获与硬件编码"></picture></a>
+<a href="docs/zh-CN/features.md#音频与麦克风透传"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/strip-3-dark.webp"><img src="assets/readme/strip-3.webp" width="464" alt="音频与麦克风：环绕声与麦克风透传"></picture></a>
+<a href="docs/zh-CN/features.md#桌面控制面板"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/strip-4-dark.webp"><img src="assets/readme/strip-4.webp" width="464" alt="桌面控制面板：游戏库、显示器与组件集中管理"></picture></a>
+<a href="docs/zh-CN/features.md#dualsense-与虚拟手柄"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/strip-5-dark.webp"><img src="assets/readme/strip-5.webp" width="464" alt="输入与手柄：触控板、手写笔与原生 DualSense"></picture></a>
+<a href="docs/zh-CN/features.md"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/strip-6-dark.webp"><img src="assets/readme/strip-6.webp" width="464" alt="桌面协作：剪贴板、文件共享与会话控制"></picture></a></p>
 
 - **画面与显示：** 场景自适应 HDR、HDR10+ / HDR Vivid 与 Dolby Vision 扩展，按屏幕亮度校准；[ZakoDisplay](https://github.com/qiin2333/zako-vdd) 无需物理显示器即可提供 HDR 虚拟屏与多种屏幕组合。
 - **捕获与编码：** 支持 NVIDIA NVENC、AMD AMF、Intel Quick Sync 等编码器，并针对捕获和编码链路优化延迟与流畅度；Zako Direct 直接取得虚拟屏画面，减少捕获环节的拷贝。
 - **音频与麦克风透传：** 最高 7.1.4 环绕声、PCM / AC3 / E-AC3，支持麦克风回传、静音保活与音频丢包恢复。
 - **独立桌面控制面板：** 集中管理游戏库、显示器、设备组件、运行状态和更新，提供日志诊断与可选 AI 辅助。
-- **输入与原生手柄：** 精确式触控板、手写笔和客户端光标；在设备中心安装 DualSense 组件后，把支持的游戏通过 USB 接入 PC 时的自适应扳机、触觉等反馈带到远程连接中。
+- **输入与原生手柄：** 精确式触控板、手写笔和客户端光标；内置原生 DualSense 支持，自适应扳机、触觉等反馈随连接使用。
 - **桌面协作与连接管理：** 双向剪贴板、文件夹共享、USB 转发、连接中调画质、自适应码率，以及远端命令和会话控制。
 
 具体支持条件和启用步骤见[功能与设置](docs/zh-CN/features.md)，开发者们还藏了很多小巧思等着你们来发现~
 
-## 下载
+## <picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/h-download-dark.webp"><img src="assets/readme/h-download.webp" height="50" alt=""></picture>&nbsp;下载
 
 也可以前往[官网](https://www.alkaidlab.com/)或[国内官网](https://www.alkaidlab.cn/)，按设备查找下载。
 
@@ -43,6 +98,8 @@ Foundation Sunshine 是基于 [Sunshine](https://github.com/LizardByte/Sunshine)
 ### 被控端（Sunshine）
 
 **装在要被控制的 Windows 电脑上。**
+
+<p align="center"><a href="https://github.com/AlkaidLab/foundation-sunshine/releases/latest"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/dl-host-dark.webp"><img src="assets/readme/dl-host.webp" height="56" alt="下载被控端：Windows 安装包（Sunshine）"></picture></a></p>
 
 如果 Foundation Sunshine 对你有帮助，欢迎 [⭐ 点个 Star](https://github.com/AlkaidLab/foundation-sunshine) 支持项目。
 
@@ -62,10 +119,9 @@ Foundation Sunshine 是基于 [Sunshine](https://github.com/LizardByte/Sunshine)
 
 这些客户端由基地成员用心打造，提供最优质的 Foundation Sunshine 体验，欢迎通过 **⭐ Star** 支持你使用的项目。
 
-- **Windows / Linux：** [Moonlight V+ for PC](https://github.com/qiin2333/moonlight-qt/releases)
-- **macOS：** [Moonlight macOS Enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced/releases) · [Moonlight V+ for PC](https://github.com/qiin2333/moonlight-qt/releases)
-- **Android / Android TV：** [Moonlight V+](https://github.com/qiin2333/moonlight-vplus/releases/latest)
-- **鸿蒙：** [Moonlight V+](https://appgallery.huawei.com/app/detail?id=com.alkaidlab.sdream)
+<p align="center"><a href="https://github.com/qiin2333/moonlight-qt/releases"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/dl-win-dark.webp"><img src="assets/readme/dl-win.webp" height="56" alt="Windows / Linux：Moonlight V+ for PC"></picture></a>&nbsp;&nbsp;<a href="https://github.com/skyhua0224/moonlight-macos-enhanced/releases"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/dl-mac-dark.webp"><img src="assets/readme/dl-mac.webp" height="56" alt="macOS：Moonlight macOS Enhanced"></picture></a>&nbsp;&nbsp;<a href="https://github.com/qiin2333/moonlight-vplus/releases/latest"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/dl-android-dark.webp"><img src="assets/readme/dl-android.webp" height="56" alt="Android / Android TV：Moonlight V+"></picture></a>&nbsp;&nbsp;<a href="https://appgallery.huawei.com/app/detail?id=com.alkaidlab.sdream"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/dl-harmony-dark.webp"><img src="assets/readme/dl-harmony.webp" height="56" alt="鸿蒙：Moonlight V+"></picture></a></p>
+
+macOS 也可使用 [Moonlight V+ for PC](https://github.com/qiin2333/moonlight-qt/releases)。
 
 #### 合作客户端
 
@@ -74,17 +130,39 @@ Foundation Sunshine 是基于 [Sunshine](https://github.com/LizardByte/Sunshine)
 - **王冠版 · Android：** [下载](https://github.com/WACrown/moonlight-android/releases) · [项目介绍](https://github.com/WACrown/moonlight-android#readme)
 - **包子版 · 鸿蒙：** [项目与下载](https://gitee.com/smdsbz/moonlight-ohos)
 
-## 快速开始
+## <picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/h-start-dark.webp"><img src="assets/readme/h-start.webp" height="50" alt=""></picture>&nbsp;快速开始
 
-### 1 安装被控端（Sunshine）
+### <picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/n1-dark.webp"><img src="assets/readme/n1.webp" height="40" alt="1"></picture>&nbsp;安装被控端（Sunshine）
 
 1. 在要被控制的 Windows 电脑上打开[下载页](https://github.com/AlkaidLab/foundation-sunshine/releases/latest)。
 2. 找到 **Assets**，下载以 `WindowsInstaller.exe` 结尾的文件，双击安装。安装器提供的组件可按需要勾选；准备使用虚拟屏时，保留 **Zako Display Driver** 选项。
+
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="assets/readme/step-installer-dark.webp">
+     <img src="assets/readme/step-installer.webp" width="560" alt="安装器：选择组件">
+   </picture>
+
 3. 安装完成后打开 Foundation Sunshine 桌面控制面板，按新手向导选择语言、显卡和显示器。有物理屏幕时可先选择它；没有物理显示器时，先检查安装时是否已安装虚拟显示器驱动；需要补装时打开 GUI 的基地显示器设置，再选择基地显示器。
+
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="assets/readme/step-wizard-language-dark.webp">
+     <img src="assets/readme/step-wizard-language.webp" width="560" alt="新手向导：选择语言">
+   </picture>
+
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="assets/readme/step-wizard-display-dark.webp">
+     <img src="assets/readme/step-wizard-display.webp" width="560" alt="新手向导：显卡与显示器">
+   </picture>
+
 4. （**可选，不推荐**）若你更喜欢 WebUI 体验，在这台电脑的浏览器打开 [https://localhost:47990](https://localhost:47990)。如果浏览器提示证书不受信任，确认地址是这台电脑的 `https://localhost:47990` 后，通过浏览器“高级”或“更多选项”中的继续访问选项打开。
 5. 首次使用按页面提示创建用户名和密码，未来可以使用它们登录 WebUI 管理界面。
 
-### 2 安装控制端（Moonlight）
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="assets/readme/step-account-dark.webp">
+     <img src="assets/readme/step-account.webp" width="560" alt="新手向导：设置 WebUI 面板账号">
+   </picture>
+
+### <picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/n2-dark.webp"><img src="assets/readme/n2.webp" height="40" alt="2"></picture>&nbsp;安装控制端（Moonlight）
 
 在手机、平板或另一台电脑上，按上面的[控制端（Moonlight）列表](#控制端moonlight)下载并安装客户端。这台设备用来观看画面、输入和操作。
 
@@ -96,16 +174,21 @@ Foundation Sunshine 是基于 [Sunshine](https://github.com/LizardByte/Sunshine)
 
 首次启动客户端时，如果系统询问本地网络权限，请允许访问。两台设备先连接同一局域网，被控电脑建议使用网线。
 
-### 3 添加电脑并配对
+### <picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/n3-dark.webp"><img src="assets/readme/n3.webp" height="40" alt="3"></picture>&nbsp;添加电脑并配对
 
 1. 打开客户端，等待 Windows 电脑出现在列表里，然后点击它。
 2. 如果没有出现，手动添加 IP：在 Windows 电脑按 `Win + R`，输入 `cmd` 并回车，再输入 `ipconfig`。找到当前使用的以太网或 WLAN 适配器下的 **IPv4 地址**，填到客户端的“添加电脑／添加主机”入口。
 3. 客户端显示 PIN 后，回到 Windows 电脑的 Sunshine 管理界面，打开 **PIN 码** 页面。
 4. 输入客户端显示的 PIN，点击 **发送**。看到配对成功提示后回到客户端。
 
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="assets/readme/web-pin-dark.webp">
+     <img src="assets/readme/web-pin.webp" width="560" alt="网页管理界面：PIN 配对">
+   </picture>
+
 这里填的是 Windows 电脑的局域网地址，例如 `192.168.1.100`，不是 `localhost`，也不是浏览器管理页面的网址。示例 IP 需要替换成你电脑的实际地址。
 
-### 4 设置第一次连接的画质
+### <picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/n4-dark.webp"><img src="assets/readme/n4.webp" height="40" alt="4"></picture>&nbsp;设置第一次连接的画质
 
 先在 **控制端（Moonlight）** 打开设置，找到视频或画质选项，再依次设置：
 
@@ -120,27 +203,37 @@ Foundation Sunshine 是基于 [Sunshine](https://github.com/LizardByte/Sunshine)
 
 设置名称因客户端不同略有区别。分辨率、帧率、码率在控制端调整；Sunshine 被控端首次保持自动编码与默认捕获即可。先不要同时开启高分辨率、高帧率和所有画质增强。
 
-### 5 连接桌面
+### <picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/n5-dark.webp"><img src="assets/readme/n5.webp" height="40" alt="5"></picture>&nbsp;连接桌面
 
 1. 在客户端打开已配对的电脑，选择 **Desktop**。
 2. 出现 Windows 桌面后，试着移动鼠标、打开一个窗口，再播放一段音频，确认画面、操作和声音都正常。
 3. 如果列表中没有 Desktop，在 Sunshine 的 **应用** 页面使用 **还原内置应用**，然后刷新客户端的应用列表。这个操作会恢复默认内置项目；如已定制这些项目，请先保留配置。
 
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="assets/readme/step-restore-dark.webp">
+     <img src="assets/readme/step-restore.webp" width="560" alt="桌面控制面板：应用页的更多菜单，含还原内置应用">
+   </picture>
+
 先用默认画质完成这一步，再调整 HDR、分辨率或虚拟显示器。
 
-### 6 添加游戏或应用（可选）
+### <picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/n6-dark.webp"><img src="assets/readme/n6.webp" height="40" alt="6"></picture>&nbsp;添加游戏或应用（可选）
 
 **批量扫描：** 在 Windows 上打开 Foundation Sunshine 桌面控制面板，进入 **应用**，点击 **扫描游戏平台库 (Steam/Epic/GOG)**。检查扫描结果，选择 **直接添加** 或 **全部添加**，然后刷新客户端列表。本地目录也可通过扫描窗口添加；浏览器管理页不能调用桌面端的本地扫描功能。
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/step-scan-dark.webp">
+  <img src="assets/readme/step-scan.webp" width="560" alt="桌面控制面板：扫描结果">
+</picture>
 
 **手动添加：** 在 **应用 → 添加新应用** 中填写应用名称和 **主程序**，保存后刷新客户端列表。主程序可以填写程序路径；路径包含空格时，使用英文双引号，例如 `"D:\My Games\Game\game.exe"`。
 
 客户端里也可以直接启动内置的 **Steam Big Picture**，再从 Steam 中选游戏。
 
-## 功能与设置
+## <picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/h-features-dark.webp"><img src="assets/readme/h-features.webp" height="50" alt=""></picture>&nbsp;功能与设置
 
 [视频 HDR 与色彩](docs/zh-CN/features.md#hdr-与色彩) · [基地虚拟显示器](docs/zh-CN/features.md#基地虚拟显示器-zakodisplay) · [画面捕获与编码](docs/zh-CN/features.md#捕获-编码与性能) · [手柄与 DualSense](docs/zh-CN/features.md#dualsense-与虚拟手柄) · [音频与麦克风透传](docs/zh-CN/features.md#音频与麦克风透传) · [独立桌面控制面板](docs/zh-CN/features.md#桌面控制面板)
 
-## 帮助与参与
+## <picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/h-help-dark.webp"><img src="assets/readme/h-help.webp" height="50" alt=""></picture>&nbsp;帮助与参与
 
 - [FAQ 与排障](docs/zh-CN/faq.md)：卡顿、丢帧、连接、声音和 DualSense 自动滚动等问题。
 - [升级说明](docs/zh-CN/upgrading.md)：正式版、测试版、配置保留与更新后检查。
@@ -155,9 +248,15 @@ Foundation Sunshine 是基于 [Sunshine](https://github.com/LizardByte/Sunshine)
 
 ## 基地开发团队成员
 
-| [![qiin2333](https://avatars.githubusercontent.com/u/2795904?s=80)](https://github.com/qiin2333) | [![Yundi339](https://avatars.githubusercontent.com/u/38252824?s=80)](https://github.com/Yundi339) | [![ShadowLemoon](https://avatars.githubusercontent.com/u/119576779?s=80)](https://github.com/ShadowLemoon) | [![skyhua0224](https://avatars.githubusercontent.com/u/91328606?s=80)](https://github.com/skyhua0224) |
+| [![qiin2333](https://avatars.githubusercontent.com/u/2795904?s=80)](https://github.com/qiin2333) | [![Yundi339](https://avatars.githubusercontent.com/u/38252824?s=80)](https://github.com/Yundi339) | [![skyhua0224](https://avatars.githubusercontent.com/u/91328606?s=80)](https://github.com/skyhua0224) | [![ShadowLemoon](https://avatars.githubusercontent.com/u/119576779?s=80)](https://github.com/ShadowLemoon) |
 | :---: | :---: | :---: | :---: |
-| [qiin2333](https://github.com/qiin2333) | [Yundi339](https://github.com/Yundi339) | [ShadowLemoon](https://github.com/ShadowLemoon) | [skyhua0224](https://github.com/skyhua0224) |
+| [qiin2333](https://github.com/qiin2333)<br>创始人 | [Yundi339](https://github.com/Yundi339) | [skyhua0224](https://github.com/skyhua0224) | [ShadowLemoon](https://github.com/ShadowLemoon) |
+
+## 赞助
+
+赞助完全自愿，Foundation Sunshine 始终免费开源，不赞助也能用上全部功能。
+
+爱发电：[qiin2333](https://www.ifdian.net/a/qiin2333) · [Yundi339](https://www.ifdian.net/a/Yundi339) · [skyhua0224](https://ifdian.net/a/skyhua)
 
 ## 其他贡献者
 

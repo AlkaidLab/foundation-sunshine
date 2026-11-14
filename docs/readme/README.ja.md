@@ -4,10 +4,12 @@
 
 <div align="center">
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/hero-dark.png">
-  <img src="../../assets/readme/hero.png" width="800" alt="Foundation Sunshine — 仮想ディスプレイ対応の Windows 向け HDR ゲームストリーミング ホスト（Moonlight 向け Sunshine フォーク）">
-</picture>
+<p><picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/hero-dark.en.png">
+  <img src="../../assets/readme/hero.en.png" width="800" alt="Foundation Sunshine — 仮想ディスプレイ対応の Windows 向け HDR ゲームストリーミング ホスト（Moonlight 向け Sunshine フォーク）">
+</picture></p>
+
+<p align="center"><a href="https://github.com/AlkaidLab/foundation-sunshine/releases/latest"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/b1-dark.ja.webp"><img src="../../assets/readme/b1.ja.webp" alt="ホストを入手" height="56"></picture></a>&nbsp;&nbsp;<a href="#クライアントmoonlight"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/b2-dark.ja.webp"><img src="../../assets/readme/b2.ja.webp" alt="クライアントを入手" height="56"></picture></a>&nbsp;&nbsp;<a href="#クイック-スタート"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/b3-dark.ja.webp"><img src="../../assets/readme/b3.ja.webp" alt="インストールと初回接続" height="56"></picture></a></p>
 
 [![Build](https://img.shields.io/github/actions/workflow/status/AlkaidLab/foundation-sunshine/main.yml?branch=master&label=Build)](https://github.com/AlkaidLab/foundation-sunshine/actions/workflows/main.yml) [![Latest release](https://img.shields.io/github/v/release/AlkaidLab/foundation-sunshine?include_prereleases&sort=date&label=Latest)](https://github.com/AlkaidLab/foundation-sunshine/releases) [![Downloads](https://img.shields.io/github/downloads/AlkaidLab/foundation-sunshine/total?label=Downloads)](https://github.com/AlkaidLab/foundation-sunshine/releases) [![GitHub Stars](https://img.shields.io/github/stars/AlkaidLab/foundation-sunshine?style=flat&label=Stars)](https://github.com/AlkaidLab/foundation-sunshine) [![License](https://img.shields.io/badge/License-GPL--3.0-blue)](https://github.com/AlkaidLab/foundation-sunshine/blob/master/LICENSE)
 
@@ -19,29 +21,84 @@ Foundation Sunshine は、Sunshine をベースにした Windows 向けの無料
 
 動的 HDR と画面キャリブレーションから低遅延キャプチャ、ハードウェア エンコードまで、Foundation は映像と入力をできるだけローカルに近づけます。サラウンドとマイク転送、DualSense のネイティブ フィードバック、クリップボード、共有フォルダーがセッションと並行して利用でき、専用のデスクトップ GUI が設定、デバイス コンポーネント、ゲーム ライブラリを一か所にまとめます。
 
-**[ホスト（Sunshine）をダウンロード](https://github.com/AlkaidLab/foundation-sunshine/releases/latest)** · **[クライアント（Moonlight）をダウンロード](#クライアントmoonlight)** · **[インストールと初回接続](#クイック-スタート)**
+<div align="center">
+
+<p align="center"><picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/show-dark.en.webp">
+  <img src="../../assets/readme/show.en.webp" alt="Foundation Sunshine の紹介画像：セリフ体の大見出し、傾けたコントロールパネルとスマートフォン、HDR・フレームレート・ホスト遅延・DualSense 触覚ゲイン・スマートフォン管理のウィジェット（すべて白いステッカー縁取り付き）。" width="952">
+</picture></p>
+
+</div>
 
 [特長](#特長) · [ドキュメント（英語）](../en/README.md) · [FAQ（英語）](../en/faq.md) · [開発（英語）](../en/development.md) · [コントリビュート](../contributing.en.md)
 - [アップグレード（英語）](../en/upgrading.md)：正式版とテスト版、構成の保存、更新の確認。
 
-## 特長
+## <picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/h-shots-dark.webp"><img src="../../assets/readme/h-shots.webp" height="50" alt=""></picture>&nbsp;スクリーンショット
+
+<table>
+<tr>
+<td align="center" valign="top">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/panel-library-dark.webp">
+  <img src="../../assets/readme/panel-library.webp" alt="デスクトップ GUI：ゲーム ライブラリ">
+</picture><br>
+<sub>デスクトップ GUI · ゲーム ライブラリ</sub>
+</td>
+<td align="center" valign="top">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/panel-appearance-dark.webp">
+  <img src="../../assets/readme/panel-appearance.webp" alt="デスクトップ GUI：外観">
+</picture><br>
+<sub>デスクトップ GUI · 外観</sub>
+</td>
+</tr>
+<tr>
+<td align="center" valign="top">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/web-encoders-dark.webp">
+  <img src="../../assets/readme/web-encoders.webp" alt="Web 管理画面：エンコードとビットレート">
+</picture><br>
+<sub>Web 管理画面 · 設定</sub>
+</td>
+<td align="center" valign="top">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/web-home-dark.webp">
+  <img src="../../assets/readme/web-home.webp" alt="Web 管理画面：概要">
+</picture><br>
+<sub>Web 管理画面 · 概要</sub>
+</td>
+</tr>
+</table>
+
+<p align="center"><a href="SCREENSHOTS.en.md">その他のスクリーンショット（英語）→</a></p>
+
+## <picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/h-highlights-dark.webp"><img src="../../assets/readme/h-highlights.webp" height="50" alt=""></picture>&nbsp;特長
+
+<p align="center"><a href="../en/features.md#hdr-and-color"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-1-dark.ja.webp"><img src="../../assets/readme/strip-1.ja.webp" width="464" alt="映像とディスプレイ：動的 HDR と仮想ディスプレイ"></picture></a>
+<a href="../en/features.md#capture-encoding-and-performance"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-2-dark.ja.webp"><img src="../../assets/readme/strip-2.ja.webp" width="464" alt="キャプチャとエンコード：低遅延キャプチャとハードウェア エンコード"></picture></a>
+<a href="../en/features.md#audio-and-microphone-forwarding"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-3-dark.ja.webp"><img src="../../assets/readme/strip-3.ja.webp" width="464" alt="オーディオとマイク：サラウンドとマイク転送"></picture></a>
+<a href="../en/features.md#desktop-control-panel"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-4-dark.ja.webp"><img src="../../assets/readme/strip-4.ja.webp" width="464" alt="デスクトップ GUI：ゲーム、ディスプレイ、コンポーネントを一元管理"></picture></a>
+<a href="../en/features.md#dualsense-and-virtual-controllers"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-5-dark.ja.webp"><img src="../../assets/readme/strip-5.ja.webp" width="464" alt="入力とコントローラー：タッチパッド、ペン、ネイティブ DualSense"></picture></a>
+<a href="../en/features.md"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-6-dark.ja.webp"><img src="../../assets/readme/strip-6.ja.webp" width="464" alt="連携：クリップボード、ファイル共有、セッション制御"></picture></a></p>
 
 - **映像とディスプレイ：** シーン適応 HDR、HDR10+ / HDR Vivid、Dolby Vision 拡張、輝度キャリブレーション。[ZakoDisplay](https://github.com/qiin2333/zako-vdd) は物理モニターなしで HDR 仮想ディスプレイと複数の画面レイアウトを提供します。
 - **キャプチャとエンコード：** NVIDIA NVENC、AMD AMF、Intel Quick Sync に対応し、低遅延で滑らかなセッション向けに最適化。Zako Direct は仮想ディスプレイのフレームを直接取得します。
 - **オーディオとマイク転送：** 最大 7.1.4、PCM / AC3 / E-AC3、クライアントのマイク転送、無音時の連続オーディオ、パケット損失の補償。
 - **専用デスクトップ GUI：** ゲーム ライブラリ、ディスプレイ、デバイス コンポーネント、実行状態、更新を管理。ログ診断と任意の AI 支援つき。
-- **入力とコントローラー：** 高精度タッチパッド、ペン入力、クライアント側カーソル。デバイス センターで DualSense コンポーネントをインストールすると、対応ゲームのアダプティブ トリガーや触覚フィードバックを遠隔でも利用できます。
+- **入力とコントローラー：** 高精度タッチパッド、ペン入力、クライアント側カーソル。ネイティブ DualSense サポートを内蔵し、アダプティブ トリガーや触覚フィードバックなどが接続中にそのまま使えます。
 - **連携とセッション管理：** 双方向クリップボード、共有フォルダー、USB 転送、セッション中の画質調整、適応ビットレート、ホスト コマンド、セッション制御。
 
 要件と有効化の手順は [features and setup（英語）](../en/features.md) を参照。小さな工夫も多数隠されています。
 
-## ダウンロード
+## <picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/h-download-dark.webp"><img src="../../assets/readme/h-download.webp" height="50" alt=""></picture>&nbsp;ダウンロード
 
 ダウンロードは[公式サイト](https://www.alkaidlab.com/)や[公式サイト（中国）](https://www.alkaidlab.cn/)からも探せます。2 台にそれぞれアプリをインストールします：**操作される PC に Foundation Sunshine、操作する側の機器に Moonlight クライアント。**
 
 ### ホスト（Sunshine）
 
 **操作される Windows PC にインストールします。**
+
+<p align="center"><a href="https://github.com/AlkaidLab/foundation-sunshine/releases/latest"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/dl-host-dark.en.webp"><img src="../../assets/readme/dl-host.en.webp" height="56" alt="ホストをダウンロード：Windows インストーラー（Sunshine）"></picture></a></p>
 
 Foundation Sunshine が役に立ったら、プロジェクトに [⭐ Star](https://github.com/AlkaidLab/foundation-sunshine) を付けてもらえると嬉しいです。
 
@@ -55,10 +112,9 @@ Windows 10 22H2 以降と、ハードウェア ビデオ エンコード対応�
 
 **以下を推奨します。** Foundation の HDR、ディスプレイ、オーディオ、入力の拡張はクライアント側の対応が必要です。他のクライアントでは機能が欠けたり、互換性の問題が起きる場合があります。これらのクライアントは AlkaidLab メンバーが維持しています。
 
-- **Windows / Linux：** [Moonlight V+ for PC](https://github.com/qiin2333/moonlight-qt/releases)
-- **macOS：** [Moonlight macOS Enhanced](https://github.com/skyhua0224/moonlight-macos-enhanced/releases) · [Moonlight V+ for PC](https://github.com/qiin2333/moonlight-qt/releases)
-- **Android / Android TV：** [Moonlight V+](https://github.com/qiin2333/moonlight-vplus/releases/latest)
-- **HarmonyOS：** [Moonlight V+（AppGallery）](https://appgallery.huawei.com/app/detail?id=com.alkaidlab.sdream)
+<p align="center"><a href="https://github.com/qiin2333/moonlight-qt/releases"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/dl-win-dark.en.webp"><img src="../../assets/readme/dl-win.en.webp" height="56" alt="Windows / Linux：Moonlight V+ for PC"></picture></a>&nbsp;&nbsp;<a href="https://github.com/skyhua0224/moonlight-macos-enhanced/releases"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/dl-mac-dark.en.webp"><img src="../../assets/readme/dl-mac.en.webp" height="56" alt="macOS：Moonlight macOS Enhanced"></picture></a>&nbsp;&nbsp;<a href="https://github.com/qiin2333/moonlight-vplus/releases/latest"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/dl-android-dark.en.webp"><img src="../../assets/readme/dl-android.en.webp" height="56" alt="Android / Android TV：Moonlight V+"></picture></a>&nbsp;&nbsp;<a href="https://appgallery.huawei.com/app/detail?id=com.alkaidlab.sdream"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/dl-harmony-dark.en.webp"><img src="../../assets/readme/dl-harmony.en.webp" height="56" alt="HarmonyOS：Moonlight V+"></picture></a></p>
+
+macOS では [Moonlight V+ for PC](https://github.com/qiin2333/moonlight-qt/releases) も利用できます。
 
 #### パートナー クライアント
 
@@ -67,14 +123,46 @@ Windows 10 22H2 以降と、ハードウェア ビデオ エンコード対応�
 - **Crown Edition · Android：** [ダウンロード](https://github.com/WACrown/moonlight-android/releases) · [紹介](https://github.com/WACrown/moonlight-android#readme)
 - **Baozi Edition · HarmonyOS：** [プロジェクトとダウンロード](https://gitee.com/smdsbz/moonlight-ohos)
 
-## クイック スタート
+## <picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/h-start-dark.webp"><img src="../../assets/readme/h-start.webp" height="50" alt=""></picture>&nbsp;クイック スタート
 
 1. **ホストをインストール：** リリースからインストーラーをダウンロードして実行します。必要なコンポーネントを選び、仮想ディスプレイを使う場合は **Zako Display Driver** を残します。続いてデスクトップ パネルの案内に従い、言語、GPU、ディスプレイを設定します。物理モニターがない場合は仮想ディスプレイ ドライバーを確認し、基地（Foundation）ディスプレイを選びます。
+
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/step-installer-dark.webp">
+     <img src="../../assets/readme/step-installer.webp" width="560" alt="インストーラー：コンポーネントの選択">
+   </picture>
+
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/step-wizard-language-dark.webp">
+     <img src="../../assets/readme/step-wizard-language.webp" width="560" alt="セットアップ ウィザード：言語">
+   </picture>
+
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/step-wizard-display-dark.webp">
+     <img src="../../assets/readme/step-wizard-display.webp" width="560" alt="セットアップ ウィザード：GPU とディスプレイ">
+   </picture>
+
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/step-account-dark.webp">
+     <img src="../../assets/readme/step-account.webp" width="560" alt="セットアップ ウィザード：WebUI アカウント">
+   </picture>
+
 2. **クライアントをインストール：** 機器に合った Moonlight クライアントをインストールします。詳しい手順は英語ガイドを参照してください。
 3. **PC を追加してペアリング：** クライアントで PC を選択します。表示されない場合は `ipconfig` で IPv4 アドレスを確認して手動で追加。クライアントに表示された PIN を Sunshine の Web 画面（**PIN**）で入力します。
+
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/web-pin-dark.webp">
+     <img src="../../assets/readme/web-pin.webp" width="560" alt="Web 管理画面：PIN ペアリング">
+   </picture>
+
 4. **最初の画質設定：** 1080p、60 FPS、20 Mbps（ネットワークが不安定なら 10 Mbps）、コーデックは自動、HDR はオフ、オーディオはステレオ / Opus。
 5. **まずデスクトップを確認：** マウス、ウィンドウ、音声を確認してから HDR、解像度、仮想ディスプレイを調整します。
 6. **ゲームの追加（任意）：** デスクトップ GUI の Steam/Epic/GOG スキャン、または手動でアプリを追加します。
+
+   <picture>
+     <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/step-scan-dark.webp">
+     <img src="../../assets/readme/step-scan.webp" width="560" alt="デスクトップ GUI：スキャン結果">
+   </picture>
 
 **最初の画質設定：**
 
@@ -87,7 +175,7 @@ Windows 10 22H2 以降と、ハードウェア ビデオ エンコード対応�
 | HDR | 最初はオフ | 既定は SDR。動作確認後に HDR を有効化 |
 | オーディオ | ステレオ / Opus | まず音を確認し、その後サラウンド等を有効化 |
 
-## ドキュメントとサポート
+## <picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/h-help-dark.webp"><img src="../../assets/readme/h-help.webp" height="50" alt=""></picture>&nbsp;ドキュメントとサポート
 
 - [ドキュメント（英語）](../en/README.md)：インストール、機能、FAQ、開発をタスク別に整理。
 - [FAQ（英語）](../en/faq.md)：カクつき、接続、オーディオの問題。

@@ -1,17 +1,17 @@
 .home-content {
-  // Content colors follow the wallpaper (via --mt-* written by useBackground)
-  // but fall back to the brand theme so the page renders before extraction.
+  // The shared appearance service derives these roles from the wallpaper and
+  // publishes them for every page; the fallback keeps the first frame readable.
   --home-heading: color-mix(
     in srgb,
-    var(--mt-text-primary, var(--ui-text-primary)) 78%,
-    var(--mt-text-secondary, var(--ui-text-secondary))
+    var(--md-sys-color-on-surface, var(--ui-text-primary)) 78%,
+    var(--md-sys-color-on-surface-variant, var(--ui-text-secondary))
   );
   --home-body: color-mix(
     in srgb,
-    var(--mt-text-primary, var(--ui-text-primary)) 68%,
-    var(--mt-text-secondary, var(--ui-text-secondary))
+    var(--md-sys-color-on-surface, var(--ui-text-primary)) 68%,
+    var(--md-sys-color-on-surface-variant, var(--ui-text-secondary))
   );
-  --home-muted: var(--mt-text-secondary, var(--ui-text-secondary));
+  --home-muted: var(--md-sys-color-on-surface-variant, var(--ui-text-secondary));
   --home-section-gap: clamp(2.4rem, 4.2vh, 3.25rem);
   display: flex;
   flex-direction: column;
@@ -40,7 +40,7 @@
   pointer-events: none;
   background: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--mt-page-bg, var(--ui-page-bg)) 42%, transparent),
+    color-mix(in srgb, var(--md-sys-color-surface, var(--ui-page-bg)) 42%, transparent),
     transparent 85%
   );
 }
@@ -75,9 +75,9 @@
   // background-position reveals the accent tail only on hover.
   background: linear-gradient(
       95deg,
-      var(--mt-text-primary, var(--ui-text-primary)) 0%,
-      var(--mt-text-primary, var(--ui-text-primary)) 42%,
-      color-mix(in srgb, var(--ui-accent) 62%, var(--mt-text-primary, var(--ui-text-primary))) 100%
+      var(--md-sys-color-on-surface, var(--ui-text-primary)) 0%,
+      var(--md-sys-color-on-surface, var(--ui-text-primary)) 42%,
+      color-mix(in srgb, var(--ui-accent) 62%, var(--md-sys-color-on-surface, var(--ui-text-primary))) 100%
     )
     no-repeat;
   -webkit-background-clip: text;
@@ -188,7 +188,7 @@
   font-weight: 900;
   line-height: 1;
   letter-spacing: -0.02em;
-  color: color-mix(in srgb, var(--mt-text-primary, var(--ui-text-primary)) 94%, var(--ui-accent));
+  color: color-mix(in srgb, var(--md-sys-color-on-surface, var(--ui-text-primary)) 94%, var(--ui-accent));
 }
 .host-platform {
   display: flex;
@@ -654,7 +654,8 @@
     min-height: 44px;
   }
 }
-@media (prefers-reduced-motion: reduce) {
+// reduced motion: the system's setting only when the person chose 跟随系统 (data-motion), never by itself; 完整 is the default and 减少 applies without the system
+@home-reduced: {
   .home-enter,
   .home-stream-arrival,
   .recent-live i,
@@ -675,4 +676,12 @@
     transition: none;
     transform: none;
   }
+};
+@media (prefers-reduced-motion: reduce) {
+  html:not([data-motion='full']) {
+    @home-reduced();
+  }
+}
+html[data-motion='reduced'] {
+  @home-reduced();
 }

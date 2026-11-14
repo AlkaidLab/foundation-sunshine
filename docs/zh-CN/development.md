@@ -41,6 +41,7 @@ cd foundation-sunshine
 使用主仓库 `.node-version` 指定的 Node.js 和 `package.json` 指定的 npm 版本，在仓库根目录执行：
 
 ```bash
+git clone https://github.com/AlkaidLab/foundation-ui ../ds5-ui-m3e   # 只需一次；WebUI 从这个同级目录引入 foundation-ui
 npm ci
 npm run dev-server
 ```

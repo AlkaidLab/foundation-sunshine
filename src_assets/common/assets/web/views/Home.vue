@@ -1,530 +1,465 @@
 <template>
   <div class="home-page">
-    <Navbar v-if="!showSetupWizard" material-colors />
-    <SetupWizard
-      v-if="showSetupWizard"
-      :adapters="adapters"
-      :display-devices="displayDevices"
-      :has-locale="hasLocale"
-      @setup-complete="onSetupComplete"
+    <MPage :title="$t('home.dash.title')" wide full>
+      <template #actions>
+        <ShellUtils placement="bar" />
+        <MButton v-if="edit" variant="tonal" icon="check" @click="edit = false">{{ $t('home.grid.done') }}</MButton>
+        <MIconButton v-else icon="edit" data-coach="home-edit" :label="$t('home.grid.edit')" @click="edit = true" />
+      </template>
+
+      <MBanner v-if="hostStatus === 'error'" tone="error" icon="error">
+        <b>{{ $t('_common.error') }}</b> {{ $t('index.startup_errors').replace(/<[^>]+>/g, '') }}
+      </MBanner>
+      <!-- the host's startup problems as a compact card: one short line each, the original message behind a toggle, the log and (where known) the fix at the trailing end -->
+      <MStartupProblems v-if="startup.length" :problems="startup" :locale="String(locale)" @logs="go('troubleshooting')" @fix="onStartupFix" />
+
+      <MAnnouncementStrip v-if="announcements.top.value" :item="announcements.top.value" :total="announcements.unread.value" :texts="announceTexts" @dismiss="announcements.dismiss" @open-url="openExternalUrl" @open-list="announceOpen = true" />
+      <MHomeDash v-model:edit="edit" :cards="cards" :details="allDetails" :ctx="dashCtx" storage-key="web-home" :texts="dashTexts" :config="hostConfig" :locale="locale" @action="onAction" />
+      <MSection v-if="session" class="home-live-controls" :title="$tp('config.host_audio', 'Host audio')">
+        <MGroup>
+          <MItem icon="volume_up" :title="$tp('config.host_audio', 'Play audio on host')" :text="$tp('config.host_audio_desc', 'Apply to the current stream without reconnecting when supported.')">
+            <template #trail><MSwitch :model-value="session.host_audio === true" :disabled="audioBusy" :label="$tp('config.host_audio', 'Host audio')" @update:model-value="setHostAudio" /></template>
+          </MItem>
+        </MGroup>
+      </MSection>
+    </MPage>
+
+    <!-- Update sheet: current -> new, channel, driver notice, short release notes, link to the release (this page cannot install) -->
+    <VersionCard
+      v-model="versionSheet"
+      :version="version"
+      :github-version="githubVersion"
+      :pre-release-version="preReleaseVersion"
+      :notify-pre-releases="notifyPreReleases"
+      :loading="loading"
+      :check-failed="versionCheckStatus === VERSION_CHECK_STATUS.ERROR"
+      :installed-version-not-stable="installedVersionNotStable"
+      :stable-build-available="stableBuildAvailable"
+      :pre-release-build-available="preReleaseBuildAvailable"
+      :build-version-is-dirty="buildVersionIsDirty"
+      @retry="fetchVersions(hostConfig)"
     />
-    <main v-else id="content" class="container home-content" :aria-busy="hostStatus === 'loading'">
-      <header class="home-intro" style="--enter-delay: 0ms">
-        <h1
-          class="home-greeting"
-          :class="{ 'home-greeting-cjk': greetingHasCjk, 'home-greeting-hang': greetingHangsPunct }"
-        >
-          <span class="home-greeting-whisper">{{ greetingText }}</span>
-          <strong class="home-greeting-word"
-            >Sunshine<span
-              v-if="streamState === 'streaming'"
-              class="home-greeting-eq"
-              aria-hidden="true"
-              ><i></i><i></i><i></i></span
-            ><span v-else aria-hidden="true">!</span></strong
-          >
-        </h1>
-        <p class="home-tagline home-enter" style="--enter-delay: 320ms">
-          <span
-            v-if="streamState === 'streaming' && streamArrival"
-            :key="streamArrival.key"
-            class="home-stream-arrival"
-            >{{ copy.arrivalPrefix
-            }}<span class="home-stream-target">{{ streamArrival.target }}</span
-            >{{ copy.arrivalSuffix }}</span
-          >
-          <span v-else>{{ copy.tagline }}</span>
-        </p>
-      </header>
-      <section
-        class="host-overview home-enter"
-        aria-labelledby="host-name"
-        style="--enter-delay: 60ms"
-      >
-        <div class="host-summary">
-          <h2 id="host-name" class="host-name" ref="hostNameEl">{{ hostConfig?.sunshine_name || 'Sunshine' }}</h2>
-          <p class="host-platform">
-            <span>{{ hostConfig?.platform || '—' }}</span>
-            <span
-              class="host-stream-status"
-              :class="{ 'is-streaming': streamState === 'streaming' }"
-              role="status"
-              aria-live="polite"
-              aria-atomic="true"
-              >{{ copy.streamStatus[streamState] }}</span
-            >
-          </p>
-        </div>
-        <dl class="host-metrics">
-          <div>
-            <dt>{{ copy.clients }}</dt>
-            <dd>{{ clientsCount ?? '—' }}</dd>
-          </div>
-          <div>
-            <dt>{{ copy.apps }}</dt>
-            <dd>{{ appsCount ?? '—' }}</dd>
-          </div>
-        </dl>
-      </section>
-      <nav
-        class="home-primary-actions home-enter"
-        :aria-label="copy.pair"
-        style="--enter-delay: 120ms"
-      >
-        <a href="/pin" class="home-pair-action">{{ copy.pair }}</a>
-        <a href="/pin" class="home-text-action"
-          >{{ copy.manage
-          }}<Icon
-            name="chevron-right"
-            :size="14"
-            :stroke-width="1.8"
-            icon-class="home-shortcut-arrow"
-            aria-hidden="true"
-            focusable="false"
-        /></a>
-      </nav>
-      <div v-if="hostStatus === 'error'" class="home-alert" role="alert">
-        <strong>{{ $t('_common.error') }}</strong>
-        <p>{{ $t('index.startup_errors').replace(/<[^>]+>/g, '') }}</p>
-      </div>
-      <ErrorLogs :fatal-logs="fatalLogs" />
-      <nav
-        class="home-shortcuts home-enter"
-        :aria-label="copy.applications"
-        style="--enter-delay: 200ms"
-      >
-        <a href="/apps"
-          ><h2>
-            <span>{{ copy.applications }}</span
-            ><Icon
-              name="chevron-right"
-              :size="16"
-              :stroke-width="1.8"
-              icon-class="home-shortcut-arrow"
-              aria-hidden="true"
-              focusable="false"
-            />
-          </h2>
-          <p>{{ copy.applicationsHint }}</p></a
-        >
-        <a href="/config"
-          ><h2>
-            <span>{{ copy.settings }}</span
-            ><Icon
-              name="chevron-right"
-              :size="16"
-              :stroke-width="1.8"
-              icon-class="home-shortcut-arrow"
-              aria-hidden="true"
-              focusable="false"
-            />
-          </h2>
-          <p>{{ copy.settingsHint }}</p></a
-        >
-        <a href="/config#av" @click="openDisplay"
-          ><h2>
-            <span>{{ copy.display }}</span
-            ><Icon
-              name="chevron-right"
-              :size="16"
-              :stroke-width="1.8"
-              icon-class="home-shortcut-arrow"
-              aria-hidden="true"
-              focusable="false"
-            />
-          </h2>
-          <p>{{ copy.displayHint }}</p></a
-        >
-      </nav>
-      <section
-        class="home-recent home-enter"
-        aria-labelledby="recent-connections-title"
-        style="--enter-delay: 270ms"
-      >
-        <h2 id="recent-connections-title">{{ copy.recent }}</h2>
-        <div class="recent-content" aria-live="polite">
-          <p v-if="clientsLoading && clientsCount === null" class="home-secondary">
-            {{ copy.loading }}
-          </p>
-          <div v-else-if="clientsError" class="recent-empty">
-            <h3>{{ copy.unavailable }}</h3>
-            <p>{{ copy.unavailableHint }}</p>
-            <button type="button" class="home-text-action" @click="refreshClients">
-              {{ copy.retry }}
-            </button>
-          </div>
-          <ul v-else-if="recentConnections.length" class="recent-connections">
-            <li v-for="client in recentConnections.slice(0, 3)" :key="client.uuid">
-              <a href="/pin">
-                <span class="recent-main">
-                  <span class="recent-client-name">{{ client.name || copy.unnamed }}</span
-                  ><span
-                    v-if="streamingClients.has(client.uuid)"
-                    class="recent-live"
-                    role="img"
-                    :aria-label="copy.streaming"
-                  ><i></i><i></i><i></i></span>
-                </span>
-                <time
-                  v-if="!streamingClients.has(client.uuid)"
-                  class="recent-time"
-                  :datetime="new Date(client.lastSeen).toISOString()"
-                  >{{ formatLastSeen(client.lastSeen) }}</time
-                >
-                <Icon
-                  name="chevron-right"
-                  :size="14"
-                  :stroke-width="1.8"
-                  icon-class="recent-row-arrow"
-                  aria-hidden="true"
-                  focusable="false"
-                />
-              </a>
-            </li>
-          </ul>
-          <div v-else class="recent-empty">
-            <h3>{{ clientsCount === 0 ? copy.noDevices : copy.noHistory }}</h3>
-            <p>{{ clientsCount === 0 ? copy.noDevicesHint : copy.noHistoryHint }}</p>
-            <a href="/pin" class="home-text-action"
-              >{{ clientsCount === 0 ? copy.pairFirst : copy.viewDevices
-              }}<Icon
-                name="chevron-right"
-                :size="14"
-                :stroke-width="1.8"
-                icon-class="home-shortcut-arrow"
-                aria-hidden="true"
-                focusable="false"
-            /></a>
-          </div>
-        </div>
-      </section>
-      <details v-if="showVersionDetails" id="version-details" class="home-version">
-        <summary>
-          <span class="home-version-label">{{ copy.versionDetails }}</span>
-          <span class="home-version-current">
-            <span>{{ $t('index.current_version') }}</span>
-            <span class="home-version-value">{{ version?.version }}</span>
-            <span class="home-version-dot" aria-hidden="true"></span>
-          </span>
-        </summary>
-        <VersionCard
-          :version="version"
-          :github-version="githubVersion"
-          :pre-release-version="preReleaseVersion"
-          :notify-pre-releases="notifyPreReleases"
-          :loading="loading"
-          :installed-version-not-stable="installedVersionNotStable"
-          :stable-build-available="stableBuildAvailable"
-          :pre-release-build-available="preReleaseBuildAvailable"
-          :build-version-is-dirty="buildVersionIsDirty"
-          :parsed-stable-body="parsedStableBody"
-          :parsed-pre-release-body="parsedPreReleaseBody"
-        />
-      </details>
-      <footer class="home-footer home-enter" style="--enter-delay: 300ms">
-        <nav class="home-footer-help" :aria-label="copy.quickStart">
-          <a :href="tutorialHref" target="_blank" rel="noopener noreferrer">{{ copy.quickStart }}</a
-          ><a
-            :href="communityHref"
-            target="_blank"
-            rel="noopener noreferrer"
-            @click.prevent="openCommunity"
-            >{{ copy.community }}</a
-          >
-        </nav>
-        <nav class="home-footer-links" :aria-label="$t('resource_card.legal')">
-          <a :href="websiteHref" target="_blank" rel="noopener noreferrer">{{ copy.website }}</a
-          ><a :href="OFFICIAL_RESOURCES[1].href" target="_blank" rel="noopener noreferrer">GitHub</a
-          ><a
-            v-for="resource in LEGAL_RESOURCES"
-            :key="resource.id"
-            :href="resource.href"
-            target="_blank"
-            rel="noopener noreferrer"
-            >{{ $t(resource.titleKey) }}</a
-          ><a
-            class="home-sponsor-link"
-            href="https://www.alkaidlab.com/#sponsors"
-            target="_blank"
-            rel="noopener noreferrer"
-            >{{ copy.support.entry }}</a
-          >
-        </nav>
-        <div class="home-credit">
-          <a :href="websiteHref" target="_blank" rel="noopener noreferrer"
-            >Powered by Alkaidlab（摇光）</a
-          ><span>GNU GPL v3.0</span>
-        </div>
-      </footer>
-    </main>
+    <MAnnouncementSheet v-model="announceOpen" :items="announcements.list.value" :title="homeTexts(locale).annTitle" :texts="announceTexts" :close-label="$t('_common.close')" @dismiss="announcements.dismiss" @open-url="openExternalUrl" />
+    <MSupportSheet v-model="sponsorSheet" :title="$t('home.dash.sponsor')" :sections="supportSections" :close-label="$t('_common.close')" @open="onSupportOpen" />
+    <ResourceSheet v-model="linksSheet" />
+
+    <ConfirmDialog :show="stopAsk" dialog-id="home-stop-session" :title="$t('home.stop_session')" title-icon="warning" tone="danger" :close-label="$t('_common.close')" @close="stopAsk = false">
+      <p>{{ $t('home.stop_body') }}</p>
+      <template #actions>
+        <MButton variant="text" @click="stopAsk = false">{{ $t('_common.cancel') }}</MButton>
+        <MButton variant="danger" @click="stopSessions">{{ $t('home.stop_session') }}</MButton>
+      </template>
+    </ConfirmDialog>
+    <ConfirmDialog :show="restartAsk" dialog-id="home-restart" :title="$t('troubleshooting.restart_sunshine')" title-icon="refresh" tone="danger" :close-label="$t('_common.close')" @close="restartAsk = false">
+      <p>{{ $t('troubleshooting.restart_sunshine_desc') }}</p>
+      <template #actions>
+        <MButton variant="text" @click="restartAsk = false">{{ $t('_common.cancel') }}</MButton>
+        <MButton variant="danger" icon="refresh" @click="restartHost">{{ $t('troubleshooting.restart_sunshine') }}</MButton>
+      </template>
+    </ConfirmDialog>
+    <MSnackbar v-model="notice" :message="noticeText" />
   </div>
 </template>
 
 <script setup>
-import { computed, nextTick, onMounted, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Navbar from '../components/layout/Navbar.vue'
-import SetupWizard from '../components/SetupWizard.vue'
-import ErrorLogs from '../components/common/ErrorLogs.vue'
+import { firstImage, recentErrorCount, micIsReady, startupProblems, MStartupProblems, MBanner, MButton, MIcon, MIconButton, MItem, MGroup, MPage, MSection, MSheet, MSnackbar, MSwitch, MHomeDash, MSupportSheet, MAnnouncementStrip, MAnnouncementSheet, useAnnouncements, useGuideCard, buildHomeModel, buildStartSteps, buildCards, useJourneyHome, useReleaseAssets, useStarCard, useSystemInfo, reachProblemOf, registeredComponentStatus, guideCardData, downloadCardData, sponsorCardData, GUIDE_TARGET, homeTexts, parseErrorLog, parseSessionLog } from 'foundation-ui/vue'
+import { realSession, buildCatalogue, buildCatalogueDetails, createHistory, createPairQr, saveSettingKey, recentKeys, rememberRecent, createQueuedCalls, createSerialCalls } from 'foundation-ui/vue'
+import QRCode from 'qrcode'
+import { useVddSettings } from '../composables/useVddSettings.js'
+import { useSharedConfig } from '../composables/configStore.js'
 import VersionCard from '../components/common/VersionCard.vue'
-import Icon from '../components/common/Icon.vue'
-import { useVersion } from '../composables/useVersion.js'
+import ConfirmDialog from '../components/common/ConfirmDialog.vue'
+import ResourceSheet from '../components/common/ResourceSheet.vue'
+import ShellUtils from '../components/layout/ShellUtils.vue'
+import { VERSION_CHECK_STATUS, useVersion } from '../composables/useVersion.js'
 import { useLogs } from '../composables/useLogs.js'
 import { useSetupWizard } from '../composables/useSetupWizard.js'
-import { trackEvents } from '../config/firebase.js'
-import { getBootstrapConfig } from '../config/bootstrapData.js'
-import {
-  OFFICIAL_RESOURCES,
-  QUICK_START_RESOURCES,
-  LEGAL_RESOURCES,
-  resolveResourceHref,
-  resolveRandomResourceHref,
-} from '../config/resources.js'
-import { getHomeCopy } from '../i18n/home.js'
-import { apiJson } from '../utils/apiFetch.js'
+import { useReach } from '../composables/useReach.js'
+import { useHostLive } from '../composables/useHostLive.js'
+import { canOpenBigScreen, openBigScreenOnHost } from '../composables/openBigScreen.js'
+import { useShellLive } from '../composables/useShellLive.js'
+import { trackEvents } from '../config/telemetry.js'
+import { hostData } from '../composables/hostData.js'
+import { SPONSORS } from '../config/sponsors.js'
+import { deviceIconFor } from '../utils/homeData.js'
 import { openExternalUrl } from '../utils/helpers.js'
-import { openNativeDisplaySettings } from '../utils/nativeHomeNavigation.js'
-import {
-  formatRelativeSeen,
-  getStreamingDestination,
-  getStreamingState,
-  parseHomeClients,
-  pruneRecentConnectionStores,
-  readRecentConnections,
-  updateRecentConnections,
-  writeRecentConnections,
-} from '../utils/recentConnections.js'
+import { getImagePreviewUrl } from '../utils/imageUtils.js'
+import { ds4HintOf } from '../utils/gamepadHint.js'
+import { apiFetch, apiJson, apiPostJson } from '../utils/apiFetch.js'
+import { $tp, setPlatformHint } from '../platform-i18n'
 
-const { locale } = useI18n()
-const copy = computed(() => getHomeCopy(locale.value))
+const { t, locale } = useI18n()
+const webShell = inject('webShell', null)
 const hostConfig = ref(null)
-const hostNameEl = ref(null)
-let hostNameObserver = null
-
-// Poster-scale type must stay on one line: measure the rendered name and
-// shrink it to fit before letting a long name wrap at the size floor. Short
-// names keep the full 10vw display size.
-function fitHostName() {
-  const el = hostNameEl.value
-  if (!el) return
-  el.style.fontSize = ''
-  el.style.whiteSpace = 'nowrap'
-  const base = parseFloat(getComputedStyle(el).fontSize)
-  const width = el.scrollWidth
-  const available = el.parentElement.clientWidth
-  if (!base || !width || !available) return
-  let fitted = Math.floor(Math.max(40, Math.min(base, (base * available) / width)))
-  el.style.fontSize = `${fitted}px`
-  // One measured correction pass: rounding and glyph metrics can push the
-  // prediction a hair off. Re-derive from the real rendered width once;
-  // if even the corrected size overflows, fall back to wrapping.
-  if (el.scrollWidth > available) {
-    fitted = Math.max(40, Math.floor((fitted * available) / el.scrollWidth))
-    el.style.fontSize = `${fitted}px`
-    if (el.scrollWidth > available) el.style.whiteSpace = 'normal'
-  }
-}
-watch(
-  () => hostConfig.value?.sunshine_name,
-  () => nextTick(fitHostName),
-)
 const hostStatus = ref('loading')
-const appsCount = ref(null)
-const clientsCount = ref(null)
-const greetingText = computed(() =>
-  clientsCount.value === 0
-    ? copy.value.firstGreeting
-    : copy.value.whisper[timeGreetingSlot(new Date().getHours())],
-)
-// Late-night streamers are a real audience: the whisper follows the clock.
-function timeGreetingSlot(hour) {
-  if (hour >= 22 || hour < 5) return 'lateNight'
-  if (hour < 11) return 'morning'
-  if (hour < 18) return 'afternoon'
-  return 'evening'
-}
-const greetingHasCjk = computed(() => /[㐀-鿿]/u.test(greetingText.value))
-// Full-width punctuation ends with half an empty em box; the greeting hangs it
-// so that whitespace doesn't stack onto the flex gap before "Sunshine".
-const greetingHangsPunct = computed(() => /[，。．！？…—]$/u.test(greetingText.value))
-const clientsLoading = ref(true)
-const clientsError = ref(false)
-const clients = ref([])
-const recentConnections = ref([])
-const streamingClients = computed(
-  () =>
-    new Set(
-      clients.value.filter((client) => client.streaming === true).map((client) => client.uuid),
-    ),
-)
-const streamState = computed(() =>
-  getStreamingState(clientsCount.value === null ? null : clients.value, clientsError.value),
-)
-const streamArrival = computed(() => getStreamingDestination(clients.value, copy.value))
-const websiteHref = computed(() => resolveResourceHref(OFFICIAL_RESOURCES[0], locale.value))
-const tutorialHref = computed(() => resolveResourceHref(QUICK_START_RESOURCES[0], locale.value))
-const communityHref = QUICK_START_RESOURCES[1].href
-const historyKey = () =>
-  `sunshine-recent-connections:${window.location.host}:${hostConfig.value?.sunshine_name || ''}`
-let refreshTimer
-let reportTimer
-let disposed = false
-let refreshing = false
-let clientsRequest = null
-let firstRefresh = true
+const edit = ref(false)
+const T = computed(() => homeTexts(locale.value))
 
-const {
-  version,
-  githubVersion,
-  preReleaseVersion,
-  notifyPreReleases,
-  loading,
-  installedVersionNotStable,
-  stableBuildAvailable,
-  preReleaseBuildAvailable,
-  buildVersionIsDirty,
-  parsedStableBody,
-  parsedPreReleaseBody,
-  fetchVersions,
-} = useVersion()
-const showVersionDetails = computed(
-  () =>
-    buildVersionIsDirty.value ||
-    installedVersionNotStable.value ||
-    stableBuildAvailable.value ||
-    (notifyPreReleases.value && preReleaseBuildAvailable.value),
-)
-const { fatalLogs, fetchLogs } = useLogs()
-const { showSetupWizard, adapters, displayDevices, hasLocale, checkSetupWizard, onSetupComplete } =
-  useSetupWizard()
+const platform = computed(() => hostConfig.value?.platform)
+// the platform variants of a text ($tp) need the platform wherever they are asked, also in a callback outside of rendering
+watch(platform, (value) => setPlatformHint(value), { immediate: true })
+const announcements = useAnnouncements({ locale, version: computed(() => hostConfig.value?.version) })
+const announceOpen = ref(false)
+const announceTexts = computed(() => { const x = homeTexts(locale.value); return { open: x.annOpen, dismiss: x.annDismiss, all: x.annAll, read: x.annRead, none: x.annNone } })
+const WANT = new Set(['session', 'latency', 'bitrate', 'fps', 'hdr', 'mic', 'vdd', 'cpu', 'gpu', 'memory'])
+const live = useHostLive({ want: () => WANT, platform: () => platform.value })
+const go = (id) => (webShell?.nav ? webShell.nav.go(id) : (window.location.href = id === 'home' ? '/' : `/${id}`))
+const pairClient = () => { go('pin'); if (webShell) webShell.pending.value = 'pair' }
 
-function openDisplay(event) {
-  if (openNativeDisplaySettings()) event.preventDefault()
-}
-async function openCommunity() {
+// ---- Data ----
+const shellLive = useShellLive()
+// the session with the real name of its client (realSession), and its measured bitrate from either route of the host (sessions[] or perf/current); `bitrate` stays the budget
+const rawSession = computed(() => realSession(live.sessions.value[0] || null, shellLive.clients.value?.list))
+const session = computed(() => { const s = rawSession.value; if (!s) return s; const m = Number.isFinite(s.measured_bitrate_kbps) ? s.measured_bitrate_kbps : live.perf.value?.measuredKbps; return Number.isFinite(m) ? { ...s, measured_bitrate_kbps: m } : s })
+const audioBusy = ref(false)
+async function setHostAudio(enabled) {
+  const s = session.value
+  if (!s || audioBusy.value) return
+  audioBusy.value = true
   try {
-    await openExternalUrl(resolveRandomResourceHref(QUICK_START_RESOURCES[1]))
-  } catch (error) {
-    console.error('Failed to open community:', error)
-  }
+    const d = await apiPostJson('/api/runtime/audio', { clientname: s.client_name, enabled })
+    if (!d?.success) throw new Error(d?.status_message || 'host audio')
+    await live.refreshAux?.()
+  } catch { say($tp('config.host_audio_failed', 'Host audio could not be changed.')) } finally { audioBusy.value = false }
 }
-function formatLastSeen(timestamp) {
-  const relative = formatRelativeSeen(timestamp, copy.value.time)
-  if (relative) return relative
+const bitrateSample = (s) => (s && Number.isFinite(s.measured_bitrate_kbps) ? s.measured_bitrate_kbps : s?.bitrate)
+const perf = live.perf
+const sys = live.system
+const pushSample = (list, v) => { if (Number.isFinite(v)) list.value = [...list.value.slice(-59), v] }
+const series = { cpu: ref([]), gpu: ref([]), bitrate: ref([]), fps: ref([]) }
+watch(sys, (s) => { if (s) { pushSample(series.cpu, s.cpu_percent); pushSample(series.gpu, s.gpu_percent) } })
+watch(() => [bitrateSample(session.value), perf.value?.fps], ([b, f]) => { if (session.value) { pushSample(series.bitrate, b); pushSample(series.fps, f) } else { series.bitrate.value = []; series.fps.value = [] } })
+
+// history this interface keeps itself (the host has none): finished sessions and minutes per day, plus samples the curves need
+const history = createHistory(localStorage, 'foundation-ui.history.web-home')
+const historyTick = ref(0)
+watch(session, (s) => { if (history.observe(s ? { ...s, fpsMeasured: perf.value?.fps, latencyP95Ms: perf.value?.p95Ms } : null)) historyTick.value += 1 }, { immediate: true })
+// one sample of every live number every three seconds, kept for an hour (the time ranges of the detail sheets read it)
+const SAMPLE_SEC = 3
+function sampleAll() {
+  const s = session.value, sy = sys.value
+  history.sample('cpu', sy?.cpu_percent); history.sample('gpu', sy?.gpu_percent)
+  if (sy?.memory_total) history.sample('mem', ((sy.memory_total - (sy.memory_available || 0)) / sy.memory_total) * 100)
+  if (s) { history.sample('bitrate', bitrateSample(s)); history.sample('fps', perf.value?.fps); history.sample('latency', perf.value?.avgMs); history.sample('loss', s.packet_loss); history.sample('dropped', s.dropped_frames) } else for (const k of ['bitrate', 'fps', 'latency', 'loss', 'dropped']) history.clear(k)
+  historyTick.value += 1
+}
+let sampler = 0
+onMounted(() => { sampleAll(); sampler = setInterval(sampleAll, SAMPLE_SEC * 1000) })
+onBeforeUnmount(() => clearInterval(sampler))
+
+const apps = ref(null)
+async function fetchApps() {
   try {
-    return new Intl.DateTimeFormat(String(locale.value).replace(/_/g, '-'), {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    }).format(timestamp)
-  } catch {
-    return new Date(timestamp).toLocaleString('en')
-  }
+    const data = await apiJson('/api/apps')
+    const list = Array.isArray(data) ? data : data?.apps
+    apps.value = Array.isArray(list) ? list.map((a) => ({ id: a.uuid || a.name, name: a.name, cover: a['image-path'] ? getImagePreviewUrl(a['image-path']) : '' })) : null
+  } catch { apps.value = null }
 }
-async function refreshClients() {
-  if (disposed || refreshing || showSetupWizard.value) return
-  refreshing = true
-  clientsLoading.value = true
-  clientsRequest = new AbortController()
-  let timedOut = false
-  const timeout = setTimeout(() => {
-    timedOut = true
-    clientsRequest?.abort()
-  }, 8000)
+
+// gamepad type: the host's controller configuration, applied to the next controller a client creates (no restart)
+const gamepadMode = ref('')
+const gamepadBusy = ref(false)
+async function fetchGamepad() {
   try {
-    const payload = await apiJson('/api/clients/list', { signal: clientsRequest.signal })
-    if (disposed) return
-    const list = parseHomeClients(payload)
-    let previous = recentConnections.value
-    if (firstRefresh) {
-      try {
-        previous = readRecentConnections(window.localStorage, historyKey())
-        pruneRecentConnectionStores(window.localStorage, historyKey())
-      } catch {
-        previous = []
-      }
-    }
-    firstRefresh = false
-    clients.value = list
-    clientsCount.value = list.length
-    recentConnections.value = updateRecentConnections(previous, list)
-    try {
-      writeRecentConnections(window.localStorage, historyKey(), recentConnections.value)
-    } catch {
-      /* Storage may be disabled. */
-    }
-    clientsError.value = false
-  } catch (error) {
-    if (!disposed && (timedOut || error.name !== 'AbortError')) clientsError.value = true
-  } finally {
-    clearTimeout(timeout)
-    refreshing = false
-    if (!disposed) clientsLoading.value = false
-  }
+    const data = await apiJson('/api/gamepad/config')
+    gamepadMode.value = data?.status === 'true' && ['auto', 'x360', 'ds4', 'ds5'].includes(data.gamepad) ? data.gamepad : ''
+  } catch { gamepadMode.value = '' }
 }
-function refreshVisibleClients() {
-  if (!document.hidden) void refreshClients()
+async function setGamepad(value) {
+  if (gamepadBusy.value || value === gamepadMode.value) return
+  const before = gamepadMode.value
+  gamepadMode.value = value
+  gamepadBusy.value = true
+  try {
+    const data = await apiPostJson('/api/gamepad/config', { gamepad: value })
+    if (data?.status !== 'true') throw new Error('not saved')
+    say(t('home.dash.pad_saved'))
+  } catch { gamepadMode.value = before; say(t('_common.error')) } finally { gamepadBusy.value = false }
 }
-onBeforeUnmount(() => {
-  disposed = true
-  clientsRequest?.abort()
-  clearInterval(refreshTimer)
-  clearTimeout(reportTimer)
-  document.removeEventListener('visibilitychange', refreshVisibleClients)
-  hostNameObserver?.disconnect()
+
+const hdrState = computed(() => {
+  const h = live.hdr.value
+  if (!h) return ''
+  const key = `home.hdr_state.${h.state}`
+  const text = t(key)
+  return text === key ? String(h.state || '') : text
 })
-onMounted(async () => {
-  trackEvents.pageView('home')
+const vddState = computed(() => {
+  const v = live.vdd.value
+  if (!v) return ''
+  const key = `home.vdd_state.${v.state}`
+  const text = t(key)
+  return text === key ? String(v.state || '') : text
+})
+const micText = computed(() => {
+  const m = live.mic.value
+  return m ? t(m.host_streaming ? 'home.mic_in_use' : m.online ? 'home.mic_online' : 'home.mic_offline') : ''
+})
+
+const { logs, fancyLogs, fatalLogs, fetchLogs } = useLogs()
+const startup = computed(() => startupProblems(fatalLogs.value.map((log) => log.value), String(locale.value)))
+// the fix of a known problem: the driver page of this UI, else the page of the project's documents that names it
+const onStartupFix = (problem) => {
+  const known = problem.known || {}
+  if (known.go === 'drivers') go('components')
+  else if (known.link) openExternalUrl(known.link)
+  else if (known.go) go('config')
+}
+
+// ---- Get started card: steps tick from real data ----
+const SEEN_KEY = 'foundation-ui.guide.web-home.sessionSeen'
+const sessionSeen = ref(localStorage.getItem(SEEN_KEY) === '1')
+watch(() => !!session.value || (parseSessionLog(logs.value)?.length || 0) > 0, (v) => { if (v && !sessionSeen.value) { sessionSeen.value = true; try { localStorage.setItem(SEEN_KEY, '1') } catch { /* storage unavailable */ } } }, { immediate: true })
+const guide = useGuideCard('web-home', () => (shellLive.clients.value && apps.value ? buildStartSteps(T.value, { paired: shellLive.clients.value.total, sessionSeen: sessionSeen.value, apps: apps.value }) : []))
+const openGuide = async () => (await import('../utils/guideLauncher.js')).openGuide()
+const downloadFor = (id) => { window.location.href = `/downloads?platform=${encodeURIComponent(id)}` }
+
+// ---- Host status and version (unchanged behaviour of the old home) ----
+const {
+  version, githubVersion, preReleaseVersion, notifyPreReleases, versionCheckStatus, loading, installedVersionNotStable,
+  stableBuildAvailable, preReleaseBuildAvailable, buildVersionIsDirty, fetchVersions,
+} = useVersion()
+const versionSheet = ref(false)
+const hasStableUpdate = computed(() => stableBuildAvailable.value)
+const hasPreReleaseUpdate = computed(() => notifyPreReleases.value && preReleaseBuildAvailable.value)
+const updateLabel = computed(() => (hasStableUpdate.value ? t('index.new_stable') : hasPreReleaseUpdate.value ? t('index.new_pre_release') : ''))
+const versionLabel = computed(() => {
+  const current = version.value?.version || hostConfig.value?.version
+  return current ? `Ver ${current}` : ''
+})
+
+// ---- The model of the shared dashboard ----
+const dashTexts = computed(() => ({ ...homeTexts(locale.value), done: t('home.grid.done'), reset: t('home.grid.reset'), earlier: t('home.grid.earlier'), later: t('home.grid.later'), addTitle: t('home.grid.add'), nothing: t('home.grid.nothing'), hide: t('home.grid.remove'), close: t('_common.close') }))
+const PAD_LABELS = computed(() => ({ auto: t('home.dash.pad_auto'), x360: 'Xbox 360', ds4: 'DualShock 4', ds5: 'DualSense' }))
+const PLATFORM_NAMES = { windows: 'Windows', linux: 'Linux', macos: 'macOS' }
+// the pad a streaming client really runs: the host reports the active type of the session's PlayStation controller
+const padSession = computed(() => live.sessions.value.find((s) => s && s.gamepad_type) || null)
+// one short line with the reason and what to do while a client's PlayStation pad runs as a DualShock 4
+const ds4Hint = computed(() => ds4HintOf(live.sessions.value, gamepadMode.value))
+const padLabel = computed(() => {
+  const type = padSession.value?.gamepad_type
+  if (type) return PAD_LABELS.value[type] || type
+  return gamepadMode.value ? PAD_LABELS.value[gamepadMode.value] : ''
+})
+const model = computed(() => {
+  const s = session.value
+  const sy = sys.value
+  const base = buildHomeModel({
+    host: { name: hostConfig.value?.sunshine_name || 'Sunshine', platform: PLATFORM_NAMES[platform.value] || '', version: versionLabel.value, running: hostStatus.value !== 'error', update: updateLabel.value },
+    session: s ? { ...s, fpsMeasured: perf.value?.fps, latencyMs: perf.value?.avgMs, latencyP95Ms: perf.value?.p95Ms, latencyLastMs: perf.value?.lastMs, capture: perf.value?.capture, uptimeMs: perf.value?.uptimeMs } : null,
+    sessionCount: live.sessions.value.length,
+    series: { cpu: series.cpu.value, gpu: series.gpu.value, bitrate: series.bitrate.value, fps: series.fps.value, latency: perf.value?.series || [] },
+    codecModes: hostConfig.value && hostConfig.value.hevc_mode !== undefined ? { hevc: hostConfig.value.hevc_mode, av1: hostConfig.value.av1_mode } : null,
+    sys: sy ? { cpu: sy.cpu_percent, gpu: sy.gpu_percent, gpuName: sy.gpu_name || '', memTotal: sy.memory_total || 0, memAvail: sy.memory_available || 0 } : null,
+    encoder: shellLive.encoder.value,
+    vdd: live.vdd.value ? { state: live.vdd.value.state === 'ready' ? 'ready' : (live.vdd.value.state === 'missing' || live.vdd.value.state === 'not_installed') ? 'missing' : 'idle', text: vddState.value, hdr: live.hdr.value ? !!live.hdr.value.hdrEnabled : undefined } : null,
+    display: hdrState.value || vddState.value ? { hdr: live.hdr.value ? !!live.hdr.value.hdrEnabled : undefined, hdrText: hdrState.value, nits: live.hdr.value?.calibrated ? live.hdr.value.maxNits : null, vddText: vddState.value, vddTone: live.vdd.value?.state === 'ready' ? 'ok' : 'warn' } : null,
+    pads: padLabel.value ? { word: padLabel.value, text: ds4Hint.value ? `${padLabel.value} · ${t(ds4Hint.value.key)}` : padLabel.value } : null,
+    mic: micText.value ? { ready: micIsReady(live.mic.value), text: micText.value, sub: live.mic.value?.underruns ? t('home.underruns', { n: live.mic.value.underruns }) : '' } : null,
+    clients: shellLive.clients.value?.list ? shellLive.clients.value.list.map((c) => ({ ...c, icon: deviceIconFor(c.name, c.os) })) : null,
+    apps: apps.value,
+    logs: parseErrorLog(logs.value),
+    recent: parseSessionLog(logs.value),
+    canAct: live.local.value !== false || !s,
+  }, homeTexts(locale.value))
+  base.strip = gamepadMode.value
+    ? { label: t('home.dash.gamepad_type'), icon: 'sports_esports', value: gamepadMode.value, busy: gamepadBusy.value, options: ['auto', 'x360', 'ds4', 'ds5'].filter((m) => m !== 'ds4' && m !== 'x360' ? true : platform.value !== 'linux').map((value) => ({ value, label: PAD_LABELS.value[value] })), switches: [] }
+    : null
+  if (base.strip && ds4Hint.value) base.strip.note = t(ds4Hint.value.key)
+  // the version sheet is the details of the host card (release notes, update channels)
+  base.details = { ...base.details, hero: { external: true } }
+  return base
+})
+// the shared virtual display control and the store the settings page uses, so a change in one shows in the other
+const vddStore = useVddSettings()
+onMounted(() => { const shared = useSharedConfig(); if (!shared.config.value) shared.loadConfig(); vddStore.refresh() })
+const catalogueInput = computed(() => {
+  void historyTick.value
+  const s = session.value
+  const sy = sys.value
+  return {
+    sampleSec: SAMPLE_SEC, vddStore: live.vdd.value ? vddStore : null,
+    reach: reach.view.report, reachChecking: reach.view.status === 'loading',
+    sysinfo: nics.info.value,
+    host: { version: versionLabel.value, update: updateLabel.value },
+    session: s ? { ...s, fpsMeasured: perf.value?.fps, latencyMs: perf.value?.avgMs, latencyP95Ms: perf.value?.p95Ms, uptimeMs: perf.value?.uptimeMs } : null,
+    history: { samples: history.samples, sessions: history.sessions, days: history.days, last: () => history.last() },
+    sys: sy ? { memTotal: sy.memory_total || 0, memAvail: sy.memory_available || 0 } : null,
+    config: hostConfig.value, logText: logs.value, logs: parseErrorLog(logs.value), clients: model.value.table?.tabs?.find((x) => x.id === 'clients') ? shellLive.clients.value.list.map((c) => ({ ...c, icon: deviceIconFor(c.name, c.os) })) : null, apps: apps.value,
+    codecModes: hostConfig.value && hostConfig.value.hevc_mode !== undefined ? { hevc: hostConfig.value.hevc_mode, av1: hostConfig.value.av1_mode } : null,
+    pads: padLabel.value ? { word: padLabel.value, text: ds4Hint.value ? `${padLabel.value} · ${t(ds4Hint.value.key)}` : padLabel.value } : null,
+    display: live.hdr.value ? { hdr: !!live.hdr.value.hdrEnabled, hdrText: hdrState.value, nits: live.hdr.value.calibrated ? live.hdr.value.maxNits : null } : null,
+    canAct: live.local.value !== false || !s,
+    canOpenDesktop: canOpenBigScreen({ platform: platform.value, local: live.local.value, hostname: window.location.hostname }),
+    recent: recentKeys.value, canRuntime: live.local.value !== false, ds5Keys: shellLive.dualsenseKeys.value,
+    pairQr: pairQr.view,
+    announcements: announcements.list.value.map((a) => ({ id: a.id, title: a.title || a.text || '', category: a.category, banner: a.banner || firstImage(a.body), date: dateOfPost(a.published), read: a.read || a.snoozed, hasText: !!a.body, url: a.url || '' })),
+  }
+})
+const catalogue = computed(() => buildCatalogue(catalogueInput.value, T.value).data)
+const allDetails = computed(() => ({ ...model.value.details, ...buildCatalogueDetails(catalogueInput.value, T.value) }))
+const isNew = computed(() => guide.visible.value)
+const cards = computed(() => buildCards(model.value, { texts: T.value, catalogue: catalogue.value, guide: guideCardData(T.value, guide.steps.value, guide.visible.value), download: downloadCardData(T.value, { locale: locale.value, assetsOf: releases.assetsOf, versionOf: releases.versionOf, qr: (text) => QRCode.create(text, { errorCorrectionLevel: 'M' }).modules }), sponsor: sponsorCardData(T.value, SPONSORS), journey: journey.data.value, sysinfo: nics.info.value, temps: null }))
+// the system information of the host (the network adapters, the CPU, the GPU, the system): a host without the API leaves those tiles out
+const sysJson = async (path) => { const r = await apiFetch(path); if (!r.ok) throw Object.assign(new Error(`HTTP ${r.status}`), { status: r.status }); return r.json() }
+const nics = useSystemInfo({ fetchJson: sysJson })
+const reachProblem = computed(() => reachProblemOf(reach.view.report))
+// what the smart overview reads (all local): the paired clients, a stream, problems, the network of the host
+const compRows = () => registeredComponentStatus()?.rows?.value || []
+const smartSignals = computed(() => ({
+  pairedCount: shellLive.clients.value?.list ? shellLive.clients.value.list.length : null,
+  streaming: !!session.value, lastStreamAt: (void historyTick.value, history.last()?.end || 0), // ms since epoch of the end of the last finished session this page saw (0: none): the after-stream scenario runs 30 minutes from it
+  problems: startup.value.length, problemComponents: compRows().filter((r) => r.state === 'error' || r.state === 'warn').map((r) => r.id),
+  recentErrors: recentErrorCount(logs.value), isNew: isNew.value,
+  wifiHost: nics.defaultNic.value?.type === 'wifi', linkSlowMbps: nics.defaultNic.value?.link_speed_mbps && nics.defaultNic.value.link_speed_mbps < 1000 ? nics.defaultNic.value.link_speed_mbps : 0,
+  reachBad: reachProblem.value, updateAvailable: !!updateLabel.value,
+}))
+const dashCtx = computed(() => ({ live: !!session.value, isNew: isNew.value, ...journey.ctx.value, star: star.visible.value, starNames: (shellLive.clients.value?.list || []).map((c) => c.name), clientList: (shellLive.clients.value?.list || []).map((c) => ({ name: c.name, uuid: c.uuid, family: c.family, official: c.official, os: c.os, version: c.version, last_seen: c.last_seen })), sessionClient: session.value ? { uuid: session.value.client_cert_uuid || session.value.uuid || session.value.client_uuid || '', name: session.value.client_name || '', family: session.value.client_family || '', os: session.value.client_os || '', official: session.value.client_official } : null, signals: smartSignals.value }))
+// the date of a post in the 资讯 tile, YYYY-MM-DD
+const dateOfPost = (at) => { if (!at) return ''; const d = new Date(at); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}` }
+function onAction(a) {
+  switch (a.type) {
+    case 'news-open': webShell?.nav ? webShell.nav.go('announcements', { id: a.value?.id }) : go('home'); break
+    case 'hero': onHero(); break
+    case 'group': setGamepad(a.value); break
+    case 'table-action': pairClient(); break
+    case 'pair-pin': pairPin(a.value?.pin); break
+    case 'pair-qr': go('pin'); if (webShell) webShell.pending.value = 'pair-qr'; break
+    case 'star-dismiss': star.dismiss(); break
+    case 'address-save': saveSetting({ key: 'external_endpoints', value: a.value?.value ?? '' }).then(() => saveSetting({ key: 'external_ip', value: '' })).then(() => reach.refresh(true)).catch(() => {}); break
+    case 'reach-check': reach.refresh(true); break
+    case 'pin-open': webShell?.openSetting?.(a.value?.key); break
+    case 'open-url': window.open(a.value, '_blank', 'noopener,noreferrer'); break
+    case 'open-desktop': openBigScreenOnHost().catch((e) => say(`${T.value.openDesktopFailed}${e?.message ? `: ${e.message}` : ''}`)); break
+    case 'pair-qr-begin': pairQr.begin(); break
+    case 'pair-qr-stop': pairQr.stop(); break
+    case 'table-row': onTableRow(a.value); break
+    case 'app': go('apps'); break
+    case 'add-app': go('apps'); if (webShell) webShell.pending.value = 'addApp'; break
+    case 'scan-games': go('apps'); if (webShell) webShell.pending.value = 'scanGames'; break
+    case 'open': go({ vdd: 'config', settings: 'config', clients: 'pin', diagnostics: 'troubleshooting' }[a.value] || a.value); break
+    case 'detail-external': versionSheet.value = true; break
+    case 'guide-go': { const to = GUIDE_TARGET[a.value.id]; if (to === 'welcome') openGuide(); else if (to === 'clients') pairClient(); else go(to === 'downloads' ? 'downloads' : to) } break
+    case 'guide-skip': guide.toggle(a.value); break
+    case 'download': downloadFor(a.value); break
+    case 'link': window.open(a.value, '_blank', 'noopener,noreferrer'); break
+    case 'setting': saveSetting(a.value); break
+    case 'runtime-bitrate': runtimeBitrate(a.value); break
+    case 'ds5-tune': ds5Tune(a.value); break
+    case 'sponsor': { const target = SPONSORS.find((x) => x.id === a.value); if (a.value === 'star') window.open('https://github.com/AlkaidLab/foundation-sunshine', '_blank', 'noopener,noreferrer'); else if (target) window.open(target.url, '_blank', 'noopener,noreferrer'); else sponsorSheet.value = true; break }
+    default: break
+  }
+}
+// a control card saves its setting the way the settings do: read the configuration, change the key, write it back
+const hostApi = { getJson: (path) => apiJson(path), postJson: (path, body) => apiJson(path, { method: 'POST', body }) }
+// the QR code of the pairing card: a pairing window is open on the host only while the card shows it (the card asks and gives it back)
+const pairQr = createPairQr({
+  start: async () => { const d = await apiJson('/api/qr-pair', { method: 'POST' }); if (String(d.status) !== 'true') throw new Error(d.error || 'qr'); return d },
+  poll: () => apiJson('/api/qr-pair'),
+  cancel: () => apiFetch('/api/qr-pair/cancel', { method: 'POST' }),
+  render: (url) => QRCode.toDataURL(url, { width: 280, margin: 2, color: { dark: '#000000', light: '#ffffff' } }),
+})
+onBeforeUnmount(() => pairQr.stop())
+// the connect journey card: on by default while no client is paired (choose the device, install, pair, done)
+const releases = useReleaseAssets()
+const journey = useJourneyHome({ storageKey: 'web-home', assetsOf: releases.assetsOf, versionOf: releases.versionOf, count: () => (shellLive.clients.value?.list ? shellLive.clients.value.list.length : null), latest: () => (shellLive.clients.value?.list?.length ? shellLive.clients.value.list[shellLive.clients.value.list.length - 1].name : ''), locale: () => locale.value, qr: (text) => QRCode.create(text, { errorCorrectionLevel: 'M' }).modules, pairQr: pairQr.view })
+// the star card: due after the first pairing or the first stream; while a stream runs the star of the client in use, otherwise the host and the sponsor entry; 以后再说 hides it until the next stream
+const star = useStarCard({ storageKey: 'web-home', triggered: () => journey.done.value || sessionSeen.value, paired: () => shellLive.clients.value?.list?.length || 0, streaming: () => !!session.value })
+// the PIN typed on the pairing card goes to the host like the pairing sheet sends it
+async function pairPin(pin) {
+  if (!/^\d{4}$/.test(String(pin || ''))) return
   try {
-    const config = await getBootstrapConfig()
-    if (disposed) return
+    const response = await apiFetch('/api/pin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin: String(pin), name: T.value.pairDefaultName }) })
+    const data = await response.json()
+    say(String(data.status) === 'true' ? T.value.pairSent : T.value.pairFailed)
+  } catch { say(T.value.pairFailed) }
+}
+// a control the keyboard repeats (a slider held on an arrow key) posts one command per destination at a time; the value that is sent is always the last one chosen
+const saveSetting = createSerialCalls(async ({ key, value, failed }) => { const r = await saveSettingKey(hostApi, key, value); if (r.ok) { hostConfig.value = r.config; rememberRecent(key) } else { say(T.value.saveFailed); failed?.() } }, (a) => a.key)
+// what acts on a running stream (host audit 2026-11-05): the bitrate command is taken from this computer only; the DualSense tuning applies to the controller in use
+const runtimeBitrate = createQueuedCalls(async ({ client, kbps }) => {
+  try { const r = await apiFetch(`/api/runtime/bitrate?bitrate=${kbps}&clientname=${encodeURIComponent(client)}`); const d = await r.json().catch(() => ({})); say(r.ok && d.success !== false ? T.value.lbSent.replace('{client}', client) : T.value.lbFailed) } catch { say(T.value.lbFailed) }
+}, (a) => a.client)
+const ds5Tune = createQueuedCalls(async ({ key, value }) => {
+  try { const d = await apiPostJson('/api/dualsense/tuning', { schema: 'ALK-DS5T/1', values: { [key]: value } }); if (d?.status === false) say(T.value.dsFailed); else shellLive.refresh?.() } catch { say(T.value.dsFailed) }
+}, (a) => a.key)
+const onTableRow = (row) => go(row.tab === 'errors' || row.tab === 'sessions' ? 'troubleshooting' : 'pin')
+const onDetail = (id) => { if (id === 'hero') versionSheet.value = true }
+
+// ---- Sheets, confirmations ----
+const sponsorSheet = ref(false)
+const linksSheet = ref(false)
+const supportSections = computed(() => [
+  { title: t('home.dash.sponsor'), items: SPONSORS.map((x) => ({ id: x.id, icon: 'favorite', title: x.label, url: x.url })) },
+  { items: [
+    { id: 'star', icon: 'star', title: t('home.dash.star'), url: 'https://github.com/AlkaidLab/foundation-sunshine' },
+    { id: 'qq', icon: 'groups', title: t('home.dash.qq'), url: 'https://qm.qq.com/q/AfMQoyKrkc' },
+    { id: 'more', icon: 'public', title: t('home.dash.more_resources') },
+  ] },
+])
+const onSupportOpen = (item) => {
+  if (item.id === 'more') { sponsorSheet.value = false; linksSheet.value = true; return }
+  window.open(item.url, '_blank', 'noopener,noreferrer')
+}
+const stopAsk = ref(false)
+const restartAsk = ref(false)
+const notice = ref(false)
+const noticeText = ref('')
+const say = (text) => { noticeText.value = text; notice.value = true }
+const onHero = () => { if (session.value) stopAsk.value = true; else restartAsk.value = true }
+async function stopSessions() {
+  stopAsk.value = false
+  try {
+    const response = await apiFetch('/api/runtime/sessions/stop', { method: 'POST' })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    say(t('home.stop_done'))
+  } catch (error) { console.error('Failed to stop sessions:', error); say(t('_common.error')) }
+}
+async function restartHost() {
+  restartAsk.value = false
+  try {
+    await apiFetch('/api/restart', { method: 'POST' })
+    say(t('troubleshooting.restart_sunshine_success'))
+  } catch (error) {
+    // the host drops the connection while it restarts
+    say(t('troubleshooting.restart_sunshine_success'))
+    console.warn('Restart request ended:', error)
+  }
+}
+
+// The first run is the guided flow (the same one as the control panel's welcome), a large window over a scrim
+const { checkSetupWizard } = useSetupWizard()
+const reach = useReach()
+
+let logTimer = 0
+let appsTimer = 0
+onMounted(async () => {
+  void reach.refresh()
+  nics.start()
+  shellLive.start()
+  void fetchApps()
+  void fetchGamepad()
+  appsTimer = setInterval(() => { if (!document.hidden) void fetchApps() }, 30000)
+  try {
+    const config = await hostData.refresh('config')
     hostConfig.value = config
     hostStatus.value = 'ready'
-    if (checkSetupWizard(config)) return
-    await nextTick()
-    fitHostName()
-    hostNameObserver = new ResizeObserver(fitHostName)
-    // Observe the full-width grid, not the fit-content summary: the summary
-    // tracks its content width and would never re-fire on viewport resizes.
-    const fitScope = hostNameEl.value?.closest('.host-overview') ?? hostNameEl.value?.parentElement
-    if (fitScope) hostNameObserver.observe(fitScope)
-    reportTimer = setTimeout(() => {
-      const gpuAdapters = config.adapters || []
-      trackEvents.gpuReported({
-        platform: config.platform || 'unknown',
-        adapter_count: gpuAdapters.length,
-        adapters: gpuAdapters.map((a) => (typeof a === 'string' ? a : a?.name || '')).join(', '),
-        selected_adapter: config.adapter_name || (gpuAdapters.length ? 'auto' : 'none'),
-        has_selected_adapter: !!config.adapter_name,
-      })
-    }, 1000)
-    document.addEventListener('visibilitychange', refreshVisibleClients)
-    refreshTimer = setInterval(refreshVisibleClients, 10000)
-    void refreshClients()
-    void apiJson('/api/apps')
-      .then((payload) => {
-        if (!disposed)
-          appsCount.value = Array.isArray(payload)
-            ? payload.length
-            : Array.isArray(payload?.apps)
-              ? payload.apps.length
-              : null
-      })
-      .catch(() => {})
+    if (checkSetupWizard(config)) void import('../utils/guideLauncher.js').then((m) => m.maybeAutoOpenGuide({ ignorePaired: true }))
+    // version and logs do not block each other, so an external version check cannot delay the local status
     await Promise.allSettled([fetchVersions(config), fetchLogs()])
-    if (!disposed && version.value) document.title += ` Ver ${version.value.version}`
-  } catch (error) {
-    if (disposed) return
+    logTimer = setInterval(() => { if (!document.hidden) void fetchLogs() }, 30000)
+    if (version.value) document.title += ` Ver ${version.value.version}`
+  } catch (e) {
     hostStatus.value = 'error'
-    clientsError.value = true
-    clientsLoading.value = false
-    console.error('Failed to initialize home:', error)
+    // in preview mode the API is not there; that is expected
+    if (e?.message?.includes('JSON') || e?.message?.includes('<!DOCTYPE')) console.warn('API not available in preview mode:', e.message)
+    else {
+      console.error('Failed to initialize:', e)
+      trackEvents.errorOccurred('home_initialization', e.message)
+    }
   }
 })
+onBeforeUnmount(() => { clearInterval(logTimer); clearInterval(appsTimer); shellLive.stop() })
 </script>
-
-<style>
-@import '../styles/global.less';
-</style>
-<style scoped src="../styles/home.less" lang="less"></style>
