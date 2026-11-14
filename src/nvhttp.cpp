@@ -81,6 +81,7 @@
 #include "tray/system_tray.h"
 #include "utility.h"
 #include "uuid.h"
+#include "version.h"
 #include "video.h"
 #include "webhook/webhook.h"
 
@@ -88,6 +89,15 @@ using json = nlohmann::json;
 
 using namespace std::literals;
 namespace nvhttp {
+
+  namespace {
+    /**
+     * @brief The Sunshine version we are replicating.
+     * @note Defined here and not in nvhttp.h: the version string contains the commit on non-master builds, so a header
+     *       definition would invalidate every translation unit that includes nvhttp.h on every new commit.
+     */
+    constexpr auto SUNSHINE_VERSION = PROJECT_NAME " " PROJECT_VER;
+  }  // namespace
 
   static constexpr std::string_view EMPTY_PROPERTY_TREE_ERROR_MSG = "Property tree is empty. Probably, control flow got interrupted by an unexpected C++ exception. This is a bug in Sunshine. Moonlight-qt will report Malformed XML (missing root element)."sv;
 
