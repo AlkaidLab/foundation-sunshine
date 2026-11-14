@@ -121,10 +121,14 @@ TEST_F(EndpointRefresh, RejectsOtherSessionsStreamsAndUnvalidatedInitialTraffic)
   EXPECT_FALSE(send(wrong, old_peer));
   EXPECT_FALSE(send(request, { address, 0 }));
   EXPECT_EQ(server.port(), 0);
-  EXPECT_TRUE(send(request, old_peer));
+  auto initial_challenge = send(request, old_peer);
+  ASSERT_TRUE(initial_challenge);
+  const auto initial_message = decode(*initial_challenge);
   EXPECT_EQ(server.port(), old_peer.port());
   now += 10ms;
   EXPECT_FALSE(send(packet(LI_ER_PROBE, 2), new_peer)); // Challenge rate limit.
+  EXPECT_EQ(server.port(), new_peer.port());
+  EXPECT_FALSE(send(packet(LI_ER_RESPONSE, initial_message.sequence, initial_message.nonce), old_peer));
   EXPECT_EQ(server.port(), new_peer.port());
 }
 
