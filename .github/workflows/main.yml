@@ -81,7 +81,8 @@ jobs:
           set -euo pipefail
           : > files.txt
           if [[ "$EVENT" == pull_request ]]; then
-            gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files" --jq '.[].filename' > files.txt
+            # A renamed file counts under both names: moving a packaging file out of its directory must still run its checks.
+            gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files" --jq '.[] | .filename, (.previous_filename // empty)' > files.txt
             if [[ $(wc -l < files.txt) -ge 3000 ]]; then : > files.txt; fi
           fi
           python3 scripts/ci/classify-changes.py --output "$GITHUB_OUTPUT" < files.txt

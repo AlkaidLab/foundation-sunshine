@@ -71,8 +71,9 @@ def main():
     if args.files:
         files = [pathlib.Path(f).resolve() for f in args.files if f.endswith(".md") and pathlib.Path(f).exists()]
     else:
-        listed = subprocess.run(["git", "-C", str(root), "ls-files", "*.md"], capture_output=True, text=True, check=True).stdout
-        files = [root / f for f in listed.split()]
+        # -z: names with spaces or non-ASCII characters are listed verbatim, not quoted
+        listed = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "*.md"], capture_output=True, text=True, check=True).stdout
+        files = [root / f for f in listed.split("\0") if f]
     broken = check(root, files)
     for path, number, target in broken:
         rel = path.relative_to(root) if path.is_relative_to(root) else path

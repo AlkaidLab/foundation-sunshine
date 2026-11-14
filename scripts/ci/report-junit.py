@@ -45,7 +45,8 @@ def load(paths):
                 status = "fail"
                 node = case.find("failure") if case.find("failure") is not None else case.find("error")
                 message = (node.get("message") or node.text or "").strip()
-            elif case.find("skipped") is not None or case.get("status") == "notrun":
+            elif case.find("skipped") is not None or case.get("status") in ("notrun", "disabled"):
+                # ctest --output-junit writes a disabled test as status="disabled" without a <skipped> child
                 status = "skip"
             cases.append({
                 "name": case.get("name", "?"),

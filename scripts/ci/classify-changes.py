@@ -40,6 +40,7 @@ WEBUI = [
 ]
 INSTALLER = [
     "tools/installer*", "tools/append_installer_payload.py", "cmake/packaging/*", "scripts/*installer*",
+    "scripts/build-setup-ui.ps1", "scripts/fetch-paired-gui.ps1", "scripts/generate-checksums.ps1",
     "src_assets/common/sunshine-control-panel",
 ]
 # The pipeline itself: a change here must be exercised by a full run.

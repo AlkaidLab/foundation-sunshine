@@ -20,12 +20,18 @@ import yaml
 BASH_SHELLS = {None, "bash", "sh", "msys2 {0}"}
 
 
+def default_shell(node):
+    return (((node or {}).get("defaults") or {}).get("run") or {}).get("shell")
+
+
 def steps_of(document):
     if not isinstance(document, dict):
         return
+    # A step's own shell wins over the job default, which wins over the workflow default (GitHub Docs, "Setting default values for jobs").
+    workflow_shell = default_shell(document)
     for job in (document.get("jobs") or {}).values():
         for step in (job or {}).get("steps") or []:
-            yield step, ((job.get("defaults") or {}).get("run") or {}).get("shell")
+            yield step, default_shell(job) or workflow_shell
     runs = document.get("runs") or {}
     for step in runs.get("steps") or []:
         yield step, None
