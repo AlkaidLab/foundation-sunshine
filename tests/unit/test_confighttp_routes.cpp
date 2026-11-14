@@ -298,6 +298,9 @@ TEST_F(ConfigHttpRoutes, EveryRegisteredRouteDispatchesItsMethodPathAndCapturesO
   for (auto &[pattern, methods] : server->resource) {
     auto path = pattern.str.substr(1, pattern.str.size() - 2);
     replace(path, "([0-9]+)", "42");
+    // Captures with a narrower alphabet need a sample the pattern accepts.
+    replace(path, "([0-9a-f]+)", "ab12");
+    replace(path, "(icon|card|banner|hero)", "icon");
     // The remaining captures are component and clipboard/file-mapping IDs.
     path = std::regex_replace(path, std::regex(R"(\([^)]*\))"), "id_1");
     replace(path, "\\/", "/");
