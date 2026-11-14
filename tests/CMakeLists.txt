@@ -104,7 +104,9 @@ if (WIN32)
     set_target_properties(ds5_native_usbip_smoke PROPERTIES
             CXX_STANDARD 23
             LINK_SEARCH_START_STATIC 1)
+    # Exit code 77 = skipped: the smoke needs the usbip-win2 client (and its driver) installed on the host.
     add_test(NAME ds5_native_usbip_smoke COMMAND ds5_native_usbip_smoke 30000)
+    set_tests_properties(ds5_native_usbip_smoke PROPERTIES SKIP_RETURN_CODE 77)
 endif ()
 
 if (WIN32)
@@ -269,6 +271,11 @@ add_executable(default_apps_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_defau
 target_sources(default_apps_unit_tests PRIVATE
         ${CMAKE_SOURCE_DIR}/src/default_apps.cpp
         ${CMAKE_SOURCE_DIR}/src/file_handler.cpp)
+if (WIN32)
+    # file_handler.cpp converts paths with platf::from_utf8/to_utf8.
+    target_sources(default_apps_unit_tests PRIVATE
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/text_encoding.cpp)
+endif ()
 target_include_directories(default_apps_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(default_apps_unit_tests PRIVATE gtest_main Boost::boost Boost::log Boost::format Boost::property_tree sunshine_project_options sunshine_coverage)
 set_target_properties(default_apps_unit_tests PROPERTIES CXX_STANDARD 23)
@@ -1378,6 +1385,10 @@ target_link_libraries(${PROJECT_NAME}
         gtest
         ${PLATFORM_LIBRARIES}
         sunshine_project_options sunshine_coverage sunshine_crypto sunshine_ai_provider sunshine_ai_stream)
+if (WIN32)
+    # src/sparxie/platform.cpp downloads through WinHTTP, as the sunshine target links it.
+    target_link_libraries(${PROJECT_NAME} PRIVATE winhttp)
+endif ()
 target_compile_definitions(${PROJECT_NAME} PUBLIC
         SUNSHINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
         ${SUNSHINE_DEFINITIONS}
