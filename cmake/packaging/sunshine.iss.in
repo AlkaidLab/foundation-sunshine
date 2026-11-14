@@ -448,7 +448,7 @@ function InstallerParameterValue(Name: String): String;
 // Authority: installer-inno-script-functions-20261107 (GetCmdTail,
 // SaveStringToFile); installer-inno-command-line-20261107 (silent switches).
 var
-  Tail, Needle, UpperTail, UpperNeedle: String;
+  Tail, UpperTail, UpperNeedle: String;
   StartPos, EndPos: Integer;
 begin
   Result := '';
