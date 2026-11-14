@@ -270,7 +270,7 @@ target_sources(default_apps_unit_tests PRIVATE
         ${CMAKE_SOURCE_DIR}/src/default_apps.cpp
         ${CMAKE_SOURCE_DIR}/src/file_handler.cpp)
 target_include_directories(default_apps_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
-target_link_libraries(default_apps_unit_tests PRIVATE gtest_main Boost::boost Boost::log Boost::property_tree sunshine_project_options sunshine_coverage)
+target_link_libraries(default_apps_unit_tests PRIVATE gtest_main Boost::boost Boost::log Boost::format Boost::property_tree sunshine_project_options sunshine_coverage)
 set_target_properties(default_apps_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME default_apps_unit_tests COMMAND default_apps_unit_tests)
 
