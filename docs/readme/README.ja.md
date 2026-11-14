@@ -37,14 +37,14 @@ Foundation Sunshine は、Sunshine をベースにした Windows 向けの無料
 
 <table>
 <tr>
-<td align="center" valign="top">
+<td width="50%" align="center" valign="top">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/panel-library-dark.webp">
   <img src="../../assets/readme/panel-library.webp" alt="デスクトップ GUI：ゲーム ライブラリ">
 </picture><br>
 <sub>デスクトップ GUI · ゲーム ライブラリ</sub>
 </td>
-<td align="center" valign="top">
+<td width="50%" align="center" valign="top">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/panel-appearance-dark.webp">
   <img src="../../assets/readme/panel-appearance.webp" alt="デスクトップ GUI：外観">
@@ -53,14 +53,14 @@ Foundation Sunshine は、Sunshine をベースにした Windows 向けの無料
 </td>
 </tr>
 <tr>
-<td align="center" valign="top">
+<td width="50%" align="center" valign="top">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/web-encoders-dark.webp">
   <img src="../../assets/readme/web-encoders.webp" alt="Web 管理画面：エンコードとビットレート">
 </picture><br>
 <sub>Web 管理画面 · 設定</sub>
 </td>
-<td align="center" valign="top">
+<td width="50%" align="center" valign="top">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/web-home-dark.webp">
   <img src="../../assets/readme/web-home.webp" alt="Web 管理画面：概要">
@@ -74,12 +74,12 @@ Foundation Sunshine は、Sunshine をベースにした Windows 向けの無料
 
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/h-highlights-dark.webp"><img src="../../assets/readme/h-highlights.webp" height="50" alt=""></picture>&nbsp;特長
 
-<p align="center"><a href="../en/features.md#hdr-and-color"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-1-dark.ja.webp"><img src="../../assets/readme/strip-1.ja.webp" width="464" alt="映像とディスプレイ：動的 HDR と仮想ディスプレイ"></picture></a>
-<a href="../en/features.md#capture-encoding-and-performance"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-2-dark.ja.webp"><img src="../../assets/readme/strip-2.ja.webp" width="464" alt="キャプチャとエンコード：低遅延キャプチャとハードウェア エンコード"></picture></a>
-<a href="../en/features.md#audio-and-microphone-forwarding"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-3-dark.ja.webp"><img src="../../assets/readme/strip-3.ja.webp" width="464" alt="オーディオとマイク：サラウンドとマイク転送"></picture></a>
-<a href="../en/features.md#desktop-control-panel"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-4-dark.ja.webp"><img src="../../assets/readme/strip-4.ja.webp" width="464" alt="デスクトップ GUI：ゲーム、ディスプレイ、コンポーネントを一元管理"></picture></a>
-<a href="../en/features.md#dualsense-and-virtual-controllers"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-5-dark.ja.webp"><img src="../../assets/readme/strip-5.ja.webp" width="464" alt="入力とコントローラー：タッチパッド、ペン、ネイティブ DualSense"></picture></a>
-<a href="../en/features.md"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-6-dark.ja.webp"><img src="../../assets/readme/strip-6.ja.webp" width="464" alt="連携：クリップボード、ファイル共有、セッション制御"></picture></a></p>
+<p align="center"><a href="../en/features.md#hdr-and-color"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-1-dark.ja.webp"><img src="../../assets/readme/strip-1.ja.webp" width="380" alt="映像とディスプレイ：動的 HDR と仮想ディスプレイ"></picture></a>&nbsp;
+<a href="../en/features.md#capture-encoding-and-performance"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-2-dark.ja.webp"><img src="../../assets/readme/strip-2.ja.webp" width="380" alt="キャプチャとエンコード：低遅延キャプチャとハードウェア エンコード"></picture></a><br>
+<a href="../en/features.md#audio-and-microphone-forwarding"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-3-dark.ja.webp"><img src="../../assets/readme/strip-3.ja.webp" width="380" alt="オーディオとマイク：サラウンドとマイク転送"></picture></a>&nbsp;
+<a href="../en/features.md#desktop-control-panel"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-4-dark.ja.webp"><img src="../../assets/readme/strip-4.ja.webp" width="380" alt="デスクトップ GUI：ゲーム、ディスプレイ、コンポーネントを一元管理"></picture></a><br>
+<a href="../en/features.md#dualsense-and-virtual-controllers"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-5-dark.ja.webp"><img src="../../assets/readme/strip-5.ja.webp" width="380" alt="入力とコントローラー：タッチパッド、ペン、ネイティブ DualSense"></picture></a>&nbsp;
+<a href="../en/features.md"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/strip-6-dark.ja.webp"><img src="../../assets/readme/strip-6.ja.webp" width="380" alt="連携：クリップボード、ファイル共有、セッション制御"></picture></a></p>
 
 - **映像とディスプレイ：** シーン適応 HDR、HDR10+ / HDR Vivid、Dolby Vision 拡張、輝度キャリブレーション。[ZakoDisplay](https://github.com/qiin2333/zako-vdd) は物理モニターなしで HDR 仮想ディスプレイと複数の画面レイアウトを提供します。
 - **キャプチャとエンコード：** NVIDIA NVENC、AMD AMF、Intel Quick Sync に対応し、低遅延で滑らかなセッション向けに最適化。Zako Direct は仮想ディスプレイのフレームを直接取得します。

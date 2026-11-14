@@ -36,33 +36,33 @@ Foundation Sunshine 是基于 [Sunshine](https://github.com/LizardByte/Sunshine)
 
 <table>
 <tr>
-<td align="center" valign="top">
+<td width="50%" align="center" valign="top">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/readme/panel-library-dark.webp">
-  <img src="assets/readme/panel-library.webp" alt="桌面控制面板：游戏库">
+  <img src="assets/readme/panel-library.webp" width="380" alt="桌面控制面板：游戏库">
 </picture><br>
 <sub>桌面控制面板 · 游戏库</sub>
 </td>
-<td align="center" valign="top">
+<td width="50%" align="center" valign="top">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/readme/panel-appearance-dark.webp">
-  <img src="assets/readme/panel-appearance.webp" alt="桌面控制面板：个性化">
+  <img src="assets/readme/panel-appearance.webp" width="380" alt="桌面控制面板：个性化">
 </picture><br>
 <sub>桌面控制面板 · 个性化</sub>
 </td>
 </tr>
 <tr>
-<td align="center" valign="top">
+<td width="50%" align="center" valign="top">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/readme/web-encoders-dark.webp">
-  <img src="assets/readme/web-encoders.webp" alt="网页管理界面：编码与码率">
+  <img src="assets/readme/web-encoders.webp" width="380" alt="网页管理界面：编码与码率">
 </picture><br>
 <sub>网页管理界面 · 设置</sub>
 </td>
-<td align="center" valign="top">
+<td width="50%" align="center" valign="top">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/readme/web-home-dark.webp">
-  <img src="assets/readme/web-home.webp" alt="网页管理界面：概览">
+  <img src="assets/readme/web-home.webp" width="380" alt="网页管理界面：概览">
 </picture><br>
 <sub>网页管理界面 · 概览</sub>
 </td>
@@ -73,12 +73,12 @@ Foundation Sunshine 是基于 [Sunshine](https://github.com/LizardByte/Sunshine)
 
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/h-highlights-dark.webp"><img src="assets/readme/h-highlights.webp" height="50" alt=""></picture>&nbsp;项目亮点
 
-<p align="center"><a href="docs/zh-CN/features.md#hdr-与色彩"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/strip-1-dark.webp"><img src="assets/readme/strip-1.webp" width="464" alt="画面与显示：动态 HDR 与虚拟显示器"></picture></a>
-<a href="docs/zh-CN/features.md#捕获-编码与性能"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/strip-2-dark.webp"><img src="assets/readme/strip-2.webp" width="464" alt="捕获与编码：低延迟捕获与硬件编码"></picture></a>
-<a href="docs/zh-CN/features.md#音频与麦克风透传"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/strip-3-dark.webp"><img src="assets/readme/strip-3.webp" width="464" alt="音频与麦克风：环绕声与麦克风透传"></picture></a>
-<a href="docs/zh-CN/features.md#桌面控制面板"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/strip-4-dark.webp"><img src="assets/readme/strip-4.webp" width="464" alt="桌面控制面板：游戏库、显示器与组件集中管理"></picture></a>
-<a href="docs/zh-CN/features.md#dualsense-与虚拟手柄"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/strip-5-dark.webp"><img src="assets/readme/strip-5.webp" width="464" alt="输入与手柄：触控板、手写笔与原生 DualSense"></picture></a>
-<a href="docs/zh-CN/features.md"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/strip-6-dark.webp"><img src="assets/readme/strip-6.webp" width="464" alt="桌面协作：剪贴板、文件共享与会话控制"></picture></a></p>
+<p align="center"><a href="docs/zh-CN/features.md#hdr-与色彩"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/strip-1-dark.webp"><img src="assets/readme/strip-1.webp" width="380" alt="画面与显示：动态 HDR 与虚拟显示器"></picture></a>&nbsp;
+<a href="docs/zh-CN/features.md#捕获-编码与性能"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/strip-2-dark.webp"><img src="assets/readme/strip-2.webp" width="380" alt="捕获与编码：低延迟捕获与硬件编码"></picture></a><br>
+<a href="docs/zh-CN/features.md#音频与麦克风透传"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/strip-3-dark.webp"><img src="assets/readme/strip-3.webp" width="380" alt="音频与麦克风：环绕声与麦克风透传"></picture></a>&nbsp;
+<a href="docs/zh-CN/features.md#桌面控制面板"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/strip-4-dark.webp"><img src="assets/readme/strip-4.webp" width="380" alt="桌面控制面板：游戏库、显示器与组件集中管理"></picture></a><br>
+<a href="docs/zh-CN/features.md#dualsense-与虚拟手柄"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/strip-5-dark.webp"><img src="assets/readme/strip-5.webp" width="380" alt="输入与手柄：触控板、手写笔与原生 DualSense"></picture></a>&nbsp;
+<a href="docs/zh-CN/features.md"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/strip-6-dark.webp"><img src="assets/readme/strip-6.webp" width="380" alt="桌面协作：剪贴板、文件共享与会话控制"></picture></a></p>
 
 - **画面与显示：** 场景自适应 HDR、HDR10+ / HDR Vivid 与 Dolby Vision 扩展，按屏幕亮度校准；[ZakoDisplay](https://github.com/qiin2333/zako-vdd) 无需物理显示器即可提供 HDR 虚拟屏与多种屏幕组合。
 - **捕获与编码：** 支持 NVIDIA NVENC、AMD AMF、Intel Quick Sync 等编码器，并针对捕获和编码链路优化延迟与流畅度；Zako Direct 直接取得虚拟屏画面，减少捕获环节的拷贝。
