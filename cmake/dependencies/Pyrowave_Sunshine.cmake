@@ -14,6 +14,10 @@ foreach(_required_file IN ITEMS
 endforeach()
 
 function(_sunshine_add_pyrowave)
+    # Granite declares cmake_minimum_required(VERSION 3.5), reported as deprecated (< 3.10) by CMake 4. The floor is raised
+    # for this third-party subtree only: the variable is local to this function, so it never reaches our own projects
+    # (https://cmake.org/cmake/help/latest/variable/CMAKE_POLICY_VERSION_MINIMUM.html).
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.10)
     set(CMAKE_POLICY_DEFAULT_CMP0077 NEW)
     set(PYROWAVE_DEVEL OFF)
     set(PYROWAVE_UTILS OFF)
