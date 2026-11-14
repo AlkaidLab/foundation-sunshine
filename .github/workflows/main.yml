@@ -251,6 +251,17 @@ jobs:
           $env:SUNSHINE_ASSETS_DIR = "${{ github.workspace }}\build"
           npm run build
 
+      # The installer's setup UI: pages (foundation-ui) and Tauri window, built from the committed Panel submodule, so it is
+      # the Panel build boundary the pinned GUI below belongs to (scripts/build-setup-ui.ps1, docs/installer-webui.md).
+      - name: Build installer setup UI
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          ./scripts/build-setup-ui.ps1 `
+            -FoundationUi "$env:GITHUB_WORKSPACE/../ds5-ui-m3e" `
+            -Output "$env:RUNNER_TEMP/installer-inputs/foundation-setup-ui.exe"
+          "SETUP_UI_EXE=$env:RUNNER_TEMP/installer-inputs/foundation-setup-ui.exe" >> $env:GITHUB_ENV
+
       - name: Cache compiler objects
         uses: actions/cache/restore@v6
         with:
@@ -265,6 +276,17 @@ jobs:
           key: ccache-windows-${{ github.run_id }}
           restore-keys: |
             ccache-windows-
+
+      # The Panel bundle and the WebView2 bootstrapper, pinned by tag/sha256 in scripts/installer-inputs.json and verified (never
+      # "latest"). The pinned Panel commit must be the committed submodule. A manual run with gui_run_id replaces the GUI below.
+      - name: Fetch pinned installer inputs
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $dest = "$env:RUNNER_TEMP/installer-inputs/pinned"
+          ./scripts/fetch-installer-inputs.ps1 -Destination $dest
+          "GUI_BUNDLE_DIR=$dest/gui" >> $env:GITHUB_ENV
+          "WEBVIEW2_BOOTSTRAPPER=$dest/MicrosoftEdgeWebview2Setup.exe" >> $env:GITHUB_ENV
 
       - name: Fetch paired GUI artifact
         if: github.event_name == 'workflow_dispatch' && inputs.gui_run_id != ''
@@ -500,9 +522,29 @@ jobs:
             exit 1
           fi
 
-          # move
-          mv ./cpack_artifacts/Sunshine.exe ../artifacts/sunshine-windows-installer.exe
+          # The engine is not the download: "Assemble installer" wraps it in the shell.
+          test -f ./cpack_artifacts/Sunshine-engine.exe
           mv ./cpack_artifacts/Sunshine.zip ../artifacts/sunshine-windows-portable.zip
+
+      # The user-facing installer, the same package tools/append_installer_payload.py makes for a local build
+      # (cmake/packaging/windows_innosetup.cmake): [shell][setup UI][WebView2 bootstrapper][Inno engine][footer].
+      - name: Assemble installer
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $shell = 'build/tools/sunshine-installer-shell.exe'
+          $engine = 'build/cpack_artifacts/Sunshine-engine.exe'
+          $output = 'artifacts/sunshine-windows-installer.exe'
+          python tools/append_installer_payload.py $shell $engine $output --ui $env:SETUP_UI_EXE --wv2 $env:WEBVIEW2_BOOTSTRAPPER
+          # Read the footer back: every section is present and carries the hash of the file it was made from.
+          $bytes = [IO.File]::ReadAllBytes($output)
+          $tail = [Text.Encoding]::ASCII.GetString($bytes, [Math]::Max(0, $bytes.Length - 2048), [Math]::Min(2048, $bytes.Length))
+          $footer = $tail.Substring($tail.LastIndexOf("ALKAID-SHELL-PAYLOAD-V1"))
+          foreach ($section in @(@('', $engine), @('ui-', $env:SETUP_UI_EXE), @('wv2-', $env:WEBVIEW2_BOOTSTRAPPER))) {
+            $hash = (Get-FileHash -LiteralPath $section[1] -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($footer -notmatch "(?m)^$($section[0])sha256=$hash\r?$") { throw "Installer footer lacks $($section[0])sha256=$hash" }
+          }
+          Write-Output $footer
 
       - name: Rename release assets
         shell: msys2 {0}

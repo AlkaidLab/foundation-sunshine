@@ -110,3 +110,12 @@ Unchanged: `/VERYSILENT` or `/SILENT` goes straight to `worker_main()` before an
 2. Host repo: the CMake target `sunshine-installer-shell` as before.
 3. `append_installer_payload.py <shell> <engine> <output> --ui foundation-setup-ui.exe`. The footer keeps the V1 keys
    first, so an older shell still finds the engine. Without `--ui`, the package is the native installer.
+
+### CI (`.github/workflows/main.yml`, job Windows)
+
+The workflow makes the same package: `scripts/build-setup-ui.ps1` builds the setup UI from the committed Panel submodule;
+`scripts/fetch-installer-inputs.ps1` downloads the Panel GUI bundle and Microsoft's WebView2 bootstrapper, pinned by tag and
+sha256 in `scripts/installer-inputs.json` (the pinned Panel commit must equal the submodule, so a submodule bump fails the
+job until the pin moves with it; the bootstrapper must also carry Microsoft's signature). ISCC writes
+`Sunshine-engine.exe`; the step "Assemble installer" wraps it with `append_installer_payload.py --ui --wv2` and checks
+the footer hashes. Only the full installer name contains "Windows".
