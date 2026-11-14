@@ -31,6 +31,19 @@ if(NOT COMMAND sunshine_source_group_filter_installed)
 endif()
 
 
+# Boost.Asio picks its thread class per translation unit: posix_thread when
+# _POSIX_THREADS is already visible where <boost/asio/detail/config.hpp> is first
+# read, win_thread otherwise. MinGW-w64 pulls <pthread.h> in through libstdc++
+# headers such as <mutex> and <thread>, so the choice depended on include order
+# and one executable could hold both layouts of win_iocp_io_context. Its timer
+# thread was then created as a win_thread in one unit and joined as a posix_thread
+# in another, so the join returned at once and freed the thread function while the
+# timer thread still ran. Select the thread class once for every target; this
+# definition comes before Boost is configured so the Boost libraries share it.
+if(MINGW)
+    add_compile_definitions(BOOST_ASIO_HAS_PTHREADS=1)
+endif()
+
 set(BOOST_VERSION "1.92.0")
 set(BOOST_RELEASE_VERSION "1.92.0")
 set(BOOST_COMPONENTS
