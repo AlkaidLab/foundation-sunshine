@@ -50,7 +50,8 @@ jobs:
       release_version: ${{ steps.setup_release_auto.outputs.release_version || steps.setup_release_manual.outputs.release_version }}
     permissions:
       contents: write  # read does not work to check squash and merge details
-    runs-on: ubuntu-latest
+    # Pinned: the ubuntu-latest label migrates to Ubuntu 26 (actions/runner-images#14748); move this on purpose, not by label.
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -77,7 +78,7 @@ jobs:
       - name: Filter bot contributors
         id: filter_release_contributors
         if: steps.setup_release_auto.outputs.release_body != ''
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         env:
           RELEASE_BODY: ${{ steps.setup_release_auto.outputs.release_body }}
         with:
@@ -346,6 +347,9 @@ jobs:
         run: |
           mkdir -p build
           ccache --zero-stats
+          # The msys2 shell starts with a minimal PATH, so the runner's .NET SDK (C:\Program Files\dotnet) is invisible to CMake
+          # and tools/sparxie-launch would silently not be built or shipped.
+          export PATH="$PATH:/c/Program Files/dotnet"
           gui_options=()
           if [[ -n "${GUI_BUNDLE_DIR:-}" ]]; then
             gui_options=(-DFETCH_GUI=OFF "-DGUI_DIR=$GUI_BUNDLE_DIR")

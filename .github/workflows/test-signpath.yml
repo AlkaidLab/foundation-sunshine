@@ -14,11 +14,6 @@ on:
         description: 'Run ID to download artifact from (leave empty for latest)'
         required: false
 
-# dawidd6/action-download-artifact still declares a Node.js 20 runtime.
-# Run it on Node.js 24 ahead of GitHub's fall 2026 Node.js 20 removal.
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
-
 jobs:
   test-sign:
     name: Test SignPath
@@ -41,7 +36,7 @@ jobs:
       # 如果没有提供 run-id，尝试从最近的成功构建下载
       - name: Download latest artifact
         if: ${{ github.event.inputs.run-id == '' }}
-        uses: dawidd6/action-download-artifact@v11
+        uses: dawidd6/action-download-artifact@v28
         with:
           workflow: main.yml
           name: ${{ github.event.inputs.artifact-name }}
