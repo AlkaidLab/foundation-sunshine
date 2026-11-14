@@ -299,6 +299,7 @@ target_include_directories(current_capture_target_unit_tests PRIVATE "${CMAKE_SO
 target_link_libraries(current_capture_target_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
 set_target_properties(current_capture_target_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME current_capture_target_unit_tests COMMAND current_capture_target_unit_tests)
+
 add_executable(ds5_tuning_unit_tests
         ${CMAKE_SOURCE_DIR}/src/ds5/tuning_profile.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_ds5_tuning.cpp)
@@ -311,6 +312,8 @@ if (WIN32)
     set_target_properties(ds5_tuning_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
 add_test(NAME ds5_tuning_unit_tests COMMAND ds5_tuning_unit_tests)
+
+include("${CMAKE_CURRENT_LIST_DIR}/ds5_matrix.cmake")
 
 add_executable(ds5_haptics_unit_tests
         ${CMAKE_SOURCE_DIR}/src/haptics/authored_ir.cpp
