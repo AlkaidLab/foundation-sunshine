@@ -74,6 +74,55 @@ def pe_debug_id(data):
     return None
 
 
+def _coff(data):
+    """(offset of the section table, number of sections, optional header offset, optional header size) of a PE image, or None."""
+    if len(data) < 0x40 or data[:2] != b"MZ":
+        return None
+    (pe,) = struct.unpack_from("<I", data, 0x3C)
+    if data[pe:pe + 4] != b"PE\0\0":
+        return None
+    nsec, = struct.unpack_from("<H", data, pe + 6)
+    optsize, = struct.unpack_from("<H", data, pe + 20)
+    return pe, nsec, pe + 24, optsize
+
+
+def section_names(data):
+    """Section names of a PE image; a long name ("/4": an offset into the COFF string table) is resolved."""
+    c = _coff(data)
+    if not c:
+        return []
+    pe, nsec, opt, optsize = c
+    symptr, nsyms = struct.unpack_from("<II", data, pe + 8 + 4)
+    names = []
+    for i in range(nsec):
+        raw = data[opt + optsize + i * 40: opt + optsize + i * 40 + 8].rstrip(b"\0").decode("latin1")
+        if raw.startswith("/") and raw[1:].isdigit() and symptr:
+            at = symptr + nsyms * 18 + int(raw[1:])
+            end = data.find(b"\0", at, at + 256)
+            if end > at:
+                raw = data[at:end].decode("latin1")
+        names.append(raw)
+    return names
+
+
+def has_dwarf(data):
+    return any(n.startswith(".debug_") for n in section_names(data))
+
+
+def is_signed(data):
+    """An Authenticode signature is in the file: stripping it would invalidate the signature."""
+    c = _coff(data)
+    if not c:
+        return False
+    _, _, opt, _ = c
+    magic, = struct.unpack_from("<H", data, opt)
+    ddir = opt + (112 if magic == 0x20B else 96)
+    if magic not in (0x10B, 0x20B):
+        return False
+    _, size = struct.unpack_from("<II", data, ddir + 4 * 8)
+    return size > 0
+
+
 def normalise(path):
     return path.replace("\\", "/")
 
@@ -121,12 +170,12 @@ def collect(dirs):
 
 
 def build(args):
-    staged = []
+    staged_all = []  # every PE of the package: (path, debug id or None, has DWARF, signed)
     for p in sorted(pathlib.Path(args.staging).rglob("*")):
         if p.suffix.lower() in (".exe", ".dll") and p.is_file():
-            did = pe_debug_id(p.read_bytes())
-            if did:
-                staged.append((p, did))
+            data = p.read_bytes()
+            staged_all.append((p, pe_debug_id(data), has_dwarf(data), is_signed(data)))
+    staged = [(p, did) for p, did, _, _ in staged_all if did]
     candidates = collect([args.staging, args.build])
     modules, skipped = [], []
     entries = {}
@@ -145,8 +194,21 @@ def build(args):
         modules.append({"name": name, "debug_id": did, "functions": funcs, "bytes": len(entries[f"{name}/{did}/{name}.sym"]),
                         "sha256": hashlib.sha256(entries[f"{name}/{did}/{name}.sym"]).hexdigest()})
         done.append(p)
+    # What still carries DWARF in the package: stripped if it is not signed (a signed file keeps its signature and its debug sections, and is listed),
+    # with or without symbols; the package must not ship debug information the symbol zip does not have.
+    to_strip, kept_signed, without_symbols = [], [], []
+    for p, did, dwarf, signed in staged_all:
+        if not dwarf:
+            continue
+        if signed:
+            kept_signed.append(p.name)
+        else:
+            to_strip.append(p)
+            if p not in done:
+                without_symbols.append(p.name)
     missing = [r for r in args.require if not any(m["name"].lower() == r.lower() for m in modules)]
-    manifest = {"schema": 1, "tag": args.tag, "commit": args.commit, "repository": args.repository, "modules": modules, "skipped": skipped}
+    manifest = {"schema": 1, "tag": args.tag, "commit": args.commit, "repository": args.repository, "modules": modules, "skipped": skipped,
+                "stripped_without_symbols": without_symbols, "kept_signed_with_debug_info": kept_signed}
     out = pathlib.Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
@@ -155,7 +217,7 @@ def build(args):
         z.writestr("symbols-manifest.json", json.dumps(manifest, indent=2, ensure_ascii=False))
     if args.strip_staged and not missing:
         # after the symbols are safe in the zip: what ships carries no DWARF (the build-id stays)
-        for p in done:
+        for p in to_strip:
             subprocess.run([args.strip_tool, "--strip-debug", str(p)], check=True)
     return manifest, missing
 
@@ -171,7 +233,7 @@ def main(argv=None):
     ap.add_argument("--repository", default="")
     ap.add_argument("--source-root", action="append", default=[])
     ap.add_argument("--require", action="append", default=[])
-    ap.add_argument("--strip-staged", action="store_true", help="run strip --strip-debug on the staged modules that got symbols")
+    ap.add_argument("--strip-staged", action="store_true", help="run strip --strip-debug on the staged modules that still carry DWARF and are not signed")
     ap.add_argument("--strip-tool", default="strip")
     args = ap.parse_args(argv)
     manifest, missing = build(args)
@@ -179,6 +241,10 @@ def main(argv=None):
         print(f"{m['name']}  {m['debug_id']}  {m['functions']} functions  {m['bytes']} bytes")
     for s in manifest["skipped"]:
         print(f"skipped {s['name']} {s['debug_id']}: {s['reason']}")
+    if manifest["stripped_without_symbols"]:
+        print("stripped, no symbols could be made: " + ", ".join(manifest["stripped_without_symbols"]))
+    if manifest["kept_signed_with_debug_info"]:
+        print("::warning title=Symbols::signed, so kept with their debug sections: " + ", ".join(manifest["kept_signed_with_debug_info"]))
     if missing:
         print(f"::error title=Symbols::no symbols for required module(s): {', '.join(missing)}")
         return 1
