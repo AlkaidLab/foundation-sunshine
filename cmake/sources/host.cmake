@@ -169,14 +169,19 @@ set(SUNSHINE_HOST_SOURCES
     src/webhook/webhook.cpp src/webhook/webhook.h
 
     # src/telemetry
+    src/telemetry/device_facts.cpp src/telemetry/device_facts.h
     src/telemetry/events.cpp src/telemetry/events.h
+    src/telemetry/install_journal.cpp src/telemetry/install_journal.h
     src/telemetry/queue.cpp src/telemetry/queue.h
+    src/telemetry/error_report.cpp src/telemetry/error_report.h
     src/telemetry/self_baseline.cpp src/telemetry/self_baseline.h
+    src/telemetry/service_lifecycle.cpp src/telemetry/service_lifecycle.h
     src/telemetry/stream_health.cpp src/telemetry/stream_health.h
     src/telemetry/stream_stats.cpp src/telemetry/stream_stats.h
     src/telemetry/service.cpp src/telemetry/service.h
     src/telemetry/transport.cpp src/telemetry/transport.h
     src/telemetry/telemetry.cpp src/telemetry/telemetry.h
+    src/telemetry/wer_event.cpp src/telemetry/wer_event.h
     src/telemetry/hooks.h
 
     # src/nvhttp

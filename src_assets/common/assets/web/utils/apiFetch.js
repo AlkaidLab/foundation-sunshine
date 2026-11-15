@@ -33,8 +33,13 @@ export const getApiErrorMessage = (data, response) => {
   return `HTTP ${response.status}`
 }
 
+let wrapper = null
+/** The calls to the host are timed for the experience statistics (foundation-ui telemetry/pagePerf.js `timedFetch`): the wrapper gets `fetch` and returns the function to call. Nothing else about a call changes. */
+export const setApiFetchWrapper = (fn) => { wrapper = typeof fn === 'function' ? fn : null }
+
 export async function apiFetch(url, options = {}) {
-  return fetch(url, buildOptions(options))
+  const request = buildOptions(options)
+  return wrapper ? wrapper(fetch)(url, request) : fetch(url, request)
 }
 
 export async function apiJson(url, options = {}) {

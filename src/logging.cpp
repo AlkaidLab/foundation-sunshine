@@ -219,6 +219,8 @@ namespace logging {
 #endif
     os << "["sv << std::put_time(&lt, "%Y-%m-%d %H:%M:%S.") << boost::format("%03u") % ms.count() << "]: "sv
        << log_type << message;
+    // error and fatal lines end with the place of the statement: [src/stream.cpp:3912:videoBroadcastThread]
+    append_site(os, view);
   }
 
   /**

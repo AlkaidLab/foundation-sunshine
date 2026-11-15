@@ -19,6 +19,7 @@
 
 #include "sunshinesvc_log.h"
 #include "src/crash/crash.h"
+#include "sunshinesvc_lifecycle.h"
 #include "sunshinesvc_state.h"
 
 // PROC_THREAD_ATTRIBUTE_JOB_LIST is currently missing from MinGW headers
@@ -481,6 +482,54 @@ EndExtraCores(std::vector<CoreProcess> &cores, HANDLE log_file) {
   }
 }
 
+// The lifecycle facts of the core, for the host to report at its next start (tools/sunshinesvc_lifecycle.h). Writing them never changes what the service does.
+std::filesystem::path
+LifecycleFile() {
+  const auto install = InstallDirectory();
+  if (install.empty()) {
+    return {};
+  }
+  return std::filesystem::path(install) / L"config" / L"telemetry" / L"service_lifecycle.jsonl";
+}
+
+void
+NoteLifecycle(const std::string &line) {
+  const auto file = LifecycleFile();
+  if (!file.empty()) {
+    sunshinesvc::lifecycle::append(file, line);
+  }
+}
+
+ULONGLONG
+FileTimeToMs(const FILETIME &time) {
+  ULARGE_INTEGER value;
+  value.LowPart = time.dwLowDateTime;
+  value.HighPart = time.dwHighDateTime;
+  return value.QuadPart / 10000;
+}
+
+// How long the process has been running (its creation time to now) and how long it ran (creation to exit, for a process that ended).
+long long
+ProcessAgeMs(HANDLE process) {
+  FILETIME created, exited, kernel, user, now;
+  if (!GetProcessTimes(process, &created, &exited, &kernel, &user)) {
+    return 0;
+  }
+  GetSystemTimeAsFileTime(&now);
+  const auto start = FileTimeToMs(created), end = FileTimeToMs(now);
+  return end > start ? static_cast<long long>(end - start) : 0;
+}
+
+long long
+ProcessLifeMs(HANDLE process) {
+  FILETIME created, exited, kernel, user;
+  if (!GetProcessTimes(process, &created, &exited, &kernel, &user)) {
+    return -1;
+  }
+  const auto start = FileTimeToMs(created), end = FileTimeToMs(exited);
+  return end > start ? static_cast<long long>(end - start) : 0;
+}
+
 VOID WINAPI
 ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
   service_status_handle = RegisterServiceCtrlHandlerEx(SERVICE_NAME, HandlerEx, NULL);
@@ -568,6 +617,7 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
   service_status.dwControlsAccepted = SERVICE_ACCEPT_STOP | SERVICE_ACCEPT_PRESHUTDOWN | SERVICE_ACCEPT_SESSIONCHANGE;
   service_status.dwCurrentState = SERVICE_RUNNING;
   SetServiceStatus(service_status_handle, &service_status);
+  NoteLifecycle(sunshinesvc::lifecycle::svc_start_line(sunshinesvc::lifecycle::unix_ms()));
 
   GuiAgentProcess gui_agent;
   DWORD gui_agent_session_id = 0xFFFFFFFF;
@@ -722,6 +772,8 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
   // Loop every 3 seconds until the stop event is set or Sunshine.exe is running. The first pass is at once: the loop used to wait 3 s before it tried at all, and
   // every start of the service (every boot) lost them (service 12:53:00, Sunshine.exe 12:53:04). A console session that is not there yet is picked up at the next pass.
   DWORD loop_wait_ms = 0;
+  // why the next core is started: the first one is the boot; later ones follow an end of the core the service did not ask for, a change of the console session, or a start that failed
+  const char *next_core_cause = "boot";
   while (WaitForSingleObject(stop_event, std::exchange(loop_wait_ms, 3000)) != WAIT_OBJECT_0) {
     auto console_session_id = WTSGetActiveConsoleSessionId();
     if (console_session_id == 0xFFFFFFFF) {
@@ -750,9 +802,13 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
     auto cores = OpenInstallCores(core_path);
     HANDLE job_handle = NULL;
     PROCESS_INFORMATION process_info = {};
+    bool core_adopted = false;
+    ULONGLONG adopted_at_tick = 0;
     if (sunshinesvc::core_start_decision(!cores.empty()) == sunshinesvc::core_start_e::adopt) {
       if (cores.size() > 1) {
+        const auto extras = static_cast<int>(cores.size() - 1);
         EndExtraCores(cores, log_file_handle);
+        NoteLifecycle(sunshinesvc::lifecycle::extra_ended_line(sunshinesvc::lifecycle::unix_ms(), extras));
       }
       process_info.hProcess = cores[0].handle;
       process_info.dwProcessId = cores[0].process_id;
@@ -760,12 +816,16 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
       WriteServiceLog(log_file_handle,
         "Sunshine.exe PID " + std::to_string(process_info.dwProcessId) +
           " is already running; supervising it instead of starting another");
+      core_adopted = true;
+      adopted_at_tick = GetTickCount64();
+      NoteLifecycle(sunshinesvc::lifecycle::core_start_line(sunshinesvc::lifecycle::unix_ms(), true, process_info.dwProcessId, ProcessAgeMs(process_info.hProcess), next_core_cause));
     }
     else {
       // Job objects cannot span sessions, so we must create one for each process
       job_handle = CreateJobObjectForChildProcess();
       if (job_handle == NULL) {
         CloseHandle(console_token);
+        next_core_cause = "start_failed";
         continue;
       }
 
@@ -791,8 +851,10 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
             &process_info)) {
         CloseHandle(console_token);
         CloseHandle(job_handle);
+        next_core_cause = "start_failed";
         continue;
       }
+      NoteLifecycle(sunshinesvc::lifecycle::core_start_line(sunshinesvc::lifecycle::unix_ms(), false, process_info.dwProcessId, 0, next_core_cause));
     }
 
     // The GUI may have exited after the previous Core stopped, while no inner
@@ -813,6 +875,9 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
     }
 
     bool still_running;
+    // whether the service itself asked the core to end (service stop, change of the console session), and whether it was the session change
+    bool exit_requested = false;
+    bool exit_for_session_change = false;
     do {
       // Wait on the exact GUI process while it is managed. After a clean exit,
       // only a low-frequency lookup runs so externally launched replacements
@@ -847,8 +912,10 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
             continue;
           }
           // Fall-through to terminate Sunshine.exe and start it again.
+          exit_for_session_change = true;
           [[fallthrough]];
         case WAIT_OBJECT_0:
+          exit_requested = true;
           // The service is shutting down, so try to gracefully terminate Sunshine.exe.
           // If it doesn't terminate in 20 seconds, we will forcefully terminate it.
           if (!RunTerminationHelper(console_token, process_info.dwProcessId) ||
@@ -890,6 +957,16 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
           break;
       }
     } while (still_running);
+
+    // what the end of this core looked like: with the exit code, how long it had run, how long since the service took it over, and whether the service asked for it
+    {
+      DWORD ended_with = 0;
+      if (WaitForSingleObject(process_info.hProcess, 0) == WAIT_OBJECT_0 && GetExitCodeProcess(process_info.hProcess, &ended_with)) {
+        NoteLifecycle(sunshinesvc::lifecycle::core_exit_line(sunshinesvc::lifecycle::unix_ms(), ended_with, ProcessLifeMs(process_info.hProcess),
+          core_adopted ? static_cast<long long>(GetTickCount64() - adopted_at_tick) : -1, exit_requested));
+      }
+      next_core_cause = exit_for_session_change ? "session_change" : "core_exit";
+    }
 
     if (process_info.hThread != NULL) {
       CloseHandle(process_info.hThread);

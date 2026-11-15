@@ -398,6 +398,35 @@ namespace telemetry {
   }
 
   void
+  service_t::crumb(crumb_e kind, std::string_view id) {
+    try {
+      std::lock_guard lock { errors_mutex_ };
+      // what the person did is only kept for an error report, so it is not kept while error reports are off
+      if (!consent_now().errors) return;
+      crumbs_.add(kind, id, deps_.now_ms());
+    }
+    catch (...) {
+    }
+  }
+
+  void
+  service_t::report_error(const error_input_t &error) {
+    try {
+      const auto now = deps_.now_ms();
+      std::optional<json> props;
+      {
+        std::lock_guard lock { errors_mutex_ };
+        // before anything is counted: the hourly quota and the held counts of the reporter belong to reports that may be sent
+        if (!consent_now().errors) return;
+        props = reporter_.report(error, crumbs_.snapshot(now), now);
+      }
+      if (props) emit(kind_e::error, "error_report", *props);
+    }
+    catch (...) {
+    }
+  }
+
+  void
   service_t::record_sample(std::uint32_t session_id, hooks::metric_e metric, double ms) noexcept {
     try {
       std::shared_lock lock { streams_mutex_ };
@@ -861,6 +890,13 @@ namespace telemetry {
     try {
       const auto now = deps_.now_ms();
       collect_logs(now, final);
+      // errors held back by the rate limit leave as one aggregate per fingerprint
+      std::vector<json> held;
+      {
+        std::lock_guard errors_lock { errors_mutex_ };
+        if (consent_now().errors) held = reporter_.flush(final ? now + error_reporter_t::AGGREGATE_MS : now);
+      }
+      for (const auto &props : held) emit(kind_e::error, "error_report", props, "host", {}, 1);  // the counts of known errors: priority 1
       std::deque<event_t> taken;
       {
         std::lock_guard lock { mutex_ };
@@ -1068,9 +1104,15 @@ namespace telemetry {
         ring_.erase(std::remove_if(ring_.begin(), ring_.end(), [&](const event_t &e) { return !c.allows(e.kind); }), ring_.end());
       }
       if (!c.errors) {
-        std::lock_guard lock { log_mutex_ };
-        raw_errors_.clear();
-        log_windows_.clear();
+        {
+          std::lock_guard lock { log_mutex_ };
+          raw_errors_.clear();
+          log_windows_.clear();
+        }
+        // the actions of the person and the errors held back for an aggregate: gone with the choice, so turning it on again does not send them
+        std::lock_guard lock { errors_mutex_ };
+        crumbs_.clear();
+        reporter_.clear();
       }
       std::lock_guard queue_lock { queue_mutex_ };
       if (!c.any()) {

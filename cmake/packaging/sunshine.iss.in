@@ -455,6 +455,8 @@ var
   GamepadResult, UsbipResult: Integer;
   RebootChecked: Boolean;
   RebootReasons: String;
+  // the journal the host reports at its next start (JournalWrite below)
+  JournalRun, PreviousVersion: String;
 
 function InstallerParameterValue(Name: String): String;
 // Authority: installer-inno-script-functions-20261107 (GetCmdTail,
@@ -490,6 +492,56 @@ begin
           ',"phase":"' + Phase + '","state":"' + State + '","result_code":' + IntToStr(ResultCode) +
           ',"message_key":"' + MessageKey + '"}' + #13#10;
   SaveStringToFile(AddBackslash(InstallRunDir) + 'events.jsonl', AnsiString(Line), True);
+end;
+
+// The journal the host reads at its next start and reports (src/telemetry/install_journal.h): one JSON line per step of this run in <app>\config\telemetry\install_journal.jsonl.
+// Only numbers and fixed words go in. Component and step names are literals of this script and the previous version is reduced to digits and dots; no path and no text of an error.
+procedure JournalWrite(Line: String);
+var
+  Dir: String;
+begin
+  Dir := ExpandConstant('{app}\config\telemetry');
+  if not ForceDirectories(Dir) then
+    Exit;
+  SaveStringToFile(AddBackslash(Dir) + 'install_journal.jsonl', AnsiString(Line + #13#10), True);
+end;
+
+function JournalRunId(): String;
+begin
+  if JournalRun = '' then
+    JournalRun := GetDateTimeString('yyyymmddhhnnss', #0, #0);
+  Result := JournalRun;
+end;
+
+function DigitsAndDots(Value: String): String;
+var
+  I: Integer;
+begin
+  Result := '';
+  for I := 1 to Length(Value) do
+    if ((Value[I] >= '0') and (Value[I] <= '9')) or (Value[I] = '.') then
+      Result := Result + Value[I];
+end;
+
+procedure JournalStart();
+var
+  Phase: String;
+begin
+  if ExistingInnoInstall then
+    Phase := 'upgrade'
+  else
+    Phase := 'install';
+  JournalWrite('{"v":1,"kind":"start","run":"' + JournalRunId() + '","phase":"' + Phase + '","from":"' + DigitsAndDots(PreviousVersion) + '"}');
+end;
+
+procedure JournalComponent(Component, Step: String; ExitCode: Integer);
+begin
+  JournalWrite('{"v":1,"kind":"component","run":"' + JournalRunId() + '","component":"' + Component + '","step":"' + Step + '","exit":' + IntToStr(ExitCode) + '}');
+end;
+
+procedure JournalFinish(ExitCode: Integer);
+begin
+  JournalWrite('{"v":1,"kind":"finish","run":"' + JournalRunId() + '","exit":' + IntToStr(ExitCode) + '}');
 end;
 
 // The steps this run takes, for the shell's overall progress (the 'plan' event; step ids as the shell names them).
@@ -566,12 +618,15 @@ procedure EvtGamepadDone();
 begin
   GamepadResult := TakeStepResult('gamepad');
   EmitStepResult('gamepad', 'StatusInstallGamepad', GamepadResult);
+  JournalComponent('gamepad', 'install', GamepadResult);
 end;
 
 procedure EvtUsbipDone();
 begin
   UsbipResult := TakeStepResult('usbip');
   EmitStepResult('usbip', 'StatusInstallUsbip', UsbipResult);
+  // 102 to 105 are the codes of the root-hub guard of the USB/IP component; -1: the helper left no result at all
+  JournalComponent('usbip', 'install', UsbipResult);
 end;
 
 procedure EvtVmouse(); begin EmitInstallerEvent('vmouse', 'running', 'StatusInstallVmouse', 0); end;
@@ -668,6 +723,9 @@ begin
     EmitInstallerEvent('install-vdd', 'failed', 'StatusInstallVDD', 101);
   end;
 
+  // the exit code of the helper itself (-1: it could not be started), not the 101 this script maps it to
+  JournalComponent('vdd', 'install', ResultCode);
+
   if (VDDResultCode = 101) and (not WizardSilent) then
   begin
     Detail := CustomMessage('MsgVDDInstallFailed') + #13#10 + #13#10 +
@@ -683,6 +741,9 @@ begin
   InstallRunDir := InstallerParameterValue('SUNSHINE_RUN_DIR');
   InstallRunId := InstallerParameterValue('SUNSHINE_RUN_ID');
   InstallEventSequence := 0;
+  PreviousVersion := '';
+  if not RegQueryStringValue(HKLM32, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{B16E5C0D-7B8A-4E3B-9F1A-2D4C6E8F0A1B}_is1', 'DisplayVersion', PreviousVersion) then
+    PreviousVersion := '';
   EmitInstallerEvent('wizard', 'running', 'WizardStarted', 0);
   // ── Main form tweaks ──
   WizardForm.Color := $FAF6F2;
@@ -1065,6 +1126,7 @@ begin
   // The exit code still reports the failure — see GetCustomSetupExitCode().
   ServiceVerifyFailed := True;
   EmitInstallerEvent('service', 'failed', 'StatusInstallService', 100);
+  JournalComponent('service', 'verify', 100);
   Log('Service verification failed. ' + Detail);
   // MsgBox() ignores /SILENT (only /SUPPRESSMSGBOXES auto-answers it), so an
   // unattended install without that switch would sit here forever now that we
@@ -1312,6 +1374,7 @@ procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssInstall then
   begin
+    JournalStart();
     EmitInstallerEvent('plan', 'running', PlannedInstallerSteps(), 0);
     InstallProgressPermille := -20;
     EmitInstallerEvent('install', 'running', 'InstallStarted', 0);
@@ -1326,6 +1389,10 @@ begin
     DeleteFile(ExpandConstant('{app}\install_portable.bat'));
     DeleteFile(ExpandConstant('{app}\uninstall_portable.bat'));
     EmitInstallerEvent('install', 'done', 'InstallFinished', GetCustomSetupExitCode());
+    // a service that was verified is reported as done (a failure was reported where it was found)
+    if not ServiceVerifyFailed then
+      JournalComponent('service', 'verify', 0);
+    JournalFinish(GetCustomSetupExitCode());
   end;
 end;
 
