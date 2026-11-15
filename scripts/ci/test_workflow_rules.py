@@ -26,7 +26,7 @@ class PublishTest(unittest.TestCase):
     def test_the_release_action_runs_only_for_a_publishing_push(self):
         # LizardByte/create-release-action creates a release for a push to master only; a manual run has its own job
         release = step(self.build, "Create/Update GitHub Release")
-        self.assertEqual(release["if"], "needs.setup_release.outputs.publish_release == 'true' && github.event_name != 'workflow_dispatch'")
+        self.assertEqual(release["if"], "needs.setup_release.outputs.publish_release == 'true' && github.event_name == 'push'")
 
     def test_a_manual_publish_has_its_own_job_that_alone_can_write(self):
         publish = self.workflow["jobs"]["publish"]
@@ -56,7 +56,7 @@ class PublishTest(unittest.TestCase):
         gate = step(self.setup, "Automatic pre-releases")
         self.assertEqual(gate["env"]["ENABLED"], "${{ vars.AUTO_PRERELEASE }}")
         self.assertIn('[ "$AUTO" = true ] && [ "$ENABLED" = true ]', gate["run"])
-        self.assertEqual(gate["if"], "github.event_name != 'workflow_dispatch'")
+        self.assertEqual(gate["if"], "github.event_name == 'push' || github.event_name == 'pull_request'")
 
     def test_manual_publish_is_an_input_that_defaults_to_off_and_is_wired_through(self):
         # PyYAML reads the key `on` as the boolean True
@@ -71,6 +71,16 @@ class PublishTest(unittest.TestCase):
         configure = step(self.build, "Configure Windows")
         channel = configure["env"]["SUNSHINE_BUILD_CHANNEL"]
         self.assertEqual(channel, "${{ needs.setup_release.outputs.publish_release == 'true' && 'beta' || 'dev' }}")
+
+    def test_the_nightly_build_is_cold_and_never_publishes(self):
+        schedule = self.workflow[True]["schedule"]
+        self.assertEqual(len(schedule), 1)
+        restore = step(self.build, "Cache compiler objects")
+        self.assertEqual(restore["if"], "github.event_name != 'schedule'")
+        manual = step(self.setup, "Setup Release (Manual)")
+        self.assertIn("schedule", manual["if"])
+        publish = self.workflow["jobs"]["publish"]
+        self.assertNotIn("schedule", publish["if"])
 
     def test_artifacts_are_uploaded_whether_or_not_the_run_publishes(self):
         upload = step(self.build, "Upload Artifacts")

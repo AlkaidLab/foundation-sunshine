@@ -1,0 +1,53 @@
+name: Windows toolchain
+description: MSYS2 UCRT64 build tools for the Windows host build, with Defender exclusions for the build directories.
+runs:
+  using: composite
+  steps:
+    # Real-time scanning of the many small files a C++ build writes is the largest single cost of the short steps
+    # (pacman, configure, cache-hit builds). The runner is a disposable VM; only the build directories and the
+    # compiler processes are excluded.
+    - name: Defender exclusions
+      shell: pwsh
+      run: |
+        # Hosted runners differ in speed from run to run (timings of the same build varied by up to 1.5x), so every run
+        # records the machine it got next to its timings.
+        $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+        "### Runner`n- CPU: $($cpu.Name), $($cpu.NumberOfLogicalProcessors) logical processors, $([math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory/1GB)) GB RAM`n- Image: $env:ImageVersion" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+        Add-MpPreference -ExclusionPath 'C:\msys64', $env:GITHUB_WORKSPACE, 'D:\a', $env:RUNNER_TEMP
+        Add-MpPreference -ExclusionProcess 'gcc.exe','g++.exe','cc1.exe','cc1plus.exe','as.exe','ld.exe','ninja.exe','ccache.exe','cmake.exe','pacman.exe','bash.exe','git.exe','iscc.exe'
+
+    # MSYS2 is installed by setup-msys2 under the runner's temp directory (D:\a\_temp\msys64), not taken from the image's
+    # C:\msys64 (`release: false`). The compiler cache keys every translation unit on the absolute paths of the system
+    # headers, so a build whose MSYS2 lives elsewhere finds none of the cache of the others: measured on this repository, 98%
+    # hits with the temp directory install and 17% with `release: false`, from the same cache. Using the image's copy would
+    # save about 20 s of extraction and cost a cold build whenever the location changes.
+    # update: true is required, not redundant with the install below. When msys2-runtime itself needs upgrading, pacman
+    # closes every MSYS2 process to finish the job, which kills the workflow shell and fails the step with exit 1.
+    # setup-msys2 performs that upgrade with the restart it needs.
+    - name: MSYS2
+      uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
+      with:
+        msystem: ucrt64
+        update: true
+        install: wget
+
+    # An explicit package list instead of the `toolchain` group: the group pulled in gdb and, through it, python, which
+    # CMake needs (installer packaging) but nothing declared. Opus is pinned to a version that is known to work.
+    # NOTE: gcc/gcc-libs were once pinned to 15.1.0-5 to work around a broken upstream gcc 15.x. MSYS2 has moved on to
+    # gcc 16.x and cmake etc. now require its gcc-libs ABI; an old gcc-libs makes cmake.exe fail to load (exit 127).
+    - name: Build tools
+      shell: msys2 {0}
+      env:
+        OPUS_PACKAGE: mingw-w64-ucrt-x86_64-opus-1.6.1-1-any.pkg.tar.zst
+      run: |
+        set -euo pipefail
+        P=mingw-w64-ucrt-x86_64
+        packages=(git diffutils $P-ccache $P-cmake $P-ninja $P-gcc $P-binutils $P-crt-git $P-headers-git $P-winpthreads-git
+          $P-pkgconf $P-make $P-python $P-cppwinrt $P-curl-winssl $P-MinHook $P-miniupnpc $P-nlohmann-json $P-libvpl $P-openssl)
+        wget -q "https://repo.msys2.org/mingw/ucrt64/${OPUS_PACKAGE}"
+        pacman -S --noconfirm --needed "${packages[@]}"
+        pacman --noconfirm -U "${OPUS_PACKAGE}"
+        {
+          echo "### Toolchain"
+          pacman -Q $P-gcc $P-cmake $P-ninja $P-ccache $P-binutils | sed 's/^/- /'
+        } | tee -a "$GITHUB_STEP_SUMMARY"

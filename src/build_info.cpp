@@ -36,10 +36,20 @@ namespace build_info {
     return buffer;
   }
 
+  const char *
+  product_name() {
+    return PROJECT_NAME;
+  }
+
+  const char *
+  version() {
+    return PROJECT_VER;
+  }
+
   info_t
   compiled() {
     info_t info;
-    info.version = PROJECT_VER;
+    info.version = version();
     info.commit = SUNSHINE_BUILD_COMMIT;
     info.branch = SUNSHINE_BUILD_BRANCH;
     info.dirty = SUNSHINE_BUILD_DIRTY != 0;

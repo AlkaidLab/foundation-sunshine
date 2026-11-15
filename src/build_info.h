@@ -17,6 +17,15 @@ namespace build_info {
   /** Version of the JSON object below; additive changes keep it. */
   inline constexpr int JSON_VERSION = 1;
 
+  /**
+   * The product name and the display version, from the generated version.h. Only build_info.cpp reads that header, so a new
+   * commit (the version carries it on non-master builds) recompiles that one file; everything else asks here.
+   */
+  const char *
+  product_name();
+  const char *
+  version();
+
   struct info_t {
     std::string version;  ///< PROJECT_VER, the display version
     std::string commit;  ///< full 40-hex commit, empty when unknown

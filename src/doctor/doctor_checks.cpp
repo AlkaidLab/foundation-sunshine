@@ -19,6 +19,7 @@
 
 #include "doctor_os.h"
 #include "src/audio.h"
+#include "src/build_info.h"
 #include "src/config.h"
 #include "src/confighttp/network.h"
 #include "src/display_device/display_device.h"
@@ -29,7 +30,6 @@
 #include "src/rtsp.h"
 #include "src/system_info.h"
 #include "src/video.h"
-#include "version.h"
 
 #ifdef _WIN32
   #include <ViGEm/Client.h>
@@ -494,7 +494,7 @@ namespace doctor {
     check_host(lang_e lang) {
       host_fact_t facts;
       facts.build = current_build_info();
-      facts.version = PROJECT_VER;
+      facts.version = build_info::version();
       facts.uptime_s = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - process_started).count();
       const auto crashes = os::recent_crashes(CRASH_WINDOW_S);
       facts.crashes_checked = crashes.checked;

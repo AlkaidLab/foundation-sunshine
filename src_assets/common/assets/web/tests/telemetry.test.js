@@ -8,16 +8,28 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const read = (p) => fs.readFileSync(path.join(here, '..', p), 'utf8')
 
 // What the Web UI sends goes to the host it is served from (POST /api/telemetry/events); no script of a third party is loaded (docs/privacy_telemetry.md).
+// The sender queues a page view after two animation frames (foundation-ui, telemetry/events.js). The stub keeps the callbacks
+// and `settle` runs them: no clock decides whether the event is there, so a slow runner cannot lose it.
+let frameCallbacks = []
 const withBrowser = async (run, { stored = {} } = {}) => {
+  frameCallbacks = []
   const store = new Map(Object.entries(stored))
   const calls = []
   const original = { localStorage: globalThis.localStorage, sessionStorage: globalThis.sessionStorage, fetch: globalThis.fetch, raf: globalThis.requestAnimationFrame }
   globalThis.localStorage = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)) }
   globalThis.sessionStorage = { getItem: () => null, setItem: () => {} }
-  globalThis.requestAnimationFrame = (fn) => setTimeout(fn, 0)
+  globalThis.requestAnimationFrame = (fn) => frameCallbacks.push(fn)
   globalThis.fetch = async (url, options) => { calls.push({ url, options, body: JSON.parse(options.body) }); return { ok: true, status: 200, json: async () => ({ accepted: 1 }) } }
   try { await run(calls) } finally {
     for (const [k, v] of Object.entries({ localStorage: original.localStorage, sessionStorage: original.sessionStorage, fetch: original.fetch, requestAnimationFrame: original.raf })) { if (v === undefined) delete globalThis[k]; else globalThis[k] = v }
+  }
+}
+const settle = async () => {
+  for (let round = 0; round < 10 && frameCallbacks.length > 0; round += 1) {
+    const due = frameCallbacks
+    frameCallbacks = []
+    for (const callback of due) callback(performance.now())
+    await Promise.resolve()
   }
 }
 const mod = async () => import(`../config/telemetry.js?${Math.random()}`)
@@ -30,7 +42,7 @@ test('events go to the host in the contract shape, never to a Google host', asyn
     trackEvents.userAction('apps_saved', { count: 3, name: 'My Secret Game' })
     trackEvents.errorOccurred('config_save', 'failed at C:\\Users\\Alice\\x.json for 192.0.2.5')
     trackEvents.pageView('display-modes')
-    await new Promise((r) => setTimeout(r, 20))
+    await settle()
     await flushTelemetry()
     assert.equal(calls.length, 1)
     assert.equal(calls[0].url, '/api/telemetry/events')
@@ -55,7 +67,7 @@ test('usage statistics off: no usage or experience event is queued, an error sti
     const { trackEvents, flushTelemetry } = await mod()
     trackEvents.userAction('x'); trackEvents.appStart(); trackEvents.pageView('home')
     trackEvents.errorOccurred('boom', 'text')
-    await new Promise((r) => setTimeout(r, 20))
+    await settle()
     await flushTelemetry()
     assert.deepEqual(calls[0].body.events.map((e) => e.name), ['error'])
   }, { stored: { 'foundation-ui.telemetry.consent': 'off', 'foundation-ui.telemetry.errors': 'on' } })
@@ -68,7 +80,7 @@ test('usage statistics off: no usage or experience event is queued, an error sti
   await withBrowser(async (calls) => {
     const { trackEvents, flushTelemetry } = await mod()
     trackEvents.errorOccurred('boom', 'text'); trackEvents.userAction('y'); trackEvents.pageView('home')
-    await new Promise((r) => setTimeout(r, 20))
+    await settle()
     await flushTelemetry()
     assert.equal(calls.length, 0, 'both off: nothing is requested')
   }, { stored: { 'foundation-ui.telemetry.errors': 'off', 'foundation-ui.telemetry.consent': 'off' } })

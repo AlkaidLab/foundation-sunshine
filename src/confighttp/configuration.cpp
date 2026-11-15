@@ -5,6 +5,7 @@
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 
 #include "configuration.h"
+#include "src/build_info.h"
 #include "src/config.h"
 #include "src/confighttp/apps.h"
 #include "src/globals.h"
@@ -23,7 +24,6 @@
 #include "src/telemetry/telemetry.h"
 #include "src/utility.h"
 #include "src/video.h"
-#include "version.h"
 #include <boost/property_tree/json_parser.hpp>
 #include <sstream>
 
@@ -108,7 +108,7 @@ namespace confighttp::configuration {
       outputTree.add_child("adapters", adapters_nodes);
       outputTree.put("status", "true");
       outputTree.put("platform", SUNSHINE_PLATFORM);
-      outputTree.put("version", PROJECT_VER);
+      outputTree.put("version", build_info::version());
 
       auto vars = config::parse_config(file_handler::read_file(config::sunshine.config_file.c_str()));
       for (auto &[name, value] : vars) {
