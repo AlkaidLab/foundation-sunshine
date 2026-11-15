@@ -159,9 +159,10 @@ namespace {
   };
 
   std::string
-  write_pending(const fs::path &config, const std::string &name, bool with_dump, const char *module = "sunshine.exe", std::uint64_t offset = 0x1234) {
+  write_pending(const fs::path &config, const std::string &name, bool with_dump, const char *module = "sunshine.exe", std::uint64_t offset = 0x1234, const char *product = "host") {
     crash::frame_t frames[] = { frame(module, offset), frame("sunshine.exe", 0x77) };
     crash::meta_t meta;
+    meta.product = product;
     meta.version = "2026.1112.1.杂鱼";
     meta.os_version = "Windows 11 10.0.26100";
     meta.fault_code = "0xC0000005";
@@ -613,6 +614,18 @@ TEST(CrashUpload, NoLogMeansNoLogPartAndAPanelReportNeverCarriesTheHostLog) {
   write_pending(config, "a", false);
   EXPECT_EQ(crash::upload_pending_once(config, server.url(), "x"), 1);
   EXPECT_EQ(server.bodies[0].find("name=\"log\""), std::string::npos);
+  // a host log is there, the report is the control panel's: the host log does not go with it
+  put(config / "sunshine.log", "[2026-11-14 22:00:00.000]: Info: the host log marker\n");
+  fs::last_write_time(config / "sunshine.log", fs::file_time_type::clock::now() - std::chrono::minutes(5));
+  write_pending(config, "b", false, "sunshine.exe", 0x1234, "panel");
+  EXPECT_EQ(crash::upload_pending_once(config, server.url(), "x"), 1);
+  ASSERT_EQ(server.bodies.size(), 2u);
+  EXPECT_EQ(server.bodies[1].find("name=\"log\""), std::string::npos);
+  EXPECT_EQ(server.bodies[1].find("the host log marker"), std::string::npos);
+  EXPECT_NE(server.bodies[1].find("\"product\":\"panel\""), std::string::npos);
+  write_pending(config, "c", false);  // the same log goes with a host report
+  EXPECT_EQ(crash::upload_pending_once(config, server.url(), "x"), 1);
+  EXPECT_NE(server.bodies[2].find("the host log marker"), std::string::npos);
   fs::remove_all(config);
 }
 

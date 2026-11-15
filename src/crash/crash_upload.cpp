@@ -149,7 +149,11 @@ namespace crash {
     fs::path
     log_path_of(const fs::path &config_dir) {
       const auto configured = conf_value(current_conf_text(), "log_path");
-      return configured.empty() ? config_dir / "sunshine.log" : fs::path(configured);
+      if (configured.empty()) return config_dir / "sunshine.log";
+      // the host's own rule (file_handler::path_from_utf8 and path_f): UTF-8 text, and a relative path is relative to the config directory
+      const std::u8string utf8(reinterpret_cast<const char8_t *>(configured.data()), configured.size());
+      const fs::path path(utf8);
+      return path.is_absolute() ? path : config_dir / path;
     }
 
     std::mutex g_env_mutex;

@@ -478,6 +478,99 @@
     "12:34:56",
     "03:15"
    ]
+  },
+  {
+   "name": "cookie header with a second item",
+   "input": "Debug: Cookie: theme=dark; session=abc123xyz; lang=zh",
+   "forbidden": [
+    "abc123xyz",
+    "theme=dark"
+   ],
+   "required": [
+    "Debug: Cookie"
+   ]
+  },
+  {
+   "name": "set-cookie header",
+   "input": "Debug: Set-Cookie: sid=9988776655; Path=/; HttpOnly",
+   "forbidden": [
+    "9988776655"
+   ],
+   "required": [
+    "Debug: Set-Cookie"
+   ]
+  },
+  {
+   "name": "numeric password",
+   "input": "Info: password=123456 retries=3",
+   "forbidden": [
+    "123456"
+   ],
+   "required": [
+    "retries=3"
+   ]
+  },
+  {
+   "name": "numeric token",
+   "input": "Debug: api_token: 987654 ok",
+   "forbidden": [
+    "987654"
+   ],
+   "required": [
+    "ok"
+   ]
+  },
+  {
+   "name": "numbers under metric keys stay",
+   "input": "Info: token_count=5 max_password_length=8 pin_timeout=30 key_frame=0",
+   "forbidden": [],
+   "required": [
+    "token_count=5",
+    "max_password_length=8",
+    "pin_timeout=30",
+    "key_frame=0"
+   ]
+  },
+  {
+   "name": "ipv6 without a decimal digit",
+   "input": "Info: peer fdab::cafe joined",
+   "forbidden": [
+    "fdab::cafe"
+   ],
+   "required": [
+    "peer",
+    "joined"
+   ]
+  },
+  {
+   "name": "c++ scope is not an address",
+   "input": "Error: a::b failed in encode::run",
+   "forbidden": [],
+   "required": [
+    "a::b",
+    "encode::run"
+   ]
+  },
+  {
+   "name": "a learned name that is also a key",
+   "input": "Info: username=password\nInfo: password=hunter2",
+   "forbidden": [
+    "hunter2"
+   ],
+   "required": [
+    "Info:"
+   ]
+  },
+  {
+   "name": "text in front of a pem block",
+   "input": "Info: password=hunter2 -----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBg\n-----END PRIVATE KEY-----\nInfo: done",
+   "forbidden": [
+    "hunter2",
+    "MIIEvQIBADANBg"
+   ],
+   "required": [
+    "Info: done"
+   ]
   }
  ]
 }

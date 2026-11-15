@@ -239,9 +239,13 @@ namespace telemetry {
       // a feedback report goes with the anonymised log of this session: uploaded first, its reference travels in the report. A page cannot name a reference itself.
       if (name == "user_report" && props.is_object()) {
         props.erase("log_ref");
-        if (deps_.session_log) {
+        // only while error reports are on (the report itself is refused otherwise), and only with the version the report will carry
+        if (deps_.session_log && consent_now().errors) {
           try {
-            if (const auto ref = deps_.session_log(endpoint(), install_id(), std::string { version })) props["log_ref"] = *ref;
+            const auto safe = safe_version(version);
+            if (!safe.empty()) {
+              if (const auto ref = deps_.session_log(endpoint(), install_id(), safe)) props["log_ref"] = *ref;
+            }
           }
           catch (...) {
           }

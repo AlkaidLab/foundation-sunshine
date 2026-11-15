@@ -1062,6 +1062,18 @@ TEST(TelemetryUserReport, TheSessionLogGoesUpFirstAndItsReferenceTravelsInTheRep
   EXPECT_EQ(h.log_calls, before);
 }
 
+TEST(TelemetryUserReport, NoLogIsUploadedWhileErrorReportsAreOffOrTheVersionIsNotAVersion) {
+  harness_t h;
+  h.log_ref = "crash-2026-11/ur-0123456789abcdef01234567.log.gz";
+  const json report = json::array({ json { { "kind", "error" }, { "name", "user_report" }, { "props", json { { "category", "bug" }, { "component", "panel" }, { "message", "it broke" } } } } });
+  h.consent = { true, false };  // error reports off: the report is refused and the log must not leave first
+  EXPECT_EQ(h.svc->ingest("web", "1", report), 0u);
+  EXPECT_EQ(h.log_calls, 0);
+  h.consent = { false, true };
+  h.svc->ingest("web", "C:\\Users\\Alice\\build", report);  // a page-supplied version that is a path: the log is not uploaded under it
+  EXPECT_EQ(h.log_calls, 0);
+}
+
 TEST(TelemetryUserReport, LogRefIsOnlyTheReferenceOfTheUserLogEndpoint) {
   const auto base = [](const json &extra) {
     json p { { "category", "bug" }, { "component", "web" }, { "message", "m" } };

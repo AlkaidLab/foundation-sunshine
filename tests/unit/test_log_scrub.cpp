@@ -39,6 +39,16 @@ TEST(LogScrubPlaceholders, AScrubbedLogIsStable) {
   EXPECT_EQ(scrub(once).text, once);
 }
 
+TEST(LogScrubBounds, ACutInsideAKeyBlockDropsTheRestOfTheBlock) {
+  std::string raw = "Info: start\n-----BEGIN PRIVATE KEY-----\n";
+  for (int i = 0; i < 60; ++i) raw += "ABCDEFGHijklmnop" + std::to_string(i) + "\n";
+  raw += "-----END PRIVATE KEY-----\nInfo: after the key\n";
+  const auto r = scrub(raw, raw.size() - 400);  // the cut falls in the body
+  EXPECT_TRUE(r.truncated);
+  EXPECT_EQ(r.text.find("ABCDEFGH"), std::string::npos) << r.text;
+  EXPECT_NE(r.text.find("Info: after the key"), std::string::npos);
+}
+
 TEST(LogScrubBounds, TailLineCutAndUtf8) {
   std::string raw;
   for (int i = 0; i < 1000; ++i) raw += "line " + std::to_string(1000 + i) + " " + std::string(40, 'x') + "\n";
@@ -66,7 +76,7 @@ namespace {
   std::string
   gunzip(const std::string &gz) {
     z_stream zs {};
-    inflateInit2(&zs, 15 + 16);
+    EXPECT_EQ(inflateInit2(&zs, 15 + 16), Z_OK);
     zs.next_in = reinterpret_cast<Bytef *>(const_cast<char *>(gz.data()));
     zs.avail_in = (uInt) gz.size();
     std::string out;
@@ -79,6 +89,7 @@ namespace {
       out.append(buf, sizeof(buf) - zs.avail_out);
     } while (rc == Z_OK);
     inflateEnd(&zs);
+    EXPECT_EQ(rc, Z_STREAM_END) << "the gzip stream is complete and its checksum holds";
     return out;
   }
 }  // namespace
@@ -134,6 +145,13 @@ TEST(CrashLogPick, TheFileClosestToTheReportWins) {
   EXPECT_NE(text.find("an older run"), std::string::npos);  // a very short log: the end of the run before it comes first
   EXPECT_EQ(crash::logfile::collect(dir / "sunshine.log", fs::file_time_type::clock::now() - std::chrono::hours(48)), "");
   EXPECT_NE(crash::logfile::collect_current(dir / "sunshine.log").find("the new run"), std::string::npos);
+  // the run that crashed wrote nothing for a long time before it crashed; the next run wrote shortly after the report: the log written after the report is not the one
+  const auto t0 = fs::file_time_type::clock::now();
+  fs::last_write_time(dir / "sunshine.log.1", t0 - std::chrono::minutes(37));  // 7 minutes before the report: still the closest to it, within the window
+  fs::last_write_time(dir / "sunshine.log", t0 - std::chrono::minutes(29));  // a minute after the report (at -30 min), so nearer in time, but written after it
+  const auto older = crash::logfile::collect(dir / "sunshine.log", crash_time);
+  EXPECT_NE(older.find("the run that crashed"), std::string::npos);
+  EXPECT_EQ(older.find("the new run"), std::string::npos);
   fs::remove_all(dir);
 }
 

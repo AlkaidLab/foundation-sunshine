@@ -73,9 +73,9 @@
 | D1 crash_signatures | signature, version, product, kind, exception_code, module, module_offset, frames, first_ms, last_ms, count | `worker:migrations/0001_init.sql:55` | 崩溃分组、标出新的崩溃。 | 400 天 |
 | D1 crash_reports | day, time_ms, install_hash, signature, version, product, kind, os_version, uptime_s, country | `worker:migrations/0001_init.sql:70` | 各版本崩溃率。 | 400 天 |
 | D1 crash_dumps | signature, install_hash, tag, name, bytes, stored_ms (the dump itself is a release asset) | `worker:migrations/0001_init.sql:87` | 已保存转储的索引（转储本身是 release 资产）。 | 与转储一起 90 天 |
-| D1 crash_logs | signature, install_hash, tag, name, bytes, lines, stored_ms, version（日志本身是发布资产 `<签名前缀>-<哈希>.log.gz`） | `worker:migrations/0011_crash_detail.sql` | 已保存日志的索引。 | 同崩溃转储。 | 90 天。 |
-| D1 user_logs | ref, install_hash, bytes, lines, stored_ms, tail（日志最后 120 行，已匿名处理，最多 20000 字符） | `worker:migrations/0011_crash_detail.sql` | 问题反馈的 issue 里显示日志的最后几行。 | 同上。 | 14 天。 |
-| D1 crash_reports 的 env、ctx 列 | 见上面 env、ctx | `worker:migrations/0011_crash_detail.sql` | 同上。 | 同上。 | 400 天。 |
+|  D1 crash_logs | signature, install_hash, tag, name, bytes, lines, stored_ms, version（日志本身是发布资产 `<签名前缀>-<哈希>.log.gz`） | `worker:migrations/0011_crash_detail.sql` | 已保存日志的索引。 同崩溃转储。 | 90 天。  |
+|  D1 user_logs | ref, install_hash, bytes, lines, stored_ms, tail（日志最后 120 行，已匿名处理，最多 20000 字符） | `worker:migrations/0011_crash_detail.sql` | 问题反馈的 issue 里显示日志的最后几行。 同上。 | 14 天。  |
+|  D1 crash_reports 的 env、ctx 列 | 见上面 env、ctx | `worker:migrations/0011_crash_detail.sql` | 同上。 同上。 | 400 天。  |
 | D1 alerts, counters, report_state | alert key, title, body, labels, issue number; rate-limit counters; day of the daily report | `worker:migrations/0001_init.sql:98` `worker:migrations/0001_init.sql:114` | 提醒和报告去重；不超出免费额度。 | 7 到 400 天 |
 | Analytics Engine | index1 = product; blobs: kind, name, version, channel, os, country, gpu_vendor, arch, install_hash and the string props; doubles: the numeric props | `worker:src/schema.ts:183` | 高频数据点的快速汇总。 | Cloudflare 的保留期 |
 | GitHub issues (private repo) | daily report (totals and top lists), crash alerts (signature, product, version, exception, module, frames), user reports (category, product, version, channel, os, os_version, country, where, install hash prefix of 8 characters, time, message in a code fence) | `worker:src/report.ts:35` `worker:src/crash.ts:133` `worker:src/userreports.ts:17` | 负责人阅读报告和提醒。 | 直到关闭 |

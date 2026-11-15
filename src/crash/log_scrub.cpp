@@ -100,6 +100,11 @@ namespace crash::logscrub {
       regex harmless { R"(^(?:["']?(?:|true|false|null|none|nil|empty|n/a|unknown|default|disabled|enabled|on|off|yes|no|-?\d{1,6}|<[^>]*>)["']?)$)", I };
       regex pin_digits { R"(\d)", S };
       regex pin_key { R"(pin|passcode)", I };
+      // a number under one of these keys is a credential (password=123456), unless the key says it counts or measures something (token_count, max_password_length)
+      regex secret_num_key { R"(pass|pwd|secret|token|credential|cookie|authorization|pin|salt|nonce)", I };
+      regex metric_key { R"((?:^|[_.-])(?:count|len|length|size|timeout|ttl|ms|secs?|seconds|max|min|limit|interval|retries|retry|attempts|version|port|enabled|expires?|age|bytes|bits|rate|percent)(?:$|[_.-]))", I };
+      regex number_value { R"(^["']?-?\d{1,6}["']?$)", S };
+      regex cookie_line { R"((\b(?:set-)?cookie2?\b\s*:\s*)[^\r\n]+)", I };
       regex login_key { R"(^(?:[\w.-]*(?:user[_ -]?name|username|login|owner))$)", I };
       regex query { R"(([?&][A-Za-z0-9_.-]+)=[^&\s#"']*)", S };
       regex url_cred { R"(\bhttps?://[^\s/@"']+@)", I };
@@ -220,7 +225,11 @@ namespace crash::logscrub {
       line = replace_all(line, r.jwt, [](const boost::smatch &) { return std::string("<jwt>"); });
       line = replace_all(line, r.bearer, [](const boost::smatch &m) { return m[1].str() + " <hidden>"; });
       line = replace_all(line, r.known_tokens, [](const boost::smatch &) { return std::string("<hidden>"); });
-      line = kv_sub(line, r.re_secret, [&](const std::string &k, const std::string &v) { return boost::regex_search(k, r.pin_key) && boost::regex_search(v, r.pin_digits); },
+      line = replace_all(line, r.cookie_line, [](const boost::smatch &m) { return m[1].str() + "<hidden>"; });  // a Cookie header is one secret, whatever it holds
+      line = kv_sub(line, r.re_secret, [&](const std::string &k, const std::string &v) {
+          if (boost::regex_search(k, r.pin_key) && boost::regex_search(v, r.pin_digits)) return true;
+          return boost::regex_match(trim(v), r.number_value) && boost::regex_search(k, r.secret_num_key) && !boost::regex_search(k, r.metric_key);
+        },
         [](const std::string &k, const std::string &sep) { return k + sep + "<hidden>"; });
       line = replace_all(line, r.pin_words, [](const boost::smatch &m) { return m[1].str() + m[2].str() + "<hidden>"; });
       line = kv_sub(line, r.re_serial, never, [](const std::string &k, const std::string &sep) { return k + sep + "<serial>"; });
@@ -248,7 +257,20 @@ namespace crash::logscrub {
         line = replace_all(src, r.ip_any, [&](const boost::smatch &m) {
           const auto v = m[0].str();
           if (v.find(':') != std::string::npos) {
-            if (v.find_first_of("0123456789") == std::string::npos || v == "::" || v == "::1") return v;
+            if (v == "::" || v == "::1") return v;
+          if (v.find_first_of("0123456789") == std::string::npos) {
+            // no decimal digit: C++ scopes such as a::b look the same; an address is made of groups of 3 or 4 hex characters (fdab::cafe)
+            std::size_t start = 0;
+            bool all_long = true;
+            while (start <= v.size()) {
+              const auto end = v.find(':', start);
+              const auto len = (end == std::string::npos ? v.size() : end) - start;
+              if (len > 0 && len < 3) all_long = false;
+              if (end == std::string::npos) break;
+              start = end + 1;
+            }
+            if (!all_long) return v;
+          }
             if (boost::regex_match(v, r.clock)) return v;
             return labels.of("ip", v);
           }
@@ -308,7 +330,17 @@ namespace crash::logscrub {
       }
       text = std::move(t);
     }
+    bool in_pem_at_start = false;
     if (text.size() > max_chars) {
+      // the cut may fall inside a key block: its body must not turn into ordinary lines
+      {
+        const auto cut = text.size() - max_chars;
+        const std::string before = text.substr(0, cut);
+        std::size_t begin_at = std::string::npos, end_at = std::string::npos;
+        for (boost::sregex_iterator it(before.cbegin(), before.cend(), rules().pem_begin), end; it != end; ++it) begin_at = (std::size_t) it->position(std::size_t { 0 });
+        for (boost::sregex_iterator it(before.cbegin(), before.cend(), rules().pem_end), end; it != end; ++it) end_at = (std::size_t) it->position(std::size_t { 0 });
+        in_pem_at_start = begin_at != std::string::npos && (end_at == std::string::npos || end_at < begin_at);
+      }
       text = text.substr(text.size() - max_chars);
       // from the next line start, and never inside a UTF-8 sequence
       const auto nl = text.find('\n');
@@ -324,13 +356,14 @@ namespace crash::logscrub {
       std::sort(names.begin(), names.end(), [](const auto &a, const auto &b) { return a.size() > b.size(); });
       std::string alt;
       for (const auto &n : names) alt += (alt.empty() ? "" : "|") + escape_re(n);
-      const regex re("(?<![\\w])(?:" + alt + ")(?![\\w])", I);
+      // an occurrence followed by = or : is a key (username=password, then password=...), not the name: it stays, so the key rules still see it
+      const regex re("(?<![\\w])(?:" + alt + ")(?![\\w])(?!\\s*[:=])", I);
       const std::string kind = pass == 0 ? "user" : "host";
       text = replace_all(text, re, [&](const boost::smatch &m) { return labels.of(kind, m[0].str()); });
     }
     std::string out;
     out.reserve(text.size());
-    bool in_pem = false;
+    bool in_pem = in_pem_at_start;
     std::size_t lines = 0;
     for (std::size_t pos = 0; pos <= text.size();) {
       auto end = text.find('\n', pos);
@@ -347,7 +380,7 @@ namespace crash::logscrub {
       if (boost::regex_search(line, rules().pem_begin)) {
         if (!boost::regex_search(line, rules().pem_end)) in_pem = true;
         const auto b = line.find("-----BEGIN");
-        piece = line.substr(0, b) + "<pem>";
+        piece = scrub_line(line.substr(0, b), labels) + "<pem>";  // what stands in front of the block is a log line like any other
       }
       else {
         piece = scrub_line(line, labels);

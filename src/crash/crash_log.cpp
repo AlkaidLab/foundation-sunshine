@@ -119,13 +119,18 @@ namespace crash::logfile {
 
   fs::path
   pick_by_time(const std::vector<fs::path> &files, fs::file_time_type when, std::chrono::seconds window) {
+    // The log of the run that crashed was last written when it crashed or before; a file written clearly after the report belongs to the run that came next. A few seconds of
+    // slack cover the order in which the handler wrote the report and the log was flushed.
+    constexpr auto slack = std::chrono::seconds(30);
     fs::path best;
     std::chrono::seconds best_delta = window + std::chrono::seconds(1);
     for (const auto &f : files) {
       std::error_code ec;
       const auto t = fs::last_write_time(f, ec);
       if (ec) continue;
-      const auto delta = std::chrono::abs(std::chrono::duration_cast<std::chrono::seconds>(t - when));
+      const auto signed_delta = std::chrono::duration_cast<std::chrono::seconds>(t - when);
+      if (signed_delta > slack) continue;
+      const auto delta = std::chrono::abs(signed_delta);
       if (delta <= window && delta < best_delta) {
         best = f;
         best_delta = delta;
