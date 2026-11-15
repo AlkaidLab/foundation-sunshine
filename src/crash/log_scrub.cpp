@@ -144,7 +144,7 @@ namespace crash::logscrub {
       regex quotes { R"(^["']|["']$)", S };
       // a learned name that is itself a key word (username=password) stays where a key stands, so the key rules still see it
       regex name_is_key { std::string("^(?:") + SECRET_KEY + "|" + SERIAL_KEY + "|" + ACCOUNT_KEY + "|" + SSID_KEY + "|" + HOST_KEY + ")$", I };
-      regex sep_follows { R"(\s*[:=])", S };
+      regex sep_follows { R"(["']?\s*[:=])", S };
     };
 
     const rules_t &
@@ -155,6 +155,7 @@ namespace crash::logscrub {
 
     const std::set<std::string> PUBLIC_NAMES = { "public", "default", "default user", "all users", "defaultuser0", "system", "system32", "localservice", "networkservice",
                                                  "administrator", "administrators", "guest", "shared", "user", "users", "root", "appdata", "programdata", "windows" };
+    const std::set<std::string> PLACEHOLDER_WORDS = { "hidden", "jwt", "pem", "ssid", "account", "host", "serial", "instance", "email", "share", "mac", "sid", "user" };
     const std::set<std::string> KEEP_IPV4 = { "0.0.0.0", "127.0.0.1", "255.255.255.255", "255.255.255.0" };
 
     std::string
@@ -201,7 +202,17 @@ namespace crash::logscrub {
       auto clean = [&](const std::set<std::string> &in, std::vector<std::string> &out) {
         for (const auto &raw : in) {
           const auto x = trim(raw);
-          if (x.size() >= 3 && x.size() <= 64 && !PUBLIC_NAMES.count(lower(x)) && !is_harmless(x) && !(x.front() == '<' && x.back() == '>')) out.push_back(x);
+          if (x.size() >= 3 && x.size() <= 64 && !PUBLIC_NAMES.count(lower(x)) && !is_harmless(x) && !(x.front() == '<' && x.back() == '>')) {
+            out.push_back(x);
+            // a name of several words ("Sky Hua") is cut at the first space by the value rules, which run before the names: every word goes too
+            for (std::size_t from = 0; x.find(' ') != std::string::npos && from < x.size();) {
+              const auto sp = x.find(' ', from);
+              const auto word = x.substr(from, sp == std::string::npos ? std::string::npos : sp - from);
+              if (word.size() >= 3 && !PUBLIC_NAMES.count(lower(word)) && !is_harmless(word)) out.push_back(word);  // "Ming 120": the 120 of fps=120 is not a name
+              if (sp == std::string::npos) break;
+              from = sp + 1;
+            }
+          }
         }
       };
       clean(u, users);
@@ -231,8 +242,8 @@ namespace crash::logscrub {
         if (m.length(0) == 0) continue;
         const auto v = m[3].str();
         if (is_harmless(v) && !must_hide(m[1].str(), v)) {
-          // a value that is one of our own placeholders (a learned name was replaced first) has the same unbalanced quote behind it
-          if (v.size() > 1 && v.front() == '<' && v.back() == '>' && quote_unbalanced(v, m[0].second, line.cend())) {
+          // a harmless value ('true', '', <hidden>) has the same unbalanced quote behind it
+          if (quote_unbalanced(v, m[0].second, line.cend())) {
             out.append(last, m[0].second);
             return out;
           }
@@ -381,8 +392,8 @@ namespace crash::logscrub {
     labels_t labels;
     std::vector<std::string> users, hosts;
     learn_names(text, users, hosts);
-    // The learned names go line by line, after the key blocks are told apart: a name must not change the markers of a key block (a user called "Key" and
-    // -----BEGIN PRIVATE KEY-----), and the lines of a key block are dropped, not renamed.
+    // The learned names go last, line by line, on what the structural rules (key blocks, key / value, quoted keys, URL credentials, addresses) left: a name that equals a structural word
+    // ("token", "http", "Key") must not break the rule that needs that word.
     std::vector<std::pair<regex, std::string>> name_rules;
     for (int pass = 0; pass < 2; ++pass) {
       auto &names = pass == 0 ? users : hosts;
@@ -399,6 +410,8 @@ namespace crash::logscrub {
       for (const auto &[re, kind] : name_rules) {
         out_line = replace_all(out_line, re, [&](const boost::smatch &m) {
           const auto name = m[0].str();
+          // the word inside one of our own placeholders (<hidden>, <ip#1>) is not a name
+          if (m[0].first != out_line.cbegin() && *(m[0].first - 1) == '<' && m.suffix().first != out_line.cend() && (*m.suffix().first == '>' || *m.suffix().first == '#') && PLACEHOLDER_WORDS.count(lower(name))) return name;
           if (boost::regex_search(m.suffix().first, m.suffix().second, rules().sep_follows, boost::match_continuous) && boost::regex_match(name, rules().name_is_key)) return name;
           return labels.of(kind, name);
         });
@@ -424,10 +437,10 @@ namespace crash::logscrub {
       if (boost::regex_search(line, rules().pem_begin)) {
         if (!boost::regex_search(line, rules().pem_end)) in_pem = true;
         const auto b = line.find("-----BEGIN");
-        piece = scrub_line(rename(line.substr(0, b)), labels) + "<pem>";  // what stands in front of the block is a log line like any other
+        piece = rename(scrub_line(line.substr(0, b), labels)) + "<pem>";  // what stands in front of the block is a log line like any other
       }
       else {
-        piece = scrub_line(rename(line), labels);
+        piece = rename(scrub_line(line, labels));
         if (piece.size() > max_line) {
           // never inside a UTF-8 sequence
           std::size_t cut = max_line - 1;

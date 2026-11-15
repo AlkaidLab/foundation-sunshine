@@ -126,12 +126,13 @@ namespace display_device {
     std::chrono::seconds timeout_duration { 5 }; /**< A retry time for the timer. */
     std::function<bool()> retry_function; /**< Function to be executed until it succeeds. */
 
-    std::thread timer_thread; /**< A timer thread. */
     std::condition_variable sleep_cv; /**< Condition variable for waking up thread. */
 
     bool can_wake_up { false }; /**< Safeguard for the condition variable to prevent sporadic thread wake ups. */
     bool keep_alive { true }; /**< A kill switch for the thread when it has been woken up. */
     boost::optional<std::chrono::steady_clock::time_point> next_wake_up_time; /**< Next time point for thread to wake up. */
+    /**< A timer thread. Declared last: it starts in the constructor and reads every member above, which are only constructed before it when it comes after them. */
+    std::thread timer_thread;
   };
 
   session_t::deinit_t::~deinit_t() {

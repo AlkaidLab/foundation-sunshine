@@ -192,6 +192,7 @@ namespace proc {
   }
   int
   proc_t::execute(int app_id, std::shared_ptr<rtsp_stream::launch_session_t> launch_session) {
+    std::lock_guard lifecycle(_lifecycle_mutex);
     // Ensure starting from a clean slate
     terminate();
     auto iter = std::find_if(_apps.begin(), _apps.end(), [&app_id](const auto app) {
@@ -409,6 +410,7 @@ namespace proc {
 
   void
   proc_t::terminate() {
+    std::lock_guard lifecycle(_lifecycle_mutex);
     std::error_code ec;
     placebo = false;
     launch_splash::end();

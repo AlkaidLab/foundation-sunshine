@@ -1,13 +1,16 @@
 """config-fingerprint.py and hot-headers.py (run: python3 -m unittest discover -s scripts/ci -p 'test_*.py')."""
 
 import gzip
+import http.server
 import io
+import os
 import pathlib
 import shutil
 import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import unittest
 
 CI = pathlib.Path(__file__).resolve().parent
@@ -50,6 +53,44 @@ class FingerprintTest(unittest.TestCase):
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout.strip()
+
+    def serve(self, body, status=200):
+        """A local server answering every request with `status` (body only with 200); returns its URL."""
+        data = body
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(status)
+                self.end_headers()
+                if status == 200:
+                    self.wfile.write(data)
+
+            def log_message(self, *args):
+                pass
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.shutdown)
+        self.addCleanup(server.server_close)
+        return f"http://127.0.0.1:{server.server_port}/ucrt64.db"
+
+    def fingerprint_from_urls(self, *urls):
+        env = dict(os.environ, MSYS2_DB_URLS=" ".join(urls), FINGERPRINT_RETRY_PAUSE="0")
+        return subprocess.run([sys.executable, str(SCRIPT), "--root", str(self.root)], capture_output=True, text=True, env=env)
+
+    def test_database_is_read_from_the_next_server_when_the_first_fails(self):
+        wanted = self.fingerprint()
+        result = self.fingerprint_from_urls(self.serve(b"", 503), self.serve(self.db.read_bytes()))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), wanted)
+        self.assertIn("503", result.stderr)
+
+    def test_no_server_gives_the_unavailable_fingerprint_after_three_rounds(self):
+        result = self.fingerprint_from_urls(self.serve(b"", 503))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr.count("HTTP Error 503:"), 3 + 1)  # three rounds, then the summary line; the port of the test server may contain 503, so the number alone is not counted
+        self.assertIn("MSYS2 package versions unavailable", result.stderr)
+        self.assertNotEqual(result.stdout.strip(), self.fingerprint())
 
     def test_it_is_twelve_hex_digits_and_stable(self):
         first = self.fingerprint()

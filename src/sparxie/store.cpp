@@ -113,7 +113,7 @@ namespace sparxie {
       return { kEndfieldDefaultWidth, kEndfieldDefaultHeight };
     }
     json
-    hoyo_object(const json &options, int display_fps, const json *existing = nullptr) {
+    hoyo_object(const json &options, int display_fps, const std::string &game, const json *existing = nullptr) {
       auto flag = [&](const char *key, bool fallback) {
         if (options.contains(key) && options[key].is_boolean()) return options[key].get<bool>();
         return fallback;
@@ -122,6 +122,11 @@ namespace sparxie {
         if (options.contains(key) && options[key].is_number_integer()) return std::clamp(options[key].get<int>(), lo, hi);
         return std::clamp(fallback, lo, hi);
       };
+      const int target_fps = resolve_target_fps(options, display_fps);
+      // Star Rail accepts 30/60/120 in its own GraphicsSettings model. Keep
+      // HoyoTouchCore for rates above that cap; the native path is more stable
+      // and also makes the game's saved setting agree with the stream.
+      const bool native_starrail_fps = game == "starrail" && (target_fps == 30 || target_fps == 60 || target_fps == 120);
       const std::string priority = known_priority(options.value("priority", std::string("normal")));
       const std::string input = options.value("input", std::string("touch"));
       const std::string resolution = options.value("resolution", std::string("auto"));
@@ -131,8 +136,8 @@ namespace sparxie {
       return json {
         // keyboard, mouse and gamepad (kbm) is a Sparxie session without the touch interface: HoyoSettings.touch_ui_enabled
         { "touchUiEnabled", options.value("input", std::string("touch")) != "kbm" },
-        { "fpsUnlockEnabled", flag("fpsUnlock", false) },
-        { "targetFps", num("fps", display_fps > 0 ? display_fps : 120, kFpsMin, kFpsMax) },
+        { "fpsUnlockEnabled", flag("fpsUnlock", false) && !native_starrail_fps },
+        { "targetFps", num("fps", target_fps, kFpsMin, kFpsMax) },
         { "backgroundFpsLimitEnabled", flag("bgLimit", true) },
         { "backgroundFps", num("bgFps", 10, kFpsMin, kFpsMax) },
         { "processPriority", priority },
@@ -157,7 +162,7 @@ namespace sparxie {
         { "game", to_sparxie_game(draft.game) },
         { "executablePath", draft.executable },
       };
-      if (draft.game != "zzz") profile["hoyo"] = hoyo_object(draft.options, draft.display_fps, existing_hoyo);
+      if (draft.game != "zzz") profile["hoyo"] = hoyo_object(draft.options, draft.display_fps, draft.game, existing_hoyo);
       return profile;
     }
     void
@@ -392,7 +397,7 @@ namespace sparxie {
   }
   int
   resolve_target_fps(const json &options, int display_fps) {
-    int target = 120;
+    int target = display_fps > 0 ? display_fps : 120;
     if (options.contains("fps")) {
       const json &fps = options["fps"];
       if (fps.is_number_integer())
@@ -407,8 +412,14 @@ namespace sparxie {
     return options.contains("fps") && options["fps"].is_string() && options["fps"].get<std::string>() == "display";
   }
   bool
-  unlock_owns_fps(const json &block) {
-    return block.value("mode", std::string("pc")) == "touch" && block.value("options", json::object()).value("fpsUnlock", false);
+  unlock_owns_fps(const json &block, int display_fps) {
+    if (block.value("mode", std::string("pc")) != "touch") return false;
+    const json options = block.value("options", json::object());
+    if (!options.value("fpsUnlock", false)) return false;
+    if (block.value("game", std::string()) != "starrail") return true;
+    // The game's own 30/60/120 tiers are authoritative. Only an above-cap
+    // request needs the HoyoTouchCore unlocker.
+    return resolve_target_fps(options, display_fps) > 120;
   }
   json
   settings_without_game_fps(const std::string &mode, const json &options, const json &settings) {

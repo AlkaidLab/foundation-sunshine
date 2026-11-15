@@ -73,9 +73,11 @@ namespace nvhttp::apps::poster {
     struct work_queue_t {
       std::mutex mutex;
       std::condition_variable condition;
+      std::condition_variable drained;
       std::deque<std::filesystem::path> pending;
       std::unordered_set<std::string> queued;
       bool started = false;
+      bool busy = false;  // the worker holds a source it popped and has not finished with it
     };
 
     struct digest_cache_t {
@@ -324,8 +326,14 @@ namespace nvhttp::apps::poster {
           path = std::move(queue.pending.front());
           queue.pending.pop_front();
           queue.queued.erase(std::filesystem::absolute(path).lexically_normal().string());
+          queue.busy = true;
         }
         build_variants(path);
+        {
+          std::lock_guard lock(queue.mutex);
+          queue.busy = false;
+        }
+        queue.drained.notify_all();
       }
     }
 
@@ -377,6 +385,13 @@ namespace nvhttp::apps::poster {
       }
     }
     queue.condition.notify_one();
+  }
+
+  bool
+  wait_idle(std::chrono::milliseconds timeout) {
+    auto &queue = work_queue();
+    std::unique_lock lock(queue.mutex);
+    return queue.drained.wait_for(lock, timeout, [&]() { return queue.pending.empty() && !queue.busy; });
   }
 
   std::optional<representation_t>

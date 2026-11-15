@@ -225,6 +225,7 @@ view_json() {
   j += std::string(",\"guidePending\":") + b(v.page == pg::done ? guide_pending() : !(v.upgrade || v.maintenance));
   j += std::string(",\"opening\":") + b(v.opening);
   j += std::string(",\"panelFailed\":") + b(v.panel_failed);
+  j += ",\"usbipGuard\":" + std::to_string(v.usbip_guard);
   j += std::string(",\"busy\":") + b(v.page == pg::uac || v.page == pg::installing);
   return j + "}";
 }

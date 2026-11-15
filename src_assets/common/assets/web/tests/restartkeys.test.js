@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { SEARCH_INDEX } from 'foundation-ui/settings/index.js'
+import { SEARCH_INDEX } from '../config/settingsData/index.js'
 import { CLIENT_KEYS, HOT_KEYS, needsRestart, setRestartPlatform } from '../composables/restartKeys.js'
 import { keysOf } from '../composables/settingsBinding.js'
 

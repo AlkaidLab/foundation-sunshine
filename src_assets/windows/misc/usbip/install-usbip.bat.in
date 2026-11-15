@@ -5,6 +5,11 @@ setlocal enabledelayedexpansion
 rem Installs the pinned usbip-win2 transport (USB/IP for the native DualSense path). The same release and digest
 rem as the panel's src-tauri/component-compatibility.json. Exit codes: 0 ready, 3010 restart recommended, else failed.
 rem The exit code is also written to result-usbip.txt next to this script, for the installer's progress events.
+rem Root-hub guard (issue #1272): usbip-win2 installs usbip2_filter on every USB\ROOT_HUB30, and a failed hub restart can
+rem leave all physical root hubs in Code 19, which kills every USB keyboard and mouse. usbip-roothub-guard.ps1 checks the hubs
+rem before and after, and rolls the install back when a physical hub got a new problem. More exit codes:
+rem 102 rolled back (hubs healthy again), 103 rolled back but not fully recovered, 104 not installed: Windows runs from
+rem a USB disk, 105 not installed: the guard could not run.
 call :main %*
 set "STEP_RC=!ERRORLEVEL!"
 > "%~dp0result-usbip.txt" echo !STEP_RC!
@@ -41,5 +46,38 @@ if defined VERIFY_ONLY (
   exit /b 0
 )
 
+set "guard=%~dp0usbip-roothub-guard.ps1"
+set "guard_state=%~dp0usbip-roothub-state.json"
+if not exist "%guard%" (
+  echo ERROR: Root-hub guard not found: "%guard%"
+  exit /b 105
+)
+
+powershell -NoProfile -ExecutionPolicy Bypass -File "%guard%" -Action preflight
+if !ERRORLEVEL! NEQ 0 (
+  set "GUARD_RC=!ERRORLEVEL!"
+  if !GUARD_RC! EQU 104 exit /b 104
+  exit /b 105
+)
+powershell -NoProfile -ExecutionPolicy Bypass -File "%guard%" -Action snapshot -State "%guard_state%"
+if !ERRORLEVEL! NEQ 0 exit /b 105
+
 "%installer%" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /RESTARTEXITCODE=3010 /SP-
-exit /b %ERRORLEVEL%
+set "INSTALL_RC=!ERRORLEVEL!"
+
+rem Verify even when the installer failed: its pnputil step may already have added the filter.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%guard%" -Action verify -State "%guard_state%"
+set "GUARD_RC=!ERRORLEVEL!"
+rem The pre-install snapshot (root hubs and driver packages as they were) is the material for a manual recovery:
+rem it is deleted only when the check or the rollback finished (0, 3010, 102), and kept when the recovery is incomplete (103, 105).
+if !GUARD_RC! EQU 0 del /q "%guard_state%" >nul 2>&1
+if !GUARD_RC! EQU 3010 del /q "%guard_state%" >nul 2>&1
+if !GUARD_RC! EQU 102 del /q "%guard_state%" >nul 2>&1
+if exist "%guard_state%" echo The pre-install snapshot is kept for the recovery: "%guard_state%"
+if !GUARD_RC! EQU 0 exit /b !INSTALL_RC!
+if !GUARD_RC! EQU 3010 (
+  if !INSTALL_RC! EQU 0 exit /b 3010
+  exit /b !INSTALL_RC!
+)
+if !GUARD_RC! EQU 102 exit /b 102
+exit /b 103

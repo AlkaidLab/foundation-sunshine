@@ -1,6 +1,6 @@
-# Crash, abort and hang reports (telemetry v1, `POST /v1/crash`)
+# Crash, abort and hang reports (`POST /v1/crash`)
 
-Contract: the crash part of the telemetry v1 specification (see `docs/privacy_telemetry.md`). This page is what the code does.
+Contract: the crash part of the report format in `docs/privacy_telemetry.md`. This page is what the code does.
 
 ## What is captured
 

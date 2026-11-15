@@ -638,6 +638,58 @@
    "required": [
     "logged in 'ok' and 'done'"
    ]
+  },
+  {
+   "name": "a learned name that is a key word keeps a quoted json key",
+   "input": "Info: username=token\nInfo: {\"token\":\"abc123def\"}",
+   "forbidden": [
+    "abc123def"
+   ],
+   "required": [
+    "Info:"
+   ]
+  },
+  {
+   "name": "a learned name that is the url scheme keeps the credentials rule",
+   "input": "Info: username=http\nInfo: GET http://alice:hunter2@router/ ok",
+   "forbidden": [
+    "hunter2",
+    "alice"
+   ],
+   "required": [
+    "Info: GET"
+   ]
+  },
+  {
+   "name": "an unbalanced quote behind a harmless quoted value",
+   "input": "Info: password='true' hunter2' next",
+   "forbidden": [
+    "hunter2"
+   ],
+   "required": [
+    "Info: password="
+   ]
+  },
+  {
+   "name": "a learned name of several words",
+   "input": "Info: loading C:\\Users\\Sky Hua\\AppData\\x.conf\nInfo: username=Sky Hua logged in",
+   "forbidden": [
+    "Sky",
+    "Hua"
+   ],
+   "required": [
+    "Info: loading"
+   ]
+  },
+  {
+   "name": "a learned name that is one of our placeholder words",
+   "input": "Info: username=hidden\nInfo: password=hunter2",
+   "forbidden": [
+    "hunter2"
+   ],
+   "required": [
+    "password=<hidden>"
+   ]
   }
  ]
 }

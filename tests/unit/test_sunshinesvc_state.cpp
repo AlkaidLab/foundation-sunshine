@@ -5,6 +5,7 @@
 #include <tools/sunshinesvc_state.h>
 
 #include <array>
+#include <vector>
 #include <gtest/gtest.h>
 
 TEST(GuiRestartBackoff, BacksOffRepeatedFailures) {
@@ -132,6 +133,45 @@ TEST(HostInstance, ASecondProcessIsNotTheOwner) {
   EXPECT_EQ(sunshinesvc::instance_claim(true, sunshinesvc::instance_error_already_exists), sunshinesvc::instance_claim_e::other_running);
   EXPECT_EQ(sunshinesvc::instance_claim(false, sunshinesvc::instance_error_access_denied), sunshinesvc::instance_claim_e::other_running);
   EXPECT_EQ(sunshinesvc::instance_claim(false, 8), sunshinesvc::instance_claim_e::unknown);
+}
+
+TEST(HostInstance, OnlyAReadyCoreThatIsNotStoppingIsAdopted) {
+  using sunshinesvc::core_action_e;
+  using sunshinesvc::core_state_t;
+  const auto plan_of = [](std::vector<core_state_t> cores) { return sunshinesvc::plan_cores(cores); };
+
+  EXPECT_FALSE(plan_of({}).keep.has_value());
+  EXPECT_TRUE(plan_of({}).actions.empty());
+
+  const auto healthy = plan_of({ { true, false } });
+  ASSERT_TRUE(healthy.keep.has_value());
+  EXPECT_EQ(*healthy.keep, 0u);
+
+  // The reported case: a core in its shutdown is not adopted, the service starts a fresh one.
+  const auto stopping = plan_of({ { true, true } });
+  EXPECT_FALSE(stopping.keep.has_value());
+  EXPECT_EQ(stopping.actions, std::vector<core_action_e> { core_action_e::wait_for_exit });
+  EXPECT_FALSE(plan_of({ { false, true } }).keep.has_value());
+
+  // Still starting, or a build that publishes nothing: replaced, not trusted.
+  const auto unknown = plan_of({ { false, false } });
+  EXPECT_FALSE(unknown.keep.has_value());
+  EXPECT_EQ(unknown.actions, std::vector<core_action_e> { core_action_e::end });
+
+  // The healthy core is found wherever it is in the list, and the others are not kept.
+  const auto mixed = plan_of({ { true, true }, { false, false }, { true, false }, { true, false } });
+  ASSERT_TRUE(mixed.keep.has_value());
+  EXPECT_EQ(*mixed.keep, 2u);
+  EXPECT_EQ(mixed.actions,
+    (std::vector<core_action_e> { core_action_e::wait_for_exit, core_action_e::end, core_action_e::keep, core_action_e::end }));
+}
+
+TEST(HostInstance, TheCoreEventsAreOneNameEachPerProcess) {
+  const auto ready = sunshinesvc::core_event_name(sunshinesvc::core_event_e::ready, 4242);
+  const auto stopping = sunshinesvc::core_event_name(sunshinesvc::core_event_e::stopping, 4242);
+  EXPECT_EQ(ready, L"Global\\FoundationSunshineCoreReady-4242");
+  EXPECT_EQ(stopping, L"Global\\FoundationSunshineCoreStopping-4242");
+  EXPECT_NE(ready, sunshinesvc::core_event_name(sunshinesvc::core_event_e::ready, 4243));
 }
 
 TEST(HostInstance, AnExistingCoreIsSupervisedInsteadOfLaunched) {

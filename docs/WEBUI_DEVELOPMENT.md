@@ -1005,3 +1005,7 @@ import { trackEvents } from '../config/telemetry.js'
 - **错误处理**: 改进预览模式下的 API 错误处理
 - **性能优化**: 使用 Rolldown 加速构建过程
 - **开发体验**: 改进预览功能，支持一键构建并预览
+
+## Settings data
+
+The search index of the settings and the label tables of the settings area belong to this project, not to foundation-ui: they are generated from the tab templates and the locale files by `node scripts/gen-config-index.mjs` into `src_assets/common/assets/web/config/settingsData/` (GPL-3.0, like the rest of the Web UI; `--check` fails when they are out of date). `config/settingsData/index.js` hands them to foundation-ui with `provideSettingsData`; every module that reads the index imports `SEARCH_INDEX` from it, so the data is supplied before anything is drawn. The control panel is built with the same files (its `@settings-data` alias points here). The tests that read this data (`tests/settingsdata-*.test.js`) are checks of foundation-ui's settings logic against the real index and labels.

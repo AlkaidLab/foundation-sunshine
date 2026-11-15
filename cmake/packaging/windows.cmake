@@ -120,6 +120,11 @@ configure_file(
 install(FILES "${GENERATED_USBIP_INSTALL_SCRIPT}"
         DESTINATION "scripts"
         COMPONENT usbip)
+# The root-hub guard is always installed (the assets component), not with the USB/IP component: the Panel runs it around its
+# own runtime install of usbip-win2 too (issue #1272), and the recovery steps name it.
+install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/usbip/usbip-roothub-guard.ps1"
+        DESTINATION "scripts"
+        COMPONENT assets)
 if(USBIP_AVAILABLE)
   install(FILES "${USBIP_INSTALLER}"
           DESTINATION "scripts/usbip"

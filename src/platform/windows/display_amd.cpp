@@ -29,17 +29,22 @@ namespace platf::dxgi {
   amd_capture_t::~amd_capture_t() {
     AMF_RESULT result;
 
-    // Before terminating the Display Capture component, we need to drain the remaining frames
-    result = captureComp->Drain();
-    if (result == AMF_OK) {
-      do {
-        result = captureComp->QueryOutput((amf::AMFData **) &capturedSurface);
-        Sleep(1);
-      } while (result != AMF_EOF);
+    // Before terminating the Display Capture component, we need to drain the remaining frames.
+    // A capture that never started has no component (and maybe no context): the destructor runs for it too.
+    if (captureComp) {
+      result = captureComp->Drain();
+      if (result == AMF_OK) {
+        do {
+          result = captureComp->QueryOutput((amf::AMFData **) &capturedSurface);
+          Sleep(1);
+        } while (result != AMF_EOF);
+      }
+      captureComp->Terminate();
     }
-    captureComp->Terminate();
 
-    context->Terminate();
+    if (context) {
+      context->Terminate();
+    }
     captureComp = nullptr;
     context = nullptr;
     capturedSurface = nullptr;

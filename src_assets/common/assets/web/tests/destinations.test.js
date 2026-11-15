@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 
-const { SEARCH_INDEX, buildSettingsEntries, categoryOfRow, dualsenseEntries, ds5PlaceOf, labelOf, searchEntries, settingsGroups } = await import('foundation-ui/settings/index.js')
+const { SEARCH_INDEX } = await import('../config/settingsData/index.js')
+const { buildSettingsEntries, categoryOfRow, dualsenseEntries, ds5PlaceOf, labelOf, searchEntries, settingsGroups } = await import('foundation-ui/settings/index.js')
 
 // The shell keeps its pages and rail items in two literals; read them from the source so the test sees what the shell has.
 const shellSource = await readFile(new URL('../views/WebShell.vue', import.meta.url), 'utf8')

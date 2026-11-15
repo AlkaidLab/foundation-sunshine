@@ -109,6 +109,27 @@ namespace ui {
   inline std::wstring
   Z(const view &v, const wchar_t *zh, const wchar_t *en) { return v.zh ? zh : en; }
 
+  // The done-page note when install-usbip.bat did not leave USB/IP installed (issue #1272). The component is marked failed in
+  // the step list; the rest of the setup is complete.
+  inline std::wstring
+  usbip_guard_note(const view &v) {
+    switch (v.usbip_guard) {
+      case 102:
+        return Z(v, L"USB/IP 没有安装：安装后检测到 USB 根集线器异常，已自动撤销，USB 设备不受影响。原生 DualSense 暂不可用。",
+                 L"USB/IP is not installed: a USB root hub reported a problem after the install, so it was rolled back. Your USB devices are unaffected. Native DualSense is unavailable.");
+      case 103:
+        return Z(v, L"USB/IP 安装后 USB 根集线器异常，自动撤销没能完全恢复。若键盘或鼠标失灵，请按 docs/usbip-roothub-recovery.zh.md 的步骤恢复。",
+                 L"A USB root hub reported a problem after the USB/IP install and the automatic rollback did not fully recover it. If the keyboard or mouse stops working, follow docs/usbip-roothub-recovery.zh.md.");
+      case 104:
+        return Z(v, L"USB/IP 没有安装：Windows 运行在 USB 磁盘上，安装它会重启所有 USB 根集线器，可能导致系统无法启动。",
+                 L"USB/IP is not installed: Windows runs from a USB disk, and the install restarts every USB root hub, which can stop it booting.");
+      case 105:
+        return Z(v, L"USB/IP 没有安装：安装前检查没有通过，无法确认 USB 根集线器的状态。",
+                 L"USB/IP is not installed: the check before the install did not pass, so the state of the USB root hubs could not be confirmed.");
+    }
+    return std::wstring();
+  }
+
   inline std::wstring
   detail_text(const view &v, int d) {
     switch (d) {
@@ -388,7 +409,7 @@ namespace ui {
         // expected to ask for one (installer-usbip-win2-readme-20261109).
         facts = {
           { ic::shield, p.tertiary_c, p.on_tertiary_c, Z(v, L"管理员权限", L"Administrator permission"), Z(v, L"安装时 Windows 会请求一次。", L"Windows asks once during setup.") },
-          { ic::monitor, p.primary_c, p.on_primary_c, Z(v, L"组件", L"Components"), Z(v, L"默认全部安装，可在“自定义功能”中调整。", L"All are installed by default. Change them in Customize.") },
+          { ic::monitor, p.primary_c, p.on_primary_c, Z(v, L"组件", L"Components"), Z(v, L"默认安装常用组件，USB/IP 需在“自定义功能”中勾选。", L"Common components are installed by default. USB/IP is opt-in in Customize.") },
         };
         add_button(101, Z(v, L"安装", L"Install"), bkind::filled);
         add_button(102, Z(v, L"自定义功能", L"Customize"), bkind::tonal);
@@ -509,10 +530,17 @@ namespace ui {
         gfg = p.on_success_c;
         title = Z(v, L"安装完成", L"Setup complete");
         lead = v.panel_failed ? Z(v, L"管理界面未能打开。点“开启串流旅程”重试。", L"The panel did not open. Press Start your streaming journey to retry.") : std::wstring();
+        if (v.usbip_guard) lead = usbip_guard_note(v) + (lead.empty() ? std::wstring() : L" " + lead);
+        if (v.usbip_guard == 103) {  // the hubs are not known to be healthy: a warning, not a plain success
+          glyph = ic::exclam;
+          gbg = p.warning_c;
+          gfg = p.on_warning_c;
+        }
         if (v.webview2_missing) {
           // installed, but the Panel cannot run yet: no WebView2 Runtime (the bootstrapper needs the network)
           lead = Z(v, L"管理界面需要 Microsoft Edge WebView2 Runtime，本次未能安装（可能没有联网）。可从 go.microsoft.com/fwlink/p/?LinkId=2124703 下载；现在可先用网页管理 https://localhost:47990。",
             L"The panel needs the Microsoft Edge WebView2 Runtime, which could not be installed (no network?). Get it from go.microsoft.com/fwlink/p/?LinkId=2124703; meanwhile use the Web UI at https://localhost:47990.");
+          if (v.usbip_guard) lead = usbip_guard_note(v) + L" " + lead;
           add_button(101, Z(v, L"打开网页管理", L"Open the Web UI"), bkind::filled);
           add_button(102, Z(v, L"重启电脑", L"Restart PC"), bkind::text);
           break;

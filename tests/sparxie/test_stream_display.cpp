@@ -48,6 +48,13 @@ namespace {
   key_of(const char *vendor, const char *name) {
     return std::string("Software") + static_cast<char>(92) + vendor + static_cast<char>(92) + name;
   }
+  json
+  owner_fixture() {
+    std::ifstream in(fs::path(SPARXIE_FIXTURES_DIR) / "owner-starrail-fps.json");
+    json fixture;
+    in >> fixture;
+    return fixture;
+  }
   sparxie::GameValues
   read_back(const sparxie::Install &install, sparxie::Registry &reg) {
     return sparxie::read_game_settings(install, reg, {}, [] { return false; }).values;
@@ -189,6 +196,52 @@ TEST(StreamDisplay, LaunchWritesTheStreamedSizeIntoEachUnityTitleWhateverTheSett
   EXPECT_EQ(resolution["height"], 1320);
   EXPECT_EQ(resolution["isFullScreen"], true);
   EXPECT_EQ(reg.get(key_of("miHoYo", "崩坏：星穹铁道"), "Screenmanager Fullscreen mode_h3630240806").dword, 1u) << "Unity's full-screen window";
+}
+
+TEST(StreamDisplay, OwnerStarRailDisplayTierUsesNative120AndDisablesVsync) {
+  const fs::path root = fresh("sparxie-owner-starrail-fps");
+  sparxie::HostEnv env = env_at(root);
+  sparxie::MemoryRegistry reg;
+  env.registry = &reg;
+  env.display_refresh = [] { return 120; };
+  env.display_size = [] { return std::pair<int, int> { 3840, 2160 }; };
+  env.process_running = [](const std::vector<std::string> &) { return false; };
+  const json fixture = owner_fixture();
+  json block = fixture["app"]["sparxie"];
+  block["dir"] = (root / "game").string();
+  block["exe"] = (root / "game" / "StarRail.exe").string();
+  touch(root / "game" / "StarRail.exe");
+  const std::string key = key_of("miHoYo", "崩坏：星穹铁道");
+  const std::string model = fixture["registry"]["model"].dump();
+  reg.set_binary(key, "GraphicsSettings_Model_h2986158309", std::vector<std::uint8_t>(model.begin(), model.end()));
+  reg.set_dword(key, "GraphicsSettings_GraphicsQuality_h523255858", fixture["registry"]["quality"].get<std::uint32_t>());
+  const json profile = fixture["profile"];
+  fs::create_directories(env.data_dir);
+  std::ofstream(env.data_dir / "config.json") << json { { "schemaVersion", 1 }, { "selectedProfileId", profile["id"] }, { "profiles", { profile } } }.dump(2);
+  write_apps(env, { { "name", fixture["app"]["name"] }, { "cmd", fixture["app"]["cmd"] }, { "sparxie", block } });
+
+  ASSERT_TRUE(sparxie::prepare_launch(env, fixture["app"]["name"], fixture["app"]["cmd"], { 3840, 2160, 120 }).ok);
+  sparxie::Install install;
+  install.id = "starrail-cn-2";
+  install.game = "starrail";
+  install.region = "cn";
+  install.dir = (root / "game").string();
+  install.exe_path = (root / "game" / "StarRail.exe").string();
+  const auto values = read_back(install, reg);
+  EXPECT_EQ(values.fps, 120);
+  EXPECT_FALSE(values.vsync);
+  const json saved = sparxie::read_store(env.data_dir).document;
+  ASSERT_EQ(saved["profiles"].size(), 1u);
+  EXPECT_FALSE(saved["profiles"][0]["hoyo"]["fpsUnlockEnabled"].get<bool>());
+  EXPECT_EQ(saved["profiles"][0]["hoyo"]["targetFps"], 120);
+
+  block["options"]["fps"] = 144;
+  write_apps(env, { { "name", fixture["app"]["name"] }, { "cmd", fixture["app"]["cmd"] }, { "sparxie", block } });
+  ASSERT_TRUE(sparxie::prepare_launch(env, fixture["app"]["name"], fixture["app"]["cmd"], { 3840, 2160, 144 }).ok);
+  EXPECT_EQ(read_back(install, reg).fps, 60) << "above the game's native cap, the unlocker owns the target and the native value is restored";
+  const json unlocked = sparxie::read_store(env.data_dir).document;
+  EXPECT_TRUE(unlocked["profiles"][0]["hoyo"]["fpsUnlockEnabled"].get<bool>());
+  EXPECT_EQ(unlocked["profiles"][0]["hoyo"]["targetFps"], 144);
 }
 
 TEST(StreamDisplay, TheSessionSizeIsUsedWhenTheDisplayCannotBeRead) {

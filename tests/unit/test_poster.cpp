@@ -82,6 +82,9 @@ TEST(Poster, FullRepresentationPreservesPixelsAndUsesByteEtag) {
   EXPECT_EQ(source_width, full_width);
   EXPECT_EQ(source_height, full_height);
   EXPECT_TRUE(full->etag.size() == 66 && full->etag.front() == '"' && full->etag.back() == '"');
+  // The background pass may still be reading source.png; Windows refuses to delete a file that is open.
+  EXPECT_TRUE(nvhttp::apps::poster::wait_idle());
+  EXPECT_TRUE(nvhttp::apps::poster::preview(source)) << "once idle, the pass has finished and its preview is on disk";
   test_support::remove_tree_quiet(root);
 }
 
@@ -101,6 +104,7 @@ TEST(Poster, BackgroundPreviewIsBoundedAndScaled) {
   const auto pixels = decode(preview->path, width, height);
   EXPECT_FALSE(pixels.empty());
   EXPECT_LE(std::max(width, height), nvhttp::apps::poster::preview_longest_side);
+  EXPECT_TRUE(nvhttp::apps::poster::wait_idle());
   test_support::remove_tree_quiet(root);
 }
 

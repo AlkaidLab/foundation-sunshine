@@ -3,6 +3,7 @@ import { computed, inject, onMounted, ref, useId } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { MIcon, MIconButton, MSheet, MAppearance, MSponsorButton, aboutTexts, appearanceTexts, useAppearance } from 'foundation-ui/vue'
 import { SPONSORS } from '../../config/sponsors.js'
+import '../../config/settingsData/index.js'
 import { labelOf } from 'foundation-ui/settings/index.js'
 import { loadAutoTheme, setStoredTheme, setTheme } from '../../utils/theme.js'
 

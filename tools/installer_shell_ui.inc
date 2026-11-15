@@ -807,10 +807,10 @@ std::wstring
 component_list() {
   // tile order: vdd, gamepad, usbip, vmouse, firewall, autostart, tools, then the desktop shortcut task
   static const wchar_t *names[] = { L"vdd", L"gamepad", L"usbip", L"vmouse", L"firewall", L"autostart", L"tools" };
-  bool all = true;
-  for (int i = 0; i < kTileCount; ++i) all = all && S.v.tiles[i];
-  g_run.tasks = all ? L"" : (S.v.tiles[7] ? L"desktopicon" : L"none");
-  if (all) return {};
+  // Always the explicit current selection, never an empty "use the defaults": the setup engine has UsePreviousSetupType=yes, and
+  // without /COMPONENTS and /MERGETASKS it restores the choices of the last install, so a component unticked now (USB/IP) would
+  // be installed again.
+  g_run.tasks = S.v.tiles[7] ? L"desktopicon" : L"none";
   std::wstring list = L"application,assets,gui";
   for (int i = 0; i < 7; ++i)
     if (S.v.tiles[i]) list += std::wstring(L",") + names[i];

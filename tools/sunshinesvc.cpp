@@ -463,23 +463,127 @@ OpenInstallCores(const std::wstring &core_path) {
   return found;
 }
 
-// Keep the first and end the others. A second Sunshine.exe is what leaves the health check
-// unable to finish: both hold sockets and the graphics driver.
-void
-EndExtraCores(std::vector<CoreProcess> &cores, HANDLE log_file) {
-  for (std::size_t index = 1; index < cores.size(); ++index) {
-    auto &extra = cores[index];
-    const auto ended = TerminateProcess(extra.handle, 1);
-    const auto waited = WaitForSingleObject(extra.handle, 5000);
-    WriteServiceLog(log_file,
-      "Ended extra Sunshine.exe PID " + std::to_string(extra.process_id) +
-        (ended && waited == WAIT_OBJECT_0 ? " before starting the core" : "; it did not exit within 5 s"));
-    CloseHandle(extra.handle);
-    extra.handle = NULL;
+// Whether the named per-process event of a core exists and is signaled. A core of an older build, or one that has not
+// created it yet, has none.
+bool
+CoreEventSignaled(sunshinesvc::core_event_e kind, DWORD process_id) {
+  const auto event = OpenEventW(SYNCHRONIZE, FALSE, sunshinesvc::core_event_name(kind, process_id).c_str());
+  if (event == NULL) {
+    return false;
   }
-  if (!cores.empty()) {
-    cores.resize(1);
+  const auto signaled = WaitForSingleObject(event, 0) == WAIT_OBJECT_0;
+  CloseHandle(event);
+  return signaled;
+}
+
+std::string
+DescribeCore(const CoreProcess &core, const sunshinesvc::core_state_t &state) {
+  DWORD session = 0;
+  const auto session_text = ProcessIdToSessionId(core.process_id, &session) ? std::to_string(session) : std::string { "?" };
+  FILETIME created, exited, kernel, user;
+  std::string age = "?";
+  if (GetProcessTimes(core.handle, &created, &exited, &kernel, &user)) {
+    FILETIME now;
+    GetSystemTimeAsFileTime(&now);
+    const auto to_u64 = [](const FILETIME &t) { return (static_cast<ULONGLONG>(t.dwHighDateTime) << 32) | t.dwLowDateTime; };
+    const auto elapsed = to_u64(now) > to_u64(created) ? to_u64(now) - to_u64(created) : 0;
+    age = std::to_string(elapsed / 10000000ull) + " s";
   }
+  return "Sunshine.exe PID " + std::to_string(core.process_id) + " (session " + session_text + ", running " + age +
+         ", ready=" + (state.ready ? "yes" : "no") + ", stopping=" + (state.stopping ? "yes" : "no") + ")";
+}
+
+// Ask one process to close by posting WM_CLOSE to the top-level windows it owns. Unlike a console control event, this reaches that
+// process only: a core and a command-line Sunshine.exe may share one console, and the event would stop both.
+bool
+RequestCoreClose(DWORD pid) {
+  struct Search {
+    DWORD pid;
+    bool posted;
+  } search { pid, false };
+  EnumWindows(
+    [](HWND window, LPARAM parameter) -> BOOL {
+      auto *found = reinterpret_cast<Search *>(parameter);
+      DWORD owner = 0;
+      GetWindowThreadProcessId(window, &owner);
+      if (owner == found->pid && PostMessageW(window, WM_CLOSE, 0, 0)) {
+        found->posted = true;
+      }
+      return TRUE;
+    },
+    reinterpret_cast<LPARAM>(&search));
+  return search.posted;
+}
+
+// Decide which of the cores found for this install to supervise, and make the others leave. A core is kept only when it
+// has said it is ready and has not said it is stopping: one on its way out would exit a moment after it was adopted and
+// leave the service without a core (the adopted process that ends after a fixed wait and is then restarted). The others
+// are given a short, bounded time and then ended, so a fresh core never competes with them for the ports and the GPU.
+// Every handle in `cores` is closed, except the one returned.
+CoreProcess
+ResolveCores(std::vector<CoreProcess> &cores, HANDLE console_token, HANDLE log_file) {
+  std::vector<sunshinesvc::core_state_t> states;
+  for (const auto &core : cores) {
+    states.push_back({ CoreEventSignaled(sunshinesvc::core_event_e::ready, core.process_id),
+      CoreEventSignaled(sunshinesvc::core_event_e::stopping, core.process_id) });
+  }
+  const auto plan = sunshinesvc::plan_cores(states);
+
+  CoreProcess kept;
+  for (std::size_t index = 0; index < cores.size(); ++index) {
+    auto &core = cores[index];
+    const auto description = DescribeCore(core, states[index]);
+    switch (plan.actions[index]) {
+      case sunshinesvc::core_action_e::keep:
+        kept = core;
+        core.handle = NULL;
+        continue;
+      case sunshinesvc::core_action_e::wait_for_exit: {
+        WriteServiceLog(log_file, description + " is shutting down; not adopting it, waiting for it to exit");
+        if (WaitForSingleObject(core.handle, sunshinesvc::core_stopping_wait_ms) != WAIT_OBJECT_0) {
+          TerminateProcess(core.handle, ERROR_PROCESS_ABORTED);
+          const auto ended = WaitForSingleObject(core.handle, sunshinesvc::core_end_wait_ms) == WAIT_OBJECT_0;
+          WriteServiceLog(log_file, description + (ended ? " did not finish its shutdown in time and was ended" : " did not exit within the wait after force termination"));
+        }
+        break;
+      }
+      case sunshinesvc::core_action_e::end: {
+        WriteServiceLog(log_file, description + " is not known to be healthy; not adopting it, ending it before starting a fresh core");
+        const auto asked = RequestCoreClose(core.process_id);
+        if (!asked || WaitForSingleObject(core.handle, sunshinesvc::core_end_wait_ms) != WAIT_OBJECT_0) {
+          TerminateProcess(core.handle, ERROR_PROCESS_ABORTED);
+          const auto ended = WaitForSingleObject(core.handle, sunshinesvc::core_end_wait_ms) == WAIT_OBJECT_0;
+          WriteServiceLog(log_file, description + (ended ? " was ended" : " did not exit within the wait after force termination"));
+        }
+        break;
+      }
+    }
+    CloseHandle(core.handle);
+    core.handle = NULL;
+  }
+  cores.clear();
+
+  // The others took time to leave: check the candidate again against what it says now, not against what it said at the start.
+  if (kept.handle != NULL) {
+    const bool alive = WaitForSingleObject(kept.handle, 0) == WAIT_TIMEOUT;
+    const bool ready = alive && CoreEventSignaled(sunshinesvc::core_event_e::ready, kept.process_id);
+    const bool stopping = alive && CoreEventSignaled(sunshinesvc::core_event_e::stopping, kept.process_id);
+    if (!alive || !ready || stopping) {
+      WriteServiceLog(log_file,
+        "Sunshine.exe PID " + std::to_string(kept.process_id) +
+          (alive ? " is no longer ready and running; not adopting it" : " has exited; not adopting it"));
+      if (alive && WaitForSingleObject(kept.handle, sunshinesvc::core_stopping_wait_ms) != WAIT_OBJECT_0) {
+        TerminateProcess(kept.handle, ERROR_PROCESS_ABORTED);
+        WaitForSingleObject(kept.handle, sunshinesvc::core_end_wait_ms);
+      }
+      CloseHandle(kept.handle);
+      kept = CoreProcess {};
+    }
+  }
+  if (kept.handle != NULL) {
+    WriteServiceLog(log_file, "Adopting Sunshine.exe PID " + std::to_string(kept.process_id) + ": it is ready and not shutting down");
+  }
+  return kept;
 }
 
 // The lifecycle facts of the core, for the host to report at its next start (tools/sunshinesvc_lifecycle.h). Writing them never changes what the service does.
@@ -797,21 +901,22 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
     }
 
     // One core per install. A leftover from the previous run (the service child that did not
-    // exit, or a user-mode Sunshine.exe) is supervised instead of joined by a second process.
+    // exit, or a user-mode Sunshine.exe) is supervised instead of joined by a second process, when it
+    // is ready and not shutting down; otherwise it is ended and a fresh core is started.
     const auto core_path = InstallDirectory() + L"\\Sunshine.exe";
     auto cores = OpenInstallCores(core_path);
     HANDLE job_handle = NULL;
     PROCESS_INFORMATION process_info = {};
     bool core_adopted = false;
     ULONGLONG adopted_at_tick = 0;
-    if (sunshinesvc::core_start_decision(!cores.empty()) == sunshinesvc::core_start_e::adopt) {
-      if (cores.size() > 1) {
-        const auto extras = static_cast<int>(cores.size() - 1);
-        EndExtraCores(cores, log_file_handle);
-        NoteLifecycle(sunshinesvc::lifecycle::extra_ended_line(sunshinesvc::lifecycle::unix_ms(), extras));
+    const auto found_cores = static_cast<int>(cores.size());
+    const auto adopted_core = ResolveCores(cores, console_token, log_file_handle);
+    if (sunshinesvc::core_start_decision(adopted_core.handle != NULL) == sunshinesvc::core_start_e::adopt) {
+      if (found_cores > 1) {
+        NoteLifecycle(sunshinesvc::lifecycle::extra_ended_line(sunshinesvc::lifecycle::unix_ms(), found_cores - 1));
       }
-      process_info.hProcess = cores[0].handle;
-      process_info.dwProcessId = cores[0].process_id;
+      process_info.hProcess = adopted_core.handle;
+      process_info.dwProcessId = adopted_core.process_id;
       process_info.hThread = NULL;
       WriteServiceLog(log_file_handle,
         "Sunshine.exe PID " + std::to_string(process_info.dwProcessId) +

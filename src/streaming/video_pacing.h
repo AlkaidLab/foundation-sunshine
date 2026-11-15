@@ -65,11 +65,24 @@ namespace streaming {
     return std::max(sustained_bps, static_cast<std::uint64_t>(needed + 0.5L));
   }
 
+  /// The frame rates a client may ask for while a stream runs (control message and HTTP API).
+  inline constexpr double dynamic_fps_min = 1.0;
+  inline constexpr double dynamic_fps_max = 1000.0;
+
+  /// True for a finite frame rate inside [dynamic_fps_min, dynamic_fps_max]; NaN and infinity are out.
+  inline bool
+  dynamic_fps_in_range(double frames_per_second) noexcept {
+    return frames_per_second >= dynamic_fps_min && frames_per_second <= dynamic_fps_max;
+  }
+
   /// The capture interval of a stream at the given frame rate; zero when the rate is unusable, which disables pacing.
   inline std::chrono::nanoseconds
   video_frame_interval(double frames_per_second) noexcept {
     if (!(frames_per_second > 0.0)) return {};
-    return std::chrono::nanoseconds { static_cast<std::int64_t>(1e9 / frames_per_second) };
+    const double interval_ns = 1e9 / frames_per_second;
+    // A rate so small that the interval no longer fits the counter would be undefined behaviour in the conversion.
+    if (!(interval_ns < 9.0e18)) return {};
+    return std::chrono::nanoseconds { static_cast<std::int64_t>(interval_ns) };
   }
 
   /**

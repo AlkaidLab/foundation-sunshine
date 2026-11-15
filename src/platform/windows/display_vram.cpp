@@ -884,11 +884,19 @@ namespace platf::dxgi {
       HRESULT status = S_OK;
 
 #define create_vertex_shader_helper(x, y)                                                                    \
+  if (!x) {                                                                                                  \
+    BOOST_LOG(error) << "Shader " << #x << " was not compiled";                                              \
+    return -1;                                                                                               \
+  }                                                                                                          \
   if (FAILED(status = device->CreateVertexShader(x->GetBufferPointer(), x->GetBufferSize(), nullptr, &y))) { \
     BOOST_LOG(error) << "Failed to create vertex shader " << #x << ": " << util::log_hex(status);            \
     return -1;                                                                                               \
   }
 #define create_pixel_shader_helper(x, y)                                                                    \
+  if (!x) {                                                                                                 \
+    BOOST_LOG(error) << "Shader " << #x << " was not compiled";                                             \
+    return -1;                                                                                              \
+  }                                                                                                         \
   if (FAILED(status = device->CreatePixelShader(x->GetBufferPointer(), x->GetBufferSize(), nullptr, &y))) { \
     BOOST_LOG(error) << "Failed to create pixel shader " << #x << ": " << util::log_hex(status);            \
     return -1;                                                                                              \

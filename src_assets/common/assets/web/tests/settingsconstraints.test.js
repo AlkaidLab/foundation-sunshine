@@ -3,7 +3,8 @@ import assert from 'node:assert/strict'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { SEARCH_INDEX, CONSTRAINTS, SETTING_META, validateSetting } from 'foundation-ui/settings/index.js'
+import { SEARCH_INDEX } from '../config/settingsData/index.js'
+import { CONSTRAINTS, SETTING_META, validateSetting } from 'foundation-ui/settings/index.js'
 import { tokenize } from '../../../../../scripts/gen-config-index.mjs'
 
 // What the host takes for a setting is in src/config.cpp. This walks the host's ranges and the settings schema (the search index and SETTING_META) and checks that a page can not offer a value

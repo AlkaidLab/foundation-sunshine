@@ -62,6 +62,8 @@ TEST(VideoPacing, FrameIntervalFollowsTheFrameRate) {
   EXPECT_EQ(streaming::video_frame_interval(0.0).count(), 0);
   EXPECT_EQ(streaming::video_frame_interval(-30.0).count(), 0);
   EXPECT_EQ(streaming::video_frame_interval(std::numeric_limits<double>::quiet_NaN()).count(), 0);
+  EXPECT_EQ(streaming::video_frame_interval(1e-12).count(), 0) << "an interval beyond int64 disables pacing instead of overflowing";
+  EXPECT_EQ(streaming::video_frame_interval(1.0).count(), 1'000'000'000);
 }
 
 TEST(VideoPacing, WireBytesFollowThePlannedLayout) {
@@ -343,4 +345,18 @@ TEST(VideoPacingSimulation, CameraTurnAt60FpsAnd80Mbps) {
     EXPECT_EQ(s.late_frames, 0u);
     EXPECT_LE(s.max_waiting, 1u);
   }
+}
+
+TEST(VideoPacing, DynamicFpsRangeIsOneToOneThousand) {
+  EXPECT_TRUE(streaming::dynamic_fps_in_range(1.0));
+  EXPECT_TRUE(streaming::dynamic_fps_in_range(59.94));
+  EXPECT_TRUE(streaming::dynamic_fps_in_range(1000.0));
+  EXPECT_FALSE(streaming::dynamic_fps_in_range(0.0));
+  EXPECT_FALSE(streaming::dynamic_fps_in_range(0.999));
+  EXPECT_FALSE(streaming::dynamic_fps_in_range(1e-12)) << "positive but far below one frame per second";
+  EXPECT_FALSE(streaming::dynamic_fps_in_range(-60.0));
+  EXPECT_FALSE(streaming::dynamic_fps_in_range(1000.5));
+  EXPECT_FALSE(streaming::dynamic_fps_in_range(std::numeric_limits<double>::quiet_NaN()));
+  EXPECT_FALSE(streaming::dynamic_fps_in_range(std::numeric_limits<double>::infinity()));
+  EXPECT_FALSE(streaming::dynamic_fps_in_range(static_cast<double>(1e-12f))) << "a float from the wire widened to double";
 }

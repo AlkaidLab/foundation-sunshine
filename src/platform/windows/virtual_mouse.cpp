@@ -6,7 +6,9 @@
  * VID/PID, then sends mouse data via HID output reports.
  */
 #define WIN32_LEAN_AND_MEAN
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 
 // HID headers

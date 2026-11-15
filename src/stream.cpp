@@ -16,6 +16,7 @@
 #include <memory>
 #include <optional>
 #include <queue>
+#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -777,6 +778,26 @@ namespace stream {
                     << ", probes_received=" << stats.valid_probes
                     << ", probe_sequence_gaps=" << stats.probe_sequence_gaps
                     << ", port_changes=" << stats.port_changes;
+  }
+
+  /**
+   * The sessions whose threads may still produce packets. The video and audio broadcast threads read the session behind the pointer a queued packet carries; the queues are shared by all
+   * sessions, so a packet of a session that has ended (and been freed) can still be in them: reading it hit a freed session (a null pointer, an invalid mutex of its FEC controller).
+   * The broadcast threads hold the lock for the packet they work on, `unregister_live_session()` waits for it.
+   */
+  std::shared_mutex live_sessions_mutex;
+  std::unordered_set<const session_t *> live_sessions;
+
+  void
+  register_live_session(const session_t *session) {
+    std::unique_lock lock(live_sessions_mutex);
+    live_sessions.insert(session);
+  }
+
+  void
+  unregister_live_session(const session_t *session) {
+    std::unique_lock lock(live_sessions_mutex);
+    live_sessions.erase(session);
   }
 
   namespace session {
@@ -2311,7 +2332,7 @@ namespace stream {
 
         const float new_fps = read_dynamic_param_f32(payload, WIRE_WORD_SIZE);
 
-        if (new_fps <= 0.0f || new_fps > 1000.0f) {
+        if (!streaming::dynamic_fps_in_range(new_fps)) {
           BOOST_LOG(warning) << "Invalid FPS value: " << new_fps;
           return;
         }
@@ -3721,6 +3742,12 @@ namespace stream {
       frame_network_latency_logger.first_point_now();
 
       auto session = (session_t *) packet->channel_data;
+      // held until the packet is sent: the session cannot be freed under it
+      std::shared_lock live_lock(live_sessions_mutex);
+      if (!session || !live_sessions.count(session)) {
+        BOOST_LOG(debug) << "Dropping a video packet of a session that has ended"sv;
+        continue;
+      }
       session->last_video_activity_ms.store(steady_now_ms(), std::memory_order_relaxed);
       {
         // the queue is shared by all video sessions: a clear is counted for the session whose packet is handled next (exact with one stream, which is the usual case)
@@ -4171,6 +4198,12 @@ namespace stream {
 
       TUPLE_2D_REF(channel_data, packet_data, *packet);
       auto session = (session_t *) channel_data;
+      // held until the packet is sent: the session cannot be freed under it
+      std::shared_lock live_lock(live_sessions_mutex);
+      if (!session || !live_sessions.count(session)) {
+        BOOST_LOG(debug) << "Dropping an audio packet of a session that has ended"sv;
+        continue;
+      }
       session->last_audio_activity_ms.store(steady_now_ms(), std::memory_order_relaxed);
       auto endpoint_refresh = session->audio.endpoint_refresh.load(std::memory_order_acquire);
       if (endpoint_refresh) {
@@ -4785,6 +4818,8 @@ namespace stream {
         session.videoThread.join();
         BOOST_LOG(debug) << "Waiting for audio to end..."sv;
         session.audioThread.join();
+        // the packets still queued for this session are dropped from here on, and the broadcast threads let go of it before it is freed
+        unregister_live_session(&session);
       }
       else {
         BOOST_LOG(debug) << "Control-only session: skipping video/audio thread join"sv;
@@ -4997,6 +5032,7 @@ namespace stream {
 
       // 仅控制流会话不启动视频/音频线程
       if (!session.control_only) {
+        register_live_session(&session);
         session.audioThread = std::thread { audioThread, &session };
         session.videoThread = std::thread { videoThread, &session };
       }

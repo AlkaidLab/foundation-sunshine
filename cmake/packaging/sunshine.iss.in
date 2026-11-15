@@ -112,7 +112,7 @@ english.TypeCustom=Custom installation
 english.ComponentVDDDesc=Required for headless/remote streaming without a physical monitor. Enables HDR passthrough.
 english.ComponentFirewallDesc=Allows Moonlight clients to discover and connect to this PC over the network.
 english.ComponentAutostartDesc=Sunshine will start automatically when Windows boots. Recommended for always-on streaming.
-english.ComponentUsbipDesc=The USB/IP transport the native DualSense path needs. Also registers the ALKAIDUSB root device.
+english.ComponentUsbipDesc=The USB/IP transport the native DualSense path needs. Also registers the ALKAIDUSB root device. Not selected by default: it installs a filter on every USB root hub, and the installer rolls it back if a root hub fails.
 english.ComponentGamepadDesc=Emulates Xbox controller for games. Install only if you need gamepad input from the client.
 english.ComponentVmouseDesc=Provides smooth absolute mouse positioning. Install if cursor feels laggy.
 english.ComponentToolsDesc=dxgi-info, audio-info for troubleshooting display and audio issues.
@@ -159,7 +159,7 @@ chinesesimplified.TypeCustom=自定义安装
 chinesesimplified.ComponentVDDDesc=无头/远程串流必装。无需外接显示器即可串流，支持 HDR 直通。
 chinesesimplified.ComponentFirewallDesc=允许 Moonlight 客户端通过网络发现并连接本机。
 chinesesimplified.ComponentAutostartDesc=Windows 启动时自动运行 Sunshine。推荐常驻串流使用。
-chinesesimplified.ComponentUsbipDesc=原生 DualSense 需要的 USB/IP 传输，同时登记 ALKAIDUSB 根设备。
+chinesesimplified.ComponentUsbipDesc=原生 DualSense 需要的 USB/IP 传输，同时登记 ALKAIDUSB 根设备。默认不勾选：它会给每个 USB 根集线器加一个筛选驱动，安装后若根集线器异常会自动回滚。
 chinesesimplified.ComponentGamepadDesc=模拟 Xbox 手柄。仅需要从客户端传入手柄输入时安装。
 chinesesimplified.ComponentVmouseDesc=提供平滑的绝对定位鼠标。如鼠标延迟可尝试安装。
 chinesesimplified.ComponentToolsDesc=dxgi-info、audio-info 等，用于排查显示和音频问题。
@@ -204,7 +204,7 @@ Name: "vdd"; Description: "{cm:ComponentVDD} — {cm:ComponentVDDDesc}"; Types: 
 Name: "firewall"; Description: "{cm:ComponentFirewall} — {cm:ComponentFirewallDesc}"; Types: recommended full compact
 Name: "autostart"; Description: "{cm:ComponentAutostart} — {cm:ComponentAutostartDesc}"; Types: recommended full
 Name: "gamepad"; Description: "{cm:ComponentGamepad} — {cm:ComponentGamepadDesc}"; Types: recommended full
-Name: "usbip"; Description: "{cm:ComponentUsbip} — {cm:ComponentUsbipDesc}"; Types: recommended full; MinVersion: 10.0.18362
+Name: "usbip"; Description: "{cm:ComponentUsbip} — {cm:ComponentUsbipDesc}"; Types: full; MinVersion: 10.0.18362
 Name: "vmouse"; Description: "{cm:ComponentVmouse} — {cm:ComponentVmouseDesc}"; Types: full
 Name: "tools"; Description: "{cm:ComponentTools} — {cm:ComponentToolsDesc}"; Types: recommended full
 
@@ -310,6 +310,9 @@ Source: "{#MySourceDir}\scripts\install-vdd.bat"; DestDir: "{app}\scripts"; Flag
 Source: "{#MySourceDir}\scripts\vdd-device-helper.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#MySourceDir}\scripts\uninstall-vdd.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#MySourceDir}\scripts\driver\*"; DestDir: "{app}\scripts\driver"; Flags: ignoreversion recursesubdirs
+
+; USB/IP root-hub guard (issue #1272): always copied, the Panel runs it around its own runtime install of usbip-win2 too.
+Source: "{#MySourceDir}\scripts\usbip-roothub-guard.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion skipifsourcedoesntexist; Components: assets
 
 ; Gamepad scripts
 Source: "{#MySourceDir}\scripts\install-usbip.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion skipifsourcedoesntexist; Components: usbip
@@ -640,13 +643,21 @@ begin
   Result := WizardIsComponentSelected('vdd');
 end;
 
+// install-usbip.bat exit codes 102..105: the root-hub guard rolled the install back, or refused it, or could not run (issue #1272).
+// The controller node is then not registered either: there is no driver for it to bind.
+function UsbipGuardTripped(): Boolean;
+begin
+  Result := (UsbipResult >= 102) and (UsbipResult <= 105);
+end;
+
 function ShouldRunUsbipRootInstall(): Boolean;
 begin
   // An existing install must migrate even when the user changes optional
   // component selection during an upgrade. New installs only create the node
   // when the USB/IP component (usbip-win2) is selected.
   // usbip-win2 needs Windows 10 1903 (18362): an older system never gets the node, migration or not.
-  Result := ((GetWindowsVersion and $FFFF) >= 18362) and (ExistingInnoInstall or WizardIsComponentSelected('usbip'));
+  Result := ((GetWindowsVersion and $FFFF) >= 18362) and (ExistingInnoInstall or WizardIsComponentSelected('usbip')) and
+            (not UsbipGuardTripped());
 end;
 
 // Authority: installer-inno-components-params-20261107; installer-inno-uninstall-regkey-20261107.

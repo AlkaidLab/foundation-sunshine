@@ -12,6 +12,7 @@
 #include "src/logging.h"
 #include "src/rtsp.h"
 #include "src/stream.h"
+#include "src/streaming/video_pacing.h"
 #include "src/utility.h"
 #include "src/video.h"
 
@@ -182,9 +183,9 @@ namespace nvhttp::dynamic_params {
         }
         case video::dynamic_param_type_e::FPS: {
           float fps = std::stof(param_value);
-          if (fps <= 0.0f || fps > 1000.0f) {
+          if (!streaming::dynamic_fps_in_range(fps)) {
             BOOST_LOG(warning) << "Change dynamic param error: invalid FPS value";
-            set_error(tree, 400, "Invalid FPS value. Must be between 0 and 1000");
+            set_error(tree, 400, "Invalid FPS value. Must be between 1 and 1000");
             return;
           }
           param.value.float_value = fps;

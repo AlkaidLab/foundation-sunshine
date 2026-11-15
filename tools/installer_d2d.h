@@ -555,7 +555,7 @@ namespace ui {
     bool zh = true, upgrade = false, maintenance = false, maintenance_downgrade = false, maintenance_same = false,
          has_uninstaller = false, uac_cancelled = false, opening = false, panel_failed = false;
     std::wstring installed_version, package_version;
-    bool tiles[8] = { true, true, true, true, true, true, true, true };  // vdd, gamepad, usbip, vmouse, firewall, autostart, tools, desktopicon
+    bool tiles[8] = { true, true, false, true, true, true, true, true };  // vdd, gamepad, usbip (opt-in, issue #1272), vmouse, firewall, autostart, tools, desktopicon
     float scroll = 0;  // components list, logical px
     std::string reboot_reasons;  // from the 'reboot' event: vdd,vigem,usbip,vmouse or none
     fail_kind failure = fail_kind::generic;
@@ -568,6 +568,7 @@ namespace ui {
     sub subs[d_count] = {};
     int last_detail = d_none;
     bool finished = false;
+    int usbip_guard = 0;  // done: install-usbip.bat exit code 102..105 when the root-hub guard rolled back, refused or could not run
     bool webview2_missing = false;  // done: the Panel's WebView2 Runtime is absent (offline, bootstrapper failed)
     std::string planned;  // the engine's 'plan' event: comma list of step ids (installer_web.inc names)
     int permille[d_count] = {};  // own progress of a step, 0..1000 ('permille' of its events); -1 = none
@@ -643,6 +644,7 @@ namespace ui {
     v.planned.clear();
     v.last_detail = d_none;
     v.finished = false;
+    v.usbip_guard = 0;
     size_t pos = 0;
     while (pos < text.size()) {
       const size_t nl = text.find('\n', pos);
@@ -659,6 +661,10 @@ namespace ui {
         continue;
       }
       if (phase == "reboot") v.reboot_reasons = json_str(line, "message_key");
+      if (phase == "usbip") {
+        const long guard_code = json_int(line, "result_code", 0);
+        v.usbip_guard = (state == "failed" && guard_code >= 102 && guard_code <= 105) ? static_cast<int>(guard_code) : 0;
+      }
       const int d = detail_of_phase(phase);
       if (d == d_none) continue;
       const long permille = json_int(line, "permille", -1);

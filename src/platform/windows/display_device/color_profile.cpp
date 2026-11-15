@@ -46,7 +46,9 @@ namespace display_device::win_color_profile {
 
     // Older MinGW headers stop at CPST_CUSTOM_WORKING_SPACE even though the
     // runtime API and current Windows SDK define STANDARD (7) and EXTENDED (8).
-    constexpr auto extended_display_color_mode = static_cast<COLORPROFILESUBTYPE>(8);
+    // Not constexpr: 8 is not an enumerator of the old header's enum, and a cast to a value outside the enum is not a
+    // constant expression (Clang rejects it, GCC accepts it).
+    const auto extended_display_color_mode = static_cast<COLORPROFILESUBTYPE>(8);
 
     using add_display_association_fn = HRESULT(WINAPI *)(
       WCS_PROFILE_MANAGEMENT_SCOPE,
