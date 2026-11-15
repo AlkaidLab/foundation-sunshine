@@ -616,7 +616,7 @@ namespace abr {
     apply_range(state, config::host_max_bitrate_kbps());
 
     BOOST_LOG(info) << "ABR enabled for client '" << client_name
-                    << "': app=" << app_name
+                    << "': app='" << app_name << "'"
                     << " mode=" << mode_to_string(cfg.mode)
                     << " bitrate=" << initial_bitrate_kbps
                     << " range=[" << state.config.min_bitrate_kbps

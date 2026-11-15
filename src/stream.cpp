@@ -3722,6 +3722,7 @@ namespace stream {
       auto session = (session_t *) packet->channel_data;
       session->last_video_activity_ms.store(steady_now_ms(), std::memory_order_relaxed);
       {
+        // the queue is shared by all video sessions: a clear is counted for the session whose packet is handled next (exact with one stream, which is the usual case)
         const auto [clears, dropped] = packets->clear_stats();
         if (clears != seen_queue_clears) {
           telemetry::hooks::count(session->launch_session_id, telemetry::hooks::counter_e::queue_flushes, clears - seen_queue_clears);

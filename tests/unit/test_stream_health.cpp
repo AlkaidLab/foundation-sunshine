@@ -561,3 +561,22 @@ TEST(StreamHealthWindow, TheSenderThreadAndTheThreadEndingAStreamCanBothUseTheWi
   sender.join();
   SUCCEED();  // the point is that it runs clean under a thread sanitizer and without a crash
 }
+
+TEST(StreamHealthWindow, ManySamplesAtOneSecondAndOneBeyondKeepTheirDistribution) {
+  std::int64_t now = 0;
+  stream_health_t h { now, dims60() };
+  for (int i = 0; i < 99; ++i) {
+    h.record(metric_e::host_ms, 1000);
+    h.count(counter_e::frames_sent);
+  }
+  h.record(metric_e::host_ms, 2500);
+  h.count(counter_e::frames_sent);
+  now += WINDOW_MS;
+  const auto w = h.tick(now, {});
+  ASSERT_TRUE(w.has_value());
+  const auto &host = w->metrics[static_cast<std::size_t>(metric_e::host_ms)];
+  EXPECT_LT(host.p95, 1100);  // not the largest value: 99 of 100 samples were 1000 ms
+  EXPECT_DOUBLE_EQ(host.max, 2500);
+  const auto chunk = h.take_chunk(now, true);
+  EXPECT_EQ(chunk["h"]["host_p95"][BUCKET_COUNT - 2], 1);  // the bucket (1000, 2000], not the overflow bucket
+}

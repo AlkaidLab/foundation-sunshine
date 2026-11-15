@@ -196,8 +196,8 @@ row("error", "log_summary: component, fatal, error, warning", "`encoder`, `0`, `
     "How many warnings and errors the host logs per hour, by component.", "No: counts. The component is one of 24 fixed words or `host`.", "@logs", "events: 180 days.",
     dict(field="log_summary：component、fatal、error、warning", purpose="主机每小时按组件记录了多少警告和错误。", risk="否：计数。组件是 24 个固定词之一，或 `host`。", scrub="@logs", keep="events 180 天。"))
 row("error", "user_report: category, component, page, error_code, attachment, message", "`bug`, `web`, `apps`, `E_LOST`, `att-2026-11/<sha256>.webp`, `the apps page stays empty`", "@e_user_report @js_report @js_msg",
-    "A report the person writes and presses Send on. Answers \"what was broken for this person\".", "Yes, by nature: it is text a person typed. It is the only free text in the system. It is sent only when they press Send, after the form has shown exactly what leaves (title, description, a short summary of the error with its top stack lines and last events).", "Scrubbed in the browser @js_scrub and again in the host @scrub and the Worker @w_scrub; at most 2000 characters; no contact field exists; the attachment is only a reference the developer panel returned.", "events: 180 days; the GitHub issue until the developers close it.",
-    dict(field="user_report：category、component、page、error_code、attachment、message", purpose="用户亲手写、亲手点击「发送」的报告，回答「这个人遇到了什么问题」。", risk="是，这是它的性质：它是人打的字，也是整个系统里唯一的自由文本。只有按下「发送」才会发出，且表单会先展示将发送的全部内容（标题、描述、错误的简短摘要及堆栈开头几行、最近的事件）。", scrub="在浏览器 @js_scrub、主机 @scrub 和 Worker @w_scrub 各清洗一遍；最长 2000 字符；没有联系方式字段；附件只是开发者面板返回的引用。", keep="events 180 天；GitHub 问题在开发者关闭前保留。"))
+    "A report the person writes and presses Send on. Answers \"what was broken for this person\".", "Yes, by nature: it is text a person typed. Besides it, only the log excerpt after a serious stream problem is text (see Never sent). It is sent only when they press Send, after the form has shown exactly what leaves (title, description, a short summary of the error with its top stack lines and last events).", "Scrubbed in the browser @js_scrub and again in the host @scrub and the Worker @w_scrub; at most 2000 characters; no contact field exists; the attachment is only a reference the developer panel returned.", "events: 180 days; the GitHub issue until the developers close it.",
+    dict(field="user_report：category、component、page、error_code、attachment、message", purpose="用户亲手写、亲手点击「发送」的报告，回答「这个人遇到了什么问题」。", risk="是，这是它的性质：它是人打的字，除它之外，只有严重串流问题之后的日志摘录是文本（见「从不发送」）。只有按下「发送」才会发出，且表单会先展示将发送的全部内容（标题、描述、错误的简短摘要及堆栈开头几行、最近的事件）。", scrub="在浏览器 @js_scrub、主机 @scrub 和 Worker @w_scrub 各清洗一遍；最长 2000 字符；没有联系方式字段；附件只是开发者面板返回的引用。", keep="events 180 天；GitHub 问题在开发者关闭前保留。"))
 
 # --- crash
 row("crash", "meta: product, version, os_version, time, uptime_s", "`host`, `2026.1112.0.杂鱼`, `10.0.26100`", "@meta",
@@ -234,13 +234,13 @@ NEVER_EN = [
     "Screen content, audio, keystrokes, files, clipboard content.",
     "The name of the computer, the Windows or macOS account, a device or a client; the name of a game or an application (a game is at most one of nine catalogue words).",
     "File paths, IP addresses, MAC addresses, ports, pairing identifiers, Steam, miHoYo or other account ids, Mirror酱 CDKs, passwords, tokens, cookies.",
-    "Free text, with two exceptions. `user_report.message` is sent when the person presses Send, after the form showed it. And, only while error reports are on, the log excerpt after a serious stream problem (`stream_anomaly`, `log true`) is sent: the last two minutes of the host's own log, with text between quotes, brackets and braces dropped and names, folders, addresses, e-mail addresses and keys cleaned; it stays text, not a fixed list of words.",
+    "Free text, with two exceptions. `user_report.message` is sent when the person presses Send, after the form showed it. And, only while error reports are on, the log excerpt after a serious stream problem (`stream_anomaly`, `log true`) is sent: the last two minutes of the host's own log, with text between quotes, brackets and braces dropped (a short bracket that only holds a code, such as `[E12]`, stays) and names, folders, addresses, e-mail addresses and keys cleaned; it stays text, not a fixed list of words.",
 ]
 NEVER_ZH = [
     "屏幕内容、声音、键盘输入、文件、剪贴板内容。",
     "电脑名、Windows 或 macOS 账号名、设备名或客户端名；游戏名和应用名（游戏最多是九个目录词之一）。",
     "文件路径、IP 地址、MAC 地址、端口、配对标识、Steam、米哈游或其他账号 id、Mirror酱 CDK、密码、令牌、Cookie。",
-    "自由文本只有两个例外。`user_report.message`：用户按下「发送」后发出，表单事先展示过。以及仅在错误报告开启时，严重串流问题之后的日志摘录（`stream_anomaly`，`log true`）：主机日志最近两分钟，引号、方括号和花括号里的文字被丢弃，名称、文件夹、地址、邮箱和密钥被清洗；它仍然是文本，不是固定词表。",
+    "自由文本只有两个例外。`user_report.message`：用户按下「发送」后发出，表单事先展示过。以及仅在错误报告开启时，严重串流问题之后的日志摘录（`stream_anomaly`，`log true`）：主机日志最近两分钟，引号、方括号和花括号里的文字被丢弃（只装代码的短方括号如 `[E12]` 保留），名称、文件夹、地址、邮箱和密钥被清洗；它仍然是文本，不是固定词表。",
 ]
 
 def render(lang):

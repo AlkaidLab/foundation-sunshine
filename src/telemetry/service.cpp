@@ -353,7 +353,7 @@ namespace telemetry {
       return true;  // Tier 3: a debug cohort asked for the detail of this stream
     }
     if (cfg.tier1_rate >= 1.0) return true;
-    return static_cast<double>(fnv1a(session_id_ + ':' + std::to_string(session_id))) / 4294967296.0 < cfg.tier1_rate;
+    return deps_.random01() < cfg.tier1_rate;
   }
 
   void
@@ -443,11 +443,11 @@ namespace telemetry {
       if (a.severe && consent_now().errors) {
         std::lock_guard logs { logs_mutex_ };
         if (anomaly_log_allowed(now)) {
-          auto text = log_excerpt(now);
+          // two excerpts wait at most: when they do, the ones waiting are kept and the new one takes no room
+          auto text = pending_logs_.size() < 2 ? log_excerpt(now) : std::string {};
           if (!text.empty()) {
             anomaly_log_commit(now);
             pending_logs_.push_back({ a.code, now, session_id_, std::move(text), 0 });
-            while (pending_logs_.size() > 2) pending_logs_.pop_front();
             log = true;
           }
         }
@@ -947,7 +947,7 @@ namespace telemetry {
         std::vector<disk_queue_t::entry_t> entries;
         {
           std::lock_guard lock { queue_mutex_ };
-          entries = queue_.entries(0, 20);
+          entries = queue_.entries(0, 64);  // priority 0 is bounded by max_p0_files (40): all of it is looked at
         }
         for (auto &e : entries) filter_by_consent(e.batch, c.usage, c.errors);
         entries.erase(std::remove_if(entries.begin(), entries.end(), [](const auto &e) { return e.batch["events"].empty(); }), entries.end());
@@ -1003,6 +1003,7 @@ namespace telemetry {
         }
         if (!handle_answer(answer, count, { entry->path })) break;
         if (answer.status >= 200 && answer.status < 300) ++sent;
+        if (backing_off()) break;  // the answer asked for a wait: the rest goes through the priority 0 path from now on
       }
     }
     catch (...) {

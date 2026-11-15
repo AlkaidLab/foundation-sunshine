@@ -41,6 +41,7 @@ namespace {
     std::vector<std::string> urls;
     int next_status = 200;
     std::string next_body;  ///< the body of the next answer (the server's configuration rides in it)
+    double random_value = 0.0;  ///< what the random source answers: the Tier 1 draw of a stream and the jitter of a backoff
     std::unique_ptr<service_t> svc;
 
     explicit harness_t(service_options_t options = {}, double tier1_rate = 1.0) {
@@ -49,7 +50,7 @@ namespace {
       service_deps_t deps;
       deps.now_ms = [this] { return now; };
       deps.consent = [this] { return consent; };
-      deps.random01 = [] { return 0.0; };
+      deps.random01 = [this] { return random_value; };
       deps.post = [this](const std::string &url, const std::string &body) {
         urls.push_back(url);
         posted.push_back(json::parse(body));
@@ -1715,6 +1716,7 @@ TEST(TelemetryStreamHealth, TheExcerptHasNoQuotedNamesAndNoClockTime) {
 TEST(TelemetryRemoteConfig, ADebugCohortRaisesTheDetailOfItsStreamsAndTheSwitchAtZeroIsNotOverridden) {
   const auto chunk_of = [](const std::string &body_text) {
     harness_t h { {}, 0.0 };
+    h.random_value = 0.5;  // the draw of every stream is above the tiny rate: only the cohort can put a stream into Tier 1
     h.next_body = body_text;
     EXPECT_TRUE(h.svc->emit(kind_e::usage, "app_start", json { { "cold", true } }));
     h.svc->flush();
@@ -1787,4 +1789,61 @@ TEST(TelemetryRemoteConfig, TheConfigurationIsKeptOnDiskAndReadAgainAtTheNextSta
   EXPECT_EQ(again->remote_config().rev, 9);
   EXPECT_DOUBLE_EQ(again->remote_config().tier1_rate, 0.25);
   EXPECT_EQ(again->remote_config().logs_per_day, 4);
+}
+
+TEST(TelemetrySender, AnAnswerThatAsksForAWaitEndsTheOrdinaryLoopAtOnce) {
+  harness_t h;
+  ASSERT_TRUE(h.svc->emit(kind_e::usage, "app_start", json { { "cold", true } }));  // priority 2
+  ASSERT_TRUE(h.svc->emit(kind_e::error, "error", json { { "component", "x" }, { "code", "a" }, { "severity", "error" } }));  // priority 1
+  ASSERT_TRUE(h.svc->emit(kind_e::usage, "feature_used", json { { "feature", "web.apps_saved" } }));  // priority 2
+  h.svc->flush();
+  ASSERT_EQ(h.svc->queued_files(), 2u);
+  h.next_body = R"({"cfg":{"backoff_s":600}})";
+  EXPECT_EQ(h.svc->pump(), 1);  // the first answer asks for a wait: the second batch does not follow in the same call
+  EXPECT_TRUE(h.svc->backing_off());
+  EXPECT_EQ(h.posted.size(), 1u);
+  EXPECT_EQ(h.svc->queued_files(), 1u);
+}
+
+TEST(TelemetrySender, AWaitLooksPastTheBatchesOfAGroupThatAlreadyLeft) {
+  harness_t h;
+  h.next_body = R"({"cfg":{"backoff_s":600}})";
+  ASSERT_TRUE(h.svc->emit(kind_e::usage, "app_start", json { { "cold", true } }));
+  h.svc->flush();
+  h.svc->pump();
+  h.posted.clear();
+  h.next_body.clear();
+  // 30 batches of the host (priority 0), then one of the panel
+  for (int i = 0; i < 30; ++i) {
+    ASSERT_TRUE(h.svc->emit(kind_e::error, "error", json { { "component", "c" + std::to_string(i) }, { "code", "a" }, { "severity", "fatal" } }));
+    h.svc->flush();
+  }
+  ASSERT_TRUE(h.svc->emit(kind_e::error, "error", json { { "component", "panel" }, { "code", "boom" }, { "severity", "fatal" } }, "panel", "1.2.3.4.test"));
+  h.svc->flush();
+  EXPECT_EQ(h.svc->pump(), 1);  // the host group, merged
+  EXPECT_EQ(h.svc->pump(), 1);  // the panel batch is found behind the 30 of the group that left
+  EXPECT_EQ(h.posted.back()["product"], "panel");
+}
+
+TEST(TelemetryStreamHealth, AnExcerptThatFindsTheQueueFullTakesNoRoom) {
+  service_options_t options;
+  options.anomaly_logs_per_day = 3;
+  options.anomaly_log_min_gap_ms = 0;
+  harness_t h { options };
+  stream_dims_t dims;
+  dims.fps = 60;
+  h.svc->stream_begin(dims, 41, "c");
+  for (int round = 0; round < 3; ++round) {  // three serious windows, nothing sent in between: two excerpts wait, the third finds the queue full
+    h.svc->note_log_line(2, "line", 4);
+    feed_stream(h, 41, 3600, 20, true);
+    h.now += 60'000;
+    h.svc->tick_streams({});
+    h.now += 121'000;  // past the cooldown of a serious code on one stream
+  }
+  EXPECT_EQ(h.svc->pump_logs(), 2);
+  h.svc->note_log_line(2, "line", 4);
+  feed_stream(h, 41, 3600, 20, true);
+  h.now += 60'000;
+  h.svc->tick_streams({});
+  EXPECT_EQ(h.svc->pump_logs(), 1);  // the room of the third was never used: this is the third excerpt of the day, the bound is 3
 }

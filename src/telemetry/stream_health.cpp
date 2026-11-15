@@ -186,7 +186,7 @@ namespace telemetry::health {
             for (std::size_t i = 0; i < BINS; ++i) {
               seen += d.bins[i];
               if (seen >= std::max<std::uint64_t>(rank, 1)) {
-                // the last bin holds everything from 1000 ms (100 ms for the jitter) up: its edge says nothing, the largest value seen does
+                // the last bin holds everything from 4000 ms (400 ms for the jitter) up: its edge says nothing, the largest value seen does
                 if (i == BINS - 1) return d.max;
                 return std::min(d.max, static_cast<double>(i + 1) / scale);
               }
@@ -321,12 +321,6 @@ namespace telemetry::health {
   stream_health_t::chunk_empty() const {
     std::lock_guard window { window_mutex_ };
     return chunk_windows_ == 0 && chunk_idle_ == 0;
-  }
-
-  void
-  stream_health_t::set_dims(dims_t dims) {
-    std::lock_guard window { window_mutex_ };
-    dims_ = std::move(dims);
   }
 
   bool

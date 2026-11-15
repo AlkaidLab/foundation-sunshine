@@ -52,7 +52,7 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | error：component、code、severity、count | `stream`, `e1a2b3c4`, `error`, `3` | `src/telemetry/events.cpp:335` `src/telemetry/service.cpp:749` | 哪个组件出错、出错多频繁。code 是日志行固定开头（到第一个引号、括号、冒号或数字为止）的哈希，所以同一个错误是同一个 code。 | 否：不含文字。修复前，错误事件带一行最长 200 字符、经过清洗的日志，仍可能含设备名或游戏名；现在这行日志留在本机。 | 发送端白名单 `src/telemetry/events.cpp:335`、网页端 `m3e:src/telemetry/events.js:57` `m3e:src/telemetry/send.js:181`、Worker `worker:src/schema.ts:61` 都去掉了 message 属性；仍发送它的旧客户端，该属性会被丢弃。 | events 180 天。 |
 | log_summary：component、fatal、error、warning | `encoder`, `0`, `2`, `9` | `src/telemetry/events.cpp:351` `src/telemetry/service.cpp:749` | 主机每小时按组件记录了多少警告和错误。 | 否：计数。组件是 24 个固定词之一，或 `host`。 | `src/telemetry/service.cpp:749` | events 180 天。 |
-| user_report：category、component、page、error_code、attachment、message | `bug`, `web`, `apps`, `E_LOST`, `att-2026-11/<sha256>.webp`, `the apps page stays empty` | `src/telemetry/events.cpp:343` `m3e:src/telemetry/report.js:140` `m3e:src/telemetry/report.js:127` | 用户亲手写、亲手点击「发送」的报告，回答「这个人遇到了什么问题」。 | 是，这是它的性质：它是人打的字，也是整个系统里唯一的自由文本。只有按下「发送」才会发出，且表单会先展示将发送的全部内容（标题、描述、错误的简短摘要及堆栈开头几行、最近的事件）。 | 在浏览器 `m3e:src/telemetry/scrub.js:52`、主机 `src/telemetry/events.cpp:154` 和 Worker `worker:src/scrub.ts:39` 各清洗一遍；最长 2000 字符；没有联系方式字段；附件只是开发者面板返回的引用。 | events 180 天；GitHub 问题在开发者关闭前保留。 |
+| user_report：category、component、page、error_code、attachment、message | `bug`, `web`, `apps`, `E_LOST`, `att-2026-11/<sha256>.webp`, `the apps page stays empty` | `src/telemetry/events.cpp:343` `m3e:src/telemetry/report.js:140` `m3e:src/telemetry/report.js:127` | 用户亲手写、亲手点击「发送」的报告，回答「这个人遇到了什么问题」。 | 是，这是它的性质：它是人打的字，除它之外，只有严重串流问题之后的日志摘录是文本（见「从不发送」）。只有按下「发送」才会发出，且表单会先展示将发送的全部内容（标题、描述、错误的简短摘要及堆栈开头几行、最近的事件）。 | 在浏览器 `m3e:src/telemetry/scrub.js:52`、主机 `src/telemetry/events.cpp:154` 和 Worker `worker:src/scrub.ts:39` 各清洗一遍；最长 2000 字符；没有联系方式字段；附件只是开发者面板返回的引用。 | events 180 天；GitHub 问题在开发者关闭前保留。 |
 
 ## 崩溃报告（错误报告）
 
@@ -82,7 +82,7 @@
 - 屏幕内容、声音、键盘输入、文件、剪贴板内容。
 - 电脑名、Windows 或 macOS 账号名、设备名或客户端名；游戏名和应用名（游戏最多是九个目录词之一）。
 - 文件路径、IP 地址、MAC 地址、端口、配对标识、Steam、米哈游或其他账号 id、Mirror酱 CDK、密码、令牌、Cookie。
-- 自由文本只有两个例外。`user_report.message`：用户按下「发送」后发出，表单事先展示过。以及仅在错误报告开启时，严重串流问题之后的日志摘录（`stream_anomaly`，`log true`）：主机日志最近两分钟，引号、方括号和花括号里的文字被丢弃，名称、文件夹、地址、邮箱和密钥被清洗；它仍然是文本，不是固定词表。
+- 自由文本只有两个例外。`user_report.message`：用户按下「发送」后发出，表单事先展示过。以及仅在错误报告开启时，严重串流问题之后的日志摘录（`stream_anomaly`，`log true`）：主机日志最近两分钟，引号、方括号和花括号里的文字被丢弃（只装代码的短方括号如 `[E12]` 保留），名称、文件夹、地址、邮箱和密钥被清洗；它仍然是文本，不是固定词表。
 
 ## 怎样保证
 

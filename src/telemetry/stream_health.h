@@ -175,8 +175,6 @@ namespace telemetry::health {
 
     const dims_t &
     dims() const { return dims_; }
-    void
-    set_dims(dims_t dims);
     const thresholds_t &
     thresholds() const { return thresholds_; }
 
@@ -197,7 +195,7 @@ namespace telemetry::health {
 
     static constexpr std::size_t METRICS = static_cast<std::size_t>(hooks::metric_e::count_);
     static constexpr std::size_t COUNTERS = static_cast<std::size_t>(hooks::counter_e::count_);
-    static constexpr std::size_t BINS = 1001;  // 1 ms resolution up to 1000 ms; the exact maximum is tracked next to it
+    static constexpr std::size_t BINS = 4001;  // 1 ms resolution up to 4000 ms (0.1 ms for the jitter up to 400 ms); the exact maximum is tracked next to it
     struct dist_t {
       std::array<std::uint32_t, BINS> bins {};
       double max = 0;
