@@ -2311,7 +2311,7 @@ namespace stream {
 
         const float new_fps = read_dynamic_param_f32(payload, WIRE_WORD_SIZE);
 
-        if (new_fps <= 0.0f || new_fps > 1000.0f) {
+        if (!streaming::dynamic_fps_in_range(new_fps)) {
           BOOST_LOG(warning) << "Invalid FPS value: " << new_fps;
           return;
         }
