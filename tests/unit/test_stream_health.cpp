@@ -575,8 +575,54 @@ TEST(StreamHealthWindow, ManySamplesAtOneSecondAndOneBeyondKeepTheirDistribution
   const auto w = h.tick(now, {});
   ASSERT_TRUE(w.has_value());
   const auto &host = w->metrics[static_cast<std::size_t>(metric_e::host_ms)];
-  EXPECT_LT(host.p95, 1100);  // not the largest value: 99 of 100 samples were 1000 ms
+  EXPECT_DOUBLE_EQ(host.p95, 1000);  // not the largest value: 99 of 100 samples were 1000 ms, and 1000 is inside the bucket (500, 1000]
   EXPECT_DOUBLE_EQ(host.max, 2500);
   const auto chunk = h.take_chunk(now, true);
-  EXPECT_EQ(chunk["h"]["host_p95"][BUCKET_COUNT - 2], 1);  // the bucket (1000, 2000], not the overflow bucket
+  EXPECT_EQ(chunk["h"]["host_p95"][16], 1);  // the bucket whose inclusive upper bound is 1000 ms
+}
+
+TEST(StreamHealthWindow, TheUpperEdgeOfABucketIsInsideItAndOneOverTheBudgetIsNotMistakenForTheBudget) {
+  std::int64_t now = 0;
+  stream_health_t h { now, dims60() };
+  for (int i = 0; i < 99; ++i) {
+    h.record(metric_e::encode_ms, 16);
+    h.count(counter_e::frames_sent);
+  }
+  h.record(metric_e::encode_ms, 17);
+  h.count(counter_e::frames_sent);
+  now += WINDOW_MS;
+  const auto w = h.tick(now, {});
+  ASSERT_TRUE(w.has_value());
+  EXPECT_DOUBLE_EQ(w->metrics[static_cast<std::size_t>(metric_e::encode_ms)].p95, 16);  // not 17
+  for (const auto &a : w->anomalies) EXPECT_NE(a.code, "XP_ENCODE_OVER") << "99 frames of 16 ms and one of 17 ms are inside the 16.7 ms budget at 60 fps";
+  // 99 of 17 ms are not
+  stream_health_t slow { now, dims60() };
+  for (int i = 0; i < 100; ++i) {
+    slow.record(metric_e::encode_ms, 17);
+    slow.count(counter_e::frames_sent);
+  }
+  now += WINDOW_MS;
+  const auto s = slow.tick(now, {});
+  ASSERT_TRUE(s.has_value());
+  bool over = false;
+  for (const auto &a : s->anomalies) over = over || a.code == "XP_ENCODE_OVER";
+  EXPECT_TRUE(over);
+}
+
+TEST(StreamHealthWindow, ManySamplesBeyondTheLastBinKeepTheirOwnDistribution) {
+  std::int64_t now = 0;
+  stream_health_t h { now, dims60() };
+  for (int i = 0; i < 99; ++i) {
+    h.record(metric_e::host_ms, 4000);
+    h.count(counter_e::frames_sent);
+  }
+  h.record(metric_e::host_ms, 20000);
+  h.count(counter_e::frames_sent);
+  now += WINDOW_MS;
+  const auto w = h.tick(now, {});
+  ASSERT_TRUE(w.has_value());
+  const auto &host = w->metrics[static_cast<std::size_t>(metric_e::host_ms)];
+  EXPECT_DOUBLE_EQ(host.p50, 4000);
+  EXPECT_DOUBLE_EQ(host.p95, 4000);
+  EXPECT_DOUBLE_EQ(host.max, 20000);
 }

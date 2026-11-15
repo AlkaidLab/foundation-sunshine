@@ -47,7 +47,7 @@ Only while **error reports** are on: when a stream has a serious problem (the se
 
 ## What is never sent
 
-Names; text you typed (apart from the report you write yourself, below); the name of your computer, your account, your devices or your clients; file paths; IP or MAC addresses; the titles of your games and applications (a game is at most a catalogue word such as `genshin`), apart from what a log line in the excerpt below happens to say after cleaning. An error event carries a code, never the text of the error: a log line or an exception message can hold what a person chose or typed.
+Names; text you typed (apart from the report you write yourself and the log excerpt below, which carries whatever a log line says after cleaning); the name of your computer, your account, your devices or your clients; file paths; IP or MAC addresses; the titles of your games and applications (a game is at most a catalogue word such as `genshin`), apart from what a log line in the excerpt below happens to say after cleaning. An error event carries a code, never the text of the error: a log line or an exception message can hold what a person chose or typed.
 
 Text leaves in two places only. The report you write yourself (`user_report`), after the form has shown you exactly what leaves; it is cleaned in your browser, again in the host and again on the server, and cut to 2000 characters. And, only while **error reports** are on, the log excerpt after a serious stream problem (above): lines of the host's own log. They are cleaned as described there, but they stay lines of text, not a fixed list of words, so what a log line happens to say after that cleaning is sent.
 The server keeps only the country code of the connection (from Cloudflare), not the address.

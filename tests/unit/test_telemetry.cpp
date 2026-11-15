@@ -1302,7 +1302,7 @@ TEST(TelemetryStreamHealth, ASevereWindowEmitsTheAnomalyAndTheStreamEndSendsTheC
   dims.client_os = "macos";
   h.svc->set_gpu_driver("32.0.15.6094 (Eve's driver)");
   h.svc->stream_begin(dims, 7, "client-a");
-  h.svc->note_log_line(2, "Streaming to Eve-PC at 203.0.113.20 as C:\\Users\\Eve\\game", 60);
+  h.svc->note_log_line(2, "Streaming to Eve-PC at 203.0.113.20 as C:\\Users\\Eve\\game");
   feed_stream(h, 7, 3600, 560, true);
   h.now += 61'000;
   h.svc->tick_streams({});
@@ -1342,7 +1342,7 @@ TEST(TelemetryStreamHealth, TheExcerptIsScrubbedRelativeInTimeAndLimitedPerDay) 
   dims.fps = 60;
   dims.codec = "h264";
   h.svc->stream_begin(dims, 9, "c");
-  h.svc->note_log_line(2, "Client Eve-PC connected from 203.0.113.20 profile C:\\Users\\Eve\\AppData\\x", 70);
+  h.svc->note_log_line(2, "Client Eve-PC connected from 203.0.113.20 profile C:\\Users\\Eve\\AppData\\x");
   feed_stream(h, 9, 3600, 20, true);
   h.now += 60'000;
   h.svc->tick_streams({});
@@ -1364,7 +1364,7 @@ TEST(TelemetryStreamHealth, TheExcerptIsScrubbedRelativeInTimeAndLimitedPerDay) 
   int allowed = 1;
   for (int round = 0; round < 7; ++round) {
     h.now += 11 * 60'000;
-    h.svc->note_log_line(2, "line", 4);
+    h.svc->note_log_line(2, "line");
     feed_stream(h, 9, 3600, 20, true);
     h.now += 60'000;
     h.svc->tick_streams({});
@@ -1379,7 +1379,7 @@ TEST(TelemetryStreamHealth, NoExcerptLeavesWhileErrorReportsAreOff) {
   stream_dims_t dims;
   dims.fps = 60;
   h.svc->stream_begin(dims, 3, "c");
-  h.svc->note_log_line(2, "something", 9);
+  h.svc->note_log_line(2, "something");
   feed_stream(h, 3, 3600, 20, true);
   h.now += 60'000;
   h.svc->tick_streams({});
@@ -1667,7 +1667,7 @@ TEST(TelemetryStreamHealth, AnExcerptThatCannotBeMadeDoesNotUseUpTheRoom) {
   h.svc->tick_streams({});
   EXPECT_EQ(h.svc->pump_logs(), 0);
   h.now += 61'000;
-  h.svc->note_log_line(2, "Frame queue full", 16);
+  h.svc->note_log_line(2, "Frame queue full");
   feed_stream(h, 21, 3600, 20, true);
   h.now += 59'000;
   h.svc->tick_streams({});
@@ -1683,7 +1683,7 @@ TEST(TelemetryStreamHealth, TheDailyRoomIsTheServersNumberWithTheLocalOptionAsIt
   h.svc->stream_begin(dims, 22, "c");
   int sent = 0;
   for (int round = 0; round < 5; ++round) {
-    h.svc->note_log_line(2, "line", 4);
+    h.svc->note_log_line(2, "line");
     feed_stream(h, 22, 3600, 20, true);
     h.now += 60'000;
     h.svc->tick_streams({});
@@ -1698,7 +1698,7 @@ TEST(TelemetryStreamHealth, TheExcerptHasNoQuotedNamesAndNoClockTime) {
   stream_dims_t dims;
   dims.fps = 60;
   h.svc->stream_begin(dims, 23, "c");
-  h.svc->note_log_line(2, "Launching app \"Genshin Impact\" for client 'Eve phone' [WGC] at 203.0.113.9", 70);
+  h.svc->note_log_line(2, "Launching app \"Genshin Impact\" for client 'Eve phone' [WGC] at 203.0.113.9");
   feed_stream(h, 23, 3600, 20, true);
   h.now += 60'000;
   h.svc->tick_streams({});
@@ -1820,8 +1820,11 @@ TEST(TelemetrySender, AWaitLooksPastTheBatchesOfAGroupThatAlreadyLeft) {
   }
   ASSERT_TRUE(h.svc->emit(kind_e::error, "error", json { { "component", "panel" }, { "code", "boom" }, { "severity", "fatal" } }, "panel", "1.2.3.4.test"));
   h.svc->flush();
-  EXPECT_EQ(h.svc->pump(), 1);  // the host group, merged
-  EXPECT_EQ(h.svc->pump(), 1);  // the panel batch is found behind the 30 of the group that left
+  h.next_status = 503;  // the first request, the host group, fails: its 30 batches stay in front of the panel batch
+  EXPECT_EQ(h.svc->pump(), 0);
+  h.now = h.svc->retry_not_before_ms() + 1;
+  h.next_status = 200;
+  EXPECT_EQ(h.svc->pump(), 1);  // the panel batch is found behind the 30 of the group that is already counted for this wait
   EXPECT_EQ(h.posted.back()["product"], "panel");
 }
 
@@ -1834,16 +1837,99 @@ TEST(TelemetryStreamHealth, AnExcerptThatFindsTheQueueFullTakesNoRoom) {
   dims.fps = 60;
   h.svc->stream_begin(dims, 41, "c");
   for (int round = 0; round < 3; ++round) {  // three serious windows, nothing sent in between: two excerpts wait, the third finds the queue full
-    h.svc->note_log_line(2, "line", 4);
+    h.svc->note_log_line(2, "line");
     feed_stream(h, 41, 3600, 20, true);
     h.now += 60'000;
     h.svc->tick_streams({});
     h.now += 121'000;  // past the cooldown of a serious code on one stream
   }
   EXPECT_EQ(h.svc->pump_logs(), 2);
-  h.svc->note_log_line(2, "line", 4);
+  h.svc->note_log_line(2, "line");
   feed_stream(h, 41, 3600, 20, true);
   h.now += 60'000;
   h.svc->tick_streams({});
   EXPECT_EQ(h.svc->pump_logs(), 1);  // the room of the third was never used: this is the third excerpt of the day, the bound is 3
+}
+
+TEST(TelemetrySender, AMergedRequestOfAWaitStaysInsideTheLimitsOfOneRequest) {
+  harness_t h;
+  h.next_body = R"({"cfg":{"backoff_s":600}})";
+  ASSERT_TRUE(h.svc->emit(kind_e::usage, "app_start", json { { "cold", true } }));
+  h.svc->flush();
+  h.svc->pump();
+  h.posted.clear();
+  h.next_body.clear();
+  // three batches of 200 different problems: together more events than one request may carry
+  for (int batch = 0; batch < 3; ++batch) {
+    for (int i = 0; i < 200; ++i) ASSERT_TRUE(h.svc->emit(kind_e::error, "error", json { { "component", "x" }, { "code", "c" + std::to_string(batch * 200 + i) }, { "severity", "fatal" } }));
+    h.svc->flush();
+  }
+  const auto files = h.svc->queued_files();
+  ASSERT_GE(files, 3u);
+  EXPECT_EQ(h.svc->pump(), 1);
+  ASSERT_EQ(h.posted.size(), 1u);
+  EXPECT_LE(h.posted[0]["events"].size(), MAX_BATCH_EVENTS);
+  EXPECT_GT(h.svc->queued_files(), 0u);  // what did not fit waits, it is not deleted
+  EXPECT_LT(h.svc->queued_files(), files);
+}
+
+TEST(TelemetrySender, APauseTheServerAskedForStillHoldsAfterARestart) {
+  temp_dir_t dir;
+  std::int64_t now = 1'800'000'000'000;
+  std::vector<json> posted;
+  std::string body;
+  const auto make = [&] {
+    service_options_t options;
+    options.dir = dir.path;
+    service_deps_t deps;
+    deps.now_ms = [&] { return now; };
+    deps.consent = [] { return consent_t {}; };
+    deps.random01 = [] { return 0.0; };
+    deps.post = [&](const std::string &, const std::string &b) {
+      posted.push_back(json::parse(b));
+      post_result_t answer { 200 };
+      answer.body = body;
+      return answer;
+    };
+    auto svc = std::make_unique<service_t>(options, deps);
+    context_t c;
+    c.version = "v1";
+    c.channel = "stable";
+    c.os = "windows";
+    svc->set_context(c);
+    return svc;
+  };
+  {
+    auto svc = make();
+    body = R"({"cfg":{"paused":true}})";
+    ASSERT_TRUE(svc->emit(kind_e::usage, "app_start", json { { "cold", true } }));
+    svc->flush(true);
+    while (svc->pump() > 0) {}
+    EXPECT_TRUE(svc->backing_off());
+  }
+  posted.clear();
+  body.clear();
+  auto again = make();  // the host restarts an hour later: the pause is still on
+  now += 3'600'000;
+  EXPECT_TRUE(again->backing_off());
+  ASSERT_TRUE(again->emit(kind_e::usage, "feature_used", json { { "feature", "web.apps_saved" } }));  // priority 2
+  ASSERT_TRUE(again->emit(kind_e::error, "error", json { { "component", "x" }, { "code", "a" }, { "severity", "fatal" } }));  // priority 0
+  again->flush();
+  EXPECT_EQ(again->pump(), 1);
+  ASSERT_EQ(posted.size(), 1u);  // only the serious one left
+  EXPECT_EQ(posted[0]["events"][0]["name"], "error");
+  EXPECT_EQ(again->queued_files(), 1u);
+  // and the pause ends at its time (six hours), or when the server stops asking for it
+  now += 6 * 3'600'000;
+  EXPECT_FALSE(again->backing_off());
+  auto later = make();
+  EXPECT_FALSE(later->backing_off());
+}
+
+TEST(TelemetryScrub, TheApplicationNameOfTheAbrLineIsNotInTheExcerptEvenWithAQuoteInIt) {
+  const auto t = scrub_log_message("ABR enabled for client 'phone': app=\"Example' Private Game\" mode=balanced bitrate=20000");
+  EXPECT_EQ(t.find("Example"), std::string::npos);
+  EXPECT_EQ(t.find("Private"), std::string::npos);
+  EXPECT_EQ(t.find("phone"), std::string::npos);
+  EXPECT_NE(t.find("mode=balanced"), std::string::npos);
 }

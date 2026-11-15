@@ -198,6 +198,7 @@ namespace telemetry::health {
     static constexpr std::size_t BINS = 4001;  // 1 ms resolution up to 4000 ms (0.1 ms for the jitter up to 400 ms); the exact maximum is tracked next to it
     struct dist_t {
       std::array<std::uint32_t, BINS> bins {};
+      std::vector<float> over;  // the samples beyond the last bin (at most 512 kept), in the unit of the metric: their distribution stays exact
       double max = 0;
       std::uint64_t n = 0;
     };

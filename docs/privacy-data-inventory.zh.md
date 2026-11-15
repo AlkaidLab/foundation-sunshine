@@ -4,7 +4,7 @@
 
 ## 一句话
 
-两个独立的开关（错误报告、使用统计），默认开启，关闭后该类内容不再发送。数据只发往开发者自己的服务器 `api.alkaidlab.com`（Cloudflare Worker），不经过广告网络，不出售。除用户亲手写的反馈外，没有任何自由文本；名称、路径、地址、账号在发送前就不在载荷里。
+两个独立的开关（错误报告、使用统计），默认开启，关闭后该类内容不再发送。数据只发往开发者自己的服务器 `api.alkaidlab.com`（Cloudflare Worker），不经过广告网络，不出售。除用户亲手写的反馈和严重串流问题之后的日志摘录（仅在错误报告开启时，清洗后的文本，见「从不发送」）外，没有任何自由文本；名称、路径、地址、账号在发送前就不在载荷里。
 
 服务器自己不保存 IP 地址，只保存 Cloudflare 给出的国家代码；Workers 日志已关闭 `worker:wrangler.toml:12`。连接本身必然经过网络，Cloudflare 作为网络服务商在传输层看得到连接的 IP，这一层不由我们控制，我们的代码不读取、不保存、不记录它。
 
@@ -41,7 +41,7 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | stream_quality（每次串流一条） | `fps_p50 119`, `encode_ms_p95 6`, `loss_pct 0.1`, `reconnects 0` | `src/telemetry/events.cpp:357` | 串流是否流畅？按版本和编码看帧率、延迟、丢包、卡顿。 | 否：数字。 | 限幅并四舍五入到一位小数 `src/telemetry/events.cpp:357`。 | events 180 天；AE 数据点按 Cloudflare 的保留期。 |
 | stream_health（每串流小时一条） | `windows 60`, `bad {backlog_p95: 3}`, `queue_flushes 0`, `codec hevc` | `src/telemetry/events.cpp:405` | 新版本的串流是否比上一版更差？按分钟统计主机处理、编码、采集、发送耗时和发送积压，有多少分钟越过固定界限，队列被清空、关键帧请求、丢包；一部分串流还带每个指标的 19 桶分布。 | 否：数字和固定词（编码、分辨率、帧率、编码器、采集方式、显卡驱动版本）。 | 只收白名单里的名字，数字限幅，维度是固定词 `src/telemetry/events.cpp:405`。 | 计数 400 天；不保留原始行。 |
-| stream_anomaly | `code XP_QUEUE_FLUSH`, `value 31`, `count 992`, `log true` | `src/telemetry/events.cpp:422` | 发生了哪种问题、多严重、在什么配置上；严重时还会发送问题前两分钟的主机日志（已匿名）。 | 低：固定代码和数字；日志片段是清洗后的文本，没有时钟时间，清洗后日志行里剩下的内容会被发送。 | 只收固定代码；日志片段丢弃引号、方括号和花括号里的文字，用和崩溃日志相同的清洗规则，并去掉计算机名和账户名 `src/telemetry/events.cpp:422`。 | 计数 400 天；日志片段 90 天。 |
+| stream_anomaly | `code XP_QUEUE_FLUSH`, `value 31`, `count 992`, `log true` | `src/telemetry/events.cpp:422` | 发生了哪种问题、多严重、在什么配置上；严重时还会发送问题前两分钟的主机日志（已匿名）。 | 低：固定代码和数字；日志片段是清洗后的文本，没有时钟时间，清洗后日志行里剩下的内容会被发送。 | 只收固定代码；日志片段丢弃引号、方括号和花括号里的文字（只装代码的短方括号如 `[E12]` 保留），用和崩溃日志相同的清洗规则，并去掉计算机名和账户名 `src/telemetry/events.cpp:422`。 | 计数 400 天；日志片段 90 天。 |
 | stream_regress | `metric jitter_p95`, `baseline 0.3`, `current 2.6` | `src/telemetry/events.cpp:438` | 这台安装是否比它自己以前更差？一个指标的名字、以前的值和现在的值；每个版本最多一次。 | 否：指标名和两个数字；滚动平均保存在本机自己的目录里。 | 指标名固定，数字限幅 `src/telemetry/events.cpp:438`。 | 计数 400 天。 |
 | startup：host_start_ms、first_frame_ms | `2100`, `450` | `src/telemetry/events.cpp:440` | 主机多久就绪、多久出第一帧。 | 否：数字。 | 限幅。 | events 180 天。 |
 | panel_page：page、time_to_content_ms | `apps`, `180` | `src/telemetry/events.cpp:441` | 控制面板各页面多久显示出内容。 | 否：我们自己的路由 id 和一个数字。 | 标记和范围。 | events 180 天。 |

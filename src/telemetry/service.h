@@ -153,6 +153,8 @@ namespace telemetry {
     /** Every host log record (any severity) goes to a short ring; an excerpt of it leaves only after a severe stream anomaly, scrubbed. Cheap; never throws. */
     void
     note_log_line(int severity, const char *message, std::size_t length) noexcept;
+    void
+    note_log_line(int severity, std::string_view text) noexcept { note_log_line(severity, text.data(), text.size()); }
     /** Send the excerpts queued by severe anomalies (POST <endpoint>/v1/anomaly-log). -> the excerpts sent. Sender thread only. */
     int
     pump_logs();

@@ -615,8 +615,11 @@ namespace abr {
     }
     apply_range(state, config::host_max_bitrate_kbps());
 
+    // the application name is written between double quotes: the log excerpt after a serious stream problem drops what stands between them
+    auto logged_app_name = app_name;
+    std::replace(logged_app_name.begin(), logged_app_name.end(), '"', '\'');
     BOOST_LOG(info) << "ABR enabled for client '" << client_name
-                    << "': app='" << app_name << "'"
+                    << "': app=\"" << logged_app_name << "\""
                     << " mode=" << mode_to_string(cfg.mode)
                     << " bitrate=" << initial_bitrate_kbps
                     << " range=[" << state.config.min_bitrate_kbps

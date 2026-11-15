@@ -97,6 +97,13 @@ namespace telemetry {
     catch (...) {
     }
     if (!deps_.now_ms) deps_.now_ms = [] { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count(); };
+    try {
+      std::ifstream wait(options_.dir / "remote_wait");
+      std::int64_t deadline = 0;
+      if (wait >> deadline && deadline > deps_.now_ms()) backoff_until_ms_.store(deadline, std::memory_order_relaxed);  // a pause or a wait the server asked for is still on
+    }
+    catch (...) {
+    }
     if (!deps_.consent) deps_.consent = [] { return consent_t {}; };
     if (!deps_.random01) {
       deps_.random01 = [] {
@@ -319,12 +326,13 @@ namespace telemetry {
         std::lock_guard lock { mutex_ };
         config_ = cfg;
       }
-      // a wait the server asked for does not stop priority 0 (see pump); a failed request still backs everything off
+      // a wait the server asked for does not stop priority 0 (see pump); a failed request still backs everything off.
+      // The latest answer is the server's word: a wait it no longer asks for ends. The deadline is kept on disk, so a restart does not skip a pause.
       const auto asked = cfg.paused ? std::max<std::int64_t>(cfg.backoff_s, 6 * 3600) : cfg.backoff_s;
-      if (asked > 0) {
-        backoff_until_ms_.store(std::max(backoff_until_ms_.load(std::memory_order_relaxed), deps_.now_ms() + asked * 1000), std::memory_order_relaxed);
-        p0_groups_sent_.clear();
-      }
+      const std::int64_t deadline = asked > 0 ? deps_.now_ms() + asked * 1000 : 0;
+      backoff_until_ms_.store(deadline, std::memory_order_relaxed);
+      p0_groups_sent_.clear();
+      std::ofstream(options_.dir / "remote_wait", std::ios::trunc) << deadline << '\n';
       std::error_code ec;
       fs::create_directories(options_.dir, ec);
       std::ofstream(options_.dir / "remote_config.json", std::ios::trunc) << doc["cfg"].dump();
@@ -955,9 +963,18 @@ namespace telemetry {
         const auto first = std::find_if(entries.begin(), entries.end(), [&](const auto &e) { return !p0_groups_sent_.count(group_of(e)); });
         if (first == entries.end()) return 0;
         const auto group = group_of(*first);
+        // the merged request must fit the limits of one request: the files of the group are taken in order until the events or the bytes would pass them, the rest waits
         std::vector<disk_queue_t::entry_t> included;
-        for (auto &e : entries)
-          if (group_of(e) == group) included.push_back(std::move(e));
+        std::size_t events_total = 0, bytes_total = 0;
+        for (auto &e : entries) {
+          if (group_of(e) != group) continue;
+          const auto events_here = e.batch["events"].size();
+          const auto bytes_here = e.batch.dump().size();
+          if (!included.empty() && (events_total + events_here > MAX_BATCH_EVENTS || bytes_total + bytes_here > MAX_BATCH_BYTES * 3 / 4)) break;
+          events_total += events_here;
+          bytes_total += bytes_here;
+          included.push_back(std::move(e));
+        }
         std::size_t count = 0;
         std::vector<fs::path> paths;
         for (const auto &e : included) paths.push_back(e.path);

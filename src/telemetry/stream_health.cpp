@@ -101,8 +101,10 @@ namespace telemetry::health {
     std::unique_lock lock { mutex_, std::try_to_lock };
     if (!lock.owns_lock()) return;  // the sender thread is closing the window: this one sample is not worth a wait
     auto &d = dist_[idx(metric)];
-    const auto bin = static_cast<std::size_t>(std::min<double>(value, static_cast<double>(BINS - 1)));
+    // bin i holds the values in (i - 1, i]: the upper edge is inclusive, as the histogram buckets are
+    const auto bin = static_cast<std::size_t>(std::min<double>(std::ceil(value), static_cast<double>(BINS - 1)));
     ++d.bins[bin];
+    if (bin == BINS - 1 && d.over.size() < 512) d.over.push_back(static_cast<float>(value));
     ++d.n;
     d.max = std::max(d.max, value);
   }
@@ -130,7 +132,9 @@ namespace telemetry::health {
           jitter_ms_ += (d - jitter_ms_) / 16.0;
           auto &dist = dist_[idx(metric_e::jitter_ms)];
           // jitter is far below 1 ms in a healthy stream: it is kept in tenths of a millisecond so the 1 ms bins of the distribution can tell 0.3 from 2
-          ++dist.bins[std::min<std::size_t>(static_cast<std::size_t>(jitter_ms_ * 10.0), BINS - 1)];
+          const auto jitter_bin = std::min<std::size_t>(static_cast<std::size_t>(std::ceil(jitter_ms_ * 10.0)), BINS - 1);
+          ++dist.bins[jitter_bin];
+          if (jitter_bin == BINS - 1 && dist.over.size() < 512) dist.over.push_back(static_cast<float>(jitter_ms_));
           ++dist.n;
           dist.max = std::max(dist.max, jitter_ms_);
         }
@@ -186,9 +190,15 @@ namespace telemetry::health {
             for (std::size_t i = 0; i < BINS; ++i) {
               seen += d.bins[i];
               if (seen >= std::max<std::uint64_t>(rank, 1)) {
-                // the last bin holds everything from 4000 ms (400 ms for the jitter) up: its edge says nothing, the largest value seen does
-                if (i == BINS - 1) return d.max;
-                return std::min(d.max, static_cast<double>(i + 1) / scale);
+                if (i == BINS - 1) {
+                  // beyond the last bin: the kept samples give the rank exactly, the largest value stands in when more than were kept lie there
+                  auto over = d.over;
+                  std::sort(over.begin(), over.end());
+                  const auto before = seen - d.bins[i];
+                  const auto at_rank = std::max<std::uint64_t>(rank, 1) - before - 1;
+                  return at_rank < over.size() ? static_cast<double>(over[at_rank]) : d.max;
+                }
+                return std::min(d.max, static_cast<double>(i) / scale);
               }
             }
             return d.max;
