@@ -33,6 +33,9 @@ A = {
     "e_user_report": (HOST, "src/telemetry/events.cpp", r'kind_e::error, "user_report", \{'),
     "e_log_summary": (HOST, "src/telemetry/events.cpp", r'kind_e::error, "log_summary", \{'),
     "e_stream_quality": (HOST, "src/telemetry/events.cpp", r'kind_e::experience, "stream_quality", \{'),
+    "e_stream_health": (HOST, "src/telemetry/events.cpp", r'kind_e::experience, "stream_health", std::move'),
+    "e_stream_anomaly": (HOST, "src/telemetry/events.cpp", r'kind_e::experience, "stream_anomaly", std::move'),
+    "e_stream_regress": (HOST, "src/telemetry/events.cpp", r'kind_e::experience, "stream_regress", std::move'),
     "e_startup": (HOST, "src/telemetry/events.cpp", r'kind_e::experience, "startup", \{'),
     "e_panel_page": (HOST, "src/telemetry/events.cpp", r'kind_e::experience, "panel_page", \{'),
     "settings": (HOST, "src/telemetry/events.cpp", r"static const std::vector<setting_spec_t> table"),
@@ -169,6 +172,15 @@ row("usage", "setting_changed: key, value", "`max_bitrate`, `15000-30000`", "@e_
 row("experience", "stream_quality (per stream)", "`fps_p50 119`, `encode_ms_p95 6`, `loss_pct 0.1`, `reconnects 0`", "@e_stream_quality",
     "Is streaming smooth? Frame rate, delay, loss, stalls by version and codec.", "No: numbers.", "Clamped numbers rounded to one decimal @e_stream_quality.", "events: 180 days; AE points per Cloudflare's retention.",
     dict(field="stream_quality（每次串流一条）", purpose="串流是否流畅？按版本和编码看帧率、延迟、丢包、卡顿。", risk="否：数字。", scrub="限幅并四舍五入到一位小数 @e_stream_quality。", keep="events 180 天；AE 数据点按 Cloudflare 的保留期。"))
+row("experience", "stream_health (per stream-hour)", "`windows 60`, `bad {backlog_p95: 3}`, `queue_flushes 0`, `codec hevc`", "@e_stream_health",
+    "Does a version stream worse than the one before it? Per minute: host processing, encode, capture, send time and send backlog; how many minutes were over a fixed bound; cleared queues, key-frame requests, loss. For a share of streams also a 19-bucket distribution per statistic.", "No: numbers and fixed words (codec, resolution, frame rate, encoder, capture method, graphics driver version).", "Allow-listed names, clamped numbers, fixed-word dimensions @e_stream_health.", "counters: 400 days; raw rows are not kept.",
+    dict(field="stream_health（每串流小时一条）", purpose="新版本的串流是否比上一版更差？按分钟统计主机处理、编码、采集、发送耗时和发送积压，有多少分钟越过固定界限，队列被清空、关键帧请求、丢包；一部分串流还带每个指标的 19 桶分布。", risk="否：数字和固定词（编码、分辨率、帧率、编码器、采集方式、显卡驱动版本）。", scrub="只收白名单里的名字，数字限幅，维度是固定词 @e_stream_health。", keep="计数 400 天；不保留原始行。"))
+row("experience", "stream_anomaly", "`code XP_QUEUE_FLUSH`, `value 31`, `count 992`, `log true`", "@e_stream_anomaly",
+    "Which problem happened, how big, on which configuration; a serious one also sends the last two minutes of the host log (anonymised).", "No: a fixed code and numbers; the log excerpt is cleaned and has no clock time.", "Fixed codes only; the log excerpt goes through the same cleaning as crash logs, and the computer and account names are removed @e_stream_anomaly.", "counters: 400 days; log excerpts: 90 days.",
+    dict(field="stream_anomaly", purpose="发生了哪种问题、多严重、在什么配置上；严重时还会发送问题前两分钟的主机日志（已匿名）。", risk="否：固定代码和数字；日志片段经过清洗，也没有时钟时间。", scrub="只收固定代码；日志片段用和崩溃日志相同的清洗规则，并去掉计算机名和账户名 @e_stream_anomaly。", keep="计数 400 天；日志片段 90 天。"))
+row("experience", "stream_regress", "`metric jitter_p95`, `baseline 0.3`, `current 2.6`", "@e_stream_regress",
+    "Did this installation get worse than it used to be? One statistic, its value before and now; at most once per version.", "No: a statistic name and two numbers. The rolling average is kept in the installation's own folder.", "Fixed statistic names, clamped numbers @e_stream_regress.", "counters: 400 days.",
+    dict(field="stream_regress", purpose="这台安装是否比它自己以前更差？一个指标的名字、以前的值和现在的值；每个版本最多一次。", risk="否：指标名和两个数字；滚动平均保存在本机自己的目录里。", scrub="指标名固定，数字限幅 @e_stream_regress。", keep="计数 400 天。"))
 row("experience", "startup: host_start_ms, first_frame_ms", "`2100`, `450`", "@e_startup",
     "How long until the host is ready and until the first frame.", "No: numbers.", "Clamped.", "events: 180 days.",
     dict(field="startup：host_start_ms、first_frame_ms", purpose="主机多久就绪、多久出第一帧。", risk="否：数字。", scrub="限幅。", keep="events 180 天。"))

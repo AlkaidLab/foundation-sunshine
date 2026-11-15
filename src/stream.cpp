@@ -89,9 +89,10 @@ extern "C" {
 #include "clipboard_bridge.h"
 #include "cursor_channel.h"
 #include "platform/common.h"
+#include "telemetry/hooks.h"
+#include "telemetry/telemetry.h"
 #include "text_context/bridge.h"
 #include "touch_keyboard_session.h"
-#include "telemetry/telemetry.h"
 
 /* Older client headers predate the optional absolute-actuator feedback flag.
  * The native Windows path still forwards the extension when advertised,
@@ -2102,6 +2103,7 @@ namespace stream {
     server->map(packetTypes[IDX_REQUEST_IDR_FRAME], [&](session_t *session, const std::string_view &payload) {
       BOOST_LOG(debug) << "type [IDX_REQUEST_IDR_FRAME]"sv;
 
+      telemetry::hooks::count(session->launch_session_id, telemetry::hooks::counter_e::idr_requests);
       session->video.idr_events->raise(true);
     });
 
@@ -2421,6 +2423,7 @@ namespace stream {
         << "firstFrame [" << firstFrame << ']' << std::endl
         << "lastFrame [" << lastFrame << ']';
 
+      telemetry::hooks::count(session->launch_session_id, telemetry::hooks::counter_e::rfi_requests);
       session->video.invalidate_ref_frames_events->raise(std::make_pair(firstFrame, lastFrame));
     });
 
@@ -3705,6 +3708,10 @@ namespace stream {
 
     crash::watched_thread_t crash_watch("video-broadcast", 20000);
 
+    // stream health: how often the packet queue was cleared as a whole since the last frame (safe::queue_t::raise on a full queue)
+    std::uint64_t seen_queue_clears = packets->clear_count();
+    std::uint64_t seen_queue_dropped = packets->cleared_elements();
+
     while (auto packet = packets->pop()) {
       crash::busy_scope_t crash_busy(crash_watch.slot);
       if (shutdown_event->peek()) {
@@ -3715,6 +3722,16 @@ namespace stream {
 
       auto session = (session_t *) packet->channel_data;
       session->last_video_activity_ms.store(steady_now_ms(), std::memory_order_relaxed);
+      {
+        const auto clears = packets->clear_count();
+        if (clears != seen_queue_clears) {
+          const auto dropped = packets->cleared_elements();
+          telemetry::hooks::count(session->launch_session_id, telemetry::hooks::counter_e::queue_flushes, clears - seen_queue_clears);
+          telemetry::hooks::count(session->launch_session_id, telemetry::hooks::counter_e::queue_frames_dropped, dropped - seen_queue_dropped);
+          seen_queue_clears = clears;
+          seen_queue_dropped = dropped;
+        }
+      }
       auto lowseq = session->video.lowseq;
       auto endpoint_refresh = session->video.endpoint_refresh.load(std::memory_order_acquire);
       if (endpoint_refresh) {
@@ -3796,6 +3813,7 @@ namespace stream {
         frame_header.frame_processing_latency = latency;
         frame_processing_latency_logger.collect_and_log(latency / 10.);
         perf::record_host_latency(session->launch_session_id, latency / 10., frame_dequeue_time);
+        telemetry::hooks::sample(session->launch_session_id, telemetry::hooks::metric_e::host_ms, latency / 10.);
       }
       else {
         frame_header.frame_processing_latency = 0;
@@ -3895,6 +3913,7 @@ namespace stream {
         offset += bytes;
       }
 
+      const auto frame_send_begin = std::chrono::steady_clock::now();
       try {
         // Send less than 64K in a single batch.
         // On Windows, batches above 64K seem to bypass SO_SNDBUF regardless of its size,
@@ -4091,6 +4110,18 @@ namespace stream {
         });
 
         session->video.lowseq = lowseq;
+
+        // stream health: the time this frame took to send, and how long after its packet was ready the last byte left
+        {
+          const auto frame_send_end = std::chrono::steady_clock::now();
+          const auto ms_between = [](const auto &a, const auto &b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
+          telemetry::hooks::sample(session->launch_session_id, telemetry::hooks::metric_e::send_ms, ms_between(frame_send_begin, frame_send_end));
+          if (packet->pipeline_trace && packet->pipeline_trace->packet_ready) {
+            telemetry::hooks::sample(session->launch_session_id, telemetry::hooks::metric_e::backlog_ms, ms_between(*packet->pipeline_trace->packet_ready, frame_send_end));
+          }
+          telemetry::hooks::count(session->launch_session_id, telemetry::hooks::counter_e::frames_sent);
+          telemetry::hooks::frame_done(session->launch_session_id, std::chrono::duration_cast<std::chrono::nanoseconds>(frame_send_end.time_since_epoch()).count());
+        }
       }
       catch (const std::exception &e) {
         BOOST_LOG(error) << "Broadcast video failed "sv << e.what();
@@ -5020,6 +5051,8 @@ namespace stream {
             info.sparxie_app = sparxie.is_sparxie;
             info.sparxie_game = sparxie.game;
           }
+          info.encoder = video::active_encoder_name();
+          info.capture_backend = ::config::video.capture.empty() ? "auto" : ::config::video.capture;
           info.altp = false;  // ALTP is not a stream transport on this branch line; when it is, this is the one place to set it
           telemetry::stream_started(info);
         }

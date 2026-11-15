@@ -133,8 +133,25 @@ namespace telemetry {
 
   // ---------------------------------------------------------------------------------------------------------------------
 
+  health::dims_t
+  health_dims_of(const stream_dims_t &d) {
+    health::dims_t out;
+    out.codec = d.codec.empty() ? "other" : d.codec;
+    out.width = d.width;
+    out.height = d.height;
+    out.fps = d.fps;
+    out.hdr = d.hdr;
+    out.transport = d.transport;
+    out.client_kind = d.client_kind.empty() ? "unknown" : d.client_kind;
+    out.client_os = d.client_os.empty() ? "other" : d.client_os;
+    out.encoder = d.encoder;
+    out.capture_backend = d.capture_backend;
+    out.gpu_driver = d.gpu_driver;
+    return out;
+  }
+
   stream_stats_t::stream_stats_t(std::uint32_t session_id, stream_dims_t dims, std::int64_t start_ms):
-      session_id_(session_id), dims_(std::move(dims)), start_ms_(start_ms) {}
+      session_id_(session_id), dims_(std::move(dims)), start_ms_(start_ms), health_(start_ms, health_dims_of(dims_)) {}
 
   void
   stream_stats_t::on_encoded_frame(std::int64_t now_ms) noexcept {

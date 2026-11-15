@@ -40,10 +40,12 @@ namespace {
     std::vector<json> posted;
     std::vector<std::string> urls;
     int next_status = 200;
+    std::string next_body;  ///< the body of the next answer (the server's configuration rides in it)
     std::unique_ptr<service_t> svc;
 
-    explicit harness_t(service_options_t options = {}) {
+    explicit harness_t(service_options_t options = {}, double tier1_rate = 1.0) {
       options.dir = dir.path;
+      std::ofstream(dir.path / "remote_config.json") << json { { "tier1_rate", tier1_rate } }.dump();
       service_deps_t deps;
       deps.now_ms = [this] { return now; };
       deps.consent = [this] { return consent; };
@@ -51,7 +53,9 @@ namespace {
       deps.post = [this](const std::string &url, const std::string &body) {
         urls.push_back(url);
         posted.push_back(json::parse(body));
-        return next_status;
+        post_result_t answer { next_status };
+        answer.body = next_body;
+        return answer;
       };
       svc = std::make_unique<service_t>(options, deps);
       context_t c;
@@ -331,8 +335,8 @@ TEST(TelemetryConsent, TurningOffDropsWhatWasWaiting) {
   harness_t h;
   ASSERT_TRUE(h.svc->emit(kind_e::usage, "app_start", json { { "cold", true } }));
   ASSERT_TRUE(h.svc->emit(kind_e::error, "error", json { { "component", "x" } }));
-  h.svc->flush();  // both waiting on disk, in one batch
-  ASSERT_EQ(h.svc->queued_files(), 1u);
+  h.svc->flush();  // both waiting on disk: a batch holds events of one priority, so two batches
+  ASSERT_EQ(h.svc->queued_files(), 2u);
   ASSERT_TRUE(h.svc->emit(kind_e::usage, "app_exit", json { { "uptime_s", 5 } }));  // and one in memory
   h.consent = { false, true };
   h.svc->consent_changed();
@@ -582,9 +586,11 @@ TEST(TelemetryIngest, PagesSendOnlyTheirOwnNames) {
   EXPECT_EQ(h.svc->ingest("panel", "1.2.3.4.杂鱼", events), 3u);
   h.svc->flush();
   h.svc->pump();
-  ASSERT_EQ(h.posted.size(), 1u);
-  EXPECT_EQ(h.posted[0]["product"], "panel");
-  EXPECT_EQ(h.posted[0]["version"], "1.2.3.4.杂鱼");
+  ASSERT_EQ(h.posted.size(), 2u);  // one batch per priority
+  for (const auto &batch : h.posted) {
+    EXPECT_EQ(batch["product"], "panel");
+    EXPECT_EQ(batch["version"], "1.2.3.4.杂鱼");
+  }
   EXPECT_EQ(names_of(h.posted), (std::set<std::string> { "panel_page", "feature_used", "error" }));
   EXPECT_EQ(h.posted[0].dump().find("Eve"), std::string::npos);
 }
@@ -1239,4 +1245,342 @@ TEST(TelemetryPrivacyGate, PlantedNamesPathsAddressesAndTokensNeverReachABatch) 
   for (const auto &secret : planted) EXPECT_EQ(all.find(secret), std::string::npos) << secret << " reached a batch, around: " << around(secret);
   EXPECT_EQ(all.find("EvaSky"), std::string::npos) << around("EvaSky");
   EXPECT_EQ(all.find("Users"), std::string::npos) << around("Users");
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// stream health: events, anomaly codes and the anonymized excerpt
+
+TEST(TelemetryStreamHealth, TheChunkAndTheAnomalyAreShapedAndWrongHistogramsAreRefused) {
+  json hist = json::object();
+  hist["host_p95"] = json::array({ 0, 0, 0, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 });
+  hist["made_up"] = json::array({ 1 });
+  json props { { "h", hist }, { "windows", 3 }, { "frames", 10800 }, { "codec", "hevc" }, { "width", 2560 }, { "bitrate_band", "60000-100000" }, { "gpu_driver", "560.94" }, { "host_name", "SKYPC" } };
+  const auto e = shape_event(kind_e::experience, "stream_health", props, 5);
+  ASSERT_TRUE(e);
+  EXPECT_EQ(e->props["h"]["host_p95"].size(), 19u);
+  EXPECT_FALSE(e->props["h"].contains("made_up"));
+  EXPECT_FALSE(e->props.contains("host_name"));
+  EXPECT_EQ(e->props["bitrate_band"], "60000-100000");
+
+  json bad = hist;
+  bad["host_p95"] = json::array({ 1, 2, 3 });  // wrong length: the prop is dropped, not the event
+  const auto e2 = shape_event(kind_e::experience, "stream_health", json { { "h", bad }, { "windows", 1 } }, 5);
+  ASSERT_TRUE(e2);
+  EXPECT_FALSE(e2->props.contains("h"));
+
+  const auto a = shape_event(kind_e::experience, "stream_anomaly", json { { "code", "XP_QUEUE_FLUSH" }, { "severe", true }, { "value", 1 }, { "count", 32 }, { "log", true } }, 5);
+  ASSERT_TRUE(a);
+  EXPECT_EQ(a->props["code"], "XP_QUEUE_FLUSH");
+  EXPECT_FALSE(shape_event(kind_e::experience, "stream_anomaly", json { { "severe", true } }, 5));  // the code is required
+  EXPECT_FALSE(shape_event(kind_e::experience, "stream_anomaly", json { { "code", "a b" } }, 5));
+}
+
+namespace {
+  void
+  feed_stream(harness_t &h, std::uint32_t id, int frames, double backlog_ms, bool flush) {
+    for (int i = 0; i < frames; ++i) {
+      h.svc->record_sample(id, hooks::metric_e::host_ms, 20);
+      h.svc->record_sample(id, hooks::metric_e::backlog_ms, backlog_ms);
+      h.svc->record_count(id, hooks::counter_e::frames_sent, 1);
+    }
+    if (flush) {
+      h.svc->record_count(id, hooks::counter_e::queue_flushes, 1);
+      h.svc->record_count(id, hooks::counter_e::queue_frames_dropped, 32);
+    }
+  }
+}  // namespace
+
+TEST(TelemetryStreamHealth, ASevereWindowEmitsTheAnomalyAndTheStreamEndSendsTheChunk) {
+  harness_t h;
+  stream_dims_t dims;
+  dims.codec = "hevc";
+  dims.width = 2560;
+  dims.height = 1440;
+  dims.fps = 60;
+  dims.client_kind = "moonlight-macos-enhanced";
+  dims.client_os = "macos";
+  h.svc->set_gpu_driver("32.0.15.6094 (Eve's driver)");
+  h.svc->stream_begin(dims, 7, "client-a");
+  h.svc->note_log_line(2, "Streaming to Eve-PC at 203.0.113.20 as C:\\Users\\Eve\\game", 60);
+  feed_stream(h, 7, 3600, 560, true);
+  h.now += 61'000;
+  h.svc->tick_streams({});
+  h.svc->stream_end(7, "none");
+  h.svc->flush(true);
+  while (h.svc->pump() > 0) {}
+  const auto names = names_of(h.posted);
+  EXPECT_TRUE(names.count("stream_anomaly"));
+  EXPECT_TRUE(names.count("stream_health"));
+  std::set<std::string> codes;
+  json chunk;
+  json anomaly_with_log;
+  for (const auto &b : h.posted) {
+    if (!b.contains("events")) continue;
+    for (const auto &e : b["events"]) {
+      if (e["name"] == "stream_anomaly") {
+        codes.insert(e["props"]["code"].get<std::string>());
+        if (e["props"]["log"] == true) anomaly_with_log = e;
+      }
+      if (e["name"] == "stream_health") chunk = e;
+    }
+  }
+  EXPECT_TRUE(codes.count("XP_QUEUE_FLUSH"));
+  EXPECT_TRUE(codes.count("XP_SEND_BACKLOG"));
+  EXPECT_FALSE(anomaly_with_log.is_null());
+  EXPECT_EQ(chunk["props"]["queue_flushes"], 1);
+  EXPECT_EQ(chunk["props"]["queue_frames_dropped"], 32);
+  EXPECT_EQ(chunk["props"]["gpu_driver"], "32.0.15.6094");  // digits and dots only
+  EXPECT_EQ(chunk["props"]["windows"], 1);
+}
+
+TEST(TelemetryStreamHealth, TheExcerptIsScrubbedRelativeInTimeAndLimitedPerDay) {
+  service_options_t options;
+  options.redact_words = { "Eve-PC", "Eve" };
+  harness_t h { options };
+  stream_dims_t dims;
+  dims.fps = 60;
+  dims.codec = "h264";
+  h.svc->stream_begin(dims, 9, "c");
+  h.svc->note_log_line(2, "Client Eve-PC connected from 203.0.113.20 profile C:\\Users\\Eve\\AppData\\x", 70);
+  feed_stream(h, 9, 3600, 20, true);
+  h.now += 60'000;
+  h.svc->tick_streams({});
+  h.svc->flush(true);
+  while (h.svc->pump() > 0) {}
+  EXPECT_EQ(h.svc->pump_logs(), 1);
+  json body;
+  for (std::size_t i = 0; i < h.urls.size(); ++i)
+    if (h.urls[i].ends_with("/v1/anomaly-log")) body = h.posted[i];
+  ASSERT_FALSE(body.is_null());
+  const auto text = body["log"].get<std::string>();
+  EXPECT_EQ(body["code"], "XP_QUEUE_FLUSH");
+  EXPECT_EQ(text.find("203.0.113.20"), std::string::npos);
+  EXPECT_EQ(text.find("Eve"), std::string::npos);
+  EXPECT_EQ(text.find("Users"), std::string::npos);
+  EXPECT_NE(text.find("[-"), std::string::npos);  // time relative to the anomaly
+
+  // the next ones are allowed after the minimum gap, up to the daily bound of six
+  int allowed = 1;
+  for (int round = 0; round < 7; ++round) {
+    h.now += 11 * 60'000;
+    h.svc->note_log_line(2, "line", 4);
+    feed_stream(h, 9, 3600, 20, true);
+    h.now += 60'000;
+    h.svc->tick_streams({});
+    allowed += h.svc->pump_logs();
+  }
+  EXPECT_EQ(allowed, 6);
+}
+
+TEST(TelemetryStreamHealth, NoExcerptLeavesWhileErrorReportsAreOff) {
+  harness_t h;
+  h.consent.errors = false;
+  stream_dims_t dims;
+  dims.fps = 60;
+  h.svc->stream_begin(dims, 3, "c");
+  h.svc->note_log_line(2, "something", 9);
+  feed_stream(h, 3, 3600, 20, true);
+  h.now += 60'000;
+  h.svc->tick_streams({});
+  EXPECT_EQ(h.svc->pump_logs(), 0);
+  for (const auto &u : h.urls) EXPECT_FALSE(u.ends_with("/v1/anomaly-log"));
+}
+
+TEST(TelemetryRemoteConfig, ASuccessfulAnswerCarriesTheConfigAndItIsKeptForTheNextStart) {
+  std::string body;
+  harness_t h;
+  json cfg { { "cfg", { { "rev", 7 }, { "tier1_rate", 0.0 }, { "logs_per_day", 1 }, { "health", true }, { "backoff_s", 0 } } } };
+  // a debug cohort for this version's GPU vendor, valid for an hour
+  cfg["cfg"]["debug"] = json::array({ { { "until", h.now + 3'600'000 }, { "gpu", "nvidia" }, { "logs_per_day", 5 } }, { { "until", h.now - 1 }, { "gpu", "amd" } } });
+  const auto parsed = parse_remote_config(cfg["cfg"], h.now);
+  EXPECT_EQ(parsed.rev, 7);
+  EXPECT_EQ(parsed.logs_per_day, 1);
+  ASSERT_EQ(parsed.debug.size(), 1u);  // the expired one is gone
+  EXPECT_EQ(parsed.debug[0].logs_per_day, 5);
+  // nonsense is clamped
+  const auto wild = parse_remote_config(json { { "tier1_rate", 7 }, { "backoff_s", 99999999 }, { "logs_per_day", -4 } }, h.now);
+  EXPECT_DOUBLE_EQ(wild.tier1_rate, 1.0);
+  EXPECT_EQ(wild.backoff_s, 21600);
+  EXPECT_EQ(wild.logs_per_day, 0);
+}
+
+TEST(TelemetryStreamHealth, Tier0IsSentByEveryStreamAndTheHistogramsOnlyByTheSampledOnesAndTheDebugCohort) {
+  const auto run = [](double rate, bool cohort) {
+    harness_t h { {}, rate };
+    if (cohort) {
+      // the debug cohort arrives with an answer; the service applies it to the streams that start after it
+      h.next_status = 200;
+    }
+    stream_dims_t dims;
+    dims.fps = 60;
+    dims.codec = "hevc";
+    h.svc->stream_begin(dims, 11, "c");
+    feed_stream(h, 11, 3600, 20, false);
+    h.now += 60'000;
+    h.svc->tick_streams({});
+    h.svc->stream_end(11, "none");
+    h.svc->flush(true);
+    while (h.svc->pump() > 0) {}
+    json chunk;
+    for (const auto &b : h.posted)
+      if (b.contains("events"))
+        for (const auto &e : b["events"])
+          if (e["name"] == "stream_health") chunk = e["props"];
+    return chunk;
+  };
+  const auto all = run(1.0, false);
+  const auto none = run(0.0, false);
+  ASSERT_FALSE(all.is_null());
+  ASSERT_FALSE(none.is_null());
+  EXPECT_TRUE(all.contains("h"));
+  EXPECT_FALSE(none.contains("h"));
+  EXPECT_TRUE(none.contains("bad"));
+  EXPECT_EQ(none["windows"], 1);
+}
+
+TEST(TelemetryStreamHealth, AnInstallThatGotWorseThanItsOwnBaselineSendsOneSmallEvent) {
+  harness_t h;
+  stream_dims_t dims;
+  dims.fps = 60;
+  dims.codec = "hevc";
+  h.svc->stream_begin(dims, 5, "c");
+  const auto minute = [&](double jitter_ms) {
+    feed_stream(h, 5, 3600, 3, false);
+    const std::int64_t interval = 16'666'667;
+    static std::int64_t t = 1'000'000'000;
+    for (int i = 0; i < 600; ++i) {
+      t += interval + (jitter_ms > 1 ? (i % 2 ? 4'000'000 : -4'000'000) : 0);
+      h.svc->record_frame_done(5, t);
+    }
+    h.now += 60'000;
+    h.svc->tick_streams({});
+  };
+  for (int i = 0; i < 35; ++i) minute(0.0);
+  for (int i = 0; i < 7; ++i) minute(5.0);
+  h.svc->stream_end(5, "none");
+  h.svc->flush(true);
+  while (h.svc->pump() > 0) {}
+  int regress = 0;
+  json event;
+  for (const auto &b : h.posted)
+    if (b.contains("events"))
+      for (const auto &e : b["events"])
+        if (e["name"] == "stream_regress") {
+          ++regress;
+          event = e["props"];
+        }
+  EXPECT_EQ(regress, 1);
+  EXPECT_EQ(event["metric"], "jitter_p95");
+  EXPECT_GT(event["current"].get<double>(), event["baseline"].get<double>() * 3);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// priorities: serious problems always get through, the rest is reduced first
+
+TEST(TelemetryPriority, SeriousThingsAreZeroUsageIsTwo) {
+  const auto p = [](const char *name, json props = json::object(), int fixed = -1) {
+    event_t e;
+    e.name = name;
+    e.props = std::move(props);
+    e.priority = fixed;
+    return event_priority(e);
+  };
+  EXPECT_EQ(p("user_report"), 0);
+  EXPECT_EQ(p("stream_health"), 0);
+  EXPECT_EQ(p("error_report"), 0);
+  EXPECT_EQ(p("error_report", json::object(), 1), 1);  // the aggregate of a known error
+  EXPECT_EQ(p("stream_anomaly", json { { "severe", true } }), 0);
+  EXPECT_EQ(p("stream_anomaly", json { { "severe", false } }), 1);
+  EXPECT_EQ(p("stream_regress"), 1);
+  EXPECT_EQ(p("error", json { { "severity", "fatal" } }), 0);
+  EXPECT_EQ(p("error", json { { "severity", "error" } }), 1);
+  for (const char *name : { "app_start", "stream_start", "feature_used", "setting_changed", "stream_quality", "panel_page", "startup" }) EXPECT_EQ(p(name), 2) << name;
+}
+
+TEST(TelemetryQueue, GivesUpPriority2ThenPriority1AndKeepsPriority0) {
+  temp_dir_t dir;
+  disk_queue_t q(dir.path, queue_limits_t { 6, 1024 * 1024, 300 * 1024, 3 });
+  const auto batch = [](int n) { return json { { "install_id", "x" }, { "events", json::array() }, { "n", n } }; };
+  for (int i = 0; i < 3; ++i) ASSERT_TRUE(q.push(batch(i), 0));
+  for (int i = 10; i < 14; ++i) ASSERT_TRUE(q.push(batch(i), 2));
+  for (int i = 20; i < 24; ++i) ASSERT_TRUE(q.push(batch(i), 1));
+  EXPECT_EQ(q.files(), 6u);
+  EXPECT_EQ(q.files_of(0), 3u);  // all of priority 0 is still here
+  EXPECT_EQ(q.files_of(2), 0u);  // priority 2 went first
+  EXPECT_EQ(q.files_of(1), 3u);
+  // the order of sending: priority 0 first, oldest first
+  const auto first = q.front();
+  ASSERT_TRUE(first);
+  EXPECT_EQ(first->batch["n"], 0);
+  const auto only0 = q.entries(0, 10);
+  ASSERT_EQ(only0.size(), 3u);
+  EXPECT_EQ(q.front(0)->batch["n"], 0);
+  for (const auto &e : only0) q.remove(e.path);
+  EXPECT_FALSE(q.front(0));  // nothing of priority 0 is left, front(0) does not hand out the others
+  EXPECT_TRUE(q.front());
+  // only when priority 0 alone is past its own bound is the oldest of it dropped
+  disk_queue_t p0(dir.path / "p0", queue_limits_t { 100, 1024 * 1024, 300 * 1024, 3 });
+  for (int i = 0; i < 5; ++i) ASSERT_TRUE(p0.push(batch(i), 0));
+  EXPECT_EQ(p0.files_of(0), 3u);
+  EXPECT_EQ(p0.front()->batch["n"], 2);
+}
+
+TEST(TelemetrySender, WhileTheServerAsksForAWaitOnlyPriority0LeavesOnceAsCounts) {
+  harness_t h;
+  h.next_body = R"({"ok":true,"cfg":{"backoff_s":600}})";
+  ASSERT_TRUE(h.svc->emit(kind_e::usage, "app_start", json { { "cold", true } }));
+  h.svc->flush();
+  ASSERT_EQ(h.svc->pump(), 1);  // the answer carries the wait
+  EXPECT_TRUE(h.svc->backing_off());
+  h.posted.clear();
+  h.next_body.clear();
+  // during the wait: usage (priority 2), a small problem (1) and three serious ones of one kind (0)
+  ASSERT_TRUE(h.svc->emit(kind_e::usage, "feature_used", json { { "feature", "web.apps_saved" } }));
+  ASSERT_TRUE(h.svc->emit(kind_e::experience, "stream_anomaly", json { { "code", "XP_IDR_STORM" }, { "severe", false } }));
+  for (int i = 0; i < 3; ++i) ASSERT_TRUE(h.svc->emit(kind_e::experience, "stream_anomaly", json { { "code", "XP_QUEUE_FLUSH" }, { "severe", true }, { "count", 32 } }));
+  h.svc->flush();
+  EXPECT_EQ(h.svc->queued_files(), 3u);  // priority 0, 1 and 2, one batch each
+  EXPECT_EQ(h.svc->pump(), 1);
+  ASSERT_EQ(h.posted.size(), 1u);
+  ASSERT_EQ(h.posted[0]["events"].size(), 1u);  // the three serious ones are one event with the count
+  EXPECT_EQ(h.posted[0]["events"][0]["props"]["code"], "XP_QUEUE_FLUSH");
+  EXPECT_EQ(h.posted[0]["events"][0]["props"]["suppressed"], 2);
+  EXPECT_EQ(h.svc->queued_files(), 2u);  // the others wait
+  EXPECT_EQ(h.svc->pump(), 0);  // once per wait
+  EXPECT_EQ(h.posted.size(), 1u);
+  // the wait is over: the rest is sent, priority 1 before 2
+  h.now += 601'000;
+  EXPECT_FALSE(h.svc->backing_off());
+  while (h.svc->pump() > 0) {}
+  EXPECT_EQ(h.svc->queued_files(), 0u);
+  ASSERT_EQ(h.posted.size(), 3u);
+  EXPECT_EQ(h.posted[1]["events"][0]["name"], "stream_anomaly");
+  EXPECT_EQ(h.posted[2]["events"][0]["name"], "feature_used");
+}
+
+TEST(TelemetrySender, TheHistogramsOfAStreamAreLeftOutWhileTheServerAsksForAWait) {
+  harness_t h;
+  h.next_body = R"({"cfg":{"backoff_s":600,"tier1_rate":1.0}})";
+  ASSERT_TRUE(h.svc->emit(kind_e::usage, "app_start", json { { "cold", true } }));
+  h.svc->flush();
+  h.svc->pump();
+  h.posted.clear();
+  h.next_body.clear();
+  stream_dims_t dims;
+  dims.fps = 60;
+  h.svc->stream_begin(dims, 4, "c");
+  feed_stream(h, 4, 3600, 20, false);
+  h.now += 60'000;
+  h.svc->tick_streams({});
+  h.svc->stream_end(4, "none");
+  h.svc->flush(true);
+  h.now += 601'000;
+  while (h.svc->pump() > 0) {}
+  json chunk;
+  for (const auto &b : h.posted)
+    for (const auto &e : b["events"])
+      if (e["name"] == "stream_health") chunk = e["props"];
+  ASSERT_FALSE(chunk.is_null());
+  EXPECT_FALSE(chunk.contains("h"));
+  EXPECT_TRUE(chunk.contains("bad"));
 }

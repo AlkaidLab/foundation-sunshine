@@ -21,6 +21,7 @@
 #include <nlohmann/json.hpp>
 
 #include "events.h"
+#include "hooks.h"
 #include "stream_stats.h"
 
 namespace telemetry {
@@ -85,6 +86,8 @@ namespace telemetry {
     std::string app_cmd;
     bool sparxie_app = false;  ///< the apps.json entry has a sparxie block (sparxie_app_of_apps)
     std::string sparxie_game;  ///< its game as a catalogue id; empty for any other app
+    std::string encoder;  ///< the encoder family (nvenc, quicksync, amdvce, vaapi, videotoolbox, software); lower-case word
+    std::string capture_backend;  ///< the configured capture method (wgc, ddx, dxgi, ...), "auto" when none is configured
     bool altp = false;  ///< the session runs over ALTP (no such flag on this branch line yet: the stream code passes false)
   };
   void stream_started(const stream_info_t &info);
@@ -92,6 +95,12 @@ namespace telemetry {
   void frame_encoded(std::uint32_t session_id) noexcept;
   void encode_ms(std::uint32_t session_id, double ms) noexcept;
   void capture_ms(std::uint32_t session_id, double ms) noexcept;
+  void
+  record_sample(std::uint32_t session_id, hooks::metric_e metric, double ms) noexcept;
+  void
+  record_count(std::uint32_t session_id, hooks::counter_e counter, std::uint64_t n) noexcept;
+  void
+  record_frame_done(std::uint32_t session_id, std::int64_t steady_ns) noexcept;
   /** What the host knows about the live sessions (loss, round trip, bitrate), read once per tick by the sender thread. */
   void set_session_probe(std::function<std::vector<session_probe_t>()> probe);
 

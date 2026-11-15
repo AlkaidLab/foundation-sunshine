@@ -33,8 +33,28 @@ namespace telemetry {
     for (const auto &entry : fs::directory_iterator(dir_, ec)) {
       if (entry.is_regular_file(ec) && entry.path().extension() == ".json") files.push_back(entry.path());
     }
-    std::sort(files.begin(), files.end());
+    std::sort(files.begin(), files.end(), [](const fs::path &a, const fs::path &b) {
+      const auto pa = priority_of_name(a), pb = priority_of_name(b);
+      return pa != pb ? pa < pb : a.filename() < b.filename();
+    });
     return files;
+  }
+
+  int
+  disk_queue_t::priority_of_name(const fs::path &path) {
+    const auto stem = path.stem().string();
+    const auto at = stem.rfind("-p");
+    if (at == std::string::npos || at + 2 >= stem.size()) return 2;  // an older file without a priority
+    const char c = stem[at + 2];
+    return c >= '0' && c <= '2' ? c - '0' : 2;
+  }
+
+  std::size_t
+  disk_queue_t::files_of(int priority) const {
+    std::size_t n = 0;
+    for (const auto &f : list())
+      if (priority_of_name(f) == priority) ++n;
+    return n;
   }
 
   std::size_t
@@ -55,32 +75,49 @@ namespace telemetry {
 
   std::size_t
   disk_queue_t::enforce_limits() {
-    auto files = list();
-    std::size_t total = 0;
-    std::vector<std::size_t> sizes;
     std::error_code ec;
-    for (const auto &file : files) {
-      const auto size = fs::file_size(file, ec);
+    auto files = list();  // priority 0 first, so the ones to give up are at the end
+    std::vector<std::size_t> sizes;
+    std::size_t total = 0;
+    for (const auto &f : files) {
+      const auto size = fs::file_size(f, ec);
       sizes.push_back(ec ? 0 : static_cast<std::size_t>(size));
       total += sizes.back();
     }
-    std::size_t removed = 0, first = 0;
-    while (first < files.size() && (files.size() - first > limits_.max_files || total > limits_.max_bytes)) {
-      fs::remove(files[first], ec);
-      total -= sizes[first];
-      ++first;
+    std::size_t removed = 0;
+    std::vector<bool> gone(files.size(), false);
+    std::size_t alive = files.size();
+    const auto drop = [&](std::size_t i) {
+      fs::remove(files[i], ec);
+      total -= sizes[i];
+      gone[i] = true;
+      --alive;
       ++removed;
+    };
+    // the lowest priority goes first, the oldest first within it; priority 0 is only cut when it alone is past its own bound
+    for (int priority = 2; priority >= 1 && (alive > limits_.max_files || total > limits_.max_bytes); --priority) {
+      for (std::size_t i = 0; i < files.size() && (alive > limits_.max_files || total > limits_.max_bytes); ++i)
+        if (!gone[i] && priority_of_name(files[i]) == priority) drop(i);
+    }
+    std::size_t p0 = 0;
+    for (std::size_t i = 0; i < files.size(); ++i)
+      if (!gone[i] && priority_of_name(files[i]) == 0) ++p0;
+    for (std::size_t i = 0; i < files.size() && (p0 > limits_.max_p0_files || ((alive > limits_.max_files || total > limits_.max_bytes) && p0 > 0)); ++i) {
+      if (!gone[i] && priority_of_name(files[i]) == 0) {
+        drop(i);
+        --p0;
+      }
     }
     dropped_ += removed;
     return removed;
   }
 
   bool
-  disk_queue_t::push(const json &batch) {
+  disk_queue_t::push(const json &batch, int priority) {
     const auto text = batch.dump();
     const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     char name[64];
-    std::snprintf(name, sizeof(name), "%013lld-%06llu.json", static_cast<long long>(now), static_cast<unsigned long long>(counter_++ % 1000000));
+    std::snprintf(name, sizeof(name), "%013lld-%06llu-p%d.json", static_cast<long long>(now), static_cast<unsigned long long>(counter_++ % 1000000), std::clamp(priority, 0, 2));
     const auto target = dir_ / name;
     auto temp = target;
     temp += ".tmp";
@@ -107,9 +144,10 @@ namespace telemetry {
   }
 
   std::optional<disk_queue_t::entry_t>
-  disk_queue_t::front() {
+  disk_queue_t::front(int max_priority) {
     std::error_code ec;
     for (const auto &file : list()) {
+      if (priority_of_name(file) > max_priority) break;  // the list is in priority order
       const auto size = fs::file_size(file, ec);
       if (ec || size == 0 || size > limits_.max_file_bytes) {
         fs::remove(file, ec);
@@ -126,6 +164,30 @@ namespace telemetry {
       return entry_t { file, std::move(batch) };
     }
     return std::nullopt;
+  }
+
+  std::vector<disk_queue_t::entry_t>
+  disk_queue_t::entries(int max_priority, std::size_t limit) {
+    std::vector<entry_t> out;
+    std::error_code ec;
+    for (const auto &file : list()) {
+      if (out.size() >= limit || priority_of_name(file) > max_priority) break;
+      const auto size = fs::file_size(file, ec);
+      if (ec || size == 0 || size > limits_.max_file_bytes) {
+        fs::remove(file, ec);
+        continue;
+      }
+      std::ifstream in(file, std::ios::binary);
+      std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+      in.close();
+      auto batch = json::parse(text, nullptr, false);
+      if (batch.is_discarded() || !batch.is_object() || !batch.contains("events") || !batch["events"].is_array() || !batch.contains("install_id")) {
+        fs::remove(file, ec);
+        continue;
+      }
+      out.push_back({ file, std::move(batch) });
+    }
+    return out;
   }
 
   void

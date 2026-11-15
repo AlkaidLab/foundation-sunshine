@@ -13,43 +13,46 @@
 | 字段 | 示例 | 代码位置 | 用途（回答什么问题） | 能否识别个人或泄露私密内容 | 已做的清洗 | 保留时间 |
 | --- | --- | --- | --- | --- | --- | --- |
 | install_id | `3f2b8a52-1c3e-4d0e-9d57-0a7c1f6b9e11` | `src/crash/crash_core.cpp:609` `src/crash/crash_core.cpp:593` | 统计日/周/月活跃安装数；把同一台安装的错误归在一起。 | 否：安装时随机生成的 UUID v4，与硬件、名称、账号无关。 | 服务器只存 install_hash（SHA-256 的前 32 位十六进制）`worker:src/crypto.ts:19`，不存原值。 | activity、sessions 400 天；events 180 天。 |
-| session_id | `9a1c6b0e-52d4-4f1a-8e3b-7c2d5e9f0a13` | `src/telemetry/events.cpp:612` | 区分程序的每一次运行（计算无崩溃会话比例）。 | 否：每次启动重新随机生成。 | 随会话摘要保存。 | sessions 400 天。 |
-| product, channel, os, arch | `host`, `stable`, `windows`, `x64` | `src/telemetry/events.cpp:612` `src/telemetry/telemetry.cpp:96` | 按产品、发布通道、系统和 CPU 架构拆分所有数字。 | 否：固定词。 | 发送端和 Worker 都用固定词表 `worker:src/schema.ts:165`。 | 随所在记录。 |
-| version | `2026.1112.0.杂鱼` | `src/telemetry/events.cpp:588` | 知道哪个版本出了问题。 | 否：程序自己的版本号。 | 只允许字母、数字和 `. _ + -` 空格，其余置空 `src/telemetry/events.cpp:588`；Worker 用同一规则 `worker:src/schema.ts:165`。 | 随所在记录。 |
-| os_version | `10.0.26100` | `src/telemetry/telemetry.cpp:211` `src/telemetry/events.cpp:597` | 发现只在某个 Windows 版本上出现的问题。 | 否：系统版本号，数百万人相同。 | 只允许字母、数字和 `. _ + -` 空格，最长 48 字符 `src/telemetry/events.cpp:597` `worker:src/schema.ts:165`；不符合的不再「清洗后发送」，而是直接丢弃。 | sessions 400 天。 |
+| session_id | `9a1c6b0e-52d4-4f1a-8e3b-7c2d5e9f0a13` | `src/telemetry/events.cpp:734` | 区分程序的每一次运行（计算无崩溃会话比例）。 | 否：每次启动重新随机生成。 | 随会话摘要保存。 | sessions 400 天。 |
+| product, channel, os, arch | `host`, `stable`, `windows`, `x64` | `src/telemetry/events.cpp:734` `src/telemetry/telemetry.cpp:96` | 按产品、发布通道、系统和 CPU 架构拆分所有数字。 | 否：固定词。 | 发送端和 Worker 都用固定词表 `worker:src/schema.ts:165`。 | 随所在记录。 |
+| version | `2026.1112.0.杂鱼` | `src/telemetry/events.cpp:710` | 知道哪个版本出了问题。 | 否：程序自己的版本号。 | 只允许字母、数字和 `. _ + -` 空格，其余置空 `src/telemetry/events.cpp:710`；Worker 用同一规则 `worker:src/schema.ts:165`。 | 随所在记录。 |
+| os_version | `10.0.26100` | `src/telemetry/telemetry.cpp:211` `src/telemetry/events.cpp:719` | 发现只在某个 Windows 版本上出现的问题。 | 否：系统版本号，数百万人相同。 | 只允许字母、数字和 `. _ + -` 空格，最长 48 字符 `src/telemetry/events.cpp:719` `worker:src/schema.ts:165`；不符合的不再「清洗后发送」，而是直接丢弃。 | sessions 400 天。 |
 | gpu_vendor | `nvidia` | `src/telemetry/telemetry.cpp:125` | 发现只在某个显卡厂商上出现的问题。 | 否：四个词之一（nvidia、amd、intel、apple）或 `other`；不含显卡型号和驱动字符串。 | 厂商先被归为一个词 `src/telemetry/telemetry.cpp:125`；Worker 只接受短的小写标记。 | sessions 400 天。 |
-| locale | `zh-CN` | `src/telemetry/events.cpp:604` | 知道哪些语言需要优先照顾。 | 否：语言标签。 | 必须符合语言标签格式，否则置空 `src/telemetry/events.cpp:604` `worker:src/schema.ts:165`。 | sessions 400 天。 |
+| locale | `zh-CN` | `src/telemetry/events.cpp:726` | 知道哪些语言需要优先照顾。 | 否：语言标签。 | 必须符合语言标签格式，否则置空 `src/telemetry/events.cpp:726` `worker:src/schema.ts:165`。 | sessions 400 天。 |
 | country（服务器添加） | `CN` | `worker:src/http.ts:67` | 了解用户所在地区，用于语言和网络方面的决策。 | 弱：只到国家，不到城市和地址。 | 只保留 Cloudflare 给出的国家代码；Worker 不读取、不保存、不记录 IP 地址；Workers 日志已关闭 `worker:wrangler.toml:12`。 | sessions、activity、crash_reports 400 天。 |
 
 ## 使用事件（使用统计）
 
 | 字段 | 示例 | 代码位置 | 用途（回答什么问题） | 能否识别个人或泄露私密内容 | 已做的清洗 | 保留时间 |
 | --- | --- | --- | --- | --- | --- | --- |
-| app_start：cold、start_ms、update_source | `true`, `1800`, `mirror` | `src/telemetry/events.cpp:301` | 启动耗时；更新来源（Mirror酱还是 GitHub）。 | 否：一个布尔值、一个数字、三个词之一。 | 按类型和范围的白名单 `src/telemetry/events.cpp:301`。 | events 180 天。 |
-| app_exit：uptime_s | `3600` | `src/telemetry/events.cpp:302` | 程序运行多久；会话是否正常结束。 | 否：一个数字。 | 范围 0 到一年。 | events 180 天。 |
-| stream_start / stream_end：client_kind | `moonlight-macos-enhanced` | `src/telemetry/events.cpp:303` `src/telemetry/stream_stats.cpp:92` | 哪些客户端家族在使用，用来决定投入方向。 | 否：只能是主机自己识别的六个家族之一，否则为 `other`。用户给设备起的名字不会传出（修复前这是一个自由的 catalogue id）。 | 发送端白名单 `src/telemetry/stream_stats.cpp:92`，Worker 端枚举 `worker:src/schema.ts:53`。 | events 180 天。 |
-| stream_start / stream_end：client_os、codec、width、height、fps、hdr、audio_codec、transport | `macos`, `hevc`, `2560`, `1440`, `120`, `true`, `opus`, `altp` | `src/telemetry/events.cpp:303` `src/telemetry/stream_stats.cpp:122` | 人们串流用什么格式和分辨率；ALTP 传输用得多不多。 | 否：固定词和数字。 | 发送端 `src/telemetry/events.cpp:303` 和 Worker `worker:src/schema.ts:53` 都用枚举；数字被限幅。 | events 180 天。 |
+| app_start：cold、start_ms、update_source | `true`, `1800`, `mirror` | `src/telemetry/events.cpp:326` | 启动耗时；更新来源（Mirror酱还是 GitHub）。 | 否：一个布尔值、一个数字、三个词之一。 | 按类型和范围的白名单 `src/telemetry/events.cpp:326`。 | events 180 天。 |
+| app_exit：uptime_s | `3600` | `src/telemetry/events.cpp:327` | 程序运行多久；会话是否正常结束。 | 否：一个数字。 | 范围 0 到一年。 | events 180 天。 |
+| stream_start / stream_end：client_kind | `moonlight-macos-enhanced` | `src/telemetry/events.cpp:328` `src/telemetry/stream_stats.cpp:92` | 哪些客户端家族在使用，用来决定投入方向。 | 否：只能是主机自己识别的六个家族之一，否则为 `other`。用户给设备起的名字不会传出（修复前这是一个自由的 catalogue id）。 | 发送端白名单 `src/telemetry/stream_stats.cpp:92`，Worker 端枚举 `worker:src/schema.ts:53`。 | events 180 天。 |
+| stream_start / stream_end：client_os、codec、width、height、fps、hdr、audio_codec、transport | `macos`, `hevc`, `2560`, `1440`, `120`, `true`, `opus`, `altp` | `src/telemetry/events.cpp:328` `src/telemetry/stream_stats.cpp:122` | 人们串流用什么格式和分辨率；ALTP 传输用得多不多。 | 否：固定词和数字。 | 发送端 `src/telemetry/events.cpp:328` 和 Worker `worker:src/schema.ts:53` 都用枚举；数字被限幅。 | events 180 天。 |
 | stream_start / stream_end：app_kind | `sparxie` | `src/telemetry/stream_stats.cpp:56` | 桌面、大屏、Sparxie、Steam 或其他：哪类使用最重要。 | 否：五个词之一。应用名称和命令只用来选词，不会发送。 | `src/telemetry/stream_stats.cpp:56` | events 180 天。 |
 | stream_start / stream_end：sparxie_game | `genshin` | `src/telemetry/stream_stats.cpp:102` | 哪些 Sparxie 游戏在使用（只用目录里的 id）。 | 否：Sparxie 目录里的九个 id 之一，或 `other`；手写或未知的值变成 `other`。 | `src/telemetry/stream_stats.cpp:102`，Worker 端枚举 `worker:src/schema.ts:53`。 | events 180 天。 |
-| stream_end：duration_s、result | `600`, `normal` | `src/telemetry/events.cpp:307` | 串流总时长（「串流分钟数」的来源）；串流以什么方式结束。 | 否：一个数字和四个词之一。 | `src/telemetry/events.cpp:307` | events 180 天；sessions 保存合计 400 天。 |
-| feature_used：feature | `stream.hdr`, `web.app_added`, `panel.pair_open` | `src/telemetry/events.cpp:308` `src/telemetry/service.cpp:220` | 哪些功能真的有人用。 | 否：我们自己的 id。网页只能用自己产品前缀（`web.` 或 `panel.`）的 id `src/telemetry/service.cpp:220`。 | 小写标记 `src/telemetry/events.cpp:308`；网页事件的前缀检查 `src/telemetry/service.cpp:220`。 | events 180 天。 |
-| setting_changed：key、value | `max_bitrate`, `15000-30000` | `src/telemetry/events.cpp:309` `src/telemetry/events.cpp:460` | 人们改了哪些设置、改成什么类型的值。 | 否：key 来自 27 项名单；value 是名单里的词或区间。路径、名称、地址这类自由值不在名单里。 | `src/telemetry/events.cpp:460`，Worker 重复检查名单和取值格式 `worker:src/schema.ts:61`。 | events 180 天。 |
+| stream_end：duration_s、result | `600`, `normal` | `src/telemetry/events.cpp:332` | 串流总时长（「串流分钟数」的来源）；串流以什么方式结束。 | 否：一个数字和四个词之一。 | `src/telemetry/events.cpp:332` | events 180 天；sessions 保存合计 400 天。 |
+| feature_used：feature | `stream.hdr`, `web.app_added`, `panel.pair_open` | `src/telemetry/events.cpp:333` `src/telemetry/service.cpp:228` | 哪些功能真的有人用。 | 否：我们自己的 id。网页只能用自己产品前缀（`web.` 或 `panel.`）的 id `src/telemetry/service.cpp:228`。 | 小写标记 `src/telemetry/events.cpp:333`；网页事件的前缀检查 `src/telemetry/service.cpp:228`。 | events 180 天。 |
+| setting_changed：key、value | `max_bitrate`, `15000-30000` | `src/telemetry/events.cpp:334` `src/telemetry/events.cpp:582` | 人们改了哪些设置、改成什么类型的值。 | 否：key 来自 27 项名单；value 是名单里的词或区间。路径、名称、地址这类自由值不在名单里。 | `src/telemetry/events.cpp:582`，Worker 重复检查名单和取值格式 `worker:src/schema.ts:61`。 | events 180 天。 |
 
 ## 体验事件（使用统计）
 
 | 字段 | 示例 | 代码位置 | 用途（回答什么问题） | 能否识别个人或泄露私密内容 | 已做的清洗 | 保留时间 |
 | --- | --- | --- | --- | --- | --- | --- |
-| stream_quality（每次串流一条） | `fps_p50 119`, `encode_ms_p95 6`, `loss_pct 0.1`, `reconnects 0` | `src/telemetry/events.cpp:332` | 串流是否流畅？按版本和编码看帧率、延迟、丢包、卡顿。 | 否：数字。 | 限幅并四舍五入到一位小数 `src/telemetry/events.cpp:332`。 | events 180 天；AE 数据点按 Cloudflare 的保留期。 |
-| startup：host_start_ms、first_frame_ms | `2100`, `450` | `src/telemetry/events.cpp:351` | 主机多久就绪、多久出第一帧。 | 否：数字。 | 限幅。 | events 180 天。 |
-| panel_page：page、time_to_content_ms | `apps`, `180` | `src/telemetry/events.cpp:352` | 控制面板各页面多久显示出内容。 | 否：我们自己的路由 id 和一个数字。 | 标记和范围。 | events 180 天。 |
+| stream_quality（每次串流一条） | `fps_p50 119`, `encode_ms_p95 6`, `loss_pct 0.1`, `reconnects 0` | `src/telemetry/events.cpp:357` | 串流是否流畅？按版本和编码看帧率、延迟、丢包、卡顿。 | 否：数字。 | 限幅并四舍五入到一位小数 `src/telemetry/events.cpp:357`。 | events 180 天；AE 数据点按 Cloudflare 的保留期。 |
+| stream_health（每串流小时一条） | `windows 60`, `bad {backlog_p95: 3}`, `queue_flushes 0`, `codec hevc` | `src/telemetry/events.cpp:405` | 新版本的串流是否比上一版更差？按分钟统计主机处理、编码、采集、发送耗时和发送积压，有多少分钟越过固定界限，队列被清空、关键帧请求、丢包；一部分串流还带每个指标的 19 桶分布。 | 否：数字和固定词（编码、分辨率、帧率、编码器、采集方式、显卡驱动版本）。 | 只收白名单里的名字，数字限幅，维度是固定词 `src/telemetry/events.cpp:405`。 | 计数 400 天；不保留原始行。 |
+| stream_anomaly | `code XP_QUEUE_FLUSH`, `value 31`, `count 992`, `log true` | `src/telemetry/events.cpp:422` | 发生了哪种问题、多严重、在什么配置上；严重时还会发送问题前两分钟的主机日志（已匿名）。 | 否：固定代码和数字；日志片段经过清洗，也没有时钟时间。 | 只收固定代码；日志片段用和崩溃日志相同的清洗规则，并去掉计算机名和账户名 `src/telemetry/events.cpp:422`。 | 计数 400 天；日志片段 90 天。 |
+| stream_regress | `metric jitter_p95`, `baseline 0.3`, `current 2.6` | `src/telemetry/events.cpp:438` | 这台安装是否比它自己以前更差？一个指标的名字、以前的值和现在的值；每个版本最多一次。 | 否：指标名和两个数字；滚动平均保存在本机自己的目录里。 | 指标名固定，数字限幅 `src/telemetry/events.cpp:438`。 | 计数 400 天。 |
+| startup：host_start_ms、first_frame_ms | `2100`, `450` | `src/telemetry/events.cpp:440` | 主机多久就绪、多久出第一帧。 | 否：数字。 | 限幅。 | events 180 天。 |
+| panel_page：page、time_to_content_ms | `apps`, `180` | `src/telemetry/events.cpp:441` | 控制面板各页面多久显示出内容。 | 否：我们自己的路由 id 和一个数字。 | 标记和范围。 | events 180 天。 |
 
 ## 错误事件（错误报告）
 
 | 字段 | 示例 | 代码位置 | 用途（回答什么问题） | 能否识别个人或泄露私密内容 | 已做的清洗 | 保留时间 |
 | --- | --- | --- | --- | --- | --- | --- |
-| error：component、code、severity、count | `stream`, `e1a2b3c4`, `error`, `3` | `src/telemetry/events.cpp:310` `src/telemetry/service.cpp:393` | 哪个组件出错、出错多频繁。code 是日志行固定开头（到第一个引号、括号、冒号或数字为止）的哈希，所以同一个错误是同一个 code。 | 否：不含文字。修复前，错误事件带一行最长 200 字符、经过清洗的日志，仍可能含设备名或游戏名；现在这行日志留在本机。 | 发送端白名单 `src/telemetry/events.cpp:310`、网页端 `m3e:src/telemetry/events.js:57` `m3e:src/telemetry/send.js:181`、Worker `worker:src/schema.ts:61` 都去掉了 message 属性；仍发送它的旧客户端，该属性会被丢弃。 | events 180 天。 |
-| log_summary：component、fatal、error、warning | `encoder`, `0`, `2`, `9` | `src/telemetry/events.cpp:326` `src/telemetry/service.cpp:393` | 主机每小时按组件记录了多少警告和错误。 | 否：计数。组件是 24 个固定词之一，或 `host`。 | `src/telemetry/service.cpp:393` | events 180 天。 |
-| user_report：category、component、page、error_code、attachment、message | `bug`, `web`, `apps`, `E_LOST`, `att-2026-11/<sha256>.webp`, `the apps page stays empty` | `src/telemetry/events.cpp:318` `m3e:src/telemetry/report.js:140` `m3e:src/telemetry/report.js:127` | 用户亲手写、亲手点击「发送」的报告，回答「这个人遇到了什么问题」。 | 是，这是它的性质：它是人打的字，也是整个系统里唯一的自由文本。只有按下「发送」才会发出，且表单会先展示将发送的全部内容（标题、描述、错误的简短摘要及堆栈开头几行、最近的事件）。 | 在浏览器 `m3e:src/telemetry/scrub.js:52`、主机 `src/telemetry/events.cpp:153` 和 Worker `worker:src/scrub.ts:39` 各清洗一遍；最长 2000 字符；没有联系方式字段；附件只是开发者面板返回的引用。 | events 180 天；GitHub 问题在开发者关闭前保留。 |
+| error：component、code、severity、count | `stream`, `e1a2b3c4`, `error`, `3` | `src/telemetry/events.cpp:335` `src/telemetry/service.cpp:749` | 哪个组件出错、出错多频繁。code 是日志行固定开头（到第一个引号、括号、冒号或数字为止）的哈希，所以同一个错误是同一个 code。 | 否：不含文字。修复前，错误事件带一行最长 200 字符、经过清洗的日志，仍可能含设备名或游戏名；现在这行日志留在本机。 | 发送端白名单 `src/telemetry/events.cpp:335`、网页端 `m3e:src/telemetry/events.js:57` `m3e:src/telemetry/send.js:181`、Worker `worker:src/schema.ts:61` 都去掉了 message 属性；仍发送它的旧客户端，该属性会被丢弃。 | events 180 天。 |
+| log_summary：component、fatal、error、warning | `encoder`, `0`, `2`, `9` | `src/telemetry/events.cpp:351` `src/telemetry/service.cpp:749` | 主机每小时按组件记录了多少警告和错误。 | 否：计数。组件是 24 个固定词之一，或 `host`。 | `src/telemetry/service.cpp:749` | events 180 天。 |
+| user_report：category、component、page、error_code、attachment、message | `bug`, `web`, `apps`, `E_LOST`, `att-2026-11/<sha256>.webp`, `the apps page stays empty` | `src/telemetry/events.cpp:343` `m3e:src/telemetry/report.js:140` `m3e:src/telemetry/report.js:127` | 用户亲手写、亲手点击「发送」的报告，回答「这个人遇到了什么问题」。 | 是，这是它的性质：它是人打的字，也是整个系统里唯一的自由文本。只有按下「发送」才会发出，且表单会先展示将发送的全部内容（标题、描述、错误的简短摘要及堆栈开头几行、最近的事件）。 | 在浏览器 `m3e:src/telemetry/scrub.js:52`、主机 `src/telemetry/events.cpp:154` 和 Worker `worker:src/scrub.ts:39` 各清洗一遍；最长 2000 字符；没有联系方式字段；附件只是开发者面板返回的引用。 | events 180 天；GitHub 问题在开发者关闭前保留。 |
 
 ## 崩溃报告（错误报告）
 
@@ -83,9 +86,9 @@
 
 ## 怎样保证
 
-- 发送端有白名单：未列出的事件名和属性在离开电脑前就被丢弃 `src/telemetry/events.cpp:310`（单元测试 `tests/unit/test_telemetry.cpp`）。
+- 发送端有白名单：未列出的事件名和属性在离开电脑前就被丢弃 `src/telemetry/events.cpp:335`（单元测试 `tests/unit/test_telemetry.cpp`）。
 - Worker 对同一份名单再检查一次；格式不对的属性被丢弃，不会被「清洗后保存」`worker:src/schema.ts:61`。
 - 三种语言的清洗规则用同一份测试向量：`tests/data/telemetry_scrub_vectors.json`（C++），m3e `test/scrub-vectors.json`（JS），Worker `test/scrub-vectors.json`（TS）；`scripts/telemetry/check-scrub-vectors.sh` 检查三份相同。向量里是虚构的用户名、电脑名、路径、IP、MAC、UUID、邮箱、令牌。
 - 崩溃转储的字节级清洗在 C++、Rust、C# 各有一份实现和同样的测试向量。
-- 同意：错误报告和使用统计各自独立；主机在每一次发送前都检查，网页发来的事件由主机再检查一次 `src/telemetry/service.cpp:220`。
+- 同意：错误报告和使用统计各自独立；主机在每一次发送前都检查，网页发来的事件由主机再检查一次 `src/telemetry/service.cpp:228`。
 - 用户可随时在「关于 › 隐私」看到「会发送什么」，并用「查看将发送的内容」看到下一次发送的原文 `src/telemetry/telemetry.cpp:470`。

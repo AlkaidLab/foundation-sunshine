@@ -16,6 +16,7 @@
 #include <nlohmann/json.hpp>
 
 #include "events.h"
+#include "stream_health.h"
 
 namespace telemetry {
 
@@ -32,6 +33,10 @@ namespace telemetry {
     std::string transport = "enet";
     std::string app_kind = "other";
     std::string sparxie_game;
+    // not part of stream_start: the stream-health dimensions (fixed words)
+    std::string encoder;  ///< the encoder family: nvenc | quicksync | amdvce | vaapi | videotoolbox | software
+    std::string capture_backend;  ///< wgc | ddx | dxgi | nvfbc | kms | x11 | wlr
+    std::string gpu_driver;  ///< digits and dots of the adapter driver version
   };
 
   /** What the host knows about a session at one tick, read from its own state and the client's reports. */
@@ -41,9 +46,14 @@ namespace telemetry {
     std::optional<double> loss_pct;
     std::optional<int> dropped_frames;  ///< cumulative, as the client reports it
     int measured_kbps = 0;  ///< 0 when the window is empty
+    int target_kbps = 0;  ///< the encoder budget of the session
+    int fec_pct = 0;  ///< the parity share in use, 0 when not known
   };
 
   nlohmann::json dims_to_props(const stream_dims_t &dims);
+  /** The dimensions as the stream-health windows carry them. */
+  health::dims_t
+  health_dims_of(const stream_dims_t &dims);
 
   /** stop_reason_name() of the host -> the contract's result: normal | error | timeout | kicked. */
   std::string result_of_stop_reason(std::string_view stop_reason);
@@ -94,6 +104,15 @@ namespace telemetry {
     /** The reconnect count: sessions of the same client that began within 30 s of the previous one ending. Set by the service. */
     void set_reconnects(int reconnects) noexcept { reconnects_ = reconnects; }
 
+    /** Tier 1: this stream sends the per-window histograms too (decided at its start by the remote sample rate). */
+    void
+    set_detail(bool detail) noexcept { detail_ = detail; }
+    bool
+    detail() const noexcept { return detail_; }
+    /** The 60-second windows of this stream. */
+    health::stream_health_t &
+    health() noexcept { return health_; }
+
     std::uint32_t session_id() const noexcept { return session_id_; }
     const stream_dims_t &dims() const noexcept { return dims_; }
     std::int64_t start_ms() const noexcept { return start_ms_; }
@@ -105,6 +124,8 @@ namespace telemetry {
     std::uint32_t session_id_;
     stream_dims_t dims_;
     std::int64_t start_ms_;
+    health::stream_health_t health_;
+    bool detail_ = true;
 
     std::atomic<std::uint64_t> frames_ { 0 };
     std::atomic<std::int64_t> first_frame_at_ { -1 };

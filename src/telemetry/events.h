@@ -52,7 +52,15 @@ namespace telemetry {
     nlohmann::json props = nlohmann::json::object();
     std::string product = "host";  ///< host | panel | web | sparxie-launch
     std::string version;  ///< product version when it differs from the host's (panel and web); empty = the host's
+    int priority = -1;  ///< 0, 1 or 2 (see event_priority); -1: by the event's name
   };
+
+  /**
+   * How much an event matters when something has to give: 0 is never sampled away, sent first and the last to be dropped (user reports, fatal errors, the first report of an error, serious stream problems, the
+   * per-stream summary); 1 is reduced when the server asks (further reports of a known error, smaller problems, comparisons with the install's own baseline); 2 is the first to shrink or stop (usage, performance detail).
+   */
+  int
+  event_priority(const event_t &event);
 
   /** Products the host sender accepts events for. */
   bool known_product(std::string_view product);

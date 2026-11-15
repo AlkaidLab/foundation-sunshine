@@ -7,6 +7,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <mutex>
 #include <thread>
 
@@ -155,11 +156,14 @@ namespace telemetry {
         // runs on the thread that logged: a counter and a copy of the line, nothing else (the line is scrubbed later, on the sender thread)
         try {
           const auto severity = record.attribute_values()["Severity"].extract<int>();
-          if (!severity || severity.get() < 3 || severity.get() > 5) return;
+          if (!severity) return;
           const auto service = current();
           if (!service) return;
           const auto message = record.attribute_values()["Message"].extract<std::string>();
           const std::string text = message ? message.get() : std::string {};
+          // every severity goes to the short ring an anomaly excerpt is cut from; only warnings and above are tallied
+          service->note_log_line(severity.get(), text.c_str(), text.size());
+          if (severity.get() < 3 || severity.get() > 5) return;
           service->note_log(severity.get(), text.c_str(), text.size(), component_of(text.c_str(), text.size()));
         }
         catch (...) {
@@ -216,10 +220,14 @@ namespace telemetry {
           for (const auto &gpu : snapshot.gpus) {
             if (gpu.is_streaming_adapter) {
               ctx.gpu_vendor = gpu_vendor_of(gpu.vendor);
+              service_->set_gpu_driver(gpu.driver_version);
               break;
             }
           }
-          if (ctx.gpu_vendor.empty() && !snapshot.gpus.empty()) ctx.gpu_vendor = gpu_vendor_of(snapshot.gpus.front().vendor);
+          if (ctx.gpu_vendor.empty() && !snapshot.gpus.empty()) {
+            ctx.gpu_vendor = gpu_vendor_of(snapshot.gpus.front().vendor);
+            service_->set_gpu_driver(snapshot.gpus.front().driver_version);
+          }
         }
         catch (...) {
         }
@@ -265,6 +273,7 @@ namespace telemetry {
             service_->flush();
           }
           service_->pump();
+          service_->pump_logs();
         }
         {
           std::lock_guard lock { mutex_ };
@@ -301,6 +310,8 @@ namespace telemetry {
       service_options_t options;
       options.dir = platf::appdata() / "telemetry";
       options.endpoint = endpoint;
+      for (const char *variable : { "COMPUTERNAME", "HOSTNAME", "USERNAME", "USER", "LOGNAME" })
+        if (const char *value = std::getenv(variable)) options.redact_words.emplace_back(value);
       service_deps_t deps;
       deps.consent = [] { return consent_t { consent_cache.usage.load(std::memory_order_relaxed), consent_cache.errors.load(std::memory_order_relaxed) }; };
       deps.post = [](const std::string &url, const std::string &body) { return http_post(url, "application/json", body); };
@@ -316,6 +327,13 @@ namespace telemetry {
         std::lock_guard lock { slot_mutex };
         service_slot() = service;
       }
+      // the per-frame timings and counters of the streaming code reach the stream trackers through these (a null hook until now: the encode and capture sums of stream_quality were empty)
+      hooks::table().frame_encoded.store(&telemetry::frame_encoded, std::memory_order_release);
+      hooks::table().encode_ms.store(&telemetry::encode_ms, std::memory_order_release);
+      hooks::table().capture_ms.store(&telemetry::capture_ms, std::memory_order_release);
+      hooks::table().sample.store(&telemetry::record_sample, std::memory_order_release);
+      hooks::table().count.store(&telemetry::record_count, std::memory_order_release);
+      hooks::table().frame_done.store(&telemetry::record_frame_done, std::memory_order_release);
       log_sink = boost::make_shared<log_sink_t>(boost::make_shared<log_backend_t>());
       bl::core::get()->add_sink(log_sink);
       runner = std::make_unique<runner_t>(std::move(service));
@@ -329,6 +347,12 @@ namespace telemetry {
   stop() {
     std::lock_guard lifecycle { lifecycle_mutex };
     if (!runner) return;
+    hooks::table().frame_encoded.store(nullptr, std::memory_order_release);
+    hooks::table().encode_ms.store(nullptr, std::memory_order_release);
+    hooks::table().capture_ms.store(nullptr, std::memory_order_release);
+    hooks::table().sample.store(nullptr, std::memory_order_release);
+    hooks::table().count.store(nullptr, std::memory_order_release);
+    hooks::table().frame_done.store(nullptr, std::memory_order_release);
     bool finished = true;
     try {
       if (const auto service = current()) {
@@ -503,6 +527,8 @@ namespace telemetry {
     // an application with a sparxie block is a Sparxie application however it is started (a direct start runs the game's own exe, not sparxie-launch)
     dims.app_kind = info.sparxie_app ? "sparxie" : classify_app_kind(info.app_name, info.app_cmd);
     dims.transport = transport_of(info.altp);
+    dims.encoder = info.encoder;
+    dims.capture_backend = info.capture_backend;
     if (info.sparxie_app) dims.sparxie_game = sparxie_game_id(info.sparxie_game);
     service->stream_begin(dims, info.session_id, info.client_uuid);
     if (info.hdr) feature_used("stream.hdr");
@@ -529,6 +555,21 @@ namespace telemetry {
   void
   capture_ms(std::uint32_t session_id, double ms) noexcept {
     if (const auto service = current()) service->record_capture_ms(session_id, ms);
+  }
+
+  void
+  record_sample(std::uint32_t session_id, hooks::metric_e metric, double ms) noexcept {
+    if (const auto service = current()) service->record_sample(session_id, metric, ms);
+  }
+
+  void
+  record_count(std::uint32_t session_id, hooks::counter_e counter, std::uint64_t n) noexcept {
+    if (const auto service = current()) service->record_count(session_id, counter, n);
+  }
+
+  void
+  record_frame_done(std::uint32_t session_id, std::int64_t steady_ns) noexcept {
+    if (const auto service = current()) service->record_frame_done(session_id, steady_ns);
   }
 
   void

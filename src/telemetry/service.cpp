@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <fstream>
 #include <random>
@@ -87,6 +88,13 @@ namespace telemetry {
 
   service_t::service_t(service_options_t options, service_deps_t deps):
       options_(std::move(options)), deps_(std::move(deps)), queue_(options_.dir / "queue", options_.queue), session_id_(new_uuid_v4()) {
+    try {
+      std::ifstream in(options_.dir / "remote_config.json");
+      const auto stored = in ? json::parse(in, nullptr, false) : json();
+      if (!stored.is_discarded() && stored.is_object()) config_ = parse_remote_config(stored, 0);
+    }
+    catch (...) {
+    }
     if (!deps_.now_ms) deps_.now_ms = [] { return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count(); };
     if (!deps_.consent) deps_.consent = [] { return consent_t {}; };
     if (!deps_.random01) {
@@ -185,7 +193,7 @@ namespace telemetry {
   // ---- events ----
 
   bool
-  service_t::emit(kind_e kind, std::string_view name, const json &props, std::string_view product, std::string_view version) {
+  service_t::emit(kind_e kind, std::string_view name, const json &props, std::string_view product, std::string_view version, int priority) {
     try {
       if (!known_product(product)) return false;
       if (!consent_now().allows(kind)) {
@@ -197,6 +205,7 @@ namespace telemetry {
       if (!shaped) return false;
       shaped->product = std::string { product };
       shaped->version = sanitize_version(version);
+      shaped->priority = priority;
       bool wake = false;
       {
         std::lock_guard lock { mutex_ };
@@ -244,7 +253,13 @@ namespace telemetry {
   service_t::stream_begin(const stream_dims_t &dims, std::uint32_t session_id, std::string_view client_key) {
     try {
       const auto now = deps_.now_ms();
-      auto stats = std::make_shared<stream_stats_t>(session_id, dims, now);
+      auto with_driver = dims;
+      {
+        std::lock_guard lock { mutex_ };
+        with_driver.gpu_driver = gpu_driver_;
+      }
+      auto stats = std::make_shared<stream_stats_t>(session_id, std::move(with_driver), now);
+      stats->set_detail(stream_detail(session_id, dims));
       {
         std::unique_lock lock { streams_mutex_ };
         const auto key = std::string { client_key };
@@ -257,6 +272,338 @@ namespace telemetry {
     }
     catch (...) {
     }
+  }
+
+  remote_config_t
+  parse_remote_config(const json &cfg, std::int64_t now_ms) {
+    remote_config_t out;
+    if (!cfg.is_object()) return out;
+    const auto num = [&](const char *k, double d) { return cfg.contains(k) && cfg[k].is_number() ? cfg[k].get<double>() : d; };
+    out.rev = static_cast<std::int64_t>(num("rev", 0));
+    out.tier1_rate = std::clamp(num("tier1_rate", 0.1), 0.0, 1.0);
+    out.logs_per_day = static_cast<int>(std::clamp(num("logs_per_day", 6), 0.0, 10.0));
+    out.health = !cfg.contains("health") || !cfg["health"].is_boolean() || cfg["health"].get<bool>();
+    out.backoff_s = static_cast<std::int64_t>(std::clamp(num("backoff_s", 0), 0.0, 21600.0));
+    out.paused = cfg.contains("paused") && cfg["paused"].is_boolean() && cfg["paused"].get<bool>();
+    if (cfg.contains("debug") && cfg["debug"].is_array()) {
+      for (const auto &c : cfg["debug"]) {
+        if (!c.is_object() || !c.contains("until") || !c["until"].is_number() || c["until"].get<double>() <= static_cast<double>(now_ms)) continue;
+        debug_cohort_t d;
+        d.until = static_cast<std::int64_t>(c["until"].get<double>());
+        const auto text = [&](const char *k) { return c.contains(k) && c[k].is_string() ? c[k].get<std::string>().substr(0, 64) : std::string {}; };
+        d.version = text("version");
+        d.gpu = text("gpu");
+        d.client = text("client");
+        d.logs_per_day = c.contains("logs_per_day") && c["logs_per_day"].is_number() ? static_cast<int>(std::clamp(c["logs_per_day"].get<double>(), 0.0, 10.0)) : 0;
+        out.debug.push_back(std::move(d));
+        if (out.debug.size() >= 8) break;
+      }
+    }
+    return out;
+  }
+
+  remote_config_t
+  service_t::remote_config() const {
+    std::lock_guard lock { mutex_ };
+    return config_;
+  }
+
+  void
+  service_t::apply_remote_config(const std::string &body) {
+    try {
+      const auto doc = json::parse(body, nullptr, false);
+      if (doc.is_discarded() || !doc.is_object() || !doc.contains("cfg")) return;
+      auto cfg = parse_remote_config(doc["cfg"], deps_.now_ms());
+      {
+        std::lock_guard lock { mutex_ };
+        config_ = cfg;
+      }
+      // a wait the server asked for does not stop priority 0 (see pump); a failed request still backs everything off
+      const auto asked = cfg.paused ? std::max<std::int64_t>(cfg.backoff_s, 6 * 3600) : cfg.backoff_s;
+      if (asked > 0) {
+        backoff_until_ms_ = std::max(backoff_until_ms_, deps_.now_ms() + asked * 1000);
+        p0_sent_in_backoff_ = false;
+      }
+      std::error_code ec;
+      fs::create_directories(options_.dir, ec);
+      std::ofstream(options_.dir / "remote_config.json", std::ios::trunc) << doc["cfg"].dump();
+    }
+    catch (...) {
+    }
+  }
+
+  bool
+  service_t::stream_detail(std::uint32_t session_id, const stream_dims_t &dims) {
+    remote_config_t cfg;
+    std::string gpu;
+    std::string version;
+    {
+      std::lock_guard lock { mutex_ };
+      cfg = config_;
+      gpu = context_.gpu_vendor;
+      version = context_.version;
+    }
+    const auto now = deps_.now_ms();
+    for (const auto &c : cfg.debug) {
+      if (c.until <= now) continue;
+      if ((!c.version.empty() && c.version != version) || (!c.gpu.empty() && c.gpu != gpu) || (!c.client.empty() && c.client != dims.client_kind)) continue;
+      return true;  // Tier 3: a debug cohort asked for the detail of this stream
+    }
+    if (cfg.tier1_rate >= 1.0) return true;
+    return static_cast<double>(fnv1a(session_id_ + ':' + std::to_string(session_id))) / 4294967296.0 < cfg.tier1_rate;
+  }
+
+  void
+  service_t::record_frame_done(std::uint32_t session_id, std::int64_t steady_ns) noexcept {
+    try {
+      std::shared_lock lock { streams_mutex_ };
+      const auto found = streams_.find(session_id);
+      if (found != streams_.end()) found->second->health().frame_done(steady_ns);
+    }
+    catch (...) {
+    }
+  }
+
+  void
+  service_t::record_sample(std::uint32_t session_id, hooks::metric_e metric, double ms) noexcept {
+    try {
+      std::shared_lock lock { streams_mutex_ };
+      const auto found = streams_.find(session_id);
+      if (found != streams_.end()) found->second->health().record(metric, ms);
+    }
+    catch (...) {
+    }
+  }
+
+  void
+  service_t::record_count(std::uint32_t session_id, hooks::counter_e counter, std::uint64_t n) noexcept {
+    try {
+      std::shared_lock lock { streams_mutex_ };
+      const auto found = streams_.find(session_id);
+      if (found != streams_.end()) found->second->health().count(counter, n);
+    }
+    catch (...) {
+    }
+  }
+
+  void
+  service_t::set_gpu_driver(std::string driver) {
+    // digits and dots only: a driver version is that, and nothing else may leave through this dimension
+    std::string clean;
+    for (const char c : driver)
+      if ((c >= '0' && c <= '9') || c == '.') clean.push_back(c);
+    if (clean.size() > 24) clean.resize(24);
+    std::lock_guard lock { mutex_ };
+    gpu_driver_ = std::move(clean);
+  }
+
+  void
+  service_t::emit_health_chunk(stream_stats_t &stats, std::int64_t now) {
+    if (stats.health().chunk_empty()) return;
+    if (!remote_config().health) {
+      stats.health().take_chunk(now, false);  // switched off remotely: the chunk is dropped, not sent
+      return;
+    }
+    const bool detail = stats.detail() && !backing_off() && remote_config().tier1_rate > 0;
+    auto props = stats.health().take_chunk(now, detail);
+    if (props.value("windows", 0) == 0) return;  // only idle windows: nothing to say about a stream that sent no frames
+    emit(kind_e::experience, "stream_health", props);
+  }
+
+  void
+  service_t::on_window(stream_stats_t &stats, const health::window_t &window, std::int64_t now) {
+    for (const auto &a : window.anomalies) {
+      json props {
+        { "code", a.code },
+        { "severe", a.severe },
+        { "value", a.value },
+        { "threshold", a.threshold },
+        { "count", a.count },
+        { "suppressed", a.suppressed },
+        { "window_s", static_cast<std::int64_t>(std::llround(window.seconds)) },
+      };
+      const auto &d = stats.health().dims();
+      props["codec"] = d.codec;
+      props["width"] = d.width;
+      props["height"] = d.height;
+      props["fps"] = d.fps;
+      props["hdr"] = d.hdr;
+      props["transport"] = d.transport;
+      props["client_kind"] = d.client_kind;
+      props["client_os"] = d.client_os;
+      if (window.probe.target_kbps > 0) props["bitrate_band"] = health::bitrate_band(window.probe.target_kbps);
+      if (!d.encoder.empty()) props["encoder"] = d.encoder;
+      if (!d.capture_backend.empty()) props["capture_backend"] = d.capture_backend;
+      if (!d.gpu_driver.empty()) props["gpu_driver"] = d.gpu_driver;
+      // a severe anomaly sends an anonymized excerpt of the host log around it, at most a few times per install and day
+      bool log = false;
+      if (a.severe && consent_now().errors && anomaly_log_allowed(now)) {
+        auto text = log_excerpt(now);
+        if (!text.empty()) {
+          pending_logs_.push_back({ a.code, now, session_id_, std::move(text), 0 });
+          while (pending_logs_.size() > 2) pending_logs_.pop_front();
+          log = true;
+        }
+      }
+      props["log"] = log;
+      emit(kind_e::experience, "stream_anomaly", props);
+    }
+    // the install's own baseline: one small event when its statistics got clearly worse than they used to be
+    if (!window.idle && remote_config().health) {
+      if (!baseline_) baseline_ = std::make_unique<self_baseline_t>(options_.dir / "stream_baseline.json", context().version);
+      for (const auto &b : baseline_->observe(window)) {
+        const auto &d = stats.health().dims();
+        json props {
+          { "metric", b.metric },
+          { "baseline", b.baseline },
+          { "current", b.current },
+          { "delta", b.delta },
+          { "windows", b.windows },
+          { "baseline_windows", b.baseline_windows },
+          { "version_changed", b.version_changed },
+          { "codec", d.codec },
+          { "width", d.width },
+          { "height", d.height },
+          { "fps", d.fps },
+          { "hdr", d.hdr },
+          { "transport", d.transport },
+          { "client_kind", d.client_kind },
+          { "client_os", d.client_os },
+        };
+        if (window.probe.target_kbps > 0) props["bitrate_band"] = health::bitrate_band(window.probe.target_kbps);
+        if (!d.encoder.empty()) props["encoder"] = d.encoder;
+        if (!d.capture_backend.empty()) props["capture_backend"] = d.capture_backend;
+        if (!d.gpu_driver.empty()) props["gpu_driver"] = d.gpu_driver;
+        emit(kind_e::experience, "stream_regress", props);
+      }
+    }
+  }
+
+  bool
+  service_t::anomaly_log_allowed(std::int64_t now) {
+    const auto day = now / 86'400'000;
+    if (anomaly_log_day_ != day) {
+      anomaly_log_day_ = day;
+      anomaly_log_count_ = 0;
+      // the count of today survives a restart: it is kept in the telemetry directory
+      std::error_code ec;
+      std::ifstream in(options_.dir / "anomaly_log_quota");
+      std::int64_t saved_day = -1;
+      int saved_count = 0;
+      if (in >> saved_day >> saved_count && saved_day == day) anomaly_log_count_ = saved_count;
+    }
+    int limit = options_.anomaly_logs_per_day;
+    {
+      std::lock_guard lock { mutex_ };
+      limit = std::min(config_.logs_per_day, limit > 0 ? std::max(limit, config_.logs_per_day) : config_.logs_per_day);
+      for (const auto &c : config_.debug)
+        if (c.until > now && c.logs_per_day > limit && (c.version.empty() || c.version == context_.version) && (c.gpu.empty() || c.gpu == context_.gpu_vendor)) limit = c.logs_per_day;
+    }
+    if (anomaly_log_count_ >= limit) return false;
+    // the first serious problem of a run is never held back by the gap: a run that goes wrong early must leave its log
+    if (!anomaly_log_first_ && last_anomaly_log_ms_ >= 0 && now - last_anomaly_log_ms_ < options_.anomaly_log_min_gap_ms) return false;
+    anomaly_log_first_ = false;
+    ++anomaly_log_count_;
+    last_anomaly_log_ms_ = now;
+    std::error_code ec;
+    fs::create_directories(options_.dir, ec);
+    std::ofstream(options_.dir / "anomaly_log_quota", std::ios::trunc) << day << ' ' << anomaly_log_count_ << '\n';
+    return true;
+  }
+
+  void
+  service_t::note_log_line(int severity, const char *message, std::size_t length) noexcept {
+    try {
+      const auto now = deps_.now_ms();
+      std::lock_guard lock { ring_mutex_ };
+      log_ring_.push_back({ now, severity, std::string { message ? message : "", std::min<std::size_t>(length, 400) } });
+      while (log_ring_.size() > 2500 || (!log_ring_.empty() && now - log_ring_.front().ms > options_.anomaly_log_span_ms + 30'000)) log_ring_.pop_front();
+    }
+    catch (...) {
+    }
+  }
+
+  std::string
+  service_t::log_excerpt(std::int64_t now) {
+    std::vector<ring_line_t> lines;
+    {
+      std::lock_guard lock { ring_mutex_ };
+      for (const auto &l : log_ring_)
+        if (now - l.ms <= options_.anomaly_log_span_ms) lines.push_back(l);
+    }
+    // the same scrubber as the rest of the telemetry; the clock is relative to the anomaly, so no wall-clock time or date leaves with it
+    static const char level[] = { 'T', 'D', 'I', 'W', 'E', 'F' };
+    const auto redact = [this](std::string text) {
+      for (const auto &word : options_.redact_words) {
+        if (word.size() < 2) continue;
+        std::string lower_text = text, lower_word = word;
+        std::transform(lower_text.begin(), lower_text.end(), lower_text.begin(), [](unsigned char c) { return std::tolower(c); });
+        std::transform(lower_word.begin(), lower_word.end(), lower_word.begin(), [](unsigned char c) { return std::tolower(c); });
+        for (std::size_t at = 0; (at = lower_text.find(lower_word, at)) != std::string::npos;) {
+          text.replace(at, word.size(), "<name>");
+          lower_text.replace(at, word.size(), "<name>");
+          at += 6;
+        }
+      }
+      return text;
+    };
+    std::vector<std::string> out;
+    out.reserve(lines.size());
+    std::size_t total = 0;
+    for (const auto &l : lines) {
+      char head[32];
+      std::snprintf(head, sizeof head, "[-%6.1fs] %c ", static_cast<double>(now - l.ms) / 1000.0, level[std::clamp(l.severity, 0, 5)]);
+      auto line = std::string { head } + redact(scrub_text(l.text, 400)) + "\n";
+      total += line.size();
+      out.push_back(std::move(line));
+    }
+    // keep the newest lines when the excerpt is longer than the limit
+    std::size_t first = 0;
+    while (total > options_.anomaly_log_max_bytes && first < out.size()) total -= out[first++].size();
+    std::string text;
+    text.reserve(total);
+    for (std::size_t i = first; i < out.size(); ++i) text += out[i];
+    return text;
+  }
+
+  int
+  service_t::pump_logs() {
+    int sent = 0;
+    try {
+      const auto n = pending_logs_.size();
+      for (std::size_t i = 0; i < n && !pending_logs_.empty(); ++i) {
+        if (!consent_now().errors) {
+          pending_logs_.clear();
+          break;
+        }
+        auto item = std::move(pending_logs_.front());
+        pending_logs_.pop_front();
+        const auto ctx = context();
+        const auto id = install_id();
+        if (id.empty()) continue;
+        json body {
+          { "v", 1 },
+          { "install_id", id },
+          { "session_id", item.session },
+          { "product", "host" },
+          { "version", safe_version(ctx.version) },
+          { "channel", ctx.channel },
+          { "os", ctx.os },
+          { "code", item.code },
+          { "t", item.t },
+          { "log", item.text },
+        };
+        const auto result = deps_.post(options_.endpoint + "/v1/anomaly-log", body.dump());
+        const bool retry = result.status == 0 || result.status == 408 || result.status == 425 || result.status == 429 || result.status >= 500;
+        if (result.status >= 200 && result.status < 300)
+          ++sent;
+        else if (retry && ++item.tries < 2)
+          pending_logs_.push_back(std::move(item));
+      }
+    }
+    catch (...) {
+    }
+    return sent;
   }
 
   void
@@ -285,6 +632,8 @@ namespace telemetry {
         }
       }
       if (stats->take_first_frame_report() && stats->first_frame_ms()) emit(kind_e::experience, "startup", json { { "first_frame_ms", *stats->first_frame_ms() } });
+      if (const auto w = stats->health().finish(now, health::probe_t {})) on_window(*stats, *w, now);
+      emit_health_chunk(*stats, now);
       auto props = dims_to_props(stats->dims());
       props["duration_s"] = std::max<std::int64_t>(0, (now - stats->start_ms()) / 1000);
       props["result"] = result_of_stop_reason(stop_reason);
@@ -311,7 +660,10 @@ namespace telemetry {
     try {
       std::shared_lock lock { streams_mutex_ };
       const auto found = streams_.find(session_id);
-      if (found != streams_.end()) found->second->on_encode_ms(ms);
+      if (found != streams_.end()) {
+        found->second->on_encode_ms(ms);
+        found->second->health().record(hooks::metric_e::encode_ms, ms);
+      }
     }
     catch (...) {
     }
@@ -322,7 +674,10 @@ namespace telemetry {
     try {
       std::shared_lock lock { streams_mutex_ };
       const auto found = streams_.find(session_id);
-      if (found != streams_.end()) found->second->on_capture_ms(ms);
+      if (found != streams_.end()) {
+        found->second->on_capture_ms(ms);
+        found->second->health().record(hooks::metric_e::capture_ms, ms);
+      }
     }
     catch (...) {
     }
@@ -348,6 +703,16 @@ namespace telemetry {
         for (const auto &p : probes)
           if (p.session_id == stats->session_id()) probe = p;
         stats->tick(now, probe);
+        {
+          health::probe_t hp;
+          hp.rtt_ms = probe.rtt_ms;
+          hp.loss_pct = probe.loss_pct;
+          hp.measured_kbps = probe.measured_kbps;
+          hp.target_kbps = probe.target_kbps;
+          hp.fec_pct = probe.fec_pct;
+          if (const auto w = stats->health().tick(now, hp)) on_window(*stats, *w, now);
+          if (stats->health().chunk_due(now)) emit_health_chunk(*stats, now);
+        }
         if (stats->take_first_frame_report()) {
           if (const auto first = stats->first_frame_ms()) emit(kind_e::experience, "startup", json { { "first_frame_ms", *first } });
         }
@@ -445,20 +810,22 @@ namespace telemetry {
       }
       if (taken.empty()) return;
       const auto c = consent_now();
-      std::map<std::string, std::vector<event_t>> by_product;
+      // a batch holds events of one product and one priority, so the queue can drop, hold and send by priority
+      std::map<std::pair<std::string, int>, std::vector<event_t>> by_product;
       for (auto &e : taken) {
         if (!c.allows(e.kind)) continue;
-        by_product[e.product].push_back(std::move(e));
+        const auto priority = event_priority(e);
+        by_product[{ e.product, priority }].push_back(std::move(e));
       }
       if (by_product.empty()) return;
       auto ctx = context();
       ctx.install_id = install_id();
       if (ctx.install_id.empty()) return;
       ctx.session_id = session_id_;
-      for (const auto &[product, events] : by_product) {
-        for (const auto &envelope : build_envelopes(ctx, product, events)) {
+      for (const auto &[key, events] : by_product) {
+        for (const auto &envelope : build_envelopes(ctx, key.first, events)) {
           std::lock_guard lock { queue_mutex_ };
-          queue_.push(envelope);
+          queue_.push(envelope, key.second);
         }
       }
     }
@@ -466,12 +833,78 @@ namespace telemetry {
     }
   }
 
+  namespace {
+    // Priority 0 events held back by a wait the server asked for leave once as counts: the same error or problem becomes one event with its count.
+    json
+    collapse_priority0(std::vector<disk_queue_t::entry_t> &entries) {
+      json merged = entries.front().batch;
+      json events = json::array();
+      std::map<std::string, std::size_t> seen;
+      bool health = false;
+      for (auto &entry : entries) {
+        if (entry.batch.value("product", "") != merged.value("product", "")) continue;
+        for (auto &e : entry.batch["events"]) {
+          const auto name = e.value("name", "");
+          const auto &p = e.contains("props") ? e["props"] : json::object();
+          if (name == "stream_health") {
+            if (health) continue;  // one summary per wait: the others are counted out
+            health = true;
+            events.push_back(e);
+            continue;
+          }
+          std::string key = name + "|" + p.value("code", std::string {}) + "|" + p.value("fingerprint", std::string {}) + "|" + p.value("metric", std::string {});
+          const auto found = seen.find(key);
+          if (found == seen.end()) {
+            seen[key] = events.size();
+            events.push_back(e);
+          }
+          else if (auto &kept = events[found->second]; kept.contains("props")) {
+            auto &kp = kept["props"];
+            if (name == "error_report")
+              kp["count"] = kp.value("count", 1) + p.value("count", 1);
+            else if (name == "stream_anomaly")
+              kp["suppressed"] = kp.value("suppressed", 0) + 1 + p.value("suppressed", 0);
+          }
+        }
+      }
+      merged["events"] = std::move(events);
+      return merged;
+    }
+  }  // namespace
+
   int
   service_t::pump() {
     int sent = 0;
     try {
       if (deps_.now_ms() < not_before_ms_) return 0;
       const auto c = consent_now();
+      // while the server asks for a wait only priority 0 may leave, once per wait and as counts; the rest stays in the queue under its caps
+      if (backing_off()) {
+        if (p0_sent_in_backoff_) return 0;
+        std::vector<disk_queue_t::entry_t> entries;
+        {
+          std::lock_guard lock { queue_mutex_ };
+          entries = queue_.entries(0, 20);
+        }
+        if (entries.empty()) return 0;
+        for (auto &e : entries) filter_by_consent(e.batch, c.usage, c.errors);
+        entries.erase(std::remove_if(entries.begin(), entries.end(), [](const auto &e) { return e.batch["events"].empty(); }), entries.end());
+        if (entries.empty()) return 0;
+        post_result_t answer;
+        try {
+          if (deps_.post) answer = deps_.post(events_url(), collapse_priority0(entries).dump());
+        }
+        catch (...) {
+          answer = {};
+        }
+        p0_sent_in_backoff_ = true;  // one request per wait, whatever the answer: a failure backs off through the usual path
+        if (answer.status >= 200 && answer.status < 300) {
+          std::lock_guard lock { queue_mutex_ };
+          for (const auto &e : entries) queue_.remove(e.path);
+          ++sent;
+        }
+        return sent;
+      }
       for (int i = 0; i < options_.max_batches_per_pump; ++i) {
         std::optional<disk_queue_t::entry_t> entry;
         {
@@ -509,6 +942,7 @@ namespace telemetry {
           failures_ = 0;
           not_before_ms_ = 0;
           ++sent;
+          if (!answer.body.empty()) apply_remote_config(answer.body);
           std::lock_guard lock { mutex_ };
           ++counts_.sent_batches;
           counts_.sent_events += count;
