@@ -4,6 +4,8 @@
  */
 #include "service.h"
 
+#include "src/crash/crash_context.h"
+
 #include <algorithm>
 #include <array>
 #include <chrono>
@@ -233,7 +235,19 @@ namespace telemetry {
         const std::string prefix = std::string { product } + ".";
         if (id.rfind(prefix, 0) != 0) continue;
       }
-      if (emit(*kind, name, e.contains("props") ? e["props"] : json::object(), product, version)) ++kept;
+      auto props = e.contains("props") ? e["props"] : json::object();
+      // a feedback report goes with the anonymised log of this session: uploaded first, its reference travels in the report. A page cannot name a reference itself.
+      if (name == "user_report" && props.is_object()) {
+        props.erase("log_ref");
+        if (deps_.session_log) {
+          try {
+            if (const auto ref = deps_.session_log(endpoint(), install_id(), std::string { version })) props["log_ref"] = *ref;
+          }
+          catch (...) {
+          }
+        }
+      }
+      if (emit(*kind, name, props, product, version)) ++kept;
     }
     return kept;
   }
@@ -253,6 +267,7 @@ namespace telemetry {
         client_of_[session_id] = key;
         streams_[session_id] = std::move(stats);
       }
+      crash::context::stream_started(dims.codec, dims.width, dims.height, dims.fps, dims.hdr, dims.transport, dims.client_kind);  // for the crash report: what the host was doing
       emit(kind_e::usage, "stream_start", dims_to_props(dims));
     }
     catch (...) {
@@ -275,6 +290,7 @@ namespace telemetry {
         if (found == streams_.end()) return;
         stats = std::move(found->second);
         streams_.erase(found);
+        if (streams_.empty()) crash::context::stream_ended();
         const auto client = client_of_.find(session_id);
         if (client != client_of_.end()) {
           if (!client->second.empty()) {
