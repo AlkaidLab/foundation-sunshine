@@ -6,7 +6,31 @@ include(${CMAKE_MODULE_PATH}/dependencies/mat_capture.cmake)
 if (TARGET sunshine_mat_capture)
     add_dependencies(sunshine sunshine_mat_capture)
 endif ()
-target_sources(sunshine PRIVATE ${SUNSHINE_HOST_SOURCES} ${PLATFORM_TARGET_FILES})
+# Host sources are compiled once and shared by `sunshine` and `test_sunshine` (Windows builds with tests). Before,
+# the aggregate test executable compiled the same ~250 files a second time, with a different command line.
+# Only files whose code depends on definitions that the test executable adds are compiled in both targets:
+#   SUNSHINE_TESTS       test seams (extra functions behind #ifdef SUNSHINE_TESTS)
+#   SUNSHINE_SHADERS_DIR the shader directory of the source tree, which tests read without an install
+# The other uses of SUNSHINE_TESTS are declarations in headers (input.h, logging_severity.h, nvhttp.h,
+# nvhttp/pairing_pending.h, webhook/webhook.h): they add names, never members or layouts, so a translation unit that
+# compiles without them is ODR-safe next to one that compiles with them.
+# A coverage build keeps the separate test compilation: the shared objects are not built with the coverage flags of
+# sunshine_coverage, and linking the test target against it cannot instrument objects that were already compiled.
+option(SUNSHINE_SHARE_HOST_OBJECTS "Compile the host sources once for sunshine and test_sunshine" ON)
+set(SUNSHINE_SHARED_HOST_OBJECTS_ENABLED OFF)
+if(WIN32 AND SUNSHINE_SHARE_HOST_OBJECTS AND (BUILD_TESTS OR BUILD_TRAY_TESTS) AND NOT SUNSHINE_TESTS_ENABLE_COVERAGE)
+    set(SUNSHINE_SHARED_HOST_OBJECTS_ENABLED ON)
+    set(_sunshine_seam_regex
+        ".*/src/(input|logging|nvhttp/pairing|nvhttp/pairing_pending|webhook/webhook|nvenc/win/nvenc_dynamic_factory|nvenc/win/impl/nvenc_dynamic_factory_1301|platform/windows/display_vram|platform/windows/pre_encode_filter)\\.cpp$")
+    set(_sunshine_host_all ${SUNSHINE_HOST_SOURCES} ${PLATFORM_TARGET_FILES})
+    set(SUNSHINE_SEAM_SOURCES ${_sunshine_host_all})
+    list(FILTER SUNSHINE_SEAM_SOURCES INCLUDE REGEX "${_sunshine_seam_regex}")
+    set(SUNSHINE_SHARED_SOURCES ${_sunshine_host_all})
+    list(FILTER SUNSHINE_SHARED_SOURCES EXCLUDE REGEX "${_sunshine_seam_regex}")
+    target_sources(sunshine PRIVATE ${SUNSHINE_SEAM_SOURCES})
+else()
+    target_sources(sunshine PRIVATE ${SUNSHINE_HOST_SOURCES} ${PLATFORM_TARGET_FILES})
+endif()
 if(WIN32)
     target_link_libraries(sunshine PRIVATE Pyrowave::Runtime sunshine_windows_resources winhttp windowscodecs ole32 shell32)
     install(FILES "${CMAKE_SOURCE_DIR}/third-party/pyrowave/LICENSE"
@@ -55,15 +79,14 @@ target_link_libraries(sunshine PRIVATE
         ${SUNSHINE_EXTERNAL_LIBRARIES} ${EXTRA_LIBS}
         sunshine_project_options sunshine_crypto sunshine_ai_provider sunshine_ai_stream
         alkaidlab_ds5_core alkaidlab_usbip_core alkaidlab_stun_codec)
+# The adapter definitions and trust-header directories are per source file (see the end of this file), not per target:
+# only three files read them, and a target-wide definition would give every translation unit a different command line
+# whenever the adapters are on or off, so a compiler cache filled by one kind of build could not serve the other.
 if (TARGET sunshine_rtx_video_adapter)
     add_dependencies(sunshine sunshine_rtx_video_adapter)
-    target_include_directories(sunshine PRIVATE "${RTX_VIDEO_TRUST_INCLUDE}")
-    target_compile_definitions(sunshine PRIVATE SUNSHINE_RTX_VIDEO_ADAPTER)
 endif ()
 if (TARGET sunshine_dlssnr_adapter)
     add_dependencies(sunshine sunshine_dlssnr_adapter)
-    target_include_directories(sunshine PRIVATE "${DLSSNR_TRUST_INCLUDE}")
-    target_compile_definitions(sunshine PRIVATE SUNSHINE_DLSSNR_ADAPTER)
 endif ()
 target_compile_definitions(sunshine PUBLIC ${SUNSHINE_DEFINITIONS})
 set_target_properties(sunshine PROPERTIES CXX_STANDARD 23
@@ -78,6 +101,30 @@ if(CUDA_INHERIT_COMPILE_OPTIONS)
 endif()
 
 target_compile_options(sunshine PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>;$<$<COMPILE_LANGUAGE:CUDA>:${SUNSHINE_COMPILE_OPTIONS_CUDA};-std=c++17>)  # cmake-lint: disable=C0301
+
+if(SUNSHINE_SHARED_HOST_OBJECTS_ENABLED)
+    # Same compile configuration as `sunshine`: definitions, options, standard and the usage requirements of every
+    # library it links. The objects are linked into sunshine and test_sunshine through $<TARGET_OBJECTS:...>.
+    add_library(sunshine_host_objects OBJECT ${SUNSHINE_SHARED_SOURCES})
+    target_link_libraries(sunshine_host_objects PRIVATE
+            Pyrowave::Runtime sunshine_windows_resources winhttp windowscodecs ole32 shell32
+            ${SUNSHINE_EXTERNAL_LIBRARIES} ${EXTRA_LIBS}
+            sunshine_project_options sunshine_crypto sunshine_ai_provider sunshine_ai_stream
+            alkaidlab_ds5_core alkaidlab_usbip_core alkaidlab_stun_codec)
+    foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
+        add_dependencies(sunshine_host_objects ${dep})
+    endforeach()
+    if (TARGET sunshine_rtx_video_adapter)
+        add_dependencies(sunshine_host_objects sunshine_rtx_video_adapter)
+    endif ()
+    if (TARGET sunshine_dlssnr_adapter)
+        add_dependencies(sunshine_host_objects sunshine_dlssnr_adapter)
+    endif ()
+    target_compile_definitions(sunshine_host_objects PUBLIC ${SUNSHINE_DEFINITIONS})
+    set_target_properties(sunshine_host_objects PROPERTIES CXX_STANDARD 23)
+    target_compile_options(sunshine_host_objects PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+    target_sources(sunshine PRIVATE $<TARGET_OBJECTS:sunshine_host_objects>)
+endif()
 
 # Homebrew build fails the vite build if we set these environment variables
 if(${SUNSHINE_BUILD_HOMEBREW})
@@ -128,5 +175,20 @@ set_source_files_properties("${CMAKE_SOURCE_DIR}/third-party/ViGEmClient/src/ViG
         PROPERTIES
         COMPILE_DEFINITIONS "UNICODE=1;ERROR_INVALID_DEVICE_OBJECT_PARAMETER=650"
         COMPILE_FLAGS ${VIGEM_COMPILE_FLAGS})
+
+# Adapter definitions: set only on the files that read them, in the directories that compile them.
+set(_alk_src "${CMAKE_SOURCE_DIR}/src")
+if (TARGET sunshine_rtx_video_adapter)
+    foreach(_f "${_alk_src}/image_enhancement/config.cpp" "${_alk_src}/platform/windows/image_enhancement/rtx_hdr/adapter_loader.cpp")
+        set_property(SOURCE "${_f}" DIRECTORY "${CMAKE_SOURCE_DIR}" ${TEST_DIR} APPEND PROPERTY COMPILE_DEFINITIONS SUNSHINE_RTX_VIDEO_ADAPTER)
+        set_property(SOURCE "${_f}" DIRECTORY "${CMAKE_SOURCE_DIR}" ${TEST_DIR} APPEND PROPERTY INCLUDE_DIRECTORIES "${RTX_VIDEO_TRUST_INCLUDE}")
+    endforeach()
+endif ()
+if (TARGET sunshine_dlssnr_adapter)
+    foreach(_f "${_alk_src}/image_enhancement/config.cpp" "${_alk_src}/platform/windows/image_enhancement/dlss_nr/adapter_loader.cpp")
+        set_property(SOURCE "${_f}" DIRECTORY "${CMAKE_SOURCE_DIR}" ${TEST_DIR} APPEND PROPERTY COMPILE_DEFINITIONS SUNSHINE_DLSSNR_ADAPTER)
+        set_property(SOURCE "${_f}" DIRECTORY "${CMAKE_SOURCE_DIR}" ${TEST_DIR} APPEND PROPERTY INCLUDE_DIRECTORIES "${DLSSNR_TRUST_INCLUDE}")
+    endforeach()
+endif ()
 
 sunshine_configure_debug_sources("${TEST_DIR}")

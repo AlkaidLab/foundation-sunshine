@@ -64,6 +64,7 @@ include(${CMAKE_MODULE_PATH}/macros/common.cmake)
 
 # load dependencies
 include(${CMAKE_MODULE_PATH}/dependencies/common.cmake)
+include(${CMAKE_MODULE_PATH}/dependencies/boost_separate.cmake)
 
 # Standalone DS5 and USB/IP semantic cores. These plain-C libraries have no
 # dependency on the Platform Runtime or Module SDK.

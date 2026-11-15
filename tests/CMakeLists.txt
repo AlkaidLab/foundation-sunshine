@@ -1345,10 +1345,19 @@ if (WIN32)
             ${TRUEHDR_ADAPTER_LOADER_TEST_SOURCE})
 endif ()
 
-set(SUNSHINE_SOURCES
-        ${SUNSHINE_HOST_SOURCES}
-        ${PLATFORM_TARGET_FILES}
-        ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/Ds5HapticsIrStream.c)
+if(SUNSHINE_SHARED_HOST_OBJECTS_ENABLED)
+    # The host sources are compiled once (sunshine_host_objects); only the files that depend on test-only
+    # definitions are compiled again here, with them.
+    set(SUNSHINE_SOURCES
+            ${SUNSHINE_SEAM_SOURCES}
+            $<TARGET_OBJECTS:sunshine_host_objects>
+            ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/Ds5HapticsIrStream.c)
+else()
+    set(SUNSHINE_SOURCES
+            ${SUNSHINE_HOST_SOURCES}
+            ${PLATFORM_TARGET_FILES}
+            ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/src/Ds5HapticsIrStream.c)
+endif()
 
 add_executable(${PROJECT_NAME} ${TEST_SOURCES})
 target_sources(${PROJECT_NAME} PRIVATE
@@ -1361,15 +1370,12 @@ if (WIN32)
 endif ()
 # The network overview in the host sources uses the STUN codec on every platform.
 target_link_libraries(${PROJECT_NAME} PRIVATE alkaidlab_stun_codec)
+# The adapter definitions are set per source file in cmake/targets/common.cmake.
 if (TARGET sunshine_rtx_video_adapter)
     add_dependencies(${PROJECT_NAME} sunshine_rtx_video_adapter)
-    target_include_directories(${PROJECT_NAME} PRIVATE "${RTX_VIDEO_TRUST_INCLUDE}")
-    target_compile_definitions(${PROJECT_NAME} PRIVATE SUNSHINE_RTX_VIDEO_ADAPTER)
 endif ()
 if (TARGET sunshine_dlssnr_adapter)
     add_dependencies(${PROJECT_NAME} sunshine_dlssnr_adapter)
-    target_include_directories(${PROJECT_NAME} PRIVATE "${DLSSNR_TRUST_INCLUDE}")
-    target_compile_definitions(${PROJECT_NAME} PRIVATE SUNSHINE_DLSSNR_ADAPTER)
 endif ()
 
 foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})

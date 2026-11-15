@@ -21,7 +21,6 @@
 #include "client_family.h"
 #include "crypto.h"
 #include "thread_safe.h"
-#include "version.h"
 
 /**
  * @brief Contains all the functions and variables related to the nvhttp (GameStream) server.
@@ -39,11 +38,6 @@ namespace nvhttp {
    * @brief The GFE version we are replicating.
    */
   constexpr auto GFE_VERSION = "3.23.0.74";
-
-  /**
-   * @brief The Sunshine version we are replicating.
-   */
-  constexpr auto SUNSHINE_VERSION = PROJECT_NAME " " PROJECT_VER;
 
   /**
    * @brief The HTTP port, as a difference from the config port.

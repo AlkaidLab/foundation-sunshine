@@ -37,6 +37,10 @@ extern "C" {
 
 using namespace std::literals;
 
+// Sink types are only used here; keeping them out of logging.h keeps boost/log/sinks.hpp out of ~220 translation units.
+using text_sink = boost::log::sinks::asynchronous_sink<boost::log::sinks::text_ostream_backend>;
+using file_sink = boost::log::sinks::synchronous_sink<boost::log::sinks::text_file_backend>;
+
 namespace bl = boost::log;
 
 namespace {
