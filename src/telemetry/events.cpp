@@ -156,11 +156,19 @@ namespace telemetry {
 
     bool
     valid_ipv6(const std::string &s) {
-      // eight groups, or a compressed form with one "::"; only hex groups of at most four digits; at least one decimal digit (so std::vector style text is not an address)
+      // eight groups, or a compressed form with one "::"; only hex groups of at most four digits. To tell an address from text such as `ab::cd` it needs a decimal digit (fe80::1) or a group of
+      // at least three hex digits (fdab::cafe): a short word between colons is not an address, a long one is
       if (s.find(":::") != std::string::npos) return false;
       bool digit = false;
       for (char c : s) digit = digit || (c >= '0' && c <= '9');
-      if (!digit) return false;
+      if (!digit) {
+        std::size_t longest = 0, run = 0;
+        for (char c : s) {
+          run = c == ':' ? 0 : run + 1;
+          longest = std::max(longest, run);
+        }
+        if (longest < 3) return false;
+      }
       const auto dbl = s.find("::");
       if (dbl != std::string::npos && s.find("::", dbl + 1) != std::string::npos) return false;
       std::size_t groups = 0, start = 0;

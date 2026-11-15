@@ -2570,3 +2570,150 @@ TEST(StartupReady, TheEventsOfTheServiceAndTheStartupHaveTheirPriorities) {
   EXPECT_FALSE(shape_event(kind_e::experience, "startup_timing", json { { "which", "page" } }, 1000).has_value());  // the time is required
   EXPECT_TRUE(shape_event(kind_e::experience, "page_ready", json { { "page", "home" }, { "ms", 5200 } }, 1000).has_value());
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Review round 1 of #1278: frames by structure, IPv6 without a decimal digit, error reports and the choice
+
+#include "src/telemetry/error_report.h"
+
+TEST(ErrorFrames, OnlyTheFourShapesLeaveAndNoAbsolutePathDoes) {
+  // the shapes that are sent
+  EXPECT_EQ(clean_frame("src/video.cpp:4821:encoder_init"), "src/video.cpp:4821:encoder_init");
+  EXPECT_EQ(clean_frame("src_assets/common/assets/web/a.js:12"), "src_assets/common/assets/web/a.js:12");
+  EXPECT_EQ(clean_frame("tools/sunshinesvc.cpp:7:(anonymous"), "");  // a parenthesis is not part of a function word
+  EXPECT_EQ(clean_frame("src/a.cpp:7:"), "src/a.cpp:7:");
+  EXPECT_EQ(clean_frame("src/stream.cpp:9:stream::session_t::run"), "src/stream.cpp:9:stream::session_t::run");
+  EXPECT_EQ(clean_frame("Sunshine.exe+0x1a2b3c"), "Sunshine.exe+0x1a2b3c");
+  EXPECT_EQ(clean_frame("render@index-DsA.js:123:45"), "render@index-DsA.js:123:45");
+  EXPECT_EQ(clean_frame("index-DsA.js:123:45"), "index-DsA.js:123:45");
+  // everything that names a person's folders is dropped whole
+  for (const char *bad : {
+         "/home/alice/project/main.cpp:7:run",
+         "C:/Users/alice/project/main.cpp:7:run",
+         "C:\\Users\\alice\\main.cpp:7:run",
+         "/Users/alice/x.cpp:1:f",
+         "home/alice/x.cpp:1:f",
+         "alice/src/x.cpp:1:f",
+         "./src/x.cpp:1:f",
+         "src/../../etc/passwd:1:f",
+         "../src/a.cpp:1:f",
+         "src/video.cpp",
+         "src/video.cpp:abc:f",
+         "/src/video.cpp:1:f",
+         "D:/work/Sunshine.exe+0x10",
+         "folder/Sunshine.exe+0x10",
+         "render@/home/alice/index.js:1:2",
+         "render@C:/Users/alice/index.js:1:2",
+         "name with space.js:1:2",
+       })
+    EXPECT_EQ(clean_frame(bad), "") << bad;
+  // and through the allow-list: a frame list with one absolute path is dropped whole, a location with one is dropped
+  json props { { "component", "web" }, { "lang", "js" }, { "fingerprint", "ab12" }, { "code", "E_X" }, { "loc", "/home/alice/a.js:1:2" }, { "frames", json::array({ "run@a.js:1:2", "/home/alice/b.js:3:4" }) } };
+  const auto event = shape_event(kind_e::error, "error_report", props, 1000);
+  ASSERT_TRUE(event.has_value());
+  EXPECT_FALSE(event->props.contains("loc"));
+  EXPECT_FALSE(event->props.contains("frames"));
+  EXPECT_EQ(event->props.dump().find("alice"), std::string::npos);
+}
+
+TEST(LogScrub, AnAddressWithoutADecimalDigitIsStillAnAddress) {
+  for (const char *line : { "peer fdab::cafe failed", "connect to dead::beef:cafe refused", "from abcd:ef01:2345:6789:abcd:ef01:2345:6789 lost", "listening on fe80::1 now" }) {
+    const auto scrubbed = scrub_log_message(line);
+    EXPECT_NE(scrubbed.find("<ipv6>"), std::string::npos) << line << " -> " << scrubbed;
+  }
+  const auto a = scrub_log_message("peer fdab::cafe failed");
+  EXPECT_EQ(a.find("fdab"), std::string::npos);
+  EXPECT_EQ(a.find("cafe"), std::string::npos);
+  // text that is not an address stays: a scope name, a short pair, a time
+  EXPECT_NE(scrub_log_message("in std::vector::size").find("std::vector::size"), std::string::npos);
+  EXPECT_NE(scrub_log_message("pair ab::cd kept").find("ab::cd"), std::string::npos);
+  // through the allow-list of an error report coming from a page
+  json props { { "component", "web" }, { "lang", "js" }, { "fingerprint", "ab12" }, { "code", "E_X" }, { "log", json::array({ "peer fdab::cafe failed", "encoder initialization failed" }) } };
+  const auto event = shape_event(kind_e::error, "error_report", props, 1000);
+  ASSERT_TRUE(event.has_value());
+  ASSERT_TRUE(event->props.contains("log"));
+  EXPECT_EQ(event->props["log"].dump().find("fdab"), std::string::npos);
+  EXPECT_NE(event->props["log"].dump().find("encoder initialization failed"), std::string::npos);
+}
+
+namespace {
+  json
+  error_reports_sent(harness_t &h) {
+    h.svc->flush(true);
+    while (h.svc->pump() > 0) {}
+    json out = json::array();
+    for (const auto &b : h.posted)
+      if (b.contains("events"))
+        for (const auto &e : b["events"])
+          if (e["name"] == "error_report") out.push_back(e["props"]);
+    h.posted.clear();
+    return out;
+  }
+  error_input_t
+  an_error(const std::string &code) {
+    error_input_t e;
+    e.code = code;
+    e.loc = "src/video.cpp:1:f";
+    e.frames = { e.loc };
+    return e;
+  }
+}  // namespace
+
+TEST(ErrorReportsAndTheChoice, WhatThePersonDidWhileErrorReportsWereOffIsNotSentAfterTheyAreOnAgain) {
+  harness_t h;
+  h.svc->crumb(crumb_e::nav, "apps");  // while on: kept
+  h.consent.errors = false;
+  h.svc->consent_changed();
+  h.svc->crumb(crumb_e::act, "tile.secret_thing");  // while off: not recorded
+  h.now += 1000;
+  h.consent.errors = true;
+  h.svc->consent_changed();
+  h.svc->crumb(crumb_e::nav, "settings");
+  h.now += 1000;
+  h.svc->report_error(an_error("E_ONE"));
+  const auto sent = error_reports_sent(h);
+  ASSERT_EQ(sent.size(), 1u);
+  const auto crumbs = sent[0]["crumbs"].dump();
+  EXPECT_EQ(crumbs.find("secret_thing"), std::string::npos);
+  EXPECT_EQ(crumbs.find("apps"), std::string::npos);  // what was kept before the choice turned off went with it
+  EXPECT_NE(crumbs.find("settings"), std::string::npos);
+}
+
+TEST(ErrorReportsAndTheChoice, AnErrorHeldBackForAnAggregateIsDroppedWhenTheChoiceTurnsOff) {
+  harness_t h;
+  h.svc->report_error(an_error("E_TWICE"));
+  h.svc->report_error(an_error("E_TWICE"));  // the second is held for the aggregate
+  h.svc->report_error(an_error("E_TWICE"));
+  h.consent.errors = false;
+  h.svc->consent_changed();  // the first report waiting in the buffer, the held counts and the quota are all gone
+  h.consent.errors = true;
+  h.svc->consent_changed();
+  h.now += error_reporter_t::AGGREGATE_MS + 1000;
+  // nothing of the earlier reports comes back, neither the report nor a count of the ones held
+  EXPECT_EQ(error_reports_sent(h).size(), 0u);
+  // and the same error is a first report again: it leaves at once, once
+  h.svc->report_error(an_error("E_TWICE"));
+  const auto sent = error_reports_sent(h);
+  ASSERT_EQ(sent.size(), 1u);
+  EXPECT_EQ(sent[0]["count"], 1);
+  h.now += error_reporter_t::AGGREGATE_MS + 1000;
+  EXPECT_EQ(error_reports_sent(h).size(), 0u);
+}
+
+TEST(ErrorReportsAndTheChoice, ReportsWhileTheChoiceIsOffCountNeitherForTheQuotaNorForTheAggregate) {
+  harness_t h;
+  h.consent.errors = false;
+  h.svc->consent_changed();
+  for (int i = 0; i < 3 * error_reporter_t::MAX_PER_HOUR; ++i) h.svc->report_error(an_error("E_OFF" + std::to_string(i)));
+  h.svc->report_error(an_error("E_OFF0"));
+  EXPECT_EQ(error_reports_sent(h).size(), 0u);
+  h.consent.errors = true;
+  h.svc->consent_changed();
+  // the hourly quota is untouched, and the held counts do not exist: a new error leaves at once and nothing follows it
+  h.svc->report_error(an_error("E_NEW"));
+  const auto sent = error_reports_sent(h);
+  ASSERT_EQ(sent.size(), 1u);
+  EXPECT_EQ(sent[0]["code"], "E_NEW");
+  h.now += error_reporter_t::AGGREGATE_MS + 1000;
+  EXPECT_EQ(error_reports_sent(h).size(), 0u);
+}

@@ -74,7 +74,7 @@ namespace telemetry {
   /** "void __cdecl stream::session::foo(int)" and "stream::foo()" -> "stream::foo". */
   std::string
   function_word(std::string_view signature);
-  /** A frame that may be sent, or empty: `module+0xoffset`, or a location `file:line[:function]`, of fixed characters, at most 120. */
+  /** A frame that may be sent, or empty: `module+0xoffset`, `src/…/file:line[:function]` (a root of this source tree, no absolute path, no drive, no `..`), or a page frame `function@file:line:col`; at most 120 characters. */
   std::string
   clean_frame(std::string_view frame);
   /** FNV-1a 64 over component, code and the first three frames (functions and files, not offsets), as 16 hex digits. Same error, same fingerprint, on every machine and build. */
@@ -103,6 +103,9 @@ namespace telemetry {
     /** The counts held back, one event per fingerprint, when ten minutes have passed since it was last sent. */
     std::vector<nlohmann::json>
     flush(std::int64_t now_ms);
+    /** Forget everything held back and the count of what was sent: error reports were turned off, so nothing counted or kept while they were on may leave when they are turned on again. */
+    void
+    clear();
 
   private:
     struct group_t {

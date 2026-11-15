@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 """Builds docs/privacy-data-inventory.md and docs/privacy-data-inventory.zh.md in the host repo from one table.
+NOTE: since #1274 the two md files carry rows that this script does not have (the program log of crash reports, meta env and ctx, D1 crash_logs and user_logs, the log_ref of user_report). Regenerating overwrites them:
+extend this script with those rows first, or merge the output by hand.
 Every `@name` in a cell is replaced by `path:line` found by searching the code for the anchor (so the evidence moves with the code)."""
 import re, subprocess, sys
 
@@ -43,6 +45,8 @@ A = {
     "e_update_result": (HOST, "src/telemetry/events.cpp", r'kind_e::error, "update_result", \{'),
     "e_install_result": (HOST, "src/telemetry/events.cpp", r'kind_e::error, "install_result", \{'),
     "e_install_summary": (HOST, "src/telemetry/events.cpp", r'kind_e::error, "install_summary", \{'),
+    "e_error_report": (HOST, "src/telemetry/events.cpp", r'kind_e::error, "error_report", \{'),
+    "e_wer_event": (HOST, "src/telemetry/events.cpp", r'kind_e::error, "wer_event", \{'),
     "e_device_facts": (HOST, "src/telemetry/events.cpp", r'kind_e::experience, "device_facts", \{'),
     "e_svc_lifecycle": (HOST, "src/telemetry/events.cpp", r'kind_e::experience, "svc_lifecycle", \{'),
     "e_startup_timing": (HOST, "src/telemetry/events.cpp", r'kind_e::experience, "startup_timing", \{'),
@@ -238,6 +242,12 @@ row("error", "install_result: result, error_class, phase, component, step, exit_
 row("error", "install_summary: phase, result, components, failed, reboot_needed, from_version, dur_ms", "`upgrade`, `failed`, `5`, `1`", "@e_install_summary @journal",
     "Did an installation finish? One event per run: ok, failed, cancelled, or incomplete (it started and never finished, the journal was quiet for ten minutes).", "No: fixed words and counts.", "Fixed words and clamped numbers @e_install_summary.", "counters: 400 days.",
     dict(field="install_summary：phase、result、components、failed、reboot_needed、from_version、dur_ms", purpose="安装有没有完成？每次运行一条：成功、失败、取消，或「中断」（开始后一直没有结束，记录已安静十分钟）。", risk="否：固定词和计数。", scrub="固定词，数字限幅 @e_install_summary。", keep="计数 400 天。"))
+row("error", "error_report: component, lang, fingerprint, code, severity, loc, frames, crumbs, log, build, page, count", "`host`, `cpp`, `a1b2c3d4e5f60789`, `E_ENCODER_INIT`, `src/video.cpp:4821:encoder_init`", "@e_error_report",
+    "Where in the program an error happens and what the person did just before. The first report of an error leaves at once, later ones are counted and leave as one count every ten minutes; at most 20 reports an hour.", "Low: the location and the stack are fixed shapes (module+0xoffset, src/...:line:function of our own source tree, function@file.js:line:col of a page); an absolute path, a drive letter or a home folder is dropped whole. Breadcrumbs are our own ids of the last 50 actions. log is the last up to 40 lines (200 characters each) of the component's own log: it stays text.", "The component anonymises its log first; the host cleans every line again (names, folders, addresses including IPv6, e-mail addresses, keys; text between quotes, brackets and braces dropped). Sent only while error reports are on, with the first report of an error. Actions are not recorded while error reports are off, and what was held back when the choice turned off is dropped @e_error_report.", "counters 400 days; the first sample of a group 400 days.",
+    dict(field="error_report：component、lang、fingerprint、code、severity、loc、frames、crumbs、log、build、page、count", purpose="错误发生在程序的哪个位置，以及出错前用户做了什么。同一个错误第一次立即发送，之后的只计数，每十分钟合并成一条数量发送；每小时最多 20 条。", risk="低：位置和栈只有固定的几种形状（模块+0x偏移、我们自己源码树里的 src/…:行:函数、页面的 函数@文件名:行:列）；绝对路径、盘符、用户文件夹整条丢弃。面包屑是我们自己的 id，最近 50 个动作。log 是组件自己日志的最后至多 40 行（每行至多 200 个字符），仍然是文本。", scrub="组件先把日志匿名处理，主机再清洗每一行（名称、文件夹、包含 IPv6 在内的地址、邮箱、密钥；引号、方括号和花括号里的文字被丢弃）。仅在错误报告开启时、随一个错误的第一条报告发送。错误报告关闭期间不记录动作，关闭时已保留的内容被丢弃 @e_error_report。", keep="计数 400 天；分组的第一份样本 400 天。"))
+row("error", "wer_event: event_id, kind, module, exception_code, offset", "`1000`, `crash`, `zakovdd.dll`, `c0000005`, `0x1a2b3c`", "@e_wer_event",
+    "Did the virtual display driver fault? Windows writes it to the Application log; the host reads it at start.", "No: only a fault whose module is the driver's own file is taken, with the exception code and the offset; no stack, and the event data of every other program is never copied.", "Fixed shape and module name; sent only while error reports are on @e_wer_event.", "events: 180 days.",
+    dict(field="wer_event：event_id、kind、module、exception_code、offset", purpose="虚拟显示器驱动有没有出过故障？Windows 把它写在应用程序日志里，主机启动时读取。", risk="否：只取故障模块是驱动自己文件的那一条，带异常代码和偏移；没有栈，其他程序的事件数据从不复制。", scrub="固定形状和模块名；仅在错误报告开启时发送 @e_wer_event。", keep="events 180 天。"))
 row("error", "log_summary: component, fatal, error, warning", "`encoder`, `0`, `2`, `9`", "@e_log_summary @logs",
     "How many warnings and errors the host logs per hour, by component.", "No: counts. The component is one of 24 fixed words or `host`.", "@logs", "events: 180 days.",
     dict(field="log_summary：component、fatal、error、warning", purpose="主机每小时按组件记录了多少警告和错误。", risk="否：计数。组件是 24 个固定词之一，或 `host`。", scrub="@logs", keep="events 180 天。"))
@@ -283,13 +293,13 @@ NEVER_EN = [
     "Screen content, audio, keystrokes, files, clipboard content.",
     "The name of the computer, the Windows or macOS account, a device or a client; the name of a game or an application (a game is at most one of nine catalogue words).",
     "File paths, IP addresses, MAC addresses, ports, pairing identifiers, Steam, miHoYo or other account ids, Mirror酱 CDKs, passwords, tokens, cookies.",
-    "Free text, with two exceptions. `user_report.message` is sent when the person presses Send, after the form showed it. And, only while error reports are on, the log excerpt after a serious stream problem (`stream_anomaly`, `log true`) is sent: the last two minutes of the host's own log, with text between quotes, brackets and braces dropped (a short bracket that only holds a code, such as `[E12]`, stays) and names, folders, addresses, e-mail addresses and keys cleaned; it stays text, not a fixed list of words.",
+    "Free text has exactly four places, and only while error reports are on (the first needs the person to press Send): `user_report.message`; the program log attached to a crash report or a feedback report (`user_report.log_ref`); the log excerpt after a serious stream problem (`stream_anomaly`, `log true`); and `error_report.log`, the last up to 40 lines (200 characters each) of a component's own log with the first report of an error. The last three are cleaned (text between quotes, brackets and braces dropped; names, folders, IPv4 and IPv6 addresses, e-mail addresses and keys removed) but stay text, so what a line says after cleaning is sent.",
 ]
 NEVER_ZH = [
     "屏幕内容、声音、键盘输入、文件、剪贴板内容。",
     "电脑名、Windows 或 macOS 账号名、设备名或客户端名；游戏名和应用名（游戏最多是九个目录词之一）。",
     "文件路径、IP 地址、MAC 地址、端口、配对标识、Steam、米哈游或其他账号 id、Mirror酱 CDK、密码、令牌、Cookie。",
-    "自由文本只有两个例外。`user_report.message`：用户按下「发送」后发出，表单事先展示过。以及仅在错误报告开启时，严重串流问题之后的日志摘录（`stream_anomaly`，`log true`）：主机日志最近两分钟，引号、方括号和花括号里的文字被丢弃（只装代码的短方括号如 `[E12]` 保留），名称、文件夹、地址、邮箱和密钥被清洗；它仍然是文本，不是固定词表。",
+    "自由文本只有四处，除第一处外都仅在错误报告开启时发送（第一处需要用户按下「发送」）：`user_report.message`；随崩溃报告或反馈报告附带的程序日志（`user_report.log_ref`）；严重串流问题之后的日志摘录（`stream_anomaly`，`log true`）；以及 `error_report.log`，组件自己日志的最后至多 40 行（每行至多 200 个字符），随一个错误的第一条报告发送。后三者都会清洗（引号、方括号和花括号里的文字被丢弃，名称、文件夹、IPv4 和 IPv6 地址、邮箱和密钥被去除），但仍然是文本，清洗后一行写了什么就会被发送。",
 ]
 
 def render(lang):

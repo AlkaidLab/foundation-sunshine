@@ -135,11 +135,18 @@ namespace telemetry {
   std::string
   clean_frame(std::string_view frame) {
     if (frame.empty() || frame.size() > 120) return {};
-    for (const unsigned char c : frame) {
-      const bool ok = std::isalnum(c) || c == '_' || c == '.' || c == '/' || c == ':' || c == '+' || c == '<' || c == '>' || c == '~' || c == '$' || c == '@' || c == '!' || c == '-';
-      if (!ok || c >= 0x80) return {};
-    }
-    return std::string { frame };
+    // Only four shapes leave, each of fixed parts; anything else (an absolute path, a drive letter, a home folder, a `..` segment) is dropped whole, never repaired:
+    //   module+0xoffset                 a native frame: the file name of the module and the offset
+    //   src/dir/file.cpp:123[:function] a location in this source tree (the first segment is one of our roots)
+    //   function@file.js:12:34          a page frame: the file name only, no folder
+    //   file.js:12:34                   the location of a page frame
+    static const std::regex native(R"(^[A-Za-z0-9_.-]{1,64}\+0x[0-9a-fA-F]{1,16}$)");
+    static const std::regex source(R"(^(?:src|src_assets|src-tauri|tools|tests|third-party)(?:/[A-Za-z0-9_.+-]{1,64}){1,8}:[0-9]{1,7}(?::[A-Za-z0-9_:<>~$.]{0,80})?$)");
+    static const std::regex page(R"(^(?:[A-Za-z0-9_$.<>-]{1,40}@)?[A-Za-z0-9_.-]{1,64}:[0-9]{1,7}:[0-9]{1,7}$)");
+    const std::string text { frame };
+    if (text.find("..") != std::string::npos) return {};  // no path traversal, and no name of ours has two dots in a row
+    if (std::regex_match(text, native) || std::regex_match(text, source) || std::regex_match(text, page)) return text;
+    return {};
   }
 
   std::string
@@ -213,6 +220,13 @@ namespace telemetry {
     ++g.held;
     if (groups_.size() > 200) groups_.erase(groups_.begin());
     return std::nullopt;
+  }
+
+  void
+  error_reporter_t::clear() {
+    std::lock_guard lock { mutex_ };
+    groups_.clear();
+    sent_.clear();
   }
 
   std::vector<json>

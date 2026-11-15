@@ -272,6 +272,8 @@ namespace telemetry {
     };
     breadcrumbs_t crumbs_;
     error_reporter_t reporter_;
+    /** Writers of the breadcrumbs and the reporter take it with the consent check inside, and consent_changed() clears them under it: nothing written while error reports were off stays, nothing slips in after the clear. */
+    std::mutex errors_mutex_;
     mutable std::mutex ring_mutex_;  // the log ring; held for a few instructions
     std::deque<ring_line_t> log_ring_;
     // pending_logs_, baseline_ and the anomaly_log_* state are used by the sender thread (pump_logs) and by the thread that ends a stream (on_window): logs_mutex_ guards them, never held across I/O,
