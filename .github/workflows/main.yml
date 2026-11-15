@@ -615,6 +615,9 @@ jobs:
           CCACHE_DIR: ${{ github.workspace }}\.ccache
           CCACHE_MAXSIZE: 2G
           CCACHE_COMPILERCHECK: content
+          # Depend mode takes the include list from the compiler's own -MD file instead of running the preprocessor a second
+          # time on a miss; hits cost the same. https://ccache.dev/manual/latest.html#_the_depend_mode
+          CCACHE_DEPEND: '1'
           CLAIM_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_RUN_ID: ${{ github.run_id }}
@@ -721,6 +724,7 @@ jobs:
           CCACHE_DIR: ${{ github.workspace }}\.ccache
           CCACHE_MAXSIZE: 2G
           CCACHE_COMPILERCHECK: content
+          CCACHE_DEPEND: '1'
         run: |
           export PATH="$PATH:/c/Program Files/dotnet"
           gui_options=()
@@ -1068,6 +1072,9 @@ jobs:
           CCACHE_DIR: ${{ github.workspace }}\.ccache
           CCACHE_MAXSIZE: 2G
           CCACHE_COMPILERCHECK: content
+          # Depend mode takes the include list from the compiler's own -MD file instead of running the preprocessor a second
+          # time on a miss; hits cost the same. https://ccache.dev/manual/latest.html#_the_depend_mode
+          CCACHE_DEPEND: '1'
         run: |
           # After a sharded cold build every object is in the merged cache: count only this step's lookups (the configure
           # step's CMake checks are never cached) and say so when the shards and this configure have drifted apart.
