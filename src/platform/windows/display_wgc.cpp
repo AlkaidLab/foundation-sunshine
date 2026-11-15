@@ -454,7 +454,17 @@ namespace platf::dxgi {
       return -1;
     }
 
-    if (!winrt::GraphicsCaptureSession::IsSupported()) {
+    // IsSupported() throws when the activation factory is missing (a Windows edition without the media features, a broken installation): the host ended in
+    // std::terminate on it, the caller falls back to the other capture when this returns -1
+    bool supported = false;
+    try {
+      supported = winrt::GraphicsCaptureSession::IsSupported();
+    }
+    catch (winrt::hresult_error &e) {
+      BOOST_LOG(error) << "Screen capture is not available on this device: [0x"sv << util::hex(e.code()).to_string_view() << ']';
+      return -1;
+    }
+    if (!supported) {
       BOOST_LOG(error) << "Screen capture is not supported on this device for this release of Windows!"sv;
       return -1;
     }
