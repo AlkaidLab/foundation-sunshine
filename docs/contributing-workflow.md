@@ -2,6 +2,9 @@
 Read our contribution guide in our organization level
 [docs](https://lizardbyte.readthedocs.io/en/latest/developers/contributing.html).
 
+## Continuous integration
+Which checks run for a change, how to force a full run, the compiler cache and how a pre-release is published are described in [CI](ci.md) (Chinese).
+
 ## Project Patterns
 
 ### Web UI
