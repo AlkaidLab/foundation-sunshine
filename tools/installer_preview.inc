@@ -58,6 +58,7 @@ preview_main(const std::wstring &out_dir) {
   const std::string usb = vdd_done + ev("gamepad", "done") + ev("usbip", "running");
   const std::string net = vdd_done + ev("gamepad", "done") + ev("usbip", "done") + ev("vmouse", "done") + ev("firewall", "running");
   const std::string svc = net + ev("firewall", "done") + ev("service", "running");
+  const std::string guard_tail = ev("firewall", "done") + ev("service", "done") + ev("autostart", "done") + ev("reboot", "done", 0, "none") + ev("install", "done") + ev("installer", "done");
   const std::string all_done = svc + ev("service", "done") + ev("autostart", "done") + ev("reboot", "done", 0, "none") + ev("install", "done") + ev("installer", "done");
 
   const std::vector<scenario> scenarios = {
@@ -96,6 +97,10 @@ preview_main(const std::wstring &out_dir) {
     { "failed-driver", pg::failed, files + ev("install-vdd", "failed", 101) + ev("installer", "done", 101), [](view &v) { v.failure = fail_kind::driver; v.exit_code = 101; } },
     { "failed-service", pg::failed, net + ev("firewall", "done") + ev("service", "failed", 100) + ev("installer", "done", 100), [](view &v) { v.failure = fail_kind::service; v.exit_code = 100; } },
     { "failed-other", pg::failed, prep + ev("install", "running"), [](view &v) { v.failure = fail_kind::generic; v.exit_code = 4; } },
+    // install-usbip.bat exit codes 102..105 (issue #1272): the USB/IP step is marked failed, the rest of the setup is complete.
+    { "done-usbip-rolled-back", pg::done, net + ev("usbip", "failed", 102) + guard_tail, nullptr },
+    { "done-usbip-incomplete", pg::done, net + ev("usbip", "failed", 103) + guard_tail, nullptr },
+    { "done-usbip-usb-boot", pg::done, net + ev("usbip", "failed", 104) + guard_tail, nullptr },
     { "done-opening-panel", pg::done, all_done, [](view &v) { v.opening = true; } },
     { "done", pg::done, all_done, nullptr },
   };

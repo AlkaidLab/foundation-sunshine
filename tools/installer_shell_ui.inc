@@ -810,7 +810,11 @@ component_list() {
   bool all = true;
   for (int i = 0; i < kTileCount; ++i) all = all && S.v.tiles[i];
   g_run.tasks = all ? L"" : (S.v.tiles[7] ? L"desktopicon" : L"none");
-  if (all) return {};
+  // The installer's default set leaves USB/IP out (it is opt-in), so "everything ticked" is an explicit list.
+  bool is_default = !S.v.tiles[2];
+  for (int i = 0; i < kTileCount; ++i)
+    if (i != 2) is_default = is_default && S.v.tiles[i];
+  if (is_default) return {};
   std::wstring list = L"application,assets,gui";
   for (int i = 0; i < 7; ++i)
     if (S.v.tiles[i]) list += std::wstring(L",") + names[i];
