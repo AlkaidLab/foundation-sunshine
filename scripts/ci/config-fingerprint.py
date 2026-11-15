@@ -29,8 +29,10 @@ import urllib.request
 
 import yaml
 
-PACKAGES = ("gcc", "gcc-libs", "binutils", "crt", "headers", "winpthreads", "libwinpthread", "curl-winssl", "MinHook",
-            "miniupnpc", "nlohmann-json", "libvpl", "openssl", "opus", "cppwinrt")
+# The names the toolchain action installs (crt, headers and winpthreads come as the -git packages). opus is not listed: the
+# action pins one exact package file, so its version is covered by the action.yml hash, not by the repository's newest opus.
+PACKAGES = ("gcc", "gcc-libs", "binutils", "crt-git", "headers-git", "winpthreads-git", "libwinpthread-git", "curl-winssl",
+            "MinHook", "miniupnpc", "nlohmann-json", "libvpl", "openssl", "cppwinrt")
 PREFIX = "mingw-w64-ucrt-x86_64-"
 DB_URL = "https://repo.msys2.org/mingw/ucrt64/ucrt64.db"
 

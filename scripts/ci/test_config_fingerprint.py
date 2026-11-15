@@ -42,7 +42,7 @@ class FingerprintTest(unittest.TestCase):
             "        run: |\n          cmake -B build -DBUILD_TESTS=ON\n")
         workflow.write_text(self.workflow_text)
         self.db = self.root / "ucrt64.db"
-        self.versions = {"gcc": "16.2.0-7", "crt": "14.0.0-1", "headers": "14.0.0-1", "openssl": "3.6.5-1"}
+        self.versions = {"gcc": "16.2.0-7", "crt-git": "14.0.0-1", "headers-git": "14.0.0-1", "openssl": "3.6.5-1", "opus": "1.6.1-1"}
         fake_db(self.db, self.versions)
 
     def fingerprint(self):
@@ -87,6 +87,16 @@ class FingerprintTest(unittest.TestCase):
         fake_db(self.db, dict(self.versions, gcc="16.3.0-1"))
         self.assertNotEqual(before, self.fingerprint())
         fake_db(self.db, self.versions)
+        self.assertEqual(before, self.fingerprint())
+
+    def test_only_the_installed_headers_package_moving_moves_it(self):
+        before = self.fingerprint()
+        fake_db(self.db, dict(self.versions, **{"headers-git": "14.0.1-1"}))
+        self.assertNotEqual(before, self.fingerprint())
+
+    def test_a_newer_opus_in_the_repository_does_not_move_it(self):
+        before = self.fingerprint()
+        fake_db(self.db, dict(self.versions, opus="1.7.0-1"))
         self.assertEqual(before, self.fingerprint())
 
     def test_an_unreachable_repository_still_yields_a_fingerprint(self):

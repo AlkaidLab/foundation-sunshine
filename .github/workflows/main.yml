@@ -1169,11 +1169,13 @@ jobs:
         shell: pwsh
         run: |
           $current = "ccache-windows-${{ needs.cold_plan.outputs.fingerprint }}-${{ github.run_id }}"
+          # Both the fingerprinted keys (ccache-windows-<fingerprint>-<run>) and the older ones without a fingerprint
+          # (ccache-windows-<run>) are pruned, so the entries from before the fingerprint do not stay in the quota.
           # Page through the caches API instead of `gh cache list`: the
           # latter caps at --limit 100, and once this repo's other caches
           # (msys2, npm, ...) grow past that, stale ccache entries would
           # fall outside the window and never get pruned.
-          $all = @(gh api --paginate "repos/$env:GITHUB_REPOSITORY/actions/caches?per_page=100" --jq '.actions_caches[] | select(.key | test("^ccache-windows-[0-9a-f]{12}-[0-9]+$")) | [(.key | sub("^ccache-windows-[0-9a-f]{12}-";"") | tonumber), .id, .key] | @tsv' |
+          $all = @(gh api --paginate "repos/$env:GITHUB_REPOSITORY/actions/caches?per_page=100" --jq '.actions_caches[] | select(.key | test("^ccache-windows-([0-9a-f]{12}-)?[0-9]+$")) | [(.key | sub("^ccache-windows-([0-9a-f]{12}-)?";"") | tonumber), .id, .key] | @tsv' |
             Where-Object { $_ } |
             ForEach-Object {
               $parts = $_ -split "`t"
