@@ -40,7 +40,6 @@
 #include "telemetry/telemetry.h"
 #include "tray/system_tray.h"
 #include "upnp.h"
-#include "version.h"
 #include "video.h"
 #include "webhook/webhook.h"
 #include "webhook/webhook_auth.h"
@@ -277,7 +276,7 @@ main(int argc, char *argv[]) {
           return 0;
         }
       }
-      std::cout << PROJECT_NAME << " version: " << PROJECT_VER << std::endl;
+      std::cout << build_info::product_name() << " version: " << build_info::version() << std::endl;
       return 0;
     }
   }
@@ -285,7 +284,7 @@ main(int argc, char *argv[]) {
   // Crash, abort and hang reports (crash/crash.h): installed before anything else can fail, pointed at the real config file once it is known.
   {
     crash::options_t crash_options;
-    crash_options.version = PROJECT_VER;
+    crash_options.version = build_info::version();
     crash_options.config_dir = platf::appdata();
   #ifdef _WIN32
     crash_options.os_version = platf::windows_version();
@@ -322,7 +321,7 @@ main(int argc, char *argv[]) {
   // logging can begin at this point
   // if anything is logged prior to this point, it will appear in stdout, but not in the log viewer in the UI
   // the version should be printed to the log before anything else
-  BOOST_LOG(info) << PROJECT_NAME << " version: " << PROJECT_VER;
+  BOOST_LOG(info) << build_info::product_name() << " version: " << build_info::version();
 
   // Usage statistics, error counts and stream quality (docs/privacy_telemetry.md). Each kind is sent only while its own choice is on; nothing here can fail the start.
   telemetry::start();

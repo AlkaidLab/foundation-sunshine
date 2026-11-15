@@ -22,7 +22,6 @@
 #include "src/logging.h"
 #include "src/platform/common.h"
 #include "src/system_info.h"
-#include "version.h"
 
 using json = nlohmann::json;
 using namespace std::literals;
@@ -89,7 +88,7 @@ namespace telemetry {
 
     post_result_t
     http_post(const std::string &url, const std::string &content_type, const std::string &body) {
-      return post_once(url, content_type, body, std::string { "FoundationSunshine/" } + PROJECT_VER);
+      return post_once(url, content_type, body, std::string { "FoundationSunshine/" } + build_info::version());
     }
 
     std::string
@@ -307,7 +306,7 @@ namespace telemetry {
       deps.post = [](const std::string &url, const std::string &body) { return http_post(url, "application/json", body); };
       auto service = std::make_shared<service_t>(std::move(options), std::move(deps));
       context_t ctx;
-      ctx.version = PROJECT_VER;
+      ctx.version = build_info::version();
       ctx.channel = channel_name();
       ctx.os = os_name();
       ctx.arch = arch_name();

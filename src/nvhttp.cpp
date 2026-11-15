@@ -40,6 +40,7 @@
 // local includes
 #include "ai/http_stream.h"
 #include "ai/proxy.h"
+#include "build_info.h"
 #include "client_fingerprint.h"
 #include "client_interface.h"
 #include "config.h"
@@ -81,7 +82,6 @@
 #include "tray/system_tray.h"
 #include "utility.h"
 #include "uuid.h"
-#include "version.h"
 #include "video.h"
 #include "webhook/webhook.h"
 
@@ -89,15 +89,6 @@ using json = nlohmann::json;
 
 using namespace std::literals;
 namespace nvhttp {
-
-  namespace {
-    /**
-     * @brief The Sunshine version we are replicating.
-     * @note Defined here and not in nvhttp.h: the version string contains the commit on non-master builds, so a header
-     *       definition would invalidate every translation unit that includes nvhttp.h on every new commit.
-     */
-    constexpr auto SUNSHINE_VERSION = PROJECT_NAME " " PROJECT_VER;
-  }  // namespace
 
   static constexpr std::string_view EMPTY_PROPERTY_TREE_ERROR_MSG = "Property tree is empty. Probably, control flow got interrupted by an unexpected C++ exception. This is a bug in Sunshine. Moonlight-qt will report Malformed XML (missing root element)."sv;
 
@@ -522,7 +513,7 @@ namespace nvhttp {
 
     tree.put("root.appversion", VERSION);
     tree.put("root.GfeVersion", GFE_VERSION);
-    tree.put("root.SunshineVersion", SUNSHINE_VERSION);
+    tree.put("root.SunshineVersion", std::string { build_info::product_name() } + " " + build_info::version());
     tree.put("root.uniqueid", http::unique_id);
     tree.put("root.HttpsPort", net::map_port(PORT_HTTPS));
     tree.put("root.ExternalPort", net::map_port(PORT_HTTP));
