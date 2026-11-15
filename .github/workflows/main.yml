@@ -437,82 +437,18 @@ jobs:
         uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
-          submodules: recursive
-        env:
-          GIT_CONFIG_COUNT: '2'
-          GIT_CONFIG_KEY_0: core.longpaths
-          GIT_CONFIG_VALUE_0: 'true'
-          # About fifty submodules: fetch them in parallel instead of one by one.
-          GIT_CONFIG_KEY_1: submodule.fetchJobs
-          GIT_CONFIG_VALUE_1: '8'
+          persist-credentials: false
 
-      - name: Setup Dependencies Windows
-        uses: msys2/setup-msys2@v2
-        with:
-          msystem: ucrt64
-          # Required, not redundant with the `pacman -Syu` below. When
-          # msys2-runtime itself needs upgrading, pacman closes every MSYS2
-          # process to finish the job, which kills the workflow shell and fails
-          # the step with exit 1. setup-msys2 performs that upgrade with the
-          # restart it needs; by the time our own step runs, the runtime is
-          # already current and only the dependency list is left to install.
-          update: true
-          install: >-
-            wget
-            curl
+      # `submodules: recursive` fetches about fifty submodules one after the other at full depth, including the Linux, macOS and
+      # Android ones and the prebuilt FFmpeg of every platform (3.9 GB). This fetches what the Windows build reads, shallow
+      # and several at a time (scripts/ci/init-submodules.sh).
+      - name: Submodules
+        shell: bash
+        run: scripts/ci/init-submodules.sh ${{ needs.changes.outputs.package == 'true' && 'windows-package' || 'windows' }}
 
-      - name: Update Windows dependencies
-        env:
-          opus_version: '1.6.1-1'
-        shell: msys2 {0}
-        run: |
-          # download pinned opus version
-          opus_tarball="mingw-w64-ucrt-x86_64-opus-${opus_version}-any.pkg.tar.zst"
-          wget https://repo.msys2.org/mingw/ucrt64/${opus_tarball}
-
-          # install dependencies
-          # NOTE: gcc/gcc-libs were previously pinned to 15.1.0-5 to work around
-          # a broken upstream gcc 15.x. Since msys2 has moved on to gcc 16.x and
-          # other packages (cmake, etc.) now require gcc-libs 16.x ABI, pinning
-          # an old gcc-libs causes cmake.exe to silently fail to load (exit 127).
-          # Let pacman install the full toolchain at the current upstream version.
-          dependencies=(
-            "git"
-            "mingw-w64-ucrt-x86_64-ccache"
-            "mingw-w64-ucrt-x86_64-cmake"
-            "mingw-w64-ucrt-x86_64-lld"
-            "mingw-w64-ucrt-x86_64-ninja"
-            "mingw-w64-ucrt-x86_64-cppwinrt"
-            "mingw-w64-ucrt-x86_64-curl-winssl"
-            "mingw-w64-ucrt-x86_64-graphviz"
-            "mingw-w64-ucrt-x86_64-MinHook"
-            "mingw-w64-ucrt-x86_64-miniupnpc"
-            "mingw-w64-ucrt-x86_64-nlohmann-json"
-            # "mingw-w64-ucrt-x86_64-nodejs"  # Replaced by actions/setup-node (vite 8 requires MSVC Node.js)
-            # "mingw-w64-ucrt-x86_64-nsis"  # Replaced by Inno Setup
-            "mingw-w64-ucrt-x86_64-onevpl"
-            "mingw-w64-ucrt-x86_64-openssl"
-            "mingw-w64-ucrt-x86_64-toolchain"
-            "mingw-w64-ucrt-x86_64-autotools"
-          )
-
-          pacman -Syu --noconfirm "${dependencies[@]}"
-
-          # install pinned opus after Syu to prevent upgrade
-          pacman --noconfirm -U ${opus_tarball}
-
-      - name: Verify Build Tools
-        shell: msys2 {0}
-        run: |
-          echo "Verifying build tools are installed..."
-          which cmake || (echo "cmake not found" && exit 1)
-          which ninja || (echo "ninja not found" && exit 1)
-          which gcc || (echo "gcc not found" && exit 1)
-          
-          echo "All build tools verified successfully"
-          echo "  CMake: $(cmake --version | head -1)"
-          echo "  Ninja: $(ninja --version)"
-          echo "  GCC: $(gcc --version | head -1)"
+      # MSYS2 UCRT64 with the build tools, Defender exclusions for the build directories, and a record of the runner CPU.
+      - name: Toolchain
+        uses: ./.github/actions/windows-toolchain
 
       # Packaging needs the Web UI build, the installer's setup UI and the Inno Setup package; pull requests that touch none
       # of what packaging reads skip them (job `changes`, output `package`). Web UI lint and tests run in the `webui` jobs.
@@ -680,7 +616,7 @@ jobs:
 
       - name: Run native tests
         shell: msys2 {0}
-        run: ctest --test-dir build --no-tests=error --output-on-failure --output-junit "$GITHUB_WORKSPACE/ctest.xml"
+        run: ctest --test-dir build -j4 --no-tests=error --output-on-failure --timeout 600 --output-junit "$GITHUB_WORKSPACE/ctest.xml"
 
       # Annotations and a job summary from the JUnit file; fails when no test ran, when fewer than --min-tests ran (a
       # registered suite that disappeared) and when a test not listed in scripts/ci/allowed-skips.txt was skipped.
@@ -702,8 +638,11 @@ jobs:
         # Only master writes (always(): a failed or cancelled build still
         # produced valid objects). PR runs restore master's entry, so they
         # don't need to save, and skipping their saves keeps the shared
-        # cache quota flat.
-        if: always() && github.ref == 'refs/heads/master'
+        # cache quota flat. A fork that runs this workflow on its own has no
+        # master lineage of the upstream repository to restore from, so there
+        # the pull request runs save too (the next push of the same pull
+        # request restores it).
+        if: always() && (github.ref == 'refs/heads/master' || github.repository != 'AlkaidLab/foundation-sunshine')
         id: ccache_save
         continue-on-error: true
         uses: actions/cache/save@v6
