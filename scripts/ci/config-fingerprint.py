@@ -21,10 +21,12 @@ run with the same inputs, and cold_plan shards the compile when no entry exists 
 import argparse
 import hashlib
 import io
+import os
 import pathlib
 import subprocess
 import sys
 import tarfile
+import time
 import urllib.request
 
 import yaml
@@ -34,7 +36,9 @@ import yaml
 PACKAGES = ("gcc", "gcc-libs", "binutils", "crt-git", "headers-git", "winpthreads-git", "libwinpthread-git", "curl-winssl",
             "MinHook", "miniupnpc", "nlohmann-json", "libvpl", "openssl", "cppwinrt")
 PREFIX = "mingw-w64-ucrt-x86_64-"
-DB_URL = "https://repo.msys2.org/mingw/ucrt64/ucrt64.db"
+# The repository database is read from the primary servers in turn; MSYS2_DB_URLS (space separated) replaces them for the unit test.
+DB_URLS = ("https://repo.msys2.org/mingw/ucrt64/ucrt64.db", "https://mirror.msys2.org/mingw/ucrt64/ucrt64.db")
+ROUNDS = 3
 
 
 def files_to_hash(root):
@@ -61,8 +65,26 @@ def configure_step(workflow):
     raise SystemExit("no 'Configure Windows' step in build_win")
 
 
+def fetch_db():
+    """The database file, from the first server that answers. A failed fetch makes the fingerprint 'unavailable', which is a new
+    cache key and so a cold build: three rounds over both servers, with a growing pause, before giving up."""
+    urls = os.environ.get("MSYS2_DB_URLS", "").split() or DB_URLS
+    pause = float(os.environ.get("FINGERPRINT_RETRY_PAUSE", "5"))
+    error = None
+    for attempt in range(ROUNDS):
+        for url in urls:
+            try:
+                return urllib.request.urlopen(url, timeout=30).read()
+            except Exception as failure:
+                error = failure
+                print(f"warning: {url}: {failure}", file=sys.stderr)
+        if attempt + 1 < ROUNDS:
+            time.sleep(pause * (attempt + 1))
+    raise error
+
+
 def read_db(path):
-    raw = pathlib.Path(path).read_bytes() if path else urllib.request.urlopen(DB_URL, timeout=60).read()
+    raw = pathlib.Path(path).read_bytes() if path else fetch_db()
     tool = ["zstd", "-dc"] if raw[:4] == b"\x28\xb5\x2f\xfd" else ["gzip", "-dc"]
     tar_bytes = subprocess.run(tool, input=raw, capture_output=True, check=True).stdout
     versions = {}
