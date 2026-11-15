@@ -11,6 +11,7 @@
 #include <array>
 #include <cstdint>
 #include <deque>
+#include <filesystem>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -25,6 +26,9 @@ namespace telemetry {
 
   inline constexpr std::size_t MAX_BREADCRUMBS = 50;
   inline constexpr std::size_t MAX_FRAMES = 32;
+  /** The tail of a component's own log in an error report: lines, and characters per line (anonymised by the sender, scrubbed again by the host). */
+  inline constexpr std::size_t MAX_LOG_LINES = 40;
+  inline constexpr std::size_t MAX_LOG_LINE_CHARS = 200;
 
   enum class crumb_e { nav,
     act,
@@ -117,5 +121,19 @@ namespace telemetry {
   /** Stack frames of the calling thread as `module+0xoffset` (the module's file name only); empty where the platform has no way. */
   std::vector<std::string>
   capture_frames(std::size_t skip = 1);
+
+  /**
+   * One install-result.json of the installer shell (tools/installer_shell.cpp) -> the error to report, or nullopt: a success, a restart request, a cancel, or a file that does not name a known step and
+   * a code word of the fixed shapes (`payload_invalid`, `engine_exit_<n>`, `webview2_exit_<n>`). Nothing from the file is copied but those two words.
+   */
+  std::optional<error_input_t>
+  installer_failure_report(std::string_view result_json);
+
+  /**
+   * The failures of earlier installs: every `<root>/<run>/install-result.json` that has not been taken yet, as errors to report. Each file taken is renamed to install-result.reported.json, so one
+   * failed run is reported once; a file that cannot be read or renamed is skipped. At most `limit` files per call.
+   */
+  std::vector<error_input_t>
+  take_installer_failures(const std::filesystem::path &root, std::size_t limit = 5);
 
 }  // namespace telemetry

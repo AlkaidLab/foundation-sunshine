@@ -116,6 +116,7 @@ if(WIN32)
         installer_web.inc
         installer_json.h
         installer_d2d.h
+        installer_failure.h
         installer_state.h
         installer_maintenance.h
         installer_ui.h

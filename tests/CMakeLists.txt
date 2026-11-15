@@ -736,6 +736,7 @@ add_executable(telemetry_unit_tests
         ${CMAKE_SOURCE_DIR}/src/telemetry/events.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/queue.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/error_report.cpp
+        ${CMAKE_SOURCE_DIR}/src/telemetry/wer_event.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/self_baseline.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/stream_health.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/stream_stats.cpp
@@ -752,6 +753,14 @@ if (WIN32)
     set_target_properties(telemetry_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
 add_test(NAME telemetry_unit_tests COMMAND telemetry_unit_tests)
+
+# Error and fatal log lines carry file:line:function of the statement (src/logging_site.h); header only, Boost.Log
+add_executable(logging_site_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_logging_site.cpp)
+target_include_directories(logging_site_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(logging_site_unit_tests PRIVATE gtest_main Boost::boost Boost::log sunshine_project_options sunshine_coverage)
+set_target_properties(logging_site_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME logging_site_unit_tests COMMAND logging_site_unit_tests)
 
 # 体检: the evaluators, the runner, the JSON and the read-only OS probes
 add_executable(doctor_unit_tests

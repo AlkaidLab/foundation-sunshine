@@ -330,6 +330,7 @@ namespace telemetry {
       counts,
       frames,
       crumbs,
+      log_lines,
       frame };
 
     struct prop_spec_t {
@@ -419,6 +420,14 @@ namespace telemetry {
                                                       { "log_ref", type_e::log_ref },
                                                       { "message", type_e::text, 0, static_cast<double>(MAX_USER_REPORT_CHARS), {}, true },
                                                     } });
+        // a fault of the virtual display driver that Windows Error Reporting wrote to the Application log: that it happened, which module, the exception code and the offset (wer_event.h); no stack exists
+        t.push_back({ kind_e::error, "wer_event", {
+                                                    { "event_id", type_e::choice, 0, 0, { "1000", "1001", "1002" }, true },
+                                                    { "kind", type_e::choice, 0, 0, { "crash", "hang" }, true },
+                                                    { "module", type_e::catalogue, 0, 96, {}, true },
+                                                    { "exception_code", type_e::code, 0, 64 },
+                                                    { "offset", type_e::code, 0, 64 },
+                                                  } });
         t.push_back({ kind_e::error, "log_summary", {
                                                       { "component", type_e::catalogue, 0, 32, {}, true },
                                                       { "fatal", type_e::integer, 0, 1000000 },
@@ -521,6 +530,7 @@ namespace telemetry {
                                                        { "count", type_e::integer, 1, 1000000 },
                                                        { "frames", type_e::frames },
                                                        { "crumbs", type_e::crumbs },
+                                                       { "log", type_e::log_lines },
                                                      } });
         t.push_back({ kind_e::experience, "startup", { { "host_start_ms", type_e::integer, 0, 3600000 }, { "first_frame_ms", type_e::integer, 0, 3600000 } } });
         t.push_back({ kind_e::experience, "panel_page", { { "page", type_e::catalogue, 0, 40, {}, true }, { "time_to_content_ms", type_e::integer, 0, 600000, {}, true } } });
@@ -616,6 +626,19 @@ namespace telemetry {
           for (const auto &c : value) {
             if (!c.is_string() || !std::regex_match(c.get<std::string>(), crumb)) return std::nullopt;
             out.push_back(c);
+          }
+          return out;
+        }
+        case type_e::log_lines: {
+          // The tail of a component's own log, already anonymised by the sender (Panel: log_scrub.rs). Scrubbed here once more with the host's text rules, so a sender that is old or wrong cannot let a path,
+          // an address or a key through; at most 40 lines of 200 characters.
+          if (!value.is_array() || value.size() > MAX_LOG_LINES) return std::nullopt;
+          json out = json::array();
+          for (const auto &line : value) {
+            if (!line.is_string()) return std::nullopt;
+            auto text = scrub_log_message(line.get<std::string>(), MAX_LOG_LINE_CHARS);
+            text.erase(std::remove_if(text.begin(), text.end(), [](unsigned char c) { return c < 0x20 || c == 0x7f; }), text.end());
+            if (!text.empty()) out.push_back(std::move(text));
           }
           return out;
         }

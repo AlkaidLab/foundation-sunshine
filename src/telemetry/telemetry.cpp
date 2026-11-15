@@ -4,10 +4,13 @@
  */
 #include "telemetry.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <mutex>
 #include <thread>
 
@@ -16,14 +19,16 @@
 #include <boost/log/sinks/sync_frontend.hpp>
 #include <boost/log/attributes/value_extraction.hpp>
 
+#include "error_report.h"
 #include "service.h"
-#include "transport.h"
 #include "src/build_info.h"
 #include "src/crash/crash.h"
 #include "src/config.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
 #include "src/system_info.h"
+#include "transport.h"
+#include "wer_event.h"
 
 using json = nlohmann::json;
 using namespace std::literals;
@@ -338,6 +343,28 @@ namespace telemetry {
       hooks::table().frame_done.store(&telemetry::record_frame_done, std::memory_order_release);
       log_sink = boost::make_shared<log_sink_t>(boost::make_shared<log_backend_t>());
       bl::core::get()->add_sink(log_sink);
+#ifdef _WIN32
+      // An install that failed earlier names its step and a code word in install-result.json (tools/installer_shell.cpp, kRunRoot): the first start after it reports each once as an error of the installer.
+      if (const char *program_data = std::getenv("ProgramData"))
+        for (const auto &failure : take_installer_failures(std::filesystem::path { program_data } / "FoundationSunshine" / "install-runs")) service->report_error(failure);
+      // A crash of the virtual display driver leaves an Application Error event (1000) for ZakoVDD.dll. Each one is reported once, as the facts only: it happened, when (the event's time is the event's
+      // own, the report carries the time of sending), the module, the exception code and the offset. The cursor is the time of the newest one taken; the first start looks back one day.
+      try {
+        const auto cursor_file = platf::appdata() / "telemetry" / "wer_cursor";
+        std::int64_t since = 0;
+        if (std::ifstream in { cursor_file }) in >> since;
+        const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+        if (since <= 0) since = now_ms - 24LL * 3600 * 1000;
+        std::int64_t newest = since;
+        for (const auto &fault : read_vdd_faults(since, 3)) {
+          service->emit(kind_e::error, "wer_event", wer_props(fault), "host", {}, 0);
+          newest = std::max(newest, fault.time_ms);
+        }
+        std::ofstream { cursor_file, std::ios::trunc } << std::max<std::int64_t>(newest, now_ms) << '\n';
+      }
+      catch (...) {
+      }
+#endif
       runner = std::make_unique<runner_t>(std::move(service));
     }
     catch (...) {

@@ -7,6 +7,9 @@
 #include <algorithm>
 #include <cctype>
 #include <cstdio>
+#include <fstream>
+#include <iterator>
+#include <regex>
 
 #ifdef _WIN32
   #include <windows.h>
@@ -262,6 +265,49 @@ namespace telemetry {
     (void) skip;
 #endif
     if (out.size() > MAX_FRAMES) out.resize(MAX_FRAMES);
+    return out;
+  }
+
+  std::optional<error_input_t>
+  installer_failure_report(std::string_view result_json) {
+    const auto doc = nlohmann::json::parse(result_json, nullptr, false);
+    if (!doc.is_object()) return std::nullopt;
+    const auto text = [&](const char *key) -> std::string { return doc.contains(key) && doc[key].is_string() ? doc[key].get<std::string>() : std::string {}; };
+    const auto state = text("state");
+    if (state != "failed" && state != "service-failed" && state != "component-failed" && state != "unknown") return std::nullopt;
+    const auto step = text("failed_step");
+    const auto code = text("error_code");
+    if (step != "payload" && step != "engine" && step != "webview2") return std::nullopt;
+    static const std::regex shape(R"(^(?:payload_invalid|(?:engine|webview2)_exit_\d{1,10})$)");
+    if (!std::regex_match(code, shape)) return std::nullopt;
+    if (code.rfind(step, 0) != 0) return std::nullopt;  // the code word belongs to its step
+    error_input_t e;
+    e.component = "installer";
+    e.lang = "installer";
+    e.code = code;
+    e.severity = "error";
+    e.frames.push_back("installer/" + step);
+    return e;
+  }
+
+  std::vector<error_input_t>
+  take_installer_failures(const std::filesystem::path &root, std::size_t limit) {
+    namespace fs = std::filesystem;
+    std::vector<error_input_t> out;
+    std::error_code ec;
+    if (!fs::is_directory(root, ec)) return out;
+    for (const auto &run : fs::directory_iterator(root, ec)) {
+      if (out.size() >= limit) break;
+      const auto file = run.path() / "install-result.json";
+      if (!fs::is_regular_file(file, ec) || fs::file_size(file, ec) > 4096) continue;
+      std::ifstream in(file, std::ios::binary);
+      const std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+      in.close();
+      const auto report = installer_failure_report(text);
+      std::error_code rename_error;
+      fs::rename(file, run.path() / "install-result.reported.json", rename_error);  // taken, whatever it said: a success or a cancel is not looked at again either
+      if (!rename_error && report) out.push_back(*report);
+    }
     return out;
   }
 

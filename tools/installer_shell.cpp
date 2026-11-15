@@ -37,9 +37,10 @@
 #include <string_view>
 #include <vector>
 
+#include "installer_failure.h"
 #include "installer_json.h"
-#include "installer_state.h"
 #include "installer_maintenance.h"
+#include "installer_state.h"
 #include "installer_ui.h"
 
 namespace {
@@ -391,7 +392,7 @@ namespace {
     const std::wstring engine = g_run.directory + L"\\sunshine-engine.exe";
     const std::wstring log_path = g_run.directory + L"\\inno.log";
     if (!extract_payload(g_run.self, engine)) {
-      write_text_atomic(g_run.result, "{\"schema\":1,\"state\":\"failed\",\"result_code\":101,\"message_key\":\"PayloadInvalid\"}\n");
+      write_text_atomic(g_run.result, "{\"schema\":1,\"state\":\"failed\",\"result_code\":101,\"message_key\":\"PayloadInvalid\"" + installer_failure::result_fields(installer_failure::step::payload, 101) + "}\n");
       return 101;
     }
     append_event(g_run.events, "{\"schema\":1,\"run\":\"" + id_utf8 +
@@ -430,8 +431,10 @@ namespace {
     }
     const auto state = installer_state::classify_exit_code(code);
     const std::string state_name(installer_state::name(state));
+    // A failed install names its step and a code word; the host reports it at its next start (a retry that worked, or an install that got as far as the host).
+    const std::string failure = installer_failure::is_failure_state(state_name) ? installer_failure::result_fields(installer_failure::step::engine, code) : std::string {};
     const std::string result = "{\"schema\":1,\"run\":\"" + id_utf8 + "\",\"state\":\"" + state_name +
-                               "\",\"result_code\":" + std::to_string(code) + "}\n";
+                               "\",\"result_code\":" + std::to_string(code) + failure + "}\n";
     write_text_atomic(g_run.result, result);
     // The decision to show the restart page, in the log: only an engine exit of 3010 asks for it.
     append_event(g_run.events, "{\"schema\":1,\"run\":\"" + id_utf8 +

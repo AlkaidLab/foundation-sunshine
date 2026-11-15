@@ -1,6 +1,8 @@
 #include "src/telemetry/error_report.h"
 #include "src/telemetry/events.h"
 #include "src/telemetry/service.h"
+#include "src/telemetry/wer_event.h"
+#include "tools/installer_failure.h"
 
 #include <gtest/gtest.h>
 #include <unistd.h>
@@ -197,3 +199,154 @@ TEST(ErrorFrames, TheStackOfTheCallingThreadIsModulePlusOffset) {
   for (const auto &f : frames) EXPECT_FALSE(clean_frame(f).empty()) << f;
 }
 #endif
+
+TEST(ErrorEvent, ALogTailIsBoundedAndScrubbedAgainByTheHost) {
+  json props {
+    { "component", "panel-shell" },
+    { "lang", "rust" },
+    { "fingerprint", "027fe2f9e2fdcceb" },
+    { "code", "panic" },
+    { "severity", "fatal" },
+    { "log", json::array({ "[2026-11-15 10:00:00.000] ERROR clipboard: agent died", "peer 192.168.1.20 sent C:\\Users\\Eve\\a.txt token=abc123", "mail eve@example.com" }) },
+  };
+  const auto e = shape_event(kind_e::error, "error_report", props, 5);
+  ASSERT_TRUE(e);
+  ASSERT_EQ(e->props["log"].size(), 3u);
+  const auto text = e->props["log"].dump();
+  EXPECT_EQ(text.find("192.168"), std::string::npos) << text;
+  EXPECT_EQ(text.find("Eve"), std::string::npos) << text;
+  EXPECT_EQ(text.find("abc123"), std::string::npos) << text;
+  EXPECT_EQ(text.find("example.com"), std::string::npos) << text;
+  EXPECT_NE(text.find("agent died"), std::string::npos) << text;
+
+  // too many lines, or a line that is not text: the prop is dropped, the event stays
+  json many = json::array();
+  for (int i = 0; i < 41; ++i) many.push_back("line");
+  props["log"] = many;
+  const auto too_many = shape_event(kind_e::error, "error_report", props, 5);
+  ASSERT_TRUE(too_many);
+  EXPECT_FALSE(too_many->props.contains("log"));
+  props["log"] = json::array({ 7 });
+  const auto not_text = shape_event(kind_e::error, "error_report", props, 5);
+  ASSERT_TRUE(not_text);
+  EXPECT_FALSE(not_text->props.contains("log"));
+
+  // a long line is cut, control characters are gone
+  props["log"] = json::array({ std::string(500, 'x') + "\x01\x02" });
+  const auto cut = shape_event(kind_e::error, "error_report", props, 5);
+  ASSERT_TRUE(cut);
+  EXPECT_LE(cut->props["log"][0].get<std::string>().size(), 200u);
+}
+
+TEST(InstallerFailure, TheShellWritesAStepAndACodeWordAndTheHostReportsThem) {
+  using installer_failure::step;
+  EXPECT_EQ(installer_failure::code_word(step::engine, 101), "engine_exit_101");
+  EXPECT_EQ(installer_failure::code_word(step::payload, 101), "payload_invalid");
+  EXPECT_EQ(installer_failure::code_word(step::webview2, 5), "webview2_exit_5");
+  EXPECT_EQ(installer_failure::result_fields(step::engine, 2), R"(,"failed_step":"engine","error_code":"engine_exit_2")");
+  EXPECT_TRUE(installer_failure::is_failure_state("failed"));
+  EXPECT_TRUE(installer_failure::is_failure_state("unknown"));
+  EXPECT_FALSE(installer_failure::is_failure_state("success"));
+  EXPECT_FALSE(installer_failure::is_failure_state("needs-reboot"));
+  EXPECT_FALSE(installer_failure::is_failure_state("cancelled"));
+
+  // what installer_shell.cpp writes for a failed engine, and what the host makes of it
+  const std::string written = std::string { R"({"schema":1,"run":"20261115-1","state":"component-failed","result_code":101)" } + installer_failure::result_fields(step::engine, 101) + "}\n";
+  const auto e = installer_failure_report(written);
+  ASSERT_TRUE(e);
+  EXPECT_EQ(e->component, "installer");
+  EXPECT_EQ(e->lang, "installer");
+  EXPECT_EQ(e->code, "engine_exit_101");
+  EXPECT_EQ(e->frames, std::vector<std::string>({ "installer/engine" }));
+  EXPECT_EQ(fingerprint_of(e->component, e->code, e->frames), fingerprint_of("installer", "engine_exit_101", { "installer/engine" }));
+
+  // no failure: a success, a restart request, a cancel, a file from an older shell, damaged text, a code word of another step, a word outside the fixed shapes
+  EXPECT_FALSE(installer_failure_report(R"({"schema":1,"state":"success","result_code":0})"));
+  EXPECT_FALSE(installer_failure_report(R"({"schema":1,"state":"needs-reboot","result_code":3010,"failed_step":"engine","error_code":"engine_exit_3010"})"));
+  EXPECT_FALSE(installer_failure_report(R"({"schema":1,"state":"cancelled","result_code":1223,"failed_step":"engine","error_code":"engine_exit_1223"})"));
+  EXPECT_FALSE(installer_failure_report(R"({"schema":1,"state":"failed","result_code":5})"));
+  EXPECT_FALSE(installer_failure_report("not json"));
+  EXPECT_FALSE(installer_failure_report(R"({"state":"failed","failed_step":"engine","error_code":"webview2_exit_5"})"));
+  EXPECT_FALSE(installer_failure_report(R"({"state":"failed","failed_step":"engine","error_code":"engine_exit_5; C:\\Users\\Eve"})"));
+  EXPECT_FALSE(installer_failure_report(R"({"state":"failed","failed_step":"C:\\Users\\Eve","error_code":"payload_invalid"})"));
+}
+
+TEST(InstallerFailure, EachFailedRunIsReportedOnceFromTheRunFolder) {
+  namespace fs = std::filesystem;
+  const auto root = fs::temp_directory_path() / ("alk-install-runs-" + std::to_string(::getpid()));
+  fs::remove_all(root);
+  const auto put = [&](const char *run, const std::string &text) {
+    fs::create_directories(root / run);
+    std::ofstream(root / run / "install-result.json") << text;
+  };
+  put("a-failed", R"({"schema":1,"state":"failed","result_code":3,"failed_step":"engine","error_code":"engine_exit_3"})");
+  put("b-success", R"({"schema":1,"state":"success","result_code":0})");
+  put("c-payload", R"({"schema":1,"state":"failed","result_code":101,"failed_step":"payload","error_code":"payload_invalid"})");
+  fs::create_directories(root / "d-empty");
+  const auto first = take_installer_failures(root);
+  ASSERT_EQ(first.size(), 2u);
+  std::vector<std::string> codes { first[0].code, first[1].code };
+  std::sort(codes.begin(), codes.end());
+  EXPECT_EQ(codes, std::vector<std::string>({ "engine_exit_3", "payload_invalid" }));
+  EXPECT_FALSE(fs::exists(root / "a-failed" / "install-result.json"));
+  EXPECT_TRUE(fs::exists(root / "a-failed" / "install-result.reported.json"));
+  EXPECT_TRUE(fs::exists(root / "b-success" / "install-result.reported.json")) << "a success is taken too, and never looked at again";
+  EXPECT_TRUE(take_installer_failures(root).empty());
+  EXPECT_TRUE(take_installer_failures(root / "no-such-folder").empty());
+  fs::remove_all(root);
+}
+
+namespace {
+  std::string
+  wer_xml(const std::string &module, const std::string &code, const std::string &offset, const std::string &id = "1000") {
+    // as EvtRender writes it: single-quoted attributes, the Application Error data in its fixed order
+    return "<Event xmlns='http://schemas.microsoft.com/win/2004/08/events/event'><System><Provider Name='Application Error'/><EventID Qualifiers='0'>" + id +
+           "</EventID><Level>2</Level><TimeCreated SystemTime='2026-11-15T13:20:11.123456700Z'/><Channel>Application</Channel><Computer>DESKTOP-ABC1234</Computer></System>"
+           "<EventData><Data>WUDFHost.exe</Data><Data>10.0.26100.1</Data><Data>6a1b2c3d</Data><Data>" +
+           module + "</Data><Data>1.0.0.0</Data><Data>6a1b2c3e</Data><Data>" + code + "</Data><Data>" +
+           offset + "</Data><Data>1234</Data><Data>01dc5a0000000000</Data><Data>C:\\Windows\\System32\\WUDFHost.exe</Data><Data>C:\\Users\\Eve\\x\\" + module + "</Data><Data/></EventData></Event>";
+  }
+}  // namespace
+
+TEST(WerEvent, OnlyTheVirtualDisplayDriversOwnFaultIsTakenAsFixedFacts) {
+  const auto fault = parse_wer_event(wer_xml("ZakoVDD.dll", "c0000005", "000000000001A2B3"));
+  ASSERT_TRUE(fault);
+  EXPECT_EQ(fault->event_id, 1000);
+  EXPECT_EQ(fault->module, "zakovdd.dll");
+  EXPECT_EQ(fault->exception_code, "c0000005");
+  EXPECT_EQ(fault->offset, "0x1a2b3");
+  EXPECT_EQ(fault->time_ms, 1794748811123LL);  // 2026-11-15T13:20:11.123Z (date -u -d ... +%s = 1794748811)
+  const auto props = wer_props(*fault);
+  EXPECT_EQ(props, (json { { "event_id", "1000" }, { "kind", "crash" }, { "module", "zakovdd.dll" }, { "exception_code", "c0000005" }, { "offset", "0x1a2b3" } }));
+  // nothing of the machine is in what leaves: not the host process path, not the user folder, not the computer name
+  const auto text = props.dump();
+  for (const char *leak : { "Users", "Eve", "DESKTOP", "WUDFHost", "System32" }) EXPECT_EQ(text.find(leak), std::string::npos) << leak;
+}
+
+TEST(WerEvent, AnotherModuleAnotherEventOrAnOddShapeIsNotTaken) {
+  EXPECT_FALSE(parse_wer_event(wer_xml("sunshine.exe", "c0000005", "1a2b3")));
+  EXPECT_FALSE(parse_wer_event(wer_xml("ZakoVDD.dll.exe", "c0000005", "1a2b3")));
+  EXPECT_FALSE(parse_wer_event(wer_xml("ZakoVDD.dll", "c0000005", "1a2b3", "1002")));
+  EXPECT_FALSE(parse_wer_event(wer_xml("ZakoVDD.dll", "access violation", "1a2b3")));
+  EXPECT_FALSE(parse_wer_event(wer_xml("ZakoVDD.dll", "c0000005", "C:\\Users\\Eve")));
+  EXPECT_FALSE(parse_wer_event("<Event><System><EventID>1000</EventID></System><EventData><Data>a</Data></EventData></Event>"));
+  EXPECT_FALSE(parse_wer_event(""));
+  EXPECT_FALSE(parse_wer_event(std::string(20000, 'x')));
+  // both quote styles for the time
+  auto xml = wer_xml("ZakoVDD.dll", "C0000374", "0x10");
+  std::replace(xml.begin(), xml.end(), '\'', '"');
+  const auto doubled = parse_wer_event(xml);
+  ASSERT_TRUE(doubled);
+  EXPECT_EQ(doubled->exception_code, "c0000374");
+  EXPECT_EQ(doubled->offset, "0x10");
+  EXPECT_EQ(doubled->time_ms, 1794748811123LL);
+}
+
+TEST(WerEvent, TheHostEventIsShapedAgainstTheAllowList) {
+  const auto fault = parse_wer_event(wer_xml("ZakoVDD.dll", "c0000005", "1a2b3"));
+  ASSERT_TRUE(fault);
+  const auto e = shape_event(kind_e::error, "wer_event", wer_props(*fault), 5);
+  ASSERT_TRUE(e);
+  EXPECT_EQ(e->props["module"], "zakovdd.dll");
+  EXPECT_EQ(e->props["offset"], "0x1a2b3");
+}

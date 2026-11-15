@@ -178,6 +178,7 @@ set(SUNSHINE_HOST_SOURCES
     src/telemetry/service.cpp src/telemetry/service.h
     src/telemetry/transport.cpp src/telemetry/transport.h
     src/telemetry/telemetry.cpp src/telemetry/telemetry.h
+    src/telemetry/wer_event.cpp src/telemetry/wer_event.h
     src/telemetry/hooks.h
 
     # src/nvhttp
