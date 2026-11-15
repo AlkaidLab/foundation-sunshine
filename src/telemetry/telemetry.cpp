@@ -19,6 +19,7 @@
 #include "service.h"
 #include "transport.h"
 #include "src/build_info.h"
+#include "src/crash/crash.h"
 #include "src/config.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
@@ -315,6 +316,7 @@ namespace telemetry {
       service_deps_t deps;
       deps.consent = [] { return consent_t { consent_cache.usage.load(std::memory_order_relaxed), consent_cache.errors.load(std::memory_order_relaxed) }; };
       deps.post = [](const std::string &url, const std::string &body) { return http_post(url, "application/json", body); };
+      deps.session_log = [](const std::string &endpoint, const std::string &install_id, const std::string &version) { return crash::upload_session_log(endpoint, install_id, version); };
       auto service = std::make_shared<service_t>(std::move(options), std::move(deps));
       context_t ctx;
       ctx.version = build_info::version();

@@ -22,6 +22,7 @@
 #include "client_fingerprint.h"
 #include "confighttp.h"
 #include "crash/crash.h"
+#include "crash/crash_env.h"
 #include "default_apps.h"
 #include "display_device/session.h"
 #include "entry_handler.h"
@@ -292,6 +293,7 @@ main(int argc, char *argv[]) {
     crash_options.os_version = "linux";
   #endif
     crash::install(crash_options);
+    crash::set_environment_provider(crash::env::describe_machine);  // read when a report is uploaded, on the computer that crashed
   }
 
   // parse config file

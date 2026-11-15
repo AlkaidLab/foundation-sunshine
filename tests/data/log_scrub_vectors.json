@@ -1,0 +1,643 @@
+{
+ "_comment": "Log scrub vectors. ONE file, identical copies in the Worker (test/log-scrub-vectors.json) and the host/Panel client tests. Each implementation must remove every string in `forbidden` from the output of `input` and keep every string in `required`. Planted values are fictional.",
+ "version": 1,
+ "vectors": [
+  {
+   "name": "windows profile path",
+   "input": "[2026-11-14 21:03:11.482]: Info: loading C:\\Users\\Sky Hua\\AppData\\Local\\Sunshine\\sunshine.conf ok",
+   "forbidden": [
+    "Sky Hua"
+   ],
+   "required": [
+    "Info: loading",
+    "AppData\\Local\\Sunshine\\sunshine.conf ok"
+   ]
+  },
+  {
+   "name": "windows profile path forward slashes",
+   "input": "Info: cache d:/Users/zhang_wei/AppData/x.bin missing",
+   "forbidden": [
+    "zhang_wei"
+   ],
+   "required": [
+    "Info: cache",
+    "AppData/x.bin missing"
+   ]
+  },
+  {
+   "name": "macos and linux home",
+   "input": "opened /Users/alice.smith/Library/x and /home/bobby/.config/y",
+   "forbidden": [
+    "alice.smith",
+    "bobby"
+   ],
+   "required": [
+    "Library/x",
+    ".config/y"
+   ]
+  },
+  {
+   "name": "user name learned from a path is hidden elsewhere",
+   "input": "Info: C:\\Users\\Tanaka\\x\nWarning: session owner Tanaka disconnected\nInfo: user=Tanaka",
+   "forbidden": [
+    "Tanaka"
+   ],
+   "required": [
+    "session owner",
+    "disconnected"
+   ]
+  },
+  {
+   "name": "user name key",
+   "input": "Info: username=li_ming logged in from client",
+   "forbidden": [
+    "li_ming"
+   ],
+   "required": [
+    "logged in from client"
+   ]
+  },
+  {
+   "name": "public profile stays",
+   "input": "Info: C:\\Users\\Public\\Documents\\x",
+   "forbidden": [],
+   "required": [
+    "C:\\Users\\Public\\Documents\\x"
+   ]
+  },
+  {
+   "name": "windows default computer name",
+   "input": "Info: host DESKTOP-4F8K2QA is ready",
+   "forbidden": [
+    "DESKTOP-4F8K2QA"
+   ],
+   "required": [
+    "is ready"
+   ]
+  },
+  {
+   "name": "computer name key",
+   "input": "Info: ComputerName: SKY-GAMING-PC (Windows 11)",
+   "forbidden": [
+    "SKY-GAMING-PC"
+   ],
+   "required": [
+    "Windows 11"
+   ]
+  },
+  {
+   "name": "hostname key learned and hidden elsewhere",
+   "input": "Info: hostname=studio-mac\nInfo: advertising as studio-mac on mdns",
+   "forbidden": [
+    "studio-mac"
+   ],
+   "required": [
+    "advertising as",
+    "on mdns"
+   ]
+  },
+  {
+   "name": "unc share",
+   "input": "Info: opening \\\\NAS-HOME\\media\\movies\\a.mkv",
+   "forbidden": [
+    "NAS-HOME",
+    "media"
+   ],
+   "required": [
+    "opening"
+   ]
+  },
+  {
+   "name": "mdns local name",
+   "input": "Info: found peer macbook-pro.local:47989",
+   "forbidden": [
+    "macbook-pro"
+   ],
+   "required": [
+    "found peer"
+   ]
+  },
+  {
+   "name": "ipv4 private",
+   "input": "Info: client 192.168.31.57 connected",
+   "forbidden": [
+    "192.168.31.57"
+   ],
+   "required": [
+    "client",
+    "connected"
+   ]
+  },
+  {
+   "name": "ipv4 public with port",
+   "input": "Warning: relay 203.0.113.77:47989 timed out",
+   "forbidden": [
+    "203.0.113.77"
+   ],
+   "required": [
+    "relay",
+    "timed out"
+   ]
+  },
+  {
+   "name": "ipv6 global",
+   "input": "Info: client 2001:db8:85a3::8a2e:370:7334 joined",
+   "forbidden": [
+    "2001:db8",
+    "7334"
+   ],
+   "required": [
+    "joined"
+   ]
+  },
+  {
+   "name": "ipv6 link-local with scope",
+   "input": "Info: bound fe80::1ff:fe23:4567:890a%12 on eth0",
+   "forbidden": [
+    "fe80::1ff",
+    "890a"
+   ],
+   "required": [
+    "bound",
+    "on eth0"
+   ]
+  },
+  {
+   "name": "loopback and any stay",
+   "input": "Info: listening on 0.0.0.0 and 127.0.0.1",
+   "forbidden": [],
+   "required": [
+    "0.0.0.0",
+    "127.0.0.1"
+   ]
+  },
+  {
+   "name": "driver and file versions stay",
+   "input": "Info: GPU driver 31.0.15.4601, file version 1.13.238.0, build 10.0.26100.9974",
+   "forbidden": [],
+   "required": [
+    "31.0.15.4601",
+    "1.13.238.0",
+    "10.0.26100.9974"
+   ]
+  },
+  {
+   "name": "mac address",
+   "input": "Info: adapter aa:bb:cc:11:22:33 and AA-BB-CC-44-55-66 up",
+   "forbidden": [
+    "aa:bb:cc:11:22:33",
+    "AA-BB-CC-44-55-66"
+   ],
+   "required": [
+    "adapter",
+    "up"
+   ]
+  },
+  {
+   "name": "e-mail",
+   "input": "Info: account zhang.san+games@example.co.uk verified",
+   "forbidden": [
+    "zhang.san",
+    "example.co.uk"
+   ],
+   "required": [
+    "verified"
+   ]
+  },
+  {
+   "name": "serial number key",
+   "input": "Info: monitor serial: 5CD1234XYZ model: DELL U2723QE",
+   "forbidden": [
+    "5CD1234XYZ"
+   ],
+   "required": [
+    "model: DELL U2723QE"
+   ]
+  },
+  {
+   "name": "device id key",
+   "input": "Info: DeviceId=ABCD-1234-EFGH-5678 vendor=054c product=0ce6",
+   "forbidden": [
+    "ABCD-1234-EFGH-5678"
+   ],
+   "required": [
+    "vendor=054c",
+    "product=0ce6"
+   ]
+  },
+  {
+   "name": "pci instance",
+   "input": "Info: GPU PCI\\VEN_10DE&DEV_2684&SUBSYS_88AC1043&REV_A1\\4&1F2A3B4C&0&0008 NVIDIA GeForce RTX 4090",
+   "forbidden": [
+    "4&1F2A3B4C&0&0008"
+   ],
+   "required": [
+    "VEN_10DE&DEV_2684",
+    "NVIDIA GeForce RTX 4090"
+   ]
+  },
+  {
+   "name": "usb instance with serial",
+   "input": "Info: pad USB\\VID_054C&PID_0CE6\\5&2a1b3c4d&0&2 attached",
+   "forbidden": [
+    "5&2a1b3c4d&0&2"
+   ],
+   "required": [
+    "VID_054C&PID_0CE6",
+    "attached"
+   ]
+  },
+  {
+   "name": "hid device path",
+   "input": "Info: opened \\\\?\\HID#VID_054C&PID_0CE6&MI_03#8&2b1c3d4e&0&0000#{4d1e55b2-f16f-11cf-88cb-001111000030}",
+   "forbidden": [
+    "8&2b1c3d4e",
+    "4d1e55b2"
+   ],
+   "required": [
+    "opened"
+   ]
+  },
+  {
+   "name": "guid",
+   "input": "Info: endpoint {0.0.0.00000000}.{8f3a1c72-6b2e-4d5a-9c1b-2e7f4a6d8b01} active",
+   "forbidden": [
+    "8f3a1c72"
+   ],
+   "required": [
+    "active"
+   ]
+  },
+  {
+   "name": "windows sid",
+   "input": "Info: token for S-1-5-21-1004336348-1177238915-682003330-1001",
+   "forbidden": [
+    "1004336348",
+    "1001"
+   ],
+   "required": [
+    "token for"
+   ]
+  },
+  {
+   "name": "bearer token",
+   "input": "Debug: Authorization: Bearer abcdef1234567890ABCDEF.xyz-123",
+   "forbidden": [
+    "abcdef1234567890"
+   ],
+   "required": [
+    "Authorization"
+   ]
+  },
+  {
+   "name": "jwt",
+   "input": "Debug: id_token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk ok",
+   "forbidden": [
+    "eyJhbGciOiJIUzI1NiJ9",
+    "dBjftJeZ4C"
+   ],
+   "required": [
+    "ok"
+   ]
+  },
+  {
+   "name": "api key and password keys",
+   "input": "Info: api_key=sk_live_1234567890abcdef password: hunter2 retries=3",
+   "forbidden": [
+    "sk_live_1234567890abcdef",
+    "hunter2"
+   ],
+   "required": [
+    "retries=3"
+   ]
+  },
+  {
+   "name": "cookie header",
+   "input": "Debug: Cookie: session=0f8e7d6c5b4a39281706f5e4d3c2b1a0; theme=dark",
+   "forbidden": [
+    "0f8e7d6c5b4a3928"
+   ],
+   "required": [
+    "Debug: Cookie"
+   ]
+  },
+  {
+   "name": "pairing pin",
+   "input": "Info: pairing request, PIN 4821 entered; pin=7305",
+   "forbidden": [
+    "4821",
+    "7305"
+   ],
+   "required": [
+    "pairing request",
+    "entered"
+   ]
+  },
+  {
+   "name": "pairing pin key",
+   "input": "Info: pair_pin: 123456 accepted",
+   "forbidden": [
+    "123456"
+   ],
+   "required": [
+    "accepted"
+   ]
+  },
+  {
+   "name": "query string values",
+   "input": "Info: GET /api/pair?code=ABC123&name=Sky-Phone&uniqueid=0123456789ABCDEF HTTP/1.1",
+   "forbidden": [
+    "ABC123",
+    "Sky-Phone",
+    "0123456789ABCDEF"
+   ],
+   "required": [
+    "GET /api/pair?code="
+   ]
+  },
+  {
+   "name": "url credentials",
+   "input": "Info: proxy http://user:p4ss@proxy.example:8080 in use",
+   "forbidden": [
+    "p4ss",
+    "user:"
+   ],
+   "required": [
+    "in use"
+   ]
+  },
+  {
+   "name": "long opaque value",
+   "input": "Debug: key 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 stored",
+   "forbidden": [
+    "9f86d081884c7d65"
+   ],
+   "required": [
+    "stored"
+   ]
+  },
+  {
+   "name": "commit hash after build stays",
+   "input": "Info: build commit 0123456789abcdef0123456789abcdef01234567 channel beta",
+   "forbidden": [],
+   "required": [
+    "0123456789abcdef0123456789abcdef01234567",
+    "channel beta"
+   ]
+  },
+  {
+   "name": "pem block",
+   "input": "Info: loading cert\n-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\nabcdefgh\n-----END PRIVATE KEY-----\nInfo: cert loaded",
+   "forbidden": [
+    "MIIEvQIBADAN",
+    "abcdefgh"
+   ],
+   "required": [
+    "loading cert",
+    "cert loaded"
+   ]
+  },
+  {
+   "name": "wifi ssid key",
+   "input": "Info: network ssid=\"Home-5G-Zhang\" signal 87%",
+   "forbidden": [
+    "Home-5G-Zhang"
+   ],
+   "required": [
+    "signal 87%"
+   ]
+  },
+  {
+   "name": "wifi ssid words",
+   "input": "Info: connected to Wi-Fi \"Starbucks Guest\" via wlan0",
+   "forbidden": [
+    "Starbucks Guest"
+   ],
+   "required": [
+    "via wlan0"
+   ]
+  },
+  {
+   "name": "game account",
+   "input": "Info: launching game account=Hero_Zhang123 region=cn uid: 100200300",
+   "forbidden": [
+    "Hero_Zhang123",
+    "100200300"
+   ],
+   "required": [
+    "region=cn"
+   ]
+  },
+  {
+   "name": "steam id",
+   "input": "Info: library for 76561198012345678",
+   "forbidden": [
+    "76561198012345678"
+   ],
+   "required": [
+    "library for"
+   ]
+  },
+  {
+   "name": "timestamps, levels, codes and numbers stay",
+   "input": "[2026-11-14 21:03:11.482]: Error: nvenc init failed 0x887A0005 at 1920x1080@120 bitrate=80000 kbps",
+   "forbidden": [],
+   "required": [
+    "[2026-11-14 21:03:11.482]",
+    "Error: nvenc init failed 0x887A0005",
+    "1920x1080@120",
+    "bitrate=80000 kbps"
+   ]
+  },
+  {
+   "name": "gpu and codec strings stay",
+   "input": "Info: adapter NVIDIA GeForce RTX 4090 (driver 32.0.15.6094) hevc_nvenc hdr=1",
+   "forbidden": [],
+   "required": [
+    "NVIDIA GeForce RTX 4090",
+    "32.0.15.6094",
+    "hevc_nvenc",
+    "hdr=1"
+   ]
+  },
+  {
+   "name": "config values that are no secrets stay",
+   "input": "Info: sunshine_name = Living Room, port = 47989, min_log_level = info, key_rightalt_to_key_win = enabled",
+   "forbidden": [],
+   "required": [
+    "port = 47989",
+    "min_log_level = info",
+    "key_rightalt_to_key_win = enabled"
+   ]
+  },
+  {
+   "name": "clock times stay",
+   "input": "Info: uptime 12:34:56, next check at 03:15",
+   "forbidden": [],
+   "required": [
+    "12:34:56",
+    "03:15"
+   ]
+  },
+  {
+   "name": "cookie header with a second item",
+   "input": "Debug: Cookie: theme=dark; session=abc123xyz; lang=zh",
+   "forbidden": [
+    "abc123xyz",
+    "theme=dark"
+   ],
+   "required": [
+    "Debug: Cookie"
+   ]
+  },
+  {
+   "name": "set-cookie header",
+   "input": "Debug: Set-Cookie: sid=9988776655; Path=/; HttpOnly",
+   "forbidden": [
+    "9988776655"
+   ],
+   "required": [
+    "Debug: Set-Cookie"
+   ]
+  },
+  {
+   "name": "numeric password",
+   "input": "Info: password=123456 retries=3",
+   "forbidden": [
+    "123456"
+   ],
+   "required": [
+    "retries=3"
+   ]
+  },
+  {
+   "name": "numeric token",
+   "input": "Debug: api_token: 987654 ok",
+   "forbidden": [
+    "987654"
+   ],
+   "required": [
+    "ok"
+   ]
+  },
+  {
+   "name": "numbers under metric keys stay",
+   "input": "Info: token_count=5 max_password_length=8 pin_timeout=30 key_frame=0",
+   "forbidden": [],
+   "required": [
+    "token_count=5",
+    "max_password_length=8",
+    "pin_timeout=30",
+    "key_frame=0"
+   ]
+  },
+  {
+   "name": "ipv6 without a decimal digit",
+   "input": "Info: peer fdab::cafe joined",
+   "forbidden": [
+    "fdab::cafe"
+   ],
+   "required": [
+    "peer",
+    "joined"
+   ]
+  },
+  {
+   "name": "c++ scope is not an address",
+   "input": "Error: a::b failed in encode::run",
+   "forbidden": [],
+   "required": [
+    "a::b",
+    "encode::run"
+   ]
+  },
+  {
+   "name": "a learned name that is also a key",
+   "input": "Info: username=password\nInfo: password=hunter2",
+   "forbidden": [
+    "hunter2"
+   ],
+   "required": [
+    "Info:"
+   ]
+  },
+  {
+   "name": "text in front of a pem block",
+   "input": "Info: password=hunter2 -----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBg\n-----END PRIVATE KEY-----\nInfo: done",
+   "forbidden": [
+    "hunter2",
+    "MIIEvQIBADANBg"
+   ],
+   "required": [
+    "Info: done"
+   ]
+  },
+  {
+   "name": "a learned name followed by a colon in a message",
+   "input": "Info: loading C:\\Users\\Tanaka\\x.conf\nInfo: Tanaka: disconnected\nInfo: Tanaka=1 left",
+   "forbidden": [
+    "Tanaka"
+   ],
+   "required": [
+    "disconnected",
+    "left"
+   ]
+  },
+  {
+   "name": "a learned name that is a word of a pem marker",
+   "input": "Info: username=Key\nInfo: cert\n-----BEGIN PRIVATE KEY-----\nabcdefgh\n-----END PRIVATE KEY-----\nInfo: done",
+   "forbidden": [
+    "abcdefgh",
+    "Key"
+   ],
+   "required": [
+    "Info: cert",
+    "Info: done"
+   ]
+  },
+  {
+   "name": "a learned name that is a key keeps the key rules",
+   "input": "Info: username=token\nInfo: token=abc123def\nInfo: token: disconnected",
+   "forbidden": [
+    "abc123def"
+   ],
+   "required": [
+    "Info:"
+   ]
+  },
+  {
+   "name": "a quoted value with an inner apostrophe drops the rest of the line",
+   "input": "Info: ssid='Players' choice - Budget.xlsx' joined\nInfo: next line",
+   "forbidden": [
+    "choice",
+    "Budget.xlsx"
+   ],
+   "required": [
+    "Info: ssid=",
+    "Info: next line"
+   ]
+  },
+  {
+   "name": "an unquoted value cut by an apostrophe drops the rest of the line",
+   "input": "Info: device_name=Bob' phone connected\nInfo: next line",
+   "forbidden": [
+    "phone",
+    "connected"
+   ],
+   "required": [
+    "Info: device_name=",
+    "Info: next line"
+   ]
+  },
+  {
+   "name": "balanced quotes after a hidden value stay",
+   "input": "Info: username=\"li_ming\" logged in 'ok' and 'done'",
+   "forbidden": [
+    "li_ming"
+   ],
+   "required": [
+    "logged in 'ok' and 'done'"
+   ]
+  }
+ ]
+}

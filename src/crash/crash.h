@@ -11,6 +11,8 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
+#include <optional>
 #include <string>
 
 namespace crash {
@@ -98,6 +100,25 @@ namespace crash {
   /// (never set in a real run).
   void
   run_test_switch();
+
+  /// Installed by the host: returns the JSON of the machine (CPU, GPUs, memory, displays, language, install source) for the "env" of a crash report. Read at upload time.
+  void
+  set_environment_provider(std::function<std::string()> provider);
+
+  /**
+   * The anonymised session log of the run that is going on, uploaded to POST <endpoint>/v1/user-log for a feedback report. Returns the reference to put into the
+   * report (prop log_ref), or nothing when error reports are off, there is no log, or the service does not take it (404, a limit): the report then goes without a log.
+   */
+  std::optional<std::string>
+  upload_session_log(const std::string &endpoint, const std::string &install_id, const std::string &version);
+
+  /// upload_session_log() for a given config directory, without the consent check (the caller has made it): the tests and tools.
+  std::optional<std::string>
+  upload_session_log_from(const std::filesystem::path &config_dir, const std::string &endpoint, const std::string &install_id, const std::string &version);
+
+  /// Seconds the uploader waits before the next pass after a 429/503 (Retry-After) or a failure; 0 after a success. For the tests.
+  long
+  upload_wait_hint_s();
 
   // --- writing, used by the handlers and by other tools that share the folder -------------------------------------------------------------
   /// Writes a report from outside a crash (tests, tools): meta text and an optional dump file already on disk.

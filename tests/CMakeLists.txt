@@ -1581,9 +1581,13 @@ add_executable(crash_unit_tests
         ${CMAKE_SOURCE_DIR}/src/crash/crash_win.cpp
         ${CMAKE_SOURCE_DIR}/src/crash/crash_posix.cpp
         ${CMAKE_SOURCE_DIR}/src/crash/crash_upload.cpp
-        ${CMAKE_SOURCE_DIR}/tests/unit/test_crash.cpp)
+        ${CMAKE_SOURCE_DIR}/src/crash/log_scrub.cpp
+        ${CMAKE_SOURCE_DIR}/src/crash/crash_log.cpp
+        ${CMAKE_SOURCE_DIR}/src/crash/crash_env_text.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_crash.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_log_scrub.cpp)
 target_include_directories(crash_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
-target_link_libraries(crash_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json sunshine::curl
+target_link_libraries(crash_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json sunshine::curl Boost::boost
         sunshine_project_options sunshine_coverage Threads::Threads)
 if (WIN32)
     target_link_libraries(crash_unit_tests PRIVATE ws2_32)
