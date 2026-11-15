@@ -1,6 +1,6 @@
-# Usage statistics, error reports and what leaves your computer (telemetry v1)
+# Usage statistics, error reports and what leaves your computer
 
-Foundation Sunshine sends a small amount of data to the developers' own server, `https://api.alkaidlab.com`, so that they can see how many people use it, how streams perform and what breaks. This page says exactly what, when, and how to turn it off.
+Foundation Sunshine sends a small amount of data to the developers' own server, `https://api.alkaidlab.com`, so that they can find and fix stutter and crashes faster, see which features are used and decide what to improve first. This page says exactly what is sent, when, and how to turn it off.
 No script of Google or any other third party is loaded by the Web UI or the control panel. Nothing is sent to a third-party analytics service by a client.
 
 ## The log that goes with a crash report or a feedback report
