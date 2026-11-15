@@ -4,10 +4,11 @@ name: Build and Release
 # out of this workflow prevents a release created below from starting another
 # build-and-release cycle.
 #
-# Pull requests are routed by what they change (job `changes`): documentation-only, workflow-only and Web UI-only
+# Pull requests and pushes are routed by what they change (job `changes`): documentation-only, workflow-only and Web UI-only
 # changes skip the Windows build, and `ci-gate` is the single check to require. A skipped *job* reports success, while a
 # workflow skipped by `on.paths` leaves its checks pending and blocks the merge (GitHub Docs, "Troubleshooting required
-# status checks"), so this workflow has no `on.paths`. Pushes to master and manual runs always run everything.
+# status checks"), so this workflow has no `on.paths`. A push to master that changes only documentation builds and publishes
+# nothing; a code push builds, packages and publishes as before. Manual runs always run everything.
 on:
   pull_request:
     branches:
@@ -25,6 +26,10 @@ on:
         description: 'Optional successful Panel artifact run; its commit must match the Panel submodule'
         type: string
         default: ''
+      publish:
+        description: 'Publish a pre-release of this master build (the release step is skipped otherwise)'
+        type: boolean
+        default: false
       rtx_hdr:
         description: 'RTX HDR support for development branches (official master always requires ON)'
         type: choice
@@ -34,9 +39,15 @@ on:
           - 'ON'
           - 'OFF'
 
+# Read-only by default; the jobs that write ask for it themselves (setup_release, the cache prune in build_win, publish).
+permissions:
+  contents: read
+
+# Only a newer push to the same pull request supersedes a running check. Every push to master has its own group and always
+# finishes: a later documentation-only push builds nothing, so it must not cancel the build that publishes the commit before.
 concurrency:
-  group: '${{ github.workflow }}-${{ github.ref }}'
-  cancel-in-progress: true
+  group: '${{ github.workflow }}-${{ github.event_name == ''push'' && github.sha || github.ref }}'
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # The pinned LizardByte release action still composes a Node.js 20 action.
 # Run it on Node.js 24 ahead of GitHub's fall 2026 Node.js 20 removal.
@@ -54,13 +65,18 @@ jobs:
     outputs:
       cpp: ${{ steps.classify.outputs.cpp }}
       webui: ${{ steps.classify.outputs.webui }}
+      webui_inputs: ${{ steps.classify.outputs.webui_inputs }}
       installer: ${{ steps.classify.outputs.installer }}
       workflow: ${{ steps.classify.outputs.workflow }}
       docs: ${{ steps.classify.outputs.docs }}
       docs_touched: ${{ steps.classify.outputs.docs_touched }}
       # Packaging (Web UI build, installer UI, Inno Setup, release assets) is checked on pull requests only when they touch
       # what it reads; master and manual runs always package.
-      package: ${{ github.event_name != 'pull_request' || steps.classify.outputs.installer == 'true' }}
+      package: ${{ steps.classify.outputs.package }}
+      # The Windows build and release path (scripts/ci/classify-changes.py, "build"): a pull request needs it for C++ and build
+      # inputs only, a push to master or a manual run for any code, the Web UI sources included. README.md and the other files
+      # only the Web UI tests read never build.
+      build: ${{ steps.classify.outputs.build }}
     steps:
       - name: Checkout the CI scripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -68,8 +84,10 @@ jobs:
           sparse-checkout: scripts/ci
           persist-credentials: false
 
-      # The file list comes from the REST API: no history to fetch and no third-party action in the path. Anything but a
-      # pull request, and a change too large to list, is treated as "everything changed".
+      # The file list comes from the REST API (a pull request's files, or the compare of a push): no history to fetch and
+      # no third-party action in the path. Manual runs, a push that creates a branch, a call that fails and a change too
+      # large to list are treated as "everything changed" (scripts/ci/changed-files.py). A push to master that changes only
+      # documentation therefore builds nothing and publishes no release.
       - name: Classify the change
         id: classify
         env:
@@ -77,15 +95,12 @@ jobs:
           EVENT: ${{ github.event_name }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
         run: |
           set -euo pipefail
-          : > files.txt
-          if [[ "$EVENT" == pull_request ]]; then
-            # A renamed file counts under both names: moving a packaging file out of its directory must still run its checks.
-            gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files" --jq '.[] | .filename, (.previous_filename // empty)' > files.txt
-            if [[ $(wc -l < files.txt) -ge 3000 ]]; then : > files.txt; fi
-          fi
-          python3 scripts/ci/classify-changes.py --output "$GITHUB_OUTPUT" < files.txt
+          python3 scripts/ci/changed-files.py --event "$EVENT" --repo "$REPO" --pr "$PR_NUMBER" --before "$BEFORE" --after "$AFTER" > files.txt
+          python3 scripts/ci/classify-changes.py --event "$EVENT" --output "$GITHUB_OUTPUT" < files.txt
 
   docs-check:
     name: Documentation links
@@ -130,6 +145,53 @@ jobs:
         run: python3 scripts/ci/check-workflow-shell.py
       - name: CI script tests
         run: python3 -m unittest discover -s scripts/ci -p 'test_*.py'
+
+  # README.md, docs/authority and the files under assets/ are read by three Web UI tests only (defaultAppsArt,
+  # diagnosticsPage, mascotSweep). A change to nothing else runs those three, not the four full shards.
+  webui-docs:
+    name: Web UI document tests
+    needs: changes
+    if: needs.changes.outputs.webui_inputs == 'true' && needs.changes.outputs.webui != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # These tests import foundation-ui (the network guard, the about page data) from the sibling checkout, but run none
+      # of its components, so its own dependencies are not installed.
+      - name: foundation-ui (pinned)
+        run: |
+          set -euo pipefail
+          sha="$(tr -d '[:space:]' < scripts/ci/foundation-ui.sha)"
+          dir="$GITHUB_WORKSPACE/../ds5-ui-m3e"
+          git init -q "$dir"
+          git -C "$dir" fetch -q --depth 1 https://github.com/AlkaidLab/foundation-ui "$sha"
+          git -C "$dir" -c advice.detachedHead=false checkout -q FETCH_HEAD
+          test "$(git -C "$dir" rev-parse HEAD)" = "$sha"
+
+      - name: Install
+        run: npm ci --no-audit --no-fund --ignore-scripts
+
+      - name: Tests
+        run: |
+          dir=src_assets/common/assets/web/tests
+          node --import foundation-ui/testing/no-network --test --test-reporter=spec --test-reporter-destination=stdout \
+            --test-reporter=junit --test-reporter-destination=webui-docs-junit.xml \
+            "$dir/defaultAppsArt.test.js" "$dir/diagnosticsPage.test.js" "$dir/mascotSweep.test.js"
+
+      - name: Report
+        if: always()
+        run: python3 scripts/ci/report-junit.py --title "Web UI document tests" --min-tests 5 webui-docs-junit.xml
 
   webui:
     name: Web UI (shard ${{ matrix.shard }}/4)
@@ -211,9 +273,10 @@ jobs:
     name: Setup Release
     needs: changes
     # Only the Windows build reads the release tag and version.
-    if: needs.changes.outputs.cpp == 'true'
+    if: needs.changes.outputs.build == 'true'
     outputs:
-      publish_release: ${{ steps.setup_release_auto.outputs.publish_release || steps.setup_release_manual.outputs.publish_release }}
+      # Whether this run publishes a pre-release: see "Automatic pre-releases" and the manual step below.
+      publish_release: ${{ steps.auto_gate.outputs.publish || steps.setup_release_manual.outputs.publish_release }}
       release_body: ${{ steps.filter_release_contributors.outputs.release_body || steps.setup_release_auto.outputs.release_body || steps.setup_release_manual.outputs.release_body }}
       release_commit: ${{ steps.setup_release_auto.outputs.release_commit || steps.setup_release_manual.outputs.release_commit }}
       release_generate_release_notes: ${{ steps.setup_release_auto.outputs.release_generate_release_notes || steps.setup_release_manual.outputs.release_generate_release_notes }}
@@ -234,17 +297,60 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
+      # A push to master builds, tests, packages and uploads the artifacts, but publishes a pre-release only when the repository
+      # variable AUTO_PRERELEASE is "true" (unset by default). The version and tag are computed either way: the build identity
+      # carries them.
+      - name: Automatic pre-releases
+        id: auto_gate
+        if: github.event_name != 'workflow_dispatch'
+        env:
+          AUTO: ${{ steps.setup_release_auto.outputs.publish_release }}
+          ENABLED: ${{ vars.AUTO_PRERELEASE }}
+        run: |
+          if [ "$AUTO" = true ] && [ "$ENABLED" = true ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            if [ "$AUTO" = true ]; then
+              echo "::notice title=Pre-release::not published: set the repository variable AUTO_PRERELEASE to true, or run this workflow manually with publish enabled"
+            fi
+          fi
+
+      # Manual runs: publish=true (master only) publishes with the version and tag a push of this commit would get, from the
+      # committer date (scripts/ci/release-info.py); otherwise the run is a dev build with a manual-<date> tag.
       - name: Setup Release (Manual)
         id: setup_release_manual
         if: github.event_name == 'workflow_dispatch'
+        env:
+          PUBLISH: ${{ inputs.publish }}
+          REF_NAME: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
         run: |
-          SUFFIX=$([ "${{ github.ref_name }}" = "master" ] && echo "" || echo "-dev")
-          echo "publish_release=false" >> $GITHUB_OUTPUT
-          echo "release_body=Manual build (${{ github.ref_name }})" >> $GITHUB_OUTPUT
-          echo "release_commit=${{ github.sha }}" >> $GITHUB_OUTPUT
-          echo "release_generate_release_notes=false" >> $GITHUB_OUTPUT
-          echo "release_tag=manual-$(date +%Y%m%d-%H%M%S)${SUFFIX}" >> $GITHUB_OUTPUT
-          echo "release_version=manual-$(date +%Y%m%d-%H%M%S)${SUFFIX}" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          if [ "$PUBLISH" = true ]; then
+            if [ "$REF_NAME" != master ]; then
+              echo "::error title=Publish::publish is only allowed on master"
+              exit 1
+            fi
+            python3 scripts/ci/release-info.py --output "$GITHUB_OUTPUT"
+            {
+              echo "publish_release=true"
+              echo "release_body=Manual publish (master)"
+              echo "release_commit=$COMMIT"
+              echo "release_generate_release_notes=true"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          SUFFIX=$([ "$REF_NAME" = "master" ] && echo "" || echo "-dev")
+          STAMP="manual-$(date +%Y%m%d-%H%M%S)${SUFFIX}"
+          {
+            echo "publish_release=false"
+            echo "release_body=Manual build ($REF_NAME)"
+            echo "release_commit=$COMMIT"
+            echo "release_generate_release_notes=false"
+            echo "release_tag=$STAMP"
+            echo "release_version=$STAMP"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Filter bot contributors
         id: filter_release_contributors
@@ -284,7 +390,7 @@ jobs:
   vdd_smoke:
     name: VDD helper smoke tests
     needs: changes
-    if: needs.changes.outputs.cpp == 'true'
+    if: needs.changes.outputs.build == 'true'
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -299,7 +405,7 @@ jobs:
   mat_smoke:
     name: MAT software regressions
     needs: changes
-    if: needs.changes.outputs.cpp == 'true'
+    if: needs.changes.outputs.build == 'true'
     runs-on: windows-latest
     timeout-minutes: 10
     steps:
@@ -316,7 +422,7 @@ jobs:
   build_win:
     name: Windows
     needs: [changes, setup_release]
-    if: needs.changes.outputs.cpp == 'true'
+    if: needs.changes.outputs.build == 'true'
     permissions:
       contents: read
       actions: write  # prune stale ccache entries after saving this run's
@@ -816,8 +922,10 @@ jobs:
             artifacts/checksums.json
           if-no-files-found: error
 
+      # Automatic pre-releases (a push to master with AUTO_PRERELEASE=true). A manual publish is the `publish` job below:
+      # this action only creates a release for a push to master.
       - name: Create/Update GitHub Release
-        if: needs.setup_release.outputs.publish_release == 'true'
+        if: needs.setup_release.outputs.publish_release == 'true' && github.event_name != 'workflow_dispatch'
         uses: LizardByte/create-release-action@v2025.426.1549
         with:
           allowUpdates: true
@@ -828,12 +936,46 @@ jobs:
           tag: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
           token: ${{ secrets.GH_BOT_TOKEN }}
 
+  # Manual publication (Run workflow with publish=true, master only): the release is created by the GitHub CLI from the
+  # artifacts of this run, in a job of its own so that the Windows job, which runs the build scripts of the commit, never
+  # holds a token that can write to the repository.
+  publish:
+    name: Publish pre-release
+    needs: [setup_release, build_win]
+    if: needs.setup_release.outputs.publish_release == 'true' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout the CI scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          sparse-checkout: scripts/ci
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: sunshine-windows-r${{ github.run_number }}
+          path: dist
+
+      # Creates the pre-release, or replaces the assets of a pre-release that is already there; a tag that belongs to a
+      # published release is an error (scripts/ci/publish-prerelease.sh).
+      - name: Create the pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
+          BODY: ${{ needs.setup_release.outputs.release_body }}
+          COMMIT: ${{ needs.setup_release.outputs.release_commit }}
+        shell: bash
+        run: bash scripts/ci/publish-prerelease.sh dist | tee -a "$GITHUB_STEP_SUMMARY"
+
   # The single status check to require. `always()` is what keeps a failed or cancelled job from being skipped past: a job
   # whose dependency failed is skipped, and a skipped required check counts as passing.
   ci-gate:
     name: CI gate
     if: always()
-    needs: [changes, docs-check, workflow-lint, webui, setup_release, vdd_smoke, mat_smoke, build_win]
+    needs: [changes, docs-check, workflow-lint, webui, webui-docs, setup_release, vdd_smoke, mat_smoke, build_win, publish]
     runs-on: ubuntu-slim
     timeout-minutes: 5
     permissions: {}
