@@ -21,6 +21,7 @@ namespace telemetry {
     std::size_t max_files = 100;
     std::size_t max_bytes = 1024 * 1024;  ///< total size of the queue directory
     std::size_t max_file_bytes = 300 * 1024;  ///< a larger file is not read back (it would break the 256 KB request limit)
+    std::size_t max_p0_files = 40;  ///< batches of priority 0 kept at most; the others make room before any of them is dropped
   };
 
   class disk_queue_t {
@@ -32,10 +33,17 @@ namespace telemetry {
 
     explicit disk_queue_t(std::filesystem::path dir, queue_limits_t limits = {});
 
-    /** Write a batch. Afterwards the caps are enforced by deleting the oldest files. -> false when it could not be written. */
-    bool push(const nlohmann::json &batch);
-    /** The oldest readable batch. A file that cannot be read or is not a batch is deleted and the next one is tried. */
-    std::optional<entry_t> front();
+    /** Write a batch of events of one priority (event_priority: 0, 1 or 2). Afterwards the caps are enforced: priority 2 goes first, then 1, oldest first; priority 0 is only cut past `max_p0_files`. -> false when it could not be written. */
+    bool
+    push(const nlohmann::json &batch, int priority = 2);
+    /** The next readable batch at or above `max_priority`: priority 0 first, then 1, then 2, oldest first within one. A file that cannot be read or is not a batch is deleted and the next one is tried. */
+    std::optional<entry_t>
+    front(int max_priority = 2);
+    /** Up to `limit` readable batches of priority 0 up to `max_priority`, in the order of front(). */
+    std::vector<entry_t>
+    entries(int max_priority, std::size_t limit);
+    std::size_t
+    files_of(int priority) const;
     void remove(const std::filesystem::path &path);
     /** Replace the content of a kept file (the events of a kind whose consent is off were taken out). */
     bool rewrite(const std::filesystem::path &path, const nlohmann::json &batch);
@@ -53,7 +61,10 @@ namespace telemetry {
     const std::filesystem::path &directory() const { return dir_; }
 
   private:
+    /** All files: sorted by priority, then by name (time). */
     std::vector<std::filesystem::path> list() const;
+    static int
+    priority_of_name(const std::filesystem::path &path);
 
     std::filesystem::path dir_;
     queue_limits_t limits_;

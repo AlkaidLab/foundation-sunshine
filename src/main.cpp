@@ -336,6 +336,7 @@ main(int argc, char *argv[]) {
       probe.loss_pct = info.packet_loss;
       probe.dropped_frames = info.dropped_frames;
       probe.measured_kbps = info.measured_bitrate_kbps;
+      probe.target_kbps = info.bitrate;
       probes.push_back(probe);
     }
     return probes;

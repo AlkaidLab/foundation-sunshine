@@ -35,6 +35,7 @@ namespace telemetry {
         if (!response) return result;
         try {
           result.status = std::stoi(response->status_code);
+          result.body = response->content.string();
           if (const auto found = response->header.find("Retry-After"); found != response->header.end()) result.retry_after_s = std::clamp(std::stol(found->second), 0L, 86400L);
         }
         catch (...) {

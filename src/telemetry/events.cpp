@@ -3,6 +3,7 @@
  * @brief Telemetry v1 event shapes, scrubbing and the batch envelope.
  */
 #include "events.h"
+#include "stream_health.h"
 
 #include <algorithm>
 #include <array>
@@ -40,6 +41,18 @@ namespace telemetry {
   consent_e
   consent_of(kind_e kind) {
     return kind == kind_e::error ? consent_e::error_reports : consent_e::usage_statistics;
+  }
+
+  int
+  event_priority(const event_t &e) {
+    if (e.priority >= 0 && e.priority <= 2) return e.priority;
+    const auto severe = [&] { return e.props.is_object() && e.props.value("severe", false); };
+    if (e.name == "user_report" || e.name == "stream_health") return 0;
+    if (e.name == "error_report") return 0;  // the first report of an error; the aggregates of known errors are marked 1 by the sender
+    if (e.name == "stream_anomaly") return severe() ? 0 : 1;
+    if (e.name == "stream_regress" || e.name == "log_summary") return 1;
+    if (e.name == "error") return e.props.is_object() && e.props.value("severity", "") == "fatal" ? 0 : 1;
+    return 2;
   }
 
   bool
@@ -220,19 +233,72 @@ namespace telemetry {
 
   std::string
   scrub_log_message(std::string_view input, std::size_t max) {
-    // A log line names things the person chose (a device, an application, a game) between quotes or brackets: what stands between them is not part of the message.
-    std::string text { input.substr(0, max * 4) };
-    // a double-quoted, bracketed or braced span; a single-quoted one only when the quote opens a word (not an apostrophe: "Couldn't")
-    static const std::regex quoted(R"(("[^"]*")|(\[[^\]]*\])|(\{[^}]*\})|((^|[\s(=:,])'[^\n]*?'(?=$|[\s).,;:!?\]])))");
+    // A log line names things the person chose (a device, an application, a game, a window title) between quotes or brackets: what stands between them is not part of the message.
+    // A quote or bracket that has no partner is not trusted: the rest of the line goes, because the name may run on past where a closing mark seems to be.
+    const std::string text { input.substr(0, max * 4) };
+    const auto n = text.size();
+    constexpr std::string_view omitted = "<…>";
+    // an apostrophe inside a word ("Couldn't") stays; a single quote opens a name only at the start of a word
+    const auto opens_word = [&](std::size_t p) {
+      return p == 0 || std::isspace(static_cast<unsigned char>(text[p - 1])) || text[p - 1] == '(' || text[p - 1] == '=' || text[p - 1] == ':' || text[p - 1] == ',';
+    };
+    const auto may_close = [&](std::size_t p) {
+      return p + 1 == n || std::isspace(static_cast<unsigned char>(text[p + 1])) || std::string_view { ").,;:!?]" }.find(text[p + 1]) != std::string_view::npos;
+    };
     // keep a bracket that only holds numbers or a short upper-case tag (a code, a count), drop the rest
-    text = replace_fn(text, quoted, [](const std::smatch &m) {
-      const auto s = m.str(0);
-      if (m[4].matched) return m.str(5) + "<…>";
-      const auto inner = s.substr(1, s.size() - 2);
-      static const std::regex plain(R"(^[A-Z0-9_ .:=,-]{0,24}$)");
-      return (s.front() == '[' && std::regex_match(inner, plain)) ? s : std::string { "<…>" };
-    });
-    return scrub_text(text, max);
+    static const std::regex plain(R"(^[A-Z0-9_ .:=,-]{0,24}$)");
+    std::string out;
+    out.reserve(n);
+    std::size_t i = 0;
+    while (i < n) {
+      const char c = text[i];
+      if (c == '"' || c == '[' || c == '{') {
+        std::size_t j = std::string::npos;
+        if (c == '"') {
+          j = text.find('"', i + 1);
+        }
+        else {
+          // a bracket may hold brackets ("[Project [draft] Budget.xlsx]"): the name ends where the outermost one closes
+          int depth = 0;
+          for (std::size_t k = i; k < n; ++k) {
+            if (text[k] == '[' || text[k] == '{') {
+              ++depth;
+            }
+            else if ((text[k] == ']' || text[k] == '}') && --depth == 0) {
+              j = k;
+              break;
+            }
+          }
+        }
+        if (j == std::string::npos) {
+          out += omitted;
+          break;
+        }
+        const auto inner = text.substr(i + 1, j - i - 1);
+        if (c == '[' && std::regex_match(inner, plain)) {
+          out.append(text, i, j - i + 1);
+        }
+        else {
+          out += omitted;
+        }
+        i = j + 1;
+        continue;
+      }
+      if (c == '\'' && opens_word(i)) {
+        // the name ends at the last quote that could close it: a title can hold a quote followed by a space
+        std::size_t last = std::string::npos;
+        for (std::size_t k = i + 1; k < n; ++k) {
+          if (text[k] == '\'' && may_close(k)) last = k;
+        }
+        out += omitted;
+        if (last == std::string::npos) break;
+        i = last + 1;
+        continue;
+      }
+      out.push_back(c);
+      ++i;
+    }
+    return scrub_text(out, max);
   }
 
   std::string
@@ -250,7 +316,17 @@ namespace telemetry {
   // allow-list per event name
 
   namespace {
-    enum class type_e { boolean, integer, number, choice, catalogue, code, attachment, log_ref, text };
+    enum class type_e { boolean,
+      integer,
+      number,
+      choice,
+      catalogue,
+      code,
+      attachment,
+      log_ref,
+      text,
+      histograms,
+      counts };
 
     struct prop_spec_t {
       std::string_view key;
@@ -291,6 +367,21 @@ namespace telemetry {
         { "transport", type_e::choice, 0, 0, transport_choices },
         { "app_kind", type_e::choice, 0, 0, app_kind_choices },
         { "sparxie_game", type_e::catalogue, 0, 40 },
+      };
+    }
+
+    // the dimensions of the stream-health events: no audio codec, app kind or game (the Worker takes the same list)
+    std::vector<prop_spec_t>
+    slim_dims() {
+      return {
+        { "client_kind", type_e::catalogue, 0, 40 },
+        { "client_os", type_e::choice, 0, 0, os_choices },
+        { "codec", type_e::choice, 0, 0, codec_choices },
+        { "width", type_e::integer, 0, 16384 },
+        { "height", type_e::integer, 0, 16384 },
+        { "fps", type_e::integer, 0, 1000 },
+        { "hdr", type_e::boolean },
+        { "transport", type_e::choice, 0, 0, transport_choices },
       };
     }
 
@@ -349,6 +440,70 @@ namespace telemetry {
                                                               { "transport", type_e::choice, 0, 0, transport_choices },
                                                               { "duration_s", type_e::integer, 0, 604800 },
                                                             } });
+        // One chunk of stream-health windows (stream_health.h): fixed-bucket histograms of the per-window statistics, counters, and the stream's dimensions as fixed words.
+        {
+          std::vector<prop_spec_t> health {
+            { "h", type_e::histograms },
+            { "bad", type_e::counts },
+            { "windows", type_e::integer, 0, 100000 },
+            { "idle_windows", type_e::integer, 0, 100000 },
+            { "window_s", type_e::integer, 0, 8640000 },
+            { "frames", type_e::integer, 0, 100000000 },
+            { "captured", type_e::integer, 0, 100000000 },
+            { "submitted", type_e::integer, 0, 100000000 },
+            { "queue_flushes", type_e::integer, 0, 1000000 },
+            { "queue_frames_dropped", type_e::integer, 0, 100000000 },
+            { "idr_requests", type_e::integer, 0, 1000000 },
+            { "rfi_requests", type_e::integer, 0, 1000000 },
+            { "anomalies", type_e::integer, 0, 1000000 },
+            { "loss_pct_avg", type_e::number, 0, 100 },
+            { "loss_pct_max", type_e::number, 0, 100 },
+            { "rtt_ms_p50", type_e::number, 0, 60000 },
+            { "rtt_ms_p95", type_e::number, 0, 60000 },
+            { "fec_pct_avg", type_e::number, 0, 100 },
+            { "actual_kbps", type_e::integer, 0, 10000000 },
+            { "target_kbps", type_e::integer, 0, 10000000 },
+            { "bitrate_band", type_e::choice, 0, 0, { "0-8000", "8000-15000", "15000-30000", "30000-60000", "60000-100000", "100000-200000", "200000+" } },
+            { "encoder", type_e::catalogue, 0, 48 },
+            { "capture_backend", type_e::catalogue, 0, 48 },
+            { "gpu_driver", type_e::catalogue, 0, 24 },
+          };
+          for (auto &d : slim_dims()) health.push_back(d);
+          t.push_back({ kind_e::experience, "stream_health", std::move(health) });
+          // One anomaly of a window: the code and its numbers say what happened; `log` says an anonymized log excerpt was sent for it.
+          std::vector<prop_spec_t> anomaly {
+            { "code", type_e::code, 0, 32, {}, true },
+            { "severe", type_e::boolean },
+            { "value", type_e::number, 0, 10000000 },
+            { "threshold", type_e::number, 0, 10000000 },
+            { "count", type_e::integer, 0, 100000000 },
+            { "suppressed", type_e::integer, 0, 1000000 },
+            { "window_s", type_e::integer, 0, 3600 },
+            { "log", type_e::boolean },
+            { "bitrate_band", type_e::choice, 0, 0, { "0-8000", "8000-15000", "15000-30000", "30000-60000", "60000-100000", "100000-200000", "200000+" } },
+            { "encoder", type_e::catalogue, 0, 48 },
+            { "capture_backend", type_e::catalogue, 0, 48 },
+            { "gpu_driver", type_e::catalogue, 0, 24 },
+          };
+          for (auto &d : slim_dims()) anomaly.push_back(d);
+          t.push_back({ kind_e::experience, "stream_anomaly", std::move(anomaly) });
+          // an install found one of its own statistics clearly worse than its own baseline (self_baseline.h)
+          std::vector<prop_spec_t> regress {
+            { "metric", type_e::catalogue, 0, 24, {}, true },
+            { "baseline", type_e::number, 0, 100000 },
+            { "current", type_e::number, 0, 100000 },
+            { "delta", type_e::number, 0, 100000 },
+            { "windows", type_e::integer, 0, 100000 },
+            { "baseline_windows", type_e::integer, 0, 10000000 },
+            { "version_changed", type_e::boolean },
+            { "bitrate_band", type_e::choice, 0, 0, { "0-8000", "8000-15000", "15000-30000", "30000-60000", "60000-100000", "100000-200000", "200000+" } },
+            { "encoder", type_e::catalogue, 0, 48 },
+            { "capture_backend", type_e::catalogue, 0, 48 },
+            { "gpu_driver", type_e::catalogue, 0, 24 },
+          };
+          for (auto &d : slim_dims()) regress.push_back(d);
+          t.push_back({ kind_e::experience, "stream_regress", std::move(regress) });
+        }
         t.push_back({ kind_e::experience, "startup", { { "host_start_ms", type_e::integer, 0, 3600000 }, { "first_frame_ms", type_e::integer, 0, 3600000 } } });
         t.push_back({ kind_e::experience, "panel_page", { { "page", type_e::catalogue, 0, 40, {}, true }, { "time_to_content_ms", type_e::integer, 0, 600000, {}, true } } });
         return t;
@@ -418,6 +573,39 @@ namespace telemetry {
         case type_e::text: {
           if (!value.is_string()) return std::nullopt;
           return json(scrub_text(value.get<std::string>(), static_cast<std::size_t>(spec.max)));
+        }
+        case type_e::counts: {
+          if (!value.is_object()) return std::nullopt;
+          json out = json::object();
+          for (const auto &k : health::hist_keys()) {
+            const auto found = value.find(std::string { k.key });
+            if (found == value.end()) continue;
+            if (!found->is_number()) return std::nullopt;
+            const double v = found->get<double>();
+            if (!std::isfinite(v)) return std::nullopt;
+            out[std::string { k.key }] = static_cast<std::int64_t>(std::llround(std::clamp(v, 0.0, 100000.0)));
+          }
+          return out;
+        }
+        case type_e::histograms: {
+          // only the keys of health::hist_keys(), each exactly BUCKET_COUNT non-negative integers; anything else drops the whole prop
+          if (!value.is_object()) return std::nullopt;
+          json out = json::object();
+          for (const auto &k : health::hist_keys()) {
+            const auto found = value.find(std::string { k.key });
+            if (found == value.end()) continue;
+            if (!found->is_array() || found->size() != health::BUCKET_COUNT) return std::nullopt;
+            json row = json::array();
+            for (const auto &n : *found) {
+              if (!n.is_number()) return std::nullopt;
+              const double v = n.get<double>();
+              if (!std::isfinite(v)) return std::nullopt;
+              row.push_back(static_cast<std::int64_t>(std::llround(std::clamp(v, 0.0, 10000000.0))));
+            }
+            out[std::string { k.key }] = std::move(row);
+          }
+          if (out.empty()) return std::nullopt;
+          return out;
         }
       }
       return std::nullopt;

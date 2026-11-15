@@ -13,6 +13,7 @@
 #include "src/globals.h"
 #include "src/hdr/calibration.h"
 #include "src/image_enhancement/config.h"
+#include "src/log_text.h"
 #include "src/logging.h"
 #include "src/rtsp.h"
 #include "src/stream.h"
@@ -505,10 +506,14 @@ namespace confighttp::runtime {
           // 继续执行，即使获取会话信息失败，仍然尝试修改码率
         }
 
-        BOOST_LOG(info) << "Config API: Attempting to change bitrate for client '" << client_name
-                        << "' to " << bitrate << " Kbps";
-        if (!available_clients.empty()) {
-          BOOST_LOG(info) << "Available RUNNING clients: " << boost::algorithm::join(available_clients, ", ");
+        BOOST_LOG(info) << "Config API: Attempting to change bitrate for client " << logging::quoted_name(client_name)
+                        << " to " << bitrate << " Kbps";
+        // names go into the log between double quotes (see src/log_text.h)
+        std::vector<std::string> logged_clients;
+        logged_clients.reserve(available_clients.size());
+        for (const auto &name : available_clients) logged_clients.push_back(logging::quoted_name(name));
+        if (!logged_clients.empty()) {
+          BOOST_LOG(info) << "Available RUNNING clients: " << boost::algorithm::join(logged_clients, ", ");
         }
 
         // 调用底层 API 修改码率
@@ -527,8 +532,8 @@ namespace confighttp::runtime {
           response_json["bitrate"] = bitrate;
           response_json["client_name"] = client_name;
 
-          BOOST_LOG(info) << "Config API: Dynamic bitrate change requested for client '"
-                          << client_name << "': " << bitrate << " Kbps";
+          BOOST_LOG(info) << "Config API: Dynamic bitrate change requested for client "
+                          << logging::quoted_name(client_name) << ": " << bitrate << " Kbps";
         }
         else {
           std::string error_msg = "No active streaming session found for client: " + client_name;
@@ -543,7 +548,10 @@ namespace confighttp::runtime {
           response_json["status_code"] = 404;
           response_json["status_message"] = error_msg;
 
-          BOOST_LOG(warning) << "Config API: Failed to change bitrate - " << error_msg;
+          // the response above keeps the plain names; the log gets them between double quotes
+          std::string logged_msg = "No active streaming session found for client: " + logging::quoted_name(client_name);
+          logged_msg += logged_clients.empty() ? std::string { ". No RUNNING sessions available." } : ". Available clients: " + boost::algorithm::join(logged_clients, ", ");
+          BOOST_LOG(warning) << "Config API: Failed to change bitrate - " << logged_msg;
         }
 
         response->write(

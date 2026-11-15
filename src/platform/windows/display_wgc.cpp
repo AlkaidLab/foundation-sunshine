@@ -19,6 +19,7 @@
 #include "misc.h"
 #include "src/config.h"
 #include "src/globals.h"
+#include "src/log_text.h"
 #include "src/logging.h"
 #include "src/process.h"
 #include <boost/program_options/parsers.hpp>
@@ -411,7 +412,7 @@ namespace platf::dxgi {
     if (enum_data.best_match_hwnd != nullptr && enum_data.best_match_score > 0) {
       wchar_t actual_title[256] = { 0 };
       GetWindowTextW(enum_data.best_match_hwnd, actual_title, sizeof(actual_title) / sizeof(actual_title[0]));
-      BOOST_LOG(debug) << "Using fuzzy match: ["sv << platf::to_utf8(actual_title) << "] for search ["sv << window_title << "] (score: "sv << enum_data.best_match_score << ")";
+      BOOST_LOG(debug) << "Using fuzzy match: "sv << logging::quoted_name(platf::to_utf8(actual_title)) << " for search "sv << logging::quoted_name(window_title) << " (score: "sv << enum_data.best_match_score << ")";
       return enum_data.best_match_hwnd;
     }
 
@@ -518,7 +519,7 @@ namespace platf::dxgi {
               window_title = (last_dot != std::string::npos) ? filename.substr(0, last_dot) : filename;
 
               if (!window_title.empty()) {
-                BOOST_LOG(info) << "Window title not specified, using executable filename: ["sv << window_title << "] (from: ["sv << app_cmd << "])";
+                BOOST_LOG(info) << "Window title not specified, using executable filename: "sv << logging::quoted_name(window_title) << " (from: "sv << logging::quoted_name(app_cmd) << ")";
               }
             }
           }
@@ -527,7 +528,7 @@ namespace platf::dxgi {
           if (window_title.empty()) {
             window_title = proc::proc.get_app_name(running_app_id);
             if (!window_title.empty()) {
-              BOOST_LOG(info) << "Window title not specified, using app name: ["sv << window_title << "]";
+              BOOST_LOG(info) << "Window title not specified, using app name: "sv << logging::quoted_name(window_title);
             }
           }
 
@@ -566,19 +567,19 @@ namespace platf::dxgi {
           target_hwnd = nullptr;
 
           if (retry < max_retries - 1) {
-            BOOST_LOG(info) << "Window not found yet: ["sv << window_title << "], retrying in "sv << retry_interval_ms << "ms ("sv << (retry + 1) << "/"sv << max_retries << ")..."sv;
+            BOOST_LOG(info) << "Window not found yet: "sv << logging::quoted_name(window_title) << ", retrying in "sv << retry_interval_ms << "ms ("sv << (retry + 1) << "/"sv << max_retries << ")..."sv;
             Sleep(retry_interval_ms);
           }
         }
 
         if (!target_hwnd) {
-          BOOST_LOG(warning) << "Window not found or invalid after "sv << max_retries << " attempts: ["sv << window_title << "]. Falling back to display capture."sv;
+          BOOST_LOG(warning) << "Window not found or invalid after "sv << max_retries << " attempts: "sv << logging::quoted_name(window_title) << ". Falling back to display capture."sv;
           capture_window = false;
         }
         else {
           wchar_t actual_title[256] = {};
           GetWindowTextW(target_hwnd, actual_title, std::size(actual_title));
-          BOOST_LOG(info) << "Capturing window: ["sv << platf::to_utf8(actual_title) << "] (searched for: ["sv << window_title << "])";
+          BOOST_LOG(info) << "Capturing window: "sv << logging::quoted_name(platf::to_utf8(actual_title)) << " (searched for: "sv << logging::quoted_name(window_title) << ")";
 
           // Maximize the window first for better capture experience
           if (!IsZoomed(target_hwnd)) {

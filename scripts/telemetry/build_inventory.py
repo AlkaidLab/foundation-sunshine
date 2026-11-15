@@ -33,6 +33,9 @@ A = {
     "e_user_report": (HOST, "src/telemetry/events.cpp", r'kind_e::error, "user_report", \{'),
     "e_log_summary": (HOST, "src/telemetry/events.cpp", r'kind_e::error, "log_summary", \{'),
     "e_stream_quality": (HOST, "src/telemetry/events.cpp", r'kind_e::experience, "stream_quality", \{'),
+    "e_stream_health": (HOST, "src/telemetry/events.cpp", r'kind_e::experience, "stream_health", std::move'),
+    "e_stream_anomaly": (HOST, "src/telemetry/events.cpp", r'kind_e::experience, "stream_anomaly", std::move'),
+    "e_stream_regress": (HOST, "src/telemetry/events.cpp", r'kind_e::experience, "stream_regress", std::move'),
     "e_startup": (HOST, "src/telemetry/events.cpp", r'kind_e::experience, "startup", \{'),
     "e_panel_page": (HOST, "src/telemetry/events.cpp", r'kind_e::experience, "panel_page", \{'),
     "settings": (HOST, "src/telemetry/events.cpp", r"static const std::vector<setting_spec_t> table"),
@@ -169,6 +172,15 @@ row("usage", "setting_changed: key, value", "`max_bitrate`, `15000-30000`", "@e_
 row("experience", "stream_quality (per stream)", "`fps_p50 119`, `encode_ms_p95 6`, `loss_pct 0.1`, `reconnects 0`", "@e_stream_quality",
     "Is streaming smooth? Frame rate, delay, loss, stalls by version and codec.", "No: numbers.", "Clamped numbers rounded to one decimal @e_stream_quality.", "events: 180 days; AE points per Cloudflare's retention.",
     dict(field="stream_quality（每次串流一条）", purpose="串流是否流畅？按版本和编码看帧率、延迟、丢包、卡顿。", risk="否：数字。", scrub="限幅并四舍五入到一位小数 @e_stream_quality。", keep="events 180 天；AE 数据点按 Cloudflare 的保留期。"))
+row("experience", "stream_health (per stream-hour)", "`windows 60`, `bad {backlog_p95: 3}`, `queue_flushes 0`, `codec hevc`", "@e_stream_health",
+    "Does a version stream worse than the one before it? Per minute: host processing, encode, capture, send time and send backlog; how many minutes were over a fixed bound; cleared queues, key-frame requests, loss. For a share of streams also a 19-bucket distribution per statistic.", "No: numbers and fixed words (codec, resolution, frame rate, encoder, capture method, graphics driver version).", "Allow-listed names, clamped numbers, fixed-word dimensions @e_stream_health.", "counters: 400 days; raw rows are not kept.",
+    dict(field="stream_health（每串流小时一条）", purpose="新版本的串流是否比上一版更差？按分钟统计主机处理、编码、采集、发送耗时和发送积压，有多少分钟越过固定界限，队列被清空、关键帧请求、丢包；一部分串流还带每个指标的 19 桶分布。", risk="否：数字和固定词（编码、分辨率、帧率、编码器、采集方式、显卡驱动版本）。", scrub="只收白名单里的名字，数字限幅，维度是固定词 @e_stream_health。", keep="计数 400 天；不保留原始行。"))
+row("experience", "stream_anomaly", "`code XP_QUEUE_FLUSH`, `value 31`, `count 992`, `log true`", "@e_stream_anomaly",
+    "Which problem happened, how big, on which configuration; a serious one also sends the last two minutes of the host log (anonymised).", "Low: a fixed code and numbers; the log excerpt is cleaned text without a clock time, so what a log line says after cleaning is sent.", "Fixed codes only; the log excerpt drops text between quotes, brackets and braces (a short bracket that only holds a code, such as `[E12]`, stays), goes through the same cleaning as crash logs, and the computer and account names are removed @e_stream_anomaly.", "counters: 400 days; log excerpts: 90 days.",
+    dict(field="stream_anomaly", purpose="发生了哪种问题、多严重、在什么配置上；严重时还会发送问题前两分钟的主机日志（已匿名）。", risk="低：固定代码和数字；日志片段是清洗后的文本，没有时钟时间，清洗后日志行里剩下的内容会被发送。", scrub="只收固定代码；日志片段丢弃引号、方括号和花括号里的文字（只装代码的短方括号如 `[E12]` 保留），用和崩溃日志相同的清洗规则，并去掉计算机名和账户名 @e_stream_anomaly。", keep="计数 400 天；日志片段 90 天。"))
+row("experience", "stream_regress", "`metric jitter_p95`, `baseline 0.3`, `current 2.6`", "@e_stream_regress",
+    "Did this installation get worse than it used to be? One statistic, its value before and now; at most once per version.", "No: a statistic name and two numbers. The rolling average is kept in the installation's own folder.", "Fixed statistic names, clamped numbers @e_stream_regress.", "counters: 400 days.",
+    dict(field="stream_regress", purpose="这台安装是否比它自己以前更差？一个指标的名字、以前的值和现在的值；每个版本最多一次。", risk="否：指标名和两个数字；滚动平均保存在本机自己的目录里。", scrub="指标名固定，数字限幅 @e_stream_regress。", keep="计数 400 天。"))
 row("experience", "startup: host_start_ms, first_frame_ms", "`2100`, `450`", "@e_startup",
     "How long until the host is ready and until the first frame.", "No: numbers.", "Clamped.", "events: 180 days.",
     dict(field="startup：host_start_ms、first_frame_ms", purpose="主机多久就绪、多久出第一帧。", risk="否：数字。", scrub="限幅。", keep="events 180 天。"))
@@ -184,8 +196,8 @@ row("error", "log_summary: component, fatal, error, warning", "`encoder`, `0`, `
     "How many warnings and errors the host logs per hour, by component.", "No: counts. The component is one of 24 fixed words or `host`.", "@logs", "events: 180 days.",
     dict(field="log_summary：component、fatal、error、warning", purpose="主机每小时按组件记录了多少警告和错误。", risk="否：计数。组件是 24 个固定词之一，或 `host`。", scrub="@logs", keep="events 180 天。"))
 row("error", "user_report: category, component, page, error_code, attachment, message", "`bug`, `web`, `apps`, `E_LOST`, `att-2026-11/<sha256>.webp`, `the apps page stays empty`", "@e_user_report @js_report @js_msg",
-    "A report the person writes and presses Send on. Answers \"what was broken for this person\".", "Yes, by nature: it is text a person typed. It is the only free text in the system. It is sent only when they press Send, after the form has shown exactly what leaves (title, description, a short summary of the error with its top stack lines and last events).", "Scrubbed in the browser @js_scrub and again in the host @scrub and the Worker @w_scrub; at most 2000 characters; no contact field exists; the attachment is only a reference the developer panel returned.", "events: 180 days; the GitHub issue until the developers close it.",
-    dict(field="user_report：category、component、page、error_code、attachment、message", purpose="用户亲手写、亲手点击「发送」的报告，回答「这个人遇到了什么问题」。", risk="是，这是它的性质：它是人打的字，也是整个系统里唯一的自由文本。只有按下「发送」才会发出，且表单会先展示将发送的全部内容（标题、描述、错误的简短摘要及堆栈开头几行、最近的事件）。", scrub="在浏览器 @js_scrub、主机 @scrub 和 Worker @w_scrub 各清洗一遍；最长 2000 字符；没有联系方式字段；附件只是开发者面板返回的引用。", keep="events 180 天；GitHub 问题在开发者关闭前保留。"))
+    "A report the person writes and presses Send on. Answers \"what was broken for this person\".", "Yes, by nature: it is text a person typed. Besides it, only the log excerpt after a serious stream problem is text (see Never sent). It is sent only when they press Send, after the form has shown exactly what leaves (title, description, a short summary of the error with its top stack lines and last events).", "Scrubbed in the browser @js_scrub and again in the host @scrub and the Worker @w_scrub; at most 2000 characters; no contact field exists; the attachment is only a reference the developer panel returned.", "events: 180 days; the GitHub issue until the developers close it.",
+    dict(field="user_report：category、component、page、error_code、attachment、message", purpose="用户亲手写、亲手点击「发送」的报告，回答「这个人遇到了什么问题」。", risk="是，这是它的性质：它是人打的字，除它之外，只有严重串流问题之后的日志摘录是文本（见「从不发送」）。只有按下「发送」才会发出，且表单会先展示将发送的全部内容（标题、描述、错误的简短摘要及堆栈开头几行、最近的事件）。", scrub="在浏览器 @js_scrub、主机 @scrub 和 Worker @w_scrub 各清洗一遍；最长 2000 字符；没有联系方式字段；附件只是开发者面板返回的引用。", keep="events 180 天；GitHub 问题在开发者关闭前保留。"))
 
 # --- crash
 row("crash", "meta: product, version, os_version, time, uptime_s", "`host`, `2026.1112.0.杂鱼`, `10.0.26100`", "@meta",
@@ -222,13 +234,13 @@ NEVER_EN = [
     "Screen content, audio, keystrokes, files, clipboard content.",
     "The name of the computer, the Windows or macOS account, a device or a client; the name of a game or an application (a game is at most one of nine catalogue words).",
     "File paths, IP addresses, MAC addresses, ports, pairing identifiers, Steam, miHoYo or other account ids, Mirror酱 CDKs, passwords, tokens, cookies.",
-    "Any free text the person did not write for a report: the only free text in the system is `user_report.message`, sent when they press Send, after the form showed it.",
+    "Free text, with two exceptions. `user_report.message` is sent when the person presses Send, after the form showed it. And, only while error reports are on, the log excerpt after a serious stream problem (`stream_anomaly`, `log true`) is sent: the last two minutes of the host's own log, with text between quotes, brackets and braces dropped (a short bracket that only holds a code, such as `[E12]`, stays) and names, folders, addresses, e-mail addresses and keys cleaned; it stays text, not a fixed list of words.",
 ]
 NEVER_ZH = [
     "屏幕内容、声音、键盘输入、文件、剪贴板内容。",
     "电脑名、Windows 或 macOS 账号名、设备名或客户端名；游戏名和应用名（游戏最多是九个目录词之一）。",
     "文件路径、IP 地址、MAC 地址、端口、配对标识、Steam、米哈游或其他账号 id、Mirror酱 CDK、密码、令牌、Cookie。",
-    "任何不是用户为了写报告而输入的自由文本：整个系统里唯一的自由文本是 `user_report.message`，只在用户按下「发送」后发出，且表单事先展示过。",
+    "自由文本只有两个例外。`user_report.message`：用户按下「发送」后发出，表单事先展示过。以及仅在错误报告开启时，严重串流问题之后的日志摘录（`stream_anomaly`，`log true`）：主机日志最近两分钟，引号、方括号和花括号里的文字被丢弃（只装代码的短方括号如 `[E12]` 保留），名称、文件夹、地址、邮箱和密钥被清洗；它仍然是文本，不是固定词表。",
 ]
 
 def render(lang):
@@ -239,7 +251,7 @@ def render(lang):
         w("# 隐私数据清单：每个客户端发送什么、服务器保存什么\n")
         w("这份清单回答三个问题：发送了什么、为什么需要、怎样去除了个人信息。每一条都标出了代码位置（`文件:行号`）；代码位置由 `scripts/telemetry/build_inventory.py` 在生成时查找，所以会随代码更新。\n")
         w("## 一句话\n")
-        w("两个独立的开关（错误报告、使用统计），默认开启，关闭后该类内容不再发送。数据只发往开发者自己的服务器 `api.alkaidlab.com`（Cloudflare Worker），不经过广告网络，不出售。除用户亲手写的反馈外，没有任何自由文本；名称、路径、地址、账号在发送前就不在载荷里。")
+        w("两个独立的开关（错误报告、使用统计），默认开启，关闭后该类内容不再发送。数据只发往开发者自己的服务器 `api.alkaidlab.com`（Cloudflare Worker），不经过广告网络，不出售。除用户亲手写的反馈和严重串流问题之后的日志摘录（仅在错误报告开启时，清洗后的文本，见「从不发送」）外，没有任何自由文本；名称、路径、地址、账号在发送前就不在载荷里。")
         w("\n服务器自己不保存 IP 地址，只保存 Cloudflare 给出的国家代码；Workers 日志已关闭 @w_obs。连接本身必然经过网络，Cloudflare 作为网络服务商在传输层看得到连接的 IP，这一层不由我们控制，我们的代码不读取、不保存、不记录它。\n")
         heads = ["字段", "示例", "代码位置", "用途（回答什么问题）", "能否识别个人或泄露私密内容", "已做的清洗", "保留时间"]
         groups = [("envelope", "每个批次都带的信封"), ("usage", "使用事件（使用统计）"), ("experience", "体验事件（使用统计）"), ("error", "错误事件（错误报告）"), ("crash", "崩溃报告（错误报告）")]
@@ -247,7 +259,7 @@ def render(lang):
         w("# Privacy data inventory: what each client sends and what the server keeps\n")
         w("This list answers three questions: what is sent, why it is needed and how personal details are removed. Every entry names the code (`file:line`); the code locations are found by `scripts/telemetry/build_inventory.py` when the page is generated, so they follow the code.\n")
         w("## In one paragraph\n")
-        w("Two independent switches (error reports, usage statistics), on by default; when one is off, nothing of that kind is sent. The data goes only to the developers' own server, `api.alkaidlab.com` (a Cloudflare Worker), not through an advertising network, and is not sold. Apart from feedback a person writes by hand there is no free text anywhere: names, paths, addresses and accounts are not in the payload to begin with.")
+        w("Two independent switches (error reports, usage statistics), on by default; when one is off, nothing of that kind is sent. The data goes only to the developers' own server, `api.alkaidlab.com` (a Cloudflare Worker), not through an advertising network, and is not sold. Apart from feedback a person writes by hand and the log excerpt after a serious stream problem (only while error reports are on, cleaned text, see Never sent) there is no free text anywhere: names, paths, addresses and accounts are not in the payload to begin with.")
         w("\nThe server does not store IP addresses, only the country code Cloudflare supplies; Workers Logs are off @w_obs. The connection itself necessarily crosses the network and Cloudflare, as the network provider, sees the connecting address at the transport layer; that layer is not ours, and our code does not read, store or log it.\n")
         heads = ["Field", "Example", "Code", "Purpose (which question it answers)", "Could it identify a person or reveal private content?", "Scrubbing applied", "Retention"]
         groups = [("envelope", "Sent with every batch (the envelope)"), ("usage", "Usage events (usage statistics)"), ("experience", "Experience events (usage statistics)"), ("error", "Error events (error reports)"), ("crash", "Crash reports (error reports)")]

@@ -12,6 +12,7 @@ namespace telemetry {
   struct post_result_t {
     int status = 0;
     long retry_after_s = 0;
+    std::string body;  ///< the answer's body (at most 64 KB): the Worker's remote configuration rides in it
     post_result_t() = default;
     post_result_t(int status_, long retry_after = 0):  // NOLINT: an int is a status
         status(status_), retry_after_s(retry_after) {}

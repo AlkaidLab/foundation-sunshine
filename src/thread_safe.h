@@ -287,12 +287,23 @@ namespace safe {
       }
 
       if (_queue.size() == _max_elements) {
+        // raise() on a full queue drops everything that waits; telemetry counts these (stream health: XP_QUEUE_FLUSH)
+        _clears.fetch_add(1, std::memory_order_relaxed);
+        _cleared_elements.fetch_add(_queue.size(), std::memory_order_relaxed);
         _queue.clear();
       }
 
       _queue.emplace_back(std::forward<Args>(args)...);
 
       _cv.notify_all();
+    }
+
+    /// How many times raise() found the queue full and cleared it, and how many elements those clears dropped.
+    std::pair<std::uint64_t, std::uint64_t>
+    clear_stats() {
+      // both counters are written under the lock in raise(); read under it too, so a clear is seen with its own element count
+      std::lock_guard ul { _lock };
+      return { _clears.load(std::memory_order_relaxed), _cleared_elements.load(std::memory_order_relaxed) };
     }
 
     bool
@@ -367,6 +378,8 @@ namespace safe {
   private:
     bool _continue { true };
     std::uint32_t _max_elements;
+    std::atomic<std::uint64_t> _clears { 0 };
+    std::atomic<std::uint64_t> _cleared_elements { 0 };
 
     std::mutex _lock;
     std::condition_variable _cv;

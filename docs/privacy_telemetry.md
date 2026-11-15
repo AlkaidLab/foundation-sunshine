@@ -31,6 +31,9 @@ Every event is a name and a few fixed words or numbers. Names that are not on th
 | `app_exit` | seconds the host ran |
 | `stream_start`, `stream_end` | client kind (a fixed word such as `moonlight-macos`), client OS, video codec, width, height, frame rate, HDR, audio codec, transport, kind of application (`desktop`, `bigscreen`, `sparxie`, `steam`, `other`) and, for a Sparxie application, its game as a catalogue word such as `genshin`; the end adds the length in seconds and how it ended (`normal`, `error`, `timeout`, `kicked`) |
 | `stream_quality` (one per stream) | frame rate (typical and low end), share of dropped frames, encode and capture time (typical and 95th percentile), network round trip, packet loss, bitrate, reconnects, stalls |
+| `stream_health` (about one per hour of streaming) | for every stream: how many 60-second windows there were and how many were over a fixed bound for each of the host processing time, encode, capture, convert and send time, send backlog and frame-interval jitter; counts of frames, key-frame and reference-invalidation requests from the client, queue clears and dropped frames; packet loss, round trip, bitrate target and measured; the stream's codec, resolution, frame rate, HDR, transport, client kind and OS, bitrate band, encoder, capture method and the driver version of the graphics adapter (digits and dots). For a share of the streams (set by the server, ten percent unless a new version is being watched) also a histogram of each statistic over the windows |
+| `stream_anomaly` | one of the fixed codes `XP_QUEUE_FLUSH`, `XP_SEND_BACKLOG`, `XP_HOST_LATENCY`, `XP_ENCODE_OVER`, `XP_CAPTURE_STALL`, `XP_FRAME_SKIP`, `XP_IDR_STORM`, `XP_LOSS_BURST`, `XP_RTT_HIGH`, `XP_BITRATE_SHORT`, with the measured number, its bound, a count and the stream's dimensions |
+| `stream_regress` | the name of one statistic, its value over the earlier windows of this installation and over the latest ones. Your installation keeps a rolling average of these statistics in the telemetry folder; nothing else of it is sent |
 | `startup` | host start time, time to the first frame of a stream |
 | `feature_used` | a fixed word naming a feature (`stream.hdr`, `web.apps_saved`, …) |
 | `setting_changed` | which of a short list of settings changed (encoder, capture, codec modes, frame-rate and bitrate buckets, …) and the new value as a fixed word or a range such as `8000-15000` |
@@ -42,9 +45,15 @@ The list of events and properties is the code in `src/telemetry/events.cpp`; the
 
 With every batch go: the version, the update channel, the operating system and its version, the CPU architecture, the GPU vendor (`nvidia`, `amd`, `intel`), the language, and two random numbers (below).
 
+## Log excerpts after a serious stream problem
+
+Only while **error reports** are on: when a stream has a serious problem (the send queue was cleared, or a frame left much too late), the host sends the last two minutes of its own log, six times a day by default (the server can change that, up to ten) and with at least ten minutes between two (the first of a run is not held back by that gap). Each line is cleaned with the same rules as the rest (names, paths, addresses, e-mail addresses, keys), text between double quotes, brackets or braces (where a log line names a game, an application or a device) and single-quoted names are dropped (a short bracket that only holds a code, such as `[E12]`, stays), your computer name and account name are removed wherever they appear, and the time of each line is the number of seconds before the problem, not the clock. The server cleans it again and keeps it as a private file for 90 days, like a crash dump. The server can lower these numbers or switch them off.
+
 ## What is never sent
 
-Names or text you typed; the name of your computer, your account, your devices or your clients; file paths; IP or MAC addresses; the titles of your games and applications (a game is at most a catalogue word such as `genshin`); any free text. The text of an error is not sent: a log line or an exception message can hold what a person chose or typed. The only free text is the report you write yourself (`user_report`), after the form has shown you exactly what leaves; it is cleaned in your browser, again in the host and again on the server, and cut to 2000 characters.
+Names; text you typed (apart from the report you write yourself and the log excerpt below, which carries whatever a log line says after cleaning); the name of your computer, your account, your devices or your clients; file paths; IP or MAC addresses; the titles of your games and applications (a game is at most a catalogue word such as `genshin`), apart from what a log line in the excerpt below happens to say after cleaning. An error event carries a code, never the text of the error: a log line or an exception message can hold what a person chose or typed.
+
+Text leaves in two places only. The report you write yourself (`user_report`), after the form has shown you exactly what leaves; it is cleaned in your browser, again in the host and again on the server, and cut to 2000 characters. And, only while **error reports** are on, the log excerpt after a serious stream problem (above): lines of the host's own log. They are cleaned as described there, but they stay lines of text, not a fixed list of words, so what a log line happens to say after that cleaning is sent.
 The server keeps only the country code of the connection (from Cloudflare), not the address.
 
 ## Identity
@@ -54,6 +63,8 @@ The server keeps only the country code of the connection (from Cloudflare), not 
 
 ## Sending, offline and limits
 
+
+Serious things are sent first and are the last to be given up. Every event has one of three priorities: 0 for user reports, fatal errors, the first report of an error, serious stream problems and the per-stream summary; 1 for further reports of a known error and smaller problems; 2 for usage and performance detail. When the queue on disk is full, priority 2 is dropped first, then 1, and priority 0 is only cut when it alone is past its own bound. When the server asks the clients to wait, priority 1 and 2 wait, and priority 0 leaves once per wait, with repeated events merged into one with a count.
 Events wait in memory and are written to `<config folder>/telemetry/queue` (at most 100 files and 1 MB; the oldest go first), then sent at least every 30 seconds in batches of at most 500 events and 256 KB. A failure waits 30 seconds, then doubles up to one hour; the server's `Retry-After` is obeyed; at most 15 requests a minute are made. Sending runs on its own thread and never makes a stream wait.
 The endpoint can be changed with `telemetry_endpoint` (for a test server).
 

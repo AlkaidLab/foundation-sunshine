@@ -49,6 +49,7 @@ extern "C" {
 #include "pyrowave/runtime.h"
 #include "rtsp.h"
 #include "spatial_transport/mat_live_session.h"
+#include "src/log_text.h"
 #include "stream.h"
 #include "streaming/fec.h"
 #include "sync.h"
@@ -2225,7 +2226,7 @@ namespace rtsp_stream {
     // 检测是否仅控制流会话（只有 control 流被设置，没有 video 和 audio）
     session.control_only = session.setup_control && !session.setup_video && !session.setup_audio;
     if (session.control_only) {
-      BOOST_LOG(info) << "Control-only session detected: client ["sv << session.client_name << "] will only provide input control"sv;
+      BOOST_LOG(info) << "Control-only session detected: client "sv << logging::quoted_name(session.client_name) << " will only provide input control"sv;
     }
 
     // Check that any required encryption is enabled

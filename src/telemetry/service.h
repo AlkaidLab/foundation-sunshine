@@ -22,6 +22,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <shared_mutex>
 #include <string>
 #include <vector>
@@ -29,7 +30,9 @@
 #include <nlohmann/json.hpp>
 
 #include "events.h"
+#include "hooks.h"
 #include "queue.h"
+#include "self_baseline.h"
 #include "stream_stats.h"
 #include "transport.h"
 
@@ -55,7 +58,31 @@ namespace telemetry {
     int max_posts_per_minute = 15;  ///< the Worker allows 20 requests a minute per install; the sender stays under it
     std::int64_t max_backoff_ms = 3600 * 1000;
     std::int64_t reconnect_window_ms = 30'000;
+    /** The computer name and the account name of this machine: removed from an excerpt wherever they appear, whatever surrounds them. */
+    std::vector<std::string> redact_words;
+    int anomaly_logs_per_day = 6;  ///< per install; the Worker applies its own, global, limit. The first excerpt of a run is not held back by the gap below
+    std::int64_t anomaly_log_min_gap_ms = 10 * 60'000;
+    std::int64_t anomaly_log_span_ms = 120'000;  ///< the excerpt reaches this far back
+    std::size_t anomaly_log_max_bytes = 120 * 1024;
   };
+
+  /** What the Worker answers with (`cfg` in the body of /v1/events), kept in <dir>/remote_config.json and read at the next start. */
+  struct debug_cohort_t {
+    std::int64_t until = 0;
+    std::string version, gpu, client;  ///< empty: any
+    int logs_per_day = 0;
+  };
+  struct remote_config_t {
+    std::int64_t rev = 0;
+    double tier1_rate = 0.1;  ///< the share of streams that send the per-window histograms
+    int logs_per_day = 6;
+    bool health = true;  ///< false: no stream-health events at all
+    std::int64_t backoff_s = 0;  ///< wait this long before the next request
+    bool paused = false;
+    std::vector<debug_cohort_t> debug;
+  };
+  remote_config_t
+  parse_remote_config(const nlohmann::json &cfg, std::int64_t now_ms, int default_logs_per_day = 6);
 
   struct service_deps_t {
     std::function<std::int64_t()> now_ms;  ///< ms since the epoch
@@ -97,7 +124,8 @@ namespace telemetry {
 
     // ---- events ----
     /** Shape against the contract, apply consent, put in the buffer. -> true when it was kept. Thread safe, never blocks on I/O. */
-    bool emit(kind_e kind, std::string_view name, const nlohmann::json &props, std::string_view product = "host", std::string_view version = {});
+    bool
+    emit(kind_e kind, std::string_view name, const nlohmann::json &props, std::string_view product = "host", std::string_view version = {}, int priority = -1);
     /** Events from a page (panel, web) through the host API: the same, with the page allow-list. -> the number kept. */
     std::size_t ingest(std::string_view product, std::string_view version, const nlohmann::json &events);
 
@@ -107,6 +135,18 @@ namespace telemetry {
     void record_encoded_frame(std::uint32_t session_id) noexcept;
     void record_encode_ms(std::uint32_t session_id, double ms) noexcept;
     void record_capture_ms(std::uint32_t session_id, double ms) noexcept;
+    /** Per-frame timings and counters for the stream-health windows (see stream_health.h). */
+    void
+    record_sample(std::uint32_t session_id, hooks::metric_e metric, double ms) noexcept;
+    void
+    record_count(std::uint32_t session_id, hooks::counter_e counter, std::uint64_t n) noexcept;
+    /** The driver version of the streaming adapter (digits and dots), a dimension of the stream-health windows. */
+    void
+    set_gpu_driver(std::string driver);
+    void
+    record_frame_done(std::uint32_t session_id, std::int64_t steady_ns) noexcept;
+    remote_config_t
+    remote_config() const;
     bool streams_active() const;
     /** The sampler: read each active session's counters and the client's reports (probes) once. */
     void tick_streams(const std::vector<session_probe_t> &probes);
@@ -115,11 +155,23 @@ namespace telemetry {
     /** A host log record (severity 3 warning, 4 error, 5 fatal); only counted and kept raw here, scrubbed later on the sender thread. Cheap; never throws. */
     void note_log(int severity, const char *message, std::size_t length, std::string_view component = "host") noexcept;
 
+    /** Every host log record (any severity) goes to a short ring; an excerpt of it leaves only after a severe stream anomaly, scrubbed. Cheap; never throws. */
+    void
+    note_log_line(int severity, const char *message, std::size_t length) noexcept;
+    void
+    note_log_line(int severity, std::string_view text) noexcept { note_log_line(severity, text.data(), text.size()); }
+    /** Send the excerpts queued by severe anomalies (POST <endpoint>/v1/anomaly-log). -> the excerpts sent. Sender thread only. */
+    int
+    pump_logs();
+
     // ---- sender (the sender thread) ----
     /** Turn the buffer (and the log tallies when their hour is over) into batches on disk. `final` also closes the current log hour. */
     void flush(bool final = false);
     /** Send queued batches until one fails (then back off). -> the batches sent. */
     int pump();
+    /** The server asked for a wait and it has not ended. */
+    bool
+    backing_off() const { return deps_.now_ms() < backoff_until_ms_.load(std::memory_order_relaxed); }
     /** The consent changed: drop what the off kinds had waiting, and the install id when both are off. */
     void consent_changed();
     /** The buffer reached flush_events: the sender thread should not wait for its interval. */
@@ -155,6 +207,25 @@ namespace telemetry {
 
     consent_t consent_now() const;
     void collect_logs(std::int64_t now, bool close_hour);
+    void
+    on_window(stream_stats_t &stats, const health::window_t &window, std::int64_t now);
+    void
+    emit_health_chunk(stream_stats_t &stats, std::int64_t now);
+    void
+    apply_remote_config(const std::string &body);
+    bool
+    stream_detail(std::uint32_t session_id, const stream_dims_t &dims);
+    /** Whether another excerpt may be sent now (the daily bound and the gap); nothing is used up until anomaly_log_commit(). Caller holds logs_mutex_. */
+    bool
+    anomaly_log_allowed(std::int64_t now);
+    /** An excerpt was queued: use up the room (and save it). Caller holds logs_mutex_. */
+    void
+    anomaly_log_commit(std::int64_t now);
+    /** What to do with the answer to a request that carried the batches at `paths`: sent (they are removed, the configuration it carries is applied), refused for good (removed), or to be tried again (-> false: stop). */
+    bool
+    handle_answer(const post_result_t &answer, std::size_t count, const std::vector<std::filesystem::path> &paths);
+    std::string
+    log_excerpt(std::int64_t now);
     void quality_event(const stream_stats_t &stats, std::int64_t now);
 
     service_options_t options_;
@@ -180,7 +251,37 @@ namespace telemetry {
     std::map<std::string, std::int64_t> last_end_by_client_;
     std::map<std::uint32_t, std::string> client_of_;
 
+    struct ring_line_t {
+      std::int64_t ms;
+      int severity;
+      std::string text;
+    };
+    struct pending_log_t {
+      std::string code;
+      std::int64_t t = 0;
+      std::string session;
+      std::string text;
+      int tries = 0;
+    };
+    mutable std::mutex ring_mutex_;  // the log ring; held for a few instructions
+    std::deque<ring_line_t> log_ring_;
+    // pending_logs_, baseline_ and the anomaly_log_* state are used by the sender thread (pump_logs) and by the thread that ends a stream (on_window): logs_mutex_ guards them, never held across I/O,
+    // taken before mutex_ and ring_mutex_ and never after them
+    mutable std::mutex logs_mutex_;
+    std::deque<pending_log_t> pending_logs_;
+    std::string gpu_driver_;  // under mutex_
+    remote_config_t config_;  // under mutex_
+    std::unique_ptr<self_baseline_t> baseline_;
+    std::int64_t anomaly_log_day_ = -1;
+    int anomaly_log_count_ = 0;
+    std::int64_t last_anomaly_log_ms_ = -1;
+    bool anomaly_log_first_ = true;  // the first serious problem of this run always gets its excerpt (until the daily bound)
+
     std::int64_t not_before_ms_ = 0;
+    // the server asked the clients to wait (cfg.backoff_s, or paused): priority 1 and 2 wait, priority 0 leaves once as counts
+    std::atomic<std::int64_t> backoff_until_ms_ { 0 };  // written by the sender thread, read by backing_off() on any thread
+    std::map<std::string, std::int64_t> p0_group_sent_at_;  // product and version of the priority 0 batches that left during a wait, and when (sender thread only)
+    std::int64_t wait_period_ms_ = 0;  // how long the latest answer asked to wait: a group leaves again only after that (sender thread only)
     int failures_ = 0;
     std::deque<std::int64_t> post_times_;  // when the last requests went out (sender thread only)
     std::int64_t last_flush_ms_ = 0;

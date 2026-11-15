@@ -465,6 +465,7 @@ namespace perf {
     // telemetry's own per-session sums (stream_quality): a null hook until telemetry runs, and never a wait
     if (sample.encode_ms) telemetry::hooks::encode_ms(session_id, *sample.encode_ms);
     if (sample.capture_to_convert_ms) telemetry::hooks::capture_ms(session_id, *sample.capture_to_convert_ms);
+    if (sample.convert_ms) telemetry::hooks::sample(session_id, telemetry::hooks::metric_e::convert_ms, *sample.convert_ms);
     std::lock_guard lock { recorder_mutex };
 
     auto it = sessions.find(session_id);
@@ -510,6 +511,7 @@ namespace perf {
   }
 
   void record_capture_frame(std::uint32_t session_id, const std::shared_ptr<capture_source_counter_t> &source, clock_t::time_point now) {
+    telemetry::hooks::count(session_id, telemetry::hooks::counter_e::captured);
     const auto generation = frame_rate_collection_epoch();
     if (!generation) return;
     std::lock_guard lock { recorder_mutex };
@@ -529,6 +531,7 @@ namespace perf {
   }
 
   void record_encode_submission(std::uint32_t session_id, bool repeat) {
+    if (!repeat) telemetry::hooks::count(session_id, telemetry::hooks::counter_e::submitted);
     const auto generation = frame_rate_collection_epoch();
     if (!generation) return;
     std::lock_guard lock { recorder_mutex };
