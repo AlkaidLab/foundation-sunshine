@@ -115,7 +115,16 @@ Unchanged: `/VERYSILENT` or `/SILENT` goes straight to `worker_main()` before an
 
 ### CI (`.github/workflows/main.yml`, job Windows)
 
-The workflow makes the same package: `scripts/build-setup-ui.ps1` builds the setup UI from the committed Panel submodule;
+The workflow makes the same package. The setup UI comes from `scripts/fetch-setup-ui.ps1` when `scripts/installer-inputs.json`
+has a `setupUi` entry for the committed Panel submodule commit and `scripts/ci/foundation-ui.sha`: the Panel repository's workflow
+`setup-ui.yml` builds `foundation-setup-ui.exe` per Panel commit and foundation-ui commit and publishes it, with a build-provenance
+attestation, to the release `setup-ui` (about 2 s to download and verify instead of about 4 min to build). The script checks the
+pinned sha256 and runs `gh attestation verify --repo <repository> --signer-workflow <repository>/.github/workflows/setup-ui.yml
+--source-digest <Panel commit>`; a file that fails either check fails the job. When there is no matching asset (no entry, a
+submodule or foundation-ui bump that has no published build yet, a failed download), or when a manual run sets
+`build_setup_ui_from_submodule`, `scripts/build-setup-ui.ps1` builds the setup UI from the committed Panel submodule instead.
+To adopt a new build: run the Panel workflow (`setup-ui.yml`, optional `foundation_ui_sha`) for the new commits, then update
+`setupUi` (`commit`, `foundationUi`, `asset`, `sha256`) together with the submodule bump.
 `scripts/fetch-installer-inputs.ps1` downloads the Panel GUI bundle and Microsoft's WebView2 bootstrapper, pinned by tag and
 sha256 in `scripts/installer-inputs.json` (the pinned Panel commit must equal the submodule, so a submodule bump fails the
 job until the pin moves with it; the bootstrapper must also carry Microsoft's signature). ISCC writes

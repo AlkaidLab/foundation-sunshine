@@ -25,6 +25,10 @@ on:
         description: 'Optional successful Panel artifact run; its commit must match the Panel submodule'
         type: string
         default: ''
+      build_setup_ui_from_submodule:
+        description: 'Build the installer setup UI from the Panel submodule instead of downloading the Panel repository build'
+        type: boolean
+        default: false
       rtx_hdr:
         description: 'RTX HDR support for development branches (official master always requires ON)'
         type: choice
@@ -446,17 +450,40 @@ jobs:
           $env:SUNSHINE_ASSETS_DIR = "${{ github.workspace }}\build"
           npm run build
 
-      # The installer's setup UI: pages (foundation-ui) and Tauri window, built from the committed Panel submodule, so it is
-      # the Panel build boundary the pinned GUI below belongs to (scripts/build-setup-ui.ps1, docs/installer-webui.md).
-      - name: Build installer setup UI
+      # The installer's setup UI (foundation-setup-ui.exe). The Panel repository builds and attests one per commit; the pin in
+      # scripts/installer-inputs.json (setupUi) is downloaded and checked (sha256 and `gh attestation verify`), about 2 s.
+      # Without a matching asset (no pin, a pin older than the committed Panel submodule or scripts/ci/foundation-ui.sha, a failed
+      # download) or when a manual run asks for it, it is built from the committed Panel submodule instead (pages from
+      # foundation-ui and the Tauri window, about 4 min; scripts/build-setup-ui.ps1, docs/installer-webui.md). A file that fails
+      # verification is an error, never a reason to build.
+      - name: Installer setup UI
         if: needs.changes.outputs.package == 'true'
         shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_FROM_SUBMODULE: ${{ inputs.build_setup_ui_from_submodule }}
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
-          ./scripts/build-setup-ui.ps1 `
-            -FoundationUi "$env:GITHUB_WORKSPACE/../ds5-ui-m3e" `
-            -Output "$env:RUNNER_TEMP/installer-inputs/foundation-setup-ui.exe"
-          "SETUP_UI_EXE=$env:RUNNER_TEMP/installer-inputs/foundation-setup-ui.exe" >> $env:GITHUB_ENV
+          $out = "$env:RUNNER_TEMP/installer-inputs/foundation-setup-ui.exe"
+          $clock = [Diagnostics.Stopwatch]::StartNew()
+          $source = 'built from the Panel submodule'
+          $fetched = $false
+          if ($env:BUILD_FROM_SUBMODULE -eq 'true') {
+            Write-Output 'A manual run asked for the source build.'
+          } else {
+            ./scripts/fetch-setup-ui.ps1 -Output $out
+            if ($LASTEXITCODE -eq 0) { $fetched = $true; $source = 'downloaded and verified' }
+            elseif ($LASTEXITCODE -ne 10) { throw "fetch-setup-ui.ps1 failed with exit code $LASTEXITCODE" }
+          }
+          if (-not $fetched) {
+            ./scripts/build-setup-ui.ps1 `
+              -FoundationUi "$env:GITHUB_WORKSPACE/../ds5-ui-m3e" `
+              -Output $out
+          }
+          $seconds = [math]::Round($clock.Elapsed.TotalSeconds, 1)
+          "SETUP_UI_EXE=$out" >> $env:GITHUB_ENV
+          "- installer setup UI: $source in $seconds s" >> $env:GITHUB_STEP_SUMMARY
+          Write-Output "installer setup UI $source in $seconds s"
 
       - name: Cache compiler objects
         uses: actions/cache/restore@v6

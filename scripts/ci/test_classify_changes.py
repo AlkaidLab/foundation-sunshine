@@ -66,7 +66,7 @@ class ClassifyTest(unittest.TestCase):
         self.assertTrue(f["installer"] and f["cpp"])
 
     def test_packaging_scripts_are_installer(self):
-        for path in ("scripts/build-setup-ui.ps1", "scripts/fetch-installer-inputs.ps1", "scripts/installer-inputs.json",
+        for path in ("scripts/build-setup-ui.ps1", "scripts/fetch-setup-ui.ps1", "scripts/fetch-installer-inputs.ps1", "scripts/installer-inputs.json",
                      "scripts/fetch-paired-gui.ps1", "scripts/generate-checksums.ps1"):
             f = flags(path)
             self.assertTrue(f["installer"] and f["cpp"], path)
