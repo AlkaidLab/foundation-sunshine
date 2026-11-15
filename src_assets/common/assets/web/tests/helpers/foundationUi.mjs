@@ -10,7 +10,7 @@ const root = ${JSON.stringify(pathToFileURL(root + '/').href)}
 export async function resolve(specifier, context, next) {
   const c = /^foundation-ui\\/clients$/.test(specifier)
   if (c) return { url: new URL('src/clients/catalogue.js', root).href, shortCircuit: true }
-  const m = /^foundation-ui\\/(vue\\/guide\\.js|settings\\/.+\\.js|nav\\/.+\\.js|about\\/.+\\.js|vue\\/deviceTiles\\.js|diagnostics\\/.+\\.js)$/.exec(specifier)
+  const m = /^foundation-ui\\/(vue\\/guide\\.js|settings\\/.+\\.js|nav\\/.+\\.js|about\\/.+\\.js|vue\\/deviceTiles\\.js|diagnostics\\/.+\\.js|search\\/.+\\.js|vue\\/(?:homeRecent|homeCatalogueTexts|homeSmart|webAccess|webAccessTexts|guideModel|guideTexts|useUnifiedSearch)\\.js)$/.exec(specifier)
   if (m) return { url: new URL('src/' + m[1], root).href, shortCircuit: true }
   return next(specifier, context)
 }

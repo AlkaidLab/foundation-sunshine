@@ -1,4 +1,5 @@
-import { SEARCH_INDEX, SETTING_META, isChanged, normalizeValue } from 'foundation-ui/settings/index.js'
+import { SEARCH_INDEX } from '../config/settingsData/index.js'
+import { SETTING_META, isChanged, normalizeValue } from 'foundation-ui/settings/index.js'
 
 // The configuration as a file and as a difference from the defaults (the 配置文件 page). The host's GET /api/config answers the keys of sunshine.conf plus facts of the
 // running host; an export writes the keys back in the host's own format (`key = value`, one per line), an import reads that format into the unsaved changes of the page, and

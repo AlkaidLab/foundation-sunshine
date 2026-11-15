@@ -3,9 +3,9 @@ import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import './helpers/foundationUi.mjs'
 // the settings model lives in the foundation-ui package (the sibling checkout), shared with the control panel
-const { SEARCH_INDEX } = await import('foundation-ui/settings/searchIndex.js')
+const { SEARCH_INDEX } = await import('../config/settingsData/index.js')
 const { buildSettingsEntries, searchEntries } = await import('foundation-ui/settings/search.js')
-const { labelOf } = await import('foundation-ui/settings/labels.js')
+const { labelOf } = await import('foundation-ui/settings/provider.js')
 
 // Every key the host reads from its configuration must be reachable in the settings search (by label in Chinese and English
 // and by its key name), unless it has no control in the Web UI at all. The list below is those keys: none of them had a

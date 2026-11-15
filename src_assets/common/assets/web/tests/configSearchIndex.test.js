@@ -6,7 +6,7 @@ import test from 'node:test'
 import { buildConfigIndex, localeKeyOf, renderIndexFile, tokenize } from '../../../../../scripts/gen-config-index.mjs'
 // the index and the settings model live in the foundation-ui package (the sibling checkout), shared with the control panel
 import './helpers/foundationUi.mjs'
-const { SEARCH_INDEX } = await import('foundation-ui/settings/searchIndex.js')
+const { SEARCH_INDEX } = await import('../config/settingsData/index.js')
 const { CONFIG_TAB_IDS, parseSettingsHash } = await import('foundation-ui/settings/model.js')
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -34,7 +34,7 @@ test('only a plain locale expression is a title key', () => {
 })
 
 test('the committed index is what the templates generate', () => {
-  assert.equal(renderIndexFile(buildConfigIndex()), readFileSync(join(foundationUi, 'src/settings/searchIndex.js'), 'utf8'))
+  assert.equal(renderIndexFile(buildConfigIndex()), readFileSync(join(here, '../config/settingsData/searchIndex.js'), 'utf8'))
 })
 
 test('every entry opens a tab that exists and names locale keys that exist', () => {

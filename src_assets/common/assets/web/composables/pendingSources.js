@@ -1,6 +1,7 @@
 import { effectScope, ref, watch } from 'vue'
 import { usePending, exposePending } from 'foundation-ui/pending'
-import { SEARCH_INDEX, constraintText, labelOf, localizedKeyLabel, validateSetting } from 'foundation-ui/settings/index.js'
+import { SEARCH_INDEX } from '../config/settingsData/index.js'
+import { constraintText, labelOf, localizedKeyLabel, validateSetting } from 'foundation-ui/settings/index.js'
 import { isIpAddress } from '../utils/listenerSettings.js'
 import { useConfig } from './useConfig.js'
 import { useSharedConfig, setConfigLoadedHook } from './configStore.js'
