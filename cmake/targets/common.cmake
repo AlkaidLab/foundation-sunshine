@@ -176,18 +176,23 @@ set_source_files_properties("${CMAKE_SOURCE_DIR}/third-party/ViGEmClient/src/ViG
         COMPILE_DEFINITIONS "UNICODE=1;ERROR_INVALID_DEVICE_OBJECT_PARAMETER=650"
         COMPILE_FLAGS ${VIGEM_COMPILE_FLAGS})
 
-# Adapter definitions: set only on the files that read them, in the directories that compile them.
+# Adapter definitions: set only on the files that read them, and only when they are compiled for the targets that load the
+# adapters (the host, its shared object library and the aggregate test executable). A source property applies to every
+# target that compiles the file, and other test executables compile the adapter loaders against fake adapters
+# (pre_encode_filter_unit_tests): with the real trust header there the fake adapter is untrusted and its tests fail,
+# which only shows when the real adapter is built (builds with the private SDK).
 set(_alk_src "${CMAKE_SOURCE_DIR}/src")
+set(_alk_adapter_targets "$<OR:$<STREQUAL:$<TARGET_PROPERTY:NAME>,sunshine>,$<STREQUAL:$<TARGET_PROPERTY:NAME>,sunshine_host_objects>,$<STREQUAL:$<TARGET_PROPERTY:NAME>,test_sunshine>>")
 if (TARGET sunshine_rtx_video_adapter)
     foreach(_f "${_alk_src}/image_enhancement/config.cpp" "${_alk_src}/platform/windows/image_enhancement/rtx_hdr/adapter_loader.cpp")
-        set_property(SOURCE "${_f}" DIRECTORY "${CMAKE_SOURCE_DIR}" ${TEST_DIR} APPEND PROPERTY COMPILE_DEFINITIONS SUNSHINE_RTX_VIDEO_ADAPTER)
-        set_property(SOURCE "${_f}" DIRECTORY "${CMAKE_SOURCE_DIR}" ${TEST_DIR} APPEND PROPERTY INCLUDE_DIRECTORIES "${RTX_VIDEO_TRUST_INCLUDE}")
+        set_property(SOURCE "${_f}" DIRECTORY "${CMAKE_SOURCE_DIR}" ${TEST_DIR} APPEND PROPERTY COMPILE_DEFINITIONS "$<${_alk_adapter_targets}:SUNSHINE_RTX_VIDEO_ADAPTER>")
+        set_property(SOURCE "${_f}" DIRECTORY "${CMAKE_SOURCE_DIR}" ${TEST_DIR} APPEND PROPERTY INCLUDE_DIRECTORIES "$<${_alk_adapter_targets}:${RTX_VIDEO_TRUST_INCLUDE}>")
     endforeach()
 endif ()
 if (TARGET sunshine_dlssnr_adapter)
     foreach(_f "${_alk_src}/image_enhancement/config.cpp" "${_alk_src}/platform/windows/image_enhancement/dlss_nr/adapter_loader.cpp")
-        set_property(SOURCE "${_f}" DIRECTORY "${CMAKE_SOURCE_DIR}" ${TEST_DIR} APPEND PROPERTY COMPILE_DEFINITIONS SUNSHINE_DLSSNR_ADAPTER)
-        set_property(SOURCE "${_f}" DIRECTORY "${CMAKE_SOURCE_DIR}" ${TEST_DIR} APPEND PROPERTY INCLUDE_DIRECTORIES "${DLSSNR_TRUST_INCLUDE}")
+        set_property(SOURCE "${_f}" DIRECTORY "${CMAKE_SOURCE_DIR}" ${TEST_DIR} APPEND PROPERTY COMPILE_DEFINITIONS "$<${_alk_adapter_targets}:SUNSHINE_DLSSNR_ADAPTER>")
+        set_property(SOURCE "${_f}" DIRECTORY "${CMAKE_SOURCE_DIR}" ${TEST_DIR} APPEND PROPERTY INCLUDE_DIRECTORIES "$<${_alk_adapter_targets}:${DLSSNR_TRUST_INCLUDE}>")
     endforeach()
 endif ()
 
