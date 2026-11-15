@@ -253,9 +253,23 @@ namespace telemetry {
     while (i < n) {
       const char c = text[i];
       if (c == '"' || c == '[' || c == '{') {
-        const char close = c == '"' ? '"' : c == '[' ? ']' :
-                                                       '}';
-        const auto j = text.find(close, i + 1);
+        std::size_t j = std::string::npos;
+        if (c == '"') {
+          j = text.find('"', i + 1);
+        }
+        else {
+          // a bracket may hold brackets ("[Project [draft] Budget.xlsx]"): the name ends where the outermost one closes
+          int depth = 0;
+          for (std::size_t k = i; k < n; ++k) {
+            if (text[k] == '[' || text[k] == '{') {
+              ++depth;
+            }
+            else if ((text[k] == ']' || text[k] == '}') && --depth == 0) {
+              j = k;
+              break;
+            }
+          }
+        }
         if (j == std::string::npos) {
           out += omitted;
           break;

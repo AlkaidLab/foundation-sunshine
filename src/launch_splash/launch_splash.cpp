@@ -13,13 +13,14 @@
 #include <system_error>
 #include <thread>
 
+#include "shown_gate.h"
 #include "src/client_interface.h"
 #include "src/config.h"
-#include "src/file_handler.h"
 #include "src/display_device/display_device.h"
+#include "src/file_handler.h"
+#include "src/log_text.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
-#include "shown_gate.h"
 #include "src/tray/tray_http.h"
 #include "src/tray/tray_state.h"
 
@@ -207,7 +208,7 @@ namespace launch_splash {
       publish_locked();
       const auto mine = ++generation;
       watcher = std::thread([mine] { watch(mine); });
-      BOOST_LOG(info) << "Launch splash: "sv << app.name << " ("sv << kind_key(kind) << ", "sv << id << (ready ? "" : ", announced before the display setup") << ')';
+      BOOST_LOG(info) << "Launch splash: "sv << logging::quoted_name(app.name) << " ("sv << kind_key(kind) << ", "sv << id << (ready ? "" : ", announced before the display setup") << ')';
       return launcher_env_t { id, status_file };
     }
   }  // namespace

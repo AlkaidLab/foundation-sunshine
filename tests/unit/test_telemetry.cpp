@@ -2056,3 +2056,21 @@ TEST(TelemetrySender, ARenewedWaitDoesNotLetTheNextPriority0RequestLeaveAtOnce) 
   while (h.svc->pump() > 0) {}
   EXPECT_EQ(h.posted.size(), 2u);
 }
+
+TEST(TelemetryScrub, ABracketHoldingBracketsEndsWhereTheOutermostOneCloses) {
+  const auto t = scrub_log_message("app [Project [draft] Budget.xlsx] failed");
+  EXPECT_EQ(t.find("Project"), std::string::npos);
+  EXPECT_EQ(t.find("Budget"), std::string::npos);
+  EXPECT_EQ(t.find("draft"), std::string::npos);
+  EXPECT_NE(t.find("failed"), std::string::npos);
+  const auto mixed = scrub_log_message("title {Plan {v2} [final] Budget.xlsx} then pid=4");
+  EXPECT_EQ(mixed.find("Budget"), std::string::npos);
+  EXPECT_EQ(mixed.find("Plan"), std::string::npos);
+  EXPECT_NE(mixed.find("pid=4"), std::string::npos);
+  // the boundary cannot be found: the inner one closes, the outer one never does
+  const auto open = scrub_log_message("app [Project [draft] Budget.xlsx failed pid=4");
+  EXPECT_EQ(open.find("Budget"), std::string::npos);
+  EXPECT_EQ(open.find("pid"), std::string::npos);
+  // a short code in brackets stays
+  EXPECT_NE(scrub_log_message("encoder [E12] gave up").find("[E12]"), std::string::npos);
+}

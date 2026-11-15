@@ -269,7 +269,7 @@ namespace nvhttp::dynamic_params {
         tree.put("root.<xmlattr>.clientname", client_name);
         tree.put("root.<xmlattr>.status_message", "Dynamic parameter change request sent to client session");
         BOOST_LOG(info) << "NVHTTP API: Dynamic parameter change requested for client "
-                        << logging::quoted_name(client_name) << ": type=" << param_type << ", value=" << param_value;
+                        << logging::quoted_name(client_name) << ": type=" << param_type << ", value=" << logging::quoted_name(param_value);
       }
       else {
         BOOST_LOG(warning) << "Change dynamic param error: no active streaming session found for client";
