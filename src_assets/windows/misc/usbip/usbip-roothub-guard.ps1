@@ -48,6 +48,7 @@ param(
   [switch]$DryRun,                 # log the rollback steps, run none of them
   [int]$SimulateHubProblem = 0,    # pretend every physical root hub has this problem code during verify
   [switch]$SimulateUsbBoot,        # pretend Windows runs from a USB disk during preflight
+  [switch]$SimulateHubMissing,     # during verify, hide the physical hubs: they are gone after the install
   [switch]$SimulateNoHubs,         # pretend the machine has no USB root hub at all (a hosted runner, a VM)
   [switch]$SimulateAllHubsPhysical, # treat every root hub as physical (a machine with only virtual hubs can then run the fault cases)
   [switch]$SimulateUnreadable,     # pretend the problem code of every physical root hub cannot be read
@@ -66,6 +67,7 @@ $FilterName = 'usbip2_filter'
 $PropertiesKey = '{a193307d-1245-46d3-be67-d8128670e09b}'
 $CM_PROB_NEED_RESTART = 14
 $script:Simulating = $false
+$script:PartFailures = @()
 $script:ScratchEnum = $EnumRoot -notlike 'HKLM:\SYSTEM\CurrentControlSet\Enum\*'
 
 function Write-GuardLog([string]$Message) {
@@ -75,6 +77,26 @@ function Write-GuardLog([string]$Message) {
 }
 
 # --------------------------------------------------------------------------------------------- hubs
+
+# A property of an object that may not have it (an older snapshot, a fault made by hand): the default instead of a StrictMode error.
+function Get-Field($Object, [string]$Name, $Default) {
+  if ($null -eq $Object) { return $Default }
+  $property = $Object.PSObject.Properties[$Name]
+  if ($null -eq $property) { return $Default }
+  return $property.Value
+}
+
+# The text of a device property for matching: strings as they are, binary data (REG_BINARY) decoded as UTF-16 and as 8-bit text.
+# Joining a byte array with '|' gives decimal numbers that never match a name.
+function ConvertTo-PropertyText($Data) {
+  if ($null -eq $Data) { return '' }
+  if ($Data -is [byte[]]) {
+    return ([System.Text.Encoding]::Unicode.GetString($Data) + '|' + [System.Text.Encoding]::UTF8.GetString($Data)).Replace([string][char]0, '|')
+  }
+  $parts = @()
+  foreach ($item in @($Data)) { $parts += $(if ($item -is [byte[]]) { ConvertTo-PropertyText $item } else { [string]$item }) }
+  return ($parts -join '|')
+}
 
 # Every present USB root hub with its problem code. A hub below a root-enumerated controller (usbip-win2's ROOT\ALKAIDUSB or
 # ROOT\USBIP_WIN2, another virtual host controller's ROOT\USB) is `Emulated`; the physical ones sit below PCI, ACPI, ...
@@ -92,6 +114,7 @@ function Get-RootHubs {
     $parent = ''
     try { $parent = [string](Get-PnpDeviceProperty -InstanceId $device.InstanceId -KeyName 'DEVPKEY_Device_Parent' -ErrorAction Stop).Data } catch { }
     $emulated = ($parent -like 'ROOT\*') -and -not $SimulateAllHubsPhysical
+    if ($script:Simulating -and $SimulateHubMissing -and -not $emulated) { continue }
     $problem = 0
     $unreadable = $false
     try {
@@ -125,9 +148,10 @@ function Get-HubFaults($Before) {
   $now = @(Get-RootHubs)
   foreach ($hub in $now) { if (Test-HubFault $hub $Before) { $faults += $hub } }
   # a physical hub that was there and is gone is as bad as one with a problem code
-  foreach ($old in @($Before | Where-Object { -not $_.Emulated })) {
+  foreach ($old in @($Before | Where-Object { $null -ne $_ -and -not (Get-Field $_ 'Emulated' $false) })) {
     if (@($now | Where-Object { $_.Id -eq $old.Id }).Count -eq 0) {
-      $faults += [pscustomobject]@{ Id = $old.Id; Status = 'Missing'; Problem = -1; Emulated = $false }
+      # the same shape as the objects of Get-RootHubs: a fault object without a property used to break Format-Hubs under StrictMode
+      $faults += [pscustomobject]@{ Id = $old.Id; Status = 'Missing'; Problem = -1; Emulated = $false; Unreadable = $false }
     }
   }
   return , $faults
@@ -147,8 +171,17 @@ function Wait-HubsSettled($Before) {
   }
 }
 
+# Never throws: a log line must not be able to stop a recovery step (it is built before the steps run).
 function Format-Hubs($Hubs) {
-  return (@($Hubs | Where-Object { $null -ne $_ }) | ForEach-Object { '{0} status={1} problem={2}{3}{4}' -f $_.Id, $_.Status, $_.Problem, $(if ($_.Emulated) { ' (emulated)' } else { '' }), $(if ($_.Unreadable) { ' (problem code unreadable)' } else { '' }) }) -join '; '
+  try {
+    $lines = foreach ($hub in @($Hubs | Where-Object { $null -ne $_ })) {
+      try {
+        '{0} status={1} problem={2}{3}{4}' -f (Get-Field $hub 'Id' '?'), (Get-Field $hub 'Status' '?'), (Get-Field $hub 'Problem' '?'),
+          $(if (Get-Field $hub 'Emulated' $false) { ' (emulated)' } else { '' }), $(if (Get-Field $hub 'Unreadable' $false) { ' (problem code unreadable)' } else { '' })
+      } catch { '(a hub that cannot be printed)' }
+    }
+    return (@($lines) -join '; ')
+  } catch { return '(the hubs cannot be printed)' }
 }
 
 # --------------------------------------------------------------------------------------------- packages
@@ -215,8 +248,8 @@ function Remove-FilterNameFromValue([Microsoft.Win32.RegistryKey]$Key, [string]$
 # {A193307D-1245-46D3-BE67-D8128670E09B} 2). Throws when the properties cannot be read.
 function Test-HubPropertiesNameFilter([string]$InstanceId) {
   foreach ($property in @(Get-PnpDeviceProperty -InstanceId $InstanceId -ErrorAction Stop)) {
-    $text = try { @($property.Data) -join '|' } catch { '' }
-    if ($text -like "*$FilterName*") { return $true }
+    $text = try { ConvertTo-PropertyText $property.Data } catch { '' }
+    if ($text.ToLowerInvariant().Contains($FilterName)) { return $true }
   }
   return $false
 }
@@ -308,11 +341,25 @@ function Restart-HubFaults($Faults) {
   }
 }
 
+# One part of the rollback. An error in it (a registry read, a log line, a query) is kept as a failure of that part and never stops the parts
+# after it: the recovery steps run whatever happened before. $Default is what the part gives when it failed.
+function Invoke-RollbackPart([string]$Name, [scriptblock]$Part, $Default) {
+  try { return (& $Part) } catch {
+    $script:PartFailures += "${Name}: $($_.Exception.Message)"
+    try { Write-GuardLog "rollback part failed, going on: ${Name}: $($_.Exception.Message)" } catch { }
+    return $Default
+  }
+}
+
 function Invoke-Rollback($Snapshot, $Faults) {
-  Write-GuardLog "ROLLBACK: physical root hub fault after the usbip-win2 install: $(Format-Hubs $Faults)"
-  $before = @($Snapshot.filterPackages)
-  $packages = @(@(Get-OemPackages $FilterName) | Where-Object { $before -notcontains $_ })
-  if ($packages.Count -eq 0) { $packages = @(Get-OemPackages $FilterName) }
+  $script:PartFailures = @()
+  try { Write-GuardLog "ROLLBACK: physical root hub fault after the usbip-win2 install: $(Format-Hubs $Faults)" } catch { }
+  $packages = @(Invoke-RollbackPart 'list the filter packages' {
+      $before = @($Snapshot.filterPackages)
+      $found = @(@(Get-OemPackages $FilterName) | Where-Object { $before -notcontains $_ })
+      if ($found.Count -eq 0) { $found = @(Get-OemPackages $FilterName) }
+      $found
+    } @())
   # The result of every step that has to succeed is kept: 102 ("rolled back") is only reported when none of them failed.
   # 0 and 3010 (restart needed) are success.
   $stepFailures = @()
@@ -320,29 +367,31 @@ function Invoke-Rollback($Snapshot, $Faults) {
     $rc = Invoke-GuardStep "pnputil /delete-driver $oem /uninstall /force" { & "$env:SystemRoot\System32\pnputil.exe" /delete-driver $oem /uninstall /force | ForEach-Object { Write-GuardLog "  $_" } }
     if ($rc -ne 0 -and $rc -ne 3010) { $stepFailures += "pnputil /delete-driver $oem exit $rc" }
   }
-  $residue = @(Clear-FilterResidue)
-  Restart-HubFaults $Faults
-  if ($DryRun) { return @{ Faults = @(); Residue = @(); StepFailures = @() } }
+  $residue = @(Invoke-RollbackPart 'clear the persisted filter names' { Clear-FilterResidue } @())
+  [void](Invoke-RollbackPart 'restart the faulty hubs' { Restart-HubFaults $Faults } $null)
+  if ($DryRun) { return @{ Faults = @(); Residue = @(); StepFailures = @($stepFailures) + @($script:PartFailures) } }
   $script:Simulating = $false
-  $faults = Wait-HubsSettled $Snapshot.hubs
-  if (@($faults).Count -eq 0) {
+  # if the hub state cannot be read, that is a hub fault that is still there, not a clean state
+  $unknown = @([pscustomobject]@{ Id = '(hub state)'; Status = 'Unknown'; Problem = -2; Emulated = $false; Unreadable = $true })
+  $faults = @(Invoke-RollbackPart 'wait for the hubs' { Wait-HubsSettled $Snapshot.hubs } $unknown)
+  if ($faults.Count -eq 0) {
     # The hubs are back. Leave no half install behind: usbip-win2's own uninstaller removes the UDE driver and its
     # controller node too, and finds the filter again if the first step missed it.
-    $uninstaller = Get-UsbipUninstaller
+    $uninstaller = Invoke-RollbackPart 'find the uninstaller' { Get-UsbipUninstaller } $null
     if ($uninstaller -and (Test-Path -LiteralPath $uninstaller)) {
       $rc = Invoke-GuardStep "$uninstaller /VERYSILENT /SUPPRESSMSGBOXES /NORESTART" {
           $p = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
           $global:LASTEXITCODE = $p.ExitCode
         }
       if ($rc -ne 0 -and $rc -ne 3010) { $stepFailures += "usbip-win2 uninstaller exit $rc" }
-      $residue += @(Clear-FilterResidue)
-      $faults = Wait-HubsSettled $Snapshot.hubs
+      $residue += @(Invoke-RollbackPart 'clear the persisted filter names (after the uninstaller)' { Clear-FilterResidue } @())
+      $faults = @(Invoke-RollbackPart 'wait for the hubs (after the uninstaller)' { Wait-HubsSettled $Snapshot.hubs } $unknown)
     } else {
       Write-GuardLog 'no usbip-win2 uninstall entry found; the UDE driver stays'
     }
   }
-  $residue = @($residue) + @(Find-FilterResidue)
-  return @{ Faults = @($faults); Residue = @($residue); StepFailures = @($stepFailures) }
+  $residue = @($residue) + @(Invoke-RollbackPart 'scan for persisted filter names' { Find-FilterResidue } @([pscustomobject]@{ Path = '(registry scan)'; Value = '(unreadable)'; Unreadable = $true }))
+  return @{ Faults = @($faults); Residue = @($residue); StepFailures = @($stepFailures) + @($script:PartFailures) }
 }
 
 # --------------------------------------------------------------------------------------------- actions

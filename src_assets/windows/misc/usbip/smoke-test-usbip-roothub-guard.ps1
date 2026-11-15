@@ -71,6 +71,28 @@ try {
     Write-Host 'note: no physical USB root hub on this machine; the fault-injection cases are skipped'
   }
 
+  # 2b. a physical hub that is GONE after the install (not a problem code: the hub is missing). The fault object of a missing hub must
+  #     have the shape of every other hub; the rollback (dry) must run on to its end instead of dying in the log line (exit 105).
+  if ($physical.Count -gt 0) {
+    $r = Invoke-Guard @('-Action', 'snapshot')
+    Assert-Equal 0 $r.Code ("snapshot for the missing-hub case`n" + $r.Output)
+    $r = Invoke-Guard @('-Action', 'verify', '-DryRun', '-SimulateHubMissing', '-SettleMinSeconds', '4', '-SettleMaxSeconds', '8')
+    Assert-Equal 102 $r.Code ("a physical hub that is missing after the install must roll back, not stop the guard`n" + $r.Output)
+    if ($r.Output -notmatch 'status=Missing') { throw ("the missing hub must be named in the log`n" + $r.Output) }
+    if ($r.Output -notmatch 'ROLLBACK DONE') { throw ("the rollback must run to its end`n" + $r.Output) }
+  }
+
+  # 2c. the text of a device property: binary data is decoded (a byte array joined with '|' gave decimal numbers that never match)
+  $tokens = $null; $errors = $null
+  $ast = [System.Management.Automation.Language.Parser]::ParseFile($GuardScript, [ref]$tokens, [ref]$errors)
+  $fn = $ast.Find({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'ConvertTo-PropertyText' }, $true)
+  if ($null -eq $fn) { throw 'ConvertTo-PropertyText not found in the guard' }
+  . ([scriptblock]::Create($fn.Extent.Text))
+  $binary = [System.Text.Encoding]::Unicode.GetBytes("*Upper`0usbip2_filter`0`0")
+  if ((ConvertTo-PropertyText $binary).ToLowerInvariant() -notmatch 'usbip2_filter') { throw 'a binary property that names the filter must match' }
+  if ((ConvertTo-PropertyText ([string[]]@('*Upper', 'usbip2_filter'))) -notmatch 'usbip2_filter') { throw 'a string-list property that names the filter must match' }
+  if ((ConvertTo-PropertyText ([byte[]](1, 2, 3, 4))) -match 'usbip2_filter') { throw 'unrelated bytes must not match' }
+
   # 3. Windows on a USB disk: refused (104), and only then
   $r = Invoke-Guard @('-Action', 'preflight', '-SimulateUsbBoot')
   Assert-Equal 104 $r.Code 'Windows from a USB disk must be refused'
