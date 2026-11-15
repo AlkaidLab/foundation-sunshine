@@ -3,6 +3,11 @@ name: Build and Release
 # Published releases are owned by sign-and-repackage.yml. Keeping that event
 # out of this workflow prevents a release created below from starting another
 # build-and-release cycle.
+#
+# Pull requests are routed by what they change (job `changes`): documentation-only, workflow-only and Web UI-only
+# changes skip the Windows build, and `ci-gate` is the single check to require. A skipped *job* reports success, while a
+# workflow skipped by `on.paths` leaves its checks pending and blocks the merge (GitHub Docs, "Troubleshooting required
+# status checks"), so this workflow has no `on.paths`. Pushes to master and manual runs always run everything.
 on:
   pull_request:
     branches:
@@ -39,8 +44,174 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
 jobs:
+  changes:
+    name: Changes
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      cpp: ${{ steps.classify.outputs.cpp }}
+      webui: ${{ steps.classify.outputs.webui }}
+      installer: ${{ steps.classify.outputs.installer }}
+      workflow: ${{ steps.classify.outputs.workflow }}
+      docs: ${{ steps.classify.outputs.docs }}
+      docs_touched: ${{ steps.classify.outputs.docs_touched }}
+      # Packaging (Web UI build, installer UI, Inno Setup, release assets) is checked on pull requests only when they touch
+      # what it reads; master and manual runs always package.
+      package: ${{ github.event_name != 'pull_request' || steps.classify.outputs.installer == 'true' }}
+    steps:
+      - name: Checkout the CI scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          sparse-checkout: scripts/ci
+          persist-credentials: false
+
+      # The file list comes from the REST API: no history to fetch and no third-party action in the path. Anything but a
+      # pull request, and a change too large to list, is treated as "everything changed".
+      - name: Classify the change
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          : > files.txt
+          if [[ "$EVENT" == pull_request ]]; then
+            # A renamed file counts under both names: moving a packaging file out of its directory must still run its checks.
+            gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files" --jq '.[] | .filename, (.previous_filename // empty)' > files.txt
+            if [[ $(wc -l < files.txt) -ge 3000 ]]; then : > files.txt; fi
+          fi
+          python3 scripts/ci/classify-changes.py --output "$GITHUB_OUTPUT" < files.txt
+
+  docs-check:
+    name: Documentation links
+    needs: changes
+    if: needs.changes.outputs.docs_touched == 'true'
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Check relative links and images
+        run: python3 scripts/ci/check-doc-links.py --root .
+
+  workflow-lint:
+    name: Workflow lint
+    needs: changes
+    if: needs.changes.outputs.workflow == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: actionlint (pinned release)
+        env:
+          VERSION: 1.7.12
+          SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+          # style and info findings (quoting habits) are not failures; warnings and errors are
+          SHELLCHECK_OPTS: --severity=warning
+        run: |
+          set -euo pipefail
+          curl -fsSL -o actionlint.tgz "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/actionlint_${VERSION}_linux_amd64.tar.gz"
+          echo "${SHA256}  actionlint.tgz" | sha256sum -c -
+          tar -xzf actionlint.tgz actionlint
+          ./actionlint -color
+      - name: Shell syntax of every run block (also msys2 steps, which actionlint skips)
+        run: python3 scripts/ci/check-workflow-shell.py
+      - name: CI script tests
+        run: python3 -m unittest discover -s scripts/ci -p 'test_*.py'
+
+  webui:
+    name: Web UI (shard ${{ matrix.shard }}/4)
+    needs: changes
+    if: needs.changes.outputs.webui == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # The Web UI imports foundation-ui from a sibling directory (package.json: "file:../ds5-ui-m3e"). Pinned to a
+      # commit (scripts/ci/foundation-ui.sha) and installed with its dev and peer dependencies: vue is both, and without
+      # it three test files fail to load.
+      - name: foundation-ui (pinned)
+        run: |
+          set -euo pipefail
+          sha="$(tr -d '[:space:]' < scripts/ci/foundation-ui.sha)"
+          dir="$GITHUB_WORKSPACE/../ds5-ui-m3e"
+          git init -q "$dir"
+          git -C "$dir" fetch -q --depth 1 https://github.com/AlkaidLab/foundation-ui "$sha"
+          git -C "$dir" -c advice.detachedHead=false checkout -q FETCH_HEAD
+          test "$(git -C "$dir" rev-parse HEAD)" = "$sha"
+          npm ci --prefix "$dir" --no-audit --no-fund
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      # Lint, locale check and build are a few seconds; they run once, in shard 1.
+      - name: Lint
+        if: matrix.shard == 1
+        run: npm run lint:webui
+
+      # One test file (sparxieCapturedGate) takes as long as all the others together, so it is sharded by test
+      # (SPARXIE_GATE_SHARD) and the other files by file (node --test-shard); both processes run side by side.
+      - name: Tests
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -uo pipefail
+          dir=src_assets/common/assets/web/tests
+          gate=sparxieCapturedGate.test.js
+          files=()
+          for f in "$dir"/*.test.js; do [ "${f##*/}" = "$gate" ] || files+=("$f"); done
+          common=(--import foundation-ui/testing/no-network --test --test-reporter=spec --test-reporter-destination=stdout)
+          node "${common[@]}" --test-reporter=junit --test-reporter-destination=webui-junit-files.xml --test-shard="$SHARD/4" "${files[@]}" &
+          others=$!
+          SPARXIE_GATE_SHARD="$SHARD/4" node "${common[@]}" --test-reporter=junit --test-reporter-destination=webui-junit-gate.xml "$dir/$gate" &
+          gate_pid=$!
+          status=0
+          wait "$others" || status=1
+          wait "$gate_pid" || status=1
+          exit $status
+
+      - name: Report
+        if: always()
+        run: python3 scripts/ci/report-junit.py --title "Web UI tests (shard ${{ matrix.shard }}/4)" --min-tests 40 webui-junit-files.xml webui-junit-gate.xml
+
+      - name: Build
+        if: matrix.shard == 1
+        run: |
+          mkdir -p build
+          SUNSHINE_SOURCE_ASSETS_DIR="$GITHUB_WORKSPACE/src_assets" SUNSHINE_ASSETS_DIR="$GITHUB_WORKSPACE/build" npm run build
+
   setup_release:
     name: Setup Release
+    needs: changes
+    # Only the Windows build reads the release tag and version.
+    if: needs.changes.outputs.cpp == 'true'
     outputs:
       publish_release: ${{ steps.setup_release_auto.outputs.publish_release || steps.setup_release_manual.outputs.publish_release }}
       release_body: ${{ steps.filter_release_contributors.outputs.release_body || steps.setup_release_auto.outputs.release_body || steps.setup_release_manual.outputs.release_body }}
@@ -112,6 +283,8 @@ jobs:
 
   vdd_smoke:
     name: VDD helper smoke tests
+    needs: changes
+    if: needs.changes.outputs.cpp == 'true'
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -125,6 +298,8 @@ jobs:
 
   mat_smoke:
     name: MAT software regressions
+    needs: changes
+    if: needs.changes.outputs.cpp == 'true'
     runs-on: windows-latest
     timeout-minutes: 10
     steps:
@@ -140,7 +315,8 @@ jobs:
 
   build_win:
     name: Windows
-    needs: setup_release
+    needs: [changes, setup_release]
+    if: needs.changes.outputs.cpp == 'true'
     permissions:
       contents: read
       actions: write  # prune stale ccache entries after saving this run's
@@ -232,31 +408,39 @@ jobs:
           echo "  Ninja: $(ninja --version)"
           echo "  GCC: $(gcc --version | head -1)"
 
+      # Packaging needs the Web UI build, the installer's setup UI and the Inno Setup package; pull requests that touch none
+      # of what packaging reads skip them (job `changes`, output `package`). Web UI lint and tests run in the `webui` jobs.
       - name: Setup Node.js
+        if: needs.changes.outputs.package == 'true'
         uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
           cache: npm
           cache-dependency-path: package-lock.json
 
-      # The Web UI imports foundation-ui from a sibling checkout named ds5-ui-m3e (package.json: "file:../ds5-ui-m3e").
-      # A full install: the checkout resolves vue and the SFC compiler from its own node_modules, and both are dev/peer
-      # dependencies there. pwsh does not stop on a failing native command by itself; the preference below does.
+      # The Web UI imports foundation-ui from a sibling checkout named ds5-ui-m3e (package.json: "file:../ds5-ui-m3e"),
+      # pinned to the commit in scripts/ci/foundation-ui.sha. A full install: the checkout resolves vue and the SFC compiler
+      # from its own node_modules, and both are dev/peer dependencies there. pwsh does not stop on a failing native command
+      # by itself; the preference below does.
       - name: Fetch foundation-ui
+        if: needs.changes.outputs.package == 'true'
         shell: pwsh
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
-          git clone --depth 1 https://github.com/AlkaidLab/foundation-ui "$env:GITHUB_WORKSPACE/../ds5-ui-m3e"
-          npm ci --prefix "$env:GITHUB_WORKSPACE/../ds5-ui-m3e"
+          $sha = (Get-Content scripts/ci/foundation-ui.sha -Raw).Trim()
+          $dir = "$env:GITHUB_WORKSPACE/../ds5-ui-m3e"
+          git init -q $dir
+          git -C $dir fetch -q --depth 1 https://github.com/AlkaidLab/foundation-ui $sha
+          git -C $dir -c advice.detachedHead=false checkout -q FETCH_HEAD
+          npm ci --prefix $dir
 
       - name: Build Web UI
+        if: needs.changes.outputs.package == 'true'
         shell: pwsh
         run: |
           # A failing native command fails the step (PowerShell 7.4+; the runner already sets ErrorActionPreference=Stop).
           $PSNativeCommandUseErrorActionPreference = $true
           npm ci
-          npm run lint:webui
-          npm run test:webui
           New-Item -ItemType Directory -Force -Path build | Out-Null
           $env:SUNSHINE_SOURCE_ASSETS_DIR = "${{ github.workspace }}\src_assets"
           $env:SUNSHINE_ASSETS_DIR = "${{ github.workspace }}\build"
@@ -265,6 +449,7 @@ jobs:
       # The installer's setup UI: pages (foundation-ui) and Tauri window, built from the committed Panel submodule, so it is
       # the Panel build boundary the pinned GUI below belongs to (scripts/build-setup-ui.ps1, docs/installer-webui.md).
       - name: Build installer setup UI
+        if: needs.changes.outputs.package == 'true'
         shell: pwsh
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
@@ -389,7 +574,23 @@ jobs:
 
       - name: Run native tests
         shell: msys2 {0}
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build --no-tests=error --output-on-failure --output-junit "$GITHUB_WORKSPACE/ctest.xml"
+
+      # Annotations and a job summary from the JUnit file; fails when no test ran, when fewer than --min-tests ran (a
+      # registered suite that disappeared) and when a test not listed in scripts/ci/allowed-skips.txt was skipped.
+      - name: Report native tests
+        if: always()
+        shell: pwsh
+        run: python scripts/ci/report-junit.py --title "Native tests" --min-tests 80 --allowed-skips scripts/ci/allowed-skips.txt ctest.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results
+          path: ctest.xml
+          retention-days: 7
+          if-no-files-found: ignore
 
       - name: Save compiler cache
         # Only master writes (always(): a failed or cancelled build still
@@ -443,6 +644,7 @@ jobs:
           Write-Output "Pruned $(@($stale).Count) stale ccache entries; kept $current"
 
       - name: Cache Inno Setup
+        if: needs.changes.outputs.package == 'true'
         id: inno-cache
         uses: actions/cache@v6
         with:
@@ -450,7 +652,7 @@ jobs:
           key: inno-setup-6.7.3
 
       - name: Install Inno Setup
-        if: steps.inno-cache.outputs.cache-hit != 'true'
+        if: needs.changes.outputs.package == 'true' && steps.inno-cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           # The unversioned jrsoftware.org/download.php/is.exe link now serves an
@@ -466,11 +668,13 @@ jobs:
           Start-Process -FilePath $installer -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-' -Wait
 
       - name: Add Inno Setup to PATH
+        if: needs.changes.outputs.package == 'true'
         shell: pwsh
         run: |
           echo "C:\Program Files (x86)\Inno Setup 6" >> $env:GITHUB_PATH
 
       - name: Package Windows
+        if: needs.changes.outputs.package == 'true'
         shell: msys2 {0}
         env:
           RTX_VIDEO_ADAPTER_BUILT: ${{ steps.configure_windows.outputs.rtx_hdr }}
@@ -543,6 +747,7 @@ jobs:
       # The user-facing installer, the same package tools/append_installer_payload.py makes for a local build
       # (cmake/packaging/windows_innosetup.cmake): [shell][setup UI][WebView2 bootstrapper][Inno engine][footer].
       - name: Assemble installer
+        if: needs.changes.outputs.package == 'true'
         shell: pwsh
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
@@ -561,6 +766,7 @@ jobs:
           Write-Output $footer
 
       - name: Rename release assets
+        if: needs.changes.outputs.package == 'true'
         shell: msys2 {0}
         run: |
           # Format tag to vYEAR.DATE where DATE is zero-padded to 4 digits
@@ -592,12 +798,14 @@ jobs:
           done
 
       - name: Generate Checksums
+        if: needs.changes.outputs.package == 'true'
         shell: pwsh
         run: |
           # Generate SHA256 checksums from the final release asset names.
           .\scripts\generate-checksums.ps1 -Path .\artifacts -Output "SHA256SUMS.txt"
 
       - name: Upload Artifacts
+        if: needs.changes.outputs.package == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: sunshine-windows-r${{ github.run_number }}
@@ -619,3 +827,30 @@ jobs:
           prerelease: true
           tag: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
           token: ${{ secrets.GH_BOT_TOKEN }}
+
+  # The single status check to require. `always()` is what keeps a failed or cancelled job from being skipped past: a job
+  # whose dependency failed is skipped, and a skipped required check counts as passing.
+  ci-gate:
+    name: CI gate
+    if: always()
+    needs: [changes, docs-check, workflow-lint, webui, setup_release, vdd_smoke, mat_smoke, build_win]
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Every needed job succeeded or was deliberately skipped
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          needs = json.loads(os.environ["NEEDS"])
+          bad = {name: job["result"] for name, job in needs.items() if job["result"] not in ("success", "skipped")}
+          for name, job in needs.items():
+              print(f"{name}: {job['result']}")
+          if needs["changes"]["result"] != "success":
+              bad["changes"] = needs["changes"]["result"]
+          if bad:
+              print(f"::error title=CI gate::{bad}")
+              sys.exit(1)
+          PY

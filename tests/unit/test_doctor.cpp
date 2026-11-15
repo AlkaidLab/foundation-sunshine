@@ -493,7 +493,11 @@ TEST(DoctorRunner, RunsInParallelTimesOutAndCatches) {
   std::atomic<int> running { 0 };
   std::atomic<int> peak { 0 };
   auto slow = [&](lang_e) {
-    peak = std::max(peak.load(), ++running);
+    // Raise the peak atomically: `peak = max(peak.load(), ++running)` lets a thread that read the old peak overwrite
+    // the larger value another thread stored in between, so the test failed now and then with peak == 1.
+    const int now = ++running;
+    for (int seen = peak.load(); now > seen && !peak.compare_exchange_weak(seen, now);) {
+    }
     std::this_thread::sleep_for(150ms);
     --running;
     return std::vector<item_t> { { "gpu.a", "gpu", status_e::pass, "a", "", {} } };
