@@ -23,9 +23,28 @@ class PublishTest(unittest.TestCase):
         self.setup = self.workflow["jobs"]["setup_release"]
         self.build = self.workflow["jobs"]["build_win"]
 
-    def test_the_release_step_runs_only_when_the_run_publishes(self):
+    def test_the_release_action_runs_only_for_a_publishing_push(self):
+        # LizardByte/create-release-action creates a release for a push to master only; a manual run has its own job
         release = step(self.build, "Create/Update GitHub Release")
-        self.assertEqual(release["if"], "needs.setup_release.outputs.publish_release == 'true'")
+        self.assertEqual(release["if"], "needs.setup_release.outputs.publish_release == 'true' && github.event_name != 'workflow_dispatch'")
+
+    def test_a_manual_publish_has_its_own_job_that_alone_can_write(self):
+        publish = self.workflow["jobs"]["publish"]
+        self.assertIn("workflow_dispatch", publish["if"])
+        self.assertIn("publish_release == 'true'", publish["if"])
+        self.assertEqual(publish["permissions"], {"contents": "write"})
+        self.assertIn("build_win", publish["needs"])
+        run = step(publish, "Create the pre-release")["run"]
+        self.assertIn("gh release create", run)
+        self.assertIn("--prerelease", run)
+        self.assertIn("--target", run)
+
+    def test_permissions_are_read_only_unless_a_job_asks_for_more(self):
+        self.assertEqual(self.workflow["permissions"], {"contents": "read"})
+        writers = sorted(name for name, job in self.workflow["jobs"].items()
+                         if "write" in (job.get("permissions") or {}).values())
+        self.assertEqual(writers, ["build_win", "publish", "setup_release"])
+        self.assertEqual(self.build["permissions"], {"contents": "read", "actions": "write"})
 
     def test_the_publish_decision_does_not_come_straight_from_the_release_action(self):
         output = self.setup["outputs"]["publish_release"]

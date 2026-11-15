@@ -39,6 +39,10 @@ on:
           - 'ON'
           - 'OFF'
 
+# Read-only by default; the jobs that write ask for it themselves (setup_release, the cache prune in build_win, publish).
+permissions:
+  contents: read
+
 # Only a newer push to the same pull request supersedes a running check. Every push to master has its own group and always
 # finishes: a later documentation-only push builds nothing, so it must not cancel the build that publishes the commit before.
 concurrency:
@@ -918,8 +922,10 @@ jobs:
             artifacts/checksums.json
           if-no-files-found: error
 
+      # Automatic pre-releases (a push to master with AUTO_PRERELEASE=true). A manual publish is the `publish` job below:
+      # this action only creates a release for a push to master.
       - name: Create/Update GitHub Release
-        if: needs.setup_release.outputs.publish_release == 'true'
+        if: needs.setup_release.outputs.publish_release == 'true' && github.event_name != 'workflow_dispatch'
         uses: LizardByte/create-release-action@v2025.426.1549
         with:
           allowUpdates: true
@@ -930,12 +936,45 @@ jobs:
           tag: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
           token: ${{ secrets.GH_BOT_TOKEN }}
 
+  # Manual publication (Run workflow with publish=true, master only): the release is created by the GitHub CLI from the
+  # artifacts of this run, in a job of its own so that the Windows job, which runs the build scripts of the commit, never
+  # holds a token that can write to the repository.
+  publish:
+    name: Publish pre-release
+    needs: [setup_release, build_win]
+    if: needs.setup_release.outputs.publish_release == 'true' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: sunshine-windows-r${{ github.run_number }}
+          path: dist
+
+      - name: Create the pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
+          BODY: ${{ needs.setup_release.outputs.release_body }}
+          COMMIT: ${{ needs.setup_release.outputs.release_commit }}
+        run: |
+          set -euo pipefail
+          ls -l dist
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --target "$COMMIT" --prerelease --title "$TAG" --notes "$BODY" --generate-notes
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,tagName,assets --jq '"\(.url)\n\(.assets|map(.name)|join("\n"))"' | tee -a "$GITHUB_STEP_SUMMARY"
+
   # The single status check to require. `always()` is what keeps a failed or cancelled job from being skipped past: a job
   # whose dependency failed is skipped, and a skipped required check counts as passing.
   ci-gate:
     name: CI gate
     if: always()
-    needs: [changes, docs-check, workflow-lint, webui, webui-docs, setup_release, vdd_smoke, mat_smoke, build_win]
+    needs: [changes, docs-check, workflow-lint, webui, webui-docs, setup_release, vdd_smoke, mat_smoke, build_win, publish]
     runs-on: ubuntu-slim
     timeout-minutes: 5
     permissions: {}
