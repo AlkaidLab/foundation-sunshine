@@ -100,7 +100,10 @@ namespace telemetry {
     try {
       std::ifstream wait(options_.dir / "remote_wait");
       std::int64_t deadline = 0;
-      if (wait >> deadline && deadline > deps_.now_ms()) backoff_until_ms_.store(deadline, std::memory_order_relaxed);  // a pause or a wait the server asked for is still on
+      if (wait >> deadline && deadline > deps_.now_ms()) {
+        backoff_until_ms_.store(deadline, std::memory_order_relaxed);  // a pause or a wait the server asked for is still on
+        wait_period_ms_ = deadline - deps_.now_ms();
+      }
     }
     catch (...) {
     }
@@ -331,7 +334,7 @@ namespace telemetry {
       const auto asked = cfg.paused ? std::max<std::int64_t>(cfg.backoff_s, 6 * 3600) : cfg.backoff_s;
       const std::int64_t deadline = asked > 0 ? deps_.now_ms() + asked * 1000 : 0;
       backoff_until_ms_.store(deadline, std::memory_order_relaxed);
-      p0_groups_sent_.clear();
+      wait_period_ms_ = asked * 1000;  // the answer to a priority 0 request renews the wait, it must not make the next one leave at once
       std::ofstream(options_.dir / "remote_wait", std::ios::trunc) << deadline << '\n';
       std::error_code ec;
       fs::create_directories(options_.dir, ec);
@@ -960,8 +963,16 @@ namespace telemetry {
         for (auto &e : entries) filter_by_consent(e.batch, c.usage, c.errors);
         entries.erase(std::remove_if(entries.begin(), entries.end(), [](const auto &e) { return e.batch["events"].empty(); }), entries.end());
         const auto group_of = [](const disk_queue_t::entry_t &e) { return e.batch.value("product", std::string {}) + "\n" + e.batch.value("version", std::string {}); };
-        const auto first = std::find_if(entries.begin(), entries.end(), [&](const auto &e) { return !p0_groups_sent_.count(group_of(e)); });
+        const auto now = deps_.now_ms();
+        const auto first = std::find_if(entries.begin(), entries.end(), [&](const auto &e) {
+          const auto sent = p0_group_sent_at_.find(group_of(e));
+          return sent == p0_group_sent_at_.end() || now - sent->second >= std::max<std::int64_t>(wait_period_ms_, 60'000);
+        });
         if (first == entries.end()) return 0;
+        // the same limit per minute as outside a wait
+        while (!post_times_.empty() && now - post_times_.front() >= 60'000) post_times_.pop_front();
+        if (static_cast<int>(post_times_.size()) >= options_.max_posts_per_minute) return 0;
+        post_times_.push_back(now);
         const auto group = group_of(*first);
         // the merged request must fit the limits of one request: the files of the group are taken in order until the events or the bytes would pass them, the rest waits
         std::vector<disk_queue_t::entry_t> included;
@@ -987,7 +998,7 @@ namespace telemetry {
         catch (...) {
           answer = {};
         }
-        p0_groups_sent_.insert(group);  // one request per group in a wait, whatever the answer: a failure backs off through handle_answer
+        p0_group_sent_at_[group] = now;  // one request per group in a wait period, whatever the answer: a failure backs off through handle_answer
         if (handle_answer(answer, count, paths)) ++sent;
         return sent;
       }

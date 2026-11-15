@@ -233,19 +233,58 @@ namespace telemetry {
 
   std::string
   scrub_log_message(std::string_view input, std::size_t max) {
-    // A log line names things the person chose (a device, an application, a game) between quotes or brackets: what stands between them is not part of the message.
-    std::string text { input.substr(0, max * 4) };
-    // a double-quoted, bracketed or braced span; a single-quoted one only when the quote opens a word (not an apostrophe: "Couldn't")
-    static const std::regex quoted(R"(("[^"]*")|(\[[^\]]*\])|(\{[^}]*\})|((^|[\s(=:,])'[^\n]*?'(?=$|[\s).,;:!?\]])))");
+    // A log line names things the person chose (a device, an application, a game, a window title) between quotes or brackets: what stands between them is not part of the message.
+    // A quote or bracket that has no partner is not trusted: the rest of the line goes, because the name may run on past where a closing mark seems to be.
+    const std::string text { input.substr(0, max * 4) };
+    const auto n = text.size();
+    constexpr std::string_view omitted = "<…>";
+    // an apostrophe inside a word ("Couldn't") stays; a single quote opens a name only at the start of a word
+    const auto opens_word = [&](std::size_t p) {
+      return p == 0 || std::isspace(static_cast<unsigned char>(text[p - 1])) || text[p - 1] == '(' || text[p - 1] == '=' || text[p - 1] == ':' || text[p - 1] == ',';
+    };
+    const auto may_close = [&](std::size_t p) {
+      return p + 1 == n || std::isspace(static_cast<unsigned char>(text[p + 1])) || std::string_view { ").,;:!?]" }.find(text[p + 1]) != std::string_view::npos;
+    };
     // keep a bracket that only holds numbers or a short upper-case tag (a code, a count), drop the rest
-    text = replace_fn(text, quoted, [](const std::smatch &m) {
-      const auto s = m.str(0);
-      if (m[4].matched) return m.str(5) + "<…>";
-      const auto inner = s.substr(1, s.size() - 2);
-      static const std::regex plain(R"(^[A-Z0-9_ .:=,-]{0,24}$)");
-      return (s.front() == '[' && std::regex_match(inner, plain)) ? s : std::string { "<…>" };
-    });
-    return scrub_text(text, max);
+    static const std::regex plain(R"(^[A-Z0-9_ .:=,-]{0,24}$)");
+    std::string out;
+    out.reserve(n);
+    std::size_t i = 0;
+    while (i < n) {
+      const char c = text[i];
+      if (c == '"' || c == '[' || c == '{') {
+        const char close = c == '"' ? '"' : c == '[' ? ']' :
+                                                       '}';
+        const auto j = text.find(close, i + 1);
+        if (j == std::string::npos) {
+          out += omitted;
+          break;
+        }
+        const auto inner = text.substr(i + 1, j - i - 1);
+        if (c == '[' && std::regex_match(inner, plain)) {
+          out.append(text, i, j - i + 1);
+        }
+        else {
+          out += omitted;
+        }
+        i = j + 1;
+        continue;
+      }
+      if (c == '\'' && opens_word(i)) {
+        // the name ends at the last quote that could close it: a title can hold a quote followed by a space
+        std::size_t last = std::string::npos;
+        for (std::size_t k = i + 1; k < n; ++k) {
+          if (text[k] == '\'' && may_close(k)) last = k;
+        }
+        out += omitted;
+        if (last == std::string::npos) break;
+        i = last + 1;
+        continue;
+      }
+      out.push_back(c);
+      ++i;
+    }
+    return scrub_text(out, max);
   }
 
   std::string

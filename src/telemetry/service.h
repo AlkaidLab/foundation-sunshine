@@ -275,7 +275,8 @@ namespace telemetry {
     std::int64_t not_before_ms_ = 0;
     // the server asked the clients to wait (cfg.backoff_s, or paused): priority 1 and 2 wait, priority 0 leaves once as counts
     std::atomic<std::int64_t> backoff_until_ms_ { 0 };  // written by the sender thread, read by backing_off() on any thread
-    std::set<std::string> p0_groups_sent_;  // product and version of the priority 0 batches that already left in this wait (sender thread only)
+    std::map<std::string, std::int64_t> p0_group_sent_at_;  // product and version of the priority 0 batches that left during a wait, and when (sender thread only)
+    std::int64_t wait_period_ms_ = 0;  // how long the latest answer asked to wait: a group leaves again only after that (sender thread only)
     int failures_ = 0;
     std::deque<std::int64_t> post_times_;  // when the last requests went out (sender thread only)
     std::int64_t last_flush_ms_ = 0;

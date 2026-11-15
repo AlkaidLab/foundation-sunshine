@@ -1,6 +1,7 @@
 #include "src/sparxie/runtime.h"
 #include "src/config.h"
 #include "src/display_device/display_device.h"
+#include "src/log_text.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
 #include "src/process.h"
@@ -250,8 +251,10 @@ namespace sparxie {
     std::thread([app_name, cmd, started] {
       try {
         HostEnv env = make_host_env();
-        if (finish_session(env, app_name, cmd, started, std::chrono::minutes(2), std::chrono::seconds(1))) BOOST_LOG(info) << "Put back the game settings of [" << app_name << "] after the session";
-        else BOOST_LOG(warning) << "The game of [" << app_name << "] was still running 2 minutes after the session; its settings are put back at the next launch or host start";
+        if (finish_session(env, app_name, cmd, started, std::chrono::minutes(2), std::chrono::seconds(1)))
+          BOOST_LOG(info) << "Put back the game settings of " << logging::quoted_name(app_name) << " after the session";
+        else
+          BOOST_LOG(warning) << "The game of " << logging::quoted_name(app_name) << " was still running 2 minutes after the session; its settings are put back at the next launch or host start";
       }
       catch (const std::exception &) {
       }
@@ -268,7 +271,7 @@ namespace sparxie {
       std::thread([env, app_name, cmd]() mutable {
         try {
           const int raised = run_launch_boost(env, app_name, cmd, std::chrono::minutes(5));
-          if (raised > 0) BOOST_LOG(info) << "Raised the priority of [" << app_name << "] to above normal";
+          if (raised > 0) BOOST_LOG(info) << "Raised the priority of " << logging::quoted_name(app_name) << " to above normal";
         }
         catch (const std::exception &) {
         }

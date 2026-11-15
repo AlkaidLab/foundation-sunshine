@@ -280,11 +280,13 @@ namespace telemetry::health {
       if (it == codes_.end()) it = codes_.insert(codes_.end(), { a.code, code_state_t {} });
       auto &state = it->second;
       const auto cooldown = a.severe ? t.severe_cooldown_ms : t.cooldown_ms;
-      if (state.last_ms >= 0 && w.end_ms - state.last_ms < cooldown) {
+      const auto last = a.severe ? state.last_severe_ms : state.last_ms;
+      if (last >= 0 && w.end_ms - last < cooldown) {
         ++state.suppressed;
         continue;
       }
       state.last_ms = w.end_ms;
+      if (a.severe) state.last_severe_ms = w.end_ms;
       a.suppressed = state.suppressed;
       state.suppressed = 0;
       w.anomalies.push_back(std::move(a));
@@ -324,7 +326,11 @@ namespace telemetry::health {
       kbps_sum_ += w.probe.measured_kbps;
       ++kbps_n_;
     }
-    target_sum_ += w.probe.target_kbps;
+    // a window without a target (the probe had none yet) must not pull the average down
+    if (w.probe.target_kbps > 0) {
+      target_sum_ += w.probe.target_kbps;
+      ++target_n_;
+    }
   }
 
   bool
@@ -378,7 +384,7 @@ namespace telemetry::health {
     }
     if (fec_n_ > 0) props["fec_pct_avg"] = round2(fec_sum_ / static_cast<double>(fec_n_));
     if (kbps_n_ > 0) props["actual_kbps"] = static_cast<std::int64_t>(kbps_sum_ / static_cast<double>(kbps_n_));
-    if (chunk_windows_ > 0 && target_sum_ > 0) props["target_kbps"] = static_cast<std::int64_t>(target_sum_ / static_cast<double>(chunk_windows_));
+    if (target_n_ > 0) props["target_kbps"] = static_cast<std::int64_t>(target_sum_ / static_cast<double>(target_n_));
     // dimensions: the same fixed words as stream_start
     props["codec"] = dims_.codec;
     props["width"] = dims_.width;
@@ -388,7 +394,7 @@ namespace telemetry::health {
     props["transport"] = dims_.transport;
     props["client_kind"] = dims_.client_kind;
     props["client_os"] = dims_.client_os;
-    if (target_sum_ > 0 && chunk_windows_ > 0) props["bitrate_band"] = bitrate_band(static_cast<int>(target_sum_ / static_cast<double>(chunk_windows_)));
+    if (target_n_ > 0) props["bitrate_band"] = bitrate_band(static_cast<int>(target_sum_ / static_cast<double>(target_n_)));
     if (!dims_.encoder.empty()) props["encoder"] = dims_.encoder;
     if (!dims_.capture_backend.empty()) props["capture_backend"] = dims_.capture_backend;
     if (!dims_.gpu_driver.empty()) props["gpu_driver"] = dims_.gpu_driver;
@@ -400,7 +406,7 @@ namespace telemetry::health {
     chunk_seconds_ = 0;
     chunk_counters_.fill(0);
     loss_sum_ = loss_max_ = fec_sum_ = kbps_sum_ = target_sum_ = 0;
-    loss_n_ = fec_n_ = kbps_n_ = 0;
+    loss_n_ = fec_n_ = kbps_n_ = target_n_ = 0;
     rtt_.clear();
     chunk_start_ms_ = now_ms;
     return props;

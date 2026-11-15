@@ -209,7 +209,8 @@ namespace telemetry::health {
     std::array<std::atomic<std::uint64_t>, COUNTERS> counters_ {};
 
     struct code_state_t {
-      std::int64_t last_ms = -1;
+      std::int64_t last_ms = -1;  ///< the last report of this code, of any severity
+      std::int64_t last_severe_ms = -1;  ///< the last severe report: a warning shortly before does not hold a severe one back
       std::uint64_t suppressed = 0;
     };
     std::vector<std::pair<std::string, code_state_t>> codes_;
@@ -224,8 +225,8 @@ namespace telemetry::health {
     std::uint64_t chunk_windows_ = 0, chunk_idle_ = 0, chunk_anomalies_ = 0;
     double chunk_seconds_ = 0;
     std::array<std::uint64_t, COUNTERS> chunk_counters_ {};
-    double loss_sum_ = 0, loss_max_ = 0, fec_sum_ = 0, kbps_sum_ = 0, target_sum_ = 0;
-    std::uint64_t loss_n_ = 0, fec_n_ = 0, kbps_n_ = 0;
+    double loss_sum_ = 0, loss_max_ = 0, fec_sum_ = 0, kbps_sum_ = 0, target_sum_ = 0;  // target_sum_ is the sum over the windows that had a target
+    std::uint64_t loss_n_ = 0, fec_n_ = 0, kbps_n_ = 0, target_n_ = 0;
     std::vector<double> rtt_;
   };
 

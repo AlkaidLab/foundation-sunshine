@@ -11,6 +11,7 @@
 #include <set>
 #include <thread>
 
+#include "src/log_text.h"
 #include "src/telemetry/events.h"
 #include "src/telemetry/queue.h"
 #include "src/telemetry/service.h"
@@ -1927,9 +1928,79 @@ TEST(TelemetrySender, APauseTheServerAskedForStillHoldsAfterARestart) {
 }
 
 TEST(TelemetryScrub, TheApplicationNameOfTheAbrLineIsNotInTheExcerptEvenWithAQuoteInIt) {
-  const auto t = scrub_log_message("ABR enabled for client 'phone': app=\"Example' Private Game\" mode=balanced bitrate=20000");
+  const auto t = scrub_log_message("ABR enabled for client " + logging::quoted_name("phone") + ": app=" + logging::quoted_name("Example\" Private Game") + " mode=balanced bitrate=20000");
   EXPECT_EQ(t.find("Example"), std::string::npos);
   EXPECT_EQ(t.find("Private"), std::string::npos);
   EXPECT_EQ(t.find("phone"), std::string::npos);
   EXPECT_NE(t.find("mode=balanced"), std::string::npos);
+}
+
+TEST(TelemetryScrub, ALogNameIsWrittenBetweenDoubleQuotesWhateverItHolds) {
+  EXPECT_EQ(logging::quoted_name("Bob's phone"), "\"Bob's phone\"");
+  EXPECT_EQ(logging::quoted_name("say \"hi\"\n\tnow"), "\"say 'hi'  now\"");
+  EXPECT_EQ(logging::quoted_name(""), "\"\"");
+  const auto title = scrub_log_message("ABR: foreground changed to " + logging::quoted_name("Players' choice - Budget.xlsx") + " (Excel.exe) pid=4242");
+  EXPECT_EQ(title.find("Budget"), std::string::npos);
+  EXPECT_EQ(title.find("choice"), std::string::npos);
+  EXPECT_NE(title.find("pid=4242"), std::string::npos);
+  const auto client = scrub_log_message("Client " + logging::quoted_name("Bob' Tablet") + ": Microphone encryption ENABLED");
+  EXPECT_EQ(client.find("Bob"), std::string::npos);
+  EXPECT_EQ(client.find("Tablet"), std::string::npos);
+  EXPECT_NE(client.find("Microphone encryption ENABLED"), std::string::npos);
+}
+
+TEST(TelemetryScrub, ASingleQuotedNameThatEndsOnAQuoteBeforeASpaceIsDroppedToItsLastQuote) {
+  // the lines as the host wrote them before the double-quote encoding
+  const auto title = scrub_log_message("ABR: foreground changed to 'Players' choice - Budget.xlsx' (Excel.exe) pid=4242");
+  EXPECT_EQ(title.find("Players"), std::string::npos);
+  EXPECT_EQ(title.find("Budget"), std::string::npos);
+  EXPECT_EQ(title.find("choice"), std::string::npos);
+  const auto client = scrub_log_message("ABR enabled for client 'Bob' phone': app=\"Game\" mode=balanced");
+  EXPECT_EQ(client.find("Bob"), std::string::npos);
+  EXPECT_EQ(client.find("phone"), std::string::npos);
+  EXPECT_NE(client.find("mode=balanced"), std::string::npos);
+}
+
+TEST(TelemetryScrub, AQuoteOrBracketWithoutAPartnerDropsTheRestOfTheLine) {
+  for (const char *line : { "client 'Bob phone connected at 10:00", "title \"Budget.xlsx - Excel pid=4 mode=x", "app [Budget sheet pid=4 mode=x", "app {Budget sheet pid=4" }) {
+    const auto t = scrub_log_message(line);
+    EXPECT_EQ(t.find("Bob"), std::string::npos) << line;
+    EXPECT_EQ(t.find("Budget"), std::string::npos) << line;
+    EXPECT_EQ(t.find("pid"), std::string::npos) << line;
+    EXPECT_EQ(t.find("connected"), std::string::npos) << line;
+  }
+  // a line cut at the size limit inside a name is such a line too
+  const auto cut = scrub_log_message(std::string("start \"") + std::string(40, 'x') + "\" tail with Budget.xlsx", 8);
+  EXPECT_EQ(cut.find("Budget"), std::string::npos);
+  // apostrophes inside words and balanced quotes keep the rest of the line
+  const auto ok = scrub_log_message("Couldn't read 'a b' then can't retry \"c\" for 3 s");
+  EXPECT_NE(ok.find("Couldn't read"), std::string::npos);
+  EXPECT_NE(ok.find("can't retry"), std::string::npos);
+  EXPECT_NE(ok.find("for 3 s"), std::string::npos);
+}
+
+TEST(TelemetrySender, ARenewedWaitDoesNotLetTheNextPriority0RequestLeaveAtOnce) {
+  harness_t h;
+  h.next_body = R"({"ok":true,"cfg":{"backoff_s":600}})";  // every answer asks for the wait again
+  ASSERT_TRUE(h.svc->emit(kind_e::usage, "app_start", json { { "cold", true } }));
+  h.svc->flush();
+  ASSERT_EQ(h.svc->pump(), 1);
+  ASSERT_TRUE(h.svc->backing_off());
+  h.posted.clear();
+  ASSERT_TRUE(h.svc->emit(kind_e::experience, "stream_anomaly", json { { "code", "XP_QUEUE_FLUSH" }, { "severe", true }, { "count", 32 } }));
+  h.svc->flush();
+  EXPECT_EQ(h.svc->pump(), 1);  // the first one leaves, its answer renews the wait
+  ASSERT_EQ(h.posted.size(), 1u);
+  ASSERT_TRUE(h.svc->emit(kind_e::experience, "stream_anomaly", json { { "code", "XP_SEND_BACKLOG" }, { "severe", true }, { "count", 1 } }));
+  h.svc->flush();
+  for (int minute = 0; minute < 9; ++minute) {
+    h.now += 60'000;
+    EXPECT_EQ(h.svc->pump(), 0) << "minute " << minute;
+  }
+  EXPECT_EQ(h.posted.size(), 1u);
+  EXPECT_EQ(h.svc->queued_files(), 1u);
+  // the wait is over (the one that the answer renewed): the rest leaves
+  h.now += 61'000;
+  while (h.svc->pump() > 0) {}
+  EXPECT_EQ(h.posted.size(), 2u);
 }

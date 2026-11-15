@@ -55,13 +55,13 @@ extern "C" {
 #endif
 
 #include "client_fingerprint.h"
-#include "crash/crash.h"
 #include "config.h"
-#include "file_handler.h"
+#include "crash/crash.h"
 #include "display_device/display_device.h"
 #include "display_device/session.h"
 #include "ds5/control_extension.h"
 #include "ds5/haptics_wire.h"
+#include "file_handler.h"
 #include "globals.h"
 #include "haptics/authored_ir.h"
 #include "haptics/authored_ir_extended.h"
@@ -73,6 +73,7 @@ extern "C" {
 #include "network.h"
 #include "nvhttp.h"
 #include "rtsp.h"
+#include "src/log_text.h"
 #include "stream.h"
 #include "streaming/dynamic_param_protocol.h"
 #include "streaming/fec.h"
@@ -771,7 +772,7 @@ namespace stream {
   log_endpoint_refresh_summary(const session_t &session, std::string_view type,
                                const endpoint_refresh_stats_t &stats) {
     BOOST_LOG(info) << "endpoint_auto_refresh: " << type << " summary"
-                    << ", client=" << session.client_name
+                    << ", client=" << logging::quoted_name(session.client_name)
                     << ", session=" << session.launch_session_id
                     << ", probes_received=" << stats.valid_probes
                     << ", probe_sequence_gaps=" << stats.probe_sequence_gaps
@@ -1073,7 +1074,7 @@ namespace stream {
       boost::lock_guard<boost::mutex> session_lock(ctx.mic_session_mutex);
       boost::lock_guard<boost::mutex> socket_lock(ctx.mic_socket_mutex);
       if (!open_mic_socket_locked(ctx)) {
-        BOOST_LOG(error) << "Failed to open microphone socket for " << session.client_name;
+        BOOST_LOG(error) << "Failed to open microphone socket for " << logging::quoted_name(session.client_name);
         return;
       }
 
@@ -1084,7 +1085,7 @@ namespace stream {
         boost::memory_order_release);
     }
 
-    BOOST_LOG(info) << "Client " << session.client_name << ": Microphone encryption "
+    BOOST_LOG(info) << "Client " << logging::quoted_name(session.client_name) << ": Microphone encryption "
                     << (should_enable_mic_encryption ? "ENABLED" : "DISABLED")
                     << " (session " << session.launch_session_id
                     << " registered for multi-client mixing)";
@@ -1101,8 +1102,8 @@ namespace stream {
   request_total_bitrate(session_t &session, int bitrate_kbps) {
     const auto total = session.config.monitor.bitrate_budget->request(bitrate_kbps);
     if (total < bitrate_kbps) {
-      BOOST_LOG(info) << "Holding dynamic bitrate for client '" << session.client_name
-                      << "' from " << bitrate_kbps << " Kbps to host maximum " << total << " Kbps";
+      BOOST_LOG(info) << "Holding dynamic bitrate for client " << logging::quoted_name(session.client_name)
+                      << " from " << bitrate_kbps << " Kbps to host maximum " << total << " Kbps";
     }
     return total;
   }
@@ -5249,23 +5250,23 @@ namespace stream {
             // The param.value.int_value is the total bitrate (user-configured, including FEC)
             effective_param.value.int_value = request_total_bitrate(*session_p, effective_param.value.int_value);
             perf::update_session_bitrate(session_p->launch_session_id, effective_param.value.int_value);
-            BOOST_LOG(info) << "Updated session total bitrate for client '" << client_name
-                            << "': " << effective_param.value.int_value << " Kbps (including FEC)";
+            BOOST_LOG(info) << "Updated session total bitrate for client " << logging::quoted_name(client_name)
+                            << ": " << effective_param.value.int_value << " Kbps (including FEC)";
             if (!send_host_bitrate_update(session_p, effective_param.value.int_value)) {
-              BOOST_LOG(debug) << "Client '" << client_name
-                               << "' did not negotiate host bitrate callbacks; 0x5506 update omitted";
+              BOOST_LOG(debug) << "Client " << logging::quoted_name(client_name)
+                               << " did not negotiate host bitrate callbacks; 0x5506 update omitted";
             }
             return true;
           }
 
           session_p->video.dynamic_param_change_events->raise(effective_param);
-          BOOST_LOG(info) << "Sent dynamic parameter change event to client '" << client_name
-                          << "': type=" << (int) effective_param.type;
+          BOOST_LOG(info) << "Sent dynamic parameter change event to client " << logging::quoted_name(client_name)
+                          << ": type=" << (int) effective_param.type;
           return true;
         }
       }
 
-      BOOST_LOG(warning) << "No active session found for client: " << client_name;
+      BOOST_LOG(warning) << "No active session found for client: " << logging::quoted_name(client_name);
       return false;
     }
 
@@ -5288,9 +5289,9 @@ namespace stream {
         if (now == was) continue;
         perf::update_session_bitrate(session_p->launch_session_id, now);
         BOOST_LOG(info) << "Host bitrate ceiling " << (cap > 0 ? std::to_string(cap) + " Kbps" : std::string { "none" })
-                        << ": session of client '" << session_p->client_name << "' " << was << " -> " << now << " Kbps (including FEC)";
+                        << ": session of client " << logging::quoted_name(session_p->client_name) << " " << was << " -> " << now << " Kbps (including FEC)";
         if (!send_host_bitrate_update(session_p, now)) {
-          BOOST_LOG(debug) << "Client '" << session_p->client_name << "' did not negotiate host bitrate callbacks; 0x5506 update omitted";
+          BOOST_LOG(debug) << "Client " << logging::quoted_name(session_p->client_name) << " did not negotiate host bitrate callbacks; 0x5506 update omitted";
         }
         changed.push_back({ session_p->client_name, now, was });
       }
@@ -5316,11 +5317,11 @@ namespace stream {
         }
         session_p->host_audio_enabled->store(enabled, std::memory_order_release);
         session_p->config.audio.flags[audio::config_t::HOST_AUDIO] = enabled;
-        BOOST_LOG(info) << "Updated host audio playback for client '" << client_name
-                        << "': " << (enabled ? "enabled" : "disabled");
+        BOOST_LOG(info) << "Updated host audio playback for client " << logging::quoted_name(client_name)
+                        << ": " << (enabled ? "enabled" : "disabled");
         return true;
       }
-      BOOST_LOG(warning) << "No active session found for host audio update: " << client_name;
+      BOOST_LOG(warning) << "No active session found for host audio update: " << logging::quoted_name(client_name);
       return false;
     }
 

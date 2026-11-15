@@ -626,3 +626,39 @@ TEST(StreamHealthWindow, ManySamplesBeyondTheLastBinKeepTheirOwnDistribution) {
   EXPECT_DOUBLE_EQ(host.p95, 4000);
   EXPECT_DOUBLE_EQ(host.max, 20000);
 }
+
+TEST(StreamHealthAnomaly, ASevereReportIsNotHeldBackByAnEarlierWarningOfTheSameCode) {
+  std::int64_t now = 0;
+  stream_health_t h { now, dims60() };
+  const auto capture = [&](double ms) { return [&h, ms] { h.record(metric_e::capture_ms, ms); }; };
+  const auto warning = one_window(h, now, 3000, 10, 5, capture(400));  // over 250 ms, under 1000 ms
+  ASSERT_EQ(warning->anomalies.size(), 1u);
+  EXPECT_FALSE(warning->anomalies[0].severe);
+  const auto severe = one_window(h, now, 3000, 10, 5, capture(1500));  // 60 s later: inside the 300 s warning cooldown
+  ASSERT_EQ(severe->anomalies.size(), 1u);
+  EXPECT_TRUE(severe->anomalies[0].severe);
+  EXPECT_EQ(severe->anomalies[0].suppressed, 0u);
+  // the severe cooldown still holds severe ones back, and a warning right after a severe one stays held back by the warning cooldown
+  EXPECT_TRUE(one_window(h, now, 3000, 10, 5, capture(1500))->anomalies.empty());
+  EXPECT_TRUE(one_window(h, now, 3000, 10, 5, capture(400))->anomalies.empty());
+}
+
+TEST(StreamHealthChunk, WindowsWithoutATargetDoNotPullTheTargetDown) {
+  std::int64_t now = 0;
+  stream_health_t h { now, dims60() };
+  one_window(h, now, 3000, 10, 5);  // the probe had no target yet
+  for (int i = 0; i < 3000; ++i) {
+    h.record(metric_e::host_ms, 10);
+    h.count(counter_e::frames_sent);
+    h.count(counter_e::captured);
+    h.count(counter_e::submitted);
+  }
+  now += WINDOW_MS;
+  probe_t probe;
+  probe.target_kbps = 80'000;
+  h.tick(now, probe);
+  const auto chunk = h.take_chunk(now);
+  EXPECT_EQ(chunk["windows"], 2);
+  EXPECT_EQ(chunk["target_kbps"], 80'000);
+  EXPECT_EQ(chunk["bitrate_band"], bitrate_band(80'000));
+}

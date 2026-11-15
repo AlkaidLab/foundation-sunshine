@@ -13,9 +13,10 @@
  */
 
 #include "abr.h"
-#include "src/config.h"
 #include "bitrate.h"
 #include "src/ai/proxy.h"
+#include "src/config.h"
+#include "src/log_text.h"
 #include "src/logging.h"
 
 #include <algorithm>
@@ -554,7 +555,7 @@ namespace abr {
       const auto was_max = state.config.max_bitrate_kbps;
       apply_range(state, ceiling_kbps);
       if (state.config.max_bitrate_kbps != was_max) {
-        BOOST_LOG(info) << "ABR range for client '" << client_name << "' follows the host ceiling: ["
+        BOOST_LOG(info) << "ABR range for client " << logging::quoted_name(client_name) << " follows the host ceiling: ["
                         << state.config.min_bitrate_kbps << "," << state.config.max_bitrate_kbps << "] Kbps";
       }
     }
@@ -615,11 +616,9 @@ namespace abr {
     }
     apply_range(state, config::host_max_bitrate_kbps());
 
-    // the application name is written between double quotes: the log excerpt after a serious stream problem drops what stands between them
-    auto logged_app_name = app_name;
-    std::replace(logged_app_name.begin(), logged_app_name.end(), '"', '\'');
-    BOOST_LOG(info) << "ABR enabled for client '" << client_name
-                    << "': app=\"" << logged_app_name << "\""
+    // names are written between double quotes: the log excerpt after a serious stream problem drops what stands between them
+    BOOST_LOG(info) << "ABR enabled for client " << logging::quoted_name(client_name)
+                    << ": app=" << logging::quoted_name(app_name)
                     << " mode=" << mode_to_string(cfg.mode)
                     << " bitrate=" << initial_bitrate_kbps
                     << " range=[" << state.config.min_bitrate_kbps
@@ -630,7 +629,7 @@ namespace abr {
   disable(const std::string &client_name) {
     std::lock_guard lock(sessions_mutex);
     sessions.erase(client_name);
-    BOOST_LOG(info) << "ABR disabled for client '" << client_name << "'";
+    BOOST_LOG(info) << "ABR disabled for client " << logging::quoted_name(client_name) << "";
   }
 
   bool
@@ -673,8 +672,8 @@ namespace abr {
     auto action = parse_llm_response(result.body, state);
     if (action.target_bitrate_kbps > 0) {
       state.llm_target_bitrate_kbps = action.target_bitrate_kbps;
-      BOOST_LOG(info) << "ABR LLM target for '" << client_name
-                      << "': " << action.target_bitrate_kbps << " Kbps"
+      BOOST_LOG(info) << "ABR LLM target for " << logging::quoted_name(client_name)
+                      << ": " << action.target_bitrate_kbps << " Kbps"
                       << " (" << action.reason << ")";
     }
   }
@@ -730,8 +729,8 @@ namespace abr {
         state.foreground_exe = fg.exe_name;
         state.last_fg_pid = fg.pid;
         state.app_changed = true;
-        BOOST_LOG(info) << "ABR: foreground changed to '" << fg.window_title
-                        << "' (" << fg.exe_name << ") pid=" << fg.pid;
+        BOOST_LOG(info) << "ABR: foreground changed to " << logging::quoted_name(fg.window_title)
+                        << " (" << fg.exe_name << ") pid=" << fg.pid;
       }
       else if (fg.pid == state.last_fg_pid && !fg.window_title.empty()) {
         state.foreground_title = fg.window_title;
@@ -768,8 +767,8 @@ namespace abr {
         }
         if (action.new_bitrate_kbps > 0) {
           state.current_bitrate_kbps = action.new_bitrate_kbps;
-          BOOST_LOG(info) << "ABR fallback for '" << client_name
-                          << "': " << action.new_bitrate_kbps << " Kbps"
+          BOOST_LOG(info) << "ABR fallback for " << logging::quoted_name(client_name)
+                          << ": " << action.new_bitrate_kbps << " Kbps"
                           << " (" << action.reason << ")";
           result_action = action;
         }

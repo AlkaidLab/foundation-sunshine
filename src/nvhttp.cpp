@@ -26,6 +26,7 @@
 
 // lib includes
 #include "src/http/server.h"
+#include "src/log_text.h"
 #include <boost/asio/io_context.hpp>
 #include <boost/asio/ip/address.hpp>
 #include <boost/asio/ssl/context.hpp>
@@ -351,7 +352,7 @@ namespace nvhttp {
              "The host has no capacity for another pending streaming handshake");
     tree.put(std::string { "root." } + std::string { result_node }, 0);
     BOOST_LOG(warning) << "Unable to register RTSP launch ticket for client "sv
-                       << launch_session->client_name << ": result="sv << static_cast<int>(result);
+                       << logging::quoted_name(launch_session->client_name) << ": result="sv << static_cast<int>(result);
     return false;
   }
 
@@ -700,7 +701,7 @@ namespace nvhttp {
     if (launch_session->highly_suspected_unknown_client) {
       BOOST_LOG(warning) << "Launch request highly resembles a known unauthorized client fork"
                          << " [client_uuid=" << client_cert_uuid
-                         << ", client_name=" << launch_session->client_name
+                         << ", client_name=" << logging::quoted_name(launch_session->client_name)
                          << ", rule_id=" << fingerprint_match.rule_id
                          << ", rule_revision=" << fingerprint_match.revision
                          << ", rule_source=" << fingerprint_match.source << ']';
@@ -918,7 +919,7 @@ namespace nvhttp {
     if (launch_session->highly_suspected_unknown_client) {
       BOOST_LOG(warning) << "Resume request highly resembles a known unauthorized client fork"
                          << " [client_uuid=" << client_cert_uuid
-                         << ", client_name=" << launch_session->client_name
+                         << ", client_name=" << logging::quoted_name(launch_session->client_name)
                          << ", rule_id=" << fingerprint_match.rule_id
                          << ", rule_revision=" << fingerprint_match.revision
                          << ", rule_source=" << fingerprint_match.source << ']';

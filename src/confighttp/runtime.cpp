@@ -13,6 +13,7 @@
 #include "src/globals.h"
 #include "src/hdr/calibration.h"
 #include "src/image_enhancement/config.h"
+#include "src/log_text.h"
 #include "src/logging.h"
 #include "src/rtsp.h"
 #include "src/stream.h"
@@ -505,8 +506,8 @@ namespace confighttp::runtime {
           // 继续执行，即使获取会话信息失败，仍然尝试修改码率
         }
 
-        BOOST_LOG(info) << "Config API: Attempting to change bitrate for client '" << client_name
-                        << "' to " << bitrate << " Kbps";
+        BOOST_LOG(info) << "Config API: Attempting to change bitrate for client " << logging::quoted_name(client_name)
+                        << " to " << bitrate << " Kbps";
         if (!available_clients.empty()) {
           BOOST_LOG(info) << "Available RUNNING clients: " << boost::algorithm::join(available_clients, ", ");
         }
@@ -527,8 +528,8 @@ namespace confighttp::runtime {
           response_json["bitrate"] = bitrate;
           response_json["client_name"] = client_name;
 
-          BOOST_LOG(info) << "Config API: Dynamic bitrate change requested for client '"
-                          << client_name << "': " << bitrate << " Kbps";
+          BOOST_LOG(info) << "Config API: Dynamic bitrate change requested for client "
+                          << logging::quoted_name(client_name) << ": " << bitrate << " Kbps";
         }
         else {
           std::string error_msg = "No active streaming session found for client: " + client_name;
