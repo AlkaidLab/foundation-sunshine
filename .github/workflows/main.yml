@@ -64,6 +64,9 @@ jobs:
       # Packaging (Web UI build, installer UI, Inno Setup, release assets) is checked on pull requests only when they touch
       # what it reads; master and manual runs always package.
       package: ${{ github.event_name != 'pull_request' || steps.classify.outputs.installer == 'true' }}
+      # The Windows build: a pull request needs it only for C++ and build inputs, but a push to master (and a manual run) that
+      # changes any code, the Web UI included, produces the package that gets published.
+      build: ${{ steps.classify.outputs.cpp == 'true' || (github.event_name != 'pull_request' && steps.classify.outputs.any_code == 'true') }}
     steps:
       - name: Checkout the CI scripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -213,7 +216,7 @@ jobs:
     name: Setup Release
     needs: changes
     # Only the Windows build reads the release tag and version.
-    if: needs.changes.outputs.cpp == 'true'
+    if: needs.changes.outputs.build == 'true'
     outputs:
       publish_release: ${{ steps.setup_release_auto.outputs.publish_release || steps.setup_release_manual.outputs.publish_release }}
       release_body: ${{ steps.filter_release_contributors.outputs.release_body || steps.setup_release_auto.outputs.release_body || steps.setup_release_manual.outputs.release_body }}
@@ -286,7 +289,7 @@ jobs:
   vdd_smoke:
     name: VDD helper smoke tests
     needs: changes
-    if: needs.changes.outputs.cpp == 'true'
+    if: needs.changes.outputs.build == 'true'
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -301,7 +304,7 @@ jobs:
   mat_smoke:
     name: MAT software regressions
     needs: changes
-    if: needs.changes.outputs.cpp == 'true'
+    if: needs.changes.outputs.build == 'true'
     runs-on: windows-latest
     timeout-minutes: 10
     steps:
@@ -318,7 +321,7 @@ jobs:
   build_win:
     name: Windows
     needs: [changes, setup_release]
-    if: needs.changes.outputs.cpp == 'true'
+    if: needs.changes.outputs.build == 'true'
     permissions:
       contents: read
       actions: write  # prune stale ccache entries after saving this run's
