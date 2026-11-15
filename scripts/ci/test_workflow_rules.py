@@ -44,7 +44,8 @@ class PublishTest(unittest.TestCase):
         self.assertEqual(self.workflow["permissions"], {"contents": "read"})
         writers = sorted(name for name, job in self.workflow["jobs"].items()
                          if "write" in (job.get("permissions") or {}).values())
-        self.assertEqual(writers, ["build_win", "publish", "setup_release"])
+        # shard / shard_cleanup: the claim refs of the cold compile (refs/claims/<run>/<chunk>), nothing else
+        self.assertEqual(writers, ["build_win", "publish", "setup_release", "shard", "shard_cleanup"])
         self.assertEqual(self.build["permissions"], {"contents": "read", "actions": "write"})
 
     def test_the_publish_decision_does_not_come_straight_from_the_release_action(self):
@@ -76,7 +77,8 @@ class PublishTest(unittest.TestCase):
         schedule = self.workflow[True]["schedule"]
         self.assertEqual(len(schedule), 1)
         restore = step(self.build, "Cache compiler objects")
-        self.assertEqual(restore["if"], "github.event_name != 'schedule'")
+        # a sharded cold build restores what its shards compiled instead (see ShardTest)
+        self.assertEqual(restore["if"], "github.event_name != 'schedule' && needs.shard.result != 'success'")
         manual = step(self.setup, "Setup Release (Manual)")
         self.assertIn("schedule", manual["if"])
         publish = self.workflow["jobs"]["publish"]
@@ -85,6 +87,51 @@ class PublishTest(unittest.TestCase):
     def test_artifacts_are_uploaded_whether_or_not_the_run_publishes(self):
         upload = step(self.build, "Upload Artifacts")
         self.assertNotIn("publish_release", upload.get("if", ""))
+
+
+class ShardTest(unittest.TestCase):
+    def setUp(self):
+        self.workflow = load()
+        self.jobs = self.workflow["jobs"]
+
+    def test_the_nightly_build_and_a_missing_cache_start_the_shards_and_the_warm_path_does_not(self):
+        plan = step(self.jobs["cold_plan"], "Decide")
+        self.assertIn('[[ "$EVENT" == schedule ]]', plan["run"])
+        self.assertIn("no compiler cache entry to restore", plan["run"])
+        self.assertEqual(self.jobs["shard"]["if"], "needs.cold_plan.outputs.sharded == 'true'")
+
+    def test_the_build_job_runs_when_the_shards_are_skipped_but_not_when_they_fail(self):
+        condition = self.jobs["build_win"]["if"]
+        self.assertIn("!cancelled()", condition)
+        self.assertIn("contains(fromJSON('[\"success\",\"skipped\"]'), needs.shard.result)", condition)
+        self.assertIn("shard", self.jobs["build_win"]["needs"])
+
+    def test_the_shards_configure_like_the_build_job_apart_from_what_only_orders_the_objects(self):
+        shard = step(self.jobs["shard"], "Configure Windows")
+        build = step(self.jobs["build_win"], "Configure Windows")
+        for name in ("BUILD_VERSION", "SUNSHINE_RTX_HDR", "SUNSHINE_BUILD_COMMIT", "DRIVER_DEPS_REQUIRED"):
+            self.assertEqual(shard["env"][name], build["env"][name], name)
+        self.assertIn("-DSUNSHINE_BUILD_MAT_CAPTURE=OFF", shard["run"])
+        self.assertNotIn("MAT_CAPTURE", build["run"])
+
+    def test_the_gate_waits_for_the_shards_and_the_jobs_that_ran_inside_the_build_job_before(self):
+        for name in ("shard", "adapter_config", "setup_ui"):
+            self.assertIn(name, self.jobs["ci-gate"]["needs"])
+
+    def test_the_claim_token_reaches_only_the_compile_script(self):
+        shard = self.jobs["shard"]
+        holders = [x["name"] for x in shard["steps"] if "CLAIM_TOKEN" in x.get("env", {})]
+        self.assertEqual(holders, ["Compile object files, chunk by chunk"])
+        script = pathlib.Path(__file__).with_name("shard-compile.sh").read_text(encoding="utf-8")
+        self.assertIn("unset CLAIM_TOKEN", script)
+
+    def test_the_moved_steps_run_in_their_own_jobs_and_the_build_job_consumes_the_setup_ui(self):
+        build = self.jobs["build_win"]
+        names = [x.get("name") for x in build["steps"]]
+        self.assertNotIn("Test the adapter build configuration without the SDK", names)
+        self.assertIn("Test the adapter build configuration without the SDK", [x.get("name") for x in self.jobs["adapter_config"]["steps"]])
+        self.assertIn("setup_ui", build["needs"])
+        self.assertEqual(step(build, "Installer setup UI")["with"]["name"], "foundation-setup-ui")
 
 
 if __name__ == "__main__":

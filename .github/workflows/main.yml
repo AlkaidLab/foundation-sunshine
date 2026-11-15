@@ -37,6 +37,10 @@ on:
         description: 'Build the installer setup UI from the Panel submodule instead of downloading the Panel repository build'
         type: boolean
         default: false
+      sharded_cold:
+        description: 'Compile the objects on parallel runners first (what the nightly build and a build without any compiler cache do)'
+        type: boolean
+        default: false
       rtx_hdr:
         description: 'RTX HDR support for development branches (official master always requires ON)'
         type: choice
@@ -426,10 +430,340 @@ jobs:
           ./tools/sonic-mat-live/build.ps1 -Output build/mat-smoke
           ./tools/sonic-mat-live/test-manage-live.ps1 -Output build/mat-operator
 
+  # Cold builds only (nightly, a manual run that asks for it, a repository without any compiler cache): a single 4-vCPU runner
+  # needs 27 to 37 minutes to compile from nothing. This decides whether the compile is split over SHARDS runners first; the
+  # warm path (a restorable compiler cache) never starts them. Splitting buys about 2x at 8 runners (docs/ci.md, "Cold builds
+  # on parallel runners"); the public-repository limit is 20 concurrent jobs, so one sharded run uses 8 of them.
+  cold_plan:
+    name: Cold build plan
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      actions: read
+    outputs:
+      sharded: ${{ steps.plan.outputs.sharded }}
+      shards: ${{ steps.plan.outputs.shards }}
+    env:
+      SHARDS: 8
+    steps:
+      - name: Decide
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          FORCED: ${{ inputs.sharded_cold }}
+          DEFAULT_REF: refs/heads/${{ github.event.repository.default_branch }}
+          THIS_REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          sharded=false
+          reason=""
+          if [[ "$EVENT" == schedule ]]; then
+            sharded=true; reason="nightly build"
+          elif [[ "$FORCED" == true ]]; then
+            sharded=true; reason="requested"
+          else
+            # Any compiler-cache entry this run could restore: the default branch's, or this ref's own.
+            found=0
+            for ref in "$DEFAULT_REF" "$THIS_REF"; do
+              n="$(gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=ccache-windows-&ref=$ref&per_page=1" --jq .total_count 2>/dev/null || echo 0)"
+              found=$((found + n))
+            done
+            if [[ "$found" == 0 ]]; then sharded=true; reason="no compiler cache entry to restore"; fi
+          fi
+          indices="$(python3 -c "import json,os;print(json.dumps(list(range(int(os.environ['SHARDS'])))))")"
+          echo "sharded=$sharded" >> "$GITHUB_OUTPUT"
+          echo "shards=$indices" >> "$GITHUB_OUTPUT"
+          echo "sharded cold build: $sharded ${reason:+($reason)}" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # One shard of a cold compile: configures exactly like build_win, builds chunks of object files until none is left
+  # (scripts/ci/shard-compile.sh; scripts/ci/shard-targets.py cuts them into equal weights from an earlier build) and uploads its
+  # compiler cache.
+  # build_win then merges the caches and runs the whole build at ~100% hits. The MAT capture package and the dotnet publish
+  # are left out: they only order before the objects and change no object command line, but every shard would run them.
+  shard:
+    name: Compile shard ${{ matrix.index }}
+    needs: [changes, setup_release, cold_plan]
+    if: needs.cold_plan.outputs.sharded == 'true'
+    permissions:
+      contents: write  # refs/claims/<run>/<chunk>: creating a ref is the atomic "this runner builds this chunk" (shard-compile.sh)
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        index: ${{ fromJSON(needs.cold_plan.outputs.shards) }}
+    steps:
+      - name: Keep LF line endings
+        shell: bash
+        run: git config --global core.autocrlf false
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Submodules
+        shell: bash
+        run: scripts/ci/init-submodules.sh windows
+
+      - name: Toolchain
+        uses: ./.github/actions/windows-toolchain
+
+      # Keep this step and build_win's "Configure Windows" in step: the shards only help while their object command lines are
+      # the ones build_win runs (build_win prints the compiler-cache hit rate and warns when it falls under 95%).
+      - name: Configure Windows
+        shell: msys2 {0}
+        env:
+          GITHUB_TOKEN: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.token || '' }}
+          RTX_VIDEO_SDK_URL: ${{ (github.repository == 'AlkaidLab/foundation-sunshine' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'AlkaidLab/foundation-sunshine')) && secrets.RTX_VIDEO_SDK_URL || '' }}
+          RTX_VIDEO_SDK_TOKEN: ${{ (github.repository == 'AlkaidLab/foundation-sunshine' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'AlkaidLab/foundation-sunshine')) && secrets.DRIVER_DOWNLOAD_TOKEN || '' }}
+          RTX_VIDEO_NGX_APPLICATION_ID: ${{ (github.repository == 'AlkaidLab/foundation-sunshine' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'AlkaidLab/foundation-sunshine')) && secrets.RTX_VIDEO_NGX_APPLICATION_ID || '' }}
+          SUNSHINE_RTX_HDR: ${{ !(github.repository == 'AlkaidLab/foundation-sunshine' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'AlkaidLab/foundation-sunshine')) && 'OFF' || (github.event_name != 'pull_request' && github.ref == 'refs/heads/master') && 'ON' || inputs.rtx_hdr || 'AUTO' }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+          BUILD_VERSION: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
+          COMMIT: ${{ needs.setup_release.outputs.release_commit }}
+          SUNSHINE_BUILD_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          SUNSHINE_BUILD_BRANCH: ${{ github.head_ref || github.ref_name }}
+          SUNSHINE_BUILD_CHANNEL: ${{ needs.setup_release.outputs.publish_release == 'true' && 'beta' || 'dev' }}
+          SUNSHINE_BUILD_BUILDER: ci
+          SUNSHINE_BUILD_CI_RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CCACHE_DIR: ${{ github.workspace }}\.ccache
+          CCACHE_MAXSIZE: 2G
+          CCACHE_COMPILERCHECK: content
+          DRIVER_DEPS_REQUIRED: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'OFF' || 'ON' }}
+        run: |
+          mkdir -p build
+          ccache --zero-stats
+          cmake \
+            -B build \
+            -G Ninja \
+            -S . \
+            -DBUILD_DOCS=OFF \
+            -DSUNSHINE_RTX_HDR="$SUNSHINE_RTX_HDR" \
+            -DSUNSHINE_BUILD_MAT_CAPTURE=OFF \
+            -DBUILD_TESTS=ON \
+            -DBUILD_TRAY_TESTS=ON \
+            -DBUILD_WEB_UI=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DSUNSHINE_ASSETS_DIR=assets \
+            -DDRIVER_DEPS_REQUIRED=${DRIVER_DEPS_REQUIRED} \
+            -DSUNSHINE_PUBLISHER_NAME='${{ github.repository_owner }}' \
+            -DSUNSHINE_PUBLISHER_WEBSITE='https://github.com/AlkaidLab/foundation-sunshine' \
+            -DSUNSHINE_PUBLISHER_ISSUE_URL='https://github.com/AlkaidLab/foundation-sunshine/issues'
+
+      # Chunks of object files are handed out one at a time, so a runner on a slower CPU simply builds fewer of them (the CPU of a
+      # hosted runner varies from one job to the next by up to 2x on the same work). The token is only read by this script, which
+      # removes it from the environment of ninja.
+      - name: Compile object files, chunk by chunk
+        shell: msys2 {0}
+        env:
+          CCACHE_DIR: ${{ github.workspace }}\.ccache
+          CCACHE_MAXSIZE: 2G
+          CCACHE_COMPILERCHECK: content
+          CLAIM_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: scripts/ci/shard-compile.sh ${{ matrix.index }} ${{ strategy.job-total }}
+
+      # The cache is a few MB per shard: ccache already compresses its entries, so the artifact is stored as one tar without further compression.
+      - name: Pack the compiler cache
+        shell: bash
+        run: tar -C .ccache -cf ccache-shard.tar .
+
+      - name: Upload the compiler cache
+        uses: actions/upload-artifact@v7
+        with:
+          name: ccache-shard-${{ matrix.index }}
+          path: ccache-shard.tar
+          compression-level: 0
+          retention-days: 1
+
+      # The durations of this build are the weights of the next split: scripts/ci/merge-shard-weights.py turns the logs of one run into
+      # scripts/ci/shard-weights.ninja_log.
+      - name: Upload the ninja log
+        uses: actions/upload-artifact@v7
+        with:
+          name: ninja-log-shard-${{ matrix.index }}
+          path: ninja_log.shard
+          compression-level: 1
+          retention-days: 14
+
+  # The claim refs only matter while the shards run.
+  shard_cleanup:
+    name: Remove the shard claims
+    needs: shard
+    if: ${{ always() && needs.shard.result != 'skipped' }}
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Delete refs/claims/${{ github.run_id }}-*
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/claims/${GITHUB_RUN_ID}-" --jq '.[].ref' \
+            | while read -r ref; do gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/${ref}" || true; done
+
+  # Pull requests without the NVIDIA SDK secrets never compile the adapter branches that master builds. This configures the
+  # same definitions with placeholder digests and runs the tests that load fake adapters, so a build-graph change that
+  # leaks the definitions into them fails here instead of on master. It is a build of its own: running beside the main build
+  # instead of after it takes about 2.5 minutes off the Windows job.
+  adapter_config:
+    name: Adapter build configuration (no SDK)
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
+    permissions:
+      contents: read
+    runs-on: windows-latest
+    steps:
+      - name: Keep LF line endings
+        shell: bash
+        run: git config --global core.autocrlf false
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Submodules
+        shell: bash
+        run: scripts/ci/init-submodules.sh windows
+
+      - name: Toolchain
+        uses: ./.github/actions/windows-toolchain
+
+      - name: Cache compiler objects
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ github.workspace }}\.ccache
+          key: ccache-windows-adapter-${{ github.run_id }}
+          restore-keys: |
+            ccache-windows-
+
+      - name: Fetch pinned installer inputs
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $dest = "$env:RUNNER_TEMP/installer-inputs/pinned"
+          ./scripts/fetch-installer-inputs.ps1 -Destination $dest
+          "GUI_BUNDLE_DIR=$dest/gui" >> $env:GITHUB_ENV
+
+      - name: Test the adapter build configuration without the SDK
+        shell: msys2 {0}
+        env:
+          CCACHE_DIR: ${{ github.workspace }}\.ccache
+          CCACHE_MAXSIZE: 2G
+          CCACHE_COMPILERCHECK: content
+        run: |
+          export PATH="$PATH:/c/Program Files/dotnet"
+          gui_options=()
+          if [[ -n "${GUI_BUNDLE_DIR:-}" ]]; then
+            gui_options=(-DFETCH_GUI=OFF "-DGUI_DIR=$GUI_BUNDLE_DIR")
+          fi
+          cmake -B build-adapter-config -G Ninja -S . "${gui_options[@]}" \
+            -DBUILD_DOCS=OFF -DBUILD_TESTS=ON -DBUILD_TRAY_TESTS=ON -DBUILD_WEB_UI=OFF \
+            -DSUNSHINE_RTX_HDR=OFF -DSUNSHINE_SIMULATE_ADAPTER_DEFINES=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DSUNSHINE_ASSETS_DIR=assets -DDRIVER_DEPS_REQUIRED=OFF
+          cmake --build build-adapter-config --target pre_encode_filter_unit_tests truehdr_adapter_loader_unit_tests
+          ctest --test-dir build-adapter-config --no-tests=error --output-on-failure \
+            -R '^(pre_encode_filter_unit_tests|truehdr_adapter_loader_unit_tests)$'
+
+  # The installer's setup UI (foundation-setup-ui.exe), built beside the compile instead of in front of the packaging.
+  setup_ui:
+    name: Installer setup UI
+    needs: changes
+    if: needs.changes.outputs.package == 'true'
+    permissions:
+      contents: read
+    runs-on: windows-latest
+    steps:
+      - name: Keep LF line endings
+        shell: bash
+        run: git config --global core.autocrlf false
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Submodules
+        shell: bash
+        run: scripts/ci/init-submodules.sh windows-package
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Fetch foundation-ui
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $sha = (Get-Content scripts/ci/foundation-ui.sha -Raw).Trim()
+          $dir = "$env:GITHUB_WORKSPACE/../ds5-ui-m3e"
+          git init -q $dir
+          git -C $dir fetch -q --depth 1 https://github.com/AlkaidLab/foundation-ui $sha
+          git -C $dir -c advice.detachedHead=false checkout -q FETCH_HEAD
+          npm ci --prefix $dir
+
+      # The installer's setup UI (foundation-setup-ui.exe). The Panel repository builds and attests one per commit; the pin in
+      # scripts/installer-inputs.json (setupUi) is downloaded and checked (sha256 and `gh attestation verify`), under 10 s.
+      # Without a matching asset (no pin, a pin older than the committed Panel submodule or scripts/ci/foundation-ui.sha, a failed
+      # download) or when a manual run asks for it, it is built from the committed Panel submodule instead (pages from
+      # foundation-ui and the Tauri window, about 3.5 min; scripts/build-setup-ui.ps1, docs/installer-webui.md). A file that fails
+      # verification is an error, never a reason to build.
+      - name: Installer setup UI
+        if: needs.changes.outputs.package == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_FROM_SUBMODULE: ${{ inputs.build_setup_ui_from_submodule }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $out = "$env:RUNNER_TEMP/installer-inputs/foundation-setup-ui.exe"
+          $clock = [Diagnostics.Stopwatch]::StartNew()
+          $source = 'built from the Panel submodule'
+          $fetched = $false
+          if ($env:BUILD_FROM_SUBMODULE -eq 'true') {
+            Write-Output 'A manual run asked for the source build.'
+          } else {
+            ./scripts/fetch-setup-ui.ps1 -Output $out
+            if ($LASTEXITCODE -eq 0) { $fetched = $true; $source = 'downloaded and verified' }
+            elseif ($LASTEXITCODE -ne 10) { throw "fetch-setup-ui.ps1 failed with exit code $LASTEXITCODE" }
+          }
+          if (-not $fetched) {
+            ./scripts/build-setup-ui.ps1 `
+              -FoundationUi "$env:GITHUB_WORKSPACE/../ds5-ui-m3e" `
+              -Output $out
+          }
+          $seconds = [math]::Round($clock.Elapsed.TotalSeconds, 1)
+          "SETUP_UI_EXE=$out" >> $env:GITHUB_ENV
+          "- installer setup UI: $source in $seconds s" >> $env:GITHUB_STEP_SUMMARY
+          Write-Output "installer setup UI $source in $seconds s"
+      - name: Upload the setup UI
+        uses: actions/upload-artifact@v7
+        with:
+          name: foundation-setup-ui
+          path: ${{ runner.temp }}/installer-inputs/foundation-setup-ui.exe
+          retention-days: 1
+
   build_win:
     name: Windows
-    needs: [changes, setup_release]
-    if: needs.changes.outputs.build == 'true'
+    needs: [changes, setup_release, cold_plan, shard, setup_ui]
+    # `shard` is skipped on the warm path; a skipped dependency would skip this job too without the explicit status checks.
+    if: ${{ !cancelled() && needs.changes.outputs.build == 'true' && needs.setup_release.result == 'success' && needs.cold_plan.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.shard.result) && contains(fromJSON('["success","skipped"]'), needs.setup_ui.result) }}
     permissions:
       contents: read
       actions: write  # prune stale ccache entries after saving this run's
@@ -524,45 +858,24 @@ jobs:
           $env:SUNSHINE_ASSETS_DIR = "${{ github.workspace }}\build"
           npm run build
 
-      # The installer's setup UI (foundation-setup-ui.exe). The Panel repository builds and attests one per commit; the pin in
-      # scripts/installer-inputs.json (setupUi) is downloaded and checked (sha256 and `gh attestation verify`), under 10 s.
-      # Without a matching asset (no pin, a pin older than the committed Panel submodule or scripts/ci/foundation-ui.sha, a failed
-      # download) or when a manual run asks for it, it is built from the committed Panel submodule instead (pages from
-      # foundation-ui and the Tauri window, about 3.5 min; scripts/build-setup-ui.ps1, docs/installer-webui.md). A file that fails
-      # verification is an error, never a reason to build.
+      # The installer's setup UI is built by the setup_ui job (beside the compile) and downloaded here.
       - name: Installer setup UI
         if: needs.changes.outputs.package == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: foundation-setup-ui
+          path: ${{ runner.temp }}/installer-inputs
+
+      - name: Point the packaging at the setup UI
+        if: needs.changes.outputs.package == 'true'
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BUILD_FROM_SUBMODULE: ${{ inputs.build_setup_ui_from_submodule }}
-        run: |
-          $PSNativeCommandUseErrorActionPreference = $true
-          $out = "$env:RUNNER_TEMP/installer-inputs/foundation-setup-ui.exe"
-          $clock = [Diagnostics.Stopwatch]::StartNew()
-          $source = 'built from the Panel submodule'
-          $fetched = $false
-          if ($env:BUILD_FROM_SUBMODULE -eq 'true') {
-            Write-Output 'A manual run asked for the source build.'
-          } else {
-            ./scripts/fetch-setup-ui.ps1 -Output $out
-            if ($LASTEXITCODE -eq 0) { $fetched = $true; $source = 'downloaded and verified' }
-            elseif ($LASTEXITCODE -ne 10) { throw "fetch-setup-ui.ps1 failed with exit code $LASTEXITCODE" }
-          }
-          if (-not $fetched) {
-            ./scripts/build-setup-ui.ps1 `
-              -FoundationUi "$env:GITHUB_WORKSPACE/../ds5-ui-m3e" `
-              -Output $out
-          }
-          $seconds = [math]::Round($clock.Elapsed.TotalSeconds, 1)
-          "SETUP_UI_EXE=$out" >> $env:GITHUB_ENV
-          "- installer setup UI: $source in $seconds s" >> $env:GITHUB_STEP_SUMMARY
-          Write-Output "installer setup UI $source in $seconds s"
+        run: '"SETUP_UI_EXE=$env:RUNNER_TEMP/installer-inputs/foundation-setup-ui.exe" >> $env:GITHUB_ENV'
 
       - name: Cache compiler objects
         # The nightly build starts cold on purpose: it proves that a build from nothing still works with today's packages,
-        # and the cache it saves replaces master's, which would otherwise only ever be topped up.
-        if: github.event_name != 'schedule'
+        # and the cache it saves replaces master's, which would otherwise only ever be topped up. A sharded cold build restores
+        # what its shards compiled (next step) instead.
+        if: github.event_name != 'schedule' && needs.shard.result != 'success'
         uses: actions/cache/restore@v6
         with:
           path: ${{ github.workspace }}\.ccache
@@ -576,6 +889,23 @@ jobs:
           key: ccache-windows-${{ github.run_id }}
           restore-keys: |
             ccache-windows-
+
+      # Cold build on parallel runners: the compiler caches of the shards are merged into one directory (ccache entries are
+      # content-addressed, so merging is copying), and the build below finds ~100% of the objects.
+      - name: Merge the shard compiler caches
+        if: needs.shard.result == 'success'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: ccache-shard-*
+          path: shard-caches
+
+      - name: Unpack the shard compiler caches
+        if: needs.shard.result == 'success'
+        shell: bash
+        run: |
+          mkdir -p .ccache
+          for tarball in shard-caches/*/ccache-shard.tar; do tar -C .ccache -xf "$tarball"; done
+          du -sh .ccache | tee -a "$GITHUB_STEP_SUMMARY"
 
       # The Panel bundle and the WebView2 bootstrapper, pinned by tag/sha256 in scripts/installer-inputs.json and verified (never
       # "latest"). The pinned Panel commit must be the committed submodule. A manual run with gui_run_id replaces the GUI below.
@@ -673,37 +1003,22 @@ jobs:
           CCACHE_MAXSIZE: 2G
           CCACHE_COMPILERCHECK: content
         run: |
+          # After a sharded cold build every object is in the merged cache: count only this step's lookups (the configure
+          # step's CMake checks are never cached) and say so when the shards and this configure have drifted apart.
+          if [[ '${{ needs.shard.result }}' == success ]]; then ccache --zero-stats; fi
           ninja -C build
           ccache --show-stats --verbose
+          if [[ '${{ needs.shard.result }}' == success ]]; then
+            read -r hits misses < <(ccache --print-stats | awk -F'\t' '/^(direct_cache_hit|preprocessed_cache_hit)\t/{h+=$2} /^cache_miss\t/{m=$2} END{print h+0, m+0}')
+            echo "compiler cache after the shards: $hits hits, $misses misses" | tee -a "$GITHUB_STEP_SUMMARY"
+            if (( misses * 100 > (hits + misses) * 5 )); then
+              echo "::warning title=Shards drifted::$misses of $((hits + misses)) compiles were not in the shard caches; keep the shard job's configure in step with Configure Windows"
+            fi
+          fi
 
       - name: Run native tests
         shell: msys2 {0}
         run: ctest --test-dir build -j4 --no-tests=error --output-on-failure --timeout 600 --output-junit "$GITHUB_WORKSPACE/ctest.xml"
-
-      # Pull requests without the NVIDIA SDK secrets never compile the adapter branches that master builds. This configures the
-      # same definitions with placeholder digests and runs the tests that load fake adapters, so a build-graph change that
-      # leaks the definitions into them fails here instead of on master.
-      - name: Test the adapter build configuration without the SDK
-        if: ${{ !cancelled() && steps.configure_windows.conclusion == 'success' }}
-        shell: msys2 {0}
-        env:
-          CCACHE_DIR: ${{ github.workspace }}\.ccache
-          CCACHE_MAXSIZE: 2G
-          CCACHE_COMPILERCHECK: content
-        run: |
-          export PATH="$PATH:/c/Program Files/dotnet"
-          gui_options=()
-          if [[ -n "${GUI_BUNDLE_DIR:-}" ]]; then
-            gui_options=(-DFETCH_GUI=OFF "-DGUI_DIR=$GUI_BUNDLE_DIR")
-          fi
-          cmake -B build-adapter-config -G Ninja -S . "${gui_options[@]}" \
-            -DBUILD_DOCS=OFF -DBUILD_TESTS=ON -DBUILD_TRAY_TESTS=ON -DBUILD_WEB_UI=OFF \
-            -DSUNSHINE_RTX_HDR=OFF -DSUNSHINE_SIMULATE_ADAPTER_DEFINES=ON \
-            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
-            -DSUNSHINE_ASSETS_DIR=assets -DDRIVER_DEPS_REQUIRED=OFF
-          cmake --build build-adapter-config --target pre_encode_filter_unit_tests truehdr_adapter_loader_unit_tests
-          ctest --test-dir build-adapter-config --no-tests=error --output-on-failure \
-            -R '^(pre_encode_filter_unit_tests|truehdr_adapter_loader_unit_tests)$'
 
       # Annotations and a job summary from the JUnit file; fails when no test ran, when fewer than --min-tests ran (a
       # registered suite that disappeared) and when a test not listed in scripts/ci/allowed-skips.txt was skipped.
@@ -1033,7 +1348,7 @@ jobs:
   ci-gate:
     name: CI gate
     if: always()
-    needs: [changes, docs-check, workflow-lint, webui, webui-docs, setup_release, vdd_smoke, mat_smoke, build_win, publish]
+    needs: [changes, docs-check, workflow-lint, webui, webui-docs, setup_release, vdd_smoke, mat_smoke, cold_plan, shard, adapter_config, setup_ui, build_win, publish]
     runs-on: ubuntu-slim
     timeout-minutes: 5
     permissions: {}
