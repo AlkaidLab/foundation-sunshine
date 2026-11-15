@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <deque>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -52,6 +53,15 @@ TEST(VideoPacing, FrameRateFitsTheShareOfTheFrameInterval) {
   // Nothing to pace with.
   EXPECT_EQ(streaming::video_pacing_frame_rate_bps(0, 200'000, interval), 0u);
   EXPECT_EQ(streaming::video_pacing_frame_rate_bps(64'000'000, 200'000, 0ns), 0u);
+}
+
+TEST(VideoPacing, FrameIntervalFollowsTheFrameRate) {
+  EXPECT_EQ(streaming::video_frame_interval(60.0).count(), 16'666'666);
+  EXPECT_EQ(streaming::video_frame_interval(120.0).count(), 8'333'333);
+  EXPECT_NEAR(static_cast<double>(streaming::video_frame_interval(59.94).count()), 16'683'350.0, 10.0);
+  EXPECT_EQ(streaming::video_frame_interval(0.0).count(), 0);
+  EXPECT_EQ(streaming::video_frame_interval(-30.0).count(), 0);
+  EXPECT_EQ(streaming::video_frame_interval(std::numeric_limits<double>::quiet_NaN()).count(), 0);
 }
 
 TEST(VideoPacing, WireBytesFollowThePlannedLayout) {

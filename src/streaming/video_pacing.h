@@ -65,6 +65,13 @@ namespace streaming {
     return std::max(sustained_bps, static_cast<std::uint64_t>(needed + 0.5L));
   }
 
+  /// The capture interval of a stream at the given frame rate; zero when the rate is unusable, which disables pacing.
+  inline std::chrono::nanoseconds
+  video_frame_interval(double frames_per_second) noexcept {
+    if (!(frames_per_second > 0.0)) return {};
+    return std::chrono::nanoseconds { static_cast<std::int64_t>(1e9 / frames_per_second) };
+  }
+
   /**
    * @brief The bytes a frame puts on the wire, from its planned FEC layout (video_fec::frame_t).
    *
