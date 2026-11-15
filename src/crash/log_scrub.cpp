@@ -208,15 +208,43 @@ namespace crash::logscrub {
       clean(h, hosts);
     }
 
-    /// key [:=] value, where `fmt` writes the replacement unless the value is harmless (or `keep` says it must be hidden anyway)
+    /// True when the value of a rule left a quote that cannot be balanced: the value was opened by a quote (or cut short by one) and the rest of the line holds an odd number of that
+    /// quote character. What follows such a quote cannot be told from the rest of the value (`'Players' choice - Budget.xlsx'`, `Bob' phone`), so it goes with it.
+    bool
+    quote_unbalanced(const std::string &value, std::string::const_iterator rest, std::string::const_iterator end) {
+      char q = 0;
+      if (!value.empty() && (value.front() == '\'' || value.front() == '"')) q = value.front();
+      else if (rest != end && (*rest == '\'' || *rest == '"')) q = *rest;
+      if (!q) return false;
+      return std::count(rest, end, q) % 2 == 1;
+    }
+
+    /// key [:=] value, where `fmt` writes the replacement unless the value is harmless (or `keep` says it must be hidden anyway). A quote that cannot be balanced drops the rest of the line.
     template <class Keep, class Fmt>
     std::string
     kv_sub(const std::string &line, const regex &re, Keep &&must_hide, Fmt &&fmt) {
-      return replace_all(line, re, [&](const boost::smatch &m) {
+      std::string out;
+      out.reserve(line.size());
+      auto last = line.cbegin();
+      for (boost::sregex_iterator it(line.cbegin(), line.cend(), re), end; it != end; ++it) {
+        const auto &m = *it;
+        if (m.length(0) == 0) continue;
         const auto v = m[3].str();
-        if (is_harmless(v) && !must_hide(m[1].str(), v)) return m[0].str();
-        return fmt(m[1].str(), m[2].str());
-      });
+        if (is_harmless(v) && !must_hide(m[1].str(), v)) {
+          // a value that is one of our own placeholders (a learned name was replaced first) has the same unbalanced quote behind it
+          if (v.size() > 1 && v.front() == '<' && v.back() == '>' && quote_unbalanced(v, m[0].second, line.cend())) {
+            out.append(last, m[0].second);
+            return out;
+          }
+          continue;
+        }
+        out.append(last, m[0].first);
+        out += fmt(m[1].str(), m[2].str());
+        last = m[0].second;
+        if (quote_unbalanced(v, last, line.cend())) return out;
+      }
+      out.append(last, line.cend());
+      return out;
     }
 
     std::string
@@ -242,7 +270,7 @@ namespace crash::logscrub {
       line = replace_all(line, r.sid, [](const boost::smatch &) { return std::string("<sid>"); });
       line = replace_all(line, r.steam, [](const boost::smatch &) { return std::string("<id>"); });
       line = kv_sub(line, r.re_ssid, never, [](const std::string &k, const std::string &sep) { return k + sep + "\"<ssid>\""; });
-      line = replace_all(line, r.wifi_quoted, [](const boost::smatch &m) { return m[1].str() + m[2].str() + "\"<ssid>\""; });
+      line = kv_sub(line, r.wifi_quoted, [](const std::string &, const std::string &) { return true; }, [](const std::string &k, const std::string &sep) { return k + sep + "\"<ssid>\""; });
       line = kv_sub(line, r.re_account, never, [](const std::string &k, const std::string &sep) { return k + sep + "<account>"; });
       line = kv_sub(line, r.re_host, never, [](const std::string &k, const std::string &sep) { return k + sep + "<host>"; });
       line = replace_all(line, r.win_user, [](const boost::smatch &m) { return m[1].str() + ":" + m[2].str() + "Users" + m[2].str() + "<user>"; });

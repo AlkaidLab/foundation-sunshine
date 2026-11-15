@@ -604,6 +604,40 @@
    "required": [
     "Info:"
    ]
+  },
+  {
+   "name": "a quoted value with an inner apostrophe drops the rest of the line",
+   "input": "Info: ssid='Players' choice - Budget.xlsx' joined\nInfo: next line",
+   "forbidden": [
+    "choice",
+    "Budget.xlsx"
+   ],
+   "required": [
+    "Info: ssid=",
+    "Info: next line"
+   ]
+  },
+  {
+   "name": "an unquoted value cut by an apostrophe drops the rest of the line",
+   "input": "Info: device_name=Bob' phone connected\nInfo: next line",
+   "forbidden": [
+    "phone",
+    "connected"
+   ],
+   "required": [
+    "Info: device_name=",
+    "Info: next line"
+   ]
+  },
+  {
+   "name": "balanced quotes after a hidden value stay",
+   "input": "Info: username=\"li_ming\" logged in 'ok' and 'done'",
+   "forbidden": [
+    "li_ming"
+   ],
+   "required": [
+    "logged in 'ok' and 'done'"
+   ]
   }
  ]
 }
