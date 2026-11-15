@@ -114,12 +114,17 @@ class ClassifiedTest(unittest.TestCase):
     """What pushes to master turn into, end to end through the classifier."""
 
     def flags(self, *files):
-        return classify.classify(push(compare("ahead", *files))[0])
+        return classify.classify(push(compare("ahead", *files))[0], "push")
 
     def test_readme_only_push_builds_nothing(self):
         flags = self.flags("docs/readme/README.en.md", "assets/readme/p3.webp")
         self.assertTrue(flags["docs"])
         self.assertFalse(flags["any_code"])
+
+    def test_root_readme_only_push_does_not_build(self):
+        flags = self.flags("README.md")
+        self.assertTrue(flags["webui_inputs"])
+        self.assertFalse(flags["build"] or flags["any_code"])
 
     def test_code_push_builds(self):
         self.assertTrue(self.flags("src/config.cpp")["cpp"])
@@ -128,7 +133,7 @@ class ClassifiedTest(unittest.TestCase):
         # cpp is false, but a master push that changes the Web UI ships a new package: the workflow builds on any_code
         flags = self.flags("src_assets/common/assets/web/pages/example.vue")
         self.assertFalse(flags["cpp"])
-        self.assertTrue(flags["webui"] and flags["any_code"])
+        self.assertTrue(flags["webui"] and flags["any_code"] and flags["build"])
 
     def test_installer_only_push_is_code(self):
         self.assertTrue(self.flags("scripts/build-setup-ui.ps1")["any_code"])

@@ -26,6 +26,10 @@ on:
         description: 'Optional successful Panel artifact run; its commit must match the Panel submodule'
         type: string
         default: ''
+      publish:
+        description: 'Publish a pre-release of this master build (the release step is skipped otherwise)'
+        type: boolean
+        default: false
       rtx_hdr:
         description: 'RTX HDR support for development branches (official master always requires ON)'
         type: choice
@@ -57,17 +61,18 @@ jobs:
     outputs:
       cpp: ${{ steps.classify.outputs.cpp }}
       webui: ${{ steps.classify.outputs.webui }}
-      webui_docs: ${{ steps.classify.outputs.webui_docs }}
+      webui_inputs: ${{ steps.classify.outputs.webui_inputs }}
       installer: ${{ steps.classify.outputs.installer }}
       workflow: ${{ steps.classify.outputs.workflow }}
       docs: ${{ steps.classify.outputs.docs }}
       docs_touched: ${{ steps.classify.outputs.docs_touched }}
       # Packaging (Web UI build, installer UI, Inno Setup, release assets) is checked on pull requests only when they touch
       # what it reads; master and manual runs always package.
-      package: ${{ github.event_name != 'pull_request' || steps.classify.outputs.installer == 'true' }}
-      # The Windows build: a pull request needs it only for C++ and build inputs, but a push to master (and a manual run) that
-      # changes any code, the Web UI included, produces the package that gets published.
-      build: ${{ steps.classify.outputs.cpp == 'true' || (github.event_name != 'pull_request' && steps.classify.outputs.any_code == 'true') }}
+      package: ${{ steps.classify.outputs.package }}
+      # The Windows build and release path (scripts/ci/classify-changes.py, "build"): a pull request needs it for C++ and build
+      # inputs only, a push to master or a manual run for any code, the Web UI sources included. README.md and the other files
+      # only the Web UI tests read never build.
+      build: ${{ steps.classify.outputs.build }}
     steps:
       - name: Checkout the CI scripts
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -91,7 +96,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 scripts/ci/changed-files.py --event "$EVENT" --repo "$REPO" --pr "$PR_NUMBER" --before "$BEFORE" --after "$AFTER" > files.txt
-          python3 scripts/ci/classify-changes.py --output "$GITHUB_OUTPUT" < files.txt
+          python3 scripts/ci/classify-changes.py --event "$EVENT" --output "$GITHUB_OUTPUT" < files.txt
 
   docs-check:
     name: Documentation links
@@ -142,7 +147,7 @@ jobs:
   webui-docs:
     name: Web UI document tests
     needs: changes
-    if: needs.changes.outputs.webui_docs == 'true' && needs.changes.outputs.webui != 'true'
+    if: needs.changes.outputs.webui_inputs == 'true' && needs.changes.outputs.webui != 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -266,7 +271,8 @@ jobs:
     # Only the Windows build reads the release tag and version.
     if: needs.changes.outputs.build == 'true'
     outputs:
-      publish_release: ${{ steps.setup_release_auto.outputs.publish_release || steps.setup_release_manual.outputs.publish_release }}
+      # Whether this run publishes a pre-release: see "Automatic pre-releases" and the manual step below.
+      publish_release: ${{ steps.auto_gate.outputs.publish || steps.setup_release_manual.outputs.publish_release }}
       release_body: ${{ steps.filter_release_contributors.outputs.release_body || steps.setup_release_auto.outputs.release_body || steps.setup_release_manual.outputs.release_body }}
       release_commit: ${{ steps.setup_release_auto.outputs.release_commit || steps.setup_release_manual.outputs.release_commit }}
       release_generate_release_notes: ${{ steps.setup_release_auto.outputs.release_generate_release_notes || steps.setup_release_manual.outputs.release_generate_release_notes }}
@@ -287,17 +293,60 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
+      # A push to master builds, tests, packages and uploads the artifacts, but publishes a pre-release only when the repository
+      # variable AUTO_PRERELEASE is "true" (unset by default). The version and tag are computed either way: the build identity
+      # carries them.
+      - name: Automatic pre-releases
+        id: auto_gate
+        if: github.event_name != 'workflow_dispatch'
+        env:
+          AUTO: ${{ steps.setup_release_auto.outputs.publish_release }}
+          ENABLED: ${{ vars.AUTO_PRERELEASE }}
+        run: |
+          if [ "$AUTO" = true ] && [ "$ENABLED" = true ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            if [ "$AUTO" = true ]; then
+              echo "::notice title=Pre-release::not published: set the repository variable AUTO_PRERELEASE to true, or run this workflow manually with publish enabled"
+            fi
+          fi
+
+      # Manual runs: publish=true (master only) publishes with the version and tag a push of this commit would get, from the
+      # committer date (scripts/ci/release-info.py); otherwise the run is a dev build with a manual-<date> tag.
       - name: Setup Release (Manual)
         id: setup_release_manual
         if: github.event_name == 'workflow_dispatch'
+        env:
+          PUBLISH: ${{ inputs.publish }}
+          REF_NAME: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
         run: |
-          SUFFIX=$([ "${{ github.ref_name }}" = "master" ] && echo "" || echo "-dev")
-          echo "publish_release=false" >> $GITHUB_OUTPUT
-          echo "release_body=Manual build (${{ github.ref_name }})" >> $GITHUB_OUTPUT
-          echo "release_commit=${{ github.sha }}" >> $GITHUB_OUTPUT
-          echo "release_generate_release_notes=false" >> $GITHUB_OUTPUT
-          echo "release_tag=manual-$(date +%Y%m%d-%H%M%S)${SUFFIX}" >> $GITHUB_OUTPUT
-          echo "release_version=manual-$(date +%Y%m%d-%H%M%S)${SUFFIX}" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          if [ "$PUBLISH" = true ]; then
+            if [ "$REF_NAME" != master ]; then
+              echo "::error title=Publish::publish is only allowed on master"
+              exit 1
+            fi
+            python3 scripts/ci/release-info.py --output "$GITHUB_OUTPUT"
+            {
+              echo "publish_release=true"
+              echo "release_body=Manual publish (master)"
+              echo "release_commit=$COMMIT"
+              echo "release_generate_release_notes=true"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          SUFFIX=$([ "$REF_NAME" = "master" ] && echo "" || echo "-dev")
+          STAMP="manual-$(date +%Y%m%d-%H%M%S)${SUFFIX}"
+          {
+            echo "publish_release=false"
+            echo "release_body=Manual build ($REF_NAME)"
+            echo "release_commit=$COMMIT"
+            echo "release_generate_release_notes=false"
+            echo "release_tag=$STAMP"
+            echo "release_version=$STAMP"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Filter bot contributors
         id: filter_release_contributors
