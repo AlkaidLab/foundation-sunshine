@@ -31,16 +31,26 @@ namespace sparxie {
 
   // A parsed Valve Data File node (KeyValues): either a leaf with a value or a
   // block with children in file order. valve-keyvalues-760f379.
+  // The children are a named struct declared before the node and defined right after it: a std::pair<std::string,
+  // VdfNode> member of VdfNode itself needs VdfNode to be complete, which the standard does not allow (GCC accepts it,
+  // Clang rejects it with the same libstdc++). std::vector may hold an incomplete type since C++17.
+  struct VdfChild;
   struct VdfNode {
     std::string value;
-    std::vector<std::pair<std::string, VdfNode>> children;
+    std::vector<VdfChild> children;
     const VdfNode *
-    find(std::string_view key) const {
-      for (const auto &child : children)
-        if (child.first == key) return &child.second;
-      return nullptr;
-    }
+    find(std::string_view key) const;
   };
+  struct VdfChild {
+    std::string first;
+    VdfNode second;
+  };
+  inline const VdfNode *
+  VdfNode::find(std::string_view key) const {
+    for (const auto &child : children)
+      if (child.first == key) return &child.second;
+    return nullptr;
+  }
 
   // Parses one root node (for example "libraryfolders" or "AppState").
   // Returns nothing when the text is not a well-formed tree.

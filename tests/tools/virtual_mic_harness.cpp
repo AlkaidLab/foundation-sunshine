@@ -13,7 +13,9 @@
  *   selftest                      the self-test the Web UI runs (tone in, tone heard)
  */
 #define WIN32_LEAN_AND_MEAN
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 
 #include <timeapi.h>

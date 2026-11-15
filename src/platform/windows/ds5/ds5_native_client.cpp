@@ -12,7 +12,9 @@
  * ds5-dualsensectl-main-20261107 supply the public report definitions below.
  */
 #define WIN32_LEAN_AND_MEAN
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 #include <windows.h>
 
 #include <audioclient.h>
