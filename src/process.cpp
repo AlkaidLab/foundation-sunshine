@@ -67,7 +67,16 @@ namespace proc {
   class deinit_t: public platf::deinit_t {
   public:
     ~deinit_t() {
-      proc.terminate();
+      // a destructor cannot let an exception out: terminate() waits for the undo commands and a failed wait throws, which ended the host in std::terminate at shutdown
+      try {
+        proc.terminate();
+      }
+      catch (const std::exception &e) {
+        BOOST_LOG(error) << "Failed to terminate the running application during shutdown: "sv << e.what();
+      }
+      catch (...) {
+        BOOST_LOG(error) << "Failed to terminate the running application during shutdown"sv;
+      }
     }
   };
 

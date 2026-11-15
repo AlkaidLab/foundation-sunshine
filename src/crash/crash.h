@@ -70,6 +70,11 @@ namespace crash {
     int slot;
   };
 
+  /// Stops and joins the watchdog thread that `install` starts. A process that never starts the uploader (the service wrapper) calls this before it returns from main:
+  /// the thread is a static std::thread, and one destroyed while joinable ends the process in std::terminate. Safe to call twice; `stop()` includes it.
+  void
+  stop_watchdog();
+
   // --- upload --------------------------------------------------------------------------------------------------------------------------
   /// Starts the background uploader: a first pass after a short delay, then every 30 minutes. Never blocks the caller.
   void
