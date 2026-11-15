@@ -59,6 +59,9 @@ namespace telemetry {
       return result == "failed" || result == "incomplete" ? 0 : 1;
     }
     if (e.name == "device_facts") return 1;
+    // the service and start-up facts: an anomaly that repeats (or follows an adoption) is never sampled away, the counts and the timings are priority 1
+    if (e.name == "host_anomaly") return severe() ? 0 : 1;
+    if (e.name == "svc_lifecycle" || e.name == "startup_timing") return 1;
     if (e.name == "error") return e.props.is_object() && e.props.value("severity", "") == "fatal" ? 0 : 1;
     return 2;
   }
@@ -76,7 +79,8 @@ namespace telemetry {
     // the result of an update step is the page's to report (it runs the update sheet); install results and device facts are the host's own, read from the installer's journal and the system inventory
     if (kind == kind_e::error) return name == "error"sv || name == "user_report"sv || name == "error_report"sv || name == "update_result"sv;
     // the sketches of a page (page_vitals) and the latency of its calls to the host (api_latency)
-    return name == "panel_page"sv || name == "startup"sv || name == "page_vitals"sv || name == "api_latency"sv;
+    // page_ready: the page says when it was ready; the host judges it (service_lifecycle.h) and does not pass the raw event on
+    return name == "panel_page"sv || name == "startup"sv || name == "page_vitals"sv || name == "api_latency"sv || name == "page_ready"sv;
   }
 
   // ---------------------------------------------------------------------------------------------------------------------
@@ -373,6 +377,9 @@ namespace telemetry {
     const std::vector<std::string_view> run_result_choices { "ok", "failed", "cancelled", "incomplete" };
     const std::vector<std::string_view> error_class_choices { "network", "http_4xx", "http_5xx", "hash_mismatch", "disk", "permission", "cancelled", "other" };
     const std::vector<std::string_view> install_phase_choices { "install", "upgrade", "repair", "uninstall" };
+    const std::vector<std::string_view> ready_which_choices { "svc_core", "page" };
+    const std::vector<std::string_view> host_anomaly_codes { "XP_SVC_CORE_RESTART", "XP_SLOW_READY" };
+    const std::vector<std::string_view> host_anomaly_causes { "soon_after_adopt", "repeat", "unexpected_exit", "above_limit", "above_baseline", "other" };
     const std::vector<std::string_view> nic_link_choices { "wired", "wireless", "other", "unknown" };
     const std::vector<std::string_view> nic_speed_choices { "lt_1g", "1g", "2_5g", "5g", "10g", "gt_10g", "unknown" };
 
@@ -610,6 +617,33 @@ namespace telemetry {
                                                           { "from_version", type_e::catalogue, 0, 40 },
                                                           { "dur_ms", type_e::integer, 0, 7200000 },
                                                         } });
+        // Service and start-up facts (service_lifecycle.h): the counts of what the service did with the core, the time to ready, and the anomalies XP_SVC_CORE_RESTART and XP_SLOW_READY
+        t.push_back({ kind_e::experience, "svc_lifecycle", {
+                                                             { "launched", type_e::integer, 0, 1000 },
+                                                             { "adopted", type_e::integer, 0, 1000 },
+                                                             { "extras_ended", type_e::integer, 0, 1000 },
+                                                             { "exits", type_e::integer, 0, 1000 },
+                                                             { "unexpected", type_e::integer, 0, 1000 },
+                                                             { "soon_after_adopt", type_e::integer, 0, 1000 },
+                                                             { "restarts_core_exit", type_e::integer, 0, 1000 },
+                                                             { "restarts_session", type_e::integer, 0, 1000 },
+                                                           } });
+        t.push_back({ kind_e::experience, "startup_timing", {
+                                                              { "which", type_e::choice, 0, 0, ready_which_choices, true },
+                                                              { "ms", type_e::integer, 0, 3600000, {}, true },
+                                                              { "slow", type_e::boolean },
+                                                            } });
+        t.push_back({ kind_e::experience, "host_anomaly", {
+                                                            { "code", type_e::choice, 0, 0, host_anomaly_codes, true },
+                                                            { "severe", type_e::boolean },
+                                                            { "value", type_e::number, 0, 3600000000.0 },
+                                                            { "threshold", type_e::number, 0, 3600000000.0 },
+                                                            { "count", type_e::integer, 1, 1000000 },
+                                                            { "cause", type_e::choice, 0, 0, host_anomaly_causes },
+                                                            { "which", type_e::choice, 0, 0, ready_which_choices },
+                                                            { "exit_code", type_e::code, 0, 24 },
+                                                          } });
+        t.push_back({ kind_e::experience, "page_ready", { { "page", type_e::catalogue, 0, 48, {}, true }, { "ms", type_e::integer, 0, 3600000, {}, true } } });
         t.push_back({ kind_e::experience, "device_facts", {
                                                             { "gpu_vendor", type_e::catalogue, 0, 24 },
                                                             { "gpu_driver", type_e::catalogue, 0, 24 },

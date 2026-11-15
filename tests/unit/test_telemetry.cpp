@@ -1987,6 +1987,7 @@ TEST(TelemetryScrub, TheApplicationNameOfTheAbrLineIsNotInTheExcerptEvenWithAQuo
   EXPECT_EQ(t.find("Private"), std::string::npos);
   EXPECT_EQ(t.find("phone"), std::string::npos);
   EXPECT_NE(t.find("mode=balanced"), std::string::npos);
+}
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Stages (b) and (c): page sketches, API latency, update and install results, device facts
@@ -2362,4 +2363,210 @@ TEST(TelemetryScrub, ABracketHoldingBracketsEndsWhereTheOutermostOneCloses) {
   EXPECT_EQ(open.find("pid"), std::string::npos);
   // a short code in brackets stays
   EXPECT_NE(scrub_log_message("encoder [E12] gave up").find("[E12]"), std::string::npos);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The service and the start-up: XP_SVC_CORE_RESTART and XP_SLOW_READY
+
+#include "src/telemetry/service_lifecycle.h"
+#include "tools/sunshinesvc_lifecycle.h"
+
+namespace {
+  using namespace telemetry::service_lifecycle;
+  namespace life = sunshinesvc::lifecycle;
+
+  // the sequence of the bug: an extra core ended, another one adopted, it exits with code 0 about 30 s later, the core is started again
+  std::string
+  bug_sequence(std::int64_t t0) {
+    return life::svc_start_line(t0) + "\n" + life::extra_ended_line(t0 + 100, 1) + "\n" + life::core_start_line(t0 + 200, true, 4242, 90'000, "boot") + "\n" +
+           life::core_exit_line(t0 + 30'200, 0, 120'000, 30'000, false) + "\n" + life::core_start_line(t0 + 30'700, false, 5151, 0, "core_exit") + "\n";
+  }
+}  // namespace
+
+TEST(ServiceLifecycle, TheLinesTheServiceWritesAreTheLinesTheHostReads) {
+  const auto records = parse(bug_sequence(1'800'000'000'000));
+  ASSERT_EQ(records.size(), 5u);
+  EXPECT_EQ(records[0].kind, "svc_start");
+  EXPECT_EQ(records[1].kind, "extra_ended");
+  EXPECT_EQ(records[1].n, 1);
+  EXPECT_TRUE(records[2].adopted);
+  EXPECT_EQ(records[2].pid, 4242);
+  EXPECT_EQ(records[2].age_ms, 90'000);
+  EXPECT_EQ(records[3].kind, "core_exit");
+  EXPECT_EQ(records[3].since_adopt_ms, 30'000);
+  EXPECT_FALSE(records[3].requested);
+  EXPECT_EQ(records[4].cause, "core_exit");
+  EXPECT_FALSE(records[4].adopted);
+  // an exit code that is a negative NTSTATUS survives as the signed 32-bit value
+  const auto crash = parse(life::core_exit_line(1000, 0xC0000005ul, 5000, -1, false) + "\n");
+  ASSERT_EQ(crash.size(), 1u);
+  EXPECT_EQ(crash[0].exit_code, static_cast<std::int32_t>(0xC0000005u));
+}
+
+TEST(ServiceLifecycle, TheBugSequenceIsACoreRestartThatIsSevereBecauseItFollowsAnAdoption) {
+  const auto summary = summarize(parse(bug_sequence(1'800'000'000'000)));
+  EXPECT_EQ(summary.extras_ended, 1);
+  EXPECT_EQ(summary.adopted, 1);
+  EXPECT_EQ(summary.launched, 1);
+  EXPECT_EQ(summary.exits, 1);
+  EXPECT_EQ(summary.soon_after_adopt, 1);
+  EXPECT_EQ(summary.unexpected, 1);  // an exit with code 0, but 30 s after the adoption
+  EXPECT_EQ(summary.restarts_core_exit, 1);
+  state_t state;
+  const auto anomaly = judge_restart(summary, state, 1'800'000'100'000);
+  ASSERT_TRUE(anomaly.has_value());
+  EXPECT_EQ(anomaly->code, "XP_SVC_CORE_RESTART");
+  EXPECT_TRUE(anomaly->severe);
+  EXPECT_EQ(anomaly->cause, "soon_after_adopt");
+  EXPECT_EQ(anomaly->value, 30'000);
+  EXPECT_EQ(anomaly->exit_code, "0");
+  // the shaped events pass the allow-list
+  EXPECT_TRUE(telemetry::shape_event(telemetry::kind_e::experience, "host_anomaly", anomaly_props(*anomaly), 1000).has_value());
+  EXPECT_TRUE(telemetry::shape_event(telemetry::kind_e::experience, "svc_lifecycle", summary_props(summary), 1000).has_value());
+}
+
+TEST(ServiceLifecycle, ADeliberateRestartOfTheHostIsCountedButNotAProblem) {
+  // the host ended with code 0 after an hour, the service started it again: how a person restarts it from its own interface
+  const std::string text = life::svc_start_line(1000) + "\n" + life::core_start_line(1100, false, 10, 0, "boot") + "\n" + life::core_exit_line(3'601'100, 0, 3'600'000, -1, false) + "\n" + life::core_start_line(3'602'000, false, 11, 0, "core_exit") + "\n";
+  const auto summary = summarize(parse(text));
+  EXPECT_EQ(summary.exits, 1);
+  EXPECT_EQ(summary.unexpected, 0);
+  state_t state;
+  EXPECT_FALSE(judge_restart(summary, state, 3'700'000).has_value());
+  // asked by the service (a change of the session, a stop) it is not an exit of the core at all
+  const auto asked = summarize(parse(life::core_exit_line(2000, 1, 100, -1, true) + "\n"));
+  EXPECT_EQ(asked.exits, 0);
+}
+
+TEST(ServiceLifecycle, ACrashShortAfterTheStartIsAProblemAndItBecomesSevereWhenItRepeats) {
+  const std::string crash = life::core_start_line(1000, false, 10, 0, "boot") + "\n" + life::core_exit_line(21'000, 0xC0000005ul, 20'000, -1, false) + "\n" + life::core_start_line(22'000, false, 11, 0, "core_exit") + "\n";
+  const auto summary = summarize(parse(crash));
+  EXPECT_EQ(summary.unexpected, 1);
+  EXPECT_EQ(summary.short_life, 1);
+  state_t state;
+  const auto first = judge_restart(summary, state, 1'000'000);
+  ASSERT_TRUE(first.has_value());
+  EXPECT_FALSE(first->severe);
+  EXPECT_EQ(first->cause, "unexpected_exit");
+  EXPECT_EQ(first->exit_code, "0xC0000005");
+  const auto second = judge_restart(summary, state, 1'000'000 + 3600'000);  // an hour later, the next start of the host
+  ASSERT_TRUE(second.has_value());
+  EXPECT_TRUE(second->severe);
+  EXPECT_EQ(second->cause, "repeat");
+  // a day and more later the earlier one does not count
+  state_t old;
+  old.restart_anomalies_ms = { 1000 };
+  EXPECT_FALSE(judge_restart(summary, old, 1000 + RESTART_REPEAT_WINDOW_MS + 10'000)->severe);
+  // two in one report are a repeat at once
+  const auto two = summarize(parse(crash + life::core_exit_line(40'000, 1, 18'000, -1, false) + "\n"));
+  state_t fresh;
+  EXPECT_TRUE(judge_restart(two, fresh, 5'000'000)->severe);
+}
+
+TEST(ServiceLifecycle, TheFileOfAHostileServiceGivesNothingItDoesNotKnow) {
+  std::string text = "not json\n";
+  text += R"({"v":2,"kind":"svc_start","t":1000})" "\n";
+  text += R"({"v":1,"kind":"core_start","t":1000,"how":"stolen","pid":1})" "\n";
+  text += R"({"v":1,"kind":"core_exit","t":-5,"exit":0})" "\n";
+  text += R"({"v":1,"kind":"formatc","t":1000})" "\n";
+  text += R"({"v":1,"kind":"core_exit","t":1000,"exit":99999999999999,"life_ms":5,"requested":false})" "\n";
+  text += R"({"v":1,"kind":"core_start","t":1000,"how":"adopted","pid":7,"age_ms":5,"cause":"C:\\Users\\Eve"})" "\n";
+  const auto records = parse(text);
+  ASSERT_EQ(records.size(), 2u);
+  EXPECT_EQ(records[1].cause, "boot");  // a cause that is not one of the words becomes the default
+  std::string big;
+  for (int i = 0; i < 5000; ++i) big += life::core_exit_line(1000 + i, 1, 100, -1, false) + "\n";
+  EXPECT_LE(parse(big).size(), MAX_LINES);
+}
+
+TEST(ServiceLifecycle, TheWriterKeepsTheFileSmall) {
+  const auto dir = fs::temp_directory_path() / ("svc-life-" + new_uuid_v4());
+  const auto file = dir / "config" / "telemetry" / "service_lifecycle.jsonl";
+  for (int i = 0; i < 2000; ++i) ASSERT_TRUE(life::append(file, life::core_exit_line(1000 + i, 1, 100, -1, false)));
+  EXPECT_LE(fs::file_size(file), life::MAX_FILE_BYTES);
+  std::string first;
+  {
+    std::ifstream in { file };  // closed before the folder is removed: Windows cannot delete a file that is open
+    std::getline(in, first);
+  }
+  EXPECT_FALSE(parse(first + "\n").empty());  // the cut leaves whole lines
+  std::error_code ec;
+  fs::remove_all(dir, ec);
+}
+
+TEST(StartupReady, SlowAboveTheLimitOrWellAboveTheInstallsOwnUsualTimeAndSevereWhenItRepeats) {
+  state_t state;
+  const std::int64_t day = 24LL * 3600 * 1000;
+  std::int64_t now = 10 * day;
+  // the install usually takes about 4 s: five readings make its own baseline
+  for (int i = 0; i < 5; ++i) EXPECT_FALSE(judge_ready("svc_core", 3'800 + i * 100, state, now += 1000).has_value());
+  EXPECT_NEAR(*usual_ms(state.svc_core_ms), 4'000, 1);
+  EXPECT_FALSE(judge_ready("svc_core", 9'000, state, now += 1000).has_value());  // twice as long, not three times, and under the limit
+  const auto above_baseline = judge_ready("svc_core", 13'500, state, now += 1000);
+  ASSERT_TRUE(above_baseline.has_value());
+  EXPECT_EQ(above_baseline->code, "XP_SLOW_READY");
+  EXPECT_EQ(above_baseline->cause, "above_baseline");
+  EXPECT_FALSE(above_baseline->severe);  // the first one
+  const auto above_limit = judge_ready("svc_core", 34'000, state, now += day);  // the sequence of the bug: 34 s
+  ASSERT_TRUE(above_limit.has_value());
+  EXPECT_EQ(above_limit->cause, "above_limit");
+  EXPECT_TRUE(above_limit->severe);  // the second within a week
+  EXPECT_EQ(above_limit->which, "svc_core");
+  EXPECT_TRUE(telemetry::shape_event(telemetry::kind_e::experience, "host_anomaly", anomaly_props(*above_limit), 1000).has_value());
+  EXPECT_TRUE(telemetry::shape_event(telemetry::kind_e::experience, "startup_timing", timing_props("svc_core", 34'000, true), 1000).has_value());
+  // a week later the repeat is forgotten
+  EXPECT_FALSE(judge_ready("page", 16'000, state, now += 8 * day)->severe);
+  // the page and the service have baselines of their own
+  EXPECT_EQ(state.page_ms.size(), 1u);
+  // without five readings there is no baseline: only the limit counts
+  state_t young;
+  EXPECT_FALSE(judge_ready("page", 14'900, young, 1000).has_value());
+  EXPECT_TRUE(judge_ready("page", 15'100, young, 2000).has_value());
+}
+
+TEST(StartupReady, TheStateSurvivesARestartAndADamagedStateIsNoState) {
+  state_t state;
+  state.restart_anomalies_ms = { 1000, 2000 };
+  state.slow_ms = { 3000 };
+  state.svc_core_ms = { 4000, 4100 };
+  state.page_ms = { 900 };
+  const auto back = state_from_json(state_to_json(state));
+  EXPECT_EQ(back.restart_anomalies_ms, state.restart_anomalies_ms);
+  EXPECT_EQ(back.svc_core_ms.size(), 2u);
+  EXPECT_TRUE(state_from_json(json { { "v", 9 } }).svc_core_ms.empty());
+  EXPECT_TRUE(state_from_json(json::parse("[1]")).slow_ms.empty());
+  EXPECT_TRUE(state_from_json(json { { "v", 1 }, { "slow", json::array({ "x", -5, 1e30 }) } }).slow_ms.empty());
+}
+
+TEST(StartupReady, TheTimeFromTheStartOfTheServiceCountsOnlyForTheCoreItLaunched) {
+  const auto records = parse(bug_sequence(1'800'000'000'000));
+  // the core of pid 5151 was launched by the service after the exit; the one of pid 4242 was adopted
+  EXPECT_EQ(svc_to_ready_ms(records, 5151, 1'800'000'034'000), 34'000);
+  EXPECT_FALSE(svc_to_ready_ms(records, 4242, 1'800'000'034'000).has_value());
+  EXPECT_FALSE(svc_to_ready_ms(records, 777, 1'800'000'034'000).has_value());  // a core a person started
+  EXPECT_FALSE(svc_to_ready_ms(records, 5151, 1'700'000'000'000).has_value());  // a ready time before the start
+  EXPECT_FALSE(svc_to_ready_ms(records, 5151, 1'800'000'000'000 + 4'000'000).has_value());  // over an hour: not a start-up
+  EXPECT_FALSE(svc_to_ready_ms(records, 0, 1'800'000'034'000).has_value());
+}
+
+TEST(StartupReady, TheEventsOfTheServiceAndTheStartupHaveTheirPriorities) {
+  auto event = [](const char *name, json props) {
+    event_t e;
+    e.kind = kind_e::experience;
+    e.name = name;
+    e.props = std::move(props);
+    return e;
+  };
+  EXPECT_EQ(event_priority(event("host_anomaly", json { { "code", "XP_SLOW_READY" }, { "severe", true } })), 0);
+  EXPECT_EQ(event_priority(event("host_anomaly", json { { "code", "XP_SLOW_READY" }, { "severe", false } })), 1);
+  EXPECT_EQ(event_priority(event("svc_lifecycle", json::object())), 1);
+  EXPECT_EQ(event_priority(event("startup_timing", json::object())), 1);
+  EXPECT_TRUE(client_may_send("web", kind_e::experience, "page_ready"));
+  EXPECT_FALSE(client_may_send("web", kind_e::experience, "host_anomaly"));
+  EXPECT_FALSE(client_may_send("panel", kind_e::experience, "startup_timing"));
+  EXPECT_FALSE(client_may_send("web", kind_e::experience, "svc_lifecycle"));
+  // a code that is not ours drops the anomaly
+  EXPECT_FALSE(shape_event(kind_e::experience, "host_anomaly", json { { "code", "XP_MADE_UP" } }, 1000).has_value());
+  EXPECT_FALSE(shape_event(kind_e::experience, "startup_timing", json { { "which", "page" } }, 1000).has_value());  // the time is required
+  EXPECT_TRUE(shape_event(kind_e::experience, "page_ready", json { { "page", "home" }, { "ms", 5200 } }, 1000).has_value());
 }

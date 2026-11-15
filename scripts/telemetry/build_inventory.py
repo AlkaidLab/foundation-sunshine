@@ -44,6 +44,12 @@ A = {
     "e_install_result": (HOST, "src/telemetry/events.cpp", r'kind_e::error, "install_result", \{'),
     "e_install_summary": (HOST, "src/telemetry/events.cpp", r'kind_e::error, "install_summary", \{'),
     "e_device_facts": (HOST, "src/telemetry/events.cpp", r'kind_e::experience, "device_facts", \{'),
+    "e_svc_lifecycle": (HOST, "src/telemetry/events.cpp", r'kind_e::experience, "svc_lifecycle", \{'),
+    "e_startup_timing": (HOST, "src/telemetry/events.cpp", r'kind_e::experience, "startup_timing", \{'),
+    "e_host_anomaly": (HOST, "src/telemetry/events.cpp", r'kind_e::experience, "host_anomaly", \{'),
+    "svcjudge": (HOST, "src/telemetry/service_lifecycle.cpp", r"^  judge_restart\("),
+    "svcwrite": (HOST, "tools/sunshinesvc_lifecycle.h", r"core_exit_line\("),
+    "w_svc": (WORKER, "src/svclife.ts", r"export function planSvcWrites"),
     "journal": (HOST, "src/telemetry/install_journal.cpp", r"^  events_from_journal\("),
     "facts": (HOST, "src/telemetry/telemetry.cpp", r"facts_from\(const system_info::snapshot_t"),
     "js_perf": (M3E, "src/telemetry/pagePerf.js", r"export function createPagePerf"),
@@ -206,6 +212,15 @@ row("experience", "page_vitals: page, visits, lcp, inp, cls, loaf, fpaint, tti, 
 row("experience", "api_latency: endpoint, calls, errors, timeouts, lat", "`config`, `40`, `0`, `0`, `lat [0,40,0,0,0,0,0,0]`", "@e_api_latency @js_perf",
     "How quickly does the host answer the calls of the panel and the Web UI? Per endpoint word: calls, failed calls, timeouts and eight latency buckets.", "No: a word for the endpoint (the path without numbers and ids, at most two segments) and counts.", "Digits-only and long segments are dropped from the word, the telemetry calls are not timed, a call the page cancelled is not counted @js_perf @e_api_latency.", "counters: 400 days.",
     dict(field="api_latency：endpoint、calls、errors、timeouts、lat", purpose="主机回答面板和 Web 界面的请求有多快？按接口名：请求数、失败数、超时数和八个耗时区间。", risk="否：接口名（路径去掉数字和 id，至多两段）和计数。", scrub="只有数字的段和过长的段不进名字，上报本身不计时，页面自己取消的请求不计 @js_perf @e_api_latency。", keep="计数 400 天。"))
+row("experience", "svc_lifecycle: launched, adopted, extras_ended, exits, unexpected, soon_after_adopt, restarts_core_exit, restarts_session", "`1`, `1`, `1`, `1`, `1`, `1`, `1`, `0`", "@e_svc_lifecycle @svcwrite",
+    "What did the service do with the core? The service leaves a small file of facts (how a core was started or taken over, an extra one ended, a core that ended without being asked, how long it had run); the host reads it at its next start, reports the counts and deletes it.", "No: counts. The file has numbers and fixed words only, no path and no name.", "Counts clamped, the file is read line by line against word lists and ranges @e_svc_lifecycle @svcjudge.", "counters: 400 days.",
+    dict(field="svc_lifecycle：launched、adopted、extras_ended、exits、unexpected、soon_after_adopt、restarts_core_exit、restarts_session", purpose="服务对核心做了什么？服务留下一个小文件（核心怎样被启动或接管、多余的核心被结束、没有被要求就结束的核心、运行了多久）；主机下次启动时读出、上报计数并删除。", risk="否：计数。文件里只有数字和固定词，没有路径和名称。", scrub="计数限幅，文件逐行按词表和范围检查 @e_svc_lifecycle @svcjudge。", keep="计数 400 天。"))
+row("experience", "startup_timing: which, ms, slow", "`svc_core`, `34000`, `true`", "@e_startup_timing @svcjudge",
+    "How long does it take until the interface can be used? From the start of the service to the web interface of the core (svc_core), and from the opening of a page to its ready mark (page); slow is above 15 s or well above this install's own usual time.", "No: a fixed word, a number of milliseconds and a yes or no. The install's usual times are kept in its own folder.", "Fixed words, clamped numbers @e_startup_timing.", "counters: 400 days.",
+    dict(field="startup_timing：which、ms、slow", purpose="打开到可以使用要多久？从服务启动到核心的网页界面可用（svc_core），以及页面从打开到可用的标记（page）；慢指超过 15 秒或远高于这台电脑自己的常见耗时。", risk="否：固定词、毫秒数和是否。这台电脑自己的常见耗时保存在它自己的文件夹里。", scrub="固定词，数字限幅 @e_startup_timing。", keep="计数 400 天。"))
+row("experience", "host_anomaly: code, severe, value, threshold, count, cause, which, exit_code", "`XP_SVC_CORE_RESTART`, `true`, `30000`, `120000`, `1`, `soon_after_adopt`", "@e_host_anomaly @svcjudge",
+    "Did the core end without being asked and start again (XP_SVC_CORE_RESTART), especially soon after the service took over a running core? Was the start slow (XP_SLOW_READY)? It repeats or follows an adoption: priority 0.", "No: one of two fixed codes, numbers and fixed words; the exit code is a number.", "Fixed codes and causes, clamped numbers @e_host_anomaly.", "counters: 400 days.",
+    dict(field="host_anomaly：code、severe、value、threshold、count、cause、which、exit_code", purpose="核心有没有在没被要求时结束并重新启动（XP_SVC_CORE_RESTART），尤其是服务接管一个已在运行的核心后不久？启动是否很慢（XP_SLOW_READY）？重复出现或发生在接管之后：优先级 0。", risk="否：两个固定代码之一、数字和固定词；退出码是一个数字。", scrub="固定代码和原因，数字限幅 @e_host_anomaly。", keep="计数 400 天。"))
 row("experience", "device_facts: gpu_vendor, gpu_driver, os_build, displays, refresh_hz, nic_link, nic_speed", "`nvidia`, `32.0.15.6094`, `26100`, `2`, `144`, `wired`, `2_5g`", "@e_device_facts @facts",
     "Which kind of computer has a problem? Coarse facts, sent only when they change (at most once a day): graphics vendor and driver version, the Windows build, the number of screens, the highest refresh rate, and whether the network adapter in use is wired or wireless and its speed class.", "No: vendor words, version numbers, counts and classes. No device name, no serial number, no address.", "Only the vendor word and the digits of the driver and the build are kept; the refresh rate is snapped to a standard rate and the adapter speed to a class @facts @e_device_facts.", "counters: 400 days.",
     dict(field="device_facts：gpu_vendor、gpu_driver、os_build、displays、refresh_hz、nic_link、nic_speed", purpose="哪类电脑出了问题？粗略的配置，只在变化时发送（每天至多一次）：显卡厂商和驱动版本、Windows 版本号、屏幕数量、最高刷新率、正在使用的网卡是有线还是无线及其速度档。", risk="否：厂商词、版本号、数量和档位。没有设备名、序列号和地址。", scrub="只保留厂商词、驱动和系统版本号里的数字；刷新率取最接近的标准值，网卡速度只取档位 @facts @e_device_facts。", keep="计数 400 天。"))
@@ -255,13 +270,14 @@ STORE = [
     ("D1 alerts, counters, report_state", "alert key, title, body, labels, issue number; rate-limit counters; day of the daily report", "@w_alerts @w_counters", "De-duplicate alerts and reports; stay inside the free tier.", "7 to 400 days"),
     ("D1 page_hist, page_total, page_installs, api_hist, api_total", "day, product, version, metric or endpoint, bucket, n (counts per fixed bucket); totals of visits and frames; the install hashes that sent a page summary on a day", "@w_page", "Page smoothness and the speed of the host's answers per version.", "400 days (the install hashes 35 days)"),
     ("D1 install_daily, install_installs, install_runs, update_daily, device_dim", "day, product, version, phase, component, step, result, class, exit code, upgrade-from version, n; the install hashes that met a failure (35 days); runs by outcome; update steps by source and stage; counts per device fact value", "@w_install", "See install and update failures per version, component and exit code; which computers have problems.", "400 days (the install hashes 35 days)"),
+    ("D1 svc_total, ready_hist, hostanom_daily, hostanom_installs", "day, product, version, counts of what the service did with the core, time-to-ready buckets by kind, anomaly counts by code, the install hashes that met an anomaly (35 days)", "@w_svc", "See per version whether the core ends by itself, whether starts got slower, and which installs met XP_SVC_CORE_RESTART or XP_SLOW_READY.", "400 days (the install hashes 35 days)"),
     ("Analytics Engine", "index1 = product; blobs: kind, name, version, channel, os, country, gpu_vendor, arch, install_hash and the string props; doubles: the numeric props", "@w_ae", "Fast aggregates of high-volume points.", "Cloudflare's retention"),
     ("GitHub issues (private repo)", "daily report (totals and top lists), crash alerts (signature, product, version, exception, module, frames), user reports (category, product, version, channel, os, os_version, country, where, install hash prefix of 8 characters, time, message in a code fence)", "@w_report @w_alertsrc @w_userrep", "The maintainers read reports and alerts.", "until closed"),
 ]
 STORE_ZH = [
-    "每天的用户数。", "每次运行一条摘要：时长、串流数、错误数、无崩溃比例。", "分位数、错误排行、页面出内容耗时。", "崩溃分组、标出新的崩溃。", "各版本崩溃率。", "已保存转储的索引（转储本身是 release 资产）。", "提醒和报告去重；不超出免费额度。", "按版本看页面是否流畅、主机回答是否变慢。", "按版本、组件、步骤和退出码看安装与更新的失败；哪类电脑有问题。", "高频数据点的快速汇总。", "负责人阅读报告和提醒。",
+    "每天的用户数。", "每次运行一条摘要：时长、串流数、错误数、无崩溃比例。", "分位数、错误排行、页面出内容耗时。", "崩溃分组、标出新的崩溃。", "各版本崩溃率。", "已保存转储的索引（转储本身是 release 资产）。", "提醒和报告去重；不超出免费额度。", "按版本看页面是否流畅、主机回答是否变慢。", "按版本、组件、步骤和退出码看安装与更新的失败；哪类电脑有问题。", "按版本看核心是否自己结束、启动是否变慢，哪些安装遇到了异常。", "高频数据点的快速汇总。", "负责人阅读报告和提醒。",
 ]
-STORE_KEEP_ZH = ["400 天", "400 天", "180 天", "400 天", "400 天", "与转储一起 90 天", "7 到 400 天", "400 天（安装哈希 35 天）", "400 天（安装哈希 35 天）", "Cloudflare 的保留期", "直到关闭"]
+STORE_KEEP_ZH = ["400 天", "400 天", "180 天", "400 天", "400 天", "与转储一起 90 天", "7 到 400 天", "400 天（安装哈希 35 天）", "400 天（安装哈希 35 天）", "400 天（安装哈希 35 天）", "Cloudflare 的保留期", "直到关闭"]
 
 NEVER_EN = [
     "Screen content, audio, keystrokes, files, clipboard content.",

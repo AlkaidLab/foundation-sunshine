@@ -15,6 +15,9 @@
 #include <sstream>
 #include <thread>
 
+#ifndef _WIN32
+  #include <unistd.h>
+#endif
 #ifdef _WIN32
   #ifndef NOMINMAX
     #define NOMINMAX
@@ -33,6 +36,7 @@
 #include "error_report.h"
 #include "device_facts.h"
 #include "install_journal.h"
+#include "service_lifecycle.h"
 #include "service.h"
 #include "src/build_info.h"
 #include "src/crash/crash.h"
@@ -279,6 +283,76 @@ namespace telemetry {
       }
     }
 
+    // ---- the service and the start-up (service_lifecycle.h) ----------------------------------------------------------------------------------------------------
+
+    /// When the host could serve its web interface (set by host_ready): the end of the start-up time the service measures.
+    std::atomic<std::int64_t> ready_wall_ms { 0 };
+    std::mutex lifecycle_state_mutex;
+
+    service_lifecycle::state_t
+    load_lifecycle_state(const std::filesystem::path &dir) {
+      try {
+        return service_lifecycle::state_from_json(json::parse(read_small_file(dir / "service_state.json", 8192), nullptr, false));
+      }
+      catch (...) {
+        return {};
+      }
+    }
+
+    void
+    save_lifecycle_state(const std::filesystem::path &dir, const service_lifecycle::state_t &state) {
+      try {
+        std::filesystem::create_directories(dir);
+        std::ofstream out { dir / "service_state.json", std::ios::binary | std::ios::trunc };
+        out << service_lifecycle::state_to_json(state).dump();
+      }
+      catch (...) {
+      }
+    }
+
+    long long
+    own_pid() {
+#ifdef _WIN32
+      return static_cast<long long>(GetCurrentProcessId());
+#else
+      return static_cast<long long>(getpid());
+#endif
+    }
+
+    /// One start-up time (service to core, or page) is judged against the limit and the install's own usual time: always a startup_timing, and a host_anomaly when it is slow.
+    void
+    judge_and_emit_ready(service_t &service, const std::filesystem::path &dir, std::string_view which, std::int64_t ms) {
+      std::lock_guard lock { lifecycle_state_mutex };
+      auto state = load_lifecycle_state(dir);
+      const auto anomaly = service_lifecycle::judge_ready(which, ms, state, wall_ms());
+      service.emit(kind_e::experience, "startup_timing", service_lifecycle::timing_props(which, ms, anomaly.has_value()));
+      if (anomaly) service.emit(kind_e::experience, "host_anomaly", service_lifecycle::anomaly_props(*anomaly));
+      save_lifecycle_state(dir, state);
+    }
+
+    /// What sunshinesvc left (tools/sunshinesvc_lifecycle.h): the counts, an XP_SVC_CORE_RESTART when the core ended without being asked, and the time from the start of the service to the web interface of this core.
+    void
+    report_service_lifecycle(service_t &service, const std::filesystem::path &dir) {
+      try {
+        const auto path = dir / "service_lifecycle.jsonl";
+        std::error_code ec;
+        if (!std::filesystem::exists(path, ec)) return;
+        const auto records = service_lifecycle::parse(read_small_file(path, service_lifecycle::MAX_BYTES));
+        std::filesystem::remove(path, ec);
+        const auto summary = service_lifecycle::summarize(records);
+        if (summary.launched + summary.adopted + summary.extras_ended + summary.exits > 0) service.emit(kind_e::experience, "svc_lifecycle", service_lifecycle::summary_props(summary));
+        {
+          std::lock_guard lock { lifecycle_state_mutex };
+          auto state = load_lifecycle_state(dir);
+          if (const auto anomaly = service_lifecycle::judge_restart(summary, state, wall_ms())) service.emit(kind_e::experience, "host_anomaly", service_lifecycle::anomaly_props(*anomaly));
+          save_lifecycle_state(dir, state);
+        }
+        if (const auto ms = service_lifecycle::svc_to_ready_ms(records, own_pid(), ready_wall_ms.load())) judge_and_emit_ready(service, dir, "svc_core", *ms);
+      }
+      catch (...) {
+      }
+    }
+
     class log_backend_t: public bl::sinks::basic_sink_backend<bl::sinks::synchronized_feeding> {
     public:
       void
@@ -373,6 +447,8 @@ namespace telemetry {
         auto last_tick = clock_t::now();
         auto last_config = clock_t::now();
         bool context_done = false;
+        bool lifecycle_done = false;
+        const auto run_started = clock_t::now();
         while (true) {
           {
             std::unique_lock lock { mutex_ };
@@ -388,6 +464,11 @@ namespace telemetry {
             fill_context();
             // what the installer left for this start (install_journal.h)
             report_install_journal(*service_, platf::appdata() / "telemetry");
+          }
+          // what the service left, once the web interface is up (or a minute after the start when it never says so)
+          if (!lifecycle_done && context_done && (ready_wall_ms.load() != 0 || now - run_started > 60s)) {
+            lifecycle_done = true;
+            report_service_lifecycle(*service_, platf::appdata() / "telemetry");
           }
           if (now - last_config >= CONFIG_RECHECK) {
             last_config = now;
@@ -549,6 +630,7 @@ namespace telemetry {
     const bool cold = std::chrono::duration_cast<std::chrono::minutes>(clock_t::now().time_since_epoch()).count() < 10;
     service->emit(kind_e::usage, "app_start", json { { "cold", cold }, { "start_ms", start_ms } });
     service->emit(kind_e::experience, "startup", json { { "host_start_ms", start_ms } });
+    ready_wall_ms.store(wall_ms());
   }
 
   void
@@ -664,7 +746,21 @@ namespace telemetry {
   std::size_t
   ingest(std::string_view product, std::string_view version, const json &events) {
     const auto service = current();
-    return service ? service->ingest(product, version, events) : 0;
+    if (!service) return 0;
+    // page_ready is the page telling when it was ready: the host judges it (limit and the install's own usual time) and sends startup_timing and, when slow, host_anomaly; the raw event is not passed on
+    if (events.is_array() && (product == "panel"sv || product == "web"sv)) {
+      json rest = json::array();
+      for (const auto &e : events) {
+        if (e.is_object() && e.value("name", "") == "page_ready") {
+          const auto shaped = shape_event(kind_e::experience, "page_ready", e.contains("props") ? e["props"] : json::object(), wall_ms());
+          if (shaped && shaped->props.value("page", "") == "home" && usage_enabled()) judge_and_emit_ready(*service, platf::appdata() / "telemetry", "page", shaped->props.value("ms", 0));
+          continue;
+        }
+        rest.push_back(e);
+      }
+      return service->ingest(product, version, rest);
+    }
+    return service->ingest(product, version, events);
   }
 
   int
