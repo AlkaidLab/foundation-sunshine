@@ -5,9 +5,12 @@
 #pragma once
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace sunshinesvc {
 
@@ -35,13 +38,69 @@ namespace sunshinesvc {
 
   enum class core_start_e {
     launch,
-    adopt,  ///< one Sunshine.exe of this install is already running; do not start a second
+    adopt,  ///< one Sunshine.exe of this install is already running and healthy; do not start a second
   };
 
+  /// @param adoptable A running core that has finished starting and is not shutting down.
   inline core_start_e
-  core_start_decision(bool already_running) {
-    return already_running ? core_start_e::adopt : core_start_e::launch;
+  core_start_decision(bool adoptable) {
+    return adoptable ? core_start_e::adopt : core_start_e::launch;
   }
+
+  enum class core_event_e {
+    ready,  ///< the core finished starting
+    stopping,  ///< the core began to shut down
+  };
+
+  /// Per-process event a core publishes in the global namespace for the service, which runs in another session
+  /// ([dr-ms-kernel-namespaces-20261109]). The process id is in the name: the events of a core that is gone vanish
+  /// with it, and the cores of one install never share a state.
+  inline std::wstring
+  core_event_name(core_event_e kind, unsigned long process_id) {
+    std::wstring name = L"Global\\FoundationSunshineCore";
+    name += kind == core_event_e::ready ? L"Ready-" : L"Stopping-";
+    name += std::to_wstring(process_id);
+    return name;
+  }
+
+  struct core_state_t {
+    bool ready = false;
+    bool stopping = false;
+  };
+
+  enum class core_action_e {
+    keep,  ///< supervise this core
+    wait_for_exit,  ///< it is shutting down: let it finish, then end it if it does not
+    end,  ///< not known to be healthy (still starting, or a build that publishes no state): end it and start a fresh one
+  };
+
+  struct core_plan_t {
+    std::optional<std::size_t> keep;
+    std::vector<core_action_e> actions;  ///< one per core, in the order given
+  };
+
+  /// A core is adopted only when it says it is ready and is not stopping. An adopted core that is already in its
+  /// shutdown exits on its own a moment later and leaves the service without a core, so it is never adopted; a core that
+  /// publishes nothing (an older build) cannot be told from one in trouble and is replaced.
+  inline core_plan_t
+  plan_cores(const std::vector<core_state_t> &cores) {
+    core_plan_t plan;
+    for (std::size_t index = 0; index < cores.size(); ++index) {
+      if (!plan.keep && cores[index].ready && !cores[index].stopping) {
+        plan.keep = index;
+        plan.actions.push_back(core_action_e::keep);
+      }
+      else {
+        plan.actions.push_back(cores[index].stopping ? core_action_e::wait_for_exit : core_action_e::end);
+      }
+    }
+    return plan;
+  }
+
+  /// A core in its shutdown has this long (its own deadline is 10 s) before it is ended.
+  inline constexpr std::uint32_t core_stopping_wait_ms = 12000;
+  /// A core asked to end gets this long to do so before it is ended.
+  inline constexpr std::uint32_t core_end_wait_ms = 5000;
 
   /// ASCII case and slash folding for an image path. Trailing separators are dropped so
   /// `C:\App\Sunshine.exe` and `c:/App/Sunshine.exe` name the same file.

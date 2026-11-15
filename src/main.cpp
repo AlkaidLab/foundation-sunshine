@@ -313,6 +313,10 @@ main(int argc, char *argv[]) {
     std::cerr << "Another Sunshine from this installation is already running; this process exits without opening ports or probing encoders." << std::endl;
     return 0;
   }
+  // The service adopts a running core only when this says it is ready and not stopping.
+  if (config::sunshine.cmd.name.empty()) {
+    lifetime::core_state_open();
+  }
 #endif
 
   auto log_deinit_guard = logging::init(config::sunshine.min_log_level, config::sunshine.log_file, config::sunshine.restore_log);
@@ -682,6 +686,7 @@ main(int argc, char *argv[]) {
 #endif
 
   telemetry::host_ready();
+  lifetime::core_state_ready();
   crash_startup_busy.reset();
   mainThreadLoop(shutdown_event);
 
