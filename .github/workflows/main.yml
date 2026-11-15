@@ -4,10 +4,11 @@ name: Build and Release
 # out of this workflow prevents a release created below from starting another
 # build-and-release cycle.
 #
-# Pull requests are routed by what they change (job `changes`): documentation-only, workflow-only and Web UI-only
+# Pull requests and pushes are routed by what they change (job `changes`): documentation-only, workflow-only and Web UI-only
 # changes skip the Windows build, and `ci-gate` is the single check to require. A skipped *job* reports success, while a
 # workflow skipped by `on.paths` leaves its checks pending and blocks the merge (GitHub Docs, "Troubleshooting required
-# status checks"), so this workflow has no `on.paths`. Pushes to master and manual runs always run everything.
+# status checks"), so this workflow has no `on.paths`. A push to master that changes only documentation builds and publishes
+# nothing; a code push builds, packages and publishes as before. Manual runs always run everything.
 on:
   pull_request:
     branches:
@@ -34,9 +35,11 @@ on:
           - 'ON'
           - 'OFF'
 
+# Only a newer push to the same pull request supersedes a running check. Every push to master has its own group and always
+# finishes: a later documentation-only push builds nothing, so it must not cancel the build that publishes the commit before.
 concurrency:
-  group: '${{ github.workflow }}-${{ github.ref }}'
-  cancel-in-progress: true
+  group: '${{ github.workflow }}-${{ github.event_name == ''push'' && github.sha || github.ref }}'
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # The pinned LizardByte release action still composes a Node.js 20 action.
 # Run it on Node.js 24 ahead of GitHub's fall 2026 Node.js 20 removal.
@@ -68,8 +71,10 @@ jobs:
           sparse-checkout: scripts/ci
           persist-credentials: false
 
-      # The file list comes from the REST API: no history to fetch and no third-party action in the path. Anything but a
-      # pull request, and a change too large to list, is treated as "everything changed".
+      # The file list comes from the REST API (a pull request's files, or the compare of a push): no history to fetch and
+      # no third-party action in the path. Manual runs, a push that creates a branch, a call that fails and a change too
+      # large to list are treated as "everything changed" (scripts/ci/changed-files.py). A push to master that changes only
+      # documentation therefore builds nothing and publishes no release.
       - name: Classify the change
         id: classify
         env:
@@ -77,14 +82,11 @@ jobs:
           EVENT: ${{ github.event_name }}
           REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
         run: |
           set -euo pipefail
-          : > files.txt
-          if [[ "$EVENT" == pull_request ]]; then
-            # A renamed file counts under both names: moving a packaging file out of its directory must still run its checks.
-            gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files" --jq '.[] | .filename, (.previous_filename // empty)' > files.txt
-            if [[ $(wc -l < files.txt) -ge 3000 ]]; then : > files.txt; fi
-          fi
+          python3 scripts/ci/changed-files.py --event "$EVENT" --repo "$REPO" --pr "$PR_NUMBER" --before "$BEFORE" --after "$AFTER" > files.txt
           python3 scripts/ci/classify-changes.py --output "$GITHUB_OUTPUT" < files.txt
 
   docs-check:
