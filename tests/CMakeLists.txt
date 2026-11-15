@@ -17,7 +17,9 @@ if (WIN32)
     target_link_libraries(mat_live_host_tests PRIVATE OpenSSL::Crypto bcrypt advapi32 shell32 ole32 uuid)
     set_target_properties(mat_live_host_tests PROPERTIES CXX_STANDARD 23 LINK_SEARCH_START_STATIC 1)
     add_test(NAME mat_live_host_tests COMMAND mat_live_host_tests)
-    set_tests_properties(mat_live_host_tests PROPERTIES TIMEOUT 15)
+    # The test measures real-time deadlines ("Live MAT missed deadline; no burst recovery"), which a runner loaded with three other
+    # test processes under `ctest -j` misses now and then. It runs alone; it takes under three seconds.
+    set_tests_properties(mat_live_host_tests PROPERTIES TIMEOUT 15 RUN_SERIAL TRUE)
     # Reuse the dependency's authentication/tamper cases without duplicating them.
     add_executable(mat_live_crypto_tests
             ${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/tests/MatLiveTest.c

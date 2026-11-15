@@ -2,6 +2,7 @@
  * @file tests/unit/test_ds5_tuning.cpp
  * @brief ALK-DS5T/1 descriptor, validation and persistence tests.
  */
+#include "test_temp_paths.h"
 #include "src/ds5/tuning_profile.h"
 #include "src/ds5/tuning_runtime.h"
 #include "src/ds5/tuning_trigger.h"
@@ -26,16 +27,14 @@ namespace {
 
     void
     SetUp() override {
-      directory = std::filesystem::temp_directory_path() /
-                  ("ds5-tuning-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+      directory = test_support::unique_temp_path("ds5-tuning");
       std::filesystem::create_directories(directory);
       profile_path = directory / "dualsense_tuning.json";
     }
 
     void
     TearDown() override {
-      std::error_code ignored;
-      std::filesystem::remove_all(directory, ignored);
+      test_support::remove_tree_quiet(directory);
       auto &state = ds5::tuning::runtime::state();
       state.active_controllers.store(0, std::memory_order_release);
       state.rumble_enabled.store(true);

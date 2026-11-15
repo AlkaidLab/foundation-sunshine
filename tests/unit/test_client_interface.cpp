@@ -2,6 +2,7 @@
  * @file tests/unit/test_client_interface.cpp
  * @brief Contract and compatibility tests for the specialised client facts.
  */
+#include "test_temp_paths.h"
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -163,8 +164,7 @@ TEST(ClientInterface, TheListTagChangesWithThePlayHistoryAndStaysANumber) {
 
 TEST(ClientInterface, ApplicationListTagFollowsTheArtFilesAndOnlyThem) {
   namespace fs = std::filesystem;
-  const auto dir = fs::temp_directory_path() / "client-interface-art-tag";
-  fs::remove_all(dir);
+  const auto dir = test_support::unique_temp_path("client-interface-art-tag");
   fs::create_directories(dir);
   const auto hero = dir / "hero.jpg";
   EXPECT_EQ(client_interface::art_file_fact("hero", hero), "") << "no file: no fact";
@@ -197,5 +197,5 @@ TEST(ClientInterface, ApplicationListTagFollowsTheArtFilesAndOnlyThem) {
   EXPECT_NE(client_interface::art_file_fact("hero", hero), changed);
   // another list tag (an app was added) moves the combined tag with the art unchanged
   EXPECT_NE(client_interface::combine_art_etag("12346", apps_art), tag);
-  fs::remove_all(dir);
+  test_support::remove_tree_quiet(dir);
 }

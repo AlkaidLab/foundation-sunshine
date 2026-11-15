@@ -1,3 +1,4 @@
+#include "test_temp_paths.h"
 #include <cstdint>
 #include "src/app_scan/scanner.h"
 #include <fstream>
@@ -11,14 +12,11 @@ namespace {
   public:
     TempTree() {
       std::error_code ec;
-      root = fs::temp_directory_path(ec);
-      if (ec) root = fs::path("/scratch");
-      root /= "app-scan-lib-" + std::to_string(reinterpret_cast<std::uintptr_t>(this));
+      root = test_support::unique_temp_path("app-scan-lib");
       fs::create_directories(root, ec);
     }
     ~TempTree() {
-      std::error_code ec;
-      fs::remove_all(root, ec);
+      test_support::remove_tree_quiet(root);
     }
     const fs::path &
     path() const { return root; }

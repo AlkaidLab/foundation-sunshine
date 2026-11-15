@@ -2,6 +2,7 @@
  * @file tests/unit/test_crash.cpp
  * @brief Crash reports: signature, meta JSON, consent, the pending folder and the upload against a local mock (telemetry v1 /v1/crash).
  */
+#include "test_temp_paths.h"
 #include <src/crash/crash.h>
 #include <src/crash/crash_core.h>
 
@@ -50,7 +51,7 @@ namespace {
 
   fs::path
   scratch(const char *name) {
-    auto dir = fs::temp_directory_path() / (std::string("crash-test-") + name + "-" + crash::new_uuid_v4().substr(0, 8));
+    auto dir = test_support::unique_temp_path(std::string("crash-test-") + name);
     fs::create_directories(dir);
     return dir;
   }
@@ -359,7 +360,7 @@ TEST(CrashPending, KeepsTheNewestTwentyAndDropsStrayDumps) {
   EXPECT_EQ(left.front().meta.filename(), "r105.json");  // the five oldest went, with their dumps
   EXPECT_FALSE(fs::exists(dir / "r100.dmp"));
   EXPECT_TRUE(fs::exists(dir / "note.txt"));
-  fs::remove_all(config);
+  test_support::remove_tree_quiet(config);
 }
 
 TEST(CrashPending, OldReportsAgeOut) {
@@ -371,7 +372,7 @@ TEST(CrashPending, OldReportsAgeOut) {
   EXPECT_EQ(crash::trim_pending(dir), 1u);
   EXPECT_FALSE(fs::exists(dir / "old.json"));
   EXPECT_TRUE(fs::exists(dir / "new.json"));
-  fs::remove_all(config);
+  test_support::remove_tree_quiet(config);
 }
 
 TEST(CrashIdentity, CreatedOnceAndStable) {
@@ -382,7 +383,7 @@ TEST(CrashIdentity, CreatedOnceAndStable) {
   EXPECT_EQ(id[14], '4');  // version 4
   EXPECT_EQ(crash::read_or_create_install_id(config, true), id);
   EXPECT_EQ(crash::read_or_create_install_id(config, false), id);
-  fs::remove_all(config);
+  test_support::remove_tree_quiet(config);
 }
 
 TEST(CrashUpload, DeliversMetaAndDumpAndDeletesAfter2xx) {
@@ -401,7 +402,7 @@ TEST(CrashUpload, DeliversMetaAndDumpAndDeletesAfter2xx) {
   EXPECT_NE(with_dump.find("\"install_id\":\"11111111-2222-4333-8444-555555555555\""), std::string::npos);  // added at upload
   EXPECT_NE(with_dump.find("\"signature\""), std::string::npos);
   EXPECT_EQ(server.bodies[1].find("name=\"dump\""), std::string::npos);
-  fs::remove_all(config);
+  test_support::remove_tree_quiet(config);
 }
 
 TEST(CrashUpload, KeepsWhatTheServerCouldNotTakeYet) {
@@ -416,7 +417,7 @@ TEST(CrashUpload, KeepsWhatTheServerCouldNotTakeYet) {
   server.status = 204;
   EXPECT_EQ(crash::upload_pending_once(config, server.url(), "x"), 1);
   EXPECT_TRUE(crash::list_pending(crash::pending_dir(config)).empty());
-  fs::remove_all(config);
+  test_support::remove_tree_quiet(config);
 }
 
 TEST(CrashUpload, ARateLimitOrStorageFailureStopsThePassAndKeepsEverything) {
@@ -431,7 +432,7 @@ TEST(CrashUpload, ARateLimitOrStorageFailureStopsThePassAndKeepsEverything) {
     EXPECT_EQ(server.bodies.size(), 1u) << status;  // the second report was not tried
     EXPECT_EQ(crash::list_pending(crash::pending_dir(config)).size(), 2u) << status;
   }
-  fs::remove_all(config);
+  test_support::remove_tree_quiet(config);
 }
 
 TEST(CrashUpload, DropsWhatTheServerRejectsForGood) {
@@ -441,7 +442,7 @@ TEST(CrashUpload, DropsWhatTheServerRejectsForGood) {
   server.status = 400;
   EXPECT_EQ(crash::upload_pending_once(config, server.url(), "x"), 1);
   EXPECT_TRUE(crash::list_pending(crash::pending_dir(config)).empty());
-  fs::remove_all(config);
+  test_support::remove_tree_quiet(config);
 }
 
 TEST(CrashUpload, NoServerLeavesTheReportAndReturnsAtOnce) {
@@ -451,7 +452,7 @@ TEST(CrashUpload, NoServerLeavesTheReportAndReturnsAtOnce) {
   EXPECT_EQ(crash::upload_pending_once(config, "http://127.0.0.1:1", "x"), 0);  // nothing listens on port 1
   EXPECT_LT(std::chrono::steady_clock::now() - began, std::chrono::seconds(12));
   EXPECT_EQ(crash::list_pending(crash::pending_dir(config)).size(), 1u);
-  fs::remove_all(config);
+  test_support::remove_tree_quiet(config);
 }
 
 TEST(CrashUpload, SkipsAReportThatIsStillBeingWritten) {
@@ -468,7 +469,7 @@ TEST(CrashUpload, SkipsAReportThatIsStillBeingWritten) {
   EXPECT_EQ(crash::upload_pending_once(config, server.url(), "x"), 0);
   EXPECT_TRUE(server.bodies.empty());
   EXPECT_EQ(crash::list_pending(dir).size(), 1u);
-  fs::remove_all(config);
+  test_support::remove_tree_quiet(config);
 }
 
 TEST(CrashUpload, CapsWhatIsOnDisk) {
@@ -478,7 +479,7 @@ TEST(CrashUpload, CapsWhatIsOnDisk) {
   for (int i = 0; i < 24; ++i) write_pending(config, "r" + std::to_string(100 + i), false);
   crash::upload_pending_once(config, server.url(), "x");
   EXPECT_EQ(crash::list_pending(crash::pending_dir(config)).size(), crash::max_pending);
-  fs::remove_all(config);
+  test_support::remove_tree_quiet(config);
 }
 
 TEST(CrashUpload, UnreadableMetaIsDiscarded) {
@@ -490,7 +491,7 @@ TEST(CrashUpload, UnreadableMetaIsDiscarded) {
   EXPECT_EQ(crash::upload_pending_once(config, server.url(), "x"), 0);
   EXPECT_FALSE(fs::exists(dir / "bad.json"));
   EXPECT_TRUE(server.bodies.empty());
-  fs::remove_all(config);
+  test_support::remove_tree_quiet(config);
 }
 
 namespace {
@@ -559,7 +560,7 @@ TEST(CrashUpload, TheDumpThatLeavesHasNoAccountName) {
   EXPECT_EQ(server.bodies[0].find("mallory"), std::string::npos);
   EXPECT_EQ(server.bodies[0].find(wide("mallory")), std::string::npos);
   EXPECT_NE(server.bodies[0].find("\\Users\\xxxxxxx\\AppData"), std::string::npos);
-  fs::remove_all(config);
+  test_support::remove_tree_quiet(config);
 }
 
 TEST(CrashMeta, ModulesCarryNoDirectoryEvenWhenOneIsPassedIn) {
