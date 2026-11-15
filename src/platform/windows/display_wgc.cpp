@@ -785,7 +785,18 @@ namespace platf::dxgi {
     }
     catch (winrt::hresult_error &e) {
       BOOST_LOG(warning) << "Failed to read the captured frame: [0x"sv << util::hex(e.code()).to_string_view() << ']';
-      return capture_e::error;
+      // A lost or reset device and a frame that was closed under the capture are recoverable: the capture starts over. Anything else stops it.
+      switch (static_cast<std::int32_t>(e.code())) {
+        case static_cast<std::int32_t>(DXGI_ERROR_DEVICE_REMOVED):
+        case static_cast<std::int32_t>(DXGI_ERROR_DEVICE_RESET):
+        case static_cast<std::int32_t>(DXGI_ERROR_DEVICE_HUNG):
+        case static_cast<std::int32_t>(DXGI_ERROR_DRIVER_INTERNAL_ERROR):
+        case static_cast<std::int32_t>(DXGI_ERROR_ACCESS_LOST):
+        case static_cast<std::int32_t>(0x80000013L):  // RO_E_CLOSED
+          return capture_e::reinit;
+        default:
+          return capture_e::error;
+      }
     }
     return capture_e::ok;
   }
