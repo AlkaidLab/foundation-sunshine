@@ -4,6 +4,18 @@ add_compile_definitions(SUNSHINE_PLATFORM="windows")
 
 enable_language(RC)
 
+# Crash-dump symbols (scripts/ci/make-symbols.py). The MinGW toolchain makes no PDB, so a crash report could name only
+# module+offset. -g1 keeps function names and line tables in the build tree (the packages are stripped), and --build-id
+# gives every module a CodeView GUID that survives stripping and signing: the key between a minidump and its symbols.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    foreach(lang C CXX)
+        string(APPEND CMAKE_${lang}_FLAGS_RELEASE " -g1")
+    endforeach()
+    foreach(kind EXE SHARED MODULE)
+        string(APPEND CMAKE_${kind}_LINKER_FLAGS " -Wl,--build-id")
+    endforeach()
+endif()
+
 # gcc complains about misleading indentation in some mingw includes
 list(APPEND SUNSHINE_COMPILE_OPTIONS -Wno-misleading-indentation)
 

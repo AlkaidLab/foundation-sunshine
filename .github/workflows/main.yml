@@ -811,12 +811,29 @@ jobs:
         run: |
           echo "C:\Program Files (x86)\Inno Setup 6" >> $env:GITHUB_PATH
 
+      # Breakpad symbols for crash dumps (scripts/ci/make-symbols.py). dump_syms is Mozilla's release asset, pinned by SHA-256.
+      - name: Fetch dump_syms
+        if: needs.changes.outputs.package == 'true'
+        shell: pwsh
+        env:
+          DUMP_SYMS_VERSION: 2.3.9
+          DUMP_SYMS_SHA256: bdf48486220708808a3e00aec78856ee1cce096189d47a1e2cb1c635f93bacc7
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'dump_syms.zip'
+          Invoke-WebRequest -Uri "https://github.com/mozilla/dump_syms/releases/download/v$env:DUMP_SYMS_VERSION/dump_syms-x86_64-pc-windows-msvc.zip" -OutFile $zip
+          if ((Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:DUMP_SYMS_SHA256) { throw 'dump_syms: unexpected SHA-256' }
+          Expand-Archive -LiteralPath $zip -DestinationPath (Join-Path $env:RUNNER_TEMP 'dump_syms')
+          $exe = Get-ChildItem -Path (Join-Path $env:RUNNER_TEMP 'dump_syms') -Filter dump_syms.exe -Recurse | Select-Object -First 1
+          "DUMP_SYMS=$($exe.FullName)" >> $env:GITHUB_ENV
+
       - name: Package Windows
         if: needs.changes.outputs.package == 'true'
         shell: msys2 {0}
         env:
           RTX_VIDEO_ADAPTER_BUILT: ${{ steps.configure_windows.outputs.rtx_hdr }}
           RTX_VIDEO_ADAPTER_REQUIRED: ${{ github.repository == 'AlkaidLab/foundation-sunshine' && github.event_name != 'pull_request' && github.ref == 'refs/heads/master' }}
+          SYMBOLS_TAG: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
+          SYMBOLS_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -o pipefail
           mkdir -p artifacts
@@ -830,6 +847,13 @@ jobs:
           # Package the Inno Setup installer and portable ZIP.
           # Install into the staging directory first.
           cmake --install . --prefix ./inno_staging
+
+          # Symbols from the unstripped modules, then strip what ships: the packages carry no DWARF, the symbol zip does.
+          # The key is the build-id GUID of each module, which stripping and signing keep.
+          python3 ../scripts/ci/make-symbols.py --staging ./inno_staging --build . --dump-syms "$(cygpath -u "$DUMP_SYMS")" \
+            --output ../artifacts/sunshine-symbols.zip --tag "$SYMBOLS_TAG" --commit "$SYMBOLS_COMMIT" --repository "$GITHUB_REPOSITORY" \
+            --source-root "$(cygpath -m "$GITHUB_WORKSPACE")" --source-root "$GITHUB_WORKSPACE" \
+            --require sunshine.exe --require sunshinesvc.exe --strip-staged
           if [[ "$RTX_VIDEO_ADAPTER_BUILT" == "true" ]]; then
             test -f ./inno_staging/tools/hdr_enhanced/nvidia_rtx_video/foundation_rtx_video_adapter.dll
             test ! -e ./inno_staging/msvcp140.dll
@@ -863,7 +887,7 @@ jobs:
           fi
           
           # Generate the portable ZIP.
-          cpack -G ZIP --config ./CPackConfig.cmake --verbose
+          cpack -G ZIP --config ./CPackConfig.cmake -D CPACK_STRIP_FILES=ON --verbose
           cmake -E tar tf ./cpack_artifacts/Sunshine.zip | tr '\\' '/' > portable-files.txt
           if [[ "$RTX_VIDEO_ADAPTER_BUILT" == "true" ]]; then
             grep -F "Sunshine/tools/hdr_enhanced/nvidia_rtx_video/foundation_rtx_video_adapter.dll" portable-files.txt
@@ -922,6 +946,7 @@ jobs:
           INSTALLER_NAME="Sunshine.${NEWTAG}.WindowsInstaller.exe"
           mv artifacts/sunshine-windows-installer.exe "artifacts/${INSTALLER_NAME}"
           mv artifacts/sunshine-windows-portable.zip "artifacts/Sunshine.${NEWTAG}.Portable-x64.zip"
+          mv artifacts/sunshine-symbols.zip "artifacts/Sunshine.${NEWTAG}.Symbols-x64.zip"
 
           # Legacy Control Panel builds treat any release asset containing
           # "Windows" as a full installer. Keep that marker exclusive to the
@@ -950,6 +975,7 @@ jobs:
           path: |
             artifacts/Sunshine.*.WindowsInstaller.exe
             artifacts/Sunshine.*.Portable-x64.zip
+            artifacts/Sunshine.*.Symbols-x64.zip
             artifacts/SHA256SUMS.txt
             artifacts/checksums.json
           if-no-files-found: error
