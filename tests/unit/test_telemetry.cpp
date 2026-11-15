@@ -1109,6 +1109,13 @@ TEST(TelemetryScrubVectors, EveryVectorHoldsForTheTextAndTheLogScrubber) {
 
 TEST(TelemetryEnvelope, VersionOsAndLocaleAreCheckedBeforeTheyLeave) {
   EXPECT_EQ(safe_version("2026.1112.0.杂鱼"), "2026.1112.0.杂鱼");
+  // the host's own version is a release tag with a leading "v": it must reach the envelope, an empty one is refused by the endpoint (400 bad_envelope) and every host event with it
+  EXPECT_EQ(safe_version("v2026.1114.173055.杂鱼"), "v2026.1114.173055.杂鱼");
+  EXPECT_EQ(safe_version("V1.2.3"), "V1.2.3");
+  EXPECT_EQ(safe_version("v"), "");
+  EXPECT_EQ(safe_version("vEvaSky"), "");
+  EXPECT_EQ(safe_version("vv1.0"), "");
+  EXPECT_EQ(safe_version("version1"), "");
   EXPECT_EQ(safe_version("C:\\Users\\Eve\\x"), "");
   EXPECT_EQ(safe_version("EvaSky"), "");  // a name is not a version
   EXPECT_EQ(safe_version("CUsersEvaSky"), "");
@@ -1136,6 +1143,24 @@ TEST(TelemetryEnvelope, VersionOsAndLocaleAreCheckedBeforeTheyLeave) {
   EXPECT_EQ(batches[0]["os_version"], "");
   EXPECT_EQ(batches[0]["locale"], "");
   EXPECT_EQ(batches[0].dump().find("Eve"), std::string::npos);
+}
+
+TEST(TelemetryEnvelope, TheReleaseTagOfTheHostReachesTheEnvelope) {
+  // a release build reports PROJECT_VER as "v2026.1114.173055.杂鱼"; the endpoint answers an envelope without a version with 400 and drops the whole batch
+  context_t context;
+  context.install_id = "11111111-2222-4333-8444-555555555555";
+  context.session_id = "66666666-7777-4888-8999-aaaaaaaaaaaa";
+  context.version = "v2026.1114.173055.杂鱼";
+  context.channel = "beta";
+  context.os = "windows";
+  event_t e;
+  e.name = "app_start";
+  e.kind = kind_e::usage;
+  e.props = json { { "cold", false }, { "start_ms", 1200 } };
+  const auto batches = build_envelopes(context, "host", { e });
+  ASSERT_EQ(batches.size(), 1u);
+  EXPECT_EQ(batches[0]["version"], "v2026.1114.173055.杂鱼");
+  EXPECT_EQ(batches[0]["events"].size(), 1u);
 }
 
 TEST(TelemetryEnvelope, TheFieldsOfABatchAreWhatThePersonSees) {

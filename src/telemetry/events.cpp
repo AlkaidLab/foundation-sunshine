@@ -587,8 +587,10 @@ namespace telemetry {
   std::string
   safe_version(std::string_view version) {
     // letters, digits and . _ + - space; a byte of a multi-byte letter (the product's own suffix is Chinese)
-    // a version starts with a digit ("2026.1112.0.杂鱼"); a word, a name or a path is not one
-    if (version.empty() || version.size() > 64 || !std::isdigit(static_cast<unsigned char>(version[0]))) return {};
+    // a version starts with a digit, or with a single "v" and then a digit: the release tag the host carries is "v2026.1114.173055.杂鱼" (the same string as in a crash report);
+    // a word, a name or a path is not one
+    const auto first_digit = version.size() > 1 && (version[0] == 'v' || version[0] == 'V') ? 1U : 0U;
+    if (version.empty() || version.size() > 64 || !std::isdigit(static_cast<unsigned char>(version[first_digit]))) return {};
     const auto ok = [](unsigned char c) { return std::isalnum(c) || c == '.' || c == '_' || c == '+' || c == '-' || c == ' ' || c >= 0x80; };
     return all_of_chars(version, ok) ? std::string { version } : std::string {};
   }

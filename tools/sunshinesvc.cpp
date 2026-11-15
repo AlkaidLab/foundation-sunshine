@@ -964,5 +964,10 @@ main(int argc, char *argv[]) {
   }
 
   // Trigger our ServiceMain()
-  return StartServiceCtrlDispatcher(service_table);
+  const auto dispatcher_result = StartServiceCtrlDispatcher(service_table);
+
+  // The crash watchdog is a static std::thread: left running, its destructor finds it joinable while the CRT tears the
+  // process down and calls std::terminate, so every normal stop of the service would end as an abort report.
+  crash::stop_watchdog();
+  return dispatcher_result;
 }

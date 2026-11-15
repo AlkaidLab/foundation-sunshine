@@ -668,6 +668,11 @@ if (WIN32)
     set_target_properties(sunshinesvc_log_unit_tests PROPERTIES CXX_STANDARD 23)
     set_target_properties(sunshinesvc_log_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
     add_test(NAME sunshinesvc_log_unit_tests COMMAND sunshinesvc_log_unit_tests)
+
+    # Started outside the service manager the wrapper installs the crash handler, fails to reach the manager and returns from main. A joinable
+    # crash watchdog thread turned that return into std::terminate: exit code 3 and an abort report on every normal stop of the service.
+    add_test(NAME sunshinesvc_clean_exit COMMAND sunshinesvc)
+    set_tests_properties(sunshinesvc_clean_exit PROPERTIES TIMEOUT 60)
 endif ()
 
 add_executable(video_probe_unit_tests

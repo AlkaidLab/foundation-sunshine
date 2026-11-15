@@ -72,6 +72,4 @@ namespace crash {
   current_conf_text();
   std::filesystem::path
   current_config_dir();
-  void
-  stop_watchdog();
 }  // namespace crash
