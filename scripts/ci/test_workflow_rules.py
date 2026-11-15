@@ -100,10 +100,7 @@ class ShardTest(unittest.TestCase):
         self.assertIn("no compiler cache entry to restore", plan["run"])
         self.assertEqual(self.jobs["shard"]["if"], "needs.cold_plan.outputs.sharded == 'true'")
 
-    def test_the_build_job_runs_when_the_shards_are_skipped_but_not_when_they_fail(self):
-        condition = self.jobs["build_win"]["if"]
-        self.assertIn("!cancelled()", condition)
-        self.assertIn("contains(fromJSON('[\"success\",\"skipped\"]'), needs.shard.result)", condition)
+    def test_the_build_job_waits_for_the_shards(self):
         self.assertIn("shard", self.jobs["build_win"]["needs"])
 
     def test_the_shards_configure_like_the_build_job_apart_from_what_only_orders_the_objects(self):
@@ -132,6 +129,42 @@ class ShardTest(unittest.TestCase):
         self.assertIn("Test the adapter build configuration without the SDK", [x.get("name") for x in self.jobs["adapter_config"]["steps"]])
         self.assertIn("setup_ui", build["needs"])
         self.assertEqual(step(build, "Installer setup UI")["with"]["name"], "foundation-setup-ui")
+
+    def test_the_build_job_also_runs_after_a_failed_shard_but_not_after_a_cancelled_one(self):
+        condition = self.jobs["build_win"]["if"]
+        self.assertIn("!cancelled()", condition)
+        self.assertIn("contains(fromJSON('[\"success\",\"skipped\",\"failure\"]'), needs.shard.result)", condition)
+        for name in ("Merge the shard compiler caches", "Unpack the shard compiler caches"):
+            self.assertIn("needs.shard.result == 'failure'", step(self.jobs["build_win"], name)["if"])
+        # whatever the shards compiled before they died still reaches build_win
+        for name in ("Pack the compiler cache", "Upload the compiler cache", "Upload the ninja log"):
+            self.assertEqual(step(self.jobs["shard"], name)["if"], "${{ !cancelled() }}")
+
+    def gate(self, **results):
+        """Run the ci-gate script with the given job results (jobs not named succeed)."""
+        script = step(self.jobs["ci-gate"], "Every needed job succeeded or was deliberately skipped")["run"]
+        code = script.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+        code = "\n".join(line[10:] if line.startswith(" " * 10) else line for line in code.splitlines())
+        needs = {name: {"result": "success"} for name in self.jobs["ci-gate"]["needs"]}
+        for name, result in results.items():
+            needs[name] = {"result": result}
+        import json
+        import os
+        import subprocess
+        import sys
+        env = dict(os.environ, NEEDS=json.dumps(needs))
+        return subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True).returncode
+
+    def test_the_gate_forgives_a_failed_shard_only_when_the_build_job_succeeded(self):
+        self.assertEqual(self.gate(), 0)
+        self.assertEqual(self.gate(shard="skipped", cold_plan="success"), 0)
+        self.assertEqual(self.gate(shard="failure"), 0)
+        self.assertEqual(self.gate(shard="failure", build_win="failure"), 1)
+        self.assertEqual(self.gate(shard="failure", build_win="skipped"), 1)
+        self.assertEqual(self.gate(shard="failure", build_win="cancelled"), 1)
+        self.assertEqual(self.gate(shard="cancelled"), 1)
+        self.assertEqual(self.gate(build_win="failure"), 1)
+        self.assertEqual(self.gate(adapter_config="failure"), 1)
 
 
 if __name__ == "__main__":

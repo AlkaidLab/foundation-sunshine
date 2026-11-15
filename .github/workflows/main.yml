@@ -572,27 +572,35 @@ jobs:
         run: scripts/ci/shard-compile.sh ${{ matrix.index }} ${{ strategy.job-total }}
 
       # The cache is a few MB per shard: ccache already compresses its entries, so the artifact is stored as one tar without further compression.
+      # Also after a failed compile: the objects compiled so far are valid, and build_win merges whatever caches exist.
       - name: Pack the compiler cache
+        if: ${{ !cancelled() }}
         shell: bash
-        run: tar -C .ccache -cf ccache-shard.tar .
+        run: |
+          mkdir -p .ccache
+          tar -C .ccache -cf ccache-shard.tar .
 
       - name: Upload the compiler cache
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
           name: ccache-shard-${{ matrix.index }}
           path: ccache-shard.tar
           compression-level: 0
           retention-days: 1
+          if-no-files-found: ignore
 
       # The durations of this build are the weights of the next split: scripts/ci/merge-shard-weights.py turns the logs of one run into
       # scripts/ci/shard-weights.ninja_log.
       - name: Upload the ninja log
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
           name: ninja-log-shard-${{ matrix.index }}
           path: ninja_log.shard
           compression-level: 1
           retention-days: 14
+          if-no-files-found: ignore
 
   # The claim refs only matter while the shards run.
   shard_cleanup:
@@ -762,8 +770,10 @@ jobs:
   build_win:
     name: Windows
     needs: [changes, setup_release, cold_plan, shard, setup_ui]
-    # `shard` is skipped on the warm path; a skipped dependency would skip this job too without the explicit status checks.
-    if: ${{ !cancelled() && needs.changes.outputs.build == 'true' && needs.setup_release.result == 'success' && needs.cold_plan.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.shard.result) && contains(fromJSON('["success","skipped"]'), needs.setup_ui.result) }}
+    # `shard` is skipped on the warm path, and a skipped dependency would skip this job too without the explicit status checks.
+    # It also runs after a failed shard (a dead runner, a lost chunk): the caches that were uploaded are merged and this job compiles
+    # what is missing, so a shard failure costs time instead of the run. A real compile error fails here as well; ci-gate decides.
+    if: ${{ !cancelled() && needs.changes.outputs.build == 'true' && needs.setup_release.result == 'success' && needs.cold_plan.result == 'success' && contains(fromJSON('["success","skipped","failure"]'), needs.shard.result) && contains(fromJSON('["success","skipped"]'), needs.setup_ui.result) }}
     permissions:
       contents: read
       actions: write  # prune stale ccache entries after saving this run's
@@ -893,19 +903,24 @@ jobs:
       # Cold build on parallel runners: the compiler caches of the shards are merged into one directory (ccache entries are
       # content-addressed, so merging is copying), and the build below finds ~100% of the objects.
       - name: Merge the shard compiler caches
-        if: needs.shard.result == 'success'
+        if: needs.shard.result == 'success' || needs.shard.result == 'failure'
+        continue-on-error: true  # after a failed shard there may be fewer caches, or none
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: ccache-shard-*
           path: shard-caches
 
       - name: Unpack the shard compiler caches
-        if: needs.shard.result == 'success'
+        if: needs.shard.result == 'success' || needs.shard.result == 'failure'
         shell: bash
         run: |
           mkdir -p .ccache
+          shopt -s nullglob
           for tarball in shard-caches/*/ccache-shard.tar; do tar -C .ccache -xf "$tarball"; done
           du -sh .ccache | tee -a "$GITHUB_STEP_SUMMARY"
+          if [[ '${{ needs.shard.result }}' == failure ]]; then
+            echo "::warning title=A compile shard failed::this job compiles the objects that no shard cache has"
+          fi
 
       # The Panel bundle and the WebView2 bootstrapper, pinned by tag/sha256 in scripts/installer-inputs.json and verified (never
       # "latest"). The pinned Panel commit must be the committed submodule. A manual run with gui_run_id replaces the GUI below.
@@ -1363,6 +1378,11 @@ jobs:
           bad = {name: job["result"] for name, job in needs.items() if job["result"] not in ("success", "skipped")}
           for name, job in needs.items():
               print(f"{name}: {job['result']}")
+          # A compile shard may die (a runner lost, a chunk nobody built): build_win then compiled what was missing and still built,
+          # tested and packaged the commit, so the run is green with a warning. If build_win did not succeed, the shard failure stands.
+          if bad.get("shard") == "failure" and needs["build_win"]["result"] == "success":
+              del bad["shard"]
+              print("::warning title=CI gate::a compile shard failed; the Windows job recovered the missing objects")
           if needs["changes"]["result"] != "success":
               bad["changes"] = needs["changes"]["result"]
           if bad:

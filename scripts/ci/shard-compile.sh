@@ -7,8 +7,11 @@
 # refs/claims/<run>-<attempt>/<k> (POST /git/refs): creating a ref that exists fails with 422, so exactly one runner wins each
 # chunk (GitHub REST, "Create a reference"). The ref needs the contents:write token of a trusted event; with a read-only token
 # (a pull request from a fork), or when the API does not answer, the runner falls back to a fixed split of the chunks over the
-# runners (snake order over the chunk weights). A chunk that nobody builds, because its runner died, is compiled by the
-# final job, which only costs time.
+# runners (snake order over the chunk weights). A 422 only means "taken" when a GET of the ref confirms it exists; any other
+# 422 (a refused name, a rejected sha) leaves the chunk to the fixed split. A chunk that nobody builds, because its runner died,
+# is compiled by the final job, which only costs time (build_win runs when a shard failed, and merges the caches that exist).
+# A runner that finds every chunk taken builds nothing and still succeeds: that is the normal outcome for a runner that starts
+# late next to fast peers.
 # The token is kept out of the environment of everything this script starts: ninja runs CMake- and source-controlled commands.
 set -euo pipefail
 index="$1"; count="$2"
@@ -27,6 +30,14 @@ claim() {
     -d "{\"ref\":\"refs/claims/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/$1\",\"sha\":\"$GITHUB_SHA\"}" 2>/dev/null)" || code=000
   echo "$code"
 }
+# 0 when refs/claims/<run>-<attempt>/$1 exists (HTTP 200), 1 when it does not or the answer is unclear.
+claimed_by_someone() {
+  local code
+  code="$(printf 'header = "Authorization: Bearer %s"\n' "$token" | curl -sS -K - -o /dev/null -w '%{http_code}' --max-time 20 \
+    -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' \
+    "https://api.github.com/repos/$GITHUB_REPOSITORY/git/ref/claims/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}/$1" 2>/dev/null)" || code=000
+  [[ "$code" == 200 ]]
+}
 # Fixed split: chunk k goes to runner k mod count, the order reversed on every second round (heaviest first, then lightest first).
 owns_static() {
   local round=$(( $1 / count )) pos=$(( $1 % count ))
@@ -40,7 +51,9 @@ for (( k = 0; k < chunks; k++ )); do
     code="$(claim "$k")"
     case "$code" in
       201) ;;
-      422) continue ;;
+      422) if claimed_by_someone "$k"; then continue; fi
+           echo "claim of chunk $k answered 422 but the ref does not exist: leaving the chunk to the fixed split"
+           owns_static "$k" || continue ;;
       *) echo "claim of chunk $k answered $code: falling back to the fixed split"; dynamic=false
          owns_static "$k" || continue ;;
     esac
@@ -55,5 +68,6 @@ for (( k = 0; k < chunks; k++ )); do
   echo "chunk $k: $secs s"
 done
 echo "runner $index built $mine of $chunks chunks in $built_seconds s (wall $(( $(date +%s) - started )) s, claims: $([[ "$dynamic" == true ]] && echo dynamic || echo fixed))" | tee -a "${GITHUB_STEP_SUMMARY:-/dev/null}"
-cp build/.ninja_log ninja_log.shard
-ccache --show-stats
+# A runner that claimed nothing has no build log; the upload step expects the file, so leave an empty one.
+if [[ -f build/.ninja_log ]]; then cp build/.ninja_log ninja_log.shard; else : > ninja_log.shard; fi
+ccache --show-stats || true
