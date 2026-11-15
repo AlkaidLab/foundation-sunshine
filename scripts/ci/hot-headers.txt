@@ -1,0 +1,9 @@
+# headers whose object files make up at least 30% of the compile time of 1006 object files (hot-headers.py generate)
+src/logging_severity.h	46
+src/config.h	46
+src/nvenc/nvenc_config.h	46
+src/stat_trackers.h	44
+src/logging.h	44
+src/utility.h	42
+src/thread_safe.h	35
+src/platform/frame_contract.h	31

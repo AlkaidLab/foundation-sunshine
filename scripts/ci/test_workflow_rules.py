@@ -97,7 +97,7 @@ class ShardTest(unittest.TestCase):
     def test_the_nightly_build_and_a_missing_cache_start_the_shards_and_the_warm_path_does_not(self):
         plan = step(self.jobs["cold_plan"], "Decide")
         self.assertIn('[[ "$EVENT" == schedule ]]', plan["run"])
-        self.assertIn("no compiler cache entry to restore", plan["run"])
+        self.assertIn("no compiler cache entry for configuration", plan["run"])
         self.assertEqual(self.jobs["shard"]["if"], "needs.cold_plan.outputs.sharded == 'true'")
 
     def test_the_build_job_waits_for_the_shards(self):
@@ -106,10 +106,55 @@ class ShardTest(unittest.TestCase):
     def test_the_shards_configure_like_the_build_job_apart_from_what_only_orders_the_objects(self):
         shard = step(self.jobs["shard"], "Configure Windows")
         build = step(self.jobs["build_win"], "Configure Windows")
-        for name in ("BUILD_VERSION", "SUNSHINE_RTX_HDR", "SUNSHINE_BUILD_COMMIT", "DRIVER_DEPS_REQUIRED"):
+        for name in ("BUILD_VERSION", "SUNSHINE_RTX_HDR", "SUNSHINE_BUILD_COMMIT"):
             self.assertEqual(shard["env"][name], build["env"][name], name)
         self.assertIn("-DSUNSHINE_BUILD_MAT_CAPTURE=OFF", shard["run"])
         self.assertNotIn("MAT_CAPTURE", build["run"])
+
+    def test_the_shard_configure_has_no_token_and_uses_the_pinned_gui_inputs(self):
+        shard = self.jobs["shard"]
+        configure = step(shard, "Configure Windows")
+        self.assertNotIn("GITHUB_TOKEN", configure["env"])
+        self.assertNotIn("DRIVER_DEPS_REQUIRED", configure["env"])  # always OFF: the shards never package
+        self.assertIn("-DDRIVER_DEPS_REQUIRED=OFF", configure["run"])
+        self.assertIn("-DFETCH_GUI=OFF", configure["run"])
+        self.assertIn('-DGUI_DIR=$GUI_BUNDLE_DIR', configure["run"])
+        self.assertIn('${GITHUB_TOKEN:-}', configure["run"])  # fails the step if a token ever reaches it
+        names = [x.get("name") for x in shard["steps"]]
+        self.assertLess(names.index("Fetch pinned installer inputs"), names.index("Configure Windows"))
+        self.assertIn("./scripts/fetch-installer-inputs.ps1 -Destination $dest", step(shard, "Fetch pinned installer inputs")["run"])
+
+    def test_the_write_token_is_in_the_claim_step_and_nowhere_else_of_the_shard_job(self):
+        import json
+        for x in self.jobs["shard"]["steps"]:
+            text = json.dumps(x)
+            if x.get("name") == "Compile object files, chunk by chunk":
+                self.assertIn("github.token", text)
+            else:
+                self.assertNotIn("github.token", text, x.get("name"))
+                self.assertNotIn("secrets.GITHUB_TOKEN", text, x.get("name"))
+
+    def test_the_cache_key_carries_the_configuration_fingerprint(self):
+        fingerprint = "${{ needs.cold_plan.outputs.fingerprint }}"
+        build = self.jobs["build_win"]
+        restore = step(build, "Cache compiler objects")["with"]
+        self.assertEqual(restore["key"], f"ccache-windows-{fingerprint}-${{{{ github.run_id }}}}")
+        self.assertEqual(restore["restore-keys"].strip(), f"ccache-windows-{fingerprint}-")
+        save = step(build, "Save compiler cache")["with"]
+        self.assertEqual(save["key"], restore["key"])
+        adapter = step(self.jobs["adapter_config"], "Cache compiler objects")["with"]
+        self.assertEqual(adapter["restore-keys"].strip(), f"ccache-windows-{fingerprint}-")
+        self.assertIn("cold_plan", self.jobs["adapter_config"]["needs"])
+        prune = step(build, "Prune stale compiler cache entries")["run"]
+        self.assertIn(f'$current = "ccache-windows-{fingerprint}-${{{{ github.run_id }}}}"', prune)
+        self.assertIn("^ccache-windows-[0-9a-f]{12}-[0-9]+$", prune)
+
+    def test_the_cold_plan_shards_on_a_missing_fingerprint_cache_or_a_widely_included_header(self):
+        plan = step(self.jobs["cold_plan"], "Decide")
+        self.assertIn("key=ccache-windows-$FINGERPRINT-", plan["run"])
+        self.assertIn("no compiler cache entry for configuration", plan["run"])
+        self.assertIn("hot-headers.py check scripts/ci/hot-headers.txt", plan["run"])
+        self.assertEqual(self.jobs["cold_plan"]["outputs"]["fingerprint"], "${{ steps.fingerprint.outputs.fingerprint }}")
 
     def test_the_gate_waits_for_the_shards_and_the_jobs_that_ran_inside_the_build_job_before(self):
         for name in ("shard", "adapter_config", "setup_ui"):

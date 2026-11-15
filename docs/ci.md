@@ -37,9 +37,9 @@
 
 ## 编译缓存
 
-- 保存：只有 master 的 push、手动运行和夜间构建保存（`ccache-windows-<run id>`，只保留最新一份，旧的由修剪步骤删除）。
+- 保存：只有 master 的 push、手动运行和夜间构建保存（`ccache-windows-<配置指纹>-<run id>`，只保留最新一份，旧的由修剪步骤删除）。
   在自己 fork 里运行这个工作流时，fork 里的 pull request 也保存，因为 fork 没有上游 master 的缓存可恢复。
-- 恢复：除夜间构建外，所有运行按前缀 `ccache-windows-` 恢复最近的一份；夜间构建不恢复，从冷缓存开始编译
+- 恢复：除夜间构建外，所有运行按前缀 `ccache-windows-<配置指纹>-` 恢复最近的一份（指纹见下一节）；夜间构建不恢复，从冷缓存开始编译
   （在 8 个并行运行器上，见下一节）。
   pull request 能读到 master 的缓存
   （缓存按分支隔离，pull request 可读基础分支，源 `github-docs-dependency-caching-20261115`）。
@@ -50,9 +50,20 @@
 
 ## 冷构建：在并行运行器上编译
 
-单个 4 vCPU 运行器从零编译要 27–37 分钟。夜间构建、勾选了 `sharded_cold` 的手动运行、以及仓库里**没有任何可恢复的编译缓存**时
-（`cold_plan` 作业用 `actions/caches` 接口查默认分支和当前引用），`shard` 作业先把编译拆到 8 个运行器上；
-有缓存可恢复的运行（热路径）不启动它们，耗时与之前相同。
+单个 4 vCPU 运行器从零编译要 27–37 分钟。下面三种情况，`shard` 作业先把编译拆到 8 个运行器上；有缓存可恢复的运行（热路径）不启动它们，
+耗时与之前相同：
+
+1. 夜间构建，或勾选了 `sharded_cold` 的手动运行。
+2. **没有当前配置指纹的编译缓存**。缓存存在不等于能命中：改了编译参数（例如加 `-g1`）、换了编译器或系统头文件的版本之后，旧缓存几乎全部未命中，
+   这一次运行实际是冷构建。`scripts/ci/config-fingerprint.py` 把决定命中的输入哈希成 12 位十六进制：`CMakeLists.txt` 和 `cmake/` 下设置参数、
+   定义、目标、依赖的模块（不含 `packaging`、`sources` 和 Linux/macOS/Unix 专用文件）、`build_win` 里 `Configure Windows` 步骤、工具链 action，
+   以及 MSYS2 UCRT64 仓库数据库里编译器、CRT、头文件和各依赖包的版本（Windows 作业用 pacman 装的就是这些最新版本）。指纹是缓存键的一部分，
+   所以运行只会恢复同一配置的缓存，`cold_plan` 也只看这个前缀（默认分支和当前引用）；MSYS2 仓库取不到时指纹不含包版本，不会让运行失败。
+3. 这次改动碰到**被广泛包含的头文件**。`scripts/ci/hot-headers.txt` 列出对应目标文件的编译时间占全部编译时间 30% 以上的仓库头文件
+   （依据 `ninja -t deps` 和 `shard-weights.ninja_log` 的耗时；`src/thread_safe.h` 占 35%，`src/config.h`、`src/logging.h` 约 45%）。
+   改动其中一个，这些目标文件全部未命中，约等于冷编译三分之一以上，超过分片的开销。只有能列出改动文件的事件（pull request、push）才会触发这条规则，
+   手动运行和新分支不会。夜间构建把新的测量结果作为工件 `ci-measurements`（`hot-headers.txt` 和 `shard-weights.ninja_log`）保留 14 天，
+   头文件包含关系变化后用它更新两个文件。
 
 流程：每个分片按与 `Configure Windows` 相同的参数配置，然后一块一块地领取目标文件：`scripts/ci/shard-targets.py` 按
 `scripts/ci/shard-weights.ninja_log` 里的耗时把目标文件切成 32 块等重的块（最重的先领），运行器通过创建 git 引用
