@@ -431,7 +431,10 @@ namespace telemetry {
     // A key that was not in the file before is either a change away from the default or a default written for the first time; the first save of a fresh install writes many of those at once, which is
     // not a change of anything. A few at a time are reported, a dump of many is not.
     if (first_writes.size() <= 3) changes.insert(changes.end(), first_writes.begin(), first_writes.end());
-    for (const auto &[k, bucket] : changes) service->emit(kind_e::usage, "setting_changed", json { { "key", k }, { "value", bucket } });
+    for (const auto &[k, bucket] : changes) {
+      service->emit(kind_e::usage, "setting_changed", json { { "key", k }, { "value", bucket } });
+      service->crumb(crumb_e::set, k + ":" + bucket);  // the key and the class of the new value, as in the event
+    }
   }
 
   bool
@@ -532,6 +535,8 @@ namespace telemetry {
     dims.encoder = info.encoder;
     dims.capture_backend = info.capture_backend;
     if (info.sparxie_app) dims.sparxie_game = sparxie_game_id(info.sparxie_game);
+    service->crumb(crumb_e::stream, "start");
+    service->crumb(crumb_e::state, "codec:" + dims.codec);
     service->stream_begin(dims, info.session_id, info.client_uuid);
     if (info.hdr) feature_used("stream.hdr");
     if (info.mic) feature_used("stream.mic");
@@ -541,7 +546,10 @@ namespace telemetry {
 
   void
   stream_ended(std::uint32_t session_id, std::string_view stop_reason) {
-    if (const auto service = current()) service->stream_end(session_id, stop_reason);
+    if (const auto service = current()) {
+      service->crumb(crumb_e::stream, "stop");
+      service->stream_end(session_id, stop_reason);
+    }
   }
 
   void
@@ -557,6 +565,31 @@ namespace telemetry {
   void
   capture_ms(std::uint32_t session_id, double ms) noexcept {
     if (const auto service = current()) service->record_capture_ms(session_id, ms);
+  }
+
+  void
+  crumb(crumb_e kind, std::string_view id) {
+    if (const auto service = current()) service->crumb(kind, id);
+  }
+
+  void
+  report_error(std::string_view code, std::string_view severity, bool with_stack, const std::source_location &where) {
+    const auto service = current();
+    if (!service) return;
+    try {
+      error_input_t e;
+      e.component = "host";
+      e.code = std::string { code };
+      e.severity = severity == "fatal" || severity == "warning" || severity == "info" ? std::string { severity } : "error";
+      e.loc = location_of(where);
+      if (!e.loc.empty()) e.frames.push_back(e.loc);
+      if (with_stack)
+        for (auto &f : capture_frames(2)) e.frames.push_back(std::move(f));
+      e.build = std::string { build_info::version() };
+      service->report_error(e);
+    }
+    catch (...) {
+    }
   }
 
   void

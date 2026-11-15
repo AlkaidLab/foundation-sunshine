@@ -31,10 +31,10 @@ extern "C" {
 }
 
 // lib includes
+#include "amf/amf_encoder.h"
 #include "cbs.h"
-#include "crash/crash.h"
 #include "config.h"
-#include "streaming/perf_recorder.h"
+#include "crash/crash.h"
 #include "display_device/display_device.h"
 #include "display_device/to_string.h"
 #include "encoder_snapshot.h"
@@ -43,14 +43,15 @@ extern "C" {
 #include "input.h"
 #include "logging.h"
 #include "nvenc/nvenc_encoder.h"
-#include "amf/amf_encoder.h"
 #include "platform/common.h"
 #include "pyrowave/capture_policy.h"
+#include "streaming/perf_recorder.h"
 #include "sync.h"
+#include "telemetry/telemetry.h"
 #include "video.h"
-#include "video_idle_policy.h"
 #include "video_dolby_vision.h"
 #include "video_hdr_metadata.h"
+#include "video_idle_policy.h"
 #include "video_probe.h"
 
 #ifdef _WIN32
@@ -180,6 +181,7 @@ namespace video {
       }
 
       BOOST_LOG(error) << "No display devices are active at the moment! Cannot probe the encoders.";
+      telemetry::report_error("E_NO_DISPLAY_FOR_PROBE");
       last_encoder_probe_result = {
         probe_error_e::no_active_display,
         "No active display devices are available for capture.",

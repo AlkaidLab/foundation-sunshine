@@ -1,0 +1,268 @@
+/**
+ * @file src/telemetry/error_report.cpp
+ * @brief See error_report.h.
+ */
+#include "error_report.h"
+
+#include <algorithm>
+#include <cctype>
+#include <cstdio>
+
+#ifdef _WIN32
+  #include <windows.h>
+#elif defined(__linux__) || defined(__APPLE__)
+  #include <dlfcn.h>
+  #include <execinfo.h>
+#endif
+
+namespace telemetry {
+
+  using nlohmann::json;
+
+  std::string_view
+  crumb_name(crumb_e kind) {
+    switch (kind) {
+      case crumb_e::nav:
+        return "nav";
+      case crumb_e::act:
+        return "act";
+      case crumb_e::set:
+        return "set";
+      case crumb_e::stream:
+        return "stream";
+      case crumb_e::dev:
+        return "dev";
+      case crumb_e::state:
+        return "state";
+      case crumb_e::net:
+        return "net";
+    }
+    return "state";
+  }
+
+  namespace {
+    // an error code keeps its case: letters, digits and _ . : + -
+    std::string
+    code_word(std::string_view text, std::size_t max) {
+      std::string out;
+      for (const unsigned char c : text) {
+        if (out.size() >= max) break;
+        if ((std::isalnum(c) && c < 0x80) || c == '_' || c == '.' || c == ':' || c == '+' || c == '-') out.push_back(static_cast<char>(c));
+      }
+      return out;
+    }
+  }  // namespace
+
+  std::string
+  crumb_word(std::string_view text, std::size_t max) {
+    std::string out;
+    for (const unsigned char c : text) {
+      if (out.size() >= max) break;
+      if (std::isalnum(c) && c < 0x80)
+        out.push_back(static_cast<char>(std::tolower(c)));
+      else if (c == '_' || c == '.' || c == ':' || c == '+' || c == '-')
+        out.push_back(static_cast<char>(c));
+      else if (!out.empty() && out.back() != '_')
+        out.push_back('_');
+    }
+    while (!out.empty() && out.back() == '_') out.pop_back();
+    return out;
+  }
+
+  breadcrumbs_t::breadcrumbs_t(std::size_t capacity):
+      capacity_(std::max<std::size_t>(1, capacity)) {}
+
+  void
+  breadcrumbs_t::add(crumb_e kind, std::string_view id, std::int64_t now_ms) {
+    auto word = crumb_word(id);
+    if (word.empty()) return;
+    std::lock_guard lock { mutex_ };
+    items_.push_back({ now_ms, kind, std::move(word) });
+    while (items_.size() > capacity_) items_.pop_front();
+  }
+
+  std::vector<std::string>
+  breadcrumbs_t::snapshot(std::int64_t now_ms) const {
+    std::lock_guard lock { mutex_ };
+    std::vector<std::string> out;
+    out.reserve(items_.size());
+    for (const auto &i : items_) out.push_back(std::to_string(std::clamp<std::int64_t>((now_ms - i.ms) / 1000, 0, 99999)) + "|" + std::string { crumb_name(i.kind) } + "|" + i.id);
+    return out;
+  }
+
+  void
+  breadcrumbs_t::clear() {
+    std::lock_guard lock { mutex_ };
+    items_.clear();
+  }
+
+  std::string
+  function_word(std::string_view signature) {
+    auto s = std::string { signature };
+    if (const auto paren = s.find('('); paren != std::string::npos) s.resize(paren);
+    if (const auto space = s.find_last_of(" *&"); space != std::string::npos) s.erase(0, space + 1);
+    std::string out;
+    for (const unsigned char c : s)
+      if (std::isalnum(c) || c == '_' || c == ':' || c == '~' || c == '<' || c == '>' || c == '$' || c == '.') out.push_back(static_cast<char>(c));
+    return out.size() > 60 ? out.substr(0, 60) : out;
+  }
+
+  std::string
+  location_of(const std::source_location &where) {
+    std::string file = where.file_name() ? where.file_name() : "";
+    std::replace(file.begin(), file.end(), '\\', '/');
+    std::size_t at = std::string::npos;
+    for (const char *root : { "/src_assets/", "/src/", "/tools/", "/tests/", "/third-party/" }) {
+      const auto found = file.rfind(root);
+      if (found != std::string::npos && (at == std::string::npos || found < at)) at = found;
+    }
+    if (at == std::string::npos) {
+      // a relative path that already starts at a root (the build passed it that way)
+      bool rooted = false;
+      for (const char *root : { "src_assets/", "src/", "tools/", "tests/", "third-party/" })
+        if (file.rfind(root, 0) == 0) rooted = true;
+      if (!rooted) return {};
+    }
+    else {
+      file.erase(0, at + 1);
+    }
+    return clean_frame(file + ":" + std::to_string(where.line()) + ":" + function_word(where.function_name()));
+  }
+
+  std::string
+  clean_frame(std::string_view frame) {
+    if (frame.empty() || frame.size() > 120) return {};
+    for (const unsigned char c : frame) {
+      const bool ok = std::isalnum(c) || c == '_' || c == '.' || c == '/' || c == ':' || c == '+' || c == '<' || c == '>' || c == '~' || c == '$' || c == '@' || c == '!' || c == '-';
+      if (!ok || c >= 0x80) return {};
+    }
+    return std::string { frame };
+  }
+
+  std::string
+  fingerprint_of(std::string_view component, std::string_view code, const std::vector<std::string> &frames) {
+    std::uint64_t h = 1469598103934665603ULL;
+    const auto mix = [&](std::string_view text) {
+      for (const unsigned char c : text) {
+        h ^= c;
+        h *= 1099511628211ULL;
+      }
+      h ^= 0xFF;
+      h *= 1099511628211ULL;
+    };
+    mix(component);
+    mix(code);
+    int used = 0;
+    for (const auto &f : frames) {
+      if (used >= 3) break;
+      // a native frame is module+offset: the module only (the offset moves with every build); a location keeps file and function, not the line
+      auto key = f;
+      if (const auto plus = key.find("+0x"); plus != std::string::npos)
+        key.resize(plus);
+      else {
+        const auto first = key.find(':');
+        const auto second = first == std::string::npos ? std::string::npos : key.find(':', first + 1);
+        key = key.substr(0, first) + (second == std::string::npos ? "" : key.substr(second));
+      }
+      mix(key);
+      ++used;
+    }
+    char out[17];
+    std::snprintf(out, sizeof out, "%016llx", static_cast<unsigned long long>(h));
+    return out;
+  }
+
+  json
+  error_reporter_t::props_of(const group_t &g, const std::string &fingerprint, std::uint64_t count) const {
+    json p {
+      { "component", crumb_word(g.error.component, 32) },
+      { "lang", g.error.lang },
+      { "fingerprint", fingerprint },
+      { "code", g.error.code },
+      { "severity", g.error.severity },
+      { "count", std::max<std::uint64_t>(1, count) },
+    };
+    if (!g.error.loc.empty()) p["loc"] = g.error.loc;
+    if (!g.error.build.empty()) p["build"] = crumb_word(g.error.build, 40);
+    if (!g.error.page.empty()) p["page"] = crumb_word(g.error.page, 48);
+    if (!g.error.frames.empty()) p["frames"] = std::vector<std::string>(g.error.frames.begin(), g.error.frames.begin() + std::min(g.error.frames.size(), MAX_FRAMES));
+    if (!g.crumbs.empty()) p["crumbs"] = std::vector<std::string>(g.crumbs.begin() + (g.crumbs.size() > MAX_BREADCRUMBS ? g.crumbs.size() - MAX_BREADCRUMBS : 0), g.crumbs.end());
+    return p;
+  }
+
+  std::optional<json>
+  error_reporter_t::report(const error_input_t &error, const std::vector<std::string> &crumbs, std::int64_t now_ms) {
+    std::lock_guard lock { mutex_ };
+    auto input = error;
+    input.code = code_word(input.code, 64);
+    if (input.code.empty()) return std::nullopt;
+    const auto fp = fingerprint_of(input.component, input.code, input.frames.empty() && !input.loc.empty() ? std::vector<std::string> { input.loc } : input.frames);
+    auto &g = groups_[fp];
+    const bool first = g.last_sent_ms == 0;
+    g.error = input;
+    g.crumbs = crumbs;
+    while (!sent_.empty() && now_ms - sent_.front() >= 3'600'000) sent_.pop_front();
+    if (first && static_cast<int>(sent_.size()) < MAX_PER_HOUR) {
+      g.last_sent_ms = now_ms;
+      sent_.push_back(now_ms);
+      return props_of(g, fp, 1);
+    }
+    ++g.held;
+    if (groups_.size() > 200) groups_.erase(groups_.begin());
+    return std::nullopt;
+  }
+
+  std::vector<json>
+  error_reporter_t::flush(std::int64_t now_ms) {
+    std::lock_guard lock { mutex_ };
+    std::vector<json> out;
+    for (auto &[fp, g] : groups_) {
+      if (g.held == 0) continue;
+      if (g.last_sent_ms != 0 && now_ms - g.last_sent_ms < AGGREGATE_MS) continue;
+      while (!sent_.empty() && now_ms - sent_.front() >= 3'600'000) sent_.pop_front();
+      if (static_cast<int>(sent_.size()) >= MAX_PER_HOUR) break;
+      out.push_back(props_of(g, fp, g.held));
+      g.held = 0;
+      g.last_sent_ms = now_ms;
+      sent_.push_back(now_ms);
+    }
+    return out;
+  }
+
+  std::vector<std::string>
+  capture_frames(std::size_t skip) {
+    std::vector<std::string> out;
+#ifdef _WIN32
+    void *addresses[MAX_FRAMES + 8] {};
+    const auto n = RtlCaptureStackBackTrace(static_cast<DWORD>(skip), static_cast<DWORD>(MAX_FRAMES), addresses, nullptr);
+    for (USHORT i = 0; i < n; ++i) {
+      HMODULE module = nullptr;
+      if (!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, static_cast<LPCSTR>(addresses[i]), &module) || !module) continue;
+      char path[MAX_PATH] {};
+      if (!GetModuleFileNameA(module, path, MAX_PATH)) continue;
+      std::string name = path;
+      if (const auto slash = name.find_last_of("\\/"); slash != std::string::npos) name.erase(0, slash + 1);
+      char tail[24];
+      std::snprintf(tail, sizeof tail, "+0x%llx", static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(addresses[i]) - reinterpret_cast<std::uintptr_t>(module)));
+      if (auto frame = clean_frame(name + tail); !frame.empty()) out.push_back(std::move(frame));
+    }
+#elif defined(__linux__) || defined(__APPLE__)
+    void *addresses[MAX_FRAMES + 8] {};
+    const int n = backtrace(addresses, static_cast<int>(MAX_FRAMES + skip));
+    for (int i = static_cast<int>(skip); i < n; ++i) {
+      Dl_info info {};
+      if (!dladdr(addresses[i], &info) || !info.dli_fname || !info.dli_fbase) continue;
+      std::string name = info.dli_fname;
+      if (const auto slash = name.find_last_of('/'); slash != std::string::npos) name.erase(0, slash + 1);
+      char tail[24];
+      std::snprintf(tail, sizeof tail, "+0x%llx", static_cast<unsigned long long>(reinterpret_cast<std::uintptr_t>(addresses[i]) - reinterpret_cast<std::uintptr_t>(info.dli_fbase)));
+      if (auto frame = clean_frame(name + tail); !frame.empty()) out.push_back(std::move(frame));
+    }
+#else
+    (void) skip;
+#endif
+    if (out.size() > MAX_FRAMES) out.resize(MAX_FRAMES);
+    return out;
+  }
+
+}  // namespace telemetry

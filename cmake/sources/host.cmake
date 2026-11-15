@@ -171,6 +171,7 @@ set(SUNSHINE_HOST_SOURCES
     # src/telemetry
     src/telemetry/events.cpp src/telemetry/events.h
     src/telemetry/queue.cpp src/telemetry/queue.h
+    src/telemetry/error_report.cpp src/telemetry/error_report.h
     src/telemetry/self_baseline.cpp src/telemetry/self_baseline.h
     src/telemetry/stream_health.cpp src/telemetry/stream_health.h
     src/telemetry/stream_stats.cpp src/telemetry/stream_stats.h

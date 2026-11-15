@@ -735,10 +735,12 @@ add_test(NAME network_reachability_unit_tests COMMAND network_reachability_unit_
 add_executable(telemetry_unit_tests
         ${CMAKE_SOURCE_DIR}/src/telemetry/events.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/queue.cpp
+        ${CMAKE_SOURCE_DIR}/src/telemetry/error_report.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/self_baseline.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/stream_health.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/stream_stats.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/service.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_error_report.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_stream_health.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_telemetry.cpp)
 target_include_directories(telemetry_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")

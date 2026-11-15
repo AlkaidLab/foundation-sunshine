@@ -21,6 +21,9 @@
 #include <nlohmann/json.hpp>
 
 #include "events.h"
+#include <source_location>
+
+#include "error_report.h"
 #include "hooks.h"
 #include "stream_stats.h"
 
@@ -67,6 +70,14 @@ namespace telemetry {
   std::size_t ingest(std::string_view product, std::string_view version, const nlohmann::json &events);
   /** One blocking POST to `endpoint() + path` (for /v1/crash). -> HTTP status, 0 when nothing answered. Never call from a streaming thread. */
   int post_to(std::string_view path, std::string_view content_type, const std::string &body);
+
+  // ---- errors and the user's last actions ----
+  /** Remember an action or a state change of the user (page, button or tile id, setting key and value class, stream start, device): a bounded ring that is attached to every error report. No free text. */
+  void
+  crumb(crumb_e kind, std::string_view id);
+  /** An error with its place (the caller's source location) and, when `with_stack`, the stack of the calling thread. Rate-limited per fingerprint; follows the error-reports choice. */
+  void
+  report_error(std::string_view code, std::string_view severity = "error", bool with_stack = false, const std::source_location &where = std::source_location::current());
 
   // ---- streams (called from the stream code) ----
   struct stream_info_t {

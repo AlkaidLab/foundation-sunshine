@@ -3,6 +3,7 @@
  * @brief Telemetry v1 event shapes, scrubbing and the batch envelope.
  */
 #include "events.h"
+#include "error_report.h"
 #include "stream_health.h"
 
 #include <algorithm>
@@ -65,7 +66,7 @@ namespace telemetry {
     if (product != "panel"sv && product != "web"sv && product != "sparxie-launch"sv) return false;
     if (kind == kind_e::usage) return name == "app_start"sv || name == "app_exit"sv || name == "feature_used"sv || name == "setting_changed"sv;
     // "user_report" is a report the person wrote in the error dialog; it is kind error and follows the error-report choice like every error event
-    if (kind == kind_e::error) return name == "error"sv || name == "user_report"sv;
+    if (kind == kind_e::error) return name == "error"sv || name == "user_report"sv || name == "error_report"sv;
     return name == "panel_page"sv || name == "startup"sv;
   }
 
@@ -326,7 +327,10 @@ namespace telemetry {
       log_ref,
       text,
       histograms,
-      counts };
+      counts,
+      frames,
+      crumbs,
+      frame };
 
     struct prop_spec_t {
       std::string_view key;
@@ -504,6 +508,20 @@ namespace telemetry {
           for (auto &d : slim_dims()) regress.push_back(d);
           t.push_back({ kind_e::experience, "stream_regress", std::move(regress) });
         }
+        // An error of any component: code, location, stack, fingerprint and the user's last actions (error_report.h); the Worker groups by component and fingerprint
+        t.push_back({ kind_e::error, "error_report", {
+                                                       { "component", type_e::catalogue, 0, 32, {}, true },
+                                                       { "lang", type_e::choice, 0, 0, { "cpp", "js", "rust", "dotnet", "installer", "driver" } },
+                                                       { "fingerprint", type_e::catalogue, 0, 64, {}, true },
+                                                       { "code", type_e::code, 0, 64, {}, true },
+                                                       { "severity", type_e::choice, 0, 0, severity_choices },
+                                                       { "loc", type_e::frame },
+                                                       { "build", type_e::catalogue, 0, 40 },
+                                                       { "page", type_e::catalogue, 0, 48 },
+                                                       { "count", type_e::integer, 1, 1000000 },
+                                                       { "frames", type_e::frames },
+                                                       { "crumbs", type_e::crumbs },
+                                                     } });
         t.push_back({ kind_e::experience, "startup", { { "host_start_ms", type_e::integer, 0, 3600000 }, { "first_frame_ms", type_e::integer, 0, 3600000 } } });
         t.push_back({ kind_e::experience, "panel_page", { { "page", type_e::catalogue, 0, 40, {}, true }, { "time_to_content_ms", type_e::integer, 0, 600000, {}, true } } });
         return t;
@@ -573,6 +591,33 @@ namespace telemetry {
         case type_e::text: {
           if (!value.is_string()) return std::nullopt;
           return json(scrub_text(value.get<std::string>(), static_cast<std::size_t>(spec.max)));
+        }
+        case type_e::frame: {
+          if (!value.is_string()) return std::nullopt;
+          auto frame = clean_frame(value.get<std::string>());
+          if (frame.empty()) return std::nullopt;
+          return json(std::move(frame));
+        }
+        case type_e::frames: {
+          if (!value.is_array() || value.size() > MAX_FRAMES) return std::nullopt;
+          json out = json::array();
+          for (const auto &f : value) {
+            if (!f.is_string()) return std::nullopt;
+            auto frame = clean_frame(f.get<std::string>());
+            if (frame.empty()) return std::nullopt;
+            out.push_back(std::move(frame));
+          }
+          return out;
+        }
+        case type_e::crumbs: {
+          if (!value.is_array() || value.size() > MAX_BREADCRUMBS) return std::nullopt;
+          static const std::regex crumb(R"(^\d{1,5}\|(?:nav|act|set|stream|dev|state|net)\|[a-z0-9_.:+-]{1,48}$)");
+          json out = json::array();
+          for (const auto &c : value) {
+            if (!c.is_string() || !std::regex_match(c.get<std::string>(), crumb)) return std::nullopt;
+            out.push_back(c);
+          }
+          return out;
         }
         case type_e::counts: {
           if (!value.is_object()) return std::nullopt;

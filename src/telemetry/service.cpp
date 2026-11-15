@@ -398,6 +398,25 @@ namespace telemetry {
   }
 
   void
+  service_t::crumb(crumb_e kind, std::string_view id) {
+    try {
+      crumbs_.add(kind, id, deps_.now_ms());
+    }
+    catch (...) {
+    }
+  }
+
+  void
+  service_t::report_error(const error_input_t &error) {
+    try {
+      const auto now = deps_.now_ms();
+      if (const auto props = reporter_.report(error, crumbs_.snapshot(now), now)) emit(kind_e::error, "error_report", *props);
+    }
+    catch (...) {
+    }
+  }
+
+  void
   service_t::record_sample(std::uint32_t session_id, hooks::metric_e metric, double ms) noexcept {
     try {
       std::shared_lock lock { streams_mutex_ };
@@ -861,6 +880,8 @@ namespace telemetry {
     try {
       const auto now = deps_.now_ms();
       collect_logs(now, final);
+      // errors held back by the rate limit leave as one aggregate per fingerprint
+      for (const auto &props : reporter_.flush(final ? now + error_reporter_t::AGGREGATE_MS : now)) emit(kind_e::error, "error_report", props, "host", {}, 1);  // the counts of known errors: priority 1
       std::deque<event_t> taken;
       {
         std::lock_guard lock { mutex_ };
