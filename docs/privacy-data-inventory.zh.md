@@ -41,7 +41,7 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | stream_quality（每次串流一条） | `fps_p50 119`, `encode_ms_p95 6`, `loss_pct 0.1`, `reconnects 0` | `src/telemetry/events.cpp:357` | 串流是否流畅？按版本和编码看帧率、延迟、丢包、卡顿。 | 否：数字。 | 限幅并四舍五入到一位小数 `src/telemetry/events.cpp:357`。 | events 180 天；AE 数据点按 Cloudflare 的保留期。 |
 | stream_health（每串流小时一条） | `windows 60`, `bad {backlog_p95: 3}`, `queue_flushes 0`, `codec hevc` | `src/telemetry/events.cpp:405` | 新版本的串流是否比上一版更差？按分钟统计主机处理、编码、采集、发送耗时和发送积压，有多少分钟越过固定界限，队列被清空、关键帧请求、丢包；一部分串流还带每个指标的 19 桶分布。 | 否：数字和固定词（编码、分辨率、帧率、编码器、采集方式、显卡驱动版本）。 | 只收白名单里的名字，数字限幅，维度是固定词 `src/telemetry/events.cpp:405`。 | 计数 400 天；不保留原始行。 |
-| stream_anomaly | `code XP_QUEUE_FLUSH`, `value 31`, `count 992`, `log true` | `src/telemetry/events.cpp:422` | 发生了哪种问题、多严重、在什么配置上；严重时还会发送问题前两分钟的主机日志（已匿名）。 | 否：固定代码和数字；日志片段经过清洗，也没有时钟时间。 | 只收固定代码；日志片段用和崩溃日志相同的清洗规则，并去掉计算机名和账户名 `src/telemetry/events.cpp:422`。 | 计数 400 天；日志片段 90 天。 |
+| stream_anomaly | `code XP_QUEUE_FLUSH`, `value 31`, `count 992`, `log true` | `src/telemetry/events.cpp:422` | 发生了哪种问题、多严重、在什么配置上；严重时还会发送问题前两分钟的主机日志（已匿名）。 | 低：固定代码和数字；日志片段是清洗后的文本，没有时钟时间，清洗后日志行里剩下的内容会被发送。 | 只收固定代码；日志片段丢弃引号、方括号和花括号里的文字，用和崩溃日志相同的清洗规则，并去掉计算机名和账户名 `src/telemetry/events.cpp:422`。 | 计数 400 天；日志片段 90 天。 |
 | stream_regress | `metric jitter_p95`, `baseline 0.3`, `current 2.6` | `src/telemetry/events.cpp:438` | 这台安装是否比它自己以前更差？一个指标的名字、以前的值和现在的值；每个版本最多一次。 | 否：指标名和两个数字；滚动平均保存在本机自己的目录里。 | 指标名固定，数字限幅 `src/telemetry/events.cpp:438`。 | 计数 400 天。 |
 | startup：host_start_ms、first_frame_ms | `2100`, `450` | `src/telemetry/events.cpp:440` | 主机多久就绪、多久出第一帧。 | 否：数字。 | 限幅。 | events 180 天。 |
 | panel_page：page、time_to_content_ms | `apps`, `180` | `src/telemetry/events.cpp:441` | 控制面板各页面多久显示出内容。 | 否：我们自己的路由 id 和一个数字。 | 标记和范围。 | events 180 天。 |
@@ -82,7 +82,7 @@
 - 屏幕内容、声音、键盘输入、文件、剪贴板内容。
 - 电脑名、Windows 或 macOS 账号名、设备名或客户端名；游戏名和应用名（游戏最多是九个目录词之一）。
 - 文件路径、IP 地址、MAC 地址、端口、配对标识、Steam、米哈游或其他账号 id、Mirror酱 CDK、密码、令牌、Cookie。
-- 任何不是用户为了写报告而输入的自由文本：整个系统里唯一的自由文本是 `user_report.message`，只在用户按下「发送」后发出，且表单事先展示过。
+- 自由文本只有两个例外。`user_report.message`：用户按下「发送」后发出，表单事先展示过。以及仅在错误报告开启时，严重串流问题之后的日志摘录（`stream_anomaly`，`log true`）：主机日志最近两分钟，引号、方括号和花括号里的文字被丢弃，名称、文件夹、地址、邮箱和密钥被清洗；它仍然是文本，不是固定词表。
 
 ## 怎样保证
 

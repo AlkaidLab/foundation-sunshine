@@ -142,6 +142,7 @@ namespace telemetry::health {
 
   std::optional<window_t>
   stream_health_t::tick(std::int64_t now_ms, const probe_t &probe) {
+    std::lock_guard window { window_mutex_ };
     if (now_ms - window_start_ms_ < WINDOW_MS) return std::nullopt;
     const auto seconds = static_cast<double>(now_ms - window_start_ms_) / 1000.0;
     auto w = close(now_ms, probe, seconds);
@@ -150,6 +151,7 @@ namespace telemetry::health {
 
   std::optional<window_t>
   stream_health_t::finish(std::int64_t now_ms, const probe_t &probe) {
+    std::lock_guard window { window_mutex_ };
     const auto span = now_ms - window_start_ms_;
     if (span < 5000) {
       // too short to say anything; the counters of these seconds are dropped with the window
@@ -183,7 +185,11 @@ namespace telemetry::health {
             std::uint64_t seen = 0;
             for (std::size_t i = 0; i < BINS; ++i) {
               seen += d.bins[i];
-              if (seen >= std::max<std::uint64_t>(rank, 1)) return std::min(d.max, static_cast<double>(i + 1) / scale);
+              if (seen >= std::max<std::uint64_t>(rank, 1)) {
+                // the last bin holds everything from 1000 ms (100 ms for the jitter) up: its edge says nothing, the largest value seen does
+                if (i == BINS - 1) return d.max;
+                return std::min(d.max, static_cast<double>(i + 1) / scale);
+              }
             }
             return d.max;
           };
@@ -312,12 +318,26 @@ namespace telemetry::health {
   }
 
   bool
+  stream_health_t::chunk_empty() const {
+    std::lock_guard window { window_mutex_ };
+    return chunk_windows_ == 0 && chunk_idle_ == 0;
+  }
+
+  void
+  stream_health_t::set_dims(dims_t dims) {
+    std::lock_guard window { window_mutex_ };
+    dims_ = std::move(dims);
+  }
+
+  bool
   stream_health_t::chunk_due(std::int64_t now_ms) const {
+    std::lock_guard window { window_mutex_ };
     return chunk_windows_ > 0 && now_ms - chunk_start_ms_ >= CHUNK_MAX_MS;
   }
 
   nlohmann::json
   stream_health_t::take_chunk(std::int64_t now_ms, bool detail) {
+    std::lock_guard window { window_mutex_ };
     using nlohmann::json;
     json props = json::object();
     props["windows"] = chunk_windows_;

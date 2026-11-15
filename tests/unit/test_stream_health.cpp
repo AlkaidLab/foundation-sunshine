@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <deque>
@@ -15,6 +16,7 @@
 #include <numeric>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 using namespace telemetry;
@@ -512,4 +514,50 @@ TEST(SelfBaseline, ASingleBadWindowAndAnInstallStillLearningSayNothing) {
   self_baseline_t tiny { {}, "v1" };
   for (int i = 0; i < 40; ++i) tiny.observe(window_with(0.1));
   for (int i = 0; i < 8; ++i) EXPECT_TRUE(tiny.observe(window_with(0.6)).empty());
+}
+
+TEST(StreamHealthWindow, AValueBeyondTheLastBinIsReportedAsItIsNotAsTheEdgeOfTheBin) {
+  std::int64_t now = 0;
+  stream_health_t h { now, dims60() };
+  for (int i = 0; i < 100; ++i) {
+    h.record(metric_e::host_ms, 2500);
+    h.count(counter_e::frames_sent);
+  }
+  now += WINDOW_MS;
+  const auto w = h.tick(now, {});
+  ASSERT_TRUE(w.has_value());
+  const auto &host = w->metrics[static_cast<std::size_t>(metric_e::host_ms)];
+  EXPECT_DOUBLE_EQ(host.p50, 2500);
+  EXPECT_DOUBLE_EQ(host.p95, 2500);
+  const auto chunk = h.take_chunk(now, true);
+  EXPECT_EQ(chunk["h"]["host_p95"][BUCKET_COUNT - 1], 1);  // the overflow bucket, not the one below
+}
+
+TEST(StreamHealthWindow, TheSenderThreadAndTheThreadEndingAStreamCanBothUseTheWindows) {
+  stream_health_t h { 0, dims60() };
+  std::atomic<bool> stop { false };
+  std::thread sender([&] {
+    std::int64_t now = 0;
+    while (!stop) {
+      now += WINDOW_MS;
+      (void) h.tick(now, {});
+      if (h.chunk_due(now)) (void) h.take_chunk(now, true);
+    }
+  });
+  std::thread feeder([&] {
+    for (int i = 0; i < 20000; ++i) {
+      h.record(metric_e::host_ms, i % 50);
+      h.count(counter_e::frames_sent);
+    }
+  });
+  std::int64_t now = 1;
+  for (int i = 0; i < 200; ++i) {
+    now += WINDOW_MS;
+    (void) h.finish(now, {});
+    (void) h.take_chunk(now, true);
+  }
+  feeder.join();
+  stop = true;
+  sender.join();
+  SUCCEED();  // the point is that it runs clean under a thread sanitizer and without a crash
 }

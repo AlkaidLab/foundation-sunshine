@@ -168,7 +168,7 @@ namespace telemetry::health {
     bool
     chunk_due(std::int64_t now_ms) const;
     bool
-    chunk_empty() const { return chunk_windows_ == 0 && chunk_idle_ == 0; }
+    chunk_empty() const;
     /** The props of one stream_health event for the windows so far; resets the chunk. Tier 0 (always): the counters and `bad`; Tier 1 (`detail`): also the per-window histograms `h`. */
     nlohmann::json
     take_chunk(std::int64_t now_ms, bool detail = true);
@@ -176,7 +176,7 @@ namespace telemetry::health {
     const dims_t &
     dims() const { return dims_; }
     void
-    set_dims(dims_t dims) { dims_ = std::move(dims); }
+    set_dims(dims_t dims);
     const thresholds_t &
     thresholds() const { return thresholds_; }
 
@@ -203,6 +203,8 @@ namespace telemetry::health {
       double max = 0;
       std::uint64_t n = 0;
     };
+    // the window side (tick, finish, chunk, take_chunk) is called from the sender thread and from the thread that ends a stream: one lock for all of it, taken before mutex_ (the sample side) and never the other way round
+    mutable std::mutex window_mutex_;
     std::mutex mutex_;
     std::array<dist_t, METRICS> dist_ {};
     std::array<std::atomic<std::uint64_t>, COUNTERS> counters_ {};

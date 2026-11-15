@@ -94,20 +94,23 @@ namespace telemetry {
       --alive;
       ++removed;
     };
-    // the lowest priority goes first, the oldest first within it; priority 0 is only cut when it alone is past its own bound
-    for (int priority = 2; priority >= 1 && (alive > limits_.max_files || total > limits_.max_bytes); --priority) {
-      for (std::size_t i = 0; i < files.size() && (alive > limits_.max_files || total > limits_.max_bytes); ++i)
-        if (!gone[i] && priority_of_name(files[i]) == priority) drop(i);
-    }
+    // priority 0 has a bound of its own and is cut by it alone (the oldest first); then the lowest priority goes first, the oldest first within it,
+    // until both global caps hold; priority 0 is only cut again when it alone is past the global caps
     std::size_t p0 = 0;
     for (std::size_t i = 0; i < files.size(); ++i)
-      if (!gone[i] && priority_of_name(files[i]) == 0) ++p0;
-    for (std::size_t i = 0; i < files.size() && (p0 > limits_.max_p0_files || ((alive > limits_.max_files || total > limits_.max_bytes) && p0 > 0)); ++i) {
+      if (priority_of_name(files[i]) == 0) ++p0;
+    for (std::size_t i = 0; i < files.size() && p0 > limits_.max_p0_files; ++i) {
       if (!gone[i] && priority_of_name(files[i]) == 0) {
         drop(i);
         --p0;
       }
     }
+    for (int priority = 2; priority >= 1 && (alive > limits_.max_files || total > limits_.max_bytes); --priority) {
+      for (std::size_t i = 0; i < files.size() && (alive > limits_.max_files || total > limits_.max_bytes); ++i)
+        if (!gone[i] && priority_of_name(files[i]) == priority) drop(i);
+    }
+    for (std::size_t i = 0; i < files.size() && (alive > limits_.max_files || total > limits_.max_bytes); ++i)
+      if (!gone[i] && priority_of_name(files[i]) == 0) drop(i);
     dropped_ += removed;
     return removed;
   }

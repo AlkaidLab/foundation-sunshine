@@ -22,6 +22,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <shared_mutex>
 #include <string>
 #include <vector>
@@ -81,7 +82,7 @@ namespace telemetry {
     std::vector<debug_cohort_t> debug;
   };
   remote_config_t
-  parse_remote_config(const nlohmann::json &cfg, std::int64_t now_ms);
+  parse_remote_config(const nlohmann::json &cfg, std::int64_t now_ms, int default_logs_per_day = 6);
 
   struct service_deps_t {
     std::function<std::int64_t()> now_ms;  ///< ms since the epoch
@@ -163,7 +164,7 @@ namespace telemetry {
     int pump();
     /** The server asked for a wait and it has not ended. */
     bool
-    backing_off() const { return deps_.now_ms() < backoff_until_ms_; }
+    backing_off() const { return deps_.now_ms() < backoff_until_ms_.load(std::memory_order_relaxed); }
     /** The consent changed: drop what the off kinds had waiting, and the install id when both are off. */
     void consent_changed();
     /** The buffer reached flush_events: the sender thread should not wait for its interval. */
@@ -207,8 +208,15 @@ namespace telemetry {
     apply_remote_config(const std::string &body);
     bool
     stream_detail(std::uint32_t session_id, const stream_dims_t &dims);
+    /** Whether another excerpt may be sent now (the daily bound and the gap); nothing is used up until anomaly_log_commit(). Caller holds logs_mutex_. */
     bool
     anomaly_log_allowed(std::int64_t now);
+    /** An excerpt was queued: use up the room (and save it). Caller holds logs_mutex_. */
+    void
+    anomaly_log_commit(std::int64_t now);
+    /** What to do with the answer to a request that carried the batches at `paths`: sent (they are removed, the configuration it carries is applied), refused for good (removed), or to be tried again (-> false: stop). */
+    bool
+    handle_answer(const post_result_t &answer, std::size_t count, const std::vector<std::filesystem::path> &paths);
     std::string
     log_excerpt(std::int64_t now);
     void quality_event(const stream_stats_t &stats, std::int64_t now);
@@ -250,19 +258,22 @@ namespace telemetry {
     };
     mutable std::mutex ring_mutex_;  // the log ring; held for a few instructions
     std::deque<ring_line_t> log_ring_;
-    std::deque<pending_log_t> pending_logs_;  // sender thread only
+    // pending_logs_, baseline_ and the anomaly_log_* state are used by the sender thread (pump_logs) and by the thread that ends a stream (on_window): logs_mutex_ guards them, never held across I/O,
+    // taken before mutex_ and ring_mutex_ and never after them
+    mutable std::mutex logs_mutex_;
+    std::deque<pending_log_t> pending_logs_;
     std::string gpu_driver_;  // under mutex_
     remote_config_t config_;  // under mutex_
-    std::unique_ptr<self_baseline_t> baseline_;  // sender thread only
-    std::int64_t anomaly_log_day_ = -1;  // sender thread only
+    std::unique_ptr<self_baseline_t> baseline_;
+    std::int64_t anomaly_log_day_ = -1;
     int anomaly_log_count_ = 0;
     std::int64_t last_anomaly_log_ms_ = -1;
     bool anomaly_log_first_ = true;  // the first serious problem of this run always gets its excerpt (until the daily bound)
 
     std::int64_t not_before_ms_ = 0;
     // the server asked the clients to wait (cfg.backoff_s, or paused): priority 1 and 2 wait, priority 0 leaves once as counts
-    std::int64_t backoff_until_ms_ = 0;
-    bool p0_sent_in_backoff_ = false;
+    std::atomic<std::int64_t> backoff_until_ms_ { 0 };  // written by the sender thread, read by backing_off() on any thread
+    std::set<std::string> p0_groups_sent_;  // product and version of the priority 0 batches that already left in this wait (sender thread only)
     int failures_ = 0;
     std::deque<std::int64_t> post_times_;  // when the last requests went out (sender thread only)
     std::int64_t last_flush_ms_ = 0;

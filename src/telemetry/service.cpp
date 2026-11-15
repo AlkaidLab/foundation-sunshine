@@ -88,10 +88,11 @@ namespace telemetry {
 
   service_t::service_t(service_options_t options, service_deps_t deps):
       options_(std::move(options)), deps_(std::move(deps)), queue_(options_.dir / "queue", options_.queue), session_id_(new_uuid_v4()) {
+    config_.logs_per_day = options_.anomaly_logs_per_day;  // until the server says otherwise
     try {
       std::ifstream in(options_.dir / "remote_config.json");
       const auto stored = in ? json::parse(in, nullptr, false) : json();
-      if (!stored.is_discarded() && stored.is_object()) config_ = parse_remote_config(stored, 0);
+      if (!stored.is_discarded() && stored.is_object()) config_ = parse_remote_config(stored, 0, options_.anomaly_logs_per_day);
     }
     catch (...) {
     }
@@ -275,13 +276,13 @@ namespace telemetry {
   }
 
   remote_config_t
-  parse_remote_config(const json &cfg, std::int64_t now_ms) {
+  parse_remote_config(const json &cfg, std::int64_t now_ms, int default_logs_per_day) {
     remote_config_t out;
     if (!cfg.is_object()) return out;
     const auto num = [&](const char *k, double d) { return cfg.contains(k) && cfg[k].is_number() ? cfg[k].get<double>() : d; };
     out.rev = static_cast<std::int64_t>(num("rev", 0));
     out.tier1_rate = std::clamp(num("tier1_rate", 0.1), 0.0, 1.0);
-    out.logs_per_day = static_cast<int>(std::clamp(num("logs_per_day", 6), 0.0, 10.0));
+    out.logs_per_day = static_cast<int>(std::clamp(num("logs_per_day", default_logs_per_day), 0.0, 10.0));
     out.health = !cfg.contains("health") || !cfg["health"].is_boolean() || cfg["health"].get<bool>();
     out.backoff_s = static_cast<std::int64_t>(std::clamp(num("backoff_s", 0), 0.0, 21600.0));
     out.paused = cfg.contains("paused") && cfg["paused"].is_boolean() && cfg["paused"].get<bool>();
@@ -313,7 +314,7 @@ namespace telemetry {
     try {
       const auto doc = json::parse(body, nullptr, false);
       if (doc.is_discarded() || !doc.is_object() || !doc.contains("cfg")) return;
-      auto cfg = parse_remote_config(doc["cfg"], deps_.now_ms());
+      auto cfg = parse_remote_config(doc["cfg"], deps_.now_ms(), options_.anomaly_logs_per_day);
       {
         std::lock_guard lock { mutex_ };
         config_ = cfg;
@@ -321,8 +322,8 @@ namespace telemetry {
       // a wait the server asked for does not stop priority 0 (see pump); a failed request still backs everything off
       const auto asked = cfg.paused ? std::max<std::int64_t>(cfg.backoff_s, 6 * 3600) : cfg.backoff_s;
       if (asked > 0) {
-        backoff_until_ms_ = std::max(backoff_until_ms_, deps_.now_ms() + asked * 1000);
-        p0_sent_in_backoff_ = false;
+        backoff_until_ms_.store(std::max(backoff_until_ms_.load(std::memory_order_relaxed), deps_.now_ms() + asked * 1000), std::memory_order_relaxed);
+        p0_groups_sent_.clear();
       }
       std::error_code ec;
       fs::create_directories(options_.dir, ec);
@@ -344,6 +345,8 @@ namespace telemetry {
       version = context_.version;
     }
     const auto now = deps_.now_ms();
+    // a Tier 1 rate of 0 is the server's switch for all histograms (it is what the quota guard sends at 90 % of a free limit): a debug cohort raises the detail of its streams, it does not override that switch
+    if (cfg.tier1_rate <= 0) return false;
     for (const auto &c : cfg.debug) {
       if (c.until <= now) continue;
       if ((!c.version.empty() && c.version != version) || (!c.gpu.empty() && c.gpu != gpu) || (!c.client.empty() && c.client != dims.client_kind)) continue;
@@ -437,12 +440,16 @@ namespace telemetry {
       if (!d.gpu_driver.empty()) props["gpu_driver"] = d.gpu_driver;
       // a severe anomaly sends an anonymized excerpt of the host log around it, at most a few times per install and day
       bool log = false;
-      if (a.severe && consent_now().errors && anomaly_log_allowed(now)) {
-        auto text = log_excerpt(now);
-        if (!text.empty()) {
-          pending_logs_.push_back({ a.code, now, session_id_, std::move(text), 0 });
-          while (pending_logs_.size() > 2) pending_logs_.pop_front();
-          log = true;
+      if (a.severe && consent_now().errors) {
+        std::lock_guard logs { logs_mutex_ };
+        if (anomaly_log_allowed(now)) {
+          auto text = log_excerpt(now);
+          if (!text.empty()) {
+            anomaly_log_commit(now);
+            pending_logs_.push_back({ a.code, now, session_id_, std::move(text), 0 });
+            while (pending_logs_.size() > 2) pending_logs_.pop_front();
+            log = true;
+          }
         }
       }
       props["log"] = log;
@@ -450,8 +457,13 @@ namespace telemetry {
     }
     // the install's own baseline: one small event when its statistics got clearly worse than they used to be
     if (!window.idle && remote_config().health) {
-      if (!baseline_) baseline_ = std::make_unique<self_baseline_t>(options_.dir / "stream_baseline.json", context().version);
-      for (const auto &b : baseline_->observe(window)) {
+      std::vector<baseline_event_t> found;
+      {
+        std::lock_guard logs { logs_mutex_ };
+        if (!baseline_) baseline_ = std::make_unique<self_baseline_t>(options_.dir / "stream_baseline.json", context().version);
+        found = baseline_->observe(window);
+      }
+      for (const auto &b : found) {
         const auto &d = stats.health().dims();
         json props {
           { "metric", b.metric },
@@ -492,23 +504,27 @@ namespace telemetry {
       int saved_count = 0;
       if (in >> saved_day >> saved_count && saved_day == day) anomaly_log_count_ = saved_count;
     }
-    int limit = options_.anomaly_logs_per_day;
+    int limit;
     {
       std::lock_guard lock { mutex_ };
-      limit = std::min(config_.logs_per_day, limit > 0 ? std::max(limit, config_.logs_per_day) : config_.logs_per_day);
+      limit = config_.logs_per_day;  // the server's number (the local option is its default)
       for (const auto &c : config_.debug)
         if (c.until > now && c.logs_per_day > limit && (c.version.empty() || c.version == context_.version) && (c.gpu.empty() || c.gpu == context_.gpu_vendor)) limit = c.logs_per_day;
     }
     if (anomaly_log_count_ >= limit) return false;
     // the first serious problem of a run is never held back by the gap: a run that goes wrong early must leave its log
     if (!anomaly_log_first_ && last_anomaly_log_ms_ >= 0 && now - last_anomaly_log_ms_ < options_.anomaly_log_min_gap_ms) return false;
+    return true;
+  }
+
+  void
+  service_t::anomaly_log_commit(std::int64_t now) {
     anomaly_log_first_ = false;
     ++anomaly_log_count_;
     last_anomaly_log_ms_ = now;
     std::error_code ec;
     fs::create_directories(options_.dir, ec);
-    std::ofstream(options_.dir / "anomaly_log_quota", std::ios::trunc) << day << ' ' << anomaly_log_count_ << '\n';
-    return true;
+    std::ofstream(options_.dir / "anomaly_log_quota", std::ios::trunc) << now / 86'400'000 << ' ' << anomaly_log_count_ << '\n';
   }
 
   void
@@ -553,7 +569,7 @@ namespace telemetry {
     for (const auto &l : lines) {
       char head[32];
       std::snprintf(head, sizeof head, "[-%6.1fs] %c ", static_cast<double>(now - l.ms) / 1000.0, level[std::clamp(l.severity, 0, 5)]);
-      auto line = std::string { head } + redact(scrub_text(l.text, 400)) + "\n";
+      auto line = std::string { head } + redact(scrub_log_message(l.text, 400)) + "\n";
       total += line.size();
       out.push_back(std::move(line));
     }
@@ -570,14 +586,23 @@ namespace telemetry {
   service_t::pump_logs() {
     int sent = 0;
     try {
-      const auto n = pending_logs_.size();
-      for (std::size_t i = 0; i < n && !pending_logs_.empty(); ++i) {
-        if (!consent_now().errors) {
-          pending_logs_.clear();
-          break;
+      std::size_t n;
+      {
+        std::lock_guard logs { logs_mutex_ };
+        n = pending_logs_.size();
+      }
+      for (std::size_t i = 0; i < n; ++i) {
+        pending_log_t item;
+        {
+          std::lock_guard logs { logs_mutex_ };
+          if (pending_logs_.empty()) break;
+          if (!consent_now().errors) {
+            pending_logs_.clear();
+            break;
+          }
+          item = std::move(pending_logs_.front());
+          pending_logs_.pop_front();
         }
-        auto item = std::move(pending_logs_.front());
-        pending_logs_.pop_front();
         const auto ctx = context();
         const auto id = install_id();
         if (id.empty()) continue;
@@ -595,10 +620,13 @@ namespace telemetry {
         };
         const auto result = deps_.post(options_.endpoint + "/v1/anomaly-log", body.dump());
         const bool retry = result.status == 0 || result.status == 408 || result.status == 425 || result.status == 429 || result.status >= 500;
-        if (result.status >= 200 && result.status < 300)
+        if (result.status >= 200 && result.status < 300) {
           ++sent;
-        else if (retry && ++item.tries < 2)
+        }
+        else if (retry && ++item.tries < 2) {
+          std::lock_guard logs { logs_mutex_ };
           pending_logs_.push_back(std::move(item));
+        }
       }
     }
     catch (...) {
@@ -833,6 +861,42 @@ namespace telemetry {
     }
   }
 
+  bool
+  service_t::handle_answer(const post_result_t &answer, std::size_t count, const std::vector<fs::path> &paths) {
+    const int status = answer.status;
+    const auto now = deps_.now_ms();
+    if (status >= 200 && status < 300) {
+      {
+        std::lock_guard lock { queue_mutex_ };
+        for (const auto &p : paths) queue_.remove(p);
+      }
+      failures_ = 0;
+      not_before_ms_ = 0;
+      if (!answer.body.empty()) apply_remote_config(answer.body);
+      std::lock_guard lock { mutex_ };
+      ++counts_.sent_batches;
+      counts_.sent_events += count;
+      return true;
+    }
+    if (status_retryable(status)) {
+      ++failures_;
+      // a 429 or 503 that says how long to wait is believed (up to an hour); otherwise the backoff decides
+      const auto asked = std::min<std::int64_t>(answer.retry_after_s, options_.max_backoff_ms / 1000) * 1000;
+      not_before_ms_ = now + std::max<std::int64_t>(asked, backoff_seconds(failures_, deps_.random01()) * 1000);
+      std::lock_guard lock { mutex_ };
+      ++counts_.failed_posts;
+      return false;
+    }
+    // refused for good (a 4xx that a retry will not change): the batches are dropped
+    {
+      std::lock_guard lock { queue_mutex_ };
+      for (const auto &p : paths) queue_.remove(p);
+    }
+    std::lock_guard lock { mutex_ };
+    ++counts_.rejected_batches;
+    return true;
+  }
+
   namespace {
     // Priority 0 events held back by a wait the server asked for leave once as counts: the same error or problem becomes one event with its count.
     json
@@ -852,7 +916,7 @@ namespace telemetry {
             events.push_back(e);
             continue;
           }
-          std::string key = name + "|" + p.value("code", std::string {}) + "|" + p.value("fingerprint", std::string {}) + "|" + p.value("metric", std::string {});
+          std::string key = name + "|" + p.value("component", std::string {}) + "|" + p.value("code", std::string {}) + "|" + p.value("fingerprint", std::string {}) + "|" + p.value("metric", std::string {});
           const auto found = seen.find(key);
           if (found == seen.end()) {
             seen[key] = events.size();
@@ -860,7 +924,7 @@ namespace telemetry {
           }
           else if (auto &kept = events[found->second]; kept.contains("props")) {
             auto &kp = kept["props"];
-            if (name == "error_report")
+            if (name == "error_report" || name == "error")
               kp["count"] = kp.value("count", 1) + p.value("count", 1);
             else if (name == "stream_anomaly")
               kp["suppressed"] = kp.value("suppressed", 0) + 1 + p.value("suppressed", 0);
@@ -878,31 +942,36 @@ namespace telemetry {
     try {
       if (deps_.now_ms() < not_before_ms_) return 0;
       const auto c = consent_now();
-      // while the server asks for a wait only priority 0 may leave, once per wait and as counts; the rest stays in the queue under its caps
+      // while the server asks for a wait only priority 0 may leave: one request per product and version in the wait, repeated events merged into one with their count; the rest stays in the queue under its caps
       if (backing_off()) {
-        if (p0_sent_in_backoff_) return 0;
         std::vector<disk_queue_t::entry_t> entries;
         {
           std::lock_guard lock { queue_mutex_ };
           entries = queue_.entries(0, 20);
         }
-        if (entries.empty()) return 0;
         for (auto &e : entries) filter_by_consent(e.batch, c.usage, c.errors);
         entries.erase(std::remove_if(entries.begin(), entries.end(), [](const auto &e) { return e.batch["events"].empty(); }), entries.end());
-        if (entries.empty()) return 0;
+        const auto group_of = [](const disk_queue_t::entry_t &e) { return e.batch.value("product", std::string {}) + "\n" + e.batch.value("version", std::string {}); };
+        const auto first = std::find_if(entries.begin(), entries.end(), [&](const auto &e) { return !p0_groups_sent_.count(group_of(e)); });
+        if (first == entries.end()) return 0;
+        const auto group = group_of(*first);
+        std::vector<disk_queue_t::entry_t> included;
+        for (auto &e : entries)
+          if (group_of(e) == group) included.push_back(std::move(e));
+        std::size_t count = 0;
+        std::vector<fs::path> paths;
+        for (const auto &e : included) paths.push_back(e.path);
+        auto merged = collapse_priority0(included);
+        count = merged["events"].size();
         post_result_t answer;
         try {
-          if (deps_.post) answer = deps_.post(events_url(), collapse_priority0(entries).dump());
+          if (deps_.post) answer = deps_.post(events_url(), merged.dump());
         }
         catch (...) {
           answer = {};
         }
-        p0_sent_in_backoff_ = true;  // one request per wait, whatever the answer: a failure backs off through the usual path
-        if (answer.status >= 200 && answer.status < 300) {
-          std::lock_guard lock { queue_mutex_ };
-          for (const auto &e : entries) queue_.remove(e.path);
-          ++sent;
-        }
+        p0_groups_sent_.insert(group);  // one request per group in a wait, whatever the answer: a failure backs off through handle_answer
+        if (handle_answer(answer, count, paths)) ++sent;
         return sent;
       }
       for (int i = 0; i < options_.max_batches_per_pump; ++i) {
@@ -932,39 +1001,8 @@ namespace telemetry {
         catch (...) {
           answer = {};
         }
-        const int status = answer.status;
-        const auto now = deps_.now_ms();
-        if (status >= 200 && status < 300) {
-          {
-            std::lock_guard lock { queue_mutex_ };
-            queue_.remove(entry->path);
-          }
-          failures_ = 0;
-          not_before_ms_ = 0;
-          ++sent;
-          if (!answer.body.empty()) apply_remote_config(answer.body);
-          std::lock_guard lock { mutex_ };
-          ++counts_.sent_batches;
-          counts_.sent_events += count;
-        }
-        else if (status_retryable(status)) {
-          ++failures_;
-          // a 429 or 503 that says how long to wait is believed (up to an hour); otherwise the backoff decides
-          const auto asked = std::min<std::int64_t>(answer.retry_after_s, options_.max_backoff_ms / 1000) * 1000;
-          not_before_ms_ = now + std::max<std::int64_t>(asked, backoff_seconds(failures_, deps_.random01()) * 1000);
-          std::lock_guard lock { mutex_ };
-          ++counts_.failed_posts;
-          break;
-        }
-        else {
-          // refused for good (a 4xx that a retry will not change): the batch is dropped
-          {
-            std::lock_guard lock { queue_mutex_ };
-            queue_.remove(entry->path);
-          }
-          std::lock_guard lock { mutex_ };
-          ++counts_.rejected_batches;
-        }
+        if (!handle_answer(answer, count, { entry->path })) break;
+        if (answer.status >= 200 && answer.status < 300) ++sent;
       }
     }
     catch (...) {

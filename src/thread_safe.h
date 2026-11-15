@@ -299,13 +299,11 @@ namespace safe {
     }
 
     /// How many times raise() found the queue full and cleared it, and how many elements those clears dropped.
-    std::uint64_t
-    clear_count() const {
-      return _clears.load(std::memory_order_relaxed);
-    }
-    std::uint64_t
-    cleared_elements() const {
-      return _cleared_elements.load(std::memory_order_relaxed);
+    std::pair<std::uint64_t, std::uint64_t>
+    clear_stats() {
+      // both counters are written under the lock in raise(); read under it too, so a clear is seen with its own element count
+      std::lock_guard ul { _lock };
+      return { _clears.load(std::memory_order_relaxed), _cleared_elements.load(std::memory_order_relaxed) };
     }
 
     bool

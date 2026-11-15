@@ -1584,3 +1584,207 @@ TEST(TelemetrySender, TheHistogramsOfAStreamAreLeftOutWhileTheServerAsksForAWait
   EXPECT_FALSE(chunk.contains("h"));
   EXPECT_TRUE(chunk.contains("bad"));
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// review follow-ups
+
+TEST(TelemetryQueue, AFullQueueOfMixedPrioritiesLosesNothingItCouldKeep) {
+  temp_dir_t dir;
+  disk_queue_t q(dir.path, queue_limits_t { 100, 8 * 1024 * 1024, 300 * 1024, 40 });
+  const auto batch = [](int n) { return json { { "install_id", "x" }, { "events", json::array() }, { "n", n } }; };
+  for (int i = 0; i < 40; ++i) ASSERT_TRUE(q.push(batch(i), 0));
+  for (int i = 0; i < 60; ++i) ASSERT_TRUE(q.push(batch(100 + i), 1));
+  ASSERT_EQ(q.files(), 100u);
+  // one more of priority 0: the bound of priority 0 is cut by itself, the global bound then holds without a second cut
+  ASSERT_TRUE(q.push(batch(500), 0));
+  EXPECT_EQ(q.files_of(0), 40u);
+  EXPECT_EQ(q.files_of(1), 60u);
+  EXPECT_EQ(q.files(), 100u);
+  EXPECT_EQ(q.front()->batch["n"], 1);  // the oldest of priority 0 went
+}
+
+TEST(TelemetrySender, AWaitSendsEveryProductAndVersionOnceAndDeletesOnlyWhatLeft) {
+  harness_t h;
+  h.next_body = R"({"cfg":{"backoff_s":600}})";
+  ASSERT_TRUE(h.svc->emit(kind_e::usage, "app_start", json { { "cold", true } }));
+  h.svc->flush();
+  ASSERT_EQ(h.svc->pump(), 1);
+  h.posted.clear();
+  h.next_body.clear();
+  // priority 0 of the host (three of one kind, two components) and of the panel
+  for (int i = 0; i < 3; ++i) ASSERT_TRUE(h.svc->emit(kind_e::error, "error", json { { "component", "encoder" }, { "code", "abc" }, { "severity", "fatal" }, { "count", 2 } }));
+  ASSERT_TRUE(h.svc->emit(kind_e::error, "error", json { { "component", "capture" }, { "code", "abc" }, { "severity", "fatal" }, { "count", 1 } }));
+  ASSERT_TRUE(h.svc->emit(kind_e::error, "error", json { { "component", "panel" }, { "code", "boom" }, { "severity", "fatal" }, { "count", 1 } }, "panel", "1.2.3.4.test"));
+  h.svc->flush();
+  EXPECT_EQ(h.svc->queued_files(), 2u);  // host and panel, priority 0
+  EXPECT_EQ(h.svc->pump(), 1);
+  ASSERT_EQ(h.posted.size(), 1u);
+  const auto first = h.posted[0];
+  EXPECT_EQ(first["events"].size(), 2u);  // two components, never merged into one
+  int encoder = 0;
+  for (const auto &e : first["events"])
+    if (e["props"]["component"] == "encoder") encoder = e["props"]["count"].get<int>();
+  EXPECT_EQ(encoder, 6);  // the counts of the merged events are added
+  EXPECT_EQ(h.svc->queued_files(), 1u);  // the panel batch is still here: it was not part of that request
+  EXPECT_EQ(h.svc->pump(), 1);  // and leaves in the same wait
+  ASSERT_EQ(h.posted.size(), 2u);
+  EXPECT_EQ(h.posted[1]["product"], "panel");
+  EXPECT_EQ(h.svc->queued_files(), 0u);
+  EXPECT_EQ(h.svc->pump(), 0);
+}
+
+TEST(TelemetrySender, TheAnswerOfAWaitRequestIsHandledLikeAnyOther) {
+  harness_t h;
+  h.next_body = R"({"cfg":{"backoff_s":600}})";
+  ASSERT_TRUE(h.svc->emit(kind_e::usage, "app_start", json { { "cold", true } }));
+  h.svc->flush();
+  h.svc->pump();
+  h.posted.clear();
+  ASSERT_TRUE(h.svc->emit(kind_e::error, "error", json { { "component", "x" }, { "code", "a" }, { "severity", "fatal" } }));
+  h.svc->flush();
+  h.next_status = 503;  // a failing server in the wait: the usual backoff applies and the batch stays
+  EXPECT_EQ(h.svc->pump(), 0);
+  EXPECT_EQ(h.svc->queued_files(), 1u);
+  EXPECT_EQ(h.svc->consecutive_failures(), 1);
+  EXPECT_GT(h.svc->retry_not_before_ms(), h.now);
+  EXPECT_EQ(h.svc->counts().failed_posts, 1u);
+  h.now = h.svc->retry_not_before_ms() + 1;
+  h.next_status = 200;
+  h.next_body = R"({"cfg":{"health":false}})";  // and the configuration of an answer in a wait is taken
+  EXPECT_EQ(h.svc->pump(), 0);  // the wait of this group was used by the failed try
+  EXPECT_EQ(h.svc->counts().sent_batches, 1u);
+  EXPECT_TRUE(h.svc->remote_config().health);
+}
+
+TEST(TelemetryStreamHealth, AnExcerptThatCannotBeMadeDoesNotUseUpTheRoom) {
+  harness_t h;
+  stream_dims_t dims;
+  dims.fps = 60;
+  h.svc->stream_begin(dims, 21, "c");
+  feed_stream(h, 21, 3600, 20, true);  // a serious window, but the log ring is empty
+  h.now += 60'000;
+  h.svc->tick_streams({});
+  EXPECT_EQ(h.svc->pump_logs(), 0);
+  h.now += 61'000;
+  h.svc->note_log_line(2, "Frame queue full", 16);
+  feed_stream(h, 21, 3600, 20, true);
+  h.now += 59'000;
+  h.svc->tick_streams({});
+  EXPECT_EQ(h.svc->pump_logs(), 1);  // the first excerpt of the run is still allowed: nothing was used up before
+}
+
+TEST(TelemetryStreamHealth, TheDailyRoomIsTheServersNumberWithTheLocalOptionAsItsDefault) {
+  service_options_t options;
+  options.anomaly_logs_per_day = 2;
+  harness_t h { options };
+  stream_dims_t dims;
+  dims.fps = 60;
+  h.svc->stream_begin(dims, 22, "c");
+  int sent = 0;
+  for (int round = 0; round < 5; ++round) {
+    h.svc->note_log_line(2, "line", 4);
+    feed_stream(h, 22, 3600, 20, true);
+    h.now += 60'000;
+    h.svc->tick_streams({});
+    sent += h.svc->pump_logs();
+    h.now += 11 * 60'000;
+  }
+  EXPECT_EQ(sent, 2);
+}
+
+TEST(TelemetryStreamHealth, TheExcerptHasNoQuotedNamesAndNoClockTime) {
+  harness_t h;
+  stream_dims_t dims;
+  dims.fps = 60;
+  h.svc->stream_begin(dims, 23, "c");
+  h.svc->note_log_line(2, "Launching app \"Genshin Impact\" for client 'Eve phone' [WGC] at 203.0.113.9", 70);
+  feed_stream(h, 23, 3600, 20, true);
+  h.now += 60'000;
+  h.svc->tick_streams({});
+  h.svc->pump_logs();
+  json body;
+  for (std::size_t i = 0; i < h.urls.size(); ++i)
+    if (h.urls[i].ends_with("/v1/anomaly-log")) body = h.posted[i];
+  ASSERT_FALSE(body.is_null());
+  const auto text = body["log"].get<std::string>();
+  EXPECT_EQ(text.find("Genshin"), std::string::npos);
+  EXPECT_EQ(text.find("Eve"), std::string::npos);
+  EXPECT_EQ(text.find("203.0.113.9"), std::string::npos);
+}
+
+TEST(TelemetryRemoteConfig, ADebugCohortRaisesTheDetailOfItsStreamsAndTheSwitchAtZeroIsNotOverridden) {
+  const auto chunk_of = [](const std::string &body_text) {
+    harness_t h { {}, 0.0 };
+    h.next_body = body_text;
+    EXPECT_TRUE(h.svc->emit(kind_e::usage, "app_start", json { { "cold", true } }));
+    h.svc->flush();
+    h.svc->pump();  // the answer carries the configuration
+    h.next_body.clear();
+    stream_dims_t dims;
+    dims.fps = 60;
+    dims.client_kind = "other";
+    h.svc->stream_begin(dims, 31, "c");
+    feed_stream(h, 31, 3600, 20, false);
+    h.now += 60'000;
+    h.svc->tick_streams({});
+    h.svc->stream_end(31, "none");
+    h.svc->flush(true);
+    while (h.svc->pump() > 0) {}
+    json chunk;
+    for (const auto &b : h.posted)
+      if (b.contains("events"))
+        for (const auto &e : b["events"])
+          if (e["name"] == "stream_health") chunk = e["props"];
+    return chunk;
+  };
+  const std::int64_t later = 1'800'000'000'000 + 3'600'000;
+  // a tiny rate: no stream is sampled, the cohort of this GPU vendor is
+  const auto with_cohort = chunk_of(R"({"cfg":{"tier1_rate":0.000001,"debug":[{"until":)" + std::to_string(later) + R"(,"gpu":"nvidia"}]}})");
+  ASSERT_FALSE(with_cohort.is_null());
+  EXPECT_TRUE(with_cohort.contains("h"));
+  const auto other_gpu = chunk_of(R"({"cfg":{"tier1_rate":0.000001,"debug":[{"until":)" + std::to_string(later) + R"(,"gpu":"amd"}]}})");
+  ASSERT_FALSE(other_gpu.is_null());
+  EXPECT_FALSE(other_gpu.contains("h"));
+  // a rate of 0 is the server's switch for all histograms
+  const auto switched_off = chunk_of(R"({"cfg":{"tier1_rate":0,"debug":[{"until":)" + std::to_string(later) + R"(,"gpu":"nvidia"}]}})");
+  ASSERT_FALSE(switched_off.is_null());
+  EXPECT_FALSE(switched_off.contains("h"));
+}
+
+TEST(TelemetryRemoteConfig, TheConfigurationIsKeptOnDiskAndReadAgainAtTheNextStart) {
+  temp_dir_t dir;
+  std::int64_t now = 1'800'000'000'000;
+  const auto make = [&](const std::string &body) {
+    service_options_t options;
+    options.dir = dir.path;
+    service_deps_t deps;
+    deps.now_ms = [&] { return now; };
+    deps.consent = [] { return consent_t {}; };
+    deps.random01 = [] { return 0.0; };
+    deps.post = [body](const std::string &, const std::string &) {
+      post_result_t answer { 200 };
+      answer.body = body;
+      return answer;
+    };
+    auto svc = std::make_unique<service_t>(options, deps);
+    context_t c;
+    c.version = "v1";
+    c.channel = "stable";
+    c.os = "windows";
+    svc->set_context(c);
+    return svc;
+  };
+  {
+    auto svc = make(R"({"cfg":{"rev":9,"tier1_rate":0.25,"logs_per_day":4}})");
+    EXPECT_DOUBLE_EQ(svc->remote_config().tier1_rate, 0.1);  // the default before any answer
+    ASSERT_TRUE(svc->emit(kind_e::usage, "app_start", json { { "cold", true } }));
+    svc->flush(true);
+    while (svc->pump() > 0) {}
+    EXPECT_EQ(svc->remote_config().rev, 9);
+    EXPECT_DOUBLE_EQ(svc->remote_config().tier1_rate, 0.25);
+  }
+  auto again = make("");  // a new start reads it before it has any answer
+  EXPECT_EQ(again->remote_config().rev, 9);
+  EXPECT_DOUBLE_EQ(again->remote_config().tier1_rate, 0.25);
+  EXPECT_EQ(again->remote_config().logs_per_day, 4);
+}
