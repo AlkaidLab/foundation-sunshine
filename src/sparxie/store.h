@@ -60,7 +60,7 @@ namespace sparxie {
   // While Sparxie's unlock owns the frame rate of a touch application, the
   // game's own tier is not that application's to store or write.
   bool
-  unlock_owns_fps(const json &block);
+  unlock_owns_fps(const json &block, int display_fps = 0);
   json
   settings_without_game_fps(const std::string &mode, const json &options, const json &settings);
   json

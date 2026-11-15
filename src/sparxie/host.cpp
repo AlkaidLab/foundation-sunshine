@@ -1443,7 +1443,7 @@ namespace sparxie {
     const bool running = env.process_running && env.process_running({ install->exe });
     // While Sparxie's unlock owns the frame rate of this application, the game's own tier is never written, even when a request carries it.
     json requested = request.value("values", json::object());
-    if (app_index >= 0 && app_index < static_cast<int>(apps["apps"].size()) && apps["apps"][app_index].contains("sparxie") && unlock_owns_fps(apps["apps"][app_index]["sparxie"]))
+    if (app_index >= 0 && app_index < static_cast<int>(apps["apps"].size()) && apps["apps"][app_index].contains("sparxie") && unlock_owns_fps(apps["apps"][app_index]["sparxie"], display_refresh_of(env)))
       requested.erase("fps");
     // `values` may hold any subset: only those fields are written, the rest keep the game's own value
     const json chosen = sparse_settings(requested);
@@ -1891,12 +1891,11 @@ namespace sparxie {
         }
       }
       const bool boost = game_boost_on(block.value("settings", json::object()));
-      // The tier fps "display" follows the streamed display: its number is
-      // resolved here, at launch, so the profile Sparxie is about to read
-      // carries the rate this stream will have. A refused write (Sparxie is
-      // open, the store is unreadable) leaves the last resolved target.
+      // The profile Sparxie is about to read carries the rate this stream will have: the tier fps "display" follows the streamed
+      // display and its number is resolved here, at launch; a fixed tier is stored as chosen. A refused write (Sparxie is open, the
+      // store is unreadable) leaves the last resolved target.
       // An Endfield session is sized by its profile (the stream's own size, or a fixed one): the display choice reaches the profile here.
-      if (!profile.empty() && ((unlock_owns_fps(block) && fps_is_display(options)) || (boost && block.value("mode", std::string()) == "touch") || (install.game == "endfield" && block.value("mode", std::string()) == "touch"))) {
+      if (!profile.empty() && ((block.value("mode", std::string()) == "touch" && options.contains("fps")) || (boost && block.value("mode", std::string()) == "touch") || (install.game == "endfield" && block.value("mode", std::string()) == "touch"))) {
         ProfileDraft draft;
         draft.game = install.game;
         draft.display_name = app_name;
@@ -1911,9 +1910,20 @@ namespace sparxie {
       // switch that still says "auto" holds nothing the person chose.
       const json settings = block.value("settingsMode", std::string()) == "auto" ? json::object() : block.value("settings", json::object());
       std::set<std::string> fields = chosen_fields(settings);
+      const int target_fps = resolve_target_fps(options, display_refresh_of(env));
       // While Sparxie's unlock owns the frame rate, the game's own tier is never one of the values this launch writes.
-      if (unlock_owns_fps(block)) fields.erase("fps");
+      if (unlock_owns_fps(block, display_refresh_of(env))) fields.erase("fps");
       GameValues values = values_from_json(settings, GameValues {});
+      // Star Rail's native model (collapse-starrail-model-d478585) is persisted via the Windows registry (ms-regsetvalueexw-20261110).
+      const bool native_starrail_fps = install.game == "starrail" && (target_fps == 30 || target_fps == 60 || target_fps == 120);
+      if (native_starrail_fps && !fields.count("fps")) {
+        fields.insert("fps");
+        values.fps = target_fps;
+      }
+      if (native_starrail_fps && target_fps == 120 && !fields.count("vsync")) {
+        fields.insert("vsync");
+        values.vsync = false;
+      }
       // The display is its own choice (跟随串流 or 固定), whatever the settings mode: it decides the size and the window mode of every launch.
       const DisplayChoice choice = display_choice_of(block);
       const StreamMode stream = resolve_stream_mode(session, env.display_size ? env.display_size() : std::pair<int, int> { 0, 0 }, display_refresh_of(env));
