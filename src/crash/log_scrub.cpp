@@ -142,6 +142,9 @@ namespace crash::logscrub {
       regex unc_host { R"(\\\\([A-Za-z0-9_-]{2,63})(?=\\))", S };
       regex win_host { R"(\b((?:DESKTOP|LAPTOP|WIN|PC|NOTEBOOK)-[A-Z0-9]{5,13})\b)", S };
       regex quotes { R"(^["']|["']$)", S };
+      // a learned name that is itself a key word (username=password) stays where a key stands, so the key rules still see it
+      regex name_is_key { std::string("^(?:") + SECRET_KEY + "|" + SERIAL_KEY + "|" + ACCOUNT_KEY + "|" + SSID_KEY + "|" + HOST_KEY + ")$", I };
+      regex sep_follows { R"(\s*[:=])", S };
     };
 
     const rules_t &
@@ -350,17 +353,30 @@ namespace crash::logscrub {
     labels_t labels;
     std::vector<std::string> users, hosts;
     learn_names(text, users, hosts);
+    // The learned names go line by line, after the key blocks are told apart: a name must not change the markers of a key block (a user called "Key" and
+    // -----BEGIN PRIVATE KEY-----), and the lines of a key block are dropped, not renamed.
+    std::vector<std::pair<regex, std::string>> name_rules;
     for (int pass = 0; pass < 2; ++pass) {
       auto &names = pass == 0 ? users : hosts;
       if (names.empty()) continue;
       std::sort(names.begin(), names.end(), [](const auto &a, const auto &b) { return a.size() > b.size(); });
       std::string alt;
       for (const auto &n : names) alt += (alt.empty() ? "" : "|") + escape_re(n);
-      // an occurrence followed by = or : is a key (username=password, then password=...), not the name: it stays, so the key rules still see it
-      const regex re("(?<![\\w])(?:" + alt + ")(?![\\w])(?!\\s*[:=])", I);
-      const std::string kind = pass == 0 ? "user" : "host";
-      text = replace_all(text, re, [&](const boost::smatch &m) { return labels.of(kind, m[0].str()); });
+      name_rules.emplace_back(regex("(?<![\\w])(?:" + alt + ")(?![\\w])", I), pass == 0 ? "user" : "host");
     }
+    // an occurrence followed by = or : stays only when the name is itself a key word (username=password, then password=...): the key rules need it.
+    // Any other name before a colon is part of a message ("Tanaka: disconnected") and goes.
+    auto rename = [&](const std::string &line) {
+      std::string out_line = line;
+      for (const auto &[re, kind] : name_rules) {
+        out_line = replace_all(out_line, re, [&](const boost::smatch &m) {
+          const auto name = m[0].str();
+          if (boost::regex_search(m.suffix().first, m.suffix().second, rules().sep_follows, boost::match_continuous) && boost::regex_match(name, rules().name_is_key)) return name;
+          return labels.of(kind, name);
+        });
+      }
+      return out_line;
+    };
     std::string out;
     out.reserve(text.size());
     bool in_pem = in_pem_at_start;
@@ -380,10 +396,10 @@ namespace crash::logscrub {
       if (boost::regex_search(line, rules().pem_begin)) {
         if (!boost::regex_search(line, rules().pem_end)) in_pem = true;
         const auto b = line.find("-----BEGIN");
-        piece = scrub_line(line.substr(0, b), labels) + "<pem>";  // what stands in front of the block is a log line like any other
+        piece = scrub_line(rename(line.substr(0, b)), labels) + "<pem>";  // what stands in front of the block is a log line like any other
       }
       else {
-        piece = scrub_line(line, labels);
+        piece = scrub_line(rename(line), labels);
         if (piece.size() > max_line) {
           // never inside a UTF-8 sequence
           std::size_t cut = max_line - 1;

@@ -84,6 +84,7 @@ namespace {
     std::atomic<int> status { 200 };
     std::atomic<int> retry_after { 0 };  ///< sent as a Retry-After header when not 0
     std::atomic<bool> stop { false };
+    std::string reply_body;  ///< sent as the JSON body of every answer; set before the request, empty = no body
 
     mock_server_t() {
   #ifdef _WIN32
@@ -133,8 +134,13 @@ namespace {
             bodies.push_back(data.substr(header_end + 4));
             targets.push_back(target);
           }
+          std::string payload;
+          {
+            std::lock_guard lock(mutex);
+            payload = reply_body;
+          }
           const std::string reply = "HTTP/1.1 " + std::to_string(status.load()) + " X\r\n" + (retry_after.load() ? "Retry-After: " + std::to_string(retry_after.load()) + "\r\n" : std::string()) +
-                                    "Content-Length: 0\r\nConnection: close\r\n\r\n";
+                                    (payload.empty() ? std::string() : "Content-Type: application/json\r\n") + "Content-Length: " + std::to_string(payload.size()) + "\r\nConnection: close\r\n\r\n" + payload;
           ::send(client, reply.data(), (int) reply.size(), 0);
           close_sock(client);
         }
@@ -670,6 +676,20 @@ TEST(CrashUpload, TheSessionLogOfAFeedbackReportGoesToUserLogAndComesBackAsARef)
   EXPECT_EQ(server.targets[0], "/v1/user-log");
   EXPECT_NE(server.bodies[0].find("<email>"), std::string::npos);
   EXPECT_EQ(server.bodies[0].find("example.co.uk"), std::string::npos);
+  // the service stores the log and answers with its reference: that reference comes back to the caller (it goes into the feedback report)
+  {
+    std::lock_guard lock(server.mutex);
+    server.reply_body = R"({"ok":true,"log":"stored","ref":"logs-2026-11/abc123.log.gz"})";
+  }
+  const auto ref = crash::upload_session_log_from(config, server.url(), "11111111-2222-4333-8444-555555555555", "2026.1115.1");
+  ASSERT_TRUE(ref.has_value());
+  EXPECT_EQ(*ref, "logs-2026-11/abc123.log.gz");
+  // a 2xx that does not say "stored" has no reference
+  {
+    std::lock_guard lock(server.mutex);
+    server.reply_body = R"({"ok":true,"log":"skipped","ref":"x"})";
+  }
+  EXPECT_FALSE(crash::upload_session_log_from(config, server.url(), "x", "v").has_value());
   server.status = 404;  // a service without the endpoint: the report goes without a log, silently
   EXPECT_FALSE(crash::upload_session_log_from(config, server.url(), "x", "v").has_value());
   fs::remove_all(config);

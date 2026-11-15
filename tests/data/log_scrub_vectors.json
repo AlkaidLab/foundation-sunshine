@@ -571,6 +571,39 @@
    "required": [
     "Info: done"
    ]
+  },
+  {
+   "name": "a learned name followed by a colon in a message",
+   "input": "Info: loading C:\\Users\\Tanaka\\x.conf\nInfo: Tanaka: disconnected\nInfo: Tanaka=1 left",
+   "forbidden": [
+    "Tanaka"
+   ],
+   "required": [
+    "disconnected",
+    "left"
+   ]
+  },
+  {
+   "name": "a learned name that is a word of a pem marker",
+   "input": "Info: username=Key\nInfo: cert\n-----BEGIN PRIVATE KEY-----\nabcdefgh\n-----END PRIVATE KEY-----\nInfo: done",
+   "forbidden": [
+    "abcdefgh",
+    "Key"
+   ],
+   "required": [
+    "Info: cert",
+    "Info: done"
+   ]
+  },
+  {
+   "name": "a learned name that is a key keeps the key rules",
+   "input": "Info: username=token\nInfo: token=abc123def\nInfo: token: disconnected",
+   "forbidden": [
+    "abc123def"
+   ],
+   "required": [
+    "Info:"
+   ]
   }
  ]
 }
