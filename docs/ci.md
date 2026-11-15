@@ -68,6 +68,7 @@ strip 和签名都不会改变它，崩溃转储（minidump）靠它找到符号
   随后把安装包和便携包里的模块 `strip` 掉，所以安装包不带 DWARF。
 - `sunshine.exe` 或 `sunshinesvc.exe` 没有符号时打包失败。
 - 解析崩溃：`minidump-stackwalk --symbols-path <解压目录> x.dmp`。
+- 符号文件格式与目录布局见 Breakpad 文档，`--build-id` 见 GNU ld 手册，二者登记在 `docs/authority/source-index.tsv`（`breakpad-symbol-files-20261115`、`gnu-ld-options-20261115`）。
 
 ## 在本地复现
 
