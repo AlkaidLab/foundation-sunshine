@@ -576,6 +576,31 @@ jobs:
         shell: msys2 {0}
         run: ctest --test-dir build --no-tests=error --output-on-failure --output-junit "$GITHUB_WORKSPACE/ctest.xml"
 
+      # Pull requests without the NVIDIA SDK secrets never compile the adapter branches that master builds. This configures the
+      # same definitions with placeholder digests and runs the tests that load fake adapters, so a build-graph change that
+      # leaks the definitions into them fails here instead of on master.
+      - name: Test the adapter build configuration without the SDK
+        if: ${{ !cancelled() && steps.configure_windows.conclusion == 'success' }}
+        shell: msys2 {0}
+        env:
+          CCACHE_DIR: ${{ github.workspace }}\.ccache
+          CCACHE_MAXSIZE: 2G
+          CCACHE_COMPILERCHECK: content
+        run: |
+          export PATH="$PATH:/c/Program Files/dotnet"
+          gui_options=()
+          if [[ -n "${GUI_BUNDLE_DIR:-}" ]]; then
+            gui_options=(-DFETCH_GUI=OFF "-DGUI_DIR=$GUI_BUNDLE_DIR")
+          fi
+          cmake -B build-adapter-config -G Ninja -S . "${gui_options[@]}" \
+            -DBUILD_DOCS=OFF -DBUILD_TESTS=ON -DBUILD_TRAY_TESTS=ON -DBUILD_WEB_UI=OFF \
+            -DSUNSHINE_RTX_HDR=OFF -DSUNSHINE_SIMULATE_ADAPTER_DEFINES=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DSUNSHINE_ASSETS_DIR=assets -DDRIVER_DEPS_REQUIRED=OFF
+          cmake --build build-adapter-config --target pre_encode_filter_unit_tests truehdr_adapter_loader_unit_tests
+          ctest --test-dir build-adapter-config --no-tests=error --output-on-failure \
+            -R '^(pre_encode_filter_unit_tests|truehdr_adapter_loader_unit_tests)$'
+
       # Annotations and a job summary from the JUnit file; fails when no test ran, when fewer than --min-tests ran (a
       # registered suite that disappeared) and when a test not listed in scripts/ci/allowed-skips.txt was skipped.
       - name: Report native tests
