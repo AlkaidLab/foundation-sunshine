@@ -20,6 +20,10 @@ const withBrowser = async (run, { stored = {} } = {}) => {
     for (const [k, v] of Object.entries({ localStorage: original.localStorage, sessionStorage: original.sessionStorage, fetch: original.fetch, requestAnimationFrame: original.raf })) { if (v === undefined) delete globalThis[k]; else globalThis[k] = v }
   }
 }
+// The page-view event is queued asynchronously (this test replaces requestAnimationFrame with a timer). Twenty milliseconds were enough on an idle
+// machine and not on a loaded CI runner running other test files side by side: the event was missing and the test failed now and
+// then. A generous settle time costs a quarter of a second per test and removes the race.
+const settle = () => new Promise((r) => setTimeout(r, 250))
 const mod = async () => import(`../config/telemetry.js?${Math.random()}`)
 
 test('events go to the host in the contract shape, never to a Google host', async () => {
@@ -30,7 +34,7 @@ test('events go to the host in the contract shape, never to a Google host', asyn
     trackEvents.userAction('apps_saved', { count: 3, name: 'My Secret Game' })
     trackEvents.errorOccurred('config_save', 'failed at C:\\Users\\Alice\\x.json for 192.0.2.5')
     trackEvents.pageView('display-modes')
-    await new Promise((r) => setTimeout(r, 20))
+    await settle()
     await flushTelemetry()
     assert.equal(calls.length, 1)
     assert.equal(calls[0].url, '/api/telemetry/events')
@@ -55,7 +59,7 @@ test('usage statistics off: no usage or experience event is queued, an error sti
     const { trackEvents, flushTelemetry } = await mod()
     trackEvents.userAction('x'); trackEvents.appStart(); trackEvents.pageView('home')
     trackEvents.errorOccurred('boom', 'text')
-    await new Promise((r) => setTimeout(r, 20))
+    await settle()
     await flushTelemetry()
     assert.deepEqual(calls[0].body.events.map((e) => e.name), ['error'])
   }, { stored: { 'foundation-ui.telemetry.consent': 'off', 'foundation-ui.telemetry.errors': 'on' } })
@@ -68,7 +72,7 @@ test('usage statistics off: no usage or experience event is queued, an error sti
   await withBrowser(async (calls) => {
     const { trackEvents, flushTelemetry } = await mod()
     trackEvents.errorOccurred('boom', 'text'); trackEvents.userAction('y'); trackEvents.pageView('home')
-    await new Promise((r) => setTimeout(r, 20))
+    await settle()
     await flushTelemetry()
     assert.equal(calls.length, 0, 'both off: nothing is requested')
   }, { stored: { 'foundation-ui.telemetry.errors': 'off', 'foundation-ui.telemetry.consent': 'off' } })
