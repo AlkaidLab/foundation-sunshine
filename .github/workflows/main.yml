@@ -20,6 +20,9 @@ on:
   push:
     branches:
       - master
+  schedule:
+    # Nightly: a cold build with the latest toolchain packages, the full native tests, and a fresh compiler cache for master.
+    - cron: '17 20 * * *'
   workflow_dispatch:
     inputs:
       gui_run_id:
@@ -296,7 +299,7 @@ jobs:
 
       - name: Setup Release (Auto)
         id: setup_release_auto
-        if: github.event_name != 'workflow_dispatch'
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
         uses: LizardByte/setup-release-action@v2025.426.225
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
@@ -306,7 +309,7 @@ jobs:
       # carries them.
       - name: Automatic pre-releases
         id: auto_gate
-        if: github.event_name != 'workflow_dispatch'
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
         env:
           AUTO: ${{ steps.setup_release_auto.outputs.publish_release }}
           ENABLED: ${{ vars.AUTO_PRERELEASE }}
@@ -324,7 +327,7 @@ jobs:
       # committer date (scripts/ci/release-info.py); otherwise the run is a dev build with a manual-<date> tag.
       - name: Setup Release (Manual)
         id: setup_release_manual
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
         env:
           PUBLISH: ${{ inputs.publish }}
           REF_NAME: ${{ github.ref_name }}
@@ -454,6 +457,35 @@ jobs:
       - name: Toolchain
         uses: ./.github/actions/windows-toolchain
 
+      # Dependency drift canary (nightly only, informational): the installed package versions are kept as an artifact and
+      # compared with the last successful nightly, so a red nightly can be tied to the packages that changed overnight.
+      - name: Record the package versions
+        if: github.event_name == 'schedule'
+        shell: msys2 {0}
+        run: pacman -Q | sort > "$GITHUB_WORKSPACE/packages.txt"
+
+      - name: Package drift since the last nightly
+        if: github.event_name == 'schedule'
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $previous = gh run list --workflow main.yml --event schedule --status success --limit 1 --json databaseId --jq '.[0].databaseId'
+          "### Package drift since the last nightly" >> $env:GITHUB_STEP_SUMMARY
+          if (-not $previous) { "No earlier successful nightly." >> $env:GITHUB_STEP_SUMMARY; exit 0 }
+          gh run download $previous --name nightly-packages --dir previous
+          $changes = Compare-Object (Get-Content previous/packages.txt) (Get-Content packages.txt) | ForEach-Object { "$($_.SideIndicator) $($_.InputObject)" }
+          if ($changes) { '```' >> $env:GITHUB_STEP_SUMMARY; $changes >> $env:GITHUB_STEP_SUMMARY; '```' >> $env:GITHUB_STEP_SUMMARY } else { "No package changed." >> $env:GITHUB_STEP_SUMMARY }
+
+      - name: Keep the package versions
+        if: github.event_name == 'schedule'
+        uses: actions/upload-artifact@v7
+        with:
+          name: nightly-packages
+          path: packages.txt
+          retention-days: 14
+
       # Packaging needs the Web UI build, the installer's setup UI and the Inno Setup package; pull requests that touch none
       # of what packaging reads skip them (job `changes`, output `package`). Web UI lint and tests run in the `webui` jobs.
       - name: Setup Node.js
@@ -528,6 +560,9 @@ jobs:
           Write-Output "installer setup UI $source in $seconds s"
 
       - name: Cache compiler objects
+        # The nightly build starts cold on purpose: it proves that a build from nothing still works with today's packages,
+        # and the cache it saves replaces master's, which would otherwise only ever be topped up.
+        if: github.event_name != 'schedule'
         uses: actions/cache/restore@v6
         with:
           path: ${{ github.workspace }}\.ccache
@@ -726,14 +761,20 @@ jobs:
           # latter caps at --limit 100, and once this repo's other caches
           # (msys2, npm, ...) grow past that, stale ccache entries would
           # fall outside the window and never get pruned.
-          $stale = gh api --paginate "repos/$env:GITHUB_REPOSITORY/actions/caches?per_page=100" --jq '.actions_caches[] | select(.key | test("^ccache-windows-[0-9]+$")) | [(.key | sub("^ccache-windows-";"") | tonumber), .id, .key] | @tsv' |
+          $all = @(gh api --paginate "repos/$env:GITHUB_REPOSITORY/actions/caches?per_page=100" --jq '.actions_caches[] | select(.key | test("^ccache-windows-[0-9]+$")) | [(.key | sub("^ccache-windows-";"") | tonumber), .id, .key] | @tsv' |
             Where-Object { $_ } |
             ForEach-Object {
               $parts = $_ -split "`t"
-              if ([long]$parts[0] -lt [long]"${{ github.run_id }}") {
-                [pscustomobject]@{ Id = $parts[1]; Key = $parts[2] }
-              }
-            }
+              [pscustomobject]@{ Run = [long]$parts[0]; Id = $parts[1]; Key = $parts[2] }
+            })
+          # actions/cache/save reports a failed save as a warning and still exits 0, so "the step succeeded" does not prove
+          # the new entry exists. The nightly build does not restore a cache first: pruning without a replacement would
+          # leave master with none.
+          if ($all.Key -notcontains $current) {
+            Write-Output "::notice title=Compiler cache::$current was not saved; the older entries are kept"
+            exit 0
+          }
+          $stale = @($all | Where-Object { $_.Run -lt [long]"${{ github.run_id }}" })
           foreach ($entry in $stale) {
             gh cache delete $entry.Id --repo $env:GITHUB_REPOSITORY
             Write-Output "Pruned $($entry.Key)"
@@ -916,7 +957,7 @@ jobs:
       # Automatic pre-releases (a push to master with AUTO_PRERELEASE=true). A manual publish is the `publish` job below:
       # this action only creates a release for a push to master.
       - name: Create/Update GitHub Release
-        if: needs.setup_release.outputs.publish_release == 'true' && github.event_name != 'workflow_dispatch'
+        if: needs.setup_release.outputs.publish_release == 'true' && github.event_name == 'push'
         uses: LizardByte/create-release-action@v2025.426.1549
         with:
           allowUpdates: true
