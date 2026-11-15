@@ -4,6 +4,7 @@
  */
 #pragma once
 
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -31,6 +32,14 @@ namespace nvhttp::apps::poster {
   /** Enqueue decoding/encoding without delaying the asset response. */
   void
   schedule(const std::filesystem::path &source);
+
+  /**
+   * Block until the background pass has finished every scheduled source and holds no file open.
+   * The worker is detached, so a caller that deletes a source right after scheduling it (a test) waits here first.
+   * @return false when the timeout passed with work still pending.
+   */
+  bool
+  wait_idle(std::chrono::milliseconds timeout = std::chrono::seconds(30));
 
   /** Return the full representation, falling back to the untouched source. */
   std::optional<representation_t>
