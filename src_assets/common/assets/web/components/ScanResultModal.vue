@@ -440,6 +440,11 @@ const getAppTypeLabel = (appType) => {
   flex: none;
 }
 
+@media (max-width: 480px) {
+  .scan-row { flex-wrap: wrap; row-gap: 8px; }
+  .scan-row__actions { flex: 0 0 100%; justify-content: flex-end; }
+}
+
 .scan-pill {
   flex: 1;
   min-height: 56px;
