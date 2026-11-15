@@ -3696,7 +3696,7 @@ namespace stream {
       return;
     }
 
-    auto ratecontrol_next_frame_start = std::chrono::steady_clock::now();
+    streaming::video_pacer_t video_pacer;
 
     crash::watched_thread_t crash_watch("video-broadcast", 20000);
 
@@ -3903,12 +3903,22 @@ namespace stream {
 
         const auto measured_kbps = session->measured_bitrate.kbps(steady_now_ms());
         const auto configured_kbps = session->config.monitor.bitrate_budget->applied().encoder_kbps;
-        const auto pacing_rate_bps = streaming::video_pacing_rate_bps(measured_kbps, configured_kbps);
-        const auto pace_frame = streaming::should_pace_video_frame(
-          packet->is_idr(), encoded_bytes, static_cast<std::size_t>(std::max(0, config::video.video_pacing_threshold)));
-        // Do not carry the previous frame's schedule into an unpaced frame.
+        const auto framerate = session->config.monitor.get_effective_framerate();
+        const auto frame_interval = framerate > 0 ?
+                                      std::chrono::nanoseconds { static_cast<std::int64_t>(1e9 / framerate) } :
+                                      std::chrono::nanoseconds::zero();
+        // The pacing rate is raised until this frame fits its share of the frame interval, and a frame is not paced while
+        // another one waits in the queue: pacing must not hold the thread past the next capture. See streaming/video_pacing.h.
+        const auto wire_bytes = encoded_bytes * (100 + static_cast<std::size_t>(fecPercentage)) / 100;
         const auto now = std::chrono::steady_clock::now();
-        auto ratecontrol_frame_start = pace_frame ? std::max(ratecontrol_next_frame_start, now) : now;
+        const auto pacing = video_pacer.begin_frame(
+          now,
+          packets->peek(),
+          streaming::should_pace_video_frame(
+            packet->is_idr(), encoded_bytes, static_cast<std::size_t>(std::max(0, config::video.video_pacing_threshold))),
+          streaming::video_pacing_rate_bps(measured_kbps, configured_kbps),
+          wire_bytes,
+          frame_interval);
 
         size_t ratecontrol_frame_packets_sent = 0;
 
@@ -3916,7 +3926,7 @@ namespace stream {
         // capture presentation timestamp. Frames without a capture timestamp
         // (intentional duplicates) retain the next scheduled pacing time.
         const bool frame_is_dupe = !packet->frame_timestamp;
-        const auto presentation_time = packet->frame_timestamp.value_or(ratecontrol_next_frame_start);
+        const auto presentation_time = packet->frame_timestamp.value_or(video_pacer.next_frame_start());
         const auto timestamp = video_rtp_timestamp(presentation_time, video_epoch);
 
         auto blockIndex = 0;
@@ -4007,9 +4017,8 @@ namespace stream {
               // Do pacing within the frame.
               // Also trigger pacing before the first send_batch() of the frame
               // to account for the last send_batch() of the previous frame.
-              if (pace_frame) {
-                const auto due = ratecontrol_frame_start + streaming::video_packet_slot(
-                                                             ratecontrol_frame_packets_sent, blocksize, pacing_rate_bps);
+              if (pacing.paced) {
+                const auto due = video_pacer.due(pacing, ratecontrol_frame_packets_sent, blocksize);
                 const auto send_now = std::chrono::steady_clock::now();
                 if (send_now < due) timer->sleep_for(due - send_now);
               }
@@ -4064,9 +4073,7 @@ namespace stream {
           }
 
           // remember this in case the next frame comes immediately
-          ratecontrol_next_frame_start = pace_frame ? ratecontrol_frame_start + streaming::video_packet_slot(
-                                                                                  ratecontrol_frame_packets_sent, blocksize, pacing_rate_bps) :
-                                                      std::chrono::steady_clock::now();
+          video_pacer.end_frame(pacing, ratecontrol_frame_packets_sent, blocksize, std::chrono::steady_clock::now());
 
           frame_network_latency_logger.second_point_now_and_log();
 
