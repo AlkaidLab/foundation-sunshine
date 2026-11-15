@@ -760,6 +760,10 @@ namespace stream {
     // for /api/perf/current and unpublishes itself when the session dies.
     streaming::measured_bitrate_window_t measured_bitrate;
     streaming::measured_bitrate_handle_t measured_bitrate_handle;
+
+    // The capture interval the video send thread paces against. The control thread rewrites it when the client changes
+    // the frame rate, and config.monitor.framerate is a plain int that the send thread must not read meanwhile.
+    std::atomic<std::int64_t> video_frame_interval_ns { 0 };
   };
 
   static void
@@ -2310,6 +2314,7 @@ namespace stream {
         }
 
         session->config.monitor.framerate = static_cast<int>(new_fps);
+        session->video_frame_interval_ns.store(streaming::video_frame_interval(new_fps).count(), std::memory_order_relaxed);
         perf::update_session_display(
           session->launch_session_id,
           session->config.monitor.width,
@@ -3696,7 +3701,7 @@ namespace stream {
       return;
     }
 
-    auto ratecontrol_next_frame_start = std::chrono::steady_clock::now();
+    streaming::video_pacer_t video_pacer;
 
     crash::watched_thread_t crash_watch("video-broadcast", 20000);
 
@@ -3903,20 +3908,28 @@ namespace stream {
 
         const auto measured_kbps = session->measured_bitrate.kbps(steady_now_ms());
         const auto configured_kbps = session->config.monitor.bitrate_budget->applied().encoder_kbps;
-        const auto pacing_rate_bps = streaming::video_pacing_rate_bps(measured_kbps, configured_kbps);
-        const auto pace_frame = streaming::should_pace_video_frame(
-          packet->is_idr(), encoded_bytes, static_cast<std::size_t>(std::max(0, config::video.video_pacing_threshold)));
-        // Do not carry the previous frame's schedule into an unpaced frame.
+        const std::chrono::nanoseconds frame_interval { session->video_frame_interval_ns.load(std::memory_order_relaxed) };
+        // The pacing rate is raised until this frame fits its share of the frame interval, and a frame is not paced while
+        // another one waits in the queue: pacing must not hold the thread past the next capture. See streaming/video_pacing.h.
+        // The size is the planned wire size, parity included: a client minimum of parity packets can exceed the percentage.
+        const auto wire_bytes = streaming::video_pacing_wire_bytes(*layout, blocksize);
         const auto now = std::chrono::steady_clock::now();
-        auto ratecontrol_frame_start = pace_frame ? std::max(ratecontrol_next_frame_start, now) : now;
+        const auto pacing = video_pacer.begin_frame(
+          now,
+          packets->peek(),
+          streaming::should_pace_video_frame(
+            packet->is_idr(), encoded_bytes, static_cast<std::size_t>(std::max(0, config::video.video_pacing_threshold))),
+          streaming::video_pacing_rate_bps(measured_kbps, configured_kbps),
+          wire_bytes,
+          frame_interval);
 
         size_t ratecontrol_frame_packets_sent = 0;
 
         // RTP video timestamps use the 90 kHz media clock and the original
         // capture presentation timestamp. Frames without a capture timestamp
-        // (intentional duplicates) retain the next scheduled pacing time.
+        // (intentional duplicates) take the time this frame's send starts.
         const bool frame_is_dupe = !packet->frame_timestamp;
-        const auto presentation_time = packet->frame_timestamp.value_or(ratecontrol_next_frame_start);
+        const auto presentation_time = packet->frame_timestamp.value_or(pacing.start);
         const auto timestamp = video_rtp_timestamp(presentation_time, video_epoch);
 
         auto blockIndex = 0;
@@ -4007,9 +4020,8 @@ namespace stream {
               // Do pacing within the frame.
               // Also trigger pacing before the first send_batch() of the frame
               // to account for the last send_batch() of the previous frame.
-              if (pace_frame) {
-                const auto due = ratecontrol_frame_start + streaming::video_packet_slot(
-                                                             ratecontrol_frame_packets_sent, blocksize, pacing_rate_bps);
+              if (pacing.paced) {
+                const auto due = video_pacer.due(pacing, ratecontrol_frame_packets_sent, blocksize);
                 const auto send_now = std::chrono::steady_clock::now();
                 if (send_now < due) timer->sleep_for(due - send_now);
               }
@@ -4064,9 +4076,7 @@ namespace stream {
           }
 
           // remember this in case the next frame comes immediately
-          ratecontrol_next_frame_start = pace_frame ? ratecontrol_frame_start + streaming::video_packet_slot(
-                                                                                  ratecontrol_frame_packets_sent, blocksize, pacing_rate_bps) :
-                                                      std::chrono::steady_clock::now();
+          video_pacer.end_frame(pacing, ratecontrol_frame_packets_sent, blocksize, std::chrono::steady_clock::now());
 
           frame_network_latency_logger.second_point_now_and_log();
 
@@ -4932,6 +4942,9 @@ namespace stream {
       // input immediately, and an unregistered launch ID would silently drop
       // that first click/touch candidate.
       text_context::bridge_t::instance().session_started(session.launch_session_id);
+
+      // Before the session is shared: the control thread may change the frame rate as soon as it can see it.
+      session.video_frame_interval_ns.store(streaming::video_frame_interval(session.config.monitor.get_effective_framerate()).count(), std::memory_order_relaxed);
 
       // 将完成初始化的会话加入共享列表。
       {

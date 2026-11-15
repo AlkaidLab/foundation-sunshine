@@ -297,6 +297,8 @@ namespace safe {
 
     bool
     peek() {
+      // raise() and try_raise() change _queue under _lock; reading it unlocked is a data race.
+      std::lock_guard ul { _lock };
       return _continue && !_queue.empty();
     }
 
