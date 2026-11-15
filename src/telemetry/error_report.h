@@ -115,7 +115,7 @@ namespace telemetry {
       std::uint64_t held = 0;
     };
     nlohmann::json
-    props_of(const group_t &g, const std::string &fingerprint, std::uint64_t count) const;
+    props_of(const group_t &g, const std::string &fingerprint, std::uint64_t count, bool detail) const;
     std::mutex mutex_;
     std::map<std::string, group_t> groups_;
     std::deque<std::int64_t> sent_;

@@ -2717,3 +2717,26 @@ TEST(ErrorReportsAndTheChoice, ReportsWhileTheChoiceIsOffCountNeitherForTheQuota
   h.now += error_reporter_t::AGGREGATE_MS + 1000;
   EXPECT_EQ(error_reports_sent(h).size(), 0u);
 }
+
+TEST(ErrorReportsAndTheChoice, TheCountOfLaterReportsCarriesNeitherTheStackNorTheActions) {
+  harness_t h;
+  h.svc->crumb(crumb_e::nav, "apps");
+  h.svc->report_error(an_error("E_AGAIN"));
+  h.svc->crumb(crumb_e::act, "tile.something");
+  h.svc->report_error(an_error("E_AGAIN"));  // held for the count
+  h.svc->report_error(an_error("E_AGAIN"));
+  const auto sent = error_reports_sent(h);  // flush(true): the first report and the count
+  ASSERT_EQ(sent.size(), 2u);
+  const json *first = nullptr, *count = nullptr;
+  for (const auto &e : sent) (e["count"] == 1 ? first : count) = &e;
+  ASSERT_NE(first, nullptr);
+  ASSERT_NE(count, nullptr);
+  EXPECT_TRUE(first->contains("frames"));
+  EXPECT_TRUE(first->contains("crumbs"));
+  EXPECT_EQ((*count)["count"], 2);
+  EXPECT_EQ((*count)["fingerprint"], (*first)["fingerprint"]);
+  EXPECT_EQ((*count)["code"], "E_AGAIN");
+  EXPECT_FALSE(count->contains("frames"));
+  EXPECT_FALSE(count->contains("crumbs"));
+  EXPECT_FALSE(count->contains("log"));
+}

@@ -183,7 +183,7 @@ namespace telemetry {
   }
 
   json
-  error_reporter_t::props_of(const group_t &g, const std::string &fingerprint, std::uint64_t count) const {
+  error_reporter_t::props_of(const group_t &g, const std::string &fingerprint, std::uint64_t count, bool detail) const {
     json p {
       { "component", crumb_word(g.error.component, 32) },
       { "lang", g.error.lang },
@@ -195,8 +195,9 @@ namespace telemetry {
     if (!g.error.loc.empty()) p["loc"] = g.error.loc;
     if (!g.error.build.empty()) p["build"] = crumb_word(g.error.build, 40);
     if (!g.error.page.empty()) p["page"] = crumb_word(g.error.page, 48);
-    if (!g.error.frames.empty()) p["frames"] = std::vector<std::string>(g.error.frames.begin(), g.error.frames.begin() + std::min(g.error.frames.size(), MAX_FRAMES));
-    if (!g.crumbs.empty()) p["crumbs"] = std::vector<std::string>(g.crumbs.begin() + (g.crumbs.size() > MAX_BREADCRUMBS ? g.crumbs.size() - MAX_BREADCRUMBS : 0), g.crumbs.end());
+    // the stack and the actions go with the first report of an error only; a count of later ones carries the group and the number
+    if (detail && !g.error.frames.empty()) p["frames"] = std::vector<std::string>(g.error.frames.begin(), g.error.frames.begin() + std::min(g.error.frames.size(), MAX_FRAMES));
+    if (detail && !g.crumbs.empty()) p["crumbs"] = std::vector<std::string>(g.crumbs.begin() + (g.crumbs.size() > MAX_BREADCRUMBS ? g.crumbs.size() - MAX_BREADCRUMBS : 0), g.crumbs.end());
     return p;
   }
 
@@ -215,7 +216,7 @@ namespace telemetry {
     if (first && static_cast<int>(sent_.size()) < MAX_PER_HOUR) {
       g.last_sent_ms = now_ms;
       sent_.push_back(now_ms);
-      return props_of(g, fp, 1);
+      return props_of(g, fp, 1, true);
     }
     ++g.held;
     if (groups_.size() > 200) groups_.erase(groups_.begin());
@@ -238,7 +239,7 @@ namespace telemetry {
       if (g.last_sent_ms != 0 && now_ms - g.last_sent_ms < AGGREGATE_MS) continue;
       while (!sent_.empty() && now_ms - sent_.front() >= 3'600'000) sent_.pop_front();
       if (static_cast<int>(sent_.size()) >= MAX_PER_HOUR) break;
-      out.push_back(props_of(g, fp, g.held));
+      out.push_back(props_of(g, fp, g.held, false));
       g.held = 0;
       g.last_sent_ms = now_ms;
       sent_.push_back(now_ms);
