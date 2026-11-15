@@ -686,9 +686,14 @@ main(int argc, char *argv[]) {
 #endif
 
   telemetry::host_ready();
-  lifetime::core_state_ready();
+  // An exit that was already asked for (a required listener failed during the probe sets the event directly) must not look ready.
+  if (!shutdown_event->peek()) {
+    lifetime::core_state_ready();
+  }
   crash_startup_busy.reset();
   mainThreadLoop(shutdown_event);
+  // Every way out of the loop is an exit: the service must not adopt this process from here on, whichever path raised the event.
+  lifetime::core_state_stopping();
 
 #ifdef _WIN32
   spatial_audio::mat_capture_process.stop();

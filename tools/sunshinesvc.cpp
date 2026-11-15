@@ -493,6 +493,28 @@ DescribeCore(const CoreProcess &core, const sunshinesvc::core_state_t &state) {
          ", ready=" + (state.ready ? "yes" : "no") + ", stopping=" + (state.stopping ? "yes" : "no") + ")";
 }
 
+// Ask one process to close by posting WM_CLOSE to the top-level windows it owns. Unlike a console control event, this reaches that
+// process only: a core and a command-line Sunshine.exe may share one console, and the event would stop both.
+bool
+RequestCoreClose(DWORD pid) {
+  struct Search {
+    DWORD pid;
+    bool posted;
+  } search { pid, false };
+  EnumWindows(
+    [](HWND window, LPARAM parameter) -> BOOL {
+      auto *found = reinterpret_cast<Search *>(parameter);
+      DWORD owner = 0;
+      GetWindowThreadProcessId(window, &owner);
+      if (owner == found->pid && PostMessageW(window, WM_CLOSE, 0, 0)) {
+        found->posted = true;
+      }
+      return TRUE;
+    },
+    reinterpret_cast<LPARAM>(&search));
+  return search.posted;
+}
+
 // Decide which of the cores found for this install to supervise, and make the others leave. A core is kept only when it
 // has said it is ready and has not said it is stopping: one on its way out would exit a moment after it was adopted and
 // leave the service without a core (the adopted process that ends after a fixed wait and is then restarted). The others
@@ -527,7 +549,7 @@ ResolveCores(std::vector<CoreProcess> &cores, HANDLE console_token, HANDLE log_f
       }
       case sunshinesvc::core_action_e::end: {
         WriteServiceLog(log_file, description + " is not known to be healthy; not adopting it, ending it before starting a fresh core");
-        const auto asked = RunTerminationHelper(console_token, core.process_id);
+        const auto asked = RequestCoreClose(core.process_id);
         if (!asked || WaitForSingleObject(core.handle, sunshinesvc::core_end_wait_ms) != WAIT_OBJECT_0) {
           TerminateProcess(core.handle, ERROR_PROCESS_ABORTED);
           const auto ended = WaitForSingleObject(core.handle, sunshinesvc::core_end_wait_ms) == WAIT_OBJECT_0;
@@ -541,6 +563,23 @@ ResolveCores(std::vector<CoreProcess> &cores, HANDLE console_token, HANDLE log_f
   }
   cores.clear();
 
+  // The others took time to leave: check the candidate again against what it says now, not against what it said at the start.
+  if (kept.handle != NULL) {
+    const bool alive = WaitForSingleObject(kept.handle, 0) == WAIT_TIMEOUT;
+    const bool ready = alive && CoreEventSignaled(sunshinesvc::core_event_e::ready, kept.process_id);
+    const bool stopping = alive && CoreEventSignaled(sunshinesvc::core_event_e::stopping, kept.process_id);
+    if (!alive || !ready || stopping) {
+      WriteServiceLog(log_file,
+        "Sunshine.exe PID " + std::to_string(kept.process_id) +
+          (alive ? " is no longer ready and running; not adopting it" : " has exited; not adopting it"));
+      if (alive && WaitForSingleObject(kept.handle, sunshinesvc::core_stopping_wait_ms) != WAIT_OBJECT_0) {
+        TerminateProcess(kept.handle, ERROR_PROCESS_ABORTED);
+        WaitForSingleObject(kept.handle, sunshinesvc::core_end_wait_ms);
+      }
+      CloseHandle(kept.handle);
+      kept = CoreProcess {};
+    }
+  }
   if (kept.handle != NULL) {
     WriteServiceLog(log_file, "Adopting Sunshine.exe PID " + std::to_string(kept.process_id) + ": it is ready and not shutting down");
   }
