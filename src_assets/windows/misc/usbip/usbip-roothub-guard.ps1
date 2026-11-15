@@ -48,6 +48,7 @@ param(
   [switch]$DryRun,                 # log the rollback steps, run none of them
   [int]$SimulateHubProblem = 0,    # pretend every physical root hub has this problem code during verify
   [switch]$SimulateUsbBoot,        # pretend Windows runs from a USB disk during preflight
+  [switch]$SimulateNoHubs,         # pretend the machine has no USB root hub at all (a hosted runner, a VM)
   [switch]$SimulateAllHubsPhysical, # treat every root hub as physical (a machine with only virtual hubs can then run the fault cases)
   [switch]$SimulateUnreadable,     # pretend the problem code of every physical root hub cannot be read
   [switch]$SimulateDiskQueryFailure # pretend the system-disk query fails during preflight
@@ -79,8 +80,13 @@ function Write-GuardLog([string]$Message) {
 # ROOT\USBIP_WIN2, another virtual host controller's ROOT\USB) is `Emulated`; the physical ones sit below PCI, ACPI, ...
 # Fail closed: a hub whose problem code cannot be read has Problem -2 (`Unreadable`), never 0; a failed enumeration throws
 # (the guard then exits 105). A parent that cannot be read leaves the hub "physical", the cautious side.
+# An empty list is a valid answer (a VM or a hosted runner can have no USB root hub). The result is returned as a plain list, which
+# PowerShell unrolls: with no hub the caller gets nothing, so every caller wraps the call in @(...) and never indexes or reads a
+# property of "the list" itself (the first version returned `, $hubs`, whose empty array became ONE element: `.Emulated` of it
+# threw under StrictMode on a machine without root hubs).
 function Get-RootHubs {
   $hubs = @()
+  if ($SimulateNoHubs) { return $hubs }
   $devices = @(Get-PnpDevice -PresentOnly -ErrorAction Stop | Where-Object { $_.InstanceId -like 'USB\ROOT_HUB*' })
   foreach ($device in $devices) {
     $parent = ''
@@ -95,7 +101,7 @@ function Get-RootHubs {
     if ($script:Simulating -and $SimulateHubProblem -ne 0 -and -not $emulated -and -not $unreadable) { $problem = $SimulateHubProblem }
     $hubs += [pscustomobject]@{ Id = $device.InstanceId; Status = [string]$device.Status; Problem = $problem; Emulated = $emulated; Unreadable = $unreadable }
   }
-  return , $hubs
+  return $hubs
 }
 
 # The physical hubs whose problem code cannot be read: nothing can be said about them, so nothing may go on.
@@ -116,7 +122,7 @@ function Test-HubFault($Hub, $Before) {
 
 function Get-HubFaults($Before) {
   $faults = @()
-  $now = Get-RootHubs
+  $now = @(Get-RootHubs)
   foreach ($hub in $now) { if (Test-HubFault $hub $Before) { $faults += $hub } }
   # a physical hub that was there and is gone is as bad as one with a problem code
   foreach ($old in @($Before | Where-Object { -not $_.Emulated })) {
@@ -142,7 +148,7 @@ function Wait-HubsSettled($Before) {
 }
 
 function Format-Hubs($Hubs) {
-  return (@($Hubs) | ForEach-Object { '{0} status={1} problem={2}{3}{4}' -f $_.Id, $_.Status, $_.Problem, $(if ($_.Emulated) { ' (emulated)' } else { '' }), $(if ($_.Unreadable) { ' (problem code unreadable)' } else { '' }) }) -join '; '
+  return (@($Hubs | Where-Object { $null -ne $_ }) | ForEach-Object { '{0} status={1} problem={2}{3}{4}' -f $_.Id, $_.Status, $_.Problem, $(if ($_.Emulated) { ' (emulated)' } else { '' }), $(if ($_.Unreadable) { ' (problem code unreadable)' } else { '' }) }) -join '; '
 }
 
 # --------------------------------------------------------------------------------------------- packages
@@ -360,14 +366,14 @@ function Invoke-Preflight {
     Write-GuardLog 'REFUSED: Windows runs from a USB disk. The usbip-win2 filter restarts every USB root hub, which can stop such a system booting (usbip-win2 issue #201). The USB/IP component is not installed.'
     return 104
   }
-  $hubs = Get-RootHubs
+  $hubs = @(Get-RootHubs)
   Assert-HubsReadable $hubs
   Write-GuardLog "preflight ok. root hubs: $(Format-Hubs $hubs)"
   return 0
 }
 
 function Invoke-Snapshot {
-  $hubs = Get-RootHubs
+  $hubs = @(Get-RootHubs)
   Assert-HubsReadable $hubs
   $snapshot = [pscustomobject]@{
     time           = (Get-Date).ToString('o')
@@ -383,10 +389,11 @@ function Invoke-Snapshot {
 function Invoke-Verify {
   if (-not (Test-Path -LiteralPath $State)) { throw "no snapshot at $State" }
   $snapshot = Get-Content -LiteralPath $State -Raw | ConvertFrom-Json
-  $snapshot.hubs = @($snapshot.hubs)
+  # a snapshot of a machine without root hubs has an empty (or null) list: no hub, not one null hub
+  $snapshot.hubs = @($snapshot.hubs | Where-Object { $null -ne $_ })
   $script:Simulating = $true
   $faults = Wait-HubsSettled $snapshot.hubs
-  $now = Get-RootHubs
+  $now = @(Get-RootHubs)
   if (@($faults).Count -eq 0) {
     $restart = @($now | Where-Object { $_.Problem -eq $CM_PROB_NEED_RESTART -and -not $_.Emulated })
     Write-GuardLog "verify ok. root hubs: $(Format-Hubs $now)"
@@ -395,7 +402,7 @@ function Invoke-Verify {
   }
   $result = Invoke-Rollback $snapshot $faults
   if (@($result.Faults).Count -eq 0 -and @($result.Residue).Count -eq 0 -and @($result.StepFailures).Count -eq 0) {
-    if ($DryRun) { Write-GuardLog 'ROLLBACK DONE (dry run: nothing was changed)' } else { Write-GuardLog "ROLLBACK DONE: root hubs healthy again: $(Format-Hubs (Get-RootHubs))" }
+    if ($DryRun) { Write-GuardLog 'ROLLBACK DONE (dry run: nothing was changed)' } else { Write-GuardLog "ROLLBACK DONE: root hubs healthy again: $(Format-Hubs @(Get-RootHubs))" }
     return 102
   }
   Write-GuardLog "ROLLBACK INCOMPLETE: hubs: $(Format-Hubs $result.Faults); persisted filter state: $(@($result.Residue | ForEach-Object { $_.Path }) -join ', '); failed steps: $(@($result.StepFailures) -join '; '). The pre-install snapshot is kept at $State. Follow docs/usbip-roothub-recovery.zh.md."
@@ -411,7 +418,7 @@ function Invoke-Cleanup {
 }
 
 function Invoke-Status {
-  Write-GuardLog "root hubs: $(Format-Hubs (Get-RootHubs))"
+  Write-GuardLog "root hubs: $(Format-Hubs @(Get-RootHubs))"
   Write-GuardLog "filter packages: $(@(Get-OemPackages $FilterName) -join ',') ; ude packages: $(@(Get-OemPackages 'usbip2_ude') -join ',')"
   $residue = @(Find-FilterResidue)
   Write-GuardLog "persisted filter names: $($residue.Count)$(if ($residue.Count) { ' -> ' + (($residue | ForEach-Object { $_.Path }) -join ', ') })"

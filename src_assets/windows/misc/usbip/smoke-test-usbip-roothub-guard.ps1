@@ -6,7 +6,8 @@
 ##>
 [CmdletBinding()]
 param(
-  [string]$GuardScript
+  [string]$GuardScript,
+  [switch]$AssumeNoHubs   # run the whole test as on a machine without USB root hubs (a hosted runner): the guard is told there are none
 )
 
 $ErrorActionPreference = 'Stop'
@@ -23,18 +24,33 @@ function Assert-Equal($Expected, $Actual, [string]$Message) {
   if ($Expected -ne $Actual) { throw "$Message`nExpected: $Expected`nActual:   $Actual" }
 }
 
+$script:Extra = @()
+if ($AssumeNoHubs) { $script:Extra = @('-SimulateNoHubs') }
 function Invoke-Guard([string[]]$Arguments) {
-  $all = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $GuardScript, '-State', $state, '-Log', $log) + $Arguments
+  $all = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $GuardScript, '-State', $state, '-Log', $log) + $Arguments + $script:Extra
   $output = & powershell.exe @all 2>&1 | Out-String
   return [pscustomobject]@{ Code = $LASTEXITCODE; Output = $output }
 }
 
 try {
+  # 0. no root hub at all (a VM, a hosted runner): an empty hub list is a valid state, no action may throw on it
+  #    (the first version died in `status` on `.Emulated` of an empty list under StrictMode)
+  $keep = $script:Extra
+  $script:Extra = @('-SimulateNoHubs')
+  $r = Invoke-Guard @('-Action', 'preflight');  Assert-Equal 0 $r.Code ("preflight without hubs`n" + $r.Output)
+  $r = Invoke-Guard @('-Action', 'snapshot');   Assert-Equal 0 $r.Code ("snapshot without hubs`n" + $r.Output)
+  $r = Invoke-Guard @('-Action', 'verify', '-DryRun', '-SettleMinSeconds', '4', '-SettleMaxSeconds', '8'); Assert-Equal 0 $r.Code ("verify without hubs`n" + $r.Output)
+  $r = Invoke-Guard @('-Action', 'status');     Assert-Equal 0 $r.Code ("status without hubs`n" + $r.Output)
+  $r = Invoke-Guard @('-Action', 'cleanup', '-EnumRoot', 'HKCU:\Software\FoundationSunshineSmoke\no-such-tree'); Assert-Equal 0 $r.Code ("cleanup without hubs`n" + $r.Output)
+  $script:Extra = $keep
+
   # 1. nothing changed: verify is healthy (0), or asks for a restart (3010) when Windows already did
   $r = Invoke-Guard @('-Action', 'snapshot')
   Assert-Equal 0 $r.Code 'snapshot must succeed'
   $snapshot = Get-Content -LiteralPath $state -Raw | ConvertFrom-Json
-  $physical = @(@($snapshot.hubs) | Where-Object { -not $_.Emulated })
+  $physical = @($snapshot.hubs | Where-Object { $null -ne $_ -and -not $_.Emulated })
+  # a machine with only virtual hubs (a VM) runs the fault cases with every hub taken for physical; one without any hub skips them
+  if ($physical.Count -eq 0 -and @($snapshot.hubs | Where-Object { $null -ne $_ }).Count -gt 0) { $script:Extra = @('-SimulateAllHubsPhysical'); $physical = @($snapshot.hubs) }
   # every verify runs with -DryRun: if a hub changed after the snapshot, a real verify would roll back for real
   $r = Invoke-Guard @('-Action', 'verify', '-DryRun', '-SettleMinSeconds', '4', '-SettleMaxSeconds', '20')
   Assert-Equal 0 $r.Code ("verify without a change must be healthy`n" + $r.Output)
