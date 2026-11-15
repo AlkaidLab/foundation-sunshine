@@ -58,6 +58,18 @@
 - 恢复每次 master push 自动发布：把仓库变量 `AUTO_PRERELEASE` 设为 `true`（默认未设置）。
 - 稳定版由人把预发布发布为正式版，`sign-and-repackage.yml` 在 `release: published` 时签名，规则不变。
 
+## 崩溃符号
+
+MinGW 构建不产生 PDB。Windows 构建加了 `-g1` 和 `-Wl,--build-id`（`cmake/compile_definitions/windows.cmake`），每个模块带一个 CodeView GUID，
+strip 和签名都不会改变它，崩溃转储（minidump）靠它找到符号。
+
+- 打包时 `scripts/ci/make-symbols.py` 用 `dump_syms`（固定版本和 SHA-256）读未 strip 的模块里的 DWARF，生成 Breakpad 符号，
+  存成 `<模块名>/<调试 ID>/<模块名>.sym`，连同 `symbols-manifest.json` 打成 `Sunshine.<版本>.Symbols-x64.zip`，作为发布资产和工件上传；
+  随后把安装包和便携包里仍带 DWARF 的模块 `strip` 掉，所以安装包不带 DWARF：没有符号的模块也会被 strip，并记进 `symbols-manifest.json` 的 `stripped_without_symbols`；带数字签名的模块不动（strip 会破坏签名），记进 `kept_signed_with_debug_info`，打包日志里有一条警告。安装器外壳在链接时就去掉调试信息。
+- `sunshine.exe` 或 `sunshinesvc.exe` 没有符号时打包失败。
+- 解析崩溃：`minidump-stackwalk --symbols-path <解压目录> x.dmp`。
+- 符号文件格式与目录布局见 Breakpad 文档，`--build-id` 见 GNU ld 手册，二者登记在 `docs/authority/source-index.tsv`（`breakpad-symbol-files-20261115`、`gnu-ld-options-20261115`）。
+
 ## 在本地复现
 
 - 分类：`printf 'README.md\n' | python3 scripts/ci/classify-changes.py --event push`

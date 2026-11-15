@@ -131,6 +131,8 @@ if(WIN32)
     if(MINGW)
         # static: the installer must start on a PC that has none of the MSYS2 runtime DLLs
         target_link_options(sunshine-installer-shell PRIVATE -municode -static)
+        # the shell is appended to the installer as it is built: -g1 (cmake/compile_definitions/windows.cmake) must not end up in the package
+        target_link_options(sunshine-installer-shell PRIVATE -Wl,--strip-debug)
     endif()
 endif()
 
