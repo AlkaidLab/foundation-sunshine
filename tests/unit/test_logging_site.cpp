@@ -16,13 +16,13 @@
 #include <regex>
 #include <sstream>
 
-// The loggers are defined in logging.cpp, which needs the whole host; the test owns a set with the same names and severities.
-boost::log::sources::severity_logger<int> verbose(0);
-boost::log::sources::severity_logger<int> debug(1);
-boost::log::sources::severity_logger<int> info(2);
-boost::log::sources::severity_logger<int> warning(3);
-boost::log::sources::severity_logger<int> error(4);
-boost::log::sources::severity_logger<int> fatal(5);
+// The host defines verbose..fatal in logging.cpp; this test owns a set of its own (the macro works on any severity logger), so it links alone and inside the aggregate test program alike.
+static boost::log::sources::severity_logger<int> site_verbose(0);
+static boost::log::sources::severity_logger<int> site_debug(1);
+static boost::log::sources::severity_logger<int> site_info(2);
+static boost::log::sources::severity_logger<int> site_warning(3);
+static boost::log::sources::severity_logger<int> site_error(4);
+static boost::log::sources::severity_logger<int> site_fatal(5);
 
 namespace {
   namespace bl = boost::log;
@@ -62,28 +62,28 @@ namespace {
 TEST(LoggingSite, AnErrorLineEndsWithFileLineAndFunction) {
   capture_t log;
   const int line = __LINE__ + 1;
-  BOOST_LOG(error) << "encoder init failed " << 7;
+  BOOST_LOG(site_error) << "encoder init failed " << 7;
   EXPECT_EQ(log.out.str(), "encoder init failed 7 [tests/unit/test_logging_site.cpp:" + std::to_string(line) + ":TestBody]\n");
 }
 
 TEST(LoggingSite, AFatalLineHasASiteToo) {
   capture_t log;
-  BOOST_LOG(fatal) << "cannot continue";
+  BOOST_LOG(site_fatal) << "cannot continue";
   EXPECT_TRUE(std::regex_match(log.out.str(), std::regex(R"(cannot continue \[tests/unit/test_logging_site\.cpp:\d+:TestBody\]\n)"))) << log.out.str();
 }
 
 TEST(LoggingSite, LinesBelowErrorAreUnchanged) {
   capture_t log;
-  BOOST_LOG(verbose) << "a";
-  BOOST_LOG(debug) << "b";
-  BOOST_LOG(info) << "c";
-  BOOST_LOG(warning) << "d";
+  BOOST_LOG(site_verbose) << "a";
+  BOOST_LOG(site_debug) << "b";
+  BOOST_LOG(site_info) << "c";
+  BOOST_LOG(site_warning) << "d";
   EXPECT_EQ(log.out.str(), "a\nb\nc\nd\n");
 }
 
 TEST(LoggingSite, TheSiteIsAFileOfTheSourceTreeNeverABuildOrHomeDirectory) {
   capture_t log;
-  BOOST_LOG(error) << "x";
+  BOOST_LOG(site_error) << "x";
   const auto text = log.out.str();
   EXPECT_EQ(text.find("/home"), std::string::npos) << text;
   EXPECT_EQ(text.find("/var"), std::string::npos) << text;
@@ -94,18 +94,18 @@ TEST(LoggingSite, TheMacroStillWorksAsTheBodyOfAnUnbracedIfElse) {
   capture_t log;
   const bool yes = true;
   if (yes)
-    BOOST_LOG(error) << "then";
+    BOOST_LOG(site_error) << "then";
   else
-    BOOST_LOG(error) << "else";
+    BOOST_LOG(site_error) << "else";
   EXPECT_EQ(log.out.str().rfind("then [tests/", 0), 0u) << log.out.str();
   EXPECT_EQ(log.out.str().find("else"), std::string::npos);
 }
 
 TEST(LoggingSite, ALoggerReachedThroughAReferenceKeepsItsSeverity) {
   capture_t log;
-  auto &ref = error;
+  auto &ref = site_error;
   BOOST_LOG(ref) << "via reference";
-  auto wrapped = std::ref(warning);
+  auto wrapped = std::ref(site_warning);
   BOOST_LOG(wrapped.get()) << "via wrapper";
   EXPECT_NE(log.out.str().find("via reference [tests/"), std::string::npos) << log.out.str();
   EXPECT_NE(log.out.str().find("via wrapper\n"), std::string::npos) << log.out.str();
