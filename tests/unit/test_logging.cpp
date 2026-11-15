@@ -44,7 +44,10 @@ TEST_P(LogLevelsTest, FlushesMessageWithItsSeverity) {
   ASSERT_TRUE(input.is_open());
   const auto expected = std::string(label) + ": " + test_message;
   for (std::string line; std::getline(input, line);) {
-    if (line.ends_with(expected)) {
+    // error and fatal lines end with the place of the statement, " [src/file.cpp:12:function]" (logging_site.h); the message stays in front of it
+    const auto at = line.find(expected);
+    const auto rest = at == std::string::npos ? std::string_view {} : std::string_view { line }.substr(at + expected.size());
+    if (at != std::string::npos && (rest.empty() || (rest.starts_with(" [") && rest.ends_with("]") && rest.find(".cpp:") != std::string_view::npos))) {
       return;
     }
   }
