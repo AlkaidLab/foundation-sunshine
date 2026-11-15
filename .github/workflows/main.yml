@@ -57,6 +57,7 @@ jobs:
     outputs:
       cpp: ${{ steps.classify.outputs.cpp }}
       webui: ${{ steps.classify.outputs.webui }}
+      webui_docs: ${{ steps.classify.outputs.webui_docs }}
       installer: ${{ steps.classify.outputs.installer }}
       workflow: ${{ steps.classify.outputs.workflow }}
       docs: ${{ steps.classify.outputs.docs }}
@@ -135,6 +136,53 @@ jobs:
         run: python3 scripts/ci/check-workflow-shell.py
       - name: CI script tests
         run: python3 -m unittest discover -s scripts/ci -p 'test_*.py'
+
+  # README.md, docs/authority and the files under assets/ are read by three Web UI tests only (defaultAppsArt,
+  # diagnosticsPage, mascotSweep). A change to nothing else runs those three, not the four full shards.
+  webui-docs:
+    name: Web UI document tests
+    needs: changes
+    if: needs.changes.outputs.webui_docs == 'true' && needs.changes.outputs.webui != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # These tests import foundation-ui (the network guard, the about page data) from the sibling checkout, but run none
+      # of its components, so its own dependencies are not installed.
+      - name: foundation-ui (pinned)
+        run: |
+          set -euo pipefail
+          sha="$(tr -d '[:space:]' < scripts/ci/foundation-ui.sha)"
+          dir="$GITHUB_WORKSPACE/../ds5-ui-m3e"
+          git init -q "$dir"
+          git -C "$dir" fetch -q --depth 1 https://github.com/AlkaidLab/foundation-ui "$sha"
+          git -C "$dir" -c advice.detachedHead=false checkout -q FETCH_HEAD
+          test "$(git -C "$dir" rev-parse HEAD)" = "$sha"
+
+      - name: Install
+        run: npm ci --no-audit --no-fund --ignore-scripts
+
+      - name: Tests
+        run: |
+          dir=src_assets/common/assets/web/tests
+          node --import foundation-ui/testing/no-network --test --test-reporter=spec --test-reporter-destination=stdout \
+            --test-reporter=junit --test-reporter-destination=webui-docs-junit.xml \
+            "$dir/defaultAppsArt.test.js" "$dir/diagnosticsPage.test.js" "$dir/mascotSweep.test.js"
+
+      - name: Report
+        if: always()
+        run: python3 scripts/ci/report-junit.py --title "Web UI document tests" --min-tests 5 webui-docs-junit.xml
 
   webui:
     name: Web UI (shard ${{ matrix.shard }}/4)
@@ -838,7 +886,7 @@ jobs:
   ci-gate:
     name: CI gate
     if: always()
-    needs: [changes, docs-check, workflow-lint, webui, setup_release, vdd_smoke, mat_smoke, build_win]
+    needs: [changes, docs-check, workflow-lint, webui, webui-docs, setup_release, vdd_smoke, mat_smoke, build_win]
     runs-on: ubuntu-slim
     timeout-minutes: 5
     permissions: {}

@@ -8,9 +8,10 @@ normally $GITHUB_OUTPUT):
 
   cpp        something the host build or its tests can notice: src, tests, cmake, third-party pins, tools, packaging,
              CMake lists, the pipeline itself (an unknown path counts as cpp)
-  webui      Web UI sources, npm manifests, Vite/ESLint config, locale files, scripts the Web UI build uses, and every
-             file the Web UI tests read from outside the Web UI directory (they check src/config.cpp, tests/fixtures,
-             tools/installer_*, README.md, docs/authority, assets/brand against the pages); implied by cpp
+  webui      Web UI sources, npm manifests, Vite/ESLint config, locale files, scripts the Web UI build uses; implied by cpp
+             (the Web UI tests read src/config.cpp, tests/fixtures, tools/installer_* and more against the pages)
+  webui_docs a file only three Web UI tests read (README.md, docs/authority, assets/): those tests alone are enough, the
+             four full Web UI shards are not needed for it; the workflow runs them when webui is false
   installer  installer shell, installer packaging, the Panel pin
   workflow   any workflow or CI script changed (static checks)
   docs       nothing but documentation, images and issue templates changed
@@ -36,8 +37,9 @@ WEBUI = [
     "src_assets/common/assets/web/*", "package.json", "package-lock.json", "vite*.js", "scripts/vite/*",
     ".node-version", "eslint.config.*", "scripts/validate-i18n.js", "scripts/reverse-sync-i18n.js",
     "scripts/format-i18n.js", "scripts/gen-config-index.mjs", "scripts/add-missing-locale-keys.mjs",
-    "README.md", "docs/authority/*", "assets/brand/*",
 ]
+# Read by defaultAppsArt, diagnosticsPage and mascotSweep (the last one walks every file under assets/ and README.md).
+WEBUI_DOCS = ["README.md", "docs/authority/*", "assets/*"]
 INSTALLER = [
     "tools/installer*", "tools/append_installer_payload.py", "cmake/packaging/*", "scripts/*installer*",
     "scripts/build-setup-ui.ps1", "scripts/fetch-paired-gui.ps1", "scripts/generate-checksums.ps1",
@@ -68,11 +70,15 @@ def categories(path):
         found.add("cpp")
     if "cpp" in found:
         found.add("webui")
+    # After the fallback above: a file under assets/ that is not an image is still unknown, hence cpp.
+    if hit(path, WEBUI_DOCS):
+        found.add("webui_docs")
     return found
 
 
 def classify(paths):
-    flags = {"cpp": False, "webui": False, "installer": False, "workflow": False, "docs": False, "docs_touched": False}
+    flags = {"cpp": False, "webui": False, "webui_docs": False, "installer": False, "workflow": False, "docs": False,
+             "docs_touched": False}
     only_docs = bool(paths)
     for path in paths:
         found = categories(path)
@@ -80,7 +86,7 @@ def classify(paths):
             flags[name] = True
         if "docs" in found:
             flags["docs_touched"] = True
-        if found != {"docs"}:
+        if not found <= {"docs", "webui_docs"}:
             only_docs = False
     flags["docs"] = only_docs
     flags["any_code"] = flags["cpp"] or flags["webui"] or flags["installer"]
@@ -94,7 +100,7 @@ def main() -> int:
     args = parser.parse_args()
     paths = [line.strip() for line in sys.stdin if line.strip()]
     if args.all or not paths:
-        flags = {"cpp": True, "webui": True, "installer": True, "workflow": True, "docs": False, "docs_touched": True, "any_code": True}
+        flags = {"cpp": True, "webui": True, "webui_docs": True, "installer": True, "workflow": True, "docs": False, "docs_touched": True, "any_code": True}
     else:
         flags = classify(paths)
     lines = [f"{key}={'true' if value else 'false'}" for key, value in flags.items()]
