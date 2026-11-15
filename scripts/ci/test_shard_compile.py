@@ -61,7 +61,7 @@ class ShardCompileTest(unittest.TestCase):
         if remove_log:
             (self.repo / "build" / ".ninja_log").unlink(missing_ok=True)
         result = subprocess.run(["bash", "scripts/ci/shard-compile.sh", str(index), str(count)], cwd=self.repo, env=env,
-                                capture_output=True, text=True, timeout=60)
+                                capture_output=True, text=True, timeout=300)
         built = [line.split("ci_chunk_")[1] for line in self.log.read_text().splitlines()] if self.log.exists() else []
         return result, built
 

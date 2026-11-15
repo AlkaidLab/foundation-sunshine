@@ -438,16 +438,39 @@ jobs:
     name: Cold build plan
     needs: changes
     if: needs.changes.outputs.build == 'true'
-    runs-on: ubuntu-slim
-    timeout-minutes: 5
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       actions: read
+      contents: read
     outputs:
       sharded: ${{ steps.plan.outputs.sharded }}
       shards: ${{ steps.plan.outputs.shards }}
+      fingerprint: ${{ steps.fingerprint.outputs.fingerprint }}
     env:
       SHARDS: 8
     steps:
+      - name: Checkout the CI scripts and the build configuration
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            scripts/ci
+            cmake
+            .github
+          persist-credentials: false
+
+      # What decides whether an earlier compiler cache still hits: the CMake modules that set flags, build_win's configure step, the
+      # toolchain action and the MSYS2 package versions (scripts/ci/config-fingerprint.py). It is part of the cache key.
+      - name: Configuration fingerprint
+        id: fingerprint
+        run: |
+          set -euo pipefail
+          fingerprint="$(python3 scripts/ci/config-fingerprint.py --details 2> details.txt)"
+          cat details.txt
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+          { echo "### Compiler cache configuration"; echo "- fingerprint: \`$fingerprint\`"; grep -E '^    ' details.txt | sed 's/^    /- /'; } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Decide
         id: plan
         env:
@@ -456,6 +479,10 @@ jobs:
           FORCED: ${{ inputs.sharded_cold }}
           DEFAULT_REF: refs/heads/${{ github.event.repository.default_branch }}
           THIS_REF: ${{ github.ref }}
+          FINGERPRINT: ${{ steps.fingerprint.outputs.fingerprint }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
         run: |
           set -euo pipefail
           sharded=false
@@ -465,13 +492,24 @@ jobs:
           elif [[ "$FORCED" == true ]]; then
             sharded=true; reason="requested"
           else
-            # Any compiler-cache entry this run could restore: the default branch's, or this ref's own.
+            # A compiler-cache entry of this configuration that the run could restore: the default branch's, or this ref's own.
+            # An entry of another fingerprint exists too, but nearly every compile misses it (other flags, compiler or headers).
             found=0
             for ref in "$DEFAULT_REF" "$THIS_REF"; do
-              n="$(gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=ccache-windows-&ref=$ref&per_page=1" --jq .total_count 2>/dev/null || echo 0)"
+              n="$(gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=ccache-windows-$FINGERPRINT-&ref=$ref&per_page=1" --jq .total_count 2>/dev/null || echo 0)"
               found=$((found + n))
             done
-            if [[ "$found" == 0 ]]; then sharded=true; reason="no compiler cache entry to restore"; fi
+            if [[ "$found" == 0 ]]; then
+              sharded=true; reason="no compiler cache entry for configuration $FINGERPRINT"
+            else
+              # A header that the object files behind about 30% of the compile time include misses the cache for all of them
+              # (scripts/ci/hot-headers.txt, measured from the ninja deps of a build): a third of a cold build on one runner, more
+              # than the shards cost. An unknown change list (a manual run, a new branch) never decides this.
+              python3 scripts/ci/changed-files.py --event "$EVENT" --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER" --before "$BEFORE" --after "$AFTER" > files.txt || true
+              if hot="$(python3 scripts/ci/hot-headers.py check scripts/ci/hot-headers.txt < files.txt)"; then
+                sharded=true; reason="touches a widely included header: $(echo "$hot" | paste -sd, -)"
+              fi
+            fi
           fi
           indices="$(python3 -c "import json,os;print(json.dumps(list(range(int(os.environ['SHARDS'])))))")"
           echo "sharded=$sharded" >> "$GITHUB_OUTPUT"
@@ -512,12 +550,21 @@ jobs:
       - name: Toolchain
         uses: ./.github/actions/windows-toolchain
 
+      # The same pinned Panel bundle and WebView2 bootstrapper build_win uses (scripts/installer-inputs.json), so the configure
+      # downloads nothing ("latest") and needs no token. Nothing here reads a token: the configure step below must not see one.
+      - name: Fetch pinned installer inputs
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $dest = "$env:RUNNER_TEMP/installer-inputs/pinned"
+          ./scripts/fetch-installer-inputs.ps1 -Destination $dest
+          "GUI_BUNDLE_DIR=$dest/gui" >> $env:GITHUB_ENV
+
       # Keep this step and build_win's "Configure Windows" in step: the shards only help while their object command lines are
       # the ones build_win runs (build_win prints the compiler-cache hit rate and warns when it falls under 95%).
       - name: Configure Windows
         shell: msys2 {0}
         env:
-          GITHUB_TOKEN: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.token || '' }}
           RTX_VIDEO_SDK_URL: ${{ (github.repository == 'AlkaidLab/foundation-sunshine' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'AlkaidLab/foundation-sunshine')) && secrets.RTX_VIDEO_SDK_URL || '' }}
           RTX_VIDEO_SDK_TOKEN: ${{ (github.repository == 'AlkaidLab/foundation-sunshine' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'AlkaidLab/foundation-sunshine')) && secrets.DRIVER_DOWNLOAD_TOKEN || '' }}
           RTX_VIDEO_NGX_APPLICATION_ID: ${{ (github.repository == 'AlkaidLab/foundation-sunshine' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'AlkaidLab/foundation-sunshine')) && secrets.RTX_VIDEO_NGX_APPLICATION_ID || '' }}
@@ -533,14 +580,18 @@ jobs:
           CCACHE_DIR: ${{ github.workspace }}\.ccache
           CCACHE_MAXSIZE: 2G
           CCACHE_COMPILERCHECK: content
-          DRIVER_DEPS_REQUIRED: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'OFF' || 'ON' }}
         run: |
+          # This job's token can write refs (the chunk claims): CMake code, FetchGUI.cmake and FetchDriverDeps.cmake included,
+          # must never see it. The token is only given to the compile step.
+          if [[ -n "${GITHUB_TOKEN:-}" ]]; then echo "::error::the configure step must not have GITHUB_TOKEN"; exit 1; fi
           mkdir -p build
           ccache --zero-stats
+          gui_options=(-DFETCH_GUI=OFF "-DGUI_DIR=$GUI_BUNDLE_DIR")
           cmake \
             -B build \
             -G Ninja \
             -S . \
+            "${gui_options[@]}" \
             -DBUILD_DOCS=OFF \
             -DSUNSHINE_RTX_HDR="$SUNSHINE_RTX_HDR" \
             -DSUNSHINE_BUILD_MAT_CAPTURE=OFF \
@@ -550,7 +601,7 @@ jobs:
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DSUNSHINE_ASSETS_DIR=assets \
-            -DDRIVER_DEPS_REQUIRED=${DRIVER_DEPS_REQUIRED} \
+            -DDRIVER_DEPS_REQUIRED=OFF \
             -DSUNSHINE_PUBLISHER_NAME='${{ github.repository_owner }}' \
             -DSUNSHINE_PUBLISHER_WEBSITE='https://github.com/AlkaidLab/foundation-sunshine' \
             -DSUNSHINE_PUBLISHER_ISSUE_URL='https://github.com/AlkaidLab/foundation-sunshine/issues'
@@ -625,7 +676,7 @@ jobs:
   # instead of after it takes about 2.5 minutes off the Windows job.
   adapter_config:
     name: Adapter build configuration (no SDK)
-    needs: changes
+    needs: [changes, cold_plan]
     if: needs.changes.outputs.build == 'true'
     permissions:
       contents: read
@@ -654,7 +705,7 @@ jobs:
           path: ${{ github.workspace }}\.ccache
           key: ccache-windows-adapter-${{ github.run_id }}
           restore-keys: |
-            ccache-windows-
+            ccache-windows-${{ needs.cold_plan.outputs.fingerprint }}-
 
       - name: Fetch pinned installer inputs
         shell: pwsh
@@ -896,9 +947,9 @@ jobs:
           # still consume the shared cache quota, and when that quota fills
           # (10 GB, LRU), eviction wiped the whole lineage once and forced a
           # full 47-minute cold rebuild.
-          key: ccache-windows-${{ github.run_id }}
+          key: ccache-windows-${{ needs.cold_plan.outputs.fingerprint }}-${{ github.run_id }}
           restore-keys: |
-            ccache-windows-
+            ccache-windows-${{ needs.cold_plan.outputs.fingerprint }}-
 
       # Cold build on parallel runners: the compiler caches of the shards are merged into one directory (ccache entries are
       # content-addressed, so merging is copying), and the build below finds ~100% of the objects.
@@ -1031,6 +1082,37 @@ jobs:
             fi
           fi
 
+      # The nightly build measures what the next split and the next header rule are built from: the compile time of every object file (the
+      # shards' ninja logs) and the share of it behind each header. Download the two files and commit them when they have moved
+      # (scripts/ci/shard-weights.ninja_log, scripts/ci/hot-headers.txt).
+      - name: Download the shard ninja logs
+        if: github.event_name == 'schedule' && needs.shard.result == 'success'
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: ninja-log-shard-*
+          path: shard-ninja-logs
+
+      - name: Measure the widely included headers
+        if: github.event_name == 'schedule' && needs.shard.result == 'success'
+        continue-on-error: true
+        shell: msys2 {0}
+        run: |
+          mkdir -p measurements
+          python scripts/ci/merge-shard-weights.py measurements/shard-weights.ninja_log shard-ninja-logs/*/ninja_log.shard
+          ninja -C build -t deps | python scripts/ci/hot-headers.py generate "$(cygpath -m "$GITHUB_WORKSPACE")" measurements/shard-weights.ninja_log 30 > measurements/hot-headers.txt
+          cat measurements/hot-headers.txt | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the measurements
+        if: github.event_name == 'schedule' && needs.shard.result == 'success'
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-measurements
+          path: measurements
+          retention-days: 14
+          if-no-files-found: ignore
+
       - name: Run native tests
         shell: msys2 {0}
         run: ctest --test-dir build -j4 --no-tests=error --output-on-failure --timeout 600 --output-junit "$GITHUB_WORKSPACE/ctest.xml"
@@ -1065,7 +1147,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: ${{ github.workspace }}\.ccache
-          key: ccache-windows-${{ github.run_id }}
+          key: ccache-windows-${{ needs.cold_plan.outputs.fingerprint }}-${{ github.run_id }}
 
       - name: Prune stale compiler cache entries
         # Collapse the cache to exactly one entry (the newest one saved).
@@ -1086,12 +1168,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
-          $current = "ccache-windows-${{ github.run_id }}"
+          $current = "ccache-windows-${{ needs.cold_plan.outputs.fingerprint }}-${{ github.run_id }}"
+          # Both the fingerprinted keys (ccache-windows-<fingerprint>-<run>) and the older ones without a fingerprint
+          # (ccache-windows-<run>) are pruned, so the entries from before the fingerprint do not stay in the quota.
           # Page through the caches API instead of `gh cache list`: the
           # latter caps at --limit 100, and once this repo's other caches
           # (msys2, npm, ...) grow past that, stale ccache entries would
           # fall outside the window and never get pruned.
-          $all = @(gh api --paginate "repos/$env:GITHUB_REPOSITORY/actions/caches?per_page=100" --jq '.actions_caches[] | select(.key | test("^ccache-windows-[0-9]+$")) | [(.key | sub("^ccache-windows-";"") | tonumber), .id, .key] | @tsv' |
+          $all = @(gh api --paginate "repos/$env:GITHUB_REPOSITORY/actions/caches?per_page=100" --jq '.actions_caches[] | select(.key | test("^ccache-windows-([0-9a-f]{12}-)?[0-9]+$")) | [(.key | sub("^ccache-windows-([0-9a-f]{12}-)?";"") | tonumber), .id, .key] | @tsv' |
             Where-Object { $_ } |
             ForEach-Object {
               $parts = $_ -split "`t"
