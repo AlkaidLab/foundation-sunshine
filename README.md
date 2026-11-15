@@ -1,13 +1,11 @@
-# Foundation Sunshine
+<p align="center"><picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/show-dark.webp">
+  <img src="assets/readme/show.webp" alt="Foundation Sunshine 展示图：衬线大标题，倾斜的控制面板和手机以及 HDR、帧率、主机延迟、DualSense 触觉增益、手机管理小组件，全部带白色贴纸描边。">
+</picture></p>
 
 <div align="center">
 
-<p><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/hero-dark.png">
-  <img src="assets/readme/hero.png" width="800" alt="Foundation Sunshine：让游戏串流更优雅。低延迟、HDR、虚拟显示器。">
-</picture></p>
-
-<p align="center"><a href="https://github.com/AlkaidLab/foundation-sunshine/releases/latest"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/b1-dark.webp"><img src="assets/readme/b1.webp" alt="下载被控端" height="56"></picture></a>&nbsp;&nbsp;<a href="#控制端moonlight"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/b2-dark.webp"><img src="assets/readme/b2.webp" alt="下载控制端" height="56"></picture></a>&nbsp;&nbsp;<a href="#快速开始"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/b3-dark.webp"><img src="assets/readme/b3.webp" alt="安装与首次连接" height="56"></picture></a></p>
+<p align="center"><a href="https://github.com/AlkaidLab/foundation-sunshine/releases/latest"><picture><source media="(prefers-color-scheme: dark) and (max-width: 600px)" srcset="assets/readme/p1-dark.webp"><source media="(max-width: 600px)" srcset="assets/readme/p1.webp"><source media="(prefers-color-scheme: dark)" srcset="assets/readme/d1-dark.webp"><img src="assets/readme/d1.webp" alt="下载被控端" height="56"></picture></a>&nbsp;&nbsp;<a href="#控制端moonlight"><picture><source media="(prefers-color-scheme: dark) and (max-width: 600px)" srcset="assets/readme/p2-dark.webp"><source media="(max-width: 600px)" srcset="assets/readme/p2.webp"><source media="(prefers-color-scheme: dark)" srcset="assets/readme/d2-dark.webp"><img src="assets/readme/d2.webp" alt="下载控制端" height="56"></picture></a>&nbsp;&nbsp;<a href="#快速开始"><picture><source media="(prefers-color-scheme: dark) and (max-width: 600px)" srcset="assets/readme/p3-dark.webp"><source media="(max-width: 600px)" srcset="assets/readme/p3.webp"><source media="(prefers-color-scheme: dark)" srcset="assets/readme/d3-dark.webp"><img src="assets/readme/d3.webp" alt="安装与首次连接" height="56"></picture></a></p>
 
 [![Build](https://img.shields.io/github/actions/workflow/status/AlkaidLab/foundation-sunshine/main.yml?branch=master&label=Build)](https://github.com/AlkaidLab/foundation-sunshine/actions/workflows/main.yml) [![Latest release](https://img.shields.io/github/v/release/AlkaidLab/foundation-sunshine?include_prereleases&sort=date&label=Latest)](https://github.com/AlkaidLab/foundation-sunshine/releases) [![Downloads](https://img.shields.io/github/downloads/AlkaidLab/foundation-sunshine/total?label=Downloads)](https://github.com/AlkaidLab/foundation-sunshine/releases) [![GitHub Stars](https://img.shields.io/github/stars/AlkaidLab/foundation-sunshine?style=flat&label=Stars)](https://github.com/AlkaidLab/foundation-sunshine) [![License](https://img.shields.io/badge/License-GPL--3.0-blue)](https://github.com/AlkaidLab/foundation-sunshine/blob/master/LICENSE)
 
@@ -24,8 +22,8 @@ Foundation Sunshine 是基于 [Sunshine](https://github.com/LizardByte/Sunshine)
 <div align="center">
 
 <p align="center"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/show-dark.webp">
-  <img src="assets/readme/show.webp" alt="Foundation Sunshine 展示图：衬线大标题，倾斜的控制面板和手机以及 HDR、帧率、主机延迟、DualSense 触觉增益、手机管理小组件，全部带白色贴纸描边。" width="952">
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/hero-band-dark.png">
+  <img src="assets/readme/hero.png" width="560" alt="Foundation Sunshine：让游戏串流更优雅。低延迟、HDR、虚拟显示器。">
 </picture></p>
 
 </div>

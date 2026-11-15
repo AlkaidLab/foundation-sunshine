@@ -1,17 +1,15 @@
-# Foundation Sunshine
-
-[简体中文](../../README.md) · [English](README.en.md) · Deutsch · [Français](README.fr.md) · [日本語](README.ja.md)
+<p align="center"><picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/show-dark.en.webp">
+  <img src="../../assets/readme/show.en.webp" alt="Foundation Sunshine im Überblick: Serifen-Überschrift, schräg gestelltes Control Panel und Smartphone sowie Widgets für HDR, Bildrate, Host-Latenz, DualSense-Haptikverstärkung und Smartphone-Verwaltung, alle mit weißem Sticker-Rand.">
+</picture></p>
 
 <div align="center">
 
-<p><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/hero-dark.en.png">
-  <img src="../../assets/readme/hero.en.png" width="800" alt="Foundation Sunshine — HDR Game-Streaming-Host für Windows mit virtuellen Displays, ein Sunshine-Fork für Moonlight">
-</picture></p>
-
-<p align="center"><a href="https://github.com/AlkaidLab/foundation-sunshine/releases/latest"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/b1-dark.de.webp"><img src="../../assets/readme/b1.de.webp" alt="Host herunterladen" height="56"></picture></a>&nbsp;&nbsp;<a href="#clients-moonlight"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/b2-dark.de.webp"><img src="../../assets/readme/b2.de.webp" alt="Client herunterladen" height="56"></picture></a>&nbsp;&nbsp;<a href="#schnellstart"><picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/b3-dark.de.webp"><img src="../../assets/readme/b3.de.webp" alt="Installieren &amp; verbinden" height="56"></picture></a></p>
+<p align="center"><a href="https://github.com/AlkaidLab/foundation-sunshine/releases/latest"><picture><source media="(prefers-color-scheme: dark) and (max-width: 600px)" srcset="../../assets/readme/p1-dark.de.webp"><source media="(max-width: 600px)" srcset="../../assets/readme/p1.de.webp"><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/d1-dark.de.webp"><img src="../../assets/readme/d1.de.webp" alt="Host herunterladen" height="56"></picture></a>&nbsp;&nbsp;<a href="#clients-moonlight"><picture><source media="(prefers-color-scheme: dark) and (max-width: 600px)" srcset="../../assets/readme/p2-dark.de.webp"><source media="(max-width: 600px)" srcset="../../assets/readme/p2.de.webp"><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/d2-dark.de.webp"><img src="../../assets/readme/d2.de.webp" alt="Client herunterladen" height="56"></picture></a>&nbsp;&nbsp;<a href="#schnellstart"><picture><source media="(prefers-color-scheme: dark) and (max-width: 600px)" srcset="../../assets/readme/p3-dark.de.webp"><source media="(max-width: 600px)" srcset="../../assets/readme/p3.de.webp"><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/d3-dark.de.webp"><img src="../../assets/readme/d3.de.webp" alt="Installieren &amp; verbinden" height="56"></picture></a></p>
 
 [![Build](https://img.shields.io/github/actions/workflow/status/AlkaidLab/foundation-sunshine/main.yml?branch=master&label=Build)](https://github.com/AlkaidLab/foundation-sunshine/actions/workflows/main.yml) [![Latest release](https://img.shields.io/github/v/release/AlkaidLab/foundation-sunshine?include_prereleases&sort=date&label=Latest)](https://github.com/AlkaidLab/foundation-sunshine/releases) [![Downloads](https://img.shields.io/github/downloads/AlkaidLab/foundation-sunshine/total?label=Downloads)](https://github.com/AlkaidLab/foundation-sunshine/releases) [![GitHub Stars](https://img.shields.io/github/stars/AlkaidLab/foundation-sunshine?style=flat&label=Stars)](https://github.com/AlkaidLab/foundation-sunshine) [![License](https://img.shields.io/badge/License-GPL--3.0-blue)](https://github.com/AlkaidLab/foundation-sunshine/blob/master/LICENSE)
+
+[简体中文](../../README.md) · [English](README.en.md) · Deutsch · [Français](README.fr.md) · [日本語](README.ja.md)
 
 [Website](https://www.alkaidlab.com/) · [Website (China)](https://www.alkaidlab.cn/) · [QQ-Community (Chinesisch)](https://qm.qq.com/cgi-bin/qm/qr?k=5qnkzSaLIrIaU4FvumftZH_6Hg7fUuLD&jump_from=webapi) · [Problem melden](https://github.com/AlkaidLab/foundation-sunshine/issues)
 
@@ -24,8 +22,8 @@ Von dynamischem HDR und Bildschirmkalibrierung bis zu latenzarmer Aufnahme und H
 <div align="center">
 
 <p align="center"><picture>
-  <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/show-dark.en.webp">
-  <img src="../../assets/readme/show.en.webp" alt="Foundation Sunshine im Überblick: Serifen-Überschrift, schräg gestelltes Control Panel und Smartphone sowie Widgets für HDR, Bildrate, Host-Latenz, DualSense-Haptikverstärkung und Smartphone-Verwaltung, alle mit weißem Sticker-Rand." width="952">
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/hero-band-dark.en.png">
+  <img src="../../assets/readme/hero.en.png" width="560" alt="Foundation Sunshine — HDR Game-Streaming-Host für Windows mit virtuellen Displays, ein Sunshine-Fork für Moonlight">
 </picture></p>
 
 </div>
