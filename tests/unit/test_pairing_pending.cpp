@@ -21,6 +21,12 @@
 #include <tuple>
 #include <vector>
 
+#ifdef _WIN32
+  #include <process.h>
+#else
+  #include <unistd.h>
+#endif
+
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
 
@@ -485,12 +491,24 @@ TEST_F(PairingPending, PairingTheSameCertificateAgainKeepsOneEntryAndItsUuid) {
   EXPECT_EQ(nvhttp::get_all_clients().size(), 2U);
 }
 
+namespace {
+  unsigned long
+  process_id() {
+#ifdef _WIN32
+    return static_cast<unsigned long>(_getpid());
+#else
+    return static_cast<unsigned long>(getpid());
+#endif
+  }
+}  // namespace
+
 TEST(PairingStateCompat, AReleasedStateFileLoadsEveryNamedDevice) {
   const auto root = fs::path(__FILE__).parent_path().parent_path() / "fixtures" / "config_upgrade";
   for (const char *era : { "2026.1031", "2026.1112" }) {
     SCOPED_TRACE(era);
     const auto source = root / era / "sunshine_state.json";
-    const auto copy = fs::temp_directory_path() / ("sunshine-state-upgrade-" + std::string(era) + ".json");
+    // One file per process: this test is built into test_sunshine and into pairing_pending_unit_tests, and ctest -j runs them side by side.
+    const auto copy = fs::temp_directory_path() / ("sunshine-state-upgrade-" + std::string(era) + "-" + std::to_string(process_id()) + ".json");
     std::error_code ignored;
     fs::copy_file(source, copy, fs::copy_options::overwrite_existing, ignored);
     ASSERT_FALSE(ignored) << source;
