@@ -38,6 +38,18 @@ A = {
     "e_stream_regress": (HOST, "src/telemetry/events.cpp", r'kind_e::experience, "stream_regress", std::move'),
     "e_startup": (HOST, "src/telemetry/events.cpp", r'kind_e::experience, "startup", \{'),
     "e_panel_page": (HOST, "src/telemetry/events.cpp", r'kind_e::experience, "panel_page", \{'),
+    "e_page_vitals": (HOST, "src/telemetry/events.cpp", r'kind_e::experience, "page_vitals", \{'),
+    "e_api_latency": (HOST, "src/telemetry/events.cpp", r'kind_e::experience, "api_latency", \{'),
+    "e_update_result": (HOST, "src/telemetry/events.cpp", r'kind_e::error, "update_result", \{'),
+    "e_install_result": (HOST, "src/telemetry/events.cpp", r'kind_e::error, "install_result", \{'),
+    "e_install_summary": (HOST, "src/telemetry/events.cpp", r'kind_e::error, "install_summary", \{'),
+    "e_device_facts": (HOST, "src/telemetry/events.cpp", r'kind_e::experience, "device_facts", \{'),
+    "journal": (HOST, "src/telemetry/install_journal.cpp", r"^  events_from_journal\("),
+    "facts": (HOST, "src/telemetry/telemetry.cpp", r"facts_from\(const system_info::snapshot_t"),
+    "js_perf": (M3E, "src/telemetry/pagePerf.js", r"export function createPagePerf"),
+    "js_buckets": (M3E, "src/telemetry/pageBuckets.js", r"export const PAGE_BUCKETS"),
+    "w_page": (WORKER, "src/pagevitals.ts", r"export function planPageWrites"),
+    "w_install": (WORKER, "src/installevents.ts", r"export function planInstallWrites"),
     "settings": (HOST, "src/telemetry/events.cpp", r"static const std::vector<setting_spec_t> table"),
     "ckind": (HOST, "src/telemetry/stream_stats.cpp", r"^  client_kind_of\("),
     "cos": (HOST, "src/telemetry/stream_stats.cpp", r"^  client_os_of\("),
@@ -188,10 +200,29 @@ row("experience", "panel_page: page, time_to_content_ms", "`apps`, `180`", "@e_p
     "How long a page of the panel takes to show its content.", "No: a route id of our own and a number.", "Token and range.", "events: 180 days.",
     dict(field="panel_page：page、time_to_content_ms", purpose="控制面板各页面多久显示出内容。", risk="否：我们自己的路由 id 和一个数字。", scrub="标记和范围。", keep="events 180 天。"))
 
+row("experience", "page_vitals: page, visits, lcp, inp, cls, loaf, fpaint, tti, heap, loaf_n, loaf_block_ms, fr_a..fr_d, dwell_s", "`home`, `15`, `lcp [0,15,0,0,0,0,0,0]`, `fr_d 5`", "@e_page_vitals @js_perf",
+    "Do the pages of the panel and the Web UI feel smooth? Per route and send: how many visits fell into each of eight fixed buckets of the largest content paint, the response to presses, layout shifts, the longest busy frame, the first paint, the time until the page says it is usable and the memory of the page; how many frames of a scroll or an animation took longer than 17, 34 and 50 ms.", "No: counts per bucket, a route word of our own and a few counters. No trace, no timestamp of a single event, no text.", "Eight counts per metric with bounds that are part of the contract @js_buckets, route words checked against the fixed pattern, counters clamped @e_page_vitals; the Worker adds the counts up per version and day @w_page.", "counters: 400 days; the per-route part in Analytics Engine.",
+    dict(field="page_vitals：page、visits、lcp、inp、cls、loaf、fpaint、tti、heap、loaf_n、loaf_block_ms、fr_a..fr_d、dwell_s", purpose="面板和 Web 界面用起来是否流畅？按页面和每次发送：最大内容绘制、点击响应、版面跳动、最长的忙碌帧、首次绘制、页面自报可用的时间、页面内存各落在八个固定区间的哪一个，以及滚动或动画时超过 17、34、50 毫秒的帧数。", risk="否：每个区间的次数、我们自己的页面名和几个计数。没有单次事件的轨迹和时间戳，没有文字。", scrub="每个指标八个计数，区间边界是约定的一部分 @js_buckets；页面名按固定格式检查，计数限幅 @e_page_vitals；服务器按版本和日期把计数相加 @w_page。", keep="计数 400 天；按页面的部分在 Analytics Engine。"))
+row("experience", "api_latency: endpoint, calls, errors, timeouts, lat", "`config`, `40`, `0`, `0`, `lat [0,40,0,0,0,0,0,0]`", "@e_api_latency @js_perf",
+    "How quickly does the host answer the calls of the panel and the Web UI? Per endpoint word: calls, failed calls, timeouts and eight latency buckets.", "No: a word for the endpoint (the path without numbers and ids, at most two segments) and counts.", "Digits-only and long segments are dropped from the word, the telemetry calls are not timed, a call the page cancelled is not counted @js_perf @e_api_latency.", "counters: 400 days.",
+    dict(field="api_latency：endpoint、calls、errors、timeouts、lat", purpose="主机回答面板和 Web 界面的请求有多快？按接口名：请求数、失败数、超时数和八个耗时区间。", risk="否：接口名（路径去掉数字和 id，至多两段）和计数。", scrub="只有数字的段和过长的段不进名字，上报本身不计时，页面自己取消的请求不计 @js_perf @e_api_latency。", keep="计数 400 天。"))
+row("experience", "device_facts: gpu_vendor, gpu_driver, os_build, displays, refresh_hz, nic_link, nic_speed", "`nvidia`, `32.0.15.6094`, `26100`, `2`, `144`, `wired`, `2_5g`", "@e_device_facts @facts",
+    "Which kind of computer has a problem? Coarse facts, sent only when they change (at most once a day): graphics vendor and driver version, the Windows build, the number of screens, the highest refresh rate, and whether the network adapter in use is wired or wireless and its speed class.", "No: vendor words, version numbers, counts and classes. No device name, no serial number, no address.", "Only the vendor word and the digits of the driver and the build are kept; the refresh rate is snapped to a standard rate and the adapter speed to a class @facts @e_device_facts.", "counters: 400 days.",
+    dict(field="device_facts：gpu_vendor、gpu_driver、os_build、displays、refresh_hz、nic_link、nic_speed", purpose="哪类电脑出了问题？粗略的配置，只在变化时发送（每天至多一次）：显卡厂商和驱动版本、Windows 版本号、屏幕数量、最高刷新率、正在使用的网卡是有线还是无线及其速度档。", risk="否：厂商词、版本号、数量和档位。没有设备名、序列号和地址。", scrub="只保留厂商词、驱动和系统版本号里的数字；刷新率取最接近的标准值，网卡速度只取档位 @facts @e_device_facts。", keep="计数 400 天。"))
+
 # --- errors
 row("error", "error: component, code, severity, count", "`stream`, `e1a2b3c4`, `error`, `3`", "@e_error @logs",
     "Which component fails and how often. The code is a hash of the fixed start of the log line (up to the first quote, bracket, colon or digit), so the same error is one code.", "No: no message. Before this fix an error carried a scrubbed log line of up to 200 characters, which could still hold a device or game name; now the line stays on the computer.", "The message property is gone from the allow-list in the sender @e_error, from the pages @js_err @js_issue and from the Worker @w_schema; an old client that still sends one has it dropped.", "events: 180 days.",
     dict(field="error：component、code、severity、count", purpose="哪个组件出错、出错多频繁。code 是日志行固定开头（到第一个引号、括号、冒号或数字为止）的哈希，所以同一个错误是同一个 code。", risk="否：不含文字。修复前，错误事件带一行最长 200 字符、经过清洗的日志，仍可能含设备名或游戏名；现在这行日志留在本机。", scrub="发送端白名单 @e_error、网页端 @js_err @js_issue、Worker @w_schema 都去掉了 message 属性；仍发送它的旧客户端，该属性会被丢弃。", keep="events 180 天。"))
+row("error", "update_result: source, stage, result, error_class, from_version, to_version, dur_ms, reboot_needed", "`mirror`, `download`, `failed`, `http_5xx`", "@e_update_result",
+    "Which step of an update fails, from which source and for what kind of reason? One event per finished step.", "No: fixed words (source, step, result, class of the reason), version numbers and a duration. The text of an error is never sent.", "Fixed words, version numbers reduced to digits and dots @e_update_result.", "counters: 400 days.",
+    dict(field="update_result：source、stage、result、error_class、from_version、to_version、dur_ms、reboot_needed", purpose="更新的哪一步失败、来自哪个来源、是什么类别的原因？每个结束的步骤一条。", risk="否：固定词（来源、步骤、结果、原因类别）、版本号和耗时。从不发送错误文字。", scrub="固定词，版本号只留数字和点 @e_update_result。", keep="计数 400 天。"))
+row("error", "install_result: result, error_class, phase, component, step, exit_code, reboot_needed, from_version, dur_ms", "`failed`, `other`, `upgrade`, `usbip`, `roothub_guard`, `102`", "@e_install_result @journal",
+    "Which component of an installation or upgrade fails, at which step and with which exit code, and from which version? The installer leaves a journal; the host reads it at its next start, reports it and deletes it.", "No: component and step words from a fixed list, the exit code, a version number and a duration. Paths and the text of an error are not in the journal.", "The journal is checked line by line against word lists and ranges, an unknown component is dropped @journal @e_install_result.", "counters: 400 days.",
+    dict(field="install_result：result、error_class、phase、component、step、exit_code、reboot_needed、from_version、dur_ms", purpose="安装或升级的哪个组件在哪一步失败、退出码是什么、从哪个版本升级？安装器留下一份记录，主机下次启动时读取、上报并删除。", risk="否：固定列表里的组件词和步骤词、退出码、版本号和耗时。记录里没有路径和错误文字。", scrub="逐行按词表和范围检查，不认识的组件被丢弃 @journal @e_install_result。", keep="计数 400 天。"))
+row("error", "install_summary: phase, result, components, failed, reboot_needed, from_version, dur_ms", "`upgrade`, `failed`, `5`, `1`", "@e_install_summary @journal",
+    "Did an installation finish? One event per run: ok, failed, cancelled, or incomplete (it started and never finished, the journal was quiet for ten minutes).", "No: fixed words and counts.", "Fixed words and clamped numbers @e_install_summary.", "counters: 400 days.",
+    dict(field="install_summary：phase、result、components、failed、reboot_needed、from_version、dur_ms", purpose="安装有没有完成？每次运行一条：成功、失败、取消，或「中断」（开始后一直没有结束，记录已安静十分钟）。", risk="否：固定词和计数。", scrub="固定词，数字限幅 @e_install_summary。", keep="计数 400 天。"))
 row("error", "log_summary: component, fatal, error, warning", "`encoder`, `0`, `2`, `9`", "@e_log_summary @logs",
     "How many warnings and errors the host logs per hour, by component.", "No: counts. The component is one of 24 fixed words or `host`.", "@logs", "events: 180 days.",
     dict(field="log_summary：component、fatal、error、warning", purpose="主机每小时按组件记录了多少警告和错误。", risk="否：计数。组件是 24 个固定词之一，或 `host`。", scrub="@logs", keep="events 180 天。"))
@@ -222,13 +253,15 @@ STORE = [
     ("D1 crash_reports", "day, time_ms, install_hash, signature, version, product, kind, os_version, uptime_s, country", "@w_reports", "Crash rate per release.", "400 days"),
     ("D1 crash_dumps", "signature, install_hash, tag, name, bytes, stored_ms (the dump itself is a release asset)", "@w_dumps", "Index of the stored dumps.", "90 days with the dump"),
     ("D1 alerts, counters, report_state", "alert key, title, body, labels, issue number; rate-limit counters; day of the daily report", "@w_alerts @w_counters", "De-duplicate alerts and reports; stay inside the free tier.", "7 to 400 days"),
+    ("D1 page_hist, page_total, page_installs, api_hist, api_total", "day, product, version, metric or endpoint, bucket, n (counts per fixed bucket); totals of visits and frames; the install hashes that sent a page summary on a day", "@w_page", "Page smoothness and the speed of the host's answers per version.", "400 days (the install hashes 35 days)"),
+    ("D1 install_daily, install_installs, install_runs, update_daily, device_dim", "day, product, version, phase, component, step, result, class, exit code, upgrade-from version, n; the install hashes that met a failure (35 days); runs by outcome; update steps by source and stage; counts per device fact value", "@w_install", "See install and update failures per version, component and exit code; which computers have problems.", "400 days (the install hashes 35 days)"),
     ("Analytics Engine", "index1 = product; blobs: kind, name, version, channel, os, country, gpu_vendor, arch, install_hash and the string props; doubles: the numeric props", "@w_ae", "Fast aggregates of high-volume points.", "Cloudflare's retention"),
     ("GitHub issues (private repo)", "daily report (totals and top lists), crash alerts (signature, product, version, exception, module, frames), user reports (category, product, version, channel, os, os_version, country, where, install hash prefix of 8 characters, time, message in a code fence)", "@w_report @w_alertsrc @w_userrep", "The maintainers read reports and alerts.", "until closed"),
 ]
 STORE_ZH = [
-    "每天的用户数。", "每次运行一条摘要：时长、串流数、错误数、无崩溃比例。", "分位数、错误排行、页面出内容耗时。", "崩溃分组、标出新的崩溃。", "各版本崩溃率。", "已保存转储的索引（转储本身是 release 资产）。", "提醒和报告去重；不超出免费额度。", "高频数据点的快速汇总。", "负责人阅读报告和提醒。",
+    "每天的用户数。", "每次运行一条摘要：时长、串流数、错误数、无崩溃比例。", "分位数、错误排行、页面出内容耗时。", "崩溃分组、标出新的崩溃。", "各版本崩溃率。", "已保存转储的索引（转储本身是 release 资产）。", "提醒和报告去重；不超出免费额度。", "按版本看页面是否流畅、主机回答是否变慢。", "按版本、组件、步骤和退出码看安装与更新的失败；哪类电脑有问题。", "高频数据点的快速汇总。", "负责人阅读报告和提醒。",
 ]
-STORE_KEEP_ZH = ["400 天", "400 天", "180 天", "400 天", "400 天", "与转储一起 90 天", "7 到 400 天", "Cloudflare 的保留期", "直到关闭"]
+STORE_KEEP_ZH = ["400 天", "400 天", "180 天", "400 天", "400 天", "与转储一起 90 天", "7 到 400 天", "400 天（安装哈希 35 天）", "400 天（安装哈希 35 天）", "Cloudflare 的保留期", "直到关闭"]
 
 NEVER_EN = [
     "Screen content, audio, keystrokes, files, clipboard content.",

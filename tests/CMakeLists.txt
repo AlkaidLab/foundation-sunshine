@@ -733,7 +733,9 @@ add_test(NAME network_reachability_unit_tests COMMAND network_reachability_unit_
 
 # Telemetry v1: event shapes, scrubbing, consent, queue limits, retry and a fake stream session (no network, no host)
 add_executable(telemetry_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/telemetry/device_facts.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/events.cpp
+        ${CMAKE_SOURCE_DIR}/src/telemetry/install_journal.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/queue.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/error_report.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/wer_event.cpp

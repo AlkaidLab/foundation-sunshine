@@ -12,7 +12,9 @@
 #include <thread>
 
 #include "src/log_text.h"
+#include "src/telemetry/device_facts.h"
 #include "src/telemetry/events.h"
+#include "src/telemetry/install_journal.h"
 #include "src/telemetry/queue.h"
 #include "src/telemetry/service.h"
 #include "src/telemetry/stream_stats.h"
@@ -1985,6 +1987,293 @@ TEST(TelemetryScrub, TheApplicationNameOfTheAbrLineIsNotInTheExcerptEvenWithAQuo
   EXPECT_EQ(t.find("Private"), std::string::npos);
   EXPECT_EQ(t.find("phone"), std::string::npos);
   EXPECT_NE(t.find("mode=balanced"), std::string::npos);
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Stages (b) and (c): page sketches, API latency, update and install results, device facts
+
+TEST(PageSketches, KeepEightBucketArraysAndDropEverythingElse) {
+  const json eight = json::array({ 0, 15, 0, 0, 0, 0, 0, 0 });
+  const auto ok = shape_event(kind_e::experience, "page_vitals", json { { "page", "home" }, { "visits", 15 }, { "lcp", eight }, { "inp", json::array({ 1, 2, 3 }) }, { "cls", json::array({ -1, 0, 0, 0, 0, 0, 0, 0 }) }, { "loaf_n", 3 }, { "fr_d", 5 }, { "path", "C:\\Users\\Eve" }, { "title", "Eve-PC" } }, 1000);
+  ASSERT_TRUE(ok.has_value());
+  EXPECT_EQ(ok->props["page"], "home");
+  EXPECT_EQ(ok->props["lcp"], eight);
+  EXPECT_FALSE(ok->props.contains("inp"));  // wrong length
+  EXPECT_FALSE(ok->props.contains("cls"));  // a negative count
+  EXPECT_FALSE(ok->props.contains("path"));
+  EXPECT_FALSE(ok->props.contains("title"));
+  EXPECT_EQ(ok->props["fr_d"], 5);
+  // the page word is required, and only a page word: no spaces, no slashes
+  EXPECT_FALSE(shape_event(kind_e::experience, "page_vitals", json { { "visits", 3 } }, 1000).has_value());
+  // the kind must match: a page sketch is an experience event
+  EXPECT_FALSE(shape_event(kind_e::error, "page_vitals", json { { "page", "home" } }, 1000).has_value());
+}
+
+TEST(PageSketches, ApiLatencyNeedsAnEndpointWord) {
+  const auto ok = shape_event(kind_e::experience, "api_latency", json { { "endpoint", "config" }, { "calls", 40 }, { "errors", 1 }, { "timeouts", 0 }, { "lat", json::array({ 0, 40, 0, 0, 0, 0, 0, 0 }) } }, 1000);
+  ASSERT_TRUE(ok.has_value());
+  EXPECT_EQ(ok->props["calls"], 40);
+  EXPECT_FALSE(shape_event(kind_e::experience, "api_latency", json { { "calls", 40 } }, 1000).has_value());
+}
+
+TEST(PageSketches, ThePagesMaySendThemAndNothingOfTheHostsOwn) {
+  for (const char *product : { "panel", "web", "sparxie-launch" }) {
+    EXPECT_TRUE(client_may_send(product, kind_e::experience, "page_vitals")) << product;
+    EXPECT_TRUE(client_may_send(product, kind_e::experience, "api_latency")) << product;
+    EXPECT_TRUE(client_may_send(product, kind_e::error, "update_result")) << product;
+    // the host reads the installer's journal and its own inventory: a page cannot claim them
+    EXPECT_FALSE(client_may_send(product, kind_e::error, "install_result")) << product;
+    EXPECT_FALSE(client_may_send(product, kind_e::error, "install_summary")) << product;
+    EXPECT_FALSE(client_may_send(product, kind_e::experience, "device_facts")) << product;
+    EXPECT_FALSE(client_may_send(product, kind_e::experience, "stream_health")) << product;
+  }
+  EXPECT_FALSE(client_may_send("host", kind_e::experience, "page_vitals"));
+}
+
+TEST(UpdateAndInstallEvents, TheContractOfTheWordsAndNumbers) {
+  const auto update = shape_event(kind_e::error, "update_result", json { { "source", "mirror" }, { "stage", "download" }, { "result", "failed" }, { "error_class", "http_5xx" }, { "from_version", "2026.1113.0" }, { "dur_ms", 1234 }, { "message", "C:\\x failed" } }, 1000);
+  ASSERT_TRUE(update.has_value());
+  EXPECT_FALSE(update->props.contains("message"));
+  EXPECT_EQ(update->props["error_class"], "http_5xx");
+  // an unknown source is "other"; an unknown stage or result drops the event (they are required)
+  EXPECT_EQ(shape_event(kind_e::error, "update_result", json { { "source", "elsewhere" }, { "stage", "check" }, { "result", "ok" } }, 1000)->props["source"], "other");
+  EXPECT_FALSE(shape_event(kind_e::error, "update_result", json { { "source", "mirror" }, { "stage", "dance" }, { "result", "ok" } }, 1000).has_value());
+  EXPECT_FALSE(shape_event(kind_e::error, "install_result", json { { "result", "maybe" } }, 1000).has_value());
+  EXPECT_TRUE(shape_event(kind_e::error, "install_result", json { { "result", "failed" }, { "component", "usbip" }, { "step", "roothub_guard" }, { "exit_code", "102" } }, 1000).has_value());
+  // a path in the exit code is not a code
+  EXPECT_FALSE(shape_event(kind_e::error, "install_result", json { { "result", "failed" }, { "exit_code", "C:\\x" } }, 1000)->props.contains("exit_code"));
+  EXPECT_TRUE(shape_event(kind_e::error, "install_summary", json { { "result", "incomplete" }, { "phase", "upgrade" } }, 1000).has_value());
+}
+
+TEST(UpdateAndInstallEvents, PrioritiesKeepTheFailuresAndLetTheRestGive) {
+  auto event = [](const char *name, json props) {
+    event_t e;
+    e.kind = kind_e::error;
+    e.name = name;
+    e.props = std::move(props);
+    return e;
+  };
+  EXPECT_EQ(event_priority(event("install_result", json { { "result", "failed" } })), 0);
+  EXPECT_EQ(event_priority(event("install_result", json { { "result", "ok" } })), 1);
+  EXPECT_EQ(event_priority(event("update_result", json { { "result", "failed" } })), 0);
+  EXPECT_EQ(event_priority(event("update_result", json { { "result", "ok" } })), 1);
+  EXPECT_EQ(event_priority(event("install_summary", json { { "result", "incomplete" } })), 0);
+  EXPECT_EQ(event_priority(event("install_summary", json { { "result", "failed" } })), 0);
+  EXPECT_EQ(event_priority(event("install_summary", json { { "result", "ok" } })), 1);
+  EXPECT_EQ(event_priority(event("device_facts", json::object())), 1);
+  EXPECT_EQ(event_priority(event("page_vitals", json::object())), 2);
+  EXPECT_EQ(event_priority(event("api_latency", json::object())), 2);
+}
+
+TEST(DeviceFacts, SpeedClassesAndLinkClasses) {
+  using namespace telemetry::device_facts;
+  EXPECT_EQ(nic_speed_class(std::nullopt), "unknown");
+  EXPECT_EQ(nic_speed_class(0), "unknown");
+  EXPECT_EQ(nic_speed_class(100), "lt_1g");
+  EXPECT_EQ(nic_speed_class(866), "lt_1g");
+  EXPECT_EQ(nic_speed_class(1000), "1g");
+  EXPECT_EQ(nic_speed_class(2500), "2_5g");
+  EXPECT_EQ(nic_speed_class(5000), "5g");
+  EXPECT_EQ(nic_speed_class(10000), "10g");
+  EXPECT_EQ(nic_speed_class(25000), "gt_10g");
+  EXPECT_EQ(nic_link_class("ethernet"), "wired");
+  EXPECT_EQ(nic_link_class("wifi"), "wireless");
+  EXPECT_EQ(nic_link_class("mesh"), "wireless");
+  EXPECT_EQ(nic_link_class("other"), "other");
+  EXPECT_EQ(nic_link_class(""), "unknown");
+}
+
+TEST(DeviceFacts, PicksTheAdapterOnTheDefaultRouteThenTheFastestRealOne) {
+  using namespace telemetry::device_facts;
+  EXPECT_FALSE(pick_nic({}).has_value());
+  EXPECT_FALSE(pick_nic({ { "ethernet", false, 1000, true } }).has_value());  // down
+  const auto routed = pick_nic({ { "ethernet", true, 10000, false }, { "wifi", true, 866, true } });
+  ASSERT_TRUE(routed.has_value());
+  EXPECT_EQ(routed->type, "wifi");
+  const auto fastest = pick_nic({ { "virtual_interface", true, 100000, false }, { "ethernet", true, 1000, false }, { "ethernet", true, 2500, false } });
+  ASSERT_TRUE(fastest.has_value());
+  EXPECT_EQ(fastest->link_speed_mbps, 2500);
+}
+
+TEST(DeviceFacts, RefreshRatesSnapToStandardRatesAndBuildNumbersKeepTheirDigits) {
+  using namespace telemetry::device_facts;
+  EXPECT_EQ(standard_refresh_hz(59.94), 60);
+  EXPECT_EQ(standard_refresh_hz(143.98), 144);
+  EXPECT_EQ(standard_refresh_hz(119.88), 120);
+  EXPECT_EQ(standard_refresh_hz(60), 60);
+  EXPECT_EQ(standard_refresh_hz(0), 0);
+  EXPECT_EQ(standard_refresh_hz(5000), 0);
+  EXPECT_EQ(standard_refresh_hz(std::nan("")), 0);
+  EXPECT_EQ(standard_refresh_hz(90.4), 90);
+  EXPECT_EQ(standard_refresh_hz(137.0), 137);  // not a standard rate: rounded
+  EXPECT_EQ(os_build_token("10.0.26100"), "26100");
+  EXPECT_EQ(os_build_token("26100.4349"), "26100");
+  EXPECT_EQ(os_build_token("Windows 11 Pro"), "11");
+  EXPECT_EQ(os_build_token("no digits"), "");
+  EXPECT_LE(os_build_token(std::string(40, '7')).size(), 16u);
+}
+
+TEST(DeviceFacts, ReportedOnceThenOnlyWhenChangedAndADayOld) {
+  using namespace telemetry::device_facts;
+  facts_t f;
+  f.gpu_vendor = "nvidia";
+  f.gpu_driver = "32.0.15.6094";
+  f.os_build = "26100";
+  f.displays = 2;
+  f.refresh_hz = 144;
+  f.nic_link = "wired";
+  f.nic_speed = "2_5g";
+  const std::int64_t day = 24LL * 3600 * 1000;
+  EXPECT_TRUE(should_send(std::nullopt, f, 1000));
+  state_t sent { fingerprint(f), 1000 };
+  EXPECT_FALSE(should_send(sent, f, 1000 + 10 * day));  // the same facts are never sent again
+  facts_t changed = f;
+  changed.refresh_hz = 60;
+  EXPECT_FALSE(should_send(sent, changed, 1000 + day / 2));  // changed, but a report was sent a few hours ago
+  EXPECT_TRUE(should_send(sent, changed, 1000 + day));
+  EXPECT_FALSE(should_send(std::nullopt, facts_t {}, 1000));  // nothing is known: nothing is sent
+  // the state survives a restart as json, and a damaged one is no state
+  const auto back = state_from_json(state_to_json(sent));
+  ASSERT_TRUE(back.has_value());
+  EXPECT_EQ(back->fingerprint, sent.fingerprint);
+  EXPECT_EQ(back->sent_ms, 1000);
+  EXPECT_FALSE(state_from_json(json { { "v", 2 } }).has_value());
+  EXPECT_FALSE(state_from_json(json::parse("[1,2]")).has_value());
+}
+
+TEST(DeviceFacts, TheEventPassesTheAllowListAndCarriesNothingElse) {
+  using namespace telemetry::device_facts;
+  facts_t f;
+  f.gpu_vendor = "amd";
+  f.os_build = "26100";
+  f.displays = 1;
+  f.refresh_hz = 165;
+  f.nic_link = "wireless";
+  f.nic_speed = "1g";
+  const auto event = shape_event(kind_e::experience, "device_facts", to_props(f), 1000);
+  ASSERT_TRUE(event.has_value());
+  EXPECT_EQ(event->props.size(), 6u);  // no driver was known
+  EXPECT_EQ(event->props["refresh_hz"], 165);
+  EXPECT_EQ(event->props["nic_speed"], "1g");
+  // a hostile value for the adapter class is "unknown", never text
+  const auto hostile = shape_event(kind_e::experience, "device_facts", json { { "nic_speed", "Intel(R) Wi-Fi 6E AX211" }, { "hostname", "EVE-PC" } }, 1000);
+  ASSERT_TRUE(hostile.has_value());
+  EXPECT_FALSE(hostile->props.contains("hostname"));
+  EXPECT_FALSE(hostile->props.contains("nic_speed"));
+}
+
+namespace {
+  const char *const JOURNAL_OK =
+    "{\"v\":1,\"kind\":\"start\",\"run\":\"20261115213000\",\"phase\":\"upgrade\",\"from\":\"2026.1113.173055\"}\n"
+    "{\"v\":1,\"kind\":\"component\",\"run\":\"20261115213000\",\"component\":\"gamepad\",\"step\":\"install\",\"exit\":0}\n"
+    "{\"v\":1,\"kind\":\"component\",\"run\":\"20261115213000\",\"component\":\"usbip\",\"step\":\"install\",\"exit\":102}\n"
+    "{\"v\":1,\"kind\":\"component\",\"run\":\"20261115213000\",\"component\":\"vdd\",\"step\":\"install\",\"exit\":3010}\n"
+    "{\"v\":1,\"kind\":\"component\",\"run\":\"20261115213000\",\"component\":\"service\",\"step\":\"verify\",\"exit\":0}\n"
+    "{\"v\":1,\"kind\":\"finish\",\"run\":\"20261115213000\",\"exit\":3010,\"ms\":90000}\n";
+
+  const telemetry::install_journal::item_t *
+  find(const telemetry::install_journal::result_t &r, const char *name, const char *component = nullptr) {
+    for (const auto &i : r.items)
+      if (i.name == name && (!component || i.props.value("component", "") == component)) return &i;
+    return nullptr;
+  }
+}  // namespace
+
+TEST(InstallJournal, AFinishedRunBecomesOneResultPerComponentAndOneSummary) {
+  const auto r = install_journal::events_from_journal(JOURNAL_OK, 1000);
+  ASSERT_TRUE(r.consumed);
+  ASSERT_EQ(r.items.size(), 5u);
+  const auto *guard = find(r, "install_result", "usbip");
+  ASSERT_NE(guard, nullptr);
+  EXPECT_EQ(guard->props["result"], "failed");
+  EXPECT_EQ(guard->props["step"], "roothub_guard");  // 102 to 105 are the root-hub guard of the USB/IP component
+  EXPECT_EQ(guard->props["exit_code"], "102");
+  EXPECT_EQ(guard->props["phase"], "upgrade");
+  EXPECT_EQ(guard->props["from_version"], "2026.1113.173055");
+  const auto *vdd = find(r, "install_result", "vdd");
+  ASSERT_NE(vdd, nullptr);
+  EXPECT_EQ(vdd->props["result"], "ok");  // 3010 is a success that wants a restart
+  EXPECT_TRUE(vdd->props["reboot_needed"].get<bool>());
+  const auto *gamepad = find(r, "install_result", "gamepad");
+  ASSERT_NE(gamepad, nullptr);
+  EXPECT_EQ(gamepad->props["result"], "ok");
+  EXPECT_FALSE(gamepad->props.contains("error_class"));
+  const auto *summary = find(r, "install_summary");
+  ASSERT_NE(summary, nullptr);
+  EXPECT_EQ(summary->props["result"], "failed");  // one component failed although the run finished
+  EXPECT_EQ(summary->props["components"], 4);
+  EXPECT_EQ(summary->props["failed"], 1);
+  EXPECT_TRUE(summary->props["reboot_needed"].get<bool>());
+  EXPECT_EQ(summary->props["dur_ms"], 90000);
+  // every event passes the allow-list of the sender as it is
+  for (const auto &item : r.items) EXPECT_TRUE(shape_event(item.kind, item.name, item.props, 1000).has_value()) << item.name << " " << item.props.dump();
+}
+
+TEST(InstallJournal, AllGuardCodesAreNamedAsTheGuardStep) {
+  for (const char *code : { "102", "103", "104", "105" }) {
+    const std::string line = std::string { R"({"v":1,"kind":"start","run":"r1","phase":"install"})" } + "\n" + R"({"v":1,"kind":"component","run":"r1","component":"usbip","step":"whatever","exit":)" + code + "}\n" + R"({"v":1,"kind":"finish","run":"r1","exit":0})" + "\n";
+    const auto r = install_journal::events_from_journal(line, 1000);
+    const auto *x = find(r, "install_result", "usbip");
+    ASSERT_NE(x, nullptr) << code;
+    EXPECT_EQ(x->props["step"], "roothub_guard") << code;
+    EXPECT_EQ(x->props["exit_code"], code);
+  }
+}
+
+TEST(InstallJournal, ARunThatNeverFinishedIsIncompleteOnlyOnceTheJournalIsQuiet) {
+  const std::string journal = std::string { R"({"v":1,"kind":"start","run":"r1","phase":"install"})" } + "\n" + R"({"v":1,"kind":"component","run":"r1","component":"vdd","step":"install","exit":0})" + "\n";
+  const auto fresh = install_journal::events_from_journal(journal, 30 * 1000);
+  EXPECT_FALSE(fresh.consumed);  // still going: leave the file for the next start
+  EXPECT_TRUE(fresh.items.empty());
+  const auto quiet = install_journal::events_from_journal(journal, install_journal::QUIET_MS + 1);
+  EXPECT_TRUE(quiet.consumed);
+  const auto *summary = find(quiet, "install_summary");
+  ASSERT_NE(summary, nullptr);
+  EXPECT_EQ(summary->props["result"], "incomplete");
+  EXPECT_NE(find(quiet, "install_result", "vdd"), nullptr);
+}
+
+TEST(InstallJournal, ExitCodesBecomeCodesAndClasses) {
+  EXPECT_EQ(install_journal::exit_code_text(0), "0");
+  EXPECT_EQ(install_journal::exit_code_text(3010), "3010");
+  EXPECT_EQ(install_journal::exit_code_text(-1), "0xFFFFFFFF");
+  EXPECT_EQ(install_journal::exit_code_text(-2147024891LL), "0x80070005");
+  EXPECT_EQ(install_journal::error_class_of(5), "permission");
+  EXPECT_EQ(install_journal::error_class_of(112), "disk");
+  EXPECT_EQ(install_journal::error_class_of(1602), "cancelled");
+  EXPECT_EQ(install_journal::error_class_of(102), "other");
+  EXPECT_EQ(install_journal::version_token("v2026.1113.173055.name"), "2026.1113.173055");
+  EXPECT_EQ(install_journal::version_token("no version"), "");
+  EXPECT_EQ(install_journal::version_token("C:\\Users\\Eve\\1.2.3"), "1.2.3");
+}
+
+TEST(InstallJournal, AHostileJournalGivesNothingItDoesNotKnow) {
+  std::string journal;
+  journal += "not json at all\n";
+  journal += R"({"v":2,"kind":"start","run":"r1"})" "\n";  // another version
+  journal += R"({"v":1,"kind":"start","run":"../../etc/passwd","phase":"install"})" "\n";  // a run id that is a path
+  journal += R"({"v":1,"kind":"start","run":"r2","phase":"hack","from":"C:\\Users\\Eve\\9.9.9"})" "\n";
+  journal += R"({"v":1,"kind":"component","run":"r2","component":"C:\\Users\\Eve","step":"x","exit":1})" "\n";  // not a component of ours
+  journal += R"({"v":1,"kind":"component","run":"r2","component":"vdd","step":"A very long step with spaces and a path C:\\x","exit":99999999999999})" "\n";  // out of range
+  journal += R"({"v":1,"kind":"component","run":"r2","component":"vdd","step":"Verify Step!","exit":7})" "\n";
+  journal += R"({"v":1,"kind":"finish","run":"r2","exit":"zero"})" "\n";
+  const auto r = install_journal::events_from_journal(journal, 1000);
+  ASSERT_TRUE(r.consumed);
+  const auto *vdd = find(r, "install_result", "vdd");
+  ASSERT_NE(vdd, nullptr);
+  EXPECT_EQ(vdd->props["step"], "install");  // "Verify Step!" is no step word: the default step stands
+  EXPECT_EQ(vdd->props["phase"], "install");  // "hack" is not a phase
+  EXPECT_EQ(vdd->props["from_version"], "9.9.9");  // only the digits and dots of the version survive
+  EXPECT_EQ(find(r, "install_result", "C:\\Users\\Eve"), nullptr);
+  for (const auto &item : r.items) {
+    const auto text = item.props.dump();
+    EXPECT_EQ(text.find("Eve"), std::string::npos) << text;
+    EXPECT_EQ(text.find("passwd"), std::string::npos) << text;
+    EXPECT_TRUE(shape_event(item.kind, item.name, item.props, 1000).has_value()) << text;
+  }
+  // a journal of any size is read from its end and bounded
+  std::string big;
+  for (int i = 0; i < 5000; ++i) big += R"({"v":1,"kind":"component","run":"r3","component":"vdd","step":"s","exit":1})" "\n";
+  EXPECT_LE(install_journal::events_from_journal(big, install_journal::QUIET_MS + 1).items.size(), 40u);
 }
 
 TEST(TelemetryScrub, ALogNameIsWrittenBetweenDoubleQuotesWhateverItHolds) {

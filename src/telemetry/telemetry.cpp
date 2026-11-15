@@ -12,7 +12,18 @@
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <sstream>
 #include <thread>
+
+#ifdef _WIN32
+  #ifndef NOMINMAX
+    #define NOMINMAX
+  #endif
+  #ifndef WIN32_LEAN_AND_MEAN
+    #define WIN32_LEAN_AND_MEAN
+  #endif
+  #include <windows.h>
+#endif
 
 #include <boost/log/core.hpp>
 #include <boost/log/sinks/basic_sink_backend.hpp>
@@ -20,6 +31,8 @@
 #include <boost/log/attributes/value_extraction.hpp>
 
 #include "error_report.h"
+#include "device_facts.h"
+#include "install_journal.h"
 #include "service.h"
 #include "src/build_info.h"
 #include "src/crash/crash.h"
@@ -155,6 +168,117 @@ namespace telemetry {
       return "host";
     }
 
+    // ---- device facts and the installer's journal (stage c) ------------------------------------------------------------------------------------------------
+
+    std::int64_t
+    wall_ms() {
+      return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    }
+
+    std::string
+    read_small_file(const std::filesystem::path &path, std::size_t max_bytes) {
+      std::ifstream in { path, std::ios::binary };
+      if (!in) return {};
+      std::string data(max_bytes + 1, '\0');
+      in.read(data.data(), static_cast<std::streamsize>(data.size()));
+      data.resize(static_cast<std::size_t>(in.gcount()));
+      if (data.size() > max_bytes) data.erase(0, data.size() - max_bytes);
+      return data;
+    }
+
+#ifdef _WIN32
+    /** The screens on the desktop and the highest refresh rate among them (the current mode, not the list of modes). */
+    void
+    probe_displays(device_facts::facts_t &facts) {
+      int count = 0;
+      double max_hz = 0;
+      DISPLAY_DEVICEW device {};
+      device.cb = sizeof(device);
+      for (DWORD i = 0; EnumDisplayDevicesW(nullptr, i, &device, 0); ++i) {
+        if (!(device.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP) || (device.StateFlags & DISPLAY_DEVICE_MIRRORING_DRIVER)) continue;
+        DEVMODEW mode {};
+        mode.dmSize = sizeof(mode);
+        if (!EnumDisplaySettingsExW(device.DeviceName, ENUM_CURRENT_SETTINGS, &mode, 0)) continue;
+        ++count;
+        if (mode.dmDisplayFrequency > 1) max_hz = std::max(max_hz, static_cast<double>(mode.dmDisplayFrequency));
+      }
+      facts.displays = count;
+      if (max_hz > 0) facts.refresh_hz = device_facts::standard_refresh_hz(max_hz);
+    }
+#else
+    void
+    probe_displays(device_facts::facts_t &) {}
+#endif
+
+    /** The facts of this computer from the inventory the host already keeps (GPU, OS, adapters) and a short look at the screens. */
+    device_facts::facts_t
+    facts_from(const system_info::snapshot_t &snapshot) {
+      device_facts::facts_t facts;
+      const system_info::gpu_info_t *gpu = nullptr;
+      for (const auto &g : snapshot.gpus)
+        if (g.is_streaming_adapter) {
+          gpu = &g;
+          break;
+        }
+      if (!gpu && !snapshot.gpus.empty()) gpu = &snapshot.gpus.front();
+      if (gpu) {
+        facts.gpu_vendor = gpu_vendor_of(gpu->vendor);
+        for (const char c : gpu->driver_version)
+          if ((c >= '0' && c <= '9') || c == '.') facts.gpu_driver.push_back(c);
+        if (facts.gpu_driver.size() > 24) facts.gpu_driver.resize(24);
+      }
+      facts.os_build = device_facts::os_build_token(snapshot.os.build.empty() ? snapshot.os.version : snapshot.os.build);
+      std::vector<device_facts::nic_t> nics;
+      for (const auto &n : snapshot.nics) nics.push_back({ std::string { system_info::to_string(n.type) }, n.up, n.link_speed_mbps, n.is_default_route });
+      if (const auto nic = device_facts::pick_nic(nics)) {
+        facts.nic_link = device_facts::nic_link_class(nic->type);
+        facts.nic_speed = device_facts::nic_speed_class(nic->link_speed_mbps);
+      }
+      probe_displays(facts);
+      return facts;
+    }
+
+    /** Reports the facts when they are new or changed (and the last report is a day old): one small event, remembered in <dir>/device_facts.json. */
+    void
+    report_device_facts(service_t &service, const std::filesystem::path &dir, const device_facts::facts_t &facts) {
+      std::optional<device_facts::state_t> last;
+      const auto path = dir / "device_facts.json";
+      try {
+        last = device_facts::state_from_json(json::parse(read_small_file(path, 4096), nullptr, false));
+      }
+      catch (...) {
+      }
+      const auto now = wall_ms();
+      if (!device_facts::should_send(last, facts, now)) return;
+      service.emit(kind_e::experience, "device_facts", device_facts::to_props(facts));
+      try {
+        std::filesystem::create_directories(dir);
+        std::ofstream out { path, std::ios::binary | std::ios::trunc };
+        out << device_facts::state_to_json({ device_facts::fingerprint(facts), now }).dump();
+      }
+      catch (...) {
+      }
+    }
+
+    /** The installer's journal becomes install_result and install_summary events and is deleted; a run that is still going is left for the next start. */
+    void
+    report_install_journal(service_t &service, const std::filesystem::path &dir) {
+      try {
+        const auto path = dir / "install_journal.jsonl";
+        std::error_code ec;
+        if (!std::filesystem::exists(path, ec)) return;
+        const auto written = std::filesystem::last_write_time(path, ec);
+        if (ec) return;
+        const auto age = std::chrono::duration_cast<std::chrono::milliseconds>(std::filesystem::file_time_type::clock::now() - written).count();
+        const auto result = install_journal::events_from_journal(read_small_file(path, install_journal::MAX_BYTES), age);
+        if (!result.consumed) return;
+        for (const auto &item : result.items) service.emit(item.kind, item.name, item.props);
+        std::filesystem::remove(path, ec);
+      }
+      catch (...) {
+      }
+    }
+
     class log_backend_t: public bl::sinks::basic_sink_backend<bl::sinks::synchronized_feeding> {
     public:
       void
@@ -234,6 +358,8 @@ namespace telemetry {
             ctx.gpu_vendor = gpu_vendor_of(snapshot.gpus.front().vendor);
             service_->set_gpu_driver(snapshot.gpus.front().driver_version);
           }
+          // coarse facts about the computer, once per start and only when they changed (device_facts.h)
+          report_device_facts(*service_, platf::appdata() / "telemetry", facts_from(snapshot));
         }
         catch (...) {
         }
@@ -260,6 +386,8 @@ namespace telemetry {
             // the OS and the GPU are read here, not at start: the probe is not part of the host's start-up
             context_done = true;
             fill_context();
+            // what the installer left for this start (install_journal.h)
+            report_install_journal(*service_, platf::appdata() / "telemetry");
           }
           if (now - last_config >= CONFIG_RECHECK) {
             last_config = now;

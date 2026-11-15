@@ -52,6 +52,13 @@ namespace telemetry {
     if (e.name == "error_report") return 0;  // the first report of an error; the aggregates of known errors are marked 1 by the sender
     if (e.name == "stream_anomaly") return severe() ? 0 : 1;
     if (e.name == "stream_regress" || e.name == "log_summary") return 1;
+    // installs and updates: a failed step, and a run that failed or never finished, are never sampled away; the successes are the denominator of a failure rate
+    if (e.name == "install_result" || e.name == "update_result") return e.props.is_object() && e.props.value("result", "") == "failed" ? 0 : 1;
+    if (e.name == "install_summary") {
+      const auto result = e.props.is_object() ? e.props.value("result", "") : std::string {};
+      return result == "failed" || result == "incomplete" ? 0 : 1;
+    }
+    if (e.name == "device_facts") return 1;
     if (e.name == "error") return e.props.is_object() && e.props.value("severity", "") == "fatal" ? 0 : 1;
     return 2;
   }
@@ -66,8 +73,10 @@ namespace telemetry {
     if (product != "panel"sv && product != "web"sv && product != "sparxie-launch"sv) return false;
     if (kind == kind_e::usage) return name == "app_start"sv || name == "app_exit"sv || name == "feature_used"sv || name == "setting_changed"sv;
     // "user_report" is a report the person wrote in the error dialog; it is kind error and follows the error-report choice like every error event
-    if (kind == kind_e::error) return name == "error"sv || name == "user_report"sv || name == "error_report"sv;
-    return name == "panel_page"sv || name == "startup"sv;
+    // the result of an update step is the page's to report (it runs the update sheet); install results and device facts are the host's own, read from the installer's journal and the system inventory
+    if (kind == kind_e::error) return name == "error"sv || name == "user_report"sv || name == "error_report"sv || name == "update_result"sv;
+    // the sketches of a page (page_vitals) and the latency of its calls to the host (api_latency)
+    return name == "panel_page"sv || name == "startup"sv || name == "page_vitals"sv || name == "api_latency"sv;
   }
 
   // ---------------------------------------------------------------------------------------------------------------------
@@ -331,7 +340,8 @@ namespace telemetry {
       frames,
       crumbs,
       log_lines,
-      frame };
+      frame,
+      vector8 };  // exactly 8 non-negative integers: the fixed buckets of a page sketch
 
     struct prop_spec_t {
       std::string_view key;
@@ -357,6 +367,14 @@ namespace telemetry {
     const std::vector<std::string_view> severity_choices { "info", "warning", "error", "fatal" };
     const std::vector<std::string_view> report_category_choices { "bug", "performance", "compat", "suggestion", "other" };
     const std::vector<std::string_view> update_source_choices { "mirror", "github", "other" };
+    const std::vector<std::string_view> update_result_source_choices { "mirror", "github", "manual", "other" };
+    const std::vector<std::string_view> update_stage_choices { "check", "download", "verify", "apply", "restart" };
+    const std::vector<std::string_view> ok_failed_choices { "ok", "failed" };
+    const std::vector<std::string_view> run_result_choices { "ok", "failed", "cancelled", "incomplete" };
+    const std::vector<std::string_view> error_class_choices { "network", "http_4xx", "http_5xx", "hash_mismatch", "disk", "permission", "cancelled", "other" };
+    const std::vector<std::string_view> install_phase_choices { "install", "upgrade", "repair", "uninstall" };
+    const std::vector<std::string_view> nic_link_choices { "wired", "wireless", "other", "unknown" };
+    const std::vector<std::string_view> nic_speed_choices { "lt_1g", "1g", "2_5g", "5g", "10g", "gt_10g", "unknown" };
 
     std::vector<prop_spec_t>
     stream_dims() {
@@ -534,6 +552,73 @@ namespace telemetry {
                                                      } });
         t.push_back({ kind_e::experience, "startup", { { "host_start_ms", type_e::integer, 0, 3600000 }, { "first_frame_ms", type_e::integer, 0, 3600000 } } });
         t.push_back({ kind_e::experience, "panel_page", { { "page", type_e::catalogue, 0, 40, {}, true }, { "time_to_content_ms", type_e::integer, 0, 600000, {}, true } } });
+        // Stage (b): the sketches of a page, one per route and send: eight bucket counts per metric (foundation-ui pageBuckets.js; the Worker has the same bounds) and a few counters. No trace, no text.
+        t.push_back({ kind_e::experience, "page_vitals", {
+                                                           { "page", type_e::catalogue, 0, 48, {}, true },
+                                                           { "visits", type_e::integer, 0, 100000 },
+                                                           { "lcp", type_e::vector8 },
+                                                           { "inp", type_e::vector8 },
+                                                           { "cls", type_e::vector8 },
+                                                           { "loaf", type_e::vector8 },
+                                                           { "fpaint", type_e::vector8 },
+                                                           { "tti", type_e::vector8 },
+                                                           { "heap", type_e::vector8 },
+                                                           { "loaf_n", type_e::integer, 0, 10000000 },
+                                                           { "loaf_block_ms", type_e::integer, 0, 100000000 },
+                                                           { "fr_a", type_e::integer, 0, 100000000 },
+                                                           { "fr_b", type_e::integer, 0, 100000000 },
+                                                           { "fr_c", type_e::integer, 0, 100000000 },
+                                                           { "fr_d", type_e::integer, 0, 100000000 },
+                                                           { "dwell_s", type_e::integer, 0, 8640000 },
+                                                         } });
+        // the latency of the page's calls to this host, per endpoint word: calls, failures, timeouts and eight latency buckets
+        t.push_back({ kind_e::experience, "api_latency", {
+                                                           { "endpoint", type_e::catalogue, 0, 32, {}, true },
+                                                           { "calls", type_e::integer, 0, 10000000 },
+                                                           { "errors", type_e::integer, 0, 10000000 },
+                                                           { "timeouts", type_e::integer, 0, 10000000 },
+                                                           { "lat", type_e::vector8 },
+                                                         } });
+        // Stage (c): the result of an update step (the page runs the update sheet), one component of an install run and the run itself (the host reads the installer's journal), and coarse device facts
+        t.push_back({ kind_e::error, "update_result", {
+                                                        { "source", type_e::choice, 0, 0, update_result_source_choices, true },
+                                                        { "stage", type_e::choice, 0, 0, update_stage_choices, true },
+                                                        { "result", type_e::choice, 0, 0, ok_failed_choices, true },
+                                                        { "error_class", type_e::choice, 0, 0, error_class_choices },
+                                                        { "from_version", type_e::catalogue, 0, 40 },
+                                                        { "to_version", type_e::catalogue, 0, 40 },
+                                                        { "dur_ms", type_e::integer, 0, 3600000 },
+                                                        { "reboot_needed", type_e::boolean },
+                                                      } });
+        t.push_back({ kind_e::error, "install_result", {
+                                                         { "result", type_e::choice, 0, 0, ok_failed_choices, true },
+                                                         { "error_class", type_e::choice, 0, 0, error_class_choices },
+                                                         { "phase", type_e::choice, 0, 0, install_phase_choices },
+                                                         { "component", type_e::catalogue, 0, 24 },
+                                                         { "step", type_e::catalogue, 0, 32 },
+                                                         { "exit_code", type_e::code, 0, 24 },
+                                                         { "reboot_needed", type_e::boolean },
+                                                         { "from_version", type_e::catalogue, 0, 40 },
+                                                         { "dur_ms", type_e::integer, 0, 7200000 },
+                                                       } });
+        t.push_back({ kind_e::error, "install_summary", {
+                                                          { "phase", type_e::choice, 0, 0, install_phase_choices },
+                                                          { "result", type_e::choice, 0, 0, run_result_choices, true },
+                                                          { "components", type_e::integer, 0, 64 },
+                                                          { "failed", type_e::integer, 0, 64 },
+                                                          { "reboot_needed", type_e::boolean },
+                                                          { "from_version", type_e::catalogue, 0, 40 },
+                                                          { "dur_ms", type_e::integer, 0, 7200000 },
+                                                        } });
+        t.push_back({ kind_e::experience, "device_facts", {
+                                                            { "gpu_vendor", type_e::catalogue, 0, 24 },
+                                                            { "gpu_driver", type_e::catalogue, 0, 24 },
+                                                            { "os_build", type_e::catalogue, 0, 16 },
+                                                            { "displays", type_e::integer, 0, 16 },
+                                                            { "refresh_hz", type_e::integer, 0, 1000 },
+                                                            { "nic_link", type_e::choice, 0, 0, nic_link_choices },
+                                                            { "nic_speed", type_e::choice, 0, 0, nic_speed_choices },
+                                                          } });
         return t;
       }();
       return table;
@@ -654,6 +739,18 @@ namespace telemetry {
             out[std::string { k.key }] = static_cast<std::int64_t>(std::llround(std::clamp(v, 0.0, 100000.0)));
           }
           return out;
+        }
+        case type_e::vector8: {
+          // exactly 8 non-negative integers; anything else drops the whole prop
+          if (!value.is_array() || value.size() != 8) return std::nullopt;
+          json row = json::array();
+          for (const auto &n : value) {
+            if (!n.is_number()) return std::nullopt;
+            const double v = n.get<double>();
+            if (!std::isfinite(v) || v < 0) return std::nullopt;
+            row.push_back(static_cast<std::int64_t>(std::llround(std::clamp(v, 0.0, 10000000.0))));
+          }
+          return row;
         }
         case type_e::histograms: {
           // only the keys of health::hist_keys(), each exactly BUCKET_COUNT non-negative integers; anything else drops the whole prop
