@@ -177,6 +177,23 @@ class Msys2PacmanTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("::error::download of o-1-any.pkg.tar.zst failed after 2 attempts", result.stdout)
 
+    def test_pinned_package_must_match_its_sha256(self):
+        import hashlib
+        self.run_script("prepare")
+        good = hashlib.sha256(b"pkg\n").hexdigest()
+        ok = self.run_script("install", "git", OPUS_PACKAGE="o-1-any.pkg.tar.zst", OPUS_SHA256=good, CURL_OK="repo.msys2.org")
+        self.assertEqual(ok.returncode, 0, ok.stderr)
+        (self.cache / "o-1-any.pkg.tar.zst").unlink()
+        bad = self.run_script("install", "git", OPUS_PACKAGE="o-1-any.pkg.tar.zst", OPUS_SHA256="0" * 64, CURL_OK="repo.msys2.org", PACMAN_ATTEMPTS=2)
+        self.assertNotEqual(bad.returncode, 0)
+        self.assertFalse((self.cache / "o-1-any.pkg.tar.zst").exists(), "a file with the wrong digest is never kept")
+
+    def test_pinned_download_stops_at_the_time_of_the_attempt(self):
+        self.run_script("prepare")
+        result = self.run_script("install", "git", OPUS_PACKAGE="o-1-any.pkg.tar.zst", CURL_OK="nowhere", PACMAN_ATTEMPTS=1, PACMAN_ATTEMPT_TIMEOUT=0)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(self.read(self.curl_log), [], "no server is tried once the attempt time is used up")
+
     def test_prune_keeps_installed_versions_and_signatures_only(self):
         self.installed.write_text("gcc 16.1.0-1\nopus 1.6.1-1\nlib 1:2.0-3\n")
         keep = ["gcc-16.1.0-1-x86_64.pkg.tar.zst", "gcc-16.1.0-1-x86_64.pkg.tar.zst.sig", "opus-1.6.1-1-any.pkg.tar.zst", "lib-1~2.0-3-any.pkg.tar.zst"]

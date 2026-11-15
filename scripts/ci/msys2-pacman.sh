@@ -105,17 +105,34 @@ upgrade() {
   retry "pacman -Syuu" pacman --noconfirm -Syuu --overwrite '*'
 }
 
+# The pinned package file must match OPUS_SHA256 when it is set: a mirror cannot be trusted to serve the file it names, and pacman -U accepts an
+# unsigned local file under the default LocalFileSigLevel = Optional.
+verify_pinned() { # <path>
+  [[ -z "${OPUS_SHA256:-}" ]] && return 0
+  local actual
+  actual="$(sha256sum "$1" | awk '{ print $1 }')"
+  [[ "$actual" == "$OPUS_SHA256" ]] || { say "$1: sha256 $actual is not the pinned $OPUS_SHA256"; return 1; }
+}
+
 # Download the pinned package file (OPUS_PACKAGE) into pacman's cache unless it is there; every server of the official list is tried.
 fetch_pinned() { # <file name>
-  local file="$1" server base
-  [[ -s "$CACHE_DIR/$file" ]] && { say "$file is in the package cache"; return 0; }
+  local file="$1" server base remaining
+  # One deadline for the whole call: `timeout` cannot wrap a shell function, and curl restarts its own limit on every retry.
+  local deadline=$((SECONDS + ATTEMPT_TIMEOUT))
+  if [[ -s "$CACHE_DIR/$file" ]]; then
+    if verify_pinned "$CACHE_DIR/$file"; then say "$file is in the package cache"; return 0; fi
+    say "$file in the package cache does not match its pinned digest; downloading it again"
+    rm -f "$CACHE_DIR/$file"
+  fi
   while read -r server; do
+    remaining=$((deadline - SECONDS))
+    if ((remaining <= 0)); then say "$file: the time of this attempt is used up"; break; fi
     base="${server#*=}"
     base="${base# }"
     base="${base//\$repo/ucrt64}"
     base="${base%/}"
     # `|| true` keeps a refused or stalled server from ending the loop under -e.
-    if curl -fsSL --connect-timeout 15 --max-time 300 --retry 2 --retry-delay 5 -o "$CACHE_DIR/$file.part" "$base/$file"; then
+    if curl -fsSL --connect-timeout 15 --max-time "$((remaining < 300 ? remaining : 300))" -o "$CACHE_DIR/$file.part" "$base/$file" && verify_pinned "$CACHE_DIR/$file.part"; then
       mv -f "$CACHE_DIR/$file.part" "$CACHE_DIR/$file"
       say "$file from $base"
       return 0
@@ -131,6 +148,7 @@ install() {
   if [[ -n "${OPUS_PACKAGE:-}" ]]; then
     # Pinned: the newest opus is not known to work. The file is kept in the package cache, so it survives the mirror dropping it.
     retry "download of $OPUS_PACKAGE" fetch_pinned "$OPUS_PACKAGE"
+    verify_pinned "$CACHE_DIR/$OPUS_PACKAGE" || { echo "::error::$OPUS_PACKAGE does not match its pinned sha256"; return 1; }
     pacman --noconfirm -U "$CACHE_DIR/$OPUS_PACKAGE"
   fi
 }

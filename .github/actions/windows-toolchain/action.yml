@@ -77,6 +77,8 @@ runs:
       shell: msys2 {0}
       env:
         OPUS_PACKAGE: mingw-w64-ucrt-x86_64-opus-1.6.1-1-any.pkg.tar.zst
+        # sha256 of the file on repo.msys2.org (2026-11-16): pacman -U takes an unsigned local file under the default LocalFileSigLevel.
+        OPUS_SHA256: 7b8f176f9cc0431b52006861c0a2e083d73d4b47a73ab749755b5379ff673252
       run: |
         set -euo pipefail
         P=mingw-w64-ucrt-x86_64
