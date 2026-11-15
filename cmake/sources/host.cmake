@@ -89,7 +89,7 @@ set(SUNSHINE_HOST_SOURCES
     src/system_info.cpp src/system_info.h
     src/build_info.cpp src/build_info.h
     src/crash/crash.h src/crash/crash_core.cpp src/crash/crash_core.h src/crash/crash_state.h
-    src/crash/crash_common.cpp src/crash/crash_win.cpp src/crash/crash_posix.cpp src/crash/crash_upload.cpp
+    src/crash/crash_common.cpp src/crash/crash_win.cpp src/crash/crash_posix.cpp src/crash/crash_upload.cpp src/crash/log_scrub.cpp src/crash/log_scrub.h src/crash/crash_log.cpp src/crash/crash_log.h src/crash/crash_env.cpp src/crash/crash_env_text.cpp src/crash/crash_env.h src/crash/crash_context.h
     src/system_info_cache.cpp
     src/system_info_probe.cpp
     src/stat_trackers.cpp src/stat_trackers.h

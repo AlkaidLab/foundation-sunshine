@@ -3,6 +3,10 @@
 Foundation Sunshine sends a small amount of data to the developers' own server, `https://api.alkaidlab.com`, so that they can see how many people use it, how streams perform and what breaks. This page says exactly what, when, and how to turn it off.
 No script of Google or any other third party is loaded by the Web UI or the control panel. Nothing is sent to a third-party analytics service by a client.
 
+## The log that goes with a crash report or a feedback report
+
+When the host crashes, or when you send feedback from the Web UI or the control panel, the report is sent together with the log of that run of the program (the file `sunshine.log`). The log is text the program writes about itself; it can contain your user name, the name of your computer, folder paths, IP and MAC addresses, device serial numbers, tokens, pairing PINs, Wi-Fi names and game account names, so it is made anonymous on your computer before it is sent: those are removed (an address becomes a placeholder such as `<ip#1>`, the same address the same placeholder, so lines can still be matched); times, levels, components, error codes, numbers, versions and GPU and driver names stay. The service checks the first and last part again and refuses the whole log if it finds personal data. The log is kept for 90 days, in a private repository, and read by the developers only. It goes only when error reports are on, and with a feedback report only after you press Send.
+
 ## Two choices, both on until you turn them off
 
 | Choice | What it covers | Config key |

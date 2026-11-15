@@ -40,6 +40,8 @@ namespace {
     std::vector<json> posted;
     std::vector<std::string> urls;
     int next_status = 200;
+    std::optional<std::string> log_ref;  ///< what the session log upload returns
+    int log_calls = 0;
     std::unique_ptr<service_t> svc;
 
     explicit harness_t(service_options_t options = {}) {
@@ -48,6 +50,10 @@ namespace {
       deps.now_ms = [this] { return now; };
       deps.consent = [this] { return consent; };
       deps.random01 = [] { return 0.0; };
+      deps.session_log = [this](const std::string &, const std::string &, const std::string &) {
+        ++log_calls;
+        return log_ref;
+      };
       deps.post = [this](const std::string &url, const std::string &body) {
         urls.push_back(url);
         posted.push_back(json::parse(body));
@@ -1032,6 +1038,52 @@ TEST(TelemetryUserReport, FollowsTheErrorReportChoice) {
   h.svc->consent_changed();
   h.svc->flush();
   EXPECT_EQ(h.svc->pump(), 0);
+}
+
+TEST(TelemetryUserReport, TheSessionLogGoesUpFirstAndItsReferenceTravelsInTheReport) {
+  harness_t h;
+  h.consent = { false, true };
+  h.log_ref = "crash-2026-11/ur-0123456789abcdef01234567.log.gz";
+  const json report = json::array({ json { { "kind", "error" }, { "name", "user_report" }, { "props", json { { "category", "bug" }, { "component", "panel" }, { "message", "it broke" }, { "log_ref", "crash-2026-11/ur-ffffffffffffffffffffffff.log.gz" } } } } });
+  EXPECT_EQ(h.svc->ingest("web", "1", report), 1u);
+  EXPECT_EQ(h.log_calls, 1);
+  h.svc->flush();
+  ASSERT_EQ(h.svc->pump(), 1);
+  EXPECT_EQ(h.posted.at(0)["events"][0]["props"]["log_ref"], *h.log_ref);  // the page cannot name a reference itself
+  // no log (error reports off, no endpoint, nothing to send): the report goes without one
+  h.log_ref.reset();
+  EXPECT_EQ(h.svc->ingest("web", "1", report), 1u);
+  h.svc->flush();
+  ASSERT_EQ(h.svc->pump(), 1);
+  EXPECT_FALSE(h.posted.back()["events"][0]["props"].contains("log_ref"));
+  // other events never ask for a log
+  const auto before = h.log_calls;
+  h.svc->ingest("web", "1", json::array({ json { { "kind", "error" }, { "name", "error" }, { "props", json { { "component", "web" }, { "code", "E_LOST" } } } } }));
+  EXPECT_EQ(h.log_calls, before);
+}
+
+TEST(TelemetryUserReport, NoLogIsUploadedWhileErrorReportsAreOffOrTheVersionIsNotAVersion) {
+  harness_t h;
+  h.log_ref = "crash-2026-11/ur-0123456789abcdef01234567.log.gz";
+  const json report = json::array({ json { { "kind", "error" }, { "name", "user_report" }, { "props", json { { "category", "bug" }, { "component", "panel" }, { "message", "it broke" } } } } });
+  h.consent = { true, false };  // error reports off: the report is refused and the log must not leave first
+  EXPECT_EQ(h.svc->ingest("web", "1", report), 0u);
+  EXPECT_EQ(h.log_calls, 0);
+  h.consent = { false, true };
+  h.svc->ingest("web", "C:\\Users\\Alice\\build", report);  // a page-supplied version that is a path: the log is not uploaded under it
+  EXPECT_EQ(h.log_calls, 0);
+}
+
+TEST(TelemetryUserReport, LogRefIsOnlyTheReferenceOfTheUserLogEndpoint) {
+  const auto base = [](const json &extra) {
+    json p { { "category", "bug" }, { "component", "web" }, { "message", "m" } };
+    p.update(extra);
+    return shape_event(kind_e::error, "user_report", p, 0);
+  };
+  EXPECT_EQ(base(json { { "log_ref", "crash-2026-11/ur-0123456789abcdef01234567.log.gz" } })->props["log_ref"], "crash-2026-11/ur-0123456789abcdef01234567.log.gz");
+  EXPECT_EQ(base(json { { "log_ref", "crash-2026-11-2/ur-0123456789abcdef01234567.log.gz" } })->props["log_ref"], "crash-2026-11-2/ur-0123456789abcdef01234567.log.gz");
+  for (const char *bad : { "https://evil.example/a.gz", "crash-2026-11/../x.log.gz", "crash-2026-11/ur-short.log.gz", "att-2026-11/ur-0123456789abcdef01234567.log.gz", "crash-2026-11/abababababababab-0123456789abcdef01234567.log.gz" })
+    EXPECT_FALSE(base(json { { "log_ref", bad } })->props.contains("log_ref")) << bad;
 }
 
 TEST(TelemetryUserReport, OnlyPagesMaySendIt) {

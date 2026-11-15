@@ -63,6 +63,11 @@ namespace telemetry {
     std::function<post_result_t(const std::string &url, const std::string &body)> post;
     std::function<consent_t()> consent;
     std::function<double()> random01;  ///< backoff jitter; default: a random generator
+    /**
+     * The session log that goes with a feedback report (user_report): uploads the anonymised log of the running host and returns its reference, or nothing (no log,
+     * error reports off, the service does not take it). Called on the thread that ingests the page's events; null in tests that do not need it.
+     */
+    std::function<std::optional<std::string>(const std::string &endpoint, const std::string &install_id, const std::string &version)> session_log;
   };
 
   struct service_counts_t {

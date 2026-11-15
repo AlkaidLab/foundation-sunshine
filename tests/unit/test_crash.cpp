@@ -4,7 +4,9 @@
  */
 #include "test_temp_paths.h"
 #include <src/crash/crash.h>
+#include <src/crash/crash_context.h>
 #include <src/crash/crash_core.h>
+#include <src/crash/crash_log.h>
 
 #include <atomic>
 #include <chrono>
@@ -80,7 +82,9 @@ namespace {
     std::vector<std::string> bodies;
     std::vector<std::string> targets;
     std::atomic<int> status { 200 };
+    std::atomic<int> retry_after { 0 };  ///< sent as a Retry-After header when not 0
     std::atomic<bool> stop { false };
+    std::string reply_body;  ///< sent as the JSON body of every answer; set before the request, empty = no body
 
     mock_server_t() {
   #ifdef _WIN32
@@ -130,7 +134,13 @@ namespace {
             bodies.push_back(data.substr(header_end + 4));
             targets.push_back(target);
           }
-          const std::string reply = "HTTP/1.1 " + std::to_string(status.load()) + " X\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+          std::string payload;
+          {
+            std::lock_guard lock(mutex);
+            payload = reply_body;
+          }
+          const std::string reply = "HTTP/1.1 " + std::to_string(status.load()) + " X\r\n" + (retry_after.load() ? "Retry-After: " + std::to_string(retry_after.load()) + "\r\n" : std::string()) +
+                                    (payload.empty() ? std::string() : "Content-Type: application/json\r\n") + "Content-Length: " + std::to_string(payload.size()) + "\r\nConnection: close\r\n\r\n" + payload;
           ::send(client, reply.data(), (int) reply.size(), 0);
           close_sock(client);
         }
@@ -155,9 +165,10 @@ namespace {
   };
 
   std::string
-  write_pending(const fs::path &config, const std::string &name, bool with_dump, const char *module = "sunshine.exe", std::uint64_t offset = 0x1234) {
+  write_pending(const fs::path &config, const std::string &name, bool with_dump, const char *module = "sunshine.exe", std::uint64_t offset = 0x1234, const char *product = "host") {
     crash::frame_t frames[] = { frame(module, offset), frame("sunshine.exe", 0x77) };
     crash::meta_t meta;
+    meta.product = product;
     meta.version = "2026.1112.1.杂鱼";
     meta.os_version = "Windows 11 10.0.26100";
     meta.fault_code = "0xC0000005";
@@ -577,4 +588,127 @@ TEST(CrashMeta, ModulesCarryNoDirectoryEvenWhenOneIsPassedIn) {
   EXPECT_EQ(text.find("bob"), std::string::npos);
   EXPECT_NE(text.find("sunshine.exe"), std::string::npos);
   EXPECT_NE(text.find("libx.so"), std::string::npos);
+}
+
+
+// ---- the session log and the machine that go with a report -------------------------------------------------------------------------------------
+
+TEST(CrashUpload, TheLogOfTheRunThatCrashedGoesWithTheReportAnonymised) {
+  mock_server_t server;
+  const auto config = scratch("log");
+  write_pending(config, "a", true);
+  const auto now = fs::file_time_type::clock::now();
+  put(config / "sunshine.log", "[2026-11-14 22:00:00.000]: Info: the new run\n");
+  fs::last_write_time(config / "sunshine.log", now - std::chrono::seconds(5));
+  put(config / "sunshine.log.1", "[2026-11-14 21:00:00.000]: Info: client 192.168.31.57 paired in C:\\Users\\Tanaka\\x\n[2026-11-14 21:00:01.000]: Error: nvenc init failed 0x887A0005\n");
+  fs::last_write_time(config / "sunshine.log.1", now - std::chrono::minutes(5));  // as old as the report: it is the run that crashed
+  EXPECT_EQ(crash::upload_pending_once(config, server.url(), "x"), 1);
+  ASSERT_EQ(server.bodies.size(), 1u);
+  const auto &body = server.bodies[0];
+  for (const char *part : { "name=\"log\"", "name=\"log_head\"", "name=\"log_tail\"", "name=\"log_lines\"", "application/gzip" }) EXPECT_NE(body.find(part), std::string::npos) << part;
+  EXPECT_NE(body.find("nvenc init failed 0x887A0005"), std::string::npos);  // the sidecars are plain text
+  EXPECT_NE(body.find("<ip#1>"), std::string::npos);
+  EXPECT_EQ(body.find("192.168.31.57"), std::string::npos);
+  EXPECT_EQ(body.find("Tanaka"), std::string::npos);
+  EXPECT_EQ(body.find("the new run"), std::string::npos);
+  fs::remove_all(config);
+}
+
+TEST(CrashUpload, NoLogMeansNoLogPartAndAPanelReportNeverCarriesTheHostLog) {
+  mock_server_t server;
+  const auto config = scratch("nolog");
+  write_pending(config, "a", false);
+  EXPECT_EQ(crash::upload_pending_once(config, server.url(), "x"), 1);
+  EXPECT_EQ(server.bodies[0].find("name=\"log\""), std::string::npos);
+  // a host log is there, the report is the control panel's: the host log does not go with it
+  put(config / "sunshine.log", "[2026-11-14 22:00:00.000]: Info: the host log marker\n");
+  fs::last_write_time(config / "sunshine.log", fs::file_time_type::clock::now() - std::chrono::minutes(5));
+  write_pending(config, "b", false, "sunshine.exe", 0x1234, "panel");
+  EXPECT_EQ(crash::upload_pending_once(config, server.url(), "x"), 1);
+  ASSERT_EQ(server.bodies.size(), 2u);
+  EXPECT_EQ(server.bodies[1].find("name=\"log\""), std::string::npos);
+  EXPECT_EQ(server.bodies[1].find("the host log marker"), std::string::npos);
+  EXPECT_NE(server.bodies[1].find("\"product\":\"panel\""), std::string::npos);
+  write_pending(config, "c", false);  // the same log goes with a host report
+  EXPECT_EQ(crash::upload_pending_once(config, server.url(), "x"), 1);
+  EXPECT_NE(server.bodies[2].find("the host log marker"), std::string::npos);
+  fs::remove_all(config);
+}
+
+TEST(CrashUpload, TheMachineIsReadAtUploadAndNeverWhenAlreadyInTheReport) {
+  mock_server_t server;
+  const auto config = scratch("env");
+  write_pending(config, "a", false);
+  crash::set_environment_provider([] { return std::string("{\"cpu\":\"Probe CPU\",\"cores\":8}"); });
+  EXPECT_EQ(crash::upload_pending_once(config, server.url(), "x"), 1);
+  EXPECT_NE(server.bodies[0].find("\"env\":{\"cores\":8,\"cpu\":\"Probe CPU\"}"), std::string::npos);
+  crash::set_environment_provider({});
+  fs::remove_all(config);
+}
+
+TEST(CrashUpload, WaitsByRetryAfterThenByDoublingFromFifteenMinutesAndResetsOnSuccess) {
+  mock_server_t server;
+  const auto config = scratch("backoff");
+  write_pending(config, "a", false);
+  server.status = 429;
+  server.retry_after = 120;
+  crash::upload_pending_once(config, server.url(), "x");
+  EXPECT_EQ(crash::upload_wait_hint_s(), 120);
+  server.status = 500;
+  server.retry_after = 0;
+  crash::upload_pending_once(config, server.url(), "x");
+  const auto first = crash::upload_wait_hint_s();
+  crash::upload_pending_once(config, server.url(), "x");
+  EXPECT_GE(first, 15 * 60);
+  EXPECT_EQ(crash::upload_wait_hint_s(), first * 2);  // doubling, as Crashpad retries
+  server.status = 200;
+  crash::upload_pending_once(config, server.url(), "x");
+  EXPECT_EQ(crash::upload_wait_hint_s(), 0);
+  fs::remove_all(config);
+}
+
+TEST(CrashUpload, TheSessionLogOfAFeedbackReportGoesToUserLogAndComesBackAsARef) {
+  mock_server_t server;
+  const auto config = scratch("userlog");
+  put(config / "sunshine.log", "[2026-11-14 22:00:00.000]: Info: mail a.b@example.co.uk sent\n[2026-11-14 22:00:01.000]: Error: frozen\n");
+  EXPECT_FALSE(crash::upload_session_log_from(config, server.url(), "11111111-2222-4333-8444-555555555555", "2026.1115.1").has_value());  // the mock answers 200 without a ref: no ref, no log_ref
+  ASSERT_EQ(server.targets.size(), 1u);
+  EXPECT_EQ(server.targets[0], "/v1/user-log");
+  EXPECT_NE(server.bodies[0].find("<email>"), std::string::npos);
+  EXPECT_EQ(server.bodies[0].find("example.co.uk"), std::string::npos);
+  // the service stores the log and answers with its reference: that reference comes back to the caller (it goes into the feedback report)
+  {
+    std::lock_guard lock(server.mutex);
+    server.reply_body = R"({"ok":true,"log":"stored","ref":"logs-2026-11/abc123.log.gz"})";
+  }
+  const auto ref = crash::upload_session_log_from(config, server.url(), "11111111-2222-4333-8444-555555555555", "2026.1115.1");
+  ASSERT_TRUE(ref.has_value());
+  EXPECT_EQ(*ref, "logs-2026-11/abc123.log.gz");
+  // a 2xx that does not say "stored" has no reference
+  {
+    std::lock_guard lock(server.mutex);
+    server.reply_body = R"({"ok":true,"log":"skipped","ref":"x"})";
+  }
+  EXPECT_FALSE(crash::upload_session_log_from(config, server.url(), "x", "v").has_value());
+  server.status = 404;  // a service without the endpoint: the report goes without a log, silently
+  EXPECT_FALSE(crash::upload_session_log_from(config, server.url(), "x", "v").has_value());
+  fs::remove_all(config);
+}
+
+TEST(CrashMeta, CarriesWhatTheHostWasDoingAsFixedWordsAndNumbers) {
+  crash::frame_t frames[] = { frame("sunshine.exe", 0x10) };
+  crash::meta_t meta;
+  meta.frames = frames;
+  meta.frame_count = 1;
+  char buffer[crash::meta_buffer_size];
+  crash::context::state().streaming = -1;
+  auto idle = std::string(buffer, crash::render_meta(meta, buffer, sizeof(buffer)));
+  EXPECT_EQ(idle.find("\"ctx\""), std::string::npos);  // unknown: nothing is written
+  crash::context::stream_started("hevc", 3840, 2160, 120, true, "altp", "moonlight-macos");
+  const auto streaming = json::parse(std::string(buffer, crash::render_meta(meta, buffer, sizeof(buffer))));
+  EXPECT_EQ(streaming["ctx"], json::parse(R"({"streaming":true,"codec":"hevc","width":3840,"height":2160,"fps":120,"transport":"altp","client_family":"moonlight-macos","hdr":true})"));
+  crash::context::stream_ended();
+  const auto ended = json::parse(std::string(buffer, crash::render_meta(meta, buffer, sizeof(buffer))));
+  EXPECT_EQ(ended["ctx"], json::parse(R"({"streaming":false})"));
+  crash::context::state().streaming = -1;
 }

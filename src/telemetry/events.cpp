@@ -250,7 +250,7 @@ namespace telemetry {
   // allow-list per event name
 
   namespace {
-    enum class type_e { boolean, integer, number, choice, catalogue, code, attachment, text };
+    enum class type_e { boolean, integer, number, choice, catalogue, code, attachment, log_ref, text };
 
     struct prop_spec_t {
       std::string_view key;
@@ -321,6 +321,7 @@ namespace telemetry {
                                                       { "page", type_e::catalogue, 0, 48 },
                                                       { "error_code", type_e::code, 0, 64 },
                                                       { "attachment", type_e::attachment },
+                                                      { "log_ref", type_e::log_ref },
                                                       { "message", type_e::text, 0, static_cast<double>(MAX_USER_REPORT_CHARS), {}, true },
                                                     } });
         t.push_back({ kind_e::error, "log_summary", {
@@ -404,6 +405,13 @@ namespace telemetry {
           // only the reference the developer panel returns: att-YYYY-MM/<64 hex>.<ext>
           if (!value.is_string()) return std::nullopt;
           static const std::regex ref(R"(^att-\d{4}-\d{2}/[0-9a-f]{64}\.[a-z0-9]{1,8}$)");
+          const auto text = value.get<std::string>();
+          return std::regex_match(text, ref) ? std::optional<json> { json(text) } : std::nullopt;
+        }
+        case type_e::log_ref: {
+          // only the reference POST /v1/user-log returns: crash-YYYY-MM[-n]/ur-<24 hex>.log.gz
+          if (!value.is_string()) return std::nullopt;
+          static const std::regex ref(R"(^crash-\d{4}-\d{2}(-\d)?/ur-[0-9a-f]{24}\.log\.gz$)");
           const auto text = value.get<std::string>();
           return std::regex_match(text, ref) ? std::optional<json> { json(text) } : std::nullopt;
         }

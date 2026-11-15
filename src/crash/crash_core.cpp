@@ -4,6 +4,8 @@
  */
 #include "crash_core.h"
 
+#include "crash_context.h"
+
 #include <algorithm>
 #include <cctype>
 #include <chrono>
@@ -343,6 +345,49 @@ namespace crash {
     w.raw(signature);
     w.raw("\",\"kind\":");
     w.str(meta.kind);
+    // what the host was doing (crash_context.h): read from atomics, fixed words and numbers; nothing is written for what is not known
+    {
+      const auto &c = context::state();
+      const int streaming = c.streaming.load(std::memory_order_relaxed);
+      const char *codec = context::codec_word(c.codec.load(std::memory_order_relaxed));
+      const char *transport = context::transport_word(c.transport.load(std::memory_order_relaxed));
+      const char *client = context::client_word(c.client.load(std::memory_order_relaxed));
+      const int width = c.width.load(std::memory_order_relaxed), height = c.height.load(std::memory_order_relaxed), fps = c.fps.load(std::memory_order_relaxed);
+      const int hdr = c.hdr.load(std::memory_order_relaxed);
+      if (streaming >= 0) {
+        w.raw(",\"ctx\":{\"streaming\":");
+        w.raw(streaming ? "true" : "false");
+        if (streaming) {
+          if (codec) {
+            w.raw(",\"codec\":");
+            w.str(codec);
+          }
+          if (width > 0 && height > 0) {
+            w.raw(",\"width\":");
+            w.dec((std::uint64_t) width);
+            w.raw(",\"height\":");
+            w.dec((std::uint64_t) height);
+          }
+          if (fps > 0) {
+            w.raw(",\"fps\":");
+            w.dec((std::uint64_t) fps);
+          }
+          if (transport) {
+            w.raw(",\"transport\":");
+            w.str(transport);
+          }
+          if (client) {
+            w.raw(",\"client_family\":");
+            w.str(client);
+          }
+          if (hdr >= 0) {
+            w.raw(",\"hdr\":");
+            w.raw(hdr ? "true" : "false");
+          }
+        }
+        w.put('}');
+      }
+    }
     w.put('}');
     if (w.full) return 0;
     out[w.len] = 0;
