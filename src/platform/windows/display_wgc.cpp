@@ -478,7 +478,12 @@ namespace platf::dxgi {
       return -1;
     }
 
-    uwp_device = d3d_comhandle.as<winrt::IDirect3DDevice>();
+    // as<>() throws when the object cannot be queried (a device that was lost, an older Windows build): nothing above this line catches it, and the exception ended the host
+    uwp_device = d3d_comhandle.try_as<winrt::IDirect3DDevice>();
+    if (uwp_device == nullptr) {
+      BOOST_LOG(error) << "Screen capture is not supported on this device for this release of Windows: the device has no WinRT Direct3D interface"sv;
+      return -1;
+    }
 
     auto capture_factory = winrt::get_activation_factory<winrt::GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
     if (capture_factory == nullptr) {
@@ -759,12 +764,19 @@ namespace platf::dxgi {
       return capture_e::timeout;
     }
 
-    auto capture_access = consumed_frame.Surface().as<winrt::IDirect3DDxgiInterfaceAccess>();
-    if (capture_access == nullptr) {
+    // the surface and the time of a frame throw when the device was lost under the capture; the capture thread handles an error by starting over
+    try {
+      auto capture_access = consumed_frame.Surface().as<winrt::IDirect3DDxgiInterfaceAccess>();
+      if (capture_access == nullptr) {
+        return capture_e::error;
+      }
+      capture_access->GetInterface(IID_ID3D11Texture2D, (void **) out);
+      out_time = consumed_frame.SystemRelativeTime().count();  // raw ticks from query performance counter
+    }
+    catch (winrt::hresult_error &e) {
+      BOOST_LOG(warning) << "Failed to read the captured frame: [0x"sv << util::hex(e.code()).to_string_view() << ']';
       return capture_e::error;
     }
-    capture_access->GetInterface(IID_ID3D11Texture2D, (void **) out);
-    out_time = consumed_frame.SystemRelativeTime().count();  // raw ticks from query performance counter
     return capture_e::ok;
   }
 
