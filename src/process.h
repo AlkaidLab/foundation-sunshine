@@ -9,6 +9,7 @@
 #endif
 
 #include <cstdint>
+#include <mutex>
 #include <optional>
 #include <unordered_map>
 
@@ -136,6 +137,10 @@ namespace proc {
     get_apps_etag() const;
 
   private:
+    /// Start and end of the application run in one place at a time: the global cancel, a new launch and the shutdown all end the running application, and two of them
+    /// walking the undo commands together read `_app` while the other replaces it. Recursive: `execute()` ends the previous run through `terminate()`.
+    std::recursive_mutex _lifecycle_mutex;
+
     int _app_id;
 
     std::string _apps_etag;
