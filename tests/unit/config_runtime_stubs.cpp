@@ -5,6 +5,7 @@
  * The configuration suites compile config.cpp on its own: the loggers, the
  * appdata directory and the few platform calls below are all it reaches.
  */
+#include "test_temp_paths.h"
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -31,12 +32,9 @@ bool is_running_as_system_user = false;
 namespace platf {
   std::filesystem::path
   appdata() {
-    static const auto directory = [] {
-      const auto path = std::filesystem::temp_directory_path() / "sunshine_config_runtime_tests";
-      std::filesystem::create_directories(path);
-      return path;
-    }();
-    return directory;
+    // One directory per process: config_runtime_unit_tests and config_upgrade_unit_tests both link this file, and ctest -j runs them together.
+    static const test_support::ScopedTempDir directory { "sunshine_config_runtime_tests" };
+    return directory.path();
   }
 
   std::string

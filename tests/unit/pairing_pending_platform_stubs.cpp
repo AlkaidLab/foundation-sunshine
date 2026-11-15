@@ -2,6 +2,7 @@
  * @file tests/unit/pairing_pending_platform_stubs.cpp
  * @brief Minimal platform values for the focused pairing-pending suite.
  */
+#include "test_temp_paths.h"
 #include "src/config.h"
 #include "src/platform/common.h"
 #include "src/platform/windows/nvprefs/nvprefs_interface.h"
@@ -41,7 +42,8 @@ namespace platf {
 
   std::filesystem::path
   appdata() {
-    return std::filesystem::temp_directory_path() / "sunshine-pairing-pending-test";
+    static const test_support::ScopedTempDir directory { "sunshine-pairing-pending-test" };
+    return directory.path();
   }
 
   std::string

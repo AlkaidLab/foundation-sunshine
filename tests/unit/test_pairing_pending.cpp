@@ -2,6 +2,7 @@
  * @file tests/unit/test_pairing_pending.cpp
  * @brief Pending-PIN lifecycle, long-poll and boundary tests.
  */
+#include "test_temp_paths.h"
 #include "src/http/client.h"
 #include "src/http/server.h"
 
@@ -21,11 +22,6 @@
 #include <tuple>
 #include <vector>
 
-#ifdef _WIN32
-  #include <process.h>
-#else
-  #include <unistd.h>
-#endif
 
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
@@ -104,8 +100,7 @@ namespace {
       nvhttp::reset_pairing_sessions_for_test();
       nvhttp::set_pending_pair_timeout_for_test(5s);
 
-      directory = fs::temp_directory_path() /
-                  ("sunshine-pairing-pending-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+      directory = test_support::unique_temp_path("sunshine-pairing-pending");
       fs::create_directories(directory);
       const auto credentials = crypto::gen_creds("localhost", 2048);
       std::ofstream(directory / "cert.pem") << credentials.x509;
@@ -148,8 +143,7 @@ namespace {
       config::sunshine.username = previous_username;
       config::sunshine.password = previous_password;
       config::sunshine.salt = previous_salt;
-      std::error_code ignored;
-      fs::remove_all(directory, ignored);
+      test_support::remove_tree_quiet(directory);
     }
 
     std::unique_ptr<web::Client<web::HTTPS>>
@@ -491,24 +485,13 @@ TEST_F(PairingPending, PairingTheSameCertificateAgainKeepsOneEntryAndItsUuid) {
   EXPECT_EQ(nvhttp::get_all_clients().size(), 2U);
 }
 
-namespace {
-  unsigned long
-  process_id() {
-#ifdef _WIN32
-    return static_cast<unsigned long>(_getpid());
-#else
-    return static_cast<unsigned long>(getpid());
-#endif
-  }
-}  // namespace
-
 TEST(PairingStateCompat, AReleasedStateFileLoadsEveryNamedDevice) {
   const auto root = fs::path(__FILE__).parent_path().parent_path() / "fixtures" / "config_upgrade";
   for (const char *era : { "2026.1031", "2026.1112" }) {
     SCOPED_TRACE(era);
     const auto source = root / era / "sunshine_state.json";
     // One file per process: this test is built into test_sunshine and into pairing_pending_unit_tests, and ctest -j runs them side by side.
-    const auto copy = fs::temp_directory_path() / ("sunshine-state-upgrade-" + std::string(era) + "-" + std::to_string(process_id()) + ".json");
+    const auto copy = fs::temp_directory_path() / ("sunshine-state-upgrade-" + std::string(era) + "-" + std::to_string(test_support::process_id()) + ".json");
     std::error_code ignored;
     fs::copy_file(source, copy, fs::copy_options::overwrite_existing, ignored);
     ASSERT_FALSE(ignored) << source;

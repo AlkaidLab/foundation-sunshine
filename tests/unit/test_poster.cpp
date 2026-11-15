@@ -18,6 +18,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include "test_temp_paths.h"
 #include <random>
 #include <thread>
 #include <vector>
@@ -26,7 +27,7 @@ namespace {
 
   std::filesystem::path
   test_root() {
-    const auto root = std::filesystem::temp_directory_path() / ("poster-unit-" + std::to_string(std::random_device {}()));
+    const auto root = test_support::unique_temp_path("poster-unit");
     std::filesystem::create_directories(root);
     return root;
   }
@@ -81,7 +82,7 @@ TEST(Poster, FullRepresentationPreservesPixelsAndUsesByteEtag) {
   EXPECT_EQ(source_width, full_width);
   EXPECT_EQ(source_height, full_height);
   EXPECT_TRUE(full->etag.size() == 66 && full->etag.front() == '"' && full->etag.back() == '"');
-  std::filesystem::remove_all(root);
+  test_support::remove_tree_quiet(root);
 }
 
 TEST(Poster, BackgroundPreviewIsBoundedAndScaled) {
@@ -100,7 +101,7 @@ TEST(Poster, BackgroundPreviewIsBoundedAndScaled) {
   const auto pixels = decode(preview->path, width, height);
   EXPECT_FALSE(pixels.empty());
   EXPECT_LE(std::max(width, height), nvhttp::apps::poster::preview_longest_side);
-  std::filesystem::remove_all(root);
+  test_support::remove_tree_quiet(root);
 }
 
 TEST(Poster, SmallSourcePreviewUsesFullRepresentation) {
@@ -112,7 +113,7 @@ TEST(Poster, SmallSourcePreviewUsesFullRepresentation) {
   ASSERT_TRUE(preview);
   EXPECT_EQ(full->path, preview->path);
   EXPECT_EQ(full->etag, preview->etag);
-  std::filesystem::remove_all(root);
+  test_support::remove_tree_quiet(root);
 }
 
 TEST(Poster, RangeAndConditionalValidators) {
