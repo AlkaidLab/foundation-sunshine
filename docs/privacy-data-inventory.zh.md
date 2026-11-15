@@ -49,7 +49,7 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | error：component、code、severity、count | `stream`, `e1a2b3c4`, `error`, `3` | `src/telemetry/events.cpp:310` `src/telemetry/service.cpp:393` | 哪个组件出错、出错多频繁。code 是日志行固定开头（到第一个引号、括号、冒号或数字为止）的哈希，所以同一个错误是同一个 code。 | 否：不含文字。修复前，错误事件带一行最长 200 字符、经过清洗的日志，仍可能含设备名或游戏名；现在这行日志留在本机。 | 发送端白名单 `src/telemetry/events.cpp:310`、网页端 `m3e:src/telemetry/events.js:57` `m3e:src/telemetry/send.js:181`、Worker `worker:src/schema.ts:61` 都去掉了 message 属性；仍发送它的旧客户端，该属性会被丢弃。 | events 180 天。 |
 | log_summary：component、fatal、error、warning | `encoder`, `0`, `2`, `9` | `src/telemetry/events.cpp:326` `src/telemetry/service.cpp:393` | 主机每小时按组件记录了多少警告和错误。 | 否：计数。组件是 24 个固定词之一，或 `host`。 | `src/telemetry/service.cpp:393` | events 180 天。 |
-| user_report：category、component、page、error_code、attachment、message | `bug`, `web`, `apps`, `E_LOST`, `att-2026-11/<sha256>.webp`, `the apps page stays empty` | `src/telemetry/events.cpp:318` `m3e:src/telemetry/report.js:140` `m3e:src/telemetry/report.js:127` | 用户亲手写、亲手点击「发送」的报告，回答「这个人遇到了什么问题」。 | 是，这是它的性质：它是人打的字，也是整个系统里唯一的自由文本。只有按下「发送」才会发出，且表单会先展示将发送的全部内容（标题、描述、错误的简短摘要及堆栈开头几行、最近的事件）。 | 在浏览器 `m3e:src/telemetry/scrub.js:52`、主机 `src/telemetry/events.cpp:153` 和 Worker `worker:src/scrub.ts:39` 各清洗一遍；最长 2000 字符；没有联系方式字段；附件只是开发者面板返回的引用。 | events 180 天；GitHub 问题在开发者关闭前保留。 |
+| user_report：category、component、page、error_code、attachment、message | `bug`, `web`, `apps`, `E_LOST`, `att-2026-11/<sha256>.webp`, `the apps page stays empty` | `src/telemetry/events.cpp:318` `m3e:src/telemetry/report.js:140` `m3e:src/telemetry/report.js:127` | 用户亲手写、亲手点击「发送」的报告，回答「这个人遇到了什么问题」。报告会附上本次运行日志的引用 `log_ref`：日志按和崩溃报告相同的方式在本机匿名处理后上传（`POST /v1/user-log`），表单发送前说明会附上日志。 | 是，这是它的性质：它是人打的字，也是整个系统里唯一的自由文本。只有按下「发送」才会发出，且表单会先展示将发送的全部内容（标题、描述、错误的简短摘要及堆栈开头几行、最近的事件）。 | 在浏览器 `m3e:src/telemetry/scrub.js:52`、主机 `src/telemetry/events.cpp:153` 和 Worker `worker:src/scrub.ts:39` 各清洗一遍；最长 2000 字符；没有联系方式字段；附件只是开发者面板返回的引用。 | events 180 天；GitHub 问题在开发者关闭前保留。 |
 
 ## 崩溃报告（错误报告）
 
@@ -59,6 +59,9 @@
 | meta：exception_code、module、module_offset、frames（至多 64 个） | `0xC0000005`, `sunshine.exe`, `0x1a2b3c` | `src/crash/crash_core.cpp:302` `src/crash/crash_core.cpp:231` `worker:src/crash.ts:24` | 崩溃发生在程序的哪个位置，以便对照该版本未剥离符号的二进制找到它。 | 否：文件名和我们自己二进制里的地址。目录在发送端 `src/crash/crash_core.cpp:231` 和 Worker `worker:src/crash.ts:24` 都会被去掉（路径里会有账号名）。 | 只留文件名；十六进制偏移；代码是固定形状。 | crash_signatures 400 天。 |
 | signature | `ab…ab` (64 hex) | `src/crash/crash_core.cpp:302` | 把相同的崩溃归为一组。 | 否：前八帧的模块名和偏移的 SHA-256。 | — | crash_signatures 400 天。 |
 | dump（主机、控制面板、sparxie-launch） | a file of tens to a few hundred KB | `src/crash/crash_win.cpp:186` `src/crash/crash_win.cpp:191` `src/crash/crash_core.cpp:506` `src/crash/crash_upload.cpp:98` `panel:src-tauri/src/crash/win.rs:210` `panel:src-tauri/src/crash/redact.rs:90` `tools/sparxie-launch/CrashReport.cs:302` `tools/sparxie-launch/DumpPrivacy.cs:87` | 让开发者能读到自己复现不了的崩溃的调用栈。 | 已压到最小。修复前，主机和控制面板请求了「间接引用内存」（每个栈指针指向的堆：TLS 私钥、配对密钥、Web UI 会话、剪贴板文字都可能在里面）。现在：没有堆、没有数据段、没有句柄数据，每个栈只保留指针大小的数值（MiniDumpFilterMemory），模块路径被过滤（MiniDumpFilterModulePaths），回调只保留模块名和 CodeView id、线程记录、上下文和栈。上传前，在本机把 `\Users\`、`/Users/`、`/home/` 后的账号名以及用户名、电脑名就地覆盖（ASCII 和 UTF-16）`src/crash/crash_core.cpp:506`。 | 转储类型和回调 `src/crash/crash_win.cpp:186`；字节级清洗有三种实现，使用同样的测试向量。 | 私有 GitHub 仓库的 release 资产，90 天后删除 `worker:wrangler.toml:31`；每个签名最多 20 份，每台安装每个签名一份 `worker:migrations/0001_init.sql:87`。 |
+| 程序日志（主机的崩溃报告） | 崩溃那一次运行的完整日志，压缩后不超过 2 MiB；开头 64 KiB 和结尾 64 KiB 另以明文附上 | `src/crash/crash_log.cpp` `src/crash/log_scrub.cpp` `src/crash/crash_upload.cpp` | 让开发者看到崩溃前程序在做什么、报了什么错。 | 日志是程序自己写的文字，不是用户输入的；里面可能出现用户名、电脑名、路径、IP/MAC 地址、设备序列号、令牌、配对 PIN、Wi-Fi 名、游戏账号名，所以发出前先在本机匿名处理（见下）。 | 先在本机匿名处理：去掉用户名和电脑名、路径里的用户名、IPv4/IPv6/MAC（同一个值在同一份日志里是同一个占位符，如 `<ip#1>`，仍能前后对照）、邮箱、序列号和设备实例 ID、令牌/密钥/Cookie、配对 PIN、Wi-Fi 名、游戏账号名；时间、级别、组件、错误码、数字、版本、显卡和驱动字符串原样保留。服务端对开头和结尾的明文再检查一次，发现个人信息就整份拒收；之后在私有仓库里再整份清洗一遍，并用清洗后的副本替换。规则与测试向量见下面「怎样保证」。 | 随崩溃转储的发布资产保留 90 天（按月份发布，月底后再过 90 天删除）。 |
+| meta：env（CPU 型号和线程数、显卡厂商/型号/驱动版本、内存、显示器数量、系统语言、安装方式） | `Intel(R) Core(TM) i9-13900K`, `32`, `nvidia`, `NVIDIA GeForce RTX 4090`, `32.0.15.6094`, `32768`, `2`, `zh-CN`, `installer` | `src/crash/crash_env.cpp` `worker:src/crashmeta.ts` | 崩溃集中在哪类机器、哪个显卡驱动上。 | 弱：硬件型号，不含电脑名、账号名、序列号。 | 只收固定词、数字和短的型号字符串，格式不符的丢弃（`src/crash/crash_env_text.cpp`、Worker 同一套规则）。 | crash_reports 400 天。 |
+| meta：ctx（是否在串流、编码、分辨率、帧率、传输方式、客户端家族、HDR） | `true`, `hevc`, `3840x2160`, `120`, `altp`, `moonlight-macos` | `src/crash/crash_context.h` `src/crash/crash_core.cpp` | 崩溃时程序在做什么。 | 否：固定词和数字。 | 客户端家族是固定词之一，其余按类别写；不写设备名、客户端名。 | crash_reports 400 天。 |
 
 ## 服务器保存的数据
 
@@ -70,6 +73,9 @@
 | D1 crash_signatures | signature, version, product, kind, exception_code, module, module_offset, frames, first_ms, last_ms, count | `worker:migrations/0001_init.sql:55` | 崩溃分组、标出新的崩溃。 | 400 天 |
 | D1 crash_reports | day, time_ms, install_hash, signature, version, product, kind, os_version, uptime_s, country | `worker:migrations/0001_init.sql:70` | 各版本崩溃率。 | 400 天 |
 | D1 crash_dumps | signature, install_hash, tag, name, bytes, stored_ms (the dump itself is a release asset) | `worker:migrations/0001_init.sql:87` | 已保存转储的索引（转储本身是 release 资产）。 | 与转储一起 90 天 |
+| D1 crash_logs | signature, install_hash, tag, name, bytes, lines, stored_ms, version（日志本身是发布资产 `<签名前缀>-<哈希>.log.gz`） | `worker:migrations/0011_crash_detail.sql` | 已保存日志的索引。 | 同崩溃转储。 | 90 天。 |
+| D1 user_logs | ref, install_hash, bytes, lines, stored_ms, tail（日志最后 120 行，已匿名处理，最多 20000 字符） | `worker:migrations/0011_crash_detail.sql` | 问题反馈的 issue 里显示日志的最后几行。 | 同上。 | 14 天。 |
+| D1 crash_reports 的 env、ctx 列 | 见上面 env、ctx | `worker:migrations/0011_crash_detail.sql` | 同上。 | 同上。 | 400 天。 |
 | D1 alerts, counters, report_state | alert key, title, body, labels, issue number; rate-limit counters; day of the daily report | `worker:migrations/0001_init.sql:98` `worker:migrations/0001_init.sql:114` | 提醒和报告去重；不超出免费额度。 | 7 到 400 天 |
 | Analytics Engine | index1 = product; blobs: kind, name, version, channel, os, country, gpu_vendor, arch, install_hash and the string props; doubles: the numeric props | `worker:src/schema.ts:183` | 高频数据点的快速汇总。 | Cloudflare 的保留期 |
 | GitHub issues (private repo) | daily report (totals and top lists), crash alerts (signature, product, version, exception, module, frames), user reports (category, product, version, channel, os, os_version, country, where, install hash prefix of 8 characters, time, message in a code fence) | `worker:src/report.ts:35` `worker:src/crash.ts:133` `worker:src/userreports.ts:17` | 负责人阅读报告和提醒。 | 直到关闭 |
@@ -79,7 +85,7 @@
 - 屏幕内容、声音、键盘输入、文件、剪贴板内容。
 - 电脑名、Windows 或 macOS 账号名、设备名或客户端名；游戏名和应用名（游戏最多是九个目录词之一）。
 - 文件路径、IP 地址、MAC 地址、端口、配对标识、Steam、米哈游或其他账号 id、Mirror酱 CDK、密码、令牌、Cookie。
-- 任何不是用户为了写报告而输入的自由文本：整个系统里唯一的自由文本是 `user_report.message`，只在用户按下「发送」后发出，且表单事先展示过。
+- 未经匿名处理的程序日志。用户亲手写的报告文字 `user_report.message` 是人输入的自由文本，只在用户按下「发送」后发出，且表单事先展示过；程序自己写的日志是另一类文字，只随崩溃报告和问题反馈一起发送，并且先经过匿名处理（见上面「程序日志」一行），关闭错误报告后两者都不发送。
 
 ## 怎样保证
 
@@ -87,5 +93,6 @@
 - Worker 对同一份名单再检查一次；格式不对的属性被丢弃，不会被「清洗后保存」`worker:src/schema.ts:61`。
 - 三种语言的清洗规则用同一份测试向量：`tests/data/telemetry_scrub_vectors.json`（C++），m3e `test/scrub-vectors.json`（JS），Worker `test/scrub-vectors.json`（TS）；`scripts/telemetry/check-scrub-vectors.sh` 检查三份相同。向量里是虚构的用户名、电脑名、路径、IP、MAC、UUID、邮箱、令牌。
 - 崩溃转储的字节级清洗在 C++、Rust、C# 各有一份实现和同样的测试向量。
+- 程序日志的匿名处理有一份共用的测试向量：`tests/data/log_scrub_vectors.json`（C++，`tests/unit/test_log_scrub.cpp`）、Worker `test/log-scrub-vectors.json`（TS，参考实现）、私有仓库里解码工作流的 Python 版；向量里是虚构的用户名、电脑名、路径、IP、MAC、序列号、令牌、PIN、Wi-Fi 名、账号名，每一类都有。客户端先处理；服务端只抽查开头和结尾各 64 KiB，发现个人信息整份拒收；解码工作流在显示任何一行之前再整份清洗，并替换存储的文件。
 - 同意：错误报告和使用统计各自独立；主机在每一次发送前都检查，网页发来的事件由主机再检查一次 `src/telemetry/service.cpp:220`。
 - 用户可随时在「关于 › 隐私」看到「会发送什么」，并用「查看将发送的内容」看到下一次发送的原文 `src/telemetry/telemetry.cpp:470`。
