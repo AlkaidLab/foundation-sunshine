@@ -47,7 +47,10 @@ param(
   [string]$EnumRoot = 'HKLM:\SYSTEM\CurrentControlSet\Enum\USB\ROOT_HUB30',
   [switch]$DryRun,                 # log the rollback steps, run none of them
   [int]$SimulateHubProblem = 0,    # pretend every physical root hub has this problem code during verify
-  [switch]$SimulateUsbBoot         # pretend Windows runs from a USB disk during preflight
+  [switch]$SimulateUsbBoot,        # pretend Windows runs from a USB disk during preflight
+  [switch]$SimulateAllHubsPhysical, # treat every root hub as physical (a machine with only virtual hubs can then run the fault cases)
+  [switch]$SimulateUnreadable,     # pretend the problem code of every physical root hub cannot be read
+  [switch]$SimulateDiskQueryFailure # pretend the system-disk query fails during preflight
 )
 
 Set-StrictMode -Version Latest
@@ -62,6 +65,7 @@ $FilterName = 'usbip2_filter'
 $PropertiesKey = '{a193307d-1245-46d3-be67-d8128670e09b}'
 $CM_PROB_NEED_RESTART = 14
 $script:Simulating = $false
+$script:ScratchEnum = $EnumRoot -notlike 'HKLM:\SYSTEM\CurrentControlSet\Enum\*'
 
 function Write-GuardLog([string]$Message) {
   $line = '{0:yyyy-MM-dd HH:mm:ss} [usbip-guard] {1}' -f (Get-Date), $Message
@@ -71,25 +75,38 @@ function Write-GuardLog([string]$Message) {
 
 # --------------------------------------------------------------------------------------------- hubs
 
-# Every present USB root hub with its problem code. A hub below the emulated controller (usbip-win2's own
-# ROOT\USBIP_WIN2 node, or the older ROOT\USB node) is `Emulated`; the others are the physical ones.
+# Every present USB root hub with its problem code. A hub below a root-enumerated controller (usbip-win2's ROOT\ALKAIDUSB or
+# ROOT\USBIP_WIN2, another virtual host controller's ROOT\USB) is `Emulated`; the physical ones sit below PCI, ACPI, ...
+# Fail closed: a hub whose problem code cannot be read has Problem -2 (`Unreadable`), never 0; a failed enumeration throws
+# (the guard then exits 105). A parent that cannot be read leaves the hub "physical", the cautious side.
 function Get-RootHubs {
   $hubs = @()
-  $devices = @(Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.InstanceId -like 'USB\ROOT_HUB*' })
+  $devices = @(Get-PnpDevice -PresentOnly -ErrorAction Stop | Where-Object { $_.InstanceId -like 'USB\ROOT_HUB*' })
   foreach ($device in $devices) {
-    $problem = 0
     $parent = ''
-    try { $problem = [int](Get-PnpDeviceProperty -InstanceId $device.InstanceId -KeyName 'DEVPKEY_Device_ProblemCode' -ErrorAction Stop).Data } catch { }
     try { $parent = [string](Get-PnpDeviceProperty -InstanceId $device.InstanceId -KeyName 'DEVPKEY_Device_Parent' -ErrorAction Stop).Data } catch { }
-    $emulated = ($parent -like 'ROOT\USBIP_WIN2\*') -or ($parent -like 'ROOT\USB\*')
-    if ($script:Simulating -and $SimulateHubProblem -ne 0 -and -not $emulated) { $problem = $SimulateHubProblem }
-    $hubs += [pscustomobject]@{ Id = $device.InstanceId; Status = [string]$device.Status; Problem = $problem; Emulated = $emulated }
+    $emulated = ($parent -like 'ROOT\*') -and -not $SimulateAllHubsPhysical
+    $problem = 0
+    $unreadable = $false
+    try {
+      if ($SimulateUnreadable -and -not $emulated) { throw 'simulated: the problem code cannot be read' }
+      $problem = [int](Get-PnpDeviceProperty -InstanceId $device.InstanceId -KeyName 'DEVPKEY_Device_ProblemCode' -ErrorAction Stop).Data
+    } catch { $problem = -2; $unreadable = $true }
+    if ($script:Simulating -and $SimulateHubProblem -ne 0 -and -not $emulated -and -not $unreadable) { $problem = $SimulateHubProblem }
+    $hubs += [pscustomobject]@{ Id = $device.InstanceId; Status = [string]$device.Status; Problem = $problem; Emulated = $emulated; Unreadable = $unreadable }
   }
   return , $hubs
 }
 
+# The physical hubs whose problem code cannot be read: nothing can be said about them, so nothing may go on.
+function Assert-HubsReadable($Hubs) {
+  $bad = @(@($Hubs) | Where-Object { $_.Unreadable -and -not $_.Emulated })
+  if ($bad.Count -gt 0) { throw "the problem code of a physical root hub cannot be read: $(($bad | ForEach-Object { $_.Id }) -join ', ')" }
+}
+
 function Test-HubFault($Hub, $Before) {
   if ($Hub.Emulated) { return $false }
+  if ($Hub.Unreadable) { return $true }   # unknown is not healthy
   if ($Hub.Problem -eq 0 -or $Hub.Problem -eq $CM_PROB_NEED_RESTART) { return $false }
   # a hub that already had this problem before the install is not ours to roll back
   $was = @($Before | Where-Object { $_.Id -eq $Hub.Id })
@@ -125,7 +142,7 @@ function Wait-HubsSettled($Before) {
 }
 
 function Format-Hubs($Hubs) {
-  return (@($Hubs) | ForEach-Object { '{0} status={1} problem={2}{3}' -f $_.Id, $_.Status, $_.Problem, $(if ($_.Emulated) { ' (emulated)' } else { '' }) }) -join '; '
+  return (@($Hubs) | ForEach-Object { '{0} status={1} problem={2}{3}{4}' -f $_.Id, $_.Status, $_.Problem, $(if ($_.Emulated) { ' (emulated)' } else { '' }), $(if ($_.Unreadable) { ' (problem code unreadable)' } else { '' }) }) -join '; '
 }
 
 # --------------------------------------------------------------------------------------------- packages
@@ -149,7 +166,7 @@ function Invoke-GuardStep([string]$Description, [scriptblock]$Step) {
   if ($DryRun) { Write-GuardLog "dry-run, would: $Description"; return 0 }
   Write-GuardLog $Description
   $global:LASTEXITCODE = 0
-  & $Step
+  try { & $Step } catch { Write-GuardLog "  step failed: $($_.Exception.Message)"; return 1 }
   $code = if ($null -eq $LASTEXITCODE) { 0 } else { $LASTEXITCODE }
   Write-GuardLog "  -> exit $code"
   return $code
@@ -188,11 +205,26 @@ function Remove-FilterNameFromValue([Microsoft.Win32.RegistryKey]$Key, [string]$
   return 'absent'
 }
 
-# Every place under the root-hub Enum keys that still names the filter. Each item: Path, Value.
+# Whether any device property of a hub names the filter (readable without registry rights: the extension INF leaves it in
+# {A193307D-1245-46D3-BE67-D8128670E09B} 2). Throws when the properties cannot be read.
+function Test-HubPropertiesNameFilter([string]$InstanceId) {
+  foreach ($property in @(Get-PnpDeviceProperty -InstanceId $InstanceId -ErrorAction Stop)) {
+    $text = try { @($property.Data) -join '|' } catch { '' }
+    if ($text -like "*$FilterName*") { return $true }
+  }
+  return $false
+}
+
+# Every place under the root-hub Enum keys that still names the filter. Each item: Path, Value, and Unreadable when the place
+# could not be read at all (fail closed: an unreadable key is reported, never taken for "no residue"). A key the registry
+# refuses is looked at through the hub's device properties instead; only when that fails too is it Unreadable.
 function Find-FilterResidue {
   $found = @()
   if (-not (Test-Path -LiteralPath $EnumRoot)) { return $found }
-  foreach ($hub in Get-ChildItem -LiteralPath $EnumRoot -ErrorAction SilentlyContinue) {
+  # The present physical hubs are the ones whose filter state matters (they carry the keyboard and mouse). The filter on a virtual
+  # hub is the point of the install on a machine that has usbip-win2, and a hub that is not present has nothing to restart.
+  $physicalIds = @(@(Get-RootHubs) | Where-Object { -not $_.Emulated } | ForEach-Object { $_.Id.ToLowerInvariant() })
+  foreach ($hub in Get-ChildItem -LiteralPath $EnumRoot -ErrorAction Stop) {
     $targets = @(
       @{ Path = "$EnumRoot\$($hub.PSChildName)\Filters"; Value = $null },
       @{ Path = "$EnumRoot\$($hub.PSChildName)\Properties\$PropertiesKey\0002"; Value = '' }
@@ -204,14 +236,22 @@ function Find-FilterResidue {
         if ($null -eq $key) { continue }
         $names = if ($null -eq $target.Value) { @($key.GetValueNames() | Where-Object { $_ -ne '' }) } else { @($target.Value) }
         foreach ($name in $names) {
-          $text = ''
-          try {
-            $raw = $key.GetValue($name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
-            $text = if ($raw -is [byte[]]) { [System.Text.Encoding]::Unicode.GetString($raw) } else { ($raw -join "`0") }
-          } catch { }
-          if ($text.ToLowerInvariant().Contains($FilterName)) { $found += [pscustomobject]@{ Path = $target.Path; Value = $name } }
+          $raw = $key.GetValue($name, $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+          $text = if ($raw -is [byte[]]) { [System.Text.Encoding]::Unicode.GetString($raw) } else { ($raw -join "`0") }
+          if ($text.ToLowerInvariant().Contains($FilterName)) { $found += [pscustomobject]@{ Path = $target.Path; Value = $name; Unreadable = $false } }
         }
-      } catch { }
+      } catch {
+        $why = $_.Exception.Message
+        $instance = "USB\ROOT_HUB30\$($hub.PSChildName)"
+        # a key the registry refuses is only looked at further for a present physical hub
+        if ($physicalIds -notcontains $instance.ToLowerInvariant() -and -not $script:ScratchEnum) { continue }
+        try {
+          if (Test-HubPropertiesNameFilter $instance) { $found += [pscustomobject]@{ Path = $target.Path; Value = '(device property)'; Unreadable = $false } }
+        } catch {
+          Write-GuardLog "cannot read $($target.Path): $why"
+          $found += [pscustomobject]@{ Path = $target.Path; Value = '(unreadable)'; Unreadable = $true }
+        }
+      }
       finally { if ($null -ne $key) { $key.Dispose() } }
     }
   }
@@ -223,6 +263,7 @@ function Clear-FilterResidue {
   $left = @()
   foreach ($item in @(Find-FilterResidue)) {
     if ($DryRun) { Write-GuardLog "dry-run, would remove '$FilterName' from $($item.Path) [$($item.Value)]"; continue }
+    if ($item.Unreadable) { $left += $item; continue }   # cannot be cleaned what cannot be read
     $key = $null
     try {
       $key = Open-GuardKey $item.Path $true
@@ -256,6 +297,7 @@ function Get-UsbipUninstaller {
 function Restart-HubFaults($Faults) {
   foreach ($hub in @($Faults)) {
     if ($hub.Status -eq 'Missing') { continue }
+    # a failed restart is logged; whether it matters shows in the hub state that Wait-HubsSettled checks afterwards
     [void](Invoke-GuardStep "pnputil /restart-device $($hub.Id)" { & "$env:SystemRoot\System32\pnputil.exe" /restart-device $hub.Id | ForEach-Object { Write-GuardLog "  $_" } })
   }
 }
@@ -265,12 +307,16 @@ function Invoke-Rollback($Snapshot, $Faults) {
   $before = @($Snapshot.filterPackages)
   $packages = @(@(Get-OemPackages $FilterName) | Where-Object { $before -notcontains $_ })
   if ($packages.Count -eq 0) { $packages = @(Get-OemPackages $FilterName) }
+  # The result of every step that has to succeed is kept: 102 ("rolled back") is only reported when none of them failed.
+  # 0 and 3010 (restart needed) are success.
+  $stepFailures = @()
   foreach ($oem in $packages) {
-    [void](Invoke-GuardStep "pnputil /delete-driver $oem /uninstall /force" { & "$env:SystemRoot\System32\pnputil.exe" /delete-driver $oem /uninstall /force | ForEach-Object { Write-GuardLog "  $_" } })
+    $rc = Invoke-GuardStep "pnputil /delete-driver $oem /uninstall /force" { & "$env:SystemRoot\System32\pnputil.exe" /delete-driver $oem /uninstall /force | ForEach-Object { Write-GuardLog "  $_" } }
+    if ($rc -ne 0 -and $rc -ne 3010) { $stepFailures += "pnputil /delete-driver $oem exit $rc" }
   }
   $residue = @(Clear-FilterResidue)
   Restart-HubFaults $Faults
-  if ($DryRun) { return @{ Faults = @(); Residue = @() } }
+  if ($DryRun) { return @{ Faults = @(); Residue = @(); StepFailures = @() } }
   $script:Simulating = $false
   $faults = Wait-HubsSettled $Snapshot.hubs
   if (@($faults).Count -eq 0) {
@@ -278,10 +324,11 @@ function Invoke-Rollback($Snapshot, $Faults) {
     # controller node too, and finds the filter again if the first step missed it.
     $uninstaller = Get-UsbipUninstaller
     if ($uninstaller -and (Test-Path -LiteralPath $uninstaller)) {
-      [void](Invoke-GuardStep "$uninstaller /VERYSILENT /SUPPRESSMSGBOXES /NORESTART" {
+      $rc = Invoke-GuardStep "$uninstaller /VERYSILENT /SUPPRESSMSGBOXES /NORESTART" {
           $p = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
           $global:LASTEXITCODE = $p.ExitCode
-        })
+        }
+      if ($rc -ne 0 -and $rc -ne 3010) { $stepFailures += "usbip-win2 uninstaller exit $rc" }
       $residue += @(Clear-FilterResidue)
       $faults = Wait-HubsSettled $Snapshot.hubs
     } else {
@@ -289,18 +336,23 @@ function Invoke-Rollback($Snapshot, $Faults) {
     }
   }
   $residue = @($residue) + @(Find-FilterResidue)
-  return @{ Faults = @($faults); Residue = @($residue) }
+  return @{ Faults = @($faults); Residue = @($residue); StepFailures = @($stepFailures) }
 }
 
 # --------------------------------------------------------------------------------------------- actions
 
 function Test-SystemOnUsbDisk {
   if ($SimulateUsbBoot) { return $true }
-  try {
-    $letter = $env:SystemDrive.TrimEnd(':')
-    $disk = Get-Partition -DriveLetter $letter -ErrorAction Stop | Get-Disk -ErrorAction Stop
-    return ([string]$disk.BusType -eq 'USB')
-  } catch { return $false }
+  # Fail closed: when the boot medium cannot be determined, the install does not go on (the exception ends the guard with 105).
+  if ($SimulateDiskQueryFailure) { throw 'simulated: the system disk cannot be queried' }
+  if (-not $env:SystemDrive) { throw 'SystemDrive is not set' }
+  $letter = $env:SystemDrive.TrimEnd(':')
+  $partitions = @(Get-Partition -DriveLetter $letter -ErrorAction Stop)
+  if ($partitions.Count -eq 0) { throw "no partition found for the system drive $letter" }
+  $disk = $partitions[0] | Get-Disk -ErrorAction Stop
+  $bus = [string]$disk.BusType
+  if ([string]::IsNullOrWhiteSpace($bus) -or $bus -eq 'Unknown') { throw "the bus type of the system disk is not recognised ('$bus')" }
+  return ($bus -eq 'USB')
 }
 
 function Invoke-Preflight {
@@ -309,12 +361,14 @@ function Invoke-Preflight {
     return 104
   }
   $hubs = Get-RootHubs
+  Assert-HubsReadable $hubs
   Write-GuardLog "preflight ok. root hubs: $(Format-Hubs $hubs)"
   return 0
 }
 
 function Invoke-Snapshot {
   $hubs = Get-RootHubs
+  Assert-HubsReadable $hubs
   $snapshot = [pscustomobject]@{
     time           = (Get-Date).ToString('o')
     hubs           = @($hubs)
@@ -340,11 +394,11 @@ function Invoke-Verify {
     return 0
   }
   $result = Invoke-Rollback $snapshot $faults
-  if (@($result.Faults).Count -eq 0 -and @($result.Residue).Count -eq 0) {
+  if (@($result.Faults).Count -eq 0 -and @($result.Residue).Count -eq 0 -and @($result.StepFailures).Count -eq 0) {
     if ($DryRun) { Write-GuardLog 'ROLLBACK DONE (dry run: nothing was changed)' } else { Write-GuardLog "ROLLBACK DONE: root hubs healthy again: $(Format-Hubs (Get-RootHubs))" }
     return 102
   }
-  Write-GuardLog "ROLLBACK INCOMPLETE: hubs: $(Format-Hubs $result.Faults); persisted filter state: $(@($result.Residue | ForEach-Object { $_.Path }) -join ', '). Follow docs/usbip-roothub-recovery.zh.md."
+  Write-GuardLog "ROLLBACK INCOMPLETE: hubs: $(Format-Hubs $result.Faults); persisted filter state: $(@($result.Residue | ForEach-Object { $_.Path }) -join ', '); failed steps: $(@($result.StepFailures) -join '; '). The pre-install snapshot is kept at $State. Follow docs/usbip-roothub-recovery.zh.md."
   return 103
 }
 

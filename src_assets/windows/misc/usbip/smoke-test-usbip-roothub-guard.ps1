@@ -35,7 +35,8 @@ try {
   Assert-Equal 0 $r.Code 'snapshot must succeed'
   $snapshot = Get-Content -LiteralPath $state -Raw | ConvertFrom-Json
   $physical = @(@($snapshot.hubs) | Where-Object { -not $_.Emulated })
-  $r = Invoke-Guard @('-Action', 'verify', '-SettleMinSeconds', '4', '-SettleMaxSeconds', '20')
+  # every verify runs with -DryRun: if a hub changed after the snapshot, a real verify would roll back for real
+  $r = Invoke-Guard @('-Action', 'verify', '-DryRun', '-SettleMinSeconds', '4', '-SettleMaxSeconds', '20')
   Assert-Equal 0 $r.Code ("verify without a change must be healthy`n" + $r.Output)
 
   # 2. a physical root hub with a new Code 19 after the install: the rollback runs (dry), exit 102
@@ -60,9 +61,24 @@ try {
   $r = Invoke-Guard @('-Action', 'preflight')
   if ($r.Code -ne 0 -and $r.Code -ne 104) { throw "preflight must be 0 or 104`n$($r.Output)" }
 
+  # 3b. fail closed: a failed system-disk query stops the install (105), an unreadable problem code too
+  $r = Invoke-Guard @('-Action', 'preflight', '-SimulateDiskQueryFailure')
+  Assert-Equal 105 $r.Code ("a failed system-disk query must not let the install go on`n" + $r.Output)
+  if ($physical.Count -gt 0) {
+    $r = Invoke-Guard @('-Action', 'preflight', '-SimulateUnreadable')
+    Assert-Equal 105 $r.Code ("an unreadable problem code before the install must report 105`n" + $r.Output)
+    $r = Invoke-Guard @('-Action', 'snapshot', '-SimulateUnreadable')
+    Assert-Equal 105 $r.Code ("a snapshot with an unreadable problem code must report 105`n" + $r.Output)
+    # after the install an unreadable hub is a fault, not a healthy hub
+    $r = Invoke-Guard @('-Action', 'snapshot')
+    $r = Invoke-Guard @('-Action', 'verify', '-DryRun', '-SimulateUnreadable', '-SettleMinSeconds', '4', '-SettleMaxSeconds', '8')
+    if ($r.Output -notmatch 'problem code unreadable') { throw ("verify must see the unreadable hub as a fault`n" + $r.Output) }
+    if ($r.Code -eq 0) { throw ("verify must not report success for an unreadable hub`n" + $r.Output) }
+  }
+
   # 4. no snapshot: the guard says it could not run (105)
   Remove-Item -LiteralPath $state -ErrorAction SilentlyContinue
-  $r = Invoke-Guard @('-Action', 'verify')
+  $r = Invoke-Guard @('-Action', 'verify', '-DryRun')
   Assert-Equal 105 $r.Code 'verify without a snapshot must report 105'
 
   # 5. persisted filter names (usbip-win2 issue #201): removed from both places, other filters and the *Upper marker kept

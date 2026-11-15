@@ -68,7 +68,12 @@ set "INSTALL_RC=!ERRORLEVEL!"
 rem Verify even when the installer failed: its pnputil step may already have added the filter.
 powershell -NoProfile -ExecutionPolicy Bypass -File "%guard%" -Action verify -State "%guard_state%"
 set "GUARD_RC=!ERRORLEVEL!"
-del /q "%guard_state%" >nul 2>&1
+rem The pre-install snapshot (root hubs and driver packages as they were) is the material for a manual recovery:
+rem it is deleted only when the check or the rollback finished (0, 3010, 102), and kept when the recovery is incomplete (103, 105).
+if !GUARD_RC! EQU 0 del /q "%guard_state%" >nul 2>&1
+if !GUARD_RC! EQU 3010 del /q "%guard_state%" >nul 2>&1
+if !GUARD_RC! EQU 102 del /q "%guard_state%" >nul 2>&1
+if exist "%guard_state%" echo The pre-install snapshot is kept for the recovery: "%guard_state%"
 if !GUARD_RC! EQU 0 exit /b !INSTALL_RC!
 if !GUARD_RC! EQU 3010 (
   if !INSTALL_RC! EQU 0 exit /b 3010

@@ -56,10 +56,12 @@ FOR /f %P IN ('findstr /M /L /Q:u "usbip2_filter usbip2_ude" C:\WINDOWS\INF\oem*
 2. 删除驱动包。先列出：`dism /image:C:\ /get-drivers /format:table`，找出「原始文件名」是 `usbip2_filter.inf` 和 `usbip2_ude.inf` 的 `oemNN.inf`，逐个删除：`dism /image:C:\ /remove-driver /driver:oemNN.inf`。
 3. **只删驱动包不够**（上游 issue [#201](https://github.com/vadimgrn/usbip-win2/issues/201) 的用户就是这样仍然启动失败）。还要清掉注册表里留下的筛选驱动名：
    1. 运行 `regedit`，选中 `HKEY_LOCAL_MACHINE`，菜单「文件 → 加载配置单元」，选 `C:\Windows\System32\config\SYSTEM`，名称填 `OFFSYS`。
-   2. 展开 `OFFSYS\ControlSet001\Enum\USB\ROOT_HUB30\`，对其下每个实例：
+   2. **先确定离线系统实际使用的控制集。** 展开 `OFFSYS\Select`，读 `Current` 和 `Default` 两个值（DWORD：1 对应 `ControlSet001`，2 对应 `ControlSet002`，依此类推）。下次启动用的是 `Default` 指向的控制集，所以必须清理它；`Current` 是上次启动用过的，如果它和 `Default` 不一样，两个都要清理。下文用 `ControlSet00N` 代表要清理的那个（微软的离线恢复步骤同样按 `Select\Default` 选控制集：[Troubleshoot INACCESSIBLE_BOOT_DEVICE](https://learn.microsoft.com/en-us/windows/client-management/troubleshoot-inaccessible-boot-device)）。
+   3. 展开 `OFFSYS\ControlSet00N\Enum\USB\ROOT_HUB30\`，对其下每个实例：
       - 如果有 `Filters` 子项，打开其中名为 `*Upper` 的值，删去 `usbip2_filter` 这一行（保留其他行）；值里没有别的内容时删掉这个值。
       - 展开 `Properties\{a193307d-1245-46d3-be67-d8128670e09b}\0002`，打开「（默认）」值，数据形如 `*Upper` 换行 `usbip2_filter`，**只删 `usbip2_filter` 这一项**，保留 `*Upper`，值类型保持不变。
-   3. 选中 `OFFSYS`，菜单「文件 → 卸载配置单元」。
+   4. 若 `Current` 与 `Default` 不同，对另一个控制集重复上一步。
+   5. 选中 `OFFSYS`，菜单「文件 → 卸载配置单元」。
 4. 关闭命令提示符，选「继续」重启。
 
 ## 恢复之后
