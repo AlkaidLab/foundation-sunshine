@@ -948,26 +948,27 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Checkout the CI scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          sparse-checkout: scripts/ci
+          persist-credentials: false
+
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           name: sunshine-windows-r${{ github.run_number }}
           path: dist
 
+      # Creates the pre-release, or replaces the assets of a pre-release that is already there; a tag that belongs to a
+      # published release is an error (scripts/ci/publish-prerelease.sh).
       - name: Create the pre-release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
           BODY: ${{ needs.setup_release.outputs.release_body }}
           COMMIT: ${{ needs.setup_release.outputs.release_commit }}
-        run: |
-          set -euo pipefail
-          ls -l dist
-          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            gh release upload "$TAG" dist/* --clobber --repo "$GITHUB_REPOSITORY"
-          else
-            gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --target "$COMMIT" --prerelease --title "$TAG" --notes "$BODY" --generate-notes
-          fi
-          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json url,tagName,assets --jq '"\(.url)\n\(.assets|map(.name)|join("\n"))"' | tee -a "$GITHUB_STEP_SUMMARY"
+        shell: bash
+        run: bash scripts/ci/publish-prerelease.sh dist | tee -a "$GITHUB_STEP_SUMMARY"
 
   # The single status check to require. `always()` is what keeps a failed or cancelled job from being skipped past: a job
   # whose dependency failed is skipped, and a skipped required check counts as passing.

@@ -35,9 +35,10 @@ class PublishTest(unittest.TestCase):
         self.assertEqual(publish["permissions"], {"contents": "write"})
         self.assertIn("build_win", publish["needs"])
         run = step(publish, "Create the pre-release")["run"]
-        self.assertIn("gh release create", run)
-        self.assertIn("--prerelease", run)
-        self.assertIn("--target", run)
+        self.assertIn("scripts/ci/publish-prerelease.sh", run)
+        script = (WORKFLOW.parents[2] / "scripts" / "ci" / "publish-prerelease.sh").read_text(encoding="utf-8")
+        for needle in ("gh release create", "--prerelease", "--target", "isPrerelease"):
+            self.assertIn(needle, script)
 
     def test_permissions_are_read_only_unless_a_job_asks_for_more(self):
         self.assertEqual(self.workflow["permissions"], {"contents": "read"})
