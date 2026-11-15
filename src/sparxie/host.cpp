@@ -1895,7 +1895,7 @@ namespace sparxie {
       // display and its number is resolved here, at launch; a fixed tier is stored as chosen. A refused write (Sparxie is open, the
       // store is unreadable) leaves the last resolved target.
       // An Endfield session is sized by its profile (the stream's own size, or a fixed one): the display choice reaches the profile here.
-      if (!profile.empty() && ((block.value("mode", std::string()) == "touch" && options.contains("fps")) || (boost && block.value("mode", std::string()) == "touch") || (install.game == "endfield" && block.value("mode", std::string()) == "touch"))) {
+      if (!profile.empty() && ((block.value("mode", std::string()) == "touch" && (options.contains("fps") || options.value("fpsUnlock", false))) || (boost && block.value("mode", std::string()) == "touch") || (install.game == "endfield" && block.value("mode", std::string()) == "touch"))) {
         ProfileDraft draft;
         draft.game = install.game;
         draft.display_name = app_name;

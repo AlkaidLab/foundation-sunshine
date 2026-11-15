@@ -55,7 +55,9 @@ test('the search lands on the right page, with the rail in its path', () => {
   const rows = buildSettingsEntries({ index: SEARCH_INDEX, label: (k) => labelOf('zh', k) })
   const hit = (q) => searchEntries(rows, q)[0]
   assert.deepEqual([hit('key_repeat_delay').params.tab, hit('key_repeat_delay').params.sub], ['input', 'keyboard'])
-  assert.equal(hit('按键重复') ? hit('按键重复').params.sub : 'keyboard', 'keyboard')
+  const repeat = hit('按键重复')
+  assert.ok(repeat, 'the Chinese label finds the setting')
+  assert.equal(repeat.params.sub, 'keyboard')
   assert.equal(hit('virtual_mouse').params.sub, 'mouse'); assert.equal(hit('dsu_server_port').params.sub, 'gamepad'); assert.equal(hit('usb_forwarding_enabled').params.sub, 'usb')
   assert.equal(hit('capture_cursor').path, '输入与外设 › 鼠标与触控')
 })

@@ -88,7 +88,7 @@ class FingerprintTest(unittest.TestCase):
     def test_no_server_gives_the_unavailable_fingerprint_after_three_rounds(self):
         result = self.fingerprint_from_urls(self.serve(b"", 503))
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stderr.count("503"), 3 + 1)  # three rounds, then the summary line
+        self.assertEqual(result.stderr.count("HTTP Error 503:"), 3 + 1)  # three rounds, then the summary line; the port of the test server may contain 503, so the number alone is not counted
         self.assertIn("MSYS2 package versions unavailable", result.stderr)
         self.assertNotEqual(result.stdout.strip(), self.fingerprint())
 

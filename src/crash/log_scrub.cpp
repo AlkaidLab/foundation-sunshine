@@ -208,7 +208,7 @@ namespace crash::logscrub {
             for (std::size_t from = 0; x.find(' ') != std::string::npos && from < x.size();) {
               const auto sp = x.find(' ', from);
               const auto word = x.substr(from, sp == std::string::npos ? std::string::npos : sp - from);
-              if (word.size() >= 3 && !PUBLIC_NAMES.count(lower(word))) out.push_back(word);
+              if (word.size() >= 3 && !PUBLIC_NAMES.count(lower(word)) && !is_harmless(word)) out.push_back(word);  // "Ming 120": the 120 of fps=120 is not a name
               if (sp == std::string::npos) break;
               from = sp + 1;
             }
