@@ -65,6 +65,22 @@ namespace streaming {
     return std::max(sustained_bps, static_cast<std::uint64_t>(needed + 0.5L));
   }
 
+  /**
+   * @brief The bytes a frame puts on the wire, from its planned FEC layout (video_fec::frame_t).
+   *
+   * The layout is the source of truth: a client's minimum parity packet count can plan far more parity than the
+   * configured percentage, and every shard is a full packet.
+   */
+  template <class Layout>
+  inline std::size_t
+  video_pacing_wire_bytes(const Layout &layout, std::size_t packet_bytes) noexcept {
+    std::size_t packets = 0;
+    for (std::size_t index = 0; index < layout.count; ++index) {
+      packets += static_cast<std::size_t>(layout.blocks[index].data) + static_cast<std::size_t>(layout.blocks[index].parity);
+    }
+    return packets * packet_bytes;
+  }
+
   inline bool
   should_pace_video_frame(bool key_frame, std::size_t frame_bytes, std::size_t burst_budget_bytes) noexcept {
     (void) key_frame;

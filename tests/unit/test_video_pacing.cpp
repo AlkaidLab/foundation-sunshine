@@ -1,3 +1,4 @@
+#include "src/streaming/fec.h"
 #include "src/streaming/measured_bitrate.h"
 #include "src/streaming/video_pacing.h"
 
@@ -51,6 +52,29 @@ TEST(VideoPacing, FrameRateFitsTheShareOfTheFrameInterval) {
   // Nothing to pace with.
   EXPECT_EQ(streaming::video_pacing_frame_rate_bps(0, 200'000, interval), 0u);
   EXPECT_EQ(streaming::video_pacing_frame_rate_bps(64'000'000, 200'000, 0ns), 0u);
+}
+
+TEST(VideoPacing, WireBytesFollowThePlannedLayout) {
+  video_fec::frame_t layout;
+  layout.count = 2;
+  layout.blocks[0].data = 47;
+  layout.blocks[0].parity = 100;  // a client minimum far above the 20 % that 47 packets would plan
+  layout.blocks[1].data = 10;
+  layout.blocks[1].parity = 3;
+  EXPECT_EQ(streaming::video_pacing_wire_bytes(layout, 1'416), (47u + 100u + 10u + 3u) * 1'416u);
+  EXPECT_EQ(streaming::video_pacing_wire_bytes(video_fec::frame_t {}, 1'416), 0u);
+
+  // Sized from that layout the frame still ends inside its share of the interval, which a 20 % estimate would not.
+  constexpr auto interval = 16'666'667ns;
+  video_fec::frame_t single;
+  single.count = 1;
+  single.blocks[0].data = 47;
+  single.blocks[0].parity = 100;
+  const auto wire = streaming::video_pacing_wire_bytes(single, 1'416);
+  const auto rate = streaming::video_pacing_frame_rate_bps(64'000'000, wire, interval);
+  EXPECT_LE(streaming::video_packet_slot(147, 1'416, rate).count(), interval.count() / 2 + 1'000);
+  const auto estimate = streaming::video_pacing_frame_rate_bps(64'000'000, 47u * 1'416u * 120u / 100u, interval);
+  EXPECT_GT(streaming::video_packet_slot(147, 1'416, estimate).count(), interval.count() / 2);
 }
 
 TEST(VideoPacing, AFrameBehindAnotherIsNotPaced) {

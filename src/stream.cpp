@@ -3909,7 +3909,8 @@ namespace stream {
                                       std::chrono::nanoseconds::zero();
         // The pacing rate is raised until this frame fits its share of the frame interval, and a frame is not paced while
         // another one waits in the queue: pacing must not hold the thread past the next capture. See streaming/video_pacing.h.
-        const auto wire_bytes = encoded_bytes * (100 + static_cast<std::size_t>(fecPercentage)) / 100;
+        // The size is the planned wire size, parity included: a client minimum of parity packets can exceed the percentage.
+        const auto wire_bytes = streaming::video_pacing_wire_bytes(*layout, blocksize);
         const auto now = std::chrono::steady_clock::now();
         const auto pacing = video_pacer.begin_frame(
           now,
@@ -3924,9 +3925,9 @@ namespace stream {
 
         // RTP video timestamps use the 90 kHz media clock and the original
         // capture presentation timestamp. Frames without a capture timestamp
-        // (intentional duplicates) retain the next scheduled pacing time.
+        // (intentional duplicates) take the time this frame's send starts.
         const bool frame_is_dupe = !packet->frame_timestamp;
-        const auto presentation_time = packet->frame_timestamp.value_or(video_pacer.next_frame_start());
+        const auto presentation_time = packet->frame_timestamp.value_or(pacing.start);
         const auto timestamp = video_rtp_timestamp(presentation_time, video_epoch);
 
         auto blockIndex = 0;
