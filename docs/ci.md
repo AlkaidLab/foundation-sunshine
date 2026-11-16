@@ -56,10 +56,34 @@
   （`repo.msys2.org`、`mirror.msys2.org`，再到 Tier 1），不丢弃任何镜像，源 `msys2-mirrors-20261116`、`msys2-mirrorlist-mingw-20261116`、
   `pacman-conf-5-20261116`。只同步 `[msys]` 和 `[ucrt64]` 两个仓库。包文件放进 pacman 缓存目录，用 `actions/cache` 取前缀
   `msys2-pkgs-ucrt64-` 的最新一份（只下载版本变了的包），只有默认分支保存，保存前只留已安装版本的文件；数据库每次现取，
-  工具链仍跟最新包。MSYS2 的位置不变（`D:\a\_temp\msys64`）。配置指纹读仓库数据库时也依次试两个主服务器、各三轮。
+  工具链包固定在 `scripts/ci/msys2-pins.txt`（见下文「工具链固定与升级」）。MSYS2 的位置不变（`D:\a\_temp\msys64`）。
+  缓存键带模式前缀（pinned/newest），不固定版本的验证构建不会顶掉固定工具链的缓存。配置指纹不再读仓库数据库，只哈希固定清单。
   验证（fork）：正常、全部镜像断开 100 秒（每次尝试限时 45 秒，第一次超时、第二次换服务器后恢复）都通过。
 - 构建标识（提交、分支、渠道、CI 运行）不进入大多数编译单元：版本号只由 `src/build_info.cpp` 读取，
   新提交只会重编译这一个文件和真正改动的文件。
+
+## 工具链固定与升级
+
+Windows 作业的 MSYS2 工具链与关键库固定在 `scripts/ci/msys2-pins.txt`：每行一个包的完整名、版本、包文件名和 sha256，覆盖
+gcc、gcc-libs、binutils、CRT、头文件、winpthreads、cmake、ninja、ccache、pkgconf、make、python、cppwinrt、openssl、
+curl-winssl、miniupnpc、nlohmann-json、MinHook、libvpl 和 opus。`scripts/ci/msys2-pacman.sh` 从官方镜像下载这些文件、校验摘要后
+用 `pacman -U` 一次装入（MSYS2 文档支持用包文件安装指定版本，源 `msys2-package-management-20261116`），并把固定名写进
+`IgnorePkg`，任何 `-Syu` 都动不了它们（源 `pacman-conf-5-20261116`）。msys 侧的 git/diffutils/curl 和固定包的传递依赖仍跟仓库
+最新，它们不参与链接产物；boost 与 FFmpeg 不来自 MSYS2（预编译件与子模块，各自固定）。编译缓存键由固定清单派生，所以升级固定版本
+必然换缓存键，上游的小版本更新则不会。
+
+2026-11-16 的一次未固定升级把 OpenSSL 带到 4.1.0 并打断构建（`ASN1_STRING` 不透明化、`X509_get_subject_name` 加 const、静态
+libcrypto 需要链接 bcrypt、主机名校验不再回退 CN），修复见 PR #1289。固定的意义就是让这类大版本更新必须经过人工。
+
+**每周巡检**（`.github/workflows/msys2-toolchain-watch.yml`，周一 03:23 UTC；定时事件只在 master 上运行，源 `gh-events-20261116`）
+读仓库数据库与固定版本对比：任何包出现更新的 MAJOR（openssl 还看 MINOR）就用 `GITHUB_TOKEN` 派发一次「不固定版本」的验证构建
+（*Build and Release* 的 `toolchain_probe` 输入，装最新包），并打开或更新唯一一个带 `toolchain-watch` 标签的 issue，标题如
+「工具链有大版本更新：openssl 4.1 → 4.2」，正文列出全部变化并附验证构建链接。没有大版本变化不发 issue；固定版本追上后，下一次
+巡检自动关闭旧 issue。手动 Run workflow 可以在任意分支演练：`simulate-newer` 输入模拟新版本，勾选 `trigger-probe` 连验证构建的
+派发一起演练。
+
+**升级步骤**：跑 `python3 scripts/ci/msys2-pins.py bump`（版本与 sha256 取自仓库数据库，直接重写固定清单）→ 核对 diff，按 API
+变化适配代码（可参考 PR #1289 对 OpenSSL 4 的处理）→ 跑一次 Windows 构建 → 合并。固定版本覆盖新版本后，巡检会自动关掉跟踪 issue。
 
 ## 冷构建：在并行运行器上编译
 
@@ -70,8 +94,8 @@
 2. **没有当前配置指纹的编译缓存**。缓存存在不等于能命中：改了编译参数（例如加 `-g1`）、换了编译器或系统头文件的版本之后，旧缓存几乎全部未命中，
    这一次运行实际是冷构建。`scripts/ci/config-fingerprint.py` 把决定命中的输入哈希成 12 位十六进制：`CMakeLists.txt` 和 `cmake/` 下设置参数、
    定义、目标、依赖的模块（不含 `packaging`、`sources` 和 Linux/macOS/Unix 专用文件）、`build_win` 里 `Configure Windows` 步骤、工具链 action，
-   以及 MSYS2 UCRT64 仓库数据库里编译器、CRT、头文件和各依赖包的版本（Windows 作业用 pacman 装的就是这些最新版本）。指纹是缓存键的一部分，
-   所以运行只会恢复同一配置的缓存，`cold_plan` 也只看这个前缀（默认分支和当前引用）；MSYS2 仓库取不到时指纹不含包版本，不会让运行失败。
+  以及固定清单 `scripts/ci/msys2-pins.txt`（Windows 作业用 pacman 装的就是这些固定版本的编译器、CRT 和依赖库）。指纹是缓存键的一部分，
+  所以运行只会恢复同一配置的缓存，`cold_plan` 也只看这个前缀（默认分支和当前引用）；上游仓库的更新不进指纹，不会让固定工具链的缓存失效。
 3. 这次改动碰到**被广泛包含的头文件**。`scripts/ci/hot-headers.txt` 列出对应目标文件的编译时间占全部编译时间 30% 以上的仓库头文件
    （依据 `ninja -t deps` 和 `shard-weights.ninja_log` 的耗时；`src/thread_safe.h` 占 35%，`src/config.h`、`src/logging.h` 约 45%）。
    改动其中一个，这些目标文件全部未命中，约等于冷编译三分之一以上，超过分片的开销。只有能列出改动文件的事件（pull request、push）才会触发这条规则，
@@ -140,6 +164,7 @@ strip 和签名都不会改变它，崩溃转储（minidump）靠它找到符号
 
 - 分类：`printf 'README.md\n' | python3 scripts/ci/classify-changes.py --event push`
 - 脚本单测：`python3 -m unittest discover -s scripts/ci -p 'test_*.py'`
+- 工具链巡检（模拟告警）：`python3 scripts/ci/msys2-pins.py check --simulate openssl=4.2.0-1 --json`
 - 工作流静态检查：`actionlint`（固定版本见 `workflow-lint` 作业）和 `python3 scripts/ci/check-workflow-shell.py`
 - 链接检查：`python3 scripts/ci/check-doc-links.py --root .`
 - 子模块：`scripts/ci/init-submodules.sh windows`（或 `windows-package`），只拉 Windows 构建读取的子模块。
