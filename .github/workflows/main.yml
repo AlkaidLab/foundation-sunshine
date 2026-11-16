@@ -1331,12 +1331,13 @@ jobs:
             grep -F "foundation_rtx_video_adapter.dll" inno-build.log
           fi
           
-          # Generate the portable ZIP.  The custom archive uses ordinary ZIP
-          # deflate for compatibility, stores image/installer payloads, and
-          # compresses independent entries in parallel (CMake Archive docs,
-          # read 2026-11-16: cmake-cpack-archive-20261116).
+          # Generate the portable ZIP. CPack's ZIP generator is the measured
+          # winner for this payload: it is smaller and faster than the
+          # per-entry alternative on the same Windows runner class
+          # (CMake Archive docs, read 2026-11-16:
+          # cmake-cpack-archive-20261116).
           portable_start=$(date +%s.%N)
-          python3 ../scripts/ci/make-portable-zip.py --source ./inno_staging --output ./cpack_artifacts/Sunshine.zip --prefix Sunshine
+          cpack -G ZIP --config ./CPackConfig.cmake -D CPACK_STRIP_FILES=ON --verbose
           portable_end=$(date +%s.%N)
           portable_seconds=$(python3 -c "print(f'{float(\"$portable_end\") - float(\"$portable_start\"):.3f}')")
           portable_bytes=$(stat -c %s ./cpack_artifacts/Sunshine.zip)
