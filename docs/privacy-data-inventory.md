@@ -100,7 +100,7 @@ The server does not store IP addresses, only the country code Cloudflare supplie
 
 ## Never sent
 
-- Screen content, audio, keystrokes, files, clipboard content.
+- Screen content, audio, keystrokes, files, clipboard content. The one exception is a screenshot the person adds to a feedback report themselves (the capture of the control panel's own window, or a picture they choose or paste): they see it, can cover places in it or remove it, and it is sent only with that one report (see `user_report`). Nothing is captured or read from the clipboard by itself.
 - The name of the computer, the Windows or macOS account, a device or a client; the name of a game or an application (a game is at most one of nine catalogue words).
 - File paths, IP addresses, MAC addresses, ports, pairing identifiers, Steam, miHoYo or other account ids, Mirror酱 CDKs, passwords, tokens, cookies.
 - A program log that has not been anonymised. The text a person typed (`user_report.message`) is sent only when they press Send, after the panel showed what leaves; the log the program wrote is a different kind of text, in two cases kept apart. **The log of a crash report** goes only when error reports are on. **The log of a feedback report the person sends** is attached by the host when it receives the report, and pressing Send is the consent for that one send, whatever the error-reports switch says. Both go only after the anonymisation described in the "program log" row above. If the log cannot be read or uploaded, the feedback is still sent, without the log. With both switches off, no install id is recovered or created for the report: it uses a one-time random id of its own (for the report and its log only), and the server counts it as no activity, session or install.
