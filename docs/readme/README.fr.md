@@ -66,6 +66,22 @@ Du HDR dynamique et du calibrage d'écran à la capture à faible latence et à 
 <sub>Interface web · Aperçu</sub>
 </td>
 </tr>
+<tr>
+<td width="50%" align="center" valign="top">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/panel-guide-dark.webp">
+  <img src="../../assets/readme/panel-guide.webp" alt="Panneau de contrôle : premier lancement">
+</picture><br>
+<sub>Panneau de contrôle · Premier lancement</sub>
+</td>
+<td width="50%" align="center" valign="top">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/web-clients-dark.webp">
+  <img src="../../assets/readme/web-clients.webp" alt="Interface web : clients et appairage">
+</picture><br>
+<sub>Interface web · Clients et appairage</sub>
+</td>
+</tr>
 </table>
 
 <p align="center"><a href="SCREENSHOTS.en.md">Plus de captures d'écran (anglais) →</a></p>

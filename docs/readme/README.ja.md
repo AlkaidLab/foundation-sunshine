@@ -66,6 +66,22 @@ Foundation Sunshine は、Sunshine をベースにした Windows 向けの無料
 <sub>Web 管理画面 · 概要</sub>
 </td>
 </tr>
+<tr>
+<td width="50%" align="center" valign="top">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/panel-guide-dark.webp">
+  <img src="../../assets/readme/panel-guide.webp" alt="デスクトップ操作パネル：初回ガイド">
+</picture><br>
+<sub>デスクトップ操作パネル · 初回ガイド</sub>
+</td>
+<td width="50%" align="center" valign="top">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/web-clients-dark.webp">
+  <img src="../../assets/readme/web-clients.webp" alt="Web 管理画面：クライアントとペアリング">
+</picture><br>
+<sub>Web 管理画面 · クライアントとペアリング</sub>
+</td>
+</tr>
 </table>
 
 <p align="center"><a href="SCREENSHOTS.en.md">その他のスクリーンショット（英語）→</a></p>

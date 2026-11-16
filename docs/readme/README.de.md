@@ -66,6 +66,22 @@ Von dynamischem HDR und Bildschirmkalibrierung bis zu latenzarmer Aufnahme und H
 <sub>Webinterface · Übersicht</sub>
 </td>
 </tr>
+<tr>
+<td width="50%" align="center" valign="top">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/panel-guide-dark.webp">
+  <img src="../../assets/readme/panel-guide.webp" alt="Desktop-Bedienfeld: Ersteinrichtung">
+</picture><br>
+<sub>Desktop-Bedienfeld · Ersteinrichtung</sub>
+</td>
+<td width="50%" align="center" valign="top">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/web-clients-dark.webp">
+  <img src="../../assets/readme/web-clients.webp" alt="Web-Verwaltung: Clients und Kopplung">
+</picture><br>
+<sub>Web-Verwaltung · Clients und Kopplung</sub>
+</td>
+</tr>
 </table>
 
 <p align="center"><a href="SCREENSHOTS.en.md">Weitere Screenshots (Englisch) →</a></p>
