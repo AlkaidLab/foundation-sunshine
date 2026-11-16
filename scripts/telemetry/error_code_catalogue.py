@@ -18,58 +18,71 @@ import sys
 LOG_START = re.compile(r"BOOST_LOG\((error|fatal)\)\s*<<")
 
 
-def fnv1a(text: str) -> int:
+def fnv1a(data) -> int:
     h = 2166136261
-    for b in text.encode():
+    for b in (data.encode() if isinstance(data, str) else data):
         h ^= b
         h = (h * 16777619) & 0xFFFFFFFF
     return h
 
 
-def error_head(text: str, max_chars: int = 96) -> str:
-    head = ""
+def _alpha(b: int) -> bool:
+    return 65 <= b <= 90 or 97 <= b <= 122  # std::isalpha in the C locale: ASCII letters only
+
+
+def error_head_bytes(text, max_bytes: int = 96) -> bytes:
+    """Byte for byte what error_head() in src/telemetry/error_code.h does: it works on the UTF-8 bytes, lower-cases ASCII only, and cuts at `max_bytes` BYTES (a multi-byte character may be cut in half)."""
+    s = text.encode() if isinstance(text, str) else bytes(text)
+    head = bytearray()
     i = 0
-    if text.startswith("["):
-        close = text.find("]")
-        if 1 < close <= 41 and all(c.isalpha() and c.isascii() or c in " _-." for c in text[1:close]):
-            head = text[1:close].lower() + " "
+    if s[:1] == b"[":
+        close = s.find(b"]")
+        if 1 < close <= 41 and all(_alpha(c) or c in b" _-." for c in s[1:close]):
+            head += s[1:close].lower() + b" "
             i = close + 1
     prefix_used = False
-    while i < len(text):
-        c = text[i]
-        if c.isdigit() and c.isascii() or c in '="[({</\\':
+    n = len(s)
+    while i < n:
+        c = s[i]
+        if 48 <= c <= 57 or c in b'="[({</\\':
             break
-        if c == "'":
-            if head and head[-1].isalpha() and head[-1].isascii() and i + 1 < len(text) and text[i + 1].isalpha() and text[i + 1].isascii():
-                head += c
+        if c == 0x27:  # '
+            if head and _alpha(head[-1]) and i + 1 < n and _alpha(s[i + 1]):
+                head.append(c)
                 i += 1
                 continue
             break
-        if c == ":":
-            words = head.count(" ") + (1 if head else 0)
-            if not prefix_used and words <= 2 and len(head) <= 24 and i + 1 < len(text) and text[i + 1] == " ":
+        if c == 0x3A:  # :
+            words = head.count(b" ") + (1 if head else 0)
+            if not prefix_used and words <= 2 and len(head) <= 24 and i + 1 < n and s[i + 1] == 0x20:
                 prefix_used = True
-                if head and head[-1] != " ":
-                    head += " "
+                if head and head[-1] != 0x20:
+                    head.append(0x20)
                 i += 1
                 continue
             break
-        if c == " " and (not head or head[-1] == " "):
+        if c == 0x20 and (not head or head[-1] == 0x20):
             i += 1
             continue
-        head += c.lower() if c.isascii() else c
+        head.append(c + 32 if 65 <= c <= 90 else c)
         i += 1
-    head = head.rstrip(" ")
-    if len(head) > max_chars:
-        head = head[:max_chars]
-        sp = head.rfind(" ")
+    while head and head[-1] == 0x20:
+        head.pop()
+    if len(head) > max_bytes:
+        del head[max_bytes:]
+        sp = head.rfind(b" ")
         if sp > 0:
-            head = head[:sp]
-    return head
+            del head[sp:]
+    return bytes(head)
+
+
+def error_head(text: str, max_bytes: int = 96) -> str:
+    """The head as text for display (a cut multi-byte character shows as a replacement character; the code is computed from the bytes)."""
+    return error_head_bytes(text, max_bytes).decode("utf-8", errors="replace")
 
 
 def error_code(text: str) -> str:
-    return "e%08x" % fnv1a(error_head(text))
+    return "e%08x" % fnv1a(error_head_bytes(text))
 
 
 def statement_end(text: str, start: int) -> int:

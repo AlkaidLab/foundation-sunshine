@@ -2585,6 +2585,23 @@ TEST(ErrorCode, TheSameMessageWithOtherValuesIsTheSameCode) {
   EXPECT_EQ(telemetry::error_code_of("x").size(), 9u);
 }
 
+TEST(ErrorCode, ALongMessageWithMultiByteCharactersIsCutAtBytesNotCharacters) {
+  // 1 + 40 * 3 bytes, no space: the head is cut at 96 bytes, in the middle of a character
+  std::string no_space = "x";
+  for (int i = 0; i < 40; ++i) no_space += "错";
+  const auto head = telemetry::error_head(no_space);
+  EXPECT_EQ(head.size(), 96u);
+  // spaces: cut at 96 bytes, then back to the last space
+  std::string spaced = "加载失败";
+  for (int i = 0; i < 12; ++i) spaced += " 加载失败";
+  const auto spaced_head = telemetry::error_head(spaced);
+  EXPECT_LE(spaced_head.size(), 96u);
+  EXPECT_EQ(spaced_head.back() & 0x80, 0x80);  // it ends on the last whole word, not on a space
+  // the codes are pinned: scripts/telemetry/test_error_code_catalogue.py holds the same two values (the dictionary tool must agree with this function byte for byte)
+  EXPECT_EQ(telemetry::error_code_of(no_space), "ec2d441a4");
+  EXPECT_EQ(telemetry::error_code_of(spaced), "ed4859417");
+}
+
 TEST(ErrorCode, TheHeadIsBounded) {
   const auto head = telemetry::error_head(std::string(300, 'a') + " " + std::string(300, 'b'));
   EXPECT_LE(head.size(), 96u);

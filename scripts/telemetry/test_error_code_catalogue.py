@@ -40,6 +40,19 @@ class Head(unittest.TestCase):
             self.assertEqual(table[code]["head"], "nvenc nvencopenencodesessionex")
 
 
+class Bytes(unittest.TestCase):
+    def test_long_multi_byte_messages_are_cut_at_bytes_like_the_host(self):
+        # the same two messages and codes as tests/unit/test_telemetry.cpp (ErrorCode.ALongMessageWithMultiByteCharactersIsCutAtBytesNotCharacters); the codes were taken from the C++ function
+        no_space = "x" + "错" * 40
+        spaced = "加载失败" + " 加载失败" * 12
+        self.assertEqual(len(cat.error_head_bytes(no_space)), 96)  # cut in the middle of a character
+        self.assertEqual(cat.error_code(no_space), "ec2d441a4")
+        self.assertLessEqual(len(cat.error_head_bytes(spaced)), 96)
+        self.assertEqual(cat.error_code(spaced), "ed4859417")
+        # a cut by characters would be longer than 96 bytes and give another code
+        self.assertNotEqual(cat.fnv1a(("x" + "错" * 95).encode()), cat.fnv1a(cat.error_head_bytes(no_space)))
+
+
 class Statements(unittest.TestCase):
     def scan_text(self, source):
         with tempfile.TemporaryDirectory() as d:
