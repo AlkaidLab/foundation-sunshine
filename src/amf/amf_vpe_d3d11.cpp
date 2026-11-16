@@ -14,6 +14,7 @@
 #include <AMF/components/VideoConverter.h>
 #include <AMF/core/Factory.h>
 
+#include "amf_runtime_pin.h"
 #include "src/logging.h"
 
 namespace amf {
@@ -94,6 +95,7 @@ namespace amf {
       }
       // SDK initialization and compute fallback must not disturb the caller's shader state.
       context_state_guard guard(immediate1.Get(), private_state.Get());
+      pin_runtime();
       library = LoadLibraryA(AMF_DLL_NAMEA);
       if (!library) return fail("runtime_unavailable");
       auto init = reinterpret_cast<AMFInit_Fn>(GetProcAddress(library, AMF_INIT_FUNCTION_NAME));
