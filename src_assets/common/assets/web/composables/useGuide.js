@@ -15,6 +15,9 @@ import { useReach } from './useReach.js'
 import { isTauriEnv, openExternalUrl } from '../utils/helpers.js'
 import { translateFallback } from '../utils/localizedMessage.js'
 import { saveSettingKey } from 'foundation-ui/settings/save.js'
+import { useUpdateStatus } from './useUpdateStatus.js'
+import { channelOfConfig, markChannelChosen } from '../utils/updateChannel.js'
+import { trackEvents } from '../config/telemetry.js'
 
 export const GUIDE_STORAGE_KEY = 'foundation.guide.web'
 
@@ -31,6 +34,7 @@ export function useGuide() {
     network: { port: 47989, activePort: 0, upnpActive: null, upnpSaved: null, loaded: false, endpoints: '' },
     webAccess: { scope: 'lan', bind: '', active: null, saved: null },
     reach: useReach().view,
+    channel: { value: 'stable' },
     clients: null,
     sessions: null,
     pair: { name: '' },
@@ -241,7 +245,22 @@ export function useGuide() {
     } catch (error) { return { ok: false, error: error?.message || '' } }
   }
 
+  /** The update channel the host has now (`notify_pre_releases`); an unreadable host leaves the default. */
+  async function loadChannel() {
+    try { state.channel.value = channelOfConfig(await hostData.refresh('config')) } catch { /* the default stays */ }
+  }
+  /** Saves the channel at once, the way 关于 does (the host's own setting, then the update check runs again); { ok } so the step can say it was not saved. */
+  async function setChannel(value) {
+    const ok = await useUpdateStatus().setPreReleases(value === 'prerelease')
+    if (ok) { state.channel.value = value === 'prerelease' ? 'prerelease' : 'stable'; markChannelChosen() }
+    return { ok }
+  }
+
   const callbacks = {
+    loadChannel,
+    setChannel,
+    // the anonymous funnel of the guide (usage statistics choice): the page's event sender
+    funnel: (props) => trackEvents.guideFunnel(props),
     scanGames,
     addGames,
     // the test tools page (the guide ends with an offer to open it)

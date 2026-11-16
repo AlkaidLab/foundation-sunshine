@@ -1,5 +1,6 @@
 import { createApp, h } from 'vue'
 import { deviceId as guideDeviceId, guideEntry, hostProgressOf, isSetupCompleted, normalizeClients, readProgress, upgradeSkips } from 'foundation-ui/vue/guide.js'
+import { channelChosen } from './updateChannel.js'
 import { hostData } from '../composables/hostData.js'
 import { apiJson } from './apiFetch.js'
 
@@ -26,7 +27,7 @@ export function decideGuideEntry({ embedded = false, suppressed = false, dismiss
   const setupCompleted = config ? isSetupCompleted(config) : undefined
   const pairedCount = list ? list.length : null
   const entry = guideEntry({ progress, version, setupCompleted, pairedCount, configExists: !!config, host: host || hostProgressOf(config), device, now })
-  return entry && { ...entry, skip: entry.mode === 'upgrade' ? upgradeSkips({ accountExists: true, setupCompleted, pairedCount }) : [] }
+  return entry && { ...entry, skip: entry.mode === 'upgrade' ? upgradeSkips({ accountExists: true, channelChosen: channelChosen(config) }) : [] }
 }
 
 let layer = null
