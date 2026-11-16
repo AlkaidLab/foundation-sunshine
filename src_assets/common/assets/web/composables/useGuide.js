@@ -156,7 +156,7 @@ export function useGuide() {
   }
 
   async function restartHost() {
-    try { const r = await apiFetch('/api/restart', { method: 'POST' }); return { ok: r.ok } } catch { return { ok: true } /* the connection drops while the host restarts */ }
+    try { const r = await apiFetch('/api/restart?reason=guide', { method: 'POST' }); return { ok: r.ok } } catch { return { ok: true } /* the connection drops while the host restarts */ }
   }
 
   /** A cheap read of the host, the proof of a restart: the start time of its process (`/api/version`); a host without it answers 404/444, then any answer of the listener route is "it is up". */

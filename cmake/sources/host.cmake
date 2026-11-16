@@ -175,6 +175,7 @@ set(SUNSHINE_HOST_SOURCES
     src/telemetry/queue.cpp src/telemetry/queue.h
     src/telemetry/error_report.cpp src/telemetry/error_report.h
     src/telemetry/self_baseline.cpp src/telemetry/self_baseline.h
+    src/telemetry/opt_out.cpp src/telemetry/opt_out.h
     src/telemetry/service_lifecycle.cpp src/telemetry/service_lifecycle.h
     src/telemetry/stream_health.cpp src/telemetry/stream_health.h
     src/telemetry/stream_stats.cpp src/telemetry/stream_stats.h

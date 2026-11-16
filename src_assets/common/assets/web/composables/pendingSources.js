@@ -29,7 +29,7 @@ let started = false
 const state = { t: (k) => k, te: () => false, locale: 'en' }
 
 async function restartHost() {
-  const response = await apiFetch('/api/restart', { method: 'POST' })
+  const response = await apiFetch('/api/restart?reason=settings', { method: 'POST' })
   // the native proxy can answer 503 when the core exits before it replies: that is the restart
   if (response.status !== 503 && !response.ok) throw new Error(`HTTP ${response.status}`)
 }

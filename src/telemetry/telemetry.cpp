@@ -42,6 +42,7 @@
 #include "src/crash/crash.h"
 #include "src/config.h"
 #include "src/logging.h"
+#include "src/logging_site.h"
 #include "src/platform/common.h"
 #include "src/system_info.h"
 #include "transport.h"
@@ -287,6 +288,13 @@ namespace telemetry {
 
     /// When the host could serve its web interface (set by host_ready): the end of the start-up time the service measures.
     std::atomic<std::int64_t> ready_wall_ms { 0 };
+    // the "core" start-up time is the difference of two readings of the steady clock (a change of the system clock in between must not show up as a slow start); the wall clock is kept for the service's own records
+    std::atomic<std::int64_t> start_steady_ms { 0 };  // when telemetry started
+    std::atomic<std::int64_t> ready_steady_ms { 0 };  // when the web interface became ready
+    std::int64_t
+    steady_ms() {
+      return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
     std::mutex lifecycle_state_mutex;
 
     service_lifecycle::state_t
@@ -340,7 +348,7 @@ namespace telemetry {
         const auto records = service_lifecycle::parse(read_small_file(path, service_lifecycle::MAX_BYTES));
         std::filesystem::remove(path, ec);
         const auto summary = service_lifecycle::summarize(records);
-        if (summary.launched + summary.adopted + summary.extras_ended + summary.exits > 0) service.emit(kind_e::experience, "svc_lifecycle", service_lifecycle::summary_props(summary));
+        if (summary.launched + summary.adopted + summary.extras_ended + summary.exits + summary.restarts_requested > 0) service.emit(kind_e::experience, "svc_lifecycle", service_lifecycle::summary_props(summary));
         {
           std::lock_guard lock { lifecycle_state_mutex };
           auto state = load_lifecycle_state(dir);
@@ -368,7 +376,7 @@ namespace telemetry {
           // every severity goes to the short ring an anomaly excerpt is cut from; only warnings and above are tallied
           service->note_log_line(severity.get(), text.c_str(), text.size());
           if (severity.get() < 3 || severity.get() > 5) return;
-          service->note_log(severity.get(), text.c_str(), text.size(), component_of(text.c_str(), text.size()));
+          service->note_log(severity.get(), text.c_str(), text.size(), component_of(text.c_str(), text.size()), severity.get() >= logging::SITE_MIN_SEVERITY ? logging::site_text(record) : std::string {});
         }
         catch (...) {
         }
@@ -448,6 +456,7 @@ namespace telemetry {
         auto last_config = clock_t::now();
         bool context_done = false;
         bool lifecycle_done = false;
+        bool core_timing_done = false;
         const auto run_started = clock_t::now();
         while (true) {
           {
@@ -469,6 +478,12 @@ namespace telemetry {
           if (!lifecycle_done && context_done && (ready_wall_ms.load() != 0 || now - run_started > 60s)) {
             lifecycle_done = true;
             report_service_lifecycle(*service_, platf::appdata() / "telemetry");
+          }
+          // the time from the start of this core to its web interface, for every install (a host that runs without the service has no service time, and had no start-up time at all). It has its own
+          // state: a web interface that is ready after the service summary was reported (a start that takes more than a minute is the one worth knowing) is still timed, once.
+          if (!core_timing_done && context_done && ready_steady_ms.load() != 0) {
+            core_timing_done = true;
+            if (const auto ready = ready_steady_ms.load(), began = start_steady_ms.load(); began > 0 && ready >= began) judge_and_emit_ready(*service_, platf::appdata() / "telemetry", "core", ready - began);
           }
           if (now - last_config >= CONFIG_RECHECK) {
             last_config = now;
@@ -531,6 +546,8 @@ namespace telemetry {
       deps.consent = [] { return consent_t { consent_cache.usage.load(std::memory_order_relaxed), consent_cache.errors.load(std::memory_order_relaxed) }; };
       deps.post = [](const std::string &url, const std::string &body) { return http_post(url, "application/json", body); };
       deps.session_log = [](const std::string &endpoint, const std::string &install_id, const std::string &version) { return crash::upload_session_log(endpoint, install_id, version); };
+      deps.session_log_state = [] { return std::string { crash::session_log_state() }; };
+      start_steady_ms.store(steady_ms());
       auto service = std::make_shared<service_t>(std::move(options), std::move(deps));
       context_t ctx;
       ctx.version = build_info::version();
@@ -539,6 +556,7 @@ namespace telemetry {
       ctx.arch = arch_name();
       ctx.locale = config::sunshine.locale;
       service->set_context(std::move(ctx));
+      service->reconcile_consent();  // a choice that was turned off while the host was not running (the config file edited) gets its record now; the first run only remembers the choices
       {
         std::lock_guard lock { slot_mutex };
         service_slot() = service;
@@ -631,6 +649,7 @@ namespace telemetry {
     service->emit(kind_e::usage, "app_start", json { { "cold", cold }, { "start_ms", start_ms } });
     service->emit(kind_e::experience, "startup", json { { "host_start_ms", start_ms } });
     ready_wall_ms.store(wall_ms());
+    ready_steady_ms.store(steady_ms());
   }
 
   void

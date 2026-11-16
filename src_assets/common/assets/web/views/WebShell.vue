@@ -310,7 +310,7 @@ provide('telemetryConsent', telemetry)
 watch(() => nav.current.value, (page) => { if (!embedded && page) trackEvents.pageView(String(page)) }, { immediate: true })
 const osName = () => { const n = typeof navigator === 'undefined' ? '' : navigator; return String(n.userAgentData?.platform || n.platform || '') }
 const errorBack = () => { if (nav.canPop.value) nav.pop(); else nav.selectRail('overview') }
-const restartHost = async () => { await apiFetch('/api/restart', { method: 'POST' }).catch(() => null) }
+const restartHost = async () => { await apiFetch('/api/restart?reason=shell', { method: 'POST' }).catch(() => null) }
 const errorContext = () => ({ product: 'web', version: shellVersion.value, os: osName(), page: String(nav.current.value || ''), locale: String(uiLocale.value), logs: String(recentLogText.value || '').split('\n').slice(-40).join('\n'), components: `webui=${shellVersion.value || '?'}` })
 setErrorContext(errorContext)
 // a browser cannot take a screenshot of its page or read the host log: the report sheet says so; the report goes privately to the developers or into a zip, never to a public issue
@@ -527,7 +527,7 @@ const reopenGuide = async () => {
 }
 const bigScreenHere = computed(() => canOpenBigScreen({ platform: hostPlatform.value, hostname: window.location.hostname }))
 const actionHandlers = computed(() => ({
-  restart: async () => { try { await apiFetch('/api/restart', { method: 'POST' }) } catch { /* the connection drops while the host restarts: the offline state takes over */ } },
+  restart: async () => { try { await apiFetch('/api/restart?reason=shell', { method: 'POST' }) } catch { /* the connection drops while the host restarts: the offline state takes over */ } },
   connect: () => connect.show('pair'),
   download: () => connect.show('install'),
   logs: () => jumpNav.go('troubleshooting'),

@@ -46,6 +46,8 @@
 #include "src/entry_handler.h"
 #include "src/globals.h"
 #include "src/logging.h"
+#include "src/restart_reason.h"
+#include "tools/sunshinesvc_lifecycle.h"
 #include "src/platform/common.h"
 #include "src/platform/run_command.h"
 #include "src/utility.h"
@@ -1692,7 +1694,13 @@ namespace platf {
   }
 
   void
-  restart() {
+  restart(std::string_view reason) {
+    // Under the service the core exits with code 0 and the service starts it again: leave a note so the service knows the exit was asked for (it reports restarts that nobody asked for).
+    // The note names this process (id and start time), so only the exit of this very core takes it.
+    {
+      const std::string word { restart_reason::normalize(reason) };
+      sunshinesvc::lifecycle::note_restart_request(appdata() / "telemetry", sunshinesvc::lifecycle::unix_ms(), word.c_str(), GetCurrentProcessId(), sunshinesvc::lifecycle::process_start_unix_ms(GetCurrentProcess()));
+    }
     // If we're running standalone, we have to respawn ourselves via CreateProcess().
     // If we're running from the service, we should just exit and let it respawn us.
     if (GetConsoleWindow() != NULL) {

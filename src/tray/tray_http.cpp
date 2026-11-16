@@ -679,7 +679,7 @@ namespace tray_http {
             }
 
             if (action == "restart") {
-              platf::restart();
+              platf::restart("tray");
               return;
             }
 

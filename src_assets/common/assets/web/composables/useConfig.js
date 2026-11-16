@@ -697,7 +697,7 @@ export function useConfig() {
     if (!result) return
 
     try {
-      const response = await apiFetch('/api/restart', { method: 'POST' })
+      const response = await apiFetch('/api/restart?reason=settings', { method: 'POST' })
       // The native proxy can return 503 when Core exits before responding.
       // Treat that expected restart response like a successful restart.
       if (response.status !== 503 && !response.ok) throw new Error(`HTTP ${response.status}`)

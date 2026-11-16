@@ -32,6 +32,7 @@
 #include "error_report.h"
 #include "events.h"
 #include "hooks.h"
+#include "opt_out.h"
 #include "queue.h"
 #include "self_baseline.h"
 #include "stream_stats.h"
@@ -96,6 +97,8 @@ namespace telemetry {
      * error reports off, the service does not take it). Called on the thread that ingests the page's events; null in tests that do not need it.
      */
     std::function<std::optional<std::string>(const std::string &endpoint, const std::string &install_id, const std::string &version)> session_log;
+    /** The fixed word that says why the latest session_log call gave no reference (crash::session_log_state()); null in tests that do not need it. */
+    std::function<std::string()> session_log_state;
   };
 
   struct service_counts_t {
@@ -160,7 +163,7 @@ namespace telemetry {
 
     // ---- the log ----
     /** A host log record (severity 3 warning, 4 error, 5 fatal); only counted and kept raw here, scrubbed later on the sender thread. Cheap; never throws. */
-    void note_log(int severity, const char *message, std::size_t length, std::string_view component = "host") noexcept;
+    void note_log(int severity, const char *message, std::size_t length, std::string_view component = "host", std::string_view site = {}) noexcept;
 
     /** Every host log record (any severity) goes to a short ring; an excerpt of it leaves only after a severe stream anomaly, scrubbed. Cheap; never throws. */
     void
@@ -179,8 +182,11 @@ namespace telemetry {
     /** The server asked for a wait and it has not ended. */
     bool
     backing_off() const { return deps_.now_ms() < backoff_until_ms_.load(std::memory_order_relaxed); }
-    /** The consent changed: drop what the off kinds had waiting, and the install id when both are off. */
+    /** The consent changed: drop what the off kinds had waiting, and the install id when both are off. A choice that was turned off is recorded once (opt_out.h) and sent by pump(). */
     void consent_changed();
+    /** Compares the two choices with what they were the last time this looked: the ones turned off get their record (opt_out.h), written to disk first. Called when the config is saved and once at the start, after the context is set. */
+    /** -> false when a turn-off could not be recorded yet (the context is not set, or the record could not be saved): the installation number is then kept and the state stays "on", so the next call tries again. */
+    bool reconcile_consent();
     /** The buffer reached flush_events: the sender thread should not wait for its interval. */
     bool flush_wanted() const;
 
@@ -210,6 +216,7 @@ namespace telemetry {
       std::string raw;
       int severity = 4;
       std::uint64_t count = 0;
+      std::string site;  ///< file:line:function of the statement (logging_site.h), kept from the first line
     };
 
     consent_t consent_now() const;
@@ -231,6 +238,11 @@ namespace telemetry {
     /** What to do with the answer to a request that carried the batches at `paths`: sent (they are removed, the configuration it carries is applied), refused for good (removed), or to be tried again (-> false: stop). */
     bool
     handle_answer(const post_result_t &answer, std::size_t count, const std::vector<std::filesystem::path> &paths);
+    /** Sends the records that are due (sender thread only); a delivered or refused one is removed, a failed one waits longer. */
+    void send_opt_outs();
+    /** The install id as it is on disk or in memory, whatever the consent now says: the record needs it for the turn-off that just happened. */
+    std::string peek_install_id();
+    void note_product(std::string_view product, std::string_view version);
     std::string
     log_excerpt(std::int64_t now);
     void quality_event(const stream_stats_t &stats, std::int64_t now);
@@ -246,6 +258,10 @@ namespace telemetry {
     context_t context_;
     std::string install_id_;
     service_counts_t counts_;
+    std::mutex opt_out_mutex_;  // the pending records and the products seen; taken alone, never with the others
+    std::vector<opt_out::record_t> opt_outs_;
+    bool opt_outs_unsaved_ = false;  // the file does not show what opt_outs_ holds (a write failed): written again at the next pass, even when nothing is waiting
+    std::map<std::string, std::string> products_seen_;  // product -> version of the clients that talked to this host
     std::function<void()> wake_;
 
     mutable std::mutex log_mutex_;  // the log tallies; held for a few instructions

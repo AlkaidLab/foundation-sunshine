@@ -378,6 +378,9 @@ namespace telemetry {
     const std::vector<std::string_view> result_choices { "normal", "error", "timeout", "kicked" };
     const std::vector<std::string_view> severity_choices { "info", "warning", "error", "fatal" };
     const std::vector<std::string_view> report_category_choices { "bug", "performance", "compat", "suggestion", "other" };
+    const std::vector<std::string_view> opt_out_choices { "usage", "errors" };
+    const std::vector<std::string_view> log_state_choices { "no_log", "pack_failed", "refused", "unreachable", "bad_answer", "errors_off", "uploaded" };
+    const std::vector<std::string_view> restart_reason_choices { "settings", "guide", "troubleshooting", "doctor", "home", "shell", "tray", "widget", "import", "api" };
     const std::vector<std::string_view> update_source_choices { "mirror", "github", "other" };
     const std::vector<std::string_view> update_result_source_choices { "mirror", "github", "manual", "other" };
     const std::vector<std::string_view> update_stage_choices { "check", "download", "verify", "apply", "restart" };
@@ -385,7 +388,7 @@ namespace telemetry {
     const std::vector<std::string_view> run_result_choices { "ok", "failed", "cancelled", "incomplete" };
     const std::vector<std::string_view> error_class_choices { "network", "http_4xx", "http_5xx", "hash_mismatch", "disk", "permission", "cancelled", "other" };
     const std::vector<std::string_view> install_phase_choices { "install", "upgrade", "repair", "uninstall" };
-    const std::vector<std::string_view> ready_which_choices { "svc_core", "page" };
+    const std::vector<std::string_view> ready_which_choices { "svc_core", "page", "core" };
     const std::vector<std::string_view> host_anomaly_codes { "XP_SVC_CORE_RESTART", "XP_SLOW_READY" };
     const std::vector<std::string_view> host_anomaly_causes { "soon_after_adopt", "repeat", "unexpected_exit", "above_limit", "above_baseline", "other" };
     const std::vector<std::string_view> nic_link_choices { "wired", "wireless", "other", "unknown" };
@@ -429,6 +432,8 @@ namespace telemetry {
         std::vector<event_spec_t> t;
         t.push_back({ kind_e::usage, "app_start", { { "cold", type_e::boolean }, { "start_ms", type_e::integer, 0, 600000 }, { "update_source", type_e::choice, 0, 0, update_source_choices } } });
         t.push_back({ kind_e::usage, "app_exit", { { "uptime_s", type_e::integer, 0, 31536000 } } });
+        // the one record that a choice was turned off (opt_out.h): which choice, nothing else; the host sends it itself, a page cannot
+        t.push_back({ kind_e::usage, "opt_out", { { "choice", type_e::choice, 0, 0, opt_out_choices, true } } });
         t.push_back({ kind_e::usage, "stream_start", stream_dims() });
         auto end = stream_dims();
         end.push_back({ "duration_s", type_e::integer, 0, 604800 });
@@ -451,6 +456,7 @@ namespace telemetry {
                                                       { "error_code", type_e::code, 0, 64 },
                                                       { "attachment", type_e::attachment },
                                                       { "log_ref", type_e::log_ref },
+                                                      { "log_state", type_e::choice, 0, 0, log_state_choices },
                                                       { "message", type_e::text, 0, static_cast<double>(MAX_USER_REPORT_CHARS), {}, true },
                                                     } });
         // a fault of the virtual display driver that Windows Error Reporting wrote to the Application log: that it happened, which module, the exception code and the offset (wer_event.h); no stack exists
@@ -631,6 +637,8 @@ namespace telemetry {
                                                              { "adopted", type_e::integer, 0, 1000 },
                                                              { "extras_ended", type_e::integer, 0, 1000 },
                                                              { "exits", type_e::integer, 0, 1000 },
+                                                             { "restarts_requested", type_e::integer, 0, 1000 },
+                                                             { "restart_reason", type_e::choice, 0, 0, restart_reason_choices },
                                                              { "unexpected", type_e::integer, 0, 1000 },
                                                              { "soon_after_adopt", type_e::integer, 0, 1000 },
                                                              { "restarts_core_exit", type_e::integer, 0, 1000 },

@@ -88,7 +88,7 @@ const go = (target) => {
   else PAGE_OF[id]?.()
 }
 const openUrl = (url) => { openExternalUrl(url).catch(() => {}) }
-const restart = async () => { try { await apiFetch('/api/restart', { method: 'POST' }) } catch { /* the connection drops while the host restarts */ } }
+const restart = async () => { try { await apiFetch('/api/restart?reason=doctor', { method: 'POST' }) } catch { /* the connection drops while the host restarts */ } }
 
 // 交给米塔 AI 分析: the log diagnosis of 日志与诊断, with the health check result in front of the log
 const ai = useAiDiagnosis()

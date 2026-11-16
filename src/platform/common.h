@@ -1062,8 +1062,11 @@ namespace platf {
   bool
   system_hibernate();
 
+  /**
+   * Restart the program. `reason` is one word of src/restart_reason.h that says what asked (it is reported with the restart; an unknown word is "api").
+   */
   void
-  restart();
+  restart(std::string_view reason = "api");
 
   /**
    * @brief Set an environment variable.

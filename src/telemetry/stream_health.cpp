@@ -272,7 +272,9 @@ namespace telemetry::health {
     if (requests >= t.idr_per_window) add(code::idr_storm, false, static_cast<double>(requests), static_cast<double>(t.idr_per_window), requests);
     if (w.probe.loss_pct && *w.probe.loss_pct >= t.loss_pct) add(code::loss_burst, false, *w.probe.loss_pct, t.loss_pct);
     if (w.probe.rtt_ms && *w.probe.rtt_ms >= t.rtt_ms) add(code::rtt_high, false, *w.probe.rtt_ms, t.rtt_ms);
-    if (w.probe.target_kbps > 0 && w.probe.measured_kbps > 0 && w.probe.measured_kbps < t.bitrate_share * w.probe.target_kbps) add(code::bitrate_short, false, w.probe.measured_kbps, t.bitrate_share * w.probe.target_kbps);
+    // XP_BITRATE_SHORT is no longer raised: the configured bitrate is a ceiling. A hardware encoder in constant-bitrate mode without filler data stays far below it on static or low-motion content
+    // (NVENC, AMF), and rate control may keep a window low on purpose; the measurement is taken at the host's own output, so it says nothing about the client's network either. The measured and the
+    // configured bitrate are still reported in the stream summaries (bitrate_kbps_avg, the bitrate band) for whoever looks at a stream. The code stays in the list for older Workers and data.
 
     // cooldown: the same code on the same stream is reported once per cooldown; what was held back is counted into the next report
     for (auto &a : found) {

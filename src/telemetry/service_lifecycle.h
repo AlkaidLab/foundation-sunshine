@@ -4,7 +4,7 @@
  *
  * sunshinesvc writes a small file of facts (tools/sunshinesvc_lifecycle.h); the host reads it at its next start, reports the counts (`svc_lifecycle`), the start-up time (`startup_timing`) and, when something
  * is clearly wrong, one anomaly (`host_anomaly`):
- *   XP_SVC_CORE_RESTART  the core ended without the service asking for it and was started again, especially soon after the service took over a core that was already running; repeated, it is priority 0
+ *   XP_SVC_CORE_RESTART  the core ended without the service asking for it and without asking for a restart itself, and was started again, especially soon after the service took over a core that was already running; repeated, it is priority 0
  *   XP_SLOW_READY        the time from the start of the service to the web interface of the core (or from the opening of a page to its ready mark) is above 15 s, or well above the install's own usual time
  * Pure code (std + nlohmann::json), so it is unit tested on its own; the text is read like the installer's journal: field by field, bounded, never trusted.
  */
@@ -48,7 +48,9 @@ namespace telemetry::service_lifecycle {
     long long life_ms = -1;
     long long since_adopt_ms = -1;
     int n = 0;
-    bool requested = false;
+    bool requested = false;  ///< the service asked the core to end
+    std::string reason;  ///< restart_reason.h word of a requested restart (empty when not said)
+    bool restart = false;  ///< the core asked for its own restart (Panel, a saved setting): exit code 0, started again by the service
   };
 
   std::vector<record_t> parse(std::string_view text);
@@ -58,7 +60,9 @@ namespace telemetry::service_lifecycle {
     int launched = 0;
     int adopted = 0;
     int extras_ended = 0;
-    int exits = 0;  ///< the core ended without the service asking
+    int exits = 0;  ///< the core ended without the service asking and without asking for a restart itself
+    std::string restart_reason;  ///< the word of the latest requested restart
+    int restarts_requested = 0;  ///< the core asked for its own restart (Panel, a saved setting): expected, never an anomaly
     int unexpected = 0;  ///< of those: an exit code other than 0, a life under a minute, or soon after an adoption
     int soon_after_adopt = 0;
     int short_life = 0;
@@ -76,7 +80,7 @@ namespace telemetry::service_lifecycle {
     double threshold = 0;  ///< ms
     int count = 1;
     std::string cause;  ///< soon_after_adopt | repeat | unexpected_exit | above_limit | above_baseline
-    std::string which;  ///< XP_SLOW_READY: svc_core | page
+    std::string which;  ///< XP_SLOW_READY: svc_core | core | page
     std::string exit_code;  ///< XP_SVC_CORE_RESTART: the exit code as text, empty when not known
   };
 
@@ -86,6 +90,7 @@ namespace telemetry::service_lifecycle {
     std::vector<std::int64_t> slow_ms;
     std::vector<double> svc_core_ms;
     std::vector<double> page_ms;
+    std::vector<double> core_ms;  ///< the start of the core to its web interface, every install
   };
   nlohmann::json state_to_json(const state_t &state);
   state_t state_from_json(const nlohmann::json &json);
@@ -93,7 +98,7 @@ namespace telemetry::service_lifecycle {
   /// nullopt when the exits were deliberate. Records the problem in the state.
   std::optional<anomaly_t> judge_restart(const summary_t &summary, state_t &state, std::int64_t now_ms);
 
-  /// `which` is "svc_core" or "page". The time is added to the install's usual times afterwards. nullopt when it is not slow.
+  /// `which` is "svc_core", "core" or "page". The time is added to the install's usual times afterwards. nullopt when it is not slow.
   std::optional<anomaly_t> judge_ready(std::string_view which, std::int64_t ms, state_t &state, std::int64_t now_ms);
 
   /// The median of the usual times, nullopt before BASELINE_MIN_SAMPLES readings.

@@ -663,6 +663,30 @@ TEST(TelemetryLog, HourlySummaryAndScrubbedErrors) {
   }
 }
 
+TEST(TelemetryLog, TheFirstLineOfACodeBecomesAnErrorReportWithItsSiteAndNoText) {
+  harness_t h;
+  const std::string line = "Download failed or rejected [https://cdn.example/steam/apps/1/header.jpg, code:23] for client \"Zed's laptop\"";
+  h.svc->note_log(4, line.c_str(), line.size(), "host", "src/httpcommon.cpp:838:download");
+  h.svc->note_log(4, line.c_str(), line.size(), "host", "src/httpcommon.cpp:838:download");
+  const std::string other = "Failed to create display for: <name>";
+  h.svc->note_log(4, other.c_str(), other.size(), "host", "");  // a line without a site: only the count
+  h.svc->flush(true);
+  h.svc->pump();
+  std::vector<json> reports;
+  json code_of_error;
+  for (const auto &b : h.posted)
+    for (const auto &e : b["events"]) {
+      if (e["name"] == "error_report") reports.push_back(e);
+      if (e["name"] == "error" && e["props"]["count"] == 2) code_of_error = e;
+    }
+  ASSERT_EQ(reports.size(), 1u);
+  ASSERT_FALSE(code_of_error.is_null());
+  EXPECT_EQ(reports[0]["props"]["code"], code_of_error["props"]["code"]);  // the report and the count are one group
+  EXPECT_EQ(reports[0]["props"]["loc"], "src/httpcommon.cpp:838:download");
+  const auto text = reports[0].dump();
+  for (const char *planted : { "cdn.example", "Zed", "laptop", "header.jpg" }) EXPECT_EQ(text.find(planted), std::string::npos) << planted;
+}
+
 TEST(TelemetryLog, ErrorCodeIsStableAcrossNamesAndPaths) {
   harness_t h;
   const std::string a = "Failed to open \"Alice's iPad\" at C:\\Users\\Alice\\x.mp4", b = "Failed to open \"Bob's phone\" at /home/bob/y.mp4";
@@ -2366,6 +2390,290 @@ TEST(TelemetryScrub, ABracketHoldingBracketsEndsWhereTheOutermostOneCloses) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
+// The record that a choice was turned off (src/telemetry/opt_out.h)
+
+namespace {
+  const std::string OPT_OUT_ID = "3f2b8a52-1c3e-4d0e-9d57-0a7c1f6b9e11";
+}
+
+TEST(OptOut, OnlyAChoiceThatWasOnAndIsOffCounts) {
+  using namespace telemetry::opt_out;
+  EXPECT_TRUE(turned_off(state_t { false, true, true }, false, false).empty());  // the first run only remembers
+  EXPECT_EQ(turned_off(state_t { true, true, true }, false, true), (std::vector<std::string> { "usage" }));
+  EXPECT_EQ(turned_off(state_t { true, true, true }, false, false), (std::vector<std::string> { "usage", "errors" }));
+  EXPECT_TRUE(turned_off(state_t { true, false, true }, false, true).empty());  // it was off already
+  EXPECT_TRUE(turned_off(state_t { true, false, false }, true, true).empty());  // turned on is not a record
+}
+
+TEST(OptOut, TheRecordCarriesTheChoiceTheProductAndTheVersionAndNothingElse) {
+  using namespace telemetry::opt_out;
+  std::vector<record_t> records;
+  add(records, { "errors" }, { { "host", "5.2.0.1.杂鱼" }, { "panel", "1.0.0" } }, OPT_OUT_ID, 1'800'000'000'000);
+  ASSERT_EQ(records.size(), 2u);
+  const auto body = body_of(records[1], "11111111-2222-4333-8444-555555555555");
+  ASSERT_TRUE(body.is_object());
+  EXPECT_EQ(body["install_id"], OPT_OUT_ID);
+  // nothing about the computer goes with it: the install, a fresh session number, the product, its version and the one event
+  for (const char *key : { "channel", "os", "os_version", "arch", "gpu_vendor", "locale" }) EXPECT_FALSE(body.contains(key)) << key;
+  std::set<std::string> keys;
+  for (const auto &[k, v] : body.items()) keys.insert(k);
+  EXPECT_EQ(keys, (std::set<std::string> { "v", "install_id", "session_id", "product", "version", "events" }));
+  EXPECT_EQ(body["product"], "panel");
+  EXPECT_EQ(body["version"], "1.0.0");
+  ASSERT_EQ(body["events"].size(), 1u);
+  EXPECT_EQ(body["events"][0]["name"], "opt_out");
+  EXPECT_EQ(body["events"][0]["props"], (json { { "choice", "errors" } }));
+  // the same turn-off twice is one record; a bad id makes none
+  add(records, { "errors" }, { { "host", "5.2.0.1.杂鱼" } }, OPT_OUT_ID, 1'800'000'001'000);
+  EXPECT_EQ(records.size(), 2u);
+  std::vector<record_t> none;
+  add(none, { "usage" }, { { "host", "1" } }, "", 1000);
+  EXPECT_TRUE(none.empty());
+}
+
+TEST(OptOut, ARecordIsRetriedWithGrowingGapsAndGivenUpOnAfterTwoWeeks) {
+  using namespace telemetry::opt_out;
+  std::vector<record_t> records;
+  add(records, { "usage" }, { { "host", "1" } }, OPT_OUT_ID, 1000);
+  EXPECT_EQ(due(records, 1000).size(), 1u);
+  failed(records[0], 1000);
+  EXPECT_TRUE(due(records, 1000 + 60'000).empty());
+  EXPECT_EQ(due(records, 1000 + RETRY_BASE_MS).size(), 1u);
+  failed(records[0], 1000);
+  EXPECT_EQ(records[0].next_try_ms, 1000 + 2 * RETRY_BASE_MS);
+  EXPECT_TRUE(due(records, 1000 + MAX_AGE_MS + 1).empty());
+  EXPECT_TRUE(records.empty());
+  // what is written to disk is read back, and a hostile file gives nothing it does not know
+  std::vector<record_t> again;
+  add(again, { "usage", "errors" }, { { "host", "1" }, { "web", "2" } }, OPT_OUT_ID, 5000);
+  const auto back = parse(serialize(again));
+  ASSERT_EQ(back.size(), 4u);
+  EXPECT_EQ(back[3].product, "web");
+  EXPECT_TRUE(parse("{\"v\":1,\"choice\":\"all\",\"product\":\"host\",\"version\":\"1\",\"install_id\":\"" + OPT_OUT_ID + "\",\"t\":1,\"next\":1,\"tries\":0}\nnot json\n").empty());
+}
+
+TEST(OptOutService, TurningAChoiceOffSendsOneRecordAndNothingAfterIt) {
+  harness_t h;
+  h.consent = consent_t { true, true };
+  h.svc->reconcile_consent();  // the first run: remembered, nothing to say
+  const auto id = h.svc->install_id();
+  ASSERT_EQ(id.size(), 36u);
+  // the panel has talked to this host
+  EXPECT_EQ(h.svc->ingest("panel", "1.0.0", json::array({ json { { "kind", "usage" }, { "name", "app_start" }, { "props", json { { "cold", true } } } } })), 1u);
+  h.consent = consent_t { false, true };
+  h.svc->consent_changed();
+  ASSERT_EQ(h.svc->pump(), 0);  // no ordinary batch
+  std::vector<json> records;
+  for (const auto &b : h.posted)
+    for (const auto &e : b["events"])
+      if (e["name"] == "opt_out") records.push_back(json { { "product", b["product"] }, { "version", b["version"] }, { "id", b["install_id"] }, { "props", e["props"] } });
+  ASSERT_EQ(records.size(), 2u);
+  for (const auto &r : records) {
+    EXPECT_EQ(r["id"], id);
+    EXPECT_EQ(r["props"], (json { { "choice", "usage" } }));
+  }
+  EXPECT_EQ(names_of(h.posted), (std::set<std::string> { "opt_out" }));
+  // delivered: nothing is sent again, and later events of the choice that is off stay unsent
+  h.posted.clear();
+  h.svc->pump();
+  EXPECT_TRUE(h.posted.empty());
+  EXPECT_FALSE(h.svc->emit(kind_e::usage, "app_start", json { { "cold", true } }));
+  // the other choice goes off too: its record, then the install id is gone
+  h.consent = consent_t { false, false };
+  h.svc->consent_changed();
+  h.svc->pump();
+  EXPECT_FALSE(h.posted.empty());
+  for (const auto &b : h.posted) EXPECT_EQ(b["events"][0]["props"], (json { { "choice", "errors" } }));
+  EXPECT_TRUE(h.svc->install_id().empty());
+}
+
+TEST(OptOutService, TheRecordIsSavedBeforeTheStateAndAnExpiredOneLeavesTheDisk) {
+  harness_t h;
+  h.consent = consent_t { true, true };
+  h.svc->reconcile_consent();
+  const auto id = h.svc->install_id();
+  const auto pending = h.dir.path / "opt_out_pending.jsonl";
+  const auto state = h.dir.path / "consent_state.json";
+  // no room to save the record (a directory stands where the file goes): the state must still say "on", so the next call finds the turn-off again
+  std::filesystem::create_directories(pending);
+  h.consent = consent_t { false, true };
+  h.svc->consent_changed();
+  EXPECT_EQ(json::parse(std::ifstream(state))["usage"], true);
+  std::filesystem::remove_all(pending);
+  h.svc->reconcile_consent();
+  EXPECT_TRUE(std::filesystem::is_regular_file(pending));
+  EXPECT_EQ(json::parse(std::ifstream(state))["usage"], false);
+  // the record is delivered: the file is empty, not left with the id in it
+  h.svc->pump();
+  EXPECT_EQ(std::filesystem::file_size(pending), 0u);
+  // a record that was never delivered is dropped after two weeks, and the file goes with it even though nothing else is waiting
+  h.next_status = 503;
+  h.consent = consent_t { false, false };
+  h.svc->reconcile_consent();
+  h.svc->pump();
+  EXPECT_GT(std::filesystem::file_size(pending), 0u);
+  h.now += telemetry::opt_out::MAX_AGE_MS + 60'000;
+  h.svc->pump();
+  EXPECT_EQ(std::filesystem::file_size(pending), 0u);
+  EXPECT_EQ(std::ifstream(pending).peek(), std::ifstream::traits_type::eof());
+  (void) id;
+}
+
+TEST(OptOutService, BothChoicesOffWithTheRecordNotSavedKeepsTheNumberUntilAFreshStartSavesIt) {
+  harness_t h;
+  h.consent = consent_t { true, true };
+  h.svc->reconcile_consent();
+  const auto id = h.svc->install_id();
+  ASSERT_EQ(id.size(), 36u);
+  const auto pending = h.dir.path / "opt_out_pending.jsonl";
+  std::filesystem::create_directories(pending);  // the file cannot be written
+  h.consent = consent_t { false, false };
+  h.svc->consent_changed();
+  EXPECT_TRUE(std::filesystem::exists(h.dir.path / "install_id"));  // the way back is kept
+  EXPECT_EQ(json::parse(std::ifstream(h.dir.path / "consent_state.json"))["usage"], true);  // and the state still says "on"
+  // the host ends (the memory with the record is lost), the problem is gone, a new service starts over the same folder with both choices off
+  const auto dir = h.dir.path;
+  h.svc.reset();
+  std::filesystem::remove_all(pending);
+  std::vector<json> posted;
+  service_deps_t deps;
+  std::int64_t now = h.now + 60'000;
+  deps.now_ms = [&] { return now; };
+  deps.consent = [] { return consent_t { false, false }; };
+  deps.post = [&](const std::string &, const std::string &body) {
+    posted.push_back(json::parse(body));
+    return post_result_t { 200 };
+  };
+  service_options_t options;
+  options.dir = dir;
+  service_t fresh(options, deps);
+  context_t c;
+  c.version = "5.2.0.1.杂鱼";
+  fresh.set_context(c);
+  EXPECT_TRUE(fresh.reconcile_consent());  // the turn-off of both is found again, saved, and then the number goes
+  EXPECT_FALSE(std::filesystem::exists(dir / "install_id"));
+  EXPECT_GT(std::filesystem::file_size(pending), 0u);
+  fresh.pump();
+  std::set<std::string> choices;
+  for (const auto &b : posted) {
+    EXPECT_EQ(b["install_id"], id);
+    choices.insert(b["events"][0]["props"]["choice"].get<std::string>());
+  }
+  EXPECT_EQ(choices, (std::set<std::string> { "usage", "errors" }));
+  EXPECT_EQ(std::filesystem::file_size(pending), 0u);
+}
+
+TEST(OptOutService, AFailedCleanupWriteIsRepeatedUntilTheFileIsEmpty) {
+  harness_t h;
+  h.consent = consent_t { true, true };
+  h.svc->reconcile_consent();
+  ASSERT_EQ(h.svc->install_id().size(), 36u);
+  const auto pending = h.dir.path / "opt_out_pending.jsonl";
+  h.next_status = 503;  // the record stays undelivered
+  h.consent = consent_t { false, true };
+  h.svc->consent_changed();
+  h.svc->pump();
+  ASSERT_GT(std::filesystem::file_size(pending), 0u);
+  // the write of the cleanup fails (the temporary file cannot be created): the record leaves the memory, the file keeps it for now
+  std::filesystem::create_directories(h.dir.path / "opt_out_pending.jsonl.tmp");
+  h.now += telemetry::opt_out::MAX_AGE_MS + 60'000;
+  h.svc->pump();
+  EXPECT_GT(std::filesystem::file_size(pending), 0u);
+  // the disk works again: the next pass writes the empty set although nothing is waiting
+  std::filesystem::remove_all(h.dir.path / "opt_out_pending.jsonl.tmp");
+  h.svc->pump();
+  EXPECT_EQ(std::filesystem::file_size(pending), 0u);
+}
+
+TEST(OptOutService, AnOfflineRecordWaitsAndAFirstRunWithTheChoiceOffSendsNothing) {
+  harness_t h;
+  h.consent = consent_t { true, true };
+  h.svc->reconcile_consent();
+  ASSERT_EQ(h.svc->install_id().size(), 36u);  // an install that never had an id never sent anything: there is nothing to say about it
+  h.next_status = 503;
+  h.consent = consent_t { true, false };
+  h.svc->consent_changed();
+  h.svc->pump();
+  ASSERT_FALSE(h.posted.empty());
+  const auto tries = h.posted.size();
+  h.svc->pump();
+  EXPECT_EQ(h.posted.size(), tries);  // not again right away
+  h.now += 11 * 60'000;
+  h.next_status = 200;
+  h.svc->pump();
+  EXPECT_EQ(h.posted.size(), tries + 1);
+  h.posted.clear();
+  h.now += 24 * 3600'000;
+  h.svc->pump();
+  EXPECT_TRUE(h.posted.empty());  // done
+  // a new install folder whose choices are off from the start says nothing
+  harness_t fresh;
+  fresh.consent = consent_t { false, false };
+  fresh.svc->reconcile_consent();
+  fresh.svc->pump();
+  EXPECT_TRUE(fresh.posted.empty());
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The code of an error line (src/telemetry/error_code.h)
+
+#include "src/telemetry/error_code.h"
+
+TEST(ErrorCode, ApostropheInsideAWordIsPartOfTheWord) {
+  EXPECT_EQ(telemetry::error_head("Couldn't read packet: end of file"), "couldn't read packet");
+  EXPECT_EQ(telemetry::error_head("Couldn't accept incoming connections: aborted"), "couldn't accept incoming connections");
+  EXPECT_NE(telemetry::error_code_of("Couldn't read packet: x"), telemetry::error_code_of("Couldn't accept incoming connections: x"));
+  // an apostrophe that opens a value still ends the head
+  EXPECT_EQ(telemetry::error_head("Client 'Alice' refused"), "client");
+}
+
+TEST(ErrorCode, AComponentPrefixIsKeptSoItsMessagesStayApart) {
+  EXPECT_EQ(telemetry::error_head("NvEnc: NvEncOpenEncodeSessionEx() failed: 8"), "nvenc nvencopenencodesessionex");
+  EXPECT_NE(telemetry::error_code_of("NvEnc: NvEncOpenEncodeSessionEx() failed: 8"), telemetry::error_code_of("NvEnc: encoding format is not supported by the gpu, NVENCAPI_VERSION: 13"));
+  EXPECT_EQ(telemetry::error_head("Audio capture: failed to initialize microphone"), "audio capture failed to initialize microphone");
+  // a longer first part is a message, not a prefix: the colon ends the head; what follows (a reason from the system, often translated) is not part of the code
+  EXPECT_EQ(telemetry::error_head("Couldn't accept incoming connections: x: y"), "couldn't accept incoming connections");
+  EXPECT_EQ(telemetry::error_head("Failed to apply the profile: access denied"), "failed to apply the profile");
+}
+
+TEST(ErrorCode, ALeadingTagIsPartOfTheHeadAndNumbersAreNot) {
+  EXPECT_EQ(telemetry::error_head("[Display Init] Configured adapter [0x1] differs"), "display init configured adapter");
+  EXPECT_EQ(telemetry::error_head("[vdd_capture] failed to query IDXGIDevice for adapter LUID: 0x80070005"), "vdd_capture failed to query idxgidevice for adapter luid");
+  EXPECT_NE(telemetry::error_code_of("[A b] one"), telemetry::error_code_of("[A b] two"));
+  // a tag with digits or symbols is data, not a tag
+  EXPECT_EQ(telemetry::error_head("[0x7ff] oops"), "");
+  EXPECT_EQ(telemetry::error_head("[user@example] oops"), "");
+}
+
+TEST(ErrorCode, TheSameMessageWithOtherValuesIsTheSameCode) {
+  EXPECT_EQ(telemetry::error_code_of("Download failed or rejected [https://a/b.jpg, code:23] [src/x.cpp:838:f]"), telemetry::error_code_of("Download failed or rejected [https://c/d.png, code:35] [src/x.cpp:838:f]"));
+  EXPECT_EQ(telemetry::error_code_of("Failed to create display for: <name>"), telemetry::error_code_of("Failed to create display for: "));
+  EXPECT_EQ(telemetry::error_code_of("x").size(), 9u);
+}
+
+TEST(ErrorCode, ALongMessageWithMultiByteCharactersIsCutAtBytesNotCharacters) {
+  // 1 + 40 * 3 bytes, no space: the head is cut at 96 bytes, in the middle of a character
+  std::string no_space = "x";
+  for (int i = 0; i < 40; ++i) no_space += "错";
+  const auto head = telemetry::error_head(no_space);
+  EXPECT_EQ(head.size(), 96u);
+  // spaces: cut at 96 bytes, then back to the last space
+  std::string spaced = "加载失败";
+  for (int i = 0; i < 12; ++i) spaced += " 加载失败";
+  const auto spaced_head = telemetry::error_head(spaced);
+  EXPECT_LE(spaced_head.size(), 96u);
+  EXPECT_EQ(spaced_head.back() & 0x80, 0x80);  // it ends on the last whole word, not on a space
+  // the codes are pinned: scripts/telemetry/test_error_code_catalogue.py holds the same two values (the dictionary tool must agree with this function byte for byte)
+  EXPECT_EQ(telemetry::error_code_of(no_space), "ec2d441a4");
+  EXPECT_EQ(telemetry::error_code_of(spaced), "ed4859417");
+}
+
+TEST(ErrorCode, TheHeadIsBounded) {
+  const auto head = telemetry::error_head(std::string(300, 'a') + " " + std::string(300, 'b'));
+  EXPECT_LE(head.size(), 96u);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
 // The service and the start-up: XP_SVC_CORE_RESTART and XP_SLOW_READY
 
 #include "src/telemetry/service_lifecycle.h"
@@ -2436,6 +2744,93 @@ TEST(ServiceLifecycle, ADeliberateRestartOfTheHostIsCountedButNotAProblem) {
   // asked by the service (a change of the session, a stop) it is not an exit of the core at all
   const auto asked = summarize(parse(life::core_exit_line(2000, 1, 100, -1, true) + "\n"));
   EXPECT_EQ(asked.exits, 0);
+}
+
+TEST(ServiceLifecycle, ARestartTheCoreAskedForIsCountedAndNeverAnAnomaly) {
+  // the Panel saves a setting: the core leaves its marker, exits with code 0 after twelve seconds and the service starts it again; four times in two minutes
+  std::string text = life::svc_start_line(1000) + "\n";
+  for (int i = 0; i < 4; ++i) {
+    text += life::core_start_line(2000 + i * 20'000, false, 10 + i, 0, i ? "core_exit" : "boot") + "\n";
+    text += life::core_exit_line(14'000 + i * 20'000, 0, 12'000, -1, false, true) + "\n";
+  }
+  const auto summary = summarize(parse(text));
+  EXPECT_EQ(summary.restarts_requested, 4);
+  EXPECT_EQ(summary.restart_reason, "api");  // none of these lines says why
+  EXPECT_EQ(summary.exits, 0);
+  EXPECT_EQ(summary.unexpected, 0);
+  EXPECT_EQ(summary.short_life, 0);
+  state_t state;
+  EXPECT_FALSE(judge_restart(summary, state, 1'000'000).has_value());
+  // the shaped event carries the count
+  EXPECT_TRUE(telemetry::shape_event(telemetry::kind_e::experience, "svc_lifecycle", summary_props(summary), 1000).has_value());
+  EXPECT_EQ(summary_props(summary).value("restarts_requested", -1), 4);
+  // the same exit without the note is the unrequested exit it always was
+  const auto without = summarize(parse(life::core_start_line(2000, false, 10, 0, "boot") + "\n" + life::core_exit_line(14'000, 0, 12'000, -1, false, false) + "\n"));
+  EXPECT_EQ(without.unexpected, 1);
+  EXPECT_EQ(without.restarts_requested, 0);
+  // a restart flag with an exit code of a crash is still a crash
+  const auto crashed = summarize(parse(life::core_exit_line(14'000, 0xC0000005ul, 12'000, -1, false, true) + "\n"));
+  EXPECT_EQ(crashed.restarts_requested, 0);
+  EXPECT_EQ(crashed.unexpected, 1);
+}
+
+TEST(ServiceLifecycle, TheReasonOfARequestedRestartTravelsFromTheCoreToTheEvent) {
+  const auto dir = std::filesystem::temp_directory_path() / "alk_restart_reason_test";
+  std::filesystem::remove_all(dir);
+  ASSERT_TRUE(life::note_restart_request(dir, 100'000, "guide", 4242, 1'799'999'000'000));
+  std::string word;
+  ASSERT_TRUE(life::take_restart_request(dir, 101'000, 4242, 1'799'999'000'000, &word));
+  EXPECT_EQ(word, "guide");
+  std::filesystem::remove_all(dir);
+  const auto line = life::core_exit_line(101'000, 0, 12'000, -1, false, true, word);
+  const auto summary = summarize(parse(line + "\n"));
+  EXPECT_EQ(summary.restarts_requested, 1);
+  EXPECT_EQ(summary.restart_reason, "guide");
+  const auto props = summary_props(summary);
+  EXPECT_EQ(props.value("restart_reason", ""), "guide");
+  EXPECT_TRUE(telemetry::shape_event(telemetry::kind_e::experience, "svc_lifecycle", props, 1000).has_value());
+  // a word that is not on the list is "api", whatever a hostile file says
+  EXPECT_EQ(summarize(parse(life::core_exit_line(1, 0, 12'000, -1, false, true, "something else") + "\n")).restart_reason, "api");
+  EXPECT_EQ(summarize(parse(life::core_exit_line(1, 0, 12'000, -1, false, true, "tray") + "\n")).restart_reason, "tray");
+}
+
+TEST(ServiceLifecycle, TheStartOfTheCoreToItsWebInterfaceIsTimedWithoutTheService) {
+  state_t state;
+  const auto fast = judge_ready("core", 3'000, state, 1'000'000);
+  EXPECT_FALSE(fast.has_value());
+  EXPECT_EQ(state.core_ms.size(), 1u);
+  EXPECT_TRUE(state.svc_core_ms.empty());  // its own baseline
+  const auto props = timing_props("core", 3'000, false);
+  EXPECT_EQ(props["which"], "core");
+  EXPECT_TRUE(telemetry::shape_event(telemetry::kind_e::experience, "startup_timing", props, 1000).has_value());
+  const auto slow = judge_ready("core", 20'000, state, 2'000'000);
+  ASSERT_TRUE(slow.has_value());
+  EXPECT_EQ(slow->which, "core");
+  EXPECT_TRUE(telemetry::shape_event(telemetry::kind_e::experience, "host_anomaly", anomaly_props(*slow), 1000).has_value());
+  // the baseline survives a restart of the host
+  const auto back = state_from_json(state_to_json(state));
+  EXPECT_EQ(back.core_ms.size(), 2u);
+}
+
+TEST(ServiceLifecycle, TheRestartMarkerIsTakenOnceAndOnlyWhileItIsFresh) {
+  const auto dir = std::filesystem::temp_directory_path() / "alk_restart_marker_test";
+  std::filesystem::remove_all(dir);
+  EXPECT_FALSE(life::take_restart_request(dir, 100'000, 7, 5));  // nothing there
+  ASSERT_TRUE(life::note_restart_request(dir, 100'000, "api", 7, 5));
+  EXPECT_TRUE(life::take_restart_request(dir, 101'500, 7, 5));
+  EXPECT_FALSE(life::take_restart_request(dir, 101'500, 7, 5));  // taken: gone
+  ASSERT_TRUE(life::note_restart_request(dir, 100'000, "api", 7, 5));
+  EXPECT_FALSE(life::take_restart_request(dir, 100'000 + life::RESTART_MARKER_WINDOW_MS + 1, 7, 5));  // an old note of an earlier restart that never happened
+  EXPECT_FALSE(std::filesystem::exists(dir / life::RESTART_MARKER));  // and it is removed all the same
+  ASSERT_TRUE(life::note_restart_request(dir, 100'000, "api", 7, 5));
+  EXPECT_FALSE(life::take_restart_request(dir, 90'000, 7, 5));  // an exit before the note was written is not this restart
+  // the note belongs to the core that wrote it: the exit of another core (another id, or the same id started later) does not take it, and it is gone afterwards
+  ASSERT_TRUE(life::note_restart_request(dir, 100'000, "settings", 7, 5));
+  EXPECT_FALSE(life::take_restart_request(dir, 101'000, 8, 5));
+  EXPECT_FALSE(std::filesystem::exists(dir / life::RESTART_MARKER));
+  ASSERT_TRUE(life::note_restart_request(dir, 100'000, "settings", 7, 5));
+  EXPECT_FALSE(life::take_restart_request(dir, 101'000, 7, 6));
+  std::filesystem::remove_all(dir);
 }
 
 TEST(ServiceLifecycle, ACrashShortAfterTheStartIsAProblemAndItBecomesSevereWhenItRepeats) {

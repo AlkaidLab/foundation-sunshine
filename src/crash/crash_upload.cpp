@@ -348,18 +348,32 @@ namespace crash {
     g_environment = std::move(provider);
   }
 
+  namespace {
+    std::atomic<const char *> g_session_log_state { "no_log" };
+  }
+
+  const char *
+  session_log_state() {
+    return g_session_log_state.load();
+  }
+
   std::optional<std::string>
   upload_session_log(const std::string &endpoint, const std::string &install_id, const std::string &version) {
-    if (!enabled()) return std::nullopt;
+    if (!enabled()) {
+      g_session_log_state.store("errors_off");
+      return std::nullopt;
+    }
     return upload_session_log_from(current_config_dir(), endpoint, install_id, version);
   }
 
   std::optional<std::string>
   upload_session_log_from(const fs::path &config_dir, const std::string &endpoint, const std::string &install_id, const std::string &version) {
+    g_session_log_state.store("no_log");
     try {
       std::call_once(g_curl_once, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
       const auto text = logfile::collect_current(log_path_of(config_dir));
       if (text.empty()) return std::nullopt;
+      g_session_log_state.store("pack_failed");
       const auto packed = logfile::pack(text);
       if (!packed) return std::nullopt;
       std::string base = endpoint;
@@ -367,9 +381,20 @@ namespace crash {
       const nlohmann::json meta { { "v", 1 }, { "install_id", install_id }, { "version", version } };
       // a service without the endpoint (404), a limit (429), a refusal: the report goes without the log
       const auto answer = post(base + "/v1/user-log", meta.dump(), {}, &*packed);
-      if (answer.status < 200 || answer.status >= 300) return std::nullopt;
+      if (answer.status == 0) {
+        g_session_log_state.store("unreachable");
+        return std::nullopt;
+      }
+      if (answer.status < 200 || answer.status >= 300) {
+        g_session_log_state.store("refused");
+        return std::nullopt;
+      }
+      g_session_log_state.store("bad_answer");
       const auto doc = nlohmann::json::parse(answer.body, nullptr, false);
-      if (doc.is_object() && doc.value("log", std::string()) == "stored" && doc.contains("ref") && doc["ref"].is_string()) return doc["ref"].get<std::string>();
+      if (doc.is_object() && doc.value("log", std::string()) == "stored" && doc.contains("ref") && doc["ref"].is_string()) {
+        g_session_log_state.store("uploaded");
+        return doc["ref"].get<std::string>();
+      }
     }
     catch (...) {
     }

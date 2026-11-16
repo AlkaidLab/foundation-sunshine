@@ -99,6 +99,12 @@ namespace telemetry::service_lifecycle {
         r.life_ms = integer_of(j, "life_ms", -1, SPAN_MAX * 12).value_or(-1);
         r.since_adopt_ms = integer_of(j, "since_adopt_ms", -1, SPAN_MAX * 12).value_or(-1);
         r.requested = j.value("requested", false);
+        r.restart = j.value("restart", false);
+        {
+          const auto word = j.value("reason", std::string {});
+          static const char *const known[] = { "settings", "guide", "troubleshooting", "doctor", "home", "shell", "tray", "widget", "import", "api" };
+          r.reason = std::any_of(std::begin(known), std::end(known), [&](const char *k) { return word == k; }) ? word : std::string { "api" };
+        }
       }
       else {
         continue;
@@ -119,6 +125,10 @@ namespace telemetry::service_lifecycle {
         else ++s.launched;
         if (r.cause == "core_exit") ++s.restarts_core_exit;
         else if (r.cause == "session_change") ++s.restarts_session;
+      }
+      else if (r.kind == "core_exit" && !r.requested && r.restart && r.exit_code == 0) {
+        ++s.restarts_requested;
+        s.restart_reason = r.reason.empty() ? std::string { "api" } : r.reason;
       }
       else if (r.kind == "core_exit" && !r.requested) {
         ++s.exits;
@@ -142,7 +152,7 @@ namespace telemetry::service_lifecycle {
 
   json
   state_to_json(const state_t &s) {
-    return { { "v", 1 }, { "restart", ints(s.restart_anomalies_ms) }, { "slow", ints(s.slow_ms) }, { "svc_core", nums(s.svc_core_ms) }, { "page", nums(s.page_ms) } };
+    return { { "v", 1 }, { "restart", ints(s.restart_anomalies_ms) }, { "slow", ints(s.slow_ms) }, { "svc_core", nums(s.svc_core_ms) }, { "page", nums(s.page_ms) }, { "core", nums(s.core_ms) } };
   }
 
   state_t
@@ -153,6 +163,7 @@ namespace telemetry::service_lifecycle {
     read_array(j, "slow", s.slow_ms, 16, 1, 4.2e12);
     read_array(j, "svc_core", s.svc_core_ms, BASELINE_KEEP, 0, 3.6e7);
     read_array(j, "page", s.page_ms, BASELINE_KEEP, 0, 3.6e7);
+    read_array(j, "core", s.core_ms, BASELINE_KEEP, 0, 3.6e7);
     return s;
   }
 
@@ -192,7 +203,7 @@ namespace telemetry::service_lifecycle {
 
   std::optional<anomaly_t>
   judge_ready(std::string_view which, std::int64_t ms, state_t &state, std::int64_t now_ms) {
-    auto &usual = which == "page" ? state.page_ms : state.svc_core_ms;
+    auto &usual = which == "page" ? state.page_ms : which == "core" ? state.core_ms : state.svc_core_ms;
     const auto median = usual_ms(usual);
     usual.push_back(static_cast<double>(ms));
     keep_last(usual, BASELINE_KEEP);
@@ -201,7 +212,7 @@ namespace telemetry::service_lifecycle {
     if (!above_limit && !above_baseline) return std::nullopt;
     anomaly_t a;
     a.code = "XP_SLOW_READY";
-    a.which = which == "page" ? "page" : "svc_core";
+    a.which = which == "page" ? "page" : which == "core" ? "core" : "svc_core";
     a.value = static_cast<double>(ms);
     a.threshold = above_limit ? static_cast<double>(SLOW_READY_MS) : *median * SLOW_READY_FACTOR;
     a.cause = above_limit ? "above_limit" : "above_baseline";
@@ -234,6 +245,8 @@ namespace telemetry::service_lifecycle {
     p["adopted"] = s.adopted;
     p["extras_ended"] = s.extras_ended;
     p["exits"] = s.exits;
+    p["restarts_requested"] = s.restarts_requested;
+    if (s.restarts_requested > 0 && !s.restart_reason.empty()) p["restart_reason"] = s.restart_reason;
     p["unexpected"] = s.unexpected;
     p["soon_after_adopt"] = s.soon_after_adopt;
     p["restarts_core_exit"] = s.restarts_core_exit;
@@ -243,7 +256,7 @@ namespace telemetry::service_lifecycle {
 
   json
   timing_props(std::string_view which, std::int64_t ms, bool slow) {
-    return { { "which", which == "page" ? "page" : "svc_core" }, { "ms", std::clamp<std::int64_t>(ms, 0, 3'600'000) }, { "slow", slow } };
+    return { { "which", which == "page" ? "page" : which == "core" ? "core" : "svc_core" }, { "ms", std::clamp<std::int64_t>(ms, 0, 3'600'000) }, { "slow", slow } };
   }
 
   json
