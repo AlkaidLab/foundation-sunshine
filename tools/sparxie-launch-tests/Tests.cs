@@ -32,6 +32,8 @@ internal static partial class Tests
             DirectStart(scratch);
             DecoyParentChecks(scratch);
             TouchUiSwitch(scratch);
+            BrokerCapabilityRules(scratch);
+            PackagedBrokerReports(scratch);
             EndfieldFields();
             ScreenArguments(scratch);
             StageReports(scratch);
