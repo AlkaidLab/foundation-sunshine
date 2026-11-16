@@ -1609,6 +1609,7 @@
       "ready": "Ready",
       "unsupported": "Not supported",
       "waiting_hdr": "Waiting for HDR",
+      "waiting_stream": "Waiting for a stream",
       "waiting_vdd": "Waiting for display"
     },
     "last": "last",

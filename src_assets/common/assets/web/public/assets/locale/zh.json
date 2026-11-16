@@ -1609,6 +1609,7 @@
       "ready": "就绪",
       "unsupported": "不支持",
       "waiting_hdr": "等待 HDR",
+      "waiting_stream": "等待串流",
       "waiting_vdd": "等待显示器"
     },
     "last": "最近",
