@@ -5,7 +5,6 @@
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 
 #include "diagnostics.h"
-#include "src/restart_reason.h"
 #include "src/audio_devices.h"
 #include "src/audio_vb_cable.h"
 #include "src/config.h"
@@ -278,14 +277,11 @@ namespace confighttp::diagnostics {
       print_req(request);
 
       // the page says why in ?reason= (one word of restart_reason.h); a client that does not say is "api"
-      {
-        std::string why;
-        for (const auto &[key, value] : request->parse_query_string())
-          if (key == "reason") why = value;
-        restart_reason::set(why);
-      }
+      std::string why;
+      for (const auto &[key, value] : request->parse_query_string())
+        if (key == "reason") why = value;
       // We may not return from this call
-      platf::restart();
+      platf::restart(why);
     }
 
     void

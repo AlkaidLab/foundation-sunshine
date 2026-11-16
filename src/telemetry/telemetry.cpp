@@ -288,7 +288,13 @@ namespace telemetry {
 
     /// When the host could serve its web interface (set by host_ready): the end of the start-up time the service measures.
     std::atomic<std::int64_t> ready_wall_ms { 0 };
-    std::atomic<std::int64_t> start_wall_ms { 0 };  // when telemetry started: the start of the core for the "core" start-up time
+    // the "core" start-up time is the difference of two readings of the steady clock (a change of the system clock in between must not show up as a slow start); the wall clock is kept for the service's own records
+    std::atomic<std::int64_t> start_steady_ms { 0 };  // when telemetry started
+    std::atomic<std::int64_t> ready_steady_ms { 0 };  // when the web interface became ready
+    std::int64_t
+    steady_ms() {
+      return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
     std::mutex lifecycle_state_mutex;
 
     service_lifecycle::state_t
@@ -450,6 +456,7 @@ namespace telemetry {
         auto last_config = clock_t::now();
         bool context_done = false;
         bool lifecycle_done = false;
+        bool core_timing_done = false;
         const auto run_started = clock_t::now();
         while (true) {
           {
@@ -471,8 +478,12 @@ namespace telemetry {
           if (!lifecycle_done && context_done && (ready_wall_ms.load() != 0 || now - run_started > 60s)) {
             lifecycle_done = true;
             report_service_lifecycle(*service_, platf::appdata() / "telemetry");
-            // the time from the start of this core to its web interface, for every install (a host that runs without the service has no service time, and had no start-up time at all)
-            if (const auto ready = ready_wall_ms.load(), began = start_wall_ms.load(); ready > 0 && began > 0 && ready >= began) judge_and_emit_ready(*service_, platf::appdata() / "telemetry", "core", ready - began);
+          }
+          // the time from the start of this core to its web interface, for every install (a host that runs without the service has no service time, and had no start-up time at all). It has its own
+          // state: a web interface that is ready after the service summary was reported (a start that takes more than a minute is the one worth knowing) is still timed, once.
+          if (!core_timing_done && context_done && ready_steady_ms.load() != 0) {
+            core_timing_done = true;
+            if (const auto ready = ready_steady_ms.load(), began = start_steady_ms.load(); began > 0 && ready >= began) judge_and_emit_ready(*service_, platf::appdata() / "telemetry", "core", ready - began);
           }
           if (now - last_config >= CONFIG_RECHECK) {
             last_config = now;
@@ -536,7 +547,7 @@ namespace telemetry {
       deps.post = [](const std::string &url, const std::string &body) { return http_post(url, "application/json", body); };
       deps.session_log = [](const std::string &endpoint, const std::string &install_id, const std::string &version) { return crash::upload_session_log(endpoint, install_id, version); };
       deps.session_log_state = [] { return std::string { crash::session_log_state() }; };
-      start_wall_ms.store(wall_ms());
+      start_steady_ms.store(steady_ms());
       auto service = std::make_shared<service_t>(std::move(options), std::move(deps));
       context_t ctx;
       ctx.version = build_info::version();
@@ -638,6 +649,7 @@ namespace telemetry {
     service->emit(kind_e::usage, "app_start", json { { "cold", cold }, { "start_ms", start_ms } });
     service->emit(kind_e::experience, "startup", json { { "host_start_ms", start_ms } });
     ready_wall_ms.store(wall_ms());
+    ready_steady_ms.store(steady_ms());
   }
 
   void

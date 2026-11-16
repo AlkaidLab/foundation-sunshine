@@ -2410,17 +2410,14 @@ TEST(OptOut, TheRecordCarriesTheChoiceTheProductAndTheVersionAndNothingElse) {
   std::vector<record_t> records;
   add(records, { "errors" }, { { "host", "5.2.0.1.杂鱼" }, { "panel", "1.0.0" } }, OPT_OUT_ID, 1'800'000'000'000);
   ASSERT_EQ(records.size(), 2u);
-  telemetry::context_t ctx;
-  ctx.install_id = "ffffffff-ffff-4fff-8fff-ffffffffffff";  // the current id: the record's own is used
-  ctx.session_id = "11111111-2222-4333-8444-555555555555";
-  ctx.version = "5.2.0.1.杂鱼";
-  ctx.channel = "stable";
-  ctx.os = "windows";
-  ctx.os_version = "10.0.26100";
-  ctx.arch = "x86_64";
-  const auto body = body_of(records[1], ctx);
+  const auto body = body_of(records[1], "11111111-2222-4333-8444-555555555555");
   ASSERT_TRUE(body.is_object());
   EXPECT_EQ(body["install_id"], OPT_OUT_ID);
+  // nothing about the computer goes with it: the install, a fresh session number, the product, its version and the one event
+  for (const char *key : { "channel", "os", "os_version", "arch", "gpu_vendor", "locale" }) EXPECT_FALSE(body.contains(key)) << key;
+  std::set<std::string> keys;
+  for (const auto &[k, v] : body.items()) keys.insert(k);
+  EXPECT_EQ(keys, (std::set<std::string> { "v", "install_id", "session_id", "product", "version", "events" }));
   EXPECT_EQ(body["product"], "panel");
   EXPECT_EQ(body["version"], "1.0.0");
   ASSERT_EQ(body["events"].size(), 1u);
@@ -2488,6 +2485,38 @@ TEST(OptOutService, TurningAChoiceOffSendsOneRecordAndNothingAfterIt) {
   EXPECT_FALSE(h.posted.empty());
   for (const auto &b : h.posted) EXPECT_EQ(b["events"][0]["props"], (json { { "choice", "errors" } }));
   EXPECT_TRUE(h.svc->install_id().empty());
+}
+
+TEST(OptOutService, TheRecordIsSavedBeforeTheStateAndAnExpiredOneLeavesTheDisk) {
+  harness_t h;
+  h.consent = consent_t { true, true };
+  h.svc->reconcile_consent();
+  const auto id = h.svc->install_id();
+  const auto pending = h.dir.path / "opt_out_pending.jsonl";
+  const auto state = h.dir.path / "consent_state.json";
+  // no room to save the record (a directory stands where the file goes): the state must still say "on", so the next call finds the turn-off again
+  std::filesystem::create_directories(pending);
+  h.consent = consent_t { false, true };
+  h.svc->consent_changed();
+  EXPECT_EQ(json::parse(std::ifstream(state))["usage"], true);
+  std::filesystem::remove_all(pending);
+  h.svc->reconcile_consent();
+  EXPECT_TRUE(std::filesystem::is_regular_file(pending));
+  EXPECT_EQ(json::parse(std::ifstream(state))["usage"], false);
+  // the record is delivered: the file is empty, not left with the id in it
+  h.svc->pump();
+  EXPECT_EQ(std::filesystem::file_size(pending), 0u);
+  // a record that was never delivered is dropped after two weeks, and the file goes with it even though nothing else is waiting
+  h.next_status = 503;
+  h.consent = consent_t { false, false };
+  h.svc->reconcile_consent();
+  h.svc->pump();
+  EXPECT_GT(std::filesystem::file_size(pending), 0u);
+  h.now += telemetry::opt_out::MAX_AGE_MS + 60'000;
+  h.svc->pump();
+  EXPECT_EQ(std::filesystem::file_size(pending), 0u);
+  EXPECT_EQ(std::ifstream(pending).peek(), std::ifstream::traits_type::eof());
+  (void) id;
 }
 
 TEST(OptOutService, AnOfflineRecordWaitsAndAFirstRunWithTheChoiceOffSendsNothing) {
@@ -2665,9 +2694,9 @@ TEST(ServiceLifecycle, ARestartTheCoreAskedForIsCountedAndNeverAnAnomaly) {
 TEST(ServiceLifecycle, TheReasonOfARequestedRestartTravelsFromTheCoreToTheEvent) {
   const auto dir = std::filesystem::temp_directory_path() / "alk_restart_reason_test";
   std::filesystem::remove_all(dir);
-  ASSERT_TRUE(life::note_restart_request(dir, 100'000, "guide"));
+  ASSERT_TRUE(life::note_restart_request(dir, 100'000, "guide", 4242, 1'799'999'000'000));
   std::string word;
-  ASSERT_TRUE(life::take_restart_request(dir, 101'000, &word));
+  ASSERT_TRUE(life::take_restart_request(dir, 101'000, 4242, 1'799'999'000'000, &word));
   EXPECT_EQ(word, "guide");
   std::filesystem::remove_all(dir);
   const auto line = life::core_exit_line(101'000, 0, 12'000, -1, false, true, word);
@@ -2703,15 +2732,21 @@ TEST(ServiceLifecycle, TheStartOfTheCoreToItsWebInterfaceIsTimedWithoutTheServic
 TEST(ServiceLifecycle, TheRestartMarkerIsTakenOnceAndOnlyWhileItIsFresh) {
   const auto dir = std::filesystem::temp_directory_path() / "alk_restart_marker_test";
   std::filesystem::remove_all(dir);
-  EXPECT_FALSE(life::take_restart_request(dir, 100'000));  // nothing there
-  ASSERT_TRUE(life::note_restart_request(dir, 100'000));
-  EXPECT_TRUE(life::take_restart_request(dir, 101'500));
-  EXPECT_FALSE(life::take_restart_request(dir, 101'500));  // taken: gone
-  ASSERT_TRUE(life::note_restart_request(dir, 100'000));
-  EXPECT_FALSE(life::take_restart_request(dir, 100'000 + life::RESTART_MARKER_WINDOW_MS + 1));  // an old note of an earlier restart that never happened
+  EXPECT_FALSE(life::take_restart_request(dir, 100'000, 7, 5));  // nothing there
+  ASSERT_TRUE(life::note_restart_request(dir, 100'000, "api", 7, 5));
+  EXPECT_TRUE(life::take_restart_request(dir, 101'500, 7, 5));
+  EXPECT_FALSE(life::take_restart_request(dir, 101'500, 7, 5));  // taken: gone
+  ASSERT_TRUE(life::note_restart_request(dir, 100'000, "api", 7, 5));
+  EXPECT_FALSE(life::take_restart_request(dir, 100'000 + life::RESTART_MARKER_WINDOW_MS + 1, 7, 5));  // an old note of an earlier restart that never happened
   EXPECT_FALSE(std::filesystem::exists(dir / life::RESTART_MARKER));  // and it is removed all the same
-  ASSERT_TRUE(life::note_restart_request(dir, 100'000));
-  EXPECT_FALSE(life::take_restart_request(dir, 90'000));  // an exit before the note was written is not this restart
+  ASSERT_TRUE(life::note_restart_request(dir, 100'000, "api", 7, 5));
+  EXPECT_FALSE(life::take_restart_request(dir, 90'000, 7, 5));  // an exit before the note was written is not this restart
+  // the note belongs to the core that wrote it: the exit of another core (another id, or the same id started later) does not take it, and it is gone afterwards
+  ASSERT_TRUE(life::note_restart_request(dir, 100'000, "settings", 7, 5));
+  EXPECT_FALSE(life::take_restart_request(dir, 101'000, 8, 5));
+  EXPECT_FALSE(std::filesystem::exists(dir / life::RESTART_MARKER));
+  ASSERT_TRUE(life::note_restart_request(dir, 100'000, "settings", 7, 5));
+  EXPECT_FALSE(life::take_restart_request(dir, 101'000, 7, 6));
   std::filesystem::remove_all(dir);
 }
 

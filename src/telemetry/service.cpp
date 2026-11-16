@@ -1145,6 +1145,30 @@ namespace telemetry {
 
   // ---- the record that a choice was turned off (opt_out.h) ----
 
+  namespace {
+    /** Writes `text` to `path` through a temporary file and a rename, so a crash leaves the old content or the new, never half of it. */
+    bool
+    write_file_atomic(const fs::path &path, const std::string &text) {
+      try {
+        std::error_code ec;
+        fs::create_directories(path.parent_path(), ec);
+        auto temp = path;
+        temp += ".tmp";
+        {
+          std::ofstream out(temp, std::ios::binary | std::ios::trunc);
+          out << text;
+          out.flush();
+          if (!out) return false;
+        }
+        fs::rename(temp, path, ec);
+        return !ec;
+      }
+      catch (...) {
+        return false;
+      }
+    }
+  }  // namespace
+
   std::string
   service_t::peek_install_id() {
     {
@@ -1173,8 +1197,7 @@ namespace telemetry {
       for (const auto &[p, v] : products_seen_) j[p] = v;
       std::error_code ec;
       fs::create_directories(options_.dir, ec);
-      std::ofstream out(options_.dir / "products_seen.json", std::ios::trunc);
-      out << j.dump();
+      write_file_atomic(options_.dir / "products_seen.json", j.dump());
     }
     catch (...) {
     }
@@ -1191,26 +1214,23 @@ namespace telemetry {
         if (!stored.is_discarded()) before = opt_out::state_from_json(stored);
       }
       const auto off = opt_out::turned_off(before, c.usage, c.errors);
-      if (!before.known || before.usage != c.usage || before.errors != c.errors) {
-        std::error_code ec;
-        fs::create_directories(options_.dir, ec);
-        std::ofstream out(options_.dir / "consent_state.json", std::ios::trunc);
-        out << opt_out::state_to_json({ true, c.usage, c.errors }).dump();
+      const bool changed = !before.known || before.usage != c.usage || before.errors != c.errors;
+      if (!off.empty()) {
+        // The record is saved before the new state is: a state that says "already off" without a saved record would lose the record for good (the next start would find nothing turned off).
+        const auto id = peek_install_id();
+        std::string host_version;
+        {
+          std::lock_guard lock { mutex_ };
+          host_version = sanitize_version(context_.version);
+        }
+        if (host_version.empty()) return;  // the context is not set yet: telemetry.cpp calls this again once it is, and the state still says "on"
+        std::lock_guard lock { opt_out_mutex_ };
+        std::vector<opt_out::product_version_t> products { { "host", host_version } };
+        for (const auto &[p, v] : products_seen_) products.push_back({ p, v });
+        opt_out::add(opt_outs_, off, products, id, deps_.now_ms());
+        if (!write_file_atomic(options_.dir / "opt_out_pending.jsonl", opt_out::serialize(opt_outs_))) return;  // not saved: the state is not committed, the next call tries again
       }
-      if (off.empty()) return;
-      const auto id = peek_install_id();
-      std::string host_version;
-      {
-        std::lock_guard lock { mutex_ };
-        host_version = sanitize_version(context_.version);
-      }
-      if (host_version.empty()) return;  // the context is not set yet: telemetry.cpp calls this again once it is
-      std::lock_guard lock { opt_out_mutex_ };
-      std::vector<opt_out::product_version_t> products { { "host", host_version } };
-      for (const auto &[p, v] : products_seen_) products.push_back({ p, v });
-      opt_out::add(opt_outs_, off, products, id, deps_.now_ms());
-      std::ofstream out(options_.dir / "opt_out_pending.jsonl", std::ios::trunc);
-      out << opt_out::serialize(opt_outs_);
+      if (changed) write_file_atomic(options_.dir / "consent_state.json", opt_out::state_to_json({ true, c.usage, c.errors }).dump());
     }
     catch (...) {
     }
@@ -1223,11 +1243,13 @@ namespace telemetry {
       {
         std::lock_guard lock { opt_out_mutex_ };
         if (opt_outs_.empty()) return;
+        const auto before = opt_outs_.size();
         const auto due = opt_out::due(opt_outs_, deps_.now_ms());
         for (const auto i : due) work.push_back(opt_outs_[i]);
+        // records that are too old or were tried too often are dropped for good: the file (and the anonymous id in it) goes with them, even when nothing else is waiting
+        if (opt_outs_.size() != before) write_file_atomic(options_.dir / "opt_out_pending.jsonl", opt_out::serialize(opt_outs_));
       }
       if (work.empty()) return;
-      const auto ctx = context();
       std::vector<opt_out::record_t> done_or_dropped, failed_now;
       for (auto &r : work) {
         // the same pacing as every other request
@@ -1235,9 +1257,7 @@ namespace telemetry {
         while (!post_times_.empty() && at - post_times_.front() >= 60'000) post_times_.pop_front();
         if (static_cast<int>(post_times_.size()) >= options_.max_posts_per_minute) break;
         post_times_.push_back(at);
-        auto with_session = ctx;
-        with_session.session_id = new_uuid_v4();
-        const auto body = opt_out::body_of(r, with_session);
+        const auto body = opt_out::body_of(r, new_uuid_v4());
         if (body.is_null()) {
           done_or_dropped.push_back(r);
           continue;
@@ -1265,8 +1285,7 @@ namespace telemetry {
             r.tries = f.tries;
             r.next_try_ms = f.next_try_ms;
           }
-      std::ofstream out(options_.dir / "opt_out_pending.jsonl", std::ios::trunc);
-      out << opt_out::serialize(opt_outs_);
+      write_file_atomic(options_.dir / "opt_out_pending.jsonl", opt_out::serialize(opt_outs_));
     }
     catch (...) {
     }

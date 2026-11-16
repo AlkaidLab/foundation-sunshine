@@ -73,8 +73,11 @@ namespace telemetry::opt_out {
   /** After a failed try: the next time grows (10 min, 20, 40 ... at most one day). */
   void failed(record_t &record, std::int64_t now_ms);
 
-  /** The body of /v1/events for one record: the install's id in place of the current one, one fresh session, one event. Null when the event does not pass the allow-list. */
-  nlohmann::json body_of(const record_t &record, context_t context);
+  /**
+   * The body of /v1/events for one record: the install's id, one fresh session number, the product and its version, and one event. Nothing about the computer (no channel, system, architecture,
+   * graphics vendor or language) goes with it. Null when the event does not pass the allow-list.
+   */
+  nlohmann::json body_of(const record_t &record, std::string_view session_id);
 
   bool is_uuid(std::string_view text);
 

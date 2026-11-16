@@ -377,7 +377,7 @@ namespace platf {
   }
 
   void
-  restart() {
+  restart(std::string_view /* reason */) {
     // Gracefully clean up and restart ourselves instead of exiting
     atexit(restart_on_exit);
     lifetime::exit_sunshine(0, true);

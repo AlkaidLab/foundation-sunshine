@@ -15,8 +15,7 @@ import os
 import re
 import sys
 
-LOG = re.compile(r"BOOST_LOG\((error|fatal)\)\s*<<\s*((?:[^;]|\n)*?);", re.S)
-PIECE = re.compile(r'\s*("(?:[^"\\]|\\.)*")\s*(?:sv|s)?\s*')
+LOG_START = re.compile(r"BOOST_LOG\((error|fatal)\)\s*<<")
 
 
 def fnv1a(text: str) -> int:
@@ -73,13 +72,69 @@ def error_code(text: str) -> str:
     return "e%08x" % fnv1a(error_head(text))
 
 
+def statement_end(text: str, start: int) -> int:
+    """The index of the semicolon that ends the statement, skipping string and character literals (a `;` inside a message does not end it)."""
+    i = start
+    n = len(text)
+    while i < n:
+        c = text[i]
+        if c in "\"'":
+            quote = c
+            i += 1
+            while i < n and text[i] != quote:
+                i += 2 if text[i] == "\\" else 1
+        elif c == ";":
+            return i
+        i += 1
+    return n
+
+
+def split_pieces(statement: str):
+    """The operands of the `<<` chain (a `<<` inside a literal is not a separator)."""
+    pieces, cur, i, n = [], [], 0, len(statement)
+    while i < n:
+        c = statement[i]
+        if c in "\"'":
+            quote = c
+            j = i + 1
+            while j < n and statement[j] != quote:
+                j += 2 if statement[j] == "\\" else 1
+            cur.append(statement[i:j + 1])
+            i = j + 1
+            continue
+        if statement.startswith("<<", i):
+            pieces.append("".join(cur))
+            cur = []
+            i += 2
+            continue
+        cur.append(c)
+        i += 1
+    pieces.append("".join(cur))
+    return pieces
+
+
+LITERAL = re.compile(r'\s*"((?:[^"\\]|\\.)*)"\s*(?:sv|s)?\s*')
+
+
+def unescape(raw: str) -> str:
+    return re.sub(r"\\(.)", lambda m: {"n": "\n", "t": "\t"}.get(m.group(1), m.group(1)), raw)
+
+
 def leading_literals(statement: str) -> str:
+    """The text the message starts with: the string literals at the front of the `<<` chain, adjacent literals ("a" "b") joined, up to the first operand that is not a literal."""
     out = []
-    for piece in statement.split("<<"):
-        m = PIECE.fullmatch(piece)
-        if not m:
+    for piece in split_pieces(statement):
+        pos, parts = 0, []
+        while pos < len(piece):
+            m = LITERAL.match(piece, pos)
+            if not m:
+                break
+            parts.append(unescape(m.group(1)))
+            pos = m.end()
+        if parts and pos == len(piece):
+            out.append("".join(parts))
+        else:
             break
-        out.append(bytes(m.group(1)[1:-1], "utf-8").decode("unicode_escape", errors="ignore") if "\\" in m.group(1) else m.group(1)[1:-1])
     return "".join(out)
 
 
@@ -91,9 +146,10 @@ def scan(root: str):
             if not name.endswith((".cpp", ".h", ".mm", ".hpp")):
                 continue
             path = os.path.join(dirpath, name)
-            text = open(path, errors="ignore").read()
-            for m in LOG.finditer(text):
-                message = leading_literals(m.group(2))
+            with open(path, errors="ignore") as handle:
+                text = handle.read()
+            for m in LOG_START.finditer(text):
+                message = leading_literals(text[m.end():statement_end(text, m.end())])
                 line = text.count("\n", 0, m.start()) + 1
                 code = error_code(message)
                 entry = table.setdefault(code, {"head": error_head(message), "sites": []})

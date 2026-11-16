@@ -138,7 +138,7 @@ namespace telemetry::opt_out {
   }
 
   json
-  body_of(const record_t &record, context_t context) {
+  body_of(const record_t &record, std::string_view session_id) {
     event_t e;
     e.t = record.t;
     e.kind = kind_e::usage;
@@ -150,10 +150,14 @@ namespace telemetry::opt_out {
     if (!shaped) return nullptr;
     e.t = shaped->t;
     e.props = shaped->props;
+    context_t context;  // empty on purpose: only the fields below are kept
     context.install_id = record.install_id;
-    const auto envelopes = build_envelopes(context, record.product, { e });
+    context.session_id = std::string { session_id };
+    auto envelopes = build_envelopes(context, record.product, { e });
     if (envelopes.empty()) return nullptr;
-    return envelopes.front();
+    auto body = std::move(envelopes.front());
+    for (const char *key : { "channel", "os", "os_version", "arch", "gpu_vendor", "locale" }) body.erase(key);
+    return body;
   }
 
 }  // namespace telemetry::opt_out

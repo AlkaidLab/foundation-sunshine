@@ -20,6 +20,10 @@
 #include <iterator>
 #include <string>
 
+#ifdef _WIN32
+  #include <windows.h>
+#endif
+
 namespace sunshinesvc::lifecycle {
 
   /// The file never grows past this: when it would, the oldest half is dropped (a service that restarts the core in a loop must not fill the disk).
@@ -90,15 +94,18 @@ namespace sunshinesvc::lifecycle {
     }
   }
 
-  /// Called by the core right before it exits for a restart it was asked to do. Never throws.
+  /**
+   * Called by the core right before it exits for a restart it was asked to do. The note holds the time, the id and the start time of this process and the reason word, so that only the exit
+   * of this very core takes it (a note left by a standalone core that was restarted by hand must not turn the exit of another core into a "requested" restart). Never throws.
+   */
   inline bool
-  note_restart_request(const std::filesystem::path &dir, std::int64_t t, const char *reason = "api") noexcept {
+  note_restart_request(const std::filesystem::path &dir, std::int64_t t, const char *reason = "api", unsigned long pid = 0, std::int64_t start_ms = 0) noexcept {
     try {
       std::error_code ec;
       std::filesystem::create_directories(dir, ec);
       std::ofstream out { dir / RESTART_MARKER, std::ios::binary | std::ios::trunc };
       if (!out) return false;
-      out << num(t) << ' ' << (reason ? reason : "api") << '\n';
+      out << num(t) << ' ' << num(static_cast<long long>(pid)) << ' ' << num(start_ms) << ' ' << (reason ? reason : "api") << '\n';
       return static_cast<bool>(out);
     }
     catch (...) {
@@ -106,9 +113,12 @@ namespace sunshinesvc::lifecycle {
     }
   }
 
-  /// Called by the service when the core ended: true when the core had left a fresh marker (it is removed either way). `exit_t` is the time of the exit.
+  /**
+   * Called by the service when a core ended: true when that core (`pid`, `start_ms`) had left a fresh note (it is removed either way, so a note never outlives the next exit).
+   * `exit_t` is the time of the exit.
+   */
   inline bool
-  take_restart_request(const std::filesystem::path &dir, std::int64_t exit_t, std::string *reason = nullptr) noexcept {
+  take_restart_request(const std::filesystem::path &dir, std::int64_t exit_t, unsigned long pid = 0, std::int64_t start_ms = 0, std::string *reason = nullptr) noexcept {
     try {
       const auto file = dir / RESTART_MARKER;
       std::string text;
@@ -119,25 +129,47 @@ namespace sunshinesvc::lifecycle {
       }
       std::error_code ec;
       std::filesystem::remove(file, ec);
-      long long t = 0;
       std::size_t i = 0;
-      for (; i < text.size(); ++i) {
-        const char c = text[i];
-        if (c < '0' || c > '9') break;
-        t = t * 10 + (c - '0');
-        if (t > 4'102'444'800'000LL) return false;
-      }
+      const auto number = [&](long long limit) -> long long {
+        long long v = 0;
+        bool any = false;
+        for (; i < text.size() && text[i] >= '0' && text[i] <= '9'; ++i) {
+          v = v * 10 + (text[i] - '0');
+          any = true;
+          if (v > limit) return -1;
+        }
+        if (i < text.size() && text[i] == ' ') ++i;
+        return any ? v : -1;
+      };
+      const auto t = number(4'102'444'800'000LL);
+      const auto note_pid = number(4'294'967'295LL);
+      const auto note_start = number(4'102'444'800'000LL);
+      if (t <= 0 || note_pid < 0 || note_start < 0) return false;
       if (reason) {
-        // one lower-case word after the time; the host checks it against its own list
+        // one lower-case word at the end; the host checks it against its own list
         std::string word;
-        for (++i; i < text.size() && word.size() < 24 && text[i] >= 'a' && text[i] <= 'z'; ++i) word.push_back(text[i]);
+        for (; i < text.size() && word.size() < 24 && text[i] >= 'a' && text[i] <= 'z'; ++i) word.push_back(text[i]);
         *reason = word;
       }
-      return t > 0 && exit_t >= t - 2000 && exit_t - t <= RESTART_MARKER_WINDOW_MS;
+      if (static_cast<unsigned long>(note_pid) != pid || note_start != start_ms) return false;  // the note of another core
+      return exit_t >= t - 2000 && exit_t - t <= RESTART_MARKER_WINDOW_MS;
     }
     catch (...) {
       return false;
     }
   }
+
+#ifdef _WIN32
+  /// When a process started, as unix ms (0 when it cannot be read): with its id it names one process for good, an id alone can be reused.
+  inline std::int64_t
+  process_start_unix_ms(HANDLE process) {
+    FILETIME created {}, exited {}, kernel {}, user {};
+    if (!GetProcessTimes(process, &created, &exited, &kernel, &user)) return 0;
+    ULARGE_INTEGER v;
+    v.LowPart = created.dwLowDateTime;
+    v.HighPart = created.dwHighDateTime;
+    return static_cast<std::int64_t>((v.QuadPart - 116444736000000000ULL) / 10000ULL);
+  }
+#endif
 
 }  // namespace sunshinesvc::lifecycle

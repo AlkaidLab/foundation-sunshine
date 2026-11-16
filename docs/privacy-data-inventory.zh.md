@@ -27,7 +27,7 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | app_start：cold、start_ms、update_source | `true`, `1800`, `mirror` | `src/telemetry/events.cpp:326` | 启动耗时；更新来源（Mirror酱还是 GitHub）。 | 否：一个布尔值、一个数字、三个词之一。 | 按类型和范围的白名单 `src/telemetry/events.cpp:326`。 | events 180 天。 |
 | app_exit：uptime_s | `3600` | `src/telemetry/events.cpp:327` | 程序运行多久；会话是否正常结束。 | 否：一个数字。 | 范围 0 到一年。 | events 180 天。 |
-| opt_out：choice | `usage` | `src/telemetry/events.cpp:436` | 用户关闭了两个开关之一（匿名使用统计或问题自动上报）；每个开关、每个产品只发一次，不算作使用。 | 否：两个固定词之一。 | 由主机自己发送；最多重试 14 天；之后不再发送该开关的任何内容。 | opt_outs：400 天。 |
+| opt_out：choice | `usage` | `src/telemetry/events.cpp:436` | 用户关闭了两个开关之一（匿名使用统计或问题自动上报）；每个开关、每个产品只发一次，不算作使用。 | 否：两个固定词之一。 | 这一批只含安装编号、新的会话编号、产品和版本；由主机自己发送；最多重试 14 天；之后不再发送该开关的任何内容。 | opt_outs：400 天。 |
 | stream_start / stream_end：client_kind | `moonlight-macos-enhanced` | `src/telemetry/events.cpp:328` `src/telemetry/stream_stats.cpp:92` | 哪些客户端家族在使用，用来决定投入方向。 | 否：只能是主机自己识别的六个家族之一，否则为 `other`。用户给设备起的名字不会传出（修复前这是一个自由的 catalogue id）。 | 发送端白名单 `src/telemetry/stream_stats.cpp:92`，Worker 端枚举 `worker:src/schema.ts:53`。 | events 180 天。 |
 | stream_start / stream_end：client_os、codec、width、height、fps、hdr、audio_codec、transport | `macos`, `hevc`, `2560`, `1440`, `120`, `true`, `opus`, `altp` | `src/telemetry/events.cpp:328` `src/telemetry/stream_stats.cpp:122` | 人们串流用什么格式和分辨率；ALTP 传输用得多不多。 | 否：固定词和数字。 | 发送端 `src/telemetry/events.cpp:328` 和 Worker `worker:src/schema.ts:53` 都用枚举；数字被限幅。 | events 180 天。 |
 | stream_start / stream_end：app_kind | `sparxie` | `src/telemetry/stream_stats.cpp:56` | 桌面、大屏、Sparxie、Steam 或其他：哪类使用最重要。 | 否：五个词之一。应用名称和命令只用来选词，不会发送。 | `src/telemetry/stream_stats.cpp:56` | events 180 天。 |

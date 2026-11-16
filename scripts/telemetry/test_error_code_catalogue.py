@@ -40,5 +40,29 @@ class Head(unittest.TestCase):
             self.assertEqual(table[code]["head"], "nvenc nvencopenencodesessionex")
 
 
+class Statements(unittest.TestCase):
+    def scan_text(self, source):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "a.cpp"), "w") as f:
+                f.write(source)
+            return cat.scan(d)
+
+    def test_a_semicolon_inside_the_message_does_not_end_the_statement(self):
+        table = self.scan_text('void f() { BOOST_LOG(error) << "Failed; retry aborted: "sv << code; }\n')
+        self.assertEqual(list(table), [cat.error_code("Failed; retry aborted")])
+        self.assertEqual(cat.error_head("Failed; retry aborted: x"), "failed; retry aborted")
+
+    def test_adjacent_literals_are_one_message(self):
+        table = self.scan_text('void f() { BOOST_LOG(error) << "Audio capture: " "failed to initialize microphone"; }\n')
+        self.assertEqual(list(table), [cat.error_code("Audio capture: failed to initialize microphone")])
+        # across << and with a suffix, as the host writes them
+        table = self.scan_text('void f() { BOOST_LOG(fatal) << "Couldn\'t start "sv << "the server"sv << port; }\n')
+        self.assertEqual(list(table), [cat.error_code("Couldn't start the server")])
+
+    def test_a_chain_that_starts_with_a_value_has_the_empty_code(self):
+        table = self.scan_text('void f() { BOOST_LOG(error) << name << " failed"; }\n')
+        self.assertEqual(list(table), ["e811c9dc5"])
+
+
 if __name__ == "__main__":
     unittest.main()

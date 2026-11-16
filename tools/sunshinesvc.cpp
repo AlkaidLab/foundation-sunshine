@@ -1072,7 +1072,7 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
         bool core_restart = false;
         std::string restart_word;
         if (const auto file = LifecycleFile(); !file.empty()) {
-          core_restart = sunshinesvc::lifecycle::take_restart_request(file.parent_path(), exit_ms, &restart_word) && !exit_requested && ended_with == 0;
+          core_restart = sunshinesvc::lifecycle::take_restart_request(file.parent_path(), exit_ms, process_info.dwProcessId, sunshinesvc::lifecycle::process_start_unix_ms(process_info.hProcess), &restart_word) && !exit_requested && ended_with == 0;
         }
         NoteLifecycle(sunshinesvc::lifecycle::core_exit_line(exit_ms, ended_with, ProcessLifeMs(process_info.hProcess),
           core_adopted ? static_cast<long long>(GetTickCount64() - adopted_at_tick) : -1,
