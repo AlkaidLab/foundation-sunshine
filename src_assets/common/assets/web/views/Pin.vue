@@ -20,15 +20,15 @@
             <MSeg v-model="kind" class="pin-filter__kind" :label="tx.filter" :options="kindChoices" />
           </div>
           <MEmpty v-if="!shown.length" icon="search_off" :title="tx.noMatch" />
-          <section v-for="group in groups" :key="group.kind" class="pin-group">
-            <h3 v-if="groups.length > 1" class="pin-group__title">{{ tx[group.kind] || tx.other }}<span class="pin-count">{{ group.items.length }}</span></h3>
+          <section v-for="group in listGroups" :key="group.kind" class="pin-group" :class="{ 'pin-group--stopped': group.kind === '__stopped' }">
+            <h3 v-if="listGroups.length > 1" class="pin-group__title">{{ group.kind === '__stopped' ? $t('connections.stopped') : (tx[group.kind] || tx.other) }}<span class="pin-count">{{ group.items.length }}</span></h3>
             <div class="pin-list" role="list" @keydown="rowKeys">
               <div
                 v-for="client in group.items"
                 :key="client.uuid"
                 class="m-item m-split-item pin-row"
                 :data-row="client.name"
-                :class="{ 'm-item--disabled': client.enabled === false }"
+                :class="{ 'pin-row--stopped': client.enabled === false }"
                 role="listitem"
                 @contextmenu="onRowMenu($event, client)"
               >
@@ -39,20 +39,16 @@
                     <span v-if="rowText(client)" class="m-item__text" :class="{ 'pin-row__live': stateOf(client) === 'streaming' }">{{ rowText(client) }}</span>
                   </span>
                 </div>
-                <MSwitch
-                  class="pin-row__switch"
-                  :model-value="client.enabled !== false"
-                  :disabled="updating.has(client.uuid) || loading || saving"
-                  :label="$t('connections.allow_device', { name: client.name })"
-                  @update:model-value="(value) => requestToggle(client, value)"
-                />
+                <!-- a stopped device says so on its row and is restored from it, with no question -->
+                <span v-if="client.enabled === false" class="pin-row__stopped"><span class="pin-badge"><MIcon name="block" />{{ $t('connections.stopped') }}</span><MButton variant="tonal" size="sm" icon="undo" :disabled="updating.has(client.uuid) || loading || saving" @click="restoreClient(client)">{{ $t('connections.restore') }}</MButton></span>
+                <!-- cancel pairing: a red icon button, always in view, two steps before anything happens -->
+                <button type="button" class="pin-row__unpair" :disabled="updating.has(client.uuid) || loading || saving" :aria-label="$t('connections.unpair_named', { name: client.name })" :data-tip="$t('connections.unpair_named', { name: client.name })" @click="requestUnpair(client)"><MIcon name="link_off" /></button>
                 <i class="m-split-item__divider" aria-hidden="true" />
                 <button type="button" class="m-split-item__gear" :disabled="updating.has(client.uuid)" :aria-label="$t('connections.settings_for', { name: client.name })" :data-tip="$t('connections.device_settings')" @click="editClient(client)"><MIcon name="settings" /></button>
               </div>
             </div>
           </section>
         </template>
-        <MFooter v-if="clients.length">{{ $t('connections.disable_note') }}</MFooter>
       </MSection>
 
       <MGroup>
@@ -109,6 +105,11 @@
           <MField data-redact="client" v-model="selectedClient.name" :label="$t('pin.device_name')" />
         </div>
 
+        <MBanner v-if="selectedClient.enabled === false" tone="warn" icon="block" class="pin-device__stopped">
+          {{ $t('connections.sheet_stopped') }}
+          <template #actions><MButton variant="tonal" size="sm" icon="undo" :disabled="updating.has(selectedClient.uuid)" @click="restoreClient(selectedClient)">{{ $t('connections.restore') }}</MButton></template>
+        </MBanner>
+
         <MSection :title="$t('connections.display_settings')">
           <MGroup>
             <MChoiceItem v-model="selectedClient.hdrBrightnessMode" :title="$t('pin.hdr_brightness')" :cancel-label="$t('_common.cancel')" :options="[{ value: 'auto', label: $t('pin.hdr_brightness_auto') }, { value: 'manual', label: $t('pin.hdr_brightness_manual') }]" />
@@ -130,7 +131,14 @@
           <MFooter>{{ $t('connections.display_hint') }}</MFooter>
         </MSection>
 
-        <MButton variant="danger" icon="link_off" @click="requestUnpair(selectedClient)">{{ $t('connections.unpair_device') }}</MButton>
+        <!-- the danger zone at the foot of the sheet: a labelled list, red icon and red title, the whole row is the button; each action asks again -->
+        <section class="pin-danger" :aria-label="$t('connections.danger_zone')">
+          <h3 class="pin-danger__label">{{ $t('connections.danger_zone') }}</h3>
+          <MGroup>
+            <MItem v-if="selectedClient.enabled !== false" action class="pin-danger__item" icon="block" :title="$t('connections.disable_row')" :text="$t('connections.disable_row_text')" @click="requestDisable(selectedClient)"><template #trail><MIcon name="chevron_right" /></template></MItem>
+            <MItem action class="pin-danger__item" icon="link_off" :title="$t('connections.unpair')" :text="$t('connections.unpair_row_text')" @click="requestUnpair(selectedClient)"><template #trail><MIcon name="chevron_right" /></template></MItem>
+          </MGroup>
+        </section>
         <MFooter>ID · {{ selectedClient.uuid }}</MFooter>
         <p v-if="clientError" class="pin-pair__error" role="alert">{{ clientError }}</p>
       </div>
@@ -151,11 +159,11 @@
       @close="confirmAction = null"
     >
       <p>{{ confirmationBody }}</p>
-      <p v-if="confirmAction?.type === 'disable'" class="pin-pair__hint">{{ $t('connections.disable_note') }}</p>
+      <p v-if="confirmAction?.type === 'disable'" class="pin-confirm__how"><MIcon name="undo" />{{ $t('connections.disable_how') }}</p>
       <p v-if="clientError" class="pin-pair__error" role="alert">{{ clientError }}</p>
       <template #actions>
         <MButton variant="text" :disabled="actionBusy" @click="confirmAction = null">{{ $t('_common.cancel') }}</MButton>
-        <MButton variant="danger" :disabled="actionBusy" @click="performAction">{{ $t(confirmAction?.type === 'disable' ? 'connections.disable_disconnect' : 'connections.confirm_unpair') }}</MButton>
+        <MButton variant="danger" :disabled="actionBusy" @click="performAction">{{ confirmAction?.type === 'disable' ? $t('connections.disable_action') : confirmAction?.type === 'unpair-all' ? $t('troubleshooting.unpair_all') : $t('connections.unpair') }}</MButton>
       </template>
     </ConfirmDialog>
     <MSnackbar v-model="noticeOpen" :message="notice" />
@@ -165,7 +173,7 @@
 <script setup>
 import { computed, inject, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MBanner, MButton, MChoiceItem, MEmpty, MField, MFieldItem, MFooter, MGroup, MIcon, MItem, MPage, MPinPad, MPromo, MScallop, MSection, MSeg, MSheet, MSkeleton, MSnackbar, MSwitch, usePageFilter, contextTexts } from 'foundation-ui/vue'
+import { MBanner, MButton, MChoiceItem, MEmpty, MField, MFieldItem, MFooter, MGroup, MIcon, MItem, MPage, MPinPad, MPromo, MScallop, MSection, MSeg, MSheet, MSkeleton, MSnackbar, usePageFilter, contextTexts } from 'foundation-ui/vue'
 import ConfirmDialog from '../components/common/ConfirmDialog.vue'
 import { formatHdrNits, usePin } from '../composables/usePin.js'
 import { useQrPair } from '../composables/useQrPair.js'
@@ -192,6 +200,12 @@ usePageFilter({ page: 'pin', apply: (q) => { kind.value = 'all'; query.value = q
 const kindChoices = computed(() => kindOptions(clients.value, tx.value))
 const shown = computed(() => filterClients(clients.value, kind.value, query.value))
 const groups = computed(() => groupClients(shown.value))
+// the devices that cannot connect are one group under their own heading, below the others
+const listGroups = computed(() => {
+  const on = groupClients(shown.value.filter((c) => c.enabled !== false))
+  const off = shown.value.filter((c) => c.enabled === false)
+  return off.length ? [...on, { kind: '__stopped', items: off }] : on
+})
 watch(kindChoices, (options) => { if (!options.some((o) => o.value === kind.value)) kind.value = 'all' })
 
 const showPairing = ref(false)
@@ -208,7 +222,6 @@ const noticeOpen = ref(false)
 const say = (text) => { notice.value = text; noticeOpen.value = true }
 let refreshTimer
 
-const STATE_TEXT = { streaming: 'connections.streaming', disabled: 'connections.disabled', allowed: 'connections.allowed' }
 const stateOf = clientState
 // The second line says something the switch does not: that the client is streaming now, or the device size when one was chosen (a medium, tablet size too); a client without a chosen size is treated as medium by the host, so every row would read the same.
 const DEFAULT_DEVICE_SIZE = 'medium'
@@ -227,13 +240,8 @@ const profileOptions = computed(() => {
   if (current && !hdrProfileList.value.includes(current)) list.push({ value: current, label: current })
   return list.concat(hdrProfileList.value.map((profile) => ({ value: profile, label: profile })))
 })
-const confirmationTitle = computed(() => t(confirmAction.value?.type === 'disable' ? 'connections.disable_title' : 'connections.unpair_title'))
-const confirmationBody = computed(() =>
-  t(
-    confirmAction.value?.type === 'disable' ? 'connections.disable_body' : confirmAction.value?.type === 'unpair-all' ? 'pin.unpair_all_confirm' : 'connections.unpair_body',
-    { name: confirmAction.value?.client?.name },
-  ),
-)
+const confirmationTitle = computed(() => (confirmAction.value?.type === 'disable' ? t('connections.disable_title', { name: confirmAction.value.client?.name }) : confirmAction.value?.type === 'unpair-all' ? t('connections.unpair_all_title') : t('connections.unpair_title', { name: confirmAction.value?.client?.name })))
+const confirmationBody = computed(() => t(confirmAction.value?.type === 'disable' ? 'connections.disable_body' : confirmAction.value?.type === 'unpair-all' ? 'connections.unpair_all_body' : 'connections.unpair_body', { n: clients.value.length }))
 
 // ---- Pairing ----
 const openPairing = (mode = 'pin') => {
@@ -284,13 +292,15 @@ const saveDevice = async () => {
     say(t('connections.device_saved'))
   } else clientError.value ||= t('pin.save_failed')
 }
-const requestToggle = async (client, enabled) => {
+// stopping a device is a ban: it always asks, and says what happens and how to undo it; restoring it is harmless and does not ask
+const requestDisable = (client) => {
+  closeDevice()
   clientError.value = ''
-  if (!enabled && client.streaming) {
-    confirmAction.value = { type: 'disable', client }
-    return
-  }
-  if (await setClientEnabled(client.uuid, enabled)) say(t('connections.permission_saved'))
+  confirmAction.value = { type: 'disable', client }
+}
+const restoreClient = async (client) => {
+  clientError.value = ''
+  if (await setClientEnabled(client.uuid, true)) say(t('connections.restored', { name: client.name }))
 }
 const requestUnpair = (client) => {
   closeDevice()
@@ -308,7 +318,7 @@ const performAction = async () => {
     else success = await unpairAll()
     if (success) {
       confirmAction.value = null
-      say(t('connections.action_done'))
+      say(action.type === 'disable' ? t('connections.stopped_note', { name: action.client?.name }) : t('connections.action_done'))
       if (!clients.value.length) openPairing()
     } else clientError.value ||= t('connections.action_failed')
   } finally {
@@ -323,13 +333,13 @@ function onRowMenu(event, client) {
   webShell.showMenu(event, [
     { id: 'settings', icon: 'settings', label: t('connections.device_settings') },
     { id: 'rename', icon: 'edit', label: t('pin.device_name') },
-    { id: 'toggle', icon: enabled ? 'cancel' : 'check_circle', label: t(enabled ? 'connections.blocked' : 'connections.allowed') },
+    { id: 'toggle', icon: enabled ? 'block' : 'undo', label: enabled ? t('connections.disable_row') : t('connections.restore') },
     ...(client.uuid ? [{ id: 'copy-id', icon: 'content_copy', label: contextTexts(String(locale.value)).copyDeviceId }] : []),
     { id: 'sep', divider: true },
-    { id: 'unpair', icon: 'link_off', label: t('connections.unpair_device'), danger: true },
+    { id: 'unpair', icon: 'link_off', label: t('connections.unpair'), danger: true },
   ], client, (entry) => {
     if (entry.id === 'settings' || entry.id === 'rename') editClient(client)
-    else if (entry.id === 'toggle') requestToggle(client, !enabled)
+    else if (entry.id === 'toggle') (enabled ? requestDisable(client) : restoreClient(client))
     else if (entry.id === 'copy-id') navigator.clipboard?.writeText(client.uuid).then(() => say(contextTexts(String(locale.value)).copied)).catch(() => {})
     else if (entry.id === 'unpair') requestUnpair(client)
   })
@@ -337,7 +347,7 @@ function onRowMenu(event, client) {
 // Arrow keys move between rows on the same kind of control (switch to switch, gear to gear)
 function rowKeys(event) {
   if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
-  const kind = event.target.closest?.('.pin-row__switch') ? '.pin-row__switch' : event.target.closest?.('.m-split-item__gear') ? '.m-split-item__gear' : ''
+  const kind = event.target.closest?.('.pin-row__unpair') ? '.pin-row__unpair' : event.target.closest?.('.m-split-item__gear') ? '.m-split-item__gear' : ''
   if (!kind) return
   const all = [...event.currentTarget.querySelectorAll(kind)]
   const next = all[all.indexOf(event.target.closest(kind)) + (event.key === 'ArrowDown' ? 1 : -1)]

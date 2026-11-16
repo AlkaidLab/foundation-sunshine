@@ -5,6 +5,7 @@
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 
 #include "clients.h"
+#include "client_sessions.h"
 #include "pair_link.h"
 #include "src/config.h"
 #include "src/confighttp/auth.h"
@@ -346,6 +347,10 @@ namespace confighttp::clients {
         std::ostringstream data;
         pt::write_json(data, outputTree);
         response->write(data.str());
+      });
+      // the same as unpairing one client: end its sessions before the pairing goes
+      terminate_sessions_of_all(nvhttp::get_all_clients(), [](const std::string &uuid) {
+        rtsp_stream::terminate_client_sessions(uuid);
       });
       nvhttp::erase_all_clients();
       proc::proc.terminate();
