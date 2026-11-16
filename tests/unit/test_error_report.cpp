@@ -186,9 +186,13 @@ TEST(ErrorService, ACrumbTrailGoesWithTheReportAndTheErrorChoiceGoverns) {
   svc.report_error(e);
   svc.flush(true);
   while (svc.pump() > 0) {}
-  for (const auto &b : posted)
-    if (b.contains("events"))
-      for (const auto &ev : b["events"]) EXPECT_NE(ev["name"], "error_report");
+  for (const auto &b : posted) {
+    if (b.contains("events")) {
+      for (const auto &ev : b["events"]) {
+        EXPECT_NE(ev["name"], "error_report");
+      }
+    }
+  }
   fs::remove_all(dir);
 }
 

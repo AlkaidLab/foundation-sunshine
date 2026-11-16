@@ -18,6 +18,10 @@ if(WIN32)
             COMMAND "${CMAKE_COMMAND}" -E make_directory "${SPARXIE_LAUNCH_PUBLISH_DIR}"
             COMMAND "${SPARXIE_LAUNCH_DOTNET}" publish "${CMAKE_CURRENT_SOURCE_DIR}/sparxie-launch/Sparxie.Launch.csproj"
                     --configuration "$<CONFIG>" --output "${SPARXIE_LAUNCH_PUBLISH_DIR}"
+                    # MSBuild defaults bin/obj next to the csproj; redirect them into the build tree
+                    # so publishing does not drop build artifacts into the source checkout.
+                    -p:BaseOutputPath="${CMAKE_CURRENT_BINARY_DIR}/sparxie-launch-bin/"
+                    -p:BaseIntermediateOutputPath="${CMAKE_CURRENT_BINARY_DIR}/sparxie-launch-obj/"
                     --nologo --verbosity minimal
             DEPENDS
                 "${CMAKE_CURRENT_SOURCE_DIR}/sparxie-launch/Sparxie.Launch.csproj"
