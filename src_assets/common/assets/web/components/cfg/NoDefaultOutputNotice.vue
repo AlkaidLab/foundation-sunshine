@@ -22,7 +22,7 @@ const goTo = (selector) => {
 </script>
 
 <template>
-  <MBanner v-if="notice" data-no-default-output :data-reason="notice.reason" tone="warn" icon="volume_off">
+  <MBanner v-if="notice" data-no-default-output :data-reason="notice.reason" tone="warn" icon="headphones">
     <strong>{{ $t('config.audio_no_default_title') }}</strong>
     <div>{{ $t(`config.audio_no_default_${notice.reason}`) }}</div>
     <div>{{ $t('config.audio_no_default_how') }}</div>
