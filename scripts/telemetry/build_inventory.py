@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Builds docs/privacy-data-inventory.md and docs/privacy-data-inventory.zh.md in the host repo from one table.
 NOTE: since #1274 the two md files carry rows that this script does not have (the program log of crash reports, meta env and ctx, D1 crash_logs and user_logs, the log_ref of user_report). Regenerating overwrites them:
-extend this script with those rows first, or merge the output by hand.
+extend this script with those rows first, or merge the output by hand. The `src/telemetry/events.cpp:LINE` references of the two files are kept right by `inventory_refs.py` (run it after changing events.cpp; `--check` lists what is off).
 Every `@name` in a cell is replaced by `path:line` found by searching the code for the anchor (so the evidence moves with the code)."""
 import re, subprocess, sys
 
@@ -162,9 +162,9 @@ row("envelope", "country (added by the server)", "`CN`", "@w_country",
     dict(field="country（服务器添加）", purpose="了解用户所在地区，用于语言和网络方面的决策。", risk="弱：只到国家，不到城市和地址。", scrub="只保留 Cloudflare 给出的国家代码；Worker 不读取、不保存、不记录 IP 地址；Workers 日志已关闭 @w_obs。", keep="sessions、activity、crash_reports 400 天。"))
 
 # --- usage events
-row("usage", "app_start: cold, start_ms, update_source", "`true`, `1800`, `mirror`", "@e_app_start",
-    "How long start takes; where updates come from (Mirror酱 or GitHub).", "No: a boolean, a number, one of three words.", "Allow-list of types and ranges @e_app_start.", "events: 180 days.",
-    dict(field="app_start：cold、start_ms、update_source", purpose="启动耗时；更新来源（Mirror酱还是 GitHub）。", risk="否：一个布尔值、一个数字、三个词之一。", scrub="按类型和范围的白名单 @e_app_start。", keep="events 180 天。"))
+row("usage", "app_start: cold, start_ms, update_source, update_source_miss", "`true`, `1800`, `cnb`, `version_lag`", "@e_app_start",
+    "How long start takes; where the last update really came from (Mirror酱, CNB or GitHub) and, when Mirror酱 was chosen but not used, why (not synced yet, CDK refused, quota, network, no CDK).", "No: a boolean, a number, one of four words, one of five words.", "Allow-list of types and ranges @e_app_start.", "events: 180 days.",
+    dict(field="app_start：cold、start_ms、update_source、update_source_miss", purpose="启动耗时；最近一次更新实际来自哪里（Mirror酱、CNB 或 GitHub），选了 Mirror酱 却没有用上时的原因（还没同步该版本、CDK 被拒、额度、网络、没有 CDK）。", risk="否：一个布尔值、一个数字、四个词之一、五个词之一。", scrub="按类型和范围的白名单 @e_app_start。", keep="events 180 天。"))
 row("usage", "app_exit: uptime_s", "`3600`", "@e_app_exit",
     "How long the program runs; whether a session ended normally.", "No: a number.", "Range 0 to one year.", "events: 180 days.",
     dict(field="app_exit：uptime_s", purpose="程序运行多久；会话是否正常结束。", risk="否：一个数字。", scrub="范围 0 到一年。", keep="events 180 天。"))
