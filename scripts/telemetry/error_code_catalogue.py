@@ -85,6 +85,66 @@ def error_code(text: str) -> str:
     return "e%08x" % fnv1a(error_head_bytes(text))
 
 
+_ID_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
+_RAW_PREFIXES = ("u8R", "uR", "UR", "LR", "R")
+
+
+def _raw_string_at(text: str, i: int):
+    """If a raw string literal (R"d(...)d", optionally u8/u/U/L-prefixed) starts at ``i``,
+    return (content_start, content_end, end); otherwise None."""
+    if i > 0 and text[i - 1] in _ID_CHARS:
+        return None
+    for prefix in _RAW_PREFIXES:
+        if text.startswith(prefix + '"', i):
+            j = i + len(prefix) + 1
+            break
+    else:
+        return None
+    paren = text.find("(", j, j + 17)  # the delimiter has at most 16 characters
+    if paren < 0:
+        return None
+    delim = text[j:paren]
+    if any(c in delim for c in ' ()\\\t\v\f\n"'):
+        return None
+    close = text.find(")" + delim + '"', paren + 1)
+    if close < 0:
+        return None
+    return paren + 1, close, close + len(delim) + 2
+
+
+def _is_digit_separator(text: str, i: int) -> bool:
+    """True when the quote at ``i`` is a C++14 digit separator (1'000, 0xFF'FF), not a character literal."""
+    if text[i] != "'" or i == 0 or text[i - 1] not in _ID_CHARS:
+        return False
+    k = i
+    while k > 0 and (text[k - 1] in _ID_CHARS or text[k - 1] == "'"):
+        k -= 1
+    token = text[k:i]
+    if token in ("u8", "u", "U", "L"):
+        return False  # u8'a', L'a': a character literal with an encoding prefix
+    return token[:1].isdigit()
+
+
+def _literal_end(text: str, i: int):
+    """If a string or character literal (raw ones included) starts at ``i``, the index after it; otherwise None."""
+    raw = _raw_string_at(text, i)
+    if raw is not None:
+        return raw[2]
+    if text[i] not in "\"'" or _is_digit_separator(text, i):
+        return None
+    quote = text[i]
+    j = i + 1
+    n = len(text)
+    while j < n:
+        if text[j] == "\\":
+            j += 2
+        elif text[j] == quote:
+            return j + 1
+        else:
+            j += 1
+    return n
+
+
 def _comment_end(text: str, start: int) -> int:
     """Return the first character after the C++ comment at ``start``."""
     if text.startswith("//", start):
@@ -114,17 +174,9 @@ def _mask_comments(text: str) -> str:
     i = 0
     n = len(text)
     while i < n:
-        if text[i] in "\"'":
-            quote = text[i]
-            i += 1
-            while i < n:
-                if text[i] == "\\":
-                    i += 2
-                elif text[i] == quote:
-                    i += 1
-                    break
-                else:
-                    i += 1
+        end = _literal_end(text, i)
+        if end is not None:
+            i = end
         elif text.startswith("//", i):
             end = _comment_end(text, i)
             for j in range(i, end):
@@ -150,12 +202,11 @@ def statement_end(text: str, start: int) -> int:
         if text.startswith("//", i) or text.startswith("/*", i):
             i = _comment_end(text, i)
             continue
-        if text[i] in "\"'":
-            quote = text[i]
-            i += 1
-            while i < n and text[i] != quote:
-                i += 2 if text[i] == "\\" else 1
-        elif text[i] == ";":
+        end = _literal_end(text, i)
+        if end is not None:
+            i = end
+            continue
+        if text[i] == ";":
             return i
         i += 1
     return n
@@ -170,13 +221,10 @@ def split_pieces(statement: str):
             cur.append("\n" if "\n" in statement[i:end] else " ")
             i = end
             continue
-        if statement[i] in "\"'":
-            quote = statement[i]
-            j = i + 1
-            while j < n and statement[j] != quote:
-                j += 2 if statement[j] == "\\" else 1
-            cur.append(statement[i:j + 1])
-            i = j + 1
+        end = _literal_end(statement, i)
+        if end is not None:
+            cur.append(statement[i:end])
+            i = end
             continue
         if statement.startswith("<<", i):
             pieces.append("".join(cur))
@@ -258,6 +306,16 @@ def unescape(raw: str) -> str:
 
 def _literal_at(text: str, start: int):
     i = _skip_space_and_comments(text, start)
+    raw = _raw_string_at(text, i)
+    if raw is not None:
+        content_start, content_end, j = raw
+        value = text[content_start:content_end].encode("utf-8")  # a raw literal has no escapes
+        suffix_start = _skip_space_and_comments(text, j)
+        for suffix in ("sv", "s"):
+            if text.startswith(suffix, suffix_start):
+                j = suffix_start + len(suffix)
+                break
+        return value, _skip_space_and_comments(text, j)
     for prefix in ("u8", "u", "U", "L"):
         if text.startswith(prefix, i):
             i += len(prefix)
@@ -290,13 +348,15 @@ def _leading_literal_bytes(statement: str) -> bytes:
     for piece in split_pieces(statement):
         pos = 0
         parts = bytearray()
+        found = False  # an empty literal "" is still a literal operand
         while True:
             parsed = _literal_at(piece, pos)
             if parsed is None:
                 break
             value, pos = parsed
             parts.extend(value)
-        if not parts or _skip_space_and_comments(piece, pos) != len(piece):
+            found = True
+        if not found or _skip_space_and_comments(piece, pos) != len(piece):
             break
         out.extend(parts)
     return bytes(out)

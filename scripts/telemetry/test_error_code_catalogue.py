@@ -88,6 +88,32 @@ class Statements(unittest.TestCase):
         table = self.scan_text(r'void f() { BOOST_LOG(error) << "Prefix \xe4\xb8\xad"; }\n')
         self.assertEqual(list(table), [cat.error_code("Prefix 中")])
 
+    def test_an_empty_literal_operand_does_not_end_the_message(self):
+        table = self.scan_text('void f() { BOOST_LOG(error) << "" << "Failed"; }\n')
+        self.assertEqual(list(table), [cat.error_code("Failed")])
+
+    def test_digit_separators_are_not_character_literals(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "a.cpp"), "w") as f:
+                f.write("constexpr int timeout = 1'000;\n/* BOOST_LOG(error) << \"Ignored\"; */\nconstexpr auto mask = 0xFF'FF'u;\nvoid f() { BOOST_LOG(error) << \"Real failure\"; }\n")
+            table = cat.scan(d)
+            self.assertEqual(sorted(e["head"] for e in table.values()), ["real failure"])
+            self.assertEqual(next(iter(table.values()))["sites"][0]["line"], 4)
+
+    def test_raw_strings_hide_quotes_and_comment_markers(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "a.cpp"), "w") as f:
+                f.write('const char *p = R"("/*)";\nvoid f() { BOOST_LOG(error) << "After raw"; }\nconst char *q = R"x(*/ ")x";\nvoid g() { BOOST_LOG(error) << R"(Raw "quoted" \\n)" << v; }\n')
+            table = cat.scan(d)
+            self.assertIn(cat.error_code("After raw"), table)
+            raw = cat.error_code('Raw "quoted" \\n')
+            self.assertIn(raw, table)
+            self.assertEqual(table[raw]["sites"][0]["line"], 4)
+            self.assertEqual(len(table), 2)
+
+    def test_prefixed_character_literals_are_still_literals(self):
+        self.assertEqual(cat.statement_end("x = u8';' + L';'; y", 0), 16)
+
     def test_comments_outside_literals_are_not_code_or_message_text(self):
         table = self.scan_text(
             r'''// BOOST_LOG(error) << "ignored";
