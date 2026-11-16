@@ -359,10 +359,7 @@ namespace crash {
 
   std::optional<std::string>
   upload_session_log(const std::string &endpoint, const std::string &install_id, const std::string &version) {
-    if (!enabled()) {
-      g_session_log_state.store("errors_off");
-      return std::nullopt;
-    }
+    // no check of the error-report switch: the run log is part of a feedback report, and pressing 发送 is the consent for it
     return upload_session_log_from(current_config_dir(), endpoint, install_id, version);
   }
 

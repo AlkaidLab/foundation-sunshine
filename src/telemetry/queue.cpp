@@ -251,7 +251,9 @@ namespace telemetry {
     json kept = json::array();
     for (auto &e : envelope["events"]) {
       const auto kind = e.contains("kind") && e["kind"].is_string() ? e["kind"].get<std::string>() : std::string {};
-      const bool allowed = (kind == "error") ? errors : (kind == "usage" || kind == "experience") ? usage : false;
+      // a feedback report the person sent stays: pressing 发送 was the consent for it, whatever the error-report switch says now
+      const bool report = kind == "error" && e.contains("name") && e["name"].is_string() && e["name"].get<std::string>() == "user_report";
+      const bool allowed = report || ((kind == "error") ? errors : (kind == "usage" || kind == "experience") ? usage : false);
       if (allowed) kept.push_back(std::move(e));
     }
     envelope["events"] = std::move(kept);

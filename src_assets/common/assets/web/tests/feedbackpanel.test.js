@@ -4,13 +4,16 @@ import fs from 'node:fs'
 
 const read = (p) => fs.readFileSync(new URL(p, import.meta.url), 'utf8')
 
-test('帮助与关于 of the Web UI has 账号与反馈 and the report sheet host without developer mode', () => {
+test('帮助与关于 of the Web UI has the 反馈 card, and the shell has the one feedback panel, its caption button and the context menu entry, without developer mode', () => {
   const about = read('../views/About.vue')
-  assert.match(about, /<MFeedbackAccount :locale="String\(locale\)" \/>/)
-  assert.ok(!/MFeedbackAccount[^\n]*developer/i.test(about))
+  assert.match(about, /<MFeedbackCard :locale="String\(locale\)" \/>/)
+  assert.ok(!/MFeedbackCard[^\n]*developer/i.test(about))
+  assert.ok(!/MFeedbackAccount/.test(about), 'no GitHub account row: the report goes straight to the developers')
   const shell = read('../views/WebShell.vue')
   assert.match(shell, /<DevReportHost v-if="!embedded"/)
-  assert.match(shell, /reportHere: \(\{ route, place, text \}\) => \{ void openDevReport\(/)
+  assert.match(shell, /<MStatusBell :locale="String\(uiLocale\)" \/><MFeedbackButton :locale="String\(uiLocale\)" \/><MAnnouncementButton/, 'the feedback icon sits next to the bell')
+  assert.match(shell, /reportHere: \(\{ place, text \}\) => \{ void openFeedbackHere\(\{ place, text \}\) \}/)
+  assert.ok(!/ctxReport/.test(shell), 'nothing is typed into the description for the person')
 })
 test('the pairing PIN, the QR and the device names are marked for the screenshot redaction', () => {
   const pin = read('../views/Pin.vue')

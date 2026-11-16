@@ -347,6 +347,7 @@ namespace telemetry {
       attachment,
       log_ref,
       text,
+      contact,
       histograms,
       counts,
       frames,
@@ -460,6 +461,7 @@ namespace telemetry {
                                                       { "log_ref", type_e::log_ref },
                                                       { "log_state", type_e::choice, 0, 0, log_state_choices },
                                                       { "message", type_e::text, 0, static_cast<double>(MAX_USER_REPORT_CHARS), {}, true },
+                                                      { "contact", type_e::contact, 0, static_cast<double>(MAX_USER_CONTACT_CHARS) },
                                                     } });
         // a fault of the virtual display driver that Windows Error Reporting wrote to the Application log: that it happened, which module, the exception code and the offset (wer_event.h); no stack exists
         t.push_back({ kind_e::error, "wer_event", {
@@ -738,6 +740,23 @@ namespace telemetry {
         case type_e::text: {
           if (!value.is_string()) return std::nullopt;
           return json(scrub_text(value.get<std::string>(), static_cast<std::size_t>(spec.max)));
+        }
+        case type_e::contact: {
+          // what a person left on purpose so the developers can answer: one line, cut, NOT scrubbed (an address they gave is what it is for); it shows only in the issue of that one report
+          if (!value.is_string()) return std::nullopt;
+          std::string line;
+          bool space = false;
+          for (const unsigned char c : value.get<std::string>()) {
+            if (c < 0x20 || c == 0x7f || c == ' ') {
+              space = !line.empty();
+              continue;
+            }
+            if (space) line += ' ';
+            space = false;
+            line += static_cast<char>(c);
+          }
+          line = cut_utf8(line, static_cast<std::size_t>(spec.max));
+          return line.empty() ? std::nullopt : std::optional<json> { json(line) };
         }
         case type_e::frame: {
           if (!value.is_string()) return std::nullopt;

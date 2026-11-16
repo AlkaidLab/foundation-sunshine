@@ -109,6 +109,7 @@ namespace telemetry {
     std::uint64_t sent_events = 0;
     std::uint64_t rejected_batches = 0;
     std::uint64_t failed_posts = 0;
+    std::uint64_t write_failed = 0;  ///< a batch that could not be written to the disk queue (its events went back to the buffer)
   };
 
   class service_t {
@@ -129,9 +130,11 @@ namespace telemetry {
     // ---- events ----
     /** Shape against the contract, apply consent, put in the buffer. -> true when it was kept. Thread safe, never blocks on I/O. */
     bool
-    emit(kind_e kind, std::string_view name, const nlohmann::json &props, std::string_view product = "host", std::string_view version = {}, int priority = -1);
+    emit(kind_e kind, std::string_view name, const nlohmann::json &props, std::string_view product = "host", std::string_view version = {}, int priority = -1, std::string_view report_id = {});
     /** Events from a page (panel, web) through the host API: the same, with the page allow-list. -> the number kept. */
     std::size_t ingest(std::string_view product, std::string_view version, const nlohmann::json &events);
+    /** Writes one feedback report to the disk queue now (its own batch, priority 0). true only when the batch is on disk. */
+    bool persist_report(const event_t &event);
 
     // ---- streams ----
     void stream_begin(const stream_dims_t &dims, std::uint32_t session_id, std::string_view client_key);

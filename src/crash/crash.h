@@ -107,12 +107,13 @@ namespace crash {
 
   /**
    * The anonymised session log of the run that is going on, uploaded to POST <endpoint>/v1/user-log for a feedback report. Returns the reference to put into the
-   * report (prop log_ref), or nothing when error reports are off, there is no log, or the service does not take it (404, a limit): the report then goes without a log.
+   * report (prop log_ref), or nothing when there is no log or the service does not take it (404, a limit): the report then goes without a log.
+   * The error-report switch does not decide: the log is part of a feedback report, and pressing 发送 is the consent for it.
    */
   std::optional<std::string>
   upload_session_log(const std::string &endpoint, const std::string &install_id, const std::string &version);
 
-  /// Why the latest upload_session_log() gave no reference (a fixed word: uploaded | errors_off | no_log | pack_failed | refused | unreachable | bad_answer), so the report can say it.
+  /// Why the latest upload_session_log() gave no reference (a fixed word: uploaded | errors_off (no longer produced: the log of a feedback report is not held back by the switch) | no_log | pack_failed | refused | unreachable | bad_answer), so the report can say it.
   const char *
   session_log_state();
 
