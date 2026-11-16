@@ -48,7 +48,13 @@ const NO_CONTROL = Object.freeze({
 })
 
 const source = readFileSync(new URL('../../../../../src/config.cpp', import.meta.url), 'utf8')
-const hostKeys = [...new Set([...source.matchAll(/_f\(\s*vars,\s*"([a-z0-9_]+)"/g)].map((m) => m[1]))].sort()
+// Typed configuration entries may keep their key in a shared header instead
+// of passing a string literal directly to the parser helper.
+const configBindingHeader = readFileSync(new URL('../../../../../src/config_session_binding.h', import.meta.url), 'utf8')
+const hostKeys = [...new Set([
+  ...[...source.matchAll(/_f\(\s*vars,\s*"([a-z0-9_]+)"/g)].map((m) => m[1]),
+  ...[...configBindingHeader.matchAll(/inline constexpr std::string_view key \{ "([a-z0-9_]+)" \}/g)].map((m) => m[1]),
+])].sort()
 
 test('the host config definitions are read (a guard against the pattern going stale)', () => {
   assert.ok(hostKeys.length > 100)
