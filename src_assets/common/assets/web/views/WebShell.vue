@@ -317,13 +317,15 @@ const errorBack = () => { if (nav.canPop.value) nav.pop(); else nav.selectRail('
 const restartHost = async () => { await apiFetch('/api/restart?reason=shell', { method: 'POST' }).catch(() => null) }
 const errorContext = () => ({ product: 'web', version: shellVersion.value, os: osName(), page: String(nav.current.value || ''), locale: String(uiLocale.value), logs: String(recentLogText.value || '').split('\n').slice(-40).join('\n'), components: `webui=${shellVersion.value || '?'}` })
 setErrorContext(errorContext)
-// a browser cannot take a screenshot of its page or read the host log: the report sheet says so; the report goes privately to the developers or into a zip, never to a public issue
+// a browser cannot take a screenshot of its page silently: there is no capture here, and the sheet's screenshot row is a picture the person chooses, pastes or drops (`shots`: the host takes it with the report, uploads it and
+// the developers see it only in the one issue of the report; nothing in it is covered automatically and the sheet says so). The report goes privately to the developers or into a zip, never to a public issue
 const developerMode = useDeveloperMode()
 registerDevReport({
   // the host log's last lines (the host answers it to a page of its own origin); the lines the error report carried are added by the sheet
   logs: async () => { await refreshLogs(); return String(recentLogText.value || '') },
   env: () => [`product: Foundation Sunshine Web UI`, `version: ${shellVersion.value || ''}`, `os: ${osName()}`, `locale: ${String(uiLocale.value)}`, `user agent: ${navigator.userAgent}`].join('\n'),
   save: (name, bytes, mime) => { const link = document.createElement('a'); link.href = URL.createObjectURL(new Blob([bytes], { type: mime })); link.download = name; document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(link.href), 4000) },
+  shots: true,
   product: 'web',
 })
 let removeErrorHandlers = null
