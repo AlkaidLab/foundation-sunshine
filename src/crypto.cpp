@@ -13,7 +13,7 @@ namespace crypto {
   using asn1_string_t = util::safe_ptr<ASN1_STRING, ASN1_STRING_free>;
 
   cert_chain_t::cert_chain_t():
-      _certs {}, _cert_ctx { X509_STORE_CTX_new() } {}
+      _certs {} {}
   void
   cert_chain_t::add(x509_t &&cert) {
     x509_store_t x509_store { X509_STORE_new() };
@@ -59,25 +59,32 @@ namespace crypto {
   cert_chain_t::verify(x509_t::element_type *cert) {
     int err_code = 0;
     for (auto &[_, x509_store] : _certs) {
-      auto fg = util::fail_guard([this]() {
-        X509_STORE_CTX_cleanup(_cert_ctx.get());
-      });
-
-      X509_STORE_CTX_init(_cert_ctx.get(), x509_store.get(), cert, nullptr);
-      X509_STORE_CTX_set_verify_cb(_cert_ctx.get(), openssl_verify_cb);
+      // One verification context per call: HTTPS handshakes verify client certificates on several threads at once, and
+      // a context shared between them lets one thread's X509_STORE_CTX_cleanup() free the verification parameters
+      // (ctx->param) another thread is about to read (X509_VERIFY_PARAM_inherit() crashed on the null pointer).
+      // OpenSSL: X509_STORE_CTX_new(3) / X509_STORE_CTX_init(3): a context is for one verification, and an object is not
+      // safe to use from several threads without the caller's own locking.
+      x509_store_ctx_t verify_ctx { X509_STORE_CTX_new() };
+      if (!verify_ctx) {
+        return X509_verify_cert_error_string(X509_V_ERR_OUT_OF_MEM);
+      }
+      if (X509_STORE_CTX_init(verify_ctx.get(), x509_store.get(), cert, nullptr) != 1) {
+        return X509_verify_cert_error_string(X509_V_ERR_STORE_LOOKUP);
+      }
+      X509_STORE_CTX_set_verify_cb(verify_ctx.get(), openssl_verify_cb);
 
       // We don't care to validate the entire chain for the purposes of client auth.
       // Some versions of clients forked from Moonlight Embedded produce client certs
       // that OpenSSL doesn't detect as self-signed due to some X509v3 extensions.
-      X509_STORE_CTX_set_flags(_cert_ctx.get(), X509_V_FLAG_PARTIAL_CHAIN);
+      X509_STORE_CTX_set_flags(verify_ctx.get(), X509_V_FLAG_PARTIAL_CHAIN);
 
-      auto err = X509_verify_cert(_cert_ctx.get());
+      auto err = X509_verify_cert(verify_ctx.get());
 
       if (err == 1) {
         return nullptr;
       }
 
-      err_code = X509_STORE_CTX_get_error(_cert_ctx.get());
+      err_code = X509_STORE_CTX_get_error(verify_ctx.get());
 
       if (err_code != X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT && err_code != X509_V_ERR_INVALID_CA) {
         return X509_verify_cert_error_string(err_code);
