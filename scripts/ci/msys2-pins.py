@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """The MSYS2 toolchain pins: compare them with the repository, and rewrite them.
 
-usage: msys2-pins.py check [--pins FILE] [--db FILE] [--simulate name=version[,...]] [--json]
-       msys2-pins.py bump  [--pins FILE] [--db FILE]
+usage: msys2-pins.py check [--pins FILE]... [--db FILE] [--simulate name=version[,...]] [--json]
+       msys2-pins.py bump  [--pins FILE]... [--db FILE]
+
+--pins may be repeated; without it both pin files are used (msys2-pins.txt and, for the Clang builds, msys2-pins-clang.txt).
 
 check reads the pins (scripts/ci/msys2-pins.txt), resolves the newest version of every pinned package from the UCRT64
 repository database (the same database pacman synchronises; NAME, VERSION, FILENAME and SHA256SUM of every desc entry)
@@ -142,7 +144,7 @@ def resolve_newest(simulate):
 
 
 def check(args):
-    _, entries = load_pins(args.pins)
+    entries = [entry for path in args.pins for entry in load_pins(path)[1]]
     db = read_db(args.db)
     simulated = resolve_newest(args.simulate)
     bumps, missing = [], []
@@ -171,8 +173,13 @@ def check(args):
 
 
 def bump(args):
-    header, entries = load_pins(args.pins)
     db = read_db(args.db)
+    for path in args.pins:
+        bump_file(path, db)
+
+
+def bump_file(path, db):
+    header, entries = load_pins(path)
     lines = list(header)
     for pin in sorted(entries, key=lambda entry: entry["name"]):
         name = pin["name"]
@@ -187,8 +194,8 @@ def bump(args):
         note = "unchanged" if version == pin["version"] else f"{pin['version']} -> {version}"
         print(f"{name} {note}")
         lines.append(f"{name} {version} {filename} {sha256}")
-    pathlib.Path(args.pins).write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"{args.pins}: {len(entries)} pins rewritten")
+    pathlib.Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"{path}: {len(entries)} pins rewritten")
 
 
 def main():
@@ -196,12 +203,15 @@ def main():
     sub = parser.add_subparsers(dest="command", required=True)
     for name in ("check", "bump"):
         subparser = sub.add_parser(name)
-        subparser.add_argument("--pins", default=str(pathlib.Path(__file__).resolve().parent / "msys2-pins.txt"))
+        subparser.add_argument("--pins", action="append", help="a pin file; repeat for several (default: msys2-pins.txt and msys2-pins-clang.txt)")
         subparser.add_argument("--db", help="read the repository database from this file instead of the servers")
     check_parser = sub.choices["check"]
     check_parser.add_argument("--simulate", default="", help="simulated repository versions, name=version, comma separated")
     check_parser.add_argument("--json", action="store_true", help="print a machine-readable summary instead of the table")
     args = parser.parse_args()
+    if not args.pins:
+        here = pathlib.Path(__file__).resolve().parent
+        args.pins = [str(here / name) for name in ("msys2-pins.txt", "msys2-pins-clang.txt") if (here / name).is_file()]
     (check if args.command == "check" else bump)(args)
 
 

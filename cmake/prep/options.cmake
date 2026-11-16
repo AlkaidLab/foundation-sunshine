@@ -13,6 +13,7 @@ option(BUILD_TRAY_TESTS "Build the focused tray protocol tests" OFF)
 option(NPM_OFFLINE "Use offline npm packages. You must ensure packages are in your npm cache." OFF)
 
 option(BUILD_WERROR "Enable -Werror flag." OFF)
+option(SUNSHINE_PRECOMPILED_HEADERS "Precompile the heavy common headers for targets with many sources." OFF)
 
 # if this option is set, the build will exit after configuring special package configuration files
 option(SUNSHINE_CONFIGURE_ONLY "Configure special files only, then exit." OFF)

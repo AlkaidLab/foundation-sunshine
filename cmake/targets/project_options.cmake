@@ -9,6 +9,17 @@ target_compile_features(sunshine_project_options INTERFACE cxx_std_23)
 if(MINGW)
     target_link_options(sunshine_project_options INTERFACE -static)
     target_compile_options(sunshine_project_options INTERFACE $<$<COMPILE_LANGUAGE:RC>:--use-temp-file>)
+    # fs-gnu-ld-gc-sections-20261116: discard unreferenced Release sections after
+    # each function/data item is emitted separately.
+    target_compile_options(sunshine_project_options INTERFACE
+            "$<$<CONFIG:Release>:-ffunction-sections;-fdata-sections>")
+    target_link_options(sunshine_project_options INTERFACE
+            $<$<CONFIG:Release>:LINKER:--gc-sections>)
+    # fs-llvm-clang-cli-20261116 and fs-llvm-lld-20261116: Clang's MinGW
+    # release executable keeps the same 2 MiB reserve as the GCC baseline.
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        target_link_options(sunshine_project_options INTERFACE -Wl,--stack,2097152)
+    endif()
 endif()
 
 # Keep per-configuration source policy in one place for both host variants.

@@ -163,6 +163,17 @@ if(NOT Boost_FOUND)
     endforeach()
 endif()
 
+# A stale Boost.Locale package can carry an explicit MinGW import-library path.
+# With -static, omit that path so Clang/LLD selects libiconv.a instead of
+# retaining a runtime dependency on libiconv-2.dll.
+if(WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND TARGET Boost::locale)
+    get_target_property(_boost_locale_links Boost::locale INTERFACE_LINK_LIBRARIES)
+    if(_boost_locale_links)
+        list(FILTER _boost_locale_links EXCLUDE REGEX "libiconv\\.dll\\.a$")
+        set_property(TARGET Boost::locale PROPERTY INTERFACE_LINK_LIBRARIES "${_boost_locale_links}")
+    endif()
+endif()
+
 # Keep the historical Boost::boost spelling available to dependencies
 # while sharing the modern Boost::headers implementation.
 if(TARGET Boost::headers AND NOT TARGET Boost::boost)

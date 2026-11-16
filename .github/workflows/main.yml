@@ -46,6 +46,13 @@ on:
         description: 'Build with the newest MSYS2 packages instead of the pinned ones (what the weekly toolchain watch dispatches to test a new major)'
         type: boolean
         default: false
+      toolchain:
+        description: 'Windows release compiler (Clang is used for releases; GCC remains the fallback)'
+        type: choice
+        default: clang
+        options:
+          - 'clang'
+          - 'gcc'
       rtx_hdr:
         description: 'RTX HDR support for development branches (official master always requires ON)'
         type: choice
@@ -69,6 +76,11 @@ concurrency:
 # Run it on Node.js 24 ahead of GitHub's fall 2026 Node.js 20 removal.
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+  # Pull requests remain on GCC because the hosted-runner end-to-end result was
+  # not faster and Clang's compiler cache is substantially larger. Releases
+  # use Clang unless the CI_TOOLCHAIN repository variable or manual input asks
+  # for GCC.
+  TOOLCHAIN: ${{ inputs.toolchain || (github.event_name == 'pull_request' && 'gcc') || vars.CI_TOOLCHAIN || 'clang' }}
 
 jobs:
   changes:
@@ -493,10 +505,11 @@ jobs:
       - name: Configuration fingerprint
         id: fingerprint
         env:
-          TOOLCHAIN: ${{ inputs.toolchain_probe == true && 'newest' || 'pinned' }}
+          # TOOLCHAIN (the compiler: gcc or clang) comes from the workflow env and is read by config-fingerprint.py itself.
+          TOOLCHAIN_MODE: ${{ inputs.toolchain_probe == true && 'newest' || 'pinned' }}
         run: |
           set -euo pipefail
-          fingerprint="$(python3 scripts/ci/config-fingerprint.py --details 2> details.txt)-$TOOLCHAIN"
+          fingerprint="$(python3 scripts/ci/config-fingerprint.py --details 2> details.txt)-$TOOLCHAIN_MODE"
           cat details.txt
           echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
           { echo "### Compiler cache configuration"; echo "- fingerprint: \`$fingerprint\`"; grep -E '^    ' details.txt | sed 's/^    /- /' || true; } >> "$GITHUB_STEP_SUMMARY"
@@ -581,6 +594,7 @@ jobs:
         uses: ./.github/actions/windows-toolchain
         with:
           unpinned: ${{ inputs.toolchain_probe == true }}
+          toolchain: ${{ env.TOOLCHAIN }}
 
       # The same pinned Panel bundle and WebView2 bootstrapper build_win uses (scripts/installer-inputs.json), so the configure
       # downloads nothing ("latest") and needs no token. Nothing here reads a token: the configure step below must not see one.
@@ -618,11 +632,16 @@ jobs:
           if [[ -n "${GITHUB_TOKEN:-}" ]]; then echo "::error::the configure step must not have GITHUB_TOKEN"; exit 1; fi
           mkdir -p build
           ccache --zero-stats
+          compiler=(-DSUNSHINE_PRECOMPILED_HEADERS=ON)
+          if [[ "$TOOLCHAIN" == clang ]]; then
+            compiler=(-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld -DSUNSHINE_PRECOMPILED_HEADERS=ON)
+          fi
           gui_options=(-DFETCH_GUI=OFF "-DGUI_DIR=$GUI_BUNDLE_DIR")
           cmake \
             -B build \
             -G Ninja \
             -S . \
+            "${compiler[@]}" \
             "${gui_options[@]}" \
             -DBUILD_DOCS=OFF \
             -DSUNSHINE_RTX_HDR="$SUNSHINE_RTX_HDR" \
@@ -647,6 +666,7 @@ jobs:
           CCACHE_DIR: ${{ github.workspace }}\.ccache
           CCACHE_MAXSIZE: 2G
           CCACHE_COMPILERCHECK: content
+          CCACHE_SLOPPINESS: pch_defines,time_macros
           # Depend mode takes the include list from the compiler's own -MD file instead of running the preprocessor a second
           # time on a miss; hits cost the same. https://ccache.dev/manual/latest.html#_the_depend_mode
           CCACHE_DEPEND: '1'
@@ -735,6 +755,7 @@ jobs:
         uses: ./.github/actions/windows-toolchain
         with:
           unpinned: ${{ inputs.toolchain_probe == true }}
+          toolchain: ${{ env.TOOLCHAIN }}
 
       - name: Cache compiler objects
         uses: actions/cache/restore@v6
@@ -758,6 +779,7 @@ jobs:
           CCACHE_DIR: ${{ github.workspace }}\.ccache
           CCACHE_MAXSIZE: 2G
           CCACHE_COMPILERCHECK: content
+          CCACHE_SLOPPINESS: pch_defines,time_macros
           CCACHE_DEPEND: '1'
         run: |
           export PATH="$PATH:/c/Program Files/dotnet"
@@ -765,7 +787,12 @@ jobs:
           if [[ -n "${GUI_BUNDLE_DIR:-}" ]]; then
             gui_options=(-DFETCH_GUI=OFF "-DGUI_DIR=$GUI_BUNDLE_DIR")
           fi
+          compiler=(-DSUNSHINE_PRECOMPILED_HEADERS=ON)
+          if [[ "$TOOLCHAIN" == clang ]]; then
+            compiler=(-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld -DSUNSHINE_PRECOMPILED_HEADERS=ON)
+          fi
           cmake -B build-adapter-config -G Ninja -S . "${gui_options[@]}" \
+            "${compiler[@]}" \
             -DBUILD_DOCS=OFF -DBUILD_TESTS=ON -DBUILD_TRAY_TESTS=ON -DBUILD_WEB_UI=OFF \
             -DSUNSHINE_RTX_HDR=OFF -DSUNSHINE_SIMULATE_ADAPTER_DEFINES=ON \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
@@ -891,6 +918,7 @@ jobs:
         uses: ./.github/actions/windows-toolchain
         with:
           unpinned: ${{ inputs.toolchain_probe == true }}
+          toolchain: ${{ env.TOOLCHAIN }}
 
       # Dependency drift canary (nightly only, informational): the installed package versions are kept as an artifact and
       # compared with the last successful nightly, so a red nightly can be tied to the packages that changed overnight.
@@ -1065,6 +1093,7 @@ jobs:
           # Hashing the compiler binary instead of its mtime keeps the cache
           # valid across runs that did not actually change gcc.
           CCACHE_COMPILERCHECK: content
+          CCACHE_SLOPPINESS: pch_defines,time_macros
           # Fork PRs still try every public dependency. Keep the build usable
           # when a release asset is temporarily unavailable; official builds
           # continue to require the complete driver set.
@@ -1079,10 +1108,15 @@ jobs:
           if [[ -n "${GUI_BUNDLE_DIR:-}" ]]; then
             gui_options=(-DFETCH_GUI=OFF "-DGUI_DIR=$GUI_BUNDLE_DIR")
           fi
+          compiler=(-DSUNSHINE_PRECOMPILED_HEADERS=ON)
+          if [[ "$TOOLCHAIN" == clang ]]; then
+            compiler=(-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld -DSUNSHINE_PRECOMPILED_HEADERS=ON)
+          fi
           cmake \
             -B build \
             -G Ninja \
             -S . \
+            "${compiler[@]}" \
             "${gui_options[@]}" \
             -DBUILD_DOCS=OFF \
             -DSUNSHINE_RTX_HDR="$SUNSHINE_RTX_HDR" \
@@ -1108,6 +1142,7 @@ jobs:
           CCACHE_DIR: ${{ github.workspace }}\.ccache
           CCACHE_MAXSIZE: 2G
           CCACHE_COMPILERCHECK: content
+          CCACHE_SLOPPINESS: pch_defines,time_macros
           # Depend mode takes the include list from the compiler's own -MD file instead of running the preprocessor a second
           # time on a miss; hits cost the same. https://ccache.dev/manual/latest.html#_the_depend_mode
           CCACHE_DEPEND: '1'
@@ -1124,6 +1159,17 @@ jobs:
               echo "::warning title=Shards drifted::$misses of $((hits + misses)) compiles were not in the shard caches; keep the shard job's configure in step with Configure Windows"
             fi
           fi
+
+      - name: Check Windows release executable
+        shell: msys2 {0}
+        run: python scripts/ci/check-windows-release.py build/sunshine.exe
+
+      - name: Run version without MSYS2 on PATH
+        shell: pwsh
+        run: |
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\Wbem"
+          & "$env:GITHUB_WORKSPACE\build\sunshine.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw "sunshine.exe --version failed with exit code $LASTEXITCODE" }
 
       # The nightly build measures what the next split and the next header rule are built from: the compile time of every object file (the
       # shards' ninja logs) and the share of it behind each header. Download the two files and commit them when they have moved

@@ -84,6 +84,14 @@ libcrypto 需要链接 bcrypt、主机名校验不再回退 CN），修复见 PR
 
 **升级步骤**：跑 `python3 scripts/ci/msys2-pins.py bump`（版本与 sha256 取自仓库数据库，直接重写固定清单）→ 核对 diff，按 API
 变化适配代码（可参考 PR #1289 对 OpenSSL 4 的处理）→ 跑一次 Windows 构建 → 合并。固定版本覆盖新版本后，巡检会自动关掉跟踪 issue。
+## Windows 编译器与发布门禁
+
+- 发布构建默认使用 MSYS2 UCRT64 的 Clang + LLD；`CI_TOOLCHAIN=gcc` 或手动运行的 `toolchain=gcc` 可回退到 GCC。
+  pull request 始终使用 GCC：固定主机的冷构建 Clang/GCC 墙钟中位数为 0.66 倍，但托管 runner 上没有可靠的端到端收益，且 Clang 的 ccache 约大 5 倍。
+- Clang、LLD 和与它们版本锁定的 `clang-libs`、`llvm-libs` 固定在 `scripts/ci/msys2-pins-clang.txt`，格式与升级方式同 `msys2-pins.txt`（`msys2-pins.py check/bump` 两个文件一并处理）；只有 Clang 构建才装它们并把它们写进 `IgnorePkg`，GCC 构建不受影响，配置指纹也只在 Clang 构建时计入这个文件。
+- 两种编译器都启用 `SUNSHINE_PRECOMPILED_HEADERS=ON`。ccache 同时使用 `CCACHE_DEPEND=1` 和 `CCACHE_SLOPPINESS=pch_defines,time_macros`，配置指纹把编译器和 Clang/LLD 包版本纳入缓存键。
+- Windows Release 目标使用 `-ffunction-sections -fdata-sections` 与 `--gc-sections`；发布打包仍先从未 strip 的模块生成 Breakpad 符号，再 strip 发出的模块。LTO 暂不启用，因为本卡没有可重复的构建时间收益测量。
+- `sunshine.exe` 的发布门禁检查 PE 导入表只含系统 DLL、`SizeOfStackReserve >= 2 MiB`，并在移除 MSYS2 的 PATH 后运行 `sunshine.exe --version`。这会在原生 Windows 构建和打包前失败，避免把依赖开发环境 DLL 的文件送进发布流程。
 
 ## 冷构建：在并行运行器上编译
 
