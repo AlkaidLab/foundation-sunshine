@@ -4,6 +4,7 @@
  */
 // standard includes
 #include <algorithm>
+#include <optional>
 #include <thread>
 
 // lib includes
@@ -20,6 +21,7 @@ extern "C" {
 
 // local includes
 #include "audio.h"
+#include "audio_sink_plan.h"
 #include "config.h"
 #include "globals.h"
 #include "logging.h"
@@ -516,6 +518,62 @@ namespace audio {
       return host_audio_enabled ? host_audio_enabled->load(std::memory_order_acquire) : config.flags[config_t::HOST_AUDIO];
     };
 
+    // The virtual device a muted stream runs on takes the widest layout it supports, at most the one the client asked for:
+    // VB-CABLE has no 7.1.4 and refuses some bit depths, so a 7.1 stream used to end without sound. A narrower capture is
+    // widened with silent channels below. Decided once per stream: the default is switched to this device and captured.
+    struct muted_route_t {
+      std::string *sink;
+      int channels;
+      const std::uint8_t *mapping;
+    };
+    std::optional<muted_route_t> muted_route;
+    bool muted_route_decided = false;
+    auto muted_route_for_stream = [&]() -> const std::optional<muted_route_t> & {
+      if (muted_route_decided || !ref->sink.null) return muted_route;
+      muted_route_decided = true;
+      auto &null = *ref->sink.null;
+      auto sink_for = [&null](int channels) -> std::string * {
+        switch (channels) {
+          case 2:
+            return &null.stereo;
+          case 6:
+            return &null.surround51;
+          case 8:
+            return &null.surround71;
+          case 12:
+            return &null.surround714;
+          default:
+            return nullptr;
+        }
+      };
+      const int channels = audio_sink_plan::pick_layout(stream.channelCount, [&](int candidate) {
+        auto *name = sink_for(candidate);
+        return name && !name->empty() && control->is_sink_format_supported(*name);
+      });
+      auto *name = sink_for(channels);
+      if (!name || name->empty()) return muted_route;
+      const std::uint8_t *mapping = stream.mapping;
+      switch (channels) {
+        case 2:
+          mapping = platf::speaker::map_stereo;
+          break;
+        case 6:
+          mapping = platf::speaker::map_surround51;
+          break;
+        case 8:
+          mapping = platf::speaker::map_surround71;
+          break;
+        default:
+          break;
+      }
+      if (channels != stream.channelCount) {
+        BOOST_LOG(info) << "Virtual audio sink takes "sv << channels << " channels, capturing those for the "sv << stream.channelCount
+                        << "-channel stream with silent extra channels"sv;
+      }
+      muted_route = muted_route_t { name, channels, channels == stream.channelCount ? stream.mapping : mapping };
+      return muted_route;
+    };
+
     // Select and open the capture endpoint each time the host-playback switch changes.
     // The platform audio control owns the sink names; rebuilding the microphone is the
     // supported live operation and avoids changing a different session's default sink.
@@ -524,29 +582,11 @@ namespace audio {
       if (!config::audio.sink.empty()) sink = &config::audio.sink;
       capture_channels = stream.channelCount;
       capture_mapping = stream.mapping;
-      if (ref->sink.null && (!play_on_host || sink->empty())) {
-        auto &null = *ref->sink.null;
-        switch (stream.channelCount) {
-          case 2:
-            sink = &null.stereo;
-            break;
-          case 6:
-            sink = &null.surround51;
-            break;
-          case 8:
-            sink = &null.surround71;
-            break;
-          case 12:
-            if (!null.surround714.empty()) {
-              sink = &null.surround714;
-              if (!null.surround71.empty() && !control->is_sink_format_supported(null.surround714)) {
-                BOOST_LOG(info) << "Virtual audio sink doesn't support 7.1.4, capturing 7.1 with silent height channels"sv;
-                sink = &null.surround71;
-                capture_channels = 8;
-                capture_mapping = platf::speaker::map_surround71;
-              }
-            }
-            break;
+      if (ref->sink.null && (!play_on_host || sink->empty() || ref->sink.null_is_selected_device)) {
+        if (const auto &route = muted_route_for_stream()) {
+          sink = route->sink;
+          capture_channels = route->channels;
+          capture_mapping = route->mapping;
         }
       }
       const auto frame_size = config.packetDuration * stream.sampleRate / 1000;
@@ -558,21 +598,8 @@ namespace audio {
     if (!ref->sink_flag->exchange(true, std::memory_order_acquire)) {
       const bool play_on_host = host_audio();
       std::string *sink = &ref->sink.host;
-      if (!play_on_host && ref->sink.null) {
-        switch (stream.channelCount) {
-          case 2:
-            sink = &ref->sink.null->stereo;
-            break;
-          case 6:
-            sink = &ref->sink.null->surround51;
-            break;
-          case 8:
-            sink = &ref->sink.null->surround71;
-            break;
-          case 12:
-            if (!ref->sink.null->surround714.empty()) sink = &ref->sink.null->surround714;
-            break;
-        }
+      if ((!play_on_host || ref->sink.null_is_selected_device) && ref->sink.null) {
+        if (const auto &route = muted_route_for_stream()) sink = route->sink;
       }
       ref->restore_sink = ref->sink.host != *sink;
       if (ref->restore_sink || (config::audio.keep_sink_default && !sink->empty())) {

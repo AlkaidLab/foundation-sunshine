@@ -160,6 +160,18 @@ if (WIN32)
 endif ()
 add_test(NAME audio_devices_unit_tests COMMAND audio_devices_unit_tests)
 
+# Which virtual device carries a muted stream, the layout it is asked for and the order of its wave formats: no audio API.
+add_executable(audio_sink_plan_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/audio_sink_plan.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_sink_plan.cpp)
+target_include_directories(audio_sink_plan_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(audio_sink_plan_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(audio_sink_plan_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(audio_sink_plan_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME audio_sink_plan_unit_tests COMMAND audio_sink_plan_unit_tests)
+
 # The VB-CABLE install and enable steps against a fake system: nothing is downloaded, installed or enabled.
 add_executable(audio_vb_cable_unit_tests
         ${CMAKE_SOURCE_DIR}/src/audio_vb_cable.cpp
@@ -1325,6 +1337,7 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/sparxie/")
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_hdr_calibration.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_authored_ir_extended.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_devices.cpp)
+list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_sink_plan.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_vb_cable.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_telemetry.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_host_bitrate_cap.cpp)

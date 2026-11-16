@@ -18,6 +18,8 @@
 // local includes
 #include "mic_write.h"
 #include "misc.h"
+#include "src/audio_devices.h"
+#include "src/audio_sink_plan.h"
 #include "src/config.h"
 #include "src/globals.h"
 #include "src/logging.h"
@@ -782,15 +784,23 @@ namespace platf::audio {
         sink.host = to_utf8(id.get());
       }
 
-      // Prepare to search for the device_id of the virtual audio sink device,
-      // this device can be either user-configured or
-      // the Steam Streaming Speakers we use by default.
+      // Prepare to search for the device_id of the virtual audio sink device, this device can be
+      // user-configured, the virtual device chosen as the one to capture, or the Steam Streaming Speakers we use by default.
       match_fields_list_t match_list;
-      if (config::audio.virtual_sink.empty()) {
-        match_list = match_steam_speakers();
-      }
-      else {
-        match_list = match_all_fields(from_utf8(config::audio.virtual_sink));
+      const bool audio_sink_is_virtual = config::audio.virtual_sink.empty() && !config::audio.sink.empty() && is_virtual_output_device(config::audio.sink);
+      switch (audio_sink_plan::choose_virtual_target(config::audio.virtual_sink, config::audio.sink, audio_sink_is_virtual)) {
+        case audio_sink_plan::virtual_target_e::virtual_sink:
+          match_list = match_all_fields(from_utf8(config::audio.virtual_sink));
+          break;
+        case audio_sink_plan::virtual_target_e::audio_sink:
+          // VB-CABLE chosen as the device to capture: the game only plays to the Windows default, so the default goes there
+          BOOST_LOG(info) << "The captured audio device is a virtual device, the stream runs on it"sv;
+          match_list = match_all_fields(from_utf8(config::audio.sink));
+          sink.null_is_selected_device = true;
+          break;
+        case audio_sink_plan::virtual_target_e::steam_streaming:
+          match_list = match_steam_speakers();
+          break;
       }
 
       // Search for the virtual audio sink device currently present in the system.
@@ -812,6 +822,41 @@ namespace platf::audio {
       }
 
       return sink;
+    }
+
+    /**
+     * @brief Whether a configured device name or id points at a known virtual output device (VB-CABLE, Steam, other VB-Audio devices).
+     */
+    bool
+    is_virtual_output_device(const std::string &configured) {
+      const auto matched = find_device_id(match_all_fields(from_utf8(configured)));
+      if (!matched) {
+        return false;
+      }
+
+      device_t device;
+      if (FAILED(device_enum->GetDevice(matched->second.c_str(), &device))) {
+        return false;
+      }
+
+      audio::prop_t prop;
+      if (FAILED(device->OpenPropertyStore(STGM_READ, &prop))) {
+        return false;
+      }
+
+      auto read = [&prop](const PROPERTYKEY &key) {
+        prop_var_t value;
+        if (FAILED(prop->GetValue(key, &value.prop)) || value.prop.vt != VT_LPWSTR || !value.prop.pwszVal) {
+          return std::string {};
+        }
+        return to_utf8(value.prop.pwszVal);
+      };
+
+      audio_devices::endpoint_t endpoint;
+      endpoint.name = read(PKEY_Device_FriendlyName);
+      endpoint.adapter = read(PKEY_DeviceInterface_FriendlyName);
+      endpoint.description = read(PKEY_Device_DeviceDesc);
+      return audio_devices::is_virtual_output_kind(audio_devices::classify_virtual(endpoint));
     }
 
     bool
@@ -869,6 +914,21 @@ namespace platf::audio {
       return std::nullopt;
     }
 
+    /**
+     * @brief The order in which the waveformats of a virtual sink are tried.
+     * @note The bit depth of the default device is a preference (switching between depths has caused glitches for some people), not a
+     *       condition: VB-CABLE has no 32-bit format at all, and a rule that skipped every format of another depth left it with none.
+     */
+    std::vector<std::size_t>
+    waveformat_try_order(const virtual_sink_waveformats_t &waveformats) {
+      std::vector<int> bits;
+      bits.reserve(waveformats.size());
+      for (const auto &waveformat : waveformats) {
+        bits.push_back(waveformat.Samples.wValidBitsPerSample);
+      }
+      return audio_sink_plan::format_try_order(bits, default_device_bits_per_sample().value_or(32));
+    }
+
     bool
     is_sink_format_supported(const std::string &sink) override {
       auto virtual_sink_info = extract_virtual_sink_info(sink);
@@ -883,14 +943,10 @@ namespace platf::audio {
         return true;
       }
 
-      // Only the waveformats set_format() would try, a device that rejects all of them counts as unsupported
-      auto wanted_bits_per_sample = default_device_bits_per_sample().value_or(32);
-      for (const auto &waveformat : virtual_sink_info->second.get().virtual_sink_waveformats) {
-        if (wanted_bits_per_sample != waveformat.Samples.wValidBitsPerSample) {
-          continue;
-        }
-
-        if (audio_client->IsFormatSupported(AUDCLNT_SHAREMODE_EXCLUSIVE, (const WAVEFORMATEX *) &waveformat, nullptr) != AUDCLNT_E_UNSUPPORTED_FORMAT) {
+      // Only the waveformats set_format() would try, in its order; a device that rejects all of them counts as unsupported
+      const auto &waveformats = virtual_sink_info->second.get().virtual_sink_waveformats;
+      for (const auto index : waveformat_try_order(waveformats)) {
+        if (audio_client->IsFormatSupported(AUDCLNT_SHAREMODE_EXCLUSIVE, (const WAVEFORMATEX *) &waveformats[index], nullptr) != AUDCLNT_E_UNSUPPORTED_FORMAT) {
           return true;
         }
       }
@@ -1131,19 +1187,20 @@ namespace platf::audio {
 
       auto &device_id = virtual_sink_info->first;
       auto &waveformats = virtual_sink_info->second.get().virtual_sink_waveformats;
-      for (const auto &waveformat : waveformats) {
+      for (const auto index : waveformat_try_order(waveformats)) {
+        const auto &waveformat = waveformats[index];
         // We're using completely undocumented and unlisted API,
         // better not pass objects without copying them first.
         auto device_id_copy = device_id;
         auto waveformat_copy = waveformat;
         auto waveformat_copy_pointer = reinterpret_cast<WAVEFORMATEX *>(&waveformat_copy);
 
-        if (wanted_bits_per_sample != waveformat.Samples.wValidBitsPerSample) {
-          continue;
-        }
-
         WAVEFORMATEXTENSIBLE p {};
         if (SUCCEEDED(policy->SetDeviceFormat(device_id_copy.c_str(), waveformat_copy_pointer, (WAVEFORMATEX *) &p))) {
+          if (waveformat.Samples.wValidBitsPerSample != wanted_bits_per_sample) {
+            BOOST_LOG(info) << "The virtual audio sink has no "sv << wanted_bits_per_sample << "-bit format for this layout, using "sv
+                            << waveformat.Samples.wValidBitsPerSample << "-bit"sv;
+          }
           BOOST_LOG(info) << "Changed virtual audio sink format to " << logging::bracket(waveformat_to_pretty_string(waveformat));
           return device_id;
         }

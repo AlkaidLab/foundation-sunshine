@@ -63,6 +63,33 @@ namespace audio_devices {
   std::string_view
   classify_virtual(const endpoint_t &endpoint);
 
+  /// Whether text is an MMDevice endpoint id such as {0.0.0.00000000}.{29dd7668-45b2-4846-882d-950f55bf7eb8}: what a setting stores for a
+  /// chosen device and what a person must never be shown instead of its name.
+  // (header only: the checks of the doctor use it in builds that do not link the rest of this file)
+  inline bool
+  looks_like_endpoint_id(std::string_view text) {
+    // {n.n.n.xxxxxxxx}.{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}: the endpoint part, a dot, the device guid
+    const auto is_hex = [](char c) { return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); };
+    const auto dot = text.find("}.{");
+    if (text.size() < 2 || text.front() != '{' || text.back() != '}' || dot == std::string_view::npos) return false;
+    const auto endpoint = text.substr(1, dot - 1);
+    const auto guid = text.substr(dot + 3, text.size() - dot - 4);
+    if (endpoint.empty() || guid.size() != 36) return false;
+    for (const char c : endpoint) {
+      if (c != '.' && !is_hex(c)) return false;
+    }
+    for (std::size_t i = 0; i < guid.size(); ++i) {
+      const bool dash = i == 8 || i == 13 || i == 18 || i == 23;
+      if (dash ? guid[i] != '-' : !is_hex(guid[i])) return false;
+    }
+    return true;
+  }
+
+  /// Whether a word of classify_virtual is a device the host can use as its virtual output: VB-CABLE, another VB-Audio device
+  /// or Steam Streaming Speakers. The host's own virtual microphone is an input and does not count.
+  bool
+  is_virtual_output_kind(std::string_view kind);
+
   /**
    * @brief Whether the endpoint is the VB-CABLE the microphone backend uses.
    *
