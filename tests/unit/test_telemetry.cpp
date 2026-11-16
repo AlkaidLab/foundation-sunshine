@@ -47,6 +47,7 @@ namespace {
     double random_value = 0.0;  ///< what the random source answers: the Tier 1 draw of a stream and the jitter of a backoff
     std::optional<std::string> log_ref;  ///< what the session log upload returns
     int log_calls = 0;
+    std::vector<std::string> log_ids;  ///< the install id (or the one-time report id) each session log upload was made under
     std::unique_ptr<service_t> svc;
 
     explicit harness_t(service_options_t options = {}, double tier1_rate = 1.0) {
@@ -56,8 +57,9 @@ namespace {
       deps.now_ms = [this] { return now; };
       deps.consent = [this] { return consent; };
       deps.random01 = [this] { return random_value; };
-      deps.session_log = [this](const std::string &, const std::string &, const std::string &) {
+      deps.session_log = [this](const std::string &, const std::string &id, const std::string &) {
         ++log_calls;
+        log_ids.push_back(id);
         return log_ref;
       };
       deps.post = [this](const std::string &url, const std::string &body) {
@@ -1039,7 +1041,7 @@ TEST(TelemetryUserReport, ShapeFollowsTheContract) {
   ASSERT_TRUE(e);
   EXPECT_EQ(e->kind, kind_e::error);
   EXPECT_EQ(e->props["category"], "performance");
-  EXPECT_FALSE(e->props.contains("contact"));  // no contact field exists on purpose
+  EXPECT_EQ(e->props["contact"], "me@example.org");  // what a person left on purpose to be answered is kept as they wrote it (it is not scrubbed)
   EXPECT_EQ(e->props["attachment"], att);
   EXPECT_EQ(e->props["error_code"], "E_DXGI_LOST");
   const auto message = e->props["message"].get<std::string>();
@@ -1067,22 +1069,47 @@ TEST(TelemetryUserReport, CategoryAndAttachmentAreChecked) {
   EXPECT_FALSE(base(json { { "error_code", "has space" } })->props.contains("error_code"));
 }
 
-TEST(TelemetryUserReport, FollowsTheErrorReportChoice) {
+TEST(TelemetryUserReport, IsNotHeldBackByTheErrorReportChoice) {
+  // pressing 发送 is the person's consent for that one send: the error-report switch decides about the automatic reports, not about this one
   harness_t h;
   const json events = json::array({ json { { "kind", "error" }, { "name", "user_report" }, { "props", json { { "category", "bug" }, { "component", "panel" }, { "message", "it broke" } } } } });
-  h.consent = { true, false };
-  EXPECT_EQ(h.svc->ingest("panel", "1.0", events), 0u);  // error reports off: refused
-  h.consent = { false, true };
+  h.consent = { true, false };  // usage on, error reports off
   EXPECT_EQ(h.svc->ingest("panel", "1.0", events), 1u);
   h.svc->flush();
   ASSERT_EQ(h.svc->pump(), 1);
   EXPECT_EQ(h.posted.at(0)["events"][0]["name"], "user_report");
-  // turned off while waiting: dropped
+  // the choice changes while the report waits: the report stays, the automatic error events of the same batch would not
+  h.consent = { false, true };
   h.svc->ingest("web", "1", events);
+  h.svc->emit(kind_e::error, "error", json { { "component", "x" }, { "code", "E_LOST" } });
   h.consent = { true, false };
   h.svc->consent_changed();
   h.svc->flush();
-  EXPECT_EQ(h.svc->pump(), 0);
+  ASSERT_EQ(h.svc->pump(), 1);
+  EXPECT_EQ(names_of({ h.posted.back() }), std::set<std::string> { "user_report" });
+}
+
+TEST(TelemetryUserReport, ContactIsOneLineKeptAsTheyWroteItAndCutAtTwoHundredCharacters) {
+  const auto base = [](const json &contact) {
+    json p { { "category", "bug" }, { "component", "web" }, { "message", "m" } };
+    if (!contact.is_null()) p["contact"] = contact;
+    return shape_event(kind_e::error, "user_report", p, 0);
+  };
+  // not scrubbed: an address they gave is what it is for; control characters and runs of blanks become one space
+  EXPECT_EQ(base("  me@example.org \n QQ\t12345  ")->props["contact"], "me@example.org QQ 12345");
+  EXPECT_EQ(base(std::string(300, 'x'))->props["contact"].get<std::string>().size(), MAX_USER_CONTACT_CHARS);
+  EXPECT_EQ(base(std::string(150, 'x') + "\xe4\xb8\xad" + std::string(100, 'y'))->props["contact"].get<std::string>().substr(150, 3), "\xe4\xb8\xad");  // a multi-byte character is never split
+  for (const json &none : { json(""), json("   \n"), json(12345), json(true), json::array() }) EXPECT_FALSE(base(none)->props.contains("contact")) << none.dump();
+  EXPECT_FALSE(base(nullptr)->props.contains("contact"));
+}
+
+TEST(TelemetryUserReport, TheQueueKeepsAReportWhenErrorReportsAreOff) {
+  json envelope { { "events", json::array({ json { { "kind", "error" }, { "name", "user_report" } }, json { { "kind", "error" }, { "name", "error" } }, json { { "kind", "usage" }, { "name", "app_start" } } }) } };
+  EXPECT_EQ(filter_by_consent(envelope, true, false), 2u);
+  EXPECT_EQ(envelope["events"][0]["name"], "user_report");
+  EXPECT_EQ(envelope["events"][1]["name"], "app_start");
+  json off { { "events", json::array({ json { { "kind", "error" }, { "name", "error" } } }) } };
+  EXPECT_EQ(filter_by_consent(off, true, false), 0u);
 }
 
 TEST(TelemetryUserReport, TheSessionLogGoesUpFirstAndItsReferenceTravelsInTheReport) {
@@ -1107,16 +1134,259 @@ TEST(TelemetryUserReport, TheSessionLogGoesUpFirstAndItsReferenceTravelsInTheRep
   EXPECT_EQ(h.log_calls, before);
 }
 
-TEST(TelemetryUserReport, NoLogIsUploadedWhileErrorReportsAreOffOrTheVersionIsNotAVersion) {
+TEST(TelemetryUserReport, TheLogGoesWithEveryReportWhateverTheErrorReportChoiceIsButNotUnderAPathAsVersion) {
   harness_t h;
   h.log_ref = "crash-2026-11/ur-0123456789abcdef01234567.log.gz";
   const json report = json::array({ json { { "kind", "error" }, { "name", "user_report" }, { "props", json { { "category", "bug" }, { "component", "panel" }, { "message", "it broke" } } } } });
-  h.consent = { true, false };  // error reports off: the report is refused and the log must not leave first
-  EXPECT_EQ(h.svc->ingest("web", "1", report), 0u);
-  EXPECT_EQ(h.log_calls, 0);
+  h.consent = { true, false };  // error reports off: the report and its log still go (pressing 发送 was the consent)
+  EXPECT_EQ(h.svc->ingest("web", "1", report), 1u);
+  EXPECT_EQ(h.log_calls, 1);
+  h.svc->flush();
+  ASSERT_EQ(h.svc->pump(), 1);
+  EXPECT_EQ(h.posted.back()["events"][0]["props"]["log_ref"], *h.log_ref);
   h.consent = { false, true };
+  const auto before = h.log_calls;
   h.svc->ingest("web", "C:\\Users\\Alice\\build", report);  // a page-supplied version that is a path: the log is not uploaded under it
-  EXPECT_EQ(h.log_calls, 0);
+  EXPECT_EQ(h.log_calls, before);
+}
+
+TEST(TelemetryUserReport, WithBothSwitchesOffTheReportGoesOutWithAOneTimeIdAndNoInstallIdIsMade) {
+  harness_t h;
+  h.consent = { false, false };
+  h.log_ref = "crash-2026-11/ur-0123456789abcdef01234567.log.gz";
+  const json report = json::array({ json { { "kind", "error" }, { "name", "user_report" }, { "props", json { { "category", "bug" }, { "component", "panel" }, { "message", "it broke" }, { "contact", "QQ 10086" } } } } });
+  EXPECT_EQ(h.svc->ingest("web", "1", report), 1u);  // accepted only because it is on disk by now (the page shows success from this answer)
+  ASSERT_EQ(h.log_ids.size(), 1u);
+  const auto report_id = h.log_ids.front();
+  EXPECT_EQ(report_id.size(), 36u);  // the log is uploaded under the report's own id, so the Worker can tie the two
+  EXPECT_FALSE(std::filesystem::exists(h.dir.path / "install_id")) << "no install id is created for this report";
+  ASSERT_EQ(h.svc->pump(), 1);
+  const auto &batch = h.posted.at(0);
+  EXPECT_EQ(batch["install_id"], report_id);
+  EXPECT_TRUE(batch["report_only"].get<bool>());
+  EXPECT_NE(batch["session_id"], batch["install_id"]);
+  ASSERT_EQ(batch["events"].size(), 1u);
+  EXPECT_EQ(batch["events"][0]["name"], "user_report");
+  EXPECT_EQ(batch["events"][0]["props"]["log_ref"], *h.log_ref);
+  EXPECT_EQ(batch["events"][0]["props"]["contact"], "QQ 10086");
+  // an ordinary event never carries the flag, and with both switches off nothing else is sent
+  EXPECT_FALSE(h.svc->emit(kind_e::usage, "feature_used", json { { "feature", "a" } }));
+  EXPECT_FALSE(std::filesystem::exists(h.dir.path / "install_id"));
+}
+
+TEST(TelemetryUserReport, TwoReportsWithBothSwitchesOffGetTwoIdsAndTheLogFollowsEach) {
+  harness_t h;
+  h.consent = { false, false };
+  h.log_ref = "crash-2026-11/ur-0123456789abcdef01234567.log.gz";
+  const json report = json::array({ json { { "kind", "error" }, { "name", "user_report" }, { "props", json { { "category", "bug" }, { "component", "panel" }, { "message", "again" } } } } });
+  EXPECT_EQ(h.svc->ingest("web", "1", report), 1u);
+  EXPECT_EQ(h.svc->ingest("web", "1", report), 1u);
+  ASSERT_EQ(h.log_ids.size(), 2u);
+  EXPECT_NE(h.log_ids[0], h.log_ids[1]) << "reports are not tied to one another or to an install";
+  h.log_ref.reset();  // the log could not be read: the report still goes, without a log
+  EXPECT_EQ(h.svc->ingest("web", "1", report), 1u);
+  while (h.svc->pump() > 0) {}
+  ASSERT_EQ(h.posted.size(), 3u);
+  EXPECT_FALSE(h.posted.back()["events"][0]["props"].contains("log_ref"));
+}
+
+TEST(TelemetryUserReport, TurningTheLastSwitchOffKeepsAWaitingReportAndDropsTheAutomaticEvents) {
+  harness_t h;
+  h.consent = { true, true };
+  const json report = json::array({ json { { "kind", "error" }, { "name", "user_report" }, { "props", json { { "category", "bug" }, { "component", "panel" }, { "message", "kept" } } } } });
+  h.svc->ingest("web", "1", report);
+  h.svc->emit(kind_e::usage, "feature_used", json { { "feature", "web.a" } }, "web", "1");
+  h.svc->flush();  // queued on disk, nothing sent yet
+  h.consent = { false, false };
+  h.svc->consent_changed();
+  h.consent = { false, true };  // the person may send what waits: the queue is read with errors on again
+  while (h.svc->pump() > 0) {}
+  const auto names = names_of(h.posted);
+  EXPECT_TRUE(names.count("user_report")) << "the report the person sent is still there";
+  EXPECT_FALSE(names.count("feature_used")) << "the automatic usage event was dropped with the choice";
+}
+
+namespace {
+  std::size_t
+  queue_files(const std::filesystem::path &dir) {
+    std::error_code ec;
+    std::size_t n = 0;
+    if (!std::filesystem::exists(dir / "queue", ec)) return 0;
+    for (const auto &f : std::filesystem::directory_iterator(dir / "queue", ec))
+      if (f.path().extension() == ".json") ++n;
+    return n;
+  }
+}  // namespace
+
+TEST(TelemetryUserReport, AReportIsOnDiskWhenTheAnswerIsGivenEvenWhileAnotherThreadKeepsFlushing) {
+  harness_t h;
+  h.consent = { false, true };
+  const json report = json::array({ json { { "kind", "error" }, { "name", "user_report" }, { "props", json { { "category", "bug" }, { "component", "panel" }, { "message", "kept" } } } } });
+  // a guard, so that a failed assertion leaves through here as well: the thread is stopped and joined before the harness it uses goes away (a joinable thread that is destroyed ends the program)
+  struct flusher_t {
+    std::atomic<bool> stop { false };
+    std::thread thread;
+    explicit flusher_t(service_t &svc) : thread([this, &svc] {
+      while (!stop.load()) svc.flush(false);  // the sender thread swaps the buffer out all the time
+    }) {}
+    ~flusher_t() {
+      stop = true;
+      if (thread.joinable()) thread.join();
+    }
+  } flusher { *h.svc };
+  for (std::size_t i = 1; i <= 40; ++i) {
+    ASSERT_EQ(h.svc->ingest("web", "1", report), 1u);
+    // the process could end right here: the report must already be in the queue directory, not only in a buffer that another thread holds
+    EXPECT_GE(queue_files(h.dir.path), i) << "report " << i << " is not on disk when the page was told it was accepted";
+  }
+}
+
+TEST(TelemetryUserReport, WhenTheQueueCannotBeWrittenTheAnswerIsNotKeptAndTheReportStaysInTheBufferForTheNextFlush) {
+  harness_t h;
+  h.consent = { false, true };
+  const json report = json::array({ json { { "kind", "error" }, { "name", "user_report" }, { "props", json { { "category", "bug" }, { "component", "panel" }, { "message", "later" } } } } });
+  const auto queue = h.dir.path / "queue";
+  std::filesystem::create_directories(queue);
+  namespace fs = std::filesystem;
+  fs::permissions(queue, fs::perms::owner_read | fs::perms::owner_exec, fs::perm_options::replace);
+  std::ofstream probe(queue / "probe");
+  if (probe) {  // a user that may write anywhere (root): the directory cannot be made unwritable, nothing to test
+    fs::permissions(queue, fs::perms::owner_all, fs::perm_options::replace);
+    GTEST_SKIP() << "the queue directory stays writable for this user";
+  }
+  EXPECT_EQ(h.svc->ingest("web", "1", report), 0u) << "not written: the page must not be told it was kept";
+  EXPECT_EQ(queue_files(h.dir.path), 0u);
+  h.svc->flush(false);  // still not writable: the event is put back, not lost
+  EXPECT_EQ(queue_files(h.dir.path), 0u);
+  fs::permissions(queue, fs::perms::owner_all, fs::perm_options::replace);
+  h.svc->flush(false);  // writable again: the held report is written now
+  EXPECT_EQ(queue_files(h.dir.path), 1u);
+  ASSERT_EQ(h.svc->pump(), 1);
+  EXPECT_EQ(h.posted.at(0)["events"][0]["props"]["message"], "later");
+}
+
+namespace {
+  // makes a queue directory that cannot be written; false when this user may write anywhere (nothing to test)
+  bool
+  lock_queue(const std::filesystem::path &dir) {
+    namespace fs = std::filesystem;
+    fs::create_directories(dir / "queue");
+    fs::permissions(dir / "queue", fs::perms::owner_read | fs::perms::owner_exec, fs::perm_options::replace);
+    std::ofstream probe(dir / "queue" / "probe");
+    if (probe) {
+      fs::permissions(dir / "queue", fs::perms::owner_all, fs::perm_options::replace);
+      return false;
+    }
+    return true;
+  }
+  void
+  unlock_queue(const std::filesystem::path &dir) {
+    std::filesystem::permissions(dir / "queue", std::filesystem::perms::owner_all, std::filesystem::perm_options::replace);
+  }
+}  // namespace
+
+TEST(TelemetryUserReport, TheIdentityIsFixedWhenTheReportIsAcceptedSoASwitchTurnedOffLaterDoesNotLoseIt) {
+  harness_t h;
+  h.consent = { false, true };
+  const json report = json::array({ json { { "kind", "error" }, { "name", "user_report" }, { "props", json { { "category", "bug" }, { "component", "panel" }, { "message", "identity" } } } } });
+  if (!lock_queue(h.dir.path)) GTEST_SKIP() << "the queue directory stays writable for this user";
+  EXPECT_EQ(h.svc->ingest("web", "1", report), 0u);  // not written: it waits in the buffer, with the identity it was accepted under
+  const auto install = h.svc->install_id();
+  ASSERT_FALSE(install.empty());
+  h.consent = { false, false };  // the last switch goes off before the next flush: no install id can be had any more
+  h.svc->consent_changed();
+  unlock_queue(h.dir.path);
+  h.svc->flush(false);
+  EXPECT_EQ(queue_files(h.dir.path), 1u) << "the report is written with the identity it already had, not dropped for want of an install id";
+  ASSERT_EQ(h.svc->pump(), 1);
+  EXPECT_EQ(h.posted.at(0)["events"][0]["props"]["message"], "identity");
+  EXPECT_EQ(h.posted.at(0)["install_id"], install);
+}
+
+TEST(TelemetryUserReport, AReportKeptInTheBufferThroughTheLastSwitchGoingOffIsSentWithAOneTimeId) {
+  harness_t h;
+  h.consent = { true, true };
+  // a report in the buffer with no identity (emitted directly, as before the identity was fixed at acceptance), and then both switches go off
+  ASSERT_TRUE(h.svc->emit(kind_e::error, "user_report", json { { "category", "bug" }, { "component", "panel" }, { "message", "through the switches" } }, "panel", "1"));
+  ASSERT_TRUE(h.svc->emit(kind_e::usage, "feature_used", json { { "feature", "panel.a" } }, "panel", "1"));
+  h.consent = { false, false };
+  h.svc->consent_changed();
+  ASSERT_FALSE(std::filesystem::exists(h.dir.path / "install_id") && !h.svc->install_id().empty());
+  h.svc->flush(false);
+  EXPECT_EQ(queue_files(h.dir.path), 1u) << "the report is written (the automatic usage event went with the choice)";
+  h.consent = { false, true };
+  ASSERT_EQ(h.svc->pump(), 1);
+  const auto &batch = h.posted.at(0);
+  EXPECT_EQ(batch["events"][0]["name"], "user_report");
+  EXPECT_TRUE(batch["report_only"].get<bool>()) << "no install id exists: the one-time id stands in for it";
+  EXPECT_EQ(batch["events"].size(), 1u);
+}
+
+TEST(TelemetryUserReport, AFlushThatCannotWriteGivesTheAutomaticEventsBackToTheBufferToo) {
+  harness_t h;
+  h.consent = { true, true };
+  ASSERT_TRUE(h.svc->emit(kind_e::usage, "feature_used", json { { "feature", "web.apps_saved" } }, "web", "1"));
+  if (!lock_queue(h.dir.path)) GTEST_SKIP() << "the queue directory stays writable for this user";
+  h.svc->flush(false);
+  EXPECT_EQ(queue_files(h.dir.path), 0u);
+  unlock_queue(h.dir.path);
+  h.svc->flush(false);
+  EXPECT_EQ(queue_files(h.dir.path), 1u) << "the event went back to the buffer and is written now";
+}
+
+TEST(TelemetryUserReport, SeveralReportsDuringAWaitOfTheServerAllArriveEachOnItsOwn) {
+  harness_t h;
+  h.next_body = R"({"ok":true,"cfg":{"backoff_s":600}})";
+  ASSERT_TRUE(h.svc->emit(kind_e::usage, "app_start", json { { "cold", true } }));
+  h.svc->flush();
+  ASSERT_EQ(h.svc->pump(), 1);
+  ASSERT_TRUE(h.svc->backing_off());
+  h.posted.clear();
+  h.next_body.clear();
+  const auto one = [](const char *message) {
+    return json::array({ json { { "kind", "error" }, { "name", "user_report" }, { "props", json { { "category", "bug" }, { "component", "panel" }, { "message", message } } } } });
+  };
+  // two with the same component and category (what the merging of a wait counts into one) and a third
+  EXPECT_EQ(h.svc->ingest("panel", "1", one("first")), 1u);
+  EXPECT_EQ(h.svc->ingest("panel", "1", one("second")), 1u);
+  EXPECT_EQ(h.svc->ingest("panel", "1", one("third")), 1u);
+  EXPECT_EQ(h.svc->queued_files(), 3u);
+  EXPECT_EQ(h.svc->pump(), 1);  // one request for each report, in the wait, not merged
+  EXPECT_EQ(h.svc->pump(), 1);
+  EXPECT_EQ(h.svc->pump(), 1);
+  ASSERT_EQ(h.posted.size(), 3u);
+  std::set<std::string> messages;
+  for (const auto &b : h.posted) {
+    ASSERT_EQ(b["events"].size(), 1u);
+    EXPECT_EQ(b["events"][0]["name"], "user_report");
+    EXPECT_FALSE(b["events"][0]["props"].contains("count"));
+    messages.insert(b["events"][0]["props"]["message"].get<std::string>());
+  }
+  EXPECT_EQ(messages, (std::set<std::string> { "first", "second", "third" }));
+  EXPECT_EQ(h.svc->queued_files(), 0u) << "each file is removed when its own request was answered";
+}
+
+TEST(TelemetryUserReport, ARefusedRequestInAWaitRemovesOnlyItsOwnFile) {
+  harness_t h;
+  h.next_body = R"({"ok":true,"cfg":{"backoff_s":600}})";
+  ASSERT_TRUE(h.svc->emit(kind_e::usage, "app_start", json { { "cold", true } }));
+  h.svc->flush();
+  ASSERT_EQ(h.svc->pump(), 1);
+  h.posted.clear();
+  h.next_body.clear();
+  const auto one = [](const char *message) {
+    return json::array({ json { { "kind", "error" }, { "name", "user_report" }, { "props", json { { "category", "bug" }, { "component", "panel" }, { "message", message } } } } });
+  };
+  h.svc->ingest("panel", "1", one("a"));
+  h.svc->ingest("panel", "1", one("b"));
+  h.next_status = 503;  // the first request fails: it stays, and so does the other
+  EXPECT_EQ(h.svc->pump(), 0);
+  EXPECT_EQ(h.svc->queued_files(), 2u);
+  h.next_status = 200;
+  h.now += 700'000;
+  while (h.svc->pump() > 0) {}
+  EXPECT_EQ(h.svc->queued_files(), 0u);
+  EXPECT_EQ(h.posted.size() >= 2u, true);
 }
 
 TEST(TelemetryUserReport, LogRefIsOnlyTheReferenceOfTheUserLogEndpoint) {
@@ -1321,7 +1591,7 @@ TEST(TelemetryPrivacyGate, PlantedNamesPathsAddressesAndTokensNeverReachABatch) 
     json { { "kind", "usage" }, { "name", "setting_changed" }, { "props", json { { "key", "locale" }, { "value", "C:\\Users\\EvaSky" } } } },
     json { { "kind", "usage" }, { "name", "feature_used" }, { "props", json { { "feature", "EvaSky" } } } },
     json { { "kind", "usage" }, { "name", "setting_changed" }, { "props", json { { "key", "EvaSky" }, { "value", "x" } } } },
-    json { { "kind", "error" }, { "name", "user_report" }, { "props", json { { "category", "bug" }, { "component", "web" }, { "message", typed }, { "contact", "eva.sky@example.com" } } } },
+    json { { "kind", "error" }, { "name", "user_report" }, { "props", json { { "category", "bug" }, { "component", "web" }, { "message", typed }, { "contact", "QQ 10086" } } } },
   });
   h.svc->ingest("web", "C:\\Users\\EvaSky", page);
   h.svc->flush(true);
@@ -1336,6 +1606,7 @@ TEST(TelemetryPrivacyGate, PlantedNamesPathsAddressesAndTokensNeverReachABatch) 
   for (const auto &secret : planted) EXPECT_EQ(all.find(secret), std::string::npos) << secret << " reached a batch, around: " << around(secret);
   EXPECT_EQ(all.find("EvaSky"), std::string::npos) << around("EvaSky");
   EXPECT_EQ(all.find("Users"), std::string::npos) << around("Users");
+  EXPECT_NE(all.find("QQ 10086"), std::string::npos) << "the contact a person left on purpose goes with the report";
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

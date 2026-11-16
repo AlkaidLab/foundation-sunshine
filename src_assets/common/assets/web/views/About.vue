@@ -19,7 +19,7 @@
       @open-update="sheet = true"
       @open="open"
     >
-      <template #help><MSection><MGroup><MItem action icon="health_and_safety" :title="doctorTexts(String(locale)).start" @click="shell?.nav.go('doctor', { autostart: true })" /></MGroup></MSection><MFeedbackAccount :locale="String(locale)" /></template>
+      <template #help><MSection><MGroup><MItem action icon="health_and_safety" :title="doctorTexts(String(locale)).start" @click="shell?.nav.go('doctor', { autostart: true })" /></MGroup></MSection><MFeedbackCard :locale="String(locale)" /></template>
     </MAbout>
     <VersionCard
       v-model="sheet"
@@ -41,7 +41,7 @@
 <script setup>
 import { computed, inject, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MAbout, MGroup, MItem, MSection, aboutTexts, useNotify, doctorTexts, MFeedbackAccount } from 'foundation-ui/vue'
+import { MAbout, MGroup, MItem, MSection, aboutTexts, useNotify, doctorTexts, MFeedbackCard } from 'foundation-ui/vue'
 import VersionCard from '../components/common/VersionCard.vue'
 import { SPONSORS } from '../config/sponsors.js'
 import { hostData } from '../composables/hostData.js'

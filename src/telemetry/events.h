@@ -27,6 +27,8 @@ namespace telemetry {
   inline constexpr std::size_t MAX_MESSAGE_CHARS = 200;
   /** The longest message of a user_report (what the person wrote in the error dialog). */
   inline constexpr std::size_t MAX_USER_REPORT_CHARS = 2000;
+  /** The longest contact line a person can leave with a user_report. */
+  inline constexpr std::size_t MAX_USER_CONTACT_CHARS = 200;
 
   enum class kind_e {
     usage,
@@ -53,6 +55,8 @@ namespace telemetry {
     std::string product = "host";  ///< host | panel | web | sparxie-launch
     std::string version;  ///< product version when it differs from the host's (panel and web); empty = the host's
     int priority = -1;  ///< 0, 1 or 2 (see event_priority); -1: by the event's name
+    std::string report_id;  ///< a feedback report sent with both switches off: its one-time random id, used in place of an install id (empty for every other event)
+    std::string report_install;  ///< a feedback report: the install id it was given when it was accepted (empty when it has a one-time `report_id` instead, and for every other event). The identity of a report is fixed at that moment and never looked up again
   };
 
   /**
@@ -66,6 +70,9 @@ namespace telemetry {
   bool known_product(std::string_view product);
   /** Event names a page (panel or web) may send through the host API; the host-only names (streams, quality, log summary) are refused so one stream is never counted twice. */
   bool client_may_send(std::string_view product, kind_e kind, std::string_view name);
+
+  /** A feedback report the person sent on purpose: pressing 发送 is the consent for that one send, so the error-report switch does not hold it back. */
+  inline bool is_user_report(kind_e kind, std::string_view name) { return kind == kind_e::error && name == "user_report"; }
 
   /**
    * Text with names, addresses, paths and secrets removed, no control characters, cut to `max` characters (counted as UTF-8 code points).

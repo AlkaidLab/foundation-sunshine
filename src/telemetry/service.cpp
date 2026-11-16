@@ -210,10 +210,11 @@ namespace telemetry {
   // ---- events ----
 
   bool
-  service_t::emit(kind_e kind, std::string_view name, const json &props, std::string_view product, std::string_view version, int priority) {
+  service_t::emit(kind_e kind, std::string_view name, const json &props, std::string_view product, std::string_view version, int priority, std::string_view report_id) {
     try {
       if (!known_product(product)) return false;
-      if (!consent_now().allows(kind)) {
+      // a report the person pressed 发送 for is their consent for that one send: it does not wait for the error-report switch
+      if (!consent_now().allows(kind) && !is_user_report(kind, name)) {
         std::lock_guard lock { mutex_ };
         ++counts_.refused;
         return false;
@@ -223,6 +224,7 @@ namespace telemetry {
       shaped->product = std::string { product };
       shaped->version = sanitize_version(version);
       shaped->priority = priority;
+      if (is_user_report(kind, name)) shaped->report_id = std::string { report_id };
       bool wake = false;
       {
         std::lock_guard lock { mutex_ };
@@ -238,6 +240,27 @@ namespace telemetry {
       return true;
     }
     catch (...) {
+      return false;
+    }
+  }
+
+  bool
+  service_t::persist_report(const event_t &event) {
+    try {
+      // the identity was fixed when the report was accepted: nothing is looked up again (the switches may have changed since)
+      auto ctx = context();
+      const bool alone = event.report_install.empty();
+      ctx.install_id = alone ? event.report_id : event.report_install;
+      if (ctx.install_id.empty()) return false;
+      ctx.session_id = alone ? new_uuid_v4() : session_id_;
+      for (auto envelope : build_envelopes(ctx, event.product, { event })) {
+        if (alone) envelope["report_only"] = true;
+        std::lock_guard lock { queue_mutex_ };
+        if (!queue_.push(envelope, 0)) return false;
+      }
+      return true;
+    }
+    catch (const std::exception &) {
       return false;
     }
   }
@@ -261,15 +284,22 @@ namespace telemetry {
         if (id.rfind(prefix, 0) != 0) continue;
       }
       auto props = e.contains("props") ? e["props"] : json::object();
+      // both switches off: there is no install id (it is neither recovered nor created for this). The report gets a one-time random id of its own, used for its log and its batch, and the Worker takes it as a report without an install.
+      // the identity of the report is fixed here, once: the install id when there is one, else a one-time id. The log is uploaded under it and the batch is written with it, whatever the switches say a moment later.
+      std::string report_id, report_install;
+      if (name == "user_report") {
+        report_install = install_id();
+        if (report_install.empty()) report_id = new_uuid_v4();
+      }
       // a feedback report goes with the anonymised log of this session: uploaded first, its reference travels in the report. A page cannot name a reference itself.
       if (name == "user_report" && props.is_object()) {
         props.erase("log_ref");
-        // only while error reports are on (the report itself is refused otherwise), and only with the version the report will carry
-        if (deps_.session_log && consent_now().errors) {
+        // always: the run log is part of a feedback report, and pressing 发送 is the consent for it (whatever the error-report switch says); only with the version the report will carry
+        if (deps_.session_log) {
           try {
             const auto safe = safe_version(version);
             if (!safe.empty()) {
-              if (const auto ref = deps_.session_log(endpoint(), install_id(), safe)) props["log_ref"] = *ref;
+              if (const auto ref = deps_.session_log(endpoint(), report_id.empty() ? report_install : report_id, safe)) props["log_ref"] = *ref;
               else if (deps_.session_log_state) props["log_state"] = deps_.session_log_state();  // the report goes without its log: the word says why
             }
           }
@@ -277,7 +307,32 @@ namespace telemetry {
           }
         }
       }
-      if (emit(*kind, name, props, product, version)) ++kept;
+      if (name == "user_report") {
+        // a feedback report is on disk before the page is told it was accepted (the page shows success from this answer): it is written to the queue here, on this thread, and not left to the buffer that the sender
+        // thread swaps out. When the write fails the event stays in the buffer for the next flush and the page is told it was not kept.
+        auto shaped = shape_event(*kind, name, props, deps_.now_ms());
+        if (!shaped) continue;
+        shaped->product = std::string { product };
+        shaped->version = sanitize_version(version);
+        shaped->report_id = report_id;
+        shaped->report_install = report_install;
+        if (persist_report(*shaped)) {
+          std::lock_guard lock { mutex_ };
+          ++counts_.emitted;
+          ++kept;
+        }
+        else {
+          std::lock_guard lock { mutex_ };
+          ++counts_.write_failed;
+          ring_.push_back(std::move(*shaped));
+          while (ring_.size() > options_.ring_max) {
+            ring_.pop_front();
+            ++counts_.dropped;
+          }
+        }
+        continue;
+      }
+      if (emit(*kind, name, props, product, version, -1, report_id)) ++kept;
     }
     return kept;
   }
@@ -917,20 +972,53 @@ namespace telemetry {
       const auto c = consent_now();
       // a batch holds events of one product and one priority, so the queue can drop, hold and send by priority
       std::map<std::pair<std::string, int>, std::vector<event_t>> by_product;
+      std::vector<event_t> alone;  // reports with an id of their own (both switches off): one batch each, with no install id and no session of the host
       for (auto &e : taken) {
-        if (!c.allows(e.kind)) continue;
+        if (!c.allows(e.kind) && !is_user_report(e.kind, e.name)) continue;
+        // a feedback report that reached the buffer without an identity (emitted directly, kept through a change of the switches): it gets one now, from the install id when there is one and a one-time id when there is not,
+        // and goes out on its own either way: it is never skipped for want of an install id
+        if (is_user_report(e.kind, e.name) && e.report_id.empty() && e.report_install.empty()) {
+          e.report_install = install_id();
+          if (e.report_install.empty()) e.report_id = new_uuid_v4();
+        }
+        if (!e.report_id.empty() || !e.report_install.empty()) {
+          alone.push_back(std::move(e));
+          continue;
+        }
         const auto priority = event_priority(e);
         by_product[{ e.product, priority }].push_back(std::move(e));
       }
-      if (by_product.empty()) return;
-      auto ctx = context();
-      ctx.install_id = install_id();
-      if (ctx.install_id.empty()) return;
-      ctx.session_id = session_id_;
-      for (const auto &[key, events] : by_product) {
-        for (const auto &envelope : build_envelopes(ctx, key.first, events)) {
-          std::lock_guard lock { queue_mutex_ };
-          queue_.push(envelope, key.second);
+      std::vector<event_t> failed;  // what could not be written: it goes back to the buffer, never lost to a failed write
+      for (const auto &e : alone)
+        if (!persist_report(e)) failed.push_back(e);
+      if (!by_product.empty()) {
+        auto ctx = context();
+        ctx.install_id = install_id();
+        ctx.session_id = session_id_;
+        for (auto &[key, events] : by_product) {
+          bool written = !ctx.install_id.empty();
+          try {
+            if (written) {
+              for (const auto &envelope : build_envelopes(ctx, key.first, events)) {
+                std::lock_guard lock { queue_mutex_ };
+                if (!queue_.push(envelope, key.second)) written = false;
+              }
+            }
+          }
+          catch (const std::exception &) {
+            written = false;
+          }
+          // no install id (both switches went off since): nothing to write for these, they are the automatic events of a choice that was turned off
+          if (!written && !ctx.install_id.empty()) failed.insert(failed.end(), events.begin(), events.end());
+        }
+      }
+      if (!failed.empty()) {
+        std::lock_guard lock { mutex_ };
+        counts_.write_failed += failed.size();
+        for (auto it = failed.rbegin(); it != failed.rend(); ++it) ring_.push_front(*it);
+        while (ring_.size() > options_.ring_max) {
+          ring_.pop_front();
+          ++counts_.dropped;
         }
       }
     }
@@ -1029,6 +1117,28 @@ namespace telemetry {
         }
         for (auto &e : entries) filter_by_consent(e.batch, c.usage, c.errors);
         entries.erase(std::remove_if(entries.begin(), entries.end(), [](const auto &e) { return e.batch["events"].empty(); }), entries.end());
+        // a feedback report is never merged with anything and never counted away: one request for each, as it was written (with its own install or one-time id), and only the file that was answered is removed. It does not wait for
+        // the group's turn either: the person pressed 发送 for it, and the rate cap per minute still holds.
+        const auto is_report = [](const disk_queue_t::entry_t &e) {
+          for (const auto &ev : e.batch["events"])
+            if (ev.value("name", "") == "user_report") return true;
+          return false;
+        };
+        if (const auto report = std::find_if(entries.begin(), entries.end(), is_report); report != entries.end()) {
+          const auto at = deps_.now_ms();
+          while (!post_times_.empty() && at - post_times_.front() >= 60'000) post_times_.pop_front();
+          if (static_cast<int>(post_times_.size()) >= options_.max_posts_per_minute) return 0;
+          post_times_.push_back(at);
+          post_result_t answer;
+          try {
+            if (deps_.post) answer = deps_.post(events_url(), report->batch.dump());
+          }
+          catch (...) {
+            answer = {};
+          }
+          if (handle_answer(answer, report->batch["events"].size(), { report->path }) && answer.status >= 200 && answer.status < 300) ++sent;
+          return sent;
+        }
         const auto group_of = [](const disk_queue_t::entry_t &e) { return e.batch.value("product", std::string {}) + "\n" + e.batch.value("version", std::string {}); };
         const auto now = deps_.now_ms();
         const auto first = std::find_if(entries.begin(), entries.end(), [&](const auto &e) {
@@ -1114,7 +1224,7 @@ namespace telemetry {
       const auto c = consent_now();
       {
         std::lock_guard lock { mutex_ };
-        ring_.erase(std::remove_if(ring_.begin(), ring_.end(), [&](const event_t &e) { return !c.allows(e.kind); }), ring_.end());
+        ring_.erase(std::remove_if(ring_.begin(), ring_.end(), [&](const event_t &e) { return !c.allows(e.kind) && !is_user_report(e.kind, e.name); }), ring_.end());
       }
       if (!c.errors) {
         {
@@ -1129,7 +1239,8 @@ namespace telemetry {
       }
       std::lock_guard queue_lock { queue_mutex_ };
       if (!c.any()) {
-        queue_.clear();
+        // only the automatic events go; a feedback report the person sent and that is still waiting is theirs and stays (its batch keeps the id it was built with)
+        queue_.refilter(false, false);
         if (recorded) {
           std::lock_guard lock { mutex_ };
           install_id_.clear();
