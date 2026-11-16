@@ -221,7 +221,11 @@ for (const r of RAIL) if (r.id !== 'overview' && r.id !== 'help') routes[`${r.id
 for (const [id, p] of Object.entries(PAGES)) routes[id] = { role: 'detail', rail: p.rail, list: p.list, supporting: p.supporting, push: p.push, rootRail: p.rootRail }
 
 const normalise = (path) => path.replace(/\.html$/, '').replace(/\/+$/, '') || '/'
-const pageLabel = (p) => (p.text ? p.text(uiLocale.value) : t(p.label))
+const pageLabel = (p) => {
+  if (typeof p?.text === 'function') return String(p.text(uiLocale.value) || '')
+  if (typeof p?.label === 'string' && p.label) return t(p.label)
+  return ''
+}
 const idFromPath = (path) => {
   const p = normalise(path)
   if (p === '/index') return 'home'
