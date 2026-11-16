@@ -76,6 +76,69 @@ class Statements(unittest.TestCase):
         table = self.scan_text('void f() { BOOST_LOG(error) << name << " failed"; }\n')
         self.assertEqual(list(table), ["e811c9dc5"])
 
+    def test_numeric_escapes_have_the_same_bytes_as_a_cpp_literal(self):
+        table = self.scan_text(
+            r'void f() { BOOST_LOG(error) << "Failed \x41" << " \101"; }\n'
+        )
+        code = cat.error_code("Failed A A")
+        self.assertEqual(list(table), [code])
+        self.assertEqual(table[code]["sites"][0]["text"], "Failed A A")
+
+    def test_numeric_escapes_preserve_utf8_bytes(self):
+        table = self.scan_text(r'void f() { BOOST_LOG(error) << "Prefix \xe4\xb8\xad"; }\n')
+        self.assertEqual(list(table), [cat.error_code("Prefix 中")])
+
+    def test_an_empty_literal_operand_does_not_end_the_message(self):
+        table = self.scan_text('void f() { BOOST_LOG(error) << "" << "Failed"; }\n')
+        self.assertEqual(list(table), [cat.error_code("Failed")])
+
+    def test_digit_separators_are_not_character_literals(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "a.cpp"), "w") as f:
+                f.write("constexpr int timeout = 1'000;\n/* BOOST_LOG(error) << \"Ignored\"; */\nconstexpr auto mask = 0xFF'FF'u;\nvoid f() { BOOST_LOG(error) << \"Real failure\"; }\n")
+            table = cat.scan(d)
+            self.assertEqual(sorted(e["head"] for e in table.values()), ["real failure"])
+            self.assertEqual(next(iter(table.values()))["sites"][0]["line"], 4)
+
+    def test_raw_strings_hide_quotes_and_comment_markers(self):
+        with tempfile.TemporaryDirectory() as d:
+            with open(os.path.join(d, "a.cpp"), "w") as f:
+                f.write('const char *p = R"("/*)";\nvoid f() { BOOST_LOG(error) << "After raw"; }\nconst char *q = R"x(*/ ")x";\nvoid g() { BOOST_LOG(error) << R"(Raw "quoted" \\n)" << v; }\n')
+            table = cat.scan(d)
+            self.assertIn(cat.error_code("After raw"), table)
+            raw = cat.error_code('Raw "quoted" \\n')
+            self.assertIn(raw, table)
+            self.assertEqual(table[raw]["sites"][0]["line"], 4)
+            self.assertEqual(len(table), 2)
+
+    def test_a_line_comment_continues_after_a_backslash_newline(self):
+        table = self.scan_text('// disabled \\\nBOOST_LOG(error) << "Fake";\nvoid f() { BOOST_LOG(error) << "Real"; }\n')
+        self.assertEqual(list(table), [cat.error_code("Real")])
+        self.assertEqual(table[cat.error_code("Real")]["sites"][0]["line"], 3)
+
+    def test_a_plain_literal_ends_at_nul_but_a_suffixed_one_keeps_its_bytes(self):
+        table = self.scan_text(r'void f() { BOOST_LOG(error) << "Failed\000retry"; }' + "\n")
+        self.assertEqual(list(table), [cat.error_code("Failed")])
+        table = self.scan_text(r'void f() { BOOST_LOG(error) << "Failed\000retry"sv; }' + "\n")
+        self.assertEqual(list(table), [cat.error_code(b"Failed\x00retry")])
+
+    def test_prefixed_character_literals_are_still_literals(self):
+        self.assertEqual(cat.statement_end("x = u8';' + L';'; y", 0), 16)
+
+    def test_comments_outside_literals_are_not_code_or_message_text(self):
+        table = self.scan_text(
+            r'''// BOOST_LOG(error) << "ignored";
+/* BOOST_LOG(fatal) << "ignored;"; */
+void f() {
+  BOOST_LOG(error) << "Failed // still text;" /* ; << "fake" */ // << "fake"
+                  << " retry";
+}
+'''
+        )
+        code = cat.error_code("Failed ")
+        self.assertEqual(list(table), [code])
+        self.assertEqual(table[code]["sites"][0]["text"], "Failed // still text; retry")
+
 
 if __name__ == "__main__":
     unittest.main()

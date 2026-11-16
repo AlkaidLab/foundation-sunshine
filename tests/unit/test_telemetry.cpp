@@ -2836,6 +2836,26 @@ TEST(OptOut, TheRecordCarriesTheChoiceTheProductAndTheVersionAndNothingElse) {
   EXPECT_TRUE(none.empty());
 }
 
+TEST(OptOut, AnExpiredRecordDoesNotBlockANewTurnOff) {
+  using namespace telemetry::opt_out;
+  std::vector<record_t> records;
+  const std::int64_t t0 = 1'800'000'000'000;
+  add(records, { "usage" }, { { "host", "1" } }, OPT_OUT_ID, t0);
+  ASSERT_EQ(records.size(), 1u);
+  // still waiting: no second record
+  add(records, { "usage" }, { { "host", "1" } }, OPT_OUT_ID, t0 + MAX_AGE_MS);
+  EXPECT_EQ(records.size(), 1u);
+  // expired but not yet cleaned up by due(): a new turn-off makes a new record
+  add(records, { "usage" }, { { "host", "1" } }, OPT_OUT_ID, t0 + MAX_AGE_MS + 1);
+  ASSERT_EQ(records.size(), 1u);
+  EXPECT_EQ(records[0].t, t0 + MAX_AGE_MS + 1);
+  // a queue full of expired records has room again
+  std::vector<record_t> full(MAX_RECORDS, record_t { "errors", "panel", "1", OPT_OUT_ID, t0, t0, 0 });
+  add(full, { "usage" }, { { "host", "1" } }, OPT_OUT_ID, t0 + MAX_AGE_MS + 1);
+  ASSERT_EQ(full.size(), 1u);
+  EXPECT_EQ(full[0].choice, "usage");
+}
+
 TEST(OptOut, ARecordIsRetriedWithGrowingGapsAndGivenUpOnAfterTwoWeeks) {
   using namespace telemetry::opt_out;
   std::vector<record_t> records;
