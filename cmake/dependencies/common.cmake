@@ -33,11 +33,12 @@ if(MINGW AND (OPENSSL_SSL_LIBRARY MATCHES "\\.dll\\.a$" OR OPENSSL_CRYPTO_LIBRAR
     message(FATAL_ERROR "Sunshine requires static OpenSSL libraries on MinGW")
 endif()
 if(WIN32 AND TARGET OpenSSL::Crypto)
-    # OpenSSL 4 (MSYS2 mingw-w64-ucrt-x86_64-openssl 4.1.0) seeds from BCryptGenRandom in its static libcrypto (rand_win), which needs bcrypt; the
-    # find module does not list it. Added once here to the imported target and to the variable that some targets link through, so no target has to
-    # carry it; linking bcrypt with OpenSSL 3 is harmless.
-    set_property(TARGET OpenSSL::Crypto APPEND PROPERTY INTERFACE_LINK_LIBRARIES bcrypt)
-    list(APPEND OPENSSL_LIBRARIES bcrypt)
+    # OpenSSL 4 (MSYS2 mingw-w64-ucrt-x86_64-openssl 4.1.0) seeds from BCryptGenRandom in its static libcrypto (rand_win; OpenSSL 3 used advapi32),
+    # which needs bcrypt, and reads certificates with crypt32; the find module lists neither. Added once here, to the imported target (so they sit behind
+    # the library on every link line, tests that link OpenSSL::Crypto directly included) and to the variable some targets link through; linking them
+    # with OpenSSL 3 is harmless.
+    set_property(TARGET OpenSSL::Crypto APPEND PROPERTY INTERFACE_LINK_LIBRARIES bcrypt crypt32)
+    list(APPEND OPENSSL_LIBRARIES bcrypt crypt32)
 endif()
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
