@@ -57,7 +57,7 @@ jobs:
           fi
           name=$(gh api "repos/$REPO/actions/runs/$run_id/artifacts?per_page=30" \
             --jq '.artifacts[] | select(.expired == false) | .name' \
-            | awk -v prefix="$PREFIX" 'index($0, prefix) == 1 { print; exit }')
+            | awk -v prefix="$PREFIX" '!found && index($0, prefix) == 1 { print; found = 1 }')
           if [ -z "$name" ]; then
             echo "No artifact starting with '$PREFIX' (not expired) in run $run_id" >&2
             exit 1
