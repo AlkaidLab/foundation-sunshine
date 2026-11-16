@@ -1254,12 +1254,13 @@ namespace telemetry {
       std::vector<opt_out::record_t> work;
       {
         std::lock_guard lock { opt_out_mutex_ };
-        if (opt_outs_.empty()) return;
+        if (opt_outs_.empty() && !opt_outs_unsaved_) return;
         const auto before = opt_outs_.size();
         const auto due = opt_out::due(opt_outs_, deps_.now_ms());
         for (const auto i : due) work.push_back(opt_outs_[i]);
-        // records that are too old or were tried too often are dropped for good: the file (and the anonymous id in it) goes with them, even when nothing else is waiting
-        if (opt_outs_.size() != before) write_file_atomic(options_.dir / "opt_out_pending.jsonl", opt_out::serialize(opt_outs_));
+        // records that are too old or were tried too often are dropped for good: the file (and the anonymous id in it) goes with them, even when nothing else is waiting. When the file cannot be
+        // written the pass is remembered as unsaved and repeated at the next one: the old id must not stay on the disk because one write failed.
+        if (opt_outs_.size() != before || opt_outs_unsaved_) opt_outs_unsaved_ = !write_file_atomic(options_.dir / "opt_out_pending.jsonl", opt_out::serialize(opt_outs_));
       }
       if (work.empty()) return;
       std::vector<opt_out::record_t> done_or_dropped, failed_now;
@@ -1297,7 +1298,7 @@ namespace telemetry {
             r.tries = f.tries;
             r.next_try_ms = f.next_try_ms;
           }
-      write_file_atomic(options_.dir / "opt_out_pending.jsonl", opt_out::serialize(opt_outs_));
+      opt_outs_unsaved_ = !write_file_atomic(options_.dir / "opt_out_pending.jsonl", opt_out::serialize(opt_outs_));
     }
     catch (...) {
     }

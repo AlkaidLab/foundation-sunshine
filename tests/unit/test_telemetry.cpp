@@ -2563,6 +2563,28 @@ TEST(OptOutService, BothChoicesOffWithTheRecordNotSavedKeepsTheNumberUntilAFresh
   EXPECT_EQ(std::filesystem::file_size(pending), 0u);
 }
 
+TEST(OptOutService, AFailedCleanupWriteIsRepeatedUntilTheFileIsEmpty) {
+  harness_t h;
+  h.consent = consent_t { true, true };
+  h.svc->reconcile_consent();
+  ASSERT_EQ(h.svc->install_id().size(), 36u);
+  const auto pending = h.dir.path / "opt_out_pending.jsonl";
+  h.next_status = 503;  // the record stays undelivered
+  h.consent = consent_t { false, true };
+  h.svc->consent_changed();
+  h.svc->pump();
+  ASSERT_GT(std::filesystem::file_size(pending), 0u);
+  // the write of the cleanup fails (the temporary file cannot be created): the record leaves the memory, the file keeps it for now
+  std::filesystem::create_directories(h.dir.path / "opt_out_pending.jsonl.tmp");
+  h.now += telemetry::opt_out::MAX_AGE_MS + 60'000;
+  h.svc->pump();
+  EXPECT_GT(std::filesystem::file_size(pending), 0u);
+  // the disk works again: the next pass writes the empty set although nothing is waiting
+  std::filesystem::remove_all(h.dir.path / "opt_out_pending.jsonl.tmp");
+  h.svc->pump();
+  EXPECT_EQ(std::filesystem::file_size(pending), 0u);
+}
+
 TEST(OptOutService, AnOfflineRecordWaitsAndAFirstRunWithTheChoiceOffSendsNothing) {
   harness_t h;
   h.consent = consent_t { true, true };

@@ -260,6 +260,7 @@ namespace telemetry {
     service_counts_t counts_;
     std::mutex opt_out_mutex_;  // the pending records and the products seen; taken alone, never with the others
     std::vector<opt_out::record_t> opt_outs_;
+    bool opt_outs_unsaved_ = false;  // the file does not show what opt_outs_ holds (a write failed): written again at the next pass, even when nothing is waiting
     std::map<std::string, std::string> products_seen_;  // product -> version of the clients that talked to this host
     std::function<void()> wake_;
 
