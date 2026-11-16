@@ -204,6 +204,12 @@ target_link_libraries(cover_failure_backoff_unit_tests PRIVATE gtest_main sunshi
 set_target_properties(cover_failure_backoff_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME cover_failure_backoff_unit_tests COMMAND cover_failure_backoff_unit_tests)
 
+add_executable(cover_download_outcome_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_cover_download_outcome.cpp)
+target_include_directories(cover_download_outcome_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(cover_download_outcome_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(cover_download_outcome_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME cover_download_outcome_unit_tests COMMAND cover_download_outcome_unit_tests)
+
 add_executable(encoder_probe_guard_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_encoder_probe_guard.cpp)
 target_include_directories(encoder_probe_guard_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(encoder_probe_guard_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
@@ -1329,6 +1335,7 @@ list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_vb_cable
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_telemetry.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_host_bitrate_cap.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_cover_failure_backoff.cpp)
+list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_cover_download_outcome.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_encoder_probe_guard.cpp)
 # MAT harnesses have independent entrypoints and explicit test targets.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/mat-live/")
