@@ -273,7 +273,12 @@ namespace platf {
    * session and then any active session with a user is used, mirroring the
    * session choice of the sunshinesvc launcher.
    */
-  DWORD
+  struct user_session_selection_t {
+    DWORD session_id;
+    bool query_failed;
+  };
+
+  user_session_selection_t
   find_active_user_session_id() {
     constexpr DWORD invalid_session_id = 0xFFFFFFFF;
     const auto console_session_id = WTSGetActiveConsoleSessionId();
@@ -281,7 +286,7 @@ namespace platf {
     PWTS_SESSION_INFOW session_info = nullptr;
     DWORD session_count = 0;
     if (!WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, &session_info, &session_count)) {
-      return invalid_session_id;
+      return { invalid_session_id, true };
     }
 
     DWORD active_rdp_session_id = invalid_session_id;
@@ -294,18 +299,20 @@ namespace platf {
 
       LPWSTR username = nullptr;
       DWORD bytes_returned = 0;
-      const bool has_user = WTSQuerySessionInformationW(
+    const bool user_query_succeeded = WTSQuerySessionInformationW(
         WTS_CURRENT_SERVER_HANDLE,
         session.SessionId,
         WTSUserName,
         &username,
-        &bytes_returned) &&
-        username != nullptr &&
-        username[0] != L'\0';
+      &bytes_returned);
       if (username != nullptr) {
         WTSFreeMemory(username);
       }
-      if (!has_user) {
+    if (!user_query_succeeded) {
+      WTSFreeMemory(session_info);
+      return { invalid_session_id, true };
+    }
+    if (username == nullptr || username[0] == L'\0') {
         continue;
       }
 
@@ -313,7 +320,7 @@ namespace platf {
       if (session.SessionId == console_session_id) {
         const auto selected_session_id = session.SessionId;
         WTSFreeMemory(session_info);
-        return selected_session_id;
+      return { selected_session_id, false };
       }
 
       LPWSTR protocol = nullptr;
@@ -343,9 +350,9 @@ namespace platf {
 
     WTSFreeMemory(session_info);
     if (active_rdp_session_id != invalid_session_id) {
-      return active_rdp_session_id;
+    return { active_rdp_session_id, false };
     }
-    return active_user_session_id;
+  return { active_user_session_id, false };
   }
 
   /**
@@ -366,7 +373,14 @@ namespace platf {
       session_id = WTSGetActiveConsoleSessionId();
     }
     else {
-      session_id = find_active_user_session_id();
+      const auto selection = find_active_user_session_id();
+      if (selection.query_failed) {
+        return nullptr;
+      }
+      session_id = selection.session_id;
+      if (session_id == invalid_session_id) {
+        session_id = WTSGetActiveConsoleSessionId();
+      }
     }
     if (invalid_session_id == session_id) {
       // If there is no active user session, log a warning and return null

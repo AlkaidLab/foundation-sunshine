@@ -32,6 +32,11 @@
 constexpr DWORD invalid_session_id = 0xFFFFFFFF;
 constexpr ULONGLONG session_reselect_delay_ms = 1000;
 
+struct user_session_selection_t {
+  DWORD session_id = invalid_session_id;
+  bool query_failed = false;
+};
+
 SERVICE_STATUS_HANDLE service_status_handle;
 SERVICE_STATUS service_status;
 HANDLE stop_event;
@@ -152,14 +157,14 @@ DuplicateTokenForSession(DWORD session_id) {
   return new_token;
 }
 
-DWORD
+user_session_selection_t
 FindActiveUserSessionId() {
   const auto console_session_id = WTSGetActiveConsoleSessionId();
 
   PWTS_SESSION_INFOW session_info = nullptr;
   DWORD session_count = 0;
   if (!WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, &session_info, &session_count)) {
-    return invalid_session_id;
+    return { invalid_session_id, true };
   }
 
   DWORD active_rdp_session_id = invalid_session_id;
@@ -172,18 +177,20 @@ FindActiveUserSessionId() {
 
     LPWSTR username = nullptr;
     DWORD bytes_returned = 0;
-    const bool has_user = WTSQuerySessionInformationW(
+    const bool user_query_succeeded = WTSQuerySessionInformationW(
       WTS_CURRENT_SERVER_HANDLE,
       session.SessionId,
       WTSUserName,
       &username,
-      &bytes_returned) &&
-      username != nullptr &&
-      username[0] != L'\0';
+      &bytes_returned);
     if (username != nullptr) {
       WTSFreeMemory(username);
     }
-    if (!has_user) {
+    if (!user_query_succeeded) {
+      WTSFreeMemory(session_info);
+      return { invalid_session_id, true };
+    }
+    if (username == nullptr || username[0] == L'\0') {
       continue;
     }
 
@@ -191,7 +198,7 @@ FindActiveUserSessionId() {
     if (session.SessionId == console_session_id) {
       const auto selected_session_id = session.SessionId;
       WTSFreeMemory(session_info);
-      return selected_session_id;
+      return { selected_session_id, false };
     }
 
     LPWSTR protocol = nullptr;
@@ -221,9 +228,9 @@ FindActiveUserSessionId() {
 
   WTSFreeMemory(session_info);
   if (active_rdp_session_id != invalid_session_id) {
-    return active_rdp_session_id;
+    return { active_rdp_session_id, false };
   }
-  return active_user_session_id;
+  return { active_user_session_id, false };
 }
 
 // sunshine.conf may pin session handling to the physical console with
@@ -260,6 +267,9 @@ session_binding_console_only() {
     trim(key);
     trim(value);
     if (key == "session_binding") {
+      if (value.empty()) {
+        continue;
+      }
       return value == "console";
     }
   }
@@ -656,21 +666,18 @@ CoreProcess
 ResolveCores(std::vector<CoreProcess> &cores, DWORD expected_session_id, HANDLE log_file) {
   std::vector<sunshinesvc::core_state_t> states;
   for (const auto &core : cores) {
-    states.push_back({ CoreEventSignaled(sunshinesvc::core_event_e::ready, core.process_id),
-      CoreEventSignaled(sunshinesvc::core_event_e::stopping, core.process_id) });
-  }
-  auto plan = sunshinesvc::plan_cores(states);
-  for (std::size_t index = 0; index < cores.size(); ++index) {
-    if (plan.actions[index] != sunshinesvc::core_action_e::keep) {
-      continue;
+    auto ready = CoreEventSignaled(sunshinesvc::core_event_e::ready, core.process_id);
+    const auto stopping = CoreEventSignaled(sunshinesvc::core_event_e::stopping, core.process_id);
+    if (ready) {
+      DWORD core_session_id = invalid_session_id;
+      if (!ProcessIdToSessionId(core.process_id, &core_session_id) ||
+          core_session_id != expected_session_id) {
+        ready = false;
+      }
     }
-
-    DWORD core_session_id = invalid_session_id;
-    if (!ProcessIdToSessionId(cores[index].process_id, &core_session_id) ||
-        core_session_id != expected_session_id) {
-      plan.actions[index] = sunshinesvc::core_action_e::end;
-    }
+    states.push_back({ ready, stopping });
   }
+  const auto plan = sunshinesvc::plan_cores(states);
 
   CoreProcess kept;
   for (std::size_t index = 0; index < cores.size(); ++index) {
@@ -1032,7 +1039,14 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
       session_id = WTSGetActiveConsoleSessionId();
     }
     else {
-      session_id = FindActiveUserSessionId();
+      const auto selection = FindActiveUserSessionId();
+      if (selection.query_failed) {
+        continue;
+      }
+      session_id = selection.session_id;
+      if (session_id == invalid_session_id) {
+        session_id = WTSGetActiveConsoleSessionId();
+      }
     }
     if (session_id == invalid_session_id) {
       // No active user session yet
@@ -1198,7 +1212,17 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
             active_session_id = WTSGetActiveConsoleSessionId();
           }
           else {
-            active_session_id = FindActiveUserSessionId();
+            const auto selection = FindActiveUserSessionId();
+            if (selection.query_failed) {
+              session_reselect_pending = true;
+              session_reselect_at_ms = GetTickCount64() + session_reselect_delay_ms;
+              still_running = true;
+              continue;
+            }
+            active_session_id = selection.session_id;
+            if (active_session_id == invalid_session_id) {
+              active_session_id = WTSGetActiveConsoleSessionId();
+            }
           }
           if (active_session_id == invalid_session_id) {
             session_reselect_pending = true;
