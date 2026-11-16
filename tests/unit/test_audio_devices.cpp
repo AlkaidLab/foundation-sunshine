@@ -286,3 +286,46 @@ TEST(AudioDevicesIdText, ChineseWindowsNamesStillClassify) {
   EXPECT_TRUE(is_virtual_output_kind(classify_virtual(cable_input())));
   EXPECT_FALSE(is_virtual_output_kind(classify_virtual(speakers())));
 }
+
+TEST(AudioDevicesDefaultOutput, ADefaultActiveDeviceIsPresent) {
+  const auto json = to_json({ speakers(true), cable_input() });
+  EXPECT_TRUE(json["default_output"]["present"].get<bool>());
+  EXPECT_EQ(json["default_output"]["reason"], "");
+  EXPECT_EQ(json["default_output"]["render_active"], 2);
+  // the route sets this one itself, from the running stream
+  EXPECT_FALSE(json["default_output"]["host_waiting"].get<bool>());
+}
+
+TEST(AudioDevicesDefaultOutput, NoPlaybackDeviceAtAllIsSaidAsSuch) {
+  // a server or a cloud machine: only a recording endpoint, or nothing
+  for (const auto &list : { std::vector<endpoint_t> {}, std::vector<endpoint_t> { cable_output() } }) {
+    const auto json = to_json(list);
+    EXPECT_FALSE(json["default_output"]["present"].get<bool>());
+    EXPECT_EQ(json["default_output"]["reason"], "no_endpoint");
+    EXPECT_EQ(json["default_output"]["render_active"], 0);
+  }
+}
+
+TEST(AudioDevicesDefaultOutput, DevicesThatAreDisabledOrUnpluggedDoNotCount) {
+  const auto json = to_json({ speakers(false), cable_input("disabled") });
+  // the speakers are active but nothing is the default; here nothing is flagged, so that is the reason
+  EXPECT_FALSE(json["default_output"]["present"].get<bool>());
+  EXPECT_EQ(json["default_output"]["reason"], "no_default");
+
+  const auto none_active = to_json({ make(flow_e::render, "{0.0.0.00000000}.{a}", "Speakers", "Realtek", "unplugged", true), cable_input("disabled") });
+  EXPECT_FALSE(none_active["default_output"]["present"].get<bool>());
+  EXPECT_EQ(none_active["default_output"]["reason"], "none_active");
+  EXPECT_EQ(none_active["default_output"]["render_active"], 0);
+}
+
+TEST(AudioDevicesDefaultOutput, EndpointsWindowsOnlyRemembersAreNotDevices) {
+  const auto json = to_json({ make(flow_e::render, "{0.0.0.00000000}.{old}", "Old speakers", "Realtek", "not_present", true) });
+  EXPECT_FALSE(json["default_output"]["present"].get<bool>());
+  EXPECT_EQ(json["default_output"]["reason"], "no_endpoint");
+}
+
+TEST(AudioDevicesDefaultOutput, ASystemWithoutTheListHasNothingToSay) {
+  const auto json = unsupported_json();
+  EXPECT_TRUE(json["default_output"]["present"].get<bool>());
+  EXPECT_EQ(json["default_output"]["reason"], "");
+}

@@ -74,6 +74,7 @@ set(SUNSHINE_HOST_SOURCES
     src/input.cpp src/input.h
     src/input_activity.cpp src/input_activity.h
     src/audio.cpp src/audio.h
+    src/audio_default_wait.h
     src/audio_devices.cpp src/audio_devices.h
     src/audio_sink_plan.cpp src/audio_sink_plan.h
     src/audio_vb_cable.cpp src/audio_vb_cable.h

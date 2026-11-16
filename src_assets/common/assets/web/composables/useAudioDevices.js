@@ -12,6 +12,7 @@ export function useAudioDevices(platform) {
   const failed = ref(false)
   let active = false
   let pending = false
+  let waitTimer
 
   const refresh = async () => {
     if (platform !== 'windows' || pending) return
@@ -22,6 +23,7 @@ export function useAudioDevices(platform) {
       state.value = normalizeAudioDevices(payload)
       failed.value = payload?.success === false
       watchJob()
+      watchDefault()
     } catch {
       if (active) failed.value = true
     } finally {
@@ -37,6 +39,14 @@ export function useAudioDevices(platform) {
     if (active && state.value.vb.job.running) jobTimer = window.setTimeout(() => { void refresh() }, 1500)
   }
 
+  // with no default playback device the page looks again every few seconds: a device plugged in or enabled elsewhere shows up here and the notice goes away
+  const watchDefault = () => {
+    window.clearTimeout(waitTimer)
+    if (active && !failed.value && state.value.supported && state.value.defaultOutput.present === false) {
+      waitTimer = window.setTimeout(() => { if (!document.hidden) void refresh(); else watchDefault() }, 5000)
+    }
+  }
+
   onMounted(() => {
     active = true
     void refresh()
@@ -46,6 +56,7 @@ export function useAudioDevices(platform) {
   onBeforeUnmount(() => {
     active = false
     window.clearTimeout(jobTimer)
+    window.clearTimeout(waitTimer)
     window.removeEventListener('focus', onVisible)
     document.removeEventListener('visibilitychange', onVisible)
   })
@@ -54,6 +65,8 @@ export function useAudioDevices(platform) {
     render: computed(() => state.value.render),
     capture: computed(() => state.value.capture),
     vb: computed(() => state.value.vb),
+    defaultOutput: computed(() => state.value.defaultOutput),
+    supported: computed(() => state.value.supported),
     loaded,
     failed,
     refresh,

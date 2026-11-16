@@ -246,6 +246,7 @@ namespace doctor {
     bool stream_audio = true;  ///< config stream_audio
     std::string sink;  ///< config audio_sink, empty for the default
     bool sink_found = false;
+    bool no_default_output = false;  ///< the system has no default playback device: the stream runs without sound until one appears
     std::string virtual_sink;  ///< config virtual_sink
     bool virtual_checked = false;
     bool virtual_found = false;

@@ -21,6 +21,7 @@ extern "C" {
 
 // local includes
 #include "audio.h"
+#include "audio_default_wait.h"
 #include "audio_sink_plan.h"
 #include "config.h"
 #include "globals.h"
@@ -499,6 +500,12 @@ namespace audio {
     }
     BOOST_LOG(debug) << "Audio capture: context reference acquired successfully";
 
+    // No default playback device: the stream goes on without sound and this thread waits for a device (it is not a failure).
+    // Capture starts the moment one appears; the stream ending first just ends the wait.
+    if (!wait_default_output(*ref.get(), [&shutdown_event]() { return shutdown_event->peek(); })) {
+      return;
+    }
+
     auto init_failure_fg = util::fail_guard([&shutdown_event]() {
       BOOST_LOG(error) << "Unable to initialize audio capture. The stream will not have audio."sv;
 
@@ -612,6 +619,29 @@ namespace audio {
     const std::uint8_t *capture_mapping = stream.mapping;
     bool applied_host_audio = host_audio();
     auto mic = open_microphone(applied_host_audio, capture_channels, capture_mapping);
+
+    // Opens the capture endpoint again until it works or the stream ends. The system losing its default playback device while
+    // streaming waits for a new one (one line in the log); any other failure is tried again every 5 seconds.
+    audio_default_wait::once_per_session_t said_once;
+    auto reopen_microphone = [&](bool play_on_host) -> std::unique_ptr<platf::mic_t> {
+      while (!shutdown_event->peek()) {
+        auto reopened = open_microphone(play_on_host, capture_channels, capture_mapping);
+        if (reopened) {
+          return reopened;
+        }
+        if (control->default_output_missing()) {
+          if (said_once.first(audio_default_wait::reason::no_default)) {
+            BOOST_LOG(warning) << "The default playback device is gone; the stream goes on without sound until one is available again"sv;
+          }
+          control->wait_for_default_output(1s);
+        }
+        else {
+          BOOST_LOG(warning) << "Couldn't re-initialize audio input"sv;
+          shutdown_event->view(5s);
+        }
+      }
+      return nullptr;
+    };
     if (!mic) {
       BOOST_LOG(error) << "Audio capture: failed to initialize microphone";
       return;
@@ -641,10 +671,9 @@ namespace audio {
       if (desired_host_audio != applied_host_audio) {
         mic.reset();
         applied_host_audio = desired_host_audio;
-        mic = open_microphone(applied_host_audio, capture_channels, capture_mapping);
+        mic = reopen_microphone(applied_host_audio);
         if (!mic) {
-          BOOST_LOG(warning) << "Audio capture: failed to apply host playback change"sv;
-          continue;
+          return;  // only the end of the stream leaves it empty
         }
       }
       std::vector<float> sample_buffer;
@@ -660,12 +689,10 @@ namespace audio {
         case platf::capture_e::reinit:
           BOOST_LOG(info) << "Reinitializing audio capture"sv;
           mic.reset();
-          do {
-            mic = open_microphone(applied_host_audio, capture_channels, capture_mapping);
-            if (!mic) {
-              BOOST_LOG(warning) << "Couldn't re-initialize audio input"sv;
-            }
-          } while (!mic && !shutdown_event->view(5s));
+          mic = reopen_microphone(applied_host_audio);
+          if (!mic) {
+            return;  // the stream ended while waiting
+          }
           continue;
         default:
           return;
@@ -714,12 +741,39 @@ namespace audio {
       return false;
     }
 
-    const std::string &sink = ctx.sink.host.empty() ? config::audio.sink : ctx.sink.host;
+    std::string sink;
+    {
+      std::lock_guard lock { ctx.sink_mutex };
+      sink = ctx.sink.host.empty() ? config::audio.sink : ctx.sink.host;
+    }
     if (sink.empty()) {
       return false;
     }
 
     return ctx.control->is_sink_available(sink);
+  }
+
+  bool
+  wait_default_output(audio_ctx_t &ctx, const std::function<bool()> &stop) {
+    if (!ctx.awaiting_default_output.load() || !ctx.control) {
+      return true;
+    }
+
+    BOOST_LOG(info) << "Audio capture waits for a default playback device; the stream has no sound until then"sv;
+    // the sink information (the host sink to restore, the virtual sinks) is read once the device is there
+    auto sink = audio_default_wait::wait_for_sink(*ctx.control, stop);
+    if (!sink) {
+      return false;
+    }
+    {
+      std::lock_guard lock { ctx.sink_mutex };
+      if (ctx.awaiting_default_output.load()) {
+        ctx.sink = std::move(*sink);
+        ctx.awaiting_default_output.store(false);
+      }
+    }
+    BOOST_LOG(info) << "A default playback device is available; audio capture starts"sv;
+    return true;
   }
 
   int
@@ -761,6 +815,16 @@ namespace audio {
 
     auto sink = ctx.control->sink_info();
     if (!sink) {
+      if (ctx.control->default_output_missing()) {
+        // A state of the computer, not a fault: no speakers, headphones or virtual output are enabled. The control stays
+        // (the microphone redirect needs it); capture waits for a device, see wait_default_output().
+        BOOST_LOG(warning) << "The system has no default playback device (no speakers, headphones or virtual speaker is enabled). "
+                              "The stream goes on without sound; audio capture starts as soon as a device appears. "
+                              "To get sound, plug in speakers or headphones, or enable a virtual one such as VB-CABLE or Steam Streaming Speakers."sv;
+        ctx.awaiting_default_output.store(true);
+        fg.disable();
+        return 0;
+      }
       // Let the calling code know it failed
       ctx.control.reset();
       return 0;

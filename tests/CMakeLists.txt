@@ -172,6 +172,17 @@ if (WIN32)
 endif ()
 add_test(NAME audio_sink_plan_unit_tests COMMAND audio_sink_plan_unit_tests)
 
+# The wait while the system has no default playback device (one log line per reason and session, the wake-up, the sink read): no audio API.
+add_executable(audio_default_wait_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_default_wait.cpp)
+target_include_directories(audio_default_wait_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(audio_default_wait_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(audio_default_wait_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(audio_default_wait_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME audio_default_wait_unit_tests COMMAND audio_default_wait_unit_tests)
+
 # The VB-CABLE install and enable steps against a fake system: nothing is downloaded, installed or enabled.
 add_executable(audio_vb_cable_unit_tests
         ${CMAKE_SOURCE_DIR}/src/audio_vb_cable.cpp
@@ -1344,6 +1355,7 @@ list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_hdr_calibratio
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_authored_ir_extended.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_devices.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_sink_plan.cpp)
+list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_default_wait.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_vb_cable.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_telemetry.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_host_bitrate_cap.cpp)

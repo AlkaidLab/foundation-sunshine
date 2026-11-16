@@ -130,6 +130,11 @@ namespace audio_devices {
   vb_cable_status_t
   summarize_vb_cable(const std::vector<endpoint_t> &endpoints, const std::vector<driver_t> *drivers = nullptr);
 
+  /// The `default_output` object of GET /api/audio/devices: whether a playback device is the default, why not, and (set by the route) whether
+  /// the host waits for one in a running stream. `render`: the listed playback endpoints.
+  nlohmann::json
+  default_output_json(const std::vector<endpoint_t> &render);
+
   /// The JSON of GET /api/audio/devices. Render endpoints and capture endpoints are two lists, the default one first;
   /// remembered (not present) endpoints are not listed, they only count for the VB-CABLE state.
   nlohmann::json

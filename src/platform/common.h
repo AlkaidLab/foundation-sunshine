@@ -929,6 +929,26 @@ namespace platf {
     sink_info() = 0;
 
     /**
+     * @brief Whether the system has no default playback device right now (Windows: nothing plugged in, enabled or virtual).
+     * @returns True only when the platform knows there is none. The stream then goes on without sound until a device appears:
+     *          see wait_for_default_output().
+     */
+    virtual bool
+    default_output_missing() {
+      return false;
+    }
+
+    /**
+     * @brief Wait for a default playback device.
+     * @param timeout Longest time to block; a device that appears (or becomes the default) ends the wait early.
+     * @returns True when a default playback device exists now. Platforms that always have one return true at once.
+     */
+    virtual bool
+    wait_for_default_output(std::chrono::milliseconds timeout) {
+      return true;
+    }
+
+    /**
      * @brief Write mono 48 kHz signed 16-bit PCM to the virtual microphone device.
      * @param samples Pointer to the PCM samples.
      * @param frame_count Number of mono frames to write.
