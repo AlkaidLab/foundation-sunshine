@@ -65,3 +65,20 @@ test('the words are 停用 / 恢复 / 取消配对 / 取消所有配对, the sam
   for (const d of [zh, tw]) for (const [k, v] of Object.entries(d.connections)) assert.doesNotMatch(v, /禁用|禁止连接|禁止連線|解除配对|解除配對/, `${k}: the old words are gone`)
   assert.equal(zh.connections.display_hint, '这些设置仅用于当前设备；停用时仍会保留。')
 })
+
+test('the pairing wait texts are translated in every language that has them', () => {
+  for (const [code, d] of Object.entries(locales)) {
+    if (code.startsWith('en')) continue
+    assert.notEqual(d.connections.waiting_client, locales.en.connections.waiting_client, `${code} waiting_client is not English`)
+    assert.notEqual(d.connections.pairing, locales.en.connections.pairing, `${code} pairing is not English`)
+  }
+})
+
+test('cancel all pairings ends the sessions of every paired client before the pairing list is cleared, as unpairing one client does', () => {
+  const host = fs.readFileSync(path.join(web, '../../../../src/confighttp/clients.cpp'), 'utf8')
+  const body = host.slice(host.indexOf('unpairAll('), host.indexOf('unpair(resp_https_t'))
+  const ends = body.indexOf('terminate_sessions_of_all(nvhttp::get_all_clients()')
+  const erases = body.indexOf('nvhttp::erase_all_clients()')
+  assert.ok(ends > 0 && erases > ends, 'the sessions are ended first, then the clients are erased')
+  assert.match(body, /rtsp_stream::terminate_client_sessions\(uuid\)/)
+})
