@@ -16,6 +16,9 @@
          Set -p:LaunchTrim=false to publish an untrimmed build for comparison. -->
     <SelfContained>true</SelfContained>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <!-- Native AOT keeps the self-contained launcher small and removes the runtime startup cost.
+         Microsoft Learn Native AOT deployment, read 2026-11-16: ms-dotnet-native-aot-20261116. -->
+    <PublishAot>true</PublishAot>
     <LaunchTrim Condition="'$(LaunchTrim)' == ''">true</LaunchTrim>
     <PublishTrimmed>$(LaunchTrim)</PublishTrimmed>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>

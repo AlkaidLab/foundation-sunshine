@@ -1312,7 +1312,12 @@ jobs:
           
           # Run the Inno Setup compiler and prove that it consumed only the
           # lightweight package manifest, not the self-contained runtime.
+          inno_start=$(date +%s.%N)
           "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" sunshine_installer.iss | tee inno-build.log
+          inno_end=$(date +%s.%N)
+          inno_seconds=$(python3 -c "print(f'{float(\"$inno_end\") - float(\"$inno_start\"):.3f}')")
+          inno_bytes=$(stat -c %s ./cpack_artifacts/Sunshine-engine.exe)
+          echo "Inno Setup: bytes=$inno_bytes seconds=$inno_seconds" | tee -a "$GITHUB_STEP_SUMMARY"
           if grep -Ei 'nvngx_(truehdr|dlssnr)\.dll' inno-build.log; then
             echo "NVIDIA enhancement runtimes must not be compiled into the installer"
             exit 1
@@ -1326,8 +1331,16 @@ jobs:
             grep -F "foundation_rtx_video_adapter.dll" inno-build.log
           fi
           
-          # Generate the portable ZIP.
-          cpack -G ZIP --config ./CPackConfig.cmake -D CPACK_STRIP_FILES=ON --verbose
+          # Generate the portable ZIP.  The custom archive uses ordinary ZIP
+          # deflate for compatibility, stores image/installer payloads, and
+          # compresses independent entries in parallel (CMake Archive docs,
+          # read 2026-11-16: cmake-cpack-archive-20261116).
+          portable_start=$(date +%s.%N)
+          python3 scripts/ci/make-portable-zip.py --source ./inno_staging --output ./cpack_artifacts/Sunshine.zip --prefix Sunshine
+          portable_end=$(date +%s.%N)
+          portable_seconds=$(python3 -c "print(f'{float(\"$portable_end\") - float(\"$portable_start\"):.3f}')")
+          portable_bytes=$(stat -c %s ./cpack_artifacts/Sunshine.zip)
+          echo "Portable ZIP: bytes=$portable_bytes seconds=$portable_seconds" | tee -a "$GITHUB_STEP_SUMMARY"
           cmake -E tar tf ./cpack_artifacts/Sunshine.zip | tr '\\' '/' > portable-files.txt
           if [[ "$RTX_VIDEO_ADAPTER_BUILT" == "true" ]]; then
             grep -F "Sunshine/tools/hdr_enhanced/nvidia_rtx_video/foundation_rtx_video_adapter.dll" portable-files.txt

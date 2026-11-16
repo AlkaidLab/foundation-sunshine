@@ -46,6 +46,10 @@ OutputBaseFilename=Sunshine-engine
 ; https://jrsoftware.org/ishelp/index.php?topic=setup_lzmanumblockthreads
 ; https://jrsoftware.org/ishelp/index.php?topic=setup_lzmablocksize
 ; https://jrsoftware.org/ishelp/index.php?topic=setup_lzmauseseparateprocess
+; Already-compressed installers and image assets are stored as-is. Inno's
+; nocompression flag avoids spending CPU on formats that cannot benefit from
+; another deflate/LZMA pass (Inno Setup [Files] flags, read 2026-11-16:
+; installer-inno-files-20261116).
 Compression=lzma2/ultra64
 SolidCompression=yes
 LZMANumBlockThreads=4
@@ -276,7 +280,13 @@ Source: "{#MySourceDir}\scripts\IMAGE_MIGRATION.md"; DestDir: "{app}\scripts"; F
 Source: "{#MySourceDir}\scripts\update-path.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: application
 
 ; Assets (shaders, web UI, etc.)
-Source: "{#MySourceDir}\assets\*"; DestDir: "{app}\assets"; Excludes: "gui\*"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: assets
+Source: "{#MySourceDir}\assets\*.png"; DestDir: "{app}\assets"; Excludes: "gui\*"; Flags: ignoreversion nocompression recursesubdirs createallsubdirs; Components: assets
+Source: "{#MySourceDir}\assets\*.jpg"; DestDir: "{app}\assets"; Excludes: "gui\*"; Flags: ignoreversion nocompression recursesubdirs createallsubdirs; Components: assets
+Source: "{#MySourceDir}\assets\*.jpeg"; DestDir: "{app}\assets"; Excludes: "gui\*"; Flags: ignoreversion nocompression recursesubdirs createallsubdirs; Components: assets
+Source: "{#MySourceDir}\assets\*.gif"; DestDir: "{app}\assets"; Excludes: "gui\*"; Flags: ignoreversion nocompression recursesubdirs createallsubdirs; Components: assets
+Source: "{#MySourceDir}\assets\*.webp"; DestDir: "{app}\assets"; Excludes: "gui\*"; Flags: ignoreversion nocompression recursesubdirs createallsubdirs; Components: assets
+Source: "{#MySourceDir}\assets\*.ico"; DestDir: "{app}\assets"; Excludes: "gui\*"; Flags: ignoreversion nocompression recursesubdirs createallsubdirs; Components: assets
+Source: "{#MySourceDir}\assets\*"; DestDir: "{app}\assets"; Excludes: "gui\*,*.png,*.jpg,*.jpeg,*.gif,*.webp,*.ico"; Flags: ignoreversion recursesubdirs createallsubdirs; Components: assets
 ; Chinese installs get the Chinese default menu command names. Sunshine copies
 ; assets\apps.json to the config folder on first start, and Moonlight clients
 ; show these names as-is.
@@ -316,10 +326,16 @@ Source: "{#MySourceDir}\scripts\usbip-roothub-guard.ps1"; DestDir: "{app}\script
 
 ; Gamepad scripts
 Source: "{#MySourceDir}\scripts\install-usbip.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion skipifsourcedoesntexist; Components: usbip
-Source: "{#MySourceDir}\scripts\usbip\*"; DestDir: "{app}\scripts\usbip"; Flags: ignoreversion recursesubdirs skipifsourcedoesntexist; Components: usbip
+Source: "{#MySourceDir}\scripts\usbip\*.exe"; DestDir: "{app}\scripts\usbip"; Flags: ignoreversion nocompression recursesubdirs skipifsourcedoesntexist; Components: usbip
+Source: "{#MySourceDir}\scripts\usbip\*.msi"; DestDir: "{app}\scripts\usbip"; Flags: ignoreversion nocompression recursesubdirs skipifsourcedoesntexist; Components: usbip
+Source: "{#MySourceDir}\scripts\usbip\*.zip"; DestDir: "{app}\scripts\usbip"; Flags: ignoreversion nocompression recursesubdirs skipifsourcedoesntexist; Components: usbip
+Source: "{#MySourceDir}\scripts\usbip\*"; DestDir: "{app}\scripts\usbip"; Excludes: "*.exe,*.msi,*.zip"; Flags: ignoreversion recursesubdirs skipifsourcedoesntexist; Components: usbip
 Source: "{#MySourceDir}\scripts\install-gamepad.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#MySourceDir}\scripts\uninstall-gamepad.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
-Source: "{#MySourceDir}\scripts\gamepad\*"; DestDir: "{app}\scripts\gamepad"; Flags: ignoreversion recursesubdirs skipifsourcedoesntexist; Components: gamepad
+Source: "{#MySourceDir}\scripts\gamepad\*.exe"; DestDir: "{app}\scripts\gamepad"; Flags: ignoreversion nocompression recursesubdirs skipifsourcedoesntexist; Components: gamepad
+Source: "{#MySourceDir}\scripts\gamepad\*.msi"; DestDir: "{app}\scripts\gamepad"; Flags: ignoreversion nocompression recursesubdirs skipifsourcedoesntexist; Components: gamepad
+Source: "{#MySourceDir}\scripts\gamepad\*.zip"; DestDir: "{app}\scripts\gamepad"; Flags: ignoreversion nocompression recursesubdirs skipifsourcedoesntexist; Components: gamepad
+Source: "{#MySourceDir}\scripts\gamepad\*"; DestDir: "{app}\scripts\gamepad"; Excludes: "*.exe,*.msi,*.zip"; Flags: ignoreversion recursesubdirs skipifsourcedoesntexist; Components: gamepad
 
 ; Virtual Mouse Driver scripts & files
 Source: "{#MySourceDir}\scripts\vmouse\install-vmouse.bat"; DestDir: "{app}\scripts\vmouse"; Flags: ignoreversion
