@@ -14,6 +14,7 @@
 // HID headers
 #include <hidpi.h>
 #include <hidsdi.h>
+#include <hidusage.h>
 #include <setupapi.h>
 
 #include <algorithm>
