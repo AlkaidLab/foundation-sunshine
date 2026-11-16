@@ -10,6 +10,8 @@ const encoder = ref('')
 // the host's whole /api/config answer (the settings list shows live values of several categories) and the DualSense tuning keys (search)
 const config = ref(null)
 const dualsenseKeys = ref([])
+// true once the host has answered (or refused) the DualSense read: a running stream's overview takes its tiles from the keys, so the page that is drawn once waits for it
+const dualsenseKnown = ref(false)
 // the DualSense channel and the microphone, for the second lines of their rows
 const ds = ref(null)
 const mic = ref(null)
@@ -28,6 +30,7 @@ async function refresh() {
     ds.value = tuning.value.status ? { state: Number(tuning.value.active_count) > 0 ? 'active' : 'ready' } : null
   }
   if (microphone.status === 'fulfilled') mic.value = microphone.value
+  dualsenseKnown.value = true
 }
 
 export function useShellLive() {
@@ -37,6 +40,7 @@ export function useShellLive() {
     encoder,
     config,
     dualsenseKeys,
+    dualsenseKnown,
     ds,
     mic,
     state: computed(() => ({ clients: clients.value && { total: clients.value.total, streaming: clients.value.streaming }, apps: apps.value, encoder: encoder.value })),
