@@ -368,7 +368,7 @@ namespace confighttp::diagnostics {
       json["vb_cable"]["job"] = audio_devices::vb_cable::status_json(audio_devices::vb_cable::runner().status());
       // a stream is running and its audio capture waits for a playback device to appear
       if (auto ref = audio::try_get_audio_ctx_ref()) {
-        json["default_output"]["host_waiting"] = ref->awaiting_default_output.load();
+        json["default_output"]["host_waiting"] = ref->awaiting_default_output.load() || ref->capture_waiting_for_device.load();
       }
       send_response(response, json);
 #else

@@ -108,6 +108,8 @@ namespace audio {
     // The system has no default playback device: the stream goes on without sound and capture starts when one appears.
     // Set while the context is built, cleared by wait_default_output(); `sink` is empty until then.
     std::atomic_bool awaiting_default_output { false };
+    // A running capture lost its default device and waits for a new one (reported as `host_waiting` by GET /api/audio/devices).
+    std::atomic_bool capture_waiting_for_device { false };
     // Guards `sink` against the capture thread that fills it in when the device appears.
     mutable std::mutex sink_mutex;
   };

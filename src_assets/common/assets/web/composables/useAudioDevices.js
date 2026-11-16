@@ -13,6 +13,8 @@ export function useAudioDevices(platform) {
   let active = false
   let pending = false
   let waitTimer
+  // the last good answer said there is no default playback device: the page keeps looking, also after a read that failed
+  let lastMissing = false
 
   const refresh = async () => {
     if (platform !== 'windows' || pending) return
@@ -22,13 +24,14 @@ export function useAudioDevices(platform) {
       if (!active) return
       state.value = normalizeAudioDevices(payload)
       failed.value = payload?.success === false
+      if (!failed.value) lastMissing = state.value.supported && state.value.defaultOutput.present === false
       watchJob()
-      watchDefault()
     } catch {
       if (active) failed.value = true
     } finally {
       pending = false
       if (active) loaded.value = true
+      watchDefault()
     }
   }
   const onVisible = () => { if (!document.hidden) void refresh() }
@@ -42,7 +45,7 @@ export function useAudioDevices(platform) {
   // with no default playback device the page looks again every few seconds: a device plugged in or enabled elsewhere shows up here and the notice goes away
   const watchDefault = () => {
     window.clearTimeout(waitTimer)
-    if (active && !failed.value && state.value.supported && state.value.defaultOutput.present === false) {
+    if (active && lastMissing) {
       waitTimer = window.setTimeout(() => { if (!document.hidden) void refresh(); else watchDefault() }, 5000)
     }
   }

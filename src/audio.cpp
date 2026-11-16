@@ -622,26 +622,37 @@ namespace audio {
 
     // Opens the capture endpoint again until it works or the stream ends. The system losing its default playback device while
     // streaming waits for a new one (one line in the log); any other failure is tried again every 5 seconds.
+    // Nothing is opened while there is no default device (the open would only repeat its own error every second), and the host-playback
+    // switch is read again before every attempt: a change made while this waits applies as soon as the capture opens.
     audio_default_wait::once_per_session_t said_once;
-    auto reopen_microphone = [&](bool play_on_host) -> std::unique_ptr<platf::mic_t> {
+    auto reopen_microphone = [&](bool &applied) -> std::unique_ptr<platf::mic_t> {
+      auto waiting_fg = util::fail_guard([&]() { ref->capture_waiting_for_device.store(false); });
       while (!shutdown_event->peek()) {
-        auto reopened = open_microphone(play_on_host, capture_channels, capture_mapping);
-        if (reopened) {
-          return reopened;
-        }
         if (control->default_output_missing()) {
           if (said_once.first(audio_default_wait::reason::no_default)) {
             BOOST_LOG(warning) << "The default playback device is gone; the stream goes on without sound until one is available again"sv;
           }
+          ref->capture_waiting_for_device.store(true);
           control->wait_for_default_output(1s);
+          continue;
         }
-        else {
-          BOOST_LOG(warning) << "Couldn't re-initialize audio input"sv;
-          shutdown_event->view(5s);
+        applied = host_audio();
+        auto reopened = open_microphone(applied, capture_channels, capture_mapping);
+        if (reopened) {
+          return reopened;
         }
+        BOOST_LOG(warning) << "Couldn't re-initialize audio input"sv;
+        shutdown_event->view(5s);
       }
       return nullptr;
     };
+    if (!mic && control->default_output_missing()) {
+      // the device went away between the wait and the first open: wait for it again
+      mic = reopen_microphone(applied_host_audio);
+      if (!mic) {
+        return;  // the stream ended while waiting
+      }
+    }
     if (!mic) {
       BOOST_LOG(error) << "Audio capture: failed to initialize microphone";
       return;
@@ -814,6 +825,10 @@ namespace audio {
     }
 
     auto sink = ctx.control->sink_info();
+    if (!sink && !ctx.control->default_output_missing()) {
+      // a device may have appeared between the two questions: ask once more before giving up
+      sink = ctx.control->sink_info();
+    }
     if (!sink) {
       if (ctx.control->default_output_missing()) {
         // A state of the computer, not a fault: no speakers, headphones or virtual output are enabled. The control stays
