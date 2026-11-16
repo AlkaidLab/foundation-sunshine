@@ -81,3 +81,10 @@ test('the maintenance page names the action on its primary button and leaves the
   assert.match(maintenance, /L"更新", L"Update"/)
   assert.match(maintenance, /v\.package_version/, 'the package version is still shown in the lead')
 })
+
+test('the buttons on the right never run into the text button on the left of the maintenance page', () => {
+  const layout = installerUi.slice(installerUi.indexOf('A text button on the left (卸载)'), installerUi.indexOf('out.buttons_top = by;'))
+  assert.match(layout, /left_end \+ 12/, 'a gap of 12 px')
+  assert.match(layout, /c\.measure_w\(b->text, 15, 1\) \+ 24/, 'a button gives up padding, never its text')
+  assert.match(layout, /b->x = at;/, 'the right buttons are laid out again after they shrank')
+})
