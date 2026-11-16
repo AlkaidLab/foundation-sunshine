@@ -8,6 +8,7 @@
 
 #include <openssl/pem.h>
 #include <openssl/rsa.h>
+#include <openssl/x509v3.h>
 
 namespace crypto {
   using asn1_string_t = util::safe_ptr<ASN1_STRING, ASN1_STRING_free>;
@@ -498,8 +499,13 @@ namespace crypto {
     const ASN1_BIT_STRING *asn1 = nullptr;
     X509_get0_signature(&asn1, nullptr, x.get());
 
-    // OpenSSL 4.0 made ASN1_STRING opaque: the accessors work in 1.1.0 and later
-    return { (const char *) ASN1_STRING_get0_data(asn1), (std::size_t) ASN1_STRING_length(asn1) };
+    // OpenSSL 4.0 made ASN1_STRING opaque: the accessors work in 1.1.0 and later (ASN1_STRING_length() is the old name of ASN1_STRING_get_length(), deprecated in 4.1)
+#if OPENSSL_VERSION_NUMBER >= 0x40100000L
+    const auto length = ASN1_STRING_get_length(asn1);
+#else
+    const auto length = ASN1_STRING_length(asn1);
+#endif
+    return { (const char *) ASN1_STRING_get0_data(asn1), (std::size_t) length };
   }
 
   std::string
@@ -541,6 +547,29 @@ namespace crypto {
     }
 
     return digest;
+  }
+
+  /** A plain DNS host name (letters, digits, hyphens, dots; labels of 1 to 63 characters; at most 253): the only kind of common name that gets a matching alternative name. */
+  static bool
+  is_dns_host_name(std::string_view name) {
+    if (name.empty() || name.size() > 253) return false;
+    std::size_t label = 0;
+    char previous = '.';
+    for (const char c : name) {
+      if (c == '.') {
+        if (label == 0 || previous == '-') return false;
+        label = 0;
+      }
+      else if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-') {
+        if (c == '-' && label == 0) return false;
+        if (++label > 63) return false;
+      }
+      else {
+        return false;
+      }
+      previous = c;
+    }
+    return label > 0 && previous != '-';
   }
 
   creds_t
@@ -586,6 +615,20 @@ namespace crypto {
 
     X509_set_subject_name(x509.get(), name.get());
     X509_set_issuer_name(x509.get(), name.get());
+
+    // A common name that is a DNS host name also goes into subjectAltName. OpenSSL 4.0 no longer falls back to the common name when it checks a host name
+    // (CHANGES, 4.0: the subject DN is consulted only with X509_CHECK_FLAG_ALWAYS_CHECK_SUBJECT), so a certificate made for "localhost" would fail a
+    // host name check that passed on OpenSSL 3. Names with spaces, such as the ones of paired clients and of the host, are not host names and get no extension.
+    if (is_dns_host_name(cn)) {
+      X509V3_CTX v3_context;
+      X509V3_set_ctx(&v3_context, x509.get(), x509.get(), nullptr, nullptr, 0);
+      const std::string alt_name = "DNS:" + std::string { cn };
+      if (auto *extension = X509V3_EXT_conf_nid(nullptr, &v3_context, NID_subject_alt_name, alt_name.c_str())) {
+        X509_add_ext(x509.get(), extension, -1);
+        X509_EXTENSION_free(extension);
+      }
+    }
+
     X509_sign(x509.get(), pkey.get(), EVP_sha256());
 
     return { pem(x509), pem(pkey) };
