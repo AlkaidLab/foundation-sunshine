@@ -29,6 +29,13 @@ namespace telemetry {
   inline constexpr std::size_t MAX_USER_REPORT_CHARS = 2000;
   /** The longest contact line a person can leave with a user_report. */
   inline constexpr std::size_t MAX_USER_CONTACT_CHARS = 200;
+  /** The most bytes of a screenshot that is taken with a feedback report (the page sends at most 700 KB; the Worker takes 1 MiB). */
+  inline constexpr std::size_t MAX_USER_SHOT_BYTES = 800 * 1024;
+
+  /** What the host tells the page about a batch besides how many events it kept. `shot`: what became of the screenshot of a feedback report in the batch ("uploaded", or why it was left out); empty when there was none. */
+  struct ingest_report_t {
+    std::string shot;
+  };
 
   enum class kind_e {
     usage,

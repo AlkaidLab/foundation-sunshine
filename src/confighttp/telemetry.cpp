@@ -3,7 +3,7 @@
  * @brief Telemetry routes of the Web UI server.
  *
  *   GET  /api/telemetry/identity  {install_id, session_id, endpoint, usage, errors}; 403 while both choices are off
- *   POST /api/telemetry/events    {product: "panel"|"web"|"sparxie-launch", version?, events: [{kind, name, props}]} -> {accepted}
+ *   POST /api/telemetry/events    {product: "panel"|"web"|"sparxie-launch", version?, events: [{kind, name, props}]} -> {accepted, shot?}  (`shot`: what became of the screenshot of a feedback report)
  *   GET  /api/telemetry/status    the two choices, the endpoint and the counters of the sender
  *   GET  /api/telemetry/preview   the events that wait in memory for the next batch, exactly as they would be sent
  *
@@ -27,7 +27,8 @@ namespace confighttp::telemetry_api {
   using namespace confighttp;
 
   namespace {
-    constexpr std::size_t MAX_BODY_BYTES = 256 * 1024;
+    // a feedback report may carry its screenshot (at most 700 KB, base64): the one event that is large
+    constexpr std::size_t MAX_BODY_BYTES = 1280 * 1024;
 
     void
     getIdentity(resp_https_t response, req_https_t request) {
@@ -61,8 +62,12 @@ namespace confighttp::telemetry_api {
       }
       const auto version = body.contains("version") && body["version"].is_string() ? body["version"].get<std::string>() : std::string {};
       // A choice that is off is not an error for the page: it simply keeps nothing, and the page has nothing to retry.
-      const auto accepted = ::telemetry::ingest(product, version, body["events"]);
-      write_json(response, web::StatusCode::ok, json { { "accepted", accepted } });
+      ::telemetry::ingest_report_t report;
+      const auto accepted = ::telemetry::ingest(product, version, body["events"], &report);
+      json answer { { "accepted", accepted } };
+      // what became of the screenshot of a feedback report: the page says the picture was sent only when this is "uploaded"
+      if (!report.shot.empty()) answer["shot"] = report.shot;
+      write_json(response, web::StatusCode::ok, answer);
     }
 
     void

@@ -12,3 +12,11 @@ test('the About page has the 反馈 card after 开始体检 and the search runs 
   assert.match(shell, /feedback: \(\) => \{ useErrors\(\)\.reportFeedback\(\) \}/)
   assert.match(shell, /<MErrorHost v-if="!embedded"/, 'an embedded frame has no form host; the row hides itself there')
 })
+
+test('the Web UI tells the feedback sheet that its host takes a screenshot, and has no capture of its own (a browser cannot take one silently)', () => {
+  const shell = read('../views/WebShell.vue')
+  const reg = shell.slice(shell.indexOf('registerDevReport({'), shell.indexOf('let removeErrorHandlers'))
+  assert.match(reg, /shots: true/)
+  assert.match(reg, /product: 'web'/)
+  assert.doesNotMatch(reg, /capture:/, 'no silent capture of the page: the person chooses, pastes or drops a picture')
+})

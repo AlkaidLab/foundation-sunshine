@@ -105,9 +105,9 @@ namespace crash {
       curl_mime_data(part, lines.data(), lines.size());
     }
 
-    /// One multipart POST. `dump` and `log` are optional.
+    /// One multipart POST. `dump`, `log` and `image` (the screenshot of a feedback report) are optional.
     answer_t
-    post(const std::string &url, const std::string &meta, const std::string &dump, const logfile::packed_t *log = nullptr) {
+    post(const std::string &url, const std::string &meta, const std::string &dump, const logfile::packed_t *log = nullptr, const std::string *image = nullptr) {
       answer_t answer;
       CURL *curl = curl_easy_init();
       if (!curl) return answer;
@@ -124,6 +124,13 @@ namespace crash {
         curl_mime_type(part, "application/octet-stream");
       }
       if (log) add_log_parts(mime, *log);
+      if (image) {
+        part = curl_mime_addpart(mime);
+        curl_mime_name(part, "image");
+        curl_mime_data(part, image->data(), image->size());
+        curl_mime_filename(part, "screenshot");
+        curl_mime_type(part, "application/octet-stream");  // the server judges by the first bytes
+      }
       curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
       curl_easy_setopt(curl, CURLOPT_MIMEPOST, mime);
       curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, collect_body);
@@ -361,6 +368,51 @@ namespace crash {
   upload_session_log(const std::string &endpoint, const std::string &install_id, const std::string &version) {
     // no check of the error-report switch: the run log is part of a feedback report, and pressing 发送 is the consent for it
     return upload_session_log_from(current_config_dir(), endpoint, install_id, version);
+  }
+
+  namespace {
+    std::atomic<const char *> g_session_shot_state { "none" };
+  }
+
+  const char *
+  session_shot_state() {
+    return g_session_shot_state.load();
+  }
+
+  std::optional<std::string>
+  upload_session_shot(const std::string &endpoint, const std::string &install_id, const std::string &version, const std::string &image) {
+    g_session_shot_state.store("none");
+    if (image.empty()) return std::nullopt;
+    try {
+      std::call_once(g_curl_once, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
+      std::string base = endpoint;
+      while (!base.empty() && base.back() == '/') base.pop_back();
+      const nlohmann::json meta { { "v", 1 }, { "install_id", install_id }, { "version", version } };
+      const auto answer = post(base + "/v1/user-screenshot", meta.dump(), {}, nullptr, &image);
+      if (answer.status == 0) {
+        g_session_shot_state.store("unreachable");
+        return std::nullopt;
+      }
+      if (answer.status < 200 || answer.status >= 300) {
+        g_session_shot_state.store("refused");  // a service without the endpoint (404), a limit (429): the report goes without the picture
+        return std::nullopt;
+      }
+      g_session_shot_state.store("bad_answer");
+      const auto doc = nlohmann::json::parse(answer.body, nullptr, false);
+      if (!doc.is_object()) return std::nullopt;
+      const auto state = doc.value("shot", std::string());
+      if (state == "stored" && doc.contains("ref") && doc["ref"].is_string()) {
+        g_session_shot_state.store("uploaded");
+        return doc["ref"].get<std::string>();
+      }
+      // the server's own words for why it left the picture out: only the ones the contract has
+      for (const char *known : { "too_large", "rejected", "unavailable", "none" })
+        if (state == known) g_session_shot_state.store(known);
+      if (state == "skipped_daily" || state == "skipped_quota") g_session_shot_state.store("unavailable");
+    }
+    catch (...) {
+    }
+    return std::nullopt;
   }
 
   std::optional<std::string>
