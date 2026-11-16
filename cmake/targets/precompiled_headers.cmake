@@ -39,4 +39,10 @@ function(_sunshine_apply_precompiled_headers)
     endforeach()
 endfunction()
 
+# fs-cmake-target-pch-20261116: this source must establish its own Windows
+# HID header order; a PCH would hide the macro-controlled windows.h contents
+# before hidpi.h defines USAGE and NTSTATUS.
+set_source_files_properties("${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_mouse.cpp"
+    PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+
 cmake_language(DEFER DIRECTORY "${CMAKE_SOURCE_DIR}" CALL _sunshine_apply_precompiled_headers)
