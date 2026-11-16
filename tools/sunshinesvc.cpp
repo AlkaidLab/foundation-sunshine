@@ -183,6 +183,9 @@ FindActiveUserSessionId() {
       WTSUserName,
       &username,
       &bytes_returned);
+    const bool has_user = user_query_succeeded &&
+                          username != nullptr &&
+                          username[0] != L'\0';
     if (username != nullptr) {
       WTSFreeMemory(username);
     }
@@ -190,7 +193,7 @@ FindActiveUserSessionId() {
       WTSFreeMemory(session_info);
       return { invalid_session_id, true };
     }
-    if (username == nullptr || username[0] == L'\0') {
+    if (!has_user) {
       continue;
     }
 
