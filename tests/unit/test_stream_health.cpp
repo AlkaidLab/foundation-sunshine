@@ -166,8 +166,28 @@ TEST(StreamHealthAnomaly, IdrStormEncodeOverAndTheNetworkCodes) {
   std::vector<std::string> codes;
   for (const auto &a : w->anomalies) codes.push_back(a.code);
   std::sort(codes.begin(), codes.end());
-  EXPECT_EQ(codes, (std::vector<std::string> { "XP_BITRATE_SHORT", "XP_ENCODE_OVER", "XP_IDR_STORM", "XP_LOSS_BURST", "XP_RTT_HIGH" }));
+  EXPECT_EQ(codes, (std::vector<std::string> { "XP_ENCODE_OVER", "XP_IDR_STORM", "XP_LOSS_BURST", "XP_RTT_HIGH" }));  // 20 000 of a configured 80 000 kbps is not an anomaly
   for (const auto &a : w->anomalies) EXPECT_EQ(is_network_code(a.code), a.code == "XP_BITRATE_SHORT" || a.code == "XP_LOSS_BURST" || a.code == "XP_RTT_HIGH");
+}
+
+TEST(StreamHealthAnomaly, AnEncoderStayingFarBelowTheConfiguredBitrateIsNotAProblem) {
+  // static content under constant-bitrate rate control: the output is a fraction of the configured ceiling, every frame on time
+  std::int64_t now = 0;
+  stream_health_t h { now, dims60() };
+  for (int i = 0; i < 3000; ++i) {
+    h.record(metric_e::encode_ms, 2);
+    h.count(counter_e::frames_sent);
+    h.count(counter_e::captured);
+    h.count(counter_e::submitted);
+  }
+  now += WINDOW_MS;
+  probe_t probe;
+  probe.target_kbps = 80'000;
+  probe.measured_kbps = 800;
+  const auto w = h.tick(now, probe);
+  ASSERT_TRUE(w.has_value());
+  for (const auto &a : w->anomalies) EXPECT_NE(a.code, "XP_BITRATE_SHORT");
+  EXPECT_TRUE(w->anomalies.empty());
 }
 
 TEST(StreamHealthAnomaly, FramesCapturedButNeverSubmittedAreSkipped) {

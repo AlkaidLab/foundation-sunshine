@@ -4,7 +4,7 @@
  *
  * sunshinesvc writes a small file of facts (tools/sunshinesvc_lifecycle.h); the host reads it at its next start, reports the counts (`svc_lifecycle`), the start-up time (`startup_timing`) and, when something
  * is clearly wrong, one anomaly (`host_anomaly`):
- *   XP_SVC_CORE_RESTART  the core ended without the service asking for it and was started again, especially soon after the service took over a core that was already running; repeated, it is priority 0
+ *   XP_SVC_CORE_RESTART  the core ended without the service asking for it and without asking for a restart itself, and was started again, especially soon after the service took over a core that was already running; repeated, it is priority 0
  *   XP_SLOW_READY        the time from the start of the service to the web interface of the core (or from the opening of a page to its ready mark) is above 15 s, or well above the install's own usual time
  * Pure code (std + nlohmann::json), so it is unit tested on its own; the text is read like the installer's journal: field by field, bounded, never trusted.
  */
@@ -48,7 +48,8 @@ namespace telemetry::service_lifecycle {
     long long life_ms = -1;
     long long since_adopt_ms = -1;
     int n = 0;
-    bool requested = false;
+    bool requested = false;  ///< the service asked the core to end
+    bool restart = false;  ///< the core asked for its own restart (Panel, a saved setting): exit code 0, started again by the service
   };
 
   std::vector<record_t> parse(std::string_view text);
@@ -58,7 +59,8 @@ namespace telemetry::service_lifecycle {
     int launched = 0;
     int adopted = 0;
     int extras_ended = 0;
-    int exits = 0;  ///< the core ended without the service asking
+    int exits = 0;  ///< the core ended without the service asking and without asking for a restart itself
+    int restarts_requested = 0;  ///< the core asked for its own restart (Panel, a saved setting): expected, never an anomaly
     int unexpected = 0;  ///< of those: an exit code other than 0, a life under a minute, or soon after an adoption
     int soon_after_adopt = 0;
     int short_life = 0;

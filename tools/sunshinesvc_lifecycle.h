@@ -6,7 +6,9 @@
  *   {"v":1,"kind":"svc_start","t":<unix ms>}
  *   {"v":1,"kind":"core_start","t":..,"how":"launched|adopted","pid":N,"age_ms":N,"cause":"boot|core_exit|session_change|start_failed"}
  *   {"v":1,"kind":"extra_ended","t":..,"n":N}
- *   {"v":1,"kind":"core_exit","t":..,"exit":N,"life_ms":N,"since_adopt_ms":N,"requested":true|false}
+ *   {"v":1,"kind":"core_exit","t":..,"exit":N,"life_ms":N,"since_adopt_ms":N,"requested":true|false,"restart":true|false}
+ * `requested`: the service asked the core to end (service stop, change of the console session). `restart`: the core asked for its own restart (Panel, a saved setting) and exited with code 0 so the
+ * service starts it again; the core leaves a marker file (restart_requested, the time in ms) just before it exits and the service takes it when it sees the exit.
  * Only numbers and fixed words are written. Portable code (std only), so it is unit tested on Linux; the service passes the values it reads from the process handles.
  */
 #pragma once
@@ -51,9 +53,13 @@ namespace sunshinesvc::lifecycle {
 
   /// exit_code is written as the signed 32-bit value of the DWORD (a negative code is an HRESULT or NTSTATUS); since_adopt_ms is -1 for a core the service started itself.
   inline std::string
-  core_exit_line(std::int64_t t, unsigned long exit_code, long long life_ms, long long since_adopt_ms, bool requested) {
-    return "{\"v\":1,\"kind\":\"core_exit\",\"t\":" + num(t) + ",\"exit\":" + num(static_cast<std::int32_t>(exit_code)) + ",\"life_ms\":" + num(life_ms) + ",\"since_adopt_ms\":" + num(since_adopt_ms) + ",\"requested\":" + (requested ? "true" : "false") + "}";
+  core_exit_line(std::int64_t t, unsigned long exit_code, long long life_ms, long long since_adopt_ms, bool requested, bool restart = false) {
+    return "{\"v\":1,\"kind\":\"core_exit\",\"t\":" + num(t) + ",\"exit\":" + num(static_cast<std::int32_t>(exit_code)) + ",\"life_ms\":" + num(life_ms) + ",\"since_adopt_ms\":" + num(since_adopt_ms) + ",\"requested\":" + (requested ? "true" : "false") + ",\"restart\":" + (restart ? "true" : "false") + "}";
   }
+
+  /// A restart the core asked for itself ends with exit code 0, which looks like an exit nobody asked for. The marker tells the two apart; it is only valid for a minute.
+  inline constexpr const char *RESTART_MARKER = "restart_requested";
+  inline constexpr std::int64_t RESTART_MARKER_WINDOW_MS = 60'000;
 
   /// Appends one line; keeps the file under MAX_FILE_BYTES. Never throws: a service that cannot write its notes carries on.
   inline bool
@@ -78,6 +84,48 @@ namespace sunshinesvc::lifecycle {
       if (!out) return false;
       out << line << '\n';
       return static_cast<bool>(out);
+    }
+    catch (...) {
+      return false;
+    }
+  }
+
+  /// Called by the core right before it exits for a restart it was asked to do. Never throws.
+  inline bool
+  note_restart_request(const std::filesystem::path &dir, std::int64_t t) noexcept {
+    try {
+      std::error_code ec;
+      std::filesystem::create_directories(dir, ec);
+      std::ofstream out { dir / RESTART_MARKER, std::ios::binary | std::ios::trunc };
+      if (!out) return false;
+      out << num(t) << '\n';
+      return static_cast<bool>(out);
+    }
+    catch (...) {
+      return false;
+    }
+  }
+
+  /// Called by the service when the core ended: true when the core had left a fresh marker (it is removed either way). `exit_t` is the time of the exit.
+  inline bool
+  take_restart_request(const std::filesystem::path &dir, std::int64_t exit_t) noexcept {
+    try {
+      const auto file = dir / RESTART_MARKER;
+      std::string text;
+      {
+        std::ifstream in { file, std::ios::binary };
+        if (!in) return false;
+        text.assign(std::istreambuf_iterator<char> { in }, std::istreambuf_iterator<char> {});
+      }
+      std::error_code ec;
+      std::filesystem::remove(file, ec);
+      long long t = 0;
+      for (const char c : text) {
+        if (c < '0' || c > '9') break;
+        t = t * 10 + (c - '0');
+        if (t > 4'102'444'800'000LL) return false;
+      }
+      return t > 0 && exit_t >= t - 2000 && exit_t - t <= RESTART_MARKER_WINDOW_MS;
     }
     catch (...) {
       return false;

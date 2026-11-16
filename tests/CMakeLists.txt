@@ -740,6 +740,7 @@ add_executable(telemetry_unit_tests
         ${CMAKE_SOURCE_DIR}/src/telemetry/error_report.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/wer_event.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/self_baseline.cpp
+        ${CMAKE_SOURCE_DIR}/src/telemetry/opt_out.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/service_lifecycle.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/stream_health.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/stream_stats.cpp

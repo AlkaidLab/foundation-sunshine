@@ -3,6 +3,8 @@
  * @brief The telemetry sender: buffer, queue, retry, consent, identity and stream trackers.
  */
 #include "service.h"
+#include "error_code.h"
+#include "opt_out.h"
 
 #include "src/crash/crash_context.h"
 
@@ -46,16 +48,6 @@ namespace telemetry {
     std::string
     sanitize_version(std::string_view version) {
       return safe_version(version);
-    }
-
-    std::uint32_t
-    fnv1a(const std::string &text) {
-      std::uint32_t h = 2166136261u;
-      for (unsigned char c : text) {
-        h ^= c;
-        h *= 16777619u;
-      }
-      return h;
     }
   }  // namespace
 
@@ -117,6 +109,18 @@ namespace telemetry {
       };
     }
     last_flush_ms_ = deps_.now_ms();
+    try {
+      std::ifstream seen(options_.dir / "products_seen.json");
+      const auto stored = seen ? json::parse(seen, nullptr, false) : json();
+      if (!stored.is_discarded() && stored.is_object()) {
+        for (const auto &[product, version] : stored.items())
+          if (known_product(product) && version.is_string() && products_seen_.size() < 4) products_seen_[product] = sanitize_version(version.get<std::string>());
+      }
+      std::ifstream pending(options_.dir / "opt_out_pending.jsonl");
+      if (pending) opt_outs_ = opt_out::parse(std::string { std::istreambuf_iterator<char> { pending }, std::istreambuf_iterator<char> {} });
+    }
+    catch (...) {
+    }
   }
 
   consent_t
@@ -241,6 +245,7 @@ namespace telemetry {
   std::size_t
   service_t::ingest(std::string_view product, std::string_view version, const json &events) {
     if (!events.is_array() || !known_product(product)) return 0;
+    note_product(product, version);
     std::size_t kept = 0, seen = 0;
     for (const auto &e : events) {
       if (++seen > MAX_BATCH_EVENTS) break;
@@ -864,15 +869,8 @@ namespace telemetry {
       emit(kind_e::error, "log_summary", json { { "component", catalogue_id(component, 32).empty() ? "host" : catalogue_id(component, 32) }, { "fatal", w.fatal }, { "error", w.error }, { "warning", w.warning } });
     }
     for (const auto &[key, raw] : raws) {
-      // The line itself is not sent. Its code is a hash of the words it starts with, up to the first character that starts a value (a quote, a bracket, ':' '=' or a digit): the fixed text of the message, so the same error is one code and what a person chose is not in it.
-      std::string head;
-      for (const char c : scrub_log_message(raw.raw, MAX_MESSAGE_CHARS)) {
-        if (std::isdigit(static_cast<unsigned char>(c)) || c == ':' || c == '=' || c == '"' || c == '\'' || c == '[' || c == '(' || c == '{' || c == '<' || c == '/' || c == '\\') break;
-        head.push_back(static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
-      }
-      while (!head.empty() && head.back() == ' ') head.pop_back();
-      char code[16];
-      std::snprintf(code, sizeof(code), "e%08x", fnv1a(head));
+      // The line itself is not sent. Its code is a hash of the fixed words it starts with (src/telemetry/error_code.h): the same error is one code and what a person chose is not in it.
+      const auto code = error_code_of(scrub_log_message(raw.raw, MAX_MESSAGE_CHARS));
       emit(kind_e::error, "error", json { { "component", catalogue_id(raw.component, 32).empty() ? "host" : catalogue_id(raw.component, 32) }, { "code", code }, { "severity", raw.severity >= 5 ? "fatal" : "error" }, { "count", raw.count } });
     }
   }
@@ -1008,6 +1006,7 @@ namespace telemetry {
     int sent = 0;
     try {
       if (deps_.now_ms() < not_before_ms_) return 0;
+      send_opt_outs();
       const auto c = consent_now();
       // while the server asks for a wait only priority 0 may leave: one request per product and version in the wait, repeated events merged into one with their count; the rest stays in the queue under its caps
       if (backing_off()) {
@@ -1098,6 +1097,7 @@ namespace telemetry {
   void
   service_t::consent_changed() {
     try {
+      reconcile_consent();  // before the install id goes: the record of a turned-off choice carries it
       const auto c = consent_now();
       {
         std::lock_guard lock { mutex_ };
@@ -1125,6 +1125,136 @@ namespace telemetry {
       else {
         queue_.refilter(c.usage, c.errors);
       }
+    }
+    catch (...) {
+    }
+  }
+
+
+  // ---- the record that a choice was turned off (opt_out.h) ----
+
+  std::string
+  service_t::peek_install_id() {
+    {
+      std::lock_guard lock { mutex_ };
+      if (!install_id_.empty()) return install_id_;
+    }
+    std::ifstream in(options_.dir / "install_id");
+    std::string text;
+    if (in && std::getline(in, text)) {
+      while (!text.empty() && (text.back() == '\r' || text.back() == '\n' || text.back() == ' ')) text.pop_back();
+      if (opt_out::is_uuid(text)) return text;
+    }
+    return {};
+  }
+
+  void
+  service_t::note_product(std::string_view product, std::string_view version) {
+    try {
+      const auto safe = sanitize_version(version);
+      if (product == "host" || safe.empty()) return;
+      std::lock_guard lock { opt_out_mutex_ };
+      auto &slot = products_seen_[std::string { product }];
+      if (slot == safe) return;
+      slot = safe;
+      json j = json::object();
+      for (const auto &[p, v] : products_seen_) j[p] = v;
+      std::error_code ec;
+      fs::create_directories(options_.dir, ec);
+      std::ofstream out(options_.dir / "products_seen.json", std::ios::trunc);
+      out << j.dump();
+    }
+    catch (...) {
+    }
+  }
+
+  void
+  service_t::reconcile_consent() {
+    try {
+      const auto c = consent_now();
+      opt_out::state_t before;
+      {
+        std::ifstream in(options_.dir / "consent_state.json");
+        const auto stored = in ? json::parse(in, nullptr, false) : json();
+        if (!stored.is_discarded()) before = opt_out::state_from_json(stored);
+      }
+      const auto off = opt_out::turned_off(before, c.usage, c.errors);
+      if (!before.known || before.usage != c.usage || before.errors != c.errors) {
+        std::error_code ec;
+        fs::create_directories(options_.dir, ec);
+        std::ofstream out(options_.dir / "consent_state.json", std::ios::trunc);
+        out << opt_out::state_to_json({ true, c.usage, c.errors }).dump();
+      }
+      if (off.empty()) return;
+      const auto id = peek_install_id();
+      std::string host_version;
+      {
+        std::lock_guard lock { mutex_ };
+        host_version = sanitize_version(context_.version);
+      }
+      if (host_version.empty()) return;  // the context is not set yet: telemetry.cpp calls this again once it is
+      std::lock_guard lock { opt_out_mutex_ };
+      std::vector<opt_out::product_version_t> products { { "host", host_version } };
+      for (const auto &[p, v] : products_seen_) products.push_back({ p, v });
+      opt_out::add(opt_outs_, off, products, id, deps_.now_ms());
+      std::ofstream out(options_.dir / "opt_out_pending.jsonl", std::ios::trunc);
+      out << opt_out::serialize(opt_outs_);
+    }
+    catch (...) {
+    }
+  }
+
+  void
+  service_t::send_opt_outs() {
+    try {
+      std::vector<opt_out::record_t> work;
+      {
+        std::lock_guard lock { opt_out_mutex_ };
+        if (opt_outs_.empty()) return;
+        const auto due = opt_out::due(opt_outs_, deps_.now_ms());
+        for (const auto i : due) work.push_back(opt_outs_[i]);
+      }
+      if (work.empty()) return;
+      const auto ctx = context();
+      std::vector<opt_out::record_t> done_or_dropped, failed_now;
+      for (auto &r : work) {
+        // the same pacing as every other request
+        const auto at = deps_.now_ms();
+        while (!post_times_.empty() && at - post_times_.front() >= 60'000) post_times_.pop_front();
+        if (static_cast<int>(post_times_.size()) >= options_.max_posts_per_minute) break;
+        post_times_.push_back(at);
+        auto with_session = ctx;
+        with_session.session_id = new_uuid_v4();
+        const auto body = opt_out::body_of(r, with_session);
+        if (body.is_null()) {
+          done_or_dropped.push_back(r);
+          continue;
+        }
+        post_result_t answer;
+        try {
+          if (deps_.post) answer = deps_.post(events_url(), body.dump());
+        }
+        catch (...) {
+          answer = {};
+        }
+        // delivered, or refused for good (a 4xx other than 408/429): the record is done; anything else is tried again later
+        if ((answer.status >= 200 && answer.status < 300) || (answer.status >= 400 && answer.status < 500 && answer.status != 408 && answer.status != 429)) done_or_dropped.push_back(r);
+        else {
+          opt_out::failed(r, deps_.now_ms());
+          failed_now.push_back(r);
+        }
+      }
+      std::lock_guard lock { opt_out_mutex_ };
+      const auto same = [](const opt_out::record_t &a, const opt_out::record_t &b) { return a.choice == b.choice && a.product == b.product && a.install_id == b.install_id; };
+      opt_outs_.erase(std::remove_if(opt_outs_.begin(), opt_outs_.end(), [&](const auto &r) { return std::any_of(done_or_dropped.begin(), done_or_dropped.end(), [&](const auto &d) { return same(r, d); }); }), opt_outs_.end());
+      for (auto &r : opt_outs_)
+        for (const auto &f : failed_now)
+          if (same(r, f)) {
+            r.tries = f.tries;
+            r.next_try_ms = f.next_try_ms;
+          }
+      std::ofstream out(options_.dir / "opt_out_pending.jsonl", std::ios::trunc);
+      out << opt_out::serialize(opt_outs_);
     }
     catch (...) {
     }

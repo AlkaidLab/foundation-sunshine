@@ -99,6 +99,7 @@ namespace telemetry::service_lifecycle {
         r.life_ms = integer_of(j, "life_ms", -1, SPAN_MAX * 12).value_or(-1);
         r.since_adopt_ms = integer_of(j, "since_adopt_ms", -1, SPAN_MAX * 12).value_or(-1);
         r.requested = j.value("requested", false);
+        r.restart = j.value("restart", false);
       }
       else {
         continue;
@@ -120,6 +121,7 @@ namespace telemetry::service_lifecycle {
         if (r.cause == "core_exit") ++s.restarts_core_exit;
         else if (r.cause == "session_change") ++s.restarts_session;
       }
+      else if (r.kind == "core_exit" && !r.requested && r.restart && r.exit_code == 0) ++s.restarts_requested;
       else if (r.kind == "core_exit" && !r.requested) {
         ++s.exits;
         const bool soon = r.since_adopt_ms >= 0 && r.since_adopt_ms <= SOON_AFTER_ADOPT_MS;
@@ -234,6 +236,7 @@ namespace telemetry::service_lifecycle {
     p["adopted"] = s.adopted;
     p["extras_ended"] = s.extras_ended;
     p["exits"] = s.exits;
+    p["restarts_requested"] = s.restarts_requested;
     p["unexpected"] = s.unexpected;
     p["soon_after_adopt"] = s.soon_after_adopt;
     p["restarts_core_exit"] = s.restarts_core_exit;

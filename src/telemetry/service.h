@@ -32,6 +32,7 @@
 #include "error_report.h"
 #include "events.h"
 #include "hooks.h"
+#include "opt_out.h"
 #include "queue.h"
 #include "self_baseline.h"
 #include "stream_stats.h"
@@ -179,8 +180,10 @@ namespace telemetry {
     /** The server asked for a wait and it has not ended. */
     bool
     backing_off() const { return deps_.now_ms() < backoff_until_ms_.load(std::memory_order_relaxed); }
-    /** The consent changed: drop what the off kinds had waiting, and the install id when both are off. */
+    /** The consent changed: drop what the off kinds had waiting, and the install id when both are off. A choice that was turned off is recorded once (opt_out.h) and sent by pump(). */
     void consent_changed();
+    /** Compares the two choices with what they were the last time this looked: the ones turned off get their record (opt_out.h), written to disk first. Called when the config is saved and once at the start, after the context is set. */
+    void reconcile_consent();
     /** The buffer reached flush_events: the sender thread should not wait for its interval. */
     bool flush_wanted() const;
 
@@ -231,6 +234,11 @@ namespace telemetry {
     /** What to do with the answer to a request that carried the batches at `paths`: sent (they are removed, the configuration it carries is applied), refused for good (removed), or to be tried again (-> false: stop). */
     bool
     handle_answer(const post_result_t &answer, std::size_t count, const std::vector<std::filesystem::path> &paths);
+    /** Sends the records that are due (sender thread only); a delivered or refused one is removed, a failed one waits longer. */
+    void send_opt_outs();
+    /** The install id as it is on disk or in memory, whatever the consent now says: the record needs it for the turn-off that just happened. */
+    std::string peek_install_id();
+    void note_product(std::string_view product, std::string_view version);
     std::string
     log_excerpt(std::int64_t now);
     void quality_event(const stream_stats_t &stats, std::int64_t now);
@@ -246,6 +254,9 @@ namespace telemetry {
     context_t context_;
     std::string install_id_;
     service_counts_t counts_;
+    std::mutex opt_out_mutex_;  // the pending records and the products seen; taken alone, never with the others
+    std::vector<opt_out::record_t> opt_outs_;
+    std::map<std::string, std::string> products_seen_;  // product -> version of the clients that talked to this host
     std::function<void()> wake_;
 
     mutable std::mutex log_mutex_;  // the log tallies; held for a few instructions

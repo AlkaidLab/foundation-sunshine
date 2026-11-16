@@ -378,6 +378,7 @@ namespace telemetry {
     const std::vector<std::string_view> result_choices { "normal", "error", "timeout", "kicked" };
     const std::vector<std::string_view> severity_choices { "info", "warning", "error", "fatal" };
     const std::vector<std::string_view> report_category_choices { "bug", "performance", "compat", "suggestion", "other" };
+    const std::vector<std::string_view> opt_out_choices { "usage", "errors" };
     const std::vector<std::string_view> update_source_choices { "mirror", "github", "other" };
     const std::vector<std::string_view> update_result_source_choices { "mirror", "github", "manual", "other" };
     const std::vector<std::string_view> update_stage_choices { "check", "download", "verify", "apply", "restart" };
@@ -429,6 +430,8 @@ namespace telemetry {
         std::vector<event_spec_t> t;
         t.push_back({ kind_e::usage, "app_start", { { "cold", type_e::boolean }, { "start_ms", type_e::integer, 0, 600000 }, { "update_source", type_e::choice, 0, 0, update_source_choices } } });
         t.push_back({ kind_e::usage, "app_exit", { { "uptime_s", type_e::integer, 0, 31536000 } } });
+        // the one record that a choice was turned off (opt_out.h): which choice, nothing else; the host sends it itself, a page cannot
+        t.push_back({ kind_e::usage, "opt_out", { { "choice", type_e::choice, 0, 0, opt_out_choices, true } } });
         t.push_back({ kind_e::usage, "stream_start", stream_dims() });
         auto end = stream_dims();
         end.push_back({ "duration_s", type_e::integer, 0, 604800 });
@@ -631,6 +634,7 @@ namespace telemetry {
                                                              { "adopted", type_e::integer, 0, 1000 },
                                                              { "extras_ended", type_e::integer, 0, 1000 },
                                                              { "exits", type_e::integer, 0, 1000 },
+                                                             { "restarts_requested", type_e::integer, 0, 1000 },
                                                              { "unexpected", type_e::integer, 0, 1000 },
                                                              { "soon_after_adopt", type_e::integer, 0, 1000 },
                                                              { "restarts_core_exit", type_e::integer, 0, 1000 },

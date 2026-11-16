@@ -340,7 +340,7 @@ namespace telemetry {
         const auto records = service_lifecycle::parse(read_small_file(path, service_lifecycle::MAX_BYTES));
         std::filesystem::remove(path, ec);
         const auto summary = service_lifecycle::summarize(records);
-        if (summary.launched + summary.adopted + summary.extras_ended + summary.exits > 0) service.emit(kind_e::experience, "svc_lifecycle", service_lifecycle::summary_props(summary));
+        if (summary.launched + summary.adopted + summary.extras_ended + summary.exits + summary.restarts_requested > 0) service.emit(kind_e::experience, "svc_lifecycle", service_lifecycle::summary_props(summary));
         {
           std::lock_guard lock { lifecycle_state_mutex };
           auto state = load_lifecycle_state(dir);
@@ -539,6 +539,7 @@ namespace telemetry {
       ctx.arch = arch_name();
       ctx.locale = config::sunshine.locale;
       service->set_context(std::move(ctx));
+      service->reconcile_consent();  // a choice that was turned off while the host was not running (the config file edited) gets its record now; the first run only remembers the choices
       {
         std::lock_guard lock { slot_mutex };
         service_slot() = service;
