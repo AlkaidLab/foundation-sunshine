@@ -14,6 +14,7 @@
 #include "src/display_device/session.h"
 #include "src/display_device/to_string.h"
 #include "src/display_device/vdd_settings.h"
+#include "src/doctor/doctor_os.h"
 #include "src/file_handler.h"
 #include "src/logging.h"
 #include "src/nvenc/frame_budget.h"
@@ -108,6 +109,8 @@ namespace confighttp::configuration {
       outputTree.add_child("adapters", adapters_nodes);
       outputTree.put("status", "true");
       outputTree.put("platform", SUNSHINE_PLATFORM);
+      // The Windows build the host runs on (RtlGetVersion), for the first-run guide: the base virtual display has no HDR on Windows 10 (build 19045 at most). Left out where it is unknown.
+      if (const auto windows_build = doctor::os::windows_build()) outputTree.put("windows_build", *windows_build);
       outputTree.put("version", build_info::version());
 
       auto vars = config::parse_config(file_handler::read_file(config::sunshine.config_file.c_str()));

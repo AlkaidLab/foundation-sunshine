@@ -27,3 +27,10 @@ test('the display page draws the choices from this list', () => {
   assert.match(page, /:options="prepOptions"/)
   assert.doesNotMatch(page, /prepExtra/)
 })
+
+test('the host configuration answer carries the Windows build for the first-run guide', () => {
+  const root = join(WEB, '..', '..', '..', '..')
+  const answer = readFileSync(join(root, 'src/confighttp/configuration.cpp'), 'utf8')
+  assert.match(answer, /#include "src\/doctor\/doctor_os\.h"/)
+  assert.match(answer, /if \(const auto windows_build = doctor::os::windows_build\(\)\) outputTree\.put\("windows_build", \*windows_build\);/)
+})
