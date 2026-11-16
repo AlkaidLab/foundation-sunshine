@@ -574,6 +574,10 @@ namespace platf {
     };
 
     std::optional<null_t> null;
+
+    // The device in `null` is the one chosen as the device to capture (a virtual device such as VB-CABLE), not Steam Streaming
+    // Speakers or the configured virtual sink: the stream runs on it whether or not the client plays the audio on the host
+    bool null_is_selected_device = false;
   };
 
   /**

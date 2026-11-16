@@ -16,6 +16,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "src/audio_devices.h"
 #include "src/network_reachability.h"
 
 // The build identity of host feat/build-identity (GET /api/version, sunshine --version --json); absent until that branch is merged.
@@ -828,11 +829,11 @@ namespace doctor {
     }
     else if (facts.sink_found) {
       items.push_back(make("audio.sink", group, status_e::pass, tr(lang, "Audio output", "音频输出"),
-        facts.sink.empty() ? tr(lang, "System default output", "系统默认输出") : facts.sink));
+        facts.sink.empty() ? tr(lang, "System default output", "系统默认输出") : audio_devices::looks_like_endpoint_id(facts.sink) ? tr(lang, "The selected output device", "所选的输出设备") : facts.sink));
     }
     else {
       items.push_back(make("audio.sink", group, status_e::fail, tr(lang, "Audio output", "音频输出"),
-        facts.sink.empty() ? tr(lang, "There is no default output device", "没有默认输出设备") : tr(lang, "\"" + facts.sink + "\" does not exist", "\"" + facts.sink + "\" 不存在"),
+        facts.sink.empty() ? tr(lang, "There is no default output device", "没有默认输出设备") : audio_devices::looks_like_endpoint_id(facts.sink) ? tr(lang, "The selected output device does not exist", "所选的输出设备不存在") : tr(lang, "\"" + facts.sink + "\" does not exist", "\"" + facts.sink + "\" 不存在"),
         open_setting(tr(lang, "Choose an existing output in Audio sink.", "在「音频输出设备」里选一个存在的设备。"), "audio_sink")));
     }
 
@@ -843,6 +844,7 @@ namespace doctor {
       else {
         items.push_back(make("audio.virtual", group, status_e::warn, tr(lang, "Virtual audio device", "虚拟音频设备"),
           facts.virtual_sink.empty() ? tr(lang, "Steam Streaming Speakers not found; without it the host's own speakers play the sound too", "没有找到 Steam Streaming Speakers;没有它时主机自己的扬声器也会出声") :
+          audio_devices::looks_like_endpoint_id(facts.virtual_sink) ? tr(lang, "The selected virtual device was not found", "没有找到所选的虚拟设备") :
                                        tr(lang, "\"" + facts.virtual_sink + "\" not found", "没有找到 \"" + facts.virtual_sink + "\""),
           open_setting(tr(lang, "Install the Steam audio drivers, or choose a Virtual sink.", "安装 Steam 音频驱动,或选择「虚拟输出设备」。"), "virtual_sink")));
       }

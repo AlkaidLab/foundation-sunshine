@@ -254,3 +254,35 @@ TEST(AudioDevices, UnsupportedPlatformIsAnAnswerNotAnError) {
   EXPECT_TRUE(json["render"].empty());
   EXPECT_EQ(json["vb_cable"]["state"], "unsupported");
 }
+
+TEST(AudioDevicesIdText, EndpointIdsAreRecognisedNamesAreNot) {
+  EXPECT_TRUE(looks_like_endpoint_id("{0.0.0.00000000}.{172f61d5-5aff-4b19-9233-e02c0003996f}"));
+  EXPECT_TRUE(looks_like_endpoint_id("{0.0.1.00000000}.{8DF5E1C3-036A-4385-BE9C-679680196F06}"));
+  // device names, in the languages a Windows shows them
+  EXPECT_FALSE(looks_like_endpoint_id("CABLE Input (VB-Audio Virtual Cable)"));
+  EXPECT_FALSE(looks_like_endpoint_id("扬声器 (Steam Streaming Speakers)"));
+  EXPECT_FALSE(looks_like_endpoint_id("ϵͳ"));
+  EXPECT_FALSE(looks_like_endpoint_id(""));
+  // braces alone, a short guid, a stray letter in the guid, a name that merely starts and ends with braces
+  EXPECT_FALSE(looks_like_endpoint_id("{}"));
+  EXPECT_FALSE(looks_like_endpoint_id("{0.0.0.00000000}.{172f61d5}"));
+  EXPECT_FALSE(looks_like_endpoint_id("{0.0.0.00000000}.{172f61d5-5aff-4b19-9233-e02c0003996g}"));
+  EXPECT_FALSE(looks_like_endpoint_id("{my speakers}"));
+}
+
+TEST(AudioDevicesIdText, OnlyOutputsCountAsVirtualOutputs) {
+  EXPECT_TRUE(is_virtual_output_kind(virtual_kind::vb_cable));
+  EXPECT_TRUE(is_virtual_output_kind(virtual_kind::vb_audio));
+  EXPECT_TRUE(is_virtual_output_kind(virtual_kind::steam_streaming));
+  EXPECT_FALSE(is_virtual_output_kind(virtual_kind::virtual_microphone));
+  EXPECT_FALSE(is_virtual_output_kind(""));
+}
+
+TEST(AudioDevicesIdText, ChineseWindowsNamesStillClassify) {
+  // the owner's Windows: the render endpoint of Steam Streaming Speakers carries a Chinese description
+  const auto steam = make(flow_e::render, "{0.0.0.00000000}.{32805c76-6b36-4e36-9c06-833720385d20}", "扬声器 (Steam Streaming Speakers)", "Steam Streaming Speakers");
+  EXPECT_EQ(classify_virtual(steam), virtual_kind::steam_streaming);
+  EXPECT_TRUE(is_virtual_output_kind(classify_virtual(steam)));
+  EXPECT_TRUE(is_virtual_output_kind(classify_virtual(cable_input())));
+  EXPECT_FALSE(is_virtual_output_kind(classify_virtual(speakers())));
+}

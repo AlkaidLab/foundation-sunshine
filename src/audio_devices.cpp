@@ -133,6 +133,11 @@ namespace audio_devices {
   }
 
   bool
+  is_virtual_output_kind(std::string_view kind) {
+    return kind == virtual_kind::vb_cable || kind == virtual_kind::vb_audio || kind == virtual_kind::steam_streaming;
+  }
+
+  bool
   is_vb_cable_driver(const driver_t &driver) {
     return equals(driver.name, "VB-Audio Virtual Cable");
   }

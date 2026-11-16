@@ -8,14 +8,17 @@ import { useCfgPin } from '../../composables/useCfgPin.js'
 import { MANUAL_DEVICE, pickerOptions, pickerText, pickerValue } from '../../utils/audioDevices.js'
 
 // One configuration setting that names an audio device: the row shows the device, tapping it opens a list of the
-// devices the host reports (automatic first, the system default marked, virtual devices such as VB-CABLE labelled) and
-// an entry for typing a name or an id by hand. A stored value the list does not know stays selectable and says so.
+// devices the host reports (automatic first, the system default marked, virtual devices such as VB-CABLE labelled; the ones that
+// cannot be used now, such as a disabled device or VB-CABLE that is not installed, follow with the reason) and an entry for typing a
+// name or an id by hand. A stored value the list does not know stays selectable and says so; its id is never shown, only a name.
 // `expert` makes the row an expert row (what it does, the default, a reset); the title is `config.<k>`, the help `config.<k>_desc`.
 const props = defineProps({
   config: { type: Object, required: true },
   k: { type: String, required: true },
   /** the endpoints to choose from (see utils/audioDevices.js) */
   devices: { type: Array, default: () => [] },
+  /** the VB-CABLE summary of the host (utils/audioDevices.js): says why VB-CABLE is not in the list */
+  vb: { type: Object, default: null },
   expert: { type: Boolean, default: false },
   label: { type: String, default: '' },
   help: { type: String, default: '' },
@@ -31,6 +34,14 @@ const labels = computed(() => ({
   auto: t('_common.auto'),
   manual: t('config.audio_device_manual'),
   missing: t('config.audio_device_missing'),
+  unknown: t('config.audio_device_unknown'),
+  states: { disabled: t('config.audio_device_state_disabled'), unplugged: t('config.audio_device_state_unplugged') },
+  vb: {
+    missing: t('config.audio_device_vb_missing'),
+    disabled: t('config.audio_device_vb_disabled'),
+    unavailable: t('config.audio_device_vb_unavailable'),
+    partial: t('config.audio_device_vb_unavailable'),
+  },
   defaultTag: t('config.audio_device_default_tag'),
   kinds: {
     vb_cable: t('config.audio_device_kind_vb_cable'),
@@ -41,8 +52,8 @@ const labels = computed(() => ({
   defaultNow: (name) => t('config.audio_device_default_now', { name }),
 }))
 const stored = computed(() => props.config[props.k])
-const options = computed(() => pickerOptions(props.devices, stored.value, labels.value))
-const valueText = computed(() => pickerText(props.devices, stored.value, t('_common.auto')))
+const options = computed(() => pickerOptions(props.devices, stored.value, labels.value, props.vb))
+const valueText = computed(() => pickerText(props.devices, stored.value, t('_common.auto'), t('config.audio_device_unknown')))
 
 const sheetOpen = ref(false)
 const manualOpen = ref(false)

@@ -246,6 +246,27 @@ TEST(DoctorAudio, MissingSinkFailsMissingVirtualWarnsMicOffSkips) {
   expect_contract(items);
 }
 
+TEST(DoctorAudio, ChosenDeviceIsNamedNeverShownAsAnId) {
+  // the picker stores the endpoint id; the checks read the name from the endpoint list, and a lost device is described without the id
+  audio_fact_t found { .checked = true, .sink = "CABLE Input (VB-Audio Virtual Cable)", .sink_found = true, .virtual_checked = true, .virtual_found = true, .virtual_name = "扬声器 (Steam Streaming Speakers)", .mic_checked = true, .mic_state = "disabled" };
+  const auto pass = evaluate_audio(found, lang_e::zh);
+  EXPECT_EQ(find(pass, "audio.sink")->status, status_e::pass);
+  EXPECT_EQ(find(pass, "audio.sink")->detail, "CABLE Input (VB-Audio Virtual Cable)");
+
+  const std::string id = "{0.0.0.00000000}.{172f61d5-5aff-4b19-9233-e02c0003996f}";
+  audio_fact_t lost { .checked = true, .sink = id, .sink_found = false, .virtual_sink = id, .virtual_checked = true, .virtual_found = false, .mic_checked = true, .mic_state = "disabled" };
+  for (const auto lang : { lang_e::zh, lang_e::en }) {
+    const auto items = evaluate_audio(lost, lang);
+    EXPECT_EQ(find(items, "audio.sink")->status, status_e::fail);
+    EXPECT_EQ(find(items, "audio.sink")->detail.find("0.0.0.00000000"), std::string::npos);
+    EXPECT_EQ(find(items, "audio.virtual")->detail.find("172f61d5"), std::string::npos);
+  }
+
+  // an id that is still stored when the check could not rename it is described, not printed
+  audio_fact_t unnamed { .checked = true, .sink = id, .sink_found = true, .virtual_checked = true, .virtual_found = true, .mic_checked = true, .mic_state = "disabled" };
+  EXPECT_EQ(find(evaluate_audio(unnamed, lang_e::zh), "audio.sink")->detail.find("0.0.0.00000000"), std::string::npos);
+}
+
 TEST(DoctorInput, WindowsWithoutVigemFailsAndLinuxUinputIsChecked) {
   input_fact_t windows { .windows = true, .gamepad = "auto", .vigem_checked = true, .vigem_ok = false, .vigem_error = "bus not found", .usbip_supported = true, .usbip_tool_found = true, .usbip_driver_checked = true, .usbip_driver_found = true, .usbip_driver = "usbip2_ude" };
   auto items = evaluate_input(windows, lang_e::zh);
