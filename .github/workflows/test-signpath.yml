@@ -50,7 +50,7 @@ jobs:
           PREFIX: ${{ github.event.inputs.artifact-prefix }}
         run: |
           set -euo pipefail
-          run_id=$(gh api "repos/$REPO/actions/workflows/main.yml/runs?branch=master&status=success&per_page=1" --jq '.workflow_runs[0].id')
+          run_id=$(gh api "repos/$REPO/actions/workflows/main.yml/runs?branch=master&event=push&status=success&per_page=1" --jq '.workflow_runs[0].id')
           if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
             echo "No successful master run of main.yml found" >&2
             exit 1

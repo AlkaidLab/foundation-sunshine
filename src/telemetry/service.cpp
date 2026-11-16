@@ -1041,13 +1041,13 @@ namespace telemetry {
       }
       for (const auto &props : held) emit(kind_e::error, "error_report", props, "host", {}, 1);  // the counts of known errors: priority 1
       std::deque<event_t> taken;
-      std::uint64_t consent_at_take = 0;
+      consent_marks_t marks_at_take;
       {
         // the take and the put-back below are the two sections a consent change must not slip between (consent_changed holds the same mutex for its clear): the writes in between run without it
         std::lock_guard flush_lock { flush_mutex_ };
         std::lock_guard lock { mutex_ };
         taken.swap(ring_);
-        consent_at_take = consent_generation_;
+        marks_at_take = consent_marks_;
         last_flush_ms_ = now;
       }
       if (taken.empty()) return;
@@ -1090,8 +1090,23 @@ namespace telemetry {
               if (deps_.before_queue_write) deps_.before_queue_write();
               bool pushed = false;
               try {
-                std::lock_guard lock { queue_mutex_ };
-                pushed = queue_.push(envelopes[at], key.second);
+                // check and write are one step against consent_changed(): its clear and its mark move under the same mutex, so an envelope is on disk before the change clears the queue or the
+                // mark has moved and the events of the turned-off choice are left out; never written behind the clear (a choice turned on again later would send them)
+                std::lock_guard flush_lock { flush_mutex_ };
+                auto envelope = envelopes[at];
+                json kept = json::array();
+                for (std::size_t i = 0; i < members[at].size(); ++i) {
+                  if (consent_marks_.moved_since(events[members[at][i]].kind, marks_at_take)) continue;
+                  kept.push_back(std::move(envelope["events"][i]));
+                }
+                if (kept.empty()) {
+                  pushed = true;  // everything of this envelope belonged to a choice that was turned off: nothing to write
+                }
+                else {
+                  envelope["events"] = std::move(kept);
+                  std::lock_guard lock { queue_mutex_ };
+                  pushed = queue_.push(envelope, key.second);
+                }
               }
               catch (...) {
               }
@@ -1116,7 +1131,7 @@ namespace telemetry {
         std::size_t back = 0;
         for (auto it = failed.rbegin(); it != failed.rend(); ++it) {
           // the consent moved while the writes went on: the automatic events of the old consent are not put back, only a report the person sent is (it never waited for a switch)
-          if (consent_generation_ != consent_at_take && !is_user_report(it->kind, it->name)) continue;
+          if (consent_marks_.moved_since(it->kind, marks_at_take) && !is_user_report(it->kind, it->name)) continue;
           ring_.push_front(*it);
           ++back;
         }
@@ -1330,7 +1345,9 @@ namespace telemetry {
       {
         // the generation moves with the clear: a flush that took its events out before this puts back only a report the person sent, never the automatic events of the consent that just ended
         std::lock_guard flush_lock { flush_mutex_ };
-        ++consent_generation_;
+        // a choice found off is marked: the events a running flush holds for it are not written or put back, also when it is turned on again before the flush ends
+        if (!c.usage) ++consent_marks_.usage;
+        if (!c.errors) ++consent_marks_.errors;
         std::lock_guard lock { mutex_ };
         ring_.erase(std::remove_if(ring_.begin(), ring_.end(), [&](const event_t &e) { return !c.allows(e.kind) && !is_user_report(e.kind, e.name); }), ring_.end());
       }

@@ -269,7 +269,14 @@ namespace telemetry {
     std::deque<event_t> ring_;
     // the take and the put-back of a flush and the buffer clear of a consent change hold flush_mutex_, so one change never slips between the two sections of a flush
     mutable std::mutex flush_mutex_;
-    std::uint64_t consent_generation_ = 0;  // moved by every consent change: what a flush took out of the buffer goes back only into the same generation
+    /// Per choice, how often it was found off by consent_changed(): an event a flush took out of the buffer is written or put back only while its own choice was not turned off since
+    /// (turning the other choice on or off, or on again, must not lose it; turning its own off and on again must not bring it back). Read and moved under flush_mutex_.
+    struct consent_marks_t {
+      std::uint64_t usage = 0;
+      std::uint64_t errors = 0;
+      bool moved_since(kind_e kind, const consent_marks_t &then) const { return kind == kind_e::error ? errors != then.errors : usage != then.usage; }
+    };
+    consent_marks_t consent_marks_;
     context_t context_;
     std::string install_id_;
     service_counts_t counts_;

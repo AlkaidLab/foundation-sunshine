@@ -1439,8 +1439,7 @@ TEST(TelemetryServiceFlush, AFailedBatchWritePutsBackOnlyWhatWasNotWritten) {
   std::multiset<int> sent;
   for (const auto &batch : h.posted)
     for (const auto &e : batch["events"]) sent.insert(e["props"]["start_ms"].get<int>());
-  EXPECT_EQ(sent.size(), MAX_BATCH_EVENTS + 1);
-  EXPECT_EQ(sent.size(), starts.size()) << "an event that was already written is not sent twice";
+  EXPECT_EQ(sent, std::multiset<int>(starts.begin(), starts.end())) << "each event leaves exactly once: none is lost, an event that was already written is not sent twice";
 }
 
 TEST(TelemetryServiceFlush, TheAutomaticEventsOfAnOldConsentAreNotPutBackWhenTheWritesFailed) {
@@ -1473,6 +1472,47 @@ TEST(TelemetryServiceFlush, TheAutomaticEventsOfAnOldConsentAreNotPutBackWhenThe
     if (batch.contains("events"))
       for (const auto &e : batch["events"]) names.insert(e["name"].get<std::string>());
   EXPECT_EQ(names, std::set<std::string> { "user_report" }) << "the old automatic events never leave";
+}
+
+TEST(TelemetryServiceFlush, AnEventTakenBeforeAWithdrawalIsNotWrittenWhenTheChoiceIsTurnedOnAgainBeforeTheWrite) {
+  harness_t h;
+  bool moved = false;
+  h.before_queue_write = [&] {
+    if (moved) return;
+    moved = true;
+    // the person turns both choices off and on again while the flush holds the events it took: the write that follows must not put the old events behind the clear
+    h.consent = { false, false };
+    h.svc->consent_changed();
+    h.consent = { true, true };
+    h.svc->consent_changed();
+  };
+  for (int i = 0; i < 3; ++i) ASSERT_TRUE(h.svc->emit(kind_e::usage, "app_start", json { { "cold", true }, { "start_ms", i } }));
+  h.svc->flush();
+  EXPECT_EQ(queue_files(h.dir.path), 0u) << "nothing of the withdrawn consent reaches the disk queue";
+  EXPECT_EQ(h.svc->buffered(), 0u);
+  EXPECT_EQ(h.svc->pump(), 0);
+  EXPECT_EQ(h.sent_events(), 0);
+}
+
+TEST(TelemetryServiceFlush, AnotherChoiceTurnedOnDuringTheFlushDoesNotLoseTheEventsOfAChoiceThatStayedOn) {
+  harness_t h;
+  if (!lock_queue(h.dir.path)) GTEST_SKIP() << "the queue directory stays writable for this user";
+  h.consent = { true, false };
+  bool moved = false;
+  h.before_queue_write = [&] {
+    if (moved) return;
+    moved = true;
+    h.consent = { true, true };  // the error reports are switched on; the usage choice never changed
+    h.svc->consent_changed();
+  };
+  for (int i = 0; i < 3; ++i) ASSERT_TRUE(h.svc->emit(kind_e::usage, "app_start", json { { "cold", true }, { "start_ms", i } }));
+  h.svc->flush();  // the write fails: the usage events are still the person's to send and go back
+  EXPECT_EQ(h.svc->buffered(), 3u);
+  unlock_queue(h.dir.path);
+  h.svc->flush();
+  EXPECT_EQ(h.svc->buffered(), 0u);
+  EXPECT_EQ(h.svc->pump(), 1);
+  EXPECT_EQ(h.sent_events(), 3);
 }
 
 TEST(TelemetryUserReport, TheIdentityIsFixedWhenTheReportIsAcceptedSoASwitchTurnedOffLaterDoesNotLoseIt) {
