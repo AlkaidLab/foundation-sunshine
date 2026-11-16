@@ -444,9 +444,10 @@ namespace ui {
         };
         if (!ban.empty()) facts.pop_back();
         {
-          const std::wstring action = v.maintenance_downgrade ? Z(v, L"降级到 ", L"Downgrade to ") :
-                                       v.maintenance_same ? Z(v, L"重新安装 ", L"Reinstall ") : Z(v, L"更新到 ", L"Update to ");
-          add_button(101, action + v.package_version, bkind::filled);
+          // The package version is in the lead above: the button names the action only, so a long version string cannot push the buttons into one another.
+          const std::wstring action = v.maintenance_downgrade ? Z(v, L"降级", L"Downgrade") :
+                                       v.maintenance_same ? Z(v, L"重新安装", L"Reinstall") : Z(v, L"更新", L"Update");
+          add_button(101, action, bkind::filled);
         }
         add_button(102, Z(v, L"修改组件", L"Modify components"), bkind::tonal);
         add_button(103, Z(v, L"卸载", L"Uninstall"), bkind::text, v.has_uninstaller);
