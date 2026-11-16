@@ -43,6 +43,7 @@
 
 #include "misc.h"
 
+#include "src/config.h"
 #include "src/entry_handler.h"
 #include "src/globals.h"
 #include "src/logging.h"
@@ -265,27 +266,134 @@ namespace platf {
   }
 
   /**
+   * @brief Find the interactive session of the signed-in user.
+   * @return The session ID, or `0xFFFFFFFF` when no active user session exists.
+   * The physical console is preferred while it has a signed-in user; when it
+   * does not (for example while the user works over RDP), the first active RDP
+   * session and then any active session with a user is used, mirroring the
+   * session choice of the sunshinesvc launcher.
+   */
+  struct user_session_selection_t {
+    DWORD session_id;
+    bool query_failed;
+  };
+
+  user_session_selection_t
+  find_active_user_session_id() {
+    constexpr DWORD invalid_session_id = 0xFFFFFFFF;
+    const auto console_session_id = WTSGetActiveConsoleSessionId();
+
+    PWTS_SESSION_INFOW session_info = nullptr;
+    DWORD session_count = 0;
+    if (!WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, &session_info, &session_count)) {
+      return { invalid_session_id, true };
+    }
+
+    DWORD active_rdp_session_id = invalid_session_id;
+    DWORD active_user_session_id = invalid_session_id;
+    for (DWORD index = 0; index < session_count; ++index) {
+      const auto &session = session_info[index];
+      if (session.State != WTSActive) {
+        continue;
+      }
+
+      LPWSTR username = nullptr;
+      DWORD bytes_returned = 0;
+    const bool user_query_succeeded = WTSQuerySessionInformationW(
+        WTS_CURRENT_SERVER_HANDLE,
+        session.SessionId,
+        WTSUserName,
+        &username,
+      &bytes_returned);
+    const bool has_user = user_query_succeeded &&
+                          username != nullptr &&
+                          username[0] != L'\0';
+      if (username != nullptr) {
+        WTSFreeMemory(username);
+      }
+    if (!user_query_succeeded) {
+      WTSFreeMemory(session_info);
+      return { invalid_session_id, true };
+    }
+    if (!has_user) {
+        continue;
+      }
+
+      // If the physical console itself has an active user, keep preferring it.
+      if (session.SessionId == console_session_id) {
+        const auto selected_session_id = session.SessionId;
+        WTSFreeMemory(session_info);
+      return { selected_session_id, false };
+      }
+
+      LPWSTR protocol = nullptr;
+      bytes_returned = 0;
+      USHORT protocol_type = 0;
+      if (WTSQuerySessionInformationW(
+            WTS_CURRENT_SERVER_HANDLE,
+            session.SessionId,
+            WTSClientProtocolType,
+            &protocol,
+            &bytes_returned)) {
+        if (protocol != nullptr && bytes_returned >= sizeof(protocol_type)) {
+          protocol_type = *reinterpret_cast<USHORT *>(protocol);
+        }
+        if (protocol != nullptr) {
+          WTSFreeMemory(protocol);
+        }
+      }
+
+      if (protocol_type == 2 && active_rdp_session_id == invalid_session_id) {
+        active_rdp_session_id = session.SessionId;
+      }
+      if (active_user_session_id == invalid_session_id) {
+        active_user_session_id = session.SessionId;
+      }
+    }
+
+    WTSFreeMemory(session_info);
+    if (active_rdp_session_id != invalid_session_id) {
+    return { active_rdp_session_id, false };
+    }
+  return { active_user_session_id, false };
+  }
+
+  /**
    * @brief Obtain the current sessions user's primary token with elevated privileges.
    * @return The user's token. If user has admin capability it will be elevated, otherwise it will be a limited token. On error, `nullptr`.
    */
   HANDLE
   retrieve_users_token(bool elevated) {
-    DWORD consoleSessionId;
+    constexpr DWORD invalid_session_id = 0xFFFFFFFF;
     HANDLE userToken;
     TOKEN_ELEVATION_TYPE elevationType;
     DWORD dwSize;
 
-    // Get the session ID of the active console session
-    consoleSessionId = WTSGetActiveConsoleSessionId();
-    if (0xFFFFFFFF == consoleSessionId) {
-      // If there is no active console session, log a warning and return null
+    // Get the session ID of the active user's interactive session. The
+    // Console binding keeps the console-only behavior.
+    DWORD session_id = invalid_session_id;
+    if (config::sunshine.session_binding == config_session_binding::mode_e::console) {
+      session_id = WTSGetActiveConsoleSessionId();
+    }
+    else {
+      const auto selection = find_active_user_session_id();
+      if (selection.query_failed) {
+        return nullptr;
+      }
+      session_id = selection.session_id;
+      if (session_id == invalid_session_id) {
+        session_id = WTSGetActiveConsoleSessionId();
+      }
+    }
+    if (invalid_session_id == session_id) {
+      // If there is no active user session, log a warning and return null
       BOOST_LOG(warning) << "There isn't an active user session, therefore it is not possible to execute commands under the users profile.";
       return nullptr;
     }
 
-    // Get the user token for the active console session
-    if (!WTSQueryUserToken(consoleSessionId, &userToken)) {
-      BOOST_LOG(debug) << "QueryUserToken failed, this would prevent commands from launching under the users profile.";
+    // Get the user token for the active user session
+    if (!WTSQueryUserToken(session_id, &userToken)) {
+      BOOST_LOG(debug) << "QueryUserToken failed for session " << session_id << ", this would prevent commands from launching under the users profile.";
       return nullptr;
     }
 
