@@ -1177,7 +1177,7 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
             still_running = true;
             break;
           }
-          if (session_reselect_pending) {
+          if (session_reselect_pending && RetryWaitTimeout(session_reselect_at_ms) == 0) {
             session_reselect_pending = false;
             SetEvent(session_change_event);
             still_running = true;
