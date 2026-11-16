@@ -148,7 +148,10 @@ def _literal_end(text: str, i: int):
 def _comment_end(text: str, start: int) -> int:
     """Return the first character after the C++ comment at ``start``."""
     if text.startswith("//", start):
+        # a backslash right before the newline splices the next line into the comment (translation phase 2)
         end = text.find("\n", start + 2)
+        while end >= 0 and text[start:end].rstrip("\r").endswith("\\"):
+            end = text.find("\n", end + 1)
         return len(text) if end < 0 else end
     if text.startswith("/*", start):
         end = text.find("*/", start + 2)
@@ -311,11 +314,13 @@ def _literal_at(text: str, start: int):
         content_start, content_end, j = raw
         value = text[content_start:content_end].encode("utf-8")  # a raw literal has no escapes
         suffix_start = _skip_space_and_comments(text, j)
+        suffixed = False
         for suffix in ("sv", "s"):
             if text.startswith(suffix, suffix_start):
                 j = suffix_start + len(suffix)
+                suffixed = True
                 break
-        return value, _skip_space_and_comments(text, j)
+        return value, _skip_space_and_comments(text, j), suffixed
     for prefix in ("u8", "u", "U", "L"):
         if text.startswith(prefix, i):
             i += len(prefix)
@@ -335,11 +340,13 @@ def _literal_at(text: str, start: int):
     value = _decode_cpp_literal(text[i + 1:j])
     j += 1
     suffix_start = _skip_space_and_comments(text, j)
+    suffixed = False
     for suffix in ("sv", "s"):
         if text.startswith(suffix, suffix_start):
             j = suffix_start + len(suffix)
+            suffixed = True
             break
-    return value, _skip_space_and_comments(text, j)
+    return value, _skip_space_and_comments(text, j), suffixed
 
 
 def _leading_literal_bytes(statement: str) -> bytes:
@@ -349,15 +356,20 @@ def _leading_literal_bytes(statement: str) -> bytes:
         pos = 0
         parts = bytearray()
         found = False  # an empty literal "" is still a literal operand
+        suffixed = False
         while True:
             parsed = _literal_at(piece, pos)
             if parsed is None:
                 break
-            value, pos = parsed
+            value, pos, has_suffix = parsed
             parts.extend(value)
             found = True
+            suffixed = suffixed or has_suffix
         if not found or _skip_space_and_comments(piece, pos) != len(piece):
             break
+        if not suffixed and 0 in parts:
+            # a plain "..." operand is inserted as const char*: the stream stops at the first NUL; "..."sv / "..."s keep their length
+            del parts[parts.index(0):]
         out.extend(parts)
     return bytes(out)
 

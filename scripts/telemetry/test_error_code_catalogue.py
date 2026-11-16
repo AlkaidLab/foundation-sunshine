@@ -111,6 +111,17 @@ class Statements(unittest.TestCase):
             self.assertEqual(table[raw]["sites"][0]["line"], 4)
             self.assertEqual(len(table), 2)
 
+    def test_a_line_comment_continues_after_a_backslash_newline(self):
+        table = self.scan_text('// disabled \\\nBOOST_LOG(error) << "Fake";\nvoid f() { BOOST_LOG(error) << "Real"; }\n')
+        self.assertEqual(list(table), [cat.error_code("Real")])
+        self.assertEqual(table[cat.error_code("Real")]["sites"][0]["line"], 3)
+
+    def test_a_plain_literal_ends_at_nul_but_a_suffixed_one_keeps_its_bytes(self):
+        table = self.scan_text(r'void f() { BOOST_LOG(error) << "Failed\000retry"; }' + "\n")
+        self.assertEqual(list(table), [cat.error_code("Failed")])
+        table = self.scan_text(r'void f() { BOOST_LOG(error) << "Failed\000retry"sv; }' + "\n")
+        self.assertEqual(list(table), [cat.error_code(b"Failed\x00retry")])
+
     def test_prefixed_character_literals_are_still_literals(self):
         self.assertEqual(cat.statement_end("x = u8';' + L';'; y", 0), 16)
 

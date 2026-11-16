@@ -107,9 +107,18 @@ namespace telemetry::opt_out {
     return out;
   }
 
+  namespace {
+    // a record that will never be sent again: too old or out of tries
+    void
+    drop_dead(std::vector<record_t> &records, std::int64_t now_ms) {
+      records.erase(std::remove_if(records.begin(), records.end(), [&](const record_t &r) { return r.tries >= MAX_TRIES || now_ms - r.t > MAX_AGE_MS; }), records.end());
+    }
+  }  // namespace
+
   void
   add(std::vector<record_t> &records, const std::vector<std::string> &choices, const std::vector<product_version_t> &products, const std::string &install_id, std::int64_t now_ms) {
     if (!is_uuid(install_id)) return;  // no identity, nothing to say it about
+    drop_dead(records, now_ms);  // an expired record must not count as waiting or take a place in the queue
     for (const auto &choice : choices) {
       if (!choice_ok(choice)) continue;
       for (const auto &p : products) {
@@ -123,7 +132,7 @@ namespace telemetry::opt_out {
 
   std::vector<std::size_t>
   due(std::vector<record_t> &records, std::int64_t now_ms) {
-    records.erase(std::remove_if(records.begin(), records.end(), [&](const record_t &r) { return r.tries >= MAX_TRIES || now_ms - r.t > MAX_AGE_MS; }), records.end());
+    drop_dead(records, now_ms);
     std::vector<std::size_t> out;
     for (std::size_t i = 0; i < records.size(); ++i)
       if (records[i].next_try_ms <= now_ms) out.push_back(i);
