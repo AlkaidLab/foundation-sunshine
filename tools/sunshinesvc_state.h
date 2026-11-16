@@ -210,6 +210,46 @@ namespace sunshinesvc {
     std::uint32_t failures_ = 0;
   };
 
+  /// A core that ended without being asked, and sooner than this after it started, counts as a failure of the start (not of a stream).
+  constexpr std::uint64_t CORE_STABLE_RUNTIME_MS = 60000;
+  constexpr std::uint32_t CORE_RESTART_FIRST_DELAY_MS = 5000;
+  constexpr std::uint32_t CORE_RESTART_MAX_DELAY_MS = 60000;
+  constexpr std::uint32_t CORE_RESTART_FREE_FAILURES = 2;
+
+  /**
+   * @brief How long the service waits before it starts the core again after a core that failed at its start.
+   *
+   * One install ran 29 cores in a row, each ended by an access violation about 1.3 s after it started (a crash inside the graphics driver at start-up, the
+   * crashed thread was the driver's own), a launch every 3 s with a crash report each. The first failures are retried at once as before (a single
+   * failure is often a driver that was not ready); from the third quick failure on the wait grows 5, 10, 20, 40 and 60 s, and a core that runs for a minute,
+   * or one that ended because it was asked to (a restart, a stop, a change of session), starts the count again.
+   */
+  class CoreRestartBackoff {
+  public:
+    /** @return the wait in ms before the next start, on top of the service's own pass interval; 0 when the core is to be started as usual. */
+    std::uint32_t
+    next_delay(std::uint64_t runtime_ms, bool asked_for) {
+      if (asked_for || runtime_ms >= CORE_STABLE_RUNTIME_MS) {
+        failures_ = 0;
+        return 0;
+      }
+      ++failures_;
+      if (failures_ <= CORE_RESTART_FREE_FAILURES) {
+        return 0;
+      }
+      const auto shift = std::min(failures_ - CORE_RESTART_FREE_FAILURES - 1, 4U);
+      return std::min(CORE_RESTART_FIRST_DELAY_MS << shift, CORE_RESTART_MAX_DELAY_MS);
+    }
+
+    void
+    reset() {
+      failures_ = 0;
+    }
+
+  private:
+    std::uint32_t failures_ = 0;
+  };
+
   class GuiAgentRestartPolicy {
   public:
     bool

@@ -189,3 +189,33 @@ TEST(HostInstance, TheSameInstallIsOnePathAndOneMutex) {
   EXPECT_NE(first, other);
   EXPECT_EQ(first.rfind(L"Global\\FoundationSunshineHost-", 0), 0u);
 }
+
+TEST(CoreRestartBackoff, FirstTwoQuickFailuresAreRetriedAtOnce) {
+  sunshinesvc::CoreRestartBackoff backoff;
+
+  EXPECT_EQ(backoff.next_delay(1300, false), 0U);
+  EXPECT_EQ(backoff.next_delay(1300, false), 0U);
+}
+
+TEST(CoreRestartBackoff, FurtherQuickFailuresWaitLongerUpToTheLimit) {
+  sunshinesvc::CoreRestartBackoff backoff;
+  constexpr std::array expected { 0U, 0U, 5000U, 10000U, 20000U, 40000U, 60000U, 60000U };
+
+  for (std::size_t index = 0; index < expected.size(); ++index) {
+    SCOPED_TRACE(index);
+    EXPECT_EQ(backoff.next_delay(1300, false), expected[index]);
+  }
+}
+
+TEST(CoreRestartBackoff, ARunOfAMinuteOrAnAskedForExitStartsTheCountAgain) {
+  sunshinesvc::CoreRestartBackoff backoff;
+
+  for (int i = 0; i < 4; ++i) backoff.next_delay(1300, false);
+  EXPECT_EQ(backoff.next_delay(sunshinesvc::CORE_STABLE_RUNTIME_MS, false), 0U);
+  EXPECT_EQ(backoff.next_delay(1300, false), 0U);
+  EXPECT_EQ(backoff.next_delay(1300, false), 0U);
+  EXPECT_EQ(backoff.next_delay(1300, false), 5000U);
+
+  EXPECT_EQ(backoff.next_delay(500, true), 0U);
+  EXPECT_EQ(backoff.next_delay(1300, false), 0U);
+}
