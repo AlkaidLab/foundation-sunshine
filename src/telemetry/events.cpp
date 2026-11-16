@@ -381,8 +381,10 @@ namespace telemetry {
     const std::vector<std::string_view> opt_out_choices { "usage", "errors" };
     const std::vector<std::string_view> log_state_choices { "no_log", "pack_failed", "refused", "unreachable", "bad_answer", "errors_off", "uploaded" };
     const std::vector<std::string_view> restart_reason_choices { "settings", "guide", "troubleshooting", "doctor", "home", "shell", "tray", "widget", "import", "api" };
-    const std::vector<std::string_view> update_source_choices { "mirror", "github", "other" };
-    const std::vector<std::string_view> update_result_source_choices { "mirror", "github", "manual", "other" };
+    const std::vector<std::string_view> update_source_choices { "mirror", "cnb", "github", "other" };
+    // why the chosen update source (Mirror酱) was not the one used in the last download
+    const std::vector<std::string_view> update_source_miss_choices { "version_lag", "cdk_invalid", "quota", "network", "no_cdk" };
+    const std::vector<std::string_view> update_result_source_choices { "mirror", "cnb", "github", "manual", "other" };
     const std::vector<std::string_view> update_stage_choices { "check", "download", "verify", "apply", "restart" };
     const std::vector<std::string_view> ok_failed_choices { "ok", "failed" };
     const std::vector<std::string_view> run_result_choices { "ok", "failed", "cancelled", "incomplete" };
@@ -430,7 +432,7 @@ namespace telemetry {
     specs() {
       static const std::vector<event_spec_t> table = [] {
         std::vector<event_spec_t> t;
-        t.push_back({ kind_e::usage, "app_start", { { "cold", type_e::boolean }, { "start_ms", type_e::integer, 0, 600000 }, { "update_source", type_e::choice, 0, 0, update_source_choices } } });
+        t.push_back({ kind_e::usage, "app_start", { { "cold", type_e::boolean }, { "start_ms", type_e::integer, 0, 600000 }, { "update_source", type_e::choice, 0, 0, update_source_choices }, { "update_source_miss", type_e::choice, 0, 0, update_source_miss_choices } } });
         t.push_back({ kind_e::usage, "app_exit", { { "uptime_s", type_e::integer, 0, 31536000 } } });
         // the one record that a choice was turned off (opt_out.h): which choice, nothing else; the host sends it itself, a page cannot
         t.push_back({ kind_e::usage, "opt_out", { { "choice", type_e::choice, 0, 0, opt_out_choices, true } } });

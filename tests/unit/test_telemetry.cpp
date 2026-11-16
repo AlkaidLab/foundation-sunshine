@@ -873,7 +873,18 @@ TEST(TelemetryWorkerRules, UpdateSourceAndErrorCodes) {
   const auto start = shape_event(kind_e::usage, "app_start", json { { "cold", true }, { "update_source", "mirror" } }, 0);
   ASSERT_TRUE(start);
   EXPECT_EQ(start->props["update_source"], "mirror");
-  EXPECT_EQ(shape_event(kind_e::usage, "app_start", json { { "update_source", "cnb" } }, 0)->props["update_source"], "other");
+  // four sources; anything else is dropped to the fallback word
+  EXPECT_EQ(shape_event(kind_e::usage, "app_start", json { { "update_source", "cnb" } }, 0)->props["update_source"], "cnb");
+  EXPECT_EQ(shape_event(kind_e::usage, "app_start", json { { "update_source", "github" } }, 0)->props["update_source"], "github");
+  // why the chosen source was not used: five words
+  for (const char *miss : { "version_lag", "cdk_invalid", "quota", "network", "no_cdk" }) {
+    const auto with_miss = shape_event(kind_e::usage, "app_start", json { { "update_source", "cnb" }, { "update_source_miss", miss } }, 0);
+    ASSERT_TRUE(with_miss) << miss;
+    EXPECT_EQ(with_miss->props["update_source_miss"], miss);
+  }
+  const auto bogus_miss = shape_event(kind_e::usage, "app_start", json { { "update_source", "cnb" }, { "update_source_miss", "bing" } }, 0);
+  ASSERT_TRUE(bogus_miss);
+  EXPECT_FALSE(bogus_miss->props.contains("update_source_miss"));
   const auto e = shape_event(kind_e::error, "error", json { { "component", "stream" }, { "code", "E_DXGI_LOST" }, { "severity", "info" } }, 0);
   ASSERT_TRUE(e);
   EXPECT_EQ(e->props["code"], "E_DXGI_LOST");  // the case is kept
