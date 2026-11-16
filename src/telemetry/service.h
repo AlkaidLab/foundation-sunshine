@@ -99,6 +99,13 @@ namespace telemetry {
     std::function<std::optional<std::string>(const std::string &endpoint, const std::string &install_id, const std::string &version)> session_log;
     /** The fixed word that says why the latest session_log call gave no reference (crash::session_log_state()); null in tests that do not need it. */
     std::function<std::string()> session_log_state;
+    /**
+     * The screenshot that goes with a feedback report: uploads the picture (PNG, JPEG or WebP bytes, already checked for type and size) and returns the reference to put into the report (prop shot_ref), or nothing:
+     * the report then goes without it. Called on the thread that ingests the page's events; null in tests that do not need it.
+     */
+    std::function<std::optional<std::string>(const std::string &endpoint, const std::string &install_id, const std::string &version, const std::string &image)> session_shot;
+    /** The fixed word that says why the latest session_shot call gave no reference (crash::session_shot_state()); null in tests that do not need it. */
+    std::function<std::string()> session_shot_state;
   };
 
   struct service_counts_t {
@@ -132,7 +139,7 @@ namespace telemetry {
     bool
     emit(kind_e kind, std::string_view name, const nlohmann::json &props, std::string_view product = "host", std::string_view version = {}, int priority = -1, std::string_view report_id = {});
     /** Events from a page (panel, web) through the host API: the same, with the page allow-list. -> the number kept. */
-    std::size_t ingest(std::string_view product, std::string_view version, const nlohmann::json &events);
+    std::size_t ingest(std::string_view product, std::string_view version, const nlohmann::json &events, ingest_report_t *report = nullptr);
     /** Writes one feedback report to the disk queue now (its own batch, priority 0). true only when the batch is on disk. */
     bool persist_report(const event_t &event);
 

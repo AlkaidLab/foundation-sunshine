@@ -346,6 +346,7 @@ namespace telemetry {
       code,
       attachment,
       log_ref,
+      shot_ref,
       text,
       contact,
       histograms,
@@ -380,6 +381,8 @@ namespace telemetry {
     const std::vector<std::string_view> severity_choices { "info", "warning", "error", "fatal" };
     const std::vector<std::string_view> report_category_choices { "bug", "performance", "compat", "suggestion", "other" };
     const std::vector<std::string_view> opt_out_choices { "usage", "errors" };
+    // why a feedback report went without its screenshot (src/telemetry/service.cpp, ingest): the words are the Worker's, `uploaded` is the one that has a shot_ref
+    const std::vector<std::string_view> shot_state_choices { "none", "too_large", "rejected", "unreachable", "refused", "bad_answer", "unavailable", "uploaded" };
     const std::vector<std::string_view> log_state_choices { "no_log", "pack_failed", "refused", "unreachable", "bad_answer", "errors_off", "uploaded" };
     const std::vector<std::string_view> restart_reason_choices { "settings", "guide", "troubleshooting", "doctor", "home", "shell", "tray", "widget", "import", "api" };
     const std::vector<std::string_view> update_source_choices { "mirror", "cnb", "github", "other" };
@@ -451,7 +454,7 @@ namespace telemetry {
                                                 { "count", type_e::integer, 1, 1000000 },
                                                 // no message: a line of the log or a text a page caught can carry what a person chose (a device, a game, a path). The code names the error; the one place for typed text is user_report.
                                               } });
-        // what the person wrote in the error dialog (spec "Worker additions"): a category, the component and page as tokens, an error code, the reference of an uploaded attachment and one scrubbed message of at most 2000 characters; no contact field
+        // what the person wrote in the error dialog (spec "Worker additions"): a category, the component and page as tokens, an error code, the reference of an uploaded attachment and one scrubbed message of at most 2000 characters, the screenshot's reference and the word for why it is missing; the contact when the person left one
         t.push_back({ kind_e::error, "user_report", {
                                                       { "category", type_e::choice, 0, 0, report_category_choices },
                                                       { "component", type_e::catalogue, 0, 32, {}, true },
@@ -460,6 +463,8 @@ namespace telemetry {
                                                       { "attachment", type_e::attachment },
                                                       { "log_ref", type_e::log_ref },
                                                       { "log_state", type_e::choice, 0, 0, log_state_choices },
+                                                      { "shot_ref", type_e::shot_ref },
+                                                      { "shot_state", type_e::choice, 0, 0, shot_state_choices },
                                                       { "message", type_e::text, 0, static_cast<double>(MAX_USER_REPORT_CHARS), {}, true },
                                                       { "contact", type_e::contact, 0, static_cast<double>(MAX_USER_CONTACT_CHARS) },
                                                     } });
@@ -734,6 +739,13 @@ namespace telemetry {
           // only the reference POST /v1/user-log returns: crash-YYYY-MM[-n]/ur-<24 hex>.log.gz
           if (!value.is_string()) return std::nullopt;
           static const std::regex ref(R"(^crash-\d{4}-\d{2}(-\d)?/ur-[0-9a-f]{24}\.log\.gz$)");
+          const auto text = value.get<std::string>();
+          return std::regex_match(text, ref) ? std::optional<json> { json(text) } : std::nullopt;
+        }
+        case type_e::shot_ref: {
+          // only the reference POST /v1/user-screenshot returns: crash-YYYY-MM[-n]/ur-shot-<24 hex>.<png|jpg|webp>
+          if (!value.is_string()) return std::nullopt;
+          static const std::regex ref(R"(^crash-\d{4}-\d{2}(-\d)?/ur-shot-[0-9a-f]{24}\.(png|jpg|webp)$)");
           const auto text = value.get<std::string>();
           return std::regex_match(text, ref) ? std::optional<json> { json(text) } : std::nullopt;
         }

@@ -47,6 +47,10 @@ namespace {
     double random_value = 0.0;  ///< what the random source answers: the Tier 1 draw of a stream and the jitter of a backoff
     std::optional<std::string> log_ref;  ///< what the session log upload returns
     int log_calls = 0;
+    std::optional<std::string> shot_ref;  ///< what the screenshot upload returns
+    std::string shot_state = "refused";  ///< the word the upload gives when it returns no reference
+    int shot_calls = 0;
+    std::vector<std::string> shot_images;  ///< the picture each upload was given
     std::vector<std::string> log_ids;  ///< the install id (or the one-time report id) each session log upload was made under
     std::unique_ptr<service_t> svc;
 
@@ -62,6 +66,12 @@ namespace {
         log_ids.push_back(id);
         return log_ref;
       };
+      deps.session_shot = [this](const std::string &, const std::string &, const std::string &, const std::string &image) {
+        ++shot_calls;
+        shot_images.push_back(image);
+        return shot_ref;
+      };
+      deps.session_shot_state = [this] { return shot_state; };
       deps.post = [this](const std::string &url, const std::string &body) {
         urls.push_back(url);
         posted.push_back(json::parse(body));
@@ -1132,6 +1142,119 @@ TEST(TelemetryUserReport, TheSessionLogGoesUpFirstAndItsReferenceTravelsInTheRep
   const auto before = h.log_calls;
   h.svc->ingest("web", "1", json::array({ json { { "kind", "error" }, { "name", "error" }, { "props", json { { "component", "web" }, { "code", "E_LOST" } } } } }));
   EXPECT_EQ(h.log_calls, before);
+}
+
+// ---- the screenshot of a feedback report (the page sends it as base64 inside the report; the host checks it again and uploads it like the log)
+namespace {
+  std::string
+  b64(const std::string &raw) {
+    static const char *table = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    for (std::size_t i = 0; i < raw.size(); i += 3) {
+      const unsigned n = (static_cast<unsigned char>(raw[i]) << 16) | (i + 1 < raw.size() ? static_cast<unsigned char>(raw[i + 1]) << 8 : 0) | (i + 2 < raw.size() ? static_cast<unsigned char>(raw[i + 2]) : 0);
+      out += table[(n >> 18) & 63];
+      out += table[(n >> 12) & 63];
+      out += i + 1 < raw.size() ? table[(n >> 6) & 63] : '=';
+      out += i + 2 < raw.size() ? table[n & 63] : '=';
+    }
+    return out;
+  }
+  const std::string PNG_BYTES = std::string("\x89PNG\r\n\x1a\n", 8) + std::string(64, 'p');
+  const std::string JPEG_BYTES = std::string("\xff\xd8\xff\xe0", 4) + std::string(64, 'j');
+  const std::string WEBP_BYTES = std::string("RIFF\x40\0\0\0WEBPVP8 ", 16) + std::string(64, 'w');
+
+  json
+  report_with(json extra) {
+    json props { { "category", "bug" }, { "component", "panel" }, { "message", "it broke" } };
+    for (auto it = extra.begin(); it != extra.end(); ++it) props[it.key()] = it.value();
+    return json::array({ json { { "kind", "error" }, { "name", "user_report" }, { "props", props } } });
+  }
+}  // namespace
+
+TEST(TelemetryScreenshot, ThePictureIsUploadedFirstItsReferenceTravelsInTheReportAndThePictureItselfNeverDoes) {
+  harness_t h;
+  h.consent = { false, false };  // pressing 发送 is the consent for this report, with both choices off
+  h.shot_ref = "crash-2026-11/ur-shot-0123456789abcdef01234567.png";
+  ingest_report_t report;
+  EXPECT_EQ(h.svc->ingest("web", "1", report_with({ { "shot", b64(PNG_BYTES) }, { "shot_ref", "crash-2026-11/ur-shot-ffffffffffffffffffffffff.png" } }), &report), 1u);
+  EXPECT_EQ(report.shot, "uploaded");
+  ASSERT_EQ(h.shot_calls, 1);
+  EXPECT_EQ(h.shot_images.at(0), PNG_BYTES) << "the Worker is given the bytes the page sent, decoded";
+  h.svc->flush();
+  ASSERT_EQ(h.svc->pump(), 1);
+  const auto &props = h.posted.at(0)["events"][0]["props"];
+  EXPECT_EQ(props["shot_ref"], *h.shot_ref) << "the page cannot name a reference itself";
+  EXPECT_FALSE(props.contains("shot")) << "the picture is not an event prop";
+  EXPECT_FALSE(props.contains("shot_state"));
+  EXPECT_EQ(h.posted.at(0).dump().find(b64(PNG_BYTES)), std::string::npos) << "no copy of the picture in what is sent";
+  for (const auto &bytes : { JPEG_BYTES, WEBP_BYTES }) {
+    ingest_report_t again;
+    h.svc->ingest("panel", "1", report_with({ { "shot", b64(bytes) } }), &again);
+    EXPECT_EQ(again.shot, "uploaded") << "JPEG and WebP are pictures too";
+  }
+}
+
+TEST(TelemetryScreenshot, WhatIsNotAPictureOrIsTooLargeIsNotUploadedAndTheReportStillGoesWithTheReason) {
+  harness_t h;
+  h.shot_ref = "crash-2026-11/ur-shot-0123456789abcdef01234567.png";
+  const std::vector<std::pair<std::string, std::string>> cases {
+    { "not base64 at all !!!", "rejected" },
+    { b64("GIF89a and then some bytes of a picture"), "rejected" },
+    { b64(std::string("<svg xmlns='http://www.w3.org/2000/svg'><script>x</script></svg>")), "rejected" },
+    { b64(std::string("MZ\x90\x00") + std::string(100, 'x')), "rejected" },
+    { b64(PNG_BYTES.substr(0, 10)), "rejected" },
+    { b64(PNG_BYTES + std::string(900 * 1024, 'x')), "too_large" },
+  };
+  int n = 0;
+  for (const auto &[text, state] : cases) {
+    ingest_report_t report;
+    ASSERT_EQ(h.svc->ingest("web", "1", report_with({ { "shot", text }, { "message", "case " + std::to_string(n++) } }), &report), 1u) << text.substr(0, 20);
+    EXPECT_EQ(report.shot, state) << text.substr(0, 20);
+  }
+  EXPECT_EQ(h.shot_calls, 0) << "nothing that is not a picture of a fitting size leaves the computer";
+  h.svc->flush();
+  ASSERT_GE(h.svc->pump(), 1);
+  int with_state = 0;
+  for (const auto &batch : h.posted)
+    for (const auto &e : batch["events"]) {
+      EXPECT_FALSE(e["props"].contains("shot")); EXPECT_FALSE(e["props"].contains("shot_ref"));
+      if (e["props"].contains("shot_state")) ++with_state;
+    }
+  EXPECT_EQ(with_state, 6) << "every report says why it has no picture";
+}
+
+TEST(TelemetryScreenshot, AnUploadThatFailsLeavesTheReportWithTheWordWhy) {
+  harness_t h;
+  h.shot_ref.reset();
+  for (const char *state : { "unreachable", "refused", "bad_answer", "unavailable" }) {
+    h.shot_state = state;
+    ingest_report_t report;
+    EXPECT_EQ(h.svc->ingest("web", "1", report_with({ { "shot", b64(PNG_BYTES) }, { "message", std::string("fails ") + state } }), &report), 1u);
+    EXPECT_EQ(report.shot, state);
+  }
+  h.svc->flush();
+  ASSERT_GE(h.svc->pump(), 1);
+  std::set<std::string> words;
+  for (const auto &batch : h.posted)
+    for (const auto &e : batch["events"]) words.insert(e["props"].value("shot_state", ""));
+  EXPECT_EQ(words, (std::set<std::string> { "unreachable", "refused", "bad_answer", "unavailable" }));
+  // a report without a picture asks for nothing and says nothing about one
+  const auto calls = h.shot_calls;
+  ingest_report_t none;
+  h.svc->ingest("web", "1", report_with({ { "message", "plain" } }), &none);
+  EXPECT_EQ(h.shot_calls, calls); EXPECT_TRUE(none.shot.empty());
+}
+
+TEST(TelemetryScreenshot, OnlyTheReferenceTheServerReturnsAndOnlyOnAFeedbackReportSurvivesTheShape) {
+  const auto shaped = [](json p) { p["category"] = "bug"; p["component"] = "panel"; p["message"] = "m"; return shape_event(kind_e::error, "user_report", p, 0); };
+  ASSERT_TRUE(shaped({ { "shot_ref", "crash-2026-11/ur-shot-0123456789abcdef01234567.webp" } }));
+  EXPECT_TRUE(shaped({ { "shot_ref", "crash-2026-11-2/ur-shot-0123456789abcdef01234567.jpg" } })->props.contains("shot_ref"));
+  for (const char *bad : { "../../etc/passwd", "crash-2026-11/ur-0123456789abcdef01234567.log.gz", "crash-2026-11/ur-shot-0123.png", "crash-2026-11/ur-shot-0123456789abcdef01234567.gif", "https://example.org/x.png" })
+    EXPECT_FALSE(shaped({ { "shot_ref", bad } })->props.contains("shot_ref")) << bad;
+  EXPECT_FALSE(shaped({ { "shot", "AAAAAAAAAAAAAAAA" } })->props.contains("shot")) << "the picture itself is not an event field";
+  EXPECT_TRUE(shaped({ { "shot_state", "too_large" } })->props.contains("shot_state"));
+  EXPECT_FALSE(shaped({ { "shot_state", "because" } })->props.contains("shot_state"));
+  EXPECT_FALSE(shape_event(kind_e::error, "error", json { { "component", "web" }, { "code", "E" }, { "shot_ref", "crash-2026-11/ur-shot-0123456789abcdef01234567.png" } }, 0)->props.contains("shot_ref"));
 }
 
 TEST(TelemetryUserReport, TheLogGoesWithEveryReportWhateverTheErrorReportChoiceIsButNotUnderAPathAsVersion) {

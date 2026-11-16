@@ -117,6 +117,17 @@ namespace crash {
   const char *
   session_log_state();
 
+  /**
+   * The screenshot of a feedback report, uploaded to POST <endpoint>/v1/user-screenshot (multipart: "meta" + "image"). `image` is PNG, JPEG or WebP bytes the caller has already checked. Returns the reference to put into the
+   * report (prop shot_ref), or nothing (a limit, a refusal, no network): the report then goes without its screenshot. The server checks the picture again and keeps it without its metadata.
+   */
+  std::optional<std::string>
+  upload_session_shot(const std::string &endpoint, const std::string &install_id, const std::string &version, const std::string &image);
+
+  /// Why the latest upload_session_shot() gave no reference (a fixed word: uploaded | none | too_large | rejected | unreachable | refused | bad_answer | unavailable).
+  const char *
+  session_shot_state();
+
   /// upload_session_log() for a given config directory, without the consent check (the caller has made it): the tests and tools.
   std::optional<std::string>
   upload_session_log_from(const std::filesystem::path &config_dir, const std::string &endpoint, const std::string &install_id, const std::string &version);

@@ -547,6 +547,8 @@ namespace telemetry {
       deps.post = [](const std::string &url, const std::string &body) { return http_post(url, "application/json", body); };
       deps.session_log = [](const std::string &endpoint, const std::string &install_id, const std::string &version) { return crash::upload_session_log(endpoint, install_id, version); };
       deps.session_log_state = [] { return std::string { crash::session_log_state() }; };
+      deps.session_shot = [](const std::string &endpoint, const std::string &install_id, const std::string &version, const std::string &image) { return crash::upload_session_shot(endpoint, install_id, version, image); };
+      deps.session_shot_state = [] { return std::string { crash::session_shot_state() }; };
       start_steady_ms.store(steady_ms());
       auto service = std::make_shared<service_t>(std::move(options), std::move(deps));
       context_t ctx;
@@ -763,7 +765,7 @@ namespace telemetry {
   }
 
   std::size_t
-  ingest(std::string_view product, std::string_view version, const json &events) {
+  ingest(std::string_view product, std::string_view version, const json &events, ingest_report_t *report) {
     const auto service = current();
     if (!service) return 0;
     // page_ready is the page telling when it was ready: the host judges it (limit and the install's own usual time) and sends startup_timing and, when slow, host_anomaly; the raw event is not passed on
@@ -777,9 +779,9 @@ namespace telemetry {
         }
         rest.push_back(e);
       }
-      return service->ingest(product, version, rest);
+      return service->ingest(product, version, rest, report);
     }
-    return service->ingest(product, version, events);
+    return service->ingest(product, version, events, report);
   }
 
   int

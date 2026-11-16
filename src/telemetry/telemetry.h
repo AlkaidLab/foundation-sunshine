@@ -67,7 +67,7 @@ namespace telemetry {
   /** The events waiting in memory for the next batch, exactly as they would be sent (GET /api/telemetry/preview). */
   nlohmann::json preview();
   /** The Panel and the Web UI hand their events to the host (POST /api/telemetry/events): shaped against the page allow-list, consent applied, sent by this sender. -> events kept. */
-  std::size_t ingest(std::string_view product, std::string_view version, const nlohmann::json &events);
+  std::size_t ingest(std::string_view product, std::string_view version, const nlohmann::json &events, ingest_report_t *report = nullptr);
   /** One blocking POST to `endpoint() + path` (for /v1/crash). -> HTTP status, 0 when nothing answered. Never call from a streaming thread. */
   int post_to(std::string_view path, std::string_view content_type, const std::string &body);
 

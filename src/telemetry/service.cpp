@@ -209,6 +209,75 @@ namespace telemetry {
 
   // ---- events ----
 
+  namespace {
+    /** Standard base64 (RFC 4648 section 4), padded; an empty string when the text is not that. */
+    std::string
+    base64_decode(std::string_view text) {
+      static const auto value = [](unsigned char c) -> int {
+        if (c >= 'A' && c <= 'Z') return c - 'A';
+        if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+        if (c >= '0' && c <= '9') return c - '0' + 52;
+        return c == '+' ? 62 : c == '/' ? 63 : -1;
+      };
+      if (text.empty() || text.size() % 4 != 0) return {};
+      std::string out;
+      out.reserve(text.size() / 4 * 3);
+      for (std::size_t i = 0; i < text.size(); i += 4) {
+        int v[4];
+        int pad = 0;
+        for (int k = 0; k < 4; ++k) {
+          const auto c = static_cast<unsigned char>(text[i + k]);
+          if (c == '=' && i + 4 == text.size() && k >= 2) {
+            v[k] = 0;
+            ++pad;
+          }
+          else if (pad == 0 && value(c) >= 0) v[k] = value(c);
+          else return {};
+        }
+        const auto n = (v[0] << 18) | (v[1] << 12) | (v[2] << 6) | v[3];
+        out.push_back(static_cast<char>((n >> 16) & 0xff));
+        if (pad < 2) out.push_back(static_cast<char>((n >> 8) & 0xff));
+        if (pad < 1) out.push_back(static_cast<char>(n & 0xff));
+      }
+      return out;
+    }
+
+    /** PNG, JPEG or WebP by the first bytes (the page's word for the type is not used). */
+    bool
+    is_screenshot_image(const std::string &b) {
+      if (b.size() >= 8 && b.compare(0, 8, "\x89PNG\r\n\x1a\n") == 0) return true;
+      if (b.size() >= 3 && static_cast<unsigned char>(b[0]) == 0xff && static_cast<unsigned char>(b[1]) == 0xd8 && static_cast<unsigned char>(b[2]) == 0xff) return true;
+      return b.size() >= 12 && b.compare(0, 4, "RIFF") == 0 && b.compare(8, 4, "WEBP") == 0;
+    }
+
+    /**
+     * The screenshot of a feedback report: checked again (the page's own check is not trusted), uploaded like the run log, and its reference put into `props` (shot_ref) or the word for why not (shot_state).
+     * -> "uploaded" or that word. The Worker checks the picture once more and takes the metadata out of what it keeps.
+     */
+    std::string
+    attach_screenshot(const service_deps_t &deps, const std::string &endpoint, const std::string &id, const std::string &version, const std::string &encoded, json &props) {
+      const auto left_out = [&](std::string state) {
+        props["shot_state"] = state;
+        return state;
+      };
+      if (encoded.size() > MAX_USER_SHOT_BYTES / 3 * 4 + 8) return left_out("too_large");
+      const auto image = base64_decode(encoded);
+      if (image.size() < 16 || !is_screenshot_image(image)) return left_out("rejected");
+      if (image.size() > MAX_USER_SHOT_BYTES) return left_out("too_large");
+      if (!deps.session_shot || version.empty()) return left_out("unavailable");
+      try {
+        if (const auto ref = deps.session_shot(endpoint, id, version, image)) {
+          props["shot_ref"] = *ref;
+          return "uploaded";
+        }
+        return left_out(deps.session_shot_state ? deps.session_shot_state() : "unavailable");
+      }
+      catch (...) {
+        return left_out("unavailable");
+      }
+    }
+  }  // namespace
+
   bool
   service_t::emit(kind_e kind, std::string_view name, const json &props, std::string_view product, std::string_view version, int priority, std::string_view report_id) {
     try {
@@ -266,7 +335,7 @@ namespace telemetry {
   }
 
   std::size_t
-  service_t::ingest(std::string_view product, std::string_view version, const json &events) {
+  service_t::ingest(std::string_view product, std::string_view version, const json &events, ingest_report_t *report) {
     if (!events.is_array() || !known_product(product)) return 0;
     note_product(product, version);
     std::size_t kept = 0, seen = 0;
@@ -294,6 +363,15 @@ namespace telemetry {
       // a feedback report goes with the anonymised log of this session: uploaded first, its reference travels in the report. A page cannot name a reference itself.
       if (name == "user_report" && props.is_object()) {
         props.erase("log_ref");
+        props.erase("shot_ref");  // like the log's: the page cannot name a reference, only the host gets one by uploading
+        props.erase("shot_state");
+        // the screenshot rides in the report as base64 (the page made it fit: at most 700 KB); it is taken out here, whatever happens to it, so the picture is never queued, shaped or sent as an event prop
+        const auto shot_text = props.contains("shot") && props["shot"].is_string() ? props["shot"].get<std::string>() : std::string {};
+        props.erase("shot");
+        if (!shot_text.empty()) {
+          const auto state = attach_screenshot(deps_, endpoint(), report_id.empty() ? report_install : report_id, safe_version(version), shot_text, props);
+          if (report) report->shot = state;
+        }
         // always: the run log is part of a feedback report, and pressing 发送 is the consent for it (whatever the error-report switch says); only with the version the report will carry
         if (deps_.session_log) {
           try {
