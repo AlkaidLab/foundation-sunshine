@@ -21,7 +21,8 @@ on:
     branches:
       - master
   schedule:
-    # Nightly: a cold build with the latest toolchain packages, the full native tests, and a fresh compiler cache for master.
+    # Nightly: a cold build with the pinned toolchain packages (the weekly toolchain watch probes the newest ones when a
+    # major moves), the full native tests, and a fresh compiler cache for master.
     - cron: '17 20 * * *'
   workflow_dispatch:
     inputs:
@@ -39,6 +40,10 @@ on:
         default: false
       sharded_cold:
         description: 'Compile the objects on parallel runners first (what the nightly build and a build without any compiler cache do)'
+        type: boolean
+        default: false
+      toolchain_probe:
+        description: 'Build with the newest MSYS2 packages instead of the pinned ones (what the weekly toolchain watch dispatches to test a new major)'
         type: boolean
         default: false
       rtx_hdr:
@@ -466,15 +471,18 @@ jobs:
           persist-credentials: false
 
       # What decides whether an earlier compiler cache still hits: the CMake modules that set flags, build_win's configure step, the
-      # toolchain action and the MSYS2 package versions (scripts/ci/config-fingerprint.py). It is part of the cache key.
+      # toolchain action and the MSYS2 package pins (scripts/ci/config-fingerprint.py). It is part of the cache key; the
+      # suffix keeps the pinned toolchain and a probe build with the newest packages in separate cache lineages.
       - name: Configuration fingerprint
         id: fingerprint
+        env:
+          TOOLCHAIN: ${{ inputs.toolchain_probe == true && 'newest' || 'pinned' }}
         run: |
           set -euo pipefail
-          fingerprint="$(python3 scripts/ci/config-fingerprint.py --details 2> details.txt)"
+          fingerprint="$(python3 scripts/ci/config-fingerprint.py --details 2> details.txt)-$TOOLCHAIN"
           cat details.txt
           echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
-          { echo "### Compiler cache configuration"; echo "- fingerprint: \`$fingerprint\`"; grep -E '^    ' details.txt | sed 's/^    /- /'; } >> "$GITHUB_STEP_SUMMARY"
+          { echo "### Compiler cache configuration"; echo "- fingerprint: \`$fingerprint\`"; grep -E '^    ' details.txt | sed 's/^    /- /' || true; } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Decide
         id: plan
@@ -554,6 +562,8 @@ jobs:
 
       - name: Toolchain
         uses: ./.github/actions/windows-toolchain
+        with:
+          unpinned: ${{ inputs.toolchain_probe == true }}
 
       # The same pinned Panel bundle and WebView2 bootstrapper build_win uses (scripts/installer-inputs.json), so the configure
       # downloads nothing ("latest") and needs no token. Nothing here reads a token: the configure step below must not see one.
@@ -706,6 +716,8 @@ jobs:
 
       - name: Toolchain
         uses: ./.github/actions/windows-toolchain
+        with:
+          unpinned: ${{ inputs.toolchain_probe == true }}
 
       - name: Cache compiler objects
         uses: actions/cache/restore@v6
@@ -860,6 +872,8 @@ jobs:
       # MSYS2 UCRT64 with the build tools, Defender exclusions for the build directories, and a record of the runner CPU.
       - name: Toolchain
         uses: ./.github/actions/windows-toolchain
+        with:
+          unpinned: ${{ inputs.toolchain_probe == true }}
 
       # Dependency drift canary (nightly only, informational): the installed package versions are kept as an artifact and
       # compared with the last successful nightly, so a red nightly can be tied to the packages that changed overnight.

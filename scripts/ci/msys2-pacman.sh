@@ -3,22 +3,31 @@
 #
 # usage (inside an MSYS2 shell):  msys2-pacman.sh prepare
 #                                 msys2-pacman.sh upgrade
-#                                 msys2-pacman.sh install [package ...]     (OPUS_PACKAGE: a pinned package file)
+#                                 msys2-pacman.sh install [package ...]     (plus the pinned set of msys2-pins.txt)
 #                                 msys2-pacman.sh prune
 #                                 msys2-pacman.sh cache-key
 #
-# Why: setup-msys2's own `update: true` runs `pacman -Syuu` with no retry. Master run 43736645013 lost four of eight compile
-# shards to "failed retrieving file 'ucrt64.db' from mirror.msys2.org : Operation too slow" (pacman's own limit: less than 1 byte/s for
-# 10 s), and the one remaining job then compiled half the tree alone. A synchronised database is a few MB, so a retry is cheap.
+# Why: setup-msys2's own 'update: true' runs 'pacman -Syuu' with no retry. Master run 43736645013 lost four of eight compile
+# shards to "failed retrieving file 'ucrt64.db' from mirror.msys2.org : Operation too slow" (pacman's own limit: less than 1 byte/s
+# for 10 s), and the one remaining job then compiled half the tree alone. A synchronised database is a few MB, so a retry is cheap.
 #
 #   * Every pacman call that needs the network is retried with a growing pause. Each attempt starts from a different server of the
 #     official mirror list (repo.msys2.org first, then mirror.msys2.org, then the Tier 1 mirrors): pacman already falls through the
 #     list for one file, but a stalled first server cost a whole attempt, and a repeated attempt against the same order repeats it.
 #   * Only the [msys] and [ucrt64] repositories are synchronised (the others are never installed from): six databases and their
 #     signatures become two, which is six fewer connections to stall.
+#   * The toolchain no longer follows the newest repository packages. The compiler, the CRT and the linked libraries are pinned to
+#     exact package files in msys2-pins.txt (full name, version, file name, sha256): MSYS2 documents installing a specific version
+#     from a downloaded package archive with 'pacman -U' (source msys2-package-management-20261116). install() downloads each
+#     pinned file into pacman's cache -- digest verified, every server of the official list tried -- and installs the set in one
+#     'pacman -U' transaction, so mutual dependencies (gcc and gcc-libs, the CRT and its headers) resolve against the pinned
+#     versions. prepare() also writes the pinned names into IgnorePkg (source pacman-conf-5-20261116): a -Syu of the base system
+#     cannot move them, an explicit pacman -U still can. TOOLCHAIN_UNPINNED=1 switches back to the newest packages: the weekly
+#     toolchain watch (.github/workflows/msys2-toolchain-watch.yml) dispatches such a build to test a new major first.
 #   * The package files live in pacman's cache directory, which the action restores and saves with actions/cache, so a run
-#     downloads only what changed since the last one. The database is always synchronised fresh (the toolchain follows the newest
-#     packages, and scripts/ci/config-fingerprint.py reads the same repository).
+#     downloads only what changed since the last one. The database is always synchronised fresh (scripts/ci/msys2-pins.py reads
+#     the same repository for the weekly watch). The cache key carries the toolchain mode, so a probe build with the newest
+#     packages never replaces the pinned toolchain's cache entry.
 #
 # Paths can be moved for the unit test (scripts/ci/test_msys2_pacman.py): MSYS2_ROOT is the root of the MSYS2 tree (default /).
 set -euo pipefail
@@ -28,6 +37,8 @@ CONF="$ROOT/etc/pacman.conf"
 MIRRORS_DIR="$ROOT/etc/pacman.d"
 CACHE_DIR="${PACMAN_CACHE_DIR:-$ROOT/var/cache/pacman/pkg}"
 LOCK="${PACMAN_LOCK:-$ROOT/var/lib/pacman/db.lck}"
+PINS_FILE="${PINS_FILE:-$(cd "$(dirname "$0")" && pwd)/msys2-pins.txt}"
+UNPINNED="${TOOLCHAIN_UNPINNED:-0}"
 ATTEMPTS="${PACMAN_ATTEMPTS:-5}"
 PAUSE="${PACMAN_RETRY_PAUSE:-10}"
 ATTEMPT_TIMEOUT="${PACMAN_ATTEMPT_TIMEOUT:-900}"
@@ -87,7 +98,28 @@ retry() {
   done
 }
 
+# The pinned entries of msys2-pins.txt: full package name, version, file name, sha256. Comments and blank lines are skipped.
+pins() {
+  [[ -r "$PINS_FILE" ]] || return 0
+  awk 'NF >= 4 && $1 !~ /^#/ { print }' "$PINS_FILE"
+}
+
+pin_field() { # <field 1-4> <full package name>
+  awk -v name="$2" -v field="$1" '$1 == name { print $field; exit }' "$PINS_FILE" 2>/dev/null || true
+}
+
+is_pinned() { [[ -n "$(pin_field 1 "$1")" ]]; }
+
+# A pinned toolchain without the pins file would silently float with the repository again -- exactly what the pins are for.
+require_pins() {
+  if [[ ! -r "$PINS_FILE" ]]; then
+    echo "::error::the toolchain is pinned, but $PINS_FILE does not exist; TOOLCHAIN_UNPINNED=1 installs the newest packages"
+    return 1
+  fi
+}
+
 prepare() {
+  [[ "$UNPINNED" == 1 ]] || require_pins
   # Space for the packages is checked against the drive of the cache dir, which is not what the runner reports; setup-msys2 does the same.
   sed -i 's/^CheckSpace/#CheckSpace/' "$CONF"
   # Comment every line of the repositories that are not used: [msys] (base system) and [ucrt64] (the toolchain) are all that is installed.
@@ -97,6 +129,15 @@ prepare() {
   ' "$CONF" > "$CONF.new"
   mv -f "$CONF.new" "$CONF"
   write_mirrors 1
+  # IgnorePkg keeps the base upgrade below (and any later -Syu) from moving a pinned package; the explicit pacman -U of
+  # install() is not affected. The line is replaced, never appended, so a second prepare -- after pacman.conf was replaced
+  # by its .pacnew -- stays idempotent.
+  local ignored
+  ignored="$(pins | awk '{ printf "%s%s", sep, $1; sep = " " }')"
+  if [[ "$UNPINNED" != 1 && -n "$ignored" ]]; then
+    sed -i '/^IgnorePkg[[:space:]]*=/d' "$CONF"
+    sed -i "/^\[options\]/a IgnorePkg = $ignored" "$CONF"
+  fi
   mkdir -p "$CACHE_DIR"
 }
 
@@ -105,22 +146,21 @@ upgrade() {
   retry "pacman -Syuu" pacman --noconfirm -Syuu --overwrite '*'
 }
 
-# The pinned package file must match OPUS_SHA256 when it is set: a mirror cannot be trusted to serve the file it names, and pacman -U accepts an
-# unsigned local file under the default LocalFileSigLevel = Optional.
-verify_pinned() { # <path>
-  [[ -z "${OPUS_SHA256:-}" ]] && return 0
+# A pinned file must match the sha256 recorded in msys2-pins.txt: a mirror cannot be trusted to serve the file it names, and
+# pacman -U accepts an unsigned local file under the default LocalFileSigLevel = Optional.
+verify_pinned() { # <path> <sha256>
   local actual
   actual="$(sha256sum "$1" | awk '{ print $1 }')"
-  [[ "$actual" == "$OPUS_SHA256" ]] || { say "$1: sha256 $actual is not the pinned $OPUS_SHA256"; return 1; }
+  [[ "$actual" == "$2" ]] || { say "$1: sha256 $actual is not the pinned $2"; return 1; }
 }
 
-# Download the pinned package file (OPUS_PACKAGE) into pacman's cache unless it is there; every server of the official list is tried.
-fetch_pinned() { # <file name>
-  local file="$1" server base remaining
+# Download one pinned package file into pacman's cache unless it is there; every server of the official list is tried.
+fetch_pinned() { # <file name> <sha256>
+  local file="$1" digest="$2" server base remaining
   # One deadline for the whole call: `timeout` cannot wrap a shell function, and curl restarts its own limit on every retry.
   local deadline=$((SECONDS + ATTEMPT_TIMEOUT))
   if [[ -s "$CACHE_DIR/$file" ]]; then
-    if verify_pinned "$CACHE_DIR/$file"; then say "$file is in the package cache"; return 0; fi
+    if verify_pinned "$CACHE_DIR/$file" "$digest"; then say "$file is in the package cache"; return 0; fi
     say "$file in the package cache does not match its pinned digest; downloading it again"
     rm -f "$CACHE_DIR/$file"
   fi
@@ -132,7 +172,7 @@ fetch_pinned() { # <file name>
     base="${base//\$repo/ucrt64}"
     base="${base%/}"
     # `|| true` keeps a refused or stalled server from ending the loop under -e.
-    if curl -fsSL --connect-timeout 15 --max-time "$((remaining < 300 ? remaining : 300))" -o "$CACHE_DIR/$file.part" "$base/$file" && verify_pinned "$CACHE_DIR/$file.part"; then
+    if curl -fsSL --connect-timeout 15 --max-time "$((remaining < 300 ? remaining : 300))" -o "$CACHE_DIR/$file.part" "$base/$file" && verify_pinned "$CACHE_DIR/$file.part" "$digest"; then
       mv -f "$CACHE_DIR/$file.part" "$CACHE_DIR/$file"
       say "$file from $base"
       return 0
@@ -144,13 +184,31 @@ fetch_pinned() { # <file name>
 }
 
 install() {
-  retry "pacman -S" pacman --noconfirm --needed -S "$@"
-  if [[ -n "${OPUS_PACKAGE:-}" ]]; then
-    # Pinned: the newest opus is not known to work. The file is kept in the package cache, so it survives the mirror dropping it.
-    retry "download of $OPUS_PACKAGE" fetch_pinned "$OPUS_PACKAGE"
-    verify_pinned "$CACHE_DIR/$OPUS_PACKAGE" || { echo "::error::$OPUS_PACKAGE does not match its pinned sha256"; return 1; }
-    pacman --noconfirm -U "$CACHE_DIR/$OPUS_PACKAGE"
+  if [[ "$UNPINNED" == 1 ]]; then
+    retry "pacman -S" pacman --noconfirm --needed -S "$@"
+    return 0
   fi
+  require_pins
+  local -a plain=() files=()
+  local name version file digest
+  for name in "$@"; do
+    is_pinned "$name" || plain+=("$name")
+  done
+  # The floating packages first: curl, the downloader below, is one of them. A pinned name is never passed to -S, so pacman
+  # cannot resolve it to the repository's newer version while the pinned file is on its way.
+  if [[ "${#plain[@]}" -gt 0 ]]; then
+    retry "pacman -S" pacman --noconfirm --needed -S "${plain[@]}"
+  fi
+  # The whole pinned set in one transaction: mutual dependencies resolve against the pinned versions, not the
+  # repository's, and a pin is installed even when the caller did not name it.
+  while read -r name version file digest; do
+    retry "download of $file" fetch_pinned "$file" "$digest"
+    files+=("$CACHE_DIR/$file")
+  done < <(pins)
+  if [[ "${#files[@]}" -gt 0 ]]; then
+    pacman --noconfirm -U "${files[@]}"
+  fi
+  return 0
 }
 
 # Keep exactly the package files of the installed versions (and their signatures): the saved cache must not grow with every update.
@@ -171,11 +229,13 @@ prune() {
   shopt -u nullglob
 }
 
-# One hash of what the saved cache would hold, so a run that downloaded nothing new does not save the same files again.
+# One hash of what the saved cache would hold, prefixed with the toolchain mode, so a run that downloaded nothing new does not
+# save the same files again and the probe builds with the newest packages never replace the pinned toolchain's cache entry.
 cache_key() {
-  local sum
+  local mode=pinned sum
+  [[ "$UNPINNED" == 1 ]] && mode=newest
   sum="$(cd "$CACHE_DIR" && ls -1 | LC_ALL=C sort | sha256sum | cut -c1-16)"
-  echo "$sum"
+  echo "$mode-$sum"
 }
 
 case "${1:-}" in

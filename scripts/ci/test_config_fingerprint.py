@@ -1,16 +1,11 @@
 """config-fingerprint.py and hot-headers.py (run: python3 -m unittest discover -s scripts/ci -p 'test_*.py')."""
 
-import gzip
-import http.server
-import io
-import os
 import pathlib
+import os
 import shutil
 import subprocess
 import sys
-import tarfile
 import tempfile
-import threading
 import unittest
 
 CI = pathlib.Path(__file__).resolve().parent
@@ -19,78 +14,30 @@ SCRIPT = CI / "config-fingerprint.py"
 HOT = CI / "hot-headers.py"
 
 
-def fake_db(path, versions):
-    with tarfile.open(path, "w:gz") as tar:
-        for name, version in versions.items():
-            data = f"%NAME%\nmingw-w64-ucrt-x86_64-{name}\n\n%VERSION%\n{version}\n".encode()
-            info = tarfile.TarInfo(f"mingw-w64-ucrt-x86_64-{name}-{version}/desc")
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
-
-
 class FingerprintTest(unittest.TestCase):
     def setUp(self):
         self.root = pathlib.Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         for rel in ("CMakeLists.txt", "cmake/compile_definitions/windows.cmake", "cmake/compile_definitions/linux.cmake",
                     "cmake/targets/common.cmake", "cmake/packaging/windows.cmake", "cmake/sources/host.cmake",
-                    ".github/actions/windows-toolchain/action.yml", "src/config.h", "docs/ci.md"):
+                    ".github/actions/windows-toolchain/action.yml", "scripts/ci/msys2-pins.txt", "src/config.h", "docs/ci.md"):
             path = self.root / rel
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(f"# {rel}\n")
+        (self.root / "scripts" / "ci" / "msys2-pins.txt").write_text(
+            "# pins\nmingw-w64-ucrt-x86_64-gcc 16.2.0-7 mingw-w64-ucrt-x86_64-gcc-16.2.0-7-any.pkg.tar.zst " + "a" * 64 + "\n"
+            "mingw-w64-ucrt-x86_64-openssl 4.1.0-1 mingw-w64-ucrt-x86_64-openssl-4.1.0-1-any.pkg.tar.zst " + "b" * 64 + "\n")
         workflow = self.root / ".github" / "workflows" / "main.yml"
         workflow.parent.mkdir(parents=True, exist_ok=True)
         self.workflow_text = (
             "jobs:\n  build_win:\n    steps:\n      - name: Configure Windows\n        env:\n          CCACHE_MAXSIZE: 2G\n"
             "        run: |\n          cmake -B build -DBUILD_TESTS=ON\n")
         workflow.write_text(self.workflow_text)
-        self.db = self.root / "ucrt64.db"
-        self.versions = {"gcc": "16.2.0-7", "crt-git": "14.0.0-1", "headers-git": "14.0.0-1", "openssl": "3.6.5-1", "opus": "1.6.1-1"}
-        fake_db(self.db, self.versions)
 
     def fingerprint(self):
-        result = subprocess.run([sys.executable, str(SCRIPT), "--root", str(self.root), "--msys2-db", str(self.db)],
-                                capture_output=True, text=True)
+        result = subprocess.run([sys.executable, str(SCRIPT), "--root", str(self.root)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout.strip()
-
-    def serve(self, body, status=200):
-        """A local server answering every request with `status` (body only with 200); returns its URL."""
-        data = body
-
-        class Handler(http.server.BaseHTTPRequestHandler):
-            def do_GET(self):
-                self.send_response(status)
-                self.end_headers()
-                if status == 200:
-                    self.wfile.write(data)
-
-            def log_message(self, *args):
-                pass
-
-        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
-        threading.Thread(target=server.serve_forever, daemon=True).start()
-        self.addCleanup(server.shutdown)
-        self.addCleanup(server.server_close)
-        return f"http://127.0.0.1:{server.server_port}/ucrt64.db"
-
-    def fingerprint_from_urls(self, *urls):
-        env = dict(os.environ, MSYS2_DB_URLS=" ".join(urls), FINGERPRINT_RETRY_PAUSE="0")
-        return subprocess.run([sys.executable, str(SCRIPT), "--root", str(self.root)], capture_output=True, text=True, env=env)
-
-    def test_database_is_read_from_the_next_server_when_the_first_fails(self):
-        wanted = self.fingerprint()
-        result = self.fingerprint_from_urls(self.serve(b"", 503), self.serve(self.db.read_bytes()))
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), wanted)
-        self.assertIn("503", result.stderr)
-
-    def test_no_server_gives_the_unavailable_fingerprint_after_three_rounds(self):
-        result = self.fingerprint_from_urls(self.serve(b"", 503))
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stderr.count("HTTP Error 503:"), 3 + 1)  # three rounds, then the summary line; the port of the test server may contain 503, so the number alone is not counted
-        self.assertIn("MSYS2 package versions unavailable", result.stderr)
-        self.assertNotEqual(result.stdout.strip(), self.fingerprint())
 
     def test_it_is_twelve_hex_digits_and_stable(self):
         first = self.fingerprint()
@@ -108,7 +55,7 @@ class FingerprintTest(unittest.TestCase):
         changed_configure = self.fingerprint()
         self.assertNotEqual(before, changed_configure)
         (self.root / ".github/workflows/main.yml").write_text(self.workflow_text)
-        for rel in (".github/actions/windows-toolchain/action.yml", "CMakeLists.txt", "cmake/targets/common.cmake"):
+        for rel in (".github/actions/windows-toolchain/action.yml", "scripts/ci/msys2-pins.txt", "CMakeLists.txt", "cmake/targets/common.cmake"):
             path = self.root / rel
             old = path.read_text()
             path.write_text(old + "# changed\n")
@@ -123,34 +70,28 @@ class FingerprintTest(unittest.TestCase):
             (self.root / rel).write_text("# something else\n")
         self.assertEqual(before, self.fingerprint())
 
-    def test_a_package_version_moves_it(self):
+    def test_a_pin_change_moves_it(self):
         before = self.fingerprint()
-        fake_db(self.db, dict(self.versions, gcc="16.3.0-1"))
+        path = self.root / "scripts" / "ci" / "msys2-pins.txt"
+        old = path.read_text()
+        path.write_text(old.replace("16.2.0-7", "17.1.0-1").replace("gcc-16.2.0-7", "gcc-17.1.0-1"))
         self.assertNotEqual(before, self.fingerprint())
-        fake_db(self.db, self.versions)
+        path.write_text(old)
         self.assertEqual(before, self.fingerprint())
 
-    def test_only_the_installed_headers_package_moving_moves_it(self):
-        before = self.fingerprint()
-        fake_db(self.db, dict(self.versions, **{"headers-git": "14.0.1-1"}))
-        self.assertNotEqual(before, self.fingerprint())
-
-    def test_a_newer_opus_in_the_repository_does_not_move_it(self):
-        before = self.fingerprint()
-        fake_db(self.db, dict(self.versions, opus="1.7.0-1"))
-        self.assertEqual(before, self.fingerprint())
-
-    def test_an_unreachable_repository_still_yields_a_fingerprint(self):
-        result = subprocess.run([sys.executable, str(SCRIPT), "--root", str(self.root), "--msys2-db", str(self.root / "missing.db")],
-                                capture_output=True, text=True)
+    def test_the_repository_database_is_not_read(self):
+        # The pins decide the cache key, not what the repository carries today: a newer upstream package must not
+        # invalidate the cache while the build still installs the pinned file.
+        env = dict(os.environ, MSYS2_DB_URLS="http://127.0.0.1:1/ucrt64.db")
+        result = subprocess.run([sys.executable, str(SCRIPT), "--root", str(self.root)], capture_output=True, text=True, env=env)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertRegex(result.stdout.strip(), r"^[0-9a-f]{12}$")
-        self.assertIn("unavailable", result.stderr)
+        self.assertEqual(result.stdout.strip(), self.fingerprint())
 
     def test_the_real_repository_has_a_fingerprint(self):
-        result = subprocess.run([sys.executable, str(SCRIPT), "--root", str(REPO), "--no-packages", "--details"], capture_output=True, text=True)
+        result = subprocess.run([sys.executable, str(SCRIPT), "--root", str(REPO), "--details"], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("cmake/compile_definitions/windows.cmake", result.stderr)
+        self.assertIn("scripts/ci/msys2-pins.txt", result.stderr)
         self.assertNotIn("cmake/packaging/", result.stderr)
         self.assertNotIn("cmake/sources/", result.stderr)
 

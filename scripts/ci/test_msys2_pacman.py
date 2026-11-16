@@ -1,7 +1,8 @@
 """msys2-pacman.sh against a stub pacman/curl/sleep and a scratch MSYS2 tree: the repositories kept, the mirror order of every attempt,
-the retry and its pauses, the pinned package download, the cache pruning and key
+the retry and its pauses, the pinned package set of msys2-pins.txt, the cache pruning and key
 (run: python3 -m unittest discover -s scripts/ci -p 'test_*.py'). Skipped where bash is not available."""
 
+import hashlib
 import os
 import pathlib
 import shutil
@@ -84,11 +85,19 @@ class Msys2PacmanTest(unittest.TestCase):
         self.log, self.sleeps, self.curl_log = self.tmp / "log", self.tmp / "sleeps", self.tmp / "curl"
         self.installed = self.tmp / "installed"
         self.installed.write_text("")
+        # The default pins file: one pinned package whose file the curl stub writes ("pkg\n"), so a plain install succeeds.
+        self.pins = self.tmp / "msys2-pins.txt"
+        self.pkg_digest = hashlib.sha256(b"pkg\n").hexdigest()
+        self.write_pins(f"p-gcc 1.0-1 p-gcc-1.0-1-any.pkg.tar.zst {self.pkg_digest}")
+
+    def write_pins(self, text):
+        self.pins.write_text("# pins\n" + text + "\n")
 
     def run_script(self, *args, fails=0, fail_code=1, **extra):
         env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}", MSYS2_ROOT=str(self.root), LOG=str(self.log),
                    COUNT=str(self.tmp / "count"), FAILS=str(fails), FAIL_CODE=str(fail_code), SLEEPS=str(self.sleeps),
                    CURLLOG=str(self.curl_log), INSTALLED=str(self.installed), CURL_OK="repo.msys2.org")
+        env["PINS_FILE"] = str(self.pins)
         env.update({k: str(v) for k, v in extra.items()})
         return subprocess.run(["bash", str(CI / "msys2-pacman.sh"), *args], env=env, capture_output=True, text=True)
 
@@ -108,6 +117,7 @@ class Msys2PacmanTest(unittest.TestCase):
         self.assertIn("#[mingw32]", conf)
         self.assertIn("#Include = /etc/pacman.d/mirrorlist.mingw", conf)
         self.assertIn("HoldPkg     = pacman", conf)
+        self.assertIn("IgnorePkg = p-gcc", conf)
         self.assertEqual(sum(1 for line in conf.splitlines() if line.startswith("Include")), 2)
         # idempotent: the second run changes nothing
         self.run_script("prepare")
@@ -150,21 +160,22 @@ class Msys2PacmanTest(unittest.TestCase):
         self.run_script("upgrade", fails=99, PACMAN_ATTEMPTS=7)
         self.assertEqual(self.read(self.sleeps), ["10", "20", "40", "60", "60", "60"])
 
-    def test_install_retries_the_package_list_and_installs_the_pinned_package(self):
-        (self.cache / "mingw-w64-ucrt-x86_64-opus-1.6.1-1-any.pkg.tar.zst").write_text("x")
-        result = self.run_script("install", "git", "mingw-w64-ucrt-x86_64-gcc", fails=1, OPUS_PACKAGE="mingw-w64-ucrt-x86_64-opus-1.6.1-1-any.pkg.tar.zst")
+    def test_install_retries_the_package_list_and_installs_the_pinned_set(self):
+        result = self.run_script("install", "git", "p-gcc", fails=1)
         self.assertEqual(result.returncode, 0, result.stderr)
         calls = self.read(self.log)
-        self.assertEqual(len(calls), 3)  # failed -S, second -S, then -U
-        self.assertTrue(calls[1].startswith("--noconfirm --needed -S git mingw-w64-ucrt-x86_64-gcc"))
+        self.assertEqual(len(calls), 3)  # failed -S, second -S, then -U of the pinned set
+        self.assertTrue(calls[1].startswith("--noconfirm --needed -S git"), calls[1])  # a pinned name never reaches -S
+        self.assertNotIn("p-gcc", calls[1])
         self.assertIn("-U", calls[2])
-        self.assertTrue(calls[2].split(" | ")[0].endswith("mingw-w64-ucrt-x86_64-opus-1.6.1-1-any.pkg.tar.zst"))
-        self.assertEqual(self.read(self.curl_log), [], "a cached package file is not downloaded")
+        self.assertTrue(calls[2].split(" | ")[0].endswith("p-gcc-1.0-1-any.pkg.tar.zst"), calls[2])
+        self.assertEqual(self.read(self.curl_log), ["https://repo.msys2.org/mingw/ucrt64/p-gcc-1.0-1-any.pkg.tar.zst"])
 
     def test_pinned_package_is_fetched_from_the_next_server_when_the_first_one_fails(self):
         self.run_script("prepare")
         # repo.msys2.org leads the list, so make it the failing one: only mirror.msys2.org serves the file
-        result = self.run_script("install", "git", OPUS_PACKAGE="o-1-any.pkg.tar.zst", CURL_OK="mirror.msys2.org")
+        self.write_pins(f"p-x 1-1 o-1-any.pkg.tar.zst {self.pkg_digest}")
+        result = self.run_script("install", "git", CURL_OK="mirror.msys2.org")
         self.assertEqual(result.returncode, 0, result.stderr)
         urls = self.read(self.curl_log)
         self.assertEqual(urls[0], "https://repo.msys2.org/mingw/ucrt64/o-1-any.pkg.tar.zst")
@@ -173,26 +184,50 @@ class Msys2PacmanTest(unittest.TestCase):
         self.assertFalse((self.cache / "o-1-any.pkg.tar.zst.part").exists())
 
     def test_pinned_package_failing_everywhere_fails_the_step(self):
-        result = self.run_script("install", "git", OPUS_PACKAGE="o-1-any.pkg.tar.zst", CURL_OK="nowhere", PACMAN_ATTEMPTS=2)
+        self.write_pins(f"p-x 1-1 o-1-any.pkg.tar.zst {self.pkg_digest}")
+        result = self.run_script("install", "git", CURL_OK="nowhere", PACMAN_ATTEMPTS=2)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("::error::download of o-1-any.pkg.tar.zst failed after 2 attempts", result.stdout)
 
     def test_pinned_package_must_match_its_sha256(self):
-        import hashlib
         self.run_script("prepare")
-        good = hashlib.sha256(b"pkg\n").hexdigest()
-        ok = self.run_script("install", "git", OPUS_PACKAGE="o-1-any.pkg.tar.zst", OPUS_SHA256=good, CURL_OK="repo.msys2.org")
+        ok = self.run_script("install", "git", CURL_OK="repo.msys2.org")
         self.assertEqual(ok.returncode, 0, ok.stderr)
-        (self.cache / "o-1-any.pkg.tar.zst").unlink()
-        bad = self.run_script("install", "git", OPUS_PACKAGE="o-1-any.pkg.tar.zst", OPUS_SHA256="0" * 64, CURL_OK="repo.msys2.org", PACMAN_ATTEMPTS=2)
+        (self.cache / "p-gcc-1.0-1-any.pkg.tar.zst").unlink()
+        self.write_pins(f"p-gcc 1.0-1 p-gcc-1.0-1-any.pkg.tar.zst {'0' * 64}")
+        bad = self.run_script("install", "git", CURL_OK="repo.msys2.org", PACMAN_ATTEMPTS=2)
         self.assertNotEqual(bad.returncode, 0)
-        self.assertFalse((self.cache / "o-1-any.pkg.tar.zst").exists(), "a file with the wrong digest is never kept")
+        self.assertFalse((self.cache / "p-gcc-1.0-1-any.pkg.tar.zst").exists(), "a file with the wrong digest is never kept")
 
     def test_pinned_download_stops_at_the_time_of_the_attempt(self):
         self.run_script("prepare")
-        result = self.run_script("install", "git", OPUS_PACKAGE="o-1-any.pkg.tar.zst", CURL_OK="nowhere", PACMAN_ATTEMPTS=1, PACMAN_ATTEMPT_TIMEOUT=0)
+        self.write_pins(f"p-x 1-1 o-1-any.pkg.tar.zst {self.pkg_digest}")
+        result = self.run_script("install", "git", CURL_OK="nowhere", PACMAN_ATTEMPTS=1, PACMAN_ATTEMPT_TIMEOUT=0)
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(self.read(self.curl_log), [], "no server is tried once the attempt time is used up")
+
+    def test_install_installs_every_pin_even_one_the_caller_did_not_name(self):
+        result = self.run_script("install", "git")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.read(self.log)
+        self.assertEqual(len(calls), 2)  # -S git, then -U of the pinned set
+        self.assertTrue(calls[0].startswith("--noconfirm --needed -S git"))
+        self.assertIn("-U", calls[1])
+
+    def test_unpinned_mode_installs_the_newest_and_prepares_no_ignore_list(self):
+        self.run_script("prepare", TOOLCHAIN_UNPINNED=1)
+        self.assertNotIn("IgnorePkg", (self.root / "etc" / "pacman.conf").read_text())
+        result = self.run_script("install", "git", "p-gcc", TOOLCHAIN_UNPINNED=1)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.read(self.log)
+        self.assertEqual(len(calls), 1)  # one -S with every name; no -U, no pinned download
+        self.assertTrue(calls[0].startswith("--noconfirm --needed -S git p-gcc"), calls[0])
+        self.assertEqual(self.read(self.curl_log), [])
+
+    def test_pinned_mode_fails_without_the_pins_file(self):
+        result = self.run_script("prepare", PINS_FILE=str(self.tmp / "gone.txt"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("::error::the toolchain is pinned", result.stdout)
 
     def test_prune_keeps_installed_versions_and_signatures_only(self):
         self.installed.write_text("gcc 16.1.0-1\nopus 1.6.1-1\nlib 1:2.0-3\n")
@@ -204,14 +239,15 @@ class Msys2PacmanTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(sorted(p.name for p in self.cache.iterdir()), sorted(keep))
 
-    def test_cache_key_follows_the_file_list(self):
+    def test_cache_key_follows_the_file_list_and_the_toolchain_mode(self):
         (self.cache / "a-1-1-any.pkg.tar.zst").write_text("x")
         first = self.run_script("cache-key").stdout.strip()
         again = self.run_script("cache-key").stdout.strip()
-        self.assertRegex(first, r"^[0-9a-f]{16}$")
+        self.assertRegex(first, r"^pinned-[0-9a-f]{16}$")
         self.assertEqual(first, again)
         (self.cache / "b-2-1-any.pkg.tar.zst").write_text("x")
         self.assertNotEqual(first, self.run_script("cache-key").stdout.strip())
+        self.assertRegex(self.run_script("cache-key", TOOLCHAIN_UNPINNED=1).stdout.strip(), r"^newest-[0-9a-f]{16}$")
 
 
 if __name__ == "__main__":
