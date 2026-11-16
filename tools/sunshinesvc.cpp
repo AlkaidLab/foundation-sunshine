@@ -878,6 +878,10 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
   DWORD loop_wait_ms = 0;
   // why the next core is started: the first one is the boot; later ones follow an end of the core the service did not ask for, a change of the console session, or a start that failed
   const char *next_core_cause = "boot";
+  // repeated failures of the core's start are not retried at the pace of the pass interval (sunshinesvc_state.h)
+  sunshinesvc::CoreRestartBackoff core_restart_backoff;
+  // not before this tick (GetTickCount64): only the start of the core waits; the pass interval, the GUI agent's supervision and the stop event go on as before
+  ULONGLONG core_restart_not_before_tick = 0;
   while (WaitForSingleObject(stop_event, std::exchange(loop_wait_ms, 3000)) != WAIT_OBJECT_0) {
     auto console_session_id = WTSGetActiveConsoleSessionId();
     if (console_session_id == 0xFFFFFFFF) {
@@ -926,6 +930,17 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
       NoteLifecycle(sunshinesvc::lifecycle::core_start_line(sunshinesvc::lifecycle::unix_ms(), true, process_info.dwProcessId, ProcessAgeMs(process_info.hProcess), next_core_cause));
     }
     else {
+      if (GetTickCount64() < core_restart_not_before_tick) {
+        // the core's start is held back after repeated failures (CoreRestartBackoff): the GUI agent is still looked after in this pass
+        CloseHandle(console_token);
+        if (gui_agent.handle != NULL && WaitForSingleObject(gui_agent.handle, 0) == WAIT_OBJECT_0) {
+          handle_gui_agent_exit();
+        }
+        if (gui_agent.handle == NULL && gui_agent_restart_policy.launch_allowed() && RetryWaitTimeout(gui_agent_retry_at_ms) == 0) {
+          acquire_gui_agent();
+        }
+        continue;
+      }
       // Job objects cannot span sessions, so we must create one for each process
       job_handle = CreateJobObjectForChildProcess();
       if (job_handle == NULL) {
@@ -1077,6 +1092,12 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
         NoteLifecycle(sunshinesvc::lifecycle::core_exit_line(exit_ms, ended_with, ProcessLifeMs(process_info.hProcess),
           core_adopted ? static_cast<long long>(GetTickCount64() - adopted_at_tick) : -1,
           exit_requested || ended_with == ERROR_SHUTDOWN_IN_PROGRESS, core_restart, core_restart ? restart_word : std::string {}));  // ERROR_SHUTDOWN_IN_PROGRESS: the core asked the service to stop (quit from the tray, the Panel)
+        const bool asked_for_exit = exit_requested || exit_for_session_change || ended_with == ERROR_SHUTDOWN_IN_PROGRESS || core_restart;
+        if (const auto wait_ms = core_restart_backoff.next_delay(static_cast<std::uint64_t>(ProcessLifeMs(process_info.hProcess)), asked_for_exit); wait_ms > 0) {
+          WriteServiceLog(log_file_handle,
+            "Sunshine.exe ended with code " + std::to_string(ended_with) + " shortly after it started; starting it again in " + std::to_string(wait_ms) + " ms");
+          core_restart_not_before_tick = GetTickCount64() + wait_ms;
+        }
       }
       next_core_cause = exit_for_session_change ? "session_change" : "core_exit";
     }

@@ -2,6 +2,11 @@
 set "PATH=%SystemRoot%\System32;%SystemRoot%;%SystemRoot%\System32\Wbem;%SystemRoot%\System32\WindowsPowerShell\v1.0"
 setlocal enabledelayedexpansion
 
+rem Source: installer-inno-script-functions-20261107 and installer-inno-command-line-20261107.
+rem Keep only fixed step names and numeric exit codes; this file never contains paths or installer output.
+set "detail=%~dp0result-usbip-steps.txt"
+del /q "%detail%" >nul 2>&1
+
 rem Installs the pinned usbip-win2 transport (USB/IP for the native DualSense path). The same release and digest
 rem as the panel's src-tauri/component-compatibility.json. Exit codes: 0 ready, 3010 restart recommended, else failed.
 rem The exit code is also written to result-usbip.txt next to this script, for the installer's progress events.
@@ -30,6 +35,7 @@ set "expected_sha256=@USBIP_SHA256@"
 
 if not exist "%installer%" (
   echo ERROR: Bundled usbip-win2 installer not found: "%installer%"
+  call :record_step payload 1
   exit /b 1
 )
 
@@ -38,6 +44,7 @@ if /I not "!actual_sha256!"=="!expected_sha256!" (
   echo ERROR: Bundled usbip-win2 installer failed SHA256 verification.
   echo Expected: !expected_sha256!
   echo Actual:   !actual_sha256!
+  call :record_step payload 1
   exit /b 1
 )
 
@@ -50,24 +57,43 @@ set "guard=%~dp0usbip-roothub-guard.ps1"
 set "guard_state=%~dp0usbip-roothub-state.json"
 if not exist "%guard%" (
   echo ERROR: Root-hub guard not found: "%guard%"
+  call :record_step guard 105
   exit /b 105
 )
 
 powershell -NoProfile -ExecutionPolicy Bypass -File "%guard%" -Action preflight
 if !ERRORLEVEL! NEQ 0 (
   set "GUARD_RC=!ERRORLEVEL!"
+  call :record_step preflight !GUARD_RC!
   if !GUARD_RC! EQU 104 exit /b 104
   exit /b 105
 )
+call :record_step preflight 0
 powershell -NoProfile -ExecutionPolicy Bypass -File "%guard%" -Action snapshot -State "%guard_state%"
-if !ERRORLEVEL! NEQ 0 exit /b 105
+if !ERRORLEVEL! NEQ 0 (
+  set "GUARD_RC=!ERRORLEVEL!"
+  call :record_step snapshot !GUARD_RC!
+  exit /b 105
+)
+call :record_step snapshot 0
 
 "%installer%" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /RESTARTEXITCODE=3010 /SP-
 set "INSTALL_RC=!ERRORLEVEL!"
+call :record_step installer !INSTALL_RC!
+rem The usbip-win2 installer itself crashed once with 0xC0000374 (heap corruption) while upgrading over an older usbip-win2, and the
+rem same upgrade worked on the next runs: it can be run again safely, so a failed run is repeated once.
+if !INSTALL_RC! EQU 0 goto :installer_done
+if !INSTALL_RC! EQU 3010 goto :installer_done
+powershell -NoProfile -Command "Start-Sleep -Seconds 5"
+"%installer%" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /RESTARTEXITCODE=3010 /SP-
+set "INSTALL_RC=!ERRORLEVEL!"
+call :record_step installer_retry !INSTALL_RC!
+:installer_done
 
 rem Verify even when the installer failed: its pnputil step may already have added the filter.
 powershell -NoProfile -ExecutionPolicy Bypass -File "%guard%" -Action verify -State "%guard_state%"
 set "GUARD_RC=!ERRORLEVEL!"
+call :record_step verify !GUARD_RC!
 rem The pre-install snapshot (root hubs and driver packages as they were) is the material for a manual recovery:
 rem it is deleted only when the check or the rollback finished (0, 3010, 102), and kept when the recovery is incomplete (103, 105).
 if !GUARD_RC! EQU 0 del /q "%guard_state%" >nul 2>&1
@@ -81,3 +107,7 @@ if !GUARD_RC! EQU 3010 (
 )
 if !GUARD_RC! EQU 102 exit /b 102
 exit /b 103
+
+:record_step
+>> "%detail%" echo %~1=%~2
+exit /b 0

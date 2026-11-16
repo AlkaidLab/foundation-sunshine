@@ -6,6 +6,7 @@
 #include "amf_d3d11.h"
 
 #include "amf_avcodec_compat.h"
+#include "amf_runtime_pin.h"
 
 #include <chrono>
 #include <thread>
@@ -39,6 +40,7 @@ namespace amf {
   amf_d3d11::init_amf_library() {
     if (factory) return true;
 
+    pin_runtime();
     amf_dll = LoadLibraryA(AMF_DLL_NAMEA);
     if (!amf_dll) {
       BOOST_LOG(error) << "AMF: failed to load " << AMF_DLL_NAMEA;

@@ -542,6 +542,36 @@ begin
   JournalWrite('{"v":1,"kind":"component","run":"' + JournalRunId() + '","component":"' + Component + '","step":"' + Step + '","exit":' + IntToStr(ExitCode) + '}');
 end;
 
+// The USB/IP wrapper records only fixed step names and numeric codes. When the component failed, read them before deleting the file so a failure in the
+// bundled installer is distinguishable from a guard failure, without copying any output. A component that worked adds nothing (one event per step would
+// only repeat "ok"). Source: installer-inno-script-functions-20261107.
+procedure JournalUsbipDetails(ComponentResult: Integer);
+var
+  Path, Line, Step, CodeText: String;
+  Lines: TArrayOfString;
+  I, EqualsAt, Code: Integer;
+begin
+  Path := ExpandConstant('{app}\scripts\result-usbip-steps.txt');
+  if not FileExists(Path) then
+    Exit;
+  if (ComponentResult <> 0) and (ComponentResult <> 3010) and LoadStringsFromFile(Path, Lines) then
+    for I := 0 to GetArrayLength(Lines) - 1 do
+    begin
+      Line := Trim(Lines[I]);
+      EqualsAt := Pos('=', Line);
+      if EqualsAt <= 1 then
+        Continue;
+      Step := Copy(Line, 1, EqualsAt - 1);
+      CodeText := Copy(Line, EqualsAt + 1, Length(Line));
+      if not ((Step = 'payload') or (Step = 'guard') or (Step = 'preflight') or (Step = 'snapshot') or
+        (Step = 'installer') or (Step = 'installer_retry') or (Step = 'verify')) then
+        Continue;
+      Code := StrToIntDef(CodeText, -1);
+      JournalComponent('usbip', Step, Code);
+    end;
+  DeleteFile(Path);
+end;
+
 procedure JournalFinish(ExitCode: Integer);
 begin
   JournalWrite('{"v":1,"kind":"finish","run":"' + JournalRunId() + '","exit":' + IntToStr(ExitCode) + '}');
@@ -629,6 +659,7 @@ begin
   UsbipResult := TakeStepResult('usbip');
   EmitStepResult('usbip', 'StatusInstallUsbip', UsbipResult);
   // 102 to 105 are the codes of the root-hub guard of the USB/IP component; -1: the helper left no result at all
+  JournalUsbipDetails(UsbipResult);
   JournalComponent('usbip', 'install', UsbipResult);
 end;
 

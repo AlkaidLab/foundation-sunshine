@@ -7,6 +7,7 @@
 #include <boost/asio/ssl.hpp>
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -15,6 +16,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <vector>
 
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
@@ -143,6 +145,34 @@ TEST(CryptoX509, RejectsInvalidOrDifferentCertificates) {
   EXPECT_FALSE(crypto::x509_matches_pem(first_certificate.get(), second_credentials.x509));
   EXPECT_FALSE(crypto::x509_matches_pem(first_certificate.get(), "not a certificate"));
   EXPECT_FALSE(crypto::x509_matches_pem(nullptr, first_credentials.x509));
+}
+
+TEST(CryptoX509, LegacyChainVerifyIsSafeFromSeveralThreads) {
+  // close_verify_safe selects cert_chain_t::verify(), which used one X509_STORE_CTX for every caller: one thread's
+  // cleanup freed the verification parameters another thread was about to read (null pointer in
+  // X509_VERIFY_PARAM_inherit, crash while Moonlight clients connected in parallel).
+  auto creds = crypto::gen_creds("alk-verify-test", 2048);
+  auto stored = crypto::x509(creds.x509);
+  auto probe = crypto::x509(creds.x509);
+  ASSERT_TRUE(stored);
+  ASSERT_TRUE(probe);
+
+  crypto::cert_chain_t chain;
+  chain.add(std::move(stored));
+
+  constexpr int threads = 8;
+  constexpr int rounds = 300;
+  std::atomic<int> failures { 0 };
+  std::vector<std::thread> workers;
+  for (int t = 0; t < threads; ++t) {
+    workers.emplace_back([&] {
+      for (int i = 0; i < rounds; ++i) {
+        if (chain.verify(probe.get()) != nullptr) ++failures;
+      }
+    });
+  }
+  for (auto &worker : workers) worker.join();
+  EXPECT_EQ(failures.load(), 0);
 }
 
 TEST(NvhttpPairing, ResolvesUuidForVerifiedPeerCertificate) {

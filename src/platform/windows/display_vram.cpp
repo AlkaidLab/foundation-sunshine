@@ -4864,101 +4864,68 @@ namespace platf::dxgi {
     compile_pixel_shader_helper(simple_cursor_ps);
     compile_vertex_shader_helper(simple_cursor_vs);
 
-    auto optional = std::async(std::launch::async, [] {
-    // Compile HDR luminance analysis compute shaders (optional, non-fatal if fails)
-      hdr_luminance_analysis_cs_hlsl = compile_compute_shader(SUNSHINE_SHADERS_DIR "/hdr_luminance_analysis_cs.hlsl");
-      if (!hdr_luminance_analysis_cs_hlsl) {
-        BOOST_LOG(warning) << "Failed to compile HDR luminance analysis CS, per-frame HDR metadata will use defaults";
-      }
-      hdr_luminance_reduce_cs_hlsl = compile_compute_shader(SUNSHINE_SHADERS_DIR "/hdr_luminance_reduce_cs.hlsl");
-      if (!hdr_luminance_reduce_cs_hlsl) {
-        BOOST_LOG(warning) << "Failed to compile HDR luminance reduce CS, per-frame HDR metadata will use defaults";
-      }
+    // The optional compute shaders used to be one task that compiled about twenty of them one after the other; that chain, not the required shaders, set the
+    // time of platf::init (the start logs of 2026-11 show a median of 1.1 s). Each one is a task of its own now: they are independent files and blobs.
+    static const D3D_SHADER_MACRO hdr_analysis_snapshot_defines[] = {
+      { "HDR_ANALYSIS_SNAPSHOT", "1" },
+      { nullptr, nullptr },
+    };
+    std::vector<std::future<void>> optional;
+    const auto compile_optional = [&optional](blob_t &target, const char *file, const D3D_SHADER_MACRO *defines, const char *failure) {
+      optional.push_back(std::async(std::launch::async, [&target, file, defines, failure] {
+        target = compile_compute_shader(file, defines);
+        if (!target) {
+          BOOST_LOG(warning) << failure;
+        }
+      }));
+    };
 
-      // Compile HDR RGB->P010 compute shaders (Phase 1 fast path; non-fatal if fails).
-      convert_yuv420_p010_cs_perceptual_quantizer_hlsl = compile_compute_shader(
-        SUNSHINE_SHADERS_DIR "/convert_yuv420_p010_cs_perceptual_quantizer.hlsl");
-      if (!convert_yuv420_p010_cs_perceptual_quantizer_hlsl) {
-        BOOST_LOG(warning) << "Failed to compile P010 PQ compute shader, HDR PQ compute fast path disabled";
-      }
-      convert_yuv420_p010_cs_hybrid_log_gamma_hlsl = compile_compute_shader(
-        SUNSHINE_SHADERS_DIR "/convert_yuv420_p010_cs_hybrid_log_gamma.hlsl");
-      if (!convert_yuv420_p010_cs_hybrid_log_gamma_hlsl) {
-        BOOST_LOG(warning) << "Failed to compile P010 HLG compute shader, HDR HLG compute fast path disabled";
-      }
+    // HDR luminance analysis compute shaders (optional, non-fatal if they fail)
+    compile_optional(hdr_luminance_analysis_cs_hlsl, SUNSHINE_SHADERS_DIR "/hdr_luminance_analysis_cs.hlsl", nullptr,
+      "Failed to compile HDR luminance analysis CS, per-frame HDR metadata will use defaults");
+    compile_optional(hdr_luminance_reduce_cs_hlsl, SUNSHINE_SHADERS_DIR "/hdr_luminance_reduce_cs.hlsl", nullptr,
+      "Failed to compile HDR luminance reduce CS, per-frame HDR metadata will use defaults");
 
-      const D3D_SHADER_MACRO hdr_analysis_snapshot_defines[] = {
-        { "HDR_ANALYSIS_SNAPSHOT", "1" },
-        { nullptr, nullptr },
-      };
-      convert_yuv420_p010_cs_perceptual_quantizer_hdr_analysis_hlsl = compile_compute_shader(
-        SUNSHINE_SHADERS_DIR "/convert_yuv420_p010_cs_perceptual_quantizer.hlsl",
-        hdr_analysis_snapshot_defines);
-      convert_yuv420_p010_cs_hybrid_log_gamma_hdr_analysis_hlsl = compile_compute_shader(
-        SUNSHINE_SHADERS_DIR "/convert_yuv420_p010_cs_hybrid_log_gamma.hlsl",
-        hdr_analysis_snapshot_defines);
-      if (!convert_yuv420_p010_cs_perceptual_quantizer_hdr_analysis_hlsl ||
-          !convert_yuv420_p010_cs_hybrid_log_gamma_hdr_analysis_hlsl) {
-        BOOST_LOG(warning) << "Failed to compile HDR analysis snapshot compute shader, full-resolution analysis copy fallback will be used";
-      }
+    // HDR RGB->P010 compute shaders (Phase 1 fast path; non-fatal if they fail)
+    compile_optional(convert_yuv420_p010_cs_perceptual_quantizer_hlsl, SUNSHINE_SHADERS_DIR "/convert_yuv420_p010_cs_perceptual_quantizer.hlsl", nullptr,
+      "Failed to compile P010 PQ compute shader, HDR PQ compute fast path disabled");
+    compile_optional(convert_yuv420_p010_cs_hybrid_log_gamma_hlsl, SUNSHINE_SHADERS_DIR "/convert_yuv420_p010_cs_hybrid_log_gamma.hlsl", nullptr,
+      "Failed to compile P010 HLG compute shader, HDR HLG compute fast path disabled");
+    compile_optional(convert_yuv420_p010_cs_perceptual_quantizer_hdr_analysis_hlsl, SUNSHINE_SHADERS_DIR "/convert_yuv420_p010_cs_perceptual_quantizer.hlsl", hdr_analysis_snapshot_defines,
+      "Failed to compile HDR analysis snapshot compute shader (PQ), full-resolution analysis copy fallback will be used");
+    compile_optional(convert_yuv420_p010_cs_hybrid_log_gamma_hdr_analysis_hlsl, SUNSHINE_SHADERS_DIR "/convert_yuv420_p010_cs_hybrid_log_gamma.hlsl", hdr_analysis_snapshot_defines,
+      "Failed to compile HDR analysis snapshot compute shader (HLG), full-resolution analysis copy fallback will be used");
 
-      // Compile SDR RGB->NV12 compute shaders (Phase 2 fast path; non-fatal if fails).
-      convert_yuv420_nv12_cs_passthrough_hlsl = compile_compute_shader(
-        SUNSHINE_SHADERS_DIR "/convert_yuv420_nv12_cs_passthrough.hlsl");
-      if (!convert_yuv420_nv12_cs_passthrough_hlsl) {
-        BOOST_LOG(warning) << "Failed to compile NV12 passthrough compute shader, SDR gamma compute fast path disabled";
-      }
-      convert_yuv420_nv12_cs_linear_hlsl = compile_compute_shader(
-        SUNSHINE_SHADERS_DIR "/convert_yuv420_nv12_cs_linear.hlsl");
-      if (!convert_yuv420_nv12_cs_linear_hlsl) {
-        BOOST_LOG(warning) << "Failed to compile NV12 linear compute shader, SDR linear compute fast path disabled";
-      }
+    // SDR RGB->NV12 compute shaders (Phase 2 fast path; non-fatal if they fail)
+    compile_optional(convert_yuv420_nv12_cs_passthrough_hlsl, SUNSHINE_SHADERS_DIR "/convert_yuv420_nv12_cs_passthrough.hlsl", nullptr,
+      "Failed to compile NV12 passthrough compute shader, SDR gamma compute fast path disabled");
+    compile_optional(convert_yuv420_nv12_cs_linear_hlsl, SUNSHINE_SHADERS_DIR "/convert_yuv420_nv12_cs_linear.hlsl", nullptr,
+      "Failed to compile NV12 linear compute shader, SDR linear compute fast path disabled");
 
-      // Compile scaling variants (Phase 2B). Each uses 5-tap Catmull-Rom-via-bilinear
-      // for Y and hardware bilinear for UV; non-fatal if any fails (path stays
-      // limited to no-scale for that variant).
-      convert_yuv420_p010_cs_perceptual_quantizer_scaled_hlsl = compile_compute_shader(
-        SUNSHINE_SHADERS_DIR "/convert_yuv420_p010_cs_perceptual_quantizer_scaled.hlsl");
-      if (!convert_yuv420_p010_cs_perceptual_quantizer_scaled_hlsl) {
-        BOOST_LOG(warning) << "Failed to compile P010 PQ scaled compute shader, HDR PQ scaled fast path disabled";
-      }
-      convert_yuv420_p010_cs_hybrid_log_gamma_scaled_hlsl = compile_compute_shader(
-        SUNSHINE_SHADERS_DIR "/convert_yuv420_p010_cs_hybrid_log_gamma_scaled.hlsl");
-      if (!convert_yuv420_p010_cs_hybrid_log_gamma_scaled_hlsl) {
-        BOOST_LOG(warning) << "Failed to compile P010 HLG scaled compute shader, HDR HLG scaled fast path disabled";
-      }
-      convert_yuv420_p010_cs_perceptual_quantizer_scaled_hdr_analysis_hlsl = compile_compute_shader(
-        SUNSHINE_SHADERS_DIR "/convert_yuv420_p010_cs_perceptual_quantizer_scaled.hlsl",
-        hdr_analysis_snapshot_defines);
-      convert_yuv420_p010_cs_hybrid_log_gamma_scaled_hdr_analysis_hlsl = compile_compute_shader(
-        SUNSHINE_SHADERS_DIR "/convert_yuv420_p010_cs_hybrid_log_gamma_scaled.hlsl",
-        hdr_analysis_snapshot_defines);
-      if (!convert_yuv420_p010_cs_perceptual_quantizer_scaled_hdr_analysis_hlsl ||
-          !convert_yuv420_p010_cs_hybrid_log_gamma_scaled_hdr_analysis_hlsl) {
-        BOOST_LOG(warning) << "Failed to compile scaled HDR analysis snapshot compute shader, full-resolution analysis copy fallback will be used";
-      }
-      convert_yuv420_nv12_cs_passthrough_scaled_hlsl = compile_compute_shader(
-        SUNSHINE_SHADERS_DIR "/convert_yuv420_nv12_cs_passthrough_scaled.hlsl");
-      if (!convert_yuv420_nv12_cs_passthrough_scaled_hlsl) {
-        BOOST_LOG(warning) << "Failed to compile NV12 passthrough scaled compute shader, SDR scaled fast path disabled";
-      }
-      convert_yuv420_nv12_cs_linear_scaled_hlsl = compile_compute_shader(
-        SUNSHINE_SHADERS_DIR "/convert_yuv420_nv12_cs_linear_scaled.hlsl");
-      pyrowave_split_yuv_cs_hlsl = compile_compute_shader(
-        SUNSHINE_SHADERS_DIR "/pyrowave_split_yuv_cs.hlsl");
-      if (!pyrowave_split_yuv_cs_hlsl) {
-        BOOST_LOG(warning) << "Failed to compile PyroWave shared-plane split shader"sv;
-      }
-      if (!convert_yuv420_nv12_cs_linear_scaled_hlsl) {
-        BOOST_LOG(warning) << "Failed to compile NV12 linear scaled compute shader, SDR scaled fast path disabled";
-      }
-    });
+    // Scaling variants (Phase 2B). Each uses 5-tap Catmull-Rom-via-bilinear for Y and hardware bilinear for UV;
+    // non-fatal if any fails (the path stays limited to no-scale for that variant).
+    compile_optional(convert_yuv420_p010_cs_perceptual_quantizer_scaled_hlsl, SUNSHINE_SHADERS_DIR "/convert_yuv420_p010_cs_perceptual_quantizer_scaled.hlsl", nullptr,
+      "Failed to compile P010 PQ scaled compute shader, HDR PQ scaled fast path disabled");
+    compile_optional(convert_yuv420_p010_cs_hybrid_log_gamma_scaled_hlsl, SUNSHINE_SHADERS_DIR "/convert_yuv420_p010_cs_hybrid_log_gamma_scaled.hlsl", nullptr,
+      "Failed to compile P010 HLG scaled compute shader, HDR HLG scaled fast path disabled");
+    compile_optional(convert_yuv420_p010_cs_perceptual_quantizer_scaled_hdr_analysis_hlsl, SUNSHINE_SHADERS_DIR "/convert_yuv420_p010_cs_perceptual_quantizer_scaled.hlsl", hdr_analysis_snapshot_defines,
+      "Failed to compile scaled HDR analysis snapshot compute shader (PQ), full-resolution analysis copy fallback will be used");
+    compile_optional(convert_yuv420_p010_cs_hybrid_log_gamma_scaled_hdr_analysis_hlsl, SUNSHINE_SHADERS_DIR "/convert_yuv420_p010_cs_hybrid_log_gamma_scaled.hlsl", hdr_analysis_snapshot_defines,
+      "Failed to compile scaled HDR analysis snapshot compute shader (HLG), full-resolution analysis copy fallback will be used");
+    compile_optional(convert_yuv420_nv12_cs_passthrough_scaled_hlsl, SUNSHINE_SHADERS_DIR "/convert_yuv420_nv12_cs_passthrough_scaled.hlsl", nullptr,
+      "Failed to compile NV12 passthrough scaled compute shader, SDR scaled fast path disabled");
+    compile_optional(convert_yuv420_nv12_cs_linear_scaled_hlsl, SUNSHINE_SHADERS_DIR "/convert_yuv420_nv12_cs_linear_scaled.hlsl", nullptr,
+      "Failed to compile NV12 linear scaled compute shader, SDR scaled fast path disabled");
+    compile_optional(pyrowave_split_yuv_cs_hlsl, SUNSHINE_SHADERS_DIR "/pyrowave_split_yuv_cs.hlsl", nullptr,
+      "Failed to compile PyroWave shared-plane split shader");
 
     bool all_required = true;
     for (auto &task : required) {
       all_required = task.get() && all_required;
     }
-    optional.get();
+    for (auto &task : optional) {
+      task.get();
+    }
     if (!all_required) {
       return -1;
     }

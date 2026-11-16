@@ -31,6 +31,7 @@
 #include <curl/curl.h>
 
 #include "config.h"
+#include "cover_failure_backoff.h"
 #include "crypto.h"
 #include "file_handler.h"
 #include "httpcommon.h"
@@ -641,6 +642,9 @@ namespace {
     size_t bytes_received = 0;
     bool checked = false;
     bool valid = false;
+    /// Why the callback stopped the transfer (curl then reports error 23, CURLE_WRITE_ERROR, whatever the reason): a content problem or a local one.
+    const char *stopped_by = nullptr;
+    bool stopped_by_local = false;
 
     // Ensure buffer is large enough for our checks to avoid overflow
     static_assert(sizeof(buffer) >= 12, "Image check buffer too small");
@@ -661,6 +665,8 @@ namespace {
 
     if (fwrite(data, 1, length, ctx.fp) != length) {
       BOOST_LOG(error) << "Couldn't write image data to ["sv << ctx.filename << ']';
+      ctx.stopped_by = "write_failed";
+      ctx.stopped_by_local = true;
       return false;
     }
     return true;
@@ -686,6 +692,7 @@ namespace {
       }
       if (ctx->bytes_received > COVER_DOWNLOAD_MAX_BYTES || total_size > COVER_DOWNLOAD_MAX_BYTES - ctx->bytes_received) {
         BOOST_LOG(warning) << "Image download exceeded "sv << COVER_DOWNLOAD_MAX_BYTES << " bytes [" << ctx->url << ']';
+        ctx->stopped_by = "too_large";
         return 0;
       }
       ctx->bytes_received += total_size;
@@ -707,7 +714,8 @@ namespace {
 
           if (!ctx->valid) {
             BOOST_LOG(warning) << "Streaming validation failed: Invalid magic bytes ["sv << ctx->url << ']';
-            return 0; // Stop download
+            ctx->stopped_by = "invalid_magic";
+            return 0;  // Stop download
           }
 
           // Check passed, open file
@@ -718,6 +726,8 @@ namespace {
 #endif
           if (!ctx->fp) {
             BOOST_LOG(error) << "Couldn't open ["sv << ctx->filename << "] for ["sv << ctx->url << ']';
+            ctx->stopped_by = "open_failed";
+            ctx->stopped_by_local = true;
             return 0;
           }
 
@@ -771,12 +781,20 @@ namespace {
     return curl_slist_append(nullptr, entry.c_str());
   }
 
-  bool perform_image_download_with_magic_check(const std::string &url, const std::string &file, long ssl_version, const ParsedDownloadUrl *resolved_parts = nullptr, const std::string *resolved_address = nullptr) {
+  /// What one attempt came to: the next address is worth a try only when the transfer itself failed.
+  enum class download_outcome_e {
+    done,
+    transfer_failed,  ///< the transfer broke off (resolution, connection, timeout, a body that did not arrive): another address of the host may work
+    rejected,  ///< an answer came and was not accepted (HTTP status, not an image, too large): the next address would say the same
+    local_failure,  ///< our own file or directory could not be used: says nothing about the URL, and no address will do better
+  };
+
+  download_outcome_e download_image_attempt(const std::string &url, const std::string &file, long ssl_version, const ParsedDownloadUrl *resolved_parts = nullptr, const std::string *resolved_address = nullptr) {
     BOOST_LOG(info) << "Downloading external image with magic check: " << url;
     CURL *curl = curl_easy_init();
     if (!curl) {
       BOOST_LOG(error) << "Couldn't create CURL instance ["sv << url << ']';
-      return false;
+      return download_outcome_e::local_failure;
     }
 
     curl_slist *resolve_list = nullptr;
@@ -785,7 +803,7 @@ namespace {
       if (!resolve_list) {
         BOOST_LOG(error) << "Couldn't pin resolved cover host addresses ["sv << url << ']';
         curl_easy_cleanup(curl);
-        return false;
+        return download_outcome_e::local_failure;
       }
       curl_easy_setopt(curl, CURLOPT_RESOLVE, resolve_list);
     }
@@ -794,7 +812,7 @@ namespace {
       BOOST_LOG(error) << "Couldn't create directory ["sv << file_dir << "] for ["sv << url << ']';
       curl_slist_free_all(resolve_list);
       curl_easy_cleanup(curl);
-      return false;
+      return download_outcome_e::local_failure;
     }
 
     const auto destination_path = file_handler::path_from_utf8(file);
@@ -834,14 +852,32 @@ namespace {
     bool http_ok = (response_code == 200);
 
     if (result != CURLE_OK || !http_ok) {
-      if (result != CURLE_OK) {
+      if (result == CURLE_WRITE_ERROR && ctx.stopped_by) {
+        // curl reports error 23 whenever the write callback stops the transfer, so the reason goes with it: a file that is not an image or is too large is the
+        // server's doing (a warning, and the cover stays the default), only a failure to open or write the local file is ours.
+        if (ctx.stopped_by_local) {
+          BOOST_LOG(error) << "Download failed ["sv << url << ", code:" << result << ", " << ctx.stopped_by << ']';
+        }
+        else {
+          BOOST_LOG(warning) << "Download rejected ["sv << url << ", " << ctx.stopped_by << ']';
+        }
+      }
+      else if (result != CURLE_OK) {
         BOOST_LOG(error) << "Download failed or rejected ["sv << url << ", code:" << result << ']';
-      } else {
+      }
+      else {
         BOOST_LOG(error) << "Download failed: HTTP " << response_code << " [" << url << "]";
       }
 
       remove_file_noexcept(temporary_path);
-      return false;
+      // our own file: not the URL's fault. The callback stopped the transfer for a content reason, or a status other than 200 came: the same from every address.
+      // Anything else broke the transfer (no connection, a timeout, a body that stopped arriving after a 200): another address may work.
+      if (ctx.stopped_by_local) return download_outcome_e::local_failure;
+      if (ctx.stopped_by || result == CURLE_FILESIZE_EXCEEDED) return download_outcome_e::rejected;
+      if (result == CURLE_OK || response_code != 200) {
+        return response_code == 0 ? download_outcome_e::transfer_failed : download_outcome_e::rejected;
+      }
+      return download_outcome_e::transfer_failed;
     }
 
     // Double check: if download finished but we never got enough bytes to check?
@@ -849,22 +885,34 @@ namespace {
     if (!ctx.checked) {
       BOOST_LOG(warning) << "Download too small to validate magic bytes ["sv << url << ']';
       remove_file_noexcept(temporary_path);
-      return false;
+      return download_outcome_e::rejected;
     }
 
     if (!ctx.valid || !close_ok) {
       BOOST_LOG(error) << "Downloaded image could not be finalized ["sv << url << ']';
       remove_file_noexcept(temporary_path);
-      return false;
+      // a failed close is ours; a body that is not an image was stopped by the callback above
+      return !close_ok ? download_outcome_e::local_failure : download_outcome_e::rejected;
     }
 
     if (!replace_file(temporary_path, destination_path)) {
       BOOST_LOG(error) << "Couldn't replace downloaded image ["sv << file << ']';
       remove_file_noexcept(temporary_path);
-      return false;
+      return download_outcome_e::local_failure;
     }
 
-    return true;
+    return download_outcome_e::done;
+  }
+
+  bool perform_image_download_with_magic_check(const std::string &url, const std::string &file, long ssl_version) {
+    return download_image_attempt(url, file, ssl_version) == download_outcome_e::done;
+  }
+
+  /// Failed cover URLs, remembered for the life of the process (see cover_failure_backoff.h).
+  http::cover_failure_backoff_t &
+  cover_failures() {
+    static http::cover_failure_backoff_t failures;
+    return failures;
   }
 }
 
@@ -873,24 +921,46 @@ namespace http {
     return perform_image_download_with_magic_check(url, file, ssl_version);
   }
 
+  bool cover_download_recently_failed(const std::string &url) {
+    return cover_failures().blocked(url);
+  }
+
   bool download_public_cover_image(const std::string &url, const std::string &file, long ssl_version) {
+    // validate_app_image_path asks for every cover that has no file yet on every refresh and every client request: a URL that just failed is left alone for a while.
+    if (cover_failures().blocked(url)) {
+      BOOST_LOG(debug) << "Skipping a cover download that failed recently ["sv << url << ']';
+      return false;
+    }
+
+    // A failure of the URL starts its wait; a failure of our own file or directory does not (the URL itself was never refused).
+    const auto done = [&](download_outcome_e outcome) {
+      if (outcome == download_outcome_e::done) cover_failures().note_success(url);
+      else if (outcome != download_outcome_e::local_failure) cover_failures().note_failure(url);
+      return outcome == download_outcome_e::done;
+    };
+
     ParsedDownloadUrl parts;
     PublicHostResolution resolution;
     if (!resolve_public_https_cover_url(url, parts, resolution)) {
       BOOST_LOG(warning) << "Blocked cover download from non-public HTTPS URL ["sv << url << ']';
-      return false;
+      return done(download_outcome_e::rejected);
     }
 
     if (resolution.is_address_literal) {
-      return perform_image_download_with_magic_check(url, file, ssl_version);
+      return done(download_image_attempt(url, file, ssl_version));
     }
 
+    // The next address of the host is tried only when the transfer itself broke off (a connection that did not open, a timeout, a body that did not arrive).
+    // An answer that was refused, such as a page that is not an image, is the same from every address, and trying them all multiplied one failure into
+    // several; a failure of our own file is the same from every address too.
+    auto outcome = download_outcome_e::transfer_failed;
     for (const auto &address : resolution.addresses) {
-      if (perform_image_download_with_magic_check(url, file, ssl_version, &parts, &address)) {
-        return true;
+      outcome = download_image_attempt(url, file, ssl_version, &parts, &address);
+      if (outcome != download_outcome_e::transfer_failed) {
+        break;
       }
     }
 
-    return false;
+    return done(outcome);
   }
 }

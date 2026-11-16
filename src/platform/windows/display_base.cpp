@@ -1290,6 +1290,13 @@ namespace platf {
     // Recover ConsentPromptBehaviorAdmin if Sunshine previously crashed during WGC capture (runs only once)
     dxgi::recover_secure_desktop();
 
+    // Every capture method below produces DXGI textures or system memory. An encoder that asks for another kind of memory (the Vulkan encoder, tried during
+    // the encoder probe) has no capture method here, which is an ordinary answer of the probe and not a failure of the display.
+    if (hwdevice_type != mem_type_e::dxgi && hwdevice_type != mem_type_e::system) {
+      BOOST_LOG(debug) << "No capture method produces this memory type on Windows, skipping display creation"sv;
+      return nullptr;
+    }
+
     auto try_init = [&](auto disp) -> std::shared_ptr<display_t> {
       if (!disp->init(config, display_name)) {
         return disp;
