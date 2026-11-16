@@ -1824,6 +1824,14 @@ namespace video {
 
   void
   reset_display(std::shared_ptr<platf::display_t> &disp, const platf::mem_type_e &type, const std::string &display_name, const config_t &config) {
+#ifdef _WIN32
+    // Windows captures DXGI textures and system memory only (platf::display): another memory type, such as the Vulkan encoder's, answers at once and would
+    // only wait through the two tries below (two sleeps of 200 ms in every encoder probe).
+    if (type != platf::mem_type_e::dxgi && type != platf::mem_type_e::system) {
+      disp.reset();
+      return;
+    }
+#endif
     // We try this twice, in case we still get an error on reinitialization
     for (int x = 0; x < 2; ++x) {
       disp.reset();
