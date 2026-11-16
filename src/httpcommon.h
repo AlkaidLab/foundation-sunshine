@@ -43,6 +43,10 @@ namespace http {
   download_image_with_magic_check(const std::string &url, const std::string &file, long ssl_version = CURL_SSLVERSION_TLSv1_2);
   bool
   download_public_cover_image(const std::string &url, const std::string &file, long ssl_version = CURL_SSLVERSION_TLSv1_2);
+
+  /// @return true when a download of this cover URL failed recently and download_public_cover_image() would not try it again yet.
+  bool
+  cover_download_recently_failed(const std::string &url);
   std::string
   url_escape(const std::string &url);
   std::string

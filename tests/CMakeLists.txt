@@ -198,6 +198,12 @@ target_link_libraries(video_pacing_unit_tests PRIVATE gtest_main sunshine_projec
 set_target_properties(video_pacing_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME video_pacing_unit_tests COMMAND video_pacing_unit_tests)
 
+add_executable(cover_failure_backoff_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_cover_failure_backoff.cpp)
+target_include_directories(cover_failure_backoff_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(cover_failure_backoff_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(cover_failure_backoff_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME cover_failure_backoff_unit_tests COMMAND cover_failure_backoff_unit_tests)
+
 add_executable(poster_unit_tests
         ${CMAKE_SOURCE_DIR}/src/nvhttp/poster.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_poster.cpp)
@@ -1316,6 +1322,7 @@ list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_devices.
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_vb_cable.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_telemetry.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_host_bitrate_cap.cpp)
+list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_cover_failure_backoff.cpp)
 # MAT harnesses have independent entrypoints and explicit test targets.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/mat-live/")
 # These files already run in registered standalone suites. Keep one copy of
