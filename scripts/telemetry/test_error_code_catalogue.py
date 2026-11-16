@@ -111,6 +111,14 @@ class Statements(unittest.TestCase):
             self.assertEqual(table[raw]["sites"][0]["line"], 4)
             self.assertEqual(len(table), 2)
 
+    def test_a_double_quote_in_a_raw_delimiter_keeps_the_next_line(self):
+        # R""(/*)"" has the delimiter " and the content /*: without reading the
+        # raw literal the /* would swallow the rest of the file, including the
+        # real log line below
+        table = self.scan_text('const char *p = R""(/*)"";\nvoid f() { BOOST_LOG(error) << "After raw delimiter"; }\n')
+        self.assertEqual(list(table), [cat.error_code("After raw delimiter")])
+        self.assertEqual(next(iter(table.values()))["sites"][0]["line"], 2)
+
     def test_a_line_comment_continues_after_a_backslash_newline(self):
         table = self.scan_text('// disabled \\\nBOOST_LOG(error) << "Fake";\nvoid f() { BOOST_LOG(error) << "Real"; }\n')
         self.assertEqual(list(table), [cat.error_code("Real")])

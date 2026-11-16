@@ -104,7 +104,9 @@ def _raw_string_at(text: str, i: int):
     if paren < 0:
         return None
     delim = text[j:paren]
-    if any(c in delim for c in ' ()\\\t\v\f\n"'):
+    # a double quote may stand in the delimiter: only space, parentheses,
+    # backslash and control characters are not allowed (C++ [lex.string])
+    if any(c in delim for c in ' ()\\\t\v\f\n'):
         return None
     close = text.find(")" + delim + '"', paren + 1)
     if close < 0:
