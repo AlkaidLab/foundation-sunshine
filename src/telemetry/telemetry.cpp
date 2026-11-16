@@ -42,6 +42,7 @@
 #include "src/crash/crash.h"
 #include "src/config.h"
 #include "src/logging.h"
+#include "src/logging_site.h"
 #include "src/platform/common.h"
 #include "src/system_info.h"
 #include "transport.h"
@@ -287,6 +288,7 @@ namespace telemetry {
 
     /// When the host could serve its web interface (set by host_ready): the end of the start-up time the service measures.
     std::atomic<std::int64_t> ready_wall_ms { 0 };
+    std::atomic<std::int64_t> start_wall_ms { 0 };  // when telemetry started: the start of the core for the "core" start-up time
     std::mutex lifecycle_state_mutex;
 
     service_lifecycle::state_t
@@ -368,7 +370,7 @@ namespace telemetry {
           // every severity goes to the short ring an anomaly excerpt is cut from; only warnings and above are tallied
           service->note_log_line(severity.get(), text.c_str(), text.size());
           if (severity.get() < 3 || severity.get() > 5) return;
-          service->note_log(severity.get(), text.c_str(), text.size(), component_of(text.c_str(), text.size()));
+          service->note_log(severity.get(), text.c_str(), text.size(), component_of(text.c_str(), text.size()), severity.get() >= logging::SITE_MIN_SEVERITY ? logging::site_text(record) : std::string {});
         }
         catch (...) {
         }
@@ -469,6 +471,8 @@ namespace telemetry {
           if (!lifecycle_done && context_done && (ready_wall_ms.load() != 0 || now - run_started > 60s)) {
             lifecycle_done = true;
             report_service_lifecycle(*service_, platf::appdata() / "telemetry");
+            // the time from the start of this core to its web interface, for every install (a host that runs without the service has no service time, and had no start-up time at all)
+            if (const auto ready = ready_wall_ms.load(), began = start_wall_ms.load(); ready > 0 && began > 0 && ready >= began) judge_and_emit_ready(*service_, platf::appdata() / "telemetry", "core", ready - began);
           }
           if (now - last_config >= CONFIG_RECHECK) {
             last_config = now;
@@ -531,6 +535,8 @@ namespace telemetry {
       deps.consent = [] { return consent_t { consent_cache.usage.load(std::memory_order_relaxed), consent_cache.errors.load(std::memory_order_relaxed) }; };
       deps.post = [](const std::string &url, const std::string &body) { return http_post(url, "application/json", body); };
       deps.session_log = [](const std::string &endpoint, const std::string &install_id, const std::string &version) { return crash::upload_session_log(endpoint, install_id, version); };
+      deps.session_log_state = [] { return std::string { crash::session_log_state() }; };
+      start_wall_ms.store(wall_ms());
       auto service = std::make_shared<service_t>(std::move(options), std::move(deps));
       context_t ctx;
       ctx.version = build_info::version();

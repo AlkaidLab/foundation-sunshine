@@ -44,7 +44,8 @@
   #include "tray/src/tray.h"
 
   // local includes
-  #include "src/confighttp.h"
+  #include "src/restart_reason.h"
+#include "src/confighttp.h"
   #include "src/display_device/session.h"
   #include "src/display_device/vdd_utils.h"
   #include "src/file_handler.h"
@@ -400,6 +401,7 @@ namespace system_tray {
 
   auto tray_restart_cb = [](struct tray_menu *item) {
     BOOST_LOG(info) << "Restarting from system tray"sv;
+    restart_reason::set("tray");
     platf::restart();
   };
 
@@ -759,6 +761,7 @@ namespace system_tray {
           if (result == IDYES) {
             BOOST_LOG(info) << "[tray_import_config] User chose to restart Sunshine"sv;
             // 重启Sunshine
+            restart_reason::set("import");
             platf::restart();
           }
           else {

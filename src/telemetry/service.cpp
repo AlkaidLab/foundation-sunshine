@@ -270,6 +270,7 @@ namespace telemetry {
             const auto safe = safe_version(version);
             if (!safe.empty()) {
               if (const auto ref = deps_.session_log(endpoint(), install_id(), safe)) props["log_ref"] = *ref;
+              else if (deps_.session_log_state) props["log_state"] = deps_.session_log_state();  // the report goes without its log: the word says why
             }
           }
           catch (...) {
@@ -818,7 +819,7 @@ namespace telemetry {
   // ---- the log ----
 
   void
-  service_t::note_log(int severity, const char *message, std::size_t length, std::string_view component) noexcept {
+  service_t::note_log(int severity, const char *message, std::size_t length, std::string_view component, std::string_view site) noexcept {
     if (severity < 3) return;
     try {
       const auto hour = deps_.now_ms() / 3'600'000;
@@ -838,7 +839,7 @@ namespace telemetry {
           // the table is full: further distinct messages of an hour are only counted in the tally above
           return;
         }
-        found = raw_errors_.emplace(key, raw_error_t { std::string { component }, raw, severity >= 5 ? 5 : 4, 0 }).first;
+        found = raw_errors_.emplace(key, raw_error_t { std::string { component }, raw, severity >= 5 ? 5 : 4, 0, std::string { site.substr(0, 200) } }).first;
       }
       ++found->second.count;
       if (severity >= 5) found->second.severity = 5;
@@ -872,6 +873,17 @@ namespace telemetry {
       // The line itself is not sent. Its code is a hash of the fixed words it starts with (src/telemetry/error_code.h): the same error is one code and what a person chose is not in it.
       const auto code = error_code_of(scrub_log_message(raw.raw, MAX_MESSAGE_CHARS));
       emit(kind_e::error, "error", json { { "component", catalogue_id(raw.component, 32).empty() ? "host" : catalogue_id(raw.component, 32) }, { "code", code }, { "severity", raw.severity >= 5 ? "fatal" : "error" }, { "count", raw.count } });
+      // Every error and fatal log line has a site, so every code can be told where it comes from: the first line of a code in the hour becomes an error report with that site (the group of the
+      // Worker then has a place in the source, which the count alone never had). No text of the line goes with it. The reporter keeps its own hourly and per-install limits.
+      if (!raw.site.empty()) {
+        error_input_t input;
+        input.component = catalogue_id(raw.component, 32).empty() ? "host" : catalogue_id(raw.component, 32);
+        input.code = code;
+        input.severity = raw.severity >= 5 ? "fatal" : "error";
+        input.loc = clean_frame(raw.site);
+        if (!input.loc.empty()) input.frames.push_back(input.loc);
+        report_error(input);
+      }
     }
   }
 

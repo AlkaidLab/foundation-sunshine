@@ -53,8 +53,8 @@ namespace sunshinesvc::lifecycle {
 
   /// exit_code is written as the signed 32-bit value of the DWORD (a negative code is an HRESULT or NTSTATUS); since_adopt_ms is -1 for a core the service started itself.
   inline std::string
-  core_exit_line(std::int64_t t, unsigned long exit_code, long long life_ms, long long since_adopt_ms, bool requested, bool restart = false) {
-    return "{\"v\":1,\"kind\":\"core_exit\",\"t\":" + num(t) + ",\"exit\":" + num(static_cast<std::int32_t>(exit_code)) + ",\"life_ms\":" + num(life_ms) + ",\"since_adopt_ms\":" + num(since_adopt_ms) + ",\"requested\":" + (requested ? "true" : "false") + ",\"restart\":" + (restart ? "true" : "false") + "}";
+  core_exit_line(std::int64_t t, unsigned long exit_code, long long life_ms, long long since_adopt_ms, bool requested, bool restart = false, const std::string &restart_reason = {}) {
+    return "{\"v\":1,\"kind\":\"core_exit\",\"t\":" + num(t) + ",\"exit\":" + num(static_cast<std::int32_t>(exit_code)) + ",\"life_ms\":" + num(life_ms) + ",\"since_adopt_ms\":" + num(since_adopt_ms) + ",\"requested\":" + (requested ? "true" : "false") + ",\"restart\":" + (restart ? "true" : "false") + (restart_reason.empty() ? "" : ",\"reason\":\"" + restart_reason + "\"") + "}";
   }
 
   /// A restart the core asked for itself ends with exit code 0, which looks like an exit nobody asked for. The marker tells the two apart; it is only valid for a minute.
@@ -92,13 +92,13 @@ namespace sunshinesvc::lifecycle {
 
   /// Called by the core right before it exits for a restart it was asked to do. Never throws.
   inline bool
-  note_restart_request(const std::filesystem::path &dir, std::int64_t t) noexcept {
+  note_restart_request(const std::filesystem::path &dir, std::int64_t t, const char *reason = "api") noexcept {
     try {
       std::error_code ec;
       std::filesystem::create_directories(dir, ec);
       std::ofstream out { dir / RESTART_MARKER, std::ios::binary | std::ios::trunc };
       if (!out) return false;
-      out << num(t) << '\n';
+      out << num(t) << ' ' << (reason ? reason : "api") << '\n';
       return static_cast<bool>(out);
     }
     catch (...) {
@@ -108,7 +108,7 @@ namespace sunshinesvc::lifecycle {
 
   /// Called by the service when the core ended: true when the core had left a fresh marker (it is removed either way). `exit_t` is the time of the exit.
   inline bool
-  take_restart_request(const std::filesystem::path &dir, std::int64_t exit_t) noexcept {
+  take_restart_request(const std::filesystem::path &dir, std::int64_t exit_t, std::string *reason = nullptr) noexcept {
     try {
       const auto file = dir / RESTART_MARKER;
       std::string text;
@@ -120,10 +120,18 @@ namespace sunshinesvc::lifecycle {
       std::error_code ec;
       std::filesystem::remove(file, ec);
       long long t = 0;
-      for (const char c : text) {
+      std::size_t i = 0;
+      for (; i < text.size(); ++i) {
+        const char c = text[i];
         if (c < '0' || c > '9') break;
         t = t * 10 + (c - '0');
         if (t > 4'102'444'800'000LL) return false;
+      }
+      if (reason) {
+        // one lower-case word after the time; the host checks it against its own list
+        std::string word;
+        for (++i; i < text.size() && word.size() < 24 && text[i] >= 'a' && text[i] <= 'z'; ++i) word.push_back(text[i]);
+        *reason = word;
       }
       return t > 0 && exit_t >= t - 2000 && exit_t - t <= RESTART_MARKER_WINDOW_MS;
     }

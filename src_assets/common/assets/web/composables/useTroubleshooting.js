@@ -159,7 +159,7 @@ export function useTroubleshooting({ fetchLogs = fetchLogsFromApi } = {}) {
       restartPressed,
       async () => {
         try {
-          await apiFetch('/api/restart', { method: 'POST' })
+          await apiFetch('/api/restart?reason=troubleshooting', { method: 'POST' })
         } catch {}
       },
       true

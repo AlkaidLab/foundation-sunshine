@@ -112,6 +112,10 @@ namespace crash {
   std::optional<std::string>
   upload_session_log(const std::string &endpoint, const std::string &install_id, const std::string &version);
 
+  /// Why the latest upload_session_log() gave no reference (a fixed word: uploaded | errors_off | no_log | pack_failed | refused | unreachable | bad_answer), so the report can say it.
+  const char *
+  session_log_state();
+
   /// upload_session_log() for a given config directory, without the consent check (the caller has made it): the tests and tools.
   std::optional<std::string>
   upload_session_log_from(const std::filesystem::path &config_dir, const std::string &endpoint, const std::string &install_id, const std::string &version);

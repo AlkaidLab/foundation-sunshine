@@ -1070,12 +1070,13 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
         const auto exit_ms = sunshinesvc::lifecycle::unix_ms();
         // a restart the core asked for itself (Panel, a saved setting) leaves a marker and exits with code 0; it is not an exit nobody asked for
         bool core_restart = false;
+        std::string restart_word;
         if (const auto file = LifecycleFile(); !file.empty()) {
-          core_restart = sunshinesvc::lifecycle::take_restart_request(file.parent_path(), exit_ms) && !exit_requested && ended_with == 0;
+          core_restart = sunshinesvc::lifecycle::take_restart_request(file.parent_path(), exit_ms, &restart_word) && !exit_requested && ended_with == 0;
         }
         NoteLifecycle(sunshinesvc::lifecycle::core_exit_line(exit_ms, ended_with, ProcessLifeMs(process_info.hProcess),
           core_adopted ? static_cast<long long>(GetTickCount64() - adopted_at_tick) : -1,
-          exit_requested || ended_with == ERROR_SHUTDOWN_IN_PROGRESS, core_restart));  // ERROR_SHUTDOWN_IN_PROGRESS: the core asked the service to stop (quit from the tray, the Panel)
+          exit_requested || ended_with == ERROR_SHUTDOWN_IN_PROGRESS, core_restart, core_restart ? restart_word : std::string {}));  // ERROR_SHUTDOWN_IN_PROGRESS: the core asked the service to stop (quit from the tray, the Panel)
       }
       next_core_cause = exit_for_session_change ? "session_change" : "core_exit";
     }

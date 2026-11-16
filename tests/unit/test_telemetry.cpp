@@ -663,6 +663,30 @@ TEST(TelemetryLog, HourlySummaryAndScrubbedErrors) {
   }
 }
 
+TEST(TelemetryLog, TheFirstLineOfACodeBecomesAnErrorReportWithItsSiteAndNoText) {
+  harness_t h;
+  const std::string line = "Download failed or rejected [https://cdn.example/steam/apps/1/header.jpg, code:23] for client \"Zed's laptop\"";
+  h.svc->note_log(4, line.c_str(), line.size(), "host", "src/httpcommon.cpp:838:download");
+  h.svc->note_log(4, line.c_str(), line.size(), "host", "src/httpcommon.cpp:838:download");
+  const std::string other = "Failed to create display for: <name>";
+  h.svc->note_log(4, other.c_str(), other.size(), "host", "");  // a line without a site: only the count
+  h.svc->flush(true);
+  h.svc->pump();
+  std::vector<json> reports;
+  json code_of_error;
+  for (const auto &b : h.posted)
+    for (const auto &e : b["events"]) {
+      if (e["name"] == "error_report") reports.push_back(e);
+      if (e["name"] == "error" && e["props"]["count"] == 2) code_of_error = e;
+    }
+  ASSERT_EQ(reports.size(), 1u);
+  ASSERT_FALSE(code_of_error.is_null());
+  EXPECT_EQ(reports[0]["props"]["code"], code_of_error["props"]["code"]);  // the report and the count are one group
+  EXPECT_EQ(reports[0]["props"]["loc"], "src/httpcommon.cpp:838:download");
+  const auto text = reports[0].dump();
+  for (const char *planted : { "cdn.example", "Zed", "laptop", "header.jpg" }) EXPECT_EQ(text.find(planted), std::string::npos) << planted;
+}
+
 TEST(TelemetryLog, ErrorCodeIsStableAcrossNamesAndPaths) {
   harness_t h;
   const std::string a = "Failed to open \"Alice's iPad\" at C:\\Users\\Alice\\x.mp4", b = "Failed to open \"Bob's phone\" at /home/bob/y.mp4";
@@ -2619,6 +2643,7 @@ TEST(ServiceLifecycle, ARestartTheCoreAskedForIsCountedAndNeverAnAnomaly) {
   }
   const auto summary = summarize(parse(text));
   EXPECT_EQ(summary.restarts_requested, 4);
+  EXPECT_EQ(summary.restart_reason, "api");  // none of these lines says why
   EXPECT_EQ(summary.exits, 0);
   EXPECT_EQ(summary.unexpected, 0);
   EXPECT_EQ(summary.short_life, 0);
@@ -2635,6 +2660,44 @@ TEST(ServiceLifecycle, ARestartTheCoreAskedForIsCountedAndNeverAnAnomaly) {
   const auto crashed = summarize(parse(life::core_exit_line(14'000, 0xC0000005ul, 12'000, -1, false, true) + "\n"));
   EXPECT_EQ(crashed.restarts_requested, 0);
   EXPECT_EQ(crashed.unexpected, 1);
+}
+
+TEST(ServiceLifecycle, TheReasonOfARequestedRestartTravelsFromTheCoreToTheEvent) {
+  const auto dir = std::filesystem::temp_directory_path() / "alk_restart_reason_test";
+  std::filesystem::remove_all(dir);
+  ASSERT_TRUE(life::note_restart_request(dir, 100'000, "guide"));
+  std::string word;
+  ASSERT_TRUE(life::take_restart_request(dir, 101'000, &word));
+  EXPECT_EQ(word, "guide");
+  std::filesystem::remove_all(dir);
+  const auto line = life::core_exit_line(101'000, 0, 12'000, -1, false, true, word);
+  const auto summary = summarize(parse(line + "\n"));
+  EXPECT_EQ(summary.restarts_requested, 1);
+  EXPECT_EQ(summary.restart_reason, "guide");
+  const auto props = summary_props(summary);
+  EXPECT_EQ(props.value("restart_reason", ""), "guide");
+  EXPECT_TRUE(telemetry::shape_event(telemetry::kind_e::experience, "svc_lifecycle", props, 1000).has_value());
+  // a word that is not on the list is "api", whatever a hostile file says
+  EXPECT_EQ(summarize(parse(life::core_exit_line(1, 0, 12'000, -1, false, true, "something else") + "\n")).restart_reason, "api");
+  EXPECT_EQ(summarize(parse(life::core_exit_line(1, 0, 12'000, -1, false, true, "tray") + "\n")).restart_reason, "tray");
+}
+
+TEST(ServiceLifecycle, TheStartOfTheCoreToItsWebInterfaceIsTimedWithoutTheService) {
+  state_t state;
+  const auto fast = judge_ready("core", 3'000, state, 1'000'000);
+  EXPECT_FALSE(fast.has_value());
+  EXPECT_EQ(state.core_ms.size(), 1u);
+  EXPECT_TRUE(state.svc_core_ms.empty());  // its own baseline
+  const auto props = timing_props("core", 3'000, false);
+  EXPECT_EQ(props["which"], "core");
+  EXPECT_TRUE(telemetry::shape_event(telemetry::kind_e::experience, "startup_timing", props, 1000).has_value());
+  const auto slow = judge_ready("core", 20'000, state, 2'000'000);
+  ASSERT_TRUE(slow.has_value());
+  EXPECT_EQ(slow->which, "core");
+  EXPECT_TRUE(telemetry::shape_event(telemetry::kind_e::experience, "host_anomaly", anomaly_props(*slow), 1000).has_value());
+  // the baseline survives a restart of the host
+  const auto back = state_from_json(state_to_json(state));
+  EXPECT_EQ(back.core_ms.size(), 2u);
 }
 
 TEST(ServiceLifecycle, TheRestartMarkerIsTakenOnceAndOnlyWhileItIsFresh) {

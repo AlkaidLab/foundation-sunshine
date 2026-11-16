@@ -14,6 +14,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "src/restart_reason.h"
 #include "src/client_fingerprint.h"
 #include "src/config.h"
 #include "src/display_device/display_device.h"
@@ -679,6 +680,7 @@ namespace tray_http {
             }
 
             if (action == "restart") {
+              restart_reason::set("tray");
               platf::restart();
               return;
             }

@@ -97,6 +97,8 @@ namespace telemetry {
      * error reports off, the service does not take it). Called on the thread that ingests the page's events; null in tests that do not need it.
      */
     std::function<std::optional<std::string>(const std::string &endpoint, const std::string &install_id, const std::string &version)> session_log;
+    /** The fixed word that says why the latest session_log call gave no reference (crash::session_log_state()); null in tests that do not need it. */
+    std::function<std::string()> session_log_state;
   };
 
   struct service_counts_t {
@@ -161,7 +163,7 @@ namespace telemetry {
 
     // ---- the log ----
     /** A host log record (severity 3 warning, 4 error, 5 fatal); only counted and kept raw here, scrubbed later on the sender thread. Cheap; never throws. */
-    void note_log(int severity, const char *message, std::size_t length, std::string_view component = "host") noexcept;
+    void note_log(int severity, const char *message, std::size_t length, std::string_view component = "host", std::string_view site = {}) noexcept;
 
     /** Every host log record (any severity) goes to a short ring; an excerpt of it leaves only after a severe stream anomaly, scrubbed. Cheap; never throws. */
     void
@@ -213,6 +215,7 @@ namespace telemetry {
       std::string raw;
       int severity = 4;
       std::uint64_t count = 0;
+      std::string site;  ///< file:line:function of the statement (logging_site.h), kept from the first line
     };
 
     consent_t consent_now() const;

@@ -11,6 +11,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include "src/restart_reason.h"
 #include "src/config.h"
 #include "src/http_util.h"
 #include "src/logging.h"
@@ -172,6 +173,7 @@ namespace widget_http {
               if (error) {
                 BOOST_LOG(debug) << "widget_http: restart response did not reach the client: "sv << error.message();
               }
+              restart_reason::set("widget");
               platf::restart();
             });
         }

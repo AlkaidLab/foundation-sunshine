@@ -420,7 +420,7 @@ async function stopSessions() {
 async function restartHost() {
   restartAsk.value = false
   try {
-    await apiFetch('/api/restart', { method: 'POST' })
+    await apiFetch('/api/restart?reason=home', { method: 'POST' })
     say(t('troubleshooting.restart_sunshine_success'))
   } catch (error) {
     // the host drops the connection while it restarts
