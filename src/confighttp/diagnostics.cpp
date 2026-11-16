@@ -5,6 +5,7 @@
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 
 #include "diagnostics.h"
+#include "src/audio.h"
 #include "src/audio_devices.h"
 #include "src/audio_vb_cable.h"
 #include "src/config.h"
@@ -365,6 +366,10 @@ namespace confighttp::diagnostics {
       const bool drivers_read = audio_devices::enumerate_vb_cable_drivers(drivers);
       auto json = audio_devices::to_json(endpoints, drivers_read ? &drivers : nullptr);
       json["vb_cable"]["job"] = audio_devices::vb_cable::status_json(audio_devices::vb_cable::runner().status());
+      // a stream is running and its audio capture waits for a playback device to appear
+      if (auto ref = audio::try_get_audio_ctx_ref()) {
+        json["default_output"]["host_waiting"] = ref->awaiting_default_output.load() || ref->capture_waiting_for_device.load();
+      }
       send_response(response, json);
 #else
       send_response(response, audio_devices::unsupported_json());

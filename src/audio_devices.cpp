@@ -4,6 +4,8 @@
  */
 #include "audio_devices.h"
 
+#include "audio_default_wait.h"
+
 #include <algorithm>
 #include <cctype>
 
@@ -201,6 +203,23 @@ namespace audio_devices {
   }
 
   nlohmann::json
+  default_output_json(const std::vector<endpoint_t> &render) {
+    int active = 0;
+    bool present = false;
+    for (const auto &endpoint : render) {
+      if (endpoint.state != "active") continue;
+      ++active;
+      present = present || endpoint.is_default;
+    }
+    return {
+      { "present", present },
+      { "reason", present ? std::string {} : std::string { audio_default_wait::classify(static_cast<int>(render.size()), active, true) } },
+      { "render_active", active },
+      { "host_waiting", false },
+    };
+  }
+
+  nlohmann::json
   to_json(const std::vector<endpoint_t> &endpoints, const std::vector<driver_t> *drivers) {
     std::vector<endpoint_t> render;
     std::vector<endpoint_t> capture;
@@ -223,6 +242,7 @@ namespace audio_devices {
       { "supported", true },
       { "render", render_json },
       { "capture", capture_json },
+      { "default_output", default_output_json(render) },
       { "vb_cable", {
                       { "installed", cable.installed },
                       { "driver_present", cable.driver_present },
@@ -244,6 +264,7 @@ namespace audio_devices {
       { "supported", false },
       { "render", nlohmann::json::array() },
       { "capture", nlohmann::json::array() },
+      { "default_output", { { "present", true }, { "reason", "" }, { "render_active", 0 }, { "host_waiting", false } } },
       { "vb_cable", {
                       { "installed", false },
                       { "driver_present", false },

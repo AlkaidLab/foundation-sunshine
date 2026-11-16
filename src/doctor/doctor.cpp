@@ -827,6 +827,14 @@ namespace doctor {
         tr(lang, "The audio system could not be opened", "无法打开系统音频") + (facts.error.empty() ? "" : ": " + facts.error),
         fix(tr(lang, "Check that the Windows Audio service runs, then restart Sunshine.", "确认系统音频服务在运行,然后重启 Sunshine。"), "restart", "sunshine", true)));
     }
+    else if (facts.no_default_output && facts.sink.empty()) {
+      // not a fault of the host: the computer has no speakers, headphones or virtual output enabled, the stream goes on without sound
+      items.push_back(make("audio.sink", group, status_e::warn, tr(lang, "Audio output", "音频输出"),
+        tr(lang, "The system has no default playback device, so the stream has no sound. It starts by itself when a device appears.",
+          "系统没有默认播放设备,串流没有声音;接入设备后会自动开始出声。"),
+        open_page(tr(lang, "Plug in speakers or headphones, or enable a virtual speaker (VB-CABLE or Steam Streaming Speakers) on the Audio page.",
+                     "接上音箱或耳机,或在「音频」页启用虚拟扬声器(VB-CABLE 或 Steam Streaming Speakers)。"), "audio")));
+    }
     else if (facts.sink_found) {
       items.push_back(make("audio.sink", group, status_e::pass, tr(lang, "Audio output", "音频输出"),
         facts.sink.empty() ? tr(lang, "System default output", "系统默认输出") : audio_devices::looks_like_endpoint_id(facts.sink) ? tr(lang, "The selected output device", "所选的输出设备") : facts.sink));
@@ -835,6 +843,14 @@ namespace doctor {
       items.push_back(make("audio.sink", group, status_e::fail, tr(lang, "Audio output", "音频输出"),
         facts.sink.empty() ? tr(lang, "There is no default output device", "没有默认输出设备") : audio_devices::looks_like_endpoint_id(facts.sink) ? tr(lang, "The selected output device does not exist", "所选的输出设备不存在") : tr(lang, "\"" + facts.sink + "\" does not exist", "\"" + facts.sink + "\" 不存在"),
         open_setting(tr(lang, "Choose an existing output in Audio sink.", "在「音频输出设备」里选一个存在的设备。"), "audio_sink")));
+    }
+
+    if (facts.stream_audio && facts.checked && facts.no_default_output && !facts.sink.empty()) {
+      // a device is chosen, but the host follows the system default for the muted route and waits for one
+      items.push_back(make("audio.default", group, status_e::warn, tr(lang, "Default playback device", "默认播放设备"),
+        tr(lang, "The system has no default playback device, so the stream has no sound until one appears.", "系统没有默认播放设备,出现之前串流没有声音。"),
+        open_page(tr(lang, "Plug in speakers or headphones, or enable a virtual speaker (VB-CABLE or Steam Streaming Speakers) on the Audio page.",
+                     "接上音箱或耳机,或在「音频」页启用虚拟扬声器(VB-CABLE 或 Steam Streaming Speakers)。"), "audio")));
     }
 
     if (facts.stream_audio && facts.virtual_checked) {

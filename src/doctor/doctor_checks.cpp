@@ -247,6 +247,7 @@ namespace doctor {
       facts.checked = endpoints.checked;
       facts.error = endpoints.error;
       if (endpoints.checked) {
+        facts.no_default_output = endpoints.default_missing;
         facts.sink_found = facts.sink.empty() ? std::ranges::any_of(endpoints.render, [](const auto &e) { return e.is_default; }) :
                                                 std::ranges::any_of(endpoints.render, [&](const auto &e) { return os::endpoint_matches(e, facts.sink); });
         if (facts.sink.empty()) {

@@ -12,6 +12,9 @@ export function useAudioDevices(platform) {
   const failed = ref(false)
   let active = false
   let pending = false
+  let waitTimer
+  // the last good answer said there is no default playback device: the page keeps looking, also after a read that failed
+  let lastMissing = false
 
   const refresh = async () => {
     if (platform !== 'windows' || pending) return
@@ -21,12 +24,14 @@ export function useAudioDevices(platform) {
       if (!active) return
       state.value = normalizeAudioDevices(payload)
       failed.value = payload?.success === false
+      if (!failed.value) lastMissing = state.value.supported && state.value.defaultOutput.present === false
       watchJob()
     } catch {
       if (active) failed.value = true
     } finally {
       pending = false
       if (active) loaded.value = true
+      watchDefault()
     }
   }
   const onVisible = () => { if (!document.hidden) void refresh() }
@@ -35,6 +40,14 @@ export function useAudioDevices(platform) {
   const watchJob = () => {
     window.clearTimeout(jobTimer)
     if (active && state.value.vb.job.running) jobTimer = window.setTimeout(() => { void refresh() }, 1500)
+  }
+
+  // with no default playback device the page looks again every few seconds: a device plugged in or enabled elsewhere shows up here and the notice goes away
+  const watchDefault = () => {
+    window.clearTimeout(waitTimer)
+    if (active && lastMissing) {
+      waitTimer = window.setTimeout(() => { if (!document.hidden) void refresh(); else watchDefault() }, 5000)
+    }
   }
 
   onMounted(() => {
@@ -46,6 +59,7 @@ export function useAudioDevices(platform) {
   onBeforeUnmount(() => {
     active = false
     window.clearTimeout(jobTimer)
+    window.clearTimeout(waitTimer)
     window.removeEventListener('focus', onVisible)
     document.removeEventListener('visibilitychange', onVisible)
   })
@@ -54,6 +68,8 @@ export function useAudioDevices(platform) {
     render: computed(() => state.value.render),
     capture: computed(() => state.value.capture),
     vb: computed(() => state.value.vb),
+    defaultOutput: computed(() => state.value.defaultOutput),
+    supported: computed(() => state.value.supported),
     loaded,
     failed,
     refresh,

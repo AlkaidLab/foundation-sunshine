@@ -11,7 +11,9 @@
 
 #include <atomic>
 #include <bitset>
+#include <functional>
 #include <memory>
+#include <mutex>
 namespace spatial_transport {
   struct LiveSession;
 }
@@ -102,7 +104,24 @@ namespace audio {
 
     bool restore_sink;
     platf::sink_t sink;
+
+    // The system has no default playback device: the stream goes on without sound and capture starts when one appears.
+    // Set while the context is built, cleared by wait_default_output(); `sink` is empty until then.
+    std::atomic_bool awaiting_default_output { false };
+    // A running capture lost its default device and waits for a new one (reported as `host_waiting` by GET /api/audio/devices).
+    std::atomic_bool capture_waiting_for_device { false };
+    // Guards `sink` against the capture thread that fills it in when the device appears.
+    mutable std::mutex sink_mutex;
   };
+
+  /**
+   * @brief Block until the system has a default playback device, then fill in the sink information.
+   * @param ctx The audio context; returns true at once when it is not waiting for a device.
+   * @param stop Returns true when the stream ended.
+   * @returns True when capture can start, false when the stream ended while waiting.
+   */
+  bool
+  wait_default_output(audio_ctx_t &ctx, const std::function<bool()> &stop);
 
   using buffer_t = util::buffer_t<std::uint8_t>;
   using packet_t = std::pair<void *, buffer_t>;

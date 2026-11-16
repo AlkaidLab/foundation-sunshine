@@ -9,7 +9,7 @@ const lower = (value) => text(value).toLowerCase()
 
 /** The answer of the host as lists; a missing or unsupported answer is an empty, unsupported one. */
 export function normalizeAudioDevices(payload) {
-  const empty = { supported: false, render: [], capture: [], vb: { installed: false, state: 'unknown', renderId: '', captureId: '', job: { action: '', step: '', running: false, errorCode: '', detail: '' } } }
+  const empty = { supported: false, render: [], capture: [], defaultOutput: { present: true, reason: '', hostWaiting: false }, vb: { installed: false, state: 'unknown', renderId: '', captureId: '', job: { action: '', step: '', running: false, errorCode: '', detail: '' } } }
   if (!payload || payload.success === false) return empty
   if (payload.supported === false) return { ...empty, vb: { ...empty.vb, state: 'unsupported' } }
   const list = (items) => (Array.isArray(items) ? items : []).map((d) => ({
@@ -22,6 +22,12 @@ export function normalizeAudioDevices(payload) {
     supported: true,
     render: list(payload.render),
     capture: list(payload.capture),
+    // an older host does not say: it counts as present, so no notice is shown on a guess
+    defaultOutput: {
+      present: payload.default_output?.present !== false,
+      reason: text(payload.default_output?.reason),
+      hostWaiting: payload.default_output?.host_waiting === true,
+    },
     vb: {
       installed: vb.installed === true, state: text(vb.state) || 'missing', renderId: text(vb.render_id), captureId: text(vb.capture_id),
       job: { action: text(vb.job?.action), step: text(vb.job?.step), running: vb.job?.running === true, errorCode: text(vb.job?.error_code), detail: text(vb.job?.detail) },
@@ -136,6 +142,19 @@ export function vbCableErrorKind(code) {
 
 /** The step of a running job as a key suffix (downloading, verifying, installing, enabling); '' when none is running. */
 export const vbCableRunningStep = (job) => (job?.running ? (['downloading', 'verifying', 'installing', 'enabling'].includes(job.step) ? job.step : 'downloading') : '')
+
+/**
+ * The notice for a computer with no default playback device (a server, a cloud machine, a VM: nothing plugged in or enabled), or null when
+ * there is nothing to say. The stream goes on without sound and starts to play by itself when a device appears, so this is a hint, not an error.
+ * `reason` is the key suffix of the text: `no_endpoint`, `none_active`, `no_default`, or `unknown` for a reason this page does not know.
+ * `ready`: the list was read (a page that is still loading or a failed read says nothing).
+ */
+export function noDefaultOutputNotice(state, ready = true) {
+  if (!ready || !state?.supported || state.defaultOutput?.present !== false) return null
+  const known = ['no_endpoint', 'none_active', 'no_default']
+  const reason = known.includes(state.defaultOutput.reason) ? state.defaultOutput.reason : 'unknown'
+  return { reason, hostWaiting: state.defaultOutput.hostWaiting === true }
+}
 
 /** The word of the VB-CABLE state the rows use; `ready` is the only state that needs no action. */
 export const vbCableReady = (vb) => vb?.state === 'ready'

@@ -60,6 +60,12 @@ Response (`version` 1):
 - `render` and `capture` list the endpoints that are active, disabled or unplugged;
   the default endpoint comes first, then the active ones by name. Endpoints Windows
   only remembers (state not present) are left out.
+- `default_output` says whether the system has a default playback device: `{"present": bool, "reason": "", "render_active": n, "host_waiting": bool}`.
+  `reason` is empty when a device is the default, otherwise `no_endpoint` (no playback device exists: a server, a cloud machine, a VM),
+  `none_active` (devices exist but all are disabled or unplugged) or `no_default` (active devices, none is the default).
+  `host_waiting` is true while a stream runs and its audio capture waits for a device: the stream goes on without sound and capture starts
+  by itself when a device appears (`IMMNotificationClient`: added, made active, or made the default; a poll covers a missed event).
+  The host writes one log line for the cause per audio session. Linux and macOS always answer `present: true`.
 - `state`: `active`, `disabled`, `unplugged`.
 - `form_factor` is the `EndpointFormFactor` of the endpoint as a word: `speakers`,
   `line_level`, `headphones`, `microphone`, `headset`, `handset`,
@@ -120,4 +126,4 @@ The routes use the same authentication as the other configuration APIs.
 Listed in docs/authority/source-index.tsv: `ms-mmdevice-api-20261112`,
 `ms-enumaudioendpoints-20261112`, `ms-getdefaultaudioendpoint-20261112`,
 `ms-endpointformfactor-20261112`, `ms-device-state-constants-20261112`,
-`ms-winverifytrust-20261112`, `ms-pnputil-command-syntax-20261112`, `ms-cm-get-devnode-status-20261112`, `ms-setupdigetclassdevsw-20261112`, `ms-device-manager-error-messages-20261112`.
+`ms-immnotificationclient-20261116`, `ms-ondefaultdevicechanged-20261116`, `ms-ondevicestatechanged-20261116`, `ms-registerendpointnotificationcallback-20261116`, `ms-winverifytrust-20261112`, `ms-pnputil-command-syntax-20261112`, `ms-cm-get-devnode-status-20261112`, `ms-setupdigetclassdevsw-20261112`, `ms-device-manager-error-messages-20261112`.

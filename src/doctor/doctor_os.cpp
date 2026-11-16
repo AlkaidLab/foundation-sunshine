@@ -269,12 +269,21 @@ namespace doctor::os {
         std::string default_id;
         {
           com_ptr_t<IMMDevice> device;
-          if (SUCCEEDED(enumerator->GetDefaultAudioEndpoint(eRender, eConsole, device.out()))) {
+          const HRESULT default_status = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, device.out());
+          if (SUCCEEDED(default_status)) {
             LPWSTR id = nullptr;
             if (SUCCEEDED(device->GetId(&id))) {
               default_id = utf8(id);
               CoTaskMemFree(id);
             }
+          }
+          else if (default_status == HRESULT_FROM_WIN32(ERROR_NOT_FOUND)) {
+            result.default_missing = true;  // E_NOTFOUND: no playback device is enabled
+          }
+          else {
+            // the audio service did not answer: that is a failed read, not a computer without a playback device
+            result.checked = false;
+            result.error = "GetDefaultAudioEndpoint";
           }
         }
         com_ptr_t<IMMDeviceCollection> collection;

@@ -6,7 +6,7 @@ import test, { after, before } from 'node:test'
 import { startHarness } from './helpers/editorHarness.js'
 import { FakeNode, findAll, textOf } from './helpers/fakeDom.js'
 import {
-  MANUAL_DEVICE, deviceName, findDevice, looksLikeEndpointId, normalizeAudioDevices, pickerOptions, pickerText, pickerValue, steamDriverState, usableDevices, vbCableErrorKind, vbCableReady, vbCableRunningStep,
+  MANUAL_DEVICE, deviceName, findDevice, looksLikeEndpointId, noDefaultOutputNotice, normalizeAudioDevices, pickerOptions, pickerText, pickerValue, steamDriverState, usableDevices, vbCableErrorKind, vbCableReady, vbCableRunningStep,
 } from '../utils/audioDevices.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -133,10 +133,12 @@ test('with no list (other systems, host not reached) the picker still offers aut
 let h
 let CfgDevice
 let VbCableRow
+let NoDefaultOutputNotice
 before(async () => {
   h = await startHarness()
   CfgDevice = (await h.load('/components/cfg/CfgDevice.vue')).default
   VbCableRow = (await h.load('/components/cfg/VbCableRow.vue')).default
+  NoDefaultOutputNotice = (await h.load('/components/cfg/NoDefaultOutputNotice.vue')).default
 })
 after(async () => {
   await h?.close()
@@ -402,4 +404,65 @@ test('the shell declares the device list before it hands it to the pages (a cons
   assert.ok(declared > 0 && used > 0, 'both are there')
   assert.ok(declared < used, 'declared before the provide that reads it')
   assert.ok(declared < shell.indexOf('audio: audioDevices.render', shell.indexOf('useSettingsList(')), 'and before the settings list')
+})
+
+// A computer with no playback device at all (a server, a cloud machine, a VM): the host says so, the page explains and keeps looking.
+const NO_DEVICE = { success: true, version: 1, supported: true, render: [], capture: [], default_output: { present: false, reason: 'no_endpoint', render_active: 0, host_waiting: true }, vb_cable: { installed: false, state: 'missing' } }
+
+test('no default playback device becomes a notice with its reason and whether a stream waits for a device', () => {
+  const state = normalizeAudioDevices(NO_DEVICE)
+  assert.deepEqual(state.defaultOutput, { present: false, reason: 'no_endpoint', hostWaiting: true })
+  assert.deepEqual(noDefaultOutputNotice(state), { reason: 'no_endpoint', hostWaiting: true })
+  const waiting = normalizeAudioDevices({ ...NO_DEVICE, default_output: { present: false, reason: 'none_active', host_waiting: false } })
+  assert.deepEqual(noDefaultOutputNotice(waiting), { reason: 'none_active', hostWaiting: false })
+  // a reason this page does not know still gets a plain sentence, not a missing text
+  assert.equal(noDefaultOutputNotice(normalizeAudioDevices({ ...NO_DEVICE, default_output: { present: false, reason: 'something_new' } })).reason, 'unknown')
+})
+
+test('the notice is silent while the list is loading, after a failed read, on another system, and when a device is the default', () => {
+  const state = normalizeAudioDevices(NO_DEVICE)
+  assert.equal(noDefaultOutputNotice(state, false), null)
+  assert.equal(noDefaultOutputNotice(normalizeAudioDevices(null)), null)
+  assert.equal(noDefaultOutputNotice(normalizeAudioDevices({ success: true, supported: false, render: [], capture: [] })), null)
+  assert.equal(noDefaultOutputNotice(normalizeAudioDevices(ANSWER)), null)
+  // an older host has no default_output: nothing is said on a guess
+  const older = { ...ANSWER }
+  delete older.default_output
+  assert.equal(noDefaultOutputNotice(normalizeAudioDevices(older)), null)
+  assert.equal(normalizeAudioDevices(older).defaultOutput.present, true)
+})
+
+test('the notice names VB-CABLE and Steam Streaming Speakers in every locale it is written for', () => {
+  const dir = new URL('../public/assets/locale/', import.meta.url)
+  for (const file of readdirSync(dir).filter((name) => name.endsWith('.json'))) {
+    const config = JSON.parse(readFileSync(new URL(file, dir), 'utf8')).config
+    for (const key of ['title', 'no_endpoint', 'none_active', 'no_default', 'unknown', 'how', 'waiting']) {
+      assert.ok(typeof config[`audio_no_default_${key}`] === 'string' && config[`audio_no_default_${key}`].length > 0, `${file}: audio_no_default_${key}`)
+    }
+    assert.match(config.audio_no_default_how, /VB-CABLE/, file)
+    assert.match(config.audio_no_default_how, /Steam Streaming Speakers/, file)
+  }
+})
+
+test('the notice on the audio page says why there is no sound, what to do, and offers the two virtual speakers', async () => {
+  const state = normalizeAudioDevices(NO_DEVICE)
+  const shown = await h.mount(NoDefaultOutputNotice, { state, loaded: true })
+  assert.match(shown.text(), /config\.audio_no_default_title/)
+  assert.match(shown.text(), /config\.audio_no_default_no_endpoint/)
+  assert.match(shown.text(), /config\.audio_no_default_how/)
+  assert.match(shown.text(), /config\.audio_no_default_waiting/, 'a running stream that waits for a device says so')
+  assert.equal(shown.buttons('VB-CABLE').length, 1)
+  assert.equal(shown.buttons('Steam Streaming Speakers').length, 1)
+  shown.unmount()
+  // the reason decides the sentence; a stream that is not running says nothing about waiting
+  const disabledOnly = await h.mount(NoDefaultOutputNotice, { state: normalizeAudioDevices({ ...NO_DEVICE, default_output: { present: false, reason: 'none_active', host_waiting: false } }), loaded: true })
+  assert.match(disabledOnly.text(), /config\.audio_no_default_none_active/)
+  assert.doesNotMatch(disabledOnly.text(), /config\.audio_no_default_waiting/)
+  disabledOnly.unmount()
+  // nothing is shown while the list loads, after a failed read, or when a device is the default
+  for (const props of [{ state, loaded: false }, { state, loaded: true, failed: true }, { state: normalizeAudioDevices(ANSWER), loaded: true }]) {
+    const quiet = await h.mount(NoDefaultOutputNotice, props)
+    assert.doesNotMatch(quiet.text(), /audio_no_default/)
+    quiet.unmount()
+  }
 })

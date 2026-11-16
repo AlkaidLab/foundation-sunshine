@@ -8,6 +8,7 @@ import { MBanner, MButton, MChip, MFooter, MGroup, MItem, MSection, MStatusPills
 import AvRoutes from './audiovideo/AvRoutes.vue'
 import CfgDevice from '../../components/cfg/CfgDevice.vue'
 import VbCableRow from '../../components/cfg/VbCableRow.vue'
+import NoDefaultOutputNotice from '../../components/cfg/NoDefaultOutputNotice.vue'
 import { useSettingsLive } from '../../composables/useSettingsLive.js'
 import { useAudioDevices } from '../../composables/useAudioDevices.js'
 import { steamDriverState, vbCableReady } from '../../utils/audioDevices.js'
@@ -205,6 +206,7 @@ onBeforeUnmount(() => {
   <CfgSub id="sound" :title="$t('shell.audio_output')">
     <MSection>
       <AvRoutes kind="audio" :config="config" :platform="platform" :session="live.sessions.value[0]" :perf="live.perf.value" :mic="micStatus" :devices="audio.render.value" :vb="audio.vb.value" />
+      <NoDefaultOutputNotice v-if="platform === 'windows'" :state="{ supported: audio.supported.value, defaultOutput: audio.defaultOutput.value }" :loaded="audio.loaded.value" :failed="audio.failed.value" />
       <MGroup>
         <CfgSwitch :config="config" k="stream_audio" :on="true" :off="false" def="true" />
         <CfgDevice v-if="platform === 'windows'" :config="config" k="audio_sink" tp :devices="audio.render.value" :vb="audio.vb.value" :placeholder="$tp('config.audio_sink_placeholder')" />
