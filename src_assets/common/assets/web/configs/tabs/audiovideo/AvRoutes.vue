@@ -51,12 +51,12 @@ const micState = computed(() => {
 const defaultDevice = computed(() => props.devices.find((d) => d.isDefault && d.state === 'active')?.name || '')
 // the system default named when no device is chosen; the device that takes the sound while a stream runs, by its name
 const audioDeviceText = computed(() => {
-  if (props.config.virtual_sink) return t('config.route_virtual', { name: deviceName(props.devices, props.config.virtual_sink) })
+  if (props.config.virtual_sink) return t('config.route_virtual', { name: deviceName(props.devices, props.config.virtual_sink, t('config.audio_device_unknown')) })
   return props.config.audio_sink ? '' : defaultDevice.value
 })
 const audio = computed(() => [
   { id: 'apps', icon: 'sports_esports', title: t('config.route_apps') },
-  { id: 'device', icon: 'speaker', title: props.config.audio_sink ? deviceName(props.devices, props.config.audio_sink) : t('config.route_device_default'), text: audioDeviceText.value },
+  { id: 'device', icon: 'speaker', title: props.config.audio_sink ? deviceName(props.devices, props.config.audio_sink, t('config.audio_device_unknown')) : t('config.route_device_default'), text: audioDeviceText.value },
   { id: 'stream', icon: 'graphic_eq', title: t('config.stream_audio'), state: on('stream_audio') ? 'on' : 'off' },
   { id: 'client', ...client.value },
 ])

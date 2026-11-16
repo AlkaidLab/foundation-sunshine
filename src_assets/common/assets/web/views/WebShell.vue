@@ -76,6 +76,7 @@ import WebDialogHost from '../components/layout/WebDialogHost.vue'
 import { registerPending } from '../composables/pendingSources.js'
 import ConfirmDialog from '../components/common/ConfirmDialog.vue'
 import { useLogout } from '../composables/useLogout.js'
+import { useAudioDevices } from '../composables/useAudioDevices.js'
 import { useShellLive } from '../composables/useShellLive.js'
 import { useUpdateStatus } from '../composables/useUpdateStatus.js'
 import { useComponentStatus } from '../composables/useComponentStatus.js'
@@ -374,7 +375,9 @@ const backPage = computed(() => {
   const page = PAGES[place.id]
   return (page ? pageLabel(page) : '') || railLabel(place.rail)
 })
-provide('webShell', { hideList, nav: jumpNav, openConfig: jumpConfig, pending, showMenu, openSetting: (key) => { const entry = settingsList.searchItems.value.find((e) => e.keyName === key); if (entry) onNavigate(entry) }, askLogout: () => { logoutAsk.value = true } })
+// the playback devices of the host: the audio row shows the chosen device by its name, the setting holds an id (another system answers `unsupported`)
+const audioDevices = useAudioDevices('windows')
+provide('webShell', { hideList, nav: jumpNav, openConfig: jumpConfig, audio: audioDevices.render, pending, showMenu, openSetting: (key) => { const entry = settingsList.searchItems.value.find((e) => e.keyName === key); if (entry) onNavigate(entry) }, askLogout: () => { logoutAsk.value = true } })
 
 // Second lines of the list rows from live host data
 const live = useShellLive()
@@ -421,7 +424,7 @@ const barItems = computed(() => {
 const barCurrent = computed(() => (nav.current.value === 'settings-hub' ? 'settings-hub' : BAR_GROUP[nav.rail.value] || 'overview'))
 const railLabel = (rail) => t(RAIL.find((r) => r.id === rail)?.label || 'navbar.home')
 // The settings list is the shared model (categories in groups, one live line each, recently used); every other rail is one group of pages
-const settingsList = useSettingsList({ locale: uiLocale, config: live.config, dualsenseKeys: live.dualsenseKeys, sources: { clients: computed(() => live.clients.value?.list), apps: live.apps, components: computed(() => componentStatus.rows.value), ds: live.ds, mic: live.mic } })
+const settingsList = useSettingsList({ locale: uiLocale, config: live.config, dualsenseKeys: live.dualsenseKeys, sources: { clients: computed(() => live.clients.value?.list), apps: live.apps, components: computed(() => componentStatus.rows.value), ds: live.ds, mic: live.mic, audio: audioDevices.render } })
 watchEffect(() => { hubLines.value = settingsList.lines.value })
 // the row ids of foundation-ui's rowLines for the pages of the list panes
 const ROW_OF_PAGE = { pin: 'clients', apps: 'apps', downloads: 'downloads', gamepad: 'gamepad', keyboard: 'keyboard', mouse: 'mouse', usb: 'usb', microphone: 'microphone', 'display-output': 'display-output', 'display-modes': 'display-modes', 'display-encoders': 'display-encoders', 'display-hdr': 'display-hdr', 'display-advanced': 'display-advanced', 'audio-output': 'audio-output', vdd: 'vdd', components: 'components', network: 'network', 'latency-clock': 'latency-clock', 'test-tools': 'test-tools', 'stream-timer': 'stream-timer', troubleshooting: 'diagnostics', about: 'help' }

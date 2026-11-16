@@ -33,6 +33,12 @@ export function normalizeAudioDevices(payload) {
 export const usableDevices = (list) => list.filter((d) => d.state === 'active')
 
 /**
+ * A MMDevice endpoint id such as {0.0.0.00000000}.{29dd7668-45b2-4846-882d-950f55bf7eb8}: what a setting stores for a chosen
+ * device. It identifies the device for the host and means nothing to a person, so it is never shown in place of a name.
+ */
+export const looksLikeEndpointId = (value) => /^\{[0-9a-f.]+\}\.\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}$/i.test(text(value).trim())
+
+/**
  * The device a stored value points at. The host matches the id, the friendly name, the description and the adapter
  * name (src/platform/windows/audio.cpp, match_all_fields), so a value typed by hand or written by an older version still finds its device.
  */
@@ -51,14 +57,26 @@ export function findDevice(list, value) {
   return null
 }
 
-/** The name of the device a stored value points at, or the value itself when the list does not know it ('' for automatic). */
-export const deviceName = (list, value) => findDevice(list, value)?.name || text(value)
+/**
+ * The name a person reads for a stored value: the device it points at, the value itself when someone typed a name the list does not
+ * know, and `unknown` for an endpoint id the list does not know (the device is gone): the id itself is never shown ('' for automatic).
+ */
+export function deviceName(list, value, unknown = 'Selected device') {
+  const stored = text(value).trim()
+  if (!stored) return ''
+  const hit = findDevice(list, stored)
+  if (hit) return hit.name
+  return looksLikeEndpointId(stored) ? unknown : stored
+}
 
 /**
- * The entries of a picker: automatic, every usable device, the stored value when no device matches it, and the entry for typing one.
- * `labels`: { auto, manual, missing, defaultTag, kinds: { vb_cable, ... }, defaultNow(name) }
+ * The entries of a picker: automatic, every usable device, the devices that cannot be used now with the reason, VB-CABLE when it is
+ * not usable, the stored value when no device matches it, and the entry for typing one.
+ * `labels`: { auto, manual, missing, unknown, defaultTag, kinds: { vb_cable, ... }, states: { disabled, unplugged }, vb: { missing, disabled, unavailable, partial }, defaultNow(name) }
+ * `vb`: the VB-CABLE summary of the host (normalizeAudioDevices().vb), optional.
+ * An entry that cannot be chosen now has `disabled: true` and the reason as its text.
  */
-export function pickerOptions(list, value, labels) {
+export function pickerOptions(list, value, labels, vb = null) {
   const usable = usableDevices(list)
   const current = usable.find((d) => d.isDefault)
   const options = [{ value: '', label: labels.auto, ...(current ? { text: labels.defaultNow(current.name) } : {}) }]
@@ -66,11 +84,15 @@ export function pickerOptions(list, value, labels) {
     const tags = [labels.kinds[device.virtual] || '', device.isDefault ? labels.defaultTag : ''].filter(Boolean)
     options.push({ value: device.id, label: device.name, ...(tags.length ? { text: tags.join(' · ') } : {}) })
   }
-  const stored = text(value).trim()
-  if (stored) {
-    const hit = findDevice(usable, stored)
-    if (!hit) options.push({ value: stored, label: stored, text: labels.missing })
+  for (const device of list.filter((d) => d.state !== 'active')) {
+    const tags = [labels.kinds[device.virtual] || '', labels.states?.[device.state] || device.state].filter(Boolean)
+    options.push({ value: device.id, label: device.name, text: tags.join(' · '), disabled: true })
   }
+  // VB-CABLE has no usable playback endpoint: say why instead of leaving it out
+  const vbMissing = vb && labels.vb?.[vb.state] && !list.some((d) => d.virtual === 'vb_cable')
+  if (vbMissing) options.push({ value: `unavailable:vb_cable`, label: labels.kinds.vb_cable || 'VB-CABLE', text: labels.vb[vb.state], disabled: true })
+  const stored = text(value).trim()
+  if (stored && !findDevice(list, stored)) options.push({ value: stored, label: looksLikeEndpointId(stored) ? labels.unknown || 'Selected device' : stored, text: labels.missing })
   options.push({ value: MANUAL_DEVICE, label: labels.manual })
   return options
 }
@@ -79,13 +101,23 @@ export function pickerOptions(list, value, labels) {
 export function pickerValue(list, value) {
   const stored = text(value).trim()
   if (!stored) return ''
-  return findDevice(usableDevices(list), stored)?.id || stored
+  return findDevice(usableDevices(list), stored)?.id || findDevice(list, stored)?.id || stored
 }
 
-/** What the row shows: the device name, or `auto` when nothing is stored. */
-export function pickerText(list, value, auto) {
+/** What the row shows: the device name, `auto` when nothing is stored, `unknown` for an id nothing matches. */
+export function pickerText(list, value, auto, unknown = 'Selected device') {
   const stored = text(value).trim()
-  return stored ? deviceName(list, stored) : auto
+  return stored ? deviceName(list, stored, unknown) : auto
+}
+
+/**
+ * Whether the Steam Streaming Speakers driver is installed, from the playback endpoints it adds: `ready` (an endpoint is active),
+ * `disabled` (the endpoint exists but is switched off or unplugged), `missing` (none).
+ */
+export function steamDriverState(list) {
+  const own = list.filter((d) => d.virtual === 'steam_streaming')
+  if (own.some((d) => d.state === 'active')) return 'ready'
+  return own.length ? 'disabled' : 'missing'
 }
 
 /**

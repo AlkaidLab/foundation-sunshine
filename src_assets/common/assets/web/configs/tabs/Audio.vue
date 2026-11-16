@@ -10,7 +10,7 @@ import CfgDevice from '../../components/cfg/CfgDevice.vue'
 import VbCableRow from '../../components/cfg/VbCableRow.vue'
 import { useSettingsLive } from '../../composables/useSettingsLive.js'
 import { useAudioDevices } from '../../composables/useAudioDevices.js'
-import { vbCableReady } from '../../utils/audioDevices.js'
+import { steamDriverState, vbCableReady } from '../../utils/audioDevices.js'
 import CfgChoice from '../../components/cfg/CfgChoice.vue'
 import CfgField from '../../components/cfg/CfgField.vue'
 import CfgSub from '../../components/cfg/CfgSub.vue'
@@ -36,6 +36,10 @@ let micStatusPending = false
 let micStatusActive = false
 let micStatusRetry = null
 let micLevelTimer
+
+// whether the Steam Streaming Speakers driver is there, read from the playback devices: the switch below is the setting "install it
+// when it is missing", this says what the host has now
+const steamDriver = computed(() => steamDriverState(audio.render.value))
 
 const microphoneBackend = computed(() => config.value.microphone_redirect_backend || 'auto')
 const showUsbipStatus = computed(() => ['usbip_experimental', 'auto'].includes(microphoneBackend.value))
@@ -200,12 +204,14 @@ onBeforeUnmount(() => {
       <AvRoutes kind="audio" :config="config" :platform="platform" :session="live.sessions.value[0]" :perf="live.perf.value" :mic="micStatus" :devices="audio.render.value" :vb="audio.vb.value" />
       <MGroup>
         <CfgSwitch :config="config" k="stream_audio" :on="true" :off="false" def="true" />
-        <CfgDevice v-if="platform === 'windows'" :config="config" k="audio_sink" tp :devices="audio.render.value" :placeholder="$tp('config.audio_sink_placeholder')" />
+        <CfgDevice v-if="platform === 'windows'" :config="config" k="audio_sink" tp :devices="audio.render.value" :vb="audio.vb.value" :placeholder="$tp('config.audio_sink_placeholder')" />
         <CfgField v-else :config="config" k="audio_sink" tp :placeholder="$tp('config.audio_sink_placeholder', 'alsa_output.pci-0000_09_00.3.analog-stereo')" />
         <template v-if="platform === 'windows'">
-          <CfgDevice :config="config" k="virtual_sink" :devices="audio.render.value" :placeholder="$t('config.virtual_sink_placeholder')" />
+          <CfgDevice :config="config" k="virtual_sink" :devices="audio.render.value" :vb="audio.vb.value" :placeholder="$t('config.virtual_sink_placeholder')" />
           <CfgSwitch :config="config" k="keep_sink_default" :on="true" :off="false" def="false" />
-          <CfgSwitch :config="config" k="install_steam_audio_drivers" def="enabled" />
+          <CfgSwitch :config="config" k="install_steam_audio_drivers" def="enabled">
+            <MChip v-if="audio.loaded.value && !audio.failed.value" data-steam-driver :data-steam-state="steamDriver" :tone="steamDriver === 'ready' ? 'ok' : 'warn'">{{ $t(`config.steam_driver_${steamDriver}`) }}</MChip>
+          </CfgSwitch>
           <VbCableRow v-if="audio.loaded.value && !vbCableReady(audio.vb.value)" :vb="audio.vb.value" :loaded="audio.loaded.value" @download="handleDownloadVSink" @open-devices="handleOpenDevices" @changed="audio.refresh" />
         </template>
       </MGroup>

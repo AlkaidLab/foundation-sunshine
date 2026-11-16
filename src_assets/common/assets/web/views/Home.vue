@@ -306,7 +306,7 @@ const catalogueInput = computed(() => {
     session: s ? { ...s, fpsMeasured: perf.value?.fps, latencyMs: perf.value?.avgMs, latencyP95Ms: perf.value?.p95Ms, uptimeMs: perf.value?.uptimeMs } : null,
     history: { samples: history.samples, sessions: history.sessions, days: history.days, last: () => history.last() },
     sys: sy ? { memTotal: sy.memory_total || 0, memAvail: sy.memory_available || 0 } : null,
-    config: hostConfig.value, logText: logs.value, logs: parseErrorLog(logs.value), clients: model.value.table?.tabs?.find((x) => x.id === 'clients') ? shellLive.clients.value.list.map((c) => ({ ...c, icon: deviceIconFor(c.name, c.os) })) : null, apps: apps.value,
+    config: hostConfig.value, audio: webShell?.audio?.value || null, logText: logs.value, logs: parseErrorLog(logs.value), clients: model.value.table?.tabs?.find((x) => x.id === 'clients') ? shellLive.clients.value.list.map((c) => ({ ...c, icon: deviceIconFor(c.name, c.os) })) : null, apps: apps.value,
     codecModes: hostConfig.value && hostConfig.value.hevc_mode !== undefined ? { hevc: hostConfig.value.hevc_mode, av1: hostConfig.value.av1_mode } : null,
     pads: padLabel.value ? { word: padLabel.value, text: ds4Hint.value ? `${padLabel.value} · ${t(ds4Hint.value.key)}` : padLabel.value } : null,
     display: live.hdr.value ? { hdr: !!live.hdr.value.hdrEnabled, hdrText: hdrState.value, nits: live.hdr.value.calibrated ? live.hdr.value.maxNits : null } : null,
