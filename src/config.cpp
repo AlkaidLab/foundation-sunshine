@@ -849,6 +849,9 @@ namespace config {
   string_restricted_f(std::unordered_map<std::string, std::string> &vars, const std::string &name, std::string &input, const std::vector<std::string_view> &allowed_vals) {
     std::string temp;
     string_f(vars, name, temp);
+    const auto begin = std::find_if_not(temp.begin(), temp.end(), whitespace);
+    const auto end = std::find_if_not(temp.rbegin(), temp.rend(), whitespace).base();
+    temp.assign(begin, end);
 
     for (auto &allowed_val : allowed_vals) {
       if (temp == allowed_val) {

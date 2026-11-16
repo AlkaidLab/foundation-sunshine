@@ -30,6 +30,7 @@
 #endif
 
 constexpr DWORD invalid_session_id = 0xFFFFFFFF;
+constexpr ULONGLONG session_reselect_delay_ms = 1000;
 
 SERVICE_STATUS_HANDLE service_status_handle;
 SERVICE_STATUS service_status;
@@ -188,8 +189,9 @@ FindActiveUserSessionId() {
 
     // If the physical console itself has an active user, keep preferring it.
     if (session.SessionId == console_session_id) {
+      const auto selected_session_id = session.SessionId;
       WTSFreeMemory(session_info);
-      return session.SessionId;
+      return selected_session_id;
     }
 
     LPWSTR protocol = nullptr;
@@ -651,13 +653,24 @@ RequestCoreClose(DWORD pid) {
 // are given a short, bounded time and then ended, so a fresh core never competes with them for the ports and the GPU.
 // Every handle in `cores` is closed, except the one returned.
 CoreProcess
-ResolveCores(std::vector<CoreProcess> &cores, HANDLE console_token, HANDLE log_file) {
+ResolveCores(std::vector<CoreProcess> &cores, DWORD expected_session_id, HANDLE log_file) {
   std::vector<sunshinesvc::core_state_t> states;
   for (const auto &core : cores) {
     states.push_back({ CoreEventSignaled(sunshinesvc::core_event_e::ready, core.process_id),
       CoreEventSignaled(sunshinesvc::core_event_e::stopping, core.process_id) });
   }
-  const auto plan = sunshinesvc::plan_cores(states);
+  auto plan = sunshinesvc::plan_cores(states);
+  for (std::size_t index = 0; index < cores.size(); ++index) {
+    if (plan.actions[index] != sunshinesvc::core_action_e::keep) {
+      continue;
+    }
+
+    DWORD core_session_id = invalid_session_id;
+    if (!ProcessIdToSessionId(cores[index].process_id, &core_session_id) ||
+        core_session_id != expected_session_id) {
+      plan.actions[index] = sunshinesvc::core_action_e::end;
+    }
+  }
 
   CoreProcess kept;
   for (std::size_t index = 0; index < cores.size(); ++index) {
@@ -1051,7 +1064,7 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
     bool core_adopted = false;
     ULONGLONG adopted_at_tick = 0;
     const auto found_cores = static_cast<int>(cores.size());
-    const auto adopted_core = ResolveCores(cores, console_token, log_file_handle);
+    const auto adopted_core = ResolveCores(cores, session_id, log_file_handle);
     if (sunshinesvc::core_start_decision(adopted_core.handle != NULL) == sunshinesvc::core_start_e::adopt) {
       if (found_cores > 1) {
         NoteLifecycle(sunshinesvc::lifecycle::extra_ended_line(sunshinesvc::lifecycle::unix_ms(), found_cores - 1));
@@ -1135,13 +1148,24 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
     // whether the service itself asked the core to end (service stop, change of the console session), and whether it was the session change
     bool exit_requested = false;
     bool exit_for_session_change = false;
+    bool session_reselect_pending = false;
+    ULONGLONG session_reselect_at_ms = 0;
     do {
       // Wait on the exact GUI process while it is managed. After a clean exit,
       // only a low-frequency lookup runs so externally launched replacements
       // can be reattached without allowing the service to revive the GUI.
       const HANDLE wait_objects[] = { stop_event, process_info.hProcess, session_change_event, gui_agent.handle };
       const DWORD wait_object_count = gui_agent.handle == NULL ? 3 : 4;
-      const DWORD wait_timeout = gui_agent.handle == NULL ? RetryWaitTimeout(gui_agent_retry_at_ms) : INFINITE;
+      DWORD wait_timeout = INFINITE;
+      if (gui_agent.handle == NULL) {
+        wait_timeout = RetryWaitTimeout(gui_agent_retry_at_ms);
+      }
+      if (session_reselect_pending) {
+        const auto reselect_timeout = RetryWaitTimeout(session_reselect_at_ms);
+        if (wait_timeout == INFINITE || reselect_timeout < wait_timeout) {
+          wait_timeout = reselect_timeout;
+        }
+      }
       const auto wait_result = WaitForMultipleObjects(wait_object_count, wait_objects, FALSE, wait_timeout);
       switch (wait_result) {
         case WAIT_TIMEOUT:
@@ -1150,6 +1174,12 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
           // lifecycle event instead of reviving the GUI during shutdown.
           if (WaitForSingleObject(stop_event, 0) == WAIT_OBJECT_0 ||
               WaitForSingleObject(process_info.hProcess, 0) == WAIT_OBJECT_0) {
+            still_running = true;
+            break;
+          }
+          if (session_reselect_pending) {
+            session_reselect_pending = false;
+            SetEvent(session_change_event);
             still_running = true;
             break;
           }
@@ -1170,9 +1200,18 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
           else {
             active_session_id = FindActiveUserSessionId();
           }
-          if (active_session_id == invalid_session_id || active_session_id == session_id) {
-            // The interactive user session did not change, or Windows is
-            // between session states. Let Sunshine keep running.
+          if (active_session_id == invalid_session_id) {
+            session_reselect_pending = true;
+            session_reselect_at_ms = GetTickCount64() + session_reselect_delay_ms;
+            // Windows is between session states. Keep the current core, but
+            // retry the selection after a bounded delay.
+            still_running = true;
+            continue;
+          }
+          session_reselect_pending = false;
+          if (active_session_id == session_id) {
+            // The interactive user session did not change. Let Sunshine keep
+            // running.
             still_running = true;
             continue;
           }

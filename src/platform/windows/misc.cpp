@@ -311,8 +311,9 @@ namespace platf {
 
       // If the physical console itself has an active user, keep preferring it.
       if (session.SessionId == console_session_id) {
+        const auto selected_session_id = session.SessionId;
         WTSFreeMemory(session_info);
-        return session.SessionId;
+        return selected_session_id;
       }
 
       LPWSTR protocol = nullptr;
