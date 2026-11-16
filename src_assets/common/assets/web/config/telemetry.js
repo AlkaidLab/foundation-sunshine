@@ -29,6 +29,8 @@ export const trackEvents = {
   configChanged: (section) => sender.feature(`web.config_saved.${String(section ?? '').slice(0, 20)}`),
   errorOccurred: (type, message) => sender.track.error(type, message),
   devicePaired: () => sender.feature('web.device_paired'),
+  // a step of the first-run guide: the guide's funnel (foundation-ui telemetry/guideEvents.js), usage kind
+  guideFunnel: (props) => sender.track.guideFunnel(props),
   // the version check and the GPU are known to the host, which reports its own version and GPU vendor with every batch
   versionChecked: () => {},
   gpuReported: () => {},

@@ -65,6 +65,22 @@ From dynamic HDR and display calibration to low-latency capture and hardware enc
 <sub>Web management UI · Overview</sub>
 </td>
 </tr>
+<tr>
+<td width="50%" align="center" valign="top">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/panel-guide-dark.webp">
+  <img src="../../assets/readme/panel-guide.webp" alt="Desktop control panel: first-run guide">
+</picture><br>
+<sub>Desktop control panel · First-run guide</sub>
+</td>
+<td width="50%" align="center" valign="top">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/web-clients-dark.webp">
+  <img src="../../assets/readme/web-clients.webp" alt="Web management UI: clients and pairing">
+</picture><br>
+<sub>Web management UI · Clients and pairing</sub>
+</td>
+</tr>
 </table>
 
 <p align="center"><a href="SCREENSHOTS.en.md">More screenshots →</a></p>

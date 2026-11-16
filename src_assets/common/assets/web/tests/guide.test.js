@@ -239,14 +239,23 @@ test('restoring the built-in apps reuses the apps page rules and saves once', as
   failing()
 })
 
-test('an upgrade shows the guide once per version of the host, with what is done left out', () => {
+test('an upgrade shows the guide once per version of the host: what is new, the update channel unless it was chosen, the done page', () => {
   const config = { setup_wizard_completed: true, version: '2.4.0' }
   const clients = { status: true, named_certs: [{ name: 'Pixel', uuid: '1' }] }
   const entry = decideGuideEntry({ config, clients, progress: null, version: '2.4.0' })
   assert.equal(entry.mode, 'upgrade')
-  assert.deepEqual(entry.skip, ['account', 'setup', 'hostdone', 'install', 'address', 'pair'])
-  // no client paired: the client steps stay
-  assert.deepEqual(decideGuideEntry({ config, clients: { status: true, named_certs: [] }, progress: null, version: '2.4.0' }).skip, ['account', 'setup'])
+  assert.deepEqual(entry.skip, ['account'])
+  // the host already notifies about pre-releases: the channel was chosen, the step is left out
+  assert.deepEqual(decideGuideEntry({ config: { ...config, notify_pre_releases: 'enabled' }, clients, progress: null, version: '2.4.0' }).skip, ['account', 'channel'])
+  // the mark a choice made in this browser leaves
+  const hadStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
+  globalThis.localStorage = { getItem: (k) => (k === 'foundation.update-channel.chosen' ? '1' : null), setItem() {} }
+  try {
+    assert.deepEqual(decideGuideEntry({ config, clients, progress: null, version: '2.4.0' }).skip, ['account', 'channel'])
+  } finally {
+    if (hadStorage) Object.defineProperty(globalThis, 'localStorage', hadStorage)
+    else delete globalThis.localStorage
+  }
   // seen for this version (closed, skipped or finished): not again; a newer version opens it again
   const seen = { finished: false, visited: ['whatsnew'], version: '2.4.0', mode: 'upgrade' }
   assert.equal(decideGuideEntry({ config, clients, progress: seen, version: '2.4.0' }), null)
@@ -333,4 +342,20 @@ test('the port check of the address step is the host 体检 (network group), ask
   assert.deepEqual(r.items.map((i) => i.id), ['network.ports'])
   assert.equal(r.worst, 'warn')
   assert.deepEqual(calls.map((c) => c.url), ['/api/doctor?only=network&lang=zh'])
+})
+
+test('the update channel of the guide is the host setting notify_pre_releases, saved like 关于 does, and counts as chosen afterwards', async () => {
+  const { channelOfConfig, channelChosen } = await import('../utils/updateChannel.js')
+  assert.equal(channelOfConfig({ notify_pre_releases: 'enabled' }), 'prerelease')
+  assert.equal(channelOfConfig({ notify_pre_releases: true }), 'prerelease')
+  assert.equal(channelOfConfig({ notify_pre_releases: 'disabled' }), 'stable')
+  assert.equal(channelOfConfig({}), 'stable'); assert.equal(channelOfConfig(null), 'stable')
+  const marks = new Map(); const storage = { getItem: (k) => marks.get(k) ?? null, setItem: (k, v) => marks.set(k, v) }
+  assert.equal(channelChosen({ notify_pre_releases: 'disabled' }, storage), false, 'the default is not a choice')
+  assert.equal(channelChosen({ notify_pre_releases: 'enabled' }, storage), true, 'pre-releases can only have been switched on')
+  storage.setItem('foundation.update-channel.chosen', '1')
+  assert.equal(channelChosen({ notify_pre_releases: 'disabled' }, storage), true, 'a choice of 稳定版 leaves its mark')
+  const guide = useGuide()
+  assert.equal(guide.state.channel.value, 'stable')
+  assert.equal(typeof guide.callbacks.loadChannel, 'function'); assert.equal(typeof guide.callbacks.setChannel, 'function'); assert.equal(typeof guide.callbacks.funnel, 'function')
 })

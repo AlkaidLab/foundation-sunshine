@@ -65,6 +65,22 @@ Foundation Sunshine 是基于 [Sunshine](https://github.com/LizardByte/Sunshine)
 <sub>网页管理界面 · 概览</sub>
 </td>
 </tr>
+<tr>
+<td width="50%" align="center" valign="top">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/panel-guide-dark.webp">
+  <img src="assets/readme/panel-guide.webp" width="380" alt="桌面控制面板：新手引导完成页">
+</picture><br>
+<sub>桌面控制面板 · 新手引导</sub>
+</td>
+<td width="50%" align="center" valign="top">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/readme/web-clients-dark.webp">
+  <img src="assets/readme/web-clients.webp" width="380" alt="网页管理界面：客户端与配对">
+</picture><br>
+<sub>网页管理界面 · 客户端与配对</sub>
+</td>
+</tr>
 </table>
 
 <p align="center"><a href="docs/readme/SCREENSHOTS.md">更多截图 →</a></p>
