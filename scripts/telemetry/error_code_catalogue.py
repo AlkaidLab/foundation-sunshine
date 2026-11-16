@@ -119,12 +119,14 @@ def _is_digit_separator(text: str, i: int) -> bool:
     if text[i] != "'" or i == 0 or text[i - 1] not in _ID_CHARS:
         return False
     k = i
-    while k > 0 and (text[k - 1] in _ID_CHARS or text[k - 1] == "'"):
+    # the dot of a floating literal (0x1.a'bp0, .5'0) belongs to the token:
+    # without it the quote after the fraction looks like a character literal
+    while k > 0 and (text[k - 1] in _ID_CHARS or text[k - 1] in "'."):
         k -= 1
     token = text[k:i]
     if token in ("u8", "u", "U", "L"):
         return False  # u8'a', L'a': a character literal with an encoding prefix
-    return token[:1].isdigit()
+    return token[:1].isdigit() or (token[:1] == "." and len(token) > 1 and token[1].isdigit())
 
 
 def _literal_end(text: str, i: int):

@@ -100,6 +100,11 @@ class Statements(unittest.TestCase):
             self.assertEqual(sorted(e["head"] for e in table.values()), ["real failure"])
             self.assertEqual(next(iter(table.values()))["sites"][0]["line"], 4)
 
+    def test_a_digit_separator_in_a_hex_float_is_not_a_character_literal(self):
+        table = self.scan_text("constexpr double x = 0x1.a'bp0; // BOOST_LOG(error) << \"Ignored\";\nvoid f() { BOOST_LOG(error) << \"Real failure\"; }\n")
+        self.assertEqual(list(table), [cat.error_code("Real failure")])
+        self.assertEqual(next(iter(table.values()))["sites"][0]["line"], 2)
+
     def test_raw_strings_hide_quotes_and_comment_markers(self):
         with tempfile.TemporaryDirectory() as d:
             with open(os.path.join(d, "a.cpp"), "w") as f:
