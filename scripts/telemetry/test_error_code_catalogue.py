@@ -76,6 +76,28 @@ class Statements(unittest.TestCase):
         table = self.scan_text('void f() { BOOST_LOG(error) << name << " failed"; }\n')
         self.assertEqual(list(table), ["e811c9dc5"])
 
+    def test_numeric_escapes_have_the_same_bytes_as_a_cpp_literal(self):
+        table = self.scan_text(
+            r'void f() { BOOST_LOG(error) << "Failed \x41" << " \101"; }\n'
+        )
+        code = cat.error_code("Failed A A")
+        self.assertEqual(list(table), [code])
+        self.assertEqual(table[code]["sites"][0]["text"], "Failed A A")
+
+    def test_comments_outside_literals_are_not_code_or_message_text(self):
+        table = self.scan_text(
+            r'''// BOOST_LOG(error) << "ignored";
+/* BOOST_LOG(fatal) << "ignored;"; */
+void f() {
+  BOOST_LOG(error) << "Failed // still text;" /* ; << "fake" */ // << "fake"
+                  << " retry";
+}
+'''
+        )
+        code = cat.error_code("Failed ")
+        self.assertEqual(list(table), [code])
+        self.assertEqual(table[code]["sites"][0]["text"], "Failed // still text; retry")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -85,30 +85,93 @@ def error_code(text: str) -> str:
     return "e%08x" % fnv1a(error_head_bytes(text))
 
 
+def _comment_end(text: str, start: int) -> int:
+    """Return the first character after the C++ comment at ``start``."""
+    if text.startswith("//", start):
+        end = text.find("\n", start + 2)
+        return len(text) if end < 0 else end
+    if text.startswith("/*", start):
+        end = text.find("*/", start + 2)
+        return len(text) if end < 0 else end + 2
+    return start
+
+
+def _skip_space_and_comments(text: str, start: int) -> int:
+    i = start
+    while i < len(text):
+        if text[i].isspace():
+            i += 1
+        elif text.startswith("//", i) or text.startswith("/*", i):
+            i = _comment_end(text, i)
+        else:
+            break
+    return i
+
+
+def _mask_comments(text: str) -> str:
+    """Replace C++ comments with spaces while preserving strings and line numbers."""
+    out = list(text)
+    i = 0
+    n = len(text)
+    while i < n:
+        if text[i] in "\"'":
+            quote = text[i]
+            i += 1
+            while i < n:
+                if text[i] == "\\":
+                    i += 2
+                elif text[i] == quote:
+                    i += 1
+                    break
+                else:
+                    i += 1
+        elif text.startswith("//", i):
+            end = _comment_end(text, i)
+            for j in range(i, end):
+                if text[j] != "\n":
+                    out[j] = " "
+            i = end
+        elif text.startswith("/*", i):
+            end = _comment_end(text, i)
+            for j in range(i, end):
+                if text[j] != "\n":
+                    out[j] = " "
+            i = end
+        else:
+            i += 1
+    return "".join(out)
+
+
 def statement_end(text: str, start: int) -> int:
-    """The index of the semicolon that ends the statement, skipping string and character literals (a `;` inside a message does not end it)."""
+    """The index of the semicolon that ends the statement, skipping literals and comments."""
     i = start
     n = len(text)
     while i < n:
-        c = text[i]
-        if c in "\"'":
-            quote = c
+        if text.startswith("//", i) or text.startswith("/*", i):
+            i = _comment_end(text, i)
+            continue
+        if text[i] in "\"'":
+            quote = text[i]
             i += 1
             while i < n and text[i] != quote:
                 i += 2 if text[i] == "\\" else 1
-        elif c == ";":
+        elif text[i] == ";":
             return i
         i += 1
     return n
 
 
 def split_pieces(statement: str):
-    """The operands of the `<<` chain (a `<<` inside a literal is not a separator)."""
+    """The operands of the `<<` chain, ignoring strings and C++ comments."""
     pieces, cur, i, n = [], [], 0, len(statement)
     while i < n:
-        c = statement[i]
-        if c in "\"'":
-            quote = c
+        if statement.startswith("//", i) or statement.startswith("/*", i):
+            end = _comment_end(statement, i)
+            cur.append("\n" if "\n" in statement[i:end] else " ")
+            i = end
+            continue
+        if statement[i] in "\"'":
+            quote = statement[i]
             j = i + 1
             while j < n and statement[j] != quote:
                 j += 2 if statement[j] == "\\" else 1
@@ -120,6 +183,7 @@ def split_pieces(statement: str):
             cur = []
             i += 2
             continue
+        c = statement[i]
         cur.append(c)
         i += 1
     pieces.append("".join(cur))
@@ -129,26 +193,118 @@ def split_pieces(statement: str):
 LITERAL = re.compile(r'\s*"((?:[^"\\]|\\.)*)"\s*(?:sv|s)?\s*')
 
 
+_SIMPLE_ESCAPES = {
+    "a": 0x07,
+    "b": 0x08,
+    "f": 0x0C,
+    "n": 0x0A,
+    "r": 0x0D,
+    "t": 0x09,
+    "v": 0x0B,
+    "\\": 0x5C,
+    "'": 0x27,
+    '"': 0x22,
+    "?": 0x3F,
+}
+
+
+def _decode_cpp_literal(raw: str) -> bytes:
+    """Decode an ordinary C++ string literal to the bytes used by a narrow literal."""
+    out = bytearray()
+    i = 0
+    while i < len(raw):
+        if raw[i] != "\\":
+            end = i + 1
+            while end < len(raw) and raw[end] != "\\":
+                end += 1
+            out.extend(raw[i:end].encode("utf-8"))
+            i = end
+            continue
+        i += 1
+        if i >= len(raw):
+            break
+        escaped = raw[i]
+        if escaped in _SIMPLE_ESCAPES:
+            out.append(_SIMPLE_ESCAPES[escaped])
+            i += 1
+        elif escaped in "01234567":
+            end = i + 1
+            while end < len(raw) and end < i + 3 and raw[end] in "01234567":
+                end += 1
+            out.append(int(raw[i:end], 8) & 0xFF)
+            i = end
+        elif escaped == "x":
+            end = i + 1
+            while end < len(raw) and raw[end] in "0123456789abcdefABCDEF":
+                end += 1
+            if end == i + 1:
+                out.extend(b"x")
+                i = end
+            else:
+                out.append(int(raw[i + 1:end], 16) & 0xFF)
+                i = end
+        else:
+            # Keep the historical behaviour for unsupported escapes.  GCC and
+            # Clang both use the escaped character for these diagnostics.
+            out.extend(escaped.encode("utf-8"))
+            i += 1
+    return bytes(out)
+
+
 def unescape(raw: str) -> str:
-    return re.sub(r"\\(.)", lambda m: {"n": "\n", "t": "\t"}.get(m.group(1), m.group(1)), raw)
+    """Decode an ordinary C++ string literal for callers that need text."""
+    return _decode_cpp_literal(raw).decode("utf-8", errors="replace")
+
+
+def _literal_at(text: str, start: int):
+    i = _skip_space_and_comments(text, start)
+    for prefix in ("u8", "u", "U", "L"):
+        if text.startswith(prefix, i):
+            i += len(prefix)
+            break
+    if i >= len(text) or text[i] != '"':
+        return None
+    j = i + 1
+    while j < len(text):
+        if text[j] == "\\":
+            j += 2
+        elif text[j] == '"':
+            break
+        else:
+            j += 1
+    if j >= len(text):
+        return None
+    value = _decode_cpp_literal(text[i + 1:j])
+    j += 1
+    suffix_start = _skip_space_and_comments(text, j)
+    for suffix in ("sv", "s"):
+        if text.startswith(suffix, suffix_start):
+            j = suffix_start + len(suffix)
+            break
+    return value, _skip_space_and_comments(text, j)
+
+
+def _leading_literal_bytes(statement: str) -> bytes:
+    """The literal bytes at the front of the `<<` chain."""
+    out = bytearray()
+    for piece in split_pieces(statement):
+        pos = 0
+        parts = bytearray()
+        while True:
+            parsed = _literal_at(piece, pos)
+            if parsed is None:
+                break
+            value, pos = parsed
+            parts.extend(value)
+        if not parts or _skip_space_and_comments(piece, pos) != len(piece):
+            break
+        out.extend(parts)
+    return bytes(out)
 
 
 def leading_literals(statement: str) -> str:
     """The text the message starts with: the string literals at the front of the `<<` chain, adjacent literals ("a" "b") joined, up to the first operand that is not a literal."""
-    out = []
-    for piece in split_pieces(statement):
-        pos, parts = 0, []
-        while pos < len(piece):
-            m = LITERAL.match(piece, pos)
-            if not m:
-                break
-            parts.append(unescape(m.group(1)))
-            pos = m.end()
-        if parts and pos == len(piece):
-            out.append("".join(parts))
-        else:
-            break
-    return "".join(out)
+    return _leading_literal_bytes(statement).decode("utf-8", errors="replace")
 
 
 def scan(root: str):
@@ -161,12 +317,12 @@ def scan(root: str):
             path = os.path.join(dirpath, name)
             with open(path, errors="ignore") as handle:
                 text = handle.read()
-            for m in LOG_START.finditer(text):
-                message = leading_literals(text[m.end():statement_end(text, m.end())])
+            for m in LOG_START.finditer(_mask_comments(text)):
                 line = text.count("\n", 0, m.start()) + 1
-                code = error_code(message)
-                entry = table.setdefault(code, {"head": error_head(message), "sites": []})
-                entry["sites"].append({"file": os.path.relpath(path, root).replace(os.sep, "/"), "line": line, "level": m.group(1), "text": message[:120]})
+                message_bytes = _leading_literal_bytes(text[m.end():statement_end(text, m.end())])
+                code = error_code(message_bytes)
+                entry = table.setdefault(code, {"head": error_head(message_bytes), "sites": []})
+                entry["sites"].append({"file": os.path.relpath(path, root).replace(os.sep, "/"), "line": line, "level": m.group(1), "text": message_bytes[:120].decode("utf-8", errors="replace")})
     return table
 
 
