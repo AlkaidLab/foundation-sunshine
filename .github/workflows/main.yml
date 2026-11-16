@@ -1336,7 +1336,7 @@ jobs:
           # compresses independent entries in parallel (CMake Archive docs,
           # read 2026-11-16: cmake-cpack-archive-20261116).
           portable_start=$(date +%s.%N)
-          python3 scripts/ci/make-portable-zip.py --source ./inno_staging --output ./cpack_artifacts/Sunshine.zip --prefix Sunshine
+          python3 ../scripts/ci/make-portable-zip.py --source ./inno_staging --output ./cpack_artifacts/Sunshine.zip --prefix Sunshine
           portable_end=$(date +%s.%N)
           portable_seconds=$(python3 -c "print(f'{float(\"$portable_end\") - float(\"$portable_start\"):.3f}')")
           portable_bytes=$(stat -c %s ./cpack_artifacts/Sunshine.zip)
