@@ -84,6 +84,10 @@ class Statements(unittest.TestCase):
         self.assertEqual(list(table), [code])
         self.assertEqual(table[code]["sites"][0]["text"], "Failed A A")
 
+    def test_numeric_escapes_preserve_utf8_bytes(self):
+        table = self.scan_text(r'void f() { BOOST_LOG(error) << "Prefix \xe4\xb8\xad"; }\n')
+        self.assertEqual(list(table), [cat.error_code("Prefix 中")])
+
     def test_comments_outside_literals_are_not_code_or_message_text(self):
         table = self.scan_text(
             r'''// BOOST_LOG(error) << "ignored";
