@@ -102,6 +102,12 @@ namespace confighttp::pair_link {
       }
       if (address.is_unspecified() || address.is_loopback() || address.is_multicast()) return {};
       if (address.is_v4() && (address.to_v4().to_bytes()[0] == 0 || address.to_v4() == ip::address_v4::broadcast())) return {};
+      // 198.18.0.0/15 is the benchmarking range (RFC 2544). A proxy tool's TUN (Mihomo, Clash) puts its fake-IP gateway there and takes the default route:
+      // no client on the network can be reached through it, so it is neither a LAN nor a global address.
+      if (address.is_v4()) {
+        const auto bytes = address.to_v4().to_bytes();
+        if (bytes[0] == 198 && (bytes[1] == 18 || bytes[1] == 19)) return {};
+      }
       if (address.is_v6() && address.to_v6().is_link_local()) return {};
 
       const auto rank = lan_rank(address);
@@ -174,8 +180,10 @@ namespace confighttp::pair_link {
       return target;
     }
 
+    // The address of the default route is the best guess when it is a LAN address. A route that leaves through a tunnel or a public address says nothing about the
+    // network a client sits in: a LAN address of one of the adapters comes first, and the route is only the answer when there is none.
     const auto route = examine(request.default_route_address, false);
-    if (route.reach == reach_e::lan || route.reach == reach_e::global) {
+    if (route.reach == reach_e::lan) {
       target.host = route.text;
       return target;
     }
@@ -183,6 +191,11 @@ namespace confighttp::pair_link {
     const auto lan = best_lan(request.interface_addresses);
     if (lan.reach == reach_e::lan) {
       target.host = lan.text;
+      return target;
+    }
+
+    if (route.reach == reach_e::global) {
+      target.host = route.text;
       return target;
     }
 
