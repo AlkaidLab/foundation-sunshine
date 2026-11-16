@@ -204,6 +204,14 @@ frame-rate unlock works the same. `GET /api/sparxie/status` reports whether the 
 a build without that file (preview.9 and older) has none and `touchUiSwitch` is `false`. The launcher checks the Broker as well: it sends `touch_ui_enabled` in every `StartSession`,
 and when the profile says `false` while the Broker's `Ping` lists no `touch-ui-switch` it refuses to start (exit code 11, logged), because an older Broker would ignore the field and start the touch interface.
 
+The launcher tells a Broker that lists no features apart from one that lists them and leaves one out. It reads the build's features in this order and logs which source it used (`capabilities: ... (reported by the Broker | from capabilities.json of the install | read from the installed files, the Broker reports none)`):
+
+1. the `Ping` list, when it is not empty: exact, a feature it leaves out is really missing;
+2. `capabilities.json` beside `Sparxie.Broker.exe`, for builds whose Broker predates the `Ping` list (an empty list there also means no features);
+3. the installed files: `endfield` when both `EndfieldCore.dll` and `EndfieldRuntime.dll` ship, `touch-ui-switch` and `screen-args` when `Sparxie.Contracts.dll` carries the protocol types `TouchUiEnabled` and `ScreenArgs`.
+
+A feature found by none of these is missing, and the refusals above apply to it.
+
 * `touchUiSwitch: true`: a `kbm` application keeps `mode: "touch"` (the launcher, Sparxie's settings) and its profile says `touchUiEnabled: false`.
 * `touchUiSwitch: false` with Sparxie installed: a `kbm` application is created (and saved) with `mode: "pc"`, the game started directly; Sparxie's settings do not apply to it, and the page says so.
   Saving it again after a newer Sparxie is installed makes it a Sparxie application. Without the component at all the mode is whatever the caller sent.

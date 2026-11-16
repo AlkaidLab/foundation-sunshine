@@ -251,6 +251,30 @@ internal static class Launcher
         return result;
     }
 
+    /// <summary>
+    /// What the profile asks for against what the installed Sparxie supports. A reason is returned when the session must not start;
+    /// the screen arguments are dropped (with a warning) when they cannot be carried.
+    /// </summary>
+    internal static string? CheckSupport(ref Profile profile, BrokerCapabilities capabilities, Action<string> warn)
+    {
+        // A session without the touch interface needs a Broker that knows the field; an older one would start the touch interface anyway.
+        if (profile.Hoyo is { TouchUi: false } && !capabilities.Has(PingInfo.TouchUiSwitch))
+            return "this profile asks for a session without the touch interface, but the installed Sparxie does not support that (no touch-ui-switch capability)";
+
+        // the screen arguments need a Broker that carries them; an older one would drop them silently, so the log says so and the registry stays the only lever
+        if (profile.Screen is { IsEmpty: false } && !capabilities.Has(PingInfo.ScreenArgsCapability))
+        {
+            warn("the installed Sparxie has no screen-args capability: the game starts without screen arguments (the host's registry write still applies)");
+            profile = profile with { Screen = null };
+        }
+
+        // an Endfield session needs a Broker that knows the title; an older one would refuse it or start something else
+        if (profile.Game == "endfield" && !capabilities.Has(PingInfo.Endfield))
+            return "this profile is an Endfield session, but the installed Sparxie does not support that (no endfield capability)";
+
+        return null;
+    }
+
     private static async Task<AttemptResult> RunSessionAsync(Profile profile, string brokerPath, JobGuard? job, bool elevated, RunLog log, CancellationTokenSource stop,
         Action<Process> setBroker, Action<EventStream> setEvents, Action<BrokerRpc> setRpc)
     {
@@ -295,20 +319,12 @@ internal static class Launcher
             await Task.Delay(250).ConfigureAwait(false);
         }
 
-        // A session without the touch interface needs a Broker that knows the field; an older one would start the touch interface anyway.
-        if (profile.Hoyo is { TouchUi: false } && !(pong?.Has(PingInfo.TouchUiSwitch) ?? false))
-            return Not(ExitCodes.Unsupported, "this profile asks for a session without the touch interface, but the installed Sparxie does not support that (its Broker lists no touch-ui-switch capability)");
-
-        // the screen arguments need a Broker that lists the capability; an older one would drop them silently, so the log says so and the registry stays the only lever
-        if (profile.Screen is { IsEmpty: false } && !(pong?.Has(PingInfo.ScreenArgsCapability) ?? false))
-        {
-            log.Warn("the installed Sparxie lists no screen-args capability: the game starts without screen arguments (the host's registry write still applies)");
-            profile = profile with { Screen = null };
-        }
-
-        // an Endfield session needs a Broker that knows the title; an older one would refuse it or start something else
-        if (profile.Game == "endfield" && !(pong?.Has(PingInfo.Endfield) ?? false))
-            return Not(ExitCodes.Unsupported, "this profile is an Endfield session, but the installed Sparxie does not support that (its Broker lists no endfield capability)");
+        // What the installed Sparxie supports: the Broker's own list, else the install's capabilities.json, else the installed files.
+        // A Broker that lists nothing is an older build, not one that lacks every feature.
+        var capabilities = BrokerCapabilities.Resolve(pong, Path.GetFullPath(brokerPath));
+        log.Info($"capabilities: {capabilities}");
+        var refusal = CheckSupport(ref profile, capabilities, log.Warn);
+        if (refusal is not null) return Not(ExitCodes.Unsupported, refusal);
 
         // the event stream first, then the session
         var events = rpc.OpenEvents(stop.Token);
