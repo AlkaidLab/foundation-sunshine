@@ -1557,7 +1557,8 @@
       "ready": "Ready",
       "unsupported": "Not supported",
       "waiting_hdr": "Waiting for HDR",
-      "waiting_vdd": "Waiting for display"
+      "waiting_vdd": "Waiting for display",
+      "waiting_stream": "En attente d’un flux"
     },
     "last": "last",
     "links_title": "Resources and community",

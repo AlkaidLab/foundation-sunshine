@@ -1555,7 +1555,8 @@
       "ready": "就緒",
       "unsupported": "不支援",
       "waiting_hdr": "等待 HDR",
-      "waiting_vdd": "等待顯示器"
+      "waiting_vdd": "等待顯示器",
+      "waiting_stream": "等待串流"
     },
     "last": "最近",
     "links_title": "資源與社群",

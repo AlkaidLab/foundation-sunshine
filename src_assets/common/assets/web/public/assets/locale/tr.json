@@ -1557,7 +1557,8 @@
       "ready": "Hazır",
       "unsupported": "Desteklenmiyor",
       "waiting_hdr": "HDR bekleniyor",
-      "waiting_vdd": "Ekran bekleniyor"
+      "waiting_vdd": "Ekran bekleniyor",
+      "waiting_stream": "Akış bekleniyor"
     },
     "last": "son",
     "links_title": "Kaynaklar ve topluluk",
