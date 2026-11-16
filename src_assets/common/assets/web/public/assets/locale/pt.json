@@ -1612,8 +1612,8 @@
       "ready": "Pronto",
       "unsupported": "Não suportado",
       "waiting_hdr": "À espera de HDR",
-      "waiting_vdd": "À espera do ecrã",
-      "waiting_stream": "A aguardar uma transmissão"
+      "waiting_stream": "A aguardar uma transmissão",
+      "waiting_vdd": "À espera do ecrã"
     },
     "last": "última",
     "links_title": "Recursos e comunidade",

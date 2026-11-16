@@ -1612,8 +1612,8 @@
       "ready": "Redo",
       "unsupported": "Stöds inte",
       "waiting_hdr": "Väntar på HDR",
-      "waiting_vdd": "Väntar på bildskärm",
-      "waiting_stream": "Väntar på en stream"
+      "waiting_stream": "Väntar på en stream",
+      "waiting_vdd": "Väntar på bildskärm"
     },
     "last": "senaste",
     "links_title": "Resurser och community",

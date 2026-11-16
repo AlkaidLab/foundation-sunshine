@@ -1612,8 +1612,8 @@
       "ready": "Готово",
       "unsupported": "Не се поддържа",
       "waiting_hdr": "Изчакване на HDR",
-      "waiting_vdd": "Изчакване на дисплей",
-      "waiting_stream": "Изчакване на поток"
+      "waiting_stream": "Изчакване на поток",
+      "waiting_vdd": "Изчакване на дисплей"
     },
     "last": "последен",
     "links_title": "Ресурси и общност",

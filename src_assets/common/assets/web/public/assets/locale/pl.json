@@ -1612,8 +1612,8 @@
       "ready": "Gotowe",
       "unsupported": "Nieobsługiwane",
       "waiting_hdr": "Oczekiwanie na HDR",
-      "waiting_vdd": "Oczekiwanie na wyświetlacz",
-      "waiting_stream": "Oczekiwanie na transmisję"
+      "waiting_stream": "Oczekiwanie na transmisję",
+      "waiting_vdd": "Oczekiwanie na wyświetlacz"
     },
     "last": "ostatni",
     "links_title": "Zasoby i społeczność",

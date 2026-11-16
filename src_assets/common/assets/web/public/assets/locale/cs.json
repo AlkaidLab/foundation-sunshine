@@ -1612,8 +1612,8 @@
       "ready": "Připraveno",
       "unsupported": "Nepodporováno",
       "waiting_hdr": "Čeká se na HDR",
-      "waiting_vdd": "Čeká se na displej",
-      "waiting_stream": "Čekání na stream"
+      "waiting_stream": "Čekání na stream",
+      "waiting_vdd": "Čeká se na displej"
     },
     "last": "poslední",
     "links_title": "Zdroje a komunita",
