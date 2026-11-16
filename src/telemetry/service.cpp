@@ -1526,7 +1526,8 @@ namespace telemetry {
         }
       }
       std::lock_guard lock { opt_out_mutex_ };
-      const auto same = [](const opt_out::record_t &a, const opt_out::record_t &b) { return a.t == b.t && a.choice == b.choice && a.product == b.product && a.install_id == b.install_id; };
+      // the record's own random id, not t: a wall-clock jump can give a later record the same t
+      const auto same = [](const opt_out::record_t &a, const opt_out::record_t &b) { return a.id == b.id; };
       opt_outs_.erase(std::remove_if(opt_outs_.begin(), opt_outs_.end(), [&](const auto &r) { return std::any_of(done_or_dropped.begin(), done_or_dropped.end(), [&](const auto &d) { return same(r, d); }); }), opt_outs_.end());
       for (auto &r : opt_outs_)
         for (const auto &f : failed_now)

@@ -2984,6 +2984,36 @@ TEST(OptOut, ARecordIsRetriedWithGrowingGapsAndGivenUpOnAfterTwoWeeks) {
   EXPECT_TRUE(parse("{\"v\":1,\"choice\":\"all\",\"product\":\"host\",\"version\":\"1\",\"install_id\":\"" + OPT_OUT_ID + "\",\"t\":1,\"next\":1,\"tries\":0}\nnot json\n").empty());
 }
 
+TEST(OptOut, RecordIdsAreRandomAndSurviveTheFile) {
+  using namespace telemetry::opt_out;
+  std::vector<record_t> records;
+  add(records, { "usage", "errors" }, { { "host", "1" }, { "panel", "2" } }, OPT_OUT_ID, 9'000);
+  ASSERT_EQ(records.size(), 4u);
+  std::set<std::uint64_t> ids;
+  for (const auto &r : records) {
+    EXPECT_NE(r.id, 0u);
+    ids.insert(r.id);
+  }
+  EXPECT_EQ(ids.size(), 4u);
+  // a wall-clock jump can give two records the same t; the ids still tell them apart
+  EXPECT_EQ(records[0].t, records[1].t);
+  EXPECT_NE(records[0].id, records[1].id);
+  const auto back = parse(serialize(records));
+  ASSERT_EQ(back.size(), 4u);
+  for (std::size_t i = 0; i < records.size(); ++i) EXPECT_EQ(back[i].id, records[i].id);
+}
+
+TEST(OptOut, ARecordWrittenBeforeTheIdExistedGetsOneAndKeepsIt) {
+  using namespace telemetry::opt_out;
+  const std::string old = "{\"v\":1,\"choice\":\"usage\",\"product\":\"host\",\"version\":\"1\",\"install_id\":\"" + OPT_OUT_ID + "\",\"t\":1800000000000,\"next\":1800000000000,\"tries\":0}\n";
+  auto records = parse(old);
+  ASSERT_EQ(records.size(), 1u);
+  EXPECT_NE(records[0].id, 0u);
+  const auto again = parse(serialize(records));
+  ASSERT_EQ(again.size(), 1u);
+  EXPECT_EQ(again[0].id, records[0].id);
+}
+
 TEST(OptOutService, TurningAChoiceOffSendsOneRecordAndNothingAfterIt) {
   harness_t h;
   h.consent = consent_t { true, true };
@@ -3144,6 +3174,46 @@ TEST(OptOutService, AnOfflineRecordWaitsAndAFirstRunWithTheChoiceOffSendsNothing
   fresh.svc->reconcile_consent();
   fresh.svc->pump();
   EXPECT_TRUE(fresh.posted.empty());
+}
+
+TEST(OptOutService, RecordsWithTheSameTAreMatchedToTheirOwnSendResult) {
+  temp_dir_t dir;
+  const std::int64_t t0 = 1'800'000'000'000;
+  const auto pending = dir.path / "opt_out_pending.jsonl";
+  {
+    std::ofstream out(pending);
+    out << json { { "v", 1 }, { "id", 11 }, { "choice", "usage" }, { "product", "host" }, { "version", "1" }, { "install_id", OPT_OUT_ID }, { "t", t0 }, { "next", t0 }, { "tries", 0 } }.dump() << "\n";
+    out << json { { "v", 1 }, { "id", 22 }, { "choice", "usage" }, { "product", "host" }, { "version", "1" }, { "install_id", OPT_OUT_ID }, { "t", t0 }, { "next", t0 + 24 * 3600 * 1000 }, { "tries", 0 } }.dump() << "\n";
+  }
+  std::int64_t now = t0;
+  std::vector<json> posted;
+  service_deps_t deps;
+  deps.now_ms = [&] { return now; };
+  deps.consent = [] { return consent_t { true, true }; };
+  deps.post = [&](const std::string &, const std::string &body) {
+    posted.push_back(json::parse(body));
+    return post_result_t { 200 };
+  };
+  service_options_t options;
+  options.dir = dir.path;
+  service_t svc(options, deps);
+  context_t c;
+  c.version = "5.2.0.1.杂鱼";
+  svc.set_context(c);
+  svc.pump();
+  ASSERT_EQ(posted.size(), 1u);  // only the record that was due
+  {
+    std::ifstream in(pending);
+    std::string line;
+    ASSERT_TRUE(std::getline(in, line));
+    const auto left = telemetry::opt_out::parse(line);
+    ASSERT_EQ(left.size(), 1u);
+    EXPECT_EQ(left[0].id, 22u);  // the sent record went; its twin with the same t did not
+  }
+  now += 24 * 3600 * 1000;
+  svc.pump();
+  ASSERT_EQ(posted.size(), 2u);
+  EXPECT_EQ(std::filesystem::file_size(pending), 0u);
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

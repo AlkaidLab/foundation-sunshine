@@ -40,6 +40,7 @@ namespace telemetry::opt_out {
     std::int64_t t = 0;  ///< when it was turned off (ms since the epoch)
     std::int64_t next_try_ms = 0;
     int tries = 0;
+    std::uint64_t id = 0;  ///< random, never reused: a send result is matched to its record by this, even when t repeats after a clock jump
   };
 
   /** What the host remembers of the two choices between starts: a turn-off is what changed since the last time it looked. */
