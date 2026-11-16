@@ -5,11 +5,6 @@ include_guard(GLOBAL)
 add_library(sunshine_tls INTERFACE)
 add_library(sunshine::tls ALIAS sunshine_tls)
 target_link_libraries(sunshine_tls INTERFACE OpenSSL::SSL OpenSSL::Crypto)
-if(WIN32 AND TARGET OpenSSL::Crypto)
-    # The static libcrypto of OpenSSL 4 takes random bytes from BCryptGenRandom (bcrypt; OpenSSL 3 used advapi32) and certificates from crypt32. They belong behind the
-    # library on every link line that uses it, tests that link OpenSSL::Crypto directly included, not only where sunshine_boost_separate happens to come after it.
-    set_property(TARGET OpenSSL::Crypto APPEND PROPERTY INTERFACE_LINK_LIBRARIES bcrypt crypt32)
-endif()
 
 add_library(sunshine_curl INTERFACE)
 add_library(sunshine::curl ALIAS sunshine_curl)

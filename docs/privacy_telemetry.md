@@ -16,7 +16,7 @@ When the host crashes, or when you send feedback from the Web UI or the control 
 
 One exception to "off means nothing is sent": a feedback report you write and send yourself, and its log, go out whatever the error-reports switch says. Pressing Send is your consent for that one report; the automatic error records and crash reports still follow the switch.
 
-Both are on by default; the first run says so once and asks nothing. Turn them off in the control panel or the Web UI under **About › Privacy**, or by setting the key in `sunshine.conf`. The host applies the choice at once: the events of an off kind that were waiting (in memory and on disk) are deleted, and nothing of that kind is kept or sent afterwards. When both are off the install ID is deleted as well and nothing identifies this install.
+Both are on by default; the first run says so once and asks nothing. Turn them off in the control panel or the Web UI under **About › Privacy**, or by setting the key in `sunshine.conf`. The host applies the choice at once: the events of an off kind that were waiting (in memory and on disk) are deleted, and nothing of that kind is kept or sent afterwards. A feedback report that was sent on purpose and is still waiting is not deleted: it is the person's own and goes out when it can, with the identity it was built with. When both are off the install ID is deleted as well and nothing identifies this install.
 A person who answered *off* to the earlier single question keeps *off* for error reports until they turn it on.
 
 ## When you turn a choice off

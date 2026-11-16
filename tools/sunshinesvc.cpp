@@ -17,9 +17,9 @@
 #include <string>
 #include <vector>
 
-#include "sunshinesvc_log.h"
 #include "src/crash/crash.h"
 #include "sunshinesvc_lifecycle.h"
+#include "sunshinesvc_log.h"
 #include "sunshinesvc_state.h"
 
 // PROC_THREAD_ATTRIBUTE_JOB_LIST is currently missing from MinGW headers
@@ -1093,10 +1093,12 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
           core_adopted ? static_cast<long long>(GetTickCount64() - adopted_at_tick) : -1,
           exit_requested || ended_with == ERROR_SHUTDOWN_IN_PROGRESS, core_restart, core_restart ? restart_word : std::string {}));  // ERROR_SHUTDOWN_IN_PROGRESS: the core asked the service to stop (quit from the tray, the Panel)
         const bool asked_for_exit = exit_requested || exit_for_session_change || ended_with == ERROR_SHUTDOWN_IN_PROGRESS || core_restart;
-        if (const auto wait_ms = core_restart_backoff.next_delay(static_cast<std::uint64_t>(ProcessLifeMs(process_info.hProcess)), asked_for_exit); wait_ms > 0) {
+        const auto restart_wait = sunshinesvc::core_restart_wait(core_restart_backoff, static_cast<std::uint64_t>(ProcessLifeMs(process_info.hProcess)), asked_for_exit, GetTickCount64());
+        // the deadline moves for every end of a core, a zero wait included: the deadline of earlier failures never holds back the start that follows an adopted or asked-for end
+        core_restart_not_before_tick = restart_wait.not_before_tick;
+        if (restart_wait.delay_ms > 0) {
           WriteServiceLog(log_file_handle,
-            "Sunshine.exe ended with code " + std::to_string(ended_with) + " shortly after it started; starting it again in " + std::to_string(wait_ms) + " ms");
-          core_restart_not_before_tick = GetTickCount64() + wait_ms;
+            "Sunshine.exe ended with code " + std::to_string(ended_with) + " shortly after it started; starting it again in " + std::to_string(restart_wait.delay_ms) + " ms");
         }
       }
       next_core_cause = exit_for_session_change ? "session_change" : "core_exit";
@@ -1166,9 +1168,9 @@ main(int argc, char *argv[]) {
   // A crash of the service wrapper itself leaves a report next to the host's own (the host uploads it; this process has no uploader)
   {
     crash::options_t crash_options;
-  #ifdef SUNSHINESVC_VERSION
+#ifdef SUNSHINESVC_VERSION
     crash_options.version = SUNSHINESVC_VERSION;
-  #endif
+#endif
     crash_options.os_version = "Windows";
     crash_options.config_dir = std::filesystem::path(module_path) / L"config";
     crash::install(crash_options);

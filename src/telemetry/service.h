@@ -106,6 +106,8 @@ namespace telemetry {
     std::function<std::optional<std::string>(const std::string &endpoint, const std::string &install_id, const std::string &version, const std::string &image)> session_shot;
     /** The fixed word that says why the latest session_shot call gave no reference (crash::session_shot_state()); null in tests that do not need it. */
     std::function<std::string()> session_shot_state;
+    /** Runs inside flush() before each batch write to the disk queue; the tests use it to move a consent change into the middle of a flush. */
+    std::function<void()> before_queue_write;
   };
 
   struct service_counts_t {
@@ -265,6 +267,16 @@ namespace telemetry {
 
     mutable std::mutex mutex_;  // the buffer and the id; never held across I/O
     std::deque<event_t> ring_;
+    // the take and the put-back of a flush and the buffer clear of a consent change hold flush_mutex_, so one change never slips between the two sections of a flush
+    mutable std::mutex flush_mutex_;
+    /// Per choice, how often it was found off by consent_changed(): an event a flush took out of the buffer is written or put back only while its own choice was not turned off since
+    /// (turning the other choice on or off, or on again, must not lose it; turning its own off and on again must not bring it back). Read and moved under flush_mutex_.
+    struct consent_marks_t {
+      std::uint64_t usage = 0;
+      std::uint64_t errors = 0;
+      bool moved_since(kind_e kind, const consent_marks_t &then) const { return kind == kind_e::error ? errors != then.errors : usage != then.usage; }
+    };
+    consent_marks_t consent_marks_;
     context_t context_;
     std::string install_id_;
     service_counts_t counts_;

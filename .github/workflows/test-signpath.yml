@@ -7,9 +7,13 @@ on:
   workflow_dispatch:
     inputs:
       artifact-name:
-        description: 'Artifact name to sign'
+        description: 'Exact artifact name to sign (used with run-id)'
         required: false
-        default: 'sunshine-windows'
+        default: ''
+      artifact-prefix:
+        description: 'Artifact name prefix to find in the latest successful master run (used without run-id)'
+        required: false
+        default: 'sunshine-windows-r'
       run-id:
         description: 'Run ID to download artifact from (leave empty for latest)'
         required: false
@@ -33,16 +37,42 @@ jobs:
           run-id: ${{ github.event.inputs.run-id }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
       
-      # 如果没有提供 run-id，尝试从最近的成功构建下载
+      # 如果没有提供 run-id，找最近一次成功的 master 构建。产物名带构建号（main.yml 上传的是
+      # sunshine-windows-r<run_number>），固定名字已经找不到：先取那一次构建，再按前缀在它的
+      # 产物里找（最新的在前，跳过已过期的），搜索只看一次构建和一页产物
+      - name: Resolve the artifact of the latest successful master run
+        id: resolve-artifact
+        if: ${{ github.event.inputs.run-id == '' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PREFIX: ${{ github.event.inputs.artifact-prefix }}
+        run: |
+          set -euo pipefail
+          run_id=$(gh api "repos/$REPO/actions/workflows/main.yml/runs?branch=master&event=push&status=success&per_page=1" --jq '.workflow_runs[0].id')
+          if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
+            echo "No successful master run of main.yml found" >&2
+            exit 1
+          fi
+          name=$(gh api "repos/$REPO/actions/runs/$run_id/artifacts?per_page=30" \
+            --jq '.artifacts[] | select(.expired == false) | .name' \
+            | awk -v prefix="$PREFIX" '!found && index($0, prefix) == 1 { print; found = 1 }')
+          if [ -z "$name" ]; then
+            echo "No artifact starting with '$PREFIX' (not expired) in run $run_id" >&2
+            exit 1
+          fi
+          echo "run-id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+
       - name: Download latest artifact
         if: ${{ github.event.inputs.run-id == '' }}
-        uses: dawidd6/action-download-artifact@v28
+        uses: actions/download-artifact@v8
         with:
-          workflow: main.yml
-          name: ${{ github.event.inputs.artifact-name }}
+          name: ${{ steps.resolve-artifact.outputs.name }}
           path: artifacts
-          check_artifacts: true
-          search_artifacts: true
+          run-id: ${{ steps.resolve-artifact.outputs.run-id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
       
       - name: List downloaded files
         shell: bash

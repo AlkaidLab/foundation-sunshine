@@ -31,6 +31,7 @@
 #include <curl/curl.h>
 
 #include "config.h"
+#include "cover_download_outcome.h"
 #include "cover_failure_backoff.h"
 #include "crypto.h"
 #include "file_handler.h"
@@ -781,13 +782,9 @@ namespace {
     return curl_slist_append(nullptr, entry.c_str());
   }
 
-  /// What one attempt came to: the next address is worth a try only when the transfer itself failed.
-  enum class download_outcome_e {
-    done,
-    transfer_failed,  ///< the transfer broke off (resolution, connection, timeout, a body that did not arrive): another address of the host may work
-    rejected,  ///< an answer came and was not accepted (HTTP status, not an image, too large): the next address would say the same
-    local_failure,  ///< our own file or directory could not be used: says nothing about the URL, and no address will do better
-  };
+  // the outcome and its classification live in cover_download_outcome.h (the tests cover them); this anonymous namespace sits outside namespace http, so the names come in here
+  using http::classify_download_failure;
+  using http::download_outcome_e;
 
   download_outcome_e download_image_attempt(const std::string &url, const std::string &file, long ssl_version, const ParsedDownloadUrl *resolved_parts = nullptr, const std::string *resolved_address = nullptr) {
     BOOST_LOG(info) << "Downloading external image with magic check: " << url;
@@ -870,14 +867,8 @@ namespace {
       }
 
       remove_file_noexcept(temporary_path);
-      // our own file: not the URL's fault. The callback stopped the transfer for a content reason, or a status other than 200 came: the same from every address.
-      // Anything else broke the transfer (no connection, a timeout, a body that stopped arriving after a 200): another address may work.
-      if (ctx.stopped_by_local) return download_outcome_e::local_failure;
-      if (ctx.stopped_by || result == CURLE_FILESIZE_EXCEEDED) return download_outcome_e::rejected;
-      if (result == CURLE_OK || response_code != 200) {
-        return response_code == 0 ? download_outcome_e::transfer_failed : download_outcome_e::rejected;
-      }
-      return download_outcome_e::transfer_failed;
+      // our own file: not the URL's fault (see classify_download_failure): a close that failed is ours also when the transfer broke off, so no address switch and no URL backoff
+      return classify_download_failure(result == CURLE_OK, response_code, ctx.stopped_by_local, ctx.stopped_by != nullptr, result == CURLE_FILESIZE_EXCEEDED, close_ok);
     }
 
     // Double check: if download finished but we never got enough bytes to check?

@@ -136,6 +136,11 @@ namespace telemetry {
    */
   std::vector<nlohmann::json> build_envelopes(const context_t &context, std::string_view product, const std::vector<event_t> &events);
 
+  /** The same, and `members` receives the positions in `events` that every envelope holds (a version starts its own envelope, so they are not a range): a caller that
+   *  puts back what a failed write left unwritten re-queues the events of the envelopes that were not pushed, not the whole group. */
+  std::vector<nlohmann::json> build_envelopes(const context_t &context, std::string_view product, const std::vector<event_t> &events,
+    std::vector<std::vector<std::size_t>> &members);
+
   /** event <-> json (the form kept in the disk queue and sent in a batch). */
   nlohmann::json event_to_json(const event_t &event);
   std::optional<event_t> event_from_json(const nlohmann::json &json);

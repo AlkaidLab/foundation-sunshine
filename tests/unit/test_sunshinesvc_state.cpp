@@ -5,8 +5,8 @@
 #include <tools/sunshinesvc_state.h>
 
 #include <array>
-#include <vector>
 #include <gtest/gtest.h>
+#include <vector>
 
 TEST(GuiRestartBackoff, BacksOffRepeatedFailures) {
   sunshinesvc::GuiRestartBackoff backoff;
@@ -218,4 +218,25 @@ TEST(CoreRestartBackoff, ARunOfAMinuteOrAnAskedForExitStartsTheCountAgain) {
 
   EXPECT_EQ(backoff.next_delay(500, true), 0U);
   EXPECT_EQ(backoff.next_delay(1300, false), 0U);
+}
+
+TEST(CoreRestartBackoff, AZeroWaitReplacesTheDeadlineOfEarlierFailures) {
+  sunshinesvc::CoreRestartBackoff backoff;
+  constexpr std::uint64_t now_tick = 100'000;
+
+  // three quick failures put the count past its free retries; a fourth one is told to wait
+  for (int i = 0; i < 3; ++i) sunshinesvc::core_restart_wait(backoff, 1300, false, now_tick);
+  const auto blocked = sunshinesvc::core_restart_wait(backoff, 1300, false, now_tick);
+  EXPECT_GT(blocked.delay_ms, 0U);
+  EXPECT_EQ(blocked.not_before_tick, now_tick + blocked.delay_ms);
+
+  // a core that ran a minute resets the count: its end clears the deadline, and the next pass may start the core at once
+  const auto adopted = sunshinesvc::core_restart_wait(backoff, sunshinesvc::CORE_STABLE_RUNTIME_MS, false, 200'000);
+  EXPECT_EQ(adopted.delay_ms, 0U);
+  EXPECT_EQ(adopted.not_before_tick, 200'000U);
+
+  // an end the service asked for does the same
+  const auto asked_for = sunshinesvc::core_restart_wait(backoff, 500, true, 300'000);
+  EXPECT_EQ(asked_for.delay_ms, 0U);
+  EXPECT_EQ(asked_for.not_before_tick, 300'000U);
 }

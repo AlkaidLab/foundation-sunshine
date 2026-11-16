@@ -250,6 +250,25 @@ namespace sunshinesvc {
     std::uint32_t failures_ = 0;
   };
 
+  /** What the service waits before it starts the core again. */
+  struct CoreRestartWait {
+    std::uint32_t delay_ms = 0;  ///< the wait before the next start; 0: the core is started as usual in the next pass, and no log line is written
+    std::uint64_t not_before_tick = 0;  ///< the tick the next start waits for, written for every end of a core (a zero wait included)
+  };
+
+  /**
+   * @brief The wait after one end of a core, and the tick the next start is allowed from.
+   *
+   * The deadline is written for every end, also when the wait is zero: a core that ran for a minute, or one that ended because it was asked to, resets the count,
+   * and the deadline of the failures before it must not hold back the start that follows (after the service adopts an external core, an active restart was kept
+   * waiting by the old deadline for up to CORE_RESTART_MAX_DELAY_MS). The log line is written for a positive wait only.
+   */
+  inline CoreRestartWait
+  core_restart_wait(CoreRestartBackoff &backoff, std::uint64_t runtime_ms, bool asked_for, std::uint64_t now_tick) {
+    const auto delay_ms = backoff.next_delay(runtime_ms, asked_for);
+    return { delay_ms, now_tick + delay_ms };
+  }
+
   class GuiAgentRestartPolicy {
   public:
     bool
