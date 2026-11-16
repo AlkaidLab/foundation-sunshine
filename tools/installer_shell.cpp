@@ -38,6 +38,7 @@
 #include <vector>
 
 #include "installer_failure.h"
+#include "installer_guide.h"
 #include "installer_json.h"
 #include "installer_maintenance.h"
 #include "installer_state.h"
