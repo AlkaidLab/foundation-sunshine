@@ -1082,6 +1082,12 @@ namespace telemetry {
 
   std::vector<json>
   build_envelopes(const context_t &context, std::string_view product, const std::vector<event_t> &events) {
+    std::vector<std::vector<std::size_t>> members;
+    return build_envelopes(context, product, events, members);
+  }
+
+  std::vector<json>
+  build_envelopes(const context_t &context, std::string_view product, const std::vector<event_t> &events, std::vector<std::vector<std::size_t>> &members) {
     std::vector<json> out;
     // a product version on an event (panel and web run their own version) starts its own envelope: the version is a field of the envelope
     std::vector<std::string> versions;
@@ -1092,17 +1098,24 @@ namespace telemetry {
     for (const auto &version : versions) {
       json current = envelope_head(context, product, version);
       std::size_t bytes = current.dump().size();
+      std::vector<std::size_t> current_members;
       const auto flush = [&] {
-        if (!current["events"].empty()) out.push_back(std::move(current));
+        if (!current["events"].empty()) {
+          out.push_back(std::move(current));
+          members.push_back(std::move(current_members));
+        }
         current = envelope_head(context, product, version);
         bytes = current.dump().size();
+        current_members.clear();
       };
-      for (const auto &e : events) {
+      for (std::size_t at = 0; at < events.size(); ++at) {
+        const auto &e = events[at];
         if ((e.version.empty() ? context.version : e.version) != version) continue;
         auto j = event_to_json(e);
         const auto size = j.dump().size() + 1;
         if (current["events"].size() >= MAX_BATCH_EVENTS || bytes + size > MAX_BATCH_BYTES) flush();
         current["events"].push_back(std::move(j));
+        current_members.push_back(at);
         bytes += size;
       }
       flush();
