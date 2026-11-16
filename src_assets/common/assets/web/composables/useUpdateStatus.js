@@ -41,22 +41,37 @@ const build = () => {
     return v.githubVersion.value?.isEqual(v.version.value) ? 'stable' : ''
   })
   // 更新通道 of 关于: the host's own setting (notify_pre_releases, the switch in 配置 > 常规); saved the way the setup guide saves one key (the
-  // whole configuration back), then the check runs again with the new choice. Resolves false (and shows the old choice) when it was not saved.
-  const setPreReleases = async (on) => {
-    const before = v.notifyPreReleases.value
+  // whole configuration back), then the check runs again with the new choice. Resolves false (and shows the host's choice) when it was not saved.
+  // Saves run one after another in the order they were asked (each reads the configuration and writes it back, so two at once would lose one), and
+  // a failed save goes back to the value the host last had, not to what the page showed when that call began.
+  let saved = null
+  let waiting = 0
+  let queue = Promise.resolve()
+  const setPreReleases = (on) => {
+    if (saved === null) saved = v.notifyPreReleases.value
     v.notifyPreReleases.value = on
-    try {
-      const current = await apiJson('/api/config')
-      current.notify_pre_releases = on
-      const result = await apiJson('/api/config', { method: 'POST', body: current })
-      if (!(result?.status === true || result?.status === 'true')) throw new Error(result?.error || 'not saved')
-      await check(true)
-      return true
-    } catch (error) {
-      console.error('Saving the update channel failed:', error)
-      v.notifyPreReleases.value = before
-      return false
+    waiting += 1
+    const save = async () => {
+      try {
+        const current = await apiJson('/api/config')
+        current.notify_pre_releases = on
+        const result = await apiJson('/api/config', { method: 'POST', body: current })
+        if (!(result?.status === true || result?.status === 'true')) throw new Error(result?.error || 'not saved')
+        saved = on
+        await check(true)
+        return true
+      } catch (error) {
+        console.error('Saving the update channel failed:', error)
+        // a later save in the queue shows its own choice; the last one shows what the host has
+        if (waiting === 1) v.notifyPreReleases.value = saved
+        return false
+      } finally {
+        waiting -= 1
+      }
     }
+    const result = queue.then(save)
+    queue = result
+    return result
   }
   return { ...v, check, ensure, state, available, nextVersion, channel, checkedAt, setPreReleases }
 }

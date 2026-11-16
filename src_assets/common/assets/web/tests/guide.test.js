@@ -248,9 +248,14 @@ test('an upgrade shows the guide once per version of the host: what is new, the 
   // the host already notifies about pre-releases: the channel was chosen, the step is left out
   assert.deepEqual(decideGuideEntry({ config: { ...config, notify_pre_releases: 'enabled' }, clients, progress: null, version: '2.4.0' }).skip, ['account', 'channel'])
   // the mark a choice made in this browser leaves
+  const hadStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage')
   globalThis.localStorage = { getItem: (k) => (k === 'foundation.update-channel.chosen' ? '1' : null), setItem() {} }
-  assert.deepEqual(decideGuideEntry({ config, clients, progress: null, version: '2.4.0' }).skip, ['account', 'channel'])
-  delete globalThis.localStorage
+  try {
+    assert.deepEqual(decideGuideEntry({ config, clients, progress: null, version: '2.4.0' }).skip, ['account', 'channel'])
+  } finally {
+    if (hadStorage) Object.defineProperty(globalThis, 'localStorage', hadStorage)
+    else delete globalThis.localStorage
+  }
   // seen for this version (closed, skipped or finished): not again; a newer version opens it again
   const seen = { finished: false, visited: ['whatsnew'], version: '2.4.0', mode: 'upgrade' }
   assert.equal(decideGuideEntry({ config, clients, progress: seen, version: '2.4.0' }), null)
