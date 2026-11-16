@@ -47,11 +47,11 @@
 #include "src/entry_handler.h"
 #include "src/globals.h"
 #include "src/logging.h"
-#include "src/restart_reason.h"
-#include "tools/sunshinesvc_lifecycle.h"
 #include "src/platform/common.h"
 #include "src/platform/run_command.h"
+#include "src/restart_reason.h"
 #include "src/utility.h"
+#include "tools/sunshinesvc_lifecycle.h"
 #include <iterator>
 
 #include "nvprefs/nvprefs_interface.h"

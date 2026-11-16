@@ -9,11 +9,11 @@
 // standard includes
 #include <algorithm>
 #include <bit>
+#include <cctype>
 #include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <fstream>
-#include <cctype>
 #include <iomanip>
 #include <limits>
 #include <memory>
@@ -29,8 +29,8 @@
 
 // lib includes
 #include <icm.h>
-#include <sddl.h>
 #include <nlohmann/json.hpp>
+#include <sddl.h>
 
 // local includes
 #include "color_profile.h"

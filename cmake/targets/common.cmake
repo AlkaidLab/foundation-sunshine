@@ -167,7 +167,11 @@ set_source_files_properties("${CMAKE_SOURCE_DIR}/src/upnp.cpp"
 set(VIGEM_COMPILE_FLAGS "")
 string(APPEND VIGEM_COMPILE_FLAGS "-Wno-unknown-pragmas ")
 string(APPEND VIGEM_COMPILE_FLAGS "-Wno-misleading-indentation ")
-string(APPEND VIGEM_COMPILE_FLAGS "-Wno-class-memaccess ")
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    string(APPEND VIGEM_COMPILE_FLAGS "-Wno-dynamic-class-memaccess ")
+else()
+    string(APPEND VIGEM_COMPILE_FLAGS "-Wno-class-memaccess ")
+endif()
 string(APPEND VIGEM_COMPILE_FLAGS "-Wno-unused-function ")
 string(APPEND VIGEM_COMPILE_FLAGS "-Wno-unused-variable ")
 set_source_files_properties("${CMAKE_SOURCE_DIR}/third-party/ViGEmClient/src/ViGEmClient.cpp"
