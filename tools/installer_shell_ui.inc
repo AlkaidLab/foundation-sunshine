@@ -1012,6 +1012,9 @@ click(int id) {
         S.v.opening = !S.v.panel_failed;
         S.opening_since = GetTickCount64();
         go(pg::done);
+        // The Panel is a process of its own: once it was started the installer has nothing left to do and closes after "Opening…" was seen. A Panel that did not start keeps the
+        // window, with the retry on the same button.
+        if (!S.v.panel_failed) SetTimer(S.window, kCloseTimer, kCloseAfterLaunchMs, nullptr);
       }
       else {
         restart_windows();  // the weak button; Windows asks open apps to close, and the user can cancel there
@@ -1256,6 +1259,11 @@ window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
       draw_control(*reinterpret_cast<DRAWITEMSTRUCT *>(lparam));
       return TRUE;
     case WM_TIMER:
+      if (wparam == kCloseTimer) {
+        KillTimer(window, kCloseTimer);
+        if (S.v.page == pg::done && !S.v.panel_failed) DestroyWindow(window);
+        return 0;
+      }
       if (wparam == kTimer) {
         poll_run();
         if (S.v.page != pg::uac && S.v.page != pg::installing) KillTimer(window, kTimer);
@@ -1311,6 +1319,7 @@ window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
       return 0;
     case WM_DESTROY:
       KillTimer(window, kTimer);
+      KillTimer(window, kCloseTimer);
       release_target();
       S.tcache.clear();
       if (S.brand_source) {

@@ -140,3 +140,55 @@ TEST(PairLink, LanFallbackPrefersHomePrefixWithoutDefaultRoute) {
   const auto target = select_target(request);
   EXPECT_EQ(target.host, "192.168.1.20");
 }
+
+TEST(PairLink, TunDefaultRouteIsNotTheTarget) {
+  // A proxy tool's TUN (Mihomo) takes the default route: the kernel answers 198.18.0.1 for the route, and the QR code must still carry the LAN address of the adapter.
+  request_t request;
+  request.http_port = 47989;
+  request.socket_address = "127.0.0.1";
+  request.host_header = "127.0.0.1:47990";
+  request.interface_addresses = { "198.18.0.1", "192.168.3.172", "fe80::1" };
+  request.default_route_address = "198.18.0.1";
+  const auto target = select_target(request);
+  EXPECT_EQ(target.host, "192.168.3.172");
+  EXPECT_EQ(pair_url(target, "3112", "Qian-PC"), "moonlight://pair?host=192.168.3.172&port=47989&pin=3112&name=Qian-PC");
+}
+
+TEST(PairLink, BenchmarkRangeIsNeverAdvertised) {
+  for (const char *tun : { "198.18.0.1", "198.18.255.254", "198.19.0.1", "198.19.255.254" }) {
+    request_t request;
+    request.http_port = 47989;
+    request.socket_address = tun;
+    request.host_header = std::string(tun) + ":47990";
+    request.interface_addresses = { tun };
+    request.default_route_address = tun;
+    EXPECT_TRUE(select_target(request).host.empty()) << tun;
+  }
+  // the neighbours of the range are ordinary addresses
+  for (const char *other : { "198.17.255.255", "198.20.0.1" }) {
+    request_t request;
+    request.http_port = 47989;
+    request.socket_address = other;
+    EXPECT_EQ(select_target(request).host, other);
+  }
+}
+
+TEST(PairLink, LanAdapterComesBeforeAPublicDefaultRoute) {
+  request_t request;
+  request.http_port = 47989;
+  request.socket_address = "127.0.0.1";
+  request.interface_addresses = { "203.0.113.9", "192.168.1.5" };
+  request.default_route_address = "203.0.113.9";
+  EXPECT_EQ(select_target(request).host, "192.168.1.5");
+  // without a LAN adapter the route's public address is what there is
+  request.interface_addresses = { "203.0.113.9" };
+  EXPECT_EQ(select_target(request).host, "203.0.113.9");
+}
+
+TEST(PairLink, LanDefaultRouteStillWins) {
+  auto request = base_request();
+  request.socket_address = "127.0.0.1";
+  request.default_route_address = "10.8.0.5";
+  EXPECT_EQ(select_target(request).host, "10.8.0.5");
+}
+

@@ -8,6 +8,7 @@ import CfgExpert from '../../../components/cfg/CfgExpert.vue'
 import CfgField from '../../../components/cfg/CfgField.vue'
 import CfgSwitch from '../../../components/cfg/CfgSwitch.vue'
 import { useVddSettings } from '../../../composables/useVddSettings.js'
+import { prepChoices } from '../../../composables/displayPrep.js'
 import { gdiNameOf, SCALES, useDisplayLive } from '../../../composables/useDisplayLive.js'
 
 // 显示器: the output display (cards like Windows' display settings, 自动 first), the display mode of the display that is streamed (three sliders, applied live by the control panel),
@@ -46,10 +47,9 @@ const targets = computed(() => ['display', 'window'].map((value) => ({ value, la
 watch(() => props.config.capture_target, (value) => { if (value === 'window' && props.config.capture !== 'wgc') props.config.capture = 'wgc' })
 
 const captureTarget = computed({ get: () => props.config.capture_target || 'display', set: (value) => { props.config.capture_target = value } })
-const prepOptions = computed(() => ['no_operation', 'ensure_active', 'ensure_primary', 'ensure_only_display'].map((value) => ({ value, label: x.value.prep[value] })))
+const prepOptions = computed(() => prepChoices({ windows: windows.value, virtual: chosen.value === 'virtual', current: props.config.display_device_prep }).map((value) => ({ value, label: x.value.prep[value] })))
 const prepModel = computed({ get: () => props.config.display_device_prep || 'no_operation', set: (value) => { props.config.display_device_prep = value } })
 const prepEffect = computed(() => x.value.prep.effect?.[prepModel.value] || '')
-const prepExtra = computed(() => (props.config.display_device_prep === 'ensure_secondary' ? [{ value: 'ensure_secondary', label: x.value.prep.ensure_secondary }] : []))
 
 const headless = computed({ get: () => store.summary.value.headless || (String(props.config.vdd_headless_create) === 'enabled' || props.config.vdd_headless_create === true), set: (value) => store.set({ vdd_headless_create: value }) })
 const open = ref(props.focus === 'display_devices')
@@ -84,7 +84,7 @@ const open = ref(props.focus === 'display_devices')
   </MSection>
 
   <MSection v-if="windows" :title="x.sections.output.prep">
-    <MPrepSeg v-model="prepModel" data-cfg="display_device_prep" :label="$tp('config.display_device_prep')" :options="[...prepOptions, ...prepExtra]" />
+    <MPrepSeg v-model="prepModel" data-cfg="display_device_prep" :label="$tp('config.display_device_prep')" :options="prepOptions" />
     <MFooter v-if="prepEffect">{{ prepEffect }}</MFooter>
     <MFooter v-if="prepModel !== 'no_operation'">{{ x.prep.revert }}</MFooter>
   </MSection>

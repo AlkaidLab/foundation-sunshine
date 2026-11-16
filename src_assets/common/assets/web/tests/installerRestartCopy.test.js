@@ -60,3 +60,31 @@ test('no installer sentence claims the virtual gamepad needs a restart', () => {
     }
   }
 })
+
+test('the installer closes itself a moment after the Panel was started, and keeps the window when the Panel did not start', () => {
+  const click = installerShell.slice(installerShell.indexOf('S.v.panel_failed = !launch_panel();'), installerShell.indexOf('restart_windows();  // the weak button'))
+  assert.match(click, /if \(!S\.v\.panel_failed\) SetTimer\(S\.window, kCloseTimer, kCloseAfterLaunchMs, nullptr\);/)
+  const timer = installerShell.slice(installerShell.indexOf('case WM_TIMER:'), installerShell.indexOf('case WM_DPICHANGED'))
+  assert.match(timer, /wparam == kCloseTimer[\s\S]*KillTimer\(window, kCloseTimer\);[\s\S]*S\.v\.page == pg::done && !S\.v\.panel_failed\) DestroyWindow\(window\)/)
+  assert.match(installerShell, /case WM_DESTROY:\s*KillTimer\(window, kTimer\);\s*KillTimer\(window, kCloseTimer\);/)
+  assert.match(readFileSync(join(root, 'tools/installer_shell.cpp'), 'utf8'), /constexpr UINT_PTR kCloseTimer = 8;/)
+  // a Panel that did not start shows the retry on the same button
+  assert.match(doneCase, /管理界面未能打开。点“开启串流旅程”重试。/)
+})
+
+test('the maintenance page names the action on its primary button and leaves the version to the lead', () => {
+  const maintenance = installerUi.slice(installerUi.indexOf('case pg::maintenance:'), installerUi.indexOf('case pg::components:'))
+  assert.match(maintenance, /add_button\(101, action, bkind::filled\)/)
+  assert.doesNotMatch(maintenance, /add_button\(101, action \+/, 'a long version string made the button wide enough to run into its neighbours')
+  assert.match(maintenance, /L"降级", L"Downgrade"/)
+  assert.match(maintenance, /L"重新安装", L"Reinstall"/)
+  assert.match(maintenance, /L"更新", L"Update"/)
+  assert.match(maintenance, /v\.package_version/, 'the package version is still shown in the lead')
+})
+
+test('the buttons on the right never run into the text button on the left of the maintenance page', () => {
+  const layout = installerUi.slice(installerUi.indexOf('A text button on the left (卸载)'), installerUi.indexOf('out.buttons_top = by;'))
+  assert.match(layout, /left_end \+ 12/, 'a gap of 12 px')
+  assert.match(layout, /c\.measure_w\(b->text, 15, 1\) \+ 24/, 'a button gives up padding, never its text')
+  assert.match(layout, /b->x = at;/, 'the right buttons are laid out again after they shrank')
+})

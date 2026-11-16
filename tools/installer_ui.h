@@ -444,9 +444,10 @@ namespace ui {
         };
         if (!ban.empty()) facts.pop_back();
         {
-          const std::wstring action = v.maintenance_downgrade ? Z(v, L"降级到 ", L"Downgrade to ") :
-                                       v.maintenance_same ? Z(v, L"重新安装 ", L"Reinstall ") : Z(v, L"更新到 ", L"Update to ");
-          add_button(101, action + v.package_version, bkind::filled);
+          // The package version is in the lead above: the button names the action only, so a long version string cannot push the buttons into one another.
+          const std::wstring action = v.maintenance_downgrade ? Z(v, L"降级", L"Downgrade") :
+                                       v.maintenance_same ? Z(v, L"重新安装", L"Reinstall") : Z(v, L"更新", L"Update");
+          add_button(101, action, bkind::filled);
         }
         add_button(102, Z(v, L"修改组件", L"Modify components"), bkind::tonal);
         add_button(103, Z(v, L"卸载", L"Uninstall"), bkind::text, v.has_uninstaller);
@@ -702,6 +703,31 @@ namespace ui {
     }
     for (auto &b : out.buttons)
       if (b.kind == bkind::text && b.id != 130) b.x = x - 8;
+    // A text button on the left (卸载) and the buttons on the right never touch: the right ones give up padding, down to the text and 12 px each side, until the gap is 12 px.
+    {
+      float left_end = -1;
+      for (const auto &b : out.buttons)
+        if (b.kind == bkind::text && b.id != 130) left_end = max(left_end, b.x + b.w);
+      std::vector<button_spec *> right;
+      for (auto &b : out.buttons)
+        if (b.kind != bkind::tile && b.kind != bkind::row && b.kind != bkind::text) right.push_back(&b);
+      if (left_end >= 0 && !right.empty()) {
+        float over = left_end + 12 - rx - 12;  // rx is 12 px past the leftmost right button
+        for (auto *b : right) {
+          if (over <= 0) break;
+          const float room = max(0.f, b->w - (c.measure_w(b->text, 15, 1) + 24));
+          const float cut = min(room, over);
+          b->w -= cut;
+          over -= cut;
+        }
+        float at = x + w;
+        for (auto *b : right) {
+          at -= b->w;
+          b->x = at;
+          at -= 12;
+        }
+      }
+    }
     out.buttons_top = by;
     out.status = out.status.empty() ? title : out.status;
     return out;

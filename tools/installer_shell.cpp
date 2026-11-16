@@ -49,6 +49,8 @@ namespace {
   constexpr wchar_t kWindowTitle[] = L"Foundation Sunshine";
   constexpr wchar_t kRunRoot[] = L"FoundationSunshine\\install-runs";
   constexpr UINT_PTR kTimer = 7;
+  constexpr UINT_PTR kCloseTimer = 8;  // the window closes a moment after the Panel was started from the done page
+  constexpr UINT kCloseAfterLaunchMs = 1500;
   constexpr unsigned char kIconPng[] = {
 #include "installer_icon.inc"
   };
