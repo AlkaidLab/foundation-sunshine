@@ -635,7 +635,6 @@ namespace audio {
     });
 
     const int frame_size = config.packetDuration * stream.sampleRate / 1000;
-    int samples_per_frame = frame_size * capture_channels;
 
     while (!shutdown_event->peek()) {
       const bool desired_host_audio = host_audio();
@@ -649,7 +648,8 @@ namespace audio {
         }
       }
       std::vector<float> sample_buffer;
-      sample_buffer.resize(samples_per_frame);
+      // the capture layout can change with the host-playback switch: the size follows the current one
+      sample_buffer.resize(frame_size * capture_channels);
 
       auto status = mic->sample(sample_buffer);
       switch (status) {

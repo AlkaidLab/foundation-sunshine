@@ -19,6 +19,8 @@
 
 #include "doctor_os.h"
 #include "src/audio.h"
+#include "src/audio_devices.h"
+#include "src/audio_sink_plan.h"
 #include "src/build_info.h"
 #include "src/config.h"
 #include "src/confighttp/network.h"
@@ -237,6 +239,7 @@ namespace doctor {
       audio_fact_t facts;
       facts.stream_audio = config::audio.stream;
       facts.sink = config::audio.sink;
+      const std::string configured_sink = config::audio.sink;  // facts.sink becomes the name of the device
       facts.virtual_sink = config::audio.virtual_sink;
 #ifdef _WIN32
       // The endpoints are enumerated directly: platf::audio_control() would install the Steam speakers when they are missing.
@@ -261,8 +264,24 @@ namespace doctor {
           }
         }
         facts.virtual_checked = true;
+        // the same decision as the stream: the device chosen to capture carries the stream when it is a virtual one and no virtual sink is set
+        bool sink_is_virtual = false;
+        if (facts.virtual_sink.empty() && !configured_sink.empty()) {
+          for (const auto &e : endpoints.render) {
+            if (!os::endpoint_matches(e, configured_sink)) continue;
+            audio_devices::endpoint_t endpoint;
+            endpoint.name = e.name;
+            endpoint.adapter = e.adapter;
+            endpoint.description = e.description;
+            sink_is_virtual = audio_devices::is_virtual_output_kind(audio_devices::classify_virtual(endpoint));
+            break;
+          }
+        }
+        const auto target = audio_sink_plan::choose_virtual_target(facts.virtual_sink, configured_sink, sink_is_virtual);
         for (const auto &e : endpoints.render) {
-          const bool match = facts.virtual_sink.empty() ? contains_icase(e.name, "Steam Streaming Speakers") : os::endpoint_matches(e, facts.virtual_sink);
+          const bool match = target == audio_sink_plan::virtual_target_e::steam_streaming ? contains_icase(e.name, "Steam Streaming Speakers") :
+                             target == audio_sink_plan::virtual_target_e::audio_sink      ? os::endpoint_matches(e, configured_sink) :
+                                                                                            os::endpoint_matches(e, facts.virtual_sink);
           if (match) {
             facts.virtual_found = true;
             facts.virtual_name = e.name;

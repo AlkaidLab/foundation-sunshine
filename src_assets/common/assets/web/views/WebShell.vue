@@ -377,7 +377,7 @@ const backPage = computed(() => {
 })
 // the playback devices of the host: the audio row shows the chosen device by its name, the setting holds an id (another system answers `unsupported`)
 const audioDevices = useAudioDevices('windows')
-provide('webShell', { hideList, nav: jumpNav, openConfig: jumpConfig, audio: audioDevices.render, pending, showMenu, openSetting: (key) => { const entry = settingsList.searchItems.value.find((e) => e.keyName === key); if (entry) onNavigate(entry) }, askLogout: () => { logoutAsk.value = true } })
+provide('webShell', { hideList, nav: jumpNav, openConfig: jumpConfig, audio: audioDevices.render, refreshAudio: audioDevices.refresh, pending, showMenu, openSetting: (key) => { const entry = settingsList.searchItems.value.find((e) => e.keyName === key); if (entry) onNavigate(entry) }, askLogout: () => { logoutAsk.value = true } })
 
 // Second lines of the list rows from live host data
 const live = useShellLive()
