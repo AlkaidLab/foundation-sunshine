@@ -291,3 +291,21 @@ html[data-bs-theme] {
 @media (min-width: 900px) { .cover-pair { grid-template-columns: minmax(0, 380px) minmax(0, 1fr); align-items: start; } }
 /* the previews of an official Sparxie cover: the heights of the two frames are equal (2:3 and 16:9 widths are 3 : 8 once the card padding is counted: 29 : 71) */
 @media (min-width: 900px) { .cover-pair--preview { grid-template-columns: minmax(0, 29fr) minmax(0, 71fr); } }
+
+/* the clients page: no switch on a row; cancel pairing is a red icon button, a stopped device says so and is restored from its row */
+.pin-row__unpair { flex: none; align-self: center; display: grid; place-items: center; width: 44px; height: 44px; margin: 0 10px 0 4px; border: 0; border-radius: 50%; background: transparent; color: var(--md-sys-color-error); cursor: pointer; font-size: 22px; transition: background-color var(--m-spring-default-effects-duration, 200ms) var(--m-spring-default-effects, ease); }
+.pin-row__unpair:hover { background: color-mix(in srgb, var(--md-sys-color-error) 10%, transparent); }
+.pin-row__unpair:active { background: color-mix(in srgb, var(--md-sys-color-error) 16%, transparent); }
+.pin-row__unpair:focus-visible { outline: 2px solid var(--md-sys-color-error); outline-offset: 2px; }
+.pin-row__unpair:disabled { opacity: .38; cursor: not-allowed; }
+.pin-row__stopped { flex: none; align-self: center; display: flex; align-items: center; gap: 8px; margin-inline-end: 4px; }
+.pin-badge { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 10px 0 8px; border-radius: 9999px; background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); font: var(--m-label-large); white-space: nowrap; }
+.pin-badge .m-icon { font-size: 16px; }
+.pin-row--stopped .m-item__title { color: var(--md-sys-color-on-surface-variant); }
+.pin-group--stopped .pin-group__title { color: var(--md-sys-color-error); }
+.pin-device__stopped { margin-bottom: 4px; }
+.pin-confirm__how { display: flex; gap: 10px; align-items: flex-start; margin: 12px 0 0; font: var(--m-body-medium); color: var(--md-sys-color-on-surface-variant); } .pin-confirm__how .m-icon { flex: none; font-size: 20px; }
+/* the danger zone of the device sheet: a labelled list, red icon and title */
+.pin-danger { display: flex; flex-direction: column; gap: 8px; }
+.pin-danger__label { margin: 0; padding: 0 4px; font: var(--m-title-small); color: var(--md-sys-color-error); }
+.pin-danger__item .m-item__title, .pin-danger__item .m-item__lead, .pin-danger__item .m-item__lead .m-icon { color: var(--md-sys-color-error); }
