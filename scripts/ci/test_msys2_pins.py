@@ -98,6 +98,21 @@ class PinsTest(unittest.TestCase):
         self.assertEqual(sorted(bump["short"] for bump in result["bumps"]), ["gcc", "openssl"])
         self.assertEqual(result["title"], "工具链有大版本更新：openssl 4.1 → 4.2")
 
+    def test_only_newer_major_or_openssl_minor_is_reported(self):
+        fake_db(self.db, {
+            PREFIX + "gcc": ("15.9.0-1", PREFIX + "gcc-15.9.0-1-any.pkg.tar.zst", "2" * 64),
+            PREFIX + "openssl": ("4.10.0-1", PREFIX + "openssl-4.10.0-1-any.pkg.tar.zst", "7" * 64),
+        })
+        result = self.check_json()
+        self.assertEqual([bump["short"] for bump in result["bumps"]], ["openssl"])
+        self.pins.write_text(
+            "# pins header\n"
+            + f"{PREFIX}openssl 4.10.0-1 {PREFIX}openssl-4.10.0-1-any.pkg.tar.zst " + "7" * 64 + "\n")
+        fake_db(self.db, {
+            PREFIX + "openssl": ("4.9.0-1", PREFIX + "openssl-4.9.0-1-any.pkg.tar.zst", "8" * 64),
+        })
+        self.assertFalse(self.check_json()["changed"])
+
     def test_a_repository_that_cannot_be_read_fails_the_check(self):
         env = {"MSYS2_DB_URLS": "http://127.0.0.1:1/ucrt64.db", "MSYS2_PINS_RETRY_PAUSE": "0"}
         result = self.run_pins("check", "--pins", str(self.pins), env=env)

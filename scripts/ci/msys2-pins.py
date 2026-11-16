@@ -104,9 +104,12 @@ def bump_level(name, pinned, newest):
     old, new = components(pinned), components(newest)
     if not old or not new:
         return None
-    if old[0] != new[0]:
+    if not old[0].isdigit() or not new[0].isdigit():
+        return None
+    if int(new[0]) > int(old[0]):
         return "major"
-    if name.endswith("-openssl") and old[:2] != new[:2]:
+    if (name.endswith("-openssl") and len(old) > 1 and len(new) > 1 and old[1].isdigit() and new[1].isdigit()
+            and int(new[0]) == int(old[0]) and int(new[1]) > int(old[1])):
         return "minor"
     return None
 
