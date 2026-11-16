@@ -370,9 +370,9 @@ namespace platf {
     DWORD dwSize;
 
     // Get the session ID of the active user's interactive session. The
-    // legacy "console" binding keeps the old console-only behavior.
+    // Console binding keeps the console-only behavior.
     DWORD session_id = invalid_session_id;
-    if (config::sunshine.session_binding == "console") {
+    if (config::sunshine.session_binding == config_session_binding::mode_e::console) {
       session_id = WTSGetActiveConsoleSessionId();
     }
     else {

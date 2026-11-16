@@ -21,6 +21,7 @@
 
 #include "sunshinesvc_log.h"
 #include "src/crash/crash.h"
+#include "src/config_session_binding.h"
 #include "sunshinesvc_lifecycle.h"
 #include "sunshinesvc_state.h"
 
@@ -237,9 +238,8 @@ FindActiveUserSessionId() {
 }
 
 // sunshine.conf may pin session handling to the physical console with
-// `session_binding = console`. Any other value (or a missing key/file)
-// keeps the default auto behavior: console preferred, active RDP session
-// as the fallback.
+// `session_binding = 1`. The default `0` (or a missing key/file) keeps the
+// automatic behavior: console preferred, active RDP session as the fallback.
 std::wstring
 InstallDirectory();
 
@@ -269,11 +269,12 @@ session_binding_console_only() {
     std::string value = line.substr(separator + 1);
     trim(key);
     trim(value);
-    if (key == "session_binding") {
+    if (key == config_session_binding::key) {
       if (value.empty()) {
         continue;
       }
-      return value == "console";
+      const auto mode = config_session_binding::parse(value);
+      return mode && *mode == config_session_binding::mode_e::console;
     }
   }
   return false;

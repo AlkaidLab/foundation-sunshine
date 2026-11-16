@@ -19,6 +19,7 @@
 #include <nlohmann/json_fwd.hpp>
 
 #include "nvenc/nvenc_config.h"
+#include "config_session_binding.h"
 
 namespace config {
   // track modified config options
@@ -290,9 +291,8 @@ namespace config {
     std::string address_family;
     std::string bind_address;
     // Interactive-session policy for user-token and launcher decisions:
-    // "auto" (default) prefers the physical console and falls back to the
-    // active RDP session; "console" keeps the legacy console-only behavior.
-    std::string session_binding;
+    // 0 selects the automatic console/RDP policy; 1 selects the console only.
+    config_session_binding::mode_e session_binding;
 
     std::string log_file;
     bool restore_log;  // 是否恢复日志文件（true=恢复，false=覆盖）
