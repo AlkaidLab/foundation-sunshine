@@ -289,6 +289,10 @@ namespace config {
     std::uint16_t port;
     std::string address_family;
     std::string bind_address;
+    // Interactive-session policy for user-token and launcher decisions:
+    // "auto" (default) prefers the physical console and falls back to the
+    // active RDP session; "console" keeps the legacy console-only behavior.
+    std::string session_binding;
 
     std::string log_file;
     bool restore_log;  // 是否恢复日志文件（true=恢复，false=覆盖）

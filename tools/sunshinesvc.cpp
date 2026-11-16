@@ -13,7 +13,9 @@
 #include <wtsapi32.h>
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -26,6 +28,8 @@
 #ifndef PROC_THREAD_ATTRIBUTE_JOB_LIST
   #define PROC_THREAD_ATTRIBUTE_JOB_LIST ProcThreadAttributeValue(13, FALSE, TRUE, FALSE)
 #endif
+
+constexpr DWORD invalid_session_id = 0xFFFFFFFF;
 
 SERVICE_STATUS_HANDLE service_status_handle;
 SERVICE_STATUS service_status;
@@ -41,10 +45,23 @@ HandlerEx(DWORD dwControl, DWORD dwEventType, LPVOID lpEventData, LPVOID lpConte
       return NO_ERROR;
 
     case SERVICE_CONTROL_SESSIONCHANGE:
-      // If a new session connects to the console, restart Sunshine
-      // to allow it to spawn inside the new console session.
-      if (dwEventType == WTS_CONSOLE_CONNECT) {
-        SetEvent(session_change_event);
+      // Re-evaluate the interactive user session whenever the console or an
+      // RDP session changes.  The physical console session is not necessarily
+      // the session containing the signed-in user (for example, RDP can be
+      // active while the console session is only Conn).
+      switch (dwEventType) {
+        case WTS_CONSOLE_CONNECT:
+        case WTS_CONSOLE_DISCONNECT:
+        case WTS_REMOTE_CONNECT:
+        case WTS_REMOTE_DISCONNECT:
+        case WTS_SESSION_LOGON:
+        case WTS_SESSION_LOGOFF:
+        case WTS_SESSION_LOCK:
+        case WTS_SESSION_UNLOCK:
+          SetEvent(session_change_event);
+          break;
+        default:
+          break;
       }
       return NO_ERROR;
 
@@ -110,7 +127,7 @@ AllocateProcThreadAttributeList(DWORD attribute_count) {
 }
 
 HANDLE
-DuplicateTokenForSession(DWORD console_session_id) {
+DuplicateTokenForSession(DWORD session_id) {
   HANDLE current_token;
   if (!OpenProcessToken(GetCurrentProcess(), TOKEN_DUPLICATE, &current_token)) {
     return NULL;
@@ -126,12 +143,125 @@ DuplicateTokenForSession(DWORD console_session_id) {
   CloseHandle(current_token);
 
   // Change the duplicated token to the console session ID
-  if (!SetTokenInformation(new_token, TokenSessionId, &console_session_id, sizeof(console_session_id))) {
+  if (!SetTokenInformation(new_token, TokenSessionId, &session_id, sizeof(session_id))) {
     CloseHandle(new_token);
     return NULL;
   }
 
   return new_token;
+}
+
+DWORD
+FindActiveUserSessionId() {
+  const auto console_session_id = WTSGetActiveConsoleSessionId();
+
+  PWTS_SESSION_INFOW session_info = nullptr;
+  DWORD session_count = 0;
+  if (!WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, &session_info, &session_count)) {
+    return invalid_session_id;
+  }
+
+  DWORD active_rdp_session_id = invalid_session_id;
+  DWORD active_user_session_id = invalid_session_id;
+  for (DWORD index = 0; index < session_count; ++index) {
+    const auto &session = session_info[index];
+    if (session.State != WTSActive) {
+      continue;
+    }
+
+    LPWSTR username = nullptr;
+    DWORD bytes_returned = 0;
+    const bool has_user = WTSQuerySessionInformationW(
+      WTS_CURRENT_SERVER_HANDLE,
+      session.SessionId,
+      WTSUserName,
+      &username,
+      &bytes_returned) &&
+      username != nullptr &&
+      username[0] != L'\0';
+    if (username != nullptr) {
+      WTSFreeMemory(username);
+    }
+    if (!has_user) {
+      continue;
+    }
+
+    // If the physical console itself has an active user, keep preferring it.
+    if (session.SessionId == console_session_id) {
+      WTSFreeMemory(session_info);
+      return session.SessionId;
+    }
+
+    LPWSTR protocol = nullptr;
+    bytes_returned = 0;
+    USHORT protocol_type = 0;
+    if (WTSQuerySessionInformationW(
+          WTS_CURRENT_SERVER_HANDLE,
+          session.SessionId,
+          WTSClientProtocolType,
+          &protocol,
+          &bytes_returned)) {
+      if (protocol != nullptr && bytes_returned >= sizeof(protocol_type)) {
+        protocol_type = *reinterpret_cast<USHORT *>(protocol);
+      }
+      if (protocol != nullptr) {
+        WTSFreeMemory(protocol);
+      }
+    }
+
+    if (protocol_type == 2 && active_rdp_session_id == invalid_session_id) {
+      active_rdp_session_id = session.SessionId;
+    }
+    if (active_user_session_id == invalid_session_id) {
+      active_user_session_id = session.SessionId;
+    }
+  }
+
+  WTSFreeMemory(session_info);
+  if (active_rdp_session_id != invalid_session_id) {
+    return active_rdp_session_id;
+  }
+  return active_user_session_id;
+}
+
+// sunshine.conf may pin session handling to the physical console with
+// `session_binding = console`. Any other value (or a missing key/file)
+// keeps the default auto behavior: console preferred, active RDP session
+// as the fallback.
+std::wstring
+InstallDirectory();
+
+bool
+session_binding_console_only() {
+  const std::filesystem::path config_path = std::filesystem::path(InstallDirectory()) / L"config" / L"sunshine.conf";
+  std::ifstream conf_file(config_path);
+  if (!conf_file.is_open()) {
+    return false;
+  }
+  std::string line;
+  while (std::getline(conf_file, line)) {
+    const auto comment = line.find('#');
+    if (comment != std::string::npos) {
+      line.resize(comment);
+    }
+    const auto separator = line.find('=');
+    if (separator == std::string::npos) {
+      continue;
+    }
+    const auto trim = [](std::string &text) {
+      const auto not_space = [](unsigned char ch) { return std::isspace(ch) == 0; };
+      text.erase(text.begin(), std::find_if_not(text.begin(), text.end(), not_space));
+      text.erase(std::find_if_not(text.rbegin(), text.rend(), not_space).base(), text.end());
+    };
+    std::string key = line.substr(0, separator);
+    std::string value = line.substr(separator + 1);
+    trim(key);
+    trim(value);
+    if (key == "session_binding") {
+      return value == "console";
+    }
+  }
+  return false;
 }
 
 struct GuiAgentProcess {
@@ -724,7 +854,7 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
   NoteLifecycle(sunshinesvc::lifecycle::svc_start_line(sunshinesvc::lifecycle::unix_ms()));
 
   GuiAgentProcess gui_agent;
-  DWORD gui_agent_session_id = 0xFFFFFFFF;
+  DWORD gui_agent_session_id = invalid_session_id;
   DWORD gui_agent_last_error = ERROR_SUCCESS;
   ULONGLONG gui_agent_retry_at_ms = 0;
   sunshinesvc::GuiRestartBackoff gui_agent_backoff;
@@ -874,24 +1004,31 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
   };
 
   // Loop every 3 seconds until the stop event is set or Sunshine.exe is running. The first pass is at once: the loop used to wait 3 s before it tried at all, and
-  // every start of the service (every boot) lost them (service 12:53:00, Sunshine.exe 12:53:04). A console session that is not there yet is picked up at the next pass.
+  // every start of the service (every boot) lost them (service 12:53:00, Sunshine.exe 12:53:04). A user session that is not there yet is picked up at the next pass.
   DWORD loop_wait_ms = 0;
-  // why the next core is started: the first one is the boot; later ones follow an end of the core the service did not ask for, a change of the console session, or a start that failed
+  // why the next core is started: the first one is the boot; later ones follow an end of the core the service did not ask for, a change of the interactive user session, or a start that failed
   const char *next_core_cause = "boot";
   // repeated failures of the core's start are not retried at the pace of the pass interval (sunshinesvc_state.h)
   sunshinesvc::CoreRestartBackoff core_restart_backoff;
   // not before this tick (GetTickCount64): only the start of the core waits; the pass interval, the GUI agent's supervision and the stop event go on as before
   ULONGLONG core_restart_not_before_tick = 0;
   while (WaitForSingleObject(stop_event, std::exchange(loop_wait_ms, 3000)) != WAIT_OBJECT_0) {
-    auto console_session_id = WTSGetActiveConsoleSessionId();
-    if (console_session_id == 0xFFFFFFFF) {
-      // No console session yet
+    const bool binding_console = session_binding_console_only();
+    DWORD session_id = invalid_session_id;
+    if (binding_console) {
+      session_id = WTSGetActiveConsoleSessionId();
+    }
+    else {
+      session_id = FindActiveUserSessionId();
+    }
+    if (session_id == invalid_session_id) {
+      // No active user session yet
       continue;
     }
 
-    if (gui_agent_session_id != console_session_id) {
+    if (gui_agent_session_id != session_id) {
       CloseGuiAgentHandle(gui_agent);
-      gui_agent_session_id = console_session_id;
+      gui_agent_session_id = session_id;
       gui_agent_last_error = ERROR_SUCCESS;
       gui_agent_retry_at_ms = 0;
       gui_agent_backoff.reset();
@@ -899,7 +1036,7 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
       gui_agent_log_limiter.reset();
     }
 
-    auto console_token = DuplicateTokenForSession(console_session_id);
+    auto console_token = DuplicateTokenForSession(session_id);
     if (console_token == NULL) {
       continue;
     }
@@ -1025,15 +1162,24 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
           still_running = true;
           break;
 
-        case WAIT_OBJECT_0 + 2:
-          if (WTSGetActiveConsoleSessionId() == console_session_id) {
-            // The active console session didn't actually change. Let Sunshine keep running.
+        case WAIT_OBJECT_0 + 2: {
+          DWORD active_session_id = invalid_session_id;
+          if (binding_console) {
+            active_session_id = WTSGetActiveConsoleSessionId();
+          }
+          else {
+            active_session_id = FindActiveUserSessionId();
+          }
+          if (active_session_id == invalid_session_id || active_session_id == session_id) {
+            // The interactive user session did not change, or Windows is
+            // between session states. Let Sunshine keep running.
             still_running = true;
             continue;
           }
           // Fall-through to terminate Sunshine.exe and start it again.
           exit_for_session_change = true;
           [[fallthrough]];
+        }
         case WAIT_OBJECT_0:
           exit_requested = true;
           // The service is shutting down, so try to gracefully terminate Sunshine.exe.
