@@ -62,9 +62,9 @@
 </template>
 
 <script setup>
-import { computed, inject, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { firstImage, recentErrorCount, micIsReady, startupProblems, MStartupProblems, MBanner, MButton, MIcon, MIconButton, MItem, MGroup, MPage, MSection, MSheet, MSnackbar, MSwitch, MHomeDash, MSupportSheet, MAnnouncementStrip, MAnnouncementSheet, useAnnouncements, useGuideCard, buildHomeModel, buildStartSteps, buildCards, useJourneyHome, useReleaseAssets, useStarCard, useSystemInfo, reachProblemOf, registeredComponentStatus, guideCardData, downloadCardData, sponsorCardData, GUIDE_TARGET, homeTexts, parseErrorLog, parseSessionLog } from 'foundation-ui/vue'
+import { coverKnown, heroArtReady, firstImage, recentErrorCount, micIsReady, startupProblems, MStartupProblems, MBanner, MButton, MIcon, MIconButton, MItem, MGroup, MPage, MSection, MSheet, MSnackbar, MSwitch, MHomeDash, MSupportSheet, MAnnouncementStrip, MAnnouncementSheet, useAnnouncements, useGuideCard, buildHomeModel, buildStartSteps, buildCards, useJourneyHome, useReleaseAssets, useStarCard, useSystemInfo, reachProblemOf, registeredComponentStatus, guideCardData, downloadCardData, sponsorCardData, GUIDE_TARGET, homeTexts, parseErrorLog, parseSessionLog } from 'foundation-ui/vue'
 import { realSession, buildCatalogue, buildCatalogueDetails, createHistory, createPairQr, saveSettingKey, recentKeys, rememberRecent, createQueuedCalls, createSerialCalls } from 'foundation-ui/vue'
 import QRCode from 'qrcode'
 import { useVddSettings } from '../composables/useVddSettings.js'
@@ -82,6 +82,7 @@ import { canOpenBigScreen, openBigScreenOnHost } from '../composables/openBigScr
 import { useShellLive } from '../composables/useShellLive.js'
 import { trackEvents } from '../config/telemetry.js'
 import { hostData } from '../composables/hostData.js'
+import { kept, SETTLE_CAP_MS } from '../composables/homeKept.js'
 import { SPONSORS } from '../config/sponsors.js'
 import { deviceIconFor } from '../utils/homeData.js'
 import { openExternalUrl } from '../utils/helpers.js'
@@ -92,8 +93,9 @@ import { $tp, setPlatformHint } from '../platform-i18n'
 
 const { t, locale } = useI18n()
 const webShell = inject('webShell', null)
-const hostConfig = ref(null)
-const hostStatus = ref('loading')
+// the host's last answer (hostData keeps it): the page starts from it and the read below replaces it
+const hostConfig = ref(hostData.peek('config'))
+const hostStatus = ref(hostConfig.value ? 'ready' : 'loading')
 const edit = ref(false)
 const T = computed(() => homeTexts(locale.value))
 
@@ -104,15 +106,33 @@ const announcements = useAnnouncements({ locale, version: computed(() => hostCon
 const announceOpen = ref(false)
 const announceTexts = computed(() => { const x = homeTexts(locale.value); return { open: x.annOpen, dismiss: x.annDismiss, all: x.annAll, read: x.annRead, none: x.annNone } })
 const WANT = new Set(['session', 'latency', 'bitrate', 'fps', 'hdr', 'mic', 'vdd', 'cpu', 'gpu', 'memory'])
-const live = useHostLive({ want: () => WANT, platform: () => platform.value })
+const live = useHostLive({ want: () => WANT, platform: () => platform.value, keep: true })
 const go = (id) => (webShell?.nav ? webShell.nav.go(id) : (window.location.href = id === 'home' ? '/' : `/${id}`))
 const pairClient = () => { go('pin'); if (webShell) webShell.pending.value = 'pair' }
 
 // ---- Data ----
+const appsOf = (data) => {
+  const list = Array.isArray(data) ? data : data?.apps
+  return Array.isArray(list) ? list.map((a) => ({ id: a.uuid || a.name, name: a.name, cover: a['image-path'] ? getImagePreviewUrl(a['image-path']) : '' })) : null
+}
+const apps = ref(appsOf(hostData.peek('apps')))
 const shellLive = useShellLive()
 // the session with the real name of its client (realSession), and its measured bitrate from either route of the host (sessions[] or perf/current); `bitrate` stays the budget
 const rawSession = computed(() => realSession(live.sessions.value[0] || null, shellLive.clients.value?.list))
-const session = computed(() => { const s = rawSession.value; if (!s) return s; const m = Number.isFinite(s.measured_bitrate_kbps) ? s.measured_bitrate_kbps : live.perf.value?.measuredKbps; return Number.isFinite(m) ? { ...s, measured_bitrate_kbps: m } : s })
+const liveSession = computed(() => { const s = rawSession.value; if (!s) return s; const m = Number.isFinite(s.measured_bitrate_kbps) ? s.measured_bitrate_kbps : live.perf.value?.measuredKbps; return Number.isFinite(m) ? { ...s, measured_bitrate_kbps: m } : s })
+// A stream that is running when the page is drawn is drawn in its first frame, not idle and then redrawn: the page takes the session when what the streaming overview is drawn from is known (the DualSense keys of the
+// stream, the cover of its game and the colours the host card takes from it), or after SETTLE_CAP_MS. A visit that kept its data starts with it.
+const liveArt = computed(() => (apps.value || []).find((a) => a.name === rawSession.value?.app_name)?.cover || '')
+const startReady = computed(() => shellLive.dualsenseKnown.value && coverKnown(liveArt.value) && heroArtReady(liveArt.value))
+const session = ref(kept.settled ? liveSession.value : null)
+let startTimer = 0
+watch([liveSession, startReady], () => {
+  const raw = liveSession.value
+  clearTimeout(startTimer)
+  if (!raw || session.value || startReady.value) { session.value = raw; return }
+  startTimer = setTimeout(() => { session.value = liveSession.value }, SETTLE_CAP_MS)
+}, { immediate: true })
+onBeforeUnmount(() => clearTimeout(startTimer))
 const audioBusy = ref(false)
 async function setHostAudio(enabled) {
   const s = session.value
@@ -128,7 +148,8 @@ const bitrateSample = (s) => (s && Number.isFinite(s.measured_bitrate_kbps) ? s.
 const perf = live.perf
 const sys = live.system
 const pushSample = (list, v) => { if (Number.isFinite(v)) list.value = [...list.value.slice(-59), v] }
-const series = { cpu: ref([]), gpu: ref([]), bitrate: ref([]), fps: ref([]) }
+const series = Object.fromEntries(['cpu', 'gpu', 'bitrate', 'fps'].map((k) => [k, ref([...(kept.series?.[k] || [])])]))
+onBeforeUnmount(() => { kept.series = Object.fromEntries(Object.entries(series).map(([k, v]) => [k, v.value])) })
 watch(sys, (s) => { if (s) { pushSample(series.cpu, s.cpu_percent); pushSample(series.gpu, s.gpu_percent) } })
 watch(() => [bitrateSample(session.value), perf.value?.fps], ([b, f]) => { if (session.value) { pushSample(series.bitrate, b); pushSample(series.fps, f) } else { series.bitrate.value = []; series.fps.value = [] } })
 
@@ -149,17 +170,13 @@ let sampler = 0
 onMounted(() => { sampleAll(); sampler = setInterval(sampleAll, SAMPLE_SEC * 1000) })
 onBeforeUnmount(() => clearInterval(sampler))
 
-const apps = ref(null)
 async function fetchApps() {
-  try {
-    const data = await apiJson('/api/apps')
-    const list = Array.isArray(data) ? data : data?.apps
-    apps.value = Array.isArray(list) ? list.map((a) => ({ id: a.uuid || a.name, name: a.name, cover: a['image-path'] ? getImagePreviewUrl(a['image-path']) : '' })) : null
-  } catch { apps.value = null }
+  try { apps.value = appsOf(await hostData.refresh('apps')) } catch { apps.value = null }
 }
 
 // gamepad type: the host's controller configuration, applied to the next controller a client creates (no restart)
-const gamepadMode = ref('')
+const gamepadMode = ref(kept.gamepad)
+watch(gamepadMode, (v) => { kept.gamepad = v })
 const gamepadBusy = ref(false)
 async function fetchGamepad() {
   try {
@@ -199,6 +216,8 @@ const micText = computed(() => {
 })
 
 const { logs, fancyLogs, fatalLogs, fetchLogs } = useLogs()
+if (kept.logs) logs.value = kept.logs
+watch(logs, (v) => { if (v) kept.logs = v })
 const startup = computed(() => startupProblems(fatalLogs.value.map((log) => log.value), String(locale.value)))
 // the fix of a known problem: the driver page of this UI, else the page of the project's documents that names it
 const onStartupFix = (problem) => {
@@ -305,6 +324,8 @@ const cards = computed(() => buildCards(model.value, { texts: T.value, catalogue
 // the system information of the host (the network adapters, the CPU, the GPU, the system): a host without the API leaves those tiles out
 const sysJson = async (path) => { const r = await apiFetch(path); if (!r.ok) throw Object.assign(new Error(`HTTP ${r.status}`), { status: r.status }); return r.json() }
 const nics = useSystemInfo({ fetchJson: sysJson })
+if (kept.nics) nics.info.value = kept.nics
+watch(nics.info, (v) => { if (v) kept.nics = v })
 const reachProblem = computed(() => reachProblemOf(reach.view.report))
 // what the smart overview reads (all local): the paired clients, a stream, problems, the network of the host
 const compRows = () => registeredComponentStatus()?.rows?.value || []
@@ -316,7 +337,16 @@ const smartSignals = computed(() => ({
   wifiHost: nics.defaultNic.value?.type === 'wifi', linkSlowMbps: nics.defaultNic.value?.link_speed_mbps && nics.defaultNic.value.link_speed_mbps < 1000 ? nics.defaultNic.value.link_speed_mbps : 0,
   reachBad: reachProblem.value, updateAvailable: !!updateLabel.value,
 }))
-const dashCtx = computed(() => ({ live: !!session.value, isNew: isNew.value, ...journey.ctx.value, star: star.visible.value, starNames: (shellLive.clients.value?.list || []).map((c) => c.name), clientList: (shellLive.clients.value?.list || []).map((c) => ({ name: c.name, uuid: c.uuid, family: c.family, official: c.official, os: c.os, version: c.version, last_seen: c.last_seen })), sessionClient: session.value ? { uuid: session.value.client_cert_uuid || session.value.uuid || session.value.client_uuid || '', name: session.value.client_name || '', family: session.value.client_family || '', os: session.value.client_os || '', official: session.value.client_official } : null, signals: smartSignals.value }))
+// The overview is drawn (not its skeleton) once what it is drawn from is known: the host's config, apps, log and gamepad type, the session and the paired clients, and for a running stream the keys, the cover and the
+// colours of the host card. A visit after the first starts from what it kept (nothing is waited for); a first visit waits for the reads, which go out together, and for at most SETTLE_CAP_MS, so a host that
+// answers slowly does not hold the page. The system information is not waited for: it only adds a tile when the link is bad, which then comes in with the motion of a change.
+const reads = reactive({ config: kept.settled, logs: kept.settled, apps: kept.settled, pad: kept.settled })
+const capped = ref(false)
+let capTimer = 0
+onBeforeUnmount(() => clearTimeout(capTimer))
+const known = computed(() => Object.values(reads).every(Boolean) && live.local.value !== null && !!shellLive.clients.value)
+const pending = computed(() => !(capped.value || (known.value && (!rawSession.value || startReady.value) && coverKnown(catalogue.value['last-session']?.cover || ''))))
+const dashCtx = computed(() => ({ pending: pending.value, live: !!session.value, isNew: isNew.value, ...journey.ctx.value, star: star.visible.value, starNames: (shellLive.clients.value?.list || []).map((c) => c.name), clientList: (shellLive.clients.value?.list || []).map((c) => ({ name: c.name, uuid: c.uuid, family: c.family, official: c.official, os: c.os, version: c.version, last_seen: c.last_seen })), sessionClient: session.value ? { uuid: session.value.client_cert_uuid || session.value.uuid || session.value.client_uuid || '', name: session.value.client_name || '', family: session.value.client_family || '', os: session.value.client_os || '', official: session.value.client_official } : null, signals: smartSignals.value }))
 // the date of a post in the 资讯 tile, YYYY-MM-DD
 const dateOfPost = (at) => { if (!at) return ''; const d = new Date(at); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}` }
 function onAction(a) {
@@ -436,24 +466,28 @@ const reach = useReach()
 let logTimer = 0
 let appsTimer = 0
 onMounted(async () => {
+  watch(pending, (p) => { if (!p) kept.settled = true }, { immediate: true }) // set up here, not above: the catalogue it reads is built from things declared further down
+  if (!kept.settled) capTimer = setTimeout(() => { capped.value = true }, SETTLE_CAP_MS)
   void reach.refresh()
   nics.start()
   shellLive.start()
-  void fetchApps()
-  void fetchGamepad()
+  void fetchApps().finally(() => { reads.apps = true })
+  void fetchGamepad().finally(() => { reads.pad = true })
   appsTimer = setInterval(() => { if (!document.hidden) void fetchApps() }, 30000)
   try {
     const config = await hostData.refresh('config')
     hostConfig.value = config
     hostStatus.value = 'ready'
+    reads.config = true
     void nextTick(() => trackEvents.homeReady())
     if (checkSetupWizard(config)) void import('../utils/guideLauncher.js').then((m) => m.maybeAutoOpenGuide({ ignorePaired: true }))
-    // version and logs do not block each other, so an external version check cannot delay the local status
-    await Promise.allSettled([fetchVersions(config), fetchLogs()])
+    // version and logs do not block each other, so an external version check cannot delay the local status (nor the first frame: the page does not wait for it)
+    await Promise.allSettled([fetchVersions(config), fetchLogs().finally(() => { reads.logs = true })])
     logTimer = setInterval(() => { if (!document.hidden) void fetchLogs() }, 30000)
     if (version.value) document.title += ` Ver ${version.value.version}`
   } catch (e) {
     hostStatus.value = 'error'
+    reads.config = true; reads.logs = true
     // in preview mode the API is not there; that is expected
     if (e?.message?.includes('JSON') || e?.message?.includes('<!DOCTYPE')) console.warn('API not available in preview mode:', e.message)
     else {

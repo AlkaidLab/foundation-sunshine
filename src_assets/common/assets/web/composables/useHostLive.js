@@ -1,9 +1,13 @@
-import { onBeforeUnmount, ref } from 'vue'
+import { onBeforeUnmount, ref, watch } from 'vue'
 import { apiFetch, apiPostJson } from '../utils/apiFetch.js'
 import { pickPerf } from '../utils/homeData.js'
 
 const CONSUMER = 'web-home'
 const LEASE_MS = 10000
+
+// What the last visit of a page that asks to `keep` saw (stale-while-revalidate): the next visit starts from it, so the page is drawn from the host's last answers in its first frame
+// and the polls below replace them in place. The session is part of it, or a page opened while a stream runs would be drawn idle and redrawn.
+const last = { local: null, sessions: [], perf: null, hdr: null, mic: null, vdd: null, system: null }
 
 /**
  * Live state of the host for the home tiles. Sessions and performance only answer on the host itself: a 403 turns
@@ -12,17 +16,20 @@ const LEASE_MS = 10000
  *    come from /api/perf/current, whose frame rates are only collected while a lease is held (renewed every 5 s,
  *    released when the session ends or the page closes).
  *  - hdr (hdr-calibration), mic (microphone/status), vdd (vdd/status): every 10 s, only for the tiles that are placed.
- * `want` returns the ids of the tiles that are on the page.
+ * `want` returns the ids of the tiles that are on the page. `keep` starts from the answers of the last visit of a page that kept them and keeps its own for the next.
  */
-export function useHostLive({ want, platform }) {
-  const local = ref(null)
-  const sessions = ref([])
-  const perf = ref(null)
-  const hdr = ref(null)
-  const mic = ref(null)
-  const vdd = ref(null)
+export function useHostLive({ want, platform, keep = false }) {
+  const from = keep ? last : { local: null, sessions: [], perf: null, hdr: null, mic: null, vdd: null, system: null }
+  const local = ref(from.local)
+  const sessions = ref(from.sessions)
+  const perf = ref(from.perf)
+  const hdr = ref(from.hdr)
+  const mic = ref(from.mic)
+  const vdd = ref(from.vdd)
   // CPU, GPU and memory of the host (/api/runtime/system); a host without the route (404) or a remote browser (403) leaves it null
-  const system = ref(null)
+  const system = ref(from.system)
+  const save = () => { if (keep) Object.assign(last, { local: local.value, sessions: sessions.value, perf: perf.value, hdr: hdr.value, mic: mic.value, vdd: vdd.value, system: system.value }) }
+  if (keep) watch([local, sessions, perf, hdr, mic, vdd, system], save, { flush: 'sync' })
   let sysTimer = 0
   let sysOff = false
   let timer = 0
@@ -110,6 +117,7 @@ export function useHostLive({ want, platform }) {
   window.addEventListener('pagehide', release)
   onBeforeUnmount(() => {
     closed = true
+    save()
     clearTimeout(timer)
     clearInterval(auxTimer)
     clearTimeout(sysTimer)
