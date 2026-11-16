@@ -64,8 +64,10 @@ namespace {
     throw_if_false(X509_gmtime_adj(X509_get_notAfter(x509.get()), 3600) != nullptr, "failed to set notAfter");
     throw_if_false(X509_set_pubkey(x509.get(), pkey.get()) == 1, "failed to set public key");
 
-    auto *name = X509_get_subject_name(x509.get());
-    throw_if_false(name != nullptr, "failed to get certificate subject");
+    // OpenSSL 4.0 returns the subject as const: build a name and set it
+    std::unique_ptr<X509_NAME, decltype(&X509_NAME_free)> subject { X509_NAME_new(), X509_NAME_free };
+    auto *name = subject.get();
+    throw_if_false(name != nullptr, "failed to create certificate subject");
     throw_if_false(
       X509_NAME_add_entry_by_txt(
         name,
@@ -76,6 +78,7 @@ namespace {
         -1,
         0) == 1,
       "failed to set certificate subject");
+    throw_if_false(X509_set_subject_name(x509.get(), name) == 1, "failed to set certificate subject");
     throw_if_false(X509_set_issuer_name(x509.get(), name) == 1, "failed to set certificate issuer");
     throw_if_false(X509_sign(x509.get(), pkey.get(), EVP_sha256()) > 0, "failed to sign certificate");
 
