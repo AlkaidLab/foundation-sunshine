@@ -12,9 +12,11 @@
 #include <windows.h>
 
 // HID headers
-#include <hidpi.h>
+// hidsdi.h defines NTSTATUS and includes hidusage.h before hidpi.h.
+// clang-format off
 #include <hidsdi.h>
-#include <hidusage.h>
+#include <hidpi.h>
+// clang-format on
 #include <setupapi.h>
 
 #include <algorithm>
