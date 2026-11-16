@@ -18,6 +18,38 @@ import sys
 LOG_START = re.compile(r"BOOST_LOG\((error|fatal)\)\s*<<")
 
 
+def _drop_controls(data: bytes) -> bytes:
+    """The bytes a log line keeps after events.cpp drop_controls: tab, CR and LF
+    become a space; other C0 characters and DEL go; C1, U+2028..U+202E,
+    U+2066..U+2069 and the BOM go. The host hashes this form, not the literal."""
+    out = bytearray()
+    i = 0
+    n = len(data)
+    while i < n:
+        c = data[i]
+        if c in (0x09, 0x0A, 0x0D):
+            out.append(0x20)
+            i += 1
+            continue
+        if c < 0x20 or c == 0x7F:
+            i += 1
+            continue
+        if c == 0xC2 and i + 1 < n and 0x80 <= data[i + 1] <= 0x9F:
+            i += 2
+            continue
+        if c == 0xE2 and i + 2 < n:
+            b, d = data[i + 1], data[i + 2]
+            if (b == 0x80 and 0xA8 <= d <= 0xAE) or (b == 0x81 and 0xA6 <= d <= 0xA9):
+                i += 3
+                continue
+        if c == 0xEF and i + 2 < n and data[i + 1] == 0xBB and data[i + 2] == 0xBF:
+            i += 3
+            continue
+        out.append(c)
+        i += 1
+    return bytes(out)
+
+
 def fnv1a(data) -> int:
     h = 2166136261
     for b in (data.encode() if isinstance(data, str) else data):
@@ -395,7 +427,8 @@ def scan(root: str):
                 text = handle.read()
             for m in LOG_START.finditer(_mask_comments(text)):
                 line = text.count("\n", 0, m.start()) + 1
-                message_bytes = _leading_literal_bytes(text[m.end():statement_end(text, m.end())])
+                # the host hashes the message after drop_controls (events.cpp), so the table does the same
+                message_bytes = _drop_controls(_leading_literal_bytes(text[m.end():statement_end(text, m.end())]))
                 code = error_code(message_bytes)
                 entry = table.setdefault(code, {"head": error_head(message_bytes), "sites": []})
                 entry["sites"].append({"file": os.path.relpath(path, root).replace(os.sep, "/"), "line": line, "level": m.group(1), "text": message_bytes[:120].decode("utf-8", errors="replace")})

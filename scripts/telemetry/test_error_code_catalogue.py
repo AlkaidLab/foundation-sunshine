@@ -53,6 +53,17 @@ class Bytes(unittest.TestCase):
         self.assertNotEqual(cat.fnv1a(("x" + "错" * 95).encode()), cat.fnv1a(cat.error_head_bytes(no_space)))
 
 
+class Controls(unittest.TestCase):
+    def test_drop_controls_matches_the_host_rule(self):
+        self.assertEqual(cat._drop_controls(b"a\tb\rc\nd"), b"a b c d")
+        self.assertEqual(cat._drop_controls(b"a\x00\x01\x1f\x7fb"), b"ab")
+        self.assertEqual(cat._drop_controls(b"a\xc2\x80b\xc2\x9fc"), b"abc")
+        self.assertEqual(cat._drop_controls(b"a\xe2\x80\xa8b\xe2\x80\xaec\xe2\x81\xa6d\xe2\x81\xa9e"), b"abcde")
+        self.assertEqual(cat._drop_controls(b"a\xef\xbb\xbfb"), b"ab")
+        # a truncated sequence cannot be judged and stays as it is
+        self.assertEqual(cat._drop_controls(b"a\xe2\x80"), b"a\xe2\x80")
+
+
 class Statements(unittest.TestCase):
     def scan_text(self, source):
         with tempfile.TemporaryDirectory() as d:
@@ -100,6 +111,11 @@ class Statements(unittest.TestCase):
             self.assertEqual(sorted(e["head"] for e in table.values()), ["real failure"])
             self.assertEqual(next(iter(table.values()))["sites"][0]["line"], 4)
 
+    def test_scan_hashes_the_message_after_dropping_controls(self):
+        table = self.scan_text('void f() { BOOST_LOG(error) << "\\t"sv << name; }\nvoid g() { BOOST_LOG(error) << "Fail\\ted\\x01: here" << v; }\n')
+        self.assertEqual(list(table), [cat.error_code(""), cat.error_code("Fail ed: here")])
+        self.assertEqual(table[cat.error_code("Fail ed: here")]["sites"][0]["text"], "Fail ed: here")
+
     def test_a_digit_separator_in_a_hex_float_is_not_a_character_literal(self):
         table = self.scan_text("constexpr double x = 0x1.a'bp0; // BOOST_LOG(error) << \"Ignored\";\nvoid f() { BOOST_LOG(error) << \"Real failure\"; }\n")
         self.assertEqual(list(table), [cat.error_code("Real failure")])
@@ -129,11 +145,11 @@ class Statements(unittest.TestCase):
         self.assertEqual(list(table), [cat.error_code("Real")])
         self.assertEqual(table[cat.error_code("Real")]["sites"][0]["line"], 3)
 
-    def test_a_plain_literal_ends_at_nul_but_a_suffixed_one_keeps_its_bytes(self):
+    def test_a_plain_literal_ends_at_nul_and_the_runtime_drops_the_nul_of_a_suffixed_one(self):
         table = self.scan_text(r'void f() { BOOST_LOG(error) << "Failed\000retry"; }' + "\n")
         self.assertEqual(list(table), [cat.error_code("Failed")])
         table = self.scan_text(r'void f() { BOOST_LOG(error) << "Failed\000retry"sv; }' + "\n")
-        self.assertEqual(list(table), [cat.error_code(b"Failed\x00retry")])
+        self.assertEqual(list(table), [cat.error_code("Failedretry")])
 
     def test_prefixed_character_literals_are_still_literals(self):
         self.assertEqual(cat.statement_end("x = u8';' + L';'; y", 0), 16)
