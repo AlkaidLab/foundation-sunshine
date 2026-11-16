@@ -1109,7 +1109,8 @@ namespace telemetry {
   void
   service_t::consent_changed() {
     try {
-      reconcile_consent();  // before the install id goes: the record of a turned-off choice carries it
+      // before the install id goes: the record of a turned-off choice carries it; when it could not be saved the id stays on the computer (the next start finds the turn-off again and saves it)
+      const bool recorded = reconcile_consent();
       const auto c = consent_now();
       {
         std::lock_guard lock { mutex_ };
@@ -1129,10 +1130,12 @@ namespace telemetry {
       std::lock_guard queue_lock { queue_mutex_ };
       if (!c.any()) {
         queue_.clear();
-        std::lock_guard lock { mutex_ };
-        install_id_.clear();
-        std::error_code ec;
-        fs::remove(options_.dir / "install_id", ec);
+        if (recorded) {
+          std::lock_guard lock { mutex_ };
+          install_id_.clear();
+          std::error_code ec;
+          fs::remove(options_.dir / "install_id", ec);
+        }
       }
       else {
         queue_.refilter(c.usage, c.errors);
@@ -1203,7 +1206,7 @@ namespace telemetry {
     }
   }
 
-  void
+  bool
   service_t::reconcile_consent() {
     try {
       const auto c = consent_now();
@@ -1223,16 +1226,25 @@ namespace telemetry {
           std::lock_guard lock { mutex_ };
           host_version = sanitize_version(context_.version);
         }
-        if (host_version.empty()) return;  // the context is not set yet: telemetry.cpp calls this again once it is, and the state still says "on"
+        if (host_version.empty()) return false;  // the context is not set yet: telemetry.cpp calls this again once it is, and the state still says "on"
         std::lock_guard lock { opt_out_mutex_ };
         std::vector<opt_out::product_version_t> products { { "host", host_version } };
         for (const auto &[p, v] : products_seen_) products.push_back({ p, v });
         opt_out::add(opt_outs_, off, products, id, deps_.now_ms());
-        if (!write_file_atomic(options_.dir / "opt_out_pending.jsonl", opt_out::serialize(opt_outs_))) return;  // not saved: the state is not committed, the next call tries again
+        if (!write_file_atomic(options_.dir / "opt_out_pending.jsonl", opt_out::serialize(opt_outs_))) return false;  // not saved: the state is not committed, the next call tries again
       }
-      if (changed) write_file_atomic(options_.dir / "consent_state.json", opt_out::state_to_json({ true, c.usage, c.errors }).dump());
+      if (changed && !write_file_atomic(options_.dir / "consent_state.json", opt_out::state_to_json({ true, c.usage, c.errors }).dump())) return false;
+      // both choices are off and every turn-off is saved (the record carries the number from now on): the number leaves the install; a retry of an earlier failure ends here too
+      if (!c.any()) {
+        std::lock_guard lock { mutex_ };
+        install_id_.clear();
+        std::error_code ec;
+        fs::remove(options_.dir / "install_id", ec);
+      }
+      return true;
     }
     catch (...) {
+      return false;
     }
   }
 

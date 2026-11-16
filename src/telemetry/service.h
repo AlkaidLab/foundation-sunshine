@@ -185,7 +185,8 @@ namespace telemetry {
     /** The consent changed: drop what the off kinds had waiting, and the install id when both are off. A choice that was turned off is recorded once (opt_out.h) and sent by pump(). */
     void consent_changed();
     /** Compares the two choices with what they were the last time this looked: the ones turned off get their record (opt_out.h), written to disk first. Called when the config is saved and once at the start, after the context is set. */
-    void reconcile_consent();
+    /** -> false when a turn-off could not be recorded yet (the context is not set, or the record could not be saved): the installation number is then kept and the state stays "on", so the next call tries again. */
+    bool reconcile_consent();
     /** The buffer reached flush_events: the sender thread should not wait for its interval. */
     bool flush_wanted() const;
 

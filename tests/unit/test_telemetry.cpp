@@ -2519,6 +2519,50 @@ TEST(OptOutService, TheRecordIsSavedBeforeTheStateAndAnExpiredOneLeavesTheDisk) 
   (void) id;
 }
 
+TEST(OptOutService, BothChoicesOffWithTheRecordNotSavedKeepsTheNumberUntilAFreshStartSavesIt) {
+  harness_t h;
+  h.consent = consent_t { true, true };
+  h.svc->reconcile_consent();
+  const auto id = h.svc->install_id();
+  ASSERT_EQ(id.size(), 36u);
+  const auto pending = h.dir.path / "opt_out_pending.jsonl";
+  std::filesystem::create_directories(pending);  // the file cannot be written
+  h.consent = consent_t { false, false };
+  h.svc->consent_changed();
+  EXPECT_TRUE(std::filesystem::exists(h.dir.path / "install_id"));  // the way back is kept
+  EXPECT_EQ(json::parse(std::ifstream(h.dir.path / "consent_state.json"))["usage"], true);  // and the state still says "on"
+  // the host ends (the memory with the record is lost), the problem is gone, a new service starts over the same folder with both choices off
+  const auto dir = h.dir.path;
+  h.svc.reset();
+  std::filesystem::remove_all(pending);
+  std::vector<json> posted;
+  service_deps_t deps;
+  std::int64_t now = h.now + 60'000;
+  deps.now_ms = [&] { return now; };
+  deps.consent = [] { return consent_t { false, false }; };
+  deps.post = [&](const std::string &, const std::string &body) {
+    posted.push_back(json::parse(body));
+    return post_result_t { 200 };
+  };
+  service_options_t options;
+  options.dir = dir;
+  service_t fresh(options, deps);
+  context_t c;
+  c.version = "5.2.0.1.杂鱼";
+  fresh.set_context(c);
+  EXPECT_TRUE(fresh.reconcile_consent());  // the turn-off of both is found again, saved, and then the number goes
+  EXPECT_FALSE(std::filesystem::exists(dir / "install_id"));
+  EXPECT_GT(std::filesystem::file_size(pending), 0u);
+  fresh.pump();
+  std::set<std::string> choices;
+  for (const auto &b : posted) {
+    EXPECT_EQ(b["install_id"], id);
+    choices.insert(b["events"][0]["props"]["choice"].get<std::string>());
+  }
+  EXPECT_EQ(choices, (std::set<std::string> { "usage", "errors" }));
+  EXPECT_EQ(std::filesystem::file_size(pending), 0u);
+}
+
 TEST(OptOutService, AnOfflineRecordWaitsAndAFirstRunWithTheChoiceOffSendsNothing) {
   harness_t h;
   h.consent = consent_t { true, true };
