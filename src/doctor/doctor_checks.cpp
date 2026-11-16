@@ -251,6 +251,15 @@ namespace doctor {
             if (e.is_default) facts.sink = e.name;
           }
         }
+        else if (facts.sink_found) {
+          // the setting holds the id the picker stored: the row shows the device by its name
+          for (const auto &e : endpoints.render) {
+            if (os::endpoint_matches(e, facts.sink)) {
+              facts.sink = e.name;
+              break;
+            }
+          }
+        }
         facts.virtual_checked = true;
         for (const auto &e : endpoints.render) {
           const bool match = facts.virtual_sink.empty() ? contains_icase(e.name, "Steam Streaming Speakers") : os::endpoint_matches(e, facts.virtual_sink);
