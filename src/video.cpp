@@ -37,6 +37,7 @@ extern "C" {
 #include "crash/crash.h"
 #include "display_device/display_device.h"
 #include "display_device/to_string.h"
+#include "encoder_probe_guard.h"
 #include "encoder_snapshot.h"
 #include "globals.h"
 #include "hdr/dynamic_hdr_selection.h"
@@ -4918,6 +4919,13 @@ namespace video {
     return -1;
   }
 
+  /// The encoder the previous process of this install was probing when it ended (src/encoder_probe_guard.h), read once per process.
+  static const std::string &
+  interrupted_probe_of_previous_process() {
+    static const std::string name = encoder_probe_guard::take_interrupted(platf::appdata());
+    return name;
+  }
+
   static bool
   validate_encoder_detailed(
     encoder_t &encoder,
@@ -4930,6 +4938,16 @@ namespace video {
       if (failure) *failure = reason;
       return false;
     };
+    // The previous start ended inside the probe of this encoder (a crash in the graphics driver): leave it out for this process, so the start gets through and
+    // the other encoders run. A person who asked for this encoder, and a check the person started (every_codec), are not held back.
+    // The marker of the previous process is read first, on every path (an encoder set in the settings, a check the person started): the marker written below would
+    // otherwise replace it before it was ever read, and the next start would walk into the same crash again.
+    const auto &interrupted_by_previous = interrupted_probe_of_previous_process();
+    if (encoder_probe_guard::should_skip(interrupted_by_previous, std::string { encoder.name }, config::video.encoder, every_codec)) {
+      BOOST_LOG(warning) << "Skipping encoder ["sv << encoder.name << "]: the previous start ended while it was being probed; it is tried again at the next start"sv;
+      return fail_with("previous_start_crashed");
+    }
+    const encoder_probe_guard::scope_t probe_marker { platf::appdata(), std::string { encoder.name } };
     std::shared_ptr<platf::display_t> disp;
     const auto configured_capture_backend = config::video.capture;
 
