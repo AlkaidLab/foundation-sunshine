@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Builds docs/privacy-data-inventory.md and docs/privacy-data-inventory.zh.md in the host repo from one table.
 NOTE: since #1274 the two md files carry rows that this script does not have (the program log of crash reports, meta env and ctx, D1 crash_logs and user_logs, the log_ref of user_report). Regenerating overwrites them:
-extend this script with those rows first, or merge the output by hand.
+extend this script with those rows first, or merge the output by hand. The `src/telemetry/events.cpp:LINE` references of the two files are kept right by `inventory_refs.py` (run it after changing events.cpp; `--check` lists what is off).
 Every `@name` in a cell is replaced by `path:line` found by searching the code for the anchor (so the evidence moves with the code)."""
 import re, subprocess, sys
 
