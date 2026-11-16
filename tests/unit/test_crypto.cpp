@@ -21,6 +21,7 @@
 #include <boost/property_tree/json_parser.hpp>
 #include <boost/property_tree/ptree.hpp>
 
+#include <openssl/x509v3.h>
 #include <gtest/gtest.h>
 
 #include "src/config.h"
@@ -173,6 +174,20 @@ TEST(CryptoX509, LegacyChainVerifyIsSafeFromSeveralThreads) {
   }
   for (auto &worker : workers) worker.join();
   EXPECT_EQ(failures.load(), 0);
+}
+
+TEST(CryptoX509, HostNameCommonNameAlsoGetsASubjectAltName) {
+  // OpenSSL 4 no longer matches a host name against the common name, so a certificate made for "localhost" needs the alternative name
+  const auto host = crypto::x509(crypto::gen_creds("localhost", 2048).x509);
+  ASSERT_TRUE(host);
+  EXPECT_GE(X509_get_ext_by_NID(host.get(), NID_subject_alt_name, -1), 0);
+  // the names of paired clients and of the host are not host names: no extension
+  const auto client = crypto::x509(crypto::gen_creds("NVIDIA GameStream Client", 2048).x509);
+  ASSERT_TRUE(client);
+  EXPECT_LT(X509_get_ext_by_NID(client.get(), NID_subject_alt_name, -1), 0);
+  const auto odd = crypto::x509(crypto::gen_creds("bad-.name..example", 2048).x509);
+  ASSERT_TRUE(odd);
+  EXPECT_LT(X509_get_ext_by_NID(odd.get(), NID_subject_alt_name, -1), 0);
 }
 
 TEST(NvhttpPairing, ResolvesUuidForVerifiedPeerCertificate) {
