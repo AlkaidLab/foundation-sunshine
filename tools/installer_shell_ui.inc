@@ -308,41 +308,15 @@ panel_exe() {
   return GetFileAttributesW(exe.c_str()) == INVALID_FILE_ATTRIBUTES ? std::wstring() : exe;
 }
 
-// The host records the start guide in its configuration (config\sunshine.conf next to sunshine.exe): the keys
-// guide_done, guide_finished, guide_closed and guide_active that foundation-ui guideHost.js writes. Only
-// guide_finished matters here. An unreadable file reads as "not recorded".
-bool
-guide_finished_on_host() {
-  const std::wstring dir = install_dir();
-  if (dir.empty()) return false;
-  const std::string conf = read_file(dir + L"\\config\\sunshine.conf");
-  const auto trim = [](std::string v) {
-    while (!v.empty() && (v.back() == ' ' || v.back() == '\t' || v.back() == '\r')) v.pop_back();
-    size_t b = 0;
-    while (b < v.size() && (v[b] == ' ' || v[b] == '\t')) ++b;
-    return v.substr(b);
-  };
-  size_t pos = 0;
-  while (pos < conf.size()) {
-    size_t end = conf.find('\n', pos);
-    if (end == std::string::npos) end = conf.size();
-    const std::string line = conf.substr(pos, end - pos);
-    pos = end + 1;
-    const size_t eq = line.find('=');
-    if (eq == std::string::npos || trim(line.substr(0, eq)) != "guide_finished") continue;
-    const std::string value = trim(line.substr(eq + 1));
-    return value == "true" || value == "1";
-  }
-  return false;
-}
-
-// 开启串流旅程 opens the Panel at the start guide only when the guide is still to do: always after a fresh install;
-// after an upgrade or a maintenance run only when the host has not recorded the guide as finished. Otherwise the
-// Panel starts plainly and its own first-run logic (guideEntry) decides.
+// 开启串流旅程 opens the Panel at the start guide only for a first run (installer_guide.h): a fresh install passes --start-guide
+// until the host records the guide as finished (guide_finished) or closed (guide_closed) in config\sunshine.conf next to
+// sunshine.exe, which foundation-ui guideHost.js writes. An upgrade or a maintenance run never passes it: the Panel's own
+// first-run logic (guideEntry) decides and shows what is new once per version. An unreadable file reads as "not recorded".
 bool
 guide_pending() {
-  if (!S.v.upgrade && !S.v.maintenance) return true;
-  return !guide_finished_on_host();
+  const std::wstring dir = install_dir();
+  const std::string conf = dir.empty() ? std::string() : read_file(dir + L"\\config\\sunshine.conf");
+  return installer_guide::start_guide(S.v.upgrade, S.v.maintenance, conf);
 }
 
 // The panel is started from this (user-level) process, so it gets the user's token and the

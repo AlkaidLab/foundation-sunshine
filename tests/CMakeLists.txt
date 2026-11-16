@@ -788,6 +788,14 @@ if (WIN32)
 endif ()
 add_test(NAME telemetry_unit_tests COMMAND telemetry_unit_tests)
 
+# 开启串流旅程: when the installer hands the Panel --start-guide (pure rules, no Windows headers)
+add_executable(installer_guide_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_installer_guide.cpp)
+target_include_directories(installer_guide_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(installer_guide_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+target_compile_options(installer_guide_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(installer_guide_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME installer_guide_tests COMMAND installer_guide_tests)
+
 # Error and fatal log lines carry file:line:function of the statement (src/logging_site.h); header only, Boost.Log
 add_executable(logging_site_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_logging_site.cpp)

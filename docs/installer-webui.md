@@ -78,10 +78,13 @@ Unchanged: `/VERYSILENT` or `/SILENT` goes straight to `worker_main()` before an
 
 ## Fixes in the same change
 
-- **a) Start guide on upgrade.** 开启串流旅程 passes `--start-guide` only on a fresh install, or when the host
-  configuration (`<InstallDir>\config\sunshine.conf`) has no `guide_finished = true`. That is the key foundation-ui
-  `guideHost.js` writes. Without the flag, the Panel's own `guideEntry` decides. Both front ends use this
-  (`guide_pending()` in installer_shell_ui.inc).
+- **a) Start guide once.** 开启串流旅程 passes `--start-guide` (the whole first-run flow from its first step) only on a fresh
+  install, and only while the host configuration (`<InstallDir>\config\sunshine.conf`) has neither
+  `guide_finished = true` nor a `guide_closed` version: the keys foundation-ui `guideHost.js` writes when the person
+  finishes or closes the guide. An upgrade or a maintenance run never passes the flag; the Panel's own `guideEntry`
+  decides and shows what is new once per version. The keys live in the configuration, which an upgrade keeps. The
+  rule is `installer_guide::start_guide()` in `installer_guide.h`, used by both front ends and covered by
+  `tests/unit/test_installer_guide.cpp`.
 - **b) Drivers reinstalled at the same version.** VDD (`vdd-device-helper.ps1`: healthy device with the bundled
   `DriverVer` and a working control interface), ViGEmBus (file version) and usbip-win2 (uninstall `DisplayVersion`)
   already skipped a current driver. The Windows test host `inno.log` files of 2026-11-09 17:50 and 17:51 show these steps
