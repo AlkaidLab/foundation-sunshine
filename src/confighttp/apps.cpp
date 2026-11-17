@@ -18,6 +18,7 @@
 #include "src/platform/run_command.h"
 #include "src/process.h"
 #include "src/sparxie/runtime.h"
+#include "src/sparxie/apps_file_lock.h"
 #include "src/utility.h"
 #include <atomic>
 #include <chrono>
@@ -49,10 +50,13 @@ namespace confighttp::apps {
     getApps(resp_https_t response, req_https_t request) {
       if (!authenticate(response, request)) return;
 
-      sparxie::note_app_list_opened();
       print_req(request);
 
-      std::string content = sparxie::typed_apps_text(file_handler::read_file(config::stream.file_apps.c_str()));
+      std::string content;
+      {
+        std::lock_guard apps_lock(::sparxie::apps_file_mutex);
+        content = sparxie::typed_apps_text(file_handler::read_file(config::stream.file_apps.c_str()));
+      }
       web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "application/json");
       response->write(content, headers);
@@ -77,6 +81,7 @@ namespace confighttp::apps {
         return;
       }
       auto writing_guard = util::fail_guard([]() { apps_writing = false; });
+      std::lock_guard apps_lock(::sparxie::apps_file_mutex);
 
       std::stringstream ss;
       ss << request->content.rdbuf();
@@ -202,6 +207,7 @@ namespace confighttp::apps {
         return;
       }
       auto writing_guard = util::fail_guard([]() { apps_writing = false; });
+      std::lock_guard apps_lock(::sparxie::apps_file_mutex);
 
       pt::ptree outputTree;
       auto g = util::fail_guard([&]() {
@@ -292,6 +298,7 @@ namespace confighttp::apps {
         return;
       }
       auto writing_guard = util::fail_guard([]() { apps_writing = false; });
+      std::lock_guard apps_lock(::sparxie::apps_file_mutex);
 
       pt::ptree outputTree;
       auto g = util::fail_guard([&]() {
@@ -823,6 +830,7 @@ namespace confighttp::apps {
       return;
     }
     auto writing_guard = util::fail_guard([]() { apps_writing = false; });
+    std::lock_guard apps_lock(::sparxie::apps_file_mutex);
     if (default_apps::retitle_file(config::stream.file_apps, locale)) {
       proc::refresh(config::stream.file_apps);
     }

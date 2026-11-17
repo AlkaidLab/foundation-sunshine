@@ -49,7 +49,7 @@ function hostOf(variant, { saved = null } = {}) {
     if (u.pathname === '/api/sparxie/status') return v.status
     if (u.pathname === '/api/sparxie/games') return v.games
     if (u.pathname === '/api/sparxie/game-settings') return v.gameSettings[u.searchParams.get('install')] || { ok: true, values: {}, unavailable: [], running: false }
-    if (u.pathname === '/api/sparxie/art/refresh') return { ok: true, updated: 0 }
+    if (u.pathname === '/api/sparxie/art/refresh') return { ok: true, state: 'ready', jobId: 1, updated: 0 }
     if (method === 'PUT' && /^\/api\/sparxie\/apps\/\d+$/.test(u.pathname) && saved) return saved.result
     const error = new Error(`not answered: ${method} ${u.pathname}`)
     error.status = 404
@@ -224,7 +224,7 @@ for (const variant of process.env.SPARXIE_GATE_VARIANT ? [process.env.SPARXIE_GA
       if (u.pathname === '/api/sparxie/status') return v.status
       if (u.pathname === '/api/sparxie/games') return e.games
       if (u.pathname === '/api/sparxie/game-settings') return e.gameSettings
-      if (u.pathname === '/api/sparxie/art/refresh') return { ok: true, updated: 0 }
+      if (u.pathname === '/api/sparxie/art/refresh') return { ok: true, state: 'ready', jobId: 1, updated: 0 }
       throw Object.assign(new Error('not answered'), { status: 404 })
     }
     sparxie.setSparxieClient(clientOf({ get: async (u) => answer('GET', u), post: async (u, b) => answer('POST', u, b), put: async (u, b) => answer('PUT', u, b) }))

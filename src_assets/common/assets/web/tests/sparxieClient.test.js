@@ -232,3 +232,61 @@ test('creating sends the poster badge for a touch application only, and the copy
   assert.equal('badge' in host.state.calls.at(-1)[2], false, 'unset: the host decides (on for the official cover)')
   for (const lang of ['zh', 'en']) for (const key of ['posterBadge', 'posterBadgeOfficial', 'posterBadgeCustom']) assert.ok(COPY[lang][key], `${lang}.${key}`)
 })
+
+test('art checks use explicit actions and poll status without repeating the refresh', async () => {
+  const actions = []
+  let checks = 0
+  const client = createClient({
+    post: async (path, body, options) => {
+      assert.equal(path, '/api/sparxie/art/refresh')
+      const action = options.headers['X-Sparxie-Art-Action']
+      actions.push(action)
+      if (action !== 'status') return { ok: true, state: 'checking', jobId: 7, retryAfterMs: 2000 }
+      assert.equal(body.jobId, 7, 'poll the job originally returned, not a newer job')
+      checks++
+      if (checks === 1) return { ok: true, state: 'checking', jobId: 7 }
+      return { ok: true, state: 'ready', jobId: 7, updated: 1, heroes: 2 }
+    },
+    waitForArtStatus: async () => {},
+  })
+  assert.equal(await client.refreshArt(), 3)
+  assert.deepEqual(actions, ['check', 'status', 'status'])
+  actions.length = 0
+  assert.equal(await client.refreshArt({ force: true }), 3)
+  assert.deepEqual(actions, ['force', 'status'])
+})
+
+test('art status polling stops on disposal and has a bounded retry count', async () => {
+  const abort = new AbortController()
+  let calls = 0
+  const post = async () => { calls++; return { ok: true, state: 'checking', jobId: 1 } }
+  const client = createClient({ post, waitForArtStatus: async () => { abort.abort() } })
+  assert.equal(await client.refreshArt({ signal: abort.signal }), 0)
+  assert.equal(calls, 1)
+  assert.equal(await client.refreshArt({ signal: abort.signal }), 0)
+  assert.equal(calls, 1)
+  const bounded = createClient({ post, waitForArtStatus: async () => {} })
+  assert.equal(await bounded.refreshArt(), 0)
+  assert.equal(calls, 62)
+})
+
+test('art job failures do not pretend that artwork changed', async () => {
+  const client = createClient({ post: async () => ({ ok: false, state: 'failed', updated: 1 }) })
+  assert.equal(await client.refreshArt(), 0)
+})
+
+test('cached artwork stops polling and preserves other successful updates', async () => {
+  const actions = []
+  const client = createClient({
+    post: async (path, body, options) => {
+      const action = options.headers['X-Sparxie-Art-Action']
+      actions.push(action)
+      return action === 'check'
+        ? { ok: true, state: 'checking', jobId: 7 }
+        : { ok: true, state: 'cached', jobId: 7, updated: 1, skipped: ['genshin-cn'] }
+    },
+    waitForArtStatus: async () => {},
+  })
+  assert.equal(await client.refreshArt(), 1)
+  assert.deepEqual(actions, ['check', 'status'])
+})

@@ -5,6 +5,8 @@
 #include "src/logging.h"
 #include "src/process.h"
 #include "src/sparxie/install.h"
+#include "src/sparxie/art_path.h"
+#include "src/sparxie/apps_file_lock.h"
 #include "src/sparxie/platform.h"
 #include "src/sparxie/runtime.h"
 #include <fstream>
@@ -39,7 +41,10 @@ namespace confighttp::sparxie {
     // The host keeps the application list in memory: a request that rewrote apps.json makes it reload once, the way the plain application routes do, so clients see the change without a restart
     void
     reload_apps(const ::sparxie::HostEnv &env) {
-      if (env.apps_writes > 0) proc::refresh(config::stream.file_apps);
+      if (env.apps_writes > 0) {
+        std::lock_guard apps_lock(::sparxie::apps_file_mutex);
+        proc::refresh(config::stream.file_apps);
+      }
     }
     bool
     ready(resp_https_t response, req_https_t request, bool with_body) {
@@ -223,9 +228,34 @@ namespace confighttp::sparxie {
     void
     post_refresh(resp_https_t response, req_https_t request) {
       if (!ready(response, request, false)) return;
-      auto env = ::sparxie::make_host_env();
-      auto result = ::sparxie::refresh_official(env, ::sparxie::host_http_get, ::sparxie::decode_art_image, ::sparxie::host_http_post_json);
-      reload_apps(env);
+      std::string action;
+      const auto header = request->header.find("X-Sparxie-Art-Action");
+      if (header != request->header.end()) {
+        action = header->second;
+      }
+      ::sparxie::ApiResult result;
+      if (action == "status") {
+        if (!check_content_type(response, request, "application/json")) {
+          return;
+        }
+        json body;
+        if (!read_json_body(response, request, body)) {
+          return;
+        }
+        const auto job = body.find("jobId");
+        if (job == body.end() || !job->is_number_integer() || *job <= 0) {
+          result.status = ::sparxie::Status::fail(400, "invalid_art_job", "A positive artwork jobId is required");
+        }
+        else {
+          result.body = ::sparxie::art_refresh_status(job->get<std::uint64_t>());
+        }
+      }
+      else if (action == "check" || action == "force") {
+        result.body = ::sparxie::request_art_refresh(action == "force");
+      }
+      else {
+        result.status = ::sparxie::Status::fail(400, "invalid_art_action", "Unknown artwork refresh action");
+      }
       finish(response, std::move(result));
     }
     // The official art of an install. `badge` asks for the variant the host drew the Sparxie mark on (the poster a touch application hands to the clients): covers/sparxie-<install>-<version>-badge<rev>.png
@@ -273,10 +303,23 @@ namespace confighttp::sparxie {
       const auto query = request->parse_query_string();
       const auto version = query.find("v");
       const auto badge = query.find("badge");
+      const std::string id = request->path_match[2];
+      const std::string art_version = version == query.end() ? std::string() : version->second;
+      if (!::sparxie::valid_art_install(id) || !::sparxie::valid_art_version(art_version)) {
+        write_json(response, web::StatusCode::not_found, json { { "ok", false }, { "error", "No cached image" }, { "error_code", "art_unavailable" } });
+        return;
+      }
       auto env = ::sparxie::make_host_env();
-      const fs::path file = art_file(env, std::string(request->path_match[1]), std::string(request->path_match[2]), version == query.end() ? std::string() : version->second,
+      const std::string slot = request->path_match[1];
+      const fs::path file = art_file(env, slot, id, art_version,
         badge != query.end() && badge->second == "1");
-      std::ifstream in(file, std::ios::binary);
+      const fs::path root = slot == "card" ? env.covers_dir : env.host_data / "posters";
+      fs::path resolved_file;
+      if (!::sparxie::art_file_within(root, file, &resolved_file)) {
+        write_json(response, web::StatusCode::not_found, json { { "ok", false }, { "error", "No cached image" }, { "error_code", "art_unavailable" } });
+        return;
+      }
+      std::ifstream in(resolved_file, std::ios::binary);
       if (!in) {
         json err;
         err["ok"] = false;
@@ -395,6 +438,5 @@ namespace confighttp::sparxie {
       // profiles that failed saves of an earlier build left in Sparxie's config go (its config is backed up first)
       if (const int removed = ::sparxie::remove_orphan_profiles(env); removed > 0) BOOST_LOG(info) << "Sparxie: removed " << removed << " profile(s) that no application uses";
     }
-    ::sparxie::note_host_started();
   }
 }  // namespace confighttp::sparxie

@@ -56,11 +56,11 @@ namespace sparxie {
   std::vector<BrowseEntry>
   host_list_roots();
   std::optional<std::string>
-  host_http_get(const std::string &url);
+  host_http_get(const std::string &url, const std::function<bool()> &cancelled = {});
   // Posts one JSON body and answers the response body (empty when the request
   // failed). Used by the art refresh for the launchers' own content APIs.
   std::optional<std::string>
-  host_http_post_json(const std::string &url, const std::string &body);
+  host_http_post_json(const std::string &url, const std::string &body, const std::function<bool()> &cancelled = {});
   Rgba
   host_decode_image(std::string_view bytes, std::string *diagnostic = nullptr);
   // Decode WebP without relying on the Windows image codec registry.

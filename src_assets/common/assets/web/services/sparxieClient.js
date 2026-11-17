@@ -104,7 +104,15 @@ export function normalizeStatus(raw) {
   return { available: true, installed: true, running: !!raw.running, version: str(raw.version), exe: str(raw.exe), touchUiSwitch: raw.touchUiSwitch === true, store: { state, profiles: Number(s.profiles) || 0 }, warned: raw.warned !== false, statement: { zh: str(raw.statement), en: str(raw.statement_en) } }
 }
 
-export function createClient({ get = apiJson, post = apiPostJson, put = (url, body) => apiPostJson(url, body, { method: 'PUT' }) } = {}) {
+const waitForArt = (ms, signal) => new Promise((resolve) => {
+  if (signal?.aborted) { resolve(); return }
+  const done = () => { clearTimeout(timer); signal?.removeEventListener('abort', done); resolve() }
+  const timer = setTimeout(done, ms)
+  signal?.addEventListener('abort', done, { once: true })
+})
+const ART_STATUS_POLLS = 60
+
+export function createClient({ get = apiJson, post = apiPostJson, put = (url, body) => apiPostJson(url, body, { method: 'PUT' }), waitForArtStatus = waitForArt } = {}) {
   return {
     /** Never throws: a host without the component, or an older host without the route, is "absent" */
     async status() {
@@ -151,8 +159,23 @@ export function createClient({ get = apiJson, post = apiPostJson, put = (url, bo
       const raw = await put(`${PATHS.create}/${index}`, body).catch(fail)
       return { app: raw?.app || null, index, wrote: !!raw?.wrote }
     },
-    /** Asks the host to fetch the official art again; resolves when it is done (the art of games that are not installed comes with it) */
-    async refreshArt() { const raw = await post(PATHS.artRefresh, {}).catch(() => null); return Number(raw?.updated) || 0 },
+    /** Requests a daily check, or an immediate manual check with force; resolves with the number of changed outputs. */
+    // Pages already display cached art. Poll only while this requested job is
+    // running; status reads never start another official-source query.
+    async refreshArt({ force = false, signal } = {}) {
+      if (signal?.aborted) return 0
+      const request = (action, body = {}) => post(PATHS.artRefresh, body, { headers: { 'X-Sparxie-Art-Action': action }, signal }).catch(() => null)
+      let raw = await request(force ? 'force' : 'check')
+      const jobId = raw?.jobId
+      for (let count = 0; raw?.state === 'checking' && count < ART_STATUS_POLLS && !signal?.aborted; count++) {
+        const delay = Math.min(10000, Math.max(1000, Number(raw.retryAfterMs) || 2000))
+        await waitForArtStatus(delay, signal)
+        if (signal?.aborted) return 0
+        raw = await request('status', { jobId })
+      }
+      if (signal?.aborted || !['ready', 'cached'].includes(raw?.state) || raw.ok === false) return 0
+      return (Number(raw.updated) || 0) + (Number(raw.heroes) || 0)
+    },
     /** Adds the game to Sparxie when it is not there and appends the application to the host's list: { app, index, saved, wrote, state } (state: write_back.state) */
     async createApp({ install, path, region, mode, name, settings, restore, cover, badge, image, hero, options }) {
       const body = { install, path, region, mode, name }

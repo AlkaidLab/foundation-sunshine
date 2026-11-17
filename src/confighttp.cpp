@@ -12,6 +12,7 @@
 #include "image_enhancement/api.h"
 #include "logging.h"
 #include "network.h"
+#include "sparxie/runtime.h"
 #include <atomic>
 #include <latch>
 #include <optional>
@@ -36,6 +37,7 @@ namespace confighttp {
 
     https_server_t server { config::nvhttp.cert, config::nvhttp.pkey };
     register_routes(server);
+    ::sparxie::note_host_started();
     server.config.reuse_address = true;
     server.config.address = net::get_bind_address(address_family);
     server.config.port = port_https;
@@ -167,6 +169,7 @@ namespace confighttp {
     local_auth_token::stop_monitor();
     ai::http::shutdown_streams();
     image_enhancement::api::shutdown();
+    ::sparxie::stop_art_refresh();
     server.stop();
     if (loopback_server) {
       loopback_server->stop();

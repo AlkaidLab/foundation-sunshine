@@ -129,7 +129,7 @@ export function createMockHost({ scene = 'data', running = false, game = false, 
       return { ok: true, path: body.path || '', parent, truncated: false, entries: rows.filter((r) => body.files || r.kind !== 'file') }
     }
     if (p === '/api/sparxie/open') { st.opened = (st.opened || 0) + 1; return { ok: true, already_running: !!st.running } }
-    if (p === '/api/sparxie/art/refresh') { const changed = st.newArt && st.artVersion !== 'f00dbabe'; if (changed) st.artVersion = 'f00dbabe'; return { ok: true, updated: changed ? 1 : 0 } }
+    if (p === '/api/sparxie/art/refresh') { const changed = st.newArt && st.artVersion !== 'f00dbabe'; if (changed) st.artVersion = 'f00dbabe'; return { ok: true, state: 'ready', jobId: 1, updated: changed ? 1 : 0 } }
     if (p === '/api/sparxie/identify' && /zenlesszonezero\.exe$/i.test(String(body.path || ''))) return { ok: true, has_game: true, install: { ...withArt(byId('zzz-global'), ''), dir: String(body.path).replace(/[\\/][^\\/]*$/, ''), markers: ['exe', 'registry'] } }
     if (p === '/api/sparxie/identify') {
       const f = FOLDERS[st.folder]

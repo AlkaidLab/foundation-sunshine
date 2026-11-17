@@ -54,6 +54,7 @@ const ZH = {
   tagSparxie: 'Sparxie 应用',
   // every error_code the Sparxie routes answer with, as one plain sentence; a code that is not here shows the host's own message
   errors: {
+    invalid_art_job: '图片刷新任务编号无效', invalid_art_action: '图片刷新操作无效',
     sparxie_running: '关闭 Sparxie 后才能写入它的配置', config_unreadable: 'Sparxie 的配置文件无法读取', config_conflict: 'Sparxie 的配置在写入期间发生了变化', schema_unsupported: '不支持这个版本的 Sparxie 配置',
     write_failed: '无法写入 Sparxie 配置', apps_write_failed: '无法保存应用列表', no_user_session: '这台电脑当前没有已登录的用户', not_found: '没有找到这个应用，应用列表可能已经变化',
     invalid_input: '填写的内容无效', invalid_region: '所选区服与安装位置不符', is_sparxie: '这是 Sparxie 的位置，不是游戏', wrong_game: '这个文件不属于所选游戏', unrecognised: '没有找到已知的游戏主程序',
@@ -109,6 +110,7 @@ const EN = {
   hints: { gameBoost: 'After the game starts, its process priority is set to Above normal' }, changedNow: 'Now', settingsProblem: (name) => `Game settings need a fix: ${name}`,
   tagSparxie: 'Sparxie application',
   errors: {
+    invalid_art_job: 'The artwork refresh job ID is invalid', invalid_art_action: 'The artwork refresh action is invalid',
     sparxie_running: 'Close Sparxie before its config is written', config_unreadable: 'The Sparxie config file cannot be read', config_conflict: 'The Sparxie config changed while it was being written', schema_unsupported: 'This version of the Sparxie config is not supported',
     write_failed: 'The Sparxie config could not be written', apps_write_failed: 'The application list could not be saved', no_user_session: 'Nobody is signed in on this PC', not_found: 'That application was not found; the list may have changed',
     invalid_input: 'Some of the input is not valid', invalid_region: 'The region does not match the install', is_sparxie: 'That is Sparxie\'s own location, not a game', wrong_game: 'That file does not belong to the chosen game', unrecognised: 'No known game executable was found',

@@ -1,6 +1,8 @@
 #include "src/sparxie/host.h"
 #include "tests/sparxie/pe_fixture.h"
 #include "src/sparxie/platform.h"
+#include "src/sparxie/art_refresh_job.h"
+#include "src/sparxie/art_path.h"
 #include <filesystem>
 #include <fstream>
 #include <algorithm>
@@ -8,6 +10,7 @@
 #include <iostream>
 #include <cmath>
 #include <memory>
+#include <future>
 #include <gtest/gtest.h>
 #ifdef _WIN32
   #include <windows.h>
@@ -58,6 +61,158 @@ namespace {
     return image;
   }
 }  // namespace
+TEST(ArtworkPaths, RejectsUntrustedComponentsAndEscapingFiles) {
+  EXPECT_TRUE(sparxie::valid_art_install("genshin-cn"));
+  EXPECT_TRUE(sparxie::valid_art_install("endfield-global"));
+  EXPECT_TRUE(sparxie::valid_art_install("starrail-cn-2"));
+  EXPECT_TRUE(sparxie::valid_art_install("starrail-cn-2", "starrail", "cn"));
+  EXPECT_FALSE(sparxie::valid_art_install("starrail-cn-2", "starrail", "global"));
+  for (const auto id : { "../genshin-cn", "..\\genshin-cn", "C:\\games", "genshin-cn/../x", "unknown-cn" }) {
+    EXPECT_FALSE(sparxie::valid_art_install(id)) << id;
+  }
+  EXPECT_TRUE(sparxie::valid_art_version(""));
+  EXPECT_TRUE(sparxie::valid_art_version("abc-123_v2"));
+  for (const auto version : { "..", "../secret", "..\\secret", "C:\\secret", "a/b", "a\\b" }) {
+    EXPECT_FALSE(sparxie::valid_art_version(version)) << version;
+  }
+  EXPECT_FALSE(sparxie::valid_art_version(std::string("safe\0bad", 8)));
+
+  const fs::path root = fs::temp_directory_path() / "sparxie-art-path-boundary";
+  fs::remove_all(root);
+  fs::create_directories(root / "art" / "genshin-cn");
+  { std::ofstream(root / "art" / "genshin-cn" / "icon.png") << "image"; }
+  { std::ofstream(root / "secret.png") << "secret"; }
+  EXPECT_TRUE(sparxie::art_file_within(root / "art", root / "art" / "genshin-cn" / "icon.png"));
+  EXPECT_FALSE(sparxie::art_file_within(root / "art", root / "art" / ".." / "secret.png"));
+  std::error_code ec;
+  fs::create_symlink(root / "secret.png", root / "art" / "genshin-cn" / "link.png", ec);
+  if (!ec) EXPECT_FALSE(sparxie::art_file_within(root / "art", root / "art" / "genshin-cn" / "link.png"));
+  fs::remove_all(root);
+}
+
+TEST(ArtworkPaths, RefreshDoesNotWriteMetadataForInjectedInstallPath) {
+  const fs::path root = fs::temp_directory_path() / "sparxie-art-injected-install";
+  fs::remove_all(root);
+  fs::create_directories(root);
+  auto env = env_at(root);
+  const fs::path victim = root / "outside.json";
+  { std::ofstream(victim) << "sentinel"; }
+  const sparxie::json apps = { { "apps", sparxie::json::array({ { { "sparxie", { { "install", (root / "outside").string() }, { "game", "genshin" }, { "region", "cn" } } } } }) } };
+  { std::ofstream(env.apps_file) << apps.dump(); }
+  const auto offline = [](const std::string &) -> std::optional<std::string> { return std::nullopt; };
+  sparxie::refresh_official(env, offline, [](std::string_view) { return sparxie::Rgba {}; });
+  std::ifstream in(victim);
+  EXPECT_EQ(std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>()), "sentinel");
+  in.close();
+  fs::remove_all(root);
+}
+
+TEST(ArtRefreshJob, ConcurrentRequestsShareOneJobAndFailureCanRetry) {
+  sparxie::ArtRefreshJob job;
+  std::promise<void> release;
+  const auto gate = release.get_future().share();
+  std::atomic<int> calls { 0 };
+  const auto work = [&](const std::atomic_bool &) {
+    ++calls;
+    gate.wait();
+    return sparxie::json { { "ok", true }, { "updated", 2 } };
+  };
+  const auto first = job.request(work);
+  std::vector<std::future<sparxie::json>> requests;
+  for (int i = 0; i < 16; ++i) {
+    requests.push_back(std::async(std::launch::async, [&]() { return job.request(work); }));
+  }
+  for (auto &request : requests) {
+    const auto reply = request.get();
+    EXPECT_EQ(reply["state"], "checking");
+    EXPECT_EQ(reply["jobId"], first["jobId"]);
+  }
+  EXPECT_EQ(job.status()["state"], "checking");
+  release.set_value();
+  const auto wait_ready = [&]() {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (job.status()["state"] == "checking" && std::chrono::steady_clock::now() < deadline) {
+      std::this_thread::yield();
+    }
+  };
+  wait_ready();
+  EXPECT_EQ(calls.load(), 1);
+  EXPECT_EQ(job.status()["state"], "ready");
+  EXPECT_EQ(job.status()["updated"], 2);
+  job.request([](const std::atomic_bool &) {
+    return sparxie::json { { "ok", true }, { "updated", 1 }, { "skipped", sparxie::json::array({ "genshin-cn" }) } };
+  });
+  wait_ready();
+  EXPECT_EQ(job.status()["state"], "cached");
+  EXPECT_EQ(job.status()["updated"], 1);
+  job.request([](const std::atomic_bool &) {
+    return sparxie::json { { "ok", true }, { "networkFailed", true } };
+  });
+  wait_ready();
+  EXPECT_EQ(job.status()["state"], "cached");
+  job.request([](const std::atomic_bool &) -> sparxie::json { throw std::runtime_error("test failure"); });
+  wait_ready();
+  EXPECT_EQ(job.status()["state"], "failed");
+  EXPECT_EQ(job.status(first["jobId"].get<std::uint64_t>())["updated"], 2) << "later jobs must not hide a completed result from its poller";
+  job.request(work);
+  wait_ready();
+  EXPECT_EQ(job.status()["state"], "ready");
+  EXPECT_EQ(calls.load(), 2);
+  EXPECT_EQ(job.status(99999)["state"], "expired");
+}
+
+TEST(ArtRefreshJob, ShutdownCancelsAndJoinsTheWorkerAndRejectsNewWork) {
+  sparxie::ArtRefreshJob job;
+  std::promise<void> started;
+  std::atomic_bool ended { false };
+  job.request([&](const std::atomic_bool &cancelled) {
+    started.set_value();
+    while (!cancelled.load()) {
+      std::this_thread::yield();
+    }
+    ended = true;
+    return sparxie::json { { "ok", true } };
+  });
+  EXPECT_EQ(started.get_future().wait_for(std::chrono::seconds(5)), std::future_status::ready);
+  job.stop();
+  EXPECT_TRUE(ended.load());
+  EXPECT_EQ(job.status()["state"], "stopped");
+  bool ran = false;
+  EXPECT_EQ(job.request([&](const std::atomic_bool &) {
+    ran = true;
+    return sparxie::json::object();
+  })["state"], "stopped");
+  EXPECT_FALSE(ran);
+}
+
+TEST(ArtRefreshJob, ForceRequestsDuringAutomaticCheckAreCoalescedAndRunAfterIt) {
+  sparxie::ArtRefreshJob job;
+  std::promise<void> started;
+  std::promise<void> release;
+  auto gate = release.get_future().share();
+  std::atomic<int> forced { 0 };
+  auto automatic = job.request([&](const std::atomic_bool &) {
+    started.set_value();
+    gate.wait();
+    return sparxie::json { { "ok", true }, { "updated", 1 } };
+  });
+  ASSERT_EQ(started.get_future().wait_for(std::chrono::seconds(5)), std::future_status::ready);
+  auto force = [&](const std::atomic_bool &) {
+    ++forced;
+    return sparxie::json { { "ok", true }, { "updated", 2 } };
+  };
+  EXPECT_EQ(job.request(force, true)["jobId"], automatic["jobId"]);
+  EXPECT_EQ(job.request(force, true)["jobId"], automatic["jobId"]);
+  release.set_value();
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (job.status()["state"] == "checking" && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::yield();
+  }
+  EXPECT_EQ(forced.load(), 1);
+  EXPECT_EQ(job.status()["state"], "ready");
+  EXPECT_EQ(job.status()["updated"], 3);
+}
+
 TEST(Art, VersionWindowScheduleAndCompose) {
   EXPECT_EQ(sparxie::art_version_of("https://cdn.example/a/abc123def.webp?x=1"), "abc123def");
   sparxie::Rgba background = solid(90, 60, 0, 0, 0);
@@ -77,14 +232,12 @@ TEST(Art, VersionWindowScheduleAndCompose) {
   EXPECT_LT(banner.h, banner.w);
   EXPECT_EQ(banner.px[0], 9);
   EXPECT_FALSE(sparxie::encode_png(cover).empty());
-  sparxie::ArtSchedule schedule;
   const auto start = std::chrono::system_clock::time_point { std::chrono::hours(10) };
-  EXPECT_TRUE(sparxie::art_due(schedule, start, sparxie::ArtReason::host_start));
-  EXPECT_FALSE(sparxie::art_due(schedule, start, sparxie::ArtReason::host_start));
-  EXPECT_FALSE(sparxie::art_due(schedule, start + std::chrono::minutes(5), sparxie::ArtReason::app_list));
-  EXPECT_TRUE(sparxie::art_due(schedule, start + std::chrono::minutes(16), sparxie::ArtReason::app_list));
-  EXPECT_FALSE(sparxie::art_due(schedule, start + std::chrono::hours(2), sparxie::ArtReason::interval));
-  EXPECT_TRUE(sparxie::art_due(schedule, start + std::chrono::hours(7), sparxie::ArtReason::interval));
+  EXPECT_TRUE(sparxie::art_check_due({}, start));
+  EXPECT_FALSE(sparxie::art_check_due(start, start + std::chrono::minutes(16)));
+  EXPECT_FALSE(sparxie::art_check_due(start, start + std::chrono::hours(24) - std::chrono::seconds(1)));
+  EXPECT_TRUE(sparxie::art_check_due(start, start + std::chrono::hours(24)));
+  EXPECT_TRUE(sparxie::art_check_due(start, start - std::chrono::seconds(1))) << "clock rollback must not postpone checks indefinitely";
   sparxie::json games;
   games["data"]["games"] = sparxie::json::array();
   sparxie::json game;
@@ -657,10 +810,20 @@ TEST(Host, RefreshUsesContentHashAndSkipsCustom) {
     }
     EXPECT_FALSE(temp_left) << "an atomic cache write leaves no temp files behind";
   }
+  const fs::path logo = cache / (version + "-logo.bin");
+  ASSERT_TRUE(fs::exists(logo));
+  {
+    std::ofstream altered_logo(logo, std::ios::binary | std::ios::trunc);
+    altered_logo << "altered-but-decodable";
+  }
   fs::remove(background);
   sparxie::refresh_official(env, get_url, decode);
   EXPECT_EQ(background_downloads, first_downloads + 2);
   EXPECT_TRUE(fs::is_regular_file(background)) << "a missing background is downloaded again";
+  {
+    std::ifstream repaired_logo(logo, std::ios::binary);
+    EXPECT_EQ(std::string((std::istreambuf_iterator<char>(repaired_logo)), std::istreambuf_iterator<char>()), "img") << "a mismatched cached logo is replaced instead of trusting its altered hash";
+  }
   sparxie::refresh_official(env, get_url, decode);
   EXPECT_EQ(background_downloads, first_downloads + 2);
   {
@@ -741,6 +904,86 @@ TEST(Host, RefreshUsesContentHashAndSkipsCustom) {
     EXPECT_TRUE(fs::is_regular_file(cover)) << "the repaired source can restore the cover offline";
   }
 #endif
+  // Automatic requests use persisted per-install metadata, including after a
+  // manual refresh. Local reconstruction must still work during this interval.
+  sparxie::ArtRefreshOptions automatic;
+  automatic.automatic = true;
+  auto restarted = env_at(root);
+  sparxie::refresh_official(restarted, get_url, decode);
+  automatic.now = std::chrono::system_clock::now();
+  const auto checked_at = automatic.now;
+  const auto metadata_path = env.host_data / "art-metadata" / "genshin-cn.json";
+  const auto last_check = [&]() {
+    sparxie::json metadata;
+    std::ifstream in(metadata_path);
+    in >> metadata;
+    return metadata.value("lastAttemptAt", std::int64_t { 0 });
+  };
+  const auto before_automatic = last_check();
+  fs::remove(cover);
+  sparxie::refresh_official(restarted, get_url, decode, {}, automatic);
+  EXPECT_EQ(last_check(), before_automatic);
+  EXPECT_TRUE(fs::exists(cover)) << "daily network throttling does not suppress local repair";
+  automatic.now = checked_at + std::chrono::hours(25);
+  const auto failed_get = [&](const std::string &) -> std::optional<std::string> {
+    return std::nullopt;
+  };
+  sparxie::refresh_official(restarted, failed_get, decode, {}, automatic);
+  EXPECT_EQ(last_check(), 0) << "a failed check must not start the daily interval";
+  automatic.now += std::chrono::minutes(1);
+  sparxie::refresh_official(restarted, get_url, decode, {}, automatic);
+  EXPECT_GT(last_check(), before_automatic) << "a later visit retries a failed check";
+  automatic.now += std::chrono::hours(25);
+  const auto throwing_get = [&](const std::string &url) -> std::optional<std::string> {
+    if (url.find("getGames?launcher_id=jGHBHlcOq1") != std::string::npos) throw std::runtime_error("network failure");
+    return get_url(url);
+  };
+  EXPECT_THROW(sparxie::refresh_official(restarted, throwing_get, decode, {}, automatic), std::runtime_error);
+  EXPECT_EQ(last_check(), 0);
+  sparxie::refresh_official(restarted, get_url, decode, {}, automatic);
+  EXPECT_GT(last_check(), 0) << "an interrupted check remains eligible for retry";
+  const auto after_retry = last_check();
+  sparxie::refresh_official(restarted, get_url, decode, {}, automatic);
+  EXPECT_EQ(last_check(), after_retry) << "a successful retry starts the daily interval";
+  automatic.now += std::chrono::minutes(1);
+  automatic.automatic = false;
+  sparxie::refresh_official(restarted, get_url, decode, {}, automatic);
+  EXPECT_GT(last_check(), after_retry) << "manual checks bypass the daily interval";
+  const auto after_manual = last_check();
+  automatic.automatic = true;
+  automatic.now += std::chrono::minutes(1);
+  sparxie::refresh_official(restarted, get_url, decode, {}, automatic);
+  EXPECT_EQ(last_check(), after_manual);
+  {
+    sparxie::json metadata;
+    std::ifstream metadata_in(metadata_path);
+    metadata_in >> metadata;
+    EXPECT_EQ(metadata["files"][background.filename().string()]["sha256"].get<std::string>().size(), 64u);
+  }
+  {
+    std::ofstream altered(background, std::ios::binary | std::ios::trunc);
+    altered << "altered-but-decodable";
+  }
+  fs::remove(cover);
+  sparxie::refresh_official(restarted, get_url, decode, {}, automatic);
+  EXPECT_EQ(last_check(), after_manual);
+  EXPECT_FALSE(fs::exists(cover)) << "a hash mismatch must not publish altered cached bytes, even if the decoder accepts them";
+  automatic.automatic = false;
+  sparxie::refresh_official(restarted, get_url, decode, {}, automatic);
+  EXPECT_TRUE(fs::exists(cover));
+  automatic.automatic = true;
+  fs::remove(metadata_path);
+  sparxie::refresh_official(restarted, get_url, decode, {}, automatic);
+  EXPECT_GT(last_check(), 0) << "a missing per-install record is independent of other games";
+  {
+    std::ofstream invalid(metadata_path, std::ios::binary | std::ios::trunc);
+    invalid << "not json";
+  }
+  sparxie::refresh_official(restarted, get_url, decode, {}, automatic);
+  EXPECT_GT(last_check(), 0);
+  const auto after_invalid = last_check();
+  sparxie::refresh_official(restarted, get_url, decode, {}, automatic);
+  EXPECT_EQ(last_check(), after_invalid) << "a malformed record is repaired instead of causing repeated queries";
   std::ifstream in(env.apps_file);
   sparxie::json after;
   in >> after;

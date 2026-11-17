@@ -2,6 +2,7 @@
 #include "src/sparxie/store.h"
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <gtest/gtest.h>
 namespace fs = std::filesystem;
 namespace {
@@ -77,6 +78,41 @@ TEST(EditSave, EveryEditorBodyOfThePlainGameSaves) {
       EXPECT_EQ(apps["apps"][kPlainGenshin]["sparxie"]["settings"].size(), (variant & 1) && std::string(mode) == "touch" && (variant & 2) ? 6u : 7u) << "sent: the items sent (the game's frame-rate tier goes while Sparxie unlocks the rate); not sent: what was stored stays: " << mode << variant;
     }
   }
+}
+
+TEST(EditSave, ConcurrentArtworkRefreshKeepsTheUsersAppEdit) {
+  Sample sample("sparxie-concurrent-art-edit");
+  auto artwork_env = sample.env;
+  auto editor_env = sample.env;
+  sparxie::Rgba image;
+  image.w = 16;
+  image.h = 16;
+  image.px.resize(16 * 16 * 4, 255);
+  for (int y = 0; y < 16; ++y) {
+    for (int x = 0; x < 16; ++x) {
+      const auto at = static_cast<std::size_t>((y * 16 + x) * 4);
+      image.px[at] = ((x / 4 + y / 4) % 2) ? 220 : 20;
+    }
+  }
+  sparxie::ArtUrls urls;
+  urls.version = "concurrent-test";
+  std::promise<void> start;
+  auto gate = start.get_future().share();
+  auto artwork = std::async(std::launch::async, [&]() {
+    gate.wait();
+    return sparxie::publish_art(artwork_env, "genshin-cn", urls, image, {}, {});
+  });
+  auto edit = std::async(std::launch::async, [&]() {
+    gate.wait();
+    return sparxie::update_app(editor_env, kPlainGenshin, editor_body("pc", true, true));
+  });
+  start.set_value();
+  EXPECT_TRUE(artwork.get().status.ok);
+  EXPECT_TRUE(edit.get().status.ok);
+  const auto app = sample.apps()["apps"][kPlainGenshin];
+  EXPECT_EQ(app["sparxie"]["options"]["fps"], 144);
+  EXPECT_EQ(app["sparxie"]["settings"]["fps"], 60);
+  EXPECT_EQ(app["sparxie"]["artVersion"], "concurrent-test");
 }
 
 TEST(EditSave, APlainGameAppStaysPlainAndWritesNoProfile) {

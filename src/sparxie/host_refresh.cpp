@@ -1,9 +1,12 @@
 #include "src/sparxie/art_sources.h"
+#include "src/sparxie/art_path.h"
 #include "src/sparxie/host.h"
+#include "src/sparxie/apps_file_lock.h"
 #include "src/sparxie/icon_file.h"
 #include "src/sparxie/svg_path.h"
 #include "src/sparxie/region.h"
 #include "src/sparxie/zip_extract.h"
+#include "src/sparxie/sha256.h"
 #include <algorithm>
 #include <atomic>
 #include <fstream>
@@ -74,6 +77,32 @@ namespace sparxie {
       return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
     }
 
+    json
+    read_metadata(const fs::path &path) {
+      const auto record = json::parse(file_text(path), nullptr, false);
+      if (record.is_object()) {
+        return record;
+      }
+      return json::object();
+    }
+
+    std::string
+    verified_picture(const HostEnv &env, const std::string &install_id, const fs::path &path) {
+      const auto bytes = file_text(path);
+      const auto metadata = read_metadata(env.host_data / "art-metadata" / (install_id + ".json"));
+      const auto files = metadata.find("files");
+      if (files != metadata.end() && files->is_object()) {
+        const auto file = files->find(path.filename().string());
+        if (file != files->end() && file->is_object()) {
+          const auto hash = file->find("sha256");
+          if (hash != file->end() && hash->is_string() && hash->get<std::string>() != sha256::hash(bytes)) {
+            return {};
+          }
+        }
+      }
+      return bytes;
+    }
+
     // Bumped when the sources of a title's pictures change (a new logo source, a clean background): a poster cached by an older revision is made again even when
     // the background's own version did not change.
     constexpr int kArtRevision = 3;
@@ -136,7 +165,7 @@ namespace sparxie {
         }
       }
       if (newest.empty()) return std::nullopt;
-      const std::string bytes = file_text(newest);
+      const std::string bytes = verified_picture(env, install_id, newest);
       if (bytes.empty()) return std::nullopt;
       return bytes;
     }
@@ -144,10 +173,10 @@ namespace sparxie {
     // a newer cache of another version must not answer a cover restore
     std::optional<std::string>
     cached_picture_at(const HostEnv &env, const std::string &install_id, const std::string &kind, const std::string &version) {
-      if (version.empty()) {
+      if (version.empty() || !valid_art_version(version)) {
         return std::nullopt;
       }
-      const std::string bytes = file_text(env.host_data / "posters" / install_id / (version + "-" + kind + ".bin"));
+      const std::string bytes = verified_picture(env, install_id, env.host_data / "posters" / install_id / (version + "-" + kind + ".bin"));
       if (bytes.empty()) {
         return std::nullopt;
       }
@@ -155,7 +184,7 @@ namespace sparxie {
     }
   }  // namespace
   ApiResult
-  refresh_official(HostEnv &env, const std::function<std::optional<std::string>(const std::string &)> &get_url, const std::function<Rgba(std::string_view)> &decode, const std::function<std::optional<std::string>(const std::string &, const std::string &)> &post_url) {
+  refresh_official(HostEnv &env, const std::function<std::optional<std::string>(const std::string &)> &get_url, const std::function<Rgba(std::string_view)> &decode, const std::function<std::optional<std::string>(const std::string &, const std::string &)> &post_url, const ArtRefreshOptions &options) {
     ApiResult result;
     if (!get_url || !decode) {
       result.body = { { "ok", true }, { "updated", 0 }, { "offline", true } };
@@ -170,7 +199,7 @@ namespace sparxie {
     };
     std::vector<Item> items;
     auto add = [&](const std::string &id, const std::string &game, const std::string &region, const std::string &dir = {}, const std::string &exe = {}) {
-      if (id.empty() || game.empty() || region.empty()) return;
+      if (!valid_art_install(id, game, region)) return;
       for (auto &item : items)
         if (item.id == id) {
           if (item.dir.empty() && !dir.empty()) {
@@ -183,7 +212,12 @@ namespace sparxie {
     };
     for (const auto &install : list_games(env).body.value("detected", json::array()))
       add(install.value("id", std::string()), install.value("game", std::string()), install.value("region", std::string()), install.value("dir", std::string()), install.value("exe", std::string()));
-    for (const auto &app : read_apps_file(env.apps_file).value("apps", json::array())) {
+    json apps_snapshot;
+    {
+      std::lock_guard apps_lock(apps_file_mutex);
+      apps_snapshot = read_apps_file(env.apps_file);
+    }
+    for (const auto &app : apps_snapshot.value("apps", json::array())) {
       if (!app.contains("sparxie") || !app["sparxie"].is_object()) continue;
       const json &block = app["sparxie"];
       add(block.value("install", std::string()), block.value("game", std::string()), block.value("region", std::string()));
@@ -205,6 +239,9 @@ namespace sparxie {
     json sources = json::object();
     std::map<std::string, std::string> icon_sources_used;
     for (const auto &item : items) {
+      if (options.cancelled && options.cancelled()) {
+        throw std::runtime_error("Artwork refresh stopped");
+      }
       ArtUrls urls;
       Rgba background;
       Rgba logo;
@@ -221,8 +258,57 @@ namespace sparxie {
       catch (const std::exception &) {
       }
       const std::string previous_version = previous.is_object() ? previous.value("version", std::string()) : std::string();
+      const fs::path metadata_path = env.host_data / "art-metadata" / (item.id + ".json");
+      json metadata = read_metadata(metadata_path);
+      const auto now_seconds = std::chrono::duration_cast<std::chrono::seconds>(options.now.time_since_epoch()).count();
+      std::chrono::system_clock::time_point last_attempt {};
+      const auto attempt = metadata.find("lastAttemptAt");
+      if (attempt != metadata.end() && attempt->is_number_integer() && *attempt > 0 && *attempt <= now_seconds) {
+        last_attempt = std::chrono::system_clock::time_point { std::chrono::seconds(attempt->get<std::int64_t>()) };
+      }
+      if (options.automatic && !art_check_due(last_attempt, options.now)) {
+        continue;
+      }
+      metadata["schemaVersion"] = 1;
+      // Clear an earlier success before trying again. A failure or interruption
+      // leaves this item eligible on the next visit, even after a restart.
+      metadata.erase("lastAttemptAt");
+      const auto save_metadata = [&]() {
+        const bool saved = keep_bytes(metadata_path, metadata.dump(2), true);
+        if (!saved && env.warn) {
+          env.warn("could not save artwork check metadata for " + item.id);
+        }
+        return saved;
+      };
+      if (!save_metadata() && options.automatic) {
+        skipped.push_back(item.id);
+        continue;
+      }
+      const auto checked = [&]() {
+        metadata["lastAttemptAt"] = now_seconds;
+        save_metadata();
+      };
+      const auto keep_picture = [&](const fs::path &path, const std::string &bytes, bool replace = false) {
+        // Reusing an existing file must never turn a hash mismatch into a new
+        // trusted hash. Replace it with the freshly downloaded bytes instead.
+        if (!replace && nonempty_file(path) && verified_picture(env, item.id, path).empty()) {
+          replace = true;
+        }
+        if (!keep_bytes(path, bytes, replace)) {
+          return false;
+        }
+        // Hash the bytes actually retained, including an already cached file.
+        const auto kept = file_text(path);
+        if (!metadata.contains("files") || !metadata["files"].is_object()) {
+          metadata["files"] = json::object();
+        }
+        metadata["files"][path.filename().string()] = { { "sha256", sha256::hash(kept) }, { "size", kept.size() } };
+        save_metadata();
+        return true;
+      };
       const bool hoyo = region_row(item.game, item.region) != nullptr;
       bool background_cache_pending = false;
+      bool retry_art = false;
       // the icon (not for HoYoverse titles: their launcher API answers one): the install's own program icon, else the store's or the publisher's, else a monogram
       Rgba icon_now;
       std::string icon_label;
@@ -309,11 +395,16 @@ namespace sparxie {
         std::string label;
         for (const auto &source : sourced) {
           ArtUrls candidate = source.resolve();
-          if (candidate.background.empty()) continue;
+          if (candidate.background.empty() || !valid_art_version(candidate.version)) continue;
+          bool replace_background = false;
           // a title whose cached art is of this very version (and was made by this revision of the sources) is left alone, as for the HoYoverse posters
           if (!candidate.version.empty() && previous_version == candidate.version && previous.value("artRev", 0) == kArtRevision) {
-            unchanged = true;
-            break;
+            const auto cached = verified_picture(env, item.id, cache / (candidate.version + "-background.bin"));
+            if (!previous.value("backgroundCachePending", false) && !cached.empty()) {
+              unchanged = true;
+              break;
+            }
+            replace_background = true;
           }
           std::string bytes = fetch_picture(candidate.background, get_url);
           if (bytes.empty()) continue;
@@ -321,7 +412,7 @@ namespace sparxie {
           Rgba decoded = bytes.empty() ? Rgba {} : decode(std::string_view(bytes));
           // a decoder that answered nothing, or one colour, is a failed decode: the next source or the placeholder (the same guard as every title)
           if (image_is_blank(decoded)) continue;
-          keep_bytes(cache / (candidate.version + "-background.bin"), bytes);
+          background_cache_pending = !keep_picture(cache / (candidate.version + "-background.bin"), bytes, replace_background);
           background = std::move(decoded);
           if (candidate.logo.empty() && !candidate.logo_svg_path.empty()) {
             // a wordmark drawn from the site's inline SVG: rasterised here (white on transparent, 1016 px wide) and kept as a PNG like any other logo
@@ -329,14 +420,16 @@ namespace sparxie {
             const auto drawn_png = encode_png(drawn);
             if (!drawn_png.empty()) {
               logo = drawn;
-              keep_bytes(cache / (candidate.version + "-logo.bin"), std::string(drawn_png.begin(), drawn_png.end()));
+              keep_picture(cache / (candidate.version + "-logo.bin"), std::string(drawn_png.begin(), drawn_png.end()));
             }
           }
           if (!candidate.logo.empty()) {
             const std::string logo_bytes = fetch_picture(candidate.logo, get_url);
             if (!logo_bytes.empty()) {
               logo = decode(std::string_view(logo_bytes));
-              if (logo.w > 0) keep_bytes(cache / (candidate.version + "-logo.bin"), logo_bytes);
+              if (logo.w > 0) {
+                keep_picture(cache / (candidate.version + "-logo.bin"), logo_bytes);
+              }
             }
           }
           if (!candidate.cover.empty()) {
@@ -349,6 +442,7 @@ namespace sparxie {
         }
         if (unchanged) {
           settle_icon({}, {});
+          checked();
           continue;
         }
         if (background.w == 0) {
@@ -357,6 +451,7 @@ namespace sparxie {
             if (previous_version != "placeholder" || sourced.empty()) {
               if (!sourced.empty()) skipped.push_back(item.id);
               settle_icon({}, {});
+              if (sourced.empty()) checked();
               continue;
             }
           }
@@ -366,9 +461,14 @@ namespace sparxie {
           urls.version = "placeholder";
           if (previous_version == urls.version && previous.value("artRev", 0) == kArtRevision) {
             settle_icon({}, {});
+            if (sourced.empty()) checked();
+            else skipped.push_back(item.id);
             continue;
           }
-          if (!sourced.empty()) skipped.push_back(item.id);
+          if (!sourced.empty()) {
+            skipped.push_back(item.id);
+            retry_art = true;
+          }
           label = "placeholder";
         }
         sources[item.id] = label;
@@ -415,6 +515,10 @@ namespace sparxie {
         }
         const std::string biz = biz_for(item.game, item.region);
         urls = art_urls_from_payload(games_json, basic_json, biz, item.region == "bili");
+        if (!valid_art_version(urls.version)) {
+          skipped.push_back(item.id);
+          continue;
+        }
         // A matching version is usable only when its source picture is still cached.
         // A missing or empty file needs one new download to restore the cache.
         if (!urls.version.empty() && previous_version == urls.version && previous.value("heroLogo", 0) == 1) {
@@ -423,7 +527,13 @@ namespace sparxie {
           if (!replace_background && nonempty_file(cached_background)) {
             const fs::path cover = env.covers_dir / ("sparxie-" + item.id + "-" + urls.version + ".png");
             const bool output_missing = !nonempty_file(cover) || !nonempty_file(cache / "hero.jpg") || !nonempty_file(cache / "hero-badge.jpg");
-            if (!output_missing || !image_is_blank(decode(file_text(cached_background)))) {
+            if (!output_missing) {
+              checked();
+              continue;
+            }
+            const auto cached_bytes = verified_picture(env, item.id, cached_background);
+            if (!cached_bytes.empty() && !image_is_blank(decode(cached_bytes))) {
+              checked();
               continue;
             }
             replace_background = true;
@@ -451,20 +561,22 @@ namespace sparxie {
           skipped.push_back(item.id);
           continue;
         }
-        background_cache_pending = !keep_bytes(cache / (urls.version + "-background.bin"), *background_bytes, replace_background);
+        background_cache_pending = !keep_picture(cache / (urls.version + "-background.bin"), *background_bytes, replace_background);
         if (!urls.logo.empty()) {
           if (const auto logo_bytes = get_url(urls.logo)) {
             logo = decode(std::string_view(*logo_bytes));
-            keep_bytes(cache / (urls.version + "-logo.bin"), *logo_bytes);
+            keep_picture(cache / (urls.version + "-logo.bin"), *logo_bytes);
           }
         }
         if (!urls.logo_large.empty()) {
-          if (const auto large_bytes = get_url(urls.logo_large)) keep_bytes(cache / (urls.version + "-herologo.bin"), *large_bytes);
+          if (const auto large_bytes = get_url(urls.logo_large)) {
+            keep_picture(cache / (urls.version + "-herologo.bin"), *large_bytes);
+          }
         }
         if (!urls.icon.empty()) {
           if (const auto icon_bytes = get_url(urls.icon)) {
             icon = decode(std::string_view(*icon_bytes));
-            keep_bytes(cache / (urls.version + "-icon.bin"), *icon_bytes);
+            keep_picture(cache / (urls.version + "-icon.bin"), *icon_bytes);
           }
         }
       }
@@ -502,6 +614,7 @@ namespace sparxie {
       }
       out << record.dump(2);
       ++updated;
+      if (!retry_art && !background_cache_pending) checked();
     }
     // The heroes: from the pictures kept in posters/<install>/, for an install fetched this run, for the national or bilibili sibling of one (they share a logo and a key art),
     // and for one whose hero.jpg is missing (a cache made before the landscape poster, or its PNG round). Nothing is fetched here, and a hero that comes out the same is not rewritten.
@@ -517,6 +630,9 @@ namespace sparxie {
     const auto logo_score = [](const Rgba &logo) { return logo_visible_area(logo) / (logo_has_plate(logo) ? 4 : 1); };
     const auto is_touched = [&](const std::string &id) { return std::find(touched.begin(), touched.end(), id) != touched.end(); };
     for (const auto &item : items) {
+      if (options.cancelled && options.cancelled()) {
+        throw std::runtime_error("Artwork refresh stopped");
+      }
       const std::string sibling = item.region == "cn" ? item.game + "-bili" : item.region == "bili" ? item.game + "-cn" : std::string();
       std::error_code exists_ec;
       const fs::path hero_dir = env.host_data / "posters" / item.id;
@@ -547,6 +663,7 @@ namespace sparxie {
       if (index_now.is_object()) {
         cover_version = index_now.value("version", std::string());
       }
+      if (!valid_art_version(cover_version)) continue;
       const bool cover_composed = index_cover_kind == "composed" || (index_cover_kind.empty() && region_row(item.game, item.region) != nullptr && !cover_version.empty());
       const bool cover_stale = index_now.is_object() && index_now.value("coverRev", 0) != kCoverRevision && cover_composed;
       const bool cover_missing = cover_composed && !cover_version.empty() && !nonempty_file(env.covers_dir / ("sparxie-" + item.id + "-" + cover_version + ".png"));

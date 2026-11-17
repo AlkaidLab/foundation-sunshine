@@ -247,8 +247,8 @@ Source: "{#MySourceDir}\tools\mat-capture\LICENSE.MinHook.txt"; DestDir: "{app}\
 #endif
 Source: "{#MySourceDir}\tools\nefconw.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
 ; The bundled WebP decoder's license and patent grant.
-Source: "{#MySourceDir}\licenses\libwebp\LICENSE.txt"; DestDir: "{app}\licenses\libwebp"; Flags: ignoreversion; Components: application
-Source: "{#MySourceDir}\licenses\libwebp\PATENTS.txt"; DestDir: "{app}\licenses\libwebp"; Flags: ignoreversion; Components: application
+Source: "{#MySourceDir}\tools\library\libwebp\LICENSE.txt"; DestDir: "{app}\tools\library\libwebp"; Flags: ignoreversion; Components: application
+Source: "{#MySourceDir}\tools\library\libwebp\PATENTS.txt"; DestDir: "{app}\tools\library\libwebp"; Flags: ignoreversion; Components: application
 ; the protocol launcher of the Sparxie touch applications (published from tools/sparxie-launch when the build has dotnet)
 Source: "{#MySourceDir}\tools\sparxie-launch.exe"; DestDir: "{app}\tools"; Flags: ignoreversion skipifsourcedoesntexist; Components: application
 

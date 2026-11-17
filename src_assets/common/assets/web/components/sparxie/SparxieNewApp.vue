@@ -368,8 +368,15 @@ async function load() {
   } finally { loaded.value = true }
   if (isEdit) { await nextTick(); baseline.value = state() }
   // the official posters (also of games that are not installed) are refreshed by the host; a poster that changed is a new address, so the tiles take the new versions
-  client().refreshArt().then(async (updated) => { if (updated) artMap.value = (await client().games()).art }).catch(() => {})
+  client().refreshArt({ signal: artCheckAbort.signal }).then(async (updated) => {
+    if (updated && !artCheckAbort.signal.aborted) {
+      const games = await client().games()
+      if (!artCheckAbort.signal.aborted) artMap.value = games.art
+    }
+  }).catch(() => {})
 }
+const artCheckAbort = new AbortController()
+onBeforeUnmount(() => artCheckAbort.abort())
 onMounted(load)
 
 const nativeChoose = nativePicker()
