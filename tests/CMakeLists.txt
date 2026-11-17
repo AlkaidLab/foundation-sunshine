@@ -576,6 +576,28 @@ if (WIN32)
 endif ()
 add_test(NAME config_runtime_unit_tests COMMAND config_runtime_unit_tests)
 
+# AMF rate-control derivation shared by both encoder paths (standalone and
+# avcodec-compatible). A regression here is what let the driver's soft-target
+# default run unconstrained and blow past the client's bitrate target.
+# Windows-only: the AMF headers staged with the AMF/ prefix exist on Windows
+# alone, and sunshine::host_headers does not carry them on other platforms.
+if (WIN32)
+    add_executable(amf_rate_control_unit_tests
+            ${CMAKE_SOURCE_DIR}/tests/unit/test_amf_rate_control.cpp
+            ${CMAKE_SOURCE_DIR}/tests/tools/amf_rate_control_test_stubs.cpp
+            ${CMAKE_SOURCE_DIR}/src/amf/amf_avcodec_compat.cpp)
+    target_include_directories(amf_rate_control_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_link_libraries(amf_rate_control_unit_tests PRIVATE gtest_main Boost::boost Boost::log Boost::format
+            sunshine::host_headers sunshine_project_options sunshine_coverage)
+    set_target_properties(amf_rate_control_unit_tests PROPERTIES CXX_STANDARD 23)
+    target_compile_definitions(amf_rate_control_unit_tests PRIVATE ${SUNSHINE_DEFINITIONS})
+    set_target_properties(amf_rate_control_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+    # windows.cmake stages AMF headers here for the host build; the compat
+    # adapter and the test both include them.
+    target_include_directories(amf_rate_control_unit_tests SYSTEM PRIVATE "${CMAKE_BINARY_DIR}/amf_include")
+    add_test(NAME amf_rate_control_unit_tests COMMAND amf_rate_control_unit_tests)
+endif ()
+
 # The configuration-upgrade suite runs on its own so the global defaults it
 # compares against are the ones a start-up has before any settings file is read.
 add_executable(config_upgrade_unit_tests
@@ -1408,6 +1430,9 @@ list(REMOVE_ITEM TEST_SOURCES
         ${CMAKE_SOURCE_DIR}/tests/unit/test_uac1_microphone.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_video_probe.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_virtual_touchscreen_device.cpp
+        # test_amf_rate_control pulls boost headers transitively via src/video.h;
+        # it runs in its own Windows-only target, not the aggregate.
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_amf_rate_control.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/pairing_pending_platform_stubs.cpp)
 
 set(ABR_TEST_STUB_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/abr_test_stubs.cpp)
