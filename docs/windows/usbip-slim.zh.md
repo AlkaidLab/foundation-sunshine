@@ -33,6 +33,20 @@ guard 继续检查并清理异常状态，绝不通过修改 INF 缩小匹配。
 之间；外部安装在 guard、状态文件、互斥量和复制文件之前返回。失败的清理继续完成其余步骤，保留必要恢复文件；根集线器恢复不完整返回 103，
 不能宣称回滚成功。互斥量防止两个顶层生命周期操作并发，内部回滚不重复取锁。
 
+## 实机观察（测试虚拟机，Windows 11 26H2，2026-11-17）
+
+这些事实只能用真实的上游安装器得到，夹具里的模拟值曾与之不符，已据此修复并补回归用例：
+
+- 上游 Inno 安装器写入的 `InstallLocation` 带结尾反斜杠（`C:\Program Files\USBip\`），
+  `UninstallString` 是 `"…\unins000.exe" /LOG`。归属判断改为规范化后不分大小写比较路径，
+  卸载命令只接受带或不带可选 `/LOG` 的引号形式，实际执行的参数仍是固定的。
+- `Get-PnpDevice -PresentOnly:$false` 并不返回全部设备，只返回不在位的设备；要包含不在位节点就不要传该开关。
+  此前卸载因此跳过 `devnode remove`，留下硬件 ID 为 `ROOT\USBIP_WIN2\UDE` 的幽灵根节点。
+- 旧版 FS 安装器静默运行上游安装器时使用其默认组件，实际装上了 GUI、SDK 和 PDB
+  （`Selected Components: main,client,gui,sdk,pdb`）。按上面的规则表，这种安装有 GUI/SDK，
+  归为外部管理，不会被接管；接管路径只对「同版本、无 GUI/SDK、带固定哈希安装器」的状态生效。
+- 接管成功后，FS 目录里作为来源证明的上游安装器（约 26 MB）会被删除。
+
 ## 运行库与许可证
 
 `objdump -p` 检查两个 EXE、libusbip.dll、resources.dll 及运行库自身的导入表：

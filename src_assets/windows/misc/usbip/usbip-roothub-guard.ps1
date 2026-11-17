@@ -207,7 +207,10 @@ function Invoke-GuardStep([string]$Description, [scriptblock]$Step) {
   if ($DryRun) { Write-GuardLog "dry-run, would: $Description"; return 0 }
   Write-GuardLog $Description
   $global:LASTEXITCODE = 0
-  try { & $Step } catch { Write-GuardLog "  step failed: $($_.Exception.Message)"; return 1 }
+  # A step may print (a child script, a native tool). Printed lines must not become part of this function's
+  # result: the caller compares the result with 0, and an array of output lines plus 0 made a successful removal
+  # of the slim package count as a failed step, so a clean rollback was reported as incomplete (103).
+  try { & $Step | Out-Host } catch { Write-GuardLog "  step failed: $($_.Exception.Message)"; return 1 }
   $code = if ($null -eq $LASTEXITCODE) { 0 } else { $LASTEXITCODE }
   Write-GuardLog "  -> exit $code"
   return $code
