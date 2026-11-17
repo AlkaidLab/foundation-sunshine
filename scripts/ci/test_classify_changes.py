@@ -65,6 +65,11 @@ class ClassifyTest(unittest.TestCase):
         f = flags("tools/installer_shell.cpp")
         self.assertTrue(f["installer"] and f["cpp"])
 
+    def test_installer_smoke_change_builds_and_packages(self):
+        for path in ("scripts/ci/test-installer-silent.ps1", ".github/actions/test-installer-silent/action.yml"):
+            f = flags(path)
+            self.assertTrue(f["installer"] and f["build"] and f["package"] and f["workflow"], path)
+
     def test_packaging_scripts_are_installer(self):
         for path in ("scripts/build-setup-ui.ps1", "scripts/fetch-setup-ui.ps1", "scripts/fetch-installer-inputs.ps1", "scripts/installer-inputs.json",
                      "scripts/fetch-paired-gui.ps1", "scripts/generate-checksums.ps1"):

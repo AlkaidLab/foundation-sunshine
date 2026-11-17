@@ -1522,6 +1522,10 @@ jobs:
             --measure-zip "sunshine-gui.exe（便携包内，解压后）=artifacts/sunshine-windows-portable.zip::Sunshine/assets/gui/sunshine-gui.exe"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Check unattended install and uninstall
+        if: needs.changes.outputs.package == 'true'
+        timeout-minutes: 12
+        uses: ./.github/actions/test-installer-silent
       - name: Rename release assets
         if: needs.changes.outputs.package == 'true'
         shell: msys2 {0}
