@@ -3,6 +3,52 @@
 # Fetch driver dependencies (downloads at configure time)
 include(${CMAKE_MODULE_PATH}/packaging/FetchDriverDeps.cmake)
 
+# Every driver the fetcher can download must have a reviewed license text. The
+# manifest pins the version variables selected above, so a pin bump without a
+# matching license review stops the configure step before packaging.
+# Source: cmake-install-20261117; cmake-cpack-archive-20261117.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(NOT Python3_Interpreter_FOUND)
+  message(FATAL_ERROR
+    "Python 3 is required to verify third-party license texts before packaging")
+endif()
+set(_third_party_license_pins
+    VIGEMBUS_VERSION VIGEMBUS_ASSET_NAME
+    USBIP_VERSION USBIP_ASSET_NAME
+    NEFCON_VERSION
+    VDD_DRIVER_VERSION VDD_WIN10_DRIVER_VERSION
+    VDD_DRIVER_ASSET_NAME VDD_WIN10_DRIVER_ASSET_NAME
+    VMOUSE_DRIVER_VERSION VMOUSE_PUBLIC_REPO)
+set(_third_party_license_pin_args)
+foreach(_third_party_license_pin IN LISTS _third_party_license_pins)
+  list(APPEND _third_party_license_pin_args
+       --pin "${_third_party_license_pin}=${${_third_party_license_pin}}")
+endforeach()
+execute_process(
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/ci/check-third-party-licenses.py"
+          --root "${CMAKE_SOURCE_DIR}"
+          ${_third_party_license_pin_args}
+  RESULT_VARIABLE _third_party_license_status
+  OUTPUT_VARIABLE _third_party_license_output
+  ERROR_VARIABLE _third_party_license_error)
+if(NOT _third_party_license_status EQUAL 0)
+  string(STRIP "${_third_party_license_output}${_third_party_license_error}"
+         _third_party_license_message)
+  message(FATAL_ERROR
+    "Third-party license verification failed:\n${_third_party_license_message}")
+endif()
+
+# License texts for the third-party binaries in this package. The Inno installer
+# copies the staging tree and the CPack ZIP is built from it, so both packages
+# carry the same files.
+install(DIRECTORY "${CMAKE_SOURCE_DIR}/third_party/licenses/"
+        DESTINATION "licenses"
+        COMPONENT application)
+install(FILES "${CMAKE_SOURCE_DIR}/NOTICE"
+              "${CMAKE_SOURCE_DIR}/LICENSE"
+        DESTINATION "."
+        COMPONENT application)
+
 install(TARGETS sunshine RUNTIME DESTINATION "." COMPONENT application)
 set(SUNSHINE_MAT_CAPTURE_AVAILABLE 0)
 if (TARGET sunshine_mat_capture)

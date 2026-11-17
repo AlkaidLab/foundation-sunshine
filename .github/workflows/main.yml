@@ -133,6 +133,23 @@ jobs:
       - name: Check relative links and images
         run: python3 scripts/ci/check-doc-links.py --root .
 
+  third-party-licenses:
+    name: Third-party licenses
+    # Source: github-actions-workflow-syntax-20261117.
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      # A driver download without a reviewed license text, a version pin that
+      # moved away from the reviewed tag, or a package path that stops copying
+      # licenses/ fails here and at Windows configure time.
+      - name: Every fetched driver has a reviewed license
+        run: python3 scripts/ci/check-third-party-licenses.py --root .
+
   workflow-lint:
     name: Workflow lint
     needs: changes
@@ -1288,6 +1305,14 @@ jobs:
           # Install into the staging directory first.
           cmake --install . --prefix ./inno_staging
 
+          # The driver licenses and the repository notices are part of the
+          # install tree that both packages read.
+          test -f ./inno_staging/NOTICE
+          test -f ./inno_staging/LICENSE
+          test -f ./inno_staging/licenses/vigembus/LICENSE
+          test -f ./inno_staging/licenses/usbip-win2/LICENSE
+          test -f ./inno_staging/licenses/zako-virtual-mouse/LICENSE
+
           # Symbols from the unstripped modules, then strip what ships: the packages carry no DWARF, the symbol zip does.
           # The key is the build-id GUID of each module, which stripping and signing keep.
           python3 ../scripts/ci/make-symbols.py --staging ./inno_staging --build . --dump-syms "$(cygpath -u "$DUMP_SYMS")" \
@@ -1330,6 +1355,9 @@ jobs:
           if [[ "$RTX_VIDEO_ADAPTER_BUILT" == "true" ]]; then
             grep -F "foundation_rtx_video_adapter.dll" inno-build.log
           fi
+          grep -E 'licenses[/\\]vigembus[/\\]LICENSE' inno-build.log
+          grep -E 'licenses[/\\]usbip-win2[/\\]LICENSE' inno-build.log
+          grep -E 'licenses[/\\]zako-virtual-mouse[/\\]LICENSE' inno-build.log
           
           # Generate the portable ZIP. CPack's ZIP generator is the measured
           # winner for this payload: it is smaller and faster than the
@@ -1357,6 +1385,10 @@ jobs:
           fi
 
           # The engine is not the download: "Assemble installer" wraps it in the shell.
+          grep -F "Sunshine/NOTICE" portable-files.txt
+          grep -F "Sunshine/licenses/vigembus/LICENSE" portable-files.txt
+          grep -F "Sunshine/licenses/usbip-win2/LICENSE" portable-files.txt
+          grep -F "Sunshine/licenses/zako-virtual-mouse/LICENSE" portable-files.txt
           test -f ./cpack_artifacts/Sunshine-engine.exe
           mv ./cpack_artifacts/Sunshine.zip ../artifacts/sunshine-windows-portable.zip
 
@@ -1487,7 +1519,7 @@ jobs:
   ci-gate:
     name: CI gate
     if: always()
-    needs: [changes, docs-check, workflow-lint, webui, webui-docs, setup_release, vdd_smoke, mat_smoke, cold_plan, shard, adapter_config, setup_ui, build_win, publish]
+    needs: [changes, docs-check, third-party-licenses, workflow-lint, webui, webui-docs, setup_release, vdd_smoke, mat_smoke, cold_plan, shard, adapter_config, setup_ui, build_win, publish]
     runs-on: ubuntu-slim
     timeout-minutes: 5
     permissions: {}
