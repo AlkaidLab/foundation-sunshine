@@ -8,6 +8,9 @@
 #include <iostream>
 #include <cmath>
 #include <gtest/gtest.h>
+#ifdef _WIN32
+  #include <src/webp/decode.h>
+#endif
 namespace fs = std::filesystem;
 namespace {
   sparxie::HostEnv
@@ -447,6 +450,19 @@ TEST(Hero, TheRealStarRailBackgroundDecodesAndComposesOnWindows) {
   ASSERT_EQ(bundled.h, 1440);
   EXPECT_FALSE(sparxie::image_is_blank(bundled));
   EXPECT_EQ(sparxie::host_decode_webp("invalid WebP").w, 0);
+  EXPECT_EQ(sparxie::host_decode_webp(std::string_view(bytes.data(), bytes.size() / 2)).w, 0);
+  ASSERT_GE(bytes.size(), 25u);
+  ASSERT_EQ(bytes.compare(12, 4, "VP8L"), 0);
+  std::string oversized = bytes;
+  const std::uint32_t dimensions = 9999u | (9999u << 14);
+  for (int i = 0; i < 4; ++i) {
+    oversized[21 + i] = static_cast<char>((dimensions >> (8 * i)) & 0xff);
+  }
+  int width = 0, height = 0;
+  ASSERT_TRUE(WebPGetInfo(reinterpret_cast<const std::uint8_t *>(oversized.data()), oversized.size(), &width, &height));
+  ASSERT_EQ(width, 10000);
+  ASSERT_EQ(height, 10000);
+  EXPECT_EQ(sparxie::host_decode_webp(oversized).w, 0);
   std::string diagnostic;
   EXPECT_EQ(sparxie::host_decode_image("RIFFxxxxWEBPbad", &diagnostic).w, 0);
   EXPECT_NE(diagnostic.find("libwebp decode failed"), std::string::npos);
