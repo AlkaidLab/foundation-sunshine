@@ -6,7 +6,8 @@
     "receipt": false,
     "legacy": false,
     "present": true,
-    "ownership": "external"
+    "ownership": "external",
+    "replaceable": true
   },
   {
     "name": "legacy-owned",
@@ -15,7 +16,8 @@
     "receipt": false,
     "legacy": true,
     "present": true,
-    "ownership": "legacy-owned"
+    "ownership": "legacy-owned",
+    "replaceable": false
   },
   {
     "name": "legacy-owned-inno-trailing-separator",
@@ -25,7 +27,8 @@
     "legacy": true,
     "present": true,
     "locationSuffix": "\\",
-    "ownership": "legacy-owned"
+    "ownership": "legacy-owned",
+    "replaceable": false
   },
   {
     "name": "legacy-two-registry-views",
@@ -35,7 +38,8 @@
     "legacy": true,
     "present": true,
     "twoViews": true,
-    "ownership": "external"
+    "ownership": "external",
+    "replaceable": false
   },
   {
     "name": "legacy-uninstaller-elsewhere",
@@ -45,7 +49,8 @@
     "legacy": true,
     "present": true,
     "uninstallerElsewhere": true,
-    "ownership": "external"
+    "ownership": "external",
+    "replaceable": false
   },
   {
     "name": "incompatible",
@@ -54,7 +59,8 @@
     "receipt": false,
     "legacy": true,
     "present": true,
-    "ownership": "external"
+    "ownership": "external",
+    "replaceable": true
   },
   {
     "name": "slim",
@@ -63,7 +69,8 @@
     "receipt": true,
     "legacy": false,
     "present": true,
-    "ownership": "managed"
+    "ownership": "managed",
+    "replaceable": false
   },
   {
     "name": "absent",
@@ -72,7 +79,8 @@
     "receipt": false,
     "legacy": false,
     "present": false,
-    "ownership": "absent"
+    "ownership": "absent",
+    "replaceable": false
   },
   {
     "name": "observed-full-double-install",
@@ -99,7 +107,8 @@
       },
       "driver_version": "12.1.30.403",
       "instance": "ROOT\\ALKAIDUSB\\0000"
-    }
+    },
+    "replaceable": true
   },
   {
     "name": "unknown-origin",
@@ -108,6 +117,255 @@
     "receipt": false,
     "legacy": false,
     "present": true,
-    "ownership": "external"
+    "ownership": "external",
+    "replaceable": true
+  },
+  {
+    "name": "fs-installed-full",
+    "version": "0.9.8.1",
+    "extras": true,
+    "receipt": false,
+    "legacy": true,
+    "present": true,
+    "proofVariant": "valid",
+    "ownership": "legacy-owned",
+    "replaceable": false,
+    "reason": "fs-installed-proof",
+    "missing": []
+  },
+  {
+    "name": "fs-installed-full-no-bundled-installer",
+    "version": "0.9.8.1",
+    "extras": true,
+    "receipt": false,
+    "legacy": false,
+    "present": true,
+    "proofVariant": "valid",
+    "ownership": "external",
+    "replaceable": true,
+    "missing": [
+      "bundled-installer"
+    ]
+  },
+  {
+    "name": "fs-installed-full-no-guard-log",
+    "version": "0.9.8.1",
+    "extras": true,
+    "receipt": false,
+    "legacy": true,
+    "present": true,
+    "proofVariant": "no-log",
+    "ownership": "external",
+    "replaceable": true,
+    "missing": [
+      "inside-guard-window",
+      "install-date"
+    ]
+  },
+  {
+    "name": "fs-installed-full-files-before-window",
+    "version": "0.9.8.1",
+    "extras": true,
+    "receipt": false,
+    "legacy": true,
+    "present": true,
+    "proofVariant": "before-window",
+    "ownership": "external",
+    "replaceable": true,
+    "missing": [
+      "inside-guard-window",
+      "install-date"
+    ]
+  },
+  {
+    "name": "fs-installed-full-files-after-window",
+    "version": "0.9.8.1",
+    "extras": true,
+    "receipt": false,
+    "legacy": true,
+    "present": true,
+    "proofVariant": "after-window",
+    "ownership": "external",
+    "replaceable": true,
+    "missing": [
+      "inside-guard-window",
+      "install-date"
+    ]
+  },
+  {
+    "name": "fs-installed-full-uninstall-data-rewritten",
+    "version": "0.9.8.1",
+    "extras": true,
+    "receipt": false,
+    "legacy": true,
+    "present": true,
+    "proofVariant": "written-outside",
+    "ownership": "external",
+    "replaceable": true,
+    "missing": [
+      "inside-guard-window",
+      "install-date"
+    ]
+  },
+  {
+    "name": "fs-installed-full-second-uninstaller",
+    "version": "0.9.8.1",
+    "extras": true,
+    "receipt": false,
+    "legacy": true,
+    "present": true,
+    "proofVariant": "two-uninstallers",
+    "ownership": "external",
+    "replaceable": true,
+    "missing": [
+      "single-uninstaller",
+      "inside-guard-window",
+      "install-date"
+    ]
+  },
+  {
+    "name": "fs-installed-full-custom-components",
+    "version": "0.9.8.1",
+    "extras": true,
+    "receipt": false,
+    "legacy": true,
+    "present": true,
+    "proofVariant": "custom-components",
+    "ownership": "external",
+    "replaceable": true,
+    "missing": [
+      "default-components"
+    ]
+  },
+  {
+    "name": "fs-installed-full-deselected-components",
+    "version": "0.9.8.1",
+    "extras": true,
+    "receipt": false,
+    "legacy": true,
+    "present": true,
+    "proofVariant": "deselected",
+    "ownership": "external",
+    "replaceable": true,
+    "missing": [
+      "default-components"
+    ]
+  },
+  {
+    "name": "fs-installed-full-other-install-day",
+    "version": "0.9.8.1",
+    "extras": true,
+    "receipt": false,
+    "legacy": true,
+    "present": true,
+    "proofVariant": "other-day",
+    "ownership": "external",
+    "replaceable": true,
+    "missing": [
+      "install-date"
+    ]
+  },
+  {
+    "name": "fs-installed-full-no-install-date",
+    "version": "0.9.8.1",
+    "extras": true,
+    "receipt": false,
+    "legacy": true,
+    "present": true,
+    "proofVariant": "no-date",
+    "ownership": "external",
+    "replaceable": true,
+    "missing": [
+      "install-date"
+    ]
+  },
+  {
+    "name": "fs-installed-full-filter-packages-before",
+    "version": "0.9.8.1",
+    "extras": true,
+    "receipt": false,
+    "legacy": true,
+    "present": true,
+    "proofVariant": "filter-before",
+    "ownership": "external",
+    "replaceable": true,
+    "missing": [
+      "inside-guard-window",
+      "install-date"
+    ]
+  },
+  {
+    "name": "fs-installed-full-rollback-in-window",
+    "version": "0.9.8.1",
+    "extras": true,
+    "receipt": false,
+    "legacy": true,
+    "present": true,
+    "proofVariant": "rollback-inside",
+    "ownership": "external",
+    "replaceable": true,
+    "missing": [
+      "inside-guard-window",
+      "install-date"
+    ]
+  },
+  {
+    "name": "fs-installed-full-window-never-closed",
+    "version": "0.9.8.1",
+    "extras": true,
+    "receipt": false,
+    "legacy": true,
+    "present": true,
+    "proofVariant": "open-window",
+    "ownership": "external",
+    "replaceable": true,
+    "missing": [
+      "inside-guard-window",
+      "install-date"
+    ]
+  },
+  {
+    "name": "fs-installed-full-two-registry-views",
+    "version": "0.9.8.1",
+    "extras": true,
+    "receipt": false,
+    "legacy": true,
+    "present": true,
+    "proofVariant": "valid",
+    "ownership": "external",
+    "replaceable": false,
+    "twoViews": true,
+    "missing": [
+      "single-registration"
+    ]
+  },
+  {
+    "name": "fs-installed-full-uninstaller-elsewhere",
+    "version": "0.9.8.1",
+    "extras": true,
+    "receipt": false,
+    "legacy": true,
+    "present": true,
+    "proofVariant": "valid",
+    "ownership": "external",
+    "replaceable": false,
+    "uninstallerElsewhere": true,
+    "missing": [
+      "single-uninstaller",
+      "inside-guard-window",
+      "install-date"
+    ]
+  },
+  {
+    "name": "fs-installed-full-other-version",
+    "version": "0.9.8.2",
+    "extras": true,
+    "receipt": false,
+    "legacy": true,
+    "present": true,
+    "proofVariant": "valid",
+    "ownership": "external",
+    "replaceable": true,
+    "missing": []
   }
 ]

@@ -2,7 +2,7 @@ name: USB-IP payload
 on:
   workflow_dispatch:
   push:
-    branches: [fix/usbip-slim, fix/usbip-ownership]
+    branches: [fix/usbip-slim, fix/usbip-ownership, fix/usbip-legacy-cleanup]
   pull_request:
     branches: [master]
     paths:
