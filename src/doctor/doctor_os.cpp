@@ -319,10 +319,12 @@ namespace doctor::os {
   usbip() {
     usbip_t result;
     result.supported = true;
+    fs::path tool_root;
     wchar_t found[MAX_PATH] {};
     if (SearchPathW(nullptr, L"usbip.exe", nullptr, MAX_PATH, found, nullptr)) {
       result.tool_found = true;
       result.tool_path = utf8(found);
+      tool_root = fs::path { found }.parent_path();
     }
     else {
       // The usbip-win2 installer does not add itself to PATH; the host looks in Program Files too.
@@ -333,6 +335,7 @@ namespace doctor::os {
         std::error_code ec;
         if (fs::is_regular_file(candidate, ec)) {
           result.tool_found = true;
+          tool_root = candidate.parent_path();
           const auto text = candidate.u8string();
           result.tool_path.assign(reinterpret_cast<const char *>(text.c_str()), text.size());
           break;
@@ -342,7 +345,7 @@ namespace doctor::os {
     if (result.tool_found) {
       // usbip-policy-regget-20261117, RegGetValueW: read typed receipt values.
       // Unknown origin or GUI/SDK always stays externally managed.
-      const auto root = fs::u8path(result.tool_path).parent_path();
+      const auto &root = tool_root;
       const auto *key = L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\AlkaidLabUSBip";
       const auto layout = registry_string(HKEY_LOCAL_MACHINE, key, L"InstallLayout");
       const auto version = registry_string(HKEY_LOCAL_MACHINE, key, L"DisplayVersion");

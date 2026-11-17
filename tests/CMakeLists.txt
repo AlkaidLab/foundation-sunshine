@@ -1703,4 +1703,5 @@ target_include_directories(usbip_external_readonly_probe PRIVATE "${CMAKE_SOURCE
 set_target_properties(usbip_external_readonly_probe PROPERTIES CXX_STANDARD 23)
 if (WIN32)
     target_link_libraries(usbip_external_readonly_probe PRIVATE ole32 uuid mmdevapi strmiids setupapi advapi32)
+    target_compile_definitions(usbip_external_readonly_probe PRIVATE INITGUID)
 endif ()
