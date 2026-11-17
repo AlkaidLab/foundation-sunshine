@@ -6,7 +6,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <deque>
 #include <functional>
 #include <limits>
@@ -39,6 +41,151 @@ TEST(VideoPacing, SlotsAccumulateAtConfiguredRate) {
   EXPECT_NEAR(streaming::video_packet_slot(8, packet_bytes, rate).count(), 8'000'000, 1);
   EXPECT_EQ(streaming::video_packet_slot(1, packet_bytes, 0).count(), 0);
 }
+
+namespace {
+  // The slot formula before it became integer arithmetic, kept as the comparison baseline.
+  std::int64_t
+  legacy_long_double_slot(std::size_t packet_index, std::size_t packet_bytes, std::uint64_t rate_bps) {
+    if (rate_bps == 0 || packet_bytes == 0 || packet_index == 0) return 0;
+    const auto bits = static_cast<long double>(packet_index) * static_cast<long double>(packet_bytes) * 8.0L;
+    const auto seconds = bits / static_cast<long double>(rate_bps);
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::duration<long double> { seconds }).count();
+  }
+
+#if defined(__SIZEOF_INT128__) && !defined(SUNSHINE_VIDEO_PACING_NO_INT128)
+  // One 128-bit expression, no branches: the definition floor(index * bytes * 8e9 / rate).
+  std::int64_t
+  exact_slot(std::size_t packet_index, std::size_t packet_bytes, std::uint64_t rate_bps) {
+    const unsigned __int128 bits = static_cast<unsigned __int128>(packet_index) * packet_bytes * 8u;
+    return static_cast<std::int64_t>(bits * 1'000'000'000u / rate_bps);
+  }
+#endif
+}  // namespace
+
+TEST(VideoPacing, IntegerSlotMatchesTheLongDoubleFormulaWithinOneNanosecond) {
+  const std::vector<std::size_t> indexes = { 1, 2, 3, 7, 8, 100, 147, 148, 1'000, 4'096, 65'535, 65'536, 1'000'000, 1u << 20, 1u << 24, 100'000'000 };
+  const std::vector<std::size_t> sizes = { 1, 188, 576, 1'000, 1'200, 1'352, 1'392, 1'416, 1'500, 4'096, 8'972, 65'507 };
+  const std::vector<std::uint64_t> rates = {
+    1'000'000, 2'000'000, 5'000'000, 8'000'000, 10'000'000, 12'345'678, 20'000'000, 50'000'000, 64'000'000, 80'000'000,
+    80'001'023, 100'000'000, 150'000'000, 192'000'000, 300'000'000, 500'000'000, 999'999'937, 1'000'000'000, 2'000'000'000, 2'500'000'000, 3'000'000'000
+  };
+  std::size_t compared = 0;
+  std::size_t off_by_one = 0;
+  for (const auto index : indexes) {
+    for (const auto size : sizes) {
+      for (const auto rate : rates) {
+        const auto now = streaming::video_packet_slot(index, size, rate).count();
+        const auto before = legacy_long_double_slot(index, size, rate);
+        ++compared;
+        EXPECT_LE(std::abs(now - before), 1) << index << " x " << size << " B at " << rate << " bps: " << now << " vs " << before;
+        if (now != before) ++off_by_one;
+#if defined(__SIZEOF_INT128__) && !defined(SUNSHINE_VIDEO_PACING_NO_INT128)
+        // Where they differ the integer value is the exact floor; the long double product or quotient rounded across it.
+        EXPECT_EQ(now, exact_slot(index, size, rate)) << index << " x " << size << " B at " << rate << " bps";
+#endif
+      }
+    }
+  }
+  EXPECT_EQ(compared, indexes.size() * sizes.size() * rates.size());
+  // Informational: how many table entries the old formula got one nanosecond below the exact value.
+  std::printf("[video-pacing] %zu of %zu table entries differ from the long double formula by 1 ns\n", off_by_one, compared);
+}
+
+TEST(VideoPacing, IntegerSlotBoundaries) {
+  EXPECT_EQ(streaming::video_packet_slot(0, 1'392, 80'000'000).count(), 0);
+  EXPECT_EQ(streaming::video_packet_slot(1, 0, 80'000'000).count(), 0);
+  EXPECT_EQ(streaming::video_packet_slot(1, 1'392, 0).count(), 0);
+  // 1 byte at 8 bit/s is exactly one second; 1 byte at 8 Gbit/s is exactly one nanosecond.
+  EXPECT_EQ(streaming::video_packet_slot(1, 1, 8).count(), 1'000'000'000);
+  EXPECT_EQ(streaming::video_packet_slot(1, 1, 8'000'000'000ull).count(), 1);
+  // Truncates toward zero: 1 byte at 3 bit/s is 2.666... seconds.
+  EXPECT_EQ(streaming::video_packet_slot(1, 1, 3).count(), 2'666'666'666);
+  // 1 byte at 9 Gbit/s is 0.888... ns, which truncates to zero.
+  EXPECT_EQ(streaming::video_packet_slot(1, 1, 9'000'000'000ull).count(), 0);
+
+  // Slots never go backwards as the packet index grows.
+  for (const std::uint64_t rate : { 1'000'000ull, 80'000'000ull, 3'000'000'000ull }) {
+    std::int64_t last = 0;
+    for (std::size_t index = 0; index <= 20'000; ++index) {
+      const auto slot = streaming::video_packet_slot(index, 1'392, rate).count();
+      ASSERT_GE(slot, last) << index << " at " << rate << " bps";
+      last = slot;
+    }
+  }
+}
+
+TEST(VideoPacing, IntegerSlotHugeInputsSaturateInsteadOfWrapping) {
+  constexpr auto max_ns = std::numeric_limits<std::int64_t>::max();
+  EXPECT_EQ(streaming::video_packet_slot(std::numeric_limits<std::size_t>::max(), std::numeric_limits<std::size_t>::max(), 1).count(), max_ns);
+  EXPECT_EQ(streaming::video_packet_slot(std::numeric_limits<std::size_t>::max(), 1'500, 1'000'000).count(), max_ns);
+  if constexpr (sizeof(std::size_t) == 8) {
+    // Just across the 64-bit fast path (index * bytes * 8e9 reaches 2^64): the 128-bit path must agree with the definition.
+    for (const std::size_t index : { std::size_t { 2'305'843'008 }, std::size_t { 2'305'843'009 }, std::size_t { 2'305'843'010 }, std::size_t { 4'000'000'000 } }) {
+      const auto now = streaming::video_packet_slot(index, 1, 3'000'000'000ull).count();
+      EXPECT_NEAR(static_cast<double>(now), static_cast<double>(index) * 8e9 / 3e9, 1.0) << index;
+#if defined(__SIZEOF_INT128__) && !defined(SUNSHINE_VIDEO_PACING_NO_INT128)
+      EXPECT_EQ(now, exact_slot(index, 1, 3'000'000'000ull)) << index;
+#endif
+    }
+#if defined(__SIZEOF_INT128__) && !defined(SUNSHINE_VIDEO_PACING_NO_INT128)
+    // A frame of 2^40 packets at a trickle rate, and the largest rate: exact against the one-expression definition.
+    EXPECT_EQ(streaming::video_packet_slot(std::size_t { 1 } << 36, 1'500, 1'000'000).count(), exact_slot(std::size_t { 1 } << 36, 1'500, 1'000'000));
+    EXPECT_EQ(streaming::video_packet_slot(std::size_t { 1 } << 40, 65'507, std::numeric_limits<std::uint64_t>::max()).count(),
+      exact_slot(std::size_t { 1 } << 40, 65'507, std::numeric_limits<std::uint64_t>::max()));
+#endif
+  }
+}
+
+TEST(VideoPacing, FloorDivideGuessIsExactEverywhere) {
+  // A deterministic generator; every case is checked against the hardware divide.
+  std::uint64_t state = 0x9E3779B97F4A7C15ull;
+  const auto next = [&state]() {
+    state ^= state << 13;
+    state ^= state >> 7;
+    state ^= state << 17;
+    return state;
+  };
+  const auto spread = [&next](int max_bits) {
+    // Log-uniform: pick a bit length, then the bits.
+    const auto bits = 1 + next() % static_cast<std::uint64_t>(max_bits);
+    return next() >> (64 - bits);
+  };
+  std::size_t checked = 0;
+  for (int i = 0; i < 4'000'000; ++i) {
+    const auto denominator = spread(64) | 1u;
+    // Numerators on both sides of a multiple of the denominator are where a rounded guess can be off.
+    const auto multiple = spread(64) / denominator;
+    for (const auto numerator : { next(), spread(64), multiple * denominator, multiple * denominator + 1, multiple * denominator - 1, multiple * denominator + denominator - 1 }) {
+      ASSERT_EQ(streaming::detail::floor_div(numerator, denominator), numerator / denominator) << numerator << " / " << denominator;
+      ++checked;
+    }
+  }
+  EXPECT_GT(checked, 20'000'000u);
+  // The edges of every range the guess depends on.
+  for (const std::uint64_t denominator : { std::uint64_t { 1 }, std::uint64_t { 3 }, (std::uint64_t { 1 } << 53) - 1, std::uint64_t { 1 } << 53, (std::uint64_t { 1 } << 53) + 1, std::numeric_limits<std::uint64_t>::max() }) {
+    for (const std::uint64_t numerator : { std::uint64_t { 0 }, std::uint64_t { 1 }, denominator - 1, denominator, denominator + 1, (std::uint64_t { 1 } << 63) - 1, std::uint64_t { 1 } << 63, std::numeric_limits<std::uint64_t>::max() }) {
+      EXPECT_EQ(streaming::detail::floor_div(numerator, denominator), numerator / denominator) << numerator << " / " << denominator;
+    }
+  }
+}
+
+#if defined(__SIZEOF_INT128__) && !defined(SUNSHINE_VIDEO_PACING_NO_INT128)
+TEST(VideoPacing, IntegerSlotIsExactForRandomStreams) {
+  std::uint64_t state = 0xD1B54A32D192ED03ull;
+  const auto next = [&state]() {
+    state ^= state << 13;
+    state ^= state >> 7;
+    state ^= state << 17;
+    return state;
+  };
+  for (int i = 0; i < 4'000'000; ++i) {
+    const std::size_t index = 1 + next() % 200'000;
+    const std::size_t bytes = 1 + next() % 9'000;
+    const std::uint64_t rate = 1'000'000 + next() % 4'000'000'000ull;
+    ASSERT_EQ(streaming::video_packet_slot(index, bytes, rate).count(), exact_slot(index, bytes, rate)) << index << " x " << bytes << " B at " << rate << " bps";
+  }
+}
+#endif
 
 TEST(VideoPacing, FrameRateFitsTheShareOfTheFrameInterval) {
   constexpr auto interval = 16'666'667ns;

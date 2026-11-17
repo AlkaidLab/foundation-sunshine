@@ -107,14 +107,68 @@ namespace streaming {
     return burst_budget_bytes != 0 && frame_bytes >= burst_budget_bytes;
   }
 
+  namespace detail {
+    /**
+     * @brief floor(numerator / denominator) without a hardware divide on the usual path.
+     *
+     * A double quotient is a good first guess, and one exact integer multiply says which way it is off, so the result
+     * is exact. The guess is trusted only while the numerator is below 2^63, the denominator below 2^53 and the guess
+     * below 2^50. Then the two operands convert with one rounding each and the division with a third, which puts the
+     * guess within 3 * 2^-53 * 2^50 < 0.4 of the true quotient, so truncating it gives the floor or one off. The
+     * remainder numerator - guess * denominator is then in [-denominator, 2 * denominator), which fits a signed 64-bit
+     * value even though the product itself wraps. Anything outside that range takes the plain 64-bit division.
+     */
+    inline std::uint64_t
+    floor_div(std::uint64_t numerator, std::uint64_t denominator) noexcept {
+      if (numerator < (std::uint64_t { 1 } << 63) && denominator < (std::uint64_t { 1 } << 53)) {
+        const double guess = static_cast<double>(static_cast<std::int64_t>(numerator)) / static_cast<double>(static_cast<std::int64_t>(denominator));
+        if (guess < 1e15) {
+          auto quotient = static_cast<std::uint64_t>(static_cast<std::int64_t>(guess));
+          const auto remainder = static_cast<std::int64_t>(numerator - quotient * denominator);
+          if (remainder < 0) return quotient - 1;
+          if (static_cast<std::uint64_t>(remainder) >= denominator) return quotient + 1;
+          return quotient;
+        }
+      }
+      return numerator / denominator;
+    }
+  }  // namespace detail
+
   // fs-rfc8085-udp-20261112 section 3.1.6 recommends regulating UDP bursts. A slot is the
   // elapsed time at which packet_index may be submitted at rate_bps.
+  //
+  // The result is floor(packet_index * packet_bytes * 8e9 / rate_bps) in whole nanoseconds, computed in integers so
+  // the value is exact and the same on every compiler. It used to go through long double, which on x86 means x87:
+  // Clang switches the x87 rounding mode around every float-to-integer conversion, and that made this function
+  // 3x slower than under GCC. Every frame a stream sends (well under 2 GB on the wire) stays in 64-bit integers;
+  // larger inputs use 128-bit integers where the compiler has them, and the result saturates at the largest
+  // nanosecond count instead of wrapping.
   inline std::chrono::nanoseconds
   video_packet_slot(std::size_t packet_index, std::size_t packet_bytes, std::uint64_t rate_bps) noexcept {
     if (rate_bps == 0 || packet_bytes == 0 || packet_index == 0) return {};
-    const auto bits = static_cast<long double>(packet_index) * static_cast<long double>(packet_bytes) * 8.0L;
-    const auto seconds = bits / static_cast<long double>(rate_bps);
-    return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::duration<long double> { seconds });
+    constexpr std::uint64_t ns_per_byte_second = 8ull * 1'000'000'000ull;
+    constexpr auto max_ns = static_cast<std::uint64_t>(INT64_MAX);
+#if defined(__SIZEOF_INT128__) && !defined(SUNSHINE_VIDEO_PACING_NO_INT128)
+    const auto bytes = static_cast<unsigned __int128>(packet_index) * packet_bytes;
+    if (bytes <= UINT64_MAX / ns_per_byte_second) {
+      return std::chrono::nanoseconds { static_cast<std::int64_t>(std::min(detail::floor_div(static_cast<std::uint64_t>(bytes) * ns_per_byte_second, rate_bps), max_ns)) };
+    }
+    // floor((q * rate + r) * k / rate) = q * k + floor(r * k / rate), with r < rate <= 2^64 so r * k fits in 128 bits.
+    const auto whole = bytes / rate_bps;
+    const auto rest = bytes % rate_bps;
+    if (whole > max_ns / ns_per_byte_second) return std::chrono::nanoseconds { INT64_MAX };
+    const auto ns = static_cast<std::uint64_t>(whole) * ns_per_byte_second + static_cast<std::uint64_t>(rest * ns_per_byte_second / rate_bps);
+    return std::chrono::nanoseconds { static_cast<std::int64_t>(std::min(ns, max_ns)) };
+#else
+    // No 128-bit integer (32-bit targets, MSVC). The 64-bit path is exact while the product below fits in 64 bits,
+    // which holds for every frame a stream sends; beyond it a double is accurate to far under a nanosecond per slot.
+    if (static_cast<std::uint64_t>(packet_index) <= UINT64_MAX / ns_per_byte_second / packet_bytes) {
+      const auto ns = detail::floor_div(static_cast<std::uint64_t>(packet_index) * packet_bytes * ns_per_byte_second, rate_bps);
+      return std::chrono::nanoseconds { static_cast<std::int64_t>(std::min(ns, max_ns)) };
+    }
+    const double ns = static_cast<double>(packet_index) * static_cast<double>(packet_bytes) * 8e9 / static_cast<double>(rate_bps);
+    return std::chrono::nanoseconds { ns >= 9.2e18 ? INT64_MAX : static_cast<std::int64_t>(ns) };
+#endif
   }
 
   /**
