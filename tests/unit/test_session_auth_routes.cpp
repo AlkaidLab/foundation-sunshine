@@ -24,22 +24,43 @@
 #include <nlohmann/json.hpp>
 #include <string>
 #include <thread>
+#include <vector>
 
 #ifdef _WIN32
   #include "src/platform/windows/misc.h"
+  #include <aclapi.h>
+
+namespace {
+  std::atomic_bool local_auth_test_as_system { false };
+  std::atomic_bool local_auth_invalid_user_token { false };
+  std::atomic_uint local_auth_gui_token_requests { 0 };
+}  // namespace
 
 // The local credential code asks the platform who it runs as.  This test links
-// only the HTTP and auth sources, so it answers as a normal user process: the
-// token file is then scoped to this process's own SID.
+// only the HTTP and auth sources. Most tests run as a normal user; a focused
+// test also simulates a SYSTEM host with a separate interactive GUI user.
 namespace platf {
   bool
   is_running_as_system() {
-    return false;
+    return local_auth_test_as_system.load();
   }
 
   HANDLE
   retrieve_users_token(bool) {
     return nullptr;
+  }
+
+  HANDLE
+  retrieve_interactive_users_token(bool) {
+    ++local_auth_gui_token_requests;
+    if (local_auth_invalid_user_token.load()) {
+      return CreateEventW(nullptr, FALSE, FALSE, nullptr);
+    }
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+      return nullptr;
+    }
+    return token;
   }
 }  // namespace platf
 #endif
@@ -509,6 +530,93 @@ TEST_F(SessionAuthRoutes, LocalTokenRotationInvalidatesThePreviousValue) {
   EXPECT_FALSE(confighttp::local_auth_token::matches(previous));
   EXPECT_TRUE(confighttp::local_auth_token::matches(current));
 }
+
+#ifdef _WIN32
+TEST_F(SessionAuthRoutes, LocalTokenRecoversAfterIdentityQueryFailure) {
+  local_auth_test_as_system.store(true);
+  const auto reset = util::fail_guard([] {
+    confighttp::local_auth_token::stop_monitor();
+    local_auth_invalid_user_token.store(false);
+    local_auth_test_as_system.store(false);
+  });
+  ASSERT_TRUE(confighttp::local_auth_token::initialize());
+  const auto previous = local_token();
+  local_auth_invalid_user_token.store(true);
+  confighttp::local_auth_token::start_monitor();
+
+  const auto wait_until = [](const auto &condition) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (std::chrono::steady_clock::now() < deadline) {
+      if (condition()) {
+        return true;
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    return false;
+  };
+  ASSERT_TRUE(wait_until([&] { return !confighttp::local_auth_token::matches(previous); }));
+  local_auth_invalid_user_token.store(false);
+  ASSERT_TRUE(wait_until([&] {
+    const auto current = local_token();
+    return current != previous && confighttp::local_auth_token::matches(current);
+  }));
+}
+
+TEST_F(SessionAuthRoutes, SystemHostGrantsTheInteractiveGuiUserAccessToTheLocalToken) {
+  local_auth_test_as_system.store(true);
+  local_auth_gui_token_requests.store(0);
+  const auto reset = util::fail_guard([] { local_auth_test_as_system.store(false); });
+
+  // The capture-user stub returns no token. The GUI user must still receive
+  // a DACL entry, as it can live in another Windows session from the core.
+  ASSERT_TRUE(confighttp::local_auth_token::initialize());
+  EXPECT_GT(local_auth_gui_token_requests.load(), 0U);
+
+  HANDLE process_token = nullptr;
+  ASSERT_TRUE(OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &process_token));
+  const auto close_token = util::fail_guard([&] { CloseHandle(process_token); });
+  DWORD token_size = 0;
+  GetTokenInformation(process_token, TokenUser, nullptr, 0, &token_size);
+  ASSERT_GT(token_size, 0U);
+  std::vector<BYTE> token_data(token_size);
+  ASSERT_TRUE(GetTokenInformation(process_token, TokenUser, token_data.data(), token_size, &token_size));
+  const auto *user = reinterpret_cast<const TOKEN_USER *>(token_data.data());
+
+  auto path = (directory / "local-auth.token").wstring();
+  PACL dacl = nullptr;
+  PSECURITY_DESCRIPTOR descriptor = nullptr;
+  ASSERT_EQ(GetNamedSecurityInfoW(path.data(), SE_FILE_OBJECT, DACL_SECURITY_INFORMATION,
+              nullptr, nullptr, &dacl, nullptr, &descriptor),
+    ERROR_SUCCESS);
+  const auto free_descriptor = util::fail_guard([&] { LocalFree(descriptor); });
+  ASSERT_NE(dacl, nullptr);
+
+  ACL_SIZE_INFORMATION info {};
+  ASSERT_TRUE(GetAclInformation(dacl, &info, sizeof(info), AclSizeInformation));
+  bool user_can_read = false;
+  for (DWORD index = 0; index < info.AceCount; ++index) {
+    void *raw_ace = nullptr;
+    ASSERT_TRUE(GetAce(dacl, index, &raw_ace));
+    const auto *header = static_cast<const ACE_HEADER *>(raw_ace);
+    if (header->AceType != ACCESS_ALLOWED_ACE_TYPE) {
+      continue;
+    }
+    const auto *ace = static_cast<const ACCESS_ALLOWED_ACE *>(raw_ace);
+    if (EqualSid(const_cast<DWORD *>(&ace->SidStart), user->User.Sid) &&
+        (ace->Mask & (GENERIC_READ | FILE_READ_DATA)) != 0) {
+      user_can_read = true;
+    }
+  }
+  EXPECT_TRUE(user_can_read);
+
+  const auto token = local_token();
+  ASSERT_EQ(token.size(), 64U);
+  auto client = connect();
+  const auto response = client->request("GET", "/api/test-local-auth-required", "",
+    { { "X-Sunshine-Local-Token", token } });
+  EXPECT_EQ(response->status_code, "200 OK");
+}
+#endif
 
 TEST_F(SessionAuthRoutes, SetupRunsOnlyWhileNoCredentialsExist) {
   auto client = connect();

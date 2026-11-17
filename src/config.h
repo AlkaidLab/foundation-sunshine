@@ -290,8 +290,8 @@ namespace config {
     std::uint16_t port;
     std::string address_family;
     std::string bind_address;
-    // Interactive-session policy for user-token and launcher decisions:
-    // 0 selects the automatic console/RDP policy; 1 selects the console only.
+    // Capture-session policy: 0 (default) selects the automatic console/RDP
+    // policy; 1 selects the console. GUI identity is selected separately.
     config_session_binding::mode_e session_binding;
 
     std::string log_file;

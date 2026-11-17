@@ -149,6 +149,14 @@ namespace platf {
   retrieve_users_token(bool elevated);
 
   /**
+   * @brief Retrieve the active interactive user's token for the GUI's local credential.
+   * @param elevated Whether to retrieve an elevated token if available.
+   * @return The user's token handle, or nullptr if no active user is available.
+   */
+  HANDLE
+  retrieve_interactive_users_token(bool elevated);
+
+  /**
    * @brief Impersonate the current user and execute a callback.
    * @param user_token The user's token to impersonate.
    * @param callback The callback function to execute while impersonating.

@@ -38,6 +38,11 @@ namespace platf {
   retrieve_users_token(bool) {
     return nullptr;
   }
+
+  HANDLE
+  retrieve_interactive_users_token(bool) {
+    return nullptr;
+  }
 #endif
 
   std::filesystem::path

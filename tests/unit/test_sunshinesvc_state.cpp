@@ -2,11 +2,97 @@
  * @file tests/unit/test_sunshinesvc_state.cpp
  * @brief Tests for the GUI agent lifecycle policy used by sunshinesvc.
  */
+#include "src/config_session_binding.h"
 #include <tools/sunshinesvc_state.h>
 
 #include <array>
 #include <gtest/gtest.h>
 #include <vector>
+
+TEST(SessionBinding, MissingOrInvalidSettingPreservesAutomaticCapture) {
+  using namespace config_session_binding;
+  EXPECT_EQ(default_mode, mode_e::automatic);
+  EXPECT_EQ(parse_or_default(""), mode_e::automatic);
+  EXPECT_EQ(parse_or_default("invalid"), mode_e::automatic);
+  EXPECT_EQ(parse_or_default("0"), mode_e::automatic);
+  EXPECT_EQ(parse_or_default("1"), mode_e::console);
+  EXPECT_EQ(parse_or_default("\"0\""), mode_e::automatic);
+  EXPECT_EQ(parse_or_default("00"), mode_e::automatic);
+  EXPECT_EQ(parse_or_default("0x0"), mode_e::automatic);
+  EXPECT_EQ(parse_or_default("0x1"), mode_e::console);
+  EXPECT_EQ(parse_or_default("2"), mode_e::automatic);
+}
+
+TEST(SessionBinding, RdpGuiDoesNotMoveConsoleCaptureOrItsUserToken) {
+  using namespace config_session_binding;
+  constexpr std::uint32_t console = 3;
+  constexpr std::uint32_t rdp = 1;
+  const auto targets = select_sessions(mode_e::console, console, rdp);
+  EXPECT_EQ(targets.capture, console);
+  EXPECT_EQ(targets.gui, rdp);
+  EXPECT_EQ(user_token_session(user_token_purpose_e::capture, mode_e::console, console, rdp), console);
+  EXPECT_EQ(user_token_session(user_token_purpose_e::gui, mode_e::console, console, rdp), rdp);
+}
+
+TEST(SessionBinding, GuiLoginAndLogoutDoNotChangeConsoleCapture) {
+  using namespace config_session_binding;
+  const auto before = select_sessions(mode_e::console, 3, invalid_session_id);
+  const auto connected = select_sessions(mode_e::console, 3, 1);
+  const auto disconnected = select_sessions(mode_e::console, 3, invalid_session_id);
+  EXPECT_EQ(before.capture, connected.capture);
+  EXPECT_EQ(connected.capture, disconnected.capture);
+  EXPECT_EQ(before.gui, invalid_session_id);
+  EXPECT_EQ(connected.gui, 1U);
+  EXPECT_EQ(disconnected.gui, invalid_session_id);
+  EXPECT_EQ(user_token_session(user_token_purpose_e::gui, mode_e::console, 3, invalid_session_id), invalid_session_id);
+
+  const auto connect = update_sessions(mode_e::console, 3, invalid_session_id, 3, 1, false);
+  EXPECT_TRUE(connect.update_gui);
+  EXPECT_FALSE(connect.restart_capture);
+  EXPECT_FALSE(connect.retry);
+  const auto disconnect = update_sessions(mode_e::console, 3, 1, 3, invalid_session_id, false);
+  EXPECT_TRUE(disconnect.update_gui);
+  EXPECT_FALSE(disconnect.restart_capture);
+  EXPECT_FALSE(disconnect.retry);
+}
+
+TEST(SessionBinding, TransientQueriesDoNotMoveTheWrongSession) {
+  using namespace config_session_binding;
+  const auto console = update_sessions(mode_e::console, 3, 1, 3, invalid_session_id, true);
+  EXPECT_FALSE(console.update_gui);
+  EXPECT_FALSE(console.restart_capture);
+  EXPECT_TRUE(console.retry);
+
+  const auto changed_console = update_sessions(mode_e::console, 3, 1, 4, invalid_session_id, true);
+  EXPECT_TRUE(changed_console.restart_capture);
+  EXPECT_FALSE(changed_console.update_gui);
+  EXPECT_TRUE(changed_console.retry);
+
+  const auto automatic = update_sessions(mode_e::automatic, 1, 1, 3, invalid_session_id, true);
+  EXPECT_FALSE(automatic.update_gui);
+  EXPECT_FALSE(automatic.restart_capture);
+  EXPECT_TRUE(automatic.retry);
+
+  const auto no_console = update_sessions(mode_e::console, 3, 1, invalid_session_id, 1, false);
+  EXPECT_FALSE(no_console.restart_capture);
+  EXPECT_TRUE(no_console.retry);
+}
+
+TEST(SessionBinding, ExplicitAutomaticCaptureFollowsTheInteractiveSession) {
+  using namespace config_session_binding;
+  const auto connected = select_sessions(mode_e::automatic, 3, 1);
+  EXPECT_EQ(connected.capture, 1U);
+  EXPECT_EQ(connected.gui, 1U);
+  EXPECT_EQ(user_token_session(user_token_purpose_e::capture, mode_e::automatic, 3, 1), 1U);
+  const auto rdp_connected = update_sessions(mode_e::automatic, 3, invalid_session_id, 3, 1, false);
+  EXPECT_TRUE(rdp_connected.update_gui);
+  EXPECT_TRUE(rdp_connected.restart_capture);
+  EXPECT_FALSE(rdp_connected.retry);
+
+  const auto no_user = select_sessions(mode_e::automatic, 3, invalid_session_id);
+  EXPECT_EQ(no_user.capture, 3U);
+  EXPECT_EQ(no_user.gui, invalid_session_id);
+}
 
 TEST(GuiRestartBackoff, BacksOffRepeatedFailures) {
   sunshinesvc::GuiRestartBackoff backoff;

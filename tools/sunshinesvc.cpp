@@ -237,18 +237,17 @@ FindActiveUserSessionId() {
   return { active_user_session_id, false };
 }
 
-// sunshine.conf may pin session handling to the physical console with
-// `session_binding = 1`. The default `0` (or a missing key/file) keeps the
-// automatic behavior: console preferred, active RDP session as the fallback.
+// Capture follows the active user by default. `session_binding = 1` selects
+// the physical console instead; GUI selection is independent.
 std::wstring
 InstallDirectory();
 
-bool
-session_binding_console_only() {
+config_session_binding::mode_e
+session_binding_mode() {
   const std::filesystem::path config_path = std::filesystem::path(InstallDirectory()) / L"config" / L"sunshine.conf";
   std::ifstream conf_file(config_path);
   if (!conf_file.is_open()) {
-    return false;
+    return config_session_binding::default_mode;
   }
   std::string line;
   while (std::getline(conf_file, line)) {
@@ -270,14 +269,10 @@ session_binding_console_only() {
     trim(key);
     trim(value);
     if (key == config_session_binding::key) {
-      if (value.empty()) {
-        continue;
-      }
-      const auto mode = config_session_binding::parse(value);
-      return mode && *mode == config_session_binding::mode_e::console;
+      return config_session_binding::parse_or_default(value);
     }
   }
-  return false;
+  return config_session_binding::default_mode;
 }
 
 struct GuiAgentProcess {
@@ -886,6 +881,10 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
   sunshinesvc::GuiAgentCrashLogLimiter gui_agent_log_limiter;
 
   const auto acquire_gui_agent = [&]() {
+    if (gui_agent_session_id == invalid_session_id) {
+      gui_agent_retry_at_ms = GetTickCount64() + sunshinesvc::GUI_REATTACH_POLL_MS;
+      return;
+    }
     bool attached_to_existing = false;
     const auto error = AcquireGuiAgent(gui_agent_session_id, gui_agent, attached_to_existing);
     if (error == ERROR_SUCCESS) {
@@ -914,6 +913,10 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
   };
 
   const auto reattach_gui_agent = [&]() {
+    if (gui_agent_session_id == invalid_session_id) {
+      gui_agent_retry_at_ms = GetTickCount64() + sunshinesvc::GUI_REATTACH_POLL_MS;
+      return;
+    }
     std::wstring gui_directory;
     std::wstring gui_path;
     auto existing_process = FindExistingGuiAgent(gui_agent_session_id, gui_directory, gui_path);
@@ -1027,6 +1030,24 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
     }
   };
 
+  const auto select_gui_session = [&](DWORD next_session_id) {
+    if (gui_agent_session_id == next_session_id) {
+      return;
+    }
+    // Closing the supervision handle does not terminate an agent in the old
+    // session. It can be reattached if that user session becomes active again.
+    CloseGuiAgentHandle(gui_agent);
+    gui_agent_session_id = next_session_id;
+    gui_agent_last_error = ERROR_SUCCESS;
+    gui_agent_retry_at_ms = 0;
+    if (next_session_id == invalid_session_id) {
+      gui_agent_retry_at_ms = GetTickCount64() + sunshinesvc::GUI_REATTACH_POLL_MS;
+    }
+    gui_agent_backoff.reset();
+    gui_agent_restart_policy.resume_supervision();
+    gui_agent_log_limiter.reset();
+  };
+
   // Loop every 3 seconds until the stop event is set or Sunshine.exe is running. The first pass is at once: the loop used to wait 3 s before it tried at all, and
   // every start of the service (every boot) lost them (service 12:53:00, Sunshine.exe 12:53:04). A user session that is not there yet is picked up at the next pass.
   DWORD loop_wait_ms = 0;
@@ -1037,35 +1058,39 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
   // not before this tick (GetTickCount64): only the start of the core waits; the pass interval, the GUI agent's supervision and the stop event go on as before
   ULONGLONG core_restart_not_before_tick = 0;
   while (WaitForSingleObject(stop_event, std::exchange(loop_wait_ms, 3000)) != WAIT_OBJECT_0) {
-    const bool binding_console = session_binding_console_only();
-    DWORD session_id = invalid_session_id;
-    if (binding_console) {
-      session_id = WTSGetActiveConsoleSessionId();
+    const auto binding_mode = session_binding_mode();
+    const auto selection = FindActiveUserSessionId();
+    auto interactive_session_id = selection.session_id;
+    if (selection.query_failed) {
+      interactive_session_id = gui_agent_session_id;
     }
-    else {
-      const auto selection = FindActiveUserSessionId();
-      if (selection.query_failed) {
-        continue;
-      }
-      session_id = selection.session_id;
-      if (session_id == invalid_session_id) {
-        session_id = WTSGetActiveConsoleSessionId();
-      }
-    }
-    if (session_id == invalid_session_id) {
-      // No active user session yet
-      continue;
+    const auto targets = config_session_binding::select_sessions(
+      binding_mode, WTSGetActiveConsoleSessionId(), interactive_session_id);
+    if (!selection.query_failed) {
+      select_gui_session(targets.gui);
     }
 
-    if (gui_agent_session_id != session_id) {
-      CloseGuiAgentHandle(gui_agent);
-      gui_agent_session_id = session_id;
-      gui_agent_last_error = ERROR_SUCCESS;
-      gui_agent_retry_at_ms = 0;
-      gui_agent_backoff.reset();
-      gui_agent_restart_policy.resume_supervision();
-      gui_agent_log_limiter.reset();
+    // GUI availability does not depend on the capture core's session or on a
+    // successful core start. A token lookup failure is retried without reviving
+    // a GUI that the user deliberately quit.
+    if (gui_agent.handle != NULL && WaitForSingleObject(gui_agent.handle, 0) == WAIT_OBJECT_0) {
+      handle_gui_agent_exit();
     }
+    if (gui_agent.handle == NULL && RetryWaitTimeout(gui_agent_retry_at_ms) == 0) {
+      if (gui_agent_restart_policy.launch_allowed()) {
+        acquire_gui_agent();
+      }
+      else {
+        reattach_gui_agent();
+      }
+    }
+
+    if ((selection.query_failed && binding_mode == config_session_binding::mode_e::automatic) ||
+        targets.capture == invalid_session_id) {
+      // No capture session yet, or automatic selection could not be queried.
+      continue;
+    }
+    const DWORD session_id = targets.capture;
 
     auto console_token = DuplicateTokenForSession(session_id);
     if (console_token == NULL) {
@@ -1103,9 +1128,6 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
         CloseHandle(console_token);
         if (gui_agent.handle != NULL && WaitForSingleObject(gui_agent.handle, 0) == WAIT_OBJECT_0) {
           handle_gui_agent_exit();
-        }
-        if (gui_agent.handle == NULL && gui_agent_restart_policy.launch_allowed() && RetryWaitTimeout(gui_agent_retry_at_ms) == 0) {
-          acquire_gui_agent();
         }
         continue;
       }
@@ -1166,8 +1188,11 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
     // whether the service itself asked the core to end (service stop, change of the console session), and whether it was the session change
     bool exit_requested = false;
     bool exit_for_session_change = false;
-    bool session_reselect_pending = false;
+    bool session_reselect_pending = selection.query_failed;
     ULONGLONG session_reselect_at_ms = 0;
+    if (selection.query_failed) {
+      session_reselect_at_ms = GetTickCount64() + session_reselect_delay_ms;
+    }
     do {
       // Wait on the exact GUI process while it is managed. After a clean exit,
       // only a low-frequency lookup runs so externally launched replacements
@@ -1201,6 +1226,16 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
             still_running = true;
             break;
           }
+          if (gui_agent_session_id == invalid_session_id) {
+            const auto gui_selection = FindActiveUserSessionId();
+            if (!gui_selection.query_failed && gui_selection.session_id != invalid_session_id) {
+              // Re-evaluate both targets: automatic capture may also need to
+              // move when a user becomes active without a delivered event.
+              SetEvent(session_change_event);
+              still_running = true;
+              break;
+            }
+          }
           if (gui_agent_restart_policy.launch_allowed()) {
             acquire_gui_agent();
           }
@@ -1211,35 +1246,23 @@ ServiceMain(DWORD dwArgc, LPTSTR *lpszArgv) {
           break;
 
         case WAIT_OBJECT_0 + 2: {
-          DWORD active_session_id = invalid_session_id;
-          if (binding_console) {
-            active_session_id = WTSGetActiveConsoleSessionId();
+          const auto next_user = FindActiveUserSessionId();
+          const auto update = config_session_binding::update_sessions(
+            binding_mode, session_id, gui_agent_session_id, WTSGetActiveConsoleSessionId(),
+            next_user.session_id, next_user.query_failed);
+          if (update.update_gui) {
+            select_gui_session(update.targets.gui);
           }
-          else {
-            const auto selection = FindActiveUserSessionId();
-            if (selection.query_failed) {
-              session_reselect_pending = true;
-              session_reselect_at_ms = GetTickCount64() + session_reselect_delay_ms;
-              still_running = true;
-              continue;
-            }
-            active_session_id = selection.session_id;
-            if (active_session_id == invalid_session_id) {
-              active_session_id = WTSGetActiveConsoleSessionId();
-            }
-          }
-          if (active_session_id == invalid_session_id) {
+          if (update.retry) {
             session_reselect_pending = true;
             session_reselect_at_ms = GetTickCount64() + session_reselect_delay_ms;
-            // Windows is between session states. Keep the current core, but
-            // retry the selection after a bounded delay.
-            still_running = true;
-            continue;
           }
-          session_reselect_pending = false;
-          if (active_session_id == session_id) {
-            // The interactive user session did not change. Let Sunshine keep
-            // running.
+          else {
+            session_reselect_pending = false;
+          }
+          if (!update.restart_capture) {
+            // GUI-only changes and transient lookup failures must not
+            // interrupt capture. A failed lookup is retried above.
             still_running = true;
             continue;
           }

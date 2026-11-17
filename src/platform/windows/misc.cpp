@@ -314,23 +314,23 @@ namespace platf {
 
       LPWSTR username = nullptr;
       DWORD bytes_returned = 0;
-    const bool user_query_succeeded = WTSQuerySessionInformationW(
+      const bool user_query_succeeded = WTSQuerySessionInformationW(
         WTS_CURRENT_SERVER_HANDLE,
         session.SessionId,
         WTSUserName,
         &username,
-      &bytes_returned);
-    const bool has_user = user_query_succeeded &&
-                          username != nullptr &&
-                          username[0] != L'\0';
+        &bytes_returned);
+      const bool has_user = user_query_succeeded &&
+                            username != nullptr &&
+                            username[0] != L'\0';
       if (username != nullptr) {
         WTSFreeMemory(username);
       }
-    if (!user_query_succeeded) {
-      WTSFreeMemory(session_info);
-      return { invalid_session_id, true };
-    }
-    if (!has_user) {
+      if (!user_query_succeeded) {
+        WTSFreeMemory(session_info);
+        return { invalid_session_id, true };
+      }
+      if (!has_user) {
         continue;
       }
 
@@ -338,7 +338,7 @@ namespace platf {
       if (session.SessionId == console_session_id) {
         const auto selected_session_id = session.SessionId;
         WTSFreeMemory(session_info);
-      return { selected_session_id, false };
+        return { selected_session_id, false };
       }
 
       LPWSTR protocol = nullptr;
@@ -368,37 +368,34 @@ namespace platf {
 
     WTSFreeMemory(session_info);
     if (active_rdp_session_id != invalid_session_id) {
-    return { active_rdp_session_id, false };
+      return { active_rdp_session_id, false };
     }
-  return { active_user_session_id, false };
+    return { active_user_session_id, false };
   }
 
-  /**
-   * @brief Obtain the current sessions user's primary token with elevated privileges.
-   * @return The user's token. If user has admin capability it will be elevated, otherwise it will be a limited token. On error, `nullptr`.
-   */
-  HANDLE
-  retrieve_users_token(bool elevated) {
+  static HANDLE
+  retrieve_user_token(bool elevated, config_session_binding::user_token_purpose_e purpose) {
     constexpr DWORD invalid_session_id = 0xFFFFFFFF;
     HANDLE userToken;
     TOKEN_ELEVATION_TYPE elevationType;
     DWORD dwSize;
 
-    // Get the session ID of the active user's interactive session. The
-    // Console binding keeps the console-only behavior.
+    // The capture policy applies to launched applications. The GUI credential
+    // instead follows the active interactive user, even when Core is in the
+    // physical console session.
     DWORD session_id = invalid_session_id;
-    if (config::sunshine.session_binding == config_session_binding::mode_e::console) {
-      session_id = WTSGetActiveConsoleSessionId();
+    if (purpose == config_session_binding::user_token_purpose_e::capture &&
+        config::sunshine.session_binding == config_session_binding::mode_e::console) {
+      session_id = config_session_binding::user_token_session(purpose, config::sunshine.session_binding,
+        WTSGetActiveConsoleSessionId(), invalid_session_id);
     }
     else {
       const auto selection = find_active_user_session_id();
       if (selection.query_failed) {
         return nullptr;
       }
-      session_id = selection.session_id;
-      if (session_id == invalid_session_id) {
-        session_id = WTSGetActiveConsoleSessionId();
-      }
+      session_id = config_session_binding::user_token_session(purpose, config::sunshine.session_binding,
+        WTSGetActiveConsoleSessionId(), selection.session_id);
     }
     if (invalid_session_id == session_id) {
       // No active user session is expected while Windows is at the sign-in
@@ -452,6 +449,16 @@ namespace platf {
 
     // We don't need to do anything for TokenElevationTypeFull users here, because they're already elevated.
     return userToken;
+  }
+
+  HANDLE
+  retrieve_users_token(bool elevated) {
+    return retrieve_user_token(elevated, config_session_binding::user_token_purpose_e::capture);
+  }
+
+  HANDLE
+  retrieve_interactive_users_token(bool elevated) {
+    return retrieve_user_token(elevated, config_session_binding::user_token_purpose_e::gui);
   }
 
   bool
@@ -2619,7 +2626,7 @@ namespace platf {
   query_session_locked() {
     PWSTR buffer = nullptr;
     DWORD size = 0;
-    if (!WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, WTSGetActiveConsoleSessionId(),
+    if (!WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, WTS_CURRENT_SESSION,
           WTSSessionInfoEx, &buffer, &size)) {
       return std::nullopt;
     }

@@ -3,7 +3,7 @@
  * @brief Per-process credential file and constant-time matcher.
  *
  * The Windows file DACL follows Microsoft Learn's DACL model: an explicit,
- * protected DACL names SYSTEM, BUILTIN\\Administrators and the active console
+ * protected DACL names SYSTEM, BUILTIN\\Administrators and the active interactive
  * user rather than inheriting an installation-directory default
  * [ds5-ms-acl-20261107] [ds5-ms-set-entries-acl-20261107]. The Windows file is
  * created with that descriptor and replaced atomically using the documented
@@ -129,16 +129,16 @@ namespace confighttp::local_auth_token {
 
     bool
     query_user_identity(user_identity_t &identity) {
-      // A SYSTEM service may query the physical console token only through
-      // the WTS APIs; a user-mode process uses its own TokenUser SID
+      // The GUI may run in a different session from a SYSTEM capture process.
+      // Resolve its interactive user through WTS; user-mode uses its own SID
       // [ds5-ms-wts-active-20261107] [ds5-ms-wts-query-20261107]
       // [ds5-ms-token-user-20261107].
       identity.system = platf::is_running_as_system();
       HANDLE token = nullptr;
       if (identity.system) {
-        token = platf::retrieve_users_token(false);
+        token = platf::retrieve_interactive_users_token(false);
         if (!token) {
-          // A service can start before a console user logs on.  In that state
+          // A service can start before an interactive user logs on. In that state
           // the DACL intentionally contains only SYSTEM and Administrators.
           identity.sid.clear();
           return true;
@@ -311,10 +311,12 @@ namespace confighttp::local_auth_token {
       }
 
       std::lock_guard lock(token_mutex);
-      if (same_identity(identity, current_identity)) return;
+      if (!current_token.empty() && same_identity(identity, current_identity)) {
+        return;
+      }
       current_token.clear();
       if (!rotate_token_locked(identity)) {
-        BOOST_LOG(error) << "Could not rotate the local Web UI token after the console user changed";
+        BOOST_LOG(error) << "Could not rotate the local Web UI token after the interactive user changed";
       }
     }
   }  // namespace

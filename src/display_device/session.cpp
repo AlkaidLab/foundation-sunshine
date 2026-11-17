@@ -420,7 +420,7 @@ namespace display_device {
 
     // Parsing is side-effect free. From this point on, parsed_config is the
     // single source of truth for whether this session needs VDD preparation.
-    const bool rdp_session_active = display_device::w_utils::is_any_rdp_session_active();
+    const bool rdp_session_active = display_device::w_utils::is_current_session_rdp();
     const bool is_rdp_blocking_vdd = !is_running_as_system_user && rdp_session_active;
     const bool use_vdd = parsed_config->use_vdd.value_or(false);
     const bool should_prepare_vdd = use_vdd && !is_rdp_blocking_vdd;

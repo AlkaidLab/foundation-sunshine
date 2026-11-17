@@ -1409,7 +1409,7 @@ namespace platf {
   get_capabilities(std::string_view client_gamepad);
 
   /**
-   * @brief Query whether the interactive console session is locked.
+   * @brief Query whether the capture process's interactive session is locked.
    * @return The lock state, or std::nullopt when the platform cannot determine it.
    * @note Distinguishes the lock screen from other secure desktops such as UAC prompts.
    */
