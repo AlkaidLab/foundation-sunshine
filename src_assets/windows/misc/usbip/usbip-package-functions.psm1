@@ -87,7 +87,7 @@ function Remove-UsbipPackage([string]$Root, [switch]$KeepFiles) {
   # tools and the receipt until all OS removal steps have succeeded.
   try { Set-UsbipDetachTask $Root -Remove } catch { $failures += $_ }
   try {
-    if (Test-Path -LiteralPath (Join-Path $Root 'devnode.exe')) {
+    if ((Test-Path -LiteralPath (Join-Path $Root 'devnode.exe')) -and @(Get-UsbipNodes -IncludeAbsent).Count -gt 0) {
       Invoke-UsbipCommand (Join-Path $Root 'devnode.exe') @('remove', $script:HardwareId, 'root')
     }
   } catch { $failures += $_ }
@@ -117,11 +117,11 @@ function Remove-UsbipFiles([string]$Root) {
   }
 }
 
-function Get-UsbipNodes {
+function Get-UsbipNodes([switch]$IncludeAbsent) {
   # usbip-slim-ms-pnp-property-20261117: hardware IDs are device properties,
   # not instance IDs. Upstream creates ROOT\USB instances; later repairs may
   # use a different enumerator while retaining the exact hardware ID.
-  foreach ($device in @(Get-PnpDevice -PresentOnly -ErrorAction Stop | Where-Object { $_.InstanceId -like 'ROOT\*' })) {
+  foreach ($device in @(Get-PnpDevice -PresentOnly:(-not $IncludeAbsent) -ErrorAction Stop | Where-Object { $_.InstanceId -like 'ROOT\*' })) {
     $ids = @(Get-PnpDeviceProperty -InstanceId $device.InstanceId -KeyName DEVPKEY_Device_HardwareIds -ErrorAction Stop).Data
     if ($ids -contains $script:HardwareId) { $device }
   }

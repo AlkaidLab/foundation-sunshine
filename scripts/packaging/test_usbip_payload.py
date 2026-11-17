@@ -43,10 +43,14 @@ class UsbipPayloadTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 extract_usbip.verify_payload(root, {'files': {}})
 
-    def test_installers_never_run_during_extraction(self):
-        source = (HERE / 'extract-usbip.py').read_text()
-        self.assertNotIn("run(installer", source)
-        self.assertNotIn("run(redist", source)
+    def test_bad_installer_is_rejected_before_extraction(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            installer = root / 'upstream.exe'
+            installer.write_bytes(b'incorrect distribution')
+            with self.assertRaises(ValueError):
+                extract_usbip.extract(installer, root / 'payload', root)
+            self.assertFalse((root / 'payload').exists())
 
 
 if __name__ == '__main__':
