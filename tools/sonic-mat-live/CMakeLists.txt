@@ -16,7 +16,20 @@ include(FetchContent)
 FetchContent_Declare(minhook
         GIT_REPOSITORY https://github.com/TsudaKageyu/minhook.git
         GIT_TAG c3fcafdc10146beb5919319d0683e44e3c30d537)
+# The pinned MinHook commit declares cmake_minimum_required(VERSION 3.5), which CMake 4 reports as deprecated (< 3.10).
+# CMAKE_POLICY_VERSION_MINIMUM raises that floor for this third-party project only
+# (https://cmake.org/cmake/help/latest/variable/CMAKE_POLICY_VERSION_MINIMUM.html); it is restored right after.
+if(DEFINED CMAKE_POLICY_VERSION_MINIMUM)
+    set(_mat_policy_floor "${CMAKE_POLICY_VERSION_MINIMUM}")
+endif()
+set(CMAKE_POLICY_VERSION_MINIMUM 3.10)
 FetchContent_MakeAvailable(minhook)
+if(DEFINED _mat_policy_floor)
+    set(CMAKE_POLICY_VERSION_MINIMUM "${_mat_policy_floor}")
+    unset(_mat_policy_floor)
+else()
+    unset(CMAKE_POLICY_VERSION_MINIMUM)
+endif()
 get_filename_component(root "../.." ABSOLUTE)
 
 add_library(sunshine-sonic-mat-worker SHARED "${root}/src/spatial_audio/mat_stream_receiver.cpp")

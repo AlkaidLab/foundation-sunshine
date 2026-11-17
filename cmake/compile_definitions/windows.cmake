@@ -4,12 +4,23 @@ add_compile_definitions(SUNSHINE_PLATFORM="windows")
 
 enable_language(RC)
 
+# Crash-dump symbols (scripts/ci/make-symbols.py). The MinGW toolchain makes no PDB, so a crash report could name only
+# module+offset. -g1 keeps function names and line tables in the build tree (the packages are stripped), and --build-id
+# gives every module a CodeView GUID that survives stripping and signing: the key between a minidump and its symbols.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    foreach(lang C CXX)
+        string(APPEND CMAKE_${lang}_FLAGS_RELEASE " -g1")
+    endforeach()
+    foreach(kind EXE SHARED MODULE)
+        string(APPEND CMAKE_${kind}_LINKER_FLAGS " -Wl,--build-id")
+    endforeach()
+endif()
+
 # gcc complains about misleading indentation in some mingw includes
 list(APPEND SUNSHINE_COMPILE_OPTIONS -Wno-misleading-indentation)
 
-# gcc15 complains about non-template type 'coroutine_handle' used as a template in Windows.Foundation.h
-# can remove after https://gcc.gnu.org/bugzilla/show_bug.cgi?id=120495 is available in mingw-w64
-list(APPEND SUNSHINE_COMPILE_OPTIONS -Wno-template-body)
+# gcc15 complains about non-template type 'coroutine_handle' used as a template in Windows.Foundation.h.
+# This is added only for GNU below because Clang diagnoses the option itself as unknown.
 
 # Template-heavy translation units (confighttp.cpp in particular) exceed the
 # 32767-section COFF limit. Without big-obj the assembler silently writes a
@@ -151,17 +162,22 @@ endif()
 set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/windows/publish.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/ftime_compat.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/system_load_win.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/misc.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/misc.cpp"
+        "${CMAKE_SOURCE_DIR}/src/telemetry/wer_event_win.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/gui_agent_supervisor.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/text_encoding.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/win_dark_mode.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/win_dark_mode.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/input.cpp"
-        "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_sidecar_client.h"
-        "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_sidecar_client.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_native_client.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_native_client.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_pad_audio.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_pad_audio.cpp"
         "${CMAKE_SOURCE_DIR}/src/touch_keyboard_session.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/touch_keyboard_session.cpp"
 
-        "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_device_host/microphone_client.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_mouse.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_mouse.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/dsu_server.h"
@@ -205,7 +221,21 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/windows/vulkan_hdr_bridge_session.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/vulkan_hdr_bridge_session.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/audio.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/audio_devices.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/audio_vb_cable_win.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/mic_write.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/mic_redirect.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_microphone.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_microphone.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_microphone_selftest.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_microphone_selftest.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/usbip_device_transport.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/usbip_device_transport.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/paced_reply_queue.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/audio_default_guard.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/audio_default_guard.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/capture_endpoint_recorder.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/capture_endpoint_recorder.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/color_profile.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/color_profile.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/device_hdr_states.cpp"
@@ -246,13 +276,19 @@ list(PREPEND PLATFORM_LIBRARIES
         nlohmann_json::nlohmann_json
         ntdll
         ole32
+        wevtapi
+        pdh
         PowrProf
         setupapi
+        cfgmgr32
         shlwapi
         synchronization.lib
         userenv
+        uuid
+        wintrust
         ws2_32
         wsock32
+        wlanapi
         wtsapi32
 )
 

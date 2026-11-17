@@ -145,6 +145,24 @@ TEST_F(EdidConfigSave, UnsupportedExplicitPartialSelectionDoesNotWrite) {
   EXPECT_EQ(config::get_config_snapshot(), before);
 }
 
+/** @brief EDID persistence retains upstream's previous-locale output and immediate bitrate update. */
+TEST_F(EdidConfigSave, SavePreservesPreviousLocaleAndLiveBitrate) {
+  std::ofstream(config::sunshine.config_file) << "locale = cs\nvdd_edid_native_resolution = 3840x2160\n"
+                                                 "resolutions = [1920x1080,3840x2160]\nfps = [60,120]\n";
+  const auto original_cap = config::host_max_bitrate_kbps();
+  std::string previous_locale;
+  EXPECT_TRUE(config::update_full_config({ { "vdd_edid_native_resolution", "1920x1080" },
+                                           { "max_bitrate", "25000" }, { "locale", "en" } },
+    &previous_locale));
+  EXPECT_EQ(previous_locale, "cs");
+  EXPECT_EQ(config::host_max_bitrate_kbps(), 25000);
+  config::set_host_max_bitrate_kbps(original_cap);
+  const auto saved = config::get_config_snapshot();
+  ASSERT_TRUE(saved);
+  EXPECT_EQ(saved->at("vdd_edid_native_resolution"), "1920x1080");
+  EXPECT_EQ(saved->at("locale"), "en");
+}
+
 /** @brief Runtime snapshots retain CLI precedence while observing later disk saves. */
 TEST_F(EdidConfigSave, MonitorCommandUsesEffectivePreferenceAndLatestSavedValues) {
   config::test_support::exchange_command_line_overrides({ { "vdd_edid_native_resolution", "default" } });

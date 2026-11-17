@@ -8,10 +8,12 @@ namespace spatial_audio {
   #include "native_mat_guard.h"
   #include "mat_installation.h"
   #include <shlobj.h>
-  #pragma comment(lib, "advapi32.lib")
-  #pragma comment(lib, "shell32.lib")
-  #pragma comment(lib, "ole32.lib")
-  #pragma comment(lib, "uuid.lib")
+  #if defined(_MSC_VER)
+    #pragma comment(lib, "advapi32.lib")
+    #pragma comment(lib, "shell32.lib")
+    #pragma comment(lib, "ole32.lib")
+    #pragma comment(lib, "uuid.lib")
+  #endif
 
 namespace spatial_audio {
   // Inputs are canonical paths. The tool deploys each executable below its SHA256.

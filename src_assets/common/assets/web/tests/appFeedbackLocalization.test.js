@@ -50,7 +50,8 @@ test('scan platform validation and desktop-only warning use the selected locale'
   assert.equal(apps.message.value, cs.apps.feedback.platform_required)
   apps.scanOptions.scope = 'directory'
   await apps.runConfiguredScan()
-  assert.equal(apps.message.value, cs.apps.feedback.scan_unavailable)
+  // no host scan and no folder dialog (a browser): the folder is typed; without one the page asks for it in the selected locale
+  assert.equal(apps.message.value, cs.apps.scan_options.directory_missing)
 })
 
 test('cover progress translates labels without changing game names or counters', async () => {

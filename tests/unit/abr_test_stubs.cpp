@@ -20,6 +20,11 @@ namespace config {
   nvhttp_t nvhttp;
   input_t input;
   sunshine_t sunshine;
+
+  int
+  host_max_bitrate_kbps() {
+    return video.max_bitrate;
+  }
 }  // namespace config
 
 namespace ai {

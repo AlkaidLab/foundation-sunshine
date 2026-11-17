@@ -13,6 +13,7 @@
 
 boost::log::sources::severity_logger<int> info;
 boost::log::sources::severity_logger<int> warning;
+boost::log::sources::severity_logger<int> debug;
 
 int main(int argc, char **argv) {
   if (argc != 9) {
@@ -33,6 +34,11 @@ int main(int argc, char **argv) {
                               std::chrono::milliseconds timeout,
                               const std::shared_ptr<std::atomic_bool> &cancel, std::size_t) {
       remote_usb::usbip_command_result result;
+      if (args.front() == "port") {
+        // The stale-port sweep before each attach lists the hub ports: report none.
+        result.exit_code = 0;
+        return result;
+      }
       if (args.front() == "detach") {
         helper_socket.reset();
         std::cout << "DETACHED" << std::endl;

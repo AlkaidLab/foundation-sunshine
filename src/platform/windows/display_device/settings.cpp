@@ -192,6 +192,14 @@ namespace display_device {
       }
 
       if (should_restore_physical_primary_for_vdd_secondary(config)) {
+        // A headless host has no physical primary to restore. After VDD prep,
+        // the VDD-only topology is already valid and the VDD is necessarily
+        // Windows' primary display.
+        if (is_vdd_only_topology(metadata.current_topology, config.device_id)) {
+          BOOST_LOG(info) << "VDD-only topology detected; keeping VDD as the active primary display";
+          return std::string {};
+        }
+
         const auto physical_primary_display =
           is_physical_primary_candidate(previous_primary_display, config.device_id) ?
             previous_primary_display :

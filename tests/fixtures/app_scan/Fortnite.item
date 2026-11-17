@@ -1,0 +1,12 @@
+{
+  "FormatVersion": 0,
+  "AppName": "Fortnite",
+  "AppVersionString": "++Fortnite+Release-33.11-CL-39234567",
+  "CatalogItemId": "4fe75bbc5a674f4f9b356b5c90567da5",
+  "DisplayName": "Fortnite",
+  "InstallLocation": "D:\\Epic Games\\Fortnite",
+  "LaunchExecutable": "FortniteLauncher.exe",
+  "InstallSize": 48234127360,
+  "AppCategories": ["public", "games", "applications"],
+  "bIsIncompleteInstall": false
+}

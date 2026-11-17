@@ -1,189 +1,45 @@
 <template>
-  <div class="troubleshooting-page">
-    <Navbar />
-    <div class="container py-4">
-      <div class="page-header mb-4">
-        <h1 class="page-title">
-          <i class="fas fa-tools me-3"></i>
-          {{ $t('troubleshooting.troubleshooting') }}
-        </h1>
-      </div>
-
-      <!-- Row 1: 重新打开新手引导 | 登出 -->
-      <div class="row mb-4">
-        <div class="col-lg-6 d-flex">
-          <TroubleshootingCard
-            class="flex-fill"
-            icon="fa-magic"
-            color="primary"
-            :title="$t('troubleshooting.reopen_setup_wizard')"
-            :description="$t('troubleshooting.reopen_setup_wizard_desc')"
-          >
-            <button class="btn btn-primary" @click="handleReopenSetupWizard">
-              <i class="fas fa-redo me-2"></i>
-              {{ $t('troubleshooting.reopen_setup_wizard') }}
-            </button>
-          </TroubleshootingCard>
-        </div>
-        <div class="col-lg-6 d-flex">
-          <TroubleshootingCard
-            class="flex-fill"
-            icon="fa-sign-out-alt"
-            color="danger"
-            :title="$t('troubleshooting.logout')"
-            :description="$t('troubleshooting.logout_desc')"
-          >
-            <button class="btn btn-danger" @click="showLogoutModal">
-              <i class="fas fa-sign-out-alt me-2"></i>
-              {{ $t('troubleshooting.logout') }}
-            </button>
-          </TroubleshootingCard>
-        </div>
-      </div>
-
-      <!-- Row 2: 强制关闭 | Boom -->
-      <div class="row mb-4">
-        <div class="col-lg-6 d-flex">
-          <TroubleshootingCard
-            class="flex-fill"
-            icon="fa-times-circle"
-            color="warning"
-            :title="$t('troubleshooting.force_close')"
-            :description="$t('troubleshooting.force_close_desc')"
-          >
-            <template #alerts>
-              <div class="alert alert-success d-flex align-items-center" v-if="closeAppStatus === true">
-                <i class="fas fa-check-circle me-2"></i>
-                {{ $t('troubleshooting.force_close_success') }}
-              </div>
-              <div class="alert alert-danger d-flex align-items-center" v-if="closeAppStatus === false">
-                <i class="fas fa-exclamation-circle me-2"></i>
-                {{ $t('troubleshooting.force_close_error') }}
-              </div>
-            </template>
-            <button class="btn btn-warning" :disabled="closeAppPressed" @click="closeApp">
-              <i class="fas fa-times me-2"></i>
-              {{ $t('troubleshooting.force_close') }}
-            </button>
-          </TroubleshootingCard>
-        </div>
-        <div class="col-lg-6 d-flex">
-          <TroubleshootingCard
-            class="flex-fill"
-            icon="fa-bomb"
-            color="danger"
-            :title="$t('troubleshooting.boom_sunshine')"
-            :description="$t('troubleshooting.boom_sunshine_desc')"
-          >
-            <template #alerts>
-              <div class="alert alert-success d-flex align-items-center" v-if="boomPressed">
-                <i class="fas fa-check-circle me-2"></i>
-                {{ $t('troubleshooting.boom_sunshine_success') }}
-              </div>
-            </template>
-            <button class="btn btn-danger" :disabled="boomPressed" @click="showBoomModal">
-              <i class="fas fa-bomb me-2"></i>
-              {{ $t('troubleshooting.boom_sunshine') }}
-            </button>
-          </TroubleshootingCard>
-        </div>
-      </div>
-
-      <!-- Row 3: 重置显示器设置 | 重启 Sunshine -->
-      <div class="row mb-4">
-        <div class="col-lg-6 d-flex" v-if="platform === 'windows'">
-          <TroubleshootingCard
-            class="flex-fill"
-            icon="fa-desktop"
-            color="primary"
-            :title="$t('troubleshooting.reset_display_device_windows')"
-            :description="$t('troubleshooting.reset_display_device_desc_windows')"
-            pre-line
-          >
-            <template #alerts>
-              <div class="alert alert-success d-flex align-items-center" v-if="resetDisplayDeviceStatus === true">
-                <i class="fas fa-check-circle me-2"></i>
-                {{ $t('troubleshooting.reset_display_device_success_windows') }}
-              </div>
-              <div class="alert alert-danger d-flex align-items-center" v-if="resetDisplayDeviceStatus === false">
-                <i class="fas fa-exclamation-circle me-2"></i>
-                {{ $t('troubleshooting.reset_display_device_error_windows') }}
-              </div>
-            </template>
-            <button
-              class="btn btn-primary"
-              :disabled="resetDisplayDevicePressed"
-              @click="resetDisplayDevicePersistence"
-            >
-              <i class="fas fa-undo me-2"></i>
-              {{ $t('troubleshooting.reset_display_device_windows') }}
-            </button>
-          </TroubleshootingCard>
-        </div>
-        <div class="col-lg-6 d-flex">
-          <TroubleshootingCard
-            class="flex-fill"
-            icon="fa-sync-alt"
-            color="primary"
-            :title="$t('troubleshooting.restart_sunshine')"
-            :description="$t('troubleshooting.restart_sunshine_desc')"
-          >
-            <template #alerts>
-              <div class="alert alert-success d-flex align-items-center" v-if="restartPressed">
-                <i class="fas fa-check-circle me-2"></i>
-                {{ $t('troubleshooting.restart_sunshine_success') }}
-              </div>
-            </template>
-            <button class="btn btn-primary" :disabled="restartPressed" @click="restart">
-              <i class="fas fa-redo me-2"></i>
-              {{ $t('troubleshooting.restart_sunshine') }}
-            </button>
-          </TroubleshootingCard>
-        </div>
-      </div>
-
-      <!-- Logs Section - Full Width -->
-      <LogsSection
-        v-model:logFilter="logFilter"
-        v-model:matchMode="matchMode"
-        v-model:ignoreCase="ignoreCase"
-        :actualLogs="actualLogs"
-        :copyLogs="copyLogs"
-        :copyConfig="handleCopyConfig"
-        @openDiagnosis="openDiagnosis"
-      />
-    </div>
-
-    <!-- AI Diagnosis Modal -->
-    <LogDiagnosisModal
-      :show="showDiagnosisModal"
-      :config="aiConfig"
-      :isConfigLoading="aiConfigLoading"
-      :isSavingConfig="aiSavingConfig"
-      :isLoading="aiLoading"
-      :result="aiResult"
-      :error="aiError"
-      :localFindings="aiLocalFindings"
-      :localSuggestions="aiLocalSuggestions"
-      @close="showDiagnosisModal = false"
-      @diagnose="handleDiagnose"
-    />
+  <div class="m-app m-root troubleshooting-page">
+    <MDiagnostics
+      :title="diagnosticsTexts(String(locale)).title"
+      :text="diag.text.value"
+      v-model:live="diag.live.value"
+      :facts="diag.facts.value"
+      :collect="diag.collect"
+      :save="diag.save"
+      :stats-for="diag.statsFor"
+      :host-names="diag.hostNames.value"
+      :client-names="diag.clientNames.value"
+      :locale="String(locale)"
+      :close-label="$t('_common.close')"
+      :commands="commands"
+      :notes="notes"
+      :disabled="disabled"
+      :labels="labels"
+      :ai="aiSheet"
+      :log-loading="logs === 'Loading...'"
+      @open="openUrl"
+      @go="goPlace"
+    >
+      <template #actions>
+        <HelpPromos />
+        <span class="dev-trigger" @click="handleDevTap" />
+      </template>
+    </MDiagnostics>
 
     <ConfirmDialog
       :show="showBoomConfirmModal"
       dialog-id="boom-confirm"
       :title="$t('troubleshooting.confirm_boom')"
-      title-icon="fas fa-bomb"
+      title-icon="warning"
       tone="danger"
       :close-label="$t('_common.close')"
       @close="closeBoomModal"
     >
       <p>{{ $t('troubleshooting.confirm_boom_desc') }}</p>
       <template #actions>
-        <button type="button" class="btn btn-secondary" @click="closeBoomModal">{{ $t('_common.cancel') }}</button>
-        <button type="button" class="btn btn-danger" @click="confirmBoom">
-          <i class="fas fa-bomb me-2"></i>{{ $t('troubleshooting.boom_sunshine') }}
-        </button>
+        <MButton variant="text" @click="closeBoomModal">{{ $t('_common.cancel') }}</MButton>
+        <MButton variant="danger" icon="warning" @click="confirmBoom">{{ $t('troubleshooting.boom_sunshine') }}</MButton>
       </template>
     </ConfirmDialog>
 
@@ -191,17 +47,15 @@
       :show="showLogoutConfirmModal"
       dialog-id="logout-confirm"
       :title="$t('troubleshooting.confirm_logout')"
-      title-icon="fas fa-sign-out-alt"
+      title-icon="logout"
       tone="danger"
       :close-label="$t('_common.close')"
       @close="closeLogoutModal"
     >
       <p>{{ $t('troubleshooting.confirm_logout_desc') }}</p>
       <template #actions>
-        <button type="button" class="btn btn-secondary" @click="closeLogoutModal">{{ $t('_common.cancel') }}</button>
-        <button type="button" class="btn btn-danger" @click="confirmLogout">
-          <i class="fas fa-sign-out-alt me-2"></i>{{ $t('troubleshooting.logout') }}
-        </button>
+        <MButton variant="text" @click="closeLogoutModal">{{ $t('_common.cancel') }}</MButton>
+        <MButton variant="danger" icon="logout" @click="confirmLogout">{{ $t('troubleshooting.logout') }}</MButton>
       </template>
     </ConfirmDialog>
 
@@ -209,173 +63,186 @@
       :show="showLocalhostLogoutModal"
       dialog-id="localhost-logout-notice"
       :title="$t('troubleshooting.logout')"
-      title-icon="fas fa-info-circle"
+      title-icon="info"
       :close-label="$t('_common.close')"
       @close="closeLocalhostLogoutModal"
     >
       <p>{{ $t('troubleshooting.logout_localhost_tip') }}</p>
       <template #actions>
-        <button type="button" class="btn btn-primary" @click="closeLocalhostLogoutModal">{{ $t('_common.close') }}</button>
+        <MButton @click="closeLocalhostLogoutModal">{{ $t('_common.close') }}</MButton>
       </template>
     </ConfirmDialog>
+    <MRemoteWindow v-model="remoteOpen" :locale="String(locale)" :state="guideData.state" :callbacks="guideData.callbacks" />
   </div>
 </template>
 
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, inject, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Navbar from '../components/layout/Navbar.vue'
-import TroubleshootingCard from '../components/TroubleshootingCard.vue'
-import LogsSection from '../components/LogsSection.vue'
-import LogDiagnosisModal from '../components/LogDiagnosisModal.vue'
+import { MDiagnostics, MButton, MRemoteWindow, coachTexts, guideTexts, homeTexts, remoteTexts, diagnosticsTexts, useGuideCard } from 'foundation-ui/vue'
+import { useGuide } from '../composables/useGuide.js'
+import HelpPromos from '../components/common/HelpPromos.vue'
 import ConfirmDialog from '../components/common/ConfirmDialog.vue'
 import { useTroubleshooting } from '../composables/useTroubleshooting.js'
 import { useLogout } from '../composables/useLogout.js'
 import { useAiDiagnosis } from '../composables/useAiDiagnosis.js'
+import { useDiagnostics } from '../composables/useDiagnostics.js'
+import { useUpdateStatus } from '../composables/useUpdateStatus.js'
+import { hostData } from '../composables/hostData.js'
+import { openExternalUrl } from '../utils/helpers.js'
+import { apiFetch } from '../utils/apiFetch.js'
+import { saveThroughDialog } from '../utils/saveDialog.js'
 
-const { t } = useI18n()
+// 诊断与日志. The same page the control panel shows. A row exists when this product can do it: sign-out is a browser session, the panel log is not here.
+const { t, locale } = useI18n()
+const guideText = computed(() => guideTexts(locale.value))
+const remoteText = computed(() => remoteTexts(String(locale.value)))
+const remoteOpen = ref(false)
+const coachText = computed(() => coachTexts(String(locale.value)))
+const startCoach = () => window.dispatchEvent(new CustomEvent('foundation-coach-start'))
+const guideData = useGuide()
+const startText = computed(() => homeTexts(locale.value))
+const startCard = useGuideCard('web-home', () => [])
+const openGuide = async () => (await import('../utils/guideLauncher.js')).openGuide()
 const { logout } = useLogout()
 
 const {
-  config: aiConfig,
-  isConfigLoading: aiConfigLoading,
-  isSavingConfig: aiSavingConfig,
-  isLoading: aiLoading,
-  result: aiResult,
-  error: aiError,
-  localFindings: aiLocalFindings,
-  localSuggestions: aiLocalSuggestions,
-  diagnose: aiDiagnose,
-  loadConfig: loadAiConfig,
+  config: aiConfig, isConfigLoading: aiConfigLoading, isSavingConfig: aiSavingConfig, isLoading: aiLoading,
+  result: aiResult, error: aiError, localFindings: aiLocalFindings, localSuggestions: aiLocalSuggestions,
+  diagnose: aiDiagnose, loadConfig: loadAiConfig,
 } = useAiDiagnosis()
-
 const showDiagnosisModal = ref(false)
 
 const {
-  platform,
-  closeAppPressed,
-  closeAppStatus,
-  restartPressed,
-  boomPressed,
-  resetDisplayDevicePressed,
-  resetDisplayDeviceStatus,
-  logFilter,
-  matchMode,
-  ignoreCase,
-  actualLogs,
-  refreshLogs,
-  closeApp,
-  restart,
-  boom,
-  resetDisplayDevicePersistence,
-  copyLogs,
-  copyConfig,
-  reopenSetupWizard,
-  loadPlatform,
-  startLogRefresh,
-  stopLogRefresh,
+  platform, closeAppPressed, closeAppStatus, restartPressed, boomPressed,
+  resetDisplayDevicePressed, resetDisplayDeviceStatus, logs, actualLogs, refreshLogs,
+  closeApp, restart, boom, resetDisplayDevicePersistence, copyLogs, copyConfig, reopenSetupWizard,
+  loadPlatform, startLogRefresh, stopLogRefresh,
 } = useTroubleshooting()
 
 const showBoomConfirmModal = ref(false)
 const showLogoutConfirmModal = ref(false)
 const showLocalhostLogoutModal = ref(false)
-
-const showBoomModal = () => {
-  showBoomConfirmModal.value = true
-}
-
-const closeBoomModal = () => {
-  showBoomConfirmModal.value = false
-}
-
-const confirmBoom = () => {
-  closeBoomModal()
-  boom()
-}
-
-const showLogoutModal = () => {
-  showLogoutConfirmModal.value = true
-}
-
-const closeLogoutModal = () => {
-  showLogoutConfirmModal.value = false
-}
-
-const closeLocalhostLogoutModal = () => {
-  showLocalhostLogoutModal.value = false
-}
-
+const downloadError = ref(null)
+const closeBoomModal = () => { showBoomConfirmModal.value = false }
+const confirmBoom = () => { closeBoomModal(); boom() }
+const closeLogoutModal = () => { showLogoutConfirmModal.value = false }
+const closeLocalhostLogoutModal = () => { showLocalhostLogoutModal.value = false }
 const confirmLogout = () => {
   closeLogoutModal()
   showLocalhostLogoutModal.value = false
-  stopLogRefresh() // 避免登出后 log 轮询再发请求触发第二次登录框
-  logout({
-    onLocalhost: () => {
-      showLocalhostLogoutModal.value = true
-    },
-  })
+  stopLogRefresh()
+  logout({ onLocalhost: () => { showLocalhostLogoutModal.value = true } })
 }
-
 const handleCopyConfig = () => copyConfig(t)
+const openDiagnosis = async () => { showDiagnosisModal.value = true; await loadAiConfig() }
 
-const handleReopenSetupWizard = () => reopenSetupWizard(t)
-
-const openDiagnosis = async () => {
-  showDiagnosisModal.value = true
-  await loadAiConfig()
+const DEV_TAP_THRESHOLD = 7
+const DEV_TAP_TIMEOUT = 3000
+const DEV_STORAGE_KEY = 'sunshine_dev_mode'
+const devTapCount = ref(0)
+let devTapTimer = null
+const handleDevTap = () => {
+  devTapCount.value++
+  clearTimeout(devTapTimer)
+  devTapTimer = setTimeout(() => { devTapCount.value = 0 }, DEV_TAP_TIMEOUT)
+  if (devTapCount.value >= DEV_TAP_THRESHOLD) {
+    devTapCount.value = 0
+    let enabled = false
+    try { enabled = localStorage.getItem(DEV_STORAGE_KEY) !== '1'; localStorage.setItem(DEV_STORAGE_KEY, enabled ? '1' : '0') } catch { /* the preference stays as it was */ }
+    window.dispatchEvent(new CustomEvent('sunshine-background-bypass', { detail: { enabled } }))
+  }
 }
 
-const handleDiagnose = () => {
-  aiDiagnose(actualLogs.value)
+async function downloadLogs() {
+  downloadError.value = null
+  const filename = 'sunshine-logs-' + new Date().toISOString().slice(0, 19).replace(/[:.]/g, '-') + '.txt'
+  if (window.__TAURI_INTERNALS__) {
+    try {
+      const response = await apiFetch('/api/logs')
+      if (!response.ok) throw new Error('HTTP ' + response.status)
+      const content = await response.text()
+      const saved = await saveThroughDialog((command, args) => window.__TAURI_INTERNALS__.invoke(command, args), 'save_text_file', { content, defaultName: filename, filterName: 'Text Files', extensions: ['txt'] })
+      if (saved === null) return
+      return
+    } catch (e) {
+      downloadError.value = { text: `${t('_common.error')} ${e?.message || e}`, tone: 'error' }
+      return
+    }
+  }
+  try {
+    const link = Object.assign(document.createElement('a'), { href: '/api/logs', download: filename })
+    document.body.appendChild(link); link.click(); document.body.removeChild(link)
+  } catch (e) { downloadError.value = { text: `${t('_common.error')} ${e?.message || e}`, tone: 'error' } }
 }
+
+const hostConfig = ref(null)
+const diag = useDiagnostics({ logs, config: hostConfig, update: useUpdateStatus() })
+watch(diag.live, (on) => { if (on) { refreshLogs(); startLogRefresh() } else stopLogRefresh() })
+const shell = inject('webShell', null)
+const openUrl = (url) => { openExternalUrl(url).catch((error) => console.error('Failed to open external URL:', error)) }
+const PLACES = { encoder: { tab: 'encoders' }, network: { tab: 'network' }, audio: { tab: 'audio', sub: 'sound' }, display: { tab: 'display', sub: 'output' } }
+const goPlace = (place) => { if (PLACES[place] && shell?.nav) shell.nav.go('config', PLACES[place]) }
+
+const noteText = (ok, yes, no) => (ok === true ? yes : ok === false ? { text: no, tone: 'error' } : '')
+const notes = computed(() => ({
+  downloadLogs: downloadError.value || '',
+  restart: restartPressed.value ? t('troubleshooting.restart_sunshine_success') : '',
+  resetDisplay: noteText(resetDisplayDeviceStatus.value, t('troubleshooting.reset_display_device_success_windows'), t('troubleshooting.reset_display_device_error_windows')),
+  forceClose: noteText(closeAppStatus.value, t('troubleshooting.force_close_success'), t('troubleshooting.force_close_error')),
+  boom: boomPressed.value ? t('troubleshooting.boom_sunshine_success') : '',
+}))
+const disabled = computed(() => ({
+  restart: restartPressed.value,
+  resetDisplay: resetDisplayDevicePressed.value,
+  forceClose: closeAppPressed.value,
+  boom: boomPressed.value,
+}))
+const labels = computed(() => ({
+  guide: { title: guideText.value.guide, text: guideText.value.helpRow },
+  coach: { title: coachText.value.rerun },
+  remote: { title: remoteText.value.openText },
+  startCard: { title: startText.value.guideTitle, text: startText.value.guideSub },
+}))
+const commands = computed(() => ({
+  restart,
+  resetDisplay: platform.value === 'windows' ? resetDisplayDevicePersistence : undefined,
+  ai: openDiagnosis,
+  diagnose: () => aiDiagnose(actualLogs.value),
+  downloadLogs,
+  copyLogs,
+  copyConfig: handleCopyConfig,
+  guide: openGuide,
+  coach: startCoach,
+  remote: () => { remoteOpen.value = true },
+  startCard: () => startCard.reopen(),
+  wizard: () => reopenSetupWizard(t),
+  forceClose: closeApp,
+  boom: () => { showBoomConfirmModal.value = true },
+  logout: () => { showLogoutConfirmModal.value = true },
+}))
+const aiSheet = computed(() => ({
+  show: showDiagnosisModal.value,
+  config: aiConfig,
+  isConfigLoading: aiConfigLoading.value,
+  isSavingConfig: aiSavingConfig.value,
+  isLoading: aiLoading.value,
+  result: aiResult.value,
+  error: aiError.value,
+  localFindings: aiLocalFindings.value,
+  localSuggestions: aiLocalSuggestions.value,
+  onClose: () => { showDiagnosisModal.value = false },
+}))
 
 onMounted(async () => {
   await Promise.all([loadPlatform(), refreshLogs()])
   startLogRefresh()
+  diag.startPolling()
+  diag.loadClients()
+  try { hostConfig.value = await hostData.refresh('config') } catch { /* the facts stay empty */ }
 })
 </script>
 
 <style>
-@import '../styles/global.less';
-</style>
-
-<style scoped>
-.troubleshooting-page {
-  min-height: 100vh;
-  padding-bottom: var(--spacing-xl);
-  color: var(--ui-text-primary);
-  background: linear-gradient(180deg, rgba(var(--ui-accent-rgb), 0.06), transparent 28rem);
-}
-
-.page-title {
-  color: var(--ui-text-primary) !important;
-  font-weight: 600;
-}
-
-.page-title i {
-  color: var(--ui-accent);
-}
-
-.btn {
-  border-radius: 8px;
-  padding: 0.5rem 1rem;
-  font-weight: 500;
-  transition: all 0.2s ease;
-}
-
-.btn:hover {
-  transform: translateY(-1px);
-}
-
-.alert {
-  border-radius: 8px;
-  font-size: 0.9rem;
-  padding: 0.75rem 1rem;
-}
-
-@media (max-width: 991.98px) {
-  .page-title {
-    font-size: 1.5rem;
-  }
-}
+.dev-trigger { display: inline-block; width: 12px; min-height: 24px; cursor: default; user-select: none; opacity: 0; }
 </style>

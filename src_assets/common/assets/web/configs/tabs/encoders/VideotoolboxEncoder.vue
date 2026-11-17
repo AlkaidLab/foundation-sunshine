@@ -1,44 +1,25 @@
 <script setup>
-import { ref } from 'vue'
+import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { MGroup, MSection } from 'foundation-ui/vue'
+import CfgExpert from '../../../components/cfg/CfgExpert.vue'
+import CfgSlider from '../../../components/cfg/CfgSlider.vue'
+import CfgChoice from '../../../components/cfg/CfgChoice.vue'
+import CfgSwitch from '../../../components/cfg/CfgSwitch.vue'
+import { keyedOptions } from '../../../utils/cfgOptions.js'
 
-const props = defineProps([
-  'platform',
-  'config',
-])
-
-const config = ref(props.config)
+defineProps(['platform', 'config'])
+const { t } = useI18n()
+const coders = computed(() => keyedOptions(t, [['auto', 'config.coder_auto'], ['cabac', 'config.coder_cabac'], ['cavlc', 'config.coder_cavlc']]))
+const software = computed(() => keyedOptions(t, [['auto', '_common.auto'], ['disabled', '_common.disabled'], ['allowed', 'config.vt_software_allowed'], ['forced', 'config.vt_software_forced']]))
 </script>
 
 <template>
-  <div id="videotoolbox-encoder" class="config-page">
-    <!-- Presets -->
-    <div class="mb-3">
-      <label for="vt_coder" class="form-label">{{ $t('config.vt_coder') }}</label>
-      <select id="vt_coder" class="form-select" v-model="config.vt_coder">
-        <option value="auto">{{ $t('config.coder_auto') }}</option>
-        <option value="cabac">{{ $t('config.coder_cabac') }}</option>
-        <option value="cavlc">{{ $t('config.coder_cavlc') }}</option>
-      </select>
-    </div>
-    <div class="mb-3">
-      <label for="vt_software" class="form-label">{{ $t('config.vt_software') }}</label>
-      <select id="vt_software" class="form-select" v-model="config.vt_software">
-        <option value="auto">{{ $t('_common.auto') }}</option>
-        <option value="disabled">{{ $t('_common.disabled') }}</option>
-        <option value="allowed">{{ $t('config.vt_software_allowed') }}</option>
-        <option value="forced">{{ $t('config.vt_software_forced') }}</option>
-      </select>
-    </div>
-    <div class="mb-3">
-      <label for="vt_realtime" class="form-label">{{ $t('config.vt_realtime') }}</label>
-      <select id="vt_realtime" class="form-select" v-model="config.vt_realtime">
-        <option value="enabled">{{ $t('_common.enabled') }}</option>
-        <option value="disabled">{{ $t('_common.disabled') }}</option>
-      </select>
-    </div>
-  </div>
+  <MSection :title="$t('tabs.advanced')">
+    <MGroup>
+      <CfgExpert control="seg" :config="config" k="vt_coder" :options="coders" />
+      <CfgExpert control="seg" :config="config" k="vt_software" :options="software" />
+      <CfgExpert control="switch" :config="config" k="vt_realtime" def="enabled" />
+    </MGroup>
+  </MSection>
 </template>
-
-<style scoped>
-
-</style>

@@ -5,9 +5,12 @@
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 
 #include "clients.h"
+#include "client_sessions.h"
+#include "pair_link.h"
 #include "src/config.h"
 #include "src/confighttp/auth.h"
 #include "src/confighttp/common.h"
+#include "src/confighttp/pairing.h"
 #include "src/crypto.h"
 #include "src/display_device/color_profile.h"
 #include "src/hdr/client_display_capabilities.h"
@@ -15,18 +18,19 @@
 #include "src/network.h"
 #include "src/nvhttp.h"
 #include "src/process.h"
+#include "src/public_address.h"
 #include "src/rtsp.h"
 #include "src/stream.h"
 #include "src/utility.h"
 #include "src/webhook/webhook.h"
 #include <boost/property_tree/json_parser.hpp>
+#include <cctype>
 #include <cmath>
 #include <filesystem>
 #include <set>
 #include <sstream>
 #ifdef _WIN32
   #include "src/platform/windows/display_device/color_profile.h"
-  #include <iphlpapi.h>
 #endif
 
 using namespace std::literals;
@@ -168,30 +172,33 @@ namespace confighttp::clients {
 
       try {
         pt::read_json(ss, inputTree);
-        std::string pin = inputTree.get<std::string>("pin");
-        std::string name = inputTree.get<std::string>("name");
-
-        // Validate PIN: must be numeric digits only, 4-8 characters
-        if (pin.size() < 4 || pin.size() > 8 || !std::all_of(pin.begin(), pin.end(), ::isdigit)) {
-          outputTree.put("status", false);
-          outputTree.put("error", "PIN must be 4-8 digits");
-          return;
+        confighttp::pairing::pin_request_t pin_request;
+        pin_request.pin = inputTree.get<std::string>("pin");
+        pin_request.name = inputTree.get<std::string>("name");
+        if (inputTree.count("id") > 0) {
+          pin_request.id = inputTree.get<std::string>("id");
         }
-        // Validate client name
-        if (name.empty() || name.size() > 256) {
+
+        const auto validation_error = confighttp::pairing::validate_pin_request(pin_request);
+        if (!validation_error.empty()) {
           outputTree.put("status", false);
-          outputTree.put("error", "Client name must be 1-256 characters");
+          outputTree.put("error", validation_error);
           return;
         }
 
-        bool pin_result = nvhttp::pin(pin, name);
+        const bool pin_result = pin_request.id.empty() ?
+                                  nvhttp::pin(pin_request.pin, pin_request.name) :
+                                  nvhttp::pin_for_pending_request(pin_request.id, pin_request.pin, pin_request.name);
         outputTree.put("status", pin_result);
+        if (!pin_result && !pin_request.id.empty()) {
+          outputTree.put("error", "Pending pairing request not found or PIN rejected");
+        }
 
         try {
           webhook::send_event_async(webhook::event_t {
             .type = pin_result ? webhook::event_type_t::CONFIG_PIN_SUCCESS : webhook::event_type_t::CONFIG_PIN_FAILED,
             .timestamp = webhook::get_current_timestamp(),
-            .client_name = name,
+            .client_name = pin_request.name,
             .client_ip = net::addr_to_normalized_string(request->remote_endpoint().address()),
             .server_ip = net::addr_to_normalized_string(request->local_endpoint().address()) });
         }
@@ -270,84 +277,43 @@ namespace confighttp::clients {
         return;
       }
 
-      // Get server address info
-      auto local_addr = net::addr_to_normalized_string(request->local_endpoint().address());
-      auto port = net::map_port(nvhttp::PORT_HTTP);
-
-      // Determine the host address for the QR code URL
-      std::string host;
-      if (!config::nvhttp.external_ip.empty()) {
-        // User explicitly configured an external IP (could be WAN for port-forwarded setups)
-        host = config::nvhttp.external_ip;
+      // The link the client scans. The port is the GameStream HTTP port (the
+      // configured base port), not the port of this Web UI request.
+      pair_link::request_t link;
+      link.socket_address = net::addr_to_normalized_string(request->local_endpoint().address());
+      if (const auto host_header = request->header.find("host"); host_header != request->header.end()) {
+        link.host_header = host_header->second;
       }
-      else {
-        // Detect a usable LAN IP (local_endpoint may be loopback or VPN)
-        host = local_addr;
-        auto host_net_type = net::from_address(host);
-        if (host_net_type != net::LAN) {
-          std::string resolved_host;
+      link.http_port = net::map_port(nvhttp::PORT_HTTP);
+      const auto endpoints = public_address::effective_endpoints(config::nvhttp.external_endpoints, config::nvhttp.external_ip);
+      if (!endpoints.endpoints.empty()) {
+        const auto &first = endpoints.endpoints.front();
+        link.external_host = first.host;
+        link.external_port = first.port;
+      }
+      try {
+        for (const auto &address : net::local_addresses()) link.interface_addresses.push_back(address.address);
+      }
+      catch (const std::exception &error) {
+        BOOST_LOG(warning) << "QR pair: unable to list local addresses: "sv << error.what();
+      }
+      link.default_route_address = pair_link::default_route_address();
 
-          // Method 1: UDP connect trick to find default outgoing interface
-          try {
-            boost::asio::io_context io_ctx;
-            boost::asio::ip::udp::socket socket(io_ctx);
-            socket.connect(boost::asio::ip::udp::endpoint(boost::asio::ip::make_address("8.8.8.8"), 53));
-            auto lan_addr = socket.local_endpoint().address();
-            socket.close();
-            auto candidate = net::addr_to_normalized_string(lan_addr);
-            if (net::from_address(candidate) == net::LAN) {
-              resolved_host = candidate;
-            }
-          }
-          catch (...) {
-          }
-
-#ifdef _WIN32
-          // Method 2 (Windows): enumerate adapters via GetAdaptersAddresses
-          if (resolved_host.empty()) {
-            ULONG bufLen = 15000;
-            std::vector<uint8_t> buf(bufLen);
-            auto pAddresses = reinterpret_cast<PIP_ADAPTER_ADDRESSES>(buf.data());
-            if (GetAdaptersAddresses(AF_INET, GAA_FLAG_SKIP_ANYCAST | GAA_FLAG_SKIP_MULTICAST, nullptr, pAddresses, &bufLen) == NO_ERROR) {
-              for (auto adapter = pAddresses; adapter; adapter = adapter->Next) {
-                if (adapter->OperStatus != IfOperStatusUp) continue;
-                if (adapter->IfType == IF_TYPE_TUNNEL || adapter->IfType == IF_TYPE_PPP) continue;
-                for (auto unicast = adapter->FirstUnicastAddress; unicast; unicast = unicast->Next) {
-                  if (unicast->Address.lpSockaddr->sa_family != AF_INET) continue;
-                  auto sin = reinterpret_cast<sockaddr_in *>(unicast->Address.lpSockaddr);
-                  boost::asio::ip::address_v4 addr(ntohl(sin->sin_addr.s_addr));
-                  auto candidate = addr.to_string();
-                  if (net::from_address(candidate) == net::LAN) {
-                    resolved_host = candidate;
-                    break;
-                  }
-                }
-                if (!resolved_host.empty()) break;
-              }
-            }
-          }
-#endif
-
-          if (!resolved_host.empty()) {
-            host = resolved_host;
-            BOOST_LOG(info) << "QR pair: resolved to LAN IP " << host;
-          }
-          else {
-            BOOST_LOG(warning) << "QR pair: could not find a LAN IP, using " << host;
-          }
-        }
+      const auto target = pair_link::select_target(link);
+      const auto url = pair_link::pair_url(target, pin, server_name);
+      if (url.empty()) {
+        nvhttp::clear_preset_pin();
+        outputTree.put("status", false);
+        outputTree.put("error", "No reachable address for the pairing link");
+        BOOST_LOG(warning) << "QR pair: no reachable address (socket "sv << link.socket_address << ")"sv;
+        return;
       }
 
-      // Build the moonlight:// URL
-      std::string url = "moonlight://pair?host=" + host +
-                        "&port=" + std::to_string(port) +
-                        "&pin=" + pin +
-                        "&name=" + server_name;
-
+      BOOST_LOG(info) << "QR pair: host "sv << target.host << " port "sv << target.port;
       outputTree.put("status", true);
       outputTree.put("pin", pin);
-      outputTree.put("host", host);
-      outputTree.put("port", port);
+      outputTree.put("host", target.host);
+      outputTree.put("port", target.port);
       outputTree.put("name", server_name);
       outputTree.put("url", url);
       outputTree.put("expires_in", 120);
@@ -381,6 +347,10 @@ namespace confighttp::clients {
         std::ostringstream data;
         pt::write_json(data, outputTree);
         response->write(data.str());
+      });
+      // the same as unpairing one client: end its sessions before the pairing goes
+      terminate_sessions_of_all(nvhttp::get_all_clients(), [](const std::string &uuid) {
+        rtsp_stream::terminate_client_sessions(uuid);
       });
       nvhttp::erase_all_clients();
       proc::proc.terminate();
@@ -600,6 +570,7 @@ namespace confighttp::clients {
   void
   register_routes(https_server_t &server) {
     server.resource["^/api/pin$"]["POST"] = savePin;
+    server.resource["^/api/pairing/pin$"]["POST"] = savePin;
     server.resource["^/api/qr-pair$"]["POST"] = generateQrPairInfo;
     server.resource["^/api/qr-pair/cancel$"]["POST"] = cancelQrPair;
     server.resource["^/api/qr-pair$"]["GET"] = getQrPairStatus;

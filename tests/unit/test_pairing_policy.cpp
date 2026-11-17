@@ -142,3 +142,74 @@ TEST_F(PairingPolicy, DisablingRevokesAnAlreadyEstablishedTlsConnection) {
   ASSERT_TRUE(nvhttp::set_client_enabled("first", false));
   EXPECT_EQ(request(), 401U);
 }
+
+TEST_F(PairingPolicy, ClientFamilyEvidencePersistsWithoutChangingPairing) {
+  client_family::observation_t observation;
+  observation.now = 1762243200;
+  client_family::add_header(observation, "User-Agent", "MoonlightEnhanced/1.3.9 CFNetwork/1498.1.5 Darwin/23.5.0");
+
+  const auto record = nvhttp::observe_client_family("first", observation);
+  EXPECT_EQ(record.family, client_family::family_e::moonlight_macos_enhanced);
+  EXPECT_EQ(record.version, "1.3.9");
+  EXPECT_EQ(record.os, "macos");
+  EXPECT_EQ(record.last_seen, observation.now);
+
+  const auto find_client = [](const nlohmann::json &clients, const std::string &uuid) {
+    for (const auto &client : clients) {
+      if (client.value("uuid", std::string {}) == uuid) {
+        return client;
+      }
+    }
+    return nlohmann::json {};
+  };
+
+  const auto listed = find_client(nvhttp::get_all_clients(), "first");
+  ASSERT_FALSE(listed.is_null());
+  EXPECT_EQ(listed.at("family"), "moonlight-macos-enhanced");
+  EXPECT_EQ(listed.at("official"), true);
+  EXPECT_EQ(listed.at("version"), "1.3.9");
+  EXPECT_EQ(listed.at("os"), "macos");
+  EXPECT_EQ(listed.at("last_seen"), observation.now);
+  EXPECT_TRUE(listed.at("family_source").get<std::string>().starts_with("moonlight-macos-enhanced-user-agent:"));
+  EXPECT_EQ(listed.at("name"), "Same display name");
+
+  {
+    std::ifstream file { config::nvhttp.file_state };
+    const auto state = nlohmann::json::parse(file);
+    const auto persisted = find_client(state.at("root").at("named_devices"), "first");
+    ASSERT_FALSE(persisted.is_null());
+    EXPECT_EQ(persisted.at("family"), "moonlight-macos-enhanced");
+    EXPECT_EQ(persisted.at("family_version"), "1.3.9");
+    EXPECT_EQ(persisted.at("family_os"), "macos");
+    EXPECT_EQ(persisted.at("family_last_seen"), std::to_string(observation.now));
+  }
+
+  nvhttp::pairing::load_state();
+  const auto reloaded = find_client(nvhttp::get_all_clients(), "first");
+  ASSERT_FALSE(reloaded.is_null());
+  EXPECT_EQ(reloaded.at("family"), "moonlight-macos-enhanced");
+  EXPECT_EQ(reloaded.at("version"), "1.3.9");
+  EXPECT_EQ(reloaded.at("last_seen"), observation.now);
+  EXPECT_TRUE(nvhttp::is_client_enabled("first"));
+}
+
+TEST_F(PairingPolicy, PairedClientIsFoundByUuidWithItsNameAndFamily) {
+  client_family::observation_t observation;
+  observation.now = 1762243200;
+  client_family::add_header(observation, "User-Agent", "MoonlightEnhanced/1.3.9 CFNetwork/1498.1.5 Darwin/23.5.0");
+  nvhttp::observe_client_family("second", observation);
+
+  const auto found = nvhttp::find_paired_client("second");
+  ASSERT_TRUE(found.has_value());
+  EXPECT_EQ(found->name, "Same display name");
+  EXPECT_EQ(found->family.family, client_family::family_e::moonlight_macos_enhanced);
+  EXPECT_EQ(found->family.os, "macos");
+
+  // The name a session reports follows the paired entry, including a rename.
+  EXPECT_EQ(client_family::session_client_name("unknown", found->name), "Same display name");
+  ASSERT_TRUE(nvhttp::rename_client("second", "Living room Mac"));
+  EXPECT_EQ(client_family::session_client_name("unknown", nvhttp::find_paired_client("second")->name), "Living room Mac");
+
+  EXPECT_FALSE(nvhttp::find_paired_client("not-paired").has_value());
+  EXPECT_FALSE(nvhttp::find_paired_client("").has_value());
+}

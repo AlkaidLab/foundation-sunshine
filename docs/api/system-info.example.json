@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "checked_at": "2026-11-03T02:10:00Z",
+  "cpu": {
+    "model": "Example CPU @ 3.40GHz",
+    "vendor": "intel",
+    "cores": 8,
+    "threads": 16,
+    "base_mhz": 3400
+  },
+  "gpus": [
+    {
+      "name": "Example Graphics Adapter",
+      "vendor": "nvidia",
+      "driver_version": "31.0.15.5222",
+      "vram_mb": 16384,
+      "is_streaming_adapter": true
+    }
+  ],
+  "nics": [
+    {
+      "name": "Ethernet",
+      "description": "Example Ethernet Controller",
+      "type": "ethernet",
+      "up": true,
+      "link_speed_mbps": 2500,
+      "ipv4": ["192.0.2.10"],
+      "ipv6": ["2001:db8::10"],
+      "mac": "aa:bb:cc",
+      "is_default_route": true,
+      "wifi": { "ssid_masked": "", "signal": null }
+    },
+    {
+      "name": "Wi-Fi",
+      "description": "Example Wi-Fi Adapter",
+      "type": "wifi",
+      "up": true,
+      "link_speed_mbps": 866,
+      "ipv4": ["192.0.2.20"],
+      "ipv6": [],
+      "mac": "de:ad:be",
+      "is_default_route": false,
+      "wifi": { "ssid_masked": "Ho***", "signal": 78 }
+    }
+  ],
+  "os": { "name": "Example Linux", "version": "24.04", "build": "6.8.0-45-generic" },
+  "host": { "name": "example-host" }
+}

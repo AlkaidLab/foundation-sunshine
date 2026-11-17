@@ -1,0 +1,197 @@
+{
+  "schema": 1,
+  "date": "2026-11-17",
+  "windows_build": "10.0.26300.0",
+  "implementation_commit": "5e084eee5",
+  "scenario": "existing external full installation",
+  "measurement": "Read-only USB/IP component entrypoints and root helper; full host setup executable was not run",
+  "result": {
+    "scenario": "external-full",
+    "ownership": "external",
+    "ready": true,
+    "files_before": 35,
+    "files_after": 35,
+    "changed_categories": 0,
+    "actions": [
+      "package/install=0",
+      "package/uninstall=0",
+      "package/remove=0",
+      "root/install=0",
+      "root/repair=0",
+      "root/uninstall=0"
+    ],
+    "mutating_scenarios": "not run",
+    "hardware_functions": "not verified"
+  },
+  "snapshots": [
+    {
+      "category": "drivers.json",
+      "sha256_before": "1873c6b619050e81ad68509f7bbf7c0484b3219794b970008091c2b298a98f40",
+      "sha256_after": "1873c6b619050e81ad68509f7bbf7c0484b3219794b970008091c2b298a98f40",
+      "bytes": 599
+    },
+    {
+      "category": "files.json",
+      "sha256_before": "ec15d6991ffc5a57f08d64302881700f6eea104ae922f732538584e994a981fa",
+      "sha256_after": "ec15d6991ffc5a57f08d64302881700f6eea104ae922f732538584e994a981fa",
+      "bytes": 9903
+    },
+    {
+      "category": "registry-0.reg",
+      "sha256_before": "34a66a965805da9f09039a68dbb6dc0ea63994b35cfdf5ec088283ed77326a54",
+      "sha256_after": "34a66a965805da9f09039a68dbb6dc0ea63994b35cfdf5ec088283ed77326a54",
+      "bytes": 2394
+    },
+    {
+      "category": "registry-1.reg",
+      "sha256_before": "f5fdd7cd340845451dc62103a251b735b4d5e65eefc14ca047177f501122e9a0",
+      "sha256_after": "f5fdd7cd340845451dc62103a251b735b4d5e65eefc14ca047177f501122e9a0",
+      "bytes": 8
+    },
+    {
+      "category": "registry-2.reg",
+      "sha256_before": "f5fdd7cd340845451dc62103a251b735b4d5e65eefc14ca047177f501122e9a0",
+      "sha256_after": "f5fdd7cd340845451dc62103a251b735b4d5e65eefc14ca047177f501122e9a0",
+      "bytes": 8
+    },
+    {
+      "category": "registry-3.reg",
+      "sha256_before": "5a9b5ce4023269bda8cb0f63cb26e4a70d45d1011d1dd60378d3b80b5cf7a20a",
+      "sha256_after": "5a9b5ce4023269bda8cb0f63cb26e4a70d45d1011d1dd60378d3b80b5cf7a20a",
+      "bytes": 4232
+    },
+    {
+      "category": "registry-4.reg",
+      "sha256_before": "7d717cb83ba0bf5c9a474dc26c1f811bd6271c807599ef5597b753fbca532762",
+      "sha256_after": "7d717cb83ba0bf5c9a474dc26c1f811bd6271c807599ef5597b753fbca532762",
+      "bytes": 3024
+    },
+    {
+      "category": "registry-5.reg",
+      "sha256_before": "731e3614e613d5ea4990fcbfc4bcd5c2810e9ced1d563aa8d62798a02f3786b4",
+      "sha256_after": "731e3614e613d5ea4990fcbfc4bcd5c2810e9ced1d563aa8d62798a02f3786b4",
+      "bytes": 2302
+    },
+    {
+      "category": "registry-6.reg",
+      "sha256_before": "51ee1ad6e85b7b057182e189390e4b75c82ff3700f8c0c8161261cc3da8ec068",
+      "sha256_after": "51ee1ad6e85b7b057182e189390e4b75c82ff3700f8c0c8161261cc3da8ec068",
+      "bytes": 2002
+    },
+    {
+      "category": "registry-7.reg",
+      "sha256_before": "c2a7c883af75a9dc0f2515d8b0799bbe938ff5f9176b2ea201ec1cd9338e26a5",
+      "sha256_after": "c2a7c883af75a9dc0f2515d8b0799bbe938ff5f9176b2ea201ec1cd9338e26a5",
+      "bytes": 36058
+    },
+    {
+      "category": "services.json",
+      "sha256_before": "686ffa14b6e8d38c766c9a9187b4efdd4ac74f044cab3cd13a2cf98c0d59e4b9",
+      "sha256_after": "686ffa14b6e8d38c766c9a9187b4efdd4ac74f044cab3cd13a2cf98c0d59e4b9",
+      "bytes": 578
+    }
+  ],
+  "scope": "USB/IP installation and matching DriverStore package files; matching system driver services; fixed ARP/service/device/USB-class registry keys",
+  "not_verified": [
+    "new install",
+    "owned legacy takeover",
+    "real uninstall",
+    "rollback",
+    "remote USB device",
+    "native controller",
+    "microphone redirection",
+    "resource authorization",
+    "cross-tenant isolation",
+    "runtime performance"
+  ],
+  "combined_host_panel_verification": {
+    "host_source_commit": "7b4e186862b1558fe153709c96661fe2085b2681",
+    "panel_source_commit": "a6164201a3658b55369c7f37ef326ad0e2214353",
+    "panel_ci_run": 44031098282,
+    "panel_test": "usbip::tests::installed_transport_reports_ready",
+    "panel_test_result": "3 passed; 0 failed; 0 ignored; 629 filtered out",
+    "result": {
+      "registry_files_services_drivers_identical": true,
+      "snapshot_categories": 11,
+      "host_external": true,
+      "panel_external": true,
+      "panel_ready": true,
+      "panel_cleanup_denied": true,
+      "panel_binary_sha256": "71D571C6260F7C574742A4E26DA8709CA745409C128654504EC5EF1C0D7A1AAA"
+    },
+    "snapshots": [
+      {
+        "category": "drivers.json",
+        "sha256_before": "1873c6b619050e81ad68509f7bbf7c0484b3219794b970008091c2b298a98f40",
+        "sha256_after": "1873c6b619050e81ad68509f7bbf7c0484b3219794b970008091c2b298a98f40",
+        "bytes": 599
+      },
+      {
+        "category": "files.json",
+        "sha256_before": "ec15d6991ffc5a57f08d64302881700f6eea104ae922f732538584e994a981fa",
+        "sha256_after": "ec15d6991ffc5a57f08d64302881700f6eea104ae922f732538584e994a981fa",
+        "bytes": 9903
+      },
+      {
+        "category": "registry-0.reg",
+        "sha256_before": "34a66a965805da9f09039a68dbb6dc0ea63994b35cfdf5ec088283ed77326a54",
+        "sha256_after": "34a66a965805da9f09039a68dbb6dc0ea63994b35cfdf5ec088283ed77326a54",
+        "bytes": 2394
+      },
+      {
+        "category": "registry-1.reg",
+        "sha256_before": "f5fdd7cd340845451dc62103a251b735b4d5e65eefc14ca047177f501122e9a0",
+        "sha256_after": "f5fdd7cd340845451dc62103a251b735b4d5e65eefc14ca047177f501122e9a0",
+        "bytes": 8
+      },
+      {
+        "category": "registry-2.reg",
+        "sha256_before": "f5fdd7cd340845451dc62103a251b735b4d5e65eefc14ca047177f501122e9a0",
+        "sha256_after": "f5fdd7cd340845451dc62103a251b735b4d5e65eefc14ca047177f501122e9a0",
+        "bytes": 8
+      },
+      {
+        "category": "registry-3.reg",
+        "sha256_before": "5a9b5ce4023269bda8cb0f63cb26e4a70d45d1011d1dd60378d3b80b5cf7a20a",
+        "sha256_after": "5a9b5ce4023269bda8cb0f63cb26e4a70d45d1011d1dd60378d3b80b5cf7a20a",
+        "bytes": 4232
+      },
+      {
+        "category": "registry-4.reg",
+        "sha256_before": "7d717cb83ba0bf5c9a474dc26c1f811bd6271c807599ef5597b753fbca532762",
+        "sha256_after": "7d717cb83ba0bf5c9a474dc26c1f811bd6271c807599ef5597b753fbca532762",
+        "bytes": 3024
+      },
+      {
+        "category": "registry-5.reg",
+        "sha256_before": "731e3614e613d5ea4990fcbfc4bcd5c2810e9ced1d563aa8d62798a02f3786b4",
+        "sha256_after": "731e3614e613d5ea4990fcbfc4bcd5c2810e9ced1d563aa8d62798a02f3786b4",
+        "bytes": 2302
+      },
+      {
+        "category": "registry-6.reg",
+        "sha256_before": "51ee1ad6e85b7b057182e189390e4b75c82ff3700f8c0c8161261cc3da8ec068",
+        "sha256_after": "51ee1ad6e85b7b057182e189390e4b75c82ff3700f8c0c8161261cc3da8ec068",
+        "bytes": 2002
+      },
+      {
+        "category": "registry-7.reg",
+        "sha256_before": "c2a7c883af75a9dc0f2515d8b0799bbe938ff5f9176b2ea201ec1cd9338e26a5",
+        "sha256_after": "c2a7c883af75a9dc0f2515d8b0799bbe938ff5f9176b2ea201ec1cd9338e26a5",
+        "bytes": 36058
+      },
+      {
+        "category": "services.json",
+        "sha256_before": "686ffa14b6e8d38c766c9a9187b4efdd4ac74f044cab3cd13a2cf98c0d59e4b9",
+        "sha256_after": "686ffa14b6e8d38c766c9a9187b4efdd4ac74f044cab3cd13a2cf98c0d59e4b9",
+        "bytes": 578
+      }
+    ],
+    "panel_tests": [
+      "usbip::tests::discovers_a_device_from_a_standard_usbip_exporter",
+      "usbip::tests::installed_transport_reports_ready",
+      "usbip::tests::unreachable_exporter_fails_cleanly"
+    ],
+    "scope": "Read-only discovery from a loopback standard USB/IP exporter fixture, installed readiness and unreachable-exporter error; no actual device attachment or stream"
+  }
+}

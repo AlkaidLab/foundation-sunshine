@@ -80,6 +80,11 @@ set(VIGEMBUS_ASSET_NAME "ViGEmBus_1.22.0_x64_x86_arm64.exe"
 set(VIGEMBUS_SHA256 "89220a7865076b342892f98865f3499fb7c4cfd673159e89d352c360fd014c6a"
     CACHE STRING "SHA256 of the pinned ViGEmBus installer")
 
+set(USBIP_VERSION "0.9.8.1" CACHE STRING "usbip-win2 release version (the panel pins the same one in src-tauri/component-compatibility.json)")
+set(USBIP_ASSET_NAME "USBip-0.9.8.1-x64.exe" CACHE STRING "usbip-win2 installer asset name")
+set(USBIP_SHA256 "38cad6d4432b52d5bb9409d9ad03b72fdffc4ada4cd3a48fbeca1a2752a8518a"
+    CACHE STRING "SHA256 of the pinned usbip-win2 installer")
+
 # Repositories
 set(VMOUSE_PUBLIC_REPO "AlkaidLab/zako-vmouse-release" CACHE STRING
     "Public repo (owner/name) hosting ZakoVirtualMouse release assets")
@@ -96,12 +101,20 @@ set(VIGEMBUS_DIR "${DRIVER_DEPS_CACHE}/vigembus" CACHE PATH "" FORCE)
 set(VIGEMBUS_INSTALLER "${VIGEMBUS_DIR}/${VIGEMBUS_ASSET_NAME}"
     CACHE FILEPATH "Pinned ViGEmBus installer" FORCE)
 
+set(USBIP_DIR "${DRIVER_DEPS_CACHE}/usbip" CACHE PATH "" FORCE)
+set(USBIP_INSTALLER "${USBIP_DIR}/${USBIP_ASSET_NAME}"
+    CACHE FILEPATH "Pinned usbip-win2 installer" FORCE)
+
+set(USBIP_PAYLOAD_DIR "${DRIVER_DEPS_CACHE}/usbip-payload" CACHE PATH "Extracted signed USB/IP payload" FORCE)
+
 set(_DRIVER_DOWNLOAD_ATTEMPTS 3)
 set(_DRIVER_DOWNLOAD_TIMEOUT_SECONDS 60)
 set(_DRIVER_DOWNLOAD_INACTIVITY_TIMEOUT_SECONDS 15)
 
 if(NOT FETCH_DRIVER_DEPS)
   message(STATUS "Driver dependency downloads disabled (FETCH_DRIVER_DEPS=OFF)")
+  # A cache left by an earlier configure with downloads ON must not make the install step ship an unverified payload.
+  unset(USBIP_AVAILABLE CACHE)
   return()
 endif()
 
@@ -410,6 +423,25 @@ function(_fetch_vigembus)
   _driver_download("${_url}" "${VIGEMBUS_INSTALLER}" "${VIGEMBUS_SHA256}")
 endfunction()
 
+# Pinned usbip-win2 installer (USB/IP transport of the native DualSense path), bundled so
+# installation never downloads it. Same release and digest as the panel's pin.
+function(_fetch_usbip)
+  set(_url
+    "https://github.com/vadimgrn/usbip-win2/releases/download/v.${USBIP_VERSION}/${USBIP_ASSET_NAME}")
+  _driver_download("${_url}" "${USBIP_INSTALLER}" "${USBIP_SHA256}")
+  if(EXISTS "${USBIP_INSTALLER}")
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    execute_process(
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/packaging/extract-usbip.py"
+        --installer "${USBIP_INSTALLER}" --output "${USBIP_PAYLOAD_DIR}"
+        --scratch "${DRIVER_DEPS_CACHE}/usbip-extract"
+      RESULT_VARIABLE _extract_status)
+    if(NOT _extract_status EQUAL 0)
+      message(FATAL_ERROR "USB/IP extraction or catalog verification failed: ${_extract_status}")
+    endif()
+  endif()
+endfunction()
+
 # ---------------------------------------------------------------------------
 # Execute all fetches
 # ---------------------------------------------------------------------------
@@ -417,6 +449,7 @@ _fetch_vmouse()
 _fetch_vdd()
 _fetch_nefcon()
 _fetch_vigembus()
+_fetch_usbip()
 
 # ---------------------------------------------------------------------------
 # Verify critical files (per-driver, so optional drivers can be skipped
@@ -465,3 +498,5 @@ _check_driver("nefcon" NEFCON_DRIVER_AVAILABLE
     "${NEFCON_DRIVER_DIR}/nefconw.exe")
 _check_driver("ViGEmBus" VIGEMBUS_AVAILABLE
     "${VIGEMBUS_INSTALLER}")
+_check_driver("usbip-win2" USBIP_AVAILABLE
+    "${USBIP_PAYLOAD_DIR}/payload.json")

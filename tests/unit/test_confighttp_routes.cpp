@@ -36,11 +36,17 @@ namespace {
     std::thread listener;
     unsigned short bound_port = 0;
     std::string previous_username;
+    std::string previous_password;
+    std::string previous_salt;
 
     void
     SetUp() override {
       previous_username = config::sunshine.username;
+      previous_password = config::sunshine.password;
+      previous_salt = config::sunshine.salt;
       config::sunshine.username = "route-regression-test";
+      config::sunshine.salt = "route-regression-salt";
+      config::sunshine.password = util::hex(crypto::hash("wire-password" + config::sunshine.salt)).to_string();
       directory = std::filesystem::temp_directory_path() /
                   ("sunshine-confighttp-test-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
       std::filesystem::create_directories(directory);
@@ -61,6 +67,8 @@ namespace {
       }
       server.reset();
       config::sunshine.username = previous_username;
+      config::sunshine.password = previous_password;
+      config::sunshine.salt = previous_salt;
       std::error_code ignored;
       std::filesystem::remove_all(directory, ignored);
     }
@@ -94,6 +102,11 @@ namespace {
       client->config.timeout = 5;
       client->config.timeout_connect = 5;
       return client;
+    }
+
+    static std::string
+    authorization() {
+      return "Basic cm91dGUtcmVncmVzc2lvbi10ZXN0OndpcmUtcGFzc3dvcmQ=";
     }
 
     std::string
@@ -173,11 +186,19 @@ TEST_F(ConfigHttpRoutes, LocaleRemainsPublicAndKeepsLegacyResponseShape) {
 
 TEST_F(ConfigHttpRoutes, LocalAuthenticatedApiKeepsItsResponseShape) {
   auto client = connect();
-  const auto response = client->request("GET", "/api/v1/file-mapping/mappings");
+  const auto response = client->request("GET", "/api/v1/file-mapping/mappings", "", { { "Authorization", authorization() } });
   EXPECT_EQ(response->status_code, "200 OK");
   const auto body = nlohmann::json::parse(response->content.string());
   EXPECT_EQ(body["ok"], true);
   EXPECT_TRUE(body["mappings"].is_array());
+}
+
+TEST_F(ConfigHttpRoutes, RuntimeSessionsStillRequiresAuthentication) {
+  auto client = connect();
+  const auto response = client->request("GET", "/api/runtime/sessions");
+  EXPECT_EQ(response->status_code, "401 Unauthorized");
+  const auto body = nlohmann::json::parse(response->content.string());
+  EXPECT_EQ(body["code"], "unauthenticated");
 }
 
 TEST_F(ConfigHttpRoutes, RejectsCrossSiteBrowserApiRequests) {
@@ -209,9 +230,11 @@ TEST_F(ConfigHttpRoutes, FirstRunPasswordStillRejectsCrossSiteSources) {
   const auto response = client->request("POST", "/api/password", "{}", { { "Content-Type", "application/json" }, { "Origin", "https://evil.example" } });
   EXPECT_EQ(response->status_code, "403 Forbidden");
   const auto unauthenticated = client->request("GET", "/api/v1/file-mapping/mappings");
-  EXPECT_EQ(unauthenticated->status_code, "307 Temporary Redirect");
-  ASSERT_NE(unauthenticated->header.find("Location"), unauthenticated->header.end());
-  EXPECT_EQ(unauthenticated->header.find("Location")->second, "/welcome");
+  EXPECT_EQ(unauthenticated->status_code, "401 Unauthorized");
+  const auto body = nlohmann::json::parse(unauthenticated->content.string());
+  EXPECT_EQ(body["code"], "unauthenticated");
+  EXPECT_EQ(body["setup_required"], true);
+  EXPECT_EQ(unauthenticated->header.count("Location"), 0);
 }
 
 TEST_F(ConfigHttpRoutes, AiPreflightRemainsAccessibleWithoutCredentials) {
@@ -239,9 +262,8 @@ TEST_F(ConfigHttpRoutes, AiStreamStillRequiresInitialCredentialsAndJson) {
   config::sunshine.username.clear();
   auto client = connect();
   const auto response = client->request("POST", "/api/ai/chat/completions", R"({"stream":true})", { { "Content-Type", "application/json" } });
-  EXPECT_EQ(response->status_code, "307 Temporary Redirect");
-  ASSERT_NE(response->header.find("Location"), response->header.end());
-  EXPECT_EQ(response->header.find("Location")->second, "/welcome");
+  EXPECT_EQ(response->status_code, "401 Unauthorized");
+  EXPECT_EQ(nlohmann::json::parse(response->content.string())["code"], "unauthenticated");
   EXPECT_EQ(response->header.count("Transfer-Encoding"), 0);
   EXPECT_EQ(client->request("POST", "/api/ai/chat/completions", R"({"stream":true})")->status_code, "400 Bad Request");
 }
@@ -277,6 +299,9 @@ TEST_F(ConfigHttpRoutes, EveryRegisteredRouteDispatchesItsMethodPathAndCapturesO
   for (auto &[pattern, methods] : server->resource) {
     auto path = pattern.str.substr(1, pattern.str.size() - 2);
     replace(path, "([0-9]+)", "42");
+    // Captures with a narrower alphabet need a sample the pattern accepts.
+    replace(path, "([0-9a-f]+)", "ab12");
+    replace(path, "(icon|card|banner|hero)", "icon");
     // The remaining captures are component and clipboard/file-mapping IDs.
     path = std::regex_replace(path, std::regex(R"(\([^)]*\))"), "id_1");
     replace(path, "\\/", "/");
@@ -358,7 +383,7 @@ TEST_F(ConfigHttpEdid, LegacyModeRemovalRejectsBeforeWritingEitherConfigFile) {
   for (const auto &payload : {
          nlohmann::json { { "resolutions", "[1920x1080]" }, { "fps", "[60,120]" } },
          nlohmann::json { { "resolutions", "[1920x1080,3840x2160]" }, { "fps", "[120,144]" } } }) {
-    const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" } });
+    const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" }, { "Authorization", authorization() } });
     ASSERT_EQ(response->status_code, "200 OK");
     const auto body = nlohmann::json::parse(response->content.string());
     EXPECT_EQ(body.at("status"), "false");
@@ -373,7 +398,7 @@ TEST_F(ConfigHttpEdid, DefaultWithoutVddXmlSavesSunshineWithoutCreatingXml) {
   ASSERT_TRUE(std::filesystem::remove(vdd_path));
   auto client = connect();
   const auto payload = nlohmann::json { { "vdd_edid_native_resolution", "default" }, { "sunshine_name", "without-vdd" } };
-  const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" } });
+  const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" }, { "Authorization", authorization() } });
   ASSERT_EQ(response->status_code, "200 OK");
   EXPECT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "true");
   const auto saved = config::get_config_snapshot();
@@ -389,7 +414,7 @@ TEST_F(ConfigHttpEdid, ExplicitSizeWithoutVddXmlSavesOnlySunshine) {
   auto client = connect();
   const auto payload = nlohmann::json { { "vdd_edid_native_resolution", "3840x2160" },
     { "resolutions", "[1920x1080,3840x2160]" }, { "fps", "[60,120]" } };
-  const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" } });
+  const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" }, { "Authorization", authorization() } });
   ASSERT_EQ(response->status_code, "200 OK");
   EXPECT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "true");
   const auto saved = config::get_config_snapshot();
@@ -404,7 +429,7 @@ TEST_F(ConfigHttpEdid, SelectionAndResetStayInSunshineAndPreserveCustomEdid) {
   for (const std::string selection : { "1920x1080", "default" }) {
     const auto payload = nlohmann::json { { "vdd_edid_native_resolution", selection },
       { "resolutions", "[1920x1080,3840x2160]" }, { "fps", "[60,120]" } };
-    const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" } });
+    const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" }, { "Authorization", authorization() } });
     ASSERT_EQ(response->status_code, "200 OK");
     EXPECT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "true");
     const auto saved = config::get_config_snapshot();
@@ -425,7 +450,7 @@ TEST_F(ConfigHttpEdid, EmptyAndNullListsStillValidateOtherModeChanges) {
            nlohmann::json { { "resolutions", "[1920x1080]" }, { "fps", blank } } }) {
       SCOPED_TRACE(payload.dump());
       const auto before = config::get_config_snapshot();
-      const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" } });
+      const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" }, { "Authorization", authorization() } });
       EXPECT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "false");
       EXPECT_EQ(config::get_config_snapshot(), before);
       EXPECT_EQ(file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str()), original_xml);
@@ -441,7 +466,7 @@ TEST_F(ConfigHttpEdid, EffectiveModeValidationDoesNotPreserveBlankOrNullLists) {
     const auto payload = nlohmann::json { { "vdd_edid_native_resolution", "3840x2160" },
       { "resolutions", blank }, { "fps", blank } };
     SCOPED_TRACE(payload.dump());
-    const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" } });
+    const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" }, { "Authorization", authorization() } });
     ASSERT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "true");
     const auto saved = config::get_config_snapshot();
     ASSERT_TRUE(saved);
@@ -458,7 +483,7 @@ TEST_F(ConfigHttpEdid, MissingListsUseRuntimeValidationWithoutSavingDefaults) {
     << "vdd_edid_native_resolution = 3840x2160\n";
   auto client = connect();
   const auto response = client->request("POST", "/api/config",
-    nlohmann::json { { "vdd_edid_native_resolution", "2736x1824" } }.dump(), { { "Content-Type", "application/json" } });
+    nlohmann::json { { "vdd_edid_native_resolution", "2736x1824" } }.dump(), { { "Content-Type", "application/json" }, { "Authorization", authorization() } });
   ASSERT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "true");
   const auto saved = config::get_config_snapshot();
   ASSERT_TRUE(saved);
@@ -492,7 +517,8 @@ TEST_F(ConfigHttpRoutes, BasicCredentialsStillAuthenticateRemoteRequestsAndRejec
   for (const auto &bad : { "Basic !!!=", "Basic d3Jvbmc=", "Basic cm91dGUtcmVncmVzc2lvbi10ZXN0Ondyb25n", "Bearer token" }) {
     const auto response = client->request("GET", "/api/test-remote-auth", "", { { "Authorization", bad } });
     EXPECT_EQ(response->status_code, "401 Unauthorized");
-    EXPECT_EQ(response->header.count("WWW-Authenticate"), 1);
+    EXPECT_EQ(response->header.count("WWW-Authenticate"), 0);
+    EXPECT_EQ(nlohmann::json::parse(response->content.string())["code"], "unauthenticated");
   }
 }
 
@@ -516,6 +542,7 @@ TEST_F(ConfigHttpRoutes, ChunkedCoverUploadPreservesDecodedBinaryAndRejectsCross
   namespace wire = boost::beast::http;
   wire::request<wire::string_body> request { wire::verb::post, "/api/covers/upload", 11 };
   request.set(wire::field::host, "localhost");
+  request.set(wire::field::authorization, authorization());
   request.set(wire::field::content_type, "application/json");
   request.keep_alive(false);
   request.body() = body;
@@ -541,7 +568,8 @@ TEST_F(ConfigHttpRoutes, InvalidBase64CoverReturnsBadRequestWithoutCreatingAFile
     SCOPED_TRACE(data);
     const auto body = nlohmann::json { { "key", key }, { "data", data } }.dump();
     std::shared_ptr<web::Client<web::HTTPS>::Response> response;
-    ASSERT_NO_THROW(response = client->request("POST", "/api/covers/upload", body, { { "Content-Type", "application/json" } }));
+    ASSERT_NO_THROW(response = client->request("POST", "/api/covers/upload", body,
+                      { { "Content-Type", "application/json" }, { "Authorization", authorization() } }));
     ASSERT_TRUE(response);
     EXPECT_EQ(response->status_code, "400 Bad Request");
     const auto json = nlohmann::json::parse(response->content.string());
@@ -578,6 +606,7 @@ TEST_F(ConfigHttpRoutes, FullLogDownloadStreamsFilesBeyondTheResponseBufferLimit
   namespace wire = boost::beast::http;
   wire::request<wire::empty_body> request { wire::verb::get, "/api/logs", 11 };
   request.set(wire::field::host, "localhost");
+  request.set(wire::field::authorization, authorization());
   request.keep_alive(false);
   wire::write(socket, request);
   boost::beast::flat_buffer buffer;

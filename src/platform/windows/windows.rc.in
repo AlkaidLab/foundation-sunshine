@@ -6,8 +6,11 @@
  */
 #include "winver.h"
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION     @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
-PRODUCTVERSION  @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+/* 4 x 16 bits from the version string (cmake/prep/rc_version.cmake): YYYY.MMDD.HHMMSS -> YYYY,MMDD,HHMM,SS */
+FILEVERSION     @BUILD_INFO_RC_FILE_VERSION@
+PRODUCTVERSION  @BUILD_INFO_RC_FILE_VERSION@
+FILEFLAGSMASK   VS_FFI_FILEFLAGSMASK
+FILEFLAGS       @BUILD_INFO_RC_FILEFLAGS@
 FILEOS          VOS__WINDOWS32
 FILETYPE        VFT_APP
 FILESUBTYPE     VFT2_UNKNOWN
@@ -23,6 +26,17 @@ BEGIN
             VALUE "LegalCopyright",   "https://raw.githubusercontent.com/LizardByte/Sunshine/master/LICENSE\0"
             VALUE "ProductName",      "Sunshine\0"
             VALUE "ProductVersion",   "@PROJECT_VERSION@\0"
+@BUILD_INFO_RC_PRIVATE_BUILD@
+            /* Build identity (cmake/prep/build_info.cmake): custom String keys the panel reads with VerQueryValueW. */
+            VALUE "Commit",           "@BUILD_INFO_COMMIT@\0"
+            VALUE "Branch",           "@BUILD_INFO_BRANCH@\0"
+            VALUE "Dirty",            "@BUILD_INFO_DIRTY@\0"
+            VALUE "Channel",          "@BUILD_INFO_CHANNEL@\0"
+            VALUE "BuildTime",        "@BUILD_INFO_TIME_UTC@\0"
+            VALUE "Variant",          "@BUILD_INFO_VARIANT@\0"
+            VALUE "Package",          "@BUILD_INFO_PACKAGE@\0"
+            VALUE "Builder",          "@BUILD_INFO_BUILDER@\0"
+            VALUE "CiRun",            "@BUILD_INFO_CI_RUN@\0"
         END
     END
 

@@ -156,6 +156,16 @@ wmain(int argc, wchar_t **argv) {
     require(!interrupted, "MAT capture startup cancelled");
     fs::path tap = fs::canonical(argv[4]), codec = fs::canonical(argv[6]);
     std::wstring th = argv[5], ch = argv[7];
+    const auto ascii = [](const std::wstring &value) {
+      std::string result;
+      result.reserve(value.size());
+      for (const auto character : value) {
+        if (character > 0x7F) return std::string {};
+        result.push_back(static_cast<char>(character));
+      }
+      return result;
+    };
+    const auto tapHash = ascii(th), codecHash = ascii(ch);
     HANDLE tapLock = CreateFileW(tap.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr), codecLock = CreateFileW(codec.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
     struct Unlock {
       HANDLE a, b;
@@ -165,7 +175,7 @@ wmain(int argc, wchar_t **argv) {
       }
     } unlock { tapLock, codecLock };
     require(tapLock != INVALID_HANDLE_VALUE && codecLock != INVALID_HANDLE_VALUE, "Lock reviewed plugin DLLs");
-    require(native_mat_guard::sha256(tap) == std::string(th.begin(), th.end()) && native_mat_guard::sha256(codec) == std::string(ch.begin(), ch.end()), "Both plugin DLL hashes");
+    require(native_mat_guard::sha256(tap) == tapHash && native_mat_guard::sha256(codec) == codecHash, "Both plugin DLL hashes");
     std::wstring pipe = argv[8], event = argv[9];
     require(pipe.starts_with(L"\\\\.\\pipe\\SunshineMatLive-") && pipe.find_first_of(L"\r\n") == std::wstring::npos && event.starts_with(L"Local\\SunshineMatLiveStop-"), "Private plugin pipe/stop");
     auto acl = PipeAcl();
@@ -176,8 +186,8 @@ wmain(int argc, wchar_t **argv) {
     require(stop && code != ERROR_ALREADY_EXISTS, "Fresh plugin stop event");
     bool reattach = std::wstring(argv[1]) == L"--reattach";
     require(!interrupted, "MAT capture startup cancelled");
-    auto tapBase = LoadReviewed(engine, pid, tap, std::string(th.begin(), th.end()), reattach);
-    auto codecBase = LoadReviewed(engine, pid, codec, std::string(ch.begin(), ch.end()), reattach);
+    auto tapBase = LoadReviewed(engine, pid, tap, tapHash, reattach);
+    auto codecBase = LoadReviewed(engine, pid, codec, codecHash, reattach);
     require(!interrupted, "MAT capture startup cancelled");
     map = Map(sizeof(q4::Ring));
     ring = (q4::Ring *) MapViewOfFile(map, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(*ring));

@@ -536,16 +536,16 @@ namespace display_device::w_utils {
   togglePnpDeviceByFriendlyName(const std::string &friendlyName, const bool &stat);
 
   /**
-   * @brief Check whether any RDP session is active.
-   * @returns True if it's detected that any RDP session is active, false otherwise.
+   * @brief Check whether the Sunshine process is in an RDP session.
+   * @returns True if the current session uses RDP, false otherwise.
    *
    * EXAMPLES:
    * ```cpp
-   * const bool is_rdp { is_any_rdp_session_active() };
+   * const bool is_rdp { is_current_session_rdp() };
    * ```
    */
   bool
-  is_any_rdp_session_active();
+  is_current_session_rdp();
 
   /**
    * @brief Rotate the display to the specified angle.

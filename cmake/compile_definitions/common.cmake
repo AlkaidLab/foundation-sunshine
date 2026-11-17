@@ -49,6 +49,7 @@ elseif(UNIX)
 endif()
 
 configure_file("${CMAKE_SOURCE_DIR}/src/version.h.in" version.h @ONLY)
+configure_file("${CMAKE_SOURCE_DIR}/src/build_info_defs.h.in" build_info_defs.h @ONLY)
 
 if(NOT SUNSHINE_ASSETS_DIR_DEF)
     set(SUNSHINE_ASSETS_DIR_DEF "${SUNSHINE_ASSETS_DIR}")
@@ -102,6 +103,7 @@ target_link_libraries(sunshine_build_dependencies INTERFACE
         nlohmann_json::nlohmann_json opus sunshine::ffmpeg ${Boost_LIBRARIES}
         sunshine::tls sunshine::curl ${PLATFORM_LIBRARIES})
 if(WIN32)
+    target_link_libraries(sunshine_build_dependencies INTERFACE webpdecoder)
     target_compile_definitions(sunshine_build_dependencies INTERFACE MINIUPNP_STATICLIB)
 endif()
 set(SUNSHINE_EXTERNAL_LIBRARIES sunshine_build_dependencies)

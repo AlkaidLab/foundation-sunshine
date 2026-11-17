@@ -51,26 +51,6 @@ namespace platf::dxgi {
     return base + L"_Slot_" + std::to_wstring(slot_idx);
   }
 
-  static std::optional<bool>
-  vdd_borrowed_texture_env_override() {
-    const char *raw_value = std::getenv("SUNSHINE_VDD_BORROWED_TEXTURE");
-    if (!raw_value || !*raw_value) {
-      return std::nullopt;
-    }
-
-    std::string value { raw_value };
-    std::transform(value.begin(), value.end(), value.begin(),
-      [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    if (value == "1" || value == "true" || value == "on" || value == "yes" || value == "enabled") {
-      return true;
-    }
-    if (value == "0" || value == "false" || value == "off" || value == "no" || value == "disabled") {
-      return false;
-    }
-    BOOST_LOG(warning) << "[vdd] ignoring invalid SUNSHINE_VDD_BORROWED_TEXTURE value: "sv << value;
-    return std::nullopt;
-  }
-
   static std::optional<vdd_frame_channel::channel_mode>
   vdd_frame_channel_mode_env_override() {
     const char *raw_value = std::getenv("SUNSHINE_VDD_FRAME_CHANNEL");
@@ -565,6 +545,9 @@ namespace platf::dxgi {
     close_sealed_frame_channel_handles(sealed_channel);
     m_legacyNamedChannel = false;
     m_frameChannelSelection = vdd_frame_channel::channel_selection::sealed_opened;
+    m_acquiredFrame = false;
+    m_idleFrameLogged = false;
+    m_attachedAt = std::chrono::steady_clock::now();
     BOOST_LOG(info) << "[vdd_capture] opened sealed monitor "sv << monitor_idx
                     << " "sv << m_width << "x"sv << m_height
                     << " fmt="sv << static_cast<int>(m_format)
@@ -700,6 +683,9 @@ namespace platf::dxgi {
     if (m_frameChannelSelection != vdd_frame_channel::channel_selection::forced_legacy) {
       m_frameChannelSelection = vdd_frame_channel::channel_selection::legacy_opened;
     }
+    m_acquiredFrame = false;
+    m_idleFrameLogged = false;
+    m_attachedAt = std::chrono::steady_clock::now();
     BOOST_LOG(info) << "[vdd_capture] opened monitor "sv << monitor_idx
                     << " "sv << m_width << "x"sv << m_height
                     << " fmt="sv << static_cast<int>(m_format)
@@ -866,11 +852,34 @@ namespace platf::dxgi {
     const DWORD event_count = cursor_channel_ready ? 2 : 1;
     DWORD wr = WaitForMultipleObjects(event_count, events, FALSE, ms);
     if (wr == WAIT_TIMEOUT) {
+      if (!m_acquiredFrame) {
+        // Nothing was published since this capture attached. The producer only publishes when the desktop changes, so a
+        // static desktop that was drawn before the attach never signals the frame event, and the stream would show
+        // nothing until something moves. The last published picture sits on the current slot with key 0 (the
+        // consumer before us released it there): take it once, as a normal frame. A slot that still holds an unread
+        // frame is in key 1 and its event is signalled, so this never takes the place of a real frame.
+        const auto idle_status = acquire_cursor_frame();
+        if (idle_status == capture_e::ok) {
+          out_cursor_only = false;
+          m_acquiredFrame = true;
+          if (!m_idleFrameLogged) {
+            m_idleFrameLogged = true;
+            BOOST_LOG(info) << "[vdd_capture] no frame was published after the attach; sending the last published picture of slot "sv
+                            << m_slotIndex << " ("sv
+                            << std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - m_attachedAt).count()
+                            << " ms after the attach)"sv;
+          }
+        }
+        // Any other answer (the slot is busy, or the acquire failed) leaves things as they were: keep waiting.
+        return idle_status == capture_e::ok ? capture_e::ok : capture_e::timeout;
+      }
       return capture_e::timeout;
     }
     if (wr == WAIT_OBJECT_0 + 1) {
       m_cursorUpdatePending = true;
-      return acquire_cursor_frame();
+      const auto cursor_status = acquire_cursor_frame();
+      if (cursor_status == capture_e::ok) m_acquiredFrame = true;
+      return cursor_status;
     }
     if (wr != WAIT_OBJECT_0) {
       BOOST_LOG(error) << "[vdd_capture] WaitForMultipleObjects: result="sv << wr
@@ -931,6 +940,7 @@ namespace platf::dxgi {
     m_holdsKey = true;
     m_heldSlot = slot;
     m_cursorUpdatePending = false;
+    m_acquiredFrame = true;
 
     // Detect producer-side resize / format change: the metadata block can change
     // any time the swap chain is re-created. If so, signal reinit so the upper
@@ -1454,16 +1464,11 @@ namespace platf::dxgi {
     dup.frame_rate_counter->kind.store(perf::capture_source_kind_e::vdd_published, std::memory_order_relaxed);
     dup.frame_rate_counter->observe_sequence(dup.frame_counter(), attach_collection_epoch);
     capture_linear_gamma = capture_format == DXGI_FORMAT_R16G16B16A16_FLOAT;
-    vdd_borrow_enabled = config::video.vdd_borrowed_texture;
-    if (auto env_override = vdd_borrowed_texture_env_override()) {
-      vdd_borrow_enabled = *env_override;
-    }
     vdd_borrow_cooldown_until = {};
     vdd_borrow_last_telemetry = {};
     vdd_borrow_attempts = 0;
     vdd_borrow_successes = 0;
     vdd_borrow_fallbacks = 0;
-    vdd_borrow_disabled_frames = 0;
     vdd_borrow_cooldown_frames = 0;
     vdd_borrow_cooldown_events = 0;
     vdd_borrow_deferred_frames = 0;
@@ -1504,7 +1509,7 @@ namespace platf::dxgi {
                     << " sealed_supported="sv << dup.sealed_frame_channel_supported()
                     << " producer_slots="sv << dup.producer_slot_count()
                     << " generation="sv << dup.producer_channel_generation()
-                    << " borrowed_texture="sv << vdd_borrow_enabled;
+                    << " borrowed_texture=automatic"sv;
 
     // Cursor export is optional and older drivers do not expose it. Likewise,
     // a cursor-only shader failure must not take down otherwise valid capture.

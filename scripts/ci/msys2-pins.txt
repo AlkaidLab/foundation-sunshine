@@ -1,0 +1,31 @@
+# The exact MSYS2 UCRT64 packages of the Windows toolchain: full package name, version, package file, sha256.
+# scripts/ci/msys2-pacman.sh downloads each file from the official mirrors, verifies the digest and installs the set
+# with pacman -U; prepare() also writes the names into pacman's IgnorePkg (source pacman-conf-5-20261116), so no -Syu
+# moves them. MSYS2 documents installing a specific version from the package archive (source
+# msys2-package-management-20261116); the repository store keeps older package files, which is what makes a pin durable.
+# Update with: python3 scripts/ci/msys2-pins.py bump   (versions and digests come from the repository database).
+# The weekly watch (.github/workflows/msys2-toolchain-watch.yml) opens an issue when the repository carries a newer
+# MAJOR version (openssl also on a newer MINOR). Resolved from the repository database
+# https://repo.msys2.org/mingw/ucrt64/ucrt64.db on 2026-11-16; opus stays at 1.6.1-1, the version the build was last
+# verified with.
+mingw-w64-ucrt-x86_64-MinHook 1.3.4-2 mingw-w64-ucrt-x86_64-MinHook-1.3.4-2-any.pkg.tar.zst cbbf2e6134530f94cd246ffef882f97936bfba9d32213d53376f73def2f6499c
+mingw-w64-ucrt-x86_64-binutils 2.47-4 mingw-w64-ucrt-x86_64-binutils-2.47-4-any.pkg.tar.zst c18a40b871bfddb5da030f015003479ca85625afde1cb89f7313945e6151397d
+mingw-w64-ucrt-x86_64-ccache 4.14.2-1 mingw-w64-ucrt-x86_64-ccache-4.14.2-1-any.pkg.tar.zst 11975b14475262e85daaca6d26579fa017c05ad8957bec41140d5dc9286a0392
+mingw-w64-ucrt-x86_64-cmake 4.5.0-1 mingw-w64-ucrt-x86_64-cmake-4.5.0-1-any.pkg.tar.zst 146cfea017827e0203c23fe8317442fa052650bbb59f8d40427e37687cd38222
+mingw-w64-ucrt-x86_64-cppwinrt 3.0.260818.1-3 mingw-w64-ucrt-x86_64-cppwinrt-3.0.260818.1-3-any.pkg.tar.zst 017ce6a005a3dc6bf607d799b1707aab9100edde270d1ec21dfa4518fa625cd9
+mingw-w64-ucrt-x86_64-crt 14.0.0.r598.ge3d18511f-1 mingw-w64-ucrt-x86_64-crt-14.0.0.r598.ge3d18511f-1-any.pkg.tar.zst e863d0d1c5cef1269738f23dcc155b9b0d161d198b93d9d5aa481cb3a2f2cf53
+mingw-w64-ucrt-x86_64-curl-winssl 8.23.0-3 mingw-w64-ucrt-x86_64-curl-winssl-8.23.0-3-any.pkg.tar.zst d2c2c134fcf0df4cde02dc6345b9e23aa2709d9a2b3574f237c2412825fa0e72
+mingw-w64-ucrt-x86_64-gcc 16.2.0-7 mingw-w64-ucrt-x86_64-gcc-16.2.0-7-any.pkg.tar.zst c7c5ac5a7413e9a3b5afa367288568058dcecce8fdd690059c5bbfa07def01b9
+mingw-w64-ucrt-x86_64-gcc-libs 16.2.0-7 mingw-w64-ucrt-x86_64-gcc-libs-16.2.0-7-any.pkg.tar.zst 6bbbd0cf94d8dbfae242d87f540d6a69623208cb1c63183cace0e9e1bb702786
+mingw-w64-ucrt-x86_64-headers 14.0.0.r598.ge3d18511f-1 mingw-w64-ucrt-x86_64-headers-14.0.0.r598.ge3d18511f-1-any.pkg.tar.zst b3cec87298555a7c6694bd4d421d586d08a1cb47bc5bc76e79602cbf4421d3c9
+mingw-w64-ucrt-x86_64-libvpl 2.17.0-1 mingw-w64-ucrt-x86_64-libvpl-2.17.0-1-any.pkg.tar.zst ae9c80f22fa62e533fbef09d4650e1152588e905b9a42b8f7ae4a2c12c27ae77
+mingw-w64-ucrt-x86_64-libwinpthread 14.0.0.r598.ge3d18511f-1 mingw-w64-ucrt-x86_64-libwinpthread-14.0.0.r598.ge3d18511f-1-any.pkg.tar.zst c35d6be83d141c8cfbb61f1637dd4b53aac8f5562d766aa26d0741c40bad4e4d
+mingw-w64-ucrt-x86_64-make 4.4.1-6 mingw-w64-ucrt-x86_64-make-4.4.1-6-any.pkg.tar.zst 15be75b9081ea2cf8f91bce1c0b9d2ab37c908ee22339e541355b0c76e282999
+mingw-w64-ucrt-x86_64-miniupnpc 2.3.3-4 mingw-w64-ucrt-x86_64-miniupnpc-2.3.3-4-any.pkg.tar.zst 0729009682c1c012dd53c9b83d2d3f6b520c4cab33bfcdc09f83bf7c616a3e54
+mingw-w64-ucrt-x86_64-ninja 1.13.2-1 mingw-w64-ucrt-x86_64-ninja-1.13.2-1-any.pkg.tar.zst 514685563a84a6ebddbbeee7bbafae5f3994e363c49364fc4507fabcaa049f2b
+mingw-w64-ucrt-x86_64-nlohmann-json 3.12.0-1 mingw-w64-ucrt-x86_64-nlohmann-json-3.12.0-1-any.pkg.tar.zst 11dca2f0b7b4ddc39acab59bcfbe745512e963d33da4c95c17997c39e8f50a27
+mingw-w64-ucrt-x86_64-openssl 4.1.0-1 mingw-w64-ucrt-x86_64-openssl-4.1.0-1-any.pkg.tar.zst e4b35719e68c9d27ec0c36b6f38a16970dd875554401ef35e14c6d35ad2a9429
+mingw-w64-ucrt-x86_64-opus 1.6.1-1 mingw-w64-ucrt-x86_64-opus-1.6.1-1-any.pkg.tar.zst 7b8f176f9cc0431b52006861c0a2e083d73d4b47a73ab749755b5379ff673252
+mingw-w64-ucrt-x86_64-pkgconf 1~3.0.11-2 mingw-w64-ucrt-x86_64-pkgconf-1~3.0.11-2-any.pkg.tar.zst 68c157c7c19f9015b6b0b65cfef16046da6dd628aea816e2cdfe385b710263ad
+mingw-w64-ucrt-x86_64-python 3.14.10-4 mingw-w64-ucrt-x86_64-python-3.14.10-4-any.pkg.tar.zst d732afaa3576d3c46d1760ad33ec4f3c7e6a39240891f09026b341bbd049aed8
+mingw-w64-ucrt-x86_64-winpthreads 14.0.0.r598.ge3d18511f-1 mingw-w64-ucrt-x86_64-winpthreads-14.0.0.r598.ge3d18511f-1-any.pkg.tar.zst 282485a1e453e972b86639cedcf43686e0000dfe5eff0421e47a4405ecdd85ce

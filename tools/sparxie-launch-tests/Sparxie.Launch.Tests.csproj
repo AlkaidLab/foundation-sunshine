@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- A self-checking test program (no test framework, so no package restore): it exits non-zero when any check fails. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Sparxie.Launch</RootNamespace>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <StartupObject>Sparxie.Launch.Tests</StartupObject>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- the dummy Endfield.exe of the decoy-parent tests: built first, found through the FakeGameDir assembly metadata -->
+    <ProjectReference Include="..\sparxie-launch-fakegame\FakeGame.csproj" ReferenceOutputAssembly="false" />
+    <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+      <_Parameter1>FakeGameDir</_Parameter1>
+      <_Parameter2>$(MSBuildThisFileDirectory)..\sparxie-launch-fakegame\bin\$(Configuration)\net10.0-windows\</_Parameter2>
+    </AssemblyAttribute>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\sparxie-launch\*.cs" Exclude="..\sparxie-launch\Program.cs" />
+  </ItemGroup>
+</Project>

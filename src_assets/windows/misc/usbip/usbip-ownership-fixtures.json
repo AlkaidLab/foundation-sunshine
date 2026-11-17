@@ -1,0 +1,113 @@
+[
+  {
+    "name": "external-full",
+    "version": "0.9.8.1",
+    "extras": true,
+    "receipt": false,
+    "legacy": false,
+    "present": true,
+    "ownership": "external"
+  },
+  {
+    "name": "legacy-owned",
+    "version": "0.9.8.1",
+    "extras": false,
+    "receipt": false,
+    "legacy": true,
+    "present": true,
+    "ownership": "legacy-owned"
+  },
+  {
+    "name": "legacy-owned-inno-trailing-separator",
+    "version": "0.9.8.1",
+    "extras": false,
+    "receipt": false,
+    "legacy": true,
+    "present": true,
+    "locationSuffix": "\\",
+    "ownership": "legacy-owned"
+  },
+  {
+    "name": "legacy-two-registry-views",
+    "version": "0.9.8.1",
+    "extras": false,
+    "receipt": false,
+    "legacy": true,
+    "present": true,
+    "twoViews": true,
+    "ownership": "external"
+  },
+  {
+    "name": "legacy-uninstaller-elsewhere",
+    "version": "0.9.8.1",
+    "extras": false,
+    "receipt": false,
+    "legacy": true,
+    "present": true,
+    "uninstallerElsewhere": true,
+    "ownership": "external"
+  },
+  {
+    "name": "incompatible",
+    "version": "0.9.8.2",
+    "extras": false,
+    "receipt": false,
+    "legacy": true,
+    "present": true,
+    "ownership": "external"
+  },
+  {
+    "name": "slim",
+    "version": "0.9.8.1",
+    "extras": false,
+    "receipt": true,
+    "legacy": false,
+    "present": true,
+    "ownership": "managed"
+  },
+  {
+    "name": "absent",
+    "version": "",
+    "extras": false,
+    "receipt": false,
+    "legacy": false,
+    "present": false,
+    "ownership": "absent"
+  },
+  {
+    "name": "observed-full-double-install",
+    "version": "0.9.8.1",
+    "extras": true,
+    "receipt": false,
+    "legacy": true,
+    "present": true,
+    "ownership": "external",
+    "observed": {
+      "uninstallers": [
+        "unins000.exe",
+        "unins001.exe"
+      ],
+      "registered_uninstaller": "unins001.exe",
+      "files": [
+        "wusbip.exe",
+        "include/usbip",
+        "lib/libusbip.lib"
+      ],
+      "services": {
+        "usbip2_filter": "running",
+        "usbip2_ude": "running"
+      },
+      "driver_version": "12.1.30.403",
+      "instance": "ROOT\\ALKAIDUSB\\0000"
+    }
+  },
+  {
+    "name": "unknown-origin",
+    "version": "0.9.8.1",
+    "extras": false,
+    "receipt": false,
+    "legacy": false,
+    "present": true,
+    "ownership": "external"
+  }
+]

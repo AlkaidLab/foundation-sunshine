@@ -1,17 +1,9 @@
+import { useNotify } from 'foundation-ui/notify'
 import { getCurrentScope, onScopeDispose } from 'vue'
 import { translateFallback } from '../utils/localizedMessage.js'
-import {
-  extractColors,
-  rgbToHsl as rgbToHslValues,
-  selectAccentColor,
-} from '../utils/colorPalette.js'
-import {
-  DEFAULT_WALLPAPER_SEED,
-  materialSeedFromImageData,
-  materialThemeTokens,
-} from '../utils/materialTheme.js'
 
-const DEFAULT_BACKGROUND = 'https://assets.alkaidlab.com/sunshine-bg0.webp'
+// The default picture is the shared appearance's (foundation-ui); a picture the person dropped here is kept under this key.
+const DEFAULT_BACKGROUND = ''
 const STORAGE_KEY = 'customBackground'
 const THUMBNAIL_MAX_SIZE = 200
 const TEXT_COLOR_PROPERTIES = [
@@ -21,167 +13,12 @@ const TEXT_COLOR_PROPERTIES = [
   '--text-title-color',
 ]
 
-const COLOR_CONFIG = {
-  textLightnessRange: { min: 15, max: 95 },
-  brightnessThreshold: 50,
-  paletteSize: 6,
-}
-
-const createDefaultColorInfo = () => ({
-  dominantColor: { r: 128, g: 128, b: 128 },
-  hsl: { h: 0, s: 0, l: 50 },
-  palette: [],
-})
-
-const clamp = (value, min, max) => Math.max(min, Math.min(max, value))
-
-const isLocalImage = (imageUrl) =>
-  typeof imageUrl === 'string' && (imageUrl.startsWith('data:') || imageUrl.startsWith('blob:'))
-
-const loadImage = (imageUrl, anonymous = false) =>
-  new Promise((resolve, reject) => {
-    const img = new Image()
-    const timer = setTimeout(() => {
-      img.onload = img.onerror = null
-      img.src = ''
-      reject(new Error(translateFallback('apps.image_load_failed')))
-    }, 8000)
-    img.onload = () => {
-      clearTimeout(timer)
-      resolve(img)
-    }
-    img.onerror = () => {
-      clearTimeout(timer)
-      reject(new Error(translateFallback('apps.image_load_failed')))
-    }
-    if (anonymous && !isLocalImage(imageUrl)) img.crossOrigin = 'anonymous'
-    img.src = imageUrl
-  })
-
-const rgbToRoundedHsl = (r, g, b) => {
-  const [h, s, l] = rgbToHslValues(r, g, b)
-  return { h: Math.round(h), s: Math.round(s), l: Math.round(l) }
-}
-
-const hslToRgb = (h, s, l) => {
-  h /= 360
-  s /= 100
-  l /= 100
-
-  if (s === 0) {
-    const val = Math.round(l * 255)
-    return { r: val, g: val, b: val }
-  }
-
-  const hue2rgb = (p, q, t) => {
-    if (t < 0) t += 1
-    if (t > 1) t -= 1
-    if (t < 1 / 6) return p + (q - p) * 6 * t
-    if (t < 1 / 2) return q
-    if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6
-    return p
-  }
-
-  const q = l < 0.5 ? l * (1 + s) : l + s - l * s
-  const p = 2 * l - q
-
-  return {
-    r: Math.round(hue2rgb(p, q, h + 1 / 3) * 255),
-    g: Math.round(hue2rgb(p, q, h) * 255),
-    b: Math.round(hue2rgb(p, q, h - 1 / 3) * 255),
-  }
-}
-
-const rgbToHex = (r, g, b) => {
-  const toHex = (x) => Math.round(x).toString(16).padStart(2, '0')
-  return `#${toHex(r)}${toHex(g)}${toHex(b)}`
-}
-
-const analyzeImageColors = (img) => {
-  if (!img.complete || !img.width || !img.height) return createDefaultColorInfo()
-
-  try {
-    const canvas = document.createElement('canvas')
-    const scale = Math.min(1, THUMBNAIL_MAX_SIZE / Math.max(img.width, img.height))
-    canvas.width = Math.max(1, Math.round(img.width * scale))
-    canvas.height = Math.max(1, Math.round(img.height * scale))
-
-    const context = canvas.getContext('2d', { willReadFrequently: true })
-    if (!context) return createDefaultColorInfo()
-
-    context.drawImage(img, 0, 0, canvas.width, canvas.height)
-    const palette = extractColors(
-      context.getImageData(0, 0, canvas.width, canvas.height),
-      COLOR_CONFIG.paletteSize,
-    )
-    const accentColor = selectAccentColor(palette)
-    if (!accentColor) return createDefaultColorInfo()
-
-    const [r, g, b] = accentColor
-    return {
-      dominantColor: { r, g, b },
-      hsl: rgbToRoundedHsl(r, g, b),
-      palette,
-    }
-  } catch {
-    return createDefaultColorInfo()
-  }
-}
-
-const detectImageColorInfo = async (imageUrl) => {
-  try {
-    const img = await loadImage(imageUrl)
-    return analyzeImageColors(img)
-  } catch {
-    return createDefaultColorInfo()
-  }
-}
-
-const calculateTextColors = (colorInfo) => {
-  const { hsl } = colorInfo
-  const { textLightnessRange, brightnessThreshold } = COLOR_CONFIG
-  const isLightBg = hsl.l > brightnessThreshold
-
-  const textH = hsl.h
-  let textS = hsl.s
-  let textL
-
-  if (isLightBg) {
-    textL = Math.max(textLightnessRange.min, hsl.l - 60)
-    if (hsl.s < 30) textS = Math.min(20, hsl.s)
-  } else {
-    textL = Math.min(textLightnessRange.max, hsl.l + 70)
-    textS = Math.min(40, hsl.s * 0.6)
-  }
-
-  const createColor = (s, l) => {
-    const rgb = hslToRgb(textH, s, l)
-    return rgbToHex(rgb.r, rgb.g, rgb.b)
-  }
-
-  return {
-    primary: createColor(textS, textL),
-    secondary: createColor(textS * 0.7, clamp(isLightBg ? textL - 15 : textL + 10, 10, 90)),
-    muted: createColor(textS * 0.4, clamp(isLightBg ? textL - 25 : textL + 20, 5, 85)),
-    title: createColor(textS * 0.3, isLightBg ? textLightnessRange.min : textLightnessRange.max),
-    bgClass: isLightBg ? 'bg-light' : 'bg-dark',
-  }
-}
-
-const setTextColorTheme = (colorInfo) => {
-  const root = document.documentElement
-  const textColors = calculateTextColors(colorInfo)
-
-  root.style.setProperty('--text-primary-color', textColors.primary)
-  root.style.setProperty('--text-secondary-color', textColors.secondary)
-  root.style.setProperty('--text-muted-color', textColors.muted)
-  root.style.setProperty('--text-title-color', textColors.title)
-
-  document.body.classList.remove('bg-light', 'bg-dark')
-  document.body.classList.add(textColors.bgClass)
-
-  root.classList.add('text-color-transitioning')
-  setTimeout(() => root.classList.remove('text-color-transitioning'), 500)
+// The wallpaper is the shared appearance of the window (foundation-ui: 薇薇's pictures by default, the person's file or address, a gradient or a
+// plain colour). A picture dropped on this page, or stored by an older version, becomes the person's file there; nothing else draws a wallpaper.
+// loaded on demand: the shared package pulls in the whole component set
+const appearance = async () => (await import('foundation-ui/vue')).useAppearance()
+const setWallpaper = async (imageUrl) => {
+  if (imageUrl) await (await appearance()).chooseDataUrl(imageUrl)
 }
 
 const resetTextColorTheme = () => {
@@ -202,7 +39,6 @@ export function useBackground(options = {}) {
     maxHeight = 1080,
     maxSizeMB = 2,
     translate = translateFallback,
-    materialColors = false,
   } = options
 
   const getCurrentBackground = () => localStorage.getItem(storageKey) ?? defaultBackground
@@ -215,110 +51,16 @@ export function useBackground(options = {}) {
     }
   }
 
-  let colorUpdateId = 0
-  let cachedMaterialImage = null
-  let cachedMaterialSeed = null
-  const previousMaterialStyles = new Map()
-  let appliedMaterialStyles = {}
-
-  const clearMaterialTheme = () => {
-    const style = document.documentElement.style
-    for (const [property, previous] of previousMaterialStyles) {
-      if (style.getPropertyValue(property) !== appliedMaterialStyles[property]) continue
-      if (previous.value) style.setProperty(property, previous.value, previous.priority)
-      else style.removeProperty(property)
-    }
-    previousMaterialStyles.clear()
-    appliedMaterialStyles = {}
-  }
-
-  const readMaterialSeed = (imageUrl) => {
-    if (cachedMaterialImage === imageUrl && cachedMaterialSeed) return cachedMaterialSeed
-    cachedMaterialImage = imageUrl
-    cachedMaterialSeed =
-      imageUrl === DEFAULT_BACKGROUND
-        ? Promise.resolve(DEFAULT_WALLPAPER_SEED)
-        : loadImage(imageUrl, true).then((image) => {
-            const canvas = document.createElement('canvas')
-            const scale = Math.min(1, THUMBNAIL_MAX_SIZE / Math.max(image.width, image.height))
-            canvas.width = Math.max(1, Math.round(image.width * scale))
-            canvas.height = Math.max(1, Math.round(image.height * scale))
-            const context = canvas.getContext('2d', { willReadFrequently: true })
-            if (!context) throw new Error('Canvas is unavailable')
-            context.drawImage(image, 0, 0, canvas.width, canvas.height)
-            return materialSeedFromImageData(
-              context.getImageData(0, 0, canvas.width, canvas.height),
-            )
-          })
-    return cachedMaterialSeed
-  }
-
-  const applyMaterialTheme = async (imageUrl, updateId) => {
-    try {
-      const seed = await readMaterialSeed(imageUrl)
-      if (updateId !== colorUpdateId) return
-      if (seed === null) return clearMaterialTheme()
-      const root = document.documentElement
-      const tokens = materialThemeTokens(seed, root.getAttribute('data-bs-theme') === 'dark')
-      for (const [property, value] of Object.entries(tokens)) {
-        if (!previousMaterialStyles.has(property)) {
-          previousMaterialStyles.set(property, {
-            value: root.style.getPropertyValue(property),
-            priority: root.style.getPropertyPriority(property),
-          })
-        }
-        root.style.setProperty(property, value)
-        // CSSOM can normalize color and gradient serialization.
-        appliedMaterialStyles[property] = root.style.getPropertyValue(property)
-      }
-    } catch {
-      if (updateId === colorUpdateId) {
-        cachedMaterialSeed = null
-        clearMaterialTheme()
-      }
-    }
-  }
-
-  if (getCurrentScope()) {
-    onScopeDispose(() => {
-      colorUpdateId++
-      clearMaterialTheme()
-    })
-  }
-
-  const refreshTextColorTheme = async (imageUrl) => {
-    const updateId = ++colorUpdateId
-    if (materialColors) {
-      if (isDevMode() || !imageUrl) return clearMaterialTheme()
-      return applyMaterialTheme(imageUrl, updateId)
-    }
-    if (!isLocalImage(imageUrl)) {
-      resetTextColorTheme()
-      return
-    }
-
-    try {
-      const colorInfo = await detectImageColorInfo(imageUrl)
-      if (updateId === colorUpdateId) setTextColorTheme(colorInfo)
-    } catch {
-      // 静默失败
-    }
-  }
-
   const setBackground = async (imageUrl) => {
-    if (isDevMode()) {
-      colorUpdateId++
-      document.body.style.background = ''
-      resetTextColorTheme()
-      clearMaterialTheme()
-      return
-    }
-    document.body.style.background = `url(${imageUrl}) center/cover fixed no-repeat`
-    await refreshTextColorTheme(imageUrl)
+    resetTextColorTheme()
+    // developer mode (seven taps) shows the plain page
+    if (isDevMode()) { await (await appearance()).set({ background: 'solid' }); return }
+    // the picture moves to the shared appearance once; from then on the personalise sheet decides which one shows
+    if (imageUrl) { await setWallpaper(imageUrl); try { localStorage.removeItem(storageKey) } catch { /* storage unavailable */ } }
   }
 
   const recheckBackgroundBrightness = async () => {
-    await refreshTextColorTheme(getCurrentBackground())
+    await setBackground(getCurrentBackground())
   }
 
   const loadBackground = () => setBackground(getCurrentBackground())
@@ -398,7 +140,7 @@ export function useBackground(options = {}) {
     try {
       await saveBackground(await compressImage(file))
     } catch (error) {
-      onError?.(error) ?? alert(error.message || translate('apps.feedback.image_process_failed'))
+      onError?.(error) ?? useNotify().snack(error.message || translate('apps.feedback.image_process_failed'))
     }
   }
 
@@ -409,13 +151,8 @@ export function useBackground(options = {}) {
       drop: (e) => handleDrop(e, onError),
     }
 
-    Object.entries(handlers).forEach(([event, handler]) =>
-      document.addEventListener(event, handler),
-    )
-    return () =>
-      Object.entries(handlers).forEach(([event, handler]) =>
-        document.removeEventListener(event, handler),
-      )
+    Object.entries(handlers).forEach(([event, handler]) => document.addEventListener(event, handler))
+    return () => Object.entries(handlers).forEach(([event, handler]) => document.removeEventListener(event, handler))
   }
 
   const clearBackground = () => {
@@ -426,10 +163,7 @@ export function useBackground(options = {}) {
 
   // 监听主题切换
   if (typeof document !== 'undefined') {
-    const handleThemeChange = () => {
-      if (materialColors) recheckBackgroundBrightness()
-      else setTimeout(recheckBackgroundBrightness, 100)
-    }
+    const handleThemeChange = () => setTimeout(recheckBackgroundBrightness, 100)
     const observerConfig = { attributes: true, attributeFilter: ['data-bs-theme'] }
     const observer = new MutationObserver(handleThemeChange)
     observer.observe(document.documentElement, observerConfig)
@@ -442,18 +176,14 @@ export function useBackground(options = {}) {
     // 监听背景旁路切换
     const onBackgroundBypass = (e) => {
       if (e.detail?.enabled) {
-        colorUpdateId++
         document.body.style.background = ''
-        clearMaterialTheme()
       } else {
         loadBackground()
       }
     }
     window.addEventListener('sunshine-background-bypass', onBackgroundBypass)
     if (getCurrentScope()) {
-      onScopeDispose(() =>
-        window.removeEventListener('sunshine-background-bypass', onBackgroundBypass),
-      )
+      onScopeDispose(() => window.removeEventListener('sunshine-background-bypass', onBackgroundBypass))
     }
   }
 

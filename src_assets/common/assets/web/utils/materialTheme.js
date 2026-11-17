@@ -6,7 +6,7 @@ import {
   themeFromSourceColor,
 } from '@material/material-color-utilities'
 
-// Precomputed with the same extractor for sunshine-bg0.webp. The wallpaper CDN
+// Precomputed with the same extractor for the default wallpaper. The wallpaper CDN
 // does not allow canvas reads, so the default can still have its matching theme.
 export const DEFAULT_WALLPAPER_SEED = 0xff4a4b79
 

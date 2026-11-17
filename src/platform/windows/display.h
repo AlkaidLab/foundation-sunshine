@@ -831,6 +831,12 @@ namespace platf::dxgi {
     std::chrono::steady_clock::time_point m_nextCursorAttachAttempt {};
     UINT32 m_cursorAttachFailures = 0;
     bool m_cursorUpdatePending = false;
+    // Whether a desktop frame (or the last published picture, see next_frame) was handed out since this capture
+    // attached. A static desktop publishes nothing, so a capture that attaches after the picture was drawn has to ask
+    // for the last picture once instead of waiting for a change that may never come.
+    bool m_acquiredFrame = false;
+    std::chrono::steady_clock::time_point m_attachedAt {};
+    bool m_idleFrameLogged = false;
     UINT32 m_lastSeenCursorShapeId = 0xFFFFFFFFu;
     UINT32 m_lastSeenCursorPositionId = 0xFFFFFFFFu;
 
@@ -869,13 +875,11 @@ namespace platf::dxgi {
     vdd_capture_t dup;
     unsigned int monitor_idx = 0;
     ID3D11Texture2D *current_frame = nullptr;  // Owned ref from dup.next_frame (via AddRef), released in release_snapshot
-    bool vdd_borrow_enabled = false;
     std::chrono::steady_clock::time_point vdd_borrow_cooldown_until {};
     std::chrono::steady_clock::time_point vdd_borrow_last_telemetry {};
     UINT64 vdd_borrow_attempts = 0;
     UINT64 vdd_borrow_successes = 0;
     UINT64 vdd_borrow_fallbacks = 0;
-    UINT64 vdd_borrow_disabled_frames = 0;
     UINT64 vdd_borrow_cooldown_frames = 0;
     UINT64 vdd_borrow_cooldown_events = 0;
     UINT64 vdd_borrow_deferred_frames = 0;

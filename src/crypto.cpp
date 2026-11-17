@@ -8,12 +8,13 @@
 
 #include <openssl/pem.h>
 #include <openssl/rsa.h>
+#include <openssl/x509v3.h>
 
 namespace crypto {
   using asn1_string_t = util::safe_ptr<ASN1_STRING, ASN1_STRING_free>;
 
   cert_chain_t::cert_chain_t():
-      _certs {}, _cert_ctx { X509_STORE_CTX_new() } {}
+      _certs {} {}
   void
   cert_chain_t::add(x509_t &&cert) {
     x509_store_t x509_store { X509_STORE_new() };
@@ -59,25 +60,32 @@ namespace crypto {
   cert_chain_t::verify(x509_t::element_type *cert) {
     int err_code = 0;
     for (auto &[_, x509_store] : _certs) {
-      auto fg = util::fail_guard([this]() {
-        X509_STORE_CTX_cleanup(_cert_ctx.get());
-      });
-
-      X509_STORE_CTX_init(_cert_ctx.get(), x509_store.get(), cert, nullptr);
-      X509_STORE_CTX_set_verify_cb(_cert_ctx.get(), openssl_verify_cb);
+      // One verification context per call: HTTPS handshakes verify client certificates on several threads at once, and
+      // a context shared between them lets one thread's X509_STORE_CTX_cleanup() free the verification parameters
+      // (ctx->param) another thread is about to read (X509_VERIFY_PARAM_inherit() crashed on the null pointer).
+      // OpenSSL: X509_STORE_CTX_new(3) / X509_STORE_CTX_init(3): a context is for one verification, and an object is not
+      // safe to use from several threads without the caller's own locking.
+      x509_store_ctx_t verify_ctx { X509_STORE_CTX_new() };
+      if (!verify_ctx) {
+        return X509_verify_cert_error_string(X509_V_ERR_OUT_OF_MEM);
+      }
+      if (X509_STORE_CTX_init(verify_ctx.get(), x509_store.get(), cert, nullptr) != 1) {
+        return X509_verify_cert_error_string(X509_V_ERR_STORE_LOOKUP);
+      }
+      X509_STORE_CTX_set_verify_cb(verify_ctx.get(), openssl_verify_cb);
 
       // We don't care to validate the entire chain for the purposes of client auth.
       // Some versions of clients forked from Moonlight Embedded produce client certs
       // that OpenSSL doesn't detect as self-signed due to some X509v3 extensions.
-      X509_STORE_CTX_set_flags(_cert_ctx.get(), X509_V_FLAG_PARTIAL_CHAIN);
+      X509_STORE_CTX_set_flags(verify_ctx.get(), X509_V_FLAG_PARTIAL_CHAIN);
 
-      auto err = X509_verify_cert(_cert_ctx.get());
+      auto err = X509_verify_cert(verify_ctx.get());
 
       if (err == 1) {
         return nullptr;
       }
 
-      err_code = X509_STORE_CTX_get_error(_cert_ctx.get());
+      err_code = X509_STORE_CTX_get_error(verify_ctx.get());
 
       if (err_code != X509_V_ERR_DEPTH_ZERO_SELF_SIGNED_CERT && err_code != X509_V_ERR_INVALID_CA) {
         return X509_verify_cert_error_string(err_code);
@@ -491,7 +499,13 @@ namespace crypto {
     const ASN1_BIT_STRING *asn1 = nullptr;
     X509_get0_signature(&asn1, nullptr, x.get());
 
-    return { (const char *) asn1->data, (std::size_t) asn1->length };
+    // OpenSSL 4.0 made ASN1_STRING opaque: the accessors work in 1.1.0 and later (ASN1_STRING_length() is the old name of ASN1_STRING_get_length(), deprecated in 4.1)
+#if OPENSSL_VERSION_NUMBER >= 0x40100000L
+    const auto length = ASN1_STRING_get_length(asn1);
+#else
+    const auto length = ASN1_STRING_length(asn1);
+#endif
+    return { (const char *) ASN1_STRING_get0_data(asn1), (std::size_t) length };
   }
 
   std::string
@@ -535,6 +549,29 @@ namespace crypto {
     return digest;
   }
 
+  /** A plain DNS host name (letters, digits, hyphens, dots; labels of 1 to 63 characters; at most 253): the only kind of common name that gets a matching alternative name. */
+  static bool
+  is_dns_host_name(std::string_view name) {
+    if (name.empty() || name.size() > 253) return false;
+    std::size_t label = 0;
+    char previous = '.';
+    for (const char c : name) {
+      if (c == '.') {
+        if (label == 0 || previous == '-') return false;
+        label = 0;
+      }
+      else if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-') {
+        if (c == '-' && label == 0) return false;
+        if (++label > 63) return false;
+      }
+      else {
+        return false;
+      }
+      previous = c;
+    }
+    return label > 0 && previous != '-';
+  }
+
   creds_t
   gen_creds(const std::string_view &cn, std::uint32_t key_bits) {
     x509_t x509 { X509_new() };
@@ -570,12 +607,28 @@ namespace crypto {
 
     X509_set_pubkey(x509.get(), pkey.get());
 
-    auto name = X509_get_subject_name(x509.get());
-    X509_NAME_add_entry_by_txt(name, "CN", MBSTRING_ASC,
+    // OpenSSL 4.0 returns the subject of a certificate as const: build the name, then set it as subject and issuer (X509_set_subject_name copies it)
+    util::safe_ptr<X509_NAME, X509_NAME_free> name { X509_NAME_new() };
+    X509_NAME_add_entry_by_txt(name.get(), "CN", MBSTRING_ASC,
       (const std::uint8_t *) cn.data(), cn.size(),
       -1, 0);
 
-    X509_set_issuer_name(x509.get(), name);
+    X509_set_subject_name(x509.get(), name.get());
+    X509_set_issuer_name(x509.get(), name.get());
+
+    // A common name that is a DNS host name also goes into subjectAltName. OpenSSL 4.0 no longer falls back to the common name when it checks a host name
+    // (CHANGES, 4.0: the subject DN is consulted only with X509_CHECK_FLAG_ALWAYS_CHECK_SUBJECT), so a certificate made for "localhost" would fail a
+    // host name check that passed on OpenSSL 3. Names with spaces, such as the ones of paired clients and of the host, are not host names and get no extension.
+    if (is_dns_host_name(cn)) {
+      X509V3_CTX v3_context;
+      X509V3_set_ctx(&v3_context, x509.get(), x509.get(), nullptr, nullptr, 0);
+      const std::string alt_name = "DNS:" + std::string { cn };
+      if (auto *extension = X509V3_EXT_conf_nid(nullptr, &v3_context, NID_subject_alt_name, alt_name.c_str())) {
+        X509_add_ext(x509.get(), extension, -1);
+        X509_EXTENSION_free(extension);
+      }
+    }
+
     X509_sign(x509.get(), pkey.get(), EVP_sha256());
 
     return { pem(x509), pem(pkey) };

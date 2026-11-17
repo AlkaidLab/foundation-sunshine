@@ -1,0 +1,25 @@
+Copyright (c) 2025 AlkaidLab. All Rights Reserved.
+
+ZAKO VIRTUAL MOUSE DRIVER - PROPRIETARY LICENSE
+
+This software and associated documentation files (the "Software") are the
+exclusive property of AlkaidLab. The Software is provided in binary form for
+use with compatible host software.
+
+PERMITTED:
+- Use the pre-built binary driver for personal or commercial purposes
+- Distribute the pre-built binary as part of a host software package
+
+NOT PERMITTED:
+- Modify, reverse engineer, decompile, or disassemble the Software
+- Redistribute the source code in any form
+- Create derivative works based on the Software
+- Remove or alter any proprietary notices
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
+ALKAIDLAB BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY ARISING FROM
+THE USE OF THE SOFTWARE.
+
+For licensing inquiries, contact: AlkaidLab

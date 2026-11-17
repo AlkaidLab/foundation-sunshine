@@ -43,6 +43,16 @@ location by modifying the configuration file.
 Although it is recommended to use the configuration UI, it is possible manually configure sunshine by
 editing the `conf` file in a text editor. Use the examples as reference.
 
+Windows capture session
+^^^^^^^^^^^^^^^^^^^^^^^
+
+The service selects the active interactive session by default, preferring the console and falling
+back to an active RDP user. The GUI independently follows the interactive user, who is granted read
+access to the restricted local authentication token. Set ``session_binding = 1`` in
+``sunshine.conf`` to keep capture on the physical console, or set it to ``0`` or omit it for automatic
+selection. Restart the service after a change. A console without a signed-in user may show the
+Windows sign-in screen rather than the desktop of a separate RDP session.
+
 `General <https://localhost:47990/config/#general>`__
 -----------------------------------------------------
 
@@ -861,7 +871,9 @@ min_fps_factor <https://localhost:47990/config/#min_fps_factor>`__
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 **Description**
-   If no external IP address is given, Sunshine will attempt to automatically detect external ip-address.
+   The public address clients use outside the network: an IP address or a DNS host name (for example a
+   dynamic DNS name). The value is validated; a malformed value is ignored with a warning. If it is not
+   set, Sunshine uses the automatically discovered address and clients fall back to discovery.
 
 **Default**
    Automatic
@@ -869,7 +881,8 @@ min_fps_factor <https://localhost:47990/config/#min_fps_factor>`__
 **Example**
    .. code-block:: text
 
-      external_ip = 123.456.789.12
+      external_ip = 203.0.113.9
+      external_ip = home.example.ddns.net
 
 `lan_encryption_mode <https://localhost:47990/config/#lan_encryption_mode>`__
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

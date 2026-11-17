@@ -3,6 +3,8 @@
  * @brief Declarations for SunshineEventListener.
  */
 #pragma once
+#include <boost/log/sinks.hpp>
+
 #include "tests_common.h"
 
 struct SunshineEventListener: testing::EmptyTestEventListener {

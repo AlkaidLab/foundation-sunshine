@@ -3,7 +3,9 @@
  * @brief Definitions for input handling on Windows.
  */
 #define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
+#ifndef NOMINMAX
+  #define NOMINMAX
+#endif
 #define WINVER 0x0A00
 #include <windows.h>
 
@@ -12,24 +14,26 @@
 #include <limits>
 #include <mutex>
 #include <thread>
+#include <vector>
 
 #include <ViGEm/Client.h>
 
+#include "ds5/ds5_native_client.h"
 #include "dsu_server.h"
-#include "ds5/ds5_sidecar_client.h"
-#include "src/ds5/config.h"
 #include "keylayout.h"
 #include "misc.h"
-#include "virtual_mouse.h"
 #include "src/config.h"
+#include "src/ds5/tuning_runtime.h"
 #include "src/globals.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
+#include "src/platform/gamepad_selection.h"
+#include "virtual_mouse.h"
 
 // Note: HSYNTHETICPOINTERDEVICE and related functions are now included in
 // modern MinGW-w64 SDK (UCRT64). The declarations below are only needed for
 // very old MinGW versions that predate Windows 10 SDK support.
-// 
+//
 // If you encounter "undefined" errors on old MinGW, uncomment the following:
 // #define SUNSHINE_NEED_SYNTHETIC_POINTER_DECL
 #ifdef SUNSHINE_NEED_SYNTHETIC_POINTER_DECL
@@ -52,7 +56,7 @@ namespace platf {
     65535, 65535
   };
 
-  enum synthetic_device_creation_options_e: ULONG {
+  enum synthetic_device_creation_options_e : ULONG {
     synthetic_device_creation_none = 0x0,
     synthetic_device_creation_physical_size = 0x1,
     synthetic_device_creation_touchpad_gesture_only = 0x2,
@@ -109,6 +113,8 @@ namespace platf {
     target_t gp;
     feedback_queue_t feedback_queue;
     bool back_as_touchpad_click = false;
+    // The gamepad_selection pad_type_* name of the emulated pad; empty while the slot is free.
+    std::string_view virtual_type;
 
     union {
       XUSB_REPORT x360;
@@ -266,13 +272,15 @@ namespace platf {
      */
     int
     alloc_gamepad_internal(const gamepad_id_t &id, feedback_queue_t &feedback_queue, VIGEM_TARGET_TYPE gp_type,
-                           bool back_as_touchpad_click) {
+      bool back_as_touchpad_click) {
       auto &gamepad = gamepads[id.globalIndex];
       assert(!gamepad.gp);
 
       gamepad.client_relative_index = id.clientRelativeIndex;
       gamepad.last_report_ts = std::chrono::steady_clock::now();
       gamepad.back_as_touchpad_click = back_as_touchpad_click;
+      gamepad.virtual_type = gp_type == Xbox360Wired ? gamepad_selection::pad_type_xbox360 :
+                                                       gamepad_selection::pad_type_dualshock4;
 
       // Establish a connect to the ViGEm driver if we don't have one yet
       if (!client) {
@@ -353,6 +361,7 @@ namespace platf {
       }
 
       gamepad.gp.reset();
+      gamepad.virtual_type = {};
 
       // Disconnect from ViGEm if we just removed the last gamepad
       bool disconnect = true;
@@ -490,16 +499,14 @@ namespace platf {
 
   static int
   gamepad_mode_from_preference(std::string_view preference) {
-    if (preference == "x360"sv) return 2;
-    if (preference == "ds4"sv) return 3;
-    if (preference == "ds5"sv) return 4;
-    return 1;
+    return gamepad_selection::mode_from_preference(preference);
   }
 
   void
   set_mouse_mode(int mode) {
     current_mouse_mode.store(mode, std::memory_order_relaxed);
-    BOOST_LOG(info) << "Mouse mode set to: "sv << (mode == 0 ? "auto" : mode == 1 ? "virtual mouse" : "SendInput");
+    BOOST_LOG(info) << "Mouse mode set to: "sv << (mode == 0 ? "auto" : mode == 1 ? "virtual mouse" :
+                                                                                    "SendInput");
   }
 
   void
@@ -544,8 +551,15 @@ namespace platf {
 
   static int
   selected_gamepad_mode(std::string_view client_gamepad) {
-    const bool client_declared = !client_gamepad.empty() && config::input.client_gamepad_override;
-    return client_declared ? gamepad_mode_from_preference(client_gamepad) : effective_gamepad_mode();
+    return gamepad_selection::select(
+      effective_gamepad_mode(), client_gamepad, config::input.client_gamepad_override, 0, 0);
+  }
+
+  static int
+  selected_gamepad_mode(std::string_view client_gamepad, const gamepad_arrival_t &metadata) {
+    return gamepad_selection::select(
+      effective_gamepad_mode(), client_gamepad, config::input.client_gamepad_override,
+      metadata.type, metadata.capabilities);
   }
 
   struct input_raw_t {
@@ -589,7 +603,7 @@ namespace platf {
     }
 
     vigem_t *vigem;
-    std::unique_ptr<ds5::sidecar_client_t> ds5_sidecar;
+    std::unique_ptr<ds5::native_client_t> ds5_native;
     dsu_server_t *dsu_server;
     bool dsu_uninitialized_warning_logged = false;
     vmouse::device_t *vmouse_dev;
@@ -613,7 +627,7 @@ namespace platf {
       raw.vigem = nullptr;
     }
 
-    raw.ds5_sidecar = std::make_unique<ds5::sidecar_client_t>();
+    raw.ds5_native = std::make_unique<ds5::native_client_t>();
 
     // 初始化DSU服务器（延迟初始化，只在需要时创建）
     raw.dsu_server = nullptr;
@@ -746,11 +760,21 @@ namespace platf {
     if (current_mouse_mode.load(std::memory_order_relaxed) != 2 && raw.vmouse_dev && raw.vmouse_dev->is_available()) {
       uint8_t mask = 0;
       switch (button) {
-        case 1: mask = vmouse::BTN_LEFT; break;
-        case 2: mask = vmouse::BTN_MIDDLE; break;
-        case 3: mask = vmouse::BTN_RIGHT; break;
-        case 4: mask = vmouse::BTN_SIDE; break;
-        default: mask = vmouse::BTN_EXTRA; break;
+        case 1:
+          mask = vmouse::BTN_LEFT;
+          break;
+        case 2:
+          mask = vmouse::BTN_MIDDLE;
+          break;
+        case 3:
+          mask = vmouse::BTN_RIGHT;
+          break;
+        case 4:
+          mask = vmouse::BTN_SIDE;
+          break;
+        default:
+          mask = vmouse::BTN_EXTRA;
+          break;
       }
       raw.vmouse_dev->button(mask, release);
       return;
@@ -794,8 +818,7 @@ namespace platf {
         const auto notches = std::clamp(
           raw.vmouse_vscroll_accum / WHEEL_DELTA,
           -127,
-          127
-        );
+          127);
         if (!raw.vmouse_dev->scroll(static_cast<int8_t>(notches))) {
           raw.vmouse_vscroll_accum = 0;
           break;
@@ -829,8 +852,7 @@ namespace platf {
         const auto notches = std::clamp(
           raw.vmouse_hscroll_accum / WHEEL_DELTA,
           -127,
-          127
-        );
+          127);
         if (!raw.vmouse_dev->hscroll(static_cast<int8_t>(notches))) {
           raw.vmouse_hscroll_accum = 0;
           break;
@@ -1946,10 +1968,14 @@ namespace platf {
 
   void
   unicode(input_t &input, char *utf8, int size) {
-    // We can do no worse than one UTF-16 character per byte of UTF-8
-    WCHAR wide[size];
+    if (size <= 0) {
+      return;
+    }
 
-    int chars = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8, size, wide, size);
+    // We can do no worse than one UTF-16 character per byte of UTF-8
+    std::vector<WCHAR> wide(size);
+
+    int chars = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8, size, wide.data(), size);
     if (chars <= 0) {
       return;
     }
@@ -1975,43 +2001,51 @@ namespace platf {
 
   int
   alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata,
-                feedback_queue_t feedback_queue, std::string_view client_gamepad) {
+    feedback_queue_t feedback_queue, std::string_view client_gamepad) {
     auto raw = (input_raw_t *) input.get();
 
     // Component files may have been installed while Sunshine stayed running.
     // Refresh once per allocation; the input packet hot path reads only the cache.
-    ds5::refresh_component_availability();
-    const bool ds5_available = raw->ds5_sidecar && ds5::component_available();
+    const bool ds5_available = raw->ds5_native != nullptr;
     // Client-declared preference (Sunshine /launch extension) outranks the
     // per-app and global host-side selection while client_gamepad_override is on.
     const bool client_declared = !client_gamepad.empty() && config::input.client_gamepad_override;
-    auto gamepad_mode = selected_gamepad_mode(client_gamepad);
+    auto gamepad_mode = selected_gamepad_mode(client_gamepad, metadata);
     const auto per_app_override = !client_declared && current_gamepad_mode.load(std::memory_order_relaxed) != 0;
-    const char *selection_source = client_declared ? "client selection" : (per_app_override ? "per-app selection" : "global selection");
+    const bool client_ds5_capability = !client_declared && client_gamepad.empty() &&
+                                       config::input.client_gamepad_override && metadata.type == LI_CTYPE_PS &&
+                                       ((metadata.capabilities & LI_CCAP_DS5_HAPTICS_PCM) != 0 ||
+                                         gamepad_selection::is_dualsense_arrival(metadata.type, metadata.capabilities));
+    const char *selection_source = client_declared       ? "client selection" :
+                                   client_ds5_capability ? "client DS5 capability" :
+                                                           (per_app_override ? "per-app selection" : "global selection");
+    if (const auto identity_mode = ::ds5::tuning::runtime::identity_gamepad_mode(); identity_mode != 0) {
+      gamepad_mode = static_cast<int>(identity_mode);
+      selection_source = "identity profile";
+    }
 
     if (gamepad_mode == 4 && !ds5_available) {
-      BOOST_LOG(warning) << "DualSense emulation was requested by "sv << selection_source
-                         << ", but its optional component is unavailable; falling back to automatic gamepad selection"sv;
+      BOOST_LOG(warning) << "DualSense request unavailable ("sv << selection_source
+                         << "); DS4 fallback remains active"sv;
       gamepad_mode = 1;
     }
 
     if (gamepad_mode == 4) {
       BOOST_LOG(info) << "Gamepad " << id.globalIndex << " will be DualSense controller ("
                       << selection_source << ')';
-      const auto ds5_settings = ds5_config::current();
-      const auto result = raw->ds5_sidecar->alloc(
+      const auto result = raw->ds5_native->alloc(
         id,
         feedback_queue,
-        ds5_settings.audio_haptics,
-        ds5_settings.genshin_compatibility
-      );
+        true);
       if (result == 0) {
-        feedback_queue->raise(gamepad_feedback_msg_t::make_motion_event_state(id.clientRelativeIndex, LI_MOTION_TYPE_ACCEL, 100));
-        feedback_queue->raise(gamepad_feedback_msg_t::make_motion_event_state(id.clientRelativeIndex, LI_MOTION_TYPE_GYRO, 100));
+        /* 250 Hz is above the legacy 100 Hz request while keeping client and
+         * host scheduling overhead below the 1000 Hz USB report ceiling. */
+        feedback_queue->raise(gamepad_feedback_msg_t::make_motion_event_state(id.clientRelativeIndex, LI_MOTION_TYPE_ACCEL, 250));
+        feedback_queue->raise(gamepad_feedback_msg_t::make_motion_event_state(id.clientRelativeIndex, LI_MOTION_TYPE_GYRO, 250));
         return 0;
       }
       BOOST_LOG(warning) << "DualSense allocation failed for "sv << selection_source
-                         << "; falling back to automatic gamepad selection"sv;
+                         << "; DS4 fallback remains active"sv;
       gamepad_mode = 1;
     }
 
@@ -2075,8 +2109,8 @@ namespace platf {
     }
 
     const bool back_as_touchpad_click = selectedGamepadType == DualShock4Wired &&
-                                         gamepad_mode == 3 &&
-                                         config::input.ds4_back_as_touchpad_click;
+                                        gamepad_mode == 3 &&
+                                        config::input.ds4_back_as_touchpad_click;
     return raw->vigem->alloc_gamepad_internal(id, feedback_queue, selectedGamepadType, back_as_touchpad_click);
   }
 
@@ -2084,8 +2118,8 @@ namespace platf {
   free_gamepad(input_t &input, int nr) {
     auto raw = (input_raw_t *) input.get();
 
-    if (raw->ds5_sidecar && raw->ds5_sidecar->owns(nr)) {
-      raw->ds5_sidecar->free(nr);
+    if (raw->ds5_native && raw->ds5_native->owns(nr)) {
+      raw->ds5_native->free(nr);
       return;
     }
 
@@ -2099,13 +2133,25 @@ namespace platf {
   bool
   gamepad_is_ds5(input_t &input, int nr) {
     auto raw = (input_raw_t *) input.get();
-    return raw->ds5_sidecar && raw->ds5_sidecar->owns(nr);
+    return raw->ds5_native && raw->ds5_native->owns(nr);
+  }
+
+  std::string_view
+  gamepad_virtual_type(input_t &input, int nr) {
+    auto raw = (input_raw_t *) input.get();
+    if (raw->ds5_native && raw->ds5_native->owns(nr)) {
+      return gamepad_selection::pad_type_dualsense;
+    }
+    if (raw->vigem && nr >= 0 && nr < static_cast<int>(raw->vigem->gamepads.size())) {
+      return raw->vigem->gamepads[nr].virtual_type;
+    }
+    return {};
   }
 
   bool
   gamepad_has_ds5_audio_haptics(input_t &input) {
     auto raw = (input_raw_t *) input.get();
-    return raw->ds5_sidecar && raw->ds5_sidecar->audio_haptics_active();
+    return raw->ds5_native && raw->ds5_native->audio_haptics_active();
   }
 
   /**
@@ -2314,8 +2360,8 @@ namespace platf {
   gamepad_update(input_t &input, int nr, const gamepad_state_t &gamepad_state) {
     auto raw = (input_raw_t *) input.get();
 
-    if (raw->ds5_sidecar && raw->ds5_sidecar->owns(nr)) {
-      raw->ds5_sidecar->submit_input(nr, gamepad_state);
+    if (raw->ds5_native && raw->ds5_native->owns(nr)) {
+      raw->ds5_native->submit_input(nr, gamepad_state);
       return;
     }
     auto vigem = raw->vigem;
@@ -2353,8 +2399,8 @@ namespace platf {
   void
   gamepad_touch(input_t &input, const gamepad_touch_t &touch) {
     auto raw = (input_raw_t *) input.get();
-    if (raw->ds5_sidecar && raw->ds5_sidecar->owns(touch.id.globalIndex)) {
-      raw->ds5_sidecar->submit_touch(touch);
+    if (raw->ds5_native && raw->ds5_native->owns(touch.id.globalIndex)) {
+      raw->ds5_native->submit_touch(touch);
       return;
     }
     auto vigem = raw->vigem;
@@ -2472,8 +2518,8 @@ namespace platf {
   void
   gamepad_motion(input_t &input, const gamepad_motion_t &motion) {
     auto raw = (input_raw_t *) input.get();
-    if (raw->ds5_sidecar && raw->ds5_sidecar->owns(motion.id.globalIndex)) {
-      raw->ds5_sidecar->submit_motion(motion);
+    if (raw->ds5_native && raw->ds5_native->owns(motion.id.globalIndex)) {
+      raw->ds5_native->submit_motion(motion);
       return;
     }
     auto vigem = raw->vigem;
@@ -2532,8 +2578,8 @@ namespace platf {
   void
   gamepad_battery(input_t &input, const gamepad_battery_t &battery) {
     auto raw = (input_raw_t *) input.get();
-    if (raw->ds5_sidecar && raw->ds5_sidecar->owns(battery.id.globalIndex)) {
-      raw->ds5_sidecar->submit_battery(battery);
+    if (raw->ds5_native && raw->ds5_native->owns(battery.id.globalIndex)) {
+      raw->ds5_native->submit_battery(battery);
       return;
     }
     auto vigem = raw->vigem;
@@ -2604,6 +2650,19 @@ namespace platf {
     ds4_update_ts_and_send(vigem, battery.id.globalIndex);
   }
 
+  /**
+   * @brief Pass the headset and microphone state of a DualSense client to the virtual controller.
+   * @param input The global input context.
+   * @param status The state reported with control message 0x5516.
+   */
+  void
+  gamepad_ds5_status(input_t &input, const gamepad_ds5_status_t &status) {
+    auto raw = (input_raw_t *) input.get();
+    if (raw->ds5_native && raw->ds5_native->owns(status.id.globalIndex)) {
+      raw->ds5_native->submit_status(status);
+    }
+  }
+
   void
   freeInput(void *p) {
     auto input = (input_raw_t *) p;
@@ -2629,7 +2688,7 @@ namespace platf {
     auto dsu_server = ((input_raw_t *) input)->dsu_server;
     auto enabled = vigem != nullptr;
     auto switch_enabled = dsu_server != nullptr;
-    auto ds5_available = ((input_raw_t *) input)->ds5_sidecar->configured();
+    auto ds5_available = ((input_raw_t *) input)->ds5_native != nullptr;
     auto reason = enabled ? "" : "gamepads.vigem-not-available";
     auto switch_reason = switch_enabled ? "" : "gamepads.motion-server-not-available";
 
@@ -2641,7 +2700,7 @@ namespace platf {
     gps[0] = { "auto", true, reason };
     gps[1] = { "x360", enabled, reason };
     gps[2] = { "ds4", enabled, reason };
-    gps[3] = { "ds5", ds5_available, ds5_available ? "" : "gamepads.ds5-sidecar-not-available" };
+    gps[3] = { "ds5", ds5_available, ds5_available ? "" : "gamepads.ds5-native-not-available" };
     gps[4] = { "switch", switch_enabled, switch_reason };
 
     for (auto &[name, is_enabled, reason_disabled] : gps) {
@@ -2662,7 +2721,7 @@ namespace platf {
     platform_caps::caps_t caps = 0;
 
     const auto selected_mode = selected_gamepad_mode(client_gamepad);
-    const auto ds5_available = ds5::refresh_component_availability();
+    const auto ds5_available = true;
     // 能力声明必须与可选 DS5 组件不可用时的创建前回退保持一致。
     const auto gamepad_mode = selected_mode == 4 && !ds5_available ? 1 : selected_mode;
 
@@ -2671,8 +2730,8 @@ namespace platf {
       caps |= platform_caps::controller_touch;
     }
 
-    const auto ds5_settings = ds5_config::current();
-    if (gamepad_mode == 4 && ds5_settings.audio_haptics && ds5_available) {
+    if (gamepad_selection::advertise_ds5_capability(
+          ds5_available, gamepad_mode, client_gamepad, config::input.client_gamepad_override)) {
       caps |= platform_caps::ds5_haptics_pcm;
     }
 

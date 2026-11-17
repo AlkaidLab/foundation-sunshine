@@ -108,12 +108,15 @@ namespace display_device {
           }
 
           path_data_it->second.source_id_to_path_index[path.sourceInfo.id] = index;
+          // Active paths are normally ordered first. If that is not true, keep the first active source we actually see.
+          if (!path_data_it->second.active_source && w_utils::is_active(path)) {
+            path_data_it->second.active_source = path.sourceInfo.id;
+          }
         }
         else {
           path_data[device_info->device_id] = path_data_t {
             { { path.sourceInfo.id, index } },
             path.sourceInfo.adapterId,
-            // Since active paths are always in the front, this is the only time we check (when we add new entry)
             w_utils::is_active(path) ? boost::make_optional(path.sourceInfo.id) : boost::none
           };
         }
@@ -284,6 +287,37 @@ namespace display_device {
       return true;
     }
 
+    /**
+     * @brief Select a CCD path that can represent the device.
+     * @param device_id Device id used for diagnostics.
+     * @param data Collected path data for the device.
+     * @returns Path index, or none when the device has no usable path.
+     *
+     * Inactive or broken adapters often have no active source and do not have source id 0.
+     * Looking up that id throws std::out_of_range and aborts startup.
+     */
+    boost::optional<std::size_t>
+    representative_path_index(const std::string &device_id, const path_data_t &data) {
+      if (data.active_source) {
+        const auto active_it { data.source_id_to_path_index.find(*data.active_source) };
+        if (active_it != std::end(data.source_id_to_path_index)) {
+          return active_it->second;
+        }
+
+        BOOST_LOG(warning) << "Device " << device_id << " active source " << *data.active_source << " is not present in the enumerated paths.";
+      }
+
+      boost::optional<std::size_t> fallback_index;
+      for (const auto &source_entry : data.source_id_to_path_index) {
+        const auto index { source_entry.second };
+        if (!fallback_index || index < *fallback_index) {
+          fallback_index = index;
+        }
+      }
+
+      return fallback_index;
+    }
+
   }  // namespace
 
   boost::optional<device_info_map_t>
@@ -309,7 +343,13 @@ namespace display_device {
     }
 
     for (const auto &[device_id, data] : topology_data) {
-      const auto &path { display_data->paths.at(data.source_id_to_path_index.at(data.active_source.get_value_or(0))) };
+      const auto path_index { representative_path_index(device_id, data) };
+      if (!path_index || *path_index >= display_data->paths.size()) {
+        BOOST_LOG(warning) << "Skipping display device " << device_id << " because it has no usable display path.";
+        continue;
+      }
+
+      const auto &path { display_data->paths[*path_index] };
 
       if (w_utils::is_active(path)) {
         const auto mode { w_utils::get_source_mode(w_utils::get_source_index(path, display_data->modes), display_data->modes) };
@@ -329,6 +369,11 @@ namespace display_device {
           hdr_state_e::unknown
         };
       }
+    }
+
+    if (available_devices.empty()) {
+      BOOST_LOG(warning) << "Display paths were returned, but no valid display devices could be enumerated.";
+      return boost::none;
     }
 
     return available_devices;

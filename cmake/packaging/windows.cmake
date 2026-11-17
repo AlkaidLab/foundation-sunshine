@@ -3,7 +3,57 @@
 # Fetch driver dependencies (downloads at configure time)
 include(${CMAKE_MODULE_PATH}/packaging/FetchDriverDeps.cmake)
 
+# Every driver the fetcher can download must have a reviewed license text. The
+# manifest pins the version variables selected above, so a pin bump without a
+# matching license review stops the configure step before packaging.
+# Source: cmake-install-20261117; cmake-cpack-archive-20261117.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(NOT Python3_Interpreter_FOUND)
+  message(FATAL_ERROR
+    "Python 3 is required to verify third-party license texts before packaging")
+endif()
+set(_third_party_license_pins
+    VIGEMBUS_VERSION VIGEMBUS_ASSET_NAME
+    USBIP_VERSION USBIP_ASSET_NAME
+    NEFCON_VERSION
+    VDD_DRIVER_VERSION VDD_WIN10_DRIVER_VERSION
+    VDD_DRIVER_ASSET_NAME VDD_WIN10_DRIVER_ASSET_NAME
+    VMOUSE_DRIVER_VERSION VMOUSE_PUBLIC_REPO)
+set(_third_party_license_pin_args)
+foreach(_third_party_license_pin IN LISTS _third_party_license_pins)
+  list(APPEND _third_party_license_pin_args
+       --pin "${_third_party_license_pin}=${${_third_party_license_pin}}")
+endforeach()
+execute_process(
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/ci/check-third-party-licenses.py"
+          --root "${CMAKE_SOURCE_DIR}"
+          ${_third_party_license_pin_args}
+  RESULT_VARIABLE _third_party_license_status
+  OUTPUT_VARIABLE _third_party_license_output
+  ERROR_VARIABLE _third_party_license_error)
+if(NOT _third_party_license_status EQUAL 0)
+  string(STRIP "${_third_party_license_output}${_third_party_license_error}"
+         _third_party_license_message)
+  message(FATAL_ERROR
+    "Third-party license verification failed:\n${_third_party_license_message}")
+endif()
+
+# License texts for the third-party binaries in this package. The Inno installer
+# copies the staging tree and the CPack ZIP is built from it, so both packages
+# carry the same files.
+install(DIRECTORY "${CMAKE_SOURCE_DIR}/third_party/licenses/"
+        DESTINATION "licenses"
+        COMPONENT application)
+install(FILES "${CMAKE_SOURCE_DIR}/NOTICE"
+              "${CMAKE_SOURCE_DIR}/LICENSE"
+        DESTINATION "."
+        COMPONENT application)
+
 install(TARGETS sunshine RUNTIME DESTINATION "." COMPONENT application)
+install(FILES "${sunshine_webp_SOURCE_DIR}/COPYING"
+        DESTINATION "tools/library/libwebp" RENAME "LICENSE.txt" COMPONENT application)
+install(FILES "${sunshine_webp_SOURCE_DIR}/PATENTS"
+        DESTINATION "tools/library/libwebp" RENAME "PATENTS.txt" COMPONENT application)
 set(SUNSHINE_MAT_CAPTURE_AVAILABLE 0)
 if (TARGET sunshine_mat_capture)
   set(SUNSHINE_MAT_CAPTURE_AVAILABLE 1)
@@ -54,20 +104,13 @@ install(TARGETS audio-info RUNTIME DESTINATION "tools" COMPONENT audio)
 install(TARGETS sunshinesvc RUNTIME DESTINATION "tools" COMPONENT application)
 install(TARGETS qiin-tabtip RUNTIME DESTINATION "tools" COMPONENT application)
 
-# The optional self-contained runtime is a separate release asset. The main
-# package carries only its pinned download manifest, keeping the feature
-# installable without adding the complete .NET runtime to every Sunshine copy.
-set(DS5_SIDECAR_PACKAGE_MANIFEST "${CMAKE_BINARY_DIR}/ds5-sidecar-package.json" CACHE FILEPATH
-    "Path to the pinned Sunshine DualSense sidecar package manifest")
-if(EXISTS "${DS5_SIDECAR_PACKAGE_MANIFEST}")
-  install(FILES "${DS5_SIDECAR_PACKAGE_MANIFEST}"
+# The touch application command uses this host-owned protocol launcher. It is
+# published from tools/sparxie-launch when the Windows SDK build has dotnet.
+if(TARGET sparxie-launch-publish)
+  add_dependencies(sunshine sparxie-launch-publish)
+  install(DIRECTORY "${SPARXIE_LAUNCH_PUBLISH_DIR}/"
           DESTINATION "tools"
-          RENAME "ds5-sidecar-package.json"
           COMPONENT application)
-  set(SUNSHINE_DS5_SIDECAR_PACKAGE_AVAILABLE ON)
-else()
-  message(STATUS "DualSense sidecar package manifest was not generated; optional component install will be unavailable")
-  set(SUNSHINE_DS5_SIDECAR_PACKAGE_AVAILABLE OFF)
 endif()
 
 # Shared tool: nefconw.exe (used by VDD and vmouse install scripts)
@@ -118,6 +161,29 @@ if(VIGEMBUS_AVAILABLE)
   install(FILES "${VIGEMBUS_INSTALLER}"
           DESTINATION "scripts/gamepad"
           COMPONENT gamepad)
+endif()
+set(GENERATED_USBIP_INSTALL_SCRIPT "${CMAKE_BINARY_DIR}/generated/install-usbip.bat")
+configure_file(
+        "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/usbip/install-usbip.bat.in"
+        "${GENERATED_USBIP_INSTALL_SCRIPT}"
+        @ONLY)
+install(FILES "${GENERATED_USBIP_INSTALL_SCRIPT}"
+              "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/usbip/usbip-package.ps1"
+              "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/usbip/usbip-package-functions.psm1"
+        DESTINATION "scripts"
+        COMPONENT usbip)
+# The root-hub guard is always installed (the assets component), not with the USB/IP component: the Panel runs it around its
+# own runtime install of usbip-win2 too (issue #1272), and the recovery steps name it.
+install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/usbip/usbip-package-ownership.psm1"
+              "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/usbip/usbip-roothub-guard.ps1"
+        DESTINATION "scripts"
+        COMPONENT assets)
+install(FILES "${CMAKE_SOURCE_DIR}/third_party/licenses/usbip-win2/LICENSE"
+        DESTINATION "licenses/usbip-win2" COMPONENT usbip)
+if(USBIP_AVAILABLE)
+  install(DIRECTORY "${USBIP_PAYLOAD_DIR}/"
+          DESTINATION "scripts/usbip"
+          COMPONENT usbip)
 endif()
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/vsink/"
         DESTINATION "scripts"
@@ -187,6 +253,12 @@ if(VMOUSE_DRIVER_AVAILABLE)
 endif()
 
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/helper/"
+        DESTINATION "tools"
+        COMPONENT assets)
+install(FILES "${CMAKE_SOURCE_DIR}/tools/driver-reboot-check.ps1"
+        DESTINATION "tools"
+        COMPONENT assets)
+install(FILES "${CMAKE_SOURCE_DIR}/tools/usbip-win2-root.ps1"
         DESTINATION "tools"
         COMPONENT assets)
 
@@ -263,11 +335,7 @@ set(CPACK_COMPONENT_GAMEPAD_DESCRIPTION "Scripts to install and uninstall Virtua
 set(CPACK_COMPONENT_GAMEPAD_GROUP "Scripts")
 
 # include specific packaging
-if(SUNSHINE_DS5_SIDECAR_PACKAGE_AVAILABLE)
-  include(${CMAKE_MODULE_PATH}/packaging/windows_innosetup.cmake)
-else()
-  message(STATUS "Inno Setup targets are disabled because the DualSense sidecar package manifest is missing")
-endif()
+include(${CMAKE_MODULE_PATH}/packaging/windows_innosetup.cmake)
 # Legacy NSIS/WiX (kept for reference, no longer used)
 # include(${CMAKE_MODULE_PATH}/packaging/windows_nsis.cmake)
 # include(${CMAKE_MODULE_PATH}/packaging/windows_wix.cmake)

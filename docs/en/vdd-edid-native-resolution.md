@@ -9,7 +9,7 @@ the native-size option in `CREATEMONITOR`; a valid custom EDID takes precedence.
 
 ## Select and verify a native resolution
 
-1. In the Windows WebUI, open **Audio/Video → Virtual Display → Advanced → EDID native resolution**.
+1. In the Windows WebUI, open **Display & video → Foundation Virtual Display → Advanced → EDID native resolution**.
 2. Choose **Default (1920×1080)** or a configured **Advertised Resolution**, including a custom size. Adding a resolution does not automatically select it as native.
 3. If you changed the advertised resolution or FPS lists, use **Apply** to reload Sunshine's mode list. For an EDID-only change, use **Save**.
 4. Turn off **VDD keep-enabled mode** in the system tray and disable **VDD reuse** so Sunshine can remove and recreate the virtual monitor. Choose **Quit Session** in Moonlight and reconnect.

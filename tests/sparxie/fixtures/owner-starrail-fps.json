@@ -1,0 +1,40 @@
+{
+  "app": {
+    "name": "Star Rail owner app",
+    "cmd": "starrail-owner",
+    "sparxie": {
+      "install": "starrail-cn-2",
+      "game": "starrail",
+      "region": "cn",
+      "mode": "touch",
+      "profile": "starrail-cn-2",
+      "restore": "restore",
+      "settings": {},
+      "options": {
+        "fps": "display",
+        "fpsUnlock": true,
+        "followPreset": false,
+        "input": "kbm"
+      }
+    }
+  },
+  "profile": {
+    "id": "starrail-cn-2",
+    "displayName": "Star Rail owner profile",
+    "game": "starRail",
+    "executablePath": "StarRail.exe",
+    "hoyo": {
+      "fpsUnlockEnabled": true,
+      "targetFps": 120,
+      "touchUiEnabled": false
+    }
+  },
+  "registry": {
+    "model": {
+      "FPS": 60,
+      "EnableVSync": true,
+      "RenderScale": 1.0
+    },
+    "quality": 4
+  }
+}

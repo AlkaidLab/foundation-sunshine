@@ -25,6 +25,7 @@
 
 #ifdef _WIN32
 #include <windows.h>
+  #include "src/platform/windows/misc.h"
 #endif
 
 namespace remote_usb {
@@ -287,11 +288,19 @@ run_process(const std::string &executable,
                       launch_error);
   }
   catch (const std::exception &exception) {
+#ifdef _WIN32
+    result.standard_error = platf::to_utf8_best_effort(exception.what(), GetOEMCP());
+#else
     result.standard_error = exception.what();
+#endif
     return result;
   }
   if (launch_error || !child.valid()) {
+#ifdef _WIN32
+    result.standard_error = platf::to_utf8_best_effort(launch_error ? launch_error.message() : "process is invalid", GetACP());
+#else
     result.standard_error = launch_error ? launch_error.message() : "process is invalid";
+#endif
     return result;
   }
 
@@ -438,6 +447,12 @@ run_process(const std::string &executable,
     append_bounded(result.standard_error, group_error.message(), max_output_bytes);
   }
   result.exit_code = child.exit_code();
+#ifdef _WIN32
+  // The helper writes its console output in the console code page. Keep valid
+  // UTF-8 and convert the rest before the text reaches a log or the UI.
+  result.standard_output = platf::to_utf8_best_effort(result.standard_output, GetOEMCP());
+  result.standard_error = platf::to_utf8_best_effort(result.standard_error, GetOEMCP());
+#endif
   return result;
 }
 

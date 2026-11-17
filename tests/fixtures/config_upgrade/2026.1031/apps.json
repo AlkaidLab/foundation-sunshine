@@ -1,0 +1,67 @@
+{
+  "env": {
+    "PATH": "$(PATH):$(HOME)/.local/bin"
+  },
+  "apps": [
+    {
+      "name": "Desktop",
+      "image-path": "desktop.png"
+    },
+    {
+      "name": "Low Res Desktop",
+      "image-path": "desktop.png",
+      "prep-cmd": [
+        {
+          "do": "xrandr --output HDMI-1 --mode 1920x1080",
+          "undo": "xrandr --output HDMI-1 --mode 1920x1200"
+        }
+      ]
+    },
+    {
+      "name": "Steam Big Picture",
+      "detached": [
+        "setsid steam steam://open/bigpicture"
+      ],
+      "image-path": "steam.png"
+    },
+    {
+      "name": "Compat Game",
+      "output": "compat-output",
+      "cmd": "compat-game --fullscreen",
+      "working-dir": "C:\\Games\\Compat",
+      "image-path": "compat.png",
+      "elevated": true,
+      "auto-detach": false,
+      "wait-all": true,
+      "exit-timeout": 5,
+      "mouse-mode": 1,
+      "gamepad": "ds5",
+      "exclude-global-prep-cmd": false,
+      "prep-cmd": [
+        {
+          "do": "prepare",
+          "undo": "cleanup",
+          "elevated": false
+        }
+      ],
+      "detached": [
+        "helper"
+      ],
+      "menu-cmd": [
+        {
+          "id": "menu-1",
+          "name": "Menu",
+          "cmd": "run",
+          "elevated": true
+        }
+      ],
+      "rtx-hdr": {
+        "mode": "on",
+        "contrast": 1,
+        "saturation": 1,
+        "middle-gray": 50,
+        "peak-nits": 1000
+      }
+    }
+  ]
+}

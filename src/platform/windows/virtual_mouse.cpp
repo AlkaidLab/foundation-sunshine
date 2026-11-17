@@ -6,12 +6,17 @@
  * VID/PID, then sends mouse data via HID output reports.
  */
 #define WIN32_LEAN_AND_MEAN
-#define NOMINMAX
+#ifndef NOMINMAX
+  #define NOMINMAX
+#endif
 #include <windows.h>
 
 // HID headers
+// hidsdi.h defines NTSTATUS and includes hidusage.h before hidpi.h.
+// clang-format off
 #include <hidsdi.h>
 #include <hidpi.h>
+// clang-format on
 #include <setupapi.h>
 
 #include <algorithm>
@@ -21,9 +26,9 @@
 #include <mutex>
 #include <thread>
 
-#include "virtual_mouse.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
+#include "virtual_mouse.h"
 
 // From vmouse_shared.h - duplicated here to avoid driver header dependency
 static constexpr uint16_t VMOUSE_VID = 0x1ACE;
@@ -34,7 +39,7 @@ static constexpr uint16_t VMOUSE_OUTPUT_REPORT_SIZE = 8;
 namespace {
 #ifdef SUNSHINE_VIRTUAL_MOUSE_STANDALONE_TEST
   struct null_log_t {
-    template<typename T>
+    template <typename T>
     null_log_t &
     operator<<(T &&) {
       return *this;
@@ -92,7 +97,7 @@ namespace platf {
     namespace detail {
       output_report_t
       build_output_report(uint8_t buttons, int16_t delta_x, int16_t delta_y,
-                          int8_t scroll_v, int8_t scroll_h) {
+        int8_t scroll_v, int8_t scroll_h) {
         return output_report_t {
           VMOUSE_OUTPUT_REPORT_ID,
           buttons,
@@ -107,7 +112,7 @@ namespace platf {
 
       uint8_t
       apply_button_transition(uint8_t current_buttons, uint8_t button_mask,
-                              bool release) {
+        bool release) {
         return release ? static_cast<uint8_t>(current_buttons & ~button_mask) :
                          static_cast<uint8_t>(current_buttons | button_mask);
       }
@@ -288,9 +293,9 @@ namespace platf {
 
       bool
       take_accumulated_report(
-          uint8_t &buttons,
-          int16_t &dx,
-          int16_t &dy) {
+        uint8_t &buttons,
+        int16_t &dx,
+        int16_t &dy) {
         std::lock_guard<std::mutex> lk(state_mutex);
         if (!accum_dirty) {
           return false;
@@ -337,8 +342,8 @@ namespace platf {
         HidD_GetHidGuid(&hidGuid);
 
         HDEVINFO devInfoSet = SetupDiGetClassDevsW(
-            &hidGuid, NULL, NULL,
-            DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+          &hidGuid, NULL, NULL,
+          DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
 
         if (devInfoSet == INVALID_HANDLE_VALUE) {
           VMOUSE_LOG(debug) << "vmouse: SetupDiGetClassDevs failed"sv;
@@ -350,8 +355,8 @@ namespace platf {
         devInterfaceData.cbSize = sizeof(SP_DEVICE_INTERFACE_DATA);
 
         for (DWORD i = 0;
-             SetupDiEnumDeviceInterfaces(devInfoSet, NULL, &hidGuid, i, &devInterfaceData);
-             i++) {
+          SetupDiEnumDeviceInterfaces(devInfoSet, NULL, &hidGuid, i, &devInterfaceData);
+          i++) {
           // Get required buffer size
           DWORD requiredSize = 0;
           SetupDiGetDeviceInterfaceDetailW(devInfoSet, &devInterfaceData, NULL, 0, &requiredSize, NULL);
@@ -363,20 +368,20 @@ namespace platf {
           detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
 
           if (!SetupDiGetDeviceInterfaceDetailW(
-                  devInfoSet, &devInterfaceData, detail, requiredSize, NULL, NULL)) {
+                devInfoSet, &devInterfaceData, detail, requiredSize, NULL, NULL)) {
             continue;
           }
 
           // Open with no access first so we can inspect attributes even if
           // the device only allows write access for output reports.
           HANDLE h = CreateFileW(
-              detail->DevicePath,
-              0,
-              FILE_SHARE_READ | FILE_SHARE_WRITE,
-              NULL,
-              OPEN_EXISTING,
-              0,
-              NULL);
+            detail->DevicePath,
+            0,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            NULL,
+            OPEN_EXISTING,
+            0,
+            NULL);
 
           if (h == INVALID_HANDLE_VALUE) continue;
 
@@ -478,7 +483,8 @@ namespace platf {
     device_t::device_t(): impl(std::make_unique<impl_t>()) {}
     device_t::~device_t() = default;
     device_t::device_t(device_t &&other) noexcept = default;
-    device_t &device_t::operator=(device_t &&other) noexcept = default;
+    device_t &
+    device_t::operator=(device_t &&other) noexcept = default;
 
     bool
     device_t::is_available() const {
@@ -565,7 +571,7 @@ namespace platf {
 
     bool
     device_t::send_report(uint8_t buttons, int16_t delta_x, int16_t delta_y,
-                          int8_t scroll_v, int8_t scroll_h) {
+      int8_t scroll_v, int8_t scroll_h) {
       {
         std::lock_guard<std::mutex> lk(impl->state_mutex);
         impl->buttonState = buttons;
@@ -593,8 +599,8 @@ namespace platf {
       HidD_GetHidGuid(&hidGuid);
 
       HDEVINFO devInfoSet = SetupDiGetClassDevsW(
-          &hidGuid, NULL, NULL,
-          DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
+        &hidGuid, NULL, NULL,
+        DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
 
       if (devInfoSet == INVALID_HANDLE_VALUE) return false;
 
@@ -603,8 +609,8 @@ namespace platf {
       devInterfaceData.cbSize = sizeof(SP_DEVICE_INTERFACE_DATA);
 
       for (DWORD i = 0;
-           SetupDiEnumDeviceInterfaces(devInfoSet, NULL, &hidGuid, i, &devInterfaceData);
-           i++) {
+        SetupDiEnumDeviceInterfaces(devInfoSet, NULL, &hidGuid, i, &devInterfaceData);
+        i++) {
         DWORD requiredSize = 0;
         SetupDiGetDeviceInterfaceDetailW(devInfoSet, &devInterfaceData, NULL, 0, &requiredSize, NULL);
         if (requiredSize == 0) continue;
@@ -614,18 +620,18 @@ namespace platf {
         detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA_W);
 
         if (!SetupDiGetDeviceInterfaceDetailW(
-                devInfoSet, &devInterfaceData, detail, requiredSize, NULL, NULL)) {
+              devInfoSet, &devInterfaceData, detail, requiredSize, NULL, NULL)) {
           continue;
         }
 
         HANDLE h = CreateFileW(
-            detail->DevicePath,
-            0,  // No access needed, just check attributes
-            FILE_SHARE_READ | FILE_SHARE_WRITE,
-            NULL,
-            OPEN_EXISTING,
-            0,
-            NULL);
+          detail->DevicePath,
+          0,  // No access needed, just check attributes
+          FILE_SHARE_READ | FILE_SHARE_WRITE,
+          NULL,
+          OPEN_EXISTING,
+          0,
+          NULL);
 
         if (h == INVALID_HANDLE_VALUE) continue;
 

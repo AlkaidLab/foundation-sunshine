@@ -21,7 +21,7 @@ export function createAgentSkill(definition = {}, options = {}) {
 export function createCapabilityFromSkill(skill, capability = {}) {
   return {
     stage: capability.stage || skill.type || 'extension',
-    icon: capability.icon || 'fa-bolt',
+    icon: capability.icon || 'bolt',
     label: capability.label || skill.label || skill.id,
     labels: capability.labels || {},
     required: capability.required === true,
@@ -107,7 +107,7 @@ export function normalizeEnabledSkillIds(skillIds, capabilities = []) {
 }
 
 export function getAgentCapabilityIcon(skillId, capabilities = []) {
-  return getAgentCapability(skillId, capabilities)?.icon || 'fa-bolt'
+  return getAgentCapability(skillId, capabilities)?.icon || 'bolt'
 }
 
 export function getAgentCapabilityLabel(skillId, options = {}) {

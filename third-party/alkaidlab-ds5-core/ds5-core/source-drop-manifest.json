@@ -1,0 +1,47 @@
+{
+  "name": "ds5-core",
+  "abi": 1,
+  "license": "Apache-2.0",
+  "notice": "NOTICE",
+  "include": [
+    "include/alkaidlab/ds5_core/ds5_core.h"
+  ],
+  "source": [
+    "src/ds5_core.c"
+  ],
+  "tests": [
+    "tests/ds5_core_contract_test.c",
+    "tests/ds5_core_report_vectors_test.c",
+    "tests/ds5_core_fuzz.c"
+  ],
+  "requires": [],
+  "source_keys": [
+    "ds5-dualsense-report-20261031",
+    "ds5-linux-hid-playstation-20261031",
+    "ds5-sdl-hidapi-ps5-20261031",
+    "ds5-usb-audio-1-20261031"
+  ],
+  "source_commit": "04f3c8fc72ce96c15106fea7a961f7269093c011",
+  "files": {
+    "include/alkaidlab/ds5_core/ds5_core.h": "6b8e0dea992b8dea463199cddebf208aba2de272b9293508c03f1e36a2484ff6",
+    "src/ds5_core.c": "0c4536c9e18ee930c5de5b9a60325fcb69aacfc169ce04663c9727f31e19ebe6",
+    "LICENSE": "16d5fe03e25b6022876abc17c32aa6072107f9e8f1bbc1f8510ff0f142af3fef",
+    "NOTICE": "90ed269c1be9184344ff6b89072d55e32530f1f1ca312c3ce5aed8ffd4b41a39",
+    "REPORT_LAYOUTS.md": "f635ae3e6a6c4585b98b41232a30b116d3dfc8c086f839e311b0377bfe615577",
+    "tests/ds5_core_contract_test.c": "bcf93047057fe113e16808bd427d397fab4a3d5aee57fde477f1a5bbf20b4f4a",
+    "tests/ds5_core_report_vectors_test.c": "ef6239ac95a42d95941e5c4c2ace73288f7d102ce0653a148a6fc3851ba0e727",
+    "tests/ds5_core_fuzz.c": "6e572b9e44197178c2aa60d6477993ac4353c5bae7f6d9a1c4ff2fb24df13016",
+    "tests/fixtures/spikeA-capture.json": "8e8f36d9085417b8aba031efbcc9b3922735bed4e28c2dce7c14b6c60ccf5e63",
+    "tests/fixtures/spikeA-input-usb.hex": "2cfbb460e456fa9f93873bafdd8e62da6424ba3fe75233ea2c124aad4aaecf56",
+    "tests/fixtures/spikeA-input-extended-synthetic.hex": "9093b8991dd4da22fc866b8e69de0dd5d2e2529744f571dd84a61cb4ee32deef",
+    "tests/fixtures/spikeA-output-usb-63.hex": "8fa740efabcf98b67872b5487c47a0e5887f1f4ab93386e0bfa09934732de5c7",
+    "tests/fixtures/spikeA-feature-05.hex": "5978b0ea58d8caeea72544ac24b29737ab794cc8b34791b3f4bf28db9eb06a7c",
+    "tests/fixtures/spikeA-feature-09.hex": "ac8952c4d994432b512f19ed2046002a62b1d6201b19740160bcfe59157209ce",
+    "tests/fixtures/spikeA-feature-20.hex": "a288c77da804ddca83316ab49acc86c384e2270fa5e433e212e4a8b0efbc0157",
+    "tests/fixtures/spikeA-bt-input-synthetic.hex": "2816dc87b07e1b706122ef15d8776d0ae064012332d5fc6b5f239249b02aa47b",
+    "tests/fixtures/spikeA-bt-output-synthetic.hex": "18f67ff5de18a6cd500ac028e893df98d58922c282743bd8c2596bb103140205",
+    "tests/fixtures/cfg_desc.hex": "8e09c84d642ca1449b66ea87b88abd001ff80844a384694d3cd0d7b83161d79b",
+    "tests/fixtures/hid_report_desc.hex": "f88ffc5cc4e470eb2eceb526cde2c915a1ce6af3545e33d86d508ff4244d0fa3"
+  },
+  "capture_fixture_manifest": "tests/fixtures/spikeA-capture.json"
+}
