@@ -1407,7 +1407,9 @@ namespace amf {
       { AMF_VIDEO_ENCODER_HEVC_TARGET_BITRATE, AMF_VIDEO_ENCODER_HEVC_PEAK_BITRATE, nullptr },
       { AMF_VIDEO_ENCODER_AV1_TARGET_BITRATE, AMF_VIDEO_ENCODER_AV1_PEAK_BITRATE, AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE },
     };
-    const auto &props = budget_props[video_format];
+    // Map an out-of-range video_format to the H.264 row, matching the
+    // get_codec_id() default branch, so the table lookup can never go OOB.
+    const auto &props = budget_props[video_format >= 0 && video_format <= 2 ? video_format : 0];
     auto vbv_size = props.vbv ? amf_avcodec_compat::vbv_buffer_size(bitrate_kbps, current_config) :
                                 int64_t { 0 };
 
@@ -1433,7 +1435,7 @@ namespace amf {
       if (snapshot_ok) {
         // Roll back whatever landed: an unapplied property keeps its snapshot
         // value, so only the writes that took effect need restoring.
-        auto rollback = [&](const wchar_t *what, const wchar_t *prop, amf_int64 value, AMF_RESULT write_res) {
+        auto rollback = [&](const char *what, const wchar_t *prop, amf_int64 value, AMF_RESULT write_res) {
           if (write_res != AMF_OK) return;
           const auto res = encoder->SetProperty(prop, value);
           if (res != AMF_OK) {
