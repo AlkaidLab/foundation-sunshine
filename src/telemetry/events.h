@@ -64,7 +64,17 @@ namespace telemetry {
     int priority = -1;  ///< 0, 1 or 2 (see event_priority); -1: by the event's name
     std::string report_id;  ///< a feedback report sent with both switches off: its one-time random id, used in place of an install id (empty for every other event)
     std::string report_install;  ///< a feedback report: the install id it was given when it was accepted (empty when it has a one-time `report_id` instead, and for every other event). The identity of a report is fixed at that moment and never looked up again
+    std::uint64_t count = 1;  ///< occurrences the sender merged into this record (see aggregate_events); 1 is a single event
   };
+
+  /** True for the high-volume usage and experience families the sender holds and merges before it uploads. */
+  bool high_volume_event(std::string_view name);
+
+  /**
+   * Merges the high-volume events of one batch by name, kind, version and their non-numeric properties. Counters and bucket vectors (page_vitals, api_latency) are summed, the other numbers are
+   * averaged, `count` holds the occurrences. Everything else (priority records, reports) passes through unchanged. `origin[i]` lists the positions in `events` that went into the result `i`.
+   */
+  std::vector<event_t> aggregate_events(const std::vector<event_t> &events, std::vector<std::vector<std::size_t>> &origin);
 
   /**
    * How much an event matters when something has to give: 0 is never sampled away, sent first and the last to be dropped (user reports, fatal errors, the first report of an error, serious stream problems, the

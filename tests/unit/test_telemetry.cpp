@@ -3756,3 +3756,99 @@ TEST(ErrorReportsAndTheChoice, TheCountOfLaterReportsCarriesNeitherTheStackNorTh
   EXPECT_FALSE(count->contains("crumbs"));
   EXPECT_FALSE(count->contains("log"));
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// host-side merging of high-volume records
+
+TEST(TelemetryAggregate, MergesHighVolumeRecordsAndPassesPriorityRecordsThrough) {
+  const auto exit_a = *shape_event(kind_e::usage, "app_exit", json { { "uptime_s", 30 } }, 100);
+  const auto exit_b = *shape_event(kind_e::usage, "app_exit", json { { "uptime_s", 60 } }, 101);
+  const auto feature = *shape_event(kind_e::usage, "feature_used", json { { "feature", "host.apps" } }, 102);
+  const auto err = *shape_event(kind_e::error, "error", json { { "component", "host" }, { "code", "e1234567" }, { "severity", "error" }, { "count", 1 } }, 103);
+  std::vector<std::vector<std::size_t>> origin;
+  const auto out = aggregate_events({ exit_a, err, exit_b, feature }, origin);
+  ASSERT_EQ(out.size(), 3u);
+  EXPECT_EQ(out[0].name, "app_exit");
+  EXPECT_EQ(out[0].count, 2u);
+  EXPECT_EQ(out[0].props["uptime_s"], 45) << "plain numbers are averaged, and stay integers";
+  EXPECT_EQ(origin[0], (std::vector<std::size_t> { 0, 2 }));
+  EXPECT_EQ(out[1].name, "error");
+  EXPECT_EQ(out[1].count, 1u) << "a priority record is never merged";
+  EXPECT_EQ(out[2].name, "feature_used");
+  EXPECT_EQ(event_to_json(out[2]).contains("count"), false) << "a single occurrence is sent as a plain event";
+  EXPECT_EQ(event_to_json(out[0])["count"], 2);
+}
+
+TEST(TelemetryAggregate, CounterAndBucketPropsOfPageRecordsAreSummed) {
+  const auto a = *shape_event(kind_e::experience, "page_vitals", json { { "page", "home" }, { "visits", 2 }, { "lcp", json::array({ 1, 0, 0, 0, 0, 0, 0, 0 }) } }, 100);
+  const auto b = *shape_event(kind_e::experience, "page_vitals", json { { "page", "home" }, { "visits", 3 }, { "lcp", json::array({ 0, 2, 0, 0, 0, 0, 0, 0 }) } }, 101);
+  const auto other = *shape_event(kind_e::experience, "page_vitals", json { { "page", "apps" }, { "visits", 1 } }, 102);
+  std::vector<std::vector<std::size_t>> origin;
+  const auto out = aggregate_events({ a, b, other }, origin);
+  ASSERT_EQ(out.size(), 2u);
+  EXPECT_EQ(out[0].props["visits"], 5);
+  EXPECT_EQ(out[0].props["lcp"], json::array({ 1, 2, 0, 0, 0, 0, 0, 0 }));
+  EXPECT_EQ(out[1].props["page"], "apps");
+}
+
+TEST(TelemetryServiceAggregate, HighVolumeRecordsWaitForTheIntervalAndLeaveMergedAtExit) {
+  service_options_t options;
+  options.aggregate_interval_ms = 6 * 60 * 60 * 1000;
+  harness_t h(options);
+  for (int i = 0; i < 3; ++i) ASSERT_TRUE(h.svc->emit(kind_e::usage, "feature_used", json { { "feature", "host.apps" } }));
+  ASSERT_TRUE(h.svc->emit(kind_e::error, "error", json { { "component", "host" }, { "code", "e1234567" }, { "severity", "error" }, { "count", 1 } }));
+  h.svc->flush();
+  EXPECT_EQ(h.svc->buffered(), 3u) << "the feature records are held";
+  EXPECT_EQ(h.svc->pump(), 1);
+  ASSERT_EQ(h.posted.size(), 1u);
+  EXPECT_EQ(names_of(h.posted), std::set<std::string> { "error" }) << "the priority record left at once";
+  h.now += 6 * 60 * 60 * 1000 + 1;
+  h.svc->flush();
+  EXPECT_EQ(h.svc->buffered(), 0u);
+  EXPECT_EQ(h.svc->pump(), 1);
+  ASSERT_EQ(h.posted.size(), 2u);
+  ASSERT_EQ(h.posted[1]["events"].size(), 1u);
+  EXPECT_EQ(h.posted[1]["events"][0]["name"], "feature_used");
+  EXPECT_EQ(h.posted[1]["events"][0]["count"], 3);
+}
+
+TEST(TelemetryServiceAggregate, ExitSendsWhatIsHeldAndASwitchTurnedOffDropsIt) {
+  service_options_t options;
+  options.aggregate_interval_ms = 6 * 60 * 60 * 1000;
+  harness_t h(options);
+  ASSERT_TRUE(h.svc->emit(kind_e::usage, "app_exit", json { { "uptime_s", 30 } }));
+  h.svc->flush();
+  EXPECT_EQ(h.svc->buffered(), 1u);
+  h.svc->flush(true);
+  EXPECT_EQ(h.svc->buffered(), 0u);
+  EXPECT_EQ(h.svc->pump(), 1);
+
+  harness_t g(options);
+  ASSERT_TRUE(g.svc->emit(kind_e::usage, "app_exit", json { { "uptime_s", 30 } }));
+  g.svc->flush();
+  ASSERT_EQ(g.svc->buffered(), 1u);
+  g.consent = { false, true };
+  g.svc->consent_changed();
+  EXPECT_EQ(g.svc->buffered(), 0u) << "what waited for the interval is gone with the choice";
+}
+
+TEST(TelemetryAggregate, ABucketVectorOnlyTheLaterRecordCarriesIsKept) {
+  const auto a = *shape_event(kind_e::experience, "page_vitals", json { { "page", "home" }, { "visits", 1 } }, 100);
+  const auto b = *shape_event(kind_e::experience, "page_vitals", json { { "page", "home" }, { "visits", 1 }, { "lcp", json::array({ 0, 2, 0, 0, 0, 0, 0, 0 }) } }, 101);
+  std::vector<std::vector<std::size_t>> origin;
+  const auto out = aggregate_events({ a, b }, origin);
+  ASSERT_EQ(out.size(), 1u);
+  EXPECT_EQ(out[0].props["lcp"], json::array({ 0, 2, 0, 0, 0, 0, 0, 0 }));
+}
+
+TEST(TelemetryServiceAggregate, ThePreviewOfHeldRecordsHonoursItsLimit) {
+  service_options_t options;
+  options.aggregate_interval_ms = 6 * 60 * 60 * 1000;
+  options.ring_max = 10;
+  options.flush_events = 1000;
+  harness_t h(options);
+  for (int i = 0; i < 30; ++i) ASSERT_TRUE(h.svc->emit(kind_e::usage, "feature_used", json { { "feature", i % 2 ? "host.apps" : "host.config" } }));
+  h.svc->flush();
+  EXPECT_LE(h.svc->preview(1).size(), 1u);
+  EXPECT_EQ(h.svc->preview(0).size(), 0u);
+}
