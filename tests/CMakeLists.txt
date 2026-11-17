@@ -514,8 +514,7 @@ add_executable(hdr_calibration_unit_tests
         ${CMAKE_SOURCE_DIR}/src/hdr/calibration.cpp
         ${CMAKE_SOURCE_DIR}/src/hdr/client_display_capabilities.cpp
         ${CMAKE_SOURCE_DIR}/src/display_device/color_profile.cpp
-        ${CMAKE_SOURCE_DIR}/src/doctor/doctor.cpp
-        ${CMAKE_SOURCE_DIR}/src/doctor/doctor_text.cpp
+        ${CMAKE_SOURCE_DIR}/src/doctor/doctor.cpp ${CMAKE_SOURCE_DIR}/src/doctor/doctor_text.cpp
         ${CMAKE_SOURCE_DIR}/src/nat_discovery.cpp
         ${CMAKE_SOURCE_DIR}/src/public_address.cpp
         ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
@@ -548,8 +547,7 @@ set(CONFIG_RUNTIME_SUPPORT_SOURCES
         ${CMAKE_SOURCE_DIR}/src/hdr/calibration.cpp
         ${CMAKE_SOURCE_DIR}/src/hdr/client_display_capabilities.cpp
         ${CMAKE_SOURCE_DIR}/src/display_device/color_profile.cpp
-        ${CMAKE_SOURCE_DIR}/src/doctor/doctor.cpp
-        ${CMAKE_SOURCE_DIR}/src/doctor/doctor_text.cpp
+        ${CMAKE_SOURCE_DIR}/src/doctor/doctor.cpp ${CMAKE_SOURCE_DIR}/src/doctor/doctor_text.cpp
         ${CMAKE_SOURCE_DIR}/src/public_address.cpp
         ${CMAKE_SOURCE_DIR}/src/nat_discovery.cpp
         ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
@@ -841,8 +839,7 @@ add_test(NAME logging_site_unit_tests COMMAND logging_site_unit_tests)
 
 # 体检: the evaluators, the runner, the JSON and the read-only OS probes
 add_executable(doctor_unit_tests
-        ${CMAKE_SOURCE_DIR}/src/doctor/doctor.cpp
-        ${CMAKE_SOURCE_DIR}/src/doctor/doctor_text.cpp
+        ${CMAKE_SOURCE_DIR}/src/doctor/doctor.cpp ${CMAKE_SOURCE_DIR}/src/doctor/doctor_text.cpp
         ${CMAKE_SOURCE_DIR}/src/doctor/doctor_os.cpp
         ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
         ${CMAKE_SOURCE_DIR}/src/public_address.cpp
@@ -863,7 +860,7 @@ endif ()
 target_compile_options(doctor_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
 set_target_properties(doctor_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME doctor_unit_tests COMMAND doctor_unit_tests)
-
+add_subdirectory(usbip)
 # 版本比较: the date part of a Foundation Sunshine version, against the table shared with the panel and the Web UI
 add_executable(version_compare_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_version_compare.cpp)
@@ -1694,14 +1691,3 @@ target_compile_options(crash_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNS
 set_target_properties(crash_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME crash_unit_tests COMMAND crash_unit_tests)
 set_tests_properties(crash_unit_tests PROPERTIES TIMEOUT 120)
-
-# Explicitly invoked by read-only machine acceptance; ordinary CI has no USB/IP driver.
-add_executable(usbip_external_readonly_probe
-        ${CMAKE_SOURCE_DIR}/tests/usbip/external_readonly_probe.cpp
-        ${CMAKE_SOURCE_DIR}/src/doctor/doctor_os.cpp)
-target_include_directories(usbip_external_readonly_probe PRIVATE "${CMAKE_SOURCE_DIR}")
-set_target_properties(usbip_external_readonly_probe PROPERTIES CXX_STANDARD 23)
-if (WIN32)
-    target_link_libraries(usbip_external_readonly_probe PRIVATE ole32 uuid mmdevapi strmiids setupapi advapi32)
-    target_compile_definitions(usbip_external_readonly_probe PRIVATE INITGUID)
-endif ()
