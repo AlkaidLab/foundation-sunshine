@@ -587,7 +587,7 @@ if (WIN32)
             ${CMAKE_SOURCE_DIR}/tests/tools/amf_rate_control_test_stubs.cpp
             ${CMAKE_SOURCE_DIR}/src/amf/amf_avcodec_compat.cpp)
     target_include_directories(amf_rate_control_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
-    target_link_libraries(amf_rate_control_unit_tests PRIVATE gtest_main Boost::boost Boost::log
+    target_link_libraries(amf_rate_control_unit_tests PRIVATE gtest_main Boost::boost Boost::log Boost::format
             sunshine::host_headers sunshine_project_options sunshine_coverage)
     set_target_properties(amf_rate_control_unit_tests PROPERTIES CXX_STANDARD 23)
     target_compile_definitions(amf_rate_control_unit_tests PRIVATE ${SUNSHINE_DEFINITIONS})
