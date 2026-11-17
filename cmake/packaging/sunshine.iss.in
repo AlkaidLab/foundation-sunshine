@@ -37,19 +37,21 @@ OutputDir=@CPACK_PACKAGE_DIRECTORY@
 ; The Inno engine is embedded in the native shell after compilation.
 OutputBaseFilename=Sunshine-engine
 ; 压缩
-; Same method and dictionary as before (lzma2/ultra64, solid). Solid compression makes the whole payload one stream, and a
-; stream shorter than the default block (4 x the 64 MB dictionary) is compressed by a single thread. A 64 MB block with four
-; block threads compresses the ~165 MB payload in parallel: the installer grows by 0.4 %, the ISCC run takes about half the time
-; (4-core hosted runner, interleaved runs of three: 41.0 s -> 21.8 s, and 33.7 s -> 18.7 s for this template against the old one;
-; 71.15 MB -> 71.44 MB). Four ultra64 block threads need more
-; memory than the 32-bit compiler process has (measured: "Out of memory"), so the compressor runs in its own 64-bit process.
+; Same method and dictionary as before (lzma2/ultra64, solid). The payload is about 120 MB; with 64 MB blocks the compressor
+; started a new stream at every block, so a file in the second block could not match the first. One block (the largest the
+; directive allows, 256 MB) and the maximum fast-byte count remove that split: measured on the same build, installer
+; 44,918,301 -> 44,381,565 bytes (-1.2 %). Only the compressor changes: the installer unpacks the same 64 MB dictionary
+; sequentially either way, so installation time and memory do not change. The price is build time (the Package step 33 s -> 45 s
+; on a hosted runner), because one block is compressed by one thread. The compressor runs in its own 64-bit process (the
+; 32-bit compiler process ran out of memory with several ultra64 block threads).
 ; https://jrsoftware.org/ishelp/index.php?topic=setup_lzmanumblockthreads
 ; https://jrsoftware.org/ishelp/index.php?topic=setup_lzmablocksize
 ; https://jrsoftware.org/ishelp/index.php?topic=setup_lzmauseseparateprocess
 Compression=lzma2/ultra64
 SolidCompression=yes
-LZMANumBlockThreads=4
-LZMABlockSize=65536
+LZMANumBlockThreads=1
+LZMABlockSize=262144
+LZMANumFastBytes=273
 LZMAUseSeparateProcess=yes
 ; UI 设置
 SetupIconFile={#MyIconFile}
