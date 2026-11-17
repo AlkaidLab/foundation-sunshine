@@ -1389,23 +1389,27 @@ namespace amf {
     if (!encoder || bitrate_kbps <= 0) return false;
 
     auto bitrate = static_cast<int64_t>(bitrate_kbps) * 1000;
-    auto vbv_size = amf_avcodec_compat::vbv_buffer_size(bitrate_kbps, current_config);
 
-    const wchar_t *target_prop = (video_format == 0) ? AMF_VIDEO_ENCODER_TARGET_BITRATE :
-                                 (video_format == 1) ? AMF_VIDEO_ENCODER_HEVC_TARGET_BITRATE :
-                                                       AMF_VIDEO_ENCODER_AV1_TARGET_BITRATE;
-    const wchar_t *peak_prop = (video_format == 0) ? AMF_VIDEO_ENCODER_PEAK_BITRATE :
-                               (video_format == 1) ? AMF_VIDEO_ENCODER_HEVC_PEAK_BITRATE :
-                                                     AMF_VIDEO_ENCODER_AV1_PEAK_BITRATE;
-    // AMF 1.5.3 classifies the HEVC VBV size as static — settable only before
-    // Init() — while H.264 and AV1 list it as dynamic. A runtime write on HEVC
-    // stores the value without ever applying it, so skip it there: the session
-    // keeps the budget chosen at Init until it is recreated. For CBR
+    // One row per codec: 0 = H.264, 1 = HEVC, 2 = AV1. AMF 1.5.3 classifies
+    // the HEVC VBV size as static — settable only before Init() — so its
+    // runtime entry stays empty while H.264 and AV1 list it as dynamic. A
+    // runtime write on HEVC stores the value without ever applying it; the
+    // session keeps the budget chosen at Init until it is recreated. For CBR
     // (peak == target) the VBV size is only a smoothing window, so a stale
     // window after an HEVC bitrate change stays coherent.
-    const wchar_t *vbv_prop = (video_format == 0) ? AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE :
-                              (video_format == 2) ? AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE :
-                                                    nullptr;
+    struct budget_props_t {
+      const wchar_t *target;
+      const wchar_t *peak;
+      const wchar_t *vbv;
+    };
+    constexpr budget_props_t budget_props[] = {
+      { AMF_VIDEO_ENCODER_TARGET_BITRATE, AMF_VIDEO_ENCODER_PEAK_BITRATE, AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE },
+      { AMF_VIDEO_ENCODER_HEVC_TARGET_BITRATE, AMF_VIDEO_ENCODER_HEVC_PEAK_BITRATE, nullptr },
+      { AMF_VIDEO_ENCODER_AV1_TARGET_BITRATE, AMF_VIDEO_ENCODER_AV1_PEAK_BITRATE, AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE },
+    };
+    const auto &props = budget_props[video_format];
+    auto vbv_size = props.vbv ? amf_avcodec_compat::vbv_buffer_size(bitrate_kbps, current_config) :
+                                int64_t { 0 };
 
     // The trio is one rate-control budget: snapshot the current values first
     // so a rejected write can be rolled back and the encoder never sits in a
@@ -1413,15 +1417,15 @@ namespace amf {
     amf_int64 old_target = 0;
     amf_int64 old_peak = 0;
     amf_int64 old_vbv = 0;
-    bool snapshot_ok = encoder->GetProperty(target_prop, &old_target) == AMF_OK &&
-                       encoder->GetProperty(peak_prop, &old_peak) == AMF_OK;
-    if (vbv_prop) {
-      snapshot_ok = snapshot_ok && encoder->GetProperty(vbv_prop, &old_vbv) == AMF_OK;
+    bool snapshot_ok = encoder->GetProperty(props.target, &old_target) == AMF_OK &&
+                       encoder->GetProperty(props.peak, &old_peak) == AMF_OK;
+    if (props.vbv) {
+      snapshot_ok = snapshot_ok && encoder->GetProperty(props.vbv, &old_vbv) == AMF_OK;
     }
 
-    const auto target_res = encoder->SetProperty(target_prop, bitrate);
-    const auto peak_res = encoder->SetProperty(peak_prop, bitrate);
-    const auto vbv_res = vbv_prop ? encoder->SetProperty(vbv_prop, vbv_size) : AMF_OK;
+    const auto target_res = encoder->SetProperty(props.target, bitrate);
+    const auto peak_res = encoder->SetProperty(props.peak, bitrate);
+    const auto vbv_res = props.vbv ? encoder->SetProperty(props.vbv, vbv_size) : AMF_OK;
 
     if (target_res != AMF_OK || peak_res != AMF_OK || vbv_res != AMF_OK) {
       BOOST_LOG(warning) << "AMF: set_bitrate(" << bitrate_kbps << " Kbps) rejected by driver"
@@ -1436,10 +1440,10 @@ namespace amf {
             BOOST_LOG(error) << "AMF: failed to roll back " << what << ", error: " << res;
           }
         };
-        rollback("target bitrate", target_prop, old_target, target_res);
-        rollback("peak bitrate", peak_prop, old_peak, peak_res);
-        if (vbv_prop) {
-          rollback("VBV budget", vbv_prop, old_vbv, vbv_res);
+        rollback("target bitrate", props.target, old_target, target_res);
+        rollback("peak bitrate", props.peak, old_peak, peak_res);
+        if (props.vbv) {
+          rollback("VBV budget", props.vbv, old_vbv, vbv_res);
         }
       }
       else {
