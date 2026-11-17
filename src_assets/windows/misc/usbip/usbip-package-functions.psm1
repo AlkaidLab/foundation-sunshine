@@ -134,7 +134,11 @@ function Get-UsbipNodes([switch]$IncludeAbsent) {
   # usbip-slim-ms-pnp-property-20261117: hardware IDs are device properties,
   # not instance IDs. Upstream creates ROOT\USB instances; later repairs may
   # use a different enumerator while retaining the exact hardware ID.
-  foreach ($device in @(Get-PnpDevice -PresentOnly:(-not $IncludeAbsent) -ErrorAction Stop | Where-Object { $_.InstanceId -like 'ROOT\*' })) {
+  # Get-PnpDevice -PresentOnly:$false is not "all devices": on Windows 11 it returned only the 8 non-present
+  # ones, so the node of a live install was never found and uninstall skipped `devnode remove`, leaving a ghost
+  # root node behind. Omit the switch to include absent nodes.
+  $devices = if ($IncludeAbsent) { Get-PnpDevice -ErrorAction Stop } else { Get-PnpDevice -PresentOnly -ErrorAction Stop }
+  foreach ($device in @($devices | Where-Object { $_.InstanceId -like 'ROOT\*' })) {
     $ids = @(Get-PnpDeviceProperty -InstanceId $device.InstanceId -KeyName DEVPKEY_Device_HardwareIds -ErrorAction Stop).Data
     if ($ids -contains $script:HardwareId) { $device }
   }

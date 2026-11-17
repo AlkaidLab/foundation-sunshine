@@ -79,6 +79,9 @@ try {
   }
   & $module {
     function script:Get-PnpDevice {
+      param([switch]$PresentOnly, $ErrorAction)
+      # Observed on Windows 11: an explicit -PresentOnly:$false returns only non-present devices, not all of them.
+      if ($PSBoundParameters.ContainsKey('PresentOnly') -and -not $PresentOnly) { return }
       [pscustomobject]@{ InstanceId = 'ROOT\USB\0000' }
       [pscustomobject]@{ InstanceId = 'ROOT\UNRELATED\0001' }
     }
@@ -90,6 +93,10 @@ try {
   Check 'upstream root instance is matched through its hardware ID' {
     $nodes = @(Get-UsbipNodes)
     Require ($nodes.Count -eq 1 -and $nodes[0].InstanceId -eq 'ROOT\USB\0000') 'hardware ID was confused with instance ID'
+  }
+  Check 'absent nodes are found without passing -PresentOnly:$false' {
+    $nodes = @(Get-UsbipNodes -IncludeAbsent)
+    Require ($nodes.Count -eq 1 -and $nodes[0].InstanceId -eq 'ROOT\USB\0000') 'uninstall would skip devnode remove'
   }
   & $module {
     function script:Get-UsbipOwnership { [pscustomobject]@{ ownership = 'managed' } }
