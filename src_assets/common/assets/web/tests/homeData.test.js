@@ -43,6 +43,16 @@ test('perf snapshot: the active session wins, missing numbers stay null, fps pre
   assert.equal(pickPerf(null), null)
 })
 
+test('the stage frame rates and the capture method of the session are passed on as the host reports them', () => {
+  const frameRates = { source: { fps: 60, source_kind: 'display', enabled: true, ready: true }, capture: { fps: 59.8 }, submitted: { fps: 59.8 }, encoded: { fps: 59.7 }, repeated: { fps: 0.1 } }
+  const withRates = pickPerf({ sessions: [{ session_id: 1, active: true, capture: 'dxgi', frame_rates: frameRates }] })
+  assert.equal(withRates.frameRates, frameRates)
+  assert.deepEqual(withRates.frameRates, frameRates)
+  assert.equal(withRates.capture, 'dxgi')
+  assert.equal(pickPerf({ sessions: [{ session_id: 1, active: true }] }).frameRates, null)
+  assert.equal(pickPerf({ sessions: [{ session_id: 1, active: true, frame_rates: 'x' }] }).frameRates, null)
+})
+
 test('log levels are counted and the latest error text has its level prefix removed', () => {
   const entries = [{ level: 'Info', value: 'Info: a' }, { level: 'Error', value: 'Error: first' }, { level: 'Warning', value: 'Warning: w' }, { level: 'Fatal', value: 'Fatal: boom' }]
   assert.deepEqual(countLogLevels(entries), { fatal: 1, error: 1, warning: 1, lastError: 'boom' })
