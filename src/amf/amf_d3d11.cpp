@@ -1390,31 +1390,39 @@ namespace amf {
 
     auto bitrate = static_cast<int64_t>(bitrate_kbps) * 1000;
     auto vbv_size = amf_avcodec_compat::vbv_buffer_size(bitrate_kbps, current_config);
-    AMF_RESULT res;
 
-    if (video_format == 0) {
-      res = encoder->SetProperty(AMF_VIDEO_ENCODER_TARGET_BITRATE, bitrate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_PEAK_BITRATE, bitrate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE, vbv_size);
-    }
-    else if (video_format == 1) {
-      res = encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_TARGET_BITRATE, bitrate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_PEAK_BITRATE, bitrate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_VBV_BUFFER_SIZE, vbv_size);
-    }
-    else {
-      res = encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_TARGET_BITRATE, bitrate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_PEAK_BITRATE, bitrate);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE, vbv_size);
-    }
+    const wchar_t *target_prop = (video_format == 0) ? AMF_VIDEO_ENCODER_TARGET_BITRATE :
+                                 (video_format == 1) ? AMF_VIDEO_ENCODER_HEVC_TARGET_BITRATE :
+                                                       AMF_VIDEO_ENCODER_AV1_TARGET_BITRATE;
+    const wchar_t *peak_prop = (video_format == 0) ? AMF_VIDEO_ENCODER_PEAK_BITRATE :
+                               (video_format == 1) ? AMF_VIDEO_ENCODER_HEVC_PEAK_BITRATE :
+                                                     AMF_VIDEO_ENCODER_AV1_PEAK_BITRATE;
+    const wchar_t *vbv_prop = (video_format == 0) ? AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE :
+                              (video_format == 1) ? AMF_VIDEO_ENCODER_HEVC_VBV_BUFFER_SIZE :
+                                                    AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE;
 
-    if (res == AMF_OK) {
+    // Check every result: a driver that rejects the runtime peak/VBV update
+    // keeps the session's initial budget, and the caller must not mistake a
+    // stale constraint for an applied one.
+    const auto target_res = encoder->SetProperty(target_prop, bitrate);
+    const auto peak_res = encoder->SetProperty(peak_prop, bitrate);
+    const auto vbv_res = encoder->SetProperty(vbv_prop, vbv_size);
+
+    if (target_res != AMF_OK) {
+      BOOST_LOG(warning) << "AMF: set_bitrate failed, error: " << target_res;
+      return false;
+    }
+    if (peak_res != AMF_OK) {
+      BOOST_LOG(warning) << "AMF: runtime peak bitrate update rejected, error: " << peak_res;
+    }
+    if (vbv_res != AMF_OK) {
+      BOOST_LOG(warning) << "AMF: runtime VBV budget update rejected, error: " << vbv_res
+                         << " (budget stays at the session's initial size)";
+    }
+    if (peak_res == AMF_OK && vbv_res == AMF_OK) {
       BOOST_LOG(info) << "AMF: bitrate dynamically changed to " << bitrate_kbps << " Kbps";
     }
-    else {
-      BOOST_LOG(warning) << "AMF: set_bitrate failed, error: " << res;
-    }
-    return res == AMF_OK;
+    return peak_res == AMF_OK && vbv_res == AMF_OK;
   }
 
   void
