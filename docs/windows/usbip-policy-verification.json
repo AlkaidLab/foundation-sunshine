@@ -109,7 +109,7 @@
     "panel_source_commit": "a6164201a3658b55369c7f37ef326ad0e2214353",
     "panel_ci_run": 44031098282,
     "panel_test": "usbip::tests::installed_transport_reports_ready",
-    "panel_test_result": "1 passed; 0 failed; 0 ignored; 631 filtered out",
+    "panel_test_result": "3 passed; 0 failed; 0 ignored; 629 filtered out",
     "result": {
       "registry_files_services_drivers_identical": true,
       "snapshot_categories": 11,
@@ -186,6 +186,12 @@
         "sha256_after": "686ffa14b6e8d38c766c9a9187b4efdd4ac74f044cab3cd13a2cf98c0d59e4b9",
         "bytes": 578
       }
-    ]
+    ],
+    "panel_tests": [
+      "usbip::tests::discovers_a_device_from_a_standard_usbip_exporter",
+      "usbip::tests::installed_transport_reports_ready",
+      "usbip::tests::unreachable_exporter_fails_cleanly"
+    ],
+    "scope": "Read-only discovery from a loopback standard USB/IP exporter fixture, installed readiness and unreachable-exporter error; no actual device attachment or stream"
   }
 }
