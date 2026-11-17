@@ -1,0 +1,88 @@
+#requires -version 5.1
+# Unit regressions use isolated files and mocked OS commands; never install a driver.
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Stop'
+$scratch = Join-Path ([IO.Path]::GetTempPath()) ('usbip-package-test-' + [guid]::NewGuid().ToString('N'))
+$module = Import-Module (Join-Path $PSScriptRoot 'usbip-package-functions.psm1') -Force -PassThru -DisableNameChecking
+$passed = 0
+function Check([string]$Name, [scriptblock]$Test) {
+  & $Test
+  $script:passed++
+  Write-Host "PASS $Name"
+}
+function Require($Condition, [string]$Message) { if (-not $Condition) { throw $Message } }
+try {
+  $payload = Join-Path $scratch 'payload'
+  New-Item -ItemType Directory -Path $payload -Force | Out-Null
+  $files = [ordered]@{}
+  $names = @('usbip.exe', 'devnode.exe', 'libusbip.dll', 'resources.dll', 'msvcp140.dll', 'msvcp140_atomic_wait.dll',
+    'vcruntime140.dll', 'vcruntime140_1.dll', 'driver/usbip2_ude.inf', 'driver/usbip2_ude.sys', 'driver/usbip2_ude.cat',
+    'driver/usbip2_filter.inf', 'driver/usbip2_filter.sys', 'driver/usbip2_filter.cat')
+  foreach ($name in $names) {
+    $path = Join-Path $payload $name
+    New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force | Out-Null
+    [IO.File]::WriteAllText($path, "fixture $name")
+    $files[$name] = @{ sha256 = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash }
+  }
+  [IO.File]::WriteAllText((Join-Path $payload 'LICENSE'), 'fixture')
+  $manifest = @{ schema = 1; layout = 'usbip-slim-v1'; version = '0.9.8.1'; installer_sha256 = 'fixture'; files = $files }
+  $manifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $payload 'payload.json') -Encoding UTF8
+  Check 'payload accepts all required original members' { $null = Read-UsbipManifest $payload }
+  Check 'modified member fails closed' {
+    $path = Join-Path $payload 'usbip.exe'
+    $original = [IO.File]::ReadAllBytes($path)
+    [IO.File]::WriteAllText($path, 'changed')
+    $rejected = $false
+    try { $null = Read-UsbipManifest $payload } catch { $rejected = $true }
+    Require $rejected 'changed tool was accepted'
+    [IO.File]::WriteAllBytes($path, $original)
+  }
+  Check 'missing catalog fails closed' {
+    $path = Join-Path $payload 'driver/usbip2_ude.cat'
+    Move-Item -LiteralPath $path -Destination "$path.saved"
+    $rejected = $false
+    try { $null = Read-UsbipManifest $payload } catch { $rejected = $true }
+    Require $rejected 'missing catalog was accepted'
+    Move-Item -LiteralPath "$path.saved" -Destination $path
+  }
+  Check 'missing driver service is not ready' {
+    Require (-not (Test-UsbipReady $payload (Read-UsbipManifest $payload))) 'uninstalled fixture was ready'
+  }
+  & $module {
+    $script:Calls = [Collections.Generic.List[string]]::new()
+    $script:FailDelete = $false
+    function script:Set-UsbipDetachTask { param($Root, [switch]$Remove); $script:Calls.Add('task-remove') }
+    function script:Get-UsbipOemPackages {
+      @([pscustomobject]@{Driver = 'oem10.inf'}, [pscustomobject]@{Driver = 'oem11.inf'})
+    }
+    function script:Invoke-UsbipCommand {
+      param($File, $Arguments)
+      $script:Calls.Add(($Arguments -join ' '))
+      if ($script:FailDelete -and $Arguments -contains 'oem10.inf') { throw 'simulated first package removal failure' }
+    }
+  }
+  # File-system receipt location avoids all real registry writes on every OS.
+  $receipt = Join-Path $scratch 'receipt'
+  & $module { param($key); $script:RecordKey = $key } $receipt
+  $env:SystemRoot = if ($env:SystemRoot) { $env:SystemRoot } else { $scratch }
+  Check 'cleanup continues after a package command fails' {
+    & $module { $script:FailDelete = $true }
+    $rejected = $false
+    try { Remove-UsbipPackage $payload } catch { $rejected = $true }
+    Require $rejected 'failed cleanup reported success'
+    $calls = @(& $module { $script:Calls.ToArray() })
+    Require ($calls -contains '/delete-driver oem11.inf /uninstall /force') 'second driver was not removed'
+    Require (Test-Path -LiteralPath (Join-Path $payload 'devnode.exe')) 'recovery tool was deleted'
+  }
+  Check 'cleanup removes only receipt members and preserves unrelated files' {
+    & $module { $script:FailDelete = $false }
+    [IO.File]::WriteAllText((Join-Path $payload 'unrelated.txt'), 'keep')
+    Remove-UsbipPackage $payload
+    Require (Test-Path -LiteralPath (Join-Path $payload 'unrelated.txt')) 'unrelated file was deleted'
+    Require (-not (Test-Path -LiteralPath (Join-Path $payload 'payload.json'))) 'receipt remains after successful cleanup'
+  }
+  Write-Host "USB/IP package regressions: $passed passed, 0 failed"
+} finally {
+  Remove-Module $module -Force
+  if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force }
+}

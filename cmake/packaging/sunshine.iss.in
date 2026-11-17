@@ -318,7 +318,7 @@ Source: "{#MySourceDir}\scripts\vdd-device-helper.ps1"; DestDir: "{app}\scripts"
 Source: "{#MySourceDir}\scripts\uninstall-vdd.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#MySourceDir}\scripts\driver\*"; DestDir: "{app}\scripts\driver"; Flags: ignoreversion recursesubdirs
 
-; USB/IP root-hub guard (issue #1272): always copied, the Panel runs it around its own runtime install of usbip-win2 too.
+Source: "{#MySourceDir}\scripts\usbip-package*"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: usbip
 Source: "{#MySourceDir}\scripts\usbip-roothub-guard.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion skipifsourcedoesntexist; Components: assets
 
 ; Gamepad scripts
