@@ -23,18 +23,23 @@ float3 AnalysisHLGToNits(float3 signal)
 
 float LoadAnalysisMaxRgbNits(uint2 position)
 {
+    // Single exit: fxc's flow analysis cannot prove the return value is
+    // initialized through the early return inside the dynamic branch.
+    float result;
     if (inputMode < 2) {
-        return HdrAnalysisMaxRgbNits(inputTexture.Load(int3(position, 0)).rgb);
+        result = HdrAnalysisMaxRgbNits(inputTexture.Load(int3(position, 0)).rgb);
+    } else {
+        uint2 pixel = position + sourceOffset;
+        // P010 stores ten-bit codes in the high bits of each sixteen-bit sample.
+        float yCode = inputTexture.Load(int3(pixel, 0)).r * (65535.0 / 64.0);
+        float2 uvCode = encodedChroma.Load(int3(pixel / 2, 0)) * (65535.0 / 64.0);
+        bool fullRange = (inputMode & 1u) != 0;
+        float y = fullRange ? yCode / 1023.0 : (yCode - 64.0) / 876.0;
+        float2 uv = (uvCode - 512.0) / (fullRange ? 1023.0 : 896.0);
+        float3 rgb = float3(y + 1.4746 * uv.y,
+            y - 0.164553 * uv.x - 0.571353 * uv.y, y + 1.8814 * uv.x);
+        float3 nits = inputMode >= 4 ? AnalysisHLGToNits(rgb) : AnalysisPQToNits(rgb);
+        result = min(max(max(nits.r, nits.g), nits.b), maxAnalysisNits);
     }
-    uint2 pixel = position + sourceOffset;
-    // P010 stores ten-bit codes in the high bits of each sixteen-bit sample.
-    float yCode = inputTexture.Load(int3(pixel, 0)).r * (65535.0 / 64.0);
-    float2 uvCode = encodedChroma.Load(int3(pixel / 2, 0)) * (65535.0 / 64.0);
-    bool fullRange = (inputMode & 1u) != 0;
-    float y = fullRange ? yCode / 1023.0 : (yCode - 64.0) / 876.0;
-    float2 uv = (uvCode - 512.0) / (fullRange ? 1023.0 : 896.0);
-    float3 rgb = float3(y + 1.4746 * uv.y,
-        y - 0.164553 * uv.x - 0.571353 * uv.y, y + 1.8814 * uv.x);
-    float3 nits = inputMode >= 4 ? AnalysisHLGToNits(rgb) : AnalysisPQToNits(rgb);
-    return min(max(max(nits.r, nits.g), nits.b), maxAnalysisNits);
+    return result;
 }
