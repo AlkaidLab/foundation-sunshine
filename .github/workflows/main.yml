@@ -1178,6 +1178,15 @@ jobs:
         shell: msys2 {0}
         run: python scripts/ci/check-windows-release.py build/sunshine.exe
 
+      # The display and audio helpers are about 1 MB of code with either compiler. A build that links the wrong library into
+      # them (Clang/LLD once loaded the Asio/Beast/OpenSSL object: 5 MB of code) is caught here, not by a reader of the package size.
+      - name: Check helper executable sizes
+        shell: msys2 {0}
+        run: |
+          for tool in dxgi-info audio-info sunshinesvc; do
+            python scripts/ci/check-windows-release.py "build/tools/$tool.exe" --max-code-bytes 1600000
+          done
+
       - name: Run version without MSYS2 on PATH
         shell: pwsh
         run: |

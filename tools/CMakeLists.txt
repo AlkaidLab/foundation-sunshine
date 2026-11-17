@@ -4,6 +4,18 @@ cmake_minimum_required(VERSION 3.25)
 set(SUNSHINE_PARENT_VERSION "${PROJECT_VERSION}")
 project(sunshine_tools)
 
+# fs-tools-no-boost-separate-20261117: none of these tools uses Boost.Asio or Boost.Beast, so they do not take the separately compiled
+# copy that cmake/dependencies/boost_separate.cmake links into every other target (link_libraries is inherited by this directory).
+# That library is one object file. A tool only needs a libstdc++ symbol that the object also defines (a weak copy of
+# std::string::_M_replace), LLD loads the whole object for it, and the global initializers in it keep the Beast, Asio and OpenSSL
+# code alive: dxgi-info and audio-info grew from 1.1 MB to 7 MB with the Clang toolchain, while the linker option --gc-sections
+# was already on the command line. GNU ld does not load the object, so GCC builds never paid for it.
+if(TARGET sunshine_boost_separate)
+    get_directory_property(_sunshine_tools_link_libraries LINK_LIBRARIES)
+    list(REMOVE_ITEM _sunshine_tools_link_libraries sunshine_boost_separate)
+    set_directory_properties(PROPERTIES LINK_LIBRARIES "${_sunshine_tools_link_libraries}")
+endif()
+
 include_directories("${CMAKE_SOURCE_DIR}")
 
 if(WIN32)

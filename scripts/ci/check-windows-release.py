@@ -204,7 +204,13 @@ def stack_reserve(data):
     return _u32(data, optional + 0x48) if magic == 0x10B else _u64(data, optional + 0x48)
 
 
-def check_data(data):
+def code_size(data):
+    """Read SizeOfCode (the sum of the code sections) from the PE optional header."""
+    _, optional, _, _ = _coff(data)
+    return _u32(data, optional + 4)
+
+
+def check_data(data, max_code_bytes=None):
     dlls = imported_dlls(data)
     delayed = delay_imported_dlls(data)
     non_system = [dll for dll in dlls + delayed if dll not in SYSTEM_DLLS and not dll.startswith(SYSTEM_PREFIXES)]
@@ -214,24 +220,30 @@ def check_data(data):
         errors.append("non-system imports: " + ", ".join(sorted(set(non_system))))
     if reserve < MIN_STACK_RESERVE:
         errors.append(f"SizeOfStackReserve is {reserve} bytes, expected at least {MIN_STACK_RESERVE}")
+    # fs-tools-no-boost-separate-20261117: a helper linked with the wrong library (a Clang/LLD build once loaded the
+    # Asio/Beast/OpenSSL object into the 1 MB display tools) keeps its imports but grows five-fold in code.
+    if max_code_bytes is not None and code_size(data) > max_code_bytes:
+        errors.append(f"SizeOfCode is {code_size(data)} bytes, expected at most {max_code_bytes}")
     return dlls + delayed, reserve, errors
 
 
-def check(path):
-    return check_data(pathlib.Path(path).read_bytes())
+def check(path, max_code_bytes=None):
+    return check_data(pathlib.Path(path).read_bytes(), max_code_bytes)
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("executable", type=pathlib.Path)
+    parser.add_argument("--max-code-bytes", type=int, default=None, help="fail when SizeOfCode exceeds this many bytes")
     args = parser.parse_args(argv)
     try:
-        dlls, reserve, errors = check(args.executable)
+        dlls, reserve, errors = check(args.executable, args.max_code_bytes)
     except (OSError, PEError, UnicodeError) as error:
         print(f"release PE check failed: {error}", file=sys.stderr)
         return 1
     print(f"imports: {', '.join(dlls) if dlls else '(none)'}")
     print(f"SizeOfStackReserve: {reserve}")
+    print(f"SizeOfCode: {code_size(args.executable.read_bytes())}")
     if errors:
         for error in errors:
             print(f"release PE check failed: {error}", file=sys.stderr)
