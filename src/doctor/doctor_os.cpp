@@ -16,10 +16,10 @@
   #ifndef WIN32_LEAN_AND_MEAN
     #define WIN32_LEAN_AND_MEAN
   #endif
-  #include <windows.h>
   #include <mmdeviceapi.h>
   #include <propidl.h>
   #include <setupapi.h>
+  #include <windows.h>
   #include <winsvc.h>
 #else
   #include <cerrno>
@@ -184,7 +184,8 @@ namespace doctor::os {
     const auto server = registry_string(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Services\\W32Time\\Parameters", L"NtpServer");
     result.source = mode == "NT5DS" ? "Domain (NT5DS)" : mode + (server ? " " + utf8(server->c_str()) : "");
     const auto state = service_state(L"W32Time");
-    result.detail = state == SERVICE_RUNNING ? "W32Time running" : state == 0 ? "W32Time missing" : "W32Time stopped (trigger start)";
+    result.detail = state == SERVICE_RUNNING ? "W32Time running" : state == 0 ? "W32Time missing" :
+                                                                                "W32Time stopped (trigger start)";
     if (state == 0) result.synced = false;
     return result;
   }
@@ -336,6 +337,23 @@ namespace doctor::os {
           result.tool_path.assign(reinterpret_cast<const char *>(text.c_str()), text.size());
           break;
         }
+      }
+    }
+    if (result.tool_found) {
+      // usbip-policy-regget-20261117, RegGetValueW: read typed receipt values.
+      // Unknown origin or GUI/SDK always stays externally managed.
+      const auto root = fs::u8path(result.tool_path).parent_path();
+      const auto *key = L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\AlkaidLabUSBip";
+      const auto layout = registry_string(HKEY_LOCAL_MACHINE, key, L"InstallLayout");
+      const auto version = registry_string(HKEY_LOCAL_MACHINE, key, L"DisplayVersion");
+      const auto source = registry_string(HKEY_LOCAL_MACHINE, key, L"SourceSHA256");
+      const auto location = registry_string(HKEY_LOCAL_MACHINE, key, L"InstallLocation");
+      std::error_code ec;
+      const bool same_root = location && fs::equivalent(root, fs::path(*location), ec) && !ec;
+      result.externally_managed = !same_root || layout != L"usbip-slim-v1" || version != L"0.9.8.1" || source != L"38cad6d4432b52d5bb9409d9ad03b72fdffc4ada4cd3a48fbeca1a2752a8518a";
+      for (const auto *member : { L"wusbip.exe", L"include", L"lib" }) {
+        const bool present = fs::exists(root / member, ec);
+        if (present || ec) result.externally_managed = true;
       }
     }
     result.driver_checked = true;

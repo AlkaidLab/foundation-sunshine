@@ -88,8 +88,10 @@ namespace doctor {
     format_bytes(std::uint64_t bytes) {
       char buffer[32];
       const double gib = static_cast<double>(bytes) / (1024.0 * 1024.0 * 1024.0);
-      if (gib >= 10) std::snprintf(buffer, sizeof(buffer), "%.0f GB", gib);
-      else std::snprintf(buffer, sizeof(buffer), "%.1f GB", gib);
+      if (gib >= 10)
+        std::snprintf(buffer, sizeof(buffer), "%.0f GB", gib);
+      else
+        std::snprintf(buffer, sizeof(buffer), "%.1f GB", gib);
       return buffer;
     }
 
@@ -148,8 +150,10 @@ namespace doctor {
       while (!part.empty() && part.front() == ' ') part.remove_prefix(1);
       while (!part.empty() && part.back() == ' ') part.remove_suffix(1);
       if (!part.empty()) {
-        if (!is_group(part)) unknown.emplace_back(part);
-        else if (std::ranges::find(groups, part) == groups.end()) groups.emplace_back(part);
+        if (!is_group(part))
+          unknown.emplace_back(part);
+        else if (std::ranges::find(groups, part) == groups.end())
+          groups.emplace_back(part);
       }
       if (end == std::string_view::npos) break;
       start = end + 1;
@@ -174,10 +178,14 @@ namespace doctor {
   std::string_view
   to_string(status_e status) {
     switch (status) {
-      case status_e::pass: return "pass";
-      case status_e::warn: return "warn";
-      case status_e::fail: return "fail";
-      case status_e::skip: return "skip";
+      case status_e::pass:
+        return "pass";
+      case status_e::warn:
+        return "warn";
+      case status_e::fail:
+        return "fail";
+      case status_e::skip:
+        return "skip";
     }
     return "skip";
   }
@@ -191,10 +199,14 @@ namespace doctor {
   worst(const std::vector<item_t> &items) {
     auto rank = [](status_e s) {
       switch (s) {
-        case status_e::fail: return 3;
-        case status_e::warn: return 2;
-        case status_e::pass: return 1;
-        case status_e::skip: return 0;
+        case status_e::fail:
+          return 3;
+        case status_e::warn:
+          return 2;
+        case status_e::pass:
+          return 1;
+        case status_e::skip:
+          return 0;
       }
       return 0;
     };
@@ -238,49 +250,6 @@ namespace doctor {
     return out;
   }
 
-  std::string
-  zh_punctuation(std::string_view text) {
-    // UTF-8 code points, so a mark can look at its neighbours
-    std::vector<char32_t> cps;
-    for (std::size_t i = 0; i < text.size();) {
-      const auto c = static_cast<unsigned char>(text[i]);
-      const int n = c < 0x80 ? 1 : (c >> 5) == 0x6 ? 2 : (c >> 4) == 0xE ? 3 : (c >> 3) == 0x1E ? 4 : 1;
-      char32_t cp = n == 1 ? c : n == 2 ? (c & 0x1F) : n == 3 ? (c & 0x0F) : (c & 0x07);
-      for (int k = 1; k < n && i + k < text.size(); ++k) cp = (cp << 6) | (static_cast<unsigned char>(text[i + k]) & 0x3F);
-      cps.push_back(cp);
-      i += n;
-    }
-    auto wide = [](char32_t cp) { return (cp >= 0x4E00 && cp <= 0x9FFF) || (cp >= 0x3000 && cp <= 0x303F) || (cp >= 0xFF00 && cp <= 0xFFEF) || cp == 0x201C || cp == 0x201D; };
-    for (std::size_t i = 0; i < cps.size(); ++i) {
-      const bool before = i > 0 && wide(cps[i - 1]);
-      const bool after = i + 1 < cps.size() && wide(cps[i + 1]);
-      switch (cps[i]) {
-        case U',': if (before || after) cps[i] = U'，'; break;
-        case U';': if (before || after) cps[i] = U'；'; break;
-        case U':': if (before || after) cps[i] = U'：'; break;
-        case U'?': if (before) cps[i] = U'？'; break;
-        case U'(': if (before || after) cps[i] = U'（'; break;
-        case U')': if (before) cps[i] = U'）'; break;
-        default: break;
-      }
-    }
-    // a full-width opening bracket pairs with the next ")"
-    bool open = false;
-    for (auto &cp : cps) {
-      if (cp == U'（') open = true;
-      else if (cp == U')' && open) { cp = U'）'; open = false; }
-      else if (cp == U'）') open = false;
-    }
-    std::string out;
-    for (const auto cp : cps) {
-      if (cp < 0x80) out += static_cast<char>(cp);
-      else if (cp < 0x800) { out += static_cast<char>(0xC0 | (cp >> 6)); out += static_cast<char>(0x80 | (cp & 0x3F)); }
-      else if (cp < 0x10000) { out += static_cast<char>(0xE0 | (cp >> 12)); out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F)); out += static_cast<char>(0x80 | (cp & 0x3F)); }
-      else { out += static_cast<char>(0xF0 | (cp >> 18)); out += static_cast<char>(0x80 | ((cp >> 12) & 0x3F)); out += static_cast<char>(0x80 | ((cp >> 6) & 0x3F)); out += static_cast<char>(0x80 | (cp & 0x3F)); }
-    }
-    return out;
-  }
-
   void
   redact_item(item_t &item) {
     item.title = redact(item.title);
@@ -293,7 +262,8 @@ namespace doctor {
   complete_action(item_t &item, lang_e lang) {
     if (!item.fix.action) return;
     auto &a = *item.fix.action;
-    if (a.level == 0) a.level = a.kind == "restart" ? 2 : a.kind == "repair" ? 3 : 1;
+    if (a.level == 0) a.level = a.kind == "restart" ? 2 : a.kind == "repair" ? 3 :
+                                                                               1;
     if (a.level >= 2) a.confirm = true;
     if (a.kind == "restart" && a.effect.empty()) {
       a.effect = tr(lang, "Restarts the Sunshine service; it is back in about 10 seconds. A stream that is live ends; the settings stay.", "重启 Sunshine 服务,大约 10 秒后回来;正在进行的串流会断开,配置不变。");
@@ -652,9 +622,12 @@ namespace doctor {
       any_ran = true;
       if (!encoder.usable) {
         std::string why;
-        if (encoder.failure == "display") why = tr(lang, "Could not open the display for this encoder's capture", "无法为这个编码器打开显示器采集");
-        else if (encoder.failure == "unsupported_gpu") why = tr(lang, "This GPU does not support it", "这块显卡不支持");
-        else why = tr(lang, "An H.264 encode session could not be opened", "无法打开 H.264 编码会话");
+        if (encoder.failure == "display")
+          why = tr(lang, "Could not open the display for this encoder's capture", "无法为这个编码器打开显示器采集");
+        else if (encoder.failure == "unsupported_gpu")
+          why = tr(lang, "This GPU does not support it", "这块显卡不支持");
+        else
+          why = tr(lang, "An H.264 encode session could not be opened", "无法打开 H.264 编码会话");
         // A backend that does not match this GPU is expected to fail; only the configured one is a problem.
         const auto status = encoder.configured ? status_e::fail : status_e::pass;
         auto detail = encoder.configured ? why : tr(lang, "Not available here: ", "本机不可用:") + why;
@@ -833,15 +806,18 @@ namespace doctor {
         tr(lang, "The system has no default playback device, so the stream has no sound. It starts by itself when a device appears.",
           "系统没有默认播放设备,串流没有声音;接入设备后会自动开始出声。"),
         open_page(tr(lang, "Plug in speakers or headphones, or enable a virtual speaker (VB-CABLE or Steam Streaming Speakers) on the Audio page.",
-                     "接上音箱或耳机,或在「音频」页启用虚拟扬声器(VB-CABLE 或 Steam Streaming Speakers)。"), "audio")));
+                    "接上音箱或耳机,或在「音频」页启用虚拟扬声器(VB-CABLE 或 Steam Streaming Speakers)。"),
+          "audio")));
     }
     else if (facts.sink_found) {
       items.push_back(make("audio.sink", group, status_e::pass, tr(lang, "Audio output", "音频输出"),
-        facts.sink.empty() ? tr(lang, "System default output", "系统默认输出") : audio_devices::looks_like_endpoint_id(facts.sink) ? tr(lang, "The selected output device", "所选的输出设备") : facts.sink));
+        facts.sink.empty() ? tr(lang, "System default output", "系统默认输出") : audio_devices::looks_like_endpoint_id(facts.sink) ? tr(lang, "The selected output device", "所选的输出设备") :
+                                                                                                                                     facts.sink));
     }
     else {
       items.push_back(make("audio.sink", group, status_e::fail, tr(lang, "Audio output", "音频输出"),
-        facts.sink.empty() ? tr(lang, "There is no default output device", "没有默认输出设备") : audio_devices::looks_like_endpoint_id(facts.sink) ? tr(lang, "The selected output device does not exist", "所选的输出设备不存在") : tr(lang, "\"" + facts.sink + "\" does not exist", "\"" + facts.sink + "\" 不存在"),
+        facts.sink.empty() ? tr(lang, "There is no default output device", "没有默认输出设备") : audio_devices::looks_like_endpoint_id(facts.sink) ? tr(lang, "The selected output device does not exist", "所选的输出设备不存在") :
+                                                                                                                                                     tr(lang, "\"" + facts.sink + "\" does not exist", "\"" + facts.sink + "\" 不存在"),
         open_setting(tr(lang, "Choose an existing output in Audio sink.", "在「音频输出设备」里选一个存在的设备。"), "audio_sink")));
     }
 
@@ -850,7 +826,8 @@ namespace doctor {
       items.push_back(make("audio.default", group, status_e::warn, tr(lang, "Default playback device", "默认播放设备"),
         tr(lang, "The system has no default playback device, so the stream has no sound until one appears.", "系统没有默认播放设备,出现之前串流没有声音。"),
         open_page(tr(lang, "Plug in speakers or headphones, or enable a virtual speaker (VB-CABLE or Steam Streaming Speakers) on the Audio page.",
-                     "接上音箱或耳机,或在「音频」页启用虚拟扬声器(VB-CABLE 或 Steam Streaming Speakers)。"), "audio")));
+                    "接上音箱或耳机,或在「音频」页启用虚拟扬声器(VB-CABLE 或 Steam Streaming Speakers)。"),
+          "audio")));
     }
 
     if (facts.stream_audio && facts.virtual_checked) {
@@ -859,9 +836,9 @@ namespace doctor {
       }
       else {
         items.push_back(make("audio.virtual", group, status_e::warn, tr(lang, "Virtual audio device", "虚拟音频设备"),
-          facts.virtual_sink.empty() ? tr(lang, "Steam Streaming Speakers not found; without it the host's own speakers play the sound too", "没有找到 Steam Streaming Speakers;没有它时主机自己的扬声器也会出声") :
+          facts.virtual_sink.empty()                                ? tr(lang, "Steam Streaming Speakers not found; without it the host's own speakers play the sound too", "没有找到 Steam Streaming Speakers;没有它时主机自己的扬声器也会出声") :
           audio_devices::looks_like_endpoint_id(facts.virtual_sink) ? tr(lang, "The selected virtual device was not found", "没有找到所选的虚拟设备") :
-                                       tr(lang, "\"" + facts.virtual_sink + "\" not found", "没有找到 \"" + facts.virtual_sink + "\""),
+                                                                      tr(lang, "\"" + facts.virtual_sink + "\" not found", "没有找到 \"" + facts.virtual_sink + "\""),
           open_setting(tr(lang, "Install the Steam audio drivers, or choose a Virtual sink.", "安装 Steam 音频驱动,或选择「虚拟输出设备」。"), "virtual_sink")));
       }
     }
@@ -935,7 +912,7 @@ namespace doctor {
     else if (facts.windows) {
       if (facts.usbip_tool_found && (!facts.usbip_driver_checked || facts.usbip_driver_found)) {
         items.push_back(make("input.ds5", group, status_e::pass, tr(lang, "DualSense driver path", "DualSense 驱动路径"),
-          tr(lang, "usbip-win2 found", "找到 usbip-win2") + (facts.usbip_driver.empty() ? "" : " · " + facts.usbip_driver)));
+          tr(lang, "usbip-win2 found", "找到 usbip-win2") + (facts.usbip_externally_managed ? tr(lang, " (externally managed)", "（外部管理）") : "") + (facts.usbip_driver.empty() ? "" : " · " + facts.usbip_driver)));
       }
       else {
         items.push_back(make("input.ds5", group, status_e::warn, tr(lang, "DualSense driver path", "DualSense 驱动路径"),
@@ -955,7 +932,7 @@ namespace doctor {
     }
     else if (facts.usbip_tool_found && (!facts.usbip_driver_checked || facts.usbip_driver_found)) {
       items.push_back(make("input.usb", group, status_e::pass, tr(lang, "USB forwarding", "USB 转发"),
-        tr(lang, "usbip-win2 ready", "usbip-win2 就绪") + (facts.usbip_driver_checked ? "" : tr(lang, " (driver service not checked)", "(驱动服务未检查)"))));
+        tr(lang, "usbip-win2 ready", "usbip-win2 就绪") + (facts.usbip_externally_managed ? tr(lang, " (externally managed)", "（外部管理）") : "") + (facts.usbip_driver_checked ? "" : tr(lang, " (driver service not checked)", "(驱动服务未检查)"))));
     }
     else {
       items.push_back(make("input.usb", group, status_e::warn, tr(lang, "USB forwarding", "USB 转发"),
@@ -1043,7 +1020,8 @@ namespace doctor {
     if (probed_v4 || probed_v6) {
       // a test from outside reached this host (the phone or edge probe of audit #5): that is a fact, not an inference
       items.push_back(make("network.public", group, status_e::pass, tr(lang, "From the internet", "公网"),
-        tr(lang, "Verified by a test from outside: ", "外网实测已验证:") + std::string { probed_v4 && probed_v6 ? "IPv4 + IPv6" : probed_v4 ? "IPv4" : "IPv6" }));
+        tr(lang, "Verified by a test from outside: ", "外网实测已验证:") + std::string { probed_v4 && probed_v6 ? "IPv4 + IPv6" : probed_v4 ? "IPv4" :
+                                                                                                                                              "IPv6" }));
     }
     else if (facts.public_verdict == "verified" || facts.public_verdict == "likely") {
       items.push_back(make("network.public", group, status_e::pass, tr(lang, "From the internet", "公网"),
@@ -1077,9 +1055,9 @@ namespace doctor {
       items.push_back(make("network.mesh", group, status_e::skip, tr(lang, "Mesh network", "组网"), tr(lang, "Not checked: no mesh adapter", "未检查:没有组网网卡")));
     }
     items.push_back(make("network.lan", group, facts.lan_listening ? status_e::pass : status_e::fail, tr(lang, "Local network", "局域网"),
-      !facts.lan_listening ? tr(lang, "Sunshine listens on no LAN address", "Sunshine 没有在任何局域网地址上监听") :
-      facts.lan_address == "*"  ? tr(lang, "Listening on every address", "在所有地址上监听") :
-                                  tr(lang, "Listening on " + facts.lan_address, "在 " + facts.lan_address + " 上监听"),
+      !facts.lan_listening     ? tr(lang, "Sunshine listens on no LAN address", "Sunshine 没有在任何局域网地址上监听") :
+      facts.lan_address == "*" ? tr(lang, "Listening on every address", "在所有地址上监听") :
+                                 tr(lang, "Listening on " + facts.lan_address, "在 " + facts.lan_address + " 上监听"),
       facts.lan_listening ? fix_t {} : open_page(tr(lang, "Check the network adapter and Address family.", "检查网卡和「地址族」。"), "network")));
 
     // NAT in front of the router: the WAN address class of UPnP (RFC 6598 for 100.64/10)
@@ -1179,10 +1157,14 @@ namespace doctor {
     else {
       const bool ok = facts.windows ? facts.account == "system" : facts.account != "root";
       std::string detail;
-      if (facts.account == "system") detail = tr(lang, "LocalSystem (service)", "LocalSystem(服务)");
-      else if (facts.account == "admin") detail = tr(lang, "An administrator, not the service", "管理员,不是服务");
-      else if (facts.account == "root") detail = "root";
-      else detail = tr(lang, "A standard user", "普通用户");
+      if (facts.account == "system")
+        detail = tr(lang, "LocalSystem (service)", "LocalSystem(服务)");
+      else if (facts.account == "admin")
+        detail = tr(lang, "An administrator, not the service", "管理员,不是服务");
+      else if (facts.account == "root")
+        detail = "root";
+      else
+        detail = tr(lang, "A standard user", "普通用户");
       if (!facts.config_writable) {
         items.push_back(make("system.account", group, status_e::fail, tr(lang, "Service account", "运行账户"),
           detail + tr(lang, "; the configuration folder is not writable", ";配置文件夹不可写"),
@@ -1275,9 +1257,12 @@ namespace doctor {
     else {
       const auto channel = channel_of(facts.version, facts.branch);
       std::string channel_text;
-      if (channel == "dev") channel_text = tr(lang, "development build", "开发构建");
-      else if (channel == "beta") channel_text = tr(lang, "beta", "测试版");
-      else channel_text = tr(lang, "release or local build", "正式版或本地构建");
+      if (channel == "dev")
+        channel_text = tr(lang, "development build", "开发构建");
+      else if (channel == "beta")
+        channel_text = tr(lang, "beta", "测试版");
+      else
+        channel_text = tr(lang, "release or local build", "正式版或本地构建");
       // Without the build record nothing tells a dirty tree: the version string never does (".杂鱼" is on every CI release).
       items.push_back(make("host.version", group, status_e::pass, tr(lang, "Sunshine version", "Sunshine 版本"),
         facts.version + " · " + channel_text + tr(lang, " (read from the version string)", "(由版本号推断)")));

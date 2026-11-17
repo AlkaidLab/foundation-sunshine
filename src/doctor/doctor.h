@@ -279,6 +279,7 @@ namespace doctor {
     bool usbip_driver_checked = false;
     bool usbip_driver_found = false;
     std::string usbip_driver;
+    bool usbip_externally_managed = false;
   };
 
   std::vector<item_t>

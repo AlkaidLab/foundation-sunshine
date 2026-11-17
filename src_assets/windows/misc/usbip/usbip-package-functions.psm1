@@ -5,6 +5,7 @@ $script:RecordKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\A
 $script:HardwareId = 'ROOT\USBIP_WIN2\UDE'
 $script:DetachTask = 'USBip Detach All On Reboot Or Shutdown'
 $script:NeedsRestart = $false
+Import-Module (Join-Path $PSScriptRoot 'usbip-package-ownership.psm1') -Force -DisableNameChecking
 
 function Invoke-UsbipCommand([string]$File, [string[]]$Arguments) {
   & $File @Arguments | Out-Host
@@ -37,7 +38,9 @@ function Get-UsbipLegacyEntries {
   }
 }
 
-function Remove-UsbipLegacy {
+function Remove-UsbipLegacy([string]$Root, [string]$HostRoot) {
+  $owner = Get-UsbipOwnership $Root $HostRoot
+  if ($owner.ownership -ne 'legacy-owned') { return }
   foreach ($entry in @(Get-UsbipLegacyEntries)) {
     if ($entry.UninstallString -notmatch '^"([^"]+\\unins[0-9]+\.exe)"$') { throw 'Unrecognized upstream USB/IP uninstaller; remove it manually' }
     $uninstaller = $Matches[1]
@@ -89,6 +92,7 @@ function Set-UsbipDetachTask([string]$Root, [switch]$Remove) {
 }
 
 function Remove-UsbipPackage([string]$Root, [switch]$KeepFiles) {
+  if ((Get-UsbipOwnership $Root (Split-Path -Parent $PSScriptRoot)).ownership -ne 'managed') { return }
   $failures = @()
   # Each cleanup stage runs even if an earlier one failed; preserve recovery
   # tools and the receipt until all OS removal steps have succeeded.
@@ -113,7 +117,7 @@ function Remove-UsbipFiles([string]$Root) {
   # Never remove unrelated files or a legacy installation recursively.
   if (Test-Path -LiteralPath (Join-Path $Root 'payload.json')) {
     $manifest = Get-Content -Raw -LiteralPath (Join-Path $Root 'payload.json') | ConvertFrom-Json
-    foreach ($name in @($manifest.files.PSObject.Properties.Name) + @('payload.json', 'LICENSE', 'usbip-package.ps1', 'usbip-package-functions.psm1', 'usbip-roothub-guard.ps1')) {
+    foreach ($name in @($manifest.files.PSObject.Properties.Name) + @('payload.json', 'LICENSE', 'usbip-package.ps1', 'usbip-package-functions.psm1', 'usbip-package-ownership.psm1', 'usbip-roothub-guard.ps1')) {
       if ($name -notmatch '^(driver/)?[A-Za-z0-9_.-]+$') { throw 'Invalid receipt member' }
       $path = Join-Path $Root $name
       if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path -Force }
@@ -136,9 +140,9 @@ function Get-UsbipNodes([switch]$IncludeAbsent) {
 
 # usbip-slim-ms-pnp-property-20261117: typed HardwareIds and ProblemCode;
 # usbip-slim-ms-pnp-device-20261117: PresentOnly, independent of root enumerator name.
-function Test-UsbipReady([string]$Root, $Manifest) {
+function Test-UsbipReady([string]$Root, $Manifest, [switch]$External) {
   try {
-    $null = Read-UsbipManifest $Root
+    if (-not $External) { $null = Read-UsbipManifest $Root }
     $nodes = @(Get-UsbipNodes)
     if ($nodes.Count -ne 1) { return $false }
     $problem = (Get-PnpDeviceProperty -InstanceId $nodes[0].InstanceId -KeyName DEVPKEY_Device_ProblemCode -ErrorAction Stop).Data
@@ -155,9 +159,24 @@ function Test-UsbipReady([string]$Root, $Manifest) {
   } catch { return $false }
 }
 
-function Install-UsbipPackage([string]$Payload, [string]$Root, [string]$Scripts) {
+function Test-UsbipExternalReady([string]$Root) {
+  try {
+    if ((Get-FileHash -LiteralPath (Join-Path $Root 'usbip.exe') -Algorithm SHA256).Hash -ne '817da219fa153b4b37c3bc1aa8fcc63f33e046188c57cc3dd2c60a6ef0883c56') { return $false }
+    if ((Get-FileHash -LiteralPath (Join-Path $Root 'libusbip.dll') -Algorithm SHA256).Hash -ne 'f123ef5d288b817a890cbe39a3c2d212b3d8b1765c691c8703ccb76c7337986c') { return $false }
+    if ((Get-FileHash -LiteralPath (Join-Path $Root 'resources.dll') -Algorithm SHA256).Hash -ne '4bfc862e5891d9b4c12a8ebd43d3ba871ebf94b65f7a00c22527c905949e0fff') { return $false }
+    $manifest = [pscustomobject]@{ files = [pscustomobject]@{
+      'driver/usbip2_ude.sys' = [pscustomobject]@{ sha256 = 'abd4fc43dce40e027e4acc884cbfe92433e026206f6565c5ee5284a39441169a' }
+      'driver/usbip2_filter.sys' = [pscustomobject]@{ sha256 = 'b93a5fc3c23d56f9b49634742374e32f269e53f764caa2d5fcb43e3259f7eced' }
+    } }
+    return Test-UsbipReady $Root $manifest -External
+  } catch { return $false }
+}
+
+function Install-UsbipPackage([string]$Payload, [string]$Root, [string]$Scripts, [string]$HostRoot) {
+  $owner = Get-UsbipOwnership $Root $HostRoot
+  if ($owner.ownership -eq 'external') { throw 'Externally managed USB/IP must not be replaced' }
   $manifest = Read-UsbipManifest $Payload
-  Remove-UsbipLegacy
+  Remove-UsbipLegacy $Root $HostRoot
   # A partial prior slim install must be removed before replacing its tools.
   if ((Test-Path -LiteralPath $script:RecordKey) -or (Test-Path -LiteralPath (Join-Path $Root 'payload.json'))) { Remove-UsbipPackage $Root }
   New-Item -ItemType Directory -Path $Root -Force | Out-Null
@@ -166,17 +185,11 @@ function Install-UsbipPackage([string]$Payload, [string]$Root, [string]$Scripts)
     New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force | Out-Null
     Copy-Item -LiteralPath (Join-Path $Payload $name) -Destination $destination -Force
   }
-  foreach ($name in 'usbip-package.ps1', 'usbip-package-functions.psm1', 'usbip-roothub-guard.ps1') {
+  foreach ($name in 'usbip-package.ps1', 'usbip-package-functions.psm1', 'usbip-package-ownership.psm1', 'usbip-roothub-guard.ps1') {
     Copy-Item -LiteralPath (Join-Path $Scripts $name) -Destination (Join-Path $Root $name) -Force
   }
   $null = Read-UsbipManifest $Root
-  # usbip-slim-pnputil-20261117 /add-driver. Never edit an INF or register
-  # services manually: the signed INF owns AddService/AddReg/AddFilter.
-  Invoke-UsbipCommand "$env:SystemRoot\System32\pnputil.exe" @('/add-driver', (Join-Path $Root 'driver\usbip2_ude.inf'))
-  Invoke-UsbipCommand "$env:SystemRoot\System32\pnputil.exe" @('/add-driver', (Join-Path $Root 'driver\usbip2_filter.inf'), '/install')
-  Invoke-UsbipCommand (Join-Path $Root 'devnode.exe') @('install', (Join-Path $Root 'driver\usbip2_ude.inf'), $script:HardwareId)
-  Set-UsbipDetachTask $Root
-  if (-not (Test-UsbipReady $Root $manifest)) { throw 'USB/IP controller or registered driver did not verify' }
+  # Record ownership before the first driver mutation so failure cleanup is owned.
   New-Item -Path $script:RecordKey -Force | Out-Null
   foreach ($entry in @{
     DisplayName = "USBip $($manifest.version)"; DisplayVersion = $manifest.version; Publisher = 'usbip-win2';
@@ -187,6 +200,14 @@ function Install-UsbipPackage([string]$Payload, [string]$Root, [string]$Scripts)
   }
   New-ItemProperty -LiteralPath $script:RecordKey -Name NoModify -Value 1 -PropertyType DWord -Force | Out-Null
   New-ItemProperty -LiteralPath $script:RecordKey -Name NoRepair -Value 1 -PropertyType DWord -Force | Out-Null
+  # usbip-slim-pnputil-20261117 /add-driver. Never edit an INF or register
+  # services manually: the signed INF owns AddService/AddReg/AddFilter.
+  Invoke-UsbipCommand "$env:SystemRoot\System32\pnputil.exe" @('/add-driver', (Join-Path $Root 'driver\usbip2_ude.inf'))
+  Invoke-UsbipCommand "$env:SystemRoot\System32\pnputil.exe" @('/add-driver', (Join-Path $Root 'driver\usbip2_filter.inf'), '/install')
+  Invoke-UsbipCommand (Join-Path $Root 'devnode.exe') @('install', (Join-Path $Root 'driver\usbip2_ude.inf'), $script:HardwareId)
+  Set-UsbipDetachTask $Root
+  if (-not (Test-UsbipReady $Root $manifest)) { throw 'USB/IP controller or registered driver did not verify' }
+
 }
 
 function Get-UsbipRestartCode { if ($script:NeedsRestart) { return 3010 }; return 0 }

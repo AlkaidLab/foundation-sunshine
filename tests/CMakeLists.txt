@@ -515,6 +515,7 @@ add_executable(hdr_calibration_unit_tests
         ${CMAKE_SOURCE_DIR}/src/hdr/client_display_capabilities.cpp
         ${CMAKE_SOURCE_DIR}/src/display_device/color_profile.cpp
         ${CMAKE_SOURCE_DIR}/src/doctor/doctor.cpp
+        ${CMAKE_SOURCE_DIR}/src/doctor/doctor_text.cpp
         ${CMAKE_SOURCE_DIR}/src/nat_discovery.cpp
         ${CMAKE_SOURCE_DIR}/src/public_address.cpp
         ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
@@ -548,6 +549,7 @@ set(CONFIG_RUNTIME_SUPPORT_SOURCES
         ${CMAKE_SOURCE_DIR}/src/hdr/client_display_capabilities.cpp
         ${CMAKE_SOURCE_DIR}/src/display_device/color_profile.cpp
         ${CMAKE_SOURCE_DIR}/src/doctor/doctor.cpp
+        ${CMAKE_SOURCE_DIR}/src/doctor/doctor_text.cpp
         ${CMAKE_SOURCE_DIR}/src/public_address.cpp
         ${CMAKE_SOURCE_DIR}/src/nat_discovery.cpp
         ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
@@ -840,6 +842,7 @@ add_test(NAME logging_site_unit_tests COMMAND logging_site_unit_tests)
 # 体检: the evaluators, the runner, the JSON and the read-only OS probes
 add_executable(doctor_unit_tests
         ${CMAKE_SOURCE_DIR}/src/doctor/doctor.cpp
+        ${CMAKE_SOURCE_DIR}/src/doctor/doctor_text.cpp
         ${CMAKE_SOURCE_DIR}/src/doctor/doctor_os.cpp
         ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
         ${CMAKE_SOURCE_DIR}/src/public_address.cpp

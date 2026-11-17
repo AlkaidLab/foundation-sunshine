@@ -329,6 +329,17 @@ TEST(DoctorInput, WindowsWithoutVigemFailsAndLinuxUinputIsChecked) {
   expect_contract(items);
 }
 
+TEST(DoctorInput, ExternalUsbipStaysAvailableAndIsLabelled) {
+  input_fact_t facts { .windows = true, .gamepad = "auto", .usbip_supported = true, .usbip_tool_found = true, .usbip_driver_checked = true, .usbip_driver_found = true, .usbip_externally_managed = true };
+  const auto items = evaluate_input(facts, lang_e::en);
+  for (const auto *id : { "input.usb", "input.ds5" }) {
+    const auto *item = find(items, id);
+    ASSERT_NE(item, nullptr);
+    EXPECT_EQ(item->status, status_e::pass);
+    EXPECT_NE(item->detail.find("externally managed"), std::string::npos);
+  }
+}
+
 TEST(DoctorNetwork, ClosedPortBlockedFirewallAndVerdicts) {
   network_fact_t facts;
   facts.checked = true;

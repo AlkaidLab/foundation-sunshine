@@ -92,6 +92,7 @@ try {
     Require ($nodes.Count -eq 1 -and $nodes[0].InstanceId -eq 'ROOT\USB\0000') 'hardware ID was confused with instance ID'
   }
   & $module {
+    function script:Get-UsbipOwnership { [pscustomobject]@{ ownership = 'managed' } }
     $script:Calls = [Collections.Generic.List[string]]::new()
     $script:FailDelete = $false
     function script:Set-UsbipDetachTask { param($Root, [switch]$Remove); $script:Calls.Add('task-remove') }

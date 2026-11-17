@@ -236,7 +236,7 @@ set(SUNSHINE_HOST_SOURCES
     src/confighttp/asset_paths.h
 
     # src/doctor
-    src/doctor/doctor.cpp src/doctor/doctor.h
+    src/doctor/doctor.cpp src/doctor/doctor_text.cpp src/doctor/doctor.h
     src/doctor/doctor_checks.cpp src/doctor/doctor_checks.h
     src/doctor/doctor_os.cpp src/doctor/doctor_os.h
 

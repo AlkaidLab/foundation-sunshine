@@ -5,6 +5,7 @@ param(
   [string]$Payload,
   [string]$InstallRoot,
   [string]$State,
+  [string]$HostRoot,
   # Regression seam: exercised only on an explicitly authorized test machine.
   [int]$SimulateHubProblem = 0
 )
@@ -13,6 +14,22 @@ $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'usbip-package-functions.psm1') -Force -DisableNameChecking
 if (-not $Payload) { $Payload = Join-Path $PSScriptRoot 'usbip' }
 if (-not $InstallRoot) { $InstallRoot = Join-Path $env:ProgramFiles 'USBip' }
+if (-not $HostRoot) { $HostRoot = Split-Path -Parent $PSScriptRoot }
+Import-Module (Join-Path $PSScriptRoot 'usbip-package-ownership.psm1') -Force -DisableNameChecking
+# Decide before creating state/log files, taking the lifecycle mutex or invoking
+# any guard. External ownership overrides every install and removal action.
+$ownership = Get-UsbipOwnership $InstallRoot $HostRoot
+if ($Action -ne 'verify' -and $ownership.ownership -eq 'external') {
+  if ($Action -eq 'status') {
+    $ready = $ownership.compatible -and (Test-UsbipExternalReady $InstallRoot)
+    [pscustomobject]@{ ownership = 'external'; compatible = $ownership.compatible; reason = $ownership.reason; ready = $ready } | ConvertTo-Json -Compress
+    exit 0
+  }
+  Write-Output 'USB/IP is externally managed; no changes were made.'
+  if ($Action -eq 'install' -and -not $ownership.compatible) { exit 106 }
+  exit 0
+}
+if ($Action -in 'uninstall', 'remove' -and $ownership.ownership -eq 'absent') { exit 0 }
 if (-not $State) {
   $stateDir = Join-Path $env:ProgramData 'AlkaidLab\USBip'
   if ($Action -in 'install', 'uninstall', 'remove') { New-Item -ItemType Directory -Path $stateDir -Force | Out-Null }
@@ -42,7 +59,7 @@ try {
   if ($Action -eq 'status') {
     $ready = $false
     try { $manifest = Read-UsbipManifest $InstallRoot; $ready = Test-UsbipReady $InstallRoot $manifest } catch { }
-    [pscustomobject]@{ layout = 'usbip-slim-v1'; ready = $ready; legacy = @(Get-UsbipLegacyEntries).Count -gt 0 } | ConvertTo-Json -Compress
+    [pscustomobject]@{ ownership = $ownership.ownership; compatible = $ownership.compatible; layout = 'usbip-slim-v1'; ready = $ready; legacy = @(Get-UsbipLegacyEntries).Count -gt 0 } | ConvertTo-Json -Compress
     exit 0
   }
   # Internal rollback is called by a child guard while this process owns the
@@ -62,10 +79,10 @@ try {
   if ((Invoke-Guard snapshot) -ne 0) { exit 105 }
   $operationFailed = $false
   try {
-    if ($Action -eq 'install') { Install-UsbipPackage $Payload $InstallRoot $PSScriptRoot }
+    if ($Action -eq 'install') { Install-UsbipPackage $Payload $InstallRoot $PSScriptRoot $HostRoot }
     else {
-      Remove-UsbipLegacy
-      Remove-UsbipPackage $InstallRoot -KeepFiles
+      Remove-UsbipLegacy $InstallRoot $HostRoot
+      if ($ownership.ownership -eq 'managed') { Remove-UsbipPackage $InstallRoot -KeepFiles }
     }
     Write-Step $Action 0
   } catch {

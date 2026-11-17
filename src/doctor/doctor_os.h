@@ -85,6 +85,7 @@ namespace doctor::os {
     bool driver_checked = false;
     bool driver_found = false;
     std::string driver;  ///< service name found, "usbip2_ude"
+    bool externally_managed = false;
   };
 
   usbip_t

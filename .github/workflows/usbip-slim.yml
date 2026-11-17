@@ -2,7 +2,7 @@ name: USB-IP payload
 on:
   workflow_dispatch:
   push:
-    branches: [fix/usbip-slim]
+    branches: [fix/usbip-slim, fix/usbip-ownership]
   pull_request:
     branches: [master]
     paths:
@@ -25,6 +25,7 @@ jobs:
         run: |
           python scripts/packaging/test_usbip_payload.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\src_assets\windows\misc\usbip\smoke-test-usbip-ownership.ps1
           & .\src_assets\windows\misc\usbip\smoke-test-usbip-package.ps1
           & .\src_assets\windows\misc\usbip\smoke-test-usbip-roothub-guard.ps1
       - name: Extract immutable upstream package and verify kernel catalogs
