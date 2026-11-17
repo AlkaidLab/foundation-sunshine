@@ -41,8 +41,27 @@ namespace sparxie {
       }
       std::error_code ec;
       fs::create_directories(path.parent_path(), ec);
-      std::ofstream out(path, std::ios::binary);
-      out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+      // The picture is written to a sibling temp file first and swapped in when
+      // complete: a refresh running in parallel (the HTTP entry bypasses the
+      // scheduler's gate) reads either the old or the new picture, never half
+      // of one.
+      static std::atomic<unsigned> keep_counter { 0 };
+      const fs::path tmp = path.parent_path() / (path.filename().string() + ".tmp-" + std::to_string(keep_counter.fetch_add(1)));
+      {
+        std::ofstream out(tmp, std::ios::binary);
+        out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        out.close();
+        if (!out) {
+          fs::remove(tmp, ec);
+          return;
+        }
+      }
+      fs::rename(tmp, path, ec);
+      if (ec) {
+        // A reader holding the target open can refuse the swap on Windows: the
+        // complete old file stays in place and the next refresh tries again.
+        fs::remove(tmp, ec);
+      }
     }
     // the bytes of a file, read as they are: on Windows a stream opened without std::ios::binary turns CR LF into LF and stops at a 0x1A byte, which cut the cached
     // lossless WebP of Star Rail short (the decoder then returned nothing, and the hero was composed black). The index.json is text and reads the same either way.
@@ -116,6 +135,15 @@ namespace sparxie {
       }
       if (newest.empty()) return std::nullopt;
       const std::string bytes = file_text(newest);
+      if (bytes.empty()) return std::nullopt;
+      return bytes;
+    }
+    // the bytes of the picture of one exact version, the one the index records:
+    // a newer cache of another version must not answer a cover restore
+    std::optional<std::string>
+    cached_picture_at(const HostEnv &env, const std::string &install_id, const std::string &kind, const std::string &version) {
+      if (version.empty()) return std::nullopt;
+      const std::string bytes = file_text(env.host_data / "posters" / install_id / (version + "-" + kind + ".bin"));
       if (bytes.empty()) return std::nullopt;
       return bytes;
     }
@@ -511,7 +539,10 @@ namespace sparxie {
       if (!is_touched(item.id) && !(!sibling.empty() && is_touched(sibling)) && hero_ok && !cover_stale && !cover_missing) {
         continue;
       }
-      auto background_bytes = cached_picture(env, item.id, "background");
+      // the cover belongs to the recorded version, so its own background is
+      // tried first and the newest cache of any version is only a fallback
+      auto background_bytes = cached_picture_at(env, item.id, "background", cover_version);
+      if (!background_bytes) background_bytes = cached_picture(env, item.id, "background");
       if (item.region == "bili")
         if (const auto national = cached_picture(env, item.game + "-cn", "background")) background_bytes = national;
       if (!background_bytes) continue;

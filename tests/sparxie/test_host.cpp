@@ -618,6 +618,16 @@ TEST(Host, RefreshUsesContentHashAndSkipsCustom) {
   auto offline = [](const std::string &) -> std::optional<std::string> { return std::nullopt; };
   sparxie::refresh_official(env, offline, decode);
   EXPECT_TRUE(fs::is_regular_file(cover)) << "the cover can be restored without network access";
+  fs::remove(cover);
+  {
+    // a newer cache of another version must not answer the restore: the index
+    // records this version, so its own background is the one composed from
+    std::ofstream newer(cache / "other-version-background.bin", std::ios::binary);
+    newer << "broken";
+  }
+  sparxie::refresh_official(env, offline, decode);
+  EXPECT_TRUE(fs::is_regular_file(cover)) << "the recorded version's background restores the cover, not a newer one of another version";
+  fs::remove(cache / "other-version-background.bin");
   {
     std::ofstream empty_cover(cover, std::ios::binary | std::ios::trunc);
   }
@@ -634,6 +644,14 @@ TEST(Host, RefreshUsesContentHashAndSkipsCustom) {
   EXPECT_GT(fs::file_size(background), 0u) << "a successful download replaces an empty cache entry";
   sparxie::refresh_official(env, get_url, decode);
   EXPECT_EQ(background_downloads, first_downloads + 1) << "a healthy cache does not download again";
+  {
+    bool temp_left = false;
+    std::error_code ec;
+    for (const auto &entry : fs::directory_iterator(cache, ec)) {
+      if (entry.path().filename().string().find(".tmp-") != std::string::npos) temp_left = true;
+    }
+    EXPECT_FALSE(temp_left) << "an atomic cache write leaves no temp files behind";
+  }
   fs::remove(background);
   sparxie::refresh_official(env, get_url, decode);
   EXPECT_EQ(background_downloads, first_downloads + 2);
