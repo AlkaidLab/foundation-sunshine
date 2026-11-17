@@ -37,7 +37,7 @@
 
 ## 编译缓存
 
-- 保存：只有 master 的 push、手动运行和夜间构建保存（`ccache-windows-<配置指纹>-<run id>`，只保留最新一份，旧的由修剪步骤删除）。
+- 保存：只有 master 的 push、手动运行和夜间构建保存（`ccache-windows-<配置指纹>-<run id>`，配置指纹以 `-pinned` 或 `-newest` 结尾；只保留最新一份，旧的由修剪步骤删除，修剪的匹配模式必须带上这个后缀，否则一个都匹配不到）。
   在自己 fork 里运行这个工作流时，fork 里的 pull request 也保存，因为 fork 没有上游 master 的缓存可恢复。
 - 恢复：除夜间构建外，所有运行按前缀 `ccache-windows-<配置指纹>-` 恢复最近的一份（指纹见下一节）；夜间构建不恢复，从冷缓存开始编译
   （在 8 个并行运行器上，见下一节）。
@@ -86,8 +86,12 @@ libcrypto 需要链接 bcrypt、主机名校验不再回退 CN），修复见 PR
 变化适配代码（可参考 PR #1289 对 OpenSSL 4 的处理）→ 跑一次 Windows 构建 → 合并。固定版本覆盖新版本后，巡检会自动关掉跟踪 issue。
 ## Windows 编译器与发布门禁
 
-- 发布构建默认使用 MSYS2 UCRT64 的 Clang + LLD；`CI_TOOLCHAIN=gcc` 或手动运行的 `toolchain=gcc` 可回退到 GCC。
-  pull request 始终使用 GCC：固定主机的冷构建 Clang/GCC 墙钟中位数为 0.66 倍，但托管 runner 上没有可靠的端到端收益，且 Clang 的 ccache 约大 5 倍。
+- 测什么发什么：pull request、push、夜间构建和发布构建都默认使用 MSYS2 UCRT64 的 Clang + LLD，完整编译、原生测试和 PE 发布门禁跑在 Clang 产物上。
+  `CI_TOOLCHAIN=gcc` 或手动运行的 `toolchain=gcc` 可切到 GCC。
+- GCC 是回退，由 `.github/workflows/gcc-fallback.yml` 每晚（UTC 21:47，合并到 master 后生效）派发一次 GCC 的完整构建（8 个分片冷编译、全部原生测试、发布门禁、打包）并等它结束；
+  失败就打开或更新唯一一个带 `gcc-fallback` 标签的 issue，成功后自动关闭。GCC 构建不保存也不修剪编译缓存（只有主工具链才保存），所以不会挤掉 Clang 的缓存。
+- Clang 的编译缓存比 GCC 大：同一棵树，热缓存 Clang 约 680 MB，GCC 约 235 MB。多出来的部分是预编译头：每个目标一份，Clang 的 `.pch` 约 25 MB，ccache 把它们当作普通条目保存；
+  GCC 的 `.gch` 不进缓存。ccache 只保留一条（见下一节），远低于 GitHub 的 10 GB 配额；热构建在 99% 命中下，Windows 作业约 9 分钟，不比 GCC 慢。
 - Clang、LLD 和与它们版本锁定的 `clang-libs`、`llvm-libs` 固定在 `scripts/ci/msys2-pins-clang.txt`，格式与升级方式同 `msys2-pins.txt`（`msys2-pins.py check/bump` 两个文件一并处理）；只有 Clang 构建才装它们并把它们写进 `IgnorePkg`，GCC 构建不受影响，配置指纹也只在 Clang 构建时计入这个文件。
 - 两种编译器都启用 `SUNSHINE_PRECOMPILED_HEADERS=ON`。ccache 同时使用 `CCACHE_DEPEND=1` 和 `CCACHE_SLOPPINESS=pch_defines,time_macros`，配置指纹把编译器和 Clang/LLD 包版本纳入缓存键。
 - Windows Release 目标使用 `-ffunction-sections -fdata-sections` 与 `--gc-sections`；发布打包仍先从未 strip 的模块生成 Breakpad 符号，再 strip 发出的模块。LTO 暂不启用，因为本卡没有可重复的构建时间收益测量。
