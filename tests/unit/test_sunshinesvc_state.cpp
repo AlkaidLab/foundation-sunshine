@@ -20,6 +20,9 @@ TEST(SessionBinding, MissingOrInvalidSettingPreservesAutomaticCapture) {
   EXPECT_EQ(parse_or_default("00"), mode_e::automatic);
   EXPECT_EQ(parse_or_default("0x0"), mode_e::automatic);
   EXPECT_EQ(parse_or_default("0x1"), mode_e::console);
+  EXPECT_EQ(parse_or_default(" 1 \t"), mode_e::console);
+  EXPECT_EQ(parse_or_default(" \"1\" \t"), mode_e::console);
+  EXPECT_EQ(parse_or_default("\t0x1 "), mode_e::console);
   EXPECT_EQ(parse_or_default("2"), mode_e::automatic);
 }
 

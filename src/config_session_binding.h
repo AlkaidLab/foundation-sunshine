@@ -28,6 +28,14 @@ namespace config_session_binding {
 
   inline constexpr std::optional<mode_e>
   parse(std::string_view value) {
+    // The host parser may retain whitespace before an inline comment, while
+    // the service trims it before calling this shared parser.
+    while (!value.empty() && (value.front() == ' ' || value.front() == '\t')) {
+      value.remove_prefix(1);
+    }
+    while (!value.empty() && (value.back() == ' ' || value.back() == '\t')) {
+      value.remove_suffix(1);
+    }
     // The normal config parser accepts quoted, zero-padded and hexadecimal
     // integers. Use the same interpretation in the service and the host.
     if (value.size() >= 2 && value.front() == '"' && value.back() == '"') {
