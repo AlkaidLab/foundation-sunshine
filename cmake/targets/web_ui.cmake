@@ -25,13 +25,19 @@ add_custom_command(OUTPUT "${_npm_stamp}"
 file(GLOB_RECURSE _web_inputs CONFIGURE_DEPENDS LIST_DIRECTORIES FALSE
         "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/web/*" "${PROJECT_SOURCE_DIR}/scripts/vite/*")
 # Vite resolves foundation-ui from this checkout, not from the web source tree.
-# Changes to that checkout must invalidate the generated bundle as well.
-if(DEFINED ENV{FOUNDATION_UI_DIR} AND NOT "$ENV{FOUNDATION_UI_DIR}" STREQUAL "")
-    get_filename_component(_foundation_ui_dir "$ENV{FOUNDATION_UI_DIR}" ABSOLUTE BASE_DIR "${PROJECT_SOURCE_DIR}")
-else()
-    get_filename_component(_foundation_ui_dir "${PROJECT_SOURCE_DIR}/../ds5-ui-m3e" ABSOLUTE)
+# Cache the selection for automatic reconfiguration; change it with -DFOUNDATION_UI_DIR.
+if(NOT DEFINED FOUNDATION_UI_DIR OR "${FOUNDATION_UI_DIR}" STREQUAL "")
+    if(DEFINED ENV{FOUNDATION_UI_DIR} AND NOT "$ENV{FOUNDATION_UI_DIR}" STREQUAL "")
+        set(_foundation_ui_default "$ENV{FOUNDATION_UI_DIR}")
+    else()
+        set(_foundation_ui_default "${PROJECT_SOURCE_DIR}/../ds5-ui-m3e")
+    endif()
+    get_filename_component(_foundation_ui_default "${_foundation_ui_default}" ABSOLUTE BASE_DIR "${PROJECT_SOURCE_DIR}")
+    set(FOUNDATION_UI_DIR "${_foundation_ui_default}" CACHE PATH "Foundation UI source directory" FORCE)
 endif()
-file(GLOB_RECURSE _foundation_ui_inputs CONFIGURE_DEPENDS LIST_DIRECTORIES FALSE "${_foundation_ui_dir}/src/*")
+get_filename_component(_foundation_ui_dir "${FOUNDATION_UI_DIR}" ABSOLUTE BASE_DIR "${PROJECT_SOURCE_DIR}")
+file(GLOB_RECURSE _foundation_ui_inputs CONFIGURE_DEPENDS LIST_DIRECTORIES FALSE
+        "${_foundation_ui_dir}/src/*" "${_foundation_ui_dir}/scripts/*")
 list(APPEND _web_inputs "${_foundation_ui_dir}/package.json" ${_foundation_ui_inputs})
 set(_web_outputs)
 file(GLOB _web_pages RELATIVE "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/web"
