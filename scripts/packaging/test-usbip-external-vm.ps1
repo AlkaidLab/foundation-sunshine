@@ -43,8 +43,11 @@ function Snapshot([string]$Name) {
   foreach ($key in $keys) {
     # Missing keys are recorded as missing, not silently omitted on one side.
     $target = Join-Path $dir ("registry-$index.reg")
-    & reg.exe export $key $target /y 2>$null | Out-Null
-    if ($LASTEXITCODE -ne 0) { Set-Content -LiteralPath $target -Value 'absent' }
+    $providerPath = 'Registry::' + $key.Replace('HKLM\', 'HKEY_LOCAL_MACHINE\')
+    if (Test-Path -LiteralPath $providerPath) {
+      & reg.exe export $key $target /y | Out-Null
+      if ($LASTEXITCODE -ne 0) { throw 'Registry inventory failed' }
+    } else { Set-Content -LiteralPath $target -Value 'absent' }
     $index++
   }
   return $files.Count

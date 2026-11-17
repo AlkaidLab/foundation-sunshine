@@ -6,7 +6,8 @@ $scratch = Join-Path ([IO.Path]::GetTempPath()) ('usbip-ownership-' + [guid]::Ne
 $module = Import-Module (Join-Path $PSScriptRoot 'usbip-package-ownership.psm1') -Force -PassThru -DisableNameChecking
 $passed = 0
 try {
-  foreach ($fixture in @(Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'usbip-ownership-fixtures.json') | ConvertFrom-Json)) {
+  $fixtures = Get-Content -Raw -LiteralPath (Join-Path $PSScriptRoot 'usbip-ownership-fixtures.json') | ConvertFrom-Json
+  foreach ($fixture in $fixtures) {
     $root = Join-Path $scratch $fixture.name
     $hostRoot = Join-Path $root 'host'
     $usbRoot = Join-Path $root 'USBip'
