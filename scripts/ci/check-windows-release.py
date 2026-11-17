@@ -166,6 +166,36 @@ def imported_dlls(data):
     return result
 
 
+def delay_imported_dlls(data):
+    """Return names from the PE delay-import directory (loaded on first call)."""
+    pe, optional, magic, rva_to_offset = _coff(data)
+    directory_offset = optional + (96 if magic == 0x10B else 112)
+    number_of_directories = _u32(data, optional + (92 if magic == 0x10B else 108))
+    if number_of_directories <= 13:
+        return []
+    delay_rva = _u32(data, directory_offset + 13 * 8)
+    delay_size = _u32(data, directory_offset + 13 * 8 + 4)
+    if not delay_rva or not delay_size:
+        return []
+    descriptor = rva_to_offset(delay_rva)
+    if descriptor is None:
+        raise PEError("invalid delay-import directory RVA")
+    image_base = _u32(data, optional + 28) if magic == 0x10B else _u64(data, optional + 24)
+    result = []
+    # ImgDelayDescr is 32 bytes: grAttrs, rvaDLLName, rvaHmod, rvaIAT, rvaINT, rvaBoundIAT, rvaUnloadIAT, dwTimeStamp.
+    for offset in range(descriptor, descriptor + max(delay_size, 32), 32):
+        if offset + 32 > len(data):
+            raise PEError("truncated delay-import descriptor")
+        attributes, name_rva = struct.unpack_from("<II", data, offset)
+        if not (attributes or name_rva):
+            break
+        if not attributes & 1:
+            # Old descriptors hold virtual addresses instead of RVAs.
+            name_rva = (name_rva - image_base) & 0xFFFFFFFF
+        result.append(_cstring(data, rva_to_offset(name_rva)))
+    return result
+
+
 def stack_reserve(data):
     """Read SizeOfStackReserve from the PE optional header."""
     _, optional, magic, _ = _coff(data)
@@ -176,14 +206,15 @@ def stack_reserve(data):
 
 def check_data(data):
     dlls = imported_dlls(data)
-    non_system = [dll for dll in dlls if dll not in SYSTEM_DLLS and not dll.startswith(SYSTEM_PREFIXES)]
+    delayed = delay_imported_dlls(data)
+    non_system = [dll for dll in dlls + delayed if dll not in SYSTEM_DLLS and not dll.startswith(SYSTEM_PREFIXES)]
     reserve = stack_reserve(data)
     errors = []
     if non_system:
         errors.append("non-system imports: " + ", ".join(sorted(set(non_system))))
     if reserve < MIN_STACK_RESERVE:
         errors.append(f"SizeOfStackReserve is {reserve} bytes, expected at least {MIN_STACK_RESERVE}")
-    return dlls, reserve, errors
+    return dlls + delayed, reserve, errors
 
 
 def check(path):

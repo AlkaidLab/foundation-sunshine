@@ -12,8 +12,9 @@ CHECK = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CHECK)
 
 
-def pe_with_imports(names, stack_reserve=2 * 1024 * 1024):
-    """Build a minimal PE32+ image containing one import descriptor per name."""
+def pe_with_imports(names, stack_reserve=2 * 1024 * 1024, delay_names=()):
+    """Build a minimal PE32+ image containing one import descriptor per name
+    (and one delay-import descriptor per delay_names entry)."""
     pe_offset = 0x80
     optional_offset = pe_offset + 24
     section_offset = optional_offset + 0xF0
@@ -29,7 +30,15 @@ def pe_with_imports(names, stack_reserve=2 * 1024 * 1024):
     # Import directory: RVA 0x1000, 20-byte descriptors, then a null descriptor.
     struct.pack_into("<II", image, optional_offset + 112 + 8, 0x1000, 20 * (len(names) + 1))
     struct.pack_into("<8sIIIIIIHHI", image, section_offset, b".idata\0", 0x400, 0x1000, 0x400, raw_offset, 0, 0, 0, 0, 0xC0000040)
-    cursor = raw_offset + 20 * (len(names) + 1)
+    delay_table = raw_offset + 20 * (len(names) + 1)
+    if delay_names:
+        struct.pack_into("<II", image, optional_offset + 112 + 13 * 8, 0x1000 + delay_table - raw_offset, 32 * (len(delay_names) + 1))
+    cursor = delay_table + 32 * (len(delay_names) + 1)
+    for index, name in enumerate(delay_names):
+        name_rva = 0x1000 + cursor - raw_offset
+        image[cursor:cursor + len(name) + 1] = name.encode() + b"\0"
+        struct.pack_into("<II", image, delay_table + index * 32, 1, name_rva)
+        cursor += len(name) + 1
     for index, name in enumerate(names):
         name_rva = 0x1000 + cursor - raw_offset
         image[cursor:cursor + len(name) + 1] = name.encode() + b"\0"
@@ -48,3 +57,17 @@ class WindowsReleaseGateTests(unittest.TestCase):
     def test_non_system_import_fails(self):
         data = pe_with_imports(["libiconv-2.dll"])
         self.assertTrue(any("libiconv-2.dll" in error for error in CHECK.check_data(data)[2]))
+
+    def test_delay_imports_are_read(self):
+        data = pe_with_imports(["KERNEL32.dll"], delay_names=["d3d11.dll", "Libiconv-2.dll"])
+        self.assertEqual(CHECK.imported_dlls(data), ["kernel32.dll"])
+        self.assertEqual(CHECK.delay_imported_dlls(data), ["d3d11.dll", "libiconv-2.dll"])
+
+    def test_system_delay_import_passes(self):
+        data = pe_with_imports(["KERNEL32.dll"], delay_names=["d3d11.dll", "api-ms-win-core-file-l1-2-0.dll"])
+        self.assertEqual(CHECK.check_data(data)[2], [])
+
+    def test_non_system_delay_import_fails_when_regular_imports_pass(self):
+        self.assertEqual(CHECK.check_data(pe_with_imports(["KERNEL32.dll"]))[2], [])
+        errors = CHECK.check_data(pe_with_imports(["KERNEL32.dll"], delay_names=["libiconv-2.dll"]))[2]
+        self.assertTrue(any("libiconv-2.dll" in error for error in errors), errors)
