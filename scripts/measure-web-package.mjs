@@ -9,8 +9,10 @@ const [source, destination] = process.argv.slice(2)
 if (!source || !destination) throw new Error('usage: measure-web-package.mjs SOURCE OUTPUT')
 const root = path.resolve(source)
 const output = path.resolve(destination)
-// Keep the output out of the source tree: publicDir is copied recursively by Vite.
-if (output === root || output.startsWith(root + path.sep)) throw new Error('OUTPUT must be outside SOURCE')
+// Keep the two trees disjoint: publicDir is copied recursively by Vite, and emptyOutDir
+// would wipe a SOURCE that lives inside OUTPUT.
+const inside = (child, parent) => child === parent || child.startsWith(parent + path.sep)
+if (inside(output, root) || inside(root, output)) throw new Error('OUTPUT and SOURCE must not be the same or contain each other')
 process.chdir(root)
 const chunks = []
 const started = performance.now()
