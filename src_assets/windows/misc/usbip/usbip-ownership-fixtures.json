@@ -38,6 +38,16 @@
     "ownership": "external"
   },
   {
+    "name": "legacy-uninstaller-elsewhere",
+    "version": "0.9.8.1",
+    "extras": false,
+    "receipt": false,
+    "legacy": true,
+    "present": true,
+    "uninstallerElsewhere": true,
+    "ownership": "external"
+  },
+  {
     "name": "incompatible",
     "version": "0.9.8.2",
     "extras": false,

@@ -44,7 +44,8 @@ try {
       function script:Get-ItemProperty {
         param($LiteralPath, $ErrorAction)
         [pscustomobject]@{ DisplayVersion = $script:Fixture.version; InstallLocation = ($script:FixtureRoot + $script:Suffix);
-          InstallLayout = 'usbip-slim-v1'; SourceSHA256 = $script:UsbipSourceHash; UninstallString = '"unins001.exe"' }
+          InstallLayout = 'usbip-slim-v1'; SourceSHA256 = $script:UsbipSourceHash
+          UninstallString = '"' + $(if ($script:Fixture.PSObject.Properties['uninstallerElsewhere']) { $script:FixtureRoot + '-other' } else { $script:FixtureRoot }) + '\unins000.exe" /LOG' }
       }
     } $fixture $usbRoot $source $(if ($fixture.PSObject.Properties['locationSuffix']) { $fixture.locationSuffix } else { '' })
     $result = Get-UsbipOwnership $usbRoot $hostRoot

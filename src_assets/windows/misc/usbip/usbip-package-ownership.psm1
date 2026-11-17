@@ -15,6 +15,13 @@ function Test-UsbipSameLocation([string]$Left, [string]$Right) {
   } catch { return $false }
 }
 
+# The takeover runs the registered uninstaller with elevated rights, so it must be the one in the install directory.
+function Test-UsbipUninstallerInRoot($Entry, [string]$Root) {
+  $command = [string](Get-UsbipValue $Entry 'UninstallString')
+  if ($command -notmatch '^"([^"]+)\\unins[0-9]+\.exe"(?:\s+/LOG)?$') { return $false }
+  return Test-UsbipSameLocation $Matches[1] $Root
+}
+
 function Get-UsbipValue($Record, [string]$Name) {
   if ($null -ne $Record -and $null -ne $Record.PSObject.Properties[$Name]) { return $Record.$Name }
   return ''
@@ -79,7 +86,7 @@ function Resolve-UsbipOwnership($Inventory) {
   # Exactly one upstream registration: two records (one per registry view) leave the origin ambiguous, and the
   # takeover would run each uninstaller in turn.
   elseif ($Inventory.Entries.Count -eq 1 -and $null -eq $Inventory.Receipt -and $Inventory.LegacyPayload -and
-      @($Inventory.Entries | Where-Object { -not (Test-UsbipSameLocation (Get-UsbipValue $_ 'InstallLocation') $Inventory.Root) }).Count -eq 0) {
+      @($Inventory.Entries | Where-Object { -not ((Test-UsbipSameLocation (Get-UsbipValue $_ 'InstallLocation') $Inventory.Root) -and (Test-UsbipUninstallerInRoot $_ $Inventory.Root)) }).Count -eq 0) {
     $owner = 'legacy-owned'; $reason = 'same-version-no-extras-bundled-installer'
   }
   [pscustomobject]@{ ownership = $owner; compatible = $compatible; reason = $reason }
