@@ -3,7 +3,7 @@
 Checked on 2026-11-12 against the upstream sources (read only; behaviour is described here, no code is copied):
 
 - host and Web UI: <https://github.com/AlkaidLab/foundation-sunshine>, `master` at 6225dcb (2026-11-12), called **host-up** below;
-- control panel: <https://github.com/AlkaidLab/foundation-panel>, `main` at 502a671, called **panel-up**.
+- control panel: <https://github.com/qiin2333/sunshine-control-panel/tree/502a6719bf4dbc17c42f3e4a2154fb8957890773>, historical `main` at 502a671, called **panel-up**. This comparison refers to the original Panel snapshot, not the current foundation-panel repository.
 
 Our product is a superset of the original (the native-superset principle): nothing the original offers may be missing or harder to reach.
 

@@ -160,23 +160,6 @@ namespace display_device::w_utils {
       return std::wstring { target_name.monitorDevicePath };
     }
 
-    bool
-    is_edid_backed_display(const DISPLAYCONFIG_PATH_INFO &path) {
-      DISPLAYCONFIG_TARGET_DEVICE_NAME target_name = {};
-      target_name.header.adapterId = path.targetInfo.adapterId;
-      target_name.header.id = path.targetInfo.id;
-      target_name.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME;
-      target_name.header.size = sizeof(target_name);
-
-      if (DisplayConfigGetDeviceInfo(&target_name.header) != ERROR_SUCCESS) {
-        // Keep the EDID lookup as a fallback when Windows cannot report the
-        // target metadata. The registry query may still provide the identity.
-        return true;
-      }
-
-      return target_name.flags.friendlyNameFromEdid != FALSE;
-    }
-
     /**
      * @brief Helper method for dealing with SetupAPI.
      * @returns True if device interface path was retrieved and is non-empty, false otherwise.
@@ -278,7 +261,7 @@ namespace display_device::w_utils {
       status = RegQueryValueExW(reg_key, L"EDID", nullptr, nullptr, edid.data(), &required_size_in_bytes);
       if (status != ERROR_SUCCESS) {
         // ERROR_FILE_NOT_FOUND is expected for some displays (virtual, RDP,
-        // etc.). The caller uses the instance ID fallback in that case.
+        // etc.). The caller uses the device path fallback in that case.
         if (status != ERROR_FILE_NOT_FOUND) {
           BOOST_LOG(warning) << get_error_string(status) << " \"RegQueryValueExW\" failed when getting size.";
         }
@@ -430,8 +413,9 @@ namespace display_device::w_utils {
           break;
         }
 
-        if (is_edid_backed_display(path) &&
-            !get_device_edid(dev_info_handle, dev_info_data, device_id_data)) {
+        // friendlyNameFromEdid describes the name source, not EDID availability.
+        // Keep the registry lookup and device-path fallback so saved IDs remain valid.
+        if (!get_device_edid(dev_info_handle, dev_info_data, device_id_data)) {
           // Error already logged
           break;
         }

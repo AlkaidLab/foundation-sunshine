@@ -7,8 +7,10 @@
 #include <cstdlib>
 #include <iostream>
 #include <cmath>
+#include <memory>
 #include <gtest/gtest.h>
 #ifdef _WIN32
+  #include <windows.h>
   #include <src/webp/decode.h>
 #endif
 namespace fs = std::filesystem;
@@ -625,6 +627,7 @@ TEST(Host, RefreshUsesContentHashAndSkipsCustom) {
     std::ofstream newer(cache / "other-version-background.bin", std::ios::binary);
     newer << "broken";
   }
+  fs::last_write_time(cache / "other-version-background.bin", fs::last_write_time(background) + std::chrono::seconds(1));
   sparxie::refresh_official(env, offline, decode);
   EXPECT_TRUE(fs::is_regular_file(cover)) << "the recorded version's background restores the cover, not a newer one of another version";
   fs::remove(cache / "other-version-background.bin");
@@ -648,7 +651,9 @@ TEST(Host, RefreshUsesContentHashAndSkipsCustom) {
     bool temp_left = false;
     std::error_code ec;
     for (const auto &entry : fs::directory_iterator(cache, ec)) {
-      if (entry.path().filename().string().find(".tmp-") != std::string::npos) temp_left = true;
+      if (entry.path().filename().string().find(".tmp-") != std::string::npos) {
+        temp_left = true;
+      }
     }
     EXPECT_FALSE(temp_left) << "an atomic cache write leaves no temp files behind";
   }
@@ -680,6 +685,62 @@ TEST(Host, RefreshUsesContentHashAndSkipsCustom) {
   }
   sparxie::refresh_official(env, get_url, decode);
   EXPECT_EQ(background_downloads, first_downloads + 4);
+#ifdef _WIN32
+  {
+    SCOPED_TRACE("A locked corrupt source remains pending after the outputs recover");
+    const auto read_index = [&]() {
+      sparxie::json record;
+      std::ifstream index_in(cache / "index.json");
+      index_in >> record;
+      return record;
+    };
+    {
+      std::ofstream broken(background, std::ios::binary | std::ios::trunc);
+      broken << "broken";
+    }
+    fs::remove(cover);
+    // Readers that omit FILE_SHARE_DELETE allow the decode but deny replacement.
+    HANDLE handle = CreateFileW(background.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    ASSERT_NE(handle, INVALID_HANDLE_VALUE);
+    std::unique_ptr<void, decltype(&CloseHandle)> locked(handle, &CloseHandle);
+    const int before_repair = background_downloads;
+    sparxie::refresh_official(env, get_url, decode);
+    EXPECT_EQ(background_downloads, before_repair + 1);
+    ASSERT_TRUE(fs::is_regular_file(cover)) << "the downloaded bytes still repair the cover";
+    EXPECT_TRUE(read_index().value("backgroundCachePending", false));
+    {
+      std::ifstream source(background, std::ios::binary);
+      EXPECT_EQ(std::string((std::istreambuf_iterator<char>(source)), std::istreambuf_iterator<char>()), "broken");
+    }
+    // Read the persisted state through a fresh environment, as after a restart.
+    auto restarted_env = env_at(root);
+    sparxie::refresh_official(restarted_env, get_url, decode);
+    EXPECT_EQ(background_downloads, before_repair + 2) << "complete outputs must not suppress the pending repair";
+    EXPECT_TRUE(read_index().value("backgroundCachePending", false));
+    for (const auto &entry : fs::directory_iterator(cache)) {
+      EXPECT_EQ(entry.path().filename().string().find(".tmp-"), std::string::npos);
+    }
+    locked.reset();
+    background_online = false;
+    sparxie::refresh_official(restarted_env, get_url, decode);
+    EXPECT_TRUE(read_index().value("backgroundCachePending", false)) << "a failed download preserves the pending repair";
+    EXPECT_TRUE(fs::is_regular_file(cover));
+    background_online = true;
+    sparxie::refresh_official(restarted_env, get_url, decode);
+    EXPECT_EQ(background_downloads, before_repair + 4);
+    EXPECT_FALSE(read_index().value("backgroundCachePending", false));
+    {
+      std::ifstream source(background, std::ios::binary);
+      EXPECT_EQ(std::string((std::istreambuf_iterator<char>(source)), std::istreambuf_iterator<char>()), "img");
+    }
+    const int after_repair = background_downloads;
+    sparxie::refresh_official(restarted_env, get_url, decode);
+    EXPECT_EQ(background_downloads, after_repair) << "successful repair stops further downloads";
+    fs::remove(cover);
+    sparxie::refresh_official(restarted_env, offline, decode);
+    EXPECT_TRUE(fs::is_regular_file(cover)) << "the repaired source can restore the cover offline";
+  }
+#endif
   std::ifstream in(env.apps_file);
   sparxie::json after;
   in >> after;
