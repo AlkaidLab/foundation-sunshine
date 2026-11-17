@@ -1424,6 +1424,15 @@ namespace amf {
     if (props.vbv) {
       snapshot_ok = snapshot_ok && encoder->GetProperty(props.vbv, &old_vbv) == AMF_OK;
     }
+    if (!snapshot_ok) {
+      // Without a snapshot there is no way to restore the old budget if a
+      // write lands but a later one is rejected. Refuse to write at all: the
+      // caller retains its previous allowance and retries on a later budget
+      // tick, and the encoder stays exactly as it was.
+      BOOST_LOG(warning) << "AMF: could not snapshot the current rate-control budget; skipping the bitrate update to "
+                            << bitrate_kbps << " Kbps";
+      return false;
+    }
 
     const auto target_res = encoder->SetProperty(props.target, bitrate);
     const auto peak_res = encoder->SetProperty(props.peak, bitrate);
@@ -1432,24 +1441,21 @@ namespace amf {
     if (target_res != AMF_OK || peak_res != AMF_OK || vbv_res != AMF_OK) {
       BOOST_LOG(warning) << "AMF: set_bitrate(" << bitrate_kbps << " Kbps) rejected by driver"
                          << " (target: " << target_res << ", peak: " << peak_res << ", vbv: " << vbv_res << ")";
-      if (snapshot_ok) {
-        // Roll back whatever landed: an unapplied property keeps its snapshot
-        // value, so only the writes that took effect need restoring.
-        auto rollback = [&](const char *what, const wchar_t *prop, amf_int64 value, AMF_RESULT write_res) {
-          if (write_res != AMF_OK) return;
-          const auto res = encoder->SetProperty(prop, value);
-          if (res != AMF_OK) {
-            BOOST_LOG(error) << "AMF: failed to roll back " << what << ", error: " << res;
-          }
-        };
-        rollback("target bitrate", props.target, old_target, target_res);
-        rollback("peak bitrate", props.peak, old_peak, peak_res);
-        if (props.vbv) {
-          rollback("VBV budget", props.vbv, old_vbv, vbv_res);
+      // Roll back whatever landed: an unapplied property keeps its snapshot
+      // value, so only the writes that took effect need restoring.
+      auto rollback = [&](const char *what, const wchar_t *prop, amf_int64 value, AMF_RESULT write_res) {
+        if (write_res != AMF_OK) return;
+        const auto res = encoder->SetProperty(prop, value);
+        if (res != AMF_OK) {
+          BOOST_LOG(error) << "AMF: failed to roll back " << what
+                           << ", error: " << res
+                           << " — the encoder may keep a mixed budget; recreate the session if this repeats";
         }
-      }
-      else {
-        BOOST_LOG(warning) << "AMF: could not snapshot the current budget before writing; the encoder may keep a mixed budget";
+      };
+      rollback("target bitrate", props.target, old_target, target_res);
+      rollback("peak bitrate", props.peak, old_peak, peak_res);
+      if (props.vbv) {
+        rollback("VBV budget", props.vbv, old_vbv, vbv_res);
       }
       return false;
     }
