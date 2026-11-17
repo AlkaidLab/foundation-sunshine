@@ -5,12 +5,21 @@
 
 #include <algorithm>
 #include <cctype>
+#include <random>
 
 namespace telemetry::opt_out {
 
   using nlohmann::json;
 
   namespace {
+    std::uint64_t
+    new_id() {
+      static thread_local std::mt19937_64 rng { std::random_device {}() };
+      std::uint64_t id = 0;
+      while (id == 0) id = rng();
+      return id;
+    }
+
     bool
     choice_ok(const std::string &c) {
       return c == "usage" || c == "errors";
@@ -91,6 +100,12 @@ namespace telemetry::opt_out {
       r.next_try_ms = j["next"].get<std::int64_t>();
       r.tries = static_cast<int>(std::clamp<std::int64_t>(j["tries"].get<std::int64_t>(), 0, MAX_TRIES));
       if (r.t <= 0) continue;
+      // a file written before the id existed has none: make one now and keep it at the next write
+      if (j.contains("id") && j["id"].is_number_unsigned()) r.id = j["id"].get<std::uint64_t>();
+      else if (j.contains("id") && j["id"].is_number_integer() && j["id"].get<std::int64_t>() > 0) r.id = static_cast<std::uint64_t>(j["id"].get<std::int64_t>());
+      // a number that is missing or already taken by an earlier record (a hand-edited or damaged file) gets a new one: the send result
+      // is matched to its record by the number, so two records that share it would both be removed after one delivery
+      while (r.id == 0 || std::any_of(out.begin(), out.end(), [&](const record_t &other) { return other.id == r.id; })) r.id = new_id();
       out.push_back(std::move(r));
     }
     return out;
@@ -100,7 +115,7 @@ namespace telemetry::opt_out {
   serialize(const std::vector<record_t> &records) {
     std::string out;
     for (const auto &r : records) {
-      const json j { { "v", 1 }, { "choice", r.choice }, { "product", r.product }, { "version", r.version }, { "install_id", r.install_id }, { "t", r.t }, { "next", r.next_try_ms }, { "tries", r.tries } };
+      const json j { { "v", 1 }, { "id", r.id }, { "choice", r.choice }, { "product", r.product }, { "version", r.version }, { "install_id", r.install_id }, { "t", r.t }, { "next", r.next_try_ms }, { "tries", r.tries } };
       out += j.dump();
       out += '\n';
     }
@@ -125,7 +140,9 @@ namespace telemetry::opt_out {
         if (!product_ok(p.product) || !version_ok(p.version)) continue;
         const bool waiting = std::any_of(records.begin(), records.end(), [&](const record_t &r) { return r.choice == choice && r.product == p.product && r.install_id == install_id; });
         if (waiting || records.size() >= MAX_RECORDS) continue;
-        records.push_back({ choice, p.product, p.version, install_id, now_ms, now_ms, 0 });
+        std::uint64_t id = new_id();
+        while (std::any_of(records.begin(), records.end(), [&](const record_t &r) { return r.id == id; })) id = new_id();
+        records.push_back({ choice, p.product, p.version, install_id, now_ms, now_ms, 0, id });
       }
     }
   }
