@@ -1,4 +1,5 @@
 #include "src/sparxie/art_sources.h"
+#include "src/sparxie/art_path.h"
 #include "src/sparxie/host.h"
 #include "src/sparxie/apps_file_lock.h"
 #include "src/sparxie/icon_file.h"
@@ -172,7 +173,7 @@ namespace sparxie {
     // a newer cache of another version must not answer a cover restore
     std::optional<std::string>
     cached_picture_at(const HostEnv &env, const std::string &install_id, const std::string &kind, const std::string &version) {
-      if (version.empty()) {
+      if (version.empty() || !valid_art_version(version)) {
         return std::nullopt;
       }
       const std::string bytes = verified_picture(env, install_id, env.host_data / "posters" / install_id / (version + "-" + kind + ".bin"));
@@ -198,7 +199,7 @@ namespace sparxie {
     };
     std::vector<Item> items;
     auto add = [&](const std::string &id, const std::string &game, const std::string &region, const std::string &dir = {}, const std::string &exe = {}) {
-      if (id.empty() || game.empty() || region.empty()) return;
+      if (!valid_art_install(id, game, region)) return;
       for (auto &item : items)
         if (item.id == id) {
           if (item.dir.empty() && !dir.empty()) {
@@ -394,7 +395,7 @@ namespace sparxie {
         std::string label;
         for (const auto &source : sourced) {
           ArtUrls candidate = source.resolve();
-          if (candidate.background.empty()) continue;
+          if (candidate.background.empty() || !valid_art_version(candidate.version)) continue;
           bool replace_background = false;
           // a title whose cached art is of this very version (and was made by this revision of the sources) is left alone, as for the HoYoverse posters
           if (!candidate.version.empty() && previous_version == candidate.version && previous.value("artRev", 0) == kArtRevision) {
@@ -514,6 +515,10 @@ namespace sparxie {
         }
         const std::string biz = biz_for(item.game, item.region);
         urls = art_urls_from_payload(games_json, basic_json, biz, item.region == "bili");
+        if (!valid_art_version(urls.version)) {
+          skipped.push_back(item.id);
+          continue;
+        }
         // A matching version is usable only when its source picture is still cached.
         // A missing or empty file needs one new download to restore the cache.
         if (!urls.version.empty() && previous_version == urls.version && previous.value("heroLogo", 0) == 1) {
@@ -658,6 +663,7 @@ namespace sparxie {
       if (index_now.is_object()) {
         cover_version = index_now.value("version", std::string());
       }
+      if (!valid_art_version(cover_version)) continue;
       const bool cover_composed = index_cover_kind == "composed" || (index_cover_kind.empty() && region_row(item.game, item.region) != nullptr && !cover_version.empty());
       const bool cover_stale = index_now.is_object() && index_now.value("coverRev", 0) != kCoverRevision && cover_composed;
       const bool cover_missing = cover_composed && !cover_version.empty() && !nonempty_file(env.covers_dir / ("sparxie-" + item.id + "-" + cover_version + ".png"));

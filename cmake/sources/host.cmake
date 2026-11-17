@@ -276,6 +276,7 @@ set(SUNSHINE_HOST_SOURCES
     src/sparxie/host.cpp src/sparxie/host.h
     src/sparxie/host_refresh.cpp
     src/sparxie/art_refresh_job.h
+    src/sparxie/art_path.h
     src/sparxie/apps_file_lock.h
     src/sparxie/platform.cpp src/sparxie/platform.h
     src/sparxie/http_body_reader.h

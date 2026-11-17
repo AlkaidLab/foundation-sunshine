@@ -1,4 +1,5 @@
 #include "src/sparxie/host.h"
+#include "src/sparxie/art_path.h"
 #include "src/sparxie/apps_file_lock.h"
 #include "src/sparxie/hoyo_settings.h"
 #include "src/sparxie/install.h"
@@ -71,7 +72,7 @@ namespace sparxie {
       std::error_code ec;
       fs::path newest;
       fs::file_time_type stamp;
-      if (install_id.empty()) return newest;
+      if (!valid_art_install(install_id)) return newest;
       for (const auto &entry : fs::directory_iterator(env.covers_dir, ec)) {
         if (entry.path().filename().string().rfind("sparxie-" + install_id + "-", 0) != 0) continue;
         if (entry.path().stem().string().find("-badge") != std::string::npos) continue;
@@ -86,7 +87,7 @@ namespace sparxie {
     // of the clients ask for it as the hero. banner.png (the old 6:1 strip) is no hero any more.
     fs::path
     official_hero(const HostEnv &env, const std::string &install_id) {
-      if (install_id.empty()) return {};
+      if (!valid_art_install(install_id)) return {};
       std::error_code ec;
       const fs::path hero = env.host_data / "posters" / install_id / "hero.jpg";
       return fs::is_regular_file(hero, ec) ? hero : fs::path {};
@@ -110,6 +111,7 @@ namespace sparxie {
     // hero.jpg takes hero-badge.jpg with it (a black picture with a badge in the corner is as blank as the black one).
     bool
     drop_blank_hero(const HostEnv &env, json &apps, const std::string &install_id) {
+      if (!valid_art_install(install_id)) return false;
       std::error_code ec;
       const fs::path dir = env.host_data / "posters" / install_id;
       const auto drop = [&](const fs::path &file, bool force) {
@@ -178,6 +180,7 @@ namespace sparxie {
 
     Posters
     official_posters(const HostEnv &env, const std::string &install_id, bool badge) {
+      if (!valid_art_install(install_id)) return {};
       Posters posters { newest_cover(env, install_id), official_hero(env, install_id) };
       if (!badge) return posters;
       std::error_code ec;

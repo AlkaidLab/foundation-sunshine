@@ -2,6 +2,7 @@
 #include "tests/sparxie/pe_fixture.h"
 #include "src/sparxie/platform.h"
 #include "src/sparxie/art_refresh_job.h"
+#include "src/sparxie/art_path.h"
 #include <filesystem>
 #include <fstream>
 #include <algorithm>
@@ -60,6 +61,52 @@ namespace {
     return image;
   }
 }  // namespace
+TEST(ArtworkPaths, RejectsUntrustedComponentsAndEscapingFiles) {
+  EXPECT_TRUE(sparxie::valid_art_install("genshin-cn"));
+  EXPECT_TRUE(sparxie::valid_art_install("endfield-global"));
+  EXPECT_TRUE(sparxie::valid_art_install("starrail-cn-2"));
+  EXPECT_TRUE(sparxie::valid_art_install("starrail-cn-2", "starrail", "cn"));
+  EXPECT_FALSE(sparxie::valid_art_install("starrail-cn-2", "starrail", "global"));
+  for (const auto id : { "../genshin-cn", "..\\genshin-cn", "C:\\games", "genshin-cn/../x", "unknown-cn" }) {
+    EXPECT_FALSE(sparxie::valid_art_install(id)) << id;
+  }
+  EXPECT_TRUE(sparxie::valid_art_version(""));
+  EXPECT_TRUE(sparxie::valid_art_version("abc-123_v2"));
+  for (const auto version : { "..", "../secret", "..\\secret", "C:\\secret", "a/b", "a\\b" }) {
+    EXPECT_FALSE(sparxie::valid_art_version(version)) << version;
+  }
+  EXPECT_FALSE(sparxie::valid_art_version(std::string("safe\0bad", 8)));
+
+  const fs::path root = fs::temp_directory_path() / "sparxie-art-path-boundary";
+  fs::remove_all(root);
+  fs::create_directories(root / "art" / "genshin-cn");
+  { std::ofstream(root / "art" / "genshin-cn" / "icon.png") << "image"; }
+  { std::ofstream(root / "secret.png") << "secret"; }
+  EXPECT_TRUE(sparxie::art_file_within(root / "art", root / "art" / "genshin-cn" / "icon.png"));
+  EXPECT_FALSE(sparxie::art_file_within(root / "art", root / "art" / ".." / "secret.png"));
+  std::error_code ec;
+  fs::create_symlink(root / "secret.png", root / "art" / "genshin-cn" / "link.png", ec);
+  if (!ec) EXPECT_FALSE(sparxie::art_file_within(root / "art", root / "art" / "genshin-cn" / "link.png"));
+  fs::remove_all(root);
+}
+
+TEST(ArtworkPaths, RefreshDoesNotWriteMetadataForInjectedInstallPath) {
+  const fs::path root = fs::temp_directory_path() / "sparxie-art-injected-install";
+  fs::remove_all(root);
+  fs::create_directories(root);
+  auto env = env_at(root);
+  const fs::path victim = root / "outside.json";
+  { std::ofstream(victim) << "sentinel"; }
+  const sparxie::json apps = { { "apps", sparxie::json::array({ { { "sparxie", { { "install", (root / "outside").string() }, { "game", "genshin" }, { "region", "cn" } } } } }) } };
+  { std::ofstream(env.apps_file) << apps.dump(); }
+  const auto offline = [](const std::string &) -> std::optional<std::string> { return std::nullopt; };
+  sparxie::refresh_official(env, offline, [](std::string_view) { return sparxie::Rgba {}; });
+  std::ifstream in(victim);
+  EXPECT_EQ(std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>()), "sentinel");
+  in.close();
+  fs::remove_all(root);
+}
+
 TEST(ArtRefreshJob, ConcurrentRequestsShareOneJobAndFailureCanRetry) {
   sparxie::ArtRefreshJob job;
   std::promise<void> release;

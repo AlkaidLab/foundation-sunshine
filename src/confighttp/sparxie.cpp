@@ -5,6 +5,7 @@
 #include "src/logging.h"
 #include "src/process.h"
 #include "src/sparxie/install.h"
+#include "src/sparxie/art_path.h"
 #include "src/sparxie/apps_file_lock.h"
 #include "src/sparxie/platform.h"
 #include "src/sparxie/runtime.h"
@@ -302,10 +303,23 @@ namespace confighttp::sparxie {
       const auto query = request->parse_query_string();
       const auto version = query.find("v");
       const auto badge = query.find("badge");
+      const std::string id = request->path_match[2];
+      const std::string art_version = version == query.end() ? std::string() : version->second;
+      if (!::sparxie::valid_art_install(id) || !::sparxie::valid_art_version(art_version)) {
+        write_json(response, web::StatusCode::not_found, json { { "ok", false }, { "error", "No cached image" }, { "error_code", "art_unavailable" } });
+        return;
+      }
       auto env = ::sparxie::make_host_env();
-      const fs::path file = art_file(env, std::string(request->path_match[1]), std::string(request->path_match[2]), version == query.end() ? std::string() : version->second,
+      const std::string slot = request->path_match[1];
+      const fs::path file = art_file(env, slot, id, art_version,
         badge != query.end() && badge->second == "1");
-      std::ifstream in(file, std::ios::binary);
+      const fs::path root = slot == "card" ? env.covers_dir : env.host_data / "posters";
+      fs::path resolved_file;
+      if (!::sparxie::art_file_within(root, file, &resolved_file)) {
+        write_json(response, web::StatusCode::not_found, json { { "ok", false }, { "error", "No cached image" }, { "error_code", "art_unavailable" } });
+        return;
+      }
+      std::ifstream in(resolved_file, std::ios::binary);
       if (!in) {
         json err;
         err["ok"] = false;
