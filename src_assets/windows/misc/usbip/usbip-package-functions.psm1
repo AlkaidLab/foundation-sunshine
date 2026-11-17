@@ -42,7 +42,9 @@ function Remove-UsbipLegacy([string]$Root, [string]$HostRoot) {
   $owner = Get-UsbipOwnership $Root $HostRoot
   if ($owner.ownership -ne 'legacy-owned') { return }
   foreach ($entry in @(Get-UsbipLegacyEntries)) {
-    if ($entry.UninstallString -notmatch '^"([^"]+\\unins[0-9]+\.exe)"$') { throw 'Unrecognized upstream USB/IP uninstaller; remove it manually' }
+    # Inno Setup registers the uninstaller as: "<dir>\unins000.exe" /LOG  (observed with usbip-win2 0.9.8.1).
+    # Accept only that exact optional argument; the arguments actually run below are fixed.
+    if ($entry.UninstallString -notmatch '^"([^"]+\\unins[0-9]+\.exe)"(?:\s+/LOG)?$') { throw 'Unrecognized upstream USB/IP uninstaller; remove it manually' }
     $uninstaller = $Matches[1]
     $process = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
     if ($process.ExitCode -notin 0, 3010) { throw "Upstream USB/IP uninstall failed: $($process.ExitCode)" }

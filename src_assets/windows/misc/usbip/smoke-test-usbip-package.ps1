@@ -147,7 +147,8 @@ try {
       function script:Get-UsbipOwnership { [pscustomobject]@{ ownership = 'legacy-owned' } }
       function script:Get-UsbipLegacyEntries {
         $script:LegacyReads++
-        if ($script:LegacyReads -eq 1) { [pscustomobject]@{ UninstallString = '"C:\USBip\unins001.exe"' } }
+        # The registry value as written by the real upstream installer, including its /LOG argument.
+        if ($script:LegacyReads -eq 1) { [pscustomobject]@{ UninstallString = '"C:\USBip\unins001.exe" /LOG' } }
       }
       function script:Start-Process {
         param($FilePath, $ArgumentList, [switch]$Wait, [switch]$PassThru)
