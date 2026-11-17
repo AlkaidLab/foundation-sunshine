@@ -23,6 +23,24 @@ namespace fs = std::filesystem;
 namespace telemetry {
 
   namespace {
+    /** The build identity as an allow-list token: lower-case ASCII letters and digits with `.`, `_` and `-`, at most 40 characters
+     *  (`v2026.1114.173055.杂鱼` becomes `v2026.1114.173055`). An error event carries it so a report names the build that raised it. */
+    std::string
+    build_token(std::string_view version) {
+      std::string out;
+      for (const unsigned char c : version) {
+        if (out.size() >= 40) break;
+        if (c < 0x80 && std::isalnum(c))
+          out.push_back(static_cast<char>(std::tolower(c)));
+        else if (!out.empty() && (c == '.' || c == '-') && out.back() != '.' && out.back() != '-')
+          out.push_back(static_cast<char>(c));
+        else if (!out.empty() && out.back() != '_' && out.back() != '.' && out.back() != '-')
+          out.push_back('_');
+      }
+      while (!out.empty() && !std::isalnum(static_cast<unsigned char>(out.back()))) out.pop_back();
+      return out;
+    }
+
     bool
     truthy(const std::string &v) {
       return v == "on" || v == "true" || v == "1" || v == "enabled" || v == "yes";
@@ -1003,10 +1021,11 @@ namespace telemetry {
     for (const auto &[component, w] : windows) {
       emit(kind_e::error, "log_summary", json { { "component", catalogue_id(component, 32).empty() ? "host" : catalogue_id(component, 32) }, { "fatal", w.fatal }, { "error", w.error }, { "warning", w.warning } });
     }
+    const auto build = build_token(context().version);
     for (const auto &[key, raw] : raws) {
       // The line itself is not sent. Its code is a hash of the fixed words it starts with (src/telemetry/error_code.h): the same error is one code and what a person chose is not in it.
       const auto code = error_code_of(scrub_log_message(raw.raw, MAX_MESSAGE_CHARS));
-      emit(kind_e::error, "error", json { { "component", catalogue_id(raw.component, 32).empty() ? "host" : catalogue_id(raw.component, 32) }, { "code", code }, { "severity", raw.severity >= 5 ? "fatal" : "error" }, { "count", raw.count } });
+      emit(kind_e::error, "error", json { { "component", catalogue_id(raw.component, 32).empty() ? "host" : catalogue_id(raw.component, 32) }, { "code", code }, { "severity", raw.severity >= 5 ? "fatal" : "error" }, { "count", raw.count }, { "build", build } });
       // Every error and fatal log line has a site, so every code can be told where it comes from: the first line of a code in the hour becomes an error report with that site (the group of the
       // Worker then has a place in the source, which the count alone never had). No text of the line goes with it. The reporter keeps its own hourly and per-install limits.
       if (!raw.site.empty()) {
