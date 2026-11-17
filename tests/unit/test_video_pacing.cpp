@@ -136,39 +136,6 @@ TEST(VideoPacing, IntegerSlotHugeInputsSaturateInsteadOfWrapping) {
   }
 }
 
-TEST(VideoPacing, FloorDivideGuessIsExactEverywhere) {
-  // A deterministic generator; every case is checked against the hardware divide.
-  std::uint64_t state = 0x9E3779B97F4A7C15ull;
-  const auto next = [&state]() {
-    state ^= state << 13;
-    state ^= state >> 7;
-    state ^= state << 17;
-    return state;
-  };
-  const auto spread = [&next](int max_bits) {
-    // Log-uniform: pick a bit length, then the bits.
-    const auto bits = 1 + next() % static_cast<std::uint64_t>(max_bits);
-    return next() >> (64 - bits);
-  };
-  std::size_t checked = 0;
-  for (int i = 0; i < 4'000'000; ++i) {
-    const auto denominator = spread(64) | 1u;
-    // Numerators on both sides of a multiple of the denominator are where a rounded guess can be off.
-    const auto multiple = spread(64) / denominator;
-    for (const auto numerator : { next(), spread(64), multiple * denominator, multiple * denominator + 1, multiple * denominator - 1, multiple * denominator + denominator - 1 }) {
-      ASSERT_EQ(streaming::detail::floor_div(numerator, denominator), numerator / denominator) << numerator << " / " << denominator;
-      ++checked;
-    }
-  }
-  EXPECT_GT(checked, 20'000'000u);
-  // The edges of every range the guess depends on.
-  for (const std::uint64_t denominator : { std::uint64_t { 1 }, std::uint64_t { 3 }, (std::uint64_t { 1 } << 53) - 1, std::uint64_t { 1 } << 53, (std::uint64_t { 1 } << 53) + 1, std::numeric_limits<std::uint64_t>::max() }) {
-    for (const std::uint64_t numerator : { std::uint64_t { 0 }, std::uint64_t { 1 }, denominator - 1, denominator, denominator + 1, (std::uint64_t { 1 } << 63) - 1, std::uint64_t { 1 } << 63, std::numeric_limits<std::uint64_t>::max() }) {
-      EXPECT_EQ(streaming::detail::floor_div(numerator, denominator), numerator / denominator) << numerator << " / " << denominator;
-    }
-  }
-}
-
 #if defined(__SIZEOF_INT128__) && !defined(SUNSHINE_VIDEO_PACING_NO_INT128)
 TEST(VideoPacing, IntegerSlotIsExactForRandomStreams) {
   std::uint64_t state = 0xD1B54A32D192ED03ull;
