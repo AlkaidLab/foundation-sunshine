@@ -7,7 +7,12 @@
 #include <cstdlib>
 #include <iostream>
 #include <cmath>
+#include <memory>
 #include <gtest/gtest.h>
+#ifdef _WIN32
+  #include <windows.h>
+  #include <src/webp/decode.h>
+#endif
 namespace fs = std::filesystem;
 namespace {
   sparxie::HostEnv
@@ -442,6 +447,27 @@ TEST(Hero, TheRealStarRailBackgroundDecodesAndComposesOnWindows) {
   std::ifstream in(std::string(SPARXIE_FIXTURES_DIR) + "/starrail-cn-bg.webp", std::ios::binary);
   ASSERT_TRUE(in.good()) << "fixture missing";
   const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  const sparxie::Rgba bundled = sparxie::host_decode_webp(bytes);
+  ASSERT_EQ(bundled.w, 2560);
+  ASSERT_EQ(bundled.h, 1440);
+  EXPECT_FALSE(sparxie::image_is_blank(bundled));
+  EXPECT_EQ(sparxie::host_decode_webp("invalid WebP").w, 0);
+  EXPECT_EQ(sparxie::host_decode_webp(std::string_view(bytes.data(), bytes.size() / 2)).w, 0);
+  ASSERT_GE(bytes.size(), 25u);
+  ASSERT_EQ(bytes.compare(12, 4, "VP8L"), 0);
+  std::string oversized = bytes;
+  const std::uint32_t dimensions = 9999u | (9999u << 14);
+  for (int i = 0; i < 4; ++i) {
+    oversized[21 + i] = static_cast<char>((dimensions >> (8 * i)) & 0xff);
+  }
+  int width = 0, height = 0;
+  ASSERT_TRUE(WebPGetInfo(reinterpret_cast<const std::uint8_t *>(oversized.data()), oversized.size(), &width, &height));
+  ASSERT_EQ(width, 10000);
+  ASSERT_EQ(height, 10000);
+  EXPECT_EQ(sparxie::host_decode_webp(oversized).w, 0);
+  std::string diagnostic;
+  EXPECT_EQ(sparxie::host_decode_image("RIFFxxxxWEBPbad", &diagnostic).w, 0);
+  EXPECT_NE(diagnostic.find("libwebp decode failed"), std::string::npos);
   const sparxie::Rgba background = sparxie::host_decode_image(bytes);
   ASSERT_EQ(background.w, 2560);
   ASSERT_EQ(background.h, 1440);
@@ -539,7 +565,9 @@ TEST(Host, RefreshUsesContentHashAndSkipsCustom) {
     std::ofstream out(env.apps_file);
     out << apps.dump();
   }
-  auto get_url = [](const std::string &url) -> std::optional<std::string> {
+  int background_downloads = 0;
+  bool background_online = true;
+  auto get_url = [&](const std::string &url) -> std::optional<std::string> {
     if (url.find("getGames") != std::string::npos) {
       sparxie::json body;
       body["data"]["games"][0]["biz"] = "hk4e_cn";
@@ -548,17 +576,171 @@ TEST(Host, RefreshUsesContentHashAndSkipsCustom) {
       body["data"]["games"][0]["display"]["icon"]["url"] = "https://cdn/icon.png";
       return body.dump();
     }
+    if (url == "https://cdn/posterHASH.webp") {
+      ++background_downloads;
+      if (!background_online) {
+        return std::nullopt;
+      }
+    }
     return std::string("img");
   };
-  auto decode = [](std::string_view) { return textured(16, 16, 10, 20, 30); };
+  auto decode = [](std::string_view bytes) {
+    if (bytes == "broken") {
+      return sparxie::Rgba {};
+    }
+    return textured(16, 16, 10, 20, 30);
+  };
   auto first = sparxie::refresh_official(env, get_url, decode);
   EXPECT_TRUE(first.status.ok) << first.body.dump();
   // the stored application's poster, and the national-biz poster of the bilibili client (its own cache): the payload here answers only hk4e_cn
   // the two HoYoverse answers plus a placeholder card for every title and
   // region this fixture's transport does not answer for
   EXPECT_EQ(first.body["updated"], 15);
+  const int first_downloads = background_downloads;
   auto second = sparxie::refresh_official(env, get_url, decode);
   EXPECT_EQ(second.body["updated"], 0);
+  EXPECT_EQ(background_downloads, first_downloads);
+
+  const fs::path cache = env.host_data / "posters" / "genshin-cn";
+  sparxie::json index;
+  {
+    std::ifstream index_in(cache / "index.json");
+    index_in >> index;
+  }
+  const std::string version = index.at("version").get<std::string>();
+  const fs::path cover = env.covers_dir / ("sparxie-genshin-cn-" + version + ".png");
+  const fs::path background = cache / (version + "-background.bin");
+  ASSERT_TRUE(fs::is_regular_file(cover));
+  ASSERT_TRUE(fs::is_regular_file(background));
+  fs::remove(cover);
+  sparxie::refresh_official(env, get_url, decode);
+  EXPECT_TRUE(fs::is_regular_file(cover)) << "the cached background restores a missing cover";
+  EXPECT_EQ(background_downloads, first_downloads) << "the source picture was already cached";
+  fs::remove(cover);
+  auto offline = [](const std::string &) -> std::optional<std::string> { return std::nullopt; };
+  sparxie::refresh_official(env, offline, decode);
+  EXPECT_TRUE(fs::is_regular_file(cover)) << "the cover can be restored without network access";
+  fs::remove(cover);
+  {
+    // a newer cache of another version must not answer the restore: the index
+    // records this version, so its own background is the one composed from
+    std::ofstream newer(cache / "other-version-background.bin", std::ios::binary);
+    newer << "broken";
+  }
+  fs::last_write_time(cache / "other-version-background.bin", fs::last_write_time(background) + std::chrono::seconds(1));
+  sparxie::refresh_official(env, offline, decode);
+  EXPECT_TRUE(fs::is_regular_file(cover)) << "the recorded version's background restores the cover, not a newer one of another version";
+  fs::remove(cache / "other-version-background.bin");
+  {
+    std::ofstream empty_cover(cover, std::ios::binary | std::ios::trunc);
+  }
+  sparxie::refresh_official(env, get_url, decode);
+  EXPECT_GT(fs::file_size(cover), 0u) << "an empty cover is restored from the cached background";
+  EXPECT_EQ(background_downloads, first_downloads);
+
+  {
+    std::ofstream empty(background, std::ios::binary | std::ios::trunc);
+  }
+  sparxie::refresh_official(env, get_url, decode);
+  EXPECT_EQ(background_downloads, first_downloads + 1);
+  ASSERT_TRUE(fs::is_regular_file(background));
+  EXPECT_GT(fs::file_size(background), 0u) << "a successful download replaces an empty cache entry";
+  sparxie::refresh_official(env, get_url, decode);
+  EXPECT_EQ(background_downloads, first_downloads + 1) << "a healthy cache does not download again";
+  {
+    bool temp_left = false;
+    std::error_code ec;
+    for (const auto &entry : fs::directory_iterator(cache, ec)) {
+      if (entry.path().filename().string().find(".tmp-") != std::string::npos) {
+        temp_left = true;
+      }
+    }
+    EXPECT_FALSE(temp_left) << "an atomic cache write leaves no temp files behind";
+  }
+  fs::remove(background);
+  sparxie::refresh_official(env, get_url, decode);
+  EXPECT_EQ(background_downloads, first_downloads + 2);
+  EXPECT_TRUE(fs::is_regular_file(background)) << "a missing background is downloaded again";
+  sparxie::refresh_official(env, get_url, decode);
+  EXPECT_EQ(background_downloads, first_downloads + 2);
+  {
+    std::ofstream broken(background, std::ios::binary | std::ios::trunc);
+    broken << "broken";
+  }
+  sparxie::refresh_official(env, get_url, decode);
+  EXPECT_EQ(background_downloads, first_downloads + 2) << "existing outputs do not require decoding the cached source";
+  fs::remove(cover);
+  background_online = false;
+  sparxie::refresh_official(env, get_url, decode);
+  EXPECT_EQ(background_downloads, first_downloads + 3);
+  EXPECT_FALSE(fs::exists(cover));
+  EXPECT_TRUE(fs::is_regular_file(cache / "hero.jpg")) << "a working poster stays available while the download fails";
+  background_online = true;
+  sparxie::refresh_official(env, get_url, decode);
+  EXPECT_EQ(background_downloads, first_downloads + 4);
+  EXPECT_TRUE(fs::is_regular_file(cover)) << "a corrupt cached background is replaced before restoring the cover";
+  {
+    std::ifstream repaired(background, std::ios::binary);
+    EXPECT_EQ(std::string((std::istreambuf_iterator<char>(repaired)), std::istreambuf_iterator<char>()), "img");
+  }
+  sparxie::refresh_official(env, get_url, decode);
+  EXPECT_EQ(background_downloads, first_downloads + 4);
+#ifdef _WIN32
+  {
+    SCOPED_TRACE("A locked corrupt source remains pending after the outputs recover");
+    const auto read_index = [&]() {
+      sparxie::json record;
+      std::ifstream index_in(cache / "index.json");
+      index_in >> record;
+      return record;
+    };
+    {
+      std::ofstream broken(background, std::ios::binary | std::ios::trunc);
+      broken << "broken";
+    }
+    fs::remove(cover);
+    // Readers that omit FILE_SHARE_DELETE allow the decode but deny replacement.
+    HANDLE handle = CreateFileW(background.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    ASSERT_NE(handle, INVALID_HANDLE_VALUE);
+    std::unique_ptr<void, decltype(&CloseHandle)> locked(handle, &CloseHandle);
+    const int before_repair = background_downloads;
+    sparxie::refresh_official(env, get_url, decode);
+    EXPECT_EQ(background_downloads, before_repair + 1);
+    ASSERT_TRUE(fs::is_regular_file(cover)) << "the downloaded bytes still repair the cover";
+    EXPECT_TRUE(read_index().value("backgroundCachePending", false));
+    {
+      std::ifstream source(background, std::ios::binary);
+      EXPECT_EQ(std::string((std::istreambuf_iterator<char>(source)), std::istreambuf_iterator<char>()), "broken");
+    }
+    // Read the persisted state through a fresh environment, as after a restart.
+    auto restarted_env = env_at(root);
+    sparxie::refresh_official(restarted_env, get_url, decode);
+    EXPECT_EQ(background_downloads, before_repair + 2) << "complete outputs must not suppress the pending repair";
+    EXPECT_TRUE(read_index().value("backgroundCachePending", false));
+    for (const auto &entry : fs::directory_iterator(cache)) {
+      EXPECT_EQ(entry.path().filename().string().find(".tmp-"), std::string::npos);
+    }
+    locked.reset();
+    background_online = false;
+    sparxie::refresh_official(restarted_env, get_url, decode);
+    EXPECT_TRUE(read_index().value("backgroundCachePending", false)) << "a failed download preserves the pending repair";
+    EXPECT_TRUE(fs::is_regular_file(cover));
+    background_online = true;
+    sparxie::refresh_official(restarted_env, get_url, decode);
+    EXPECT_EQ(background_downloads, before_repair + 4);
+    EXPECT_FALSE(read_index().value("backgroundCachePending", false));
+    {
+      std::ifstream source(background, std::ios::binary);
+      EXPECT_EQ(std::string((std::istreambuf_iterator<char>(source)), std::istreambuf_iterator<char>()), "img");
+    }
+    const int after_repair = background_downloads;
+    sparxie::refresh_official(restarted_env, get_url, decode);
+    EXPECT_EQ(background_downloads, after_repair) << "successful repair stops further downloads";
+    fs::remove(cover);
+    sparxie::refresh_official(restarted_env, offline, decode);
+    EXPECT_TRUE(fs::is_regular_file(cover)) << "the repaired source can restore the cover offline";
+  }
+#endif
   std::ifstream in(env.apps_file);
   sparxie::json after;
   in >> after;

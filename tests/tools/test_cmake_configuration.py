@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--source', required=True)
@@ -125,11 +126,12 @@ class Configuration(unittest.TestCase):
 
     def test_web_ui_is_incremental_and_recovers_missing_outputs(self):
         log = self.project / 'npm-calls.txt'
-        npm = self.launcher('npm-stub', '''import pathlib, sys
+        npm = self.launcher('npm-stub', '''import os, pathlib, sys
 root = pathlib.Path(__file__).parent
 with (root / 'npm-calls.txt').open('a') as log: log.write(sys.argv[1] + '\\n')
 if sys.argv[1] == 'ci': (root / 'node_modules').mkdir(exist_ok=True)
 else:
+    (root / 'foundation-ui-used.txt').write_text(os.environ['FOUNDATION_UI_DIR'])
     destination = pathlib.Path(sys.argv[sys.argv.index('--outDir') + 1])
     destination.mkdir(parents=True, exist_ok=True)
     for page in (root / 'src_assets/common/assets/web').glob('*.html'):
@@ -140,16 +142,38 @@ else:
         self.write('src_assets/common/assets/web/index.html', 'page\n')
         script = self.write('src_assets/common/assets/web/main.js', 'initial\n')
         self.write('scripts/vite/vite.config.js', '// config\n')
+        ui = self.root / 'ds5-ui-m3e'
+        (ui / 'src').mkdir(parents=True)
+        (ui / 'package.json').write_text('{}\n', encoding='utf-8')
+        (ui / 'src' / 'index.js').write_text('initial\n', encoding='utf-8')
+        (ui / 'scripts').mkdir()
+        ui_script = ui / 'scripts' / 'helper.js'
+        ui_script.write_text('initial\n', encoding='utf-8')
+        other_ui = self.root / 'other-ui'
+        (other_ui / 'src').mkdir(parents=True)
+        (other_ui / 'package.json').write_text('{}\n', encoding='utf-8')
         self.cmake_project(f'set(NPM "{npm.as_posix()}")\nset(SUNSHINE_SOURCE_ASSETS_DIR "${{PROJECT_SOURCE_DIR}}/src_assets")\n'
                    'set(NPM_SOURCE_ASSETS_DIR "${SUNSHINE_SOURCE_ASSETS_DIR}")\nset(NPM_ASSETS_DIR "${PROJECT_BINARY_DIR}")\n'
                    + self.include('cmake/targets/web_ui.cmake'))
-        self.configure()
+        with patch.dict(os.environ, {'FOUNDATION_UI_DIR': str(ui)}):
+            self.configure()
         def calls():
             before = len(log.read_text().splitlines()) if log.exists() else 0
             self.build_project()
             return log.read_text().splitlines()[before:]
         self.assertEqual(calls(), ['ci', 'run'])
+        self.assertEqual(pathlib.Path((self.project / 'foundation-ui-used.txt').read_text()), ui)
         self.assertEqual(calls(), [])
+        # An automatic reconfigure in a changed environment keeps the chosen
+        # checkout, and edits to that checkout still rebuild the bundle.
+        with patch.dict(os.environ, {'FOUNDATION_UI_DIR': str(other_ui)}):
+            (ui / 'src' / 'added.js').write_text('added\n', encoding='utf-8')
+            self.assertEqual(calls(), ['run'])
+            self.assertEqual(pathlib.Path((self.project / 'foundation-ui-used.txt').read_text()), ui)
+            (ui / 'src' / 'index.js').write_text('edited\n', encoding='utf-8')
+            self.assertEqual(calls(), ['run'])
+            ui_script.write_text('edited\n', encoding='utf-8')
+            self.assertEqual(calls(), ['run'])
         script.write_text('edited\n')
         self.assertEqual(calls(), ['run'])
         lock.write_text('{"changed":true}\n')
@@ -158,6 +182,9 @@ else:
         self.assertEqual(calls(), ['run'])
         shutil.rmtree(self.project / 'node_modules')
         self.assertEqual(calls(), ['ci', 'run'])
+        self.configure([f'-DFOUNDATION_UI_DIR={other_ui.as_posix()}'])
+        self.assertEqual(calls(), ['run'])
+        self.assertEqual(pathlib.Path((self.project / 'foundation-ui-used.txt').read_text()), other_ui)
 
     def test_asset_copies_preserve_paths_edits_additions_and_removals(self):
         first = self.write('src_assets/common/assets/first/icon.txt', 'first\n')
