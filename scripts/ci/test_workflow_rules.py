@@ -147,7 +147,7 @@ class ShardTest(unittest.TestCase):
         self.assertIn("cold_plan", self.jobs["adapter_config"]["needs"])
         prune = step(build, "Prune stale compiler cache entries")["run"]
         self.assertIn(f'$current = "ccache-windows-{fingerprint}-${{{{ github.run_id }}}}"', prune)
-        self.assertIn("^ccache-windows-([0-9a-f]{12}-)?[0-9]+$", prune)  # fingerprinted and older keys
+        self.assertIn("^ccache-windows-([0-9a-f]{12}-(pinned|newest)-)?[0-9]+$", prune)  # fingerprinted (with the toolchain mode) and older keys
 
     def test_the_cold_plan_shards_on_a_missing_fingerprint_cache_or_a_widely_included_header(self):
         plan = step(self.jobs["cold_plan"], "Decide")

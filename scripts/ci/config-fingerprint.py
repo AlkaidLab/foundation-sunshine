@@ -11,7 +11,8 @@ many cache entries exist. This hashes what moves them for the whole build:
     cmake/packaging, which only shapes the installer, cmake/sources, the lists of source files, and the Linux, macOS and Unix
     modules: none of those moves a Windows compile command line);
   * the cmake invocation of build_win's "Configure Windows" step and its ccache settings;
-  * the toolchain action and the MSYS2 package pins (scripts/ci/msys2-pins.txt: the name, version, file and sha256 of every
+  * the toolchain action, the compiler of the job (TOOLCHAIN or CI_TOOLCHAIN: gcc, the default, or clang) and the MSYS2 package
+    pins (scripts/ci/msys2-pins.txt, plus msys2-pins-clang.txt for a Clang job: the name, version, file and sha256 of every
     pinned package -- the exact compiler, CRT and libraries the Windows job installs). The repository is not read: an
     upstream update the pins do not take must not invalidate the cache, because the build still runs the pinned versions.
 
@@ -22,13 +23,14 @@ share an entry. Prints the digits.
 """
 import argparse
 import hashlib
+import os
 import pathlib
 import sys
 
 import yaml
 
 
-def files_to_hash(root):
+def files_to_hash(root, toolchain):
     found = [root / "CMakeLists.txt"]
     cmake = root / "cmake"
     if cmake.is_dir():
@@ -41,6 +43,8 @@ def files_to_hash(root):
                 found.append(path)
     found.append(root / ".github" / "actions" / "windows-toolchain" / "action.yml")
     found.append(root / "scripts" / "ci" / "msys2-pins.txt")
+    if toolchain == "clang":
+        found.append(root / "scripts" / "ci" / "msys2-pins-clang.txt")
     return [p for p in found if p.is_file()]
 
 
@@ -62,21 +66,26 @@ def main():
     root = pathlib.Path(args.root)
     digest = hashlib.sha256()
     details = []
+    toolchain = os.environ.get("TOOLCHAIN", os.environ.get("CI_TOOLCHAIN", "gcc")).lower()
+    if toolchain not in ("gcc", "clang"):
+        raise SystemExit(f"unsupported Windows toolchain: {toolchain}")
 
     def add(label, data):
         part = hashlib.sha256(data).hexdigest()[:12]
         digest.update(label.encode() + b"\0" + data + b"\0")
         details.append(f"{label}: {part}")
 
-    for path in files_to_hash(root):
+    for path in files_to_hash(root, toolchain):
         add(path.relative_to(root).as_posix(), path.read_bytes())
     step = configure_step(root / args.workflow)
     add("Configure Windows", (step["run"] + "\n" + "\n".join(f"{k}={v}" for k, v in sorted(step.get("env", {}).items()))).encode())
-    pins = root / "scripts" / "ci" / "msys2-pins.txt"
-    if pins.is_file():
-        # Not part of the digest (the file itself is hashed whole); the job summary shows the toolchain it covers.
-        details.extend(f"    {line.split()[0]} {line.split()[1]}" for line in pins.read_text(encoding="utf-8").splitlines()
-                       if line.strip() and not line.lstrip().startswith("#"))
+    add("Windows toolchain", toolchain.encode())
+    for name in ("msys2-pins.txt",) + (("msys2-pins-clang.txt",) if toolchain == "clang" else ()):
+        pins = root / "scripts" / "ci" / name
+        if pins.is_file():
+            # Not part of the digest (the file itself is hashed whole); the job summary shows the toolchain it covers.
+            details.extend(f"    {line.split()[0]} {line.split()[1]}" for line in pins.read_text(encoding="utf-8").splitlines()
+                           if line.strip() and not line.lstrip().startswith("#"))
     if args.details:
         print("\n".join(details), file=sys.stderr)
     print(digest.hexdigest()[:12])

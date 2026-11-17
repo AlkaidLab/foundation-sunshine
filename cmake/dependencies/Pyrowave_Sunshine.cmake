@@ -13,6 +13,20 @@ foreach(_required_file IN ITEMS
     endif()
 endforeach()
 
+function(_sunshine_quiet_vendored_targets directory)
+    get_property(_targets DIRECTORY "${directory}" PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(_target IN LISTS _targets)
+        get_target_property(_type ${_target} TYPE)
+        if(_type MATCHES "^(STATIC_LIBRARY|SHARED_LIBRARY|OBJECT_LIBRARY|EXECUTABLE)$")
+            target_compile_options(${_target} PRIVATE "$<$<COMPILE_LANGUAGE:C>:-Wno-typedef-redefinition>" "$<$<COMPILE_LANGUAGE:CXX>:-Wno-unused-function>")
+        endif()
+    endforeach()
+    get_property(_subdirectories DIRECTORY "${directory}" PROPERTY SUBDIRECTORIES)
+    foreach(_subdirectory IN LISTS _subdirectories)
+        _sunshine_quiet_vendored_targets("${_subdirectory}")
+    endforeach()
+endfunction()
+
 function(_sunshine_add_pyrowave)
     # Granite declares cmake_minimum_required(VERSION 3.5), reported as deprecated (< 3.10) by CMake 4. The floor is raised
     # for this third-party subtree only: the variable is local to this function, so it never reaches our own projects
@@ -28,6 +42,9 @@ function(_sunshine_add_pyrowave)
     set(GRANITE_INSTALL_TARGETS OFF)
     set(GRANITE_INSTALL_EXE_TARGETS OFF)
     add_subdirectory("${_pyrowave_source_root}" "${CMAKE_BINARY_DIR}/pyrowave" EXCLUDE_FROM_ALL)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        _sunshine_quiet_vendored_targets("${CMAKE_BINARY_DIR}/pyrowave")
+    endif()
 endfunction()
 
 _sunshine_add_pyrowave()

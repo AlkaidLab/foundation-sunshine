@@ -94,7 +94,8 @@ class Msys2PacmanTest(unittest.TestCase):
         self.pins.write_text("# pins\n" + text + "\n")
 
     def run_script(self, *args, fails=0, fail_code=1, **extra):
-        env = dict(os.environ, PATH=f"{self.bin}:{os.environ['PATH']}", MSYS2_ROOT=str(self.root), LOG=str(self.log),
+        # TOOLCHAIN is set for the whole workflow (clang on release builds): a test names the compiler itself.
+        env = dict({k: v for k, v in os.environ.items() if k != "TOOLCHAIN"}, PATH=f"{self.bin}:{os.environ['PATH']}", MSYS2_ROOT=str(self.root), LOG=str(self.log),
                    COUNT=str(self.tmp / "count"), FAILS=str(fails), FAIL_CODE=str(fail_code), SLEEPS=str(self.sleeps),
                    CURLLOG=str(self.curl_log), INSTALLED=str(self.installed), CURL_OK="repo.msys2.org")
         env["PINS_FILE"] = str(self.pins)
@@ -228,6 +229,38 @@ class Msys2PacmanTest(unittest.TestCase):
         result = self.run_script("prepare", PINS_FILE=str(self.tmp / "gone.txt"))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("::error::the toolchain is pinned", result.stdout)
+
+    def write_clang_pins(self):
+        self.clang_pins = self.tmp / "msys2-pins-clang.txt"
+        self.clang_pins.write_text(f"# clang pins\np-clang 1.0-1 p-clang-1.0-1-any.pkg.tar.zst {self.pkg_digest}\n")
+
+    def test_a_clang_build_pins_and_installs_the_clang_packages_too(self):
+        self.write_clang_pins()
+        result = self.run_script("prepare", TOOLCHAIN="clang", CLANG_PINS_FILE=str(self.clang_pins))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("IgnorePkg = p-gcc p-clang", (self.root / "etc" / "pacman.conf").read_text())
+        result = self.run_script("install", "git", "p-clang", TOOLCHAIN="clang", CLANG_PINS_FILE=str(self.clang_pins))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.read(self.log)
+        self.assertTrue(calls[-1].startswith("--noconfirm -U"), calls[-1])
+        self.assertIn("p-clang-1.0-1-any.pkg.tar.zst", calls[-1])
+        self.assertIn("p-gcc-1.0-1-any.pkg.tar.zst", calls[-1])
+        self.assertNotIn("p-clang", " ".join(call for call in calls if " -S " in call), "a pinned name is never passed to -S")
+
+    def test_a_gcc_build_ignores_the_clang_pins(self):
+        self.write_clang_pins()
+        self.run_script("prepare", CLANG_PINS_FILE=str(self.clang_pins))
+        conf = (self.root / "etc" / "pacman.conf").read_text()
+        self.assertIn("IgnorePkg = p-gcc\n", conf)
+        self.assertNotIn("p-clang", conf)
+        result = self.run_script("install", "git", CLANG_PINS_FILE=str(self.clang_pins))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("p-clang", self.read(self.log)[-1])
+
+    def test_a_clang_build_fails_without_the_clang_pins_file(self):
+        result = self.run_script("prepare", TOOLCHAIN="clang", CLANG_PINS_FILE=str(self.tmp / "gone-clang.txt"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("::error::the Clang toolchain is pinned", result.stdout)
 
     def test_prune_keeps_installed_versions_and_signatures_only(self):
         self.installed.write_text("gcc 16.1.0-1\nopus 1.6.1-1\nlib 1:2.0-3\n")

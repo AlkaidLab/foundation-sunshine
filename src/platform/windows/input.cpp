@@ -4,7 +4,7 @@
  */
 #define WIN32_LEAN_AND_MEAN
 #ifndef NOMINMAX
-#define NOMINMAX
+  #define NOMINMAX
 #endif
 #define WINVER 0x0A00
 #include <windows.h>

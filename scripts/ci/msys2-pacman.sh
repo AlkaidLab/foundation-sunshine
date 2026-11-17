@@ -38,6 +38,10 @@ MIRRORS_DIR="$ROOT/etc/pacman.d"
 CACHE_DIR="${PACMAN_CACHE_DIR:-$ROOT/var/cache/pacman/pkg}"
 LOCK="${PACMAN_LOCK:-$ROOT/var/lib/pacman/db.lck}"
 PINS_FILE="${PINS_FILE:-$(cd "$(dirname "$0")" && pwd)/msys2-pins.txt}"
+# Clang and LLD (and the LLVM libraries their versions are locked to) are pinned in a second file that only a Clang build reads,
+# so the GCC builds install nothing of it. TOOLCHAIN is the compiler of the job (gcc, the default, or clang).
+CLANG_PINS_FILE="${CLANG_PINS_FILE:-$(cd "$(dirname "$0")" && pwd)/msys2-pins-clang.txt}"
+TOOLCHAIN="${TOOLCHAIN:-gcc}"
 UNPINNED="${TOOLCHAIN_UNPINNED:-0}"
 ATTEMPTS="${PACMAN_ATTEMPTS:-5}"
 PAUSE="${PACMAN_RETRY_PAUSE:-10}"
@@ -102,10 +106,14 @@ retry() {
 pins() {
   [[ -r "$PINS_FILE" ]] || return 0
   awk 'NF >= 4 && $1 !~ /^#/ { print }' "$PINS_FILE"
+  # A Clang build pins the Clang packages as well (require_pins fails first when that file is missing).
+  if [[ "$TOOLCHAIN" == clang && -r "$CLANG_PINS_FILE" ]]; then
+    awk 'NF >= 4 && $1 !~ /^#/ { print }' "$CLANG_PINS_FILE"
+  fi
 }
 
 pin_field() { # <field 1-4> <full package name>
-  awk -v name="$2" -v field="$1" '$1 == name { print $field; exit }' "$PINS_FILE" 2>/dev/null || true
+  pins | awk -v name="$2" -v field="$1" '$1 == name { print $field; exit }' || true
 }
 
 is_pinned() { [[ -n "$(pin_field 1 "$1")" ]]; }
@@ -114,6 +122,10 @@ is_pinned() { [[ -n "$(pin_field 1 "$1")" ]]; }
 require_pins() {
   if [[ ! -r "$PINS_FILE" ]]; then
     echo "::error::the toolchain is pinned, but $PINS_FILE does not exist; TOOLCHAIN_UNPINNED=1 installs the newest packages"
+    return 1
+  fi
+  if [[ "$TOOLCHAIN" == clang && ! -r "$CLANG_PINS_FILE" ]]; then
+    echo "::error::the Clang toolchain is pinned, but $CLANG_PINS_FILE does not exist; TOOLCHAIN_UNPINNED=1 installs the newest packages"
     return 1
   fi
 }

@@ -135,6 +135,23 @@ class PinsTest(unittest.TestCase):
         self.assertEqual(entries[PREFIX + "gcc"], ["16.2.0-7", PREFIX + "gcc-16.2.0-7-any.pkg.tar.zst", "2" * 64])
         self.assertEqual(entries[PREFIX + "opus"], ["1.6.1-1", PREFIX + "opus-1.6.1-1-any.pkg.tar.zst", "4" * 64])
 
+    def test_check_and_bump_cover_every_pin_file_given(self):
+        clang = self.tmp / "msys2-pins-clang.txt"
+        clang.write_text("# clang pins\n" + f"{PREFIX}clang 23.1.5-1 {PREFIX}clang-23.1.5-1-any.pkg.tar.zst " + "9" * 64 + "\n")
+        fake_db(self.db, {
+            PREFIX + "gcc": ("16.2.0-7", PREFIX + "gcc-16.2.0-7-any.pkg.tar.zst", "2" * 64),
+            PREFIX + "clang": ("24.1.0-1", PREFIX + "clang-24.1.0-1-any.pkg.tar.zst", "d" * 64),
+        })
+        checked = self.run_pins("check", "--pins", str(self.pins), "--pins", str(clang), "--db", str(self.db), "--json")
+        self.assertEqual(checked.returncode, 0, checked.stderr)
+        summary = json.loads(checked.stdout)
+        self.assertEqual(summary["checked"], 5)
+        self.assertEqual([bump["short"] for bump in summary["bumps"]], ["clang"])
+        bumped = self.run_pins("bump", "--pins", str(self.pins), "--pins", str(clang), "--db", str(self.db))
+        self.assertEqual(bumped.returncode, 0, bumped.stderr)
+        self.assertEqual(clang.read_text().splitlines()[0], "# clang pins")
+        self.assertEqual(clang.read_text().splitlines()[1].split()[1:], ["24.1.0-1", PREFIX + "clang-24.1.0-1-any.pkg.tar.zst", "d" * 64])
+
 
 if __name__ == "__main__":
     unittest.main()

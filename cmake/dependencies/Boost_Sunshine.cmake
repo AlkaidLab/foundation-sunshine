@@ -3,6 +3,12 @@
 #
 include_guard(GLOBAL)
 
+# fs-llvm-clang-cli-20261116: the MinGW Clang release must resolve Boost.Locale's
+# iconv dependency to the static archive before the import-library suffix.
+if(WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    list(PREPEND CMAKE_FIND_LIBRARY_SUFFIXES ".a")
+endif()
+
 if(NOT COMMAND sunshine_source_group_filter_installed)
     macro(sunshine_source_group_filter_installed)
     endmacro()
@@ -118,8 +124,9 @@ if(NOT Boost_FOUND)
                 URL ${BOOST_URL}
                 URL_HASH ${BOOST_HASH}
         )
-    elseif(APPLE AND CMAKE_VERSION VERSION_GREATER_EQUAL "3.25.0")
+    elseif((APPLE OR (WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")) AND CMAKE_VERSION VERSION_GREATER_EQUAL "3.25.0")
         # add SYSTEM to FetchContent_Declare, this fails on debian bookworm
+        # Windows Clang: Boost headers are external and should not repeat their warnings in every translation unit.
         FetchContent_Declare(
                 Boost
                 URL ${BOOST_URL}
@@ -161,6 +168,17 @@ if(NOT Boost_FOUND)
     foreach(component ${BOOST_COMPONENTS})
         list(APPEND Boost_LIBRARIES "Boost::${component}")
     endforeach()
+endif()
+
+# A stale Boost.Locale package can carry an explicit MinGW import-library path.
+# With -static, omit that path so Clang/LLD selects libiconv.a instead of
+# retaining a runtime dependency on libiconv-2.dll.
+if(WIN32 AND CMAKE_CXX_COMPILER_ID MATCHES "Clang" AND TARGET Boost::locale)
+    get_target_property(_boost_locale_links Boost::locale INTERFACE_LINK_LIBRARIES)
+    if(_boost_locale_links)
+        list(FILTER _boost_locale_links EXCLUDE REGEX "libiconv\\.dll\\.a$")
+        set_property(TARGET Boost::locale PROPERTY INTERFACE_LINK_LIBRARIES "${_boost_locale_links}")
+    endif()
 endif()
 
 # Keep the historical Boost::boost spelling available to dependencies
