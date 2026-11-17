@@ -19,8 +19,6 @@
     <!-- Native AOT keeps the self-contained launcher small and removes the runtime startup cost.
          Microsoft Learn Native AOT deployment, read 2026-11-16: ms-dotnet-native-aot-20261116. -->
     <PublishAot>true</PublishAot>
-    <!-- ms-dotnet-aot-size-20261117, Optimize for size or speed: this helper is a cold launch path. -->
-    <OptimizationPreference>Size</OptimizationPreference>
     <LaunchTrim Condition="'$(LaunchTrim)' == ''">true</LaunchTrim>
     <PublishTrimmed>$(LaunchTrim)</PublishTrimmed>
     <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
