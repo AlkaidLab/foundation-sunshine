@@ -1401,28 +1401,45 @@ namespace amf {
                               (video_format == 1) ? AMF_VIDEO_ENCODER_HEVC_VBV_BUFFER_SIZE :
                                                     AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE;
 
-    // Check every result: a driver that rejects the runtime peak/VBV update
-    // keeps the session's initial budget, and the caller must not mistake a
-    // stale constraint for an applied one.
+    // The trio is one rate-control budget: snapshot the current values first
+    // so a rejected write can be rolled back and the encoder never sits in a
+    // half-updated state (target on the new budget, peak/VBV on the old one).
+    amf_int64 old_target = 0;
+    amf_int64 old_peak = 0;
+    amf_int64 old_vbv = 0;
+    const bool snapshot_ok = encoder->GetProperty(target_prop, &old_target) == AMF_OK &&
+                             encoder->GetProperty(peak_prop, &old_peak) == AMF_OK &&
+                             encoder->GetProperty(vbv_prop, &old_vbv) == AMF_OK;
+
     const auto target_res = encoder->SetProperty(target_prop, bitrate);
     const auto peak_res = encoder->SetProperty(peak_prop, bitrate);
     const auto vbv_res = encoder->SetProperty(vbv_prop, vbv_size);
 
-    if (target_res != AMF_OK) {
-      BOOST_LOG(warning) << "AMF: set_bitrate failed, error: " << target_res;
+    if (target_res != AMF_OK || peak_res != AMF_OK || vbv_res != AMF_OK) {
+      BOOST_LOG(warning) << "AMF: set_bitrate(" << bitrate_kbps << " Kbps) rejected by driver"
+                         << " (target: " << target_res << ", peak: " << peak_res << ", vbv: " << vbv_res << ")";
+      if (snapshot_ok) {
+        // Roll back whatever landed: an unapplied property keeps its snapshot
+        // value, so only the writes that took effect need restoring.
+        auto rollback = [&](const wchar_t *what, const wchar_t *prop, amf_int64 value, AMF_RESULT write_res) {
+          if (write_res != AMF_OK) return;
+          const auto res = encoder->SetProperty(prop, value);
+          if (res != AMF_OK) {
+            BOOST_LOG(error) << "AMF: failed to roll back " << what << ", error: " << res;
+          }
+        };
+        rollback("target bitrate", target_prop, old_target, target_res);
+        rollback("peak bitrate", peak_prop, old_peak, peak_res);
+        rollback("VBV budget", vbv_prop, old_vbv, vbv_res);
+      }
+      else {
+        BOOST_LOG(warning) << "AMF: could not snapshot the current budget before writing; the encoder may keep a mixed budget";
+      }
       return false;
     }
-    if (peak_res != AMF_OK) {
-      BOOST_LOG(warning) << "AMF: runtime peak bitrate update rejected, error: " << peak_res;
-    }
-    if (vbv_res != AMF_OK) {
-      BOOST_LOG(warning) << "AMF: runtime VBV budget update rejected, error: " << vbv_res
-                         << " (budget stays at the session's initial size)";
-    }
-    if (peak_res == AMF_OK && vbv_res == AMF_OK) {
-      BOOST_LOG(info) << "AMF: bitrate dynamically changed to " << bitrate_kbps << " Kbps";
-    }
-    return peak_res == AMF_OK && vbv_res == AMF_OK;
+
+    BOOST_LOG(info) << "AMF: bitrate dynamically changed to " << bitrate_kbps << " Kbps";
+    return true;
   }
 
   void
