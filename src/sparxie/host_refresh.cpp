@@ -25,13 +25,45 @@ namespace sparxie {
       if (!body.contains("apps") || !body["apps"].is_array()) body["apps"] = json::array();
       return body;
     }
-    void
-    keep_bytes(const fs::path &path, const std::string &bytes) {
+    bool
+    nonempty_file(const fs::path &path) {
       std::error_code ec;
-      if (fs::exists(path, ec)) return;
+      if (!fs::is_regular_file(path, ec)) {
+        return false;
+      }
+      const auto size = fs::file_size(path, ec);
+      return !ec && size > 0;
+    }
+    bool
+    keep_bytes(const fs::path &path, const std::string &bytes, bool replace = false) {
+      if (!replace && nonempty_file(path)) {
+        return true;
+      }
+      std::error_code ec;
       fs::create_directories(path.parent_path(), ec);
-      std::ofstream out(path, std::ios::binary);
-      out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+      // The picture is written to a sibling temp file first and swapped in when
+      // complete: a refresh running in parallel (the HTTP entry bypasses the
+      // scheduler's gate) reads either the old or the new picture, never half
+      // of one.
+      static std::atomic<unsigned> keep_counter { 0 };
+      const fs::path tmp = path.parent_path() / (path.filename().string() + ".tmp-" + std::to_string(keep_counter.fetch_add(1)));
+      {
+        std::ofstream out(tmp, std::ios::binary);
+        out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        out.close();
+        if (!out) {
+          fs::remove(tmp, ec);
+          return false;
+        }
+      }
+      fs::rename(tmp, path, ec);
+      if (ec) {
+        // Keep the old complete file. The caller must remember a failed repair
+        // even if it can publish new outputs from the downloaded bytes.
+        fs::remove(tmp, ec);
+        return false;
+      }
+      return true;
     }
     // the bytes of a file, read as they are: on Windows a stream opened without std::ios::binary turns CR LF into LF and stops at a 0x1A byte, which cut the cached
     // lossless WebP of Star Rail short (the decoder then returned nothing, and the hero was composed black). The index.json is text and reads the same either way.
@@ -108,6 +140,19 @@ namespace sparxie {
       if (bytes.empty()) return std::nullopt;
       return bytes;
     }
+    // the bytes of the picture of one exact version, the one the index records:
+    // a newer cache of another version must not answer a cover restore
+    std::optional<std::string>
+    cached_picture_at(const HostEnv &env, const std::string &install_id, const std::string &kind, const std::string &version) {
+      if (version.empty()) {
+        return std::nullopt;
+      }
+      const std::string bytes = file_text(env.host_data / "posters" / install_id / (version + "-" + kind + ".bin"));
+      if (bytes.empty()) {
+        return std::nullopt;
+      }
+      return bytes;
+    }
   }  // namespace
   ApiResult
   refresh_official(HostEnv &env, const std::function<std::optional<std::string>(const std::string &)> &get_url, const std::function<Rgba(std::string_view)> &decode, const std::function<std::optional<std::string>(const std::string &, const std::string &)> &post_url) {
@@ -177,6 +222,7 @@ namespace sparxie {
       }
       const std::string previous_version = previous.is_object() ? previous.value("version", std::string()) : std::string();
       const bool hoyo = region_row(item.game, item.region) != nullptr;
+      bool background_cache_pending = false;
       // the icon (not for HoYoverse titles: their launcher API answers one): the install's own program icon, else the store's or the publisher's, else a monogram
       Rgba icon_now;
       std::string icon_label;
@@ -329,6 +375,7 @@ namespace sparxie {
         icon_sources_used[item.id] = icon_label;
       }
       if (hoyo) {
+        bool replace_background = false;
         std::string host = "https://hyp-api.mihoyo.com";
         std::string launcher = "jGHBHlcOq1";
         std::string language = "zh-cn";
@@ -368,8 +415,20 @@ namespace sparxie {
         }
         const std::string biz = biz_for(item.game, item.region);
         urls = art_urls_from_payload(games_json, basic_json, biz, item.region == "bili");
-        // an install cached before the larger launcher logo was kept is fetched again once (its version did not change, its hero logo was the small one)
-        if (!urls.version.empty() && previous_version == urls.version && previous.value("heroLogo", 0) == 1) continue;
+        // A matching version is usable only when its source picture is still cached.
+        // A missing or empty file needs one new download to restore the cache.
+        if (!urls.version.empty() && previous_version == urls.version && previous.value("heroLogo", 0) == 1) {
+          replace_background = previous.value("backgroundCachePending", false);
+          const fs::path cached_background = cache / (urls.version + "-background.bin");
+          if (!replace_background && nonempty_file(cached_background)) {
+            const fs::path cover = env.covers_dir / ("sparxie-" + item.id + "-" + urls.version + ".png");
+            const bool output_missing = !nonempty_file(cover) || !nonempty_file(cache / "hero.jpg") || !nonempty_file(cache / "hero-badge.jpg");
+            if (!output_missing || !image_is_blank(decode(file_text(cached_background)))) {
+              continue;
+            }
+            replace_background = true;
+          }
+        }
         if (urls.background.empty()) {
           skipped.push_back(item.id);
           continue;
@@ -382,11 +441,17 @@ namespace sparxie {
         background = decode(std::string_view(*background_bytes));
         if (image_is_blank(background)) {
           // the decoder gave nothing (or one colour) for this picture: nothing is published or cached from it, the poster and cover on disk stay
-          if (env.warn) env.warn("the official background of " + item.id + " decoded blank (" + std::to_string(background_bytes->size()) + " bytes from " + urls.background + ")");
+          if (env.warn) {
+            std::string reason = "decoded blank";
+            if (background.w <= 0 || background.h <= 0 || background.px.empty()) {
+              reason = "failed to decode";
+            }
+            env.warn("the official background of " + item.id + " " + reason + " (" + std::to_string(background_bytes->size()) + " bytes from " + urls.background + ")");
+          }
           skipped.push_back(item.id);
           continue;
         }
-        keep_bytes(cache / (urls.version + "-background.bin"), *background_bytes);
+        background_cache_pending = !keep_bytes(cache / (urls.version + "-background.bin"), *background_bytes, replace_background);
         if (!urls.logo.empty()) {
           if (const auto logo_bytes = get_url(urls.logo)) {
             logo = decode(std::string_view(*logo_bytes));
@@ -424,6 +489,12 @@ namespace sparxie {
       // the cover is the store's finished capsule, a placeholder card, or composed here from the key art and the logo (only a composed one is made again when the composition changes)
       const std::string cover_kind = capsule.w > 0 ? "capsule" : urls.version == "placeholder" ? "placeholder" : "composed";
       json record = { { "version", urls.version }, { "url", urls.background }, { "heroLogo", 1 }, { "coverKind", cover_kind }, { "coverRev", cover_kind == "composed" ? 0 : kCoverRevision }, { "logoCoverOnly", urls.logo_cover_only } };
+      // Outputs can be repaired from memory while Windows refuses to replace
+      // an open cache file. Persist this with its version so the next refresh
+      // retries even with complete outputs, including after a host restart.
+      if (background_cache_pending) {
+        record["backgroundCachePending"] = true;
+      }
       if (!hoyo) {
         record["artRev"] = kArtRevision;
         record["iconRev"] = kIconRevision;
@@ -472,9 +543,22 @@ namespace sparxie {
       catch (const std::exception &) {
       }
       const std::string index_cover_kind = index_now.is_object() ? index_now.value("coverKind", std::string()) : std::string();
-      const bool cover_stale = index_now.is_object() && index_now.value("coverRev", 0) != kCoverRevision && (index_cover_kind == "composed" || (index_cover_kind.empty() && region_row(item.game, item.region) != nullptr && !index_now.value("version", std::string()).empty()));
-      if (!is_touched(item.id) && !(!sibling.empty() && is_touched(sibling)) && hero_ok && !cover_stale) continue;
-      auto background_bytes = cached_picture(env, item.id, "background");
+      std::string cover_version;
+      if (index_now.is_object()) {
+        cover_version = index_now.value("version", std::string());
+      }
+      const bool cover_composed = index_cover_kind == "composed" || (index_cover_kind.empty() && region_row(item.game, item.region) != nullptr && !cover_version.empty());
+      const bool cover_stale = index_now.is_object() && index_now.value("coverRev", 0) != kCoverRevision && cover_composed;
+      const bool cover_missing = cover_composed && !cover_version.empty() && !nonempty_file(env.covers_dir / ("sparxie-" + item.id + "-" + cover_version + ".png"));
+      if (!is_touched(item.id) && !(!sibling.empty() && is_touched(sibling)) && hero_ok && !cover_stale && !cover_missing) {
+        continue;
+      }
+      // the cover belongs to the recorded version, so its own background is
+      // tried first and the newest cache of any version is only a fallback
+      auto background_bytes = cached_picture_at(env, item.id, "background", cover_version);
+      if (!background_bytes) {
+        background_bytes = cached_picture(env, item.id, "background");
+      }
       if (item.region == "bili")
         if (const auto national = cached_picture(env, item.game + "-cn", "background")) background_bytes = national;
       if (!background_bytes) continue;

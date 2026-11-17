@@ -1,0 +1,33 @@
+name: Launcher package size
+
+on:
+  push:
+    branches: [perf/tools-package-size]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: windows-2025
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Native launcher tests
+        shell: pwsh
+        run: |
+          dotnet run --project tools/sparxie-launch-tests/Sparxie.Launch.Tests.csproj -c Release
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Compare two publish and package trials
+        shell: pwsh
+        run: ./scripts/measure-launcher-package.ps1 -OutputDirectory "$env:RUNNER_TEMP/launcher-size"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: launcher-package-size
+          path: ${{ runner.temp }}/launcher-size/summary.json
+          if-no-files-found: warn

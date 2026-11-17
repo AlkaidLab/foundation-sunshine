@@ -62,7 +62,10 @@ namespace sparxie {
   std::optional<std::string>
   host_http_post_json(const std::string &url, const std::string &body);
   Rgba
-  host_decode_image(std::string_view bytes);
+  host_decode_image(std::string_view bytes, std::string *diagnostic = nullptr);
+  // Decode WebP without relying on the Windows image codec registry.
+  Rgba
+  host_decode_webp(std::string_view bytes);
   // The machine-wide ProgramData directory (the Epic Games Launcher keeps its
   // install manifests there). Empty when the host cannot resolve it.
   fs::path

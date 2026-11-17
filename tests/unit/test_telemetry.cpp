@@ -671,6 +671,7 @@ TEST(TelemetryLog, HourlySummaryAndScrubbedErrors) {
   EXPECT_EQ(summary["props"]["fatal"], 1);
   ASSERT_FALSE(error.is_null());
   EXPECT_EQ(error["props"]["count"], 2);
+  EXPECT_EQ(error["props"]["build"], "5.2.0.1");  // the version as an allow-list token: the non-ASCII tail of the tag is cut
   EXPECT_FALSE(error["props"].contains("message"));  // the line never leaves the computer
   EXPECT_EQ(error["props"]["code"].get<std::string>().size(), 9u);
   for (const auto &b : h.posted) {

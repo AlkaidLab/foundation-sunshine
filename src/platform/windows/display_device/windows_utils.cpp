@@ -248,7 +248,7 @@ namespace display_device::w_utils {
         // ERROR_FILE_NOT_FOUND (2) is expected for some displays (virtual, RDP, etc.)
         // Code has fallback mechanism, so this is not a critical error
         if (status == ERROR_FILE_NOT_FOUND) {
-          BOOST_LOG(debug) << get_error_string(status) << " \"RegQueryValueExW\" failed when getting size (EDID not found, using fallback).";
+          BOOST_LOG(verbose) << get_error_string(status) << " \"RegQueryValueExW\" failed when getting size (EDID not found, using fallback).";
         }
         else {
           BOOST_LOG(warning) << get_error_string(status) << " \"RegQueryValueExW\" failed when getting size.";
@@ -260,12 +260,9 @@ namespace display_device::w_utils {
 
       status = RegQueryValueExW(reg_key, L"EDID", nullptr, nullptr, edid.data(), &required_size_in_bytes);
       if (status != ERROR_SUCCESS) {
-        // ERROR_FILE_NOT_FOUND (2) is expected for some displays (virtual, RDP, etc.)
-        // Code has fallback mechanism, so this is not a critical error
-        if (status == ERROR_FILE_NOT_FOUND) {
-          BOOST_LOG(debug) << get_error_string(status) << " \"RegQueryValueExW\" failed when getting size (EDID not found, using fallback).";
-        }
-        else {
+        // ERROR_FILE_NOT_FOUND is expected for some displays (virtual, RDP,
+        // etc.). The caller uses the device path fallback in that case.
+        if (status != ERROR_FILE_NOT_FOUND) {
           BOOST_LOG(warning) << get_error_string(status) << " \"RegQueryValueExW\" failed when getting size.";
         }
         return false;
@@ -416,6 +413,8 @@ namespace display_device::w_utils {
           break;
         }
 
+        // friendlyNameFromEdid describes the name source, not EDID availability.
+        // Keep the registry lookup and device-path fallback so saved IDs remain valid.
         if (!get_device_edid(dev_info_handle, dev_info_data, device_id_data)) {
           // Error already logged
           break;

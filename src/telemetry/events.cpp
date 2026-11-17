@@ -454,6 +454,7 @@ namespace telemetry {
                                                 { "code", type_e::code, 0, 64 },
                                                 { "severity", type_e::choice, 0, 0, severity_choices },
                                                 { "count", type_e::integer, 1, 1000000 },
+                                                { "build", type_e::catalogue, 0, 40 },
                                                 // no message: a line of the log or a text a page caught can carry what a person chose (a device, a game, a path). The code names the error; the one place for typed text is user_report.
                                               } });
         // what the person wrote in the error dialog (spec "Worker additions"): a category, the component and page as tokens, an error code, the reference of an uploaded attachment and one scrubbed message of at most 2000 characters, the screenshot's reference and the word for why it is missing; the contact when the person left one

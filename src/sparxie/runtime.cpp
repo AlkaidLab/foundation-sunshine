@@ -143,7 +143,7 @@ namespace sparxie {
     spawn_refresh(HostEnv env) {
       std::thread([env = std::move(env)]() mutable {
         try {
-          refresh_official(env, host_http_get, [](std::string_view bytes) { return host_decode_image(bytes); }, host_http_post_json);
+          refresh_official(env, host_http_get, decode_art_image, host_http_post_json);
         }
         catch (const std::exception &) {
         }
@@ -165,6 +165,20 @@ namespace sparxie {
       }
     }
   }  // namespace
+  Rgba
+  decode_art_image(std::string_view bytes) {
+    std::string diagnostic;
+    auto image = host_decode_image(bytes, &diagnostic);
+    if (!diagnostic.empty()) {
+      if (image.w > 0 && image.h > 0) {
+        BOOST_LOG(debug) << "Sparxie: image decode recovered: " << diagnostic << ", input bytes=" << bytes.size();
+      }
+      else {
+        BOOST_LOG(debug) << "Sparxie: image decode failed: " << diagnostic << ", input bytes=" << bytes.size();
+      }
+    }
+    return image;
+  }
   HostEnv
   make_host_env() {
     HostEnv env;

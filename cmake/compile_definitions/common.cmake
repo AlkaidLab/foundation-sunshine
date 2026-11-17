@@ -103,6 +103,7 @@ target_link_libraries(sunshine_build_dependencies INTERFACE
         nlohmann_json::nlohmann_json opus sunshine::ffmpeg ${Boost_LIBRARIES}
         sunshine::tls sunshine::curl ${PLATFORM_LIBRARIES})
 if(WIN32)
+    target_link_libraries(sunshine_build_dependencies INTERFACE webpdecoder)
     target_compile_definitions(sunshine_build_dependencies INTERFACE MINIUPNP_STATICLIB)
 endif()
 set(SUNSHINE_EXTERNAL_LIBRARIES sunshine_build_dependencies)

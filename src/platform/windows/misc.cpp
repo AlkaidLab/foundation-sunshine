@@ -3,6 +3,7 @@
  * @brief Miscellaneous definitions for Windows.
  */
 #include <csignal>
+#include <cstdint>
 #include <filesystem>
 #include <iomanip>
 #include <limits>
@@ -81,6 +82,20 @@ NtSetTimerResolution(ULONG DesiredResolution, BOOLEAN SetResolution, PULONG Curr
 namespace {
 
   std::atomic<bool> used_nt_set_timer_resolution = false;
+  std::atomic<std::int64_t> last_no_active_user_session_log_ms { 0 };
+  constexpr std::int64_t no_active_user_session_log_interval_ms = 30'000;
+
+  void
+  log_no_active_user_session() {
+    const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now().time_since_epoch())
+                          .count();
+    auto last_log_ms = last_no_active_user_session_log_ms.load(std::memory_order_relaxed);
+    if ((last_log_ms == 0 || now_ms - last_log_ms >= no_active_user_session_log_interval_ms) &&
+        last_no_active_user_session_log_ms.compare_exchange_strong(last_log_ms, now_ms)) {
+      BOOST_LOG(debug) << "There isn't an active user session, therefore it is not possible to execute commands under the user's profile.";
+    }
+  }
 
   bool
   nt_set_timer_resolution_max() {
@@ -386,8 +401,9 @@ namespace platf {
       }
     }
     if (invalid_session_id == session_id) {
-      // If there is no active user session, log a warning and return null
-      BOOST_LOG(warning) << "There isn't an active user session, therefore it is not possible to execute commands under the users profile.";
+      // No active user session is expected while Windows is at the sign-in
+      // screen. Keep the diagnostic useful without logging every retry.
+      log_no_active_user_session();
       return nullptr;
     }
 

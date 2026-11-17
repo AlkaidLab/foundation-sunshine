@@ -224,7 +224,7 @@ namespace confighttp::sparxie {
     post_refresh(resp_https_t response, req_https_t request) {
       if (!ready(response, request, false)) return;
       auto env = ::sparxie::make_host_env();
-      auto result = ::sparxie::refresh_official(env, ::sparxie::host_http_get, [](std::string_view bytes) { return ::sparxie::host_decode_image(bytes); }, ::sparxie::host_http_post_json);
+      auto result = ::sparxie::refresh_official(env, ::sparxie::host_http_get, ::sparxie::decode_art_image, ::sparxie::host_http_post_json);
       reload_apps(env);
       finish(response, std::move(result));
     }

@@ -45,10 +45,18 @@ const privateMapsDir = process.env.SOURCEMAP_DIR
 const privateSourcemaps = privateMapsDir ? (await import(pathToFileURL(resolve(foundationUi, 'src', 'build', 'privateSourcemaps.js')).href)).privateSourcemaps : null
 
 export default defineConfig({
+  // vue-production-20261117 §With Build Tools; vue-i18n-opt-20261117 §Feature build flags.
+  // SFC templates are compiled by plugin-vue. Keep the message compiler: locales are fetched as JSON.
+  define: {
+    __VUE_PROD_DEVTOOLS__: false,
+    __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: false,
+    __VUE_I18N_LEGACY_API__: false,
+    __INTLIFY_PROD_DEVTOOLS__: false,
+  },
   resolve: {
     dedupe: ['vue'],
     alias: [
-      { find: /^vue$/, replacement: 'vue/dist/vue.esm-bundler.js' },
+      { find: /^vue$/, replacement: 'vue/dist/vue.runtime.esm-bundler.js' },
       ...foundationUiAliases(foundationUi),
     ],
   },

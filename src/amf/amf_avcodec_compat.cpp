@@ -442,9 +442,23 @@ namespace amf {
 
     return {
       async_depth,
-      true,
       configure_result,
     };
+  }
+
+  int
+  amf_avcodec_compat::rate_control_h264(const amf_config &config, const video::config_t &client_config) {
+    return auto_rc_h264(config, make_avcodec_context_like(client_config));
+  }
+
+  int
+  amf_avcodec_compat::rate_control_hevc(const amf_config &config, const video::config_t &client_config) {
+    return auto_rc_hevc(config, make_avcodec_context_like(client_config));
+  }
+
+  int
+  amf_avcodec_compat::rate_control_av1(const amf_config &config, const video::config_t &client_config) {
+    return auto_rc_av1(config, make_avcodec_context_like(client_config));
   }
 
   int64_t

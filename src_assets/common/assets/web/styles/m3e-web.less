@@ -112,7 +112,7 @@ html[data-bs-theme] {
 .pin-group + .pin-group { margin-top: 16px; }
 .pin-group__title { display: flex; align-items: baseline; gap: 8px; margin: 0 0 8px; padding: 0 4px; font: var(--m-title-small); color: var(--md-sys-color-primary-text); }
 .pin-count { font: var(--m-label-medium); color: color-mix(in srgb, var(--md-sys-color-on-surface-variant) 55%, var(--md-sys-color-on-surface)); }
-.pin-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 6px 12px; }
+.pin-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: 6px 12px; }
 .pin-row { border-radius: 20px; background: var(--m-card); min-height: 0; }
 .pin-row .m-split-item__main { padding: 8px 12px; gap: 12px; }
 .pin-row .m-split-item__gear { width: 48px; }
@@ -299,6 +299,13 @@ html[data-bs-theme] {
 .pin-row__unpair:focus-visible { outline: 2px solid var(--md-sys-color-error); outline-offset: 2px; }
 .pin-row__unpair:disabled { opacity: .38; cursor: not-allowed; }
 .pin-row__stopped { flex: none; align-self: center; display: flex; align-items: center; gap: 8px; margin-inline-end: 4px; }
+/* A stopped card has more actions: give the device name its own row instead of squeezing it between controls. */
+.pin-row--stopped { display: grid; grid-template-columns: minmax(0, 1fr) 44px 1px 48px; }
+.pin-row--stopped .pin-row__main { grid-column: 1 / -1; }
+.pin-row--stopped .pin-row__stopped { grid-column: 1; grid-row: 2; margin: 0 4px 8px 12px; min-width: 0; flex-wrap: wrap; }
+.pin-row--stopped .pin-row__unpair { grid-column: 2; grid-row: 2; margin: 0 0 8px; }
+.pin-row--stopped .m-split-item__divider { grid-column: 3; grid-row: 2; margin: 0 0 8px; }
+.pin-row--stopped .m-split-item__gear { grid-column: 4; grid-row: 2; min-height: 44px; margin-bottom: 8px; }
 .pin-badge { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 10px 0 8px; border-radius: 9999px; background: var(--md-sys-color-error-container); color: var(--md-sys-color-on-error-container); font: var(--m-label-large); white-space: nowrap; }
 .pin-badge .m-icon { font-size: 16px; }
 .pin-row--stopped .m-item__title { color: var(--md-sys-color-on-surface-variant); }

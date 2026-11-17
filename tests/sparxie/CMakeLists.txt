@@ -1,9 +1,13 @@
-cmake_minimum_required(VERSION 3.16)
+cmake_minimum_required(VERSION 3.25)
 project(sparxie_host_tests LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(GTest REQUIRED)
 find_package(Threads REQUIRED)
+if(WIN32)
+  include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/dependencies/webp_decoder.cmake)
+  link_libraries(webpdecoder)
+endif()
 set(SPX_ROOT ${CMAKE_CURRENT_LIST_DIR}/../..)
 add_executable(sparxie_unit_tests
   ${SPX_ROOT}/src/sparxie/model.cpp
@@ -41,6 +45,8 @@ add_executable(sparxie_unit_tests
   ${CMAKE_CURRENT_LIST_DIR}/test_game_boost.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_zzz_file.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_host.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/test_webp_decode_policy.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/test_http_body_reader.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_apps_types.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_edit_save.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_captured_gate.cpp
