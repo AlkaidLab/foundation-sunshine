@@ -2,7 +2,7 @@ param([Parameter(Mandatory = $true)][string]$OutputDirectory)
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
-$project = Join-Path $root 'tools/sparxie-launch/Sparxie.Launch.csproj'
+$projectDir = Join-Path $root 'tools/sparxie-launch'
 $output = [IO.Path]::GetFullPath($OutputDirectory)
 New-Item -ItemType Directory -Force $output | Out-Null
 $rows = @()
@@ -12,10 +12,18 @@ foreach ($trial in 1..2) {
     $arms = if ($trial -eq 1) { @('default', 'size') } else { @('size', 'default') }
     foreach ($arm in $arms) {
         $dir = Join-Path $output "$arm-$trial"
+        # Start every trial from an empty directory so a rerun cannot trip over an old archive.
+        if (Test-Path $dir) { Remove-Item $dir -Recurse -Force }
         $publish = Join-Path $dir 'publish'
+        # Build from a copy without the project's own obj/bin: the SDK globs every .cs file under
+        # the project directory, so generated files from an earlier build would be compiled twice.
+        $src = Join-Path $dir 'src'
+        New-Item -ItemType Directory -Force $src | Out-Null
+        Get-ChildItem $projectDir -Force | Where-Object { $_.Name -notin @('obj', 'bin') } |
+            Copy-Item -Destination $src -Recurse -Force
         $hint = if ($arm -eq 'size') { 'Size' } else { '' }
         $watch = [Diagnostics.Stopwatch]::StartNew()
-        & dotnet publish $project -c Release -r win-x64 --self-contained true `
+        & dotnet publish (Join-Path $src 'Sparxie.Launch.csproj') -c Release -r win-x64 --self-contained true `
             --output $publish --disable-build-servers --nologo `
             "-p:BaseIntermediateOutputPath=$dir/obj/" "-p:BaseOutputPath=$dir/bin/" `
             "-p:OptimizationPreference=$hint"
