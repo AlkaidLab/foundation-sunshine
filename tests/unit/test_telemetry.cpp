@@ -3742,3 +3742,24 @@ TEST(TelemetryServiceAggregate, ExitSendsWhatIsHeldAndASwitchTurnedOffDropsIt) {
   g.svc->consent_changed();
   EXPECT_EQ(g.svc->buffered(), 0u) << "what waited for the interval is gone with the choice";
 }
+
+TEST(TelemetryAggregate, ABucketVectorOnlyTheLaterRecordCarriesIsKept) {
+  const auto a = *shape_event(kind_e::experience, "page_vitals", json { { "page", "home" }, { "visits", 1 } }, 100);
+  const auto b = *shape_event(kind_e::experience, "page_vitals", json { { "page", "home" }, { "visits", 1 }, { "lcp", json::array({ 0, 2, 0, 0, 0, 0, 0, 0 }) } }, 101);
+  std::vector<std::vector<std::size_t>> origin;
+  const auto out = aggregate_events({ a, b }, origin);
+  ASSERT_EQ(out.size(), 1u);
+  EXPECT_EQ(out[0].props["lcp"], json::array({ 0, 2, 0, 0, 0, 0, 0, 0 }));
+}
+
+TEST(TelemetryServiceAggregate, ThePreviewOfHeldRecordsHonoursItsLimit) {
+  service_options_t options;
+  options.aggregate_interval_ms = 6 * 60 * 60 * 1000;
+  options.ring_max = 10;
+  options.flush_events = 1000;
+  harness_t h(options);
+  for (int i = 0; i < 30; ++i) ASSERT_TRUE(h.svc->emit(kind_e::usage, "feature_used", json { { "feature", i % 2 ? "host.apps" : "host.config" } }));
+  h.svc->flush();
+  EXPECT_LE(h.svc->preview(1).size(), 1u);
+  EXPECT_EQ(h.svc->preview(0).size(), 0u);
+}

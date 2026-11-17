@@ -1156,7 +1156,7 @@ namespace telemetry {
       json dims = json::object();
       for (auto it = e.props.begin(); it != e.props.end(); ++it)
         if (!it.value().is_number() && !(additive && it.value().is_array())) dims[it.key()] = it.value();
-      const auto key = e.name + '\0' + std::string { kind_name(e.kind) } + '\0' + e.version + '\0' + std::to_string(e.priority) + '\0' + dims.dump();
+      const auto key = e.product + '\0' + e.name + '\0' + std::string { kind_name(e.kind) } + '\0' + e.version + '\0' + std::to_string(e.priority) + '\0' + dims.dump();
       auto found = groups.find(key);
       if (found == groups.end()) {
         found = groups.emplace(key, acc_t { out.size(), {}, {}, {} }).first;
@@ -1178,7 +1178,9 @@ namespace telemetry {
         }
         else if (additive && v.is_array() && origin[a.out_at].size() > 1) {
           auto &dst = target.props[it.key()];
-          if (dst.is_array() && dst.size() == v.size())
+          if (!dst.is_array())
+            dst = v;  // an optional bucket vector the first record did not carry
+          else if (dst.size() == v.size())
             for (std::size_t k = 0; k < v.size(); ++k)
               if (v[k].is_number() && dst[k].is_number()) dst[k] = dst[k].get<double>() + v[k].get<double>();
         }

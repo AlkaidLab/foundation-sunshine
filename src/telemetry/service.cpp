@@ -1165,7 +1165,9 @@ namespace telemetry {
           ++back;
         }
         counts_.write_failed += back;
-        while (ring_.size() > options_.ring_max) {
+        // what a failed write puts back may be the whole held interval: it fits the same room it was taken from
+        const auto room = options_.aggregate_interval_ms > 0 ? options_.ring_max * 4 : options_.ring_max;
+        while (ring_.size() > room) {
           ring_.pop_front();
           ++counts_.dropped;
         }
@@ -1573,22 +1575,18 @@ namespace telemetry {
   json
   service_t::preview(std::size_t max) const {
     std::lock_guard lock { mutex_ };
-    json out = json::array();
-    const auto start = ring_.size() > max ? ring_.size() - max : 0;
-    for (std::size_t i = start; i < ring_.size(); ++i) {
-      auto e = event_to_json(ring_[i]);
-      e["product"] = ring_[i].product;
-      out.push_back(std::move(e));
-    }
+    std::vector<event_t> shown { ring_.begin(), ring_.end() };
     // what waits for the aggregate interval is shown the way it will leave: merged
     if (!aggregate_ring_.empty()) {
       std::vector<std::vector<std::size_t>> origin;
-      const auto merged = aggregate_events(std::vector<event_t> { aggregate_ring_.begin(), aggregate_ring_.end() }, origin);
-      for (const auto &m : merged) {
-        auto e = event_to_json(m);
-        e["product"] = m.product;
-        out.push_back(std::move(e));
-      }
+      for (auto &m : aggregate_events(std::vector<event_t> { aggregate_ring_.begin(), aggregate_ring_.end() }, origin)) shown.push_back(std::move(m));
+    }
+    json out = json::array();
+    const auto start = shown.size() > max ? shown.size() - max : 0;
+    for (std::size_t i = start; i < shown.size(); ++i) {
+      auto e = event_to_json(shown[i]);
+      e["product"] = shown[i].product;
+      out.push_back(std::move(e));
     }
     return out;
   }
