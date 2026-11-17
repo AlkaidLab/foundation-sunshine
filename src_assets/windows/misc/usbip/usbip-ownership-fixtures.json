@@ -28,6 +28,16 @@
     "ownership": "legacy-owned"
   },
   {
+    "name": "legacy-two-registry-views",
+    "version": "0.9.8.1",
+    "extras": false,
+    "receipt": false,
+    "legacy": true,
+    "present": true,
+    "twoViews": true,
+    "ownership": "external"
+  },
+  {
     "name": "incompatible",
     "version": "0.9.8.2",
     "extras": false,

@@ -30,7 +30,7 @@ try {
       $script:Suffix = $suffix
       $script:FixtureRoot = $root
       $script:Source = $source
-      $script:UsbipUninstallBases = @('fixture-registry')
+      $script:UsbipUninstallBases = if ($f.PSObject.Properties['twoViews']) { @('fixture-registry-a', 'fixture-registry-b') } else { @('fixture-registry') }
       $script:UsbipSourceHash = if ($f.legacy) { (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash } else { 'fixture-source' }
       function script:Test-Path {
         param($LiteralPath, $ErrorAction)
@@ -97,6 +97,28 @@ Export-ModuleMember -Function Get-UsbipOwnership
       Write-Host "PASS external-root-entrypoint/$action no-node-mutation"
     }
   } finally { $env:ProgramFiles = $oldProgramFiles }
+  # Ownership is decided again under the lifecycle lock: a first read of managed followed by a second read of external
+  # (another process changed the installation while this one waited) must change nothing.
+  $counter = Join-Path $scripts 'ownership-reads.txt'
+  foreach ($action in 'install', 'uninstall') {
+    Remove-Item -LiteralPath $counter -Force -ErrorAction SilentlyContinue
+    @"
+function Get-UsbipOwnership {
+  `$n = if (Test-Path -LiteralPath '$counter') { [int](Get-Content -LiteralPath '$counter') } else { 0 }
+  Set-Content -LiteralPath '$counter' -Value (`$n + 1)
+  if (`$n -eq 0) { [pscustomobject]@{ownership='managed'; compatible=`$true; reason='fixture'} }
+  else { [pscustomobject]@{ownership='external'; compatible=`$true; reason='fixture'} }
+}
+Export-ModuleMember -Function Get-UsbipOwnership
+"@ | Set-Content -LiteralPath (Join-Path $scripts 'usbip-package-ownership.psm1')
+    & (Join-Path $scripts 'usbip-package.ps1') -Action $action -InstallRoot $usbRoot -HostRoot $hostRoot -State (Join-Path $scripts 'must-not-exist/state.json')
+    if ($LASTEXITCODE -ne 0) { throw "Changed-under-lock $action returned $LASTEXITCODE" }
+    if ([int](Get-Content -LiteralPath $counter) -ne 2) { throw "Changed-under-lock $action did not read ownership again under the lock" }
+    if (Test-Path -LiteralPath (Join-Path $scripts 'result-usbip-steps.txt')) { throw "Changed-under-lock $action wrote a step log" }
+    if (Test-Path -LiteralPath (Join-Path $scripts 'must-not-exist')) { throw "Changed-under-lock $action created state" }
+    $passed++
+    Write-Host "PASS ownership-under-lock/$action external-after-wait no-state-or-guard"
+  }
   Write-Host "USB/IP ownership regressions: $passed passed, 0 skipped, 0 failed"
 } finally {
   Remove-Module usbip-package-functions, usbip-package-ownership -Force -ErrorAction SilentlyContinue

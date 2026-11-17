@@ -68,6 +68,15 @@ try {
   $mutex = New-Object Threading.Mutex($false, 'Global\AlkaidLabUsbipLifecycle')
   try { $locked = $mutex.WaitOne(0) } catch [Threading.AbandonedMutexException] { $locked = $true }
   if (-not $locked) { throw 'Another USB/IP install or uninstall is running' }
+  # Ownership read before the lock can be stale: another lifecycle process may have changed the installation while this
+  # one waited. Decide again under the lock and apply the same external/absent rules before anything is touched.
+  $ownership = Get-UsbipOwnership $InstallRoot $HostRoot
+  if ($ownership.ownership -eq 'external') {
+    Write-Output 'USB/IP is externally managed; no changes were made.'
+    if ($Action -eq 'install' -and -not $ownership.compatible) { $rc = 106; exit 106 }
+    $rc = 0; exit 0
+  }
+  if ($Action -eq 'uninstall' -and $ownership.ownership -eq 'absent') { $rc = 0; exit 0 }
   if (Test-Path -LiteralPath $steps) { Remove-Item -LiteralPath $steps -Force }
   if ($Action -eq 'install') {
     $manifest = Read-UsbipManifest $Payload

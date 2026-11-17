@@ -76,7 +76,9 @@ function Resolve-UsbipOwnership($Inventory) {
       (Get-UsbipValue $Inventory.Receipt 'SourceSHA256') -eq $script:UsbipSourceHash -and
       (Test-UsbipSameLocation (Get-UsbipValue $Inventory.Receipt 'InstallLocation') $Inventory.Root) -and
       $Inventory.Entries.Count -eq 0) { $owner = 'managed'; $reason = 'slim-receipt' }
-  elseif ($Inventory.Entries.Count -gt 0 -and $null -eq $Inventory.Receipt -and $Inventory.LegacyPayload -and
+  # Exactly one upstream registration: two records (one per registry view) leave the origin ambiguous, and the
+  # takeover would run each uninstaller in turn.
+  elseif ($Inventory.Entries.Count -eq 1 -and $null -eq $Inventory.Receipt -and $Inventory.LegacyPayload -and
       @($Inventory.Entries | Where-Object { -not (Test-UsbipSameLocation (Get-UsbipValue $_ 'InstallLocation') $Inventory.Root) }).Count -eq 0) {
     $owner = 'legacy-owned'; $reason = 'same-version-no-extras-bundled-installer'
   }
