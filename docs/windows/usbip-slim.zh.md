@@ -46,7 +46,7 @@ VCRUNTIME140_1.dll。其余依赖为系统 DLL 与 Windows 10 内置 UCRT API �
 app-local 方式，并负责运行库版本维护；不采用已弃用的 merge modules，也不改成静态链接。
 再分发以拥有有效 Visual Studio 使用许可并遵守其软件许可条款为前提，本文不宣称替代
 该许可。来源记录 usbip-slim-ms-vc-redist-20261117 与 usbip-slim-ms-redist2026-20261117（2022 清单亦作交叉核对）。
-usbip-win2 的 BSD-2-Clause 原文统一放入 `third_party/licenses/usbip-win2/LICENSE`，
+usbip-slim-license-20261117 记录的 usbip-win2 BSD-2-Clause 原文统一放入 `third_party/licenses/usbip-win2/LICENSE`，
 在 payload 中保留副本；与第三方声明任务采用相同目录。
 
 ## 探测、性能与验证边界
