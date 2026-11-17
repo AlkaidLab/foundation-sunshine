@@ -12,7 +12,7 @@ CHECK = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CHECK)
 
 
-def pe_with_imports(names, stack_reserve=2 * 1024 * 1024, delay_names=()):
+def pe_with_imports(names, stack_reserve=2 * 1024 * 1024, delay_names=(), size_of_code=0):
     """Build a minimal PE32+ image containing one import descriptor per name
     (and one delay-import descriptor per delay_names entry)."""
     pe_offset = 0x80
@@ -25,6 +25,7 @@ def pe_with_imports(names, stack_reserve=2 * 1024 * 1024, delay_names=()):
     image[pe_offset:pe_offset + 4] = b"PE\0\0"
     struct.pack_into("<HHIIIHH", image, pe_offset + 4, 0x8664, 1, 0, 0, 0, 0xF0, 0x2022)
     struct.pack_into("<H", image, optional_offset, 0x20B)
+    struct.pack_into("<I", image, optional_offset + 4, size_of_code)
     struct.pack_into("<Q", image, optional_offset + 0x48, stack_reserve)
     struct.pack_into("<I", image, optional_offset + 108, 16)
     # Import directory: RVA 0x1000, 20-byte descriptors, then a null descriptor.
@@ -71,3 +72,13 @@ class WindowsReleaseGateTests(unittest.TestCase):
         self.assertEqual(CHECK.check_data(pe_with_imports(["KERNEL32.dll"]))[2], [])
         errors = CHECK.check_data(pe_with_imports(["KERNEL32.dll"], delay_names=["libiconv-2.dll"]))[2]
         self.assertTrue(any("libiconv-2.dll" in error for error in errors), errors)
+
+    def test_code_size_limit(self):
+        small = pe_with_imports(["KERNEL32.dll"], size_of_code=900_000)
+        large = pe_with_imports(["KERNEL32.dll"], size_of_code=5_300_000)
+        self.assertEqual(CHECK.code_size(large), 5_300_000)
+        self.assertEqual(CHECK.check_data(small, 1_500_000)[2], [])
+        self.assertEqual(CHECK.check_data(large)[2], [])
+        errors = CHECK.check_data(large, 1_500_000)[2]
+        self.assertTrue(any("SizeOfCode" in error for error in errors), errors)
+
