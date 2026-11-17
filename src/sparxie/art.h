@@ -8,16 +8,6 @@ namespace sparxie {
     int h = 0;
     std::vector<std::uint8_t> px;
   };
-  struct ArtSchedule {
-    std::chrono::system_clock::time_point last_fetch {};
-    std::chrono::system_clock::time_point last_check {};
-    std::chrono::minutes jitter { 0 };
-    bool host_started = false;
-  };
-  enum class ArtReason { host_start,
-    interval,
-    app_list,
-    manual };
   struct ArtUrls {
     std::string icon;
     std::string logo;
@@ -123,7 +113,7 @@ namespace sparxie {
   Rgba
   decode_image(const std::uint8_t *data, std::size_t size);
   bool
-  art_due(ArtSchedule &schedule, std::chrono::system_clock::time_point now, ArtReason reason);
+  art_check_due(std::chrono::system_clock::time_point last_attempt, std::chrono::system_clock::time_point now);
   ArtUrls
   art_urls_from_payload(const json &games_payload, const json &basic_payload, const std::string &biz, bool prefer_carousel);
 }  // namespace sparxie

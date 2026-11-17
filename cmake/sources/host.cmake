@@ -275,6 +275,7 @@ set(SUNSHINE_HOST_SOURCES
     src/sparxie/svg_path.cpp src/sparxie/svg_path.h
     src/sparxie/host.cpp src/sparxie/host.h
     src/sparxie/host_refresh.cpp
+    src/sparxie/art_refresh_job.h
     src/sparxie/platform.cpp src/sparxie/platform.h
     src/sparxie/http_body_reader.h
     src/sparxie/webp_decode_policy.h

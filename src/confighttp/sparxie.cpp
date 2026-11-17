@@ -223,9 +223,34 @@ namespace confighttp::sparxie {
     void
     post_refresh(resp_https_t response, req_https_t request) {
       if (!ready(response, request, false)) return;
-      auto env = ::sparxie::make_host_env();
-      auto result = ::sparxie::refresh_official(env, ::sparxie::host_http_get, ::sparxie::decode_art_image, ::sparxie::host_http_post_json);
-      reload_apps(env);
+      std::string action;
+      const auto header = request->header.find("X-Sparxie-Art-Action");
+      if (header != request->header.end()) {
+        action = header->second;
+      }
+      ::sparxie::ApiResult result;
+      if (action == "status") {
+        if (!check_content_type(response, request, "application/json")) {
+          return;
+        }
+        json body;
+        if (!read_json_body(response, request, body)) {
+          return;
+        }
+        const auto job = body.find("jobId");
+        if (job == body.end() || !job->is_number_integer() || *job <= 0) {
+          result.status = ::sparxie::Status::fail(400, "invalid_art_job", "A positive artwork jobId is required");
+        }
+        else {
+          result.body = ::sparxie::art_refresh_status(job->get<std::uint64_t>());
+        }
+      }
+      else if (action == "check" || action == "force") {
+        result.body = ::sparxie::request_art_refresh(action == "force");
+      }
+      else {
+        result.status = ::sparxie::Status::fail(400, "invalid_art_action", "Unknown artwork refresh action");
+      }
       finish(response, std::move(result));
     }
     // The official art of an install. `badge` asks for the variant the host drew the Sparxie mark on (the poster a touch application hands to the clients): covers/sparxie-<install>-<version>-badge<rev>.png

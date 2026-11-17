@@ -886,25 +886,11 @@ namespace sparxie {
     return out;
   }
   bool
-  art_due(ArtSchedule &schedule, std::chrono::system_clock::time_point now, ArtReason reason) {
-    if (reason == ArtReason::manual) return true;
-    if (reason == ArtReason::host_start) {
-      if (schedule.host_started) return false;
-      schedule.host_started = true;
-      schedule.last_check = now;
-      schedule.last_fetch = now;
-      return true;
-    }
-    if (reason == ArtReason::app_list) {
-      if (schedule.last_check.time_since_epoch().count() != 0 && now - schedule.last_check < std::chrono::minutes(15)) return false;
-      schedule.last_check = now;
-      return true;
-    }
-    const auto gap = std::chrono::hours(6) + schedule.jitter;
-    if (schedule.last_fetch.time_since_epoch().count() != 0 && now - schedule.last_fetch < gap) return false;
-    schedule.last_fetch = now;
-    schedule.last_check = now;
-    return true;
+  art_check_due(std::chrono::system_clock::time_point last_attempt, std::chrono::system_clock::time_point now) {
+    constexpr auto check_interval = std::chrono::hours(24);
+    // A missing record or a clock rollback permits a new check. Otherwise,
+    // attempts (including failures) share the same per-install daily interval.
+    return last_attempt.time_since_epoch().count() == 0 || now < last_attempt || now - last_attempt >= check_interval;
   }
   ArtUrls
   art_urls_from_payload(const json &games_payload, const json &basic_payload, const std::string &biz, bool prefer_carousel) {

@@ -6,6 +6,13 @@ namespace sparxie {
   make_host_env();
   Rgba
   decode_art_image(std::string_view bytes);
+  // Requests return immediately; callers share one in-flight refresh.
+  json
+  request_art_refresh(bool force = false);
+  json
+  art_refresh_status(std::uint64_t job_id);
+  void
+  stop_art_refresh();
   void
   note_host_started();
   void

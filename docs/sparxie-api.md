@@ -884,14 +884,32 @@ for `icon`). `v` is the version token so a new poster is a new URL.
 updates that application's `image-path` to the new composed file in the
 host covers directory, which is what a Moonlight client reads.
 
-Refresh runs at host start, again after six hours plus up to 30 minutes of
-jitter, and when the application list is opened if the last check was more
-than 15 minutes ago. The list request is not delayed for the fetch. Offline,
-or a failed fetch, serves the last cache. `art_unavailable` is only the case
-where there has never been a cache.
+Host start and application-list visits request an asynchronous refresh; there
+is no periodic timer. Existing artwork stays available while the worker checks
+for updates. Each game/region records its last attempt in
+`art-metadata/<install>.json`; automatic network checks are at least 24 hours
+apart, including after failed requests or a host restart. Manual checks update
+the same timestamp. Missing local outputs can still be rebuilt from cached
+sources during the interval. Newly retained source images have SHA-256 and byte
+size recorded in that metadata; existing poster indexes remain in place.
 
-`POST /api/sparxie/art/refresh` with `{ "install": "genshin-cn" }` forces
-one check. An empty body checks every known install.
+`POST /api/sparxie/art/refresh` uses the required `X-Sparxie-Art-Action` header:
+
+- `check`: start an automatic check, respecting each install's interval.
+- `force`: check immediately, bypassing the interval.
+- `status`: send `{ "jobId": 1 }` to read that job without starting work or contacting sources.
+
+Missing/unknown actions return 400 (`invalid_art_action`). Requests operate on
+all known games/regions. While a job is running, further refresh requests return
+its same `jobId`, `state: "checking"`, and `retryAfterMs: 2000`. On completion,
+`state: "ready"` includes `updated`, `heroes`, and `skipped`; individual source
+failures retain cached artwork and appear in `skipped`. An unexpected job failure
+returns `state: "failed"`, and shutdown returns `state: "stopped"`. The latest
+16 completed results are retained so a new job does not hide an earlier result.
+An unknown/evicted job returns `state: "expired"`. Status is process-local;
+after a restart it starts as `idle`. All these status responses
+use HTTP 200. A page can poll `status` while checking and reread games/apps when
+ready; polling must stop on page disposal and is bounded by the client.
 
 `PUT /api/sparxie/apps/{index}/cover` with `{ "cover": "official" }` or
 `"custom"` sets the flag. `custom` stops the sync from changing

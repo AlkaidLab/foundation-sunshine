@@ -483,13 +483,15 @@ watch(() => webShell?.pending.value, (request) => {
   else scanAfterLoad = true
 }, { immediate: true })
 
-// The official posters change now and then (the host refreshes them when it starts and while it runs). Ask it once in a while when the page opens and read the list again when one changed:
+// Show cached posters immediately, then request the host's daily check and read the list again when its background job changes artwork:
 // a poster that changed is a new address (its version is part of it), so the cards show the new one and not the one that was cached.
 let lastArtCheck = 0
+const artCheckAbort = new AbortController()
+onBeforeUnmount(() => artCheckAbort.abort())
 watch(spxAvailable, async (on) => {
   if (!on || Date.now() - lastArtCheck < 10 * 60 * 1000) return
   lastArtCheck = Date.now()
-  if (await sparxieClient().refreshArt()) await loadApps()
+  if (await sparxieClient().refreshArt({ signal: artCheckAbort.signal }) && !artCheckAbort.signal.aborted) await loadApps()
 }, { immediate: true })
 
 // the application a Sparxie page made is saved like any other and the person lands on its own page to adjust it

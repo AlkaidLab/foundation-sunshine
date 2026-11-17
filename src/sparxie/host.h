@@ -108,8 +108,13 @@ namespace sparxie {
   /// another hero.png) of the official-cover apps of that install at it; a custom hero is never touched. Returns how many apps changed, or -1 when no picture was made.
   int
   publish_hero(HostEnv &env, const std::string &install_id, const Rgba &background, const Rgba &logo);
+  struct ArtRefreshOptions {
+    bool automatic = false;
+    std::chrono::system_clock::time_point now = std::chrono::system_clock::now();
+    std::function<bool()> cancelled;
+  };
   ApiResult
-  refresh_official(HostEnv &env, const std::function<std::optional<std::string>(const std::string &)> &get_url, const std::function<Rgba(std::string_view)> &decode, const std::function<std::optional<std::string>(const std::string &, const std::string &)> &post_url = {});
+  refresh_official(HostEnv &env, const std::function<std::optional<std::string>(const std::string &)> &get_url, const std::function<Rgba(std::string_view)> &decode, const std::function<std::optional<std::string>(const std::string &, const std::string &)> &post_url = {}, const ArtRefreshOptions &options = {});
   /// The badged copy of the newest official cover of an install when it is missing (an install whose posters were made before the Sparxie badge), and the applications
   /// of that install pointed at it; returns how many changed (1 when only the file was made).
   int

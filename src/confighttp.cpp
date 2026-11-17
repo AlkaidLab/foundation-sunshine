@@ -12,6 +12,7 @@
 #include "image_enhancement/api.h"
 #include "logging.h"
 #include "network.h"
+#include "sparxie/runtime.h"
 #include <atomic>
 #include <latch>
 #include <optional>
@@ -167,6 +168,7 @@ namespace confighttp {
     local_auth_token::stop_monitor();
     ai::http::shutdown_streams();
     image_enhancement::api::shutdown();
+    ::sparxie::stop_art_refresh();
     server.stop();
     if (loopback_server) {
       loopback_server->stop();

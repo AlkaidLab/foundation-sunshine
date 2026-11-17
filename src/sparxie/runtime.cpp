@@ -1,4 +1,5 @@
 #include "src/sparxie/runtime.h"
+#include "src/sparxie/art_refresh_job.h"
 #include "src/config.h"
 #include "src/display_device/display_device.h"
 #include "src/log_text.h"
@@ -96,75 +97,46 @@ namespace sparxie {
       return fs::path(home ? home : "") / ".local" / "share" / "sparxie";
 #endif
     }
-    ArtSchedule
-    load_schedule(const fs::path &path) {
-      ArtSchedule schedule;
-      bool jitter_set = false;
-      std::ifstream in(path);
-      if (in) {
-        try {
-          json body;
-          in >> body;
-          const auto fetch = body.value("last_fetch", static_cast<long long>(0));
-          const auto check = body.value("last_check", static_cast<long long>(0));
-          if (fetch > 0) schedule.last_fetch = std::chrono::system_clock::time_point { std::chrono::seconds(fetch) };
-          if (check > 0) schedule.last_check = std::chrono::system_clock::time_point { std::chrono::seconds(check) };
-          jitter_set = body.value("jitterSet", false);
-          if (jitter_set) schedule.jitter = std::chrono::minutes(body.value("jitter", 0));
-        }
-        catch (const std::exception &) {
-        }
-      }
-      // Each process performs the host-start refresh once. The saved flag
-      // must not suppress the next process start.
-      schedule.host_started = false;
-      if (!jitter_set) {
-        const std::size_t mixed = std::hash<std::string> {}(path.string());
-        schedule.jitter = std::chrono::minutes(static_cast<int>(mixed % 30));
-      }
-      return schedule;
-    }
-    void
-    save_schedule(const fs::path &path, const ArtSchedule &schedule) {
-      std::error_code ec;
-      fs::create_directories(path.parent_path(), ec);
-      std::ofstream out(path);
-      const auto fetch = std::chrono::duration_cast<std::chrono::seconds>(schedule.last_fetch.time_since_epoch()).count();
-      const auto check = std::chrono::duration_cast<std::chrono::seconds>(schedule.last_check.time_since_epoch()).count();
-      json body;
-      body["last_fetch"] = fetch;
-      body["last_check"] = check;
-      body["jitter"] = static_cast<int>(schedule.jitter.count());
-      body["jitterSet"] = true;
-      body["started"] = false;
-      out << body.dump(2);
-    }
-    void
-    spawn_refresh(HostEnv env) {
-      std::thread([env = std::move(env)]() mutable {
-        try {
-          refresh_official(env, host_http_get, decode_art_image, host_http_post_json);
-        }
-        catch (const std::exception &) {
-        }
-      }).detach();
-    }
-    void
-    consider(ArtReason reason) {
-      try {
-        static std::mutex gate;
-        std::lock_guard<std::mutex> lock(gate);
-        HostEnv env = make_host_env();
-        const fs::path path = env.host_data / "art-schedule.json";
-        ArtSchedule schedule = load_schedule(path);
-        if (!art_due(schedule, std::chrono::system_clock::now(), reason)) return;
-        save_schedule(path, schedule);
-        spawn_refresh(std::move(env));
-      }
-      catch (const std::exception &) {
-      }
+    ArtRefreshJob &
+    artwork_job() {
+      static ArtRefreshJob job;
+      return job;
     }
   }  // namespace
+  json
+  request_art_refresh(bool force) {
+    return artwork_job().request([force](const std::atomic_bool &cancelled) {
+      auto env = make_host_env();
+      ArtRefreshOptions options;
+      options.automatic = !force;
+      options.cancelled = [&cancelled]() { return cancelled.load(); };
+      const auto get = [&cancelled](const std::string &url) {
+        if (cancelled.load()) {
+          throw std::runtime_error("Artwork refresh stopped");
+        }
+        return host_http_get(url);
+      };
+      const auto post = [&cancelled](const std::string &url, const std::string &body) {
+        if (cancelled.load()) {
+          throw std::runtime_error("Artwork refresh stopped");
+        }
+        return host_http_post_json(url, body);
+      };
+      auto result = refresh_official(env, get, decode_art_image, post, options);
+      if (env.apps_writes > 0 && !cancelled.load()) {
+        proc::refresh(config::stream.file_apps);
+      }
+      return result.body;
+    });
+  }
+  json
+  art_refresh_status(std::uint64_t job_id) {
+    return artwork_job().status(job_id);
+  }
+  void
+  stop_art_refresh() {
+    artwork_job().stop();
+  }
   Rgba
   decode_art_image(std::string_view bytes) {
     std::string diagnostic;
@@ -239,7 +211,7 @@ namespace sparxie {
   }
   void
   note_host_started() {
-    consider(ArtReason::host_start);
+    request_art_refresh();
     // a session that was cut off by a host restart left its values written: put them back now (a game that is running keeps them until it quits)
     std::thread([] {
       try {
@@ -252,8 +224,7 @@ namespace sparxie {
   }
   void
   note_app_list_opened() {
-    consider(ArtReason::app_list);
-    consider(ArtReason::interval);
+    request_art_refresh();
   }
   namespace {
     // the launch the next after_session belongs to
