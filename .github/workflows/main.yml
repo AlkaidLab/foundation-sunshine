@@ -76,11 +76,11 @@ concurrency:
 # Run it on Node.js 24 ahead of GitHub's fall 2026 Node.js 20 removal.
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
-  # Pull requests remain on GCC because the hosted-runner end-to-end result was
-  # not faster and Clang's compiler cache is substantially larger. Releases
-  # use Clang unless the CI_TOOLCHAIN repository variable or manual input asks
-  # for GCC.
-  TOOLCHAIN: ${{ inputs.toolchain || (github.event_name == 'pull_request' && 'gcc') || vars.CI_TOOLCHAIN || 'clang' }}
+  # What is tested is what is shipped: pull requests, pushes, the nightly build and releases all build with Clang (the release
+  # compiler), so the compile, the native tests and the PE release gate run on the Clang binaries. GCC is the fallback: the
+  # CI_TOOLCHAIN repository variable or the manual input switch to it, and .github/workflows/gcc-fallback.yml builds and
+  # tests it in full every night and opens an issue when that fails.
+  TOOLCHAIN: ${{ inputs.toolchain || vars.CI_TOOLCHAIN || 'clang' }}
 
 jobs:
   changes:
@@ -1160,6 +1160,20 @@ jobs:
             fi
           fi
 
+      - name: Compiler cache size
+        if: always()
+        shell: msys2 {0}
+        env:
+          CCACHE_DIR: ${{ github.workspace }}\.ccache
+        run: |
+          # Where the cache bytes are: the precompiled headers (one per target) or the object files, and how many entries of each.
+          {
+            echo "### Compiler cache ($TOOLCHAIN)"
+            echo "- total: $(du -sm .ccache | cut -f1) MB, $(find .ccache -type f | wc -l) files"
+            find .ccache -type f -size +5M -printf '%s\n' | awk '{n++; s+=$1} END {printf "- entries over 5 MB (precompiled headers): %d, %d MB\n", n, s/1048576}'
+            find .ccache -type f -size -5M -printf '%s\n' | awk '{n++; s+=$1} END {printf "- other entries: %d, %d MB\n", n, s/1048576}'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
       - name: Check Windows release executable
         shell: msys2 {0}
         run: python scripts/ci/check-windows-release.py build/sunshine.exe
@@ -1230,7 +1244,7 @@ jobs:
         # master lineage of the upstream repository to restore from, so there
         # the pull request runs save too (the next push of the same pull
         # request restores it).
-        if: always() && (github.ref == 'refs/heads/master' || github.repository != 'AlkaidLab/foundation-sunshine')
+        if: always() && env.TOOLCHAIN == (vars.CI_TOOLCHAIN || 'clang') && (github.ref == 'refs/heads/master' || github.repository != 'AlkaidLab/foundation-sunshine')
         id: ccache_save
         continue-on-error: true
         uses: actions/cache/save@v6
@@ -1259,12 +1273,13 @@ jobs:
         run: |
           $current = "ccache-windows-${{ needs.cold_plan.outputs.fingerprint }}-${{ github.run_id }}"
           # Both the fingerprinted keys (ccache-windows-<fingerprint>-<run>) and the older ones without a fingerprint
-          # (ccache-windows-<run>) are pruned, so the entries from before the fingerprint do not stay in the quota.
+          # (ccache-windows-<run>) are pruned (the fingerprint ends in -pinned or -newest; a pattern without that part matched
+          # none of the current keys and let every run's entry pile up in the quota), so the entries from before the fingerprint do not stay in the quota.
           # Page through the caches API instead of `gh cache list`: the
           # latter caps at --limit 100, and once this repo's other caches
           # (msys2, npm, ...) grow past that, stale ccache entries would
           # fall outside the window and never get pruned.
-          $all = @(gh api --paginate "repos/$env:GITHUB_REPOSITORY/actions/caches?per_page=100" --jq '.actions_caches[] | select(.key | test("^ccache-windows-([0-9a-f]{12}-)?[0-9]+$")) | [(.key | sub("^ccache-windows-([0-9a-f]{12}-)?";"") | tonumber), .id, .key] | @tsv' |
+          $all = @(gh api --paginate "repos/$env:GITHUB_REPOSITORY/actions/caches?per_page=100" --jq '.actions_caches[] | select(.key | test("^ccache-windows-([0-9a-f]{12}-(pinned|newest)-)?[0-9]+$")) | [(.key | sub("^ccache-windows-([0-9a-f]{12}-(pinned|newest)-)?";"") | tonumber), .id, .key] | @tsv' |
             Where-Object { $_ } |
             ForEach-Object {
               $parts = $_ -split "`t"
