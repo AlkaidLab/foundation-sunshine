@@ -58,7 +58,11 @@ try {
         $scheduler = New-Object -ComObject Schedule.Service
         $scheduler.Connect()
         $definition = $scheduler.GetFolder('\').GetTask($taskName).Definition
-        Require ($definition.Principal.UserId -in 'S-1-5-19', 'NT AUTHORITY\LOCAL SERVICE') 'task service identity changed'
+        $principal = $definition.Principal.UserId
+        $sid = if ($principal -like 'S-1-*') { $principal } else {
+          (New-Object Security.Principal.NTAccount($principal)).Translate([Security.Principal.SecurityIdentifier]).Value
+        }
+        Require ($sid -eq 'S-1-5-19') "task service identity changed: $sid"
         Require ($definition.Principal.RunLevel -eq 0) 'task needlessly elevated'
         Require ($definition.Triggers.Count -eq 1) 'shutdown event trigger missing'
         $query = $definition.Triggers.Item(1).Subscription

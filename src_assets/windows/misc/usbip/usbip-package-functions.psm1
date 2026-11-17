@@ -85,7 +85,7 @@ function Set-UsbipDetachTask([string]$Root, [switch]$Remove) {
   $action = $task.Actions.Create(0)
   $action.Path = Join-Path $Root 'usbip.exe'
   $action.Arguments = 'detach --all=closeonly'
-  $null = $folder.RegisterTaskDefinition($script:DetachTask, $task, 6, '', '', 5)
+  $null = $folder.RegisterTaskDefinition($script:DetachTask, $task, 6, 'S-1-5-19', $null, 5)
 }
 
 function Remove-UsbipPackage([string]$Root, [switch]$KeepFiles) {
