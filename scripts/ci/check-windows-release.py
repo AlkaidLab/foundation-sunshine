@@ -210,9 +210,11 @@ def code_size(data):
     return _u32(data, optional + 4)
 
 
-def check_data(data, max_code_bytes=None):
-    dlls = imported_dlls(data)
-    delayed = delay_imported_dlls(data)
+def check_data(data, max_code_bytes=None, stack_only=False):
+    # stack_only: the installer shell links Direct2D/DirectWrite statically-imported system DLLs that the helper list does not carry;
+    # for it only the stack reserve is a release property (issue #1326: LLD gave it 1 MiB and its worker frame was 1 MiB).
+    dlls = [] if stack_only else imported_dlls(data)
+    delayed = [] if stack_only else delay_imported_dlls(data)
     non_system = [dll for dll in dlls + delayed if dll not in SYSTEM_DLLS and not dll.startswith(SYSTEM_PREFIXES)]
     reserve = stack_reserve(data)
     errors = []
@@ -227,17 +229,18 @@ def check_data(data, max_code_bytes=None):
     return dlls + delayed, reserve, errors
 
 
-def check(path, max_code_bytes=None):
-    return check_data(pathlib.Path(path).read_bytes(), max_code_bytes)
+def check(path, max_code_bytes=None, stack_only=False):
+    return check_data(pathlib.Path(path).read_bytes(), max_code_bytes, stack_only)
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("executable", type=pathlib.Path)
     parser.add_argument("--max-code-bytes", type=int, default=None, help="fail when SizeOfCode exceeds this many bytes")
+    parser.add_argument("--stack-only", action="store_true", help="check only SizeOfStackReserve (the installer shell)")
     args = parser.parse_args(argv)
     try:
-        dlls, reserve, errors = check(args.executable, args.max_code_bytes)
+        dlls, reserve, errors = check(args.executable, args.max_code_bytes, args.stack_only)
     except (OSError, PEError, UnicodeError) as error:
         print(f"release PE check failed: {error}", file=sys.stderr)
         return 1

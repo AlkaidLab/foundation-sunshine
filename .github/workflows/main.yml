@@ -1187,6 +1187,12 @@ jobs:
             python scripts/ci/check-windows-release.py "build/tools/$tool.exe" --max-code-bytes 1600000
           done
 
+      # The installer shell is also the elevated worker and the updater. LLD gives an executable a 1 MiB stack by default, and the
+      # worker's inlined 1 MiB buffer overflowed it before the first event (issue #1326): the reserve is a release property.
+      - name: Check installer shell stack reserve
+        shell: msys2 {0}
+        run: python scripts/ci/check-windows-release.py build/tools/sunshine-installer-shell.exe --stack-only
+
       - name: Run version without MSYS2 on PATH
         shell: pwsh
         run: |
@@ -1482,6 +1488,26 @@ jobs:
             if ($footer -notmatch "(?m)^$($section[0])sha256=$hash\r?$") { throw "Installer footer lacks $($section[0])sha256=$hash" }
           }
           Write-Output $footer
+
+      # The CI never ran the installer, which is how a stack overflow in its first step shipped. The package is run here as the
+      # worker would be: the entry, the run directory, the events file and the extraction of the engine from the payload
+      # (--selftest-worker, no install, no engine), under a time limit.
+      - name: Run the installer worker (smoke test)
+        if: needs.changes.outputs.package == 'true'
+        shell: pwsh
+        run: |
+          $installer = (Resolve-Path 'artifacts/sunshine-windows-installer.exe').Path
+          $dir = Join-Path $env:RUNNER_TEMP 'installer-worker-smoke'
+          if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
+          $process = Start-Process -FilePath $installer -ArgumentList '--selftest-worker', $dir -PassThru
+          if (-not $process.WaitForExit(120000)) { $process.Kill(); throw 'installer worker did not finish in 120 s' }
+          $process.Refresh()
+          Get-ChildItem $dir -ErrorAction SilentlyContinue | Format-Table Name, Length
+          if ($process.ExitCode -ne 0) { throw ('installer worker exited with 0x{0:X8}' -f $process.ExitCode) }
+          $engine = Join-Path $dir 'sunshine-engine.exe'
+          $expected = (Get-FileHash -LiteralPath 'build/cpack_artifacts/Sunshine-engine.exe' -Algorithm SHA256).Hash
+          if (-not (Test-Path $engine) -or (Get-FileHash -LiteralPath $engine -Algorithm SHA256).Hash -ne $expected) { throw 'the extracted engine differs from the packaged one' }
+          if (-not (Select-String -Path (Join-Path $dir 'events.jsonl') -Pattern 'WorkerStarted' -Quiet)) { throw 'the worker wrote no first event' }
 
       - name: Rename release assets
         if: needs.changes.outputs.package == 'true'

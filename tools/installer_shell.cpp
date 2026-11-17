@@ -66,6 +66,7 @@ namespace {
     std::wstring tasks;  // "desktopicon", "none" or empty
     std::wstring shell_pid;  // pid of the user-level window; the engine must not kill it
     std::wstring worker_copy;  // the copy of this exe the elevated worker runs from
+    std::wstring selftest_directory;  // --selftest-worker: run the worker steps up to the engine in this directory, no install
   };
 
   run_context g_run;
@@ -231,7 +232,9 @@ namespace {
     LARGE_INTEGER position {};
     position.QuadPart = static_cast<LONGLONG>(offset);
     bool ok = SetFilePointerEx(input, position, nullptr, FILE_BEGIN) != FALSE;
-    std::array<char, 1024 * 1024> buffer {};
+    // Heap, not stack: a 1 MiB local here is inlined into worker_main by Clang, and the 1 MiB default stack reserve of
+    // LLD overflowed in the prologue before the worker wrote its first event (issue #1326).
+    std::vector<char> buffer(1024 * 1024);
     uint64_t remaining = size;
     while (ok && remaining != 0) {
       const DWORD requested = static_cast<DWORD>(std::min<uint64_t>(remaining, buffer.size()));
@@ -384,11 +387,12 @@ namespace {
   int
   worker_main() {
     const std::wstring id = g_run.id;
+    const bool selftest = !g_run.selftest_directory.empty();
     const std::wstring root = program_data() + L"\\" + kRunRoot;
-    g_run.directory = root + L"\\" + id;
+    g_run.directory = selftest ? g_run.selftest_directory : root + L"\\" + id;
     g_run.events = g_run.directory + L"\\events.jsonl";
     g_run.result = g_run.directory + L"\\install-result.json";
-    if (!make_directory_tree(g_run.directory) || !protect_run_directory(g_run.directory)) return 5;
+    if (!make_directory_tree(g_run.directory) || (!selftest && !protect_run_directory(g_run.directory))) return 5;
     const std::string id_utf8(id.begin(), id.end());
     append_event(g_run.events, "{\"schema\":1,\"run\":\"" + id_utf8 +
                                  "\",\"seq\":1,\"phase\":\"worker\",\"state\":\"running\",\"result_code\":0,\"message_key\":\"WorkerStarted\"}\n");
@@ -397,6 +401,11 @@ namespace {
     if (!extract_payload(g_run.self, engine)) {
       write_text_atomic(g_run.result, "{\"schema\":1,\"state\":\"failed\",\"result_code\":101,\"message_key\":\"PayloadInvalid\"" + installer_failure::result_fields(installer_failure::step::payload, 101) + "}\n");
       return 101;
+    }
+    if (selftest) {
+      // The same entry, run directory and payload extraction as an install, without starting the engine.
+      write_text_atomic(g_run.result, "{\"schema\":1,\"state\":\"selftest-ok\",\"result_code\":0}\n");
+      return 0;
     }
     append_event(g_run.events, "{\"schema\":1,\"run\":\"" + id_utf8 +
                                  "\",\"seq\":2,\"phase\":\"engine\",\"state\":\"running\",\"result_code\":0,\"message_key\":\"EngineStarted\"}\n");
@@ -480,6 +489,15 @@ wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
       if (ch >= L'0' && ch <= L'9') g_run.shell_pid.push_back(ch);
     const std::wstring tasks = command_value(command_line, L"--tasks");
     g_run.tasks = tasks == L"desktopicon" || tasks == L"none" ? tasks : L"";
+    return worker_main();
+  }
+  // CI smoke test of the worker: --selftest-worker <directory> runs worker_main up to and including the payload
+  // extraction into that directory (scripts/ci/check-windows-release.py needs a package built by the same job).
+  if (command_line.find(L"--selftest-worker ") != std::wstring::npos) {
+    g_run.self = module_path();
+    g_run.id = make_run_id();
+    g_run.selftest_directory = command_value(command_line, L"--selftest-worker");
+    if (g_run.selftest_directory.empty()) return 1223;
     return worker_main();
   }
   // An updater (the Panel's, an old Panel's, a script) starts the package the way it started the
