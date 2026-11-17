@@ -563,7 +563,9 @@ TEST(Host, RefreshUsesContentHashAndSkipsCustom) {
     std::ofstream out(env.apps_file);
     out << apps.dump();
   }
-  auto get_url = [](const std::string &url) -> std::optional<std::string> {
+  int background_downloads = 0;
+  bool background_online = true;
+  auto get_url = [&](const std::string &url) -> std::optional<std::string> {
     if (url.find("getGames") != std::string::npos) {
       sparxie::json body;
       body["data"]["games"][0]["biz"] = "hk4e_cn";
@@ -572,17 +574,94 @@ TEST(Host, RefreshUsesContentHashAndSkipsCustom) {
       body["data"]["games"][0]["display"]["icon"]["url"] = "https://cdn/icon.png";
       return body.dump();
     }
+    if (url == "https://cdn/posterHASH.webp") {
+      ++background_downloads;
+      if (!background_online) {
+        return std::nullopt;
+      }
+    }
     return std::string("img");
   };
-  auto decode = [](std::string_view) { return textured(16, 16, 10, 20, 30); };
+  auto decode = [](std::string_view bytes) {
+    if (bytes == "broken") {
+      return sparxie::Rgba {};
+    }
+    return textured(16, 16, 10, 20, 30);
+  };
   auto first = sparxie::refresh_official(env, get_url, decode);
   EXPECT_TRUE(first.status.ok) << first.body.dump();
   // the stored application's poster, and the national-biz poster of the bilibili client (its own cache): the payload here answers only hk4e_cn
   // the two HoYoverse answers plus a placeholder card for every title and
   // region this fixture's transport does not answer for
   EXPECT_EQ(first.body["updated"], 15);
+  const int first_downloads = background_downloads;
   auto second = sparxie::refresh_official(env, get_url, decode);
   EXPECT_EQ(second.body["updated"], 0);
+  EXPECT_EQ(background_downloads, first_downloads);
+
+  const fs::path cache = env.host_data / "posters" / "genshin-cn";
+  sparxie::json index;
+  {
+    std::ifstream index_in(cache / "index.json");
+    index_in >> index;
+  }
+  const std::string version = index.at("version").get<std::string>();
+  const fs::path cover = env.covers_dir / ("sparxie-genshin-cn-" + version + ".png");
+  const fs::path background = cache / (version + "-background.bin");
+  ASSERT_TRUE(fs::is_regular_file(cover));
+  ASSERT_TRUE(fs::is_regular_file(background));
+  fs::remove(cover);
+  sparxie::refresh_official(env, get_url, decode);
+  EXPECT_TRUE(fs::is_regular_file(cover)) << "the cached background restores a missing cover";
+  EXPECT_EQ(background_downloads, first_downloads) << "the source picture was already cached";
+  fs::remove(cover);
+  auto offline = [](const std::string &) -> std::optional<std::string> { return std::nullopt; };
+  sparxie::refresh_official(env, offline, decode);
+  EXPECT_TRUE(fs::is_regular_file(cover)) << "the cover can be restored without network access";
+  {
+    std::ofstream empty_cover(cover, std::ios::binary | std::ios::trunc);
+  }
+  sparxie::refresh_official(env, get_url, decode);
+  EXPECT_GT(fs::file_size(cover), 0u) << "an empty cover is restored from the cached background";
+  EXPECT_EQ(background_downloads, first_downloads);
+
+  {
+    std::ofstream empty(background, std::ios::binary | std::ios::trunc);
+  }
+  sparxie::refresh_official(env, get_url, decode);
+  EXPECT_EQ(background_downloads, first_downloads + 1);
+  ASSERT_TRUE(fs::is_regular_file(background));
+  EXPECT_GT(fs::file_size(background), 0u) << "a successful download replaces an empty cache entry";
+  sparxie::refresh_official(env, get_url, decode);
+  EXPECT_EQ(background_downloads, first_downloads + 1) << "a healthy cache does not download again";
+  fs::remove(background);
+  sparxie::refresh_official(env, get_url, decode);
+  EXPECT_EQ(background_downloads, first_downloads + 2);
+  EXPECT_TRUE(fs::is_regular_file(background)) << "a missing background is downloaded again";
+  sparxie::refresh_official(env, get_url, decode);
+  EXPECT_EQ(background_downloads, first_downloads + 2);
+  {
+    std::ofstream broken(background, std::ios::binary | std::ios::trunc);
+    broken << "broken";
+  }
+  sparxie::refresh_official(env, get_url, decode);
+  EXPECT_EQ(background_downloads, first_downloads + 2) << "existing outputs do not require decoding the cached source";
+  fs::remove(cover);
+  background_online = false;
+  sparxie::refresh_official(env, get_url, decode);
+  EXPECT_EQ(background_downloads, first_downloads + 3);
+  EXPECT_FALSE(fs::exists(cover));
+  EXPECT_TRUE(fs::is_regular_file(cache / "hero.jpg")) << "a working poster stays available while the download fails";
+  background_online = true;
+  sparxie::refresh_official(env, get_url, decode);
+  EXPECT_EQ(background_downloads, first_downloads + 4);
+  EXPECT_TRUE(fs::is_regular_file(cover)) << "a corrupt cached background is replaced before restoring the cover";
+  {
+    std::ifstream repaired(background, std::ios::binary);
+    EXPECT_EQ(std::string((std::istreambuf_iterator<char>(repaired)), std::istreambuf_iterator<char>()), "img");
+  }
+  sparxie::refresh_official(env, get_url, decode);
+  EXPECT_EQ(background_downloads, first_downloads + 4);
   std::ifstream in(env.apps_file);
   sparxie::json after;
   in >> after;
