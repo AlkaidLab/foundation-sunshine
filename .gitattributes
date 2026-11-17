@@ -25,3 +25,5 @@ cmake/prep/build_identity_archive.txt export-subst
 
 # third-party licence texts keep their upstream bytes (their SHA-256 is pinned in third_party/licenses/manifest.json)
 third_party/licenses/**/LICENSE -text
+# The payload manifest hashes are shared with the component compatibility manifest.
+scripts/packaging/usbip-payload.json text eol=lf
