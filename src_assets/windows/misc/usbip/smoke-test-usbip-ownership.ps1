@@ -81,6 +81,21 @@ Export-ModuleMember -Function Get-UsbipOwnership
       Write-Host "PASS external-entrypoint/$action compatible=$compatible no-state-or-guard"
     }
   }
+  $rootStage = Join-Path $scratch 'root-entrypoint'
+  New-Item -ItemType Directory -Force (Join-Path $rootStage 'tools'), (Join-Path $rootStage 'scripts') | Out-Null
+  $repo = (Get-Item -LiteralPath $PSScriptRoot).Parent.Parent.Parent.Parent.FullName
+  Copy-Item -LiteralPath (Join-Path $repo 'tools/usbip-win2-root.ps1') -Destination (Join-Path $rootStage 'tools')
+  Copy-Item -LiteralPath (Join-Path $scripts 'usbip-package-ownership.psm1') -Destination (Join-Path $rootStage 'scripts')
+  $oldProgramFiles = $env:ProgramFiles
+  try {
+    $env:ProgramFiles = $scratch
+    foreach ($action in 'install', 'repair', 'uninstall') {
+      & (Join-Path $rootStage 'tools/usbip-win2-root.ps1') -Action $action
+      if ($LASTEXITCODE -ne 0) { throw "External root helper $action returned $LASTEXITCODE" }
+      $passed++
+      Write-Host "PASS external-root-entrypoint/$action no-node-mutation"
+    }
+  } finally { $env:ProgramFiles = $oldProgramFiles }
   Write-Host "USB/IP ownership regressions: $passed passed, 0 skipped, 0 failed"
 } finally {
   Remove-Module usbip-package-functions, usbip-package-ownership -Force -ErrorAction SilentlyContinue

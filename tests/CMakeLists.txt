@@ -1694,3 +1694,13 @@ target_compile_options(crash_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNS
 set_target_properties(crash_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME crash_unit_tests COMMAND crash_unit_tests)
 set_tests_properties(crash_unit_tests PROPERTIES TIMEOUT 120)
+
+# Explicitly invoked by read-only machine acceptance; ordinary CI has no USB/IP driver.
+add_executable(usbip_external_readonly_probe
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_usbip_external_readonly.cpp
+        ${CMAKE_SOURCE_DIR}/src/doctor/doctor_os.cpp)
+target_include_directories(usbip_external_readonly_probe PRIVATE "${CMAKE_SOURCE_DIR}")
+set_target_properties(usbip_external_readonly_probe PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    target_link_libraries(usbip_external_readonly_probe PRIVATE ole32 uuid mmdevapi strmiids setupapi advapi32)
+endif ()

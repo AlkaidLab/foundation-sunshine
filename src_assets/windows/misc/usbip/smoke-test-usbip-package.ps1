@@ -131,6 +131,35 @@ try {
     Require (Test-Path -LiteralPath (Join-Path $payload 'unrelated.txt')) 'unrelated file was deleted'
     Require (-not (Test-Path -LiteralPath (Join-Path $payload 'payload.json'))) 'receipt remains after successful cleanup'
   }
+  Check 'external cleanup helpers never reach OS mutations or upstream uninstallers' {
+    & $module {
+      function script:Get-UsbipOwnership { [pscustomobject]@{ ownership = 'external' } }
+      function script:Get-UsbipLegacyEntries { throw 'External upstream uninstaller must not be queried for removal' }
+      function script:Set-UsbipDetachTask { throw 'External task must not be changed' }
+    }
+    Remove-UsbipLegacy $payload $scratch
+    Remove-UsbipPackage $payload
+  }
+  Check 'confirmed legacy ownership uses the registered upstream uninstaller once' {
+    & $module {
+      $script:LegacyReads = 0
+      $script:UninstallCalls = 0
+      function script:Get-UsbipOwnership { [pscustomobject]@{ ownership = 'legacy-owned' } }
+      function script:Get-UsbipLegacyEntries {
+        $script:LegacyReads++
+        if ($script:LegacyReads -eq 1) { [pscustomobject]@{ UninstallString = '"C:\USBip\unins001.exe"' } }
+      }
+      function script:Start-Process {
+        param($FilePath, $ArgumentList, [switch]$Wait, [switch]$PassThru)
+        if ($FilePath -ne 'C:\USBip\unins001.exe' -or ($ArgumentList -join ' ') -ne '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART') { throw 'Unexpected legacy uninstall command' }
+        $script:UninstallCalls++
+        [pscustomobject]@{ ExitCode = 0 }
+      }
+    }
+    Remove-UsbipLegacy $payload $scratch
+    Require ((& $module { $script:UninstallCalls }) -eq 1) 'Legacy uninstall count changed'
+    Require ((Get-UsbipRestartCode) -eq 3010) 'Legacy takeover must report restart'
+  }
   Write-Host "USB/IP package regressions: $passed passed, $skipped skipped, 0 failed"
 } finally {
   Remove-Module $module -Force
