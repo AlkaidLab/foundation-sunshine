@@ -2,8 +2,8 @@
 
 Checked on 2026-11-12 against the upstream sources (read only; behaviour is described here, no code is copied):
 
-- host and Web UI: <https://github.com/qiin2333/foundation-sunshine>, `master` at 6225dcb (2026-11-12), called **host-up** below;
-- control panel: <https://github.com/qiin2333/sunshine-control-panel>, `main` at 502a671, called **panel-up**.
+- host and Web UI: <https://github.com/AlkaidLab/foundation-sunshine>, `master` at 6225dcb (2026-11-12), called **host-up** below;
+- control panel: <https://github.com/AlkaidLab/foundation-panel>, `main` at 502a671, called **panel-up**.
 
 Our product is a superset of the original (the native-superset principle): nothing the original offers may be missing or harder to reach.
 
