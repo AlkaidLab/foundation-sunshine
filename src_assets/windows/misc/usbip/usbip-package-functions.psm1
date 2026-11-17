@@ -81,7 +81,7 @@ function Set-UsbipDetachTask([string]$Root, [switch]$Remove) {
   $null = $folder.RegisterTaskDefinition($script:DetachTask, $task, 6, '', '', 5)
 }
 
-function Remove-UsbipPackage([string]$Root) {
+function Remove-UsbipPackage([string]$Root, [switch]$KeepFiles) {
   $failures = @()
   # Each cleanup stage runs even if an earlier one failed; preserve recovery
   # tools and the receipt until all OS removal steps have succeeded.
@@ -99,6 +99,10 @@ function Remove-UsbipPackage([string]$Root) {
   } catch { $failures += $_ }
   if ($failures.Count -ne 0) { throw "USB/IP cleanup incomplete ($($failures.Count) failed steps); recovery files retained" }
   if (Test-Path -LiteralPath $script:RecordKey) { Remove-Item -LiteralPath $script:RecordKey -Recurse -Force }
+  if (-not $KeepFiles) { Remove-UsbipFiles $Root }
+}
+
+function Remove-UsbipFiles([string]$Root) {
   # Never remove unrelated files or a legacy installation recursively.
   if (Test-Path -LiteralPath (Join-Path $Root 'payload.json')) {
     $manifest = Get-Content -Raw -LiteralPath (Join-Path $Root 'payload.json') | ConvertFrom-Json
@@ -113,18 +117,34 @@ function Remove-UsbipPackage([string]$Root) {
   }
 }
 
+function Get-UsbipNodes {
+  # usbip-slim-ms-pnp-property-20261117: hardware IDs are device properties,
+  # not instance IDs. Upstream creates ROOT\USB instances; later repairs may
+  # use a different enumerator while retaining the exact hardware ID.
+  foreach ($device in @(Get-PnpDevice -PresentOnly -ErrorAction Stop | Where-Object { $_.InstanceId -like 'ROOT\*' })) {
+    $ids = @(Get-PnpDeviceProperty -InstanceId $device.InstanceId -KeyName DEVPKEY_Device_HardwareIds -ErrorAction Stop).Data
+    if ($ids -contains $script:HardwareId) { $device }
+  }
+}
+
+# usbip-slim-ms-pnp-property-20261117: typed HardwareIds and ProblemCode;
+# usbip-slim-ms-pnp-device-20261117: PresentOnly, independent of root enumerator name.
 function Test-UsbipReady([string]$Root, $Manifest) {
   try {
     $null = Read-UsbipManifest $Root
-    $nodes = @(Get-PnpDevice -PresentOnly -ErrorAction Stop | Where-Object { $_.InstanceId -like 'ROOT\USBIP_WIN2\*' })
+    $nodes = @(Get-UsbipNodes)
     if ($nodes.Count -ne 1) { return $false }
     $problem = (Get-PnpDeviceProperty -InstanceId $nodes[0].InstanceId -KeyName DEVPKEY_Device_ProblemCode -ErrorAction Stop).Data
     if ($problem -notin 0, 14) { return $false }
-    $service = Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Services\usbip2_ude' -ErrorAction Stop
-    $image = [string]$service.ImagePath
-    $image = $image -replace '^\\SystemRoot\\', ($env:SystemRoot + '\') -replace '^\\\?\?\\', ''
-    if (-not [IO.Path]::IsPathRooted($image)) { $image = Join-Path $env:SystemRoot $image }
-    return (Get-FileHash -LiteralPath $image -Algorithm SHA256).Hash -eq $Manifest.files.'driver/usbip2_ude.sys'.sha256
+    foreach ($name in 'usbip2_ude', 'usbip2_filter') {
+      $service = Get-ItemProperty -LiteralPath ('HKLM:\SYSTEM\CurrentControlSet\Services\' + $name) -ErrorAction Stop
+      $image = [string]$service.ImagePath
+      $image = $image -replace '^\\SystemRoot\\', ($env:SystemRoot + '\') -replace '^\\\?\?\\', ''
+      if (-not [IO.Path]::IsPathRooted($image)) { $image = Join-Path $env:SystemRoot $image }
+      $expected = $Manifest.files.PSObject.Properties['driver/' + $name + '.sys'].Value.sha256
+      if ((Get-FileHash -LiteralPath $image -Algorithm SHA256).Hash -ne $expected) { return $false }
+    }
+    return $true
   } catch { return $false }
 }
 

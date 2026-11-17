@@ -447,11 +447,11 @@ jobs:
           & .\src_assets\windows\misc\vdd\smoke-test-vdd-device-helper.ps1
           & .\src_assets\windows\misc\vdd\smoke-test-install-vdd-selection.ps1
 
-      - name: Run USB/IP root-hub guard smoke test
+      - name: Run USB/IP package and root-hub guard regressions
         shell: pwsh
         run: |
+          & .\src_assets\windows\misc\usbip\smoke-test-usbip-package.ps1
           & .\src_assets\windows\misc\usbip\smoke-test-usbip-roothub-guard.ps1
-
   mat_smoke:
     name: MAT software regressions
     needs: changes

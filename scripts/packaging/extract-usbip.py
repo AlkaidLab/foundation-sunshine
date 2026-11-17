@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Extract a fixed, hash-bound distribution; never execute either installer.
 
-Sources: usbip-slim-innounp-20261117 (Usage), usbip-slim-expand-20261117
+Sources: usbip-slim-innounp-20261117 (Usage), usbip-slim-ms-expand-20261117
 (/f), usbip-slim-catalog-20261117 (unchanged package members).
 The cabinet offsets below describe ONLY the pinned redistributable, not a
 general-purpose Burn parser. Changing the pin requires a new payload review.

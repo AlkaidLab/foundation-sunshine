@@ -321,7 +321,7 @@ Source: "{#MySourceDir}\scripts\driver\*"; DestDir: "{app}\scripts\driver"; Flag
 Source: "{#MySourceDir}\scripts\usbip-package*"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: usbip
 Source: "{#MySourceDir}\scripts\usbip-roothub-guard.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion skipifsourcedoesntexist; Components: assets
 
-; Gamepad scripts
+Source: "{#MySourceDir}\licenses\usbip-win2\*"; DestDir: "{app}\licenses\usbip-win2"; Flags: ignoreversion; Components: usbip
 Source: "{#MySourceDir}\scripts\install-usbip.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion skipifsourcedoesntexist; Components: usbip
 Source: "{#MySourceDir}\scripts\usbip\*"; DestDir: "{app}\scripts\usbip"; Flags: ignoreversion recursesubdirs skipifsourcedoesntexist; Components: usbip
 Source: "{#MySourceDir}\scripts\install-gamepad.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion

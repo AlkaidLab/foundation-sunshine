@@ -15,12 +15,13 @@ if (-not $Payload) { $Payload = Join-Path $PSScriptRoot 'usbip' }
 if (-not $InstallRoot) { $InstallRoot = Join-Path $env:ProgramFiles 'USBip' }
 if (-not $State) {
   $stateDir = Join-Path $env:ProgramData 'AlkaidLab\USBip'
-  New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
+  if ($Action -in 'install', 'uninstall', 'remove') { New-Item -ItemType Directory -Path $stateDir -Force | Out-Null }
   $State = Join-Path $stateDir 'roothub-state.json'
 }
 $guard = Join-Path $PSScriptRoot 'usbip-roothub-guard.ps1'
 $powershell = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
-$steps = Join-Path $PSScriptRoot 'result-usbip-steps.txt'
+$stepsRoot = if ($PSScriptRoot -eq $InstallRoot) { Split-Path -Parent $State } else { $PSScriptRoot }
+$steps = Join-Path $stepsRoot 'result-usbip-steps.txt'
 function Write-Step([string]$Name, [int]$Code) { Add-Content -LiteralPath $steps -Value "$Name=$Code" -Encoding ASCII }
 function Invoke-Guard([string]$Operation) {
   $arguments = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $guard, '-Action', $Operation, '-State', $State)
@@ -62,7 +63,7 @@ try {
   $operationFailed = $false
   try {
     if ($Action -eq 'install') { Install-UsbipPackage $Payload $InstallRoot $PSScriptRoot }
-    else { Remove-UsbipPackage $InstallRoot }
+    else { Remove-UsbipPackage $InstallRoot -KeepFiles }
     Write-Step $Action 0
   } catch {
     Write-Warning $_.Exception.Message
@@ -79,6 +80,7 @@ try {
   # Always verify, even when a driver command failed after changing state.
   $rc = Invoke-Guard verify
   if ($rc -in 0, 3010, 102) { Remove-Item -LiteralPath $State -Force -ErrorAction SilentlyContinue }
+  if (($rc -in 0, 3010) -and -not $operationFailed -and $Action -eq 'uninstall') { Remove-UsbipFiles $InstallRoot }
   if ($rc -eq 0) { $rc = if ($operationFailed) { 1 } else { Get-UsbipRestartCode } }
   elseif ($rc -eq 3010 -and $operationFailed) { $rc = 1 }
 } catch {

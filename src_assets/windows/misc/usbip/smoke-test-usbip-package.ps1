@@ -49,6 +49,20 @@ try {
     Require (-not (Test-UsbipReady $payload (Read-UsbipManifest $payload))) 'uninstalled fixture was ready'
   }
   & $module {
+    function script:Get-PnpDevice {
+      [pscustomobject]@{ InstanceId = 'ROOT\USB\0000' }
+      [pscustomobject]@{ InstanceId = 'ROOT\UNRELATED\0001' }
+    }
+    function script:Get-PnpDeviceProperty {
+      param($InstanceId, $KeyName, $ErrorAction)
+      [pscustomobject]@{ Data = $(if ($InstanceId -eq 'ROOT\USB\0000') { @('ROOT\USBIP_WIN2\UDE') } else { @('other') }) }
+    }
+  }
+  Check 'upstream root instance is matched through its hardware ID' {
+    $nodes = @(Get-UsbipNodes)
+    Require ($nodes.Count -eq 1 -and $nodes[0].InstanceId -eq 'ROOT\USB\0000') 'hardware ID was confused with instance ID'
+  }
+  & $module {
     $script:Calls = [Collections.Generic.List[string]]::new()
     $script:FailDelete = $false
     function script:Set-UsbipDetachTask { param($Root, [switch]$Remove); $script:Calls.Add('task-remove') }
@@ -73,6 +87,12 @@ try {
     $calls = @(& $module { $script:Calls.ToArray() })
     Require ($calls -contains '/delete-driver oem11.inf /uninstall /force') 'second driver was not removed'
     Require (Test-Path -LiteralPath (Join-Path $payload 'devnode.exe')) 'recovery tool was deleted'
+  }
+  Check 'uninstall keeps recovery tools until hub verification completes' {
+    & $module { $script:FailDelete = $false }
+    Remove-UsbipPackage $payload -KeepFiles
+    Require (Test-Path -LiteralPath (Join-Path $payload 'devnode.exe')) 'recovery tool removed before hub verification'
+    $null = Read-UsbipManifest $payload
   }
   Check 'cleanup removes only receipt members and preserves unrelated files' {
     & $module { $script:FailDelete = $false }
