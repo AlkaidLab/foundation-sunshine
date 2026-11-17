@@ -103,7 +103,9 @@ namespace telemetry::opt_out {
       // a file written before the id existed has none: make one now and keep it at the next write
       if (j.contains("id") && j["id"].is_number_unsigned()) r.id = j["id"].get<std::uint64_t>();
       else if (j.contains("id") && j["id"].is_number_integer() && j["id"].get<std::int64_t>() > 0) r.id = static_cast<std::uint64_t>(j["id"].get<std::int64_t>());
-      if (r.id == 0) r.id = new_id();
+      // a number that is missing or already taken by an earlier record (a hand-edited or damaged file) gets a new one: the send result
+      // is matched to its record by the number, so two records that share it would both be removed after one delivery
+      while (r.id == 0 || std::any_of(out.begin(), out.end(), [&](const record_t &other) { return other.id == r.id; })) r.id = new_id();
       out.push_back(std::move(r));
     }
     return out;

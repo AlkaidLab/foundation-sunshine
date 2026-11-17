@@ -3014,6 +3014,25 @@ TEST(OptOut, ARecordWrittenBeforeTheIdExistedGetsOneAndKeepsIt) {
   EXPECT_EQ(again[0].id, records[0].id);
 }
 
+TEST(OptOut, TwoRecordsThatShareANumberOnTheDiskGetDistinctOnesAndKeepTheirOwnFields) {
+  using namespace telemetry::opt_out;
+  const auto line = [](const std::string &choice, const std::string &product, std::int64_t next) {
+    return "{\"v\":1,\"id\":11,\"choice\":\"" + choice + "\",\"product\":\"" + product + "\",\"version\":\"1\",\"install_id\":\"" + OPT_OUT_ID + "\",\"t\":1800000000000,\"next\":" + std::to_string(next) +
+           ",\"tries\":0}\n";
+  };
+  auto records = parse(line("usage", "host", 1800000000000) + line("errors", "panel", 1800086400000));
+  ASSERT_EQ(records.size(), 2u);
+  EXPECT_EQ(records[0].id, 11u);
+  EXPECT_NE(records[1].id, 0u);
+  EXPECT_NE(records[1].id, records[0].id);
+  EXPECT_EQ(records[1].choice, "errors");
+  EXPECT_EQ(records[1].product, "panel");
+  EXPECT_EQ(records[1].next_try_ms, 1800086400000);
+  const auto again = parse(serialize(records));
+  ASSERT_EQ(again.size(), 2u);
+  EXPECT_EQ(again[1].id, records[1].id);
+}
+
 TEST(OptOutService, TurningAChoiceOffSendsOneRecordAndNothingAfterIt) {
   harness_t h;
   h.consent = consent_t { true, true };
