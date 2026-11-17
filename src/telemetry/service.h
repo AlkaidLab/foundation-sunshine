@@ -54,6 +54,7 @@ namespace telemetry {
     std::filesystem::path dir;  ///< <config>/telemetry: install_id and queue/
     std::string endpoint = "https://api.alkaidlab.com";  ///< base; batches go to <endpoint>/v1/events
     std::size_t ring_max = 2000;
+    std::int64_t aggregate_interval_ms = 0;  ///< > 0: high-volume events are held and uploaded merged at most this often (and at exit); 0 sends every event as it is
     std::size_t flush_events = 200;  ///< a full buffer asks for a flush
     queue_limits_t queue;
     int max_batches_per_pump = 10;
@@ -267,6 +268,8 @@ namespace telemetry {
 
     mutable std::mutex mutex_;  // the buffer and the id; never held across I/O
     std::deque<event_t> ring_;
+    std::deque<event_t> aggregate_ring_;  // high-volume events held until the aggregate interval is over (mutex_)
+    std::int64_t last_aggregate_flush_ms_ = 0;
     // the take and the put-back of a flush and the buffer clear of a consent change hold flush_mutex_, so one change never slips between the two sections of a flush
     mutable std::mutex flush_mutex_;
     /// Per choice, how often it was found off by consent_changed(): an event a flush took out of the buffer is written or put back only while its own choice was not turned off since

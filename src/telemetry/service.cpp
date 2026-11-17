@@ -109,6 +109,7 @@ namespace telemetry {
       };
     }
     last_flush_ms_ = deps_.now_ms();
+    last_aggregate_flush_ms_ = last_flush_ms_;
     try {
       std::ifstream seen(options_.dir / "products_seen.json");
       const auto stored = seen ? json::parse(seen, nullptr, false) : json();
@@ -1047,6 +1048,26 @@ namespace telemetry {
         std::lock_guard flush_lock { flush_mutex_ };
         std::lock_guard lock { mutex_ };
         taken.swap(ring_);
+        if (options_.aggregate_interval_ms > 0) {
+          // the high-volume families wait here and leave merged once per interval and at exit; everything else goes on as before
+          for (auto it = taken.begin(); it != taken.end();) {
+            if (high_volume_event(it->name) && it->report_id.empty() && it->report_install.empty()) {
+              aggregate_ring_.push_back(std::move(*it));
+              it = taken.erase(it);
+            }
+            else
+              ++it;
+          }
+          while (aggregate_ring_.size() > options_.ring_max * 4) {
+            aggregate_ring_.pop_front();
+            ++counts_.dropped;
+          }
+          if (final || now - last_aggregate_flush_ms_ >= options_.aggregate_interval_ms) {
+            for (auto &e : aggregate_ring_) taken.push_back(std::move(e));
+            aggregate_ring_.clear();
+            last_aggregate_flush_ms_ = now;
+          }
+        }
         marks_at_take = consent_marks_;
         last_flush_ms_ = now;
       }
@@ -1080,11 +1101,15 @@ namespace telemetry {
         for (auto &[key, events] : by_product) {
           // no install id (both switches went off since): nothing to write for these, they are the automatic events of a choice that was turned off
           if (ctx.install_id.empty()) continue;
+          std::vector<std::vector<std::size_t>> origin;
+          std::vector<event_t> merged;
+          if (options_.aggregate_interval_ms > 0) merged = aggregate_events(events, origin);
+          const auto &outgoing = options_.aggregate_interval_ms > 0 ? merged : events;
           std::vector<bool> written(events.size(), false);  // per event: only what a pushed envelope carried is on disk, a group is no longer written all or nothing
           bool complete = false;
           try {
             std::vector<std::vector<std::size_t>> members;
-            const auto envelopes = build_envelopes(ctx, key.first, events, members);
+            const auto envelopes = build_envelopes(ctx, key.first, outgoing, members);
             complete = true;
             for (std::size_t at = 0; at < envelopes.size(); ++at) {
               if (deps_.before_queue_write) deps_.before_queue_write();
@@ -1096,7 +1121,7 @@ namespace telemetry {
                 auto envelope = envelopes[at];
                 json kept = json::array();
                 for (std::size_t i = 0; i < members[at].size(); ++i) {
-                  if (consent_marks_.moved_since(events[members[at][i]].kind, marks_at_take)) continue;
+                  if (consent_marks_.moved_since(outgoing[members[at][i]].kind, marks_at_take)) continue;
                   kept.push_back(std::move(envelope["events"][i]));
                 }
                 if (kept.empty()) {
@@ -1114,7 +1139,11 @@ namespace telemetry {
                 complete = false;  // the envelopes after this one are not attempted: the events of this envelope and of those go back
                 break;
               }
-              for (const auto member : members[at]) written[member] = true;
+              for (const auto member : members[at]) {
+                if (origin.empty()) written[member] = true;
+                else
+                  for (const auto from : origin[member]) written[from] = true;
+              }
             }
           }
           catch (const std::exception &) {
@@ -1350,6 +1379,7 @@ namespace telemetry {
         if (!c.errors) ++consent_marks_.errors;
         std::lock_guard lock { mutex_ };
         ring_.erase(std::remove_if(ring_.begin(), ring_.end(), [&](const event_t &e) { return !c.allows(e.kind) && !is_user_report(e.kind, e.name); }), ring_.end());
+        aggregate_ring_.erase(std::remove_if(aggregate_ring_.begin(), aggregate_ring_.end(), [&](const event_t &e) { return !c.allows(e.kind); }), aggregate_ring_.end());
       }
       if (!c.errors) {
         {
@@ -1550,6 +1580,16 @@ namespace telemetry {
       e["product"] = ring_[i].product;
       out.push_back(std::move(e));
     }
+    // what waits for the aggregate interval is shown the way it will leave: merged
+    if (!aggregate_ring_.empty()) {
+      std::vector<std::vector<std::size_t>> origin;
+      const auto merged = aggregate_events(std::vector<event_t> { aggregate_ring_.begin(), aggregate_ring_.end() }, origin);
+      for (const auto &m : merged) {
+        auto e = event_to_json(m);
+        e["product"] = m.product;
+        out.push_back(std::move(e));
+      }
+    }
     return out;
   }
 
@@ -1562,7 +1602,7 @@ namespace telemetry {
   std::size_t
   service_t::buffered() const {
     std::lock_guard lock { mutex_ };
-    return ring_.size();
+    return ring_.size() + aggregate_ring_.size();
   }
 
 }  // namespace telemetry

@@ -540,6 +540,7 @@ namespace telemetry {
       service_options_t options;
       options.dir = platf::appdata() / "telemetry";
       options.endpoint = endpoint;
+      options.aggregate_interval_ms = 6 * 60 * 60 * 1000;  // high-volume usage and experience records leave merged, at most every six hours and at exit
       for (const char *variable : { "COMPUTERNAME", "HOSTNAME", "USERNAME", "USER", "LOGNAME" })
         if (const char *value = std::getenv(variable)) options.redact_words.emplace_back(value);
       service_deps_t deps;

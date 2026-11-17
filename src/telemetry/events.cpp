@@ -11,6 +11,8 @@
 #include <cmath>
 #include <cctype>
 #include <functional>
+#include <map>
+#include <set>
 #include <regex>
 
 using json = nlohmann::json;
@@ -1003,6 +1005,7 @@ namespace telemetry {
       { "name", event.name },
       { "props", event.props },
     };
+    if (event.count > 1) j["count"] = event.count;
     return j;
   }
 
@@ -1119,6 +1122,78 @@ namespace telemetry {
         bytes += size;
       }
       flush();
+    }
+    return out;
+  }
+
+  bool
+  high_volume_event(std::string_view name) {
+    static const std::array<std::string_view, 11> names {
+      "app_start", "app_exit", "feature_used", "setting_changed", "stream_start", "stream_end", "stream_quality", "startup", "panel_page", "page_vitals", "api_latency",
+    };
+    return std::find(names.begin(), names.end(), name) != names.end();
+  }
+
+  std::vector<event_t>
+  aggregate_events(const std::vector<event_t> &events, std::vector<std::vector<std::size_t>> &origin) {
+    struct acc_t {
+      std::size_t out_at;
+      std::map<std::string, double> sum;
+      std::map<std::string, std::uint64_t> seen;
+      std::set<std::string> fractional;
+    };
+    std::vector<event_t> out;
+    origin.clear();
+    std::map<std::string, acc_t> groups;
+    for (std::size_t i = 0; i < events.size(); ++i) {
+      const auto &e = events[i];
+      if (!high_volume_event(e.name) || !e.report_id.empty() || !e.report_install.empty() || !e.props.is_object()) {
+        out.push_back(e);
+        origin.push_back({ i });
+        continue;
+      }
+      const bool additive = e.name == "page_vitals" || e.name == "api_latency";
+      json dims = json::object();
+      for (auto it = e.props.begin(); it != e.props.end(); ++it)
+        if (!it.value().is_number() && !(additive && it.value().is_array())) dims[it.key()] = it.value();
+      const auto key = e.name + '\0' + std::string { kind_name(e.kind) } + '\0' + e.version + '\0' + std::to_string(e.priority) + '\0' + dims.dump();
+      auto found = groups.find(key);
+      if (found == groups.end()) {
+        found = groups.emplace(key, acc_t { out.size(), {}, {}, {} }).first;
+        out.push_back(e);
+        origin.push_back({});
+        out.back().count = 0;
+      }
+      auto &a = found->second;
+      auto &target = out[a.out_at];
+      origin[a.out_at].push_back(i);
+      ++target.count;
+      target.t = std::max(target.t, e.t);
+      for (auto it = e.props.begin(); it != e.props.end(); ++it) {
+        const auto &v = it.value();
+        if (v.is_number()) {
+          a.sum[it.key()] += v.get<double>();
+          ++a.seen[it.key()];
+          if (!v.is_number_integer()) a.fractional.insert(it.key());
+        }
+        else if (additive && v.is_array() && origin[a.out_at].size() > 1) {
+          auto &dst = target.props[it.key()];
+          if (dst.is_array() && dst.size() == v.size())
+            for (std::size_t k = 0; k < v.size(); ++k)
+              if (v[k].is_number() && dst[k].is_number()) dst[k] = dst[k].get<double>() + v[k].get<double>();
+        }
+      }
+    }
+    for (auto &[key, a] : groups) {
+      auto &target = out[a.out_at];
+      const bool additive = target.name == "page_vitals" || target.name == "api_latency";
+      for (const auto &[prop, total] : a.sum) {
+        const double value = additive ? total : total / static_cast<double>(a.seen[prop]);
+        if (a.fractional.count(prop))
+          target.props[prop] = value;
+        else
+          target.props[prop] = static_cast<std::int64_t>(std::llround(value));
+      }
     }
     return out;
   }
