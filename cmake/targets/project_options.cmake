@@ -31,6 +31,21 @@ function(sunshine_configure_debug_sources test_directory)
     endif()
 endfunction()
 
+# fs-clang-fec-novec-20261117: nanors keeps its inner loops in explicit SIMD intrinsics, chosen at run time by CPU feature bits. What is left to the
+# compiler is the scalar head and tail of each call. Clang's loop and SLP vectorizers turn that tail into a large vectorized function, which
+# costs an 8-register prologue on every call of the 1.4 KB shards: 4-7% less FEC throughput than GCC on the same machine. Without them the
+# Clang build matches GCC within 1.5%. GCC is not affected.
+function(sunshine_configure_fec_sources test_directory)
+    if(CMAKE_C_COMPILER_ID MATCHES "Clang")
+        set_source_files_properties(
+                "${CMAKE_SOURCE_DIR}/third-party/nanors/rs.c"
+                "${CMAKE_SOURCE_DIR}/third-party/nanors/deps/obl/oblas_common.c"
+                "${CMAKE_SOURCE_DIR}/third-party/nanors/deps/obl/oblas_lite.c"
+                DIRECTORY "${CMAKE_SOURCE_DIR}" "${test_directory}"
+                PROPERTIES COMPILE_OPTIONS "-fno-vectorize;-fno-slp-vectorize")
+    endif()
+endfunction()
+
 add_library(sunshine_coverage INTERFACE)
 if(SUNSHINE_TESTS_ENABLE_COVERAGE)
     if(NOT CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")

@@ -232,3 +232,4 @@ if (_alk_nr_adapter_on)
 endif ()
 
 sunshine_configure_debug_sources("${TEST_DIR}")
+sunshine_configure_fec_sources("${TEST_DIR}")
