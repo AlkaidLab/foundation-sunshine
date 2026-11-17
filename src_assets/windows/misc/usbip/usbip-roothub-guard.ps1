@@ -41,6 +41,8 @@ param(
   [Parameter(Mandatory)][ValidateSet('preflight', 'snapshot', 'verify', 'status', 'cleanup')][string]$Action,
   [string]$State,
   [string]$Log,
+  # The slim package supplies its own driver/tool cleanup instead of an Inno uninstaller.
+  [string]$RollbackScript,
   [int]$SettleMinSeconds = 12,
   [int]$SettleMaxSeconds = 60,
   # Test seams. The defaults are the real system.
@@ -205,7 +207,10 @@ function Invoke-GuardStep([string]$Description, [scriptblock]$Step) {
   if ($DryRun) { Write-GuardLog "dry-run, would: $Description"; return 0 }
   Write-GuardLog $Description
   $global:LASTEXITCODE = 0
-  try { & $Step } catch { Write-GuardLog "  step failed: $($_.Exception.Message)"; return 1 }
+  # A step may print (a child script, a native tool). Printed lines must not become part of this function's
+  # result: the caller compares the result with 0, and an array of output lines plus 0 made a successful removal
+  # of the slim package count as a failed step, so a clean rollback was reported as incomplete (103).
+  try { & $Step | Out-Host } catch { Write-GuardLog "  step failed: $($_.Exception.Message)"; return 1 }
   $code = if ($null -eq $LASTEXITCODE) { 0 } else { $LASTEXITCODE }
   Write-GuardLog "  -> exit $code"
   return $code
@@ -378,7 +383,14 @@ function Invoke-Rollback($Snapshot, $Faults) {
     # The hubs are back. Leave no half install behind: usbip-win2's own uninstaller removes the UDE driver and its
     # controller node too, and finds the filter again if the first step missed it.
     $uninstaller = Invoke-RollbackPart 'find the uninstaller' { Get-UsbipUninstaller } $null
-    if ($uninstaller -and (Test-Path -LiteralPath $uninstaller)) {
+    if ($RollbackScript -and (Test-Path -LiteralPath $RollbackScript)) {
+      $rc = Invoke-GuardStep 'remove the slim USB/IP package' {
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File $RollbackScript -Action remove -InstallRoot (Split-Path -Parent $RollbackScript)
+        }
+      if ($rc -ne 0 -and $rc -ne 3010) { $stepFailures += "USB/IP package cleanup exit $rc" }
+      $residue += @(Invoke-RollbackPart 'clear the persisted filter names (after package cleanup)' { Clear-FilterResidue } @())
+      $faults = @(Invoke-RollbackPart 'wait for the hubs (after package cleanup)' { Wait-HubsSettled $Snapshot.hubs } $unknown)
+    } elseif ($uninstaller -and (Test-Path -LiteralPath $uninstaller)) {
       $rc = Invoke-GuardStep "$uninstaller /VERYSILENT /SUPPRESSMSGBOXES /NORESTART" {
           $p = Start-Process -FilePath $uninstaller -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
           $global:LASTEXITCODE = $p.ExitCode

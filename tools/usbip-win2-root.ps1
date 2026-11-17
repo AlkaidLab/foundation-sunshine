@@ -34,6 +34,30 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# usbip-policy-reg-20261117: an upstream AppId does not establish ownership.
+# Do not register, rename, disable or remove nodes belonging to an external install.
+if ($Action -ne 'status') {
+  $hostRoot = Split-Path -Parent $PSScriptRoot
+  $policy = Join-Path $hostRoot 'scripts\usbip-package-ownership.psm1'
+  if (-not (Test-Path -LiteralPath $policy)) {
+    Write-Output 'USB/IP ownership is unavailable; no changes were made.'
+    exit 0
+  }
+  Import-Module $policy -Force -DisableNameChecking
+  $owner = Get-UsbipOwnership (Join-Path $env:ProgramFiles 'USBip') $hostRoot
+  if ($owner.ownership -notin 'managed', 'legacy-owned') {
+    Write-Output 'USB/IP is externally managed or absent; no changes were made.'
+    exit 0
+  }
+  if ($Action -eq 'uninstall') {
+    $package = Join-Path $hostRoot 'scripts\usbip-package.ps1'
+    if (Test-Path -LiteralPath $package) {
+      & $package -Action uninstall -HostRoot $hostRoot
+      exit $LASTEXITCODE
+    }
+  }
+}
+
 $HardwareId = 'ROOT\USBIP_WIN2\UDE'
 $RootName = 'ALKAIDUSB'
 $OldInstanceId = 'ROOT\USB\0000'

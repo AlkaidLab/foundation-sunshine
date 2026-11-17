@@ -514,7 +514,7 @@ add_executable(hdr_calibration_unit_tests
         ${CMAKE_SOURCE_DIR}/src/hdr/calibration.cpp
         ${CMAKE_SOURCE_DIR}/src/hdr/client_display_capabilities.cpp
         ${CMAKE_SOURCE_DIR}/src/display_device/color_profile.cpp
-        ${CMAKE_SOURCE_DIR}/src/doctor/doctor.cpp
+        ${CMAKE_SOURCE_DIR}/src/doctor/doctor.cpp ${CMAKE_SOURCE_DIR}/src/doctor/doctor_text.cpp
         ${CMAKE_SOURCE_DIR}/src/nat_discovery.cpp
         ${CMAKE_SOURCE_DIR}/src/public_address.cpp
         ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
@@ -547,7 +547,7 @@ set(CONFIG_RUNTIME_SUPPORT_SOURCES
         ${CMAKE_SOURCE_DIR}/src/hdr/calibration.cpp
         ${CMAKE_SOURCE_DIR}/src/hdr/client_display_capabilities.cpp
         ${CMAKE_SOURCE_DIR}/src/display_device/color_profile.cpp
-        ${CMAKE_SOURCE_DIR}/src/doctor/doctor.cpp
+        ${CMAKE_SOURCE_DIR}/src/doctor/doctor.cpp ${CMAKE_SOURCE_DIR}/src/doctor/doctor_text.cpp
         ${CMAKE_SOURCE_DIR}/src/public_address.cpp
         ${CMAKE_SOURCE_DIR}/src/nat_discovery.cpp
         ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
@@ -839,7 +839,7 @@ add_test(NAME logging_site_unit_tests COMMAND logging_site_unit_tests)
 
 # 体检: the evaluators, the runner, the JSON and the read-only OS probes
 add_executable(doctor_unit_tests
-        ${CMAKE_SOURCE_DIR}/src/doctor/doctor.cpp
+        ${CMAKE_SOURCE_DIR}/src/doctor/doctor.cpp ${CMAKE_SOURCE_DIR}/src/doctor/doctor_text.cpp
         ${CMAKE_SOURCE_DIR}/src/doctor/doctor_os.cpp
         ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
         ${CMAKE_SOURCE_DIR}/src/public_address.cpp
@@ -860,7 +860,7 @@ endif ()
 target_compile_options(doctor_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
 set_target_properties(doctor_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME doctor_unit_tests COMMAND doctor_unit_tests)
-
+add_subdirectory(usbip)
 # 版本比较: the date part of a Foundation Sunshine version, against the table shared with the panel and the Web UI
 add_executable(version_compare_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_version_compare.cpp)
@@ -1396,7 +1396,7 @@ list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_encoder_probe_
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/mat-live/")
 # These files already run in registered standalone suites. Keep one copy of
 # their assertions and isolate their fixtures from the aggregate host state.
-list(REMOVE_ITEM TEST_SOURCES
+list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/usbip/external_readonly_probe.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_ai_provider.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_build_info.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_version_compare.cpp

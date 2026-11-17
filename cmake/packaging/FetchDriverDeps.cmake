@@ -105,12 +105,16 @@ set(USBIP_DIR "${DRIVER_DEPS_CACHE}/usbip" CACHE PATH "" FORCE)
 set(USBIP_INSTALLER "${USBIP_DIR}/${USBIP_ASSET_NAME}"
     CACHE FILEPATH "Pinned usbip-win2 installer" FORCE)
 
+set(USBIP_PAYLOAD_DIR "${DRIVER_DEPS_CACHE}/usbip-payload" CACHE PATH "Extracted signed USB/IP payload" FORCE)
+
 set(_DRIVER_DOWNLOAD_ATTEMPTS 3)
 set(_DRIVER_DOWNLOAD_TIMEOUT_SECONDS 60)
 set(_DRIVER_DOWNLOAD_INACTIVITY_TIMEOUT_SECONDS 15)
 
 if(NOT FETCH_DRIVER_DEPS)
   message(STATUS "Driver dependency downloads disabled (FETCH_DRIVER_DEPS=OFF)")
+  # A cache left by an earlier configure with downloads ON must not make the install step ship an unverified payload.
+  unset(USBIP_AVAILABLE CACHE)
   return()
 endif()
 
@@ -425,6 +429,17 @@ function(_fetch_usbip)
   set(_url
     "https://github.com/vadimgrn/usbip-win2/releases/download/v.${USBIP_VERSION}/${USBIP_ASSET_NAME}")
   _driver_download("${_url}" "${USBIP_INSTALLER}" "${USBIP_SHA256}")
+  if(EXISTS "${USBIP_INSTALLER}")
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    execute_process(
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/packaging/extract-usbip.py"
+        --installer "${USBIP_INSTALLER}" --output "${USBIP_PAYLOAD_DIR}"
+        --scratch "${DRIVER_DEPS_CACHE}/usbip-extract"
+      RESULT_VARIABLE _extract_status)
+    if(NOT _extract_status EQUAL 0)
+      message(FATAL_ERROR "USB/IP extraction or catalog verification failed: ${_extract_status}")
+    endif()
+  endif()
 endfunction()
 
 # ---------------------------------------------------------------------------
@@ -484,4 +499,4 @@ _check_driver("nefcon" NEFCON_DRIVER_AVAILABLE
 _check_driver("ViGEmBus" VIGEMBUS_AVAILABLE
     "${VIGEMBUS_INSTALLER}")
 _check_driver("usbip-win2" USBIP_AVAILABLE
-    "${USBIP_INSTALLER}")
+    "${USBIP_PAYLOAD_DIR}/payload.json")

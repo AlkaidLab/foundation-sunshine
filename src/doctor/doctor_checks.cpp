@@ -377,6 +377,7 @@ namespace doctor {
       facts.usbip_driver_checked = usb.driver_checked;
       facts.usbip_driver_found = usb.driver_found;
       facts.usbip_driver = usb.driver;
+      facts.usbip_externally_managed = usb.externally_managed;
       return evaluate_input(facts, lang);
     }
 
