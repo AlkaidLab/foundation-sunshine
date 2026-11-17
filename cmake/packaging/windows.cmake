@@ -4,6 +4,10 @@
 include(${CMAKE_MODULE_PATH}/packaging/FetchDriverDeps.cmake)
 
 install(TARGETS sunshine RUNTIME DESTINATION "." COMPONENT application)
+install(FILES "${sunshine_webp_SOURCE_DIR}/COPYING"
+        DESTINATION "licenses/libwebp" RENAME "LICENSE.txt" COMPONENT application)
+install(FILES "${sunshine_webp_SOURCE_DIR}/PATENTS"
+        DESTINATION "licenses/libwebp" RENAME "PATENTS.txt" COMPONENT application)
 set(SUNSHINE_MAT_CAPTURE_AVAILABLE 0)
 if (TARGET sunshine_mat_capture)
   set(SUNSHINE_MAT_CAPTURE_AVAILABLE 1)

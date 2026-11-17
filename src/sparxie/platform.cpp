@@ -7,10 +7,13 @@
     #define NOMINMAX
   #endif
   #include <algorithm>
+  #include <atomic>
   #include <chrono>
   #include <cstring>
   #include <cwctype>
+  #include <mutex>
   #include <set>
+  #include <sstream>
   #include <thread>
   #include <objbase.h>
   #include <shlobj.h>
@@ -19,6 +22,7 @@
   #include <wincodec.h>
   #include <windows.h>
   #include <winhttp.h>
+  #include <src/webp/decode.h>
 namespace sparxie {
   namespace {
     std::wstring
@@ -326,38 +330,178 @@ namespace sparxie {
     return http_request(L"POST", url, &json_body);
   }
   Rgba
-  host_decode_image(std::string_view bytes) {
+  decode_image_wic(std::string_view bytes, std::string *diagnostic, bool *component_init_failed) {
     Rgba image;
-    if (bytes.empty()) return image;
+    if (component_init_failed) {
+      *component_init_failed = false;
+    }
+    if (diagnostic) {
+      diagnostic->clear();
+    }
+    if (bytes.empty()) {
+      return image;
+    }
     ComInit com;
+    auto failed = [diagnostic](const char *stage, HRESULT hr) {
+      if (diagnostic) {
+        std::ostringstream text;
+        text << stage << " failed (HRESULT 0x" << std::hex << static_cast<unsigned long>(hr) << ')';
+        *diagnostic = text.str();
+      }
+    };
     IWICImagingFactory *factory = nullptr;
-    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory)))) return image;
+    HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
+    if (FAILED(hr)) {
+      failed("CoCreateInstance", hr);
+      return image;
+    }
     IWICStream *stream = nullptr;
-    if (FAILED(factory->CreateStream(&stream)) || FAILED(stream->InitializeFromMemory(reinterpret_cast<BYTE *>(const_cast<char *>(bytes.data())), static_cast<DWORD>(bytes.size())))) {
-      if (stream) stream->Release();
+    hr = factory->CreateStream(&stream);
+    if (FAILED(hr)) {
+      failed("CreateStream", hr);
+      factory->Release();
+      return image;
+    }
+    hr = stream->InitializeFromMemory(reinterpret_cast<BYTE *>(const_cast<char *>(bytes.data())), static_cast<DWORD>(bytes.size()));
+    if (FAILED(hr)) {
+      failed("InitializeFromMemory", hr);
+      if (stream) {
+        stream->Release();
+      }
       factory->Release();
       return image;
     }
     IWICBitmapDecoder *decoder = nullptr;
-    factory->CreateDecoderFromStream(stream, nullptr, WICDecodeMetadataCacheOnLoad, &decoder);
-    IWICBitmapFrameDecode *frame = nullptr;
-    if (decoder) decoder->GetFrame(0, &frame);
-    IWICFormatConverter *converter = nullptr;
-    factory->CreateFormatConverter(&converter);
-    if (frame && converter && SUCCEEDED(converter->Initialize(frame, GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone, nullptr, 0.f, WICBitmapPaletteTypeCustom))) {
-      UINT width = 0, height = 0;
-      converter->GetSize(&width, &height);
-      image.w = static_cast<int>(width);
-      image.h = static_cast<int>(height);
-      image.px.resize(static_cast<std::size_t>(width) * height * 4);
-      // a codec that cannot deliver the pixels (a WebP codec that fails half way) is a failed decode, never a picture of zeros
-      if (image.px.empty() || FAILED(converter->CopyPixels(nullptr, width * 4, static_cast<UINT>(image.px.size()), image.px.data()))) image = Rgba {};
+    hr = factory->CreateDecoderFromStream(stream, nullptr, WICDecodeMetadataCacheOnLoad, &decoder);
+    if (component_init_failed && hr == WINCODEC_ERR_COMPONENTINITIALIZEFAILURE) {
+      *component_init_failed = true;
     }
-    if (converter) converter->Release();
-    if (frame) frame->Release();
-    if (decoder) decoder->Release();
+    IWICBitmapFrameDecode *frame = nullptr;
+    IWICFormatConverter *converter = nullptr;
+    const char *stage = "CreateDecoderFromStream";
+    if (SUCCEEDED(hr)) {
+      stage = "GetFrame";
+      hr = decoder->GetFrame(0, &frame);
+    }
+    if (SUCCEEDED(hr)) {
+      stage = "CreateFormatConverter";
+      hr = factory->CreateFormatConverter(&converter);
+    }
+    if (SUCCEEDED(hr)) {
+      stage = "Initialize converter";
+      hr = converter->Initialize(frame, GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone, nullptr, 0.f, WICBitmapPaletteTypeCustom);
+    }
+    if (SUCCEEDED(hr)) {
+      UINT width = 0, height = 0;
+      stage = "GetSize";
+      hr = converter->GetSize(&width, &height);
+      if (SUCCEEDED(hr) && (width == 0 || height == 0)) {
+        stage = "GetSize (empty image)";
+        hr = E_FAIL;
+      }
+      if (SUCCEEDED(hr)) {
+        image.w = static_cast<int>(width);
+        image.h = static_cast<int>(height);
+        image.px.resize(static_cast<std::size_t>(width) * height * 4);
+        // A failed pixel copy is a failed decode, never a picture of zeros.
+        stage = "CopyPixels";
+        hr = converter->CopyPixels(nullptr, width * 4, static_cast<UINT>(image.px.size()), image.px.data());
+        if (FAILED(hr)) {
+          image = Rgba {};
+        }
+      }
+    }
+    if (FAILED(hr)) {
+      failed(stage, hr);
+    }
+    if (converter) {
+      converter->Release();
+    }
+    if (frame) {
+      frame->Release();
+    }
+    if (decoder) {
+      decoder->Release();
+    }
     stream->Release();
     factory->Release();
+    return image;
+  }
+  Rgba
+  host_decode_webp(std::string_view bytes) {
+    Rgba image;
+    if (bytes.empty()) {
+      return image;
+    }
+    int width = 0;
+    int height = 0;
+    const auto *data = reinterpret_cast<const std::uint8_t *>(bytes.data());
+    if (!WebPGetInfo(data, bytes.size(), &width, &height) || width <= 0 || height <= 0 ||
+        static_cast<long long>(width) * height > 40'000'000LL) {
+      return image;
+    }
+    image.w = width;
+    image.h = height;
+    image.px.resize(static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4);
+    if (!WebPDecodeRGBAInto(data, bytes.size(), image.px.data(), image.px.size(), width * 4)) {
+      return {};
+    }
+    return image;
+  }
+  Rgba
+  host_decode_image(std::string_view bytes, std::string *diagnostic) {
+    enum class WebpWicState { unknown, available, unavailable };
+    static std::atomic<WebpWicState> webp_wic_state { WebpWicState::unknown };
+    static std::mutex probe_mutex;
+    const bool is_webp = bytes.size() >= 12 && bytes.compare(0, 4, "RIFF") == 0 && bytes.compare(8, 4, "WEBP") == 0;
+    std::unique_lock<std::mutex> probe_lock(probe_mutex, std::defer_lock);
+    if (is_webp && webp_wic_state.load() == WebpWicState::unknown) {
+      // Only one thread performs the first check; other refreshes wait for its result.
+      probe_lock.lock();
+    }
+    if (is_webp && webp_wic_state.load() == WebpWicState::unavailable) {
+      Rgba image = host_decode_webp(bytes);
+      if (diagnostic) {
+        diagnostic->clear();
+        if (image.w == 0 || image.h == 0) {
+          *diagnostic = "libwebp decode failed (WIC WebP decoder unavailable)";
+        }
+      }
+      return image;
+    }
+
+    bool component_init_failed = false;
+    Rgba image = decode_image_wic(bytes, diagnostic, &component_init_failed);
+    if (image.w > 0 && image.h > 0 && !image.px.empty()) {
+      if (is_webp && webp_wic_state.load() == WebpWicState::unknown) {
+        webp_wic_state.store(WebpWicState::available);
+      }
+      return image;
+    }
+    // The Windows WebP extension may not initialize in a service process.
+    if (is_webp) {
+      image = host_decode_webp(bytes);
+      if (image.w > 0 && image.h > 0) {
+        bool first_unavailable = true;
+        if (component_init_failed) {
+          // Remember only a component initialization failure on a valid image;
+          // a bad picture or unrelated WIC failure must not disable the codec.
+          first_unavailable = webp_wic_state.exchange(WebpWicState::unavailable) != WebpWicState::unavailable;
+        }
+        if (diagnostic) {
+          if (first_unavailable) {
+            *diagnostic += "; libwebp fallback succeeded";
+          }
+          else {
+            diagnostic->clear();
+          }
+        }
+        return image;
+      }
+      if (diagnostic) {
+        *diagnostic += "; libwebp decode failed";
+      }
+    }
     return image;
   }
   fs::path
@@ -419,7 +563,9 @@ namespace sparxie {
   std::optional<std::string>
   host_http_post_json(const std::string &, const std::string &) { return std::nullopt; }
   Rgba
-  host_decode_image(std::string_view) { return {}; }
+  host_decode_image(std::string_view, std::string *) { return {}; }
+  Rgba
+  host_decode_webp(std::string_view) { return {}; }
   fs::path
   host_program_data() { return {}; }
   std::vector<fs::path>

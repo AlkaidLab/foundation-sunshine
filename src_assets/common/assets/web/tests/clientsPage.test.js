@@ -3,8 +3,9 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
-const web = path.join(path.dirname(new URL(import.meta.url).pathname), '..')
+const web = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 const read = (p) => fs.readFileSync(path.join(web, p), 'utf8')
 const page = read('views/Pin.vue')
 const locales = Object.fromEntries(fs.readdirSync(path.join(web, 'public/assets/locale')).filter((f) => f.endsWith('.json')).map((f) => [f.replace(/\.json$/, ''), JSON.parse(read(`public/assets/locale/${f}`))]))

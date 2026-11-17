@@ -4,6 +4,10 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(GTest REQUIRED)
 find_package(Threads REQUIRED)
+if(WIN32)
+  include(${CMAKE_CURRENT_LIST_DIR}/../../cmake/dependencies/webp_decoder.cmake)
+  link_libraries(webpdecoder)
+endif()
 set(SPX_ROOT ${CMAKE_CURRENT_LIST_DIR}/../..)
 add_executable(sparxie_unit_tests
   ${SPX_ROOT}/src/sparxie/model.cpp

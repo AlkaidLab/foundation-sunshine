@@ -382,7 +382,13 @@ namespace sparxie {
         background = decode(std::string_view(*background_bytes));
         if (image_is_blank(background)) {
           // the decoder gave nothing (or one colour) for this picture: nothing is published or cached from it, the poster and cover on disk stay
-          if (env.warn) env.warn("the official background of " + item.id + " decoded blank (" + std::to_string(background_bytes->size()) + " bytes from " + urls.background + ")");
+          if (env.warn) {
+            std::string reason = "decoded blank";
+            if (background.w <= 0 || background.h <= 0 || background.px.empty()) {
+              reason = "failed to decode";
+            }
+            env.warn("the official background of " + item.id + " " + reason + " (" + std::to_string(background_bytes->size()) + " bytes from " + urls.background + ")");
+          }
           skipped.push_back(item.id);
           continue;
         }

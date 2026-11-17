@@ -17,6 +17,7 @@ add_subdirectory("${CMAKE_SOURCE_DIR}/third-party/moonlight-audio-haptics" EXCLU
 # common dependencies
 include("${CMAKE_MODULE_PATH}/dependencies/nlohmann_json.cmake")
 if(WIN32)
+    include("${CMAKE_MODULE_PATH}/dependencies/webp_decoder.cmake")
     set(OPENSSL_USE_STATIC_LIBS TRUE)
     # An older configure may have cached DLL import libraries. Preserve explicit
     # static paths; re-discover only incompatible cached dynamic selections.

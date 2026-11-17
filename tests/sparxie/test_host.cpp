@@ -442,6 +442,14 @@ TEST(Hero, TheRealStarRailBackgroundDecodesAndComposesOnWindows) {
   std::ifstream in(std::string(SPARXIE_FIXTURES_DIR) + "/starrail-cn-bg.webp", std::ios::binary);
   ASSERT_TRUE(in.good()) << "fixture missing";
   const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+  const sparxie::Rgba bundled = sparxie::host_decode_webp(bytes);
+  ASSERT_EQ(bundled.w, 2560);
+  ASSERT_EQ(bundled.h, 1440);
+  EXPECT_FALSE(sparxie::image_is_blank(bundled));
+  EXPECT_EQ(sparxie::host_decode_webp("invalid WebP").w, 0);
+  std::string diagnostic;
+  EXPECT_EQ(sparxie::host_decode_image("RIFFxxxxWEBPbad", &diagnostic).w, 0);
+  EXPECT_NE(diagnostic.find("libwebp decode failed"), std::string::npos);
   const sparxie::Rgba background = sparxie::host_decode_image(bytes);
   ASSERT_EQ(background.w, 2560);
   ASSERT_EQ(background.h, 1440);

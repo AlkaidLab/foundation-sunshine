@@ -4,6 +4,8 @@
 namespace sparxie {
   HostEnv
   make_host_env();
+  Rgba
+  decode_art_image(std::string_view bytes);
   void
   note_host_started();
   void
