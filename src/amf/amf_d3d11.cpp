@@ -1384,6 +1384,13 @@ namespace amf {
     return true;
   }
 
+  // Dynamic bitrate update. Returns true only when the complete budget —
+  // target and peak, plus VBV where the codec accepts it at runtime — was
+  // accepted by the driver. false means the update never wrote anything
+  // (snapshot failure) or was rolled back to the snapshot; the sole residual
+  // case is a rollback write itself being rejected, which can leave a mixed
+  // budget behind — the caller keeps its previous allowance either way, but a
+  // session in that state should be recreated rather than re-driven.
   bool
   amf_d3d11::set_bitrate(int bitrate_kbps) {
     if (!encoder || bitrate_kbps <= 0) return false;
