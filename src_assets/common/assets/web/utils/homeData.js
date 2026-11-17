@@ -77,6 +77,7 @@ export function pickPerf(snapshot, sessionId = null) {
     series: Array.isArray(latency.series_ms) ? latency.series_ms.filter((v) => Number.isFinite(v)) : [],
     encoder: item.encoder || '',
     capture: item.capture || '',
+    frameRates: item.frame_rates && typeof item.frame_rates === 'object' ? item.frame_rates : null, // the stage rates as the host reports them
     uptimeMs: num(item.uptime_ms),
   }
 }
