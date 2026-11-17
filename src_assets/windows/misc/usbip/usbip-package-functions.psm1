@@ -207,7 +207,12 @@ function Install-UsbipPackage([string]$Payload, [string]$Root, [string]$Scripts,
   Invoke-UsbipCommand (Join-Path $Root 'devnode.exe') @('install', (Join-Path $Root 'driver\usbip2_ude.inf'), $script:HardwareId)
   Set-UsbipDetachTask $Root
   if (-not (Test-UsbipReady $Root $manifest)) { throw 'USB/IP controller or registered driver did not verify' }
-
+  # The bundled upstream installer was only the proof that an earlier FS install owned the package.
+  # After a verified replacement it is a 26 MB leftover of the old layout.
+  if ($owner.ownership -eq 'legacy-owned') {
+    $bundled = Join-Path $HostRoot 'scripts\usbip\USBip-0.9.8.1-x64.exe'
+    if (Test-Path -LiteralPath $bundled -PathType Leaf) { Remove-Item -LiteralPath $bundled -Force }
+  }
 }
 
 function Get-UsbipRestartCode { if ($script:NeedsRestart) { return 3010 }; return 0 }

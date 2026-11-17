@@ -4,6 +4,17 @@ $ErrorActionPreference = 'Stop'
 $script:UsbipUninstallBases = @('HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall', 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall')
 $script:UsbipSourceHash = '38cad6d4432b52d5bb9409d9ad03b72fdffc4ada4cd3a48fbeca1a2752a8518a'
 
+# Inno Setup writes InstallLocation with a trailing backslash (observed with usbip-win2 0.9.8.1),
+# so a plain string comparison against the default root never matches. Windows paths are case-insensitive.
+function Test-UsbipSameLocation([string]$Left, [string]$Right) {
+  if (-not $Left -or -not $Right) { return $false }
+  try {
+    $a = [IO.Path]::GetFullPath($Left).TrimEnd([char]92)
+    $b = [IO.Path]::GetFullPath($Right).TrimEnd([char]92)
+    return [string]::Equals($a, $b, [StringComparison]::OrdinalIgnoreCase)
+  } catch { return $false }
+}
+
 function Get-UsbipValue($Record, [string]$Name) {
   if ($null -ne $Record -and $null -ne $Record.PSObject.Properties[$Name]) { return $Record.$Name }
   return ''
@@ -63,10 +74,10 @@ function Resolve-UsbipOwnership($Inventory) {
   elseif ($null -ne $Inventory.Receipt -and
       (Get-UsbipValue $Inventory.Receipt 'InstallLayout') -eq 'usbip-slim-v1' -and
       (Get-UsbipValue $Inventory.Receipt 'SourceSHA256') -eq $script:UsbipSourceHash -and
-      (Get-UsbipValue $Inventory.Receipt 'InstallLocation') -eq $Inventory.Root -and
+      (Test-UsbipSameLocation (Get-UsbipValue $Inventory.Receipt 'InstallLocation') $Inventory.Root) -and
       $Inventory.Entries.Count -eq 0) { $owner = 'managed'; $reason = 'slim-receipt' }
   elseif ($Inventory.Entries.Count -gt 0 -and $null -eq $Inventory.Receipt -and $Inventory.LegacyPayload -and
-      @($Inventory.Entries | Where-Object { (Get-UsbipValue $_ 'InstallLocation') -ne $Inventory.Root }).Count -eq 0) {
+      @($Inventory.Entries | Where-Object { -not (Test-UsbipSameLocation (Get-UsbipValue $_ 'InstallLocation') $Inventory.Root) }).Count -eq 0) {
     $owner = 'legacy-owned'; $reason = 'same-version-no-extras-bundled-installer'
   }
   [pscustomobject]@{ ownership = $owner; compatible = $compatible; reason = $reason }

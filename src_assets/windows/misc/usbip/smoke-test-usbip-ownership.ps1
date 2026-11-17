@@ -25,8 +25,9 @@ try {
     }
     # Simulated ARP registry values. Filesystem probes use actual isolated layouts.
     & $module {
-      param($f, $root, $source)
+      param($f, $root, $source, $suffix)
       $script:Fixture = $f
+      $script:Suffix = $suffix
       $script:FixtureRoot = $root
       $script:Source = $source
       $script:UsbipUninstallBases = @('fixture-registry')
@@ -42,10 +43,10 @@ try {
       }
       function script:Get-ItemProperty {
         param($LiteralPath, $ErrorAction)
-        [pscustomobject]@{ DisplayVersion = $script:Fixture.version; InstallLocation = $script:FixtureRoot;
+        [pscustomobject]@{ DisplayVersion = $script:Fixture.version; InstallLocation = ($script:FixtureRoot + $script:Suffix);
           InstallLayout = 'usbip-slim-v1'; SourceSHA256 = $script:UsbipSourceHash; UninstallString = '"unins001.exe"' }
       }
-    } $fixture $usbRoot $source
+    } $fixture $usbRoot $source $(if ($fixture.PSObject.Properties['locationSuffix']) { $fixture.locationSuffix } else { '' })
     $result = Get-UsbipOwnership $usbRoot $hostRoot
     if ($result.ownership -ne $fixture.ownership) { throw "$($fixture.name): expected $($fixture.ownership), got $($result | ConvertTo-Json -Compress)" }
     if ($fixture.name -eq 'observed-full-double-install' -and -not $result.compatible) { throw 'Observed full install must be reusable' }
