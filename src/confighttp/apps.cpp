@@ -50,10 +50,13 @@ namespace confighttp::apps {
     getApps(resp_https_t response, req_https_t request) {
       if (!authenticate(response, request)) return;
 
-      sparxie::note_app_list_opened();
       print_req(request);
 
-      std::string content = sparxie::typed_apps_text(file_handler::read_file(config::stream.file_apps.c_str()));
+      std::string content;
+      {
+        std::lock_guard apps_lock(::sparxie::apps_file_mutex);
+        content = sparxie::typed_apps_text(file_handler::read_file(config::stream.file_apps.c_str()));
+      }
       web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "application/json");
       response->write(content, headers);

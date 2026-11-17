@@ -38,38 +38,53 @@ namespace sparxie {
       state_ = { { "ok", true }, { "state", "checking" }, { "jobId", generation_ }, { "retryAfterMs", kStatusRetryMs }, { "updated", 0 } };
       try {
         worker_ = std::thread([this, work = std::move(work)]() mutable {
-          json result;
-          int updated = 0;
-          int heroes = 0;
-          while (true) {
+          try {
+            json result;
+            int updated = 0;
+            int heroes = 0;
+            while (true) {
+              try {
+                result = work(cancelled_);
+                updated += result.value("updated", 0);
+                heroes += result.value("heroes", 0);
+                result["updated"] = updated;
+                result["heroes"] = heroes;
+                const auto skipped = result.find("skipped");
+                result["state"] = result.value("networkFailed", false) || (skipped != result.end() && skipped->is_array() && !skipped->empty()) ? "cached" : "ready";
+              }
+              catch (...) {
+                result = { { "ok", false }, { "state", "failed" }, { "error_code", "art_refresh_failed" }, { "updated", 0 } };
+              }
+              std::unique_lock lock(mutex_);
+              if (!stopping_ && pending_force_) {
+                work = std::move(pending_force_);
+                pending_force_ = {};
+                running_force_ = true;
+                continue;
+              }
+              if (stopping_) {
+                result["state"] = "stopped";
+              }
+              result["jobId"] = generation_;
+              state_ = std::move(result);
+              completed_.push_back(state_);
+              if (completed_.size() > kRetainedResults) {
+                completed_.pop_front();
+              }
+              break;
+            }
+          }
+          catch (...) {
+            // Nothing may escape a thread entry point. Even status bookkeeping
+            // can throw; leave a failed state when it is still possible.
             try {
-              result = work(cancelled_);
-              updated += result.value("updated", 0);
-              heroes += result.value("heroes", 0);
-              result["updated"] = updated;
-              result["heroes"] = heroes;
-              result["state"] = "ready";
+              std::lock_guard lock(mutex_);
+              state_["state"] = "failed";
+              state_["ok"] = false;
+              state_["error_code"] = "art_refresh_failed";
             }
             catch (...) {
-              result = { { "ok", false }, { "state", "failed" }, { "error_code", "art_refresh_failed" }, { "updated", 0 } };
             }
-            std::unique_lock lock(mutex_);
-            if (!stopping_ && pending_force_) {
-              work = std::move(pending_force_);
-              pending_force_ = {};
-              running_force_ = true;
-              continue;
-            }
-            if (stopping_) {
-              result["state"] = "stopped";
-            }
-            result["jobId"] = generation_;
-            state_ = std::move(result);
-            completed_.push_back(state_);
-            if (completed_.size() > kRetainedResults) {
-              completed_.pop_front();
-            }
-            break;
           }
         });
       }

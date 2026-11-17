@@ -18,6 +18,7 @@ namespace sparxie {
   namespace {
     json
     read_apps(const fs::path &path) {
+      std::lock_guard apps_lock(apps_file_mutex);
       json body = { { "apps", json::array() } };
       if (path.empty() || !fs::exists(path)) return body;
       std::ifstream in(path);

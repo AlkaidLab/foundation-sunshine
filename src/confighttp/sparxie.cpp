@@ -5,6 +5,7 @@
 #include "src/logging.h"
 #include "src/process.h"
 #include "src/sparxie/install.h"
+#include "src/sparxie/apps_file_lock.h"
 #include "src/sparxie/platform.h"
 #include "src/sparxie/runtime.h"
 #include <fstream>
@@ -39,7 +40,10 @@ namespace confighttp::sparxie {
     // The host keeps the application list in memory: a request that rewrote apps.json makes it reload once, the way the plain application routes do, so clients see the change without a restart
     void
     reload_apps(const ::sparxie::HostEnv &env) {
-      if (env.apps_writes > 0) proc::refresh(config::stream.file_apps);
+      if (env.apps_writes > 0) {
+        std::lock_guard apps_lock(::sparxie::apps_file_mutex);
+        proc::refresh(config::stream.file_apps);
+      }
     }
     bool
     ready(resp_https_t response, req_https_t request, bool with_body) {

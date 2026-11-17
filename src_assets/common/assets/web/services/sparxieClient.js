@@ -173,7 +173,7 @@ export function createClient({ get = apiJson, post = apiPostJson, put = (url, bo
         if (signal?.aborted) return 0
         raw = await request('status', { jobId })
       }
-      if (signal?.aborted || raw?.state !== 'ready' || raw.ok === false) return 0
+      if (signal?.aborted || !['ready', 'cached'].includes(raw?.state) || raw.ok === false) return 0
       return (Number(raw.updated) || 0) + (Number(raw.heroes) || 0)
     },
     /** Adds the game to Sparxie when it is not there and appends the application to the host's list: { app, index, saved, wrote, state } (state: write_back.state) */

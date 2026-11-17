@@ -92,6 +92,17 @@ TEST(ArtRefreshJob, ConcurrentRequestsShareOneJobAndFailureCanRetry) {
   EXPECT_EQ(calls.load(), 1);
   EXPECT_EQ(job.status()["state"], "ready");
   EXPECT_EQ(job.status()["updated"], 2);
+  job.request([](const std::atomic_bool &) {
+    return sparxie::json { { "ok", true }, { "updated", 1 }, { "skipped", sparxie::json::array({ "genshin-cn" }) } };
+  });
+  wait_ready();
+  EXPECT_EQ(job.status()["state"], "cached");
+  EXPECT_EQ(job.status()["updated"], 1);
+  job.request([](const std::atomic_bool &) {
+    return sparxie::json { { "ok", true }, { "networkFailed", true } };
+  });
+  wait_ready();
+  EXPECT_EQ(job.status()["state"], "cached");
   job.request([](const std::atomic_bool &) -> sparxie::json { throw std::runtime_error("test failure"); });
   wait_ready();
   EXPECT_EQ(job.status()["state"], "failed");
@@ -661,10 +672,8 @@ TEST(Host, RefreshUsesContentHashAndSkipsCustom) {
     out << apps.dump();
   }
   int background_downloads = 0;
-  int requests = 0;
   bool background_online = true;
   auto get_url = [&](const std::string &url) -> std::optional<std::string> {
-    ++requests;
     if (url.find("getGames") != std::string::npos) {
       sparxie::json body;
       body["data"]["games"][0]["biz"] = "hk4e_cn";
@@ -852,38 +861,56 @@ TEST(Host, RefreshUsesContentHashAndSkipsCustom) {
   // manual refresh. Local reconstruction must still work during this interval.
   sparxie::ArtRefreshOptions automatic;
   automatic.automatic = true;
-  const auto checked_at = automatic.now;
-  const int before_automatic = requests;
-  fs::remove(cover);
   auto restarted = env_at(root);
+  sparxie::refresh_official(restarted, get_url, decode);
+  automatic.now = std::chrono::system_clock::now();
+  const auto checked_at = automatic.now;
+  const auto metadata_path = env.host_data / "art-metadata" / "genshin-cn.json";
+  const auto last_check = [&]() {
+    sparxie::json metadata;
+    std::ifstream in(metadata_path);
+    in >> metadata;
+    return metadata.value("lastAttemptAt", std::int64_t { 0 });
+  };
+  const auto before_automatic = last_check();
+  fs::remove(cover);
   sparxie::refresh_official(restarted, get_url, decode, {}, automatic);
-  EXPECT_EQ(requests, before_automatic);
+  EXPECT_EQ(last_check(), before_automatic);
   EXPECT_TRUE(fs::exists(cover)) << "daily network throttling does not suppress local repair";
   automatic.now = checked_at + std::chrono::hours(25);
   const auto failed_get = [&](const std::string &) -> std::optional<std::string> {
-    ++requests;
     return std::nullopt;
   };
   sparxie::refresh_official(restarted, failed_get, decode, {}, automatic);
-  EXPECT_GT(requests, before_automatic);
-  const int after_failure = requests;
+  EXPECT_EQ(last_check(), 0) << "a failed check must not start the daily interval";
   automatic.now += std::chrono::minutes(1);
-  sparxie::refresh_official(restarted, failed_get, decode, {}, automatic);
-  EXPECT_EQ(requests, after_failure) << "failed checks also prevent repeated official requests";
+  sparxie::refresh_official(restarted, get_url, decode, {}, automatic);
+  EXPECT_GT(last_check(), before_automatic) << "a later visit retries a failed check";
+  automatic.now += std::chrono::hours(25);
+  const auto throwing_get = [&](const std::string &url) -> std::optional<std::string> {
+    if (url.find("getGames?launcher_id=jGHBHlcOq1") != std::string::npos) throw std::runtime_error("network failure");
+    return get_url(url);
+  };
+  EXPECT_THROW(sparxie::refresh_official(restarted, throwing_get, decode, {}, automatic), std::runtime_error);
+  EXPECT_EQ(last_check(), 0);
+  sparxie::refresh_official(restarted, get_url, decode, {}, automatic);
+  EXPECT_GT(last_check(), 0) << "an interrupted check remains eligible for retry";
+  const auto after_retry = last_check();
+  sparxie::refresh_official(restarted, get_url, decode, {}, automatic);
+  EXPECT_EQ(last_check(), after_retry) << "a successful retry starts the daily interval";
+  automatic.now += std::chrono::minutes(1);
   automatic.automatic = false;
   sparxie::refresh_official(restarted, get_url, decode, {}, automatic);
-  EXPECT_GT(requests, after_failure) << "manual checks bypass the daily interval";
-  const int after_manual = requests;
+  EXPECT_GT(last_check(), after_retry) << "manual checks bypass the daily interval";
+  const auto after_manual = last_check();
   automatic.automatic = true;
   automatic.now += std::chrono::minutes(1);
   sparxie::refresh_official(restarted, get_url, decode, {}, automatic);
-  EXPECT_EQ(requests, after_manual);
-  const auto metadata_path = env.host_data / "art-metadata" / "genshin-cn.json";
+  EXPECT_EQ(last_check(), after_manual);
   {
     sparxie::json metadata;
     std::ifstream metadata_in(metadata_path);
     metadata_in >> metadata;
-    EXPECT_EQ(metadata["sourceVersion"], version);
     EXPECT_EQ(metadata["files"][background.filename().string()]["sha256"].get<std::string>().size(), 64u);
   }
   {
@@ -892,7 +919,7 @@ TEST(Host, RefreshUsesContentHashAndSkipsCustom) {
   }
   fs::remove(cover);
   sparxie::refresh_official(restarted, get_url, decode, {}, automatic);
-  EXPECT_EQ(requests, after_manual);
+  EXPECT_EQ(last_check(), after_manual);
   EXPECT_FALSE(fs::exists(cover)) << "a hash mismatch must not publish altered cached bytes, even if the decoder accepts them";
   automatic.automatic = false;
   sparxie::refresh_official(restarted, get_url, decode, {}, automatic);
@@ -900,17 +927,16 @@ TEST(Host, RefreshUsesContentHashAndSkipsCustom) {
   automatic.automatic = true;
   fs::remove(metadata_path);
   sparxie::refresh_official(restarted, get_url, decode, {}, automatic);
-  EXPECT_GT(requests, after_manual) << "a missing per-install record is independent of other games";
+  EXPECT_GT(last_check(), 0) << "a missing per-install record is independent of other games";
   {
     std::ofstream invalid(metadata_path, std::ios::binary | std::ios::trunc);
     invalid << "not json";
   }
-  const int before_invalid = requests;
   sparxie::refresh_official(restarted, get_url, decode, {}, automatic);
-  EXPECT_GT(requests, before_invalid);
-  const int after_invalid = requests;
+  EXPECT_GT(last_check(), 0);
+  const auto after_invalid = last_check();
   sparxie::refresh_official(restarted, get_url, decode, {}, automatic);
-  EXPECT_EQ(requests, after_invalid) << "a malformed record is repaired instead of causing repeated queries";
+  EXPECT_EQ(last_check(), after_invalid) << "a malformed record is repaired instead of causing repeated queries";
   std::ifstream in(env.apps_file);
   sparxie::json after;
   in >> after;

@@ -111,19 +111,37 @@ namespace sparxie {
       ArtRefreshOptions options;
       options.automatic = !force;
       options.cancelled = [&cancelled]() { return cancelled.load(); };
-      const auto get = [&cancelled](const std::string &url) {
+      bool network_failed = false;
+      const auto get = [&cancelled, &network_failed](const std::string &url) {
         if (cancelled.load()) {
           throw std::runtime_error("Artwork refresh stopped");
         }
-        return host_http_get(url, [&cancelled]() { return cancelled.load(); });
+        try {
+          auto response = host_http_get(url, [&cancelled]() { return cancelled.load(); });
+          if (!response) network_failed = true;
+          return response;
+        }
+        catch (const std::exception &) {
+          network_failed = true;
+          return std::optional<std::string> {};
+        }
       };
-      const auto post = [&cancelled](const std::string &url, const std::string &body) {
+      const auto post = [&cancelled, &network_failed](const std::string &url, const std::string &body) {
         if (cancelled.load()) {
           throw std::runtime_error("Artwork refresh stopped");
         }
-        return host_http_post_json(url, body, [&cancelled]() { return cancelled.load(); });
+        try {
+          auto response = host_http_post_json(url, body, [&cancelled]() { return cancelled.load(); });
+          if (!response) network_failed = true;
+          return response;
+        }
+        catch (const std::exception &) {
+          network_failed = true;
+          return std::optional<std::string> {};
+        }
       };
       auto result = refresh_official(env, get, decode_art_image, post, options);
+      result.body["networkFailed"] = network_failed;
       if (env.apps_writes > 0 && !cancelled.load()) {
         std::lock_guard apps_lock(apps_file_mutex);
         proc::refresh(config::stream.file_apps);
@@ -213,20 +231,26 @@ namespace sparxie {
   }
   void
   note_host_started() {
-    request_art_refresh();
+    try {
+      request_art_refresh();
+    }
+    catch (...) {
+      BOOST_LOG(warning) << "Sparxie: could not start artwork refresh";
+    }
     // a session that was cut off by a host restart left its values written: put them back now (a game that is running keeps them until it quits)
-    std::thread([] {
-      try {
-        HostEnv env = make_host_env();
-        recover_pending_settings(env);
-      }
-      catch (const std::exception &) {
-      }
-    }).detach();
-  }
-  void
-  note_app_list_opened() {
-    request_art_refresh();
+    try {
+      std::thread([] {
+        try {
+          HostEnv env = make_host_env();
+          recover_pending_settings(env);
+        }
+        catch (...) {
+        }
+      }).detach();
+    }
+    catch (...) {
+      BOOST_LOG(warning) << "Sparxie: could not start settings recovery";
+    }
   }
   namespace {
     // the launch the next after_session belongs to

@@ -269,7 +269,9 @@ namespace sparxie {
         continue;
       }
       metadata["schemaVersion"] = 1;
-      metadata["lastAttemptAt"] = now_seconds;
+      // Clear an earlier success before trying again. A failure or interruption
+      // leaves this item eligible on the next visit, even after a restart.
+      metadata.erase("lastAttemptAt");
       const auto save_metadata = [&]() {
         const bool saved = keep_bytes(metadata_path, metadata.dump(2), true);
         if (!saved && env.warn) {
@@ -277,15 +279,12 @@ namespace sparxie {
         }
         return saved;
       };
-      // Record attempts before networking, so an offline host does not retry on
-      // every page visit. A manual request bypasses the daily check above.
       if (!save_metadata() && options.automatic) {
         skipped.push_back(item.id);
         continue;
       }
-      const auto checked_version = [&](const std::string &version) {
-        metadata["lastSuccessAt"] = now_seconds;
-        metadata["sourceVersion"] = version;
+      const auto checked = [&]() {
+        metadata["lastAttemptAt"] = now_seconds;
         save_metadata();
       };
       const auto keep_picture = [&](const fs::path &path, const std::string &bytes, bool replace = false) {
@@ -308,6 +307,7 @@ namespace sparxie {
       };
       const bool hoyo = region_row(item.game, item.region) != nullptr;
       bool background_cache_pending = false;
+      bool retry_art = false;
       // the icon (not for HoYoverse titles: their launcher API answers one): the install's own program icon, else the store's or the publisher's, else a monogram
       Rgba icon_now;
       std::string icon_label;
@@ -395,7 +395,6 @@ namespace sparxie {
         for (const auto &source : sourced) {
           ArtUrls candidate = source.resolve();
           if (candidate.background.empty()) continue;
-          checked_version(candidate.version);
           bool replace_background = false;
           // a title whose cached art is of this very version (and was made by this revision of the sources) is left alone, as for the HoYoverse posters
           if (!candidate.version.empty() && previous_version == candidate.version && previous.value("artRev", 0) == kArtRevision) {
@@ -442,6 +441,7 @@ namespace sparxie {
         }
         if (unchanged) {
           settle_icon({}, {});
+          checked();
           continue;
         }
         if (background.w == 0) {
@@ -450,6 +450,7 @@ namespace sparxie {
             if (previous_version != "placeholder" || sourced.empty()) {
               if (!sourced.empty()) skipped.push_back(item.id);
               settle_icon({}, {});
+              if (sourced.empty()) checked();
               continue;
             }
           }
@@ -459,9 +460,14 @@ namespace sparxie {
           urls.version = "placeholder";
           if (previous_version == urls.version && previous.value("artRev", 0) == kArtRevision) {
             settle_icon({}, {});
+            if (sourced.empty()) checked();
+            else skipped.push_back(item.id);
             continue;
           }
-          if (!sourced.empty()) skipped.push_back(item.id);
+          if (!sourced.empty()) {
+            skipped.push_back(item.id);
+            retry_art = true;
+          }
           label = "placeholder";
         }
         sources[item.id] = label;
@@ -508,9 +514,6 @@ namespace sparxie {
         }
         const std::string biz = biz_for(item.game, item.region);
         urls = art_urls_from_payload(games_json, basic_json, biz, item.region == "bili");
-        if (!urls.background.empty()) {
-          checked_version(urls.version);
-        }
         // A matching version is usable only when its source picture is still cached.
         // A missing or empty file needs one new download to restore the cache.
         if (!urls.version.empty() && previous_version == urls.version && previous.value("heroLogo", 0) == 1) {
@@ -520,10 +523,12 @@ namespace sparxie {
             const fs::path cover = env.covers_dir / ("sparxie-" + item.id + "-" + urls.version + ".png");
             const bool output_missing = !nonempty_file(cover) || !nonempty_file(cache / "hero.jpg") || !nonempty_file(cache / "hero-badge.jpg");
             if (!output_missing) {
+              checked();
               continue;
             }
             const auto cached_bytes = verified_picture(env, item.id, cached_background);
             if (!cached_bytes.empty() && !image_is_blank(decode(cached_bytes))) {
+              checked();
               continue;
             }
             replace_background = true;
@@ -604,6 +609,7 @@ namespace sparxie {
       }
       out << record.dump(2);
       ++updated;
+      if (!retry_art && !background_cache_pending) checked();
     }
     // The heroes: from the pictures kept in posters/<install>/, for an install fetched this run, for the national or bilibili sibling of one (they share a logo and a key art),
     // and for one whose hero.jpg is missing (a cache made before the landscape poster, or its PNG round). Nothing is fetched here, and a hero that comes out the same is not rewritten.

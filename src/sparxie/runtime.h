@@ -15,8 +15,6 @@ namespace sparxie {
   stop_art_refresh();
   void
   note_host_started();
-  void
-  note_app_list_opened();
   // Runs before an application's command starts: writes the game's settings and display for this stream (`session` is the mode the client asked
   // for) and returns the arguments to append to the command (empty for most apps).
   // Runs when the application ends (the game quit, or the stream ended and the host ended it): puts back the game settings its launch wrote. Returns at once; a thread of its

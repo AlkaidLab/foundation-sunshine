@@ -886,10 +886,11 @@ host covers directory, which is what a Moonlight client reads.
 
 Host start and application-list visits request an asynchronous refresh; there
 is no periodic timer. Existing artwork stays available while the worker checks
-for updates. Each game/region records its last attempt in
-`art-metadata/<install>.json`; automatic network checks are at least 24 hours
-apart, including after failed requests or a host restart. Manual checks update
-the same timestamp. Missing local outputs can still be rebuilt from cached
+for updates. Each game/region records its last successful check in
+`art-metadata/<install>.json`; successful automatic network checks are at least
+24 hours apart, including after a host restart. A failed or interrupted check
+can be retried on the next application-list visit. Manual checks bypass the
+interval. Missing local outputs can still be rebuilt from cached
 sources during the interval. Newly retained source images have SHA-256 and byte
 size recorded in that metadata; existing poster indexes remain in place.
 
@@ -904,8 +905,11 @@ size recorded in that metadata; existing poster indexes remain in place.
 Missing/unknown actions return 400 (`invalid_art_action`). Requests operate on
 all known games/regions. While a job is running, further refresh requests return
 its same `jobId`, `state: "checking"`, and `retryAfterMs: 2000`. On completion,
-`state: "ready"` includes `updated`, `heroes`, and `skipped`; individual source
-failures retain cached artwork and appear in `skipped`. An unexpected job failure
+`state: "ready"` includes `updated`, `heroes`, and `skipped`. If any artwork
+could not be refreshed, `state: "cached"` marks a completed job that kept the
+available cache; `networkFailed` marks a failed network request, `skipped`
+identifies games that could not be refreshed, and successful updates are still
+reported. The client stops polling in either state. An unexpected job failure
 returns `state: "failed"`, and shutdown returns `state: "stopped"`. The latest
 16 completed results are retained so a new job does not hide an earlier result.
 An unknown/evicted job returns `state: "expired"`. Status is process-local;

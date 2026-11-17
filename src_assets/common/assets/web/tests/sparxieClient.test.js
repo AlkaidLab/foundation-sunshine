@@ -274,3 +274,19 @@ test('art job failures do not pretend that artwork changed', async () => {
   const client = createClient({ post: async () => ({ ok: false, state: 'failed', updated: 1 }) })
   assert.equal(await client.refreshArt(), 0)
 })
+
+test('cached artwork stops polling and preserves other successful updates', async () => {
+  const actions = []
+  const client = createClient({
+    post: async (path, body, options) => {
+      const action = options.headers['X-Sparxie-Art-Action']
+      actions.push(action)
+      return action === 'check'
+        ? { ok: true, state: 'checking', jobId: 7 }
+        : { ok: true, state: 'cached', jobId: 7, updated: 1, skipped: ['genshin-cn'] }
+    },
+    waitForArtStatus: async () => {},
+  })
+  assert.equal(await client.refreshArt(), 1)
+  assert.deepEqual(actions, ['check', 'status'])
+})
