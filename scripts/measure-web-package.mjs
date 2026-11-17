@@ -2,6 +2,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { deflateRawSync } from 'node:zlib'
+import { realpathSync } from 'node:fs'
 import { performance } from 'node:perf_hooks'
 import { build } from 'vite'
 
@@ -9,10 +10,29 @@ const [source, destination] = process.argv.slice(2)
 if (!source || !destination) throw new Error('usage: measure-web-package.mjs SOURCE OUTPUT')
 const root = path.resolve(source)
 const output = path.resolve(destination)
-// Keep the two trees disjoint: publicDir is copied recursively by Vite, and emptyOutDir
-// would wipe a SOURCE that lives inside OUTPUT.
-const inside = (child, parent) => child === parent || child.startsWith(parent + path.sep)
-if (inside(output, root) || inside(root, output)) throw new Error('OUTPUT and SOURCE must not be the same or contain each other')
+// Keep the two trees disjoint: publicDir is copied recursively by Vite, and emptyOutDir would
+// wipe a SOURCE that lives inside OUTPUT. Compare real paths (symlinks resolved, case folded where
+// the file system ignores case) by their relative path, so a root OUTPUT and a link are caught too.
+function real(location) {
+  let head = path.resolve(location)
+  const tail = []
+  for (;;) {
+    try { head = realpathSync.native(head); break } catch {
+      const parent = path.dirname(head)
+      if (parent === head) break
+      tail.unshift(path.basename(head)); head = parent
+    }
+  }
+  return path.join(head, ...tail)
+}
+const fold = process.platform === 'win32' || process.platform === 'darwin' ? (location) => location.toLowerCase() : (location) => location
+const inside = (child, parent) => {
+  const rel = path.relative(fold(parent), fold(child))
+  return rel === '' || (rel !== '..' && !rel.startsWith('..' + path.sep) && !path.isAbsolute(rel))
+}
+if (inside(real(output), real(root)) || inside(real(root), real(output))) throw new Error('OUTPUT and SOURCE must not be the same or contain each other')
+// An exported value would move Vite's root away from SOURCE (vite.config.js) and out of the guard above.
+delete process.env.SUNSHINE_SOURCE_ASSETS_DIR
 process.chdir(root)
 const chunks = []
 const started = performance.now()
