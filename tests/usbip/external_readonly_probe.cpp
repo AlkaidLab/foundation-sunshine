@@ -1,5 +1,5 @@
 /**
- * @file tests/unit/test_usbip_external_readonly.cpp
+ * @file tests/usbip/external_readonly_probe.cpp
  * @brief Opt-in, read-only probe of the host's actual USB/IP ownership collector.
  */
 #include "src/doctor/doctor_os.h"

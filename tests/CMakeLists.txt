@@ -1697,7 +1697,7 @@ set_tests_properties(crash_unit_tests PROPERTIES TIMEOUT 120)
 
 # Explicitly invoked by read-only machine acceptance; ordinary CI has no USB/IP driver.
 add_executable(usbip_external_readonly_probe
-        ${CMAKE_SOURCE_DIR}/tests/unit/test_usbip_external_readonly.cpp
+        ${CMAKE_SOURCE_DIR}/tests/usbip/external_readonly_probe.cpp
         ${CMAKE_SOURCE_DIR}/src/doctor/doctor_os.cpp)
 target_include_directories(usbip_external_readonly_probe PRIVATE "${CMAKE_SOURCE_DIR}")
 set_target_properties(usbip_external_readonly_probe PROPERTIES CXX_STANDARD 23)
