@@ -39,6 +39,7 @@ const NO_CONTROL = Object.freeze({
   session_idle_minutes: 'new with the web login sessions (30 min default, 1..1440): the defaults suit a person, no control in the redesigned UI, set in the config file',
   session_remember_days: 'new with the web login sessions (30 days default, 1..365): the defaults suit a person, no control in the redesigned UI, set in the config file',
   session_remember_idle_minutes: 'new with the web login sessions (7 days default, 1..525600): the defaults suit a person, no control in the redesigned UI, set in the config file',
+  session_binding: 'new with Windows RDP session binding (auto or console): no control in the redesigned UI, set in the config file',
   stun_servers: 'new with the network overview (empty: the built-in list of the region, "none": off): read by the overview, no control in the redesigned UI, set in the config file',
   tray_locale: 'no control in the original UI',
   vaapi_strict_rc_buffer: 'no control in the original UI',
@@ -47,7 +48,13 @@ const NO_CONTROL = Object.freeze({
 })
 
 const source = readFileSync(new URL('../../../../../src/config.cpp', import.meta.url), 'utf8')
-const hostKeys = [...new Set([...source.matchAll(/_f\(\s*vars,\s*"([a-z0-9_]+)"/g)].map((m) => m[1]))].sort()
+// Typed configuration entries may keep their key in a shared header instead
+// of passing a string literal directly to the parser helper.
+const configBindingHeader = readFileSync(new URL('../../../../../src/config_session_binding.h', import.meta.url), 'utf8')
+const hostKeys = [...new Set([
+  ...[...source.matchAll(/_f\(\s*vars,\s*"([a-z0-9_]+)"/g)].map((m) => m[1]),
+  ...[...configBindingHeader.matchAll(/inline constexpr std::string_view key \{ "([a-z0-9_]+)" \}/g)].map((m) => m[1]),
+])].sort()
 
 test('the host config definitions are read (a guard against the pattern going stale)', () => {
   assert.ok(hostKeys.length > 100)

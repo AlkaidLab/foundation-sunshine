@@ -24,7 +24,7 @@ namespace confighttp::local_auth_token {
   bool
   write_restricted_file(const std::filesystem::path &path, std::string_view contents);
 
-  /** Refresh the Windows file ACL when the active console user changes. */
+  /** Refresh the Windows file ACL when the active user session changes. */
   void
   start_monitor();
 

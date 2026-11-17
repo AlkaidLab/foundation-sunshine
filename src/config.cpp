@@ -645,6 +645,7 @@ namespace config {
     47989,  // Base port number
     "ipv4",  // Address family
     {},  // Bind address
+    config_session_binding::mode_e::automatic,  // Interactive session binding
     file_handler::path_to_utf8(platf::appdata() / "sunshine.log"),  // log file
     false,  // restore_log - 默认不恢复日志文件
     50,  // max_log_size_mb - 默认50MB，超过自动轮转
@@ -848,6 +849,9 @@ namespace config {
   string_restricted_f(std::unordered_map<std::string, std::string> &vars, const std::string &name, std::string &input, const std::vector<std::string_view> &allowed_vals) {
     std::string temp;
     string_f(vars, name, temp);
+    const auto begin = std::find_if_not(temp.begin(), temp.end(), whitespace);
+    const auto end = std::find_if_not(temp.rbegin(), temp.rend(), whitespace).base();
+    temp.assign(begin, end);
 
     for (auto &allowed_val : allowed_vals) {
       if (temp == allowed_val) {
@@ -1681,6 +1685,17 @@ namespace config {
     string_restricted_f(vars, "address_family", sunshine.address_family, { "ipv4"sv, "both"sv });
     string_f(vars, "bind_address", sunshine.bind_address);
 
+    int session_binding_value = static_cast<int>(sunshine.session_binding);
+    int_between_f(
+      vars,
+      std::string { config_session_binding::key },
+      session_binding_value,
+      {
+        static_cast<int>(config_session_binding::mode_e::automatic),
+        static_cast<int>(config_session_binding::mode_e::console),
+      });
+    sunshine.session_binding = static_cast<config_session_binding::mode_e>(session_binding_value);
+
     bool upnp = false;
     bool_f(vars, "upnp"s, upnp);
 
@@ -2097,6 +2112,7 @@ namespace config {
 
       // 受保护的字段：由系统托盘控制，需要保留本地配置文件中的原有值
       const std::set<std::string> protectedFields = {
+        "session_binding",
         "vdd_keep_enabled",  // 由系统托盘控制，不通过Web UI修改
         "vdd_headless_create",  // 由系统托盘控制，不通过Web UI修改
         "tray_locale",  // 由系统托盘控制，不通过Web UI修改
