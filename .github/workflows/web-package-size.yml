@@ -1,0 +1,56 @@
+name: Web package size
+
+on:
+  push:
+    branches: [perf/web-package-size]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .node-version
+      - name: Install pinned dependencies
+        run: |
+          set -euo pipefail
+          sha="$(tr -d '[:space:]' < scripts/ci/foundation-ui.sha)"
+          dir="$GITHUB_WORKSPACE/../ds5-ui-m3e"
+          git init -q "$dir"
+          git -C "$dir" fetch -q --depth 1 https://github.com/AlkaidLab/foundation-ui "$sha"
+          git -C "$dir" checkout -q FETCH_HEAD
+          npm ci --prefix "$dir" --no-audit --no-fund
+          npm ci --no-audit --no-fund
+      - name: Web tests and lint
+        run: |
+          set -euo pipefail
+          npm run lint:webui
+          npm run test:webui
+      - name: Compare two production builds per arm
+        run: |
+          set -euo pipefail
+          export FOUNDATION_UI_DIR="$GITHUB_WORKSPACE/../ds5-ui-m3e"
+          base="$RUNNER_TEMP/web-package-base"
+          git fetch --no-tags --depth 1 origin ba45948e5e2d80e3e6d24fd2cabca9494be6812e
+          git worktree add --detach "$base" ba45948e5e2d80e3e6d24fd2cabca9494be6812e
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$base/node_modules"
+          node "$base/src_assets/common/assets/web/scripts/extract-welcome-locales.js"
+          npm run prebuild
+          for trial in 1 2; do
+            node scripts/measure-web-package.mjs "$base" "$RUNNER_TEMP/web-base-$trial"
+            node scripts/measure-web-package.mjs "$GITHUB_WORKSPACE" "$RUNNER_TEMP/web-candidate-$trial"
+          done
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: web-package-size
+          path: ${{ runner.temp }}/web-*.json
+          if-no-files-found: warn
