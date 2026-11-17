@@ -22,3 +22,6 @@ tests/sparxie/fixtures/sample-zzz-general-data-20261112.json -text whitespace=cr
 
 # git archive writes the commit and its refs into this file (cmake/prep/build_info.cmake reads it when there is no .git)
 cmake/prep/build_identity_archive.txt export-subst
+
+# third-party licence texts keep their upstream bytes (their SHA-256 is pinned in third_party/licenses/manifest.json)
+third_party/licenses/**/LICENSE -text
