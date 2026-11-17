@@ -46,6 +46,21 @@ if not errorlevel 1 (
     exit /b 87
 )
 
+rem ----------------------------------------------------------------------------
+rem  Same driver already active: leave it alone. A reinstall removes the device
+rem  node and re-enumerates the HID mouse for nothing. Same = exactly one
+rem  Root\ZakoVirtualMouse device, status OK, and its DEVPKEY_Device_DriverVersion
+rem  equal to the DriverVer of the bundled INF (installer-ms-inf-driverver-20261109,
+rem  installer-ms-devpkey-driverversion-20261109). Exit 2 = same, skip.
+rem ----------------------------------------------------------------------------
+set "VMOUSE_BUNDLED_INF=%DRIVER_DIR%\ZakoVirtualMouse.inf"
+set "VMOUSE_DIST_INF=%DIST_DIR%\ZakoVirtualMouse.inf"
+powershell -NoProfile -Command "try { if (-not (Test-Path -LiteralPath $env:VMOUSE_DIST_INF)) { exit 1 }; $l = Select-String -LiteralPath $env:VMOUSE_BUNDLED_INF -Pattern '^\s*DriverVer\s*=' | Select-Object -First 1; if (-not $l) { exit 1 }; $want = [version](($l.Line -split ',')[-1].Trim()); $d = @(Get-PnpDevice -InstanceId 'ROOT\HIDCLASS\*' -ErrorAction SilentlyContinue | Where-Object { $_.HardwareID -contains 'Root\ZakoVirtualMouse' }); if ($d.Count -ne 1 -or $d[0].Status -ne 'OK') { exit 1 }; $have = (Get-PnpDeviceProperty -InstanceId $d[0].InstanceId -KeyName 'DEVPKEY_Device_DriverVersion' -ErrorAction Stop).Data; Write-Output ('Installed Virtual Mouse driver ' + $have + ', bundled ' + $want); if ([version]$have -eq $want) { exit 2 } else { exit 1 } } catch { exit 1 }"
+if %ERRORLEVEL% EQU 2 (
+    echo The bundled Virtual Mouse driver version is already active; skipping the reinstall.
+    exit /b 0
+)
+
 rem Skip expensive PnP and DriverStore cleanup on a clean installation.
 set "VMOUSE_CLEANUP_REQUIRED=0"
 if exist "%DIST_DIR%\ZakoVirtualMouse.inf" set "VMOUSE_CLEANUP_REQUIRED=1"

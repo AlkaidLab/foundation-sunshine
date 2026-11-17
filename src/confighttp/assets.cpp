@@ -86,6 +86,11 @@ namespace confighttp::assets {
     }
 
     void
+    getDualSensePage(resp_https_t response, req_https_t request) {
+      getHtmlPage(response, request, "dualsense.html");
+    }
+
+    void
     getPasswordPage(resp_https_t response, req_https_t request) {
       getHtmlPage(response, request, "password.html");
     }
@@ -268,6 +273,7 @@ namespace confighttp::assets {
     server.resource["^/apps/?$"]["GET"] = getAppsPage;
     server.resource["^/downloads/?$"]["GET"] = getDownloadsPage;
     server.resource["^/config/?$"]["GET"] = getConfigPage;
+    server.resource["^/dualsense/?$"]["GET"] = getDualSensePage;
     server.resource["^/password/?$"]["GET"] = getPasswordPage;
     server.resource["^/welcome/?$"]["GET"] = getWelcomePage;
     server.resource["^/troubleshooting/?$"]["GET"] = getTroubleshootingPage;

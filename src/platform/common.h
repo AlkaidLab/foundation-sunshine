@@ -111,6 +111,7 @@ namespace platf {
     set_adaptive_triggers,  ///< Set adaptive triggers
     ds5_haptics_pcm,  ///< Authored DualSense actuator PCM (48 kHz, stereo, S16LE)
     ds5_haptics_state,  ///< Absolute actuator mode and claimed control groups
+    ds5_output_extension,  ///< Player and mute LEDs, volumes, microphone mute, routing, lightbar brightness (0x5515)
   };
 
   struct gamepad_feedback_msg_t {
@@ -162,8 +163,9 @@ namespace platf {
 
     static gamepad_feedback_msg_t
     make_ds5_haptics_pcm(std::uint16_t id, std::uint8_t flags, std::uint16_t frame_count,
-                         std::uint32_t sequence, std::uint64_t presentation_time_us,
-                         const std::uint8_t *pcm, std::size_t pcm_size) {
+      std::uint32_t sequence, std::uint64_t presentation_time_us,
+      const std::uint8_t *pcm, std::size_t pcm_size,
+      const std::uint8_t *speaker_pcm = nullptr, bool haptics_enabled = true) {
       gamepad_feedback_msg_t msg {};
       msg.type = gamepad_feedback_e::ds5_haptics_pcm;
       msg.id = id;
@@ -173,6 +175,9 @@ namespace platf {
       msg.data.ds5_haptics.presentation_time_us = presentation_time_us;
       const auto expected_size = static_cast<std::size_t>(msg.data.ds5_haptics.frame_count) * 4;
       std::copy_n(pcm, std::min(expected_size, pcm_size), msg.data.ds5_haptics.pcm.begin());
+      msg.data.ds5_haptics.haptics_enabled = haptics_enabled;
+      msg.data.ds5_haptics.has_speaker = speaker_pcm != nullptr;
+      if (speaker_pcm != nullptr) std::copy_n(speaker_pcm, expected_size, msg.data.ds5_haptics.speaker_pcm.begin());
       return msg;
     }
 
@@ -182,6 +187,19 @@ namespace platf {
       msg.type = gamepad_feedback_e::ds5_haptics_state;
       msg.id = id;
       std::copy_n(state, 8, msg.data.ds5_haptics_state.begin());
+      return msg;
+    }
+
+    static gamepad_feedback_msg_t
+    make_ds5_output_extension(std::uint16_t id, std::uint32_t valid_mask, std::uint8_t player_led_mask,
+      std::uint8_t mute_led, std::uint8_t speaker_volume, std::uint8_t headphone_volume,
+      std::uint8_t mic_volume, std::uint8_t mic_mute, std::uint8_t audio_routing,
+      std::uint8_t lightbar_brightness) {
+      gamepad_feedback_msg_t msg {};
+      msg.type = gamepad_feedback_e::ds5_output_extension;
+      msg.id = id;
+      msg.data.ds5_output_extension = { valid_mask, player_led_mask, mute_led, speaker_volume, headphone_volume,
+        mic_volume, mic_mute, audio_routing, lightbar_brightness };
       return msg;
     }
 
@@ -225,8 +243,25 @@ namespace platf {
         std::uint32_t sequence;
         std::uint64_t presentation_time_us;
         std::array<std::uint8_t, 240 * 2 * sizeof(std::int16_t)> pcm;
+        /// The pad's speaker channels (left, right per frame) of the same frames; valid when has_speaker.
+        std::array<std::uint8_t, 240 * 2 * sizeof(std::int16_t)> speaker_pcm;
+        bool has_speaker;
+        /// False when the haptics path is switched off: pcm is then silence and only the speaker part is real.
+        bool haptics_enabled;
       } ds5_haptics;
       std::array<std::uint8_t, 8> ds5_haptics_state;
+
+      struct {
+        std::uint32_t valid_mask;
+        std::uint8_t player_led_mask;
+        std::uint8_t mute_led;
+        std::uint8_t speaker_volume;
+        std::uint8_t headphone_volume;
+        std::uint8_t mic_volume;
+        std::uint8_t mic_mute;
+        std::uint8_t audio_routing;
+        std::uint8_t lightbar_brightness;
+      } ds5_output_extension;
     } data;
   };
 
@@ -344,7 +379,9 @@ namespace platf {
     int width, height;
   };
 
-  // These values must match Limelight-internal.h's SS_FF_* constants!
+  // These values must match moonlight-common-c's LI_FF_* constants. Existing
+  // low bits are frozen legacy assignments; new fork-only capabilities use
+  // the high-bit registry documented in common-c/docs/protocol-extension-registry.md.
   namespace platform_caps {
     typedef uint32_t caps_t;
 
@@ -359,6 +396,8 @@ namespace platf {
     constexpr caps_t dynamic_sdr_white = 0x100;  // Reserved legacy SDR white updates; never advertised
     constexpr caps_t remote_text_context = 0x200;  // InputPane/UIA text context updates
     constexpr caps_t host_session_state = 0x800;  // Session lock state updates (0x550E)
+    constexpr caps_t bitrate_callback = 0x4000;  // Host-to-client runtime bitrate updates (0x5506); registry: LI_FF_BITRATE_CALLBACK
+    constexpr caps_t endpoint_auto_refresh = 0x8000;  // Authenticated UDP endpoint migration v1
   };  // namespace platform_caps
 
   struct gamepad_state_t {
@@ -412,6 +451,15 @@ namespace platf {
     gamepad_id_t id;
     std::uint8_t state;
     std::uint8_t percentage;
+  };
+
+  /** @brief Headset and microphone facts reported by a DualSense client (control message 0x5516). */
+  struct gamepad_ds5_status_t {
+    gamepad_id_t id;
+    std::uint32_t valid_mask;  ///< ds5::control_extension::in_* bits
+    std::uint8_t headset_present;
+    std::uint8_t microphone_present;
+    std::uint8_t microphone_muted;
   };
 
   struct touch_input_t {
@@ -526,6 +574,10 @@ namespace platf {
     };
 
     std::optional<null_t> null;
+
+    // The device in `null` is the one chosen as the device to capture (a virtual device such as VB-CABLE), not Steam Streaming
+    // Speakers or the configured virtual sink: the stream runs on it whether or not the client plays the audio on the host
+    bool null_is_selected_device = false;
   };
 
   /**
@@ -544,9 +596,9 @@ namespace platf {
     /// Kept in sync with video::hdr_metadata::hdr10plus_percentages by a static_assert there.
     static constexpr size_t HDR10PLUS_PERCENTILES = 9;
 
-    float min_maxrgb = 0.0f;    ///< Minimum of max(R,G,B) across all pixels (nits)
-    float max_maxrgb = 0.0f;    ///< Maximum of max(R,G,B) across all pixels (nits)
-    float avg_maxrgb = 0.0f;    ///< Arithmetic mean of max(R,G,B) in linear light (nits), for HDR10+
+    float min_maxrgb = 0.0f;  ///< Minimum of max(R,G,B) across all pixels (nits)
+    float max_maxrgb = 0.0f;  ///< Maximum of max(R,G,B) across all pixels (nits)
+    float avg_maxrgb = 0.0f;  ///< Arithmetic mean of max(R,G,B) in linear light (nits), for HDR10+
     /// Arithmetic mean of the PQ-coded max(R,G,B), in normalized PQ signal space, for
     /// HDR Vivid. Accumulated per pixel by the analyzer, like avg_maxrgb, and
     /// deliberately derived from neither its result nor the histogram: PQ is concave,
@@ -567,9 +619,9 @@ namespace platf {
     float percentile_99 = 0.0f;
     /// maxRGB (nits) at each HDR10+ percentage, ordered like hdr10plus_percentages.
     float distribution_maxrgb[HDR10PLUS_PERCENTILES] = {};
-    float analysis_max_nits = 0.0f; ///< Upper luminance bound used by the analyzer
-    uint64_t sample_sequence = 0;   ///< Increments only when a new GPU readback completes
-    bool valid = false;         ///< Whether stats are available (false on first frame)
+    float analysis_max_nits = 0.0f;  ///< Upper luminance bound used by the analyzer
+    uint64_t sample_sequence = 0;  ///< Increments only when a new GPU readback completes
+    bool valid = false;  ///< Whether stats are available (false on first frame)
   };
 
   struct encode_device_t {
@@ -579,7 +631,8 @@ namespace platf {
     convert(platf::img_t &img) = 0;
 
     // Packet-level confirmation, independent of the PQ/HLG transfer function.
-    virtual void report_dolby_vision_output(bool injected, bool enabled) {}
+    virtual void
+    report_dolby_vision_output(bool injected, bool enabled) {}
 
     video::sunshine_colorspace_t colorspace;
 
@@ -876,6 +929,26 @@ namespace platf {
     sink_info() = 0;
 
     /**
+     * @brief Whether the system has no default playback device right now (Windows: nothing plugged in, enabled or virtual).
+     * @returns True only when the platform knows there is none. The stream then goes on without sound until a device appears:
+     *          see wait_for_default_output().
+     */
+    virtual bool
+    default_output_missing() {
+      return false;
+    }
+
+    /**
+     * @brief Wait for a default playback device.
+     * @param timeout Longest time to block; a device that appears (or becomes the default) ends the wait early.
+     * @returns True when a default playback device exists now. Platforms that always have one return true at once.
+     */
+    virtual bool
+    wait_for_default_output(std::chrono::milliseconds timeout) {
+      return true;
+    }
+
+    /**
      * @brief Write mono 48 kHz signed 16-bit PCM to the virtual microphone device.
      * @param samples Pointer to the PCM samples.
      * @param frame_count Number of mono frames to write.
@@ -945,6 +1018,15 @@ namespace platf {
   std::vector<std::string>
   adapter_names();
 
+#ifdef _WIN32
+  /**
+   * @brief What identifies the installed GPUs and their drivers: vendor, device, LUID and user-mode driver version of every adapter, in enumeration order.
+   * @return Empty when the adapters cannot be enumerated; the encoder probe then never reuses a previous result.
+   */
+  std::string
+  gpu_signature();
+#endif
+
   /**
    * @brief Check if GPUs/drivers have changed since the last call to this function.
    * @return `true` if a change has occurred or if it is unknown whether a change occurred.
@@ -1004,8 +1086,11 @@ namespace platf {
   bool
   system_hibernate();
 
+  /**
+   * Restart the program. `reason` is one word of src/restart_reason.h that says what asked (it is reported with the restart; an unknown word is "api").
+   */
   void
-  restart();
+  restart(std::string_view reason = "api");
 
   /**
    * @brief Set an environment variable.
@@ -1265,6 +1350,15 @@ namespace platf {
   gamepad_battery(input_t &input, const gamepad_battery_t &battery);
 
   /**
+   * @brief Pass the headset and microphone state of a DualSense client to the virtual controller.
+   * @param input The global input context.
+   * @param status The state reported with control message 0x5516. Platforms without a virtual
+   *               DualSense ignore it.
+   */
+  void
+  gamepad_ds5_status(input_t &input, const gamepad_ds5_status_t &status);
+
+  /**
    * @brief Create a new virtual gamepad.
    * @param input The global input context.
    * @param id The gamepad ID.
@@ -1275,7 +1369,7 @@ namespace platf {
    */
   int
   alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata,
-                feedback_queue_t feedback_queue, std::string_view client_gamepad);
+    feedback_queue_t feedback_queue, std::string_view client_gamepad);
   void
   free_gamepad(input_t &input, int nr);
   /**
@@ -1286,6 +1380,17 @@ namespace platf {
    */
   bool
   gamepad_is_ds5(input_t &input, int nr);
+
+  /**
+   * @brief The virtual pad type the platform created for an allocated gamepad.
+   * @param input The global platform input context.
+   * @param nr The global gamepad index.
+   * @return A gamepad_selection pad_type_* name ("ds4", "ds5", "x360"); empty
+   *         when the index is not allocated or the platform does not name its
+   *         virtual pads in that vocabulary.
+   */
+  std::string_view
+  gamepad_virtual_type(input_t &input, int nr);
 
   /**
    * @brief 检查已分配的 DualSense 音频触觉会话是否仍可用。
@@ -1304,7 +1409,7 @@ namespace platf {
   get_capabilities(std::string_view client_gamepad);
 
   /**
-   * @brief Query whether the interactive console session is locked.
+   * @brief Query whether the capture process's interactive session is locked.
    * @return The lock state, or std::nullopt when the platform cannot determine it.
    * @note Distinguishes the lock screen from other secure desktops such as UAC prompts.
    */

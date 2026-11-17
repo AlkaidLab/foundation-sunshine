@@ -34,10 +34,14 @@ namespace nvenc {
      * @brief Get input surface texture.
      * @return Input surface texture.
      */
-    virtual ID3D11Texture2D *get_input_texture() = 0;
+    ID3D11Texture2D *
+    get_input_texture() override = 0;
+
   protected:
-    bool init_library() override;
-    bool wait_for_async_event(uint32_t timeout_ms) override;
+    bool
+    init_library() override;
+    bool
+    wait_for_async_event(uint32_t timeout_ms) override;
 
   private:
     shared_dll dll;

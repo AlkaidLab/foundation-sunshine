@@ -26,18 +26,18 @@ namespace display_device::vdd_settings {
    */
   class transaction {
   public:
-    /** Snapshot the existing XML, refusing writes if it cannot be read safely. */
+    /** @brief Snapshot the existing XML, refusing writes if it cannot be read safely. */
     transaction();
-    /** Restore staged XML on a failed configuration save without throwing. */
+    /** @brief Restore staged XML on a failed configuration save without throwing. */
     ~transaction();
     transaction(const transaction &) = delete;
     transaction &
     operator=(const transaction &) = delete;
 
-    /** Write general modes/GPU only; an empty list uses the driver's fallback. */
+    /** @brief Write general modes/GPU only; an empty list uses the driver's fallback. */
     save_result
     save(std::string resArray, std::string fpsArray, std::string gpu_name);
-    /** Keep the staged XML after the Sunshine configuration has been saved. */
+    /** @brief Keep the staged XML after the Sunshine configuration has been saved. */
     void
     commit() noexcept { restore_ = false; }
 
@@ -50,10 +50,10 @@ namespace display_device::vdd_settings {
 
 #ifdef SUNSHINE_TESTS
   namespace test_support {
-    /** Require an explicit fixture path; nullopt disables writes in test builds. */
+    /** @brief Require an explicit fixture path; nullopt disables writes in test builds. */
     void
     set_settings_path(const std::optional<std::filesystem::path> &path);
-    /** Pause a staged save for deterministic concurrency tests; absent in production. */
+    /** @brief Pause a staged save for deterministic concurrency tests; absent in production. */
     void
     set_before_save_hook(std::function<void()> hook);
   }  // namespace test_support

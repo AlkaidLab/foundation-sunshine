@@ -28,7 +28,6 @@ namespace file_mapping_ws {
     session_token_validator_t validate_token,
     client_uuid_authorizer_t authorize_peer_uuid,
     file_mapping::operations::execution_context_t operations_context):
-      io_(io),
       config_(std::move(config)),
       validate_token_(std::move(validate_token)),
       authorize_peer_uuid_(std::move(authorize_peer_uuid)),
@@ -95,11 +94,11 @@ namespace file_mapping_ws {
     boost::system::error_code ec;
     ssl_ctx_.set_options(
       ssl::context::default_workarounds |
-      ssl::context::no_sslv2 |
-      ssl::context::no_sslv3 |
-      ssl::context::no_tlsv1 |
-      ssl::context::no_tlsv1_1 |
-      ssl::context::single_dh_use,
+        ssl::context::no_sslv2 |
+        ssl::context::no_sslv3 |
+        ssl::context::no_tlsv1 |
+        ssl::context::no_tlsv1_1 |
+        ssl::context::single_dh_use,
       ec);
     if (ec) {
       return fail(ec.message());

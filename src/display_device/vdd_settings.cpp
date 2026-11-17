@@ -35,7 +35,7 @@ namespace display_device::vdd_settings {
     std::function<void()> before_save_hook;
 #endif
 
-    /** Split legacy comma-separated mode lists without interpreting their values. */
+    /** @brief Split legacy comma-separated mode lists without interpreting their values. */
     std::vector<std::string>
     split(const std::string &str, char delimiter) {
       std::vector<std::string> tokens;

@@ -1,6 +1,8 @@
 import { translateFallback } from '../utils/localizedMessage.js'
-import { API_ENDPOINTS, DEFAULT_BUILT_IN_APPS, DEFAULT_MENU_CMD_NAME_KEYS } from '../utils/constants.js';
+import { API_ENDPOINTS } from '../utils/constants.js';
+import { getDefaultBuiltInApps, restoreDefaultBuiltInApps } from 'foundation-ui/apps';
 import { apiJson, apiPostJson } from '../utils/apiFetch.js';
+import { hostData } from '../composables/hostData.js';
 import { deepClone, formatError } from '../utils/helpers.js';
 import { normalizePerAppGamepadMode } from '../utils/gamepadModes.js';
 import { normalizeDlssnrConfig } from '../utils/dlssnr.js';
@@ -22,7 +24,8 @@ export class AppService {
    */
   static async getApps() {
     try {
-      const data = await apiJson(API_ENDPOINTS.APPS);
+      // through hostData: the answer is kept, so the next start of the page draws from it at once
+      const data = await hostData.refresh('apps');
       return data.apps || [];
     } catch (error) {
       console.error('获取应用列表失败:', error);
@@ -88,7 +91,7 @@ export class AppService {
    */
   static async getPlatform() {
     try {
-      const data = await apiJson(API_ENDPOINTS.CONFIG);
+      const data = await hostData.refresh('config');
       return data.platform || 'windows';
     } catch (error) {
       console.error('获取平台信息失败:', error);
@@ -98,63 +101,19 @@ export class AppService {
   }
 
   /**
-   * Get the platform default built-in apps.
+   * Get the platform default built-in apps (shared with the panel: foundation-ui/apps).
    * @param {string} platform
-   * @param {Function} [translate] i18n t(); when given, default menu command
-   *   names follow the current UI language (falls back to the English names)
+   * @param {Function} [translate] i18n t(); default menu command names follow the current UI language
    */
   static getDefaultBuiltInApps(platform, translate) {
-    const apps = cloneData(DEFAULT_BUILT_IN_APPS[platform] || []);
-    if (typeof translate !== 'function') {
-      return apps;
-    }
-
-    apps.forEach((app) => {
-      (app['menu-cmd'] || []).forEach((menuCmd) => {
-        const key = DEFAULT_MENU_CMD_NAME_KEYS[menuCmd.id];
-        const translated = key ? translate(key) : '';
-        if (translated && translated !== key) {
-          menuCmd.name = translated;
-        }
-      });
-    });
-    return apps;
+    return getDefaultBuiltInApps(platform, translate);
   }
 
   /**
    * Restore matching built-in app defaults and append missing built-in apps.
    */
   static restoreDefaultBuiltInApps(apps, platform, translate) {
-    const defaults = AppService.getDefaultBuiltInApps(platform, translate);
-    const nextApps = cloneData(Array.isArray(apps) ? apps : []);
-    let added = 0;
-    let restored = 0;
-
-    defaults.forEach((defaultApp) => {
-      const defaultName = normalizeAppName(defaultApp.name);
-      const existingIndex = nextApps.findIndex((app) => normalizeAppName(app.name) === defaultName);
-      const cleanDefault = cloneData(defaultApp);
-
-      if (existingIndex === -1) {
-        nextApps.push(cleanDefault);
-        added++;
-        return;
-      }
-
-      const currentComparable = JSON.stringify(withoutIndex(nextApps[existingIndex]));
-      const defaultComparable = JSON.stringify(cleanDefault);
-      if (currentComparable !== defaultComparable) {
-        nextApps[existingIndex] = cleanDefault;
-        restored++;
-      }
-    });
-
-    return {
-      apps: nextApps,
-      added,
-      restored,
-      changed: added + restored
-    };
+    return restoreDefaultBuiltInApps(apps, platform, translate);
   }
 
   /**

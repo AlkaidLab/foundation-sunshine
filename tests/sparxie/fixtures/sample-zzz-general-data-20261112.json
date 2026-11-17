@@ -1,0 +1,145 @@
+
+{
+    "$Type" : "MoleMole.GeneralLocalDataItem",
+    "deviceUUID" : "",
+    "userLocalDataVersionId" : "0.0.1",
+    "curAccountName"         : "",
+    "uid"                    : 0,
+    "selectedServerIndex"    : 0,
+    "DeviceLanguageType"     : -1,
+    "DeviceLanguageVoiceType" : -1,
+    "PlayerPrefs_StringContainer" : {
+        "__NAP_LAST_RES_INFO__" : "0",
+        "__NAP_LAST_DEVICE_INFO__" : "0",
+        "__NAP_LAST_DX12_VERSION__" : "32.0.16.1088"
+    },
+    "PlayerPrefs_IntContainer"    : {
+        "__NAP_LAST_DX12__" : 1,
+        "TeleportJumpUIToggleKey,UIVideoshopPageController" : 1,
+        "TeleportJumpUIToggleKey,UINewsStandPageController" : 0,
+        "TeleportJumpUIToggleKey,UICafePageController"      : 0,
+        "ResourceManagementEntrance_RedDot_From2.8"         : 1,
+        "AutoDeletePlayedContent"                           : 1,
+        "TeleportJumpUIToggleKey,UIBangbooModGaragePageController" : 0,
+        "__NAP_SHADER_WARMUP_IN_PROGRESS__"                        : 0
+    },
+    "PlayerPrefs_FloatContainer"  : {
+    },
+    "LocalUILayoutPlatform"       : 2,
+    "UILayoutManualSetRecordState" : 1,
+    "ControlChoosePopWindowRecordState" : 0,
+    "selectServerName"                  : "prod_gf_cn",
+    "SystemSettingDataMap"              : {
+        "5" : {
+            "$Type" : "MoleMole.SystemSettingLocalData",
+            "Version" : 1,
+            "Data"    : 0
+        },
+        "22003" : {
+            "$Type" : "MoleMole.SystemSettingLocalData",
+            "Version" : 0,
+            "Data"    : 1
+        },
+        "22004" : {
+            "$Type" : "MoleMole.SystemSettingLocalData",
+            "Version" : 0,
+            "Data"    : 1
+        },
+        "22005" : {
+            "$Type" : "MoleMole.SystemSettingLocalData",
+            "Version" : 0,
+            "Data"    : 1
+        },
+        "22006" : {
+            "$Type" : "MoleMole.SystemSettingLocalData",
+            "Version" : 0,
+            "Data"    : 1
+        },
+        "110"   : {
+            "$Type" : "MoleMole.SystemSettingLocalData",
+            "Version" : 0,
+            "Data"    : 1
+        },
+        "23001" : {
+            "$Type" : "MoleMole.SystemSettingLocalData",
+            "Version" : 0,
+            "Data"    : 3
+        },
+        "3"     : {
+            "$Type" : "MoleMole.SystemSettingLocalData",
+            "Version" : 0,
+            "Data"    : 0
+        },
+        "106"   : {
+            "$Type" : "MoleMole.SystemSettingLocalData",
+            "Version" : 0,
+            "Data"    : 1
+        },
+        "14"    : {
+            "$Type" : "MoleMole.SystemSettingLocalData",
+            "Version" : 0,
+            "Data"    : 1
+        },
+        "107"   : {
+            "$Type" : "MoleMole.SystemSettingLocalData",
+            "Version" : 0,
+            "Data"    : 1
+        },
+        "80"    : {
+            "$Type" : "MoleMole.SystemSettingLocalData",
+            "Version" : 0,
+            "Data"    : 1
+        },
+        "10111" : {
+            "$Type" : "MoleMole.SystemSettingLocalData",
+            "Version" : 0,
+            "Data"    : 10
+        },
+        "31006" : {
+            "$Type" : "MoleMole.SystemSettingLocalData",
+            "Version" : 0,
+            "Data"    : 1
+        },
+        "16184" : {
+            "$Type" : "MoleMole.SystemSettingLocalData",
+            "Version" : 0,
+            "Data"    : 3
+        },
+        "43"    : {
+            "$Type" : "MoleMole.SystemSettingLocalData",
+            "Version" : 0,
+            "Data"    : 1
+        },
+        "10124" : {
+            "$Type" : "MoleMole.SystemSettingLocalData",
+            "Version" : 0,
+            "Data"    : 1
+        },
+        "42"    : {
+            "$Type" : "MoleMole.SystemSettingLocalData",
+            "Version" : 0,
+            "Data"    : 2
+        },
+        "9"     : {
+            "$Type" : "MoleMole.SystemSettingLocalData",
+            "Version" : 0,
+            "Data"    : 1
+        },
+        "8"     : {
+            "$Type" : "MoleMole.SystemSettingLocalData",
+            "Version" : 0,
+            "Data"    : 1
+        }
+    },
+    "KeyboardBindingMap"                : {
+    },
+    "MouseBindingMap"                   : {
+    },
+    "GamepadBindingMap"                 : {
+    },
+    "HDRSettingRecordState"             : 0,
+    "HDRMaxLuminosityLevel"             : -1,
+    "HDRUIPaperWhiteLevel"              : -1,
+    "LastVHSStoreOpenTime"              : "11/09/2026 07:02:28",
+    "DisableBattleUIOptimization"       : false
+}

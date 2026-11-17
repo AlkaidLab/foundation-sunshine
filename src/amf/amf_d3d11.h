@@ -162,7 +162,6 @@ namespace amf {
     int hwsurfaces_in_queue = 0;
     static constexpr int HWSURFACES_IN_QUEUE_DEFAULT = 16;
     int hwsurfaces_in_queue_max = HWSURFACES_IN_QUEUE_DEFAULT;
-    bool user_configured_rate_control = false;
     bool avcodec_compat_profile = false;
     amf_avcodec_scheduler avcodec_scheduler;
 

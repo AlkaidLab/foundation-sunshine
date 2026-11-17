@@ -5,21 +5,25 @@
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 
 #include "configuration.h"
+#include "src/build_info.h"
 #include "src/config.h"
+#include "src/confighttp/apps.h"
 #include "src/globals.h"
 #include "src/confighttp/auth.h"
 #include "src/confighttp/common.h"
 #include "src/display_device/session.h"
 #include "src/display_device/to_string.h"
+#include "src/doctor/doctor_os.h"
 #include "src/file_handler.h"
 #include "src/logging.h"
 #include "src/nvenc/frame_budget.h"
 #include "src/nvhttp.h"
 #include "src/network.h"
 #include "src/platform/common.h"
+#include "src/stream.h"
+#include "src/telemetry/telemetry.h"
 #include "src/utility.h"
 #include "src/video.h"
-#include "version.h"
 #include <boost/property_tree/json_parser.hpp>
 #include <sstream>
 
@@ -43,6 +47,7 @@ namespace confighttp::configuration {
           { "address_family", config::sunshine.address_family },
           { "port", config::sunshine.port },
           { "upnp", static_cast<bool>(config::sunshine.flags[config::flag::UPNP]) },
+          { "origin_web_ui_allowed", config::nvhttp.origin_web_ui_allowed },
         } },
       };
       try {
@@ -58,6 +63,7 @@ namespace confighttp::configuration {
           { "address_family", value("address_family", "ipv4") },
           { "port", std::stoi(value("port", "47989")) },
           { "upnp", upnp == "enabled" || upnp == "true" || upnp == "1" },
+          { "origin_web_ui_allowed", value("origin_web_ui_allowed", "lan") },
         };
         for (const auto &address : net::local_addresses()) output["addresses"].push_back({ { "name", address.name }, { "address", address.address } });
       }
@@ -102,7 +108,9 @@ namespace confighttp::configuration {
       outputTree.add_child("adapters", adapters_nodes);
       outputTree.put("status", "true");
       outputTree.put("platform", SUNSHINE_PLATFORM);
-      outputTree.put("version", PROJECT_VER);
+      // The Windows build the host runs on (RtlGetVersion), for the first-run guide: the base virtual display has no HDR on Windows 10 (build 19045 at most). Left out where it is unknown.
+      if (const auto windows_build = doctor::os::windows_build()) outputTree.put("windows_build", *windows_build);
+      outputTree.put("version", build_info::version());
 
       auto vars = config::parse_config(file_handler::read_file(config::sunshine.config_file.c_str()));
       for (auto &[name, value] : vars) {
@@ -122,6 +130,9 @@ namespace confighttp::configuration {
       outputTree.put("nvidia_vsync.version", 1);
 #endif
       outputTree.put("active_encoder", video::active_encoder_name());
+      // what the encoder probe resolved the two codec settings to (0 = not probed yet, 1 = not offered, 2 = offered, 3 = offered with 10-bit)
+      outputTree.put("active_hevc_mode", video::active_hevc_mode);
+      outputTree.put("active_av1_mode", video::active_av1_mode);
       if (auto frame_budget = nvenc::get_frame_budget_report()) {
         pt::ptree budget_node;
         budget_node.put("clamped", frame_budget->clamped);
@@ -319,10 +330,28 @@ namespace confighttp::configuration {
         }
 
         // 更新配置
-        if (!config::update_full_config(fullConfig, true)) {
+        std::string previous_locale;
+        // the settings that are reported when they change (an allow-list of keys, values as enums or buckets) are compared with what was saved before
+        const auto saved_before = config::get_config_snapshot();
+        if (!config::update_full_config(fullConfig, &previous_locale, true)) {
           outputTree.put("status", "false");
           outputTree.put("error", "Failed to persist Sunshine or virtual display settings; see host log");
           return;
+        }
+        // the two telemetry choices take effect at once: what the off kind had waiting is dropped
+        telemetry::consent_changed();
+        if (saved_before) telemetry::settings_changed(*saved_before, fullConfig);
+        // the language of the host changed: the built-in applications show their names in it (a name the person changed stays)
+        const auto locale_now = fullConfig.find("locale");
+        if (locale_now != fullConfig.end() && !locale_now->second.empty() && locale_now->second != previous_locale) {
+          confighttp::apps::retitle_defaults(locale_now->second);
+        }
+
+        // The bitrate ceiling takes effect now: update_full_config set it in this process, the running sessions take it before the answer goes out (so the tray, which waits for it, can say it is applied).
+        {
+          const auto changed = stream::session::apply_host_bitrate_cap();
+          outputTree.put("max_bitrate_in_force", config::host_max_bitrate_kbps());
+          outputTree.put("sessions_updated", static_cast<int>(changed.size()));
         }
       }
       catch (std::exception &e) {

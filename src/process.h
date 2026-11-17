@@ -8,11 +8,14 @@
   #define __kernel_entry
 #endif
 
+#include <cstdint>
+#include <mutex>
 #include <optional>
 #include <unordered_map>
 
 #include <boost/process/v1.hpp>
 
+#include "client_interface.h"
 #include "config.h"
 #include "platform/common.h"
 #include "rtsp.h"
@@ -65,6 +68,7 @@ namespace proc {
     std::string working_dir;
     std::string output;
     std::string image_path;
+    client_interface::app_facts_t fs_facts;
     std::string id;
     bool elevated;
     bool auto_detach;
@@ -110,6 +114,9 @@ namespace proc {
     get_app_name(int app_id);
     std::string
     get_app_cmd(int app_id);
+    /** Return the PID of the process started for the current app, if any. */
+    std::optional<unsigned long>
+    get_running_pid() const;
     std::string
     get_last_run_app_name();
     std::optional<rtsp_stream::synthetic_hdr_config_t>
@@ -130,6 +137,19 @@ namespace proc {
     get_apps_etag() const;
 
   private:
+    /// Start and end of the application run in one place at a time: the global cancel, a new launch and the shutdown all end the running application, and two of them
+    /// walking the undo commands together read `_app` while the other replaces it. Recursive: `execute()` ends the previous run through `terminate()`.
+    /// Moving a `proc_t` (the application list is replaced on a reload) leaves the lock of the destination alone: it may be held by another thread right then.
+    struct lifecycle_mutex_t: std::recursive_mutex {
+      lifecycle_mutex_t() = default;
+      lifecycle_mutex_t(lifecycle_mutex_t &&) noexcept {}
+      lifecycle_mutex_t &
+      operator=(lifecycle_mutex_t &&) noexcept {
+        return *this;
+      }
+    };
+    lifecycle_mutex_t _lifecycle_mutex;
+
     int _app_id;
 
     std::string _apps_etag;
@@ -159,6 +179,16 @@ namespace proc {
 
   std::string
   validate_app_image_path(std::string app_image_path);
+
+  /// The file of one kind of art ("poster", "hero", "logo", "icon") of an application as it exists now; empty when the application has none (or the configured file is not an image).
+  std::string
+  app_art_asset_path(const ctx_t &app, std::string_view type);
+
+  /// The version tag of the art of an application as it is now: the configured paths' own tag plus the size and the time of every present art file, so a file replaced under
+  /// the same name is a new version. A URL poster is not statted here: resolving it can download a picture.
+  /// `quiet` (the application list tag) finds the poster without logging a missing one.
+  std::string
+  app_art_version(const ctx_t &app, bool quiet = false);
   void
   refresh(const std::string &file_name);
   std::optional<proc::proc_t>

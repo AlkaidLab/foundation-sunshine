@@ -21,6 +21,7 @@ namespace display_device::vdd_modes {
   inline std::map<std::string, std::string>
   with_mode_list_defaults(std::map<std::string, std::string> saved,
     const std::vector<std::string> &runtime_resolutions, const std::vector<std::string> &runtime_fps) {
+    /** @brief Serialize runtime defaults only when a saved list is omitted. */
     const auto fill = [&](const char *key, const auto &items) {
       if (!mode_list_or(saved, key, "").empty()) return;
       std::string list = "[";

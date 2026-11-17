@@ -51,8 +51,6 @@ export default defineConfig({
   resolve: {
     alias: {
       vue: 'vue/dist/vue.esm-bundler.js',
-      '@fortawesome/fontawesome-free': resolve('node_modules/@fortawesome/fontawesome-free'),
-      bootstrap: resolve('node_modules/bootstrap'),
     },
   },
   plugins: [
@@ -212,7 +210,6 @@ export default defineConfig({
             // 将Vue相关库分离到单独的chunk
             { name: 'vue-vendor', test: /[\\/]node_modules[\\/](vue|vue-i18n)[\\/]/ },
             // 将Bootstrap和FontAwesome分离
-            { name: 'ui-vendor', test: /[\\/]node_modules[\\/](bootstrap|@fortawesome|@popperjs)[\\/]/ },
             // 将其他第三方库分离
             { name: 'utils-vendor', test: /[\\/]node_modules[\\/](marked|nanoid|vuedraggable-es)[\\/]/ },
           ],

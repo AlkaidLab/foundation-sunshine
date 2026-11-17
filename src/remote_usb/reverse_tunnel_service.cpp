@@ -215,6 +215,21 @@ namespace remote_usb {
 
       void
       request_attach() {
+        // Release only the native DualSense bridge leftovers.  Endpoints this
+        // process is forwarding are excluded by the controller, and the
+        // native identity check keeps a real controller untouched.
+        const auto sweep = controller_.sweep_stale_ds5_ports();
+        if (!sweep.detached_ports.empty()) {
+          BOOST_LOG(info) << "Remote USB tunnel released stale USB/IP hub port(s)";
+          for (const auto port : sweep.detached_ports) {
+            BOOST_LOG(info) << "  detached port " << port;
+          }
+        }
+        if (!sweep.ok() && sweep.status != usbip_host_status::unsupported) {
+          BOOST_LOG(debug) << "Remote USB tunnel stale USB/IP sweep: " << sweep.detail;
+        }
+
+        remember_protected_endpoint(request_local_.server_endpoint);
         auto self = shared_from_this();
         attach_operation_ = controller_.attach(request_local_,
           [self](usbip_host_result result) {
@@ -239,22 +254,28 @@ namespace remote_usb {
            * detach is running. */
           auto release_slot = config_.release_device_slot;
           auto busid = slot_busid_;
+          const auto forwarded = request_local_.server_endpoint;
           if (result.binding) {
-            controller_.detach(*result.binding, [release_slot, busid](usbip_host_result detached) {
+            controller_.detach(*result.binding, [release_slot, busid, forwarded](usbip_host_result detached) {
               if (!detached.ok()) {
                 BOOST_LOG(warning) << "Remote USB tunnel detach reported: " << detached.detail;
               }
+              forget_protected_endpoint(forwarded);
               if (release_slot && !busid.empty()) {
                 release_slot(busid);
               }
             });
           }
-          else if (release_slot && !busid.empty()) {
-            release_slot(busid);
+          else {
+            forget_protected_endpoint(forwarded);
+            if (release_slot && !busid.empty()) {
+              release_slot(busid);
+            }
           }
           return;
         }
         if (!result.ok() || !result.binding) {
+          forget_protected_endpoint(request_local_.server_endpoint);
           BOOST_LOG(warning) << "Remote USB tunnel usbip attach failed: " << result.detail;
           reply_error("usbip attach failed");
           return;
@@ -416,10 +437,12 @@ namespace remote_usb {
            * then; it only reports and releases the slot. */
           auto release_slot = config_.release_device_slot;
           auto busid = slot_busid_;
-          controller_.detach(*binding_, [release_slot, busid](usbip_host_result result) {
+          const auto forwarded = binding_->server_endpoint;
+          controller_.detach(*binding_, [release_slot, busid, forwarded](usbip_host_result result) {
             if (!result.ok()) {
               BOOST_LOG(warning) << "Remote USB tunnel detach reported: " << result.detail;
             }
+            forget_protected_endpoint(forwarded);
             if (release_slot && !busid.empty()) {
               release_slot(busid);
             }

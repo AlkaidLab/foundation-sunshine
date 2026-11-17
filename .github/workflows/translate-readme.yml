@@ -15,7 +15,7 @@ permissions:
 jobs:
   translate:
     name: Regenerate docs/readme translations
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7

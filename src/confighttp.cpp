@@ -5,12 +5,14 @@
 #include "confighttp.h"
 #include "ai/http_stream.h"
 #include "config.h"
+#include "confighttp/local_auth_token.h"
 #include "confighttp/routes.h"
 #include "confighttp/types.h"
 #include "globals.h"
 #include "image_enhancement/api.h"
 #include "logging.h"
 #include "network.h"
+#include "sparxie/runtime.h"
 #include <atomic>
 #include <latch>
 #include <optional>
@@ -23,18 +25,26 @@ namespace confighttp {
   start() {
     auto shutdown_event = mail::man->event<bool>(mail::shutdown);
 
+    if (!local_auth_token::initialize()) {
+      BOOST_LOG(error) << "Local Web UI credential initialization failed; local API requests will require another credential";
+    }
+    else {
+      local_auth_token::start_monitor();
+    }
+
     auto port_https = net::map_port(PORT_HTTPS);
     auto address_family = net::af_from_enum_string(config::sunshine.address_family);
 
     https_server_t server { config::nvhttp.cert, config::nvhttp.pkey };
     register_routes(server);
+    ::sparxie::note_host_started();
     server.config.reuse_address = true;
     server.config.address = net::get_bind_address(address_family);
     server.config.port = port_https;
-    // Use a small thread pool so that a slow request handler (proxy upstream,
-    // file upload, etc.) doesn't block other web UI requests on the same
-    // single-threaded io_service.
-    server.config.thread_pool_size = 2;
+    // A health check asks for several groups at once, and each handler blocks until
+    // that group's probe budget. Two threads let one encoder probe stall every other
+    // page. Eight keeps a slow probe from taking the whole UI without a large pool.
+    server.config.thread_pool_size = 8;
     // Enforce the limit while Beast is parsing and buffering the request, before
     // individual handlers parse it. This still leaves headroom for the 10 MiB
     // base64 cover-upload endpoint.
@@ -156,8 +166,10 @@ namespace confighttp {
     // Wait for any event
     shutdown_event->view();
 
+    local_auth_token::stop_monitor();
     ai::http::shutdown_streams();
     image_enhancement::api::shutdown();
+    ::sparxie::stop_art_refresh();
     server.stop();
     if (loopback_server) {
       loopback_server->stop();

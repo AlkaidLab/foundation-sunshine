@@ -38,7 +38,7 @@ export function cycleDialogFocus(event, container, focusable) {
 }
 
 /**
- * Keep nested overlays inside the closest Bootstrap modal so its focus trap accepts them.
+ * Keep nested overlays inside the closest dialog so its focus trap accepts them.
  *
  * @param {Element | null | undefined} element Element that opened the overlay.
  * @param {string | Element} fallback Teleport target when the overlay is not nested in a modal.

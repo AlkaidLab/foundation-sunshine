@@ -17,3 +17,11 @@ if(WIN32)
 else()
     target_link_libraries(sunshine_curl INTERFACE PkgConfig::CURL)
 endif()
+
+# gzip for the session log that goes with a crash or feedback report (src/crash/crash_log.cpp). On Windows the static libcurl link line already carries -lz
+# (MSYS2 mingw-w64-ucrt-x86_64-zlib, libz.a with -static; the runtime zlib1.dll is installed for OpenSSL, cmake/packaging/windows.cmake): a second zlib
+# from find_package would be the import library next to it and the link would define every symbol twice. Elsewhere curl is linked dynamically and brings no zlib.
+if(NOT WIN32)
+    find_package(ZLIB REQUIRED)
+    target_link_libraries(sunshine_curl INTERFACE ZLIB::ZLIB)
+endif()

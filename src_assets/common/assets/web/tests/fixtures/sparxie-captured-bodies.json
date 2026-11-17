@@ -1,0 +1,366 @@
+{
+  "withSwitch": {
+    "原神触屏": {
+      "change": "input touch -> kbm",
+      "body": {
+        "name": "原神触屏",
+        "mode": "touch",
+        "settings": {},
+        "display": {
+          "mode": "follow"
+        },
+        "restore": "restore",
+        "cover": "official",
+        "image-path": "C:\\Program Files\\Sunshine\\config\\covers\\sparxie-genshin-cn-v1-badge1.png",
+        "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\genshin-cn\\hero-badge.jpg",
+        "options": {
+          "input": "kbm",
+          "fpsUnlock": false,
+          "fps": 120,
+          "bgLimit": true,
+          "bgFps": 10,
+          "priority": "normal",
+          "followPreset": false,
+          "preset30": 60,
+          "preset60": 1000,
+          "scaleOverride": false,
+          "scale": 400,
+          "isDefault": true
+        }
+      }
+    },
+    "原神": {
+      "change": "input kbm -> touch",
+      "body": {
+        "name": "原神",
+        "mode": "touch",
+        "settings": {
+          "hdr": true,
+          "vsync": true
+        },
+        "display": {
+          "mode": "follow"
+        },
+        "restore": "restore",
+        "cover": "official",
+        "image-path": "C:\\Program Files\\Sunshine\\config\\covers\\sparxie-genshin-cn-v1.png",
+        "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\genshin-cn\\hero.jpg",
+        "badge": true,
+        "options": {
+          "input": "touch",
+          "fpsUnlock": false,
+          "fps": 120,
+          "bgLimit": true,
+          "bgFps": 10,
+          "priority": "normal",
+          "followPreset": false,
+          "preset30": 60,
+          "preset60": 1000,
+          "scaleOverride": false,
+          "scale": 400,
+          "isDefault": true
+        }
+      }
+    },
+    "星铁触屏": {
+      "change": "input touch -> kbm",
+      "body": {
+        "name": "星铁触屏",
+        "mode": "touch",
+        "settings": {},
+        "display": {
+          "mode": "follow"
+        },
+        "restore": "restore",
+        "cover": "official",
+        "image-path": "C:\\Program Files\\Sunshine\\config\\covers\\sparxie-starrail-cn-v1-badge1.png",
+        "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\starrail-cn\\hero-badge.jpg",
+        "options": {
+          "input": "kbm",
+          "fpsUnlock": false,
+          "fps": 120,
+          "bgLimit": true,
+          "bgFps": 10,
+          "priority": "normal",
+          "followPreset": false,
+          "preset30": 60,
+          "preset60": 1000,
+          "scaleOverride": false,
+          "scale": 400,
+          "isDefault": true
+        }
+      }
+    },
+    "星穹铁道": {
+      "change": "input kbm -> touch",
+      "body": {
+        "name": "星穹铁道",
+        "mode": "touch",
+        "settings": {},
+        "display": {
+          "mode": "follow"
+        },
+        "restore": "restore",
+        "cover": "official",
+        "image-path": "C:\\Program Files\\Sunshine\\config\\covers\\sparxie-starrail-cn-v1.png",
+        "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\starrail-cn\\hero.jpg",
+        "badge": true,
+        "options": {
+          "input": "touch",
+          "fpsUnlock": true,
+          "fps": 120,
+          "bgLimit": true,
+          "bgFps": 10,
+          "priority": "normal",
+          "followPreset": false,
+          "preset30": 60,
+          "preset60": 1000,
+          "scaleOverride": false,
+          "scale": 400,
+          "isDefault": true
+        }
+      }
+    },
+    "绝区零触屏": {
+      "change": "input touch -> kbm",
+      "body": {
+        "name": "绝区零触屏",
+        "mode": "pc",
+        "settings": {},
+        "display": {
+          "mode": "follow"
+        },
+        "restore": "restore",
+        "cover": "official",
+        "image-path": "C:\\Program Files\\Sunshine\\config\\covers\\sparxie-zzz-cn-v1-badge1.png",
+        "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\zzz-cn\\hero-badge.jpg",
+        "options": {
+          "input": "kbm",
+          "fpsUnlock": false,
+          "fps": 120,
+          "bgLimit": true,
+          "bgFps": 10,
+          "priority": "normal",
+          "followPreset": false,
+          "preset30": 60,
+          "preset60": 1000,
+          "scaleOverride": false,
+          "scale": 400,
+          "isDefault": true
+        }
+      }
+    },
+    "绝区零": {
+      "change": "input kbm -> touch",
+      "body": {
+        "name": "绝区零",
+        "mode": "touch",
+        "settings": {},
+        "display": {
+          "mode": "follow"
+        },
+        "restore": "restore",
+        "cover": "official",
+        "image-path": "C:\\Program Files\\Sunshine\\config\\covers\\sparxie-zzz-cn-v1.png",
+        "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\zzz-cn\\hero.jpg",
+        "badge": true,
+        "options": {
+          "input": "touch",
+          "fpsUnlock": false,
+          "fps": 120,
+          "bgLimit": true,
+          "bgFps": 10,
+          "priority": "normal",
+          "followPreset": false,
+          "preset30": 60,
+          "preset60": 1000,
+          "scaleOverride": false,
+          "scale": 400,
+          "isDefault": true
+        }
+      }
+    }
+  },
+  "withoutSwitch": {
+    "原神触屏": {
+      "change": "input touch -> kbm",
+      "body": {
+        "name": "原神触屏",
+        "mode": "pc",
+        "settings": {},
+        "display": {
+          "mode": "follow"
+        },
+        "restore": "restore",
+        "cover": "official",
+        "image-path": "C:\\Program Files\\Sunshine\\config\\covers\\sparxie-genshin-cn-v1-badge1.png",
+        "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\genshin-cn\\hero-badge.jpg",
+        "options": {
+          "input": "kbm",
+          "fpsUnlock": false,
+          "fps": 120,
+          "bgLimit": true,
+          "bgFps": 10,
+          "priority": "normal",
+          "followPreset": false,
+          "preset30": 60,
+          "preset60": 1000,
+          "scaleOverride": false,
+          "scale": 400,
+          "isDefault": true
+        }
+      }
+    },
+    "原神": {
+      "change": "input kbm -> touch",
+      "body": {
+        "name": "原神",
+        "mode": "touch",
+        "settings": {
+          "hdr": true,
+          "vsync": true
+        },
+        "display": {
+          "mode": "follow"
+        },
+        "restore": "restore",
+        "cover": "official",
+        "image-path": "C:\\Program Files\\Sunshine\\config\\covers\\sparxie-genshin-cn-v1.png",
+        "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\genshin-cn\\hero.jpg",
+        "badge": true,
+        "options": {
+          "input": "touch",
+          "fpsUnlock": false,
+          "fps": 120,
+          "bgLimit": true,
+          "bgFps": 10,
+          "priority": "normal",
+          "followPreset": false,
+          "preset30": 60,
+          "preset60": 1000,
+          "scaleOverride": false,
+          "scale": 400,
+          "isDefault": true
+        }
+      }
+    },
+    "星铁触屏": {
+      "change": "input touch -> kbm",
+      "body": {
+        "name": "星铁触屏",
+        "mode": "pc",
+        "settings": {},
+        "display": {
+          "mode": "follow"
+        },
+        "restore": "restore",
+        "cover": "official",
+        "image-path": "C:\\Program Files\\Sunshine\\config\\covers\\sparxie-starrail-cn-v1-badge1.png",
+        "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\starrail-cn\\hero-badge.jpg",
+        "options": {
+          "input": "kbm",
+          "fpsUnlock": false,
+          "fps": 120,
+          "bgLimit": true,
+          "bgFps": 10,
+          "priority": "normal",
+          "followPreset": false,
+          "preset30": 60,
+          "preset60": 1000,
+          "scaleOverride": false,
+          "scale": 400,
+          "isDefault": true
+        }
+      }
+    },
+    "星穹铁道": {
+      "change": "input kbm -> touch",
+      "body": {
+        "name": "星穹铁道",
+        "mode": "touch",
+        "settings": {},
+        "display": {
+          "mode": "follow"
+        },
+        "restore": "restore",
+        "cover": "official",
+        "image-path": "C:\\Program Files\\Sunshine\\config\\covers\\sparxie-starrail-cn-v1.png",
+        "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\starrail-cn\\hero.jpg",
+        "badge": true,
+        "options": {
+          "input": "touch",
+          "fpsUnlock": true,
+          "fps": 120,
+          "bgLimit": true,
+          "bgFps": 10,
+          "priority": "normal",
+          "followPreset": false,
+          "preset30": 60,
+          "preset60": 1000,
+          "scaleOverride": false,
+          "scale": 400,
+          "isDefault": true
+        }
+      }
+    },
+    "绝区零触屏": {
+      "change": "input touch -> kbm",
+      "body": {
+        "name": "绝区零触屏",
+        "mode": "pc",
+        "settings": {},
+        "display": {
+          "mode": "follow"
+        },
+        "restore": "restore",
+        "cover": "official",
+        "image-path": "C:\\Program Files\\Sunshine\\config\\covers\\sparxie-zzz-cn-v1-badge1.png",
+        "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\zzz-cn\\hero-badge.jpg",
+        "options": {
+          "input": "kbm",
+          "fpsUnlock": false,
+          "fps": 120,
+          "bgLimit": true,
+          "bgFps": 10,
+          "priority": "normal",
+          "followPreset": false,
+          "preset30": 60,
+          "preset60": 1000,
+          "scaleOverride": false,
+          "scale": 400,
+          "isDefault": true
+        }
+      }
+    },
+    "绝区零": {
+      "change": "input kbm -> touch",
+      "body": {
+        "name": "绝区零",
+        "mode": "touch",
+        "settings": {},
+        "display": {
+          "mode": "follow"
+        },
+        "restore": "restore",
+        "cover": "official",
+        "image-path": "C:\\Program Files\\Sunshine\\config\\covers\\sparxie-zzz-cn-v1.png",
+        "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\zzz-cn\\hero.jpg",
+        "badge": true,
+        "options": {
+          "input": "touch",
+          "fpsUnlock": false,
+          "fps": 120,
+          "bgLimit": true,
+          "bgFps": 10,
+          "priority": "normal",
+          "followPreset": false,
+          "preset30": 60,
+          "preset60": 1000,
+          "scaleOverride": false,
+          "scale": 400,
+          "isDefault": true
+        }
+      }
+    }
+  }
+}

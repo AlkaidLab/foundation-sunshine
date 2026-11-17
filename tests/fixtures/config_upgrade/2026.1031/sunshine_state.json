@@ -1,0 +1,21 @@
+{
+    "root": {
+        "uniqueid": "0f8fad5b-d9cb-469f-a165-70867728950e",
+        "named_devices": [
+            {
+                "name": "Tablet",
+                "cert": "-----BEGIN CERTIFICATE-----\nMIIDGTCCAgGgAwIBAgIUf+vjDF98S2TmSst4N3hPfCPIusAwDQYJKoZIhvcNAQEL\nBQAwHDEaMBgGA1UEAwwRY29tcGF0LWNsaWVudC1vbmUwHhcNMjYxMTE0MDIyOTE4\nWhcNMzYxMTExMDIyOTE4WjAcMRowGAYDVQQDDBFjb21wYXQtY2xpZW50LW9uZTCC\nASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAM8jsErTvrjKRpJ0x2aOsliu\nHtmvbvnqq2HFHNWsbzTKHhXVmIPtwlwbbhStj22LKcuv1NPhvVdJga7tcIZSoyvN\nFOfLqCatbcd1Da5joJ6mH+H687bggpX/2n57qYDZFu7U0Y4CTV0bkdujonrciCtl\nIvj8ckaXhHB9SYhts5/6Q7YazZd/rVFZ5wz7MhtfPi3AxaFBB51j4tQ12in4GVqz\nsGV2kdxq4J2LvzDr9y/0KoyXelZAW1wV6tKP5mJkcnhXPmUcD2JUdyU85mXFNbwF\ndK82JGYN0esNVOnH0fK2cB+6C5FXH4+6aOhCK21AwLHL7Yvp0nyR9vpApLQEcRkC\nAwEAAaNTMFEwHQYDVR0OBBYEFD/+I+cZA/G3I/iSN7U+0/dPClAtMB8GA1UdIwQY\nMBaAFD/+I+cZA/G3I/iSN7U+0/dPClAtMA8GA1UdEwEB/wQFMAMBAf8wDQYJKoZI\nhvcNAQELBQADggEBAH5tEyIAkHhxcqga2rmeJrUiYus+Y+jf7LNu+VeyyrJ9hf0U\njVS4QgOxxIXPQovEh56FACPDjlszO/K5uExobbUR0ircxs5tyc62xKZ7flF/iuX0\njm9O6ZEyahvqnpEkeam3MNnHOc3PztpZBfgRl0BMyNMZY4V/BNPNJDIwPbhqOeBS\nmbTgZjIsEMRiDJNrU3WSrEW2Q28UTe4527ZAtKOh0SuclZU4GA6WUGWBzkGmFvO/\nXuWf3Gim70jFdA6i6x1BkWkX/TE/XaE91Z8GNBFKjHlZj02dySyx8MIXHjkeWBCx\nqdv/cKlofxsOBPRypKn5OyEWyoHLClkUW2vxJPE=\n-----END CERTIFICATE-----",
+                "uuid": "8f14e45f-ceea-467a-9e4a-2b1f6f0a1c11",
+                "enabled": true,
+                "last_session_ended": 1700000000
+            },
+            {
+                "name": "Phone",
+                "cert": "-----BEGIN CERTIFICATE-----\nMIIDGTCCAgGgAwIBAgIUdUSGYKldlyMk/lenUlksVRDKz4cwDQYJKoZIhvcNAQEL\nBQAwHDEaMBgGA1UEAwwRY29tcGF0LWNsaWVudC10d28wHhcNMjYxMTE0MDIyOTE4\nWhcNMzYxMTExMDIyOTE4WjAcMRowGAYDVQQDDBFjb21wYXQtY2xpZW50LXR3bzCC\nASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAMHGTi7irZh+jwWluOC4jOGO\nylU/hCaUitfpz/f4Jts1p+StY49e64MDzDlp1jbKmfWVsPXKgUqB3ykHsA6r0IU/\nNyAngNJUsZM9NjSFtFR3Py8xmQ7tOcsNTIPbwDxUM+I4ji4AmnT6w34tfS4UmmfL\nlU6AVkp8qJso7J8S11H/s25QRlsaRedAU+8k+Qde9+6g4J/pJaYHSQAYMQD3CdBz\nGM/YJ6H8NYWttuGoHRGTeuCJSUAc8KrqTfQjZ6GbNVDtPzJImt6EJ3zbT+H0Oc3Z\nEvVRXyrgrNP631nBq8aF9Bx8U1gsUHtwDdhYZ3ga6RkCPIixhFISWKtJQhan7V8C\nAwEAAaNTMFEwHQYDVR0OBBYEFJ3EJ/TqCq85ZRgC8wkJmF6jJLIXMB8GA1UdIwQY\nMBaAFJ3EJ/TqCq85ZRgC8wkJmF6jJLIXMA8GA1UdEwEB/wQFMAMBAf8wDQYJKoZI\nhvcNAQELBQADggEBAB3ItyMlHc3DtNrMhjpMImU11v9BIYj1ztI95i/F+UciZKJY\n2g33m5R/o9ZWhgA7uVEM34QsUUs6u55SXKpAThQltzbqX5+fufCua+BpMqBymqOc\nVPXZkGYqBWW3YpFxgUQPpvqwxFvrrpc8ANZmWg2PcrlOkqFXdjwtajejEvtgHEvR\n2caq9hFCZvLt/E0muy/HhCN25uz5G63Waly4sMMZT+saum2KoE8I5YPF9MWu5OD0\n/XpX2a/V6PSTZnHSIYwxPe3MUgn56Z2LWWUJMuwqhAfNZQonNjPUx8REPY9uZ2t+\nfTJQS5ywFcrTaNuWjpHtHnJ2Z8OMLhAnpsQOLlU=\n-----END CERTIFICATE-----",
+                "uuid": "c9f0f895-fb98-4b8f-9a15-2b2b0b6c3d22",
+                "enabled": false,
+                "last_session_ended": 1700000200
+            }
+        ]
+    }
+}

@@ -73,10 +73,13 @@ namespace nvhttp::stream_start {
       explicit temporary_video_config_t(config::video_t replacement):
           original_config { config::video } {
         config::video = std::move(replacement);
+        // A probe made with the replacement options must not be reused by a launch with the real ones, nor the other way round.
+        video::forget_encoder_probe_result();
       }
 
       ~temporary_video_config_t() {
         config::video = std::move(original_config);
+        video::forget_encoder_probe_result();
       }
 
       temporary_video_config_t(const temporary_video_config_t &) = delete;
@@ -713,6 +716,10 @@ namespace nvhttp::stream_start {
         touch_effective = launch_session.touch_keyboard == 1;
       }
       touch_kb::start_session(touch_effective);
+      // The same intent tells an application what the launching client is: Sparxie's Endfield session follows it for its automatic input
+      // (a touch-family client that did not declare an intent counts as a touch device here, without the keyboard group)
+      const bool touch_client = touch_effective || (launch_session.touch_keyboard < 0 && launch_session.touch_family);
+      launch_session.env["SUNSHINE_CLIENT_TOUCH"] = touch_client ? "true" : "false";
     }
 #endif
     auto_recovery_result_t recovery_result;

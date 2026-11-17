@@ -128,18 +128,26 @@
     },
     "macos-enhanced": {
       "captions": [
-        "Régler la luminosité, les couleurs et l’image",
-        "Saisie locale, adaptation des raccourcis et commandes du trackpad",
-        "Égaliseur, correction du casque et options surround",
-        "Régler l’image, le son et l’hôte pendant le streaming"
+        "HDR sur les écrans compatibles",
+        "Commandes de bureau familières",
+        "Synchroniser textes et images",
+        "Transmettre la voix locale au PC de jeu",
+        "Accéder aux dossiers partagés de l’hôte",
+        "Régler le streaming et le mode de souris",
+        "Host haptics, adaptive triggers, lightbar colour and gyroscope",
+        "Saisie locale, adaptation des raccourcis et commandes du trackpad"
       ],
       "description": "Profitez d’une interface Mac native, de la saisie locale et du trackpad. Réglez l’image HDR, le son du casque et les paramètres du streaming.",
       "detail": "Client natif amélioré pour macOS",
       "features": [
-        "Réglages HDR et couleurs",
-        "Saisie Mac et trackpad",
-        "Réglages casque et audio",
-        "Commandes en cours de streaming"
+        "Image HDR",
+        "Clavier et manettes",
+        "Presse-papiers bidirectionnel",
+        "Microphone distant",
+        "Fichiers partagés de l’hôte",
+        "Commandes en cours de streaming",
+        "DualSense haptics, triggers and motion",
+        "Saisie Mac et trackpad"
       ],
       "name": "macOS",
       "note": "macOS 12+, Apple Silicon et Intel. Le presse-papiers, le microphone et les commandes de l’hôte nécessitent sa prise en charge.",
@@ -197,6 +205,7 @@
     "downloadAddress": "Adresse de téléchargement",
     "enhanced": "Améliorée",
     "failed": "Le code QR est indisponible. Utilisez le bouton de téléchargement.",
+    "filesFailed": "La liste des téléchargements n’a pas pu être lue",
     "friendLink": "Lien partenaire",
     "getApp": "Obtenir l’application",
     "mirror": "Téléchargement alternatif",

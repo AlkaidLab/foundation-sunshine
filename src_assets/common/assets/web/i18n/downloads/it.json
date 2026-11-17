@@ -128,18 +128,26 @@
     },
     "macos-enhanced": {
       "captions": [
-        "Regola luminosità, colore e presentazione video",
-        "Metodi di input locali, adattamento scorciatoie e trackpad",
-        "Equalizzatore, correzione cuffie e opzioni surround",
-        "Regola video, audio e host durante lo streaming"
+        "HDR su schermi compatibili",
+        "Comandi desktop familiari",
+        "Sincronizza testo e immagini",
+        "Invia la voce locale al PC da gioco",
+        "Accedi alle cartelle condivise dell’host",
+        "Regola streaming e modalità del mouse",
+        "Host haptics, adaptive triggers, lightbar colour and gyroscope",
+        "Metodi di input locali, adattamento scorciatoie e trackpad"
       ],
       "description": "Migliora lo streaming con un’interfaccia Mac nativa, input di testo locale e trackpad. Regola HDR, audio delle cuffie e impostazioni dello streaming.",
       "detail": "Client nativo potenziato per macOS",
       "features": [
-        "Controlli HDR e colore",
-        "Input Mac e trackpad",
-        "Regolazione cuffie e audio",
-        "Controlli durante lo streaming"
+        "Video HDR",
+        "Tastiera e controller",
+        "Appunti bidirezionali",
+        "Microfono remoto",
+        "File condivisi dell’host",
+        "Controlli durante lo streaming",
+        "DualSense haptics, triggers and motion",
+        "Input Mac e trackpad"
       ],
       "name": "macOS",
       "note": "macOS 12+, Apple Silicon e Intel. Appunti, microfono e controlli dell’host richiedono il supporto dell’host.",
@@ -197,6 +205,7 @@
     "downloadAddress": "Indirizzo di download",
     "enhanced": "Potenziata",
     "failed": "Il codice QR non è disponibile. Usa il pulsante di download.",
+    "filesFailed": "Impossibile leggere l’elenco dei download",
     "friendLink": "Link partner",
     "getApp": "Ottieni app",
     "mirror": "Download alternativo",

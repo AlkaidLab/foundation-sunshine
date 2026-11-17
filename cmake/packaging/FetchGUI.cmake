@@ -7,7 +7,7 @@
 # Configuration (CMake cache variables):
 #   FETCH_GUI             — Enable/disable GUI download (default: ON)
 #   GUI_VERSION           — Release tag to download (e.g. v0.4.38)
-#   GUI_REPO              — GitHub repo (default: qiin2333/sunshine-control-panel)
+#   GUI_REPO              — GitHub repo (default: AlkaidLab/foundation-panel)
 #   GUI_ASSET_NAME        — Release ZIP asset name
 #   GUI_DIR               — GUI bundle directory; with FETCH_GUI=OFF, use a locally built bundle
 #
@@ -23,7 +23,7 @@ endif()
 option(FETCH_GUI "Download pre-built GUI from GitHub Releases" ON)
 
 set(GUI_VERSION "latest" CACHE STRING "Sunshine GUI release tag (or 'latest')")
-set(GUI_REPO "qiin2333/sunshine-control-panel" CACHE STRING "GUI GitHub repository")
+set(GUI_REPO "AlkaidLab/foundation-panel" CACHE STRING "GUI GitHub repository")
 set(GUI_ASSET_NAME "sunshine-gui-windows-x64.zip" CACHE STRING "Sunshine GUI bundle asset name")
 set(GUI_DIR "${CMAKE_BINARY_DIR}/_gui" CACHE PATH "GUI binary directory")
 
