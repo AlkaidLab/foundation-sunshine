@@ -261,9 +261,17 @@ namespace sparxie {
     // One HTTPS round trip of the art refresh. Bounded in every way a launcher's server could stall or flood it: timeouts (resolve, connect, send, receive), HTTPS
     // only, the redirect limit of WinHTTP, a 200 answer only, gzip/deflate answered decoded (Kuro's index files are gzip) and at most kMaxBody bytes.
     constexpr std::size_t kMaxBody = 32u * 1024u * 1024u;
+    constexpr auto kHttpTotalTimeout = std::chrono::seconds(60);
 
     std::optional<std::string>
-    http_request(const wchar_t *method, const std::string &url, const std::string *json_body) {
+    http_request(const wchar_t *method, const std::string &url, const std::string *json_body, const std::function<bool()> &cancelled) {
+      const auto deadline = std::chrono::steady_clock::now() + kHttpTotalTimeout;
+      const auto interrupted = [&]() {
+        return (cancelled && cancelled()) || std::chrono::steady_clock::now() >= deadline;
+      };
+      if (interrupted()) {
+        return std::nullopt;
+      }
       const std::wstring wide = widen(url);
       URL_COMPONENTS parts {};
       parts.dwStructSize = sizeof(parts);
@@ -285,30 +293,38 @@ namespace sparxie {
         DWORD decompress = WINHTTP_DECOMPRESSION_FLAG_ALL;
         WinHttpSetOption(request, WINHTTP_OPTION_DECOMPRESSION, &decompress, sizeof(decompress));
         const wchar_t json_headers[] = L"Content-Type: application/json\r\n";
-        if (json_body)
+        if (json_body) {
           ok = WinHttpSendRequest(request, json_headers, static_cast<DWORD>(-1), const_cast<char *>(json_body->data()), static_cast<DWORD>(json_body->size()), static_cast<DWORD>(json_body->size()), 0);
-        else
+        }
+        else {
           ok = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
-        ok = ok && WinHttpReceiveResponse(request, nullptr);
+        }
+        ok = ok && !interrupted() && WinHttpReceiveResponse(request, nullptr);
       }
-      if (ok) {
+      if (ok && !interrupted()) {
         DWORD status = 0;
         DWORD size = sizeof(status);
         ok = WinHttpQueryHeaders(request, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER, WINHTTP_HEADER_NAME_BY_INDEX, &status, &size, WINHTTP_NO_HEADER_INDEX) && status == 200;
       }
-      if (ok) {
+      if (ok && !interrupted()) {
         auto received = read_http_body(kMaxBody,
-          [request](std::uint32_t &available) {
+          [request, &interrupted](std::uint32_t &available) {
+            if (interrupted()) {
+              return false;
+            }
             DWORD value = 0;
             const bool success = WinHttpQueryDataAvailable(request, &value) != FALSE;
             available = value;
-            return success;
+            return success && !interrupted();
           },
-          [request](char *buffer, std::uint32_t available, std::uint32_t &received) {
+          [request, &interrupted](char *buffer, std::uint32_t available, std::uint32_t &received) {
+            if (interrupted()) {
+              return false;
+            }
             DWORD value = 0;
             const bool success = WinHttpReadData(request, buffer, available, &value) != FALSE;
             received = value;
-            return success;
+            return success && !interrupted();
           });
         if (received) {
           body = std::move(*received);
@@ -320,19 +336,19 @@ namespace sparxie {
       if (request) WinHttpCloseHandle(request);
       if (connect) WinHttpCloseHandle(connect);
       WinHttpCloseHandle(session);
-      if (!ok) return std::nullopt;
+      if (!ok || interrupted()) return std::nullopt;
       return body;
     }
   }  // namespace
 
   std::optional<std::string>
-  host_http_get(const std::string &url) {
-    return http_request(L"GET", url, nullptr);
+  host_http_get(const std::string &url, const std::function<bool()> &cancelled) {
+    return http_request(L"GET", url, nullptr, cancelled);
   }
 
   std::optional<std::string>
-  host_http_post_json(const std::string &url, const std::string &json_body) {
-    return http_request(L"POST", url, &json_body);
+  host_http_post_json(const std::string &url, const std::string &json_body, const std::function<bool()> &cancelled) {
+    return http_request(L"POST", url, &json_body, cancelled);
   }
   Rgba
   decode_image_wic(std::string_view bytes, std::string *diagnostic, bool *component_init_failed) {
@@ -535,9 +551,9 @@ namespace sparxie {
   std::vector<BrowseEntry>
   host_list_roots() { return { { "/", "/", "drive", false } }; }
   std::optional<std::string>
-  host_http_get(const std::string &) { return std::nullopt; }
+  host_http_get(const std::string &, const std::function<bool()> &) { return std::nullopt; }
   std::optional<std::string>
-  host_http_post_json(const std::string &, const std::string &) { return std::nullopt; }
+  host_http_post_json(const std::string &, const std::string &, const std::function<bool()> &) { return std::nullopt; }
   Rgba
   host_decode_image(std::string_view, std::string *) { return {}; }
   Rgba

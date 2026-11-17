@@ -192,7 +192,9 @@ main(int argc, char **argv) {
       emit({ { "command", "scan" }, { "detected", listed.body.value("detected", sparxie::json::array()) } });
       return listed.status.ok ? 0 : 1;
     }
-    const auto refreshed = sparxie::refresh_official(env, sparxie::host_http_get, [](std::string_view bytes) { return sparxie::host_decode_image(bytes); }, sparxie::host_http_post_json);
+    const auto get = [](const std::string &url) { return sparxie::host_http_get(url); };
+    const auto post = [](const std::string &url, const std::string &body) { return sparxie::host_http_post_json(url, body); };
+    const auto refreshed = sparxie::refresh_official(env, get, [](std::string_view bytes) { return sparxie::host_decode_image(bytes); }, post);
     emit({ { "command", "refresh" }, { "report", refreshed.body } });
     return refreshed.status.ok ? 0 : 1;
   }

@@ -1,5 +1,6 @@
 #include "src/sparxie/art_sources.h"
 #include "src/sparxie/host.h"
+#include "src/sparxie/apps_file_lock.h"
 #include "src/sparxie/icon_file.h"
 #include "src/sparxie/svg_path.h"
 #include "src/sparxie/region.h"
@@ -210,7 +211,12 @@ namespace sparxie {
     };
     for (const auto &install : list_games(env).body.value("detected", json::array()))
       add(install.value("id", std::string()), install.value("game", std::string()), install.value("region", std::string()), install.value("dir", std::string()), install.value("exe", std::string()));
-    for (const auto &app : read_apps_file(env.apps_file).value("apps", json::array())) {
+    json apps_snapshot;
+    {
+      std::lock_guard apps_lock(apps_file_mutex);
+      apps_snapshot = read_apps_file(env.apps_file);
+    }
+    for (const auto &app : apps_snapshot.value("apps", json::array())) {
       if (!app.contains("sparxie") || !app["sparxie"].is_object()) continue;
       const json &block = app["sparxie"];
       add(block.value("install", std::string()), block.value("game", std::string()), block.value("region", std::string()));
@@ -283,6 +289,11 @@ namespace sparxie {
         save_metadata();
       };
       const auto keep_picture = [&](const fs::path &path, const std::string &bytes, bool replace = false) {
+        // Reusing an existing file must never turn a hash mismatch into a new
+        // trusted hash. Replace it with the freshly downloaded bytes instead.
+        if (!replace && nonempty_file(path) && verified_picture(env, item.id, path).empty()) {
+          replace = true;
+        }
         if (!keep_bytes(path, bytes, replace)) {
           return false;
         }

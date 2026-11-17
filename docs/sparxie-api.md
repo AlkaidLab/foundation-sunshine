@@ -896,7 +896,9 @@ size recorded in that metadata; existing poster indexes remain in place.
 `POST /api/sparxie/art/refresh` uses the required `X-Sparxie-Art-Action` header:
 
 - `check`: start an automatic check, respecting each install's interval.
-- `force`: check immediately, bypassing the interval.
+- `force`: check immediately, bypassing the interval. If an automatic check is
+  already running, coalesce force requests into one forced pass after it; the
+  same job remains in `checking` until that pass finishes.
 - `status`: send `{ "jobId": 1 }` to read that job without starting work or contacting sources.
 
 Missing/unknown actions return 400 (`invalid_art_action`). Requests operate on
@@ -908,7 +910,10 @@ returns `state: "failed"`, and shutdown returns `state: "stopped"`. The latest
 16 completed results are retained so a new job does not hide an earlier result.
 An unknown/evicted job returns `state: "expired"`. Status is process-local;
 after a restart it starts as `idle`. All these status responses
-use HTTP 200. A page can poll `status` while checking and reread games/apps when
+use HTTP 200. Source requests have per-operation timeouts and a 60-second total
+deadline checked between reads; cancellation is checked between operations, so
+shutdown may still wait for a single in-progress WinHTTP operation to time out.
+A page can poll `status` while checking and reread games/apps when
 ready; polling must stop on page disposal and is bounded by the client.
 
 `PUT /api/sparxie/apps/{index}/cover` with `{ "cover": "official" }` or

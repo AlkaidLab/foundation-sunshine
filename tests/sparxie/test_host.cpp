@@ -127,6 +127,34 @@ TEST(ArtRefreshJob, ShutdownCancelsAndJoinsTheWorkerAndRejectsNewWork) {
   EXPECT_FALSE(ran);
 }
 
+TEST(ArtRefreshJob, ForceRequestsDuringAutomaticCheckAreCoalescedAndRunAfterIt) {
+  sparxie::ArtRefreshJob job;
+  std::promise<void> started;
+  std::promise<void> release;
+  auto gate = release.get_future().share();
+  std::atomic<int> forced { 0 };
+  auto automatic = job.request([&](const std::atomic_bool &) {
+    started.set_value();
+    gate.wait();
+    return sparxie::json { { "ok", true }, { "updated", 1 } };
+  });
+  ASSERT_EQ(started.get_future().wait_for(std::chrono::seconds(5)), std::future_status::ready);
+  auto force = [&](const std::atomic_bool &) {
+    ++forced;
+    return sparxie::json { { "ok", true }, { "updated", 2 } };
+  };
+  EXPECT_EQ(job.request(force, true)["jobId"], automatic["jobId"]);
+  EXPECT_EQ(job.request(force, true)["jobId"], automatic["jobId"]);
+  release.set_value();
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (job.status()["state"] == "checking" && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::yield();
+  }
+  EXPECT_EQ(forced.load(), 1);
+  EXPECT_EQ(job.status()["state"], "ready");
+  EXPECT_EQ(job.status()["updated"], 3);
+}
+
 TEST(Art, VersionWindowScheduleAndCompose) {
   EXPECT_EQ(sparxie::art_version_of("https://cdn.example/a/abc123def.webp?x=1"), "abc123def");
   sparxie::Rgba background = solid(90, 60, 0, 0, 0);
@@ -726,10 +754,20 @@ TEST(Host, RefreshUsesContentHashAndSkipsCustom) {
     }
     EXPECT_FALSE(temp_left) << "an atomic cache write leaves no temp files behind";
   }
+  const fs::path logo = cache / (version + "-logo.bin");
+  ASSERT_TRUE(fs::exists(logo));
+  {
+    std::ofstream altered_logo(logo, std::ios::binary | std::ios::trunc);
+    altered_logo << "altered-but-decodable";
+  }
   fs::remove(background);
   sparxie::refresh_official(env, get_url, decode);
   EXPECT_EQ(background_downloads, first_downloads + 2);
   EXPECT_TRUE(fs::is_regular_file(background)) << "a missing background is downloaded again";
+  {
+    std::ifstream repaired_logo(logo, std::ios::binary);
+    EXPECT_EQ(std::string((std::istreambuf_iterator<char>(repaired_logo)), std::istreambuf_iterator<char>()), "img") << "a mismatched cached logo is replaced instead of trusting its altered hash";
+  }
   sparxie::refresh_official(env, get_url, decode);
   EXPECT_EQ(background_downloads, first_downloads + 2);
   {

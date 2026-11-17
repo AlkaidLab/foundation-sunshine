@@ -18,6 +18,7 @@
 #include "src/platform/run_command.h"
 #include "src/process.h"
 #include "src/sparxie/runtime.h"
+#include "src/sparxie/apps_file_lock.h"
 #include "src/utility.h"
 #include <atomic>
 #include <chrono>
@@ -77,6 +78,7 @@ namespace confighttp::apps {
         return;
       }
       auto writing_guard = util::fail_guard([]() { apps_writing = false; });
+      std::lock_guard apps_lock(::sparxie::apps_file_mutex);
 
       std::stringstream ss;
       ss << request->content.rdbuf();
@@ -202,6 +204,7 @@ namespace confighttp::apps {
         return;
       }
       auto writing_guard = util::fail_guard([]() { apps_writing = false; });
+      std::lock_guard apps_lock(::sparxie::apps_file_mutex);
 
       pt::ptree outputTree;
       auto g = util::fail_guard([&]() {
@@ -292,6 +295,7 @@ namespace confighttp::apps {
         return;
       }
       auto writing_guard = util::fail_guard([]() { apps_writing = false; });
+      std::lock_guard apps_lock(::sparxie::apps_file_mutex);
 
       pt::ptree outputTree;
       auto g = util::fail_guard([&]() {
@@ -823,6 +827,7 @@ namespace confighttp::apps {
       return;
     }
     auto writing_guard = util::fail_guard([]() { apps_writing = false; });
+    std::lock_guard apps_lock(::sparxie::apps_file_mutex);
     if (default_apps::retitle_file(config::stream.file_apps, locale)) {
       proc::refresh(config::stream.file_apps);
     }

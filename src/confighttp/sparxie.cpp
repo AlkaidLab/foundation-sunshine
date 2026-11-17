@@ -420,6 +420,5 @@ namespace confighttp::sparxie {
       // profiles that failed saves of an earlier build left in Sparxie's config go (its config is backed up first)
       if (const int removed = ::sparxie::remove_orphan_profiles(env); removed > 0) BOOST_LOG(info) << "Sparxie: removed " << removed << " profile(s) that no application uses";
     }
-    ::sparxie::note_host_started();
   }
 }  // namespace confighttp::sparxie

@@ -1,5 +1,6 @@
 #include "src/sparxie/runtime.h"
 #include "src/sparxie/art_refresh_job.h"
+#include "src/sparxie/apps_file_lock.h"
 #include "src/config.h"
 #include "src/display_device/display_device.h"
 #include "src/log_text.h"
@@ -114,20 +115,21 @@ namespace sparxie {
         if (cancelled.load()) {
           throw std::runtime_error("Artwork refresh stopped");
         }
-        return host_http_get(url);
+        return host_http_get(url, [&cancelled]() { return cancelled.load(); });
       };
       const auto post = [&cancelled](const std::string &url, const std::string &body) {
         if (cancelled.load()) {
           throw std::runtime_error("Artwork refresh stopped");
         }
-        return host_http_post_json(url, body);
+        return host_http_post_json(url, body, [&cancelled]() { return cancelled.load(); });
       };
       auto result = refresh_official(env, get, decode_art_image, post, options);
       if (env.apps_writes > 0 && !cancelled.load()) {
+        std::lock_guard apps_lock(apps_file_mutex);
         proc::refresh(config::stream.file_apps);
       }
       return result.body;
-    });
+    }, force);
   }
   json
   art_refresh_status(std::uint64_t job_id) {

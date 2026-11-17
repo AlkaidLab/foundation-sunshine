@@ -37,6 +37,7 @@ namespace confighttp {
 
     https_server_t server { config::nvhttp.cert, config::nvhttp.pkey };
     register_routes(server);
+    ::sparxie::note_host_started();
     server.config.reuse_address = true;
     server.config.address = net::get_bind_address(address_family);
     server.config.port = port_https;

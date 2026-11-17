@@ -1,4 +1,5 @@
 #include "src/sparxie/host.h"
+#include "src/sparxie/apps_file_lock.h"
 #include "src/sparxie/hoyo_settings.h"
 #include "src/sparxie/install.h"
 #include "src/sparxie/platform.h"
@@ -606,6 +607,7 @@ namespace sparxie {
     // the index of the new application, or -1 when the list could not be saved
     int
     append_app(HostEnv &env, const json &app) {
+      std::lock_guard apps_lock(apps_file_mutex);
       json apps = read_apps(env.apps_file);
       apps["apps"].push_back(app);
       if (!commit_apps(env, apps)) return -1;
@@ -1195,6 +1197,7 @@ namespace sparxie {
   }
   ApiResult
   update_app_in(HostEnv &env, int index, const json &request, std::string &made) {
+    std::lock_guard apps_lock(apps_file_mutex);
     ApiResult result;
     json apps = read_apps(env.apps_file);
     if (index < 0 || index >= static_cast<int>(apps["apps"].size()) || !apps["apps"][index].contains("sparxie") || !apps["apps"][index]["sparxie"].is_object()) {
@@ -1377,6 +1380,7 @@ namespace sparxie {
       if (!posters.hero.empty()) made["hero"] = posters.hero.string();
       created.push_back(std::move(made));
     }
+    std::lock_guard apps_lock(apps_file_mutex);
     json apps = read_apps(env.apps_file);
     for (const auto &app : created) apps["apps"].push_back(app);
     commit_apps(env, apps);
@@ -1427,6 +1431,7 @@ namespace sparxie {
   }
   ApiResult
   write_game_settings_for(HostEnv &env, const json &request) {
+    std::lock_guard apps_lock(apps_file_mutex);
     ApiResult result;
     std::string install_id = request.value("install", std::string());
     const json apps = read_apps(env.apps_file);
@@ -1472,6 +1477,7 @@ namespace sparxie {
   }
   ApiResult
   set_cover(HostEnv &env, int index, const std::string &cover) {
+    std::lock_guard apps_lock(apps_file_mutex);
     ApiResult result;
     if (cover != "official" && cover != "custom") {
       result.status = Status::fail(400, "invalid_input", "cover must be official or custom");
@@ -1528,6 +1534,7 @@ namespace sparxie {
       std::ofstream icon_out(env.host_data / "posters" / install_id / "icon.png", std::ios::binary);
       icon_out.write(reinterpret_cast<const char *>(icon_png.data()), static_cast<std::streamsize>(icon_png.size()));
     }
+    std::lock_guard apps_lock(apps_file_mutex);
     json apps = read_apps(env.apps_file);
     int updated = 0;
     for (auto &app : apps["apps"]) {
@@ -1577,10 +1584,12 @@ namespace sparxie {
   publish_hero(HostEnv &env, const std::string &install_id, const Rgba &background, const Rgba &logo) {
     if (!write_hero(env, install_id, background, logo)) {
       // the poster cannot be made: a blank one already on disk must not stay (the heroes of the apps fall back to the cover)
+      std::lock_guard apps_lock(apps_file_mutex);
       json apps = read_apps(env.apps_file);
       if (drop_blank_hero(env, apps, install_id)) commit_apps(env, apps);
       return -1;
     }
+    std::lock_guard apps_lock(apps_file_mutex);
     json apps = read_apps(env.apps_file);
     int updated = 0;
     for (auto &app : apps["apps"]) {
@@ -1594,6 +1603,7 @@ namespace sparxie {
   }
   int
   publish_cover_badge(HostEnv &env, const std::string &install_id) {
+    std::lock_guard apps_lock(apps_file_mutex);
     json apps = read_apps(env.apps_file);
     const bool dropped = drop_blank_badged_cover(env, apps, install_id);
     const bool made = ensure_cover_badge(env, install_id);
@@ -1609,6 +1619,7 @@ namespace sparxie {
   }
   int
   attach_official_covers(HostEnv &env) {
+    std::lock_guard apps_lock(apps_file_mutex);
     json apps = read_apps(env.apps_file);
     int attached = 0;
     // a blank landscape poster or badged cover (made from a background that decoded as zeros) goes at host start; the refresh composes the poster again from the cached pictures

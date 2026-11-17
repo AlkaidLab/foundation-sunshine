@@ -19,35 +19,57 @@ namespace sparxie {
     }
 
     json
-    request(Work work) {
+    request(Work work, bool force = false) {
       std::lock_guard lock(mutex_);
-      if (stopping_ || state_["state"] == "checking") {
+      if (stopping_) {
+        return state_;
+      }
+      if (state_["state"] == "checking") {
+        if (force && !running_force_) {
+          pending_force_ = std::move(work);
+        }
         return state_;
       }
       if (worker_.joinable()) {
         worker_.join();
       }
       ++generation_;
+      running_force_ = force;
       state_ = { { "ok", true }, { "state", "checking" }, { "jobId", generation_ }, { "retryAfterMs", kStatusRetryMs }, { "updated", 0 } };
       try {
-        worker_ = std::thread([this, work = std::move(work)]() {
+        worker_ = std::thread([this, work = std::move(work)]() mutable {
           json result;
-          try {
-            result = work(cancelled_);
-            result["state"] = "ready";
-          }
-          catch (...) {
-            result = { { "ok", false }, { "state", "failed" }, { "error_code", "art_refresh_failed" }, { "updated", 0 } };
-          }
-          std::lock_guard lock(mutex_);
-          if (stopping_) {
-            result["state"] = "stopped";
-          }
-          result["jobId"] = generation_;
-          state_ = std::move(result);
-          completed_.push_back(state_);
-          if (completed_.size() > kRetainedResults) {
-            completed_.pop_front();
+          int updated = 0;
+          int heroes = 0;
+          while (true) {
+            try {
+              result = work(cancelled_);
+              updated += result.value("updated", 0);
+              heroes += result.value("heroes", 0);
+              result["updated"] = updated;
+              result["heroes"] = heroes;
+              result["state"] = "ready";
+            }
+            catch (...) {
+              result = { { "ok", false }, { "state", "failed" }, { "error_code", "art_refresh_failed" }, { "updated", 0 } };
+            }
+            std::unique_lock lock(mutex_);
+            if (!stopping_ && pending_force_) {
+              work = std::move(pending_force_);
+              pending_force_ = {};
+              running_force_ = true;
+              continue;
+            }
+            if (stopping_) {
+              result["state"] = "stopped";
+            }
+            result["jobId"] = generation_;
+            state_ = std::move(result);
+            completed_.push_back(state_);
+            if (completed_.size() > kRetainedResults) {
+              completed_.pop_front();
+            }
+            break;
           }
         });
       }
@@ -96,6 +118,8 @@ namespace sparxie {
     std::thread worker_;
     std::atomic_bool cancelled_ { false };
     bool stopping_ = false;
+    bool running_force_ = false;
+    Work pending_force_;
     std::uint64_t generation_ = 0;
     std::deque<json> completed_;
     json state_ = { { "ok", true }, { "state", "idle" }, { "jobId", 0 }, { "updated", 0 } };
