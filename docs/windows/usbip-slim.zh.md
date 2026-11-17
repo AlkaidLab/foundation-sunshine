@@ -20,7 +20,7 @@ guard 继续检查并清理异常状态，绝不通过修改 INF 缩小匹配。
 | pnputil 安装 usbip2_filter.inf | 系统 pnputil `/add-driver … /install` |
 | devnode install UDE INF 和 ROOT\\USBIP_WIN2\\UDE | 先由 pnputil 暂存 UDE INF，再用原版 devnode 注册根设备 |
 | AddService、AddReg、AddFilter | 全部交给原样签名 INF，脚本不重写服务或驱动注册表 |
-| RegisterDetachTask | Task Scheduler 2.0 注册同名 SYSTEM 按需任务及原始 detach 参数 |
+| RegisterDetachTask | Task Scheduler 2.0 注册同名 LocalService 任务，保留关机/重启事件触发及原始 detach 参数 |
 | PrepareToInstall 卸载旧包 | 查固定 AppId 的 64/32 位卸载项，运行原 uninstaller；注册仍在则停止 |
 | devnode remove | 调原版 devnode remove，失败仍继续其他清理并返回失败 |
 | DeleteOemDriver 双查找 | DISM Get-WindowsDriver 的结构化包信息匹配两个原始 INF，再由 pnputil 删除 |

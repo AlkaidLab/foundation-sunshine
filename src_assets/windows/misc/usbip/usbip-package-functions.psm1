@@ -62,19 +62,26 @@ function Set-UsbipDetachTask([string]$Root, [switch]$Remove) {
   $scheduler.Connect()
   $folder = $scheduler.GetFolder('\')
   if ($Remove) {
-    try { $null = $folder.GetTask($script:DetachTask) }
-    catch {
-      if (($_.Exception.HResult -band 0xffff) -eq 2) { return }
-      throw
-    }
+    if (@($folder.GetTasks(0) | Where-Object { $_.Name -eq $script:DetachTask }).Count -eq 0) { return }
     $folder.DeleteTask($script:DetachTask, 0)
     return
   }
   $task = $scheduler.NewTask(0)
-  $task.Principal.UserId = 'SYSTEM'
+  $task.RegistrationInfo.Description = 'Detach imported USB devices on reboot or shutdown'
+  $trigger = $task.Triggers.Create(0)
+  $trigger.Subscription = '<QueryList><Query Id="0" Path="System"><Select Path="System">*[System[Provider[@Name=''Microsoft-Windows-Kernel-Power''] and (EventID=109)]] or *[System[Provider[@Name=''User32''] and (EventID=1074)]]</Select></Query></QueryList>'
+  $task.Principal.UserId = 'S-1-5-19'
   $task.Principal.LogonType = 5
-  $task.Principal.RunLevel = 1
+  $task.Principal.RunLevel = 0
   $task.Settings.Enabled = $true
+  $task.Settings.MultipleInstances = 2
+  $task.Settings.DisallowStartIfOnBatteries = $false
+  $task.Settings.StopIfGoingOnBatteries = $false
+  $task.Settings.AllowHardTerminate = $true
+  $task.Settings.StartWhenAvailable = $false
+  $task.Settings.RunOnlyIfNetworkAvailable = $false
+  $task.Settings.ExecutionTimeLimit = 'PT30S'
+  $task.Settings.Priority = 7
   $action = $task.Actions.Create(0)
   $action.Path = Join-Path $Root 'usbip.exe'
   $action.Arguments = 'detach --all=closeonly'

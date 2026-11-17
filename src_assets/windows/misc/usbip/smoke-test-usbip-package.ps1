@@ -5,6 +5,7 @@ $ErrorActionPreference = 'Stop'
 $scratch = Join-Path ([IO.Path]::GetTempPath()) ('usbip-package-test-' + [guid]::NewGuid().ToString('N'))
 $module = Import-Module (Join-Path $PSScriptRoot 'usbip-package-functions.psm1') -Force -PassThru -DisableNameChecking
 $passed = 0
+$skipped = 0
 function Check([string]$Name, [scriptblock]$Test) {
   & $Test
   $script:passed++
@@ -47,6 +48,30 @@ try {
   }
   Check 'missing driver service is not ready' {
     Require (-not (Test-UsbipReady $payload (Read-UsbipManifest $payload))) 'uninstalled fixture was ready'
+  }
+  if ($env:OS -eq 'Windows_NT') {
+    Check 'detach task keeps LocalService and shutdown event triggers' {
+      $taskName = 'USBIP-package-test-' + [guid]::NewGuid().ToString('N')
+      & $module { param($name); $script:DetachTask = $name } $taskName
+      try {
+        Set-UsbipDetachTask $payload
+        $scheduler = New-Object -ComObject Schedule.Service
+        $scheduler.Connect()
+        $definition = $scheduler.GetFolder('\').GetTask($taskName).Definition
+        Require ($definition.Principal.UserId -in 'S-1-5-19', 'NT AUTHORITY\LOCAL SERVICE') 'task service identity changed'
+        Require ($definition.Principal.RunLevel -eq 0) 'task needlessly elevated'
+        Require ($definition.Triggers.Count -eq 1) 'shutdown event trigger missing'
+        $query = $definition.Triggers.Item(1).Subscription
+        Require ($query.Contains('EventID=109') -and $query.Contains('EventID=1074')) 'shutdown event subscription incomplete'
+        Require ($definition.Actions.Item(1).Arguments -eq 'detach --all=closeonly') 'detach action changed'
+      } finally {
+        Set-UsbipDetachTask $payload -Remove
+        & $module { $script:DetachTask = 'USBip Detach All On Reboot Or Shutdown' }
+      }
+    }
+  } else {
+    $skipped++
+    Write-Host 'SKIP detach task OS registration: requires Windows'
   }
   & $module {
     function script:Get-PnpDevice {
@@ -101,7 +126,7 @@ try {
     Require (Test-Path -LiteralPath (Join-Path $payload 'unrelated.txt')) 'unrelated file was deleted'
     Require (-not (Test-Path -LiteralPath (Join-Path $payload 'payload.json'))) 'receipt remains after successful cleanup'
   }
-  Write-Host "USB/IP package regressions: $passed passed, 0 failed"
+  Write-Host "USB/IP package regressions: $passed passed, $skipped skipped, 0 failed"
 } finally {
   Remove-Module $module -Force
   if (Test-Path -LiteralPath $scratch) { Remove-Item -LiteralPath $scratch -Recurse -Force }

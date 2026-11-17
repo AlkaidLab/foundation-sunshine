@@ -48,9 +48,7 @@ function Assert-Removed {
   Require (-not (Test-Path -LiteralPath (Join-Path $installed 'payload.json'))) 'payload files remain'
   $scheduler = New-Object -ComObject Schedule.Service
   $scheduler.Connect()
-  $taskFound = $false
-  try { $null = $scheduler.GetFolder('\').GetTask('USBip Detach All On Reboot Or Shutdown'); $taskFound = $true }
-  catch { if (($_.Exception.HResult -band 0xffff) -ne 2) { throw } }
+  $taskFound = @($scheduler.GetFolder('\').GetTasks(0) | Where-Object { $_.Name -eq 'USBip Detach All On Reboot Or Shutdown' }).Count -gt 0
   Require (-not $taskFound) 'detach task remains'
 }
 try {
