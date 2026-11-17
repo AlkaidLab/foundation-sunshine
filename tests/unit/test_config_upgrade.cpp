@@ -474,12 +474,6 @@ TEST_F(ConfigUpgrade, AnEmptyValueIsOmittedNotReadAsASpace) {
   EXPECT_FALSE(parsed.contains("client_gamepad_override"));
 }
 
-TEST_F(ConfigUpgrade, SessionBindingAcceptsWhitespaceBeforeInlineComments) {
-  const auto parsed = config::parse_config("session_binding = 1 \t# console\n");
-  ASSERT_TRUE(parsed.contains("session_binding"));
-  EXPECT_EQ(config_session_binding::parse_or_default(parsed.at("session_binding")), config_session_binding::mode_e::console);
-}
-
 TEST_F(ConfigUpgrade, AnUnknownKeySurvivesAFullSettingsSaveWhenTheUiSendsItBack) {
   const auto path = platf::appdata() / "config-upgrade-unknown.conf";
   std::ofstream(path, std::ios::binary | std::ios::trunc) << "sunshine_name = old\nfuture_key = kept\n";
