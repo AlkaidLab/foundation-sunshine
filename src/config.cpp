@@ -645,7 +645,7 @@ namespace config {
     47989,  // Base port number
     "ipv4",  // Address family
     {},  // Bind address
-    config_session_binding::mode_e::automatic,  // Interactive session binding
+    config_session_binding::default_mode,  // Capture session binding
     file_handler::path_to_utf8(platf::appdata() / "sunshine.log"),  // log file
     false,  // restore_log - 默认不恢复日志文件
     50,  // max_log_size_mb - 默认50MB，超过自动轮转
@@ -1685,16 +1685,11 @@ namespace config {
     string_restricted_f(vars, "address_family", sunshine.address_family, { "ipv4"sv, "both"sv });
     string_f(vars, "bind_address", sunshine.bind_address);
 
-    int session_binding_value = static_cast<int>(sunshine.session_binding);
-    int_between_f(
-      vars,
-      std::string { config_session_binding::key },
-      session_binding_value,
-      {
-        static_cast<int>(config_session_binding::mode_e::automatic),
-        static_cast<int>(config_session_binding::mode_e::console),
-      });
-    sunshine.session_binding = static_cast<config_session_binding::mode_e>(session_binding_value);
+    const auto session_binding_key = std::string { config_session_binding::key };
+    if (const auto binding = vars.find(session_binding_key); binding != vars.end()) {
+      sunshine.session_binding = config_session_binding::parse_or_default(binding->second);
+      vars.erase(binding);
+    }
 
     bool upnp = false;
     bool_f(vars, "upnp"s, upnp);

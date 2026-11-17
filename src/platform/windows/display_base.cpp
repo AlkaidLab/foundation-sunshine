@@ -630,7 +630,7 @@ namespace platf::dxgi {
     }
 
     auto adapter_name = from_utf8(config::video.adapter_name);
-    const bool is_rdp_session = !is_running_as_system_user && display_device::w_utils::is_any_rdp_session_active();
+    const bool is_rdp_session = !is_running_as_system_user && display_device::w_utils::is_current_session_rdp();
     auto output_name = is_rdp_session ? std::wstring {} : from_utf8(display_name);
     display_device_name.clear();
 
@@ -1442,7 +1442,7 @@ namespace platf {
 
         // Don't include the display in the list if we can't actually capture it
         // In RDP sessions, accept any enumerated output since virtual displays may not report attachment status correctly
-        bool is_rdp = !is_running_as_system_user && display_device::w_utils::is_any_rdp_session_active();
+        bool is_rdp = !is_running_as_system_user && display_device::w_utils::is_current_session_rdp();
 
         bool can_capture = false;
 
