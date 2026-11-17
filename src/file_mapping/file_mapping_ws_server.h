@@ -27,18 +27,25 @@ namespace file_mapping_ws {
       client_uuid_authorizer_t authorize_peer_uuid = {},
       file_mapping::operations::execution_context_t operations_context = {});
 
-    validation_result_t start();
-    void stop();
-    transport_state_e state() const;
-    std::uint16_t bound_port() const;
+    validation_result_t
+    start();
+    void
+    stop();
+    transport_state_e
+    state() const;
+    std::uint16_t
+    bound_port() const;
 
   private:
-    validation_result_t configure_ssl();
-    validation_result_t open_acceptor();
-    void accept_next();
-    void on_accept(boost::system::error_code ec, tcp::socket socket);
+    validation_result_t
+    configure_ssl();
+    validation_result_t
+    open_acceptor();
+    void
+    accept_next();
+    void
+    on_accept(boost::system::error_code ec, tcp::socket socket);
 
-    asio::io_context &io_;
     transport_config_t config_;
     session_token_validator_t validate_token_;
     client_uuid_authorizer_t authorize_peer_uuid_;

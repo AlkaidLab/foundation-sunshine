@@ -82,6 +82,7 @@ include(${CMAKE_MODULE_PATH}/compile_definitions/common.cmake)
 include(${CMAKE_MODULE_PATH}/targets/beast_http.cmake)
 include(${CMAKE_MODULE_PATH}/targets/core.cmake)
 include(${CMAKE_MODULE_PATH}/targets/common.cmake)
+include(${CMAKE_MODULE_PATH}/targets/precompiled_headers.cmake)
 
 # packaging
 include(${CMAKE_MODULE_PATH}/packaging/common.cmake)

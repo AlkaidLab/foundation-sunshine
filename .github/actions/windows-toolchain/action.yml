@@ -1,6 +1,10 @@
 name: Windows toolchain
 description: MSYS2 UCRT64 build tools for the Windows host build, with Defender exclusions for the build directories.
 inputs:
+  toolchain:
+    description: "gcc or clang (MSYS2 UCRT64 Clang with libstdc++ and LLD; its packages are pinned in scripts/ci/msys2-pins-clang.txt)"
+    required: false
+    default: gcc
   save-cache:
     description: Save the pacman package cache even when the ref is not the default branch.
     required: false
@@ -60,6 +64,7 @@ runs:
       shell: msys2 {0}
       env:
         TOOLCHAIN_UNPINNED: ${{ inputs.unpinned == 'true' && '1' || '' }}
+        TOOLCHAIN: ${{ inputs.toolchain }}
       run: bash "$(cygpath -u "$GITHUB_WORKSPACE")/scripts/ci/msys2-pacman.sh" prepare
 
     # The base system upgrade, in the two passes setup-msys2 uses. When msys2-runtime itself is upgraded, pacman closes every
@@ -73,6 +78,7 @@ runs:
         # prepare runs here a second time (after pacman.conf was replaced by its .pacnew); it must know the mode too,
         # or an unpinned probe build would write IgnorePkg and pacman would prompt for every pinned name.
         TOOLCHAIN_UNPINNED: ${{ inputs.unpinned == 'true' && '1' || '' }}
+        TOOLCHAIN: ${{ inputs.toolchain }}
       run: |
         $script = (Join-Path $env:GITHUB_WORKSPACE 'scripts/ci/msys2-pacman.sh') -replace '\\', '/'
         $script = '/' + $script.Substring(0, 1).ToLower() + $script.Substring(2)
@@ -95,17 +101,22 @@ runs:
       shell: msys2 {0}
       env:
         TOOLCHAIN_UNPINNED: ${{ inputs.unpinned == 'true' && '1' || '' }}
+        TOOLCHAIN: ${{ inputs.toolchain }}
       run: |
         set -euo pipefail
         P=mingw-w64-ucrt-x86_64
         packages=(git diffutils curl $P-ccache $P-cmake $P-ninja $P-gcc $P-binutils $P-crt $P-headers $P-winpthreads
           $P-libwinpthread $P-pkgconf $P-make $P-python $P-cppwinrt $P-curl-winssl $P-MinHook $P-miniupnpc $P-nlohmann-json
           $P-libvpl $P-openssl $P-opus)
+        # Clang and LLD are named here so an unpinned probe build installs them too; in the pinned mode they and their version-locked
+        # libraries come from scripts/ci/msys2-pins-clang.txt (msys2-pacman.sh reads it when TOOLCHAIN=clang).
+        if [[ "$TOOLCHAIN" == clang ]]; then packages+=($P-clang $P-lld); fi
         script="$(cygpath -u "$GITHUB_WORKSPACE")/scripts/ci/msys2-pacman.sh"
         bash "$script" install "${packages[@]}"
         {
           echo "### Toolchain"
           pacman -Q $P-gcc $P-cmake $P-ninja $P-ccache $P-binutils | sed 's/^/- /'
+          if [[ "$TOOLCHAIN" == clang ]]; then pacman -Q $P-clang $P-lld | sed 's/^/- /'; fi
         } | tee -a "$GITHUB_STEP_SUMMARY"
         # Only the packages that are installed stay in the saved cache.
         bash "$script" prune

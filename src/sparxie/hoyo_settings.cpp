@@ -155,11 +155,8 @@ namespace sparxie {
     api_token(int index) { return index >= 0 && index <= 4 ? kApi[index].value : kApi[3].value; }
 
     const Lab kOnOff[] = { { "off", "关", "Off" }, { "on", "开", "On" } };
-    const Lab kLowHigh[] = { { "low", "低", "Low" }, { "high", "高", "High" } };
-    const Lab k3[] = { { "low", "低", "Low" }, { "medium", "中", "Medium" }, { "high", "高", "High" } };
     const Lab k4[] = { { "lowest", "最低", "Lowest" }, { "low", "低", "Low" }, { "medium", "中", "Medium" }, { "high", "高", "High" } };
     const Lab k5[] = { { "lowest", "最低", "Lowest" }, { "low", "低", "Low" }, { "medium", "中", "Medium" }, { "high", "高", "High" }, { "highest", "极高", "Highest" } };
-    const Lab kOff4[] = { { "off", "关", "Off" }, { "low", "低", "Low" }, { "medium", "中", "Medium" }, { "high", "高", "High" } };
     const Lab kQual[] = { { "off", "关", "Off" }, { "verylow", "最低", "Very low" }, { "low", "低", "Low" }, { "medium", "中", "Medium" }, { "high", "高", "High" }, { "veryhigh", "最高", "Very high" } };
 
     int

@@ -566,7 +566,6 @@ namespace reachability {
 
     const CLSID CLSID_NetFwPolicy2_ = { 0xE2B3C97F, 0x6AE1, 0x41AC, { 0x81, 0x7A, 0xF6, 0xF9, 0x21, 0x66, 0xD7, 0xDD } };
     const IID IID_INetFwPolicy2_ = { 0x98325047, 0xC671, 0x4174, { 0x8D, 0x81, 0xDE, 0xFC, 0xD3, 0xF0, 0x31, 0x86 } };
-    const IID IID_INetFwRules_ = { 0x9C4C6277, 0x5027, 0x441E, { 0xAF, 0xAE, 0xCA, 0x1F, 0x54, 0x2D, 0xA0, 0x09 } };
     const IID IID_INetFwRule_ = { 0xAF230D27, 0xBABA, 0x4E42, { 0xAC, 0xED, 0xF5, 0x24, 0xF2, 0x2C, 0xFC, 0xE2 } };
 
     // NET_FW_IP_PROTOCOL_ANY from icftypes.h; not exposed by every mingw-w64 header.
@@ -975,7 +974,8 @@ namespace reachability {
         context.run();
         result.connected = connected;
         result.identity_match = connected && certificate_is_ours(stream.native_handle(), certificate_path);
-        if (!connected) result.error = timed_out ? "timeout" : error.empty() ? "failed" : error;
+        if (!connected) result.error = timed_out ? "timeout" : error.empty() ? "failed" :
+                                                                               error;
         boost::system::error_code ignored;
         stream.next_layer().close(ignored);
       }

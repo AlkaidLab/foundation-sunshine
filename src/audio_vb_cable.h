@@ -156,7 +156,6 @@ namespace audio_devices::vb_cable {
     mutable std::mutex mutex_;
     std::condition_variable done_;
     job_status_t status_;
-    bool thread_started_ = false;
     std::thread worker_;
   };
 

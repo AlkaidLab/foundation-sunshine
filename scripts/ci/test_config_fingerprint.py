@@ -34,8 +34,11 @@ class FingerprintTest(unittest.TestCase):
             "        run: |\n          cmake -B build -DBUILD_TESTS=ON\n")
         workflow.write_text(self.workflow_text)
 
-    def fingerprint(self):
-        result = subprocess.run([sys.executable, str(SCRIPT), "--root", str(self.root)], capture_output=True, text=True)
+    def fingerprint(self, toolchain=None):
+        env = {key: value for key, value in os.environ.items() if key not in ("TOOLCHAIN", "CI_TOOLCHAIN")}
+        if toolchain:
+            env["TOOLCHAIN"] = toolchain
+        result = subprocess.run([sys.executable, str(SCRIPT), "--root", str(self.root)], capture_output=True, text=True, env=env)
         self.assertEqual(result.returncode, 0, result.stderr)
         return result.stdout.strip()
 
@@ -79,10 +82,27 @@ class FingerprintTest(unittest.TestCase):
         path.write_text(old)
         self.assertEqual(before, self.fingerprint())
 
+    def test_the_compiler_and_the_clang_pins_move_it_only_for_clang(self):
+        clang_pins = self.root / "scripts" / "ci" / "msys2-pins-clang.txt"
+        clang_pins.write_text("# clang pins\nmingw-w64-ucrt-x86_64-clang 23.1.5-1 mingw-w64-ucrt-x86_64-clang-23.1.5-1-any.pkg.tar.zst " + "c" * 64 + "\n")
+        gcc, clang = self.fingerprint("gcc"), self.fingerprint("clang")
+        self.assertEqual(gcc, self.fingerprint(), "gcc is the default")
+        self.assertNotEqual(gcc, clang)
+        clang_pins.write_text(clang_pins.read_text().replace("23.1.5", "24.1.0"))
+        self.assertEqual(gcc, self.fingerprint("gcc"), "the clang pins are not part of a gcc build")
+        self.assertNotEqual(clang, self.fingerprint("clang"))
+
+    def test_an_unknown_compiler_is_refused(self):
+        env = dict(os.environ, TOOLCHAIN="msvc")
+        result = subprocess.run([sys.executable, str(SCRIPT), "--root", str(self.root)], capture_output=True, text=True, env=env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unsupported Windows toolchain", result.stderr)
+
     def test_the_repository_database_is_not_read(self):
         # The pins decide the cache key, not what the repository carries today: a newer upstream package must not
         # invalidate the cache while the build still installs the pinned file.
-        env = dict(os.environ, MSYS2_DB_URLS="http://127.0.0.1:1/ucrt64.db")
+        env = {key: value for key, value in os.environ.items() if key not in ("TOOLCHAIN", "CI_TOOLCHAIN")}
+        env["MSYS2_DB_URLS"] = "http://127.0.0.1:1/ucrt64.db"
         result = subprocess.run([sys.executable, str(SCRIPT), "--root", str(self.root)], capture_output=True, text=True, env=env)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), self.fingerprint())

@@ -24,9 +24,7 @@
 
 namespace haptics {
   namespace {
-    constexpr std::uint8_t source_stream_start = 0x01;
     constexpr std::uint8_t source_stream_end = 0x02;
-    constexpr std::uint8_t source_discontinuity = 0x04;
     std::int16_t
     read_i16(const std::uint8_t *p) {
       return static_cast<std::int16_t>(p[0] | (static_cast<std::uint16_t>(p[1]) << 8));
