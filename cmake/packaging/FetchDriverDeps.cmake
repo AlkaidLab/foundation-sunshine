@@ -113,6 +113,8 @@ set(_DRIVER_DOWNLOAD_INACTIVITY_TIMEOUT_SECONDS 15)
 
 if(NOT FETCH_DRIVER_DEPS)
   message(STATUS "Driver dependency downloads disabled (FETCH_DRIVER_DEPS=OFF)")
+  # A cache left by an earlier configure with downloads ON must not make the install step ship an unverified payload.
+  unset(USBIP_AVAILABLE CACHE)
   return()
 endif()
 
