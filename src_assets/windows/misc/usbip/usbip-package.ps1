@@ -63,7 +63,10 @@ try {
   $operationFailed = $false
   try {
     if ($Action -eq 'install') { Install-UsbipPackage $Payload $InstallRoot $PSScriptRoot }
-    else { Remove-UsbipPackage $InstallRoot -KeepFiles }
+    else {
+      Remove-UsbipLegacy
+      Remove-UsbipPackage $InstallRoot -KeepFiles
+    }
     Write-Step $Action 0
   } catch {
     Write-Warning $_.Exception.Message
