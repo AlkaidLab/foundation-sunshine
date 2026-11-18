@@ -11,7 +11,9 @@
 
 #include <cstdint>
 #include <exception>
+#include <chrono>
 #include <future>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -39,27 +41,34 @@ namespace single_flight {
           const auto age = now_s - result_at_;
           if (age < reuse_s || (!refresh && age < ttl_s)) return result_;
         }
-        if (flight_ && flight_key_ == key) {
-          joined = flight_future_;
+        // One flight per key: a probe for another key running beside it does not hide it from a second caller of the same key.
+        const auto found = flights_.find(key);
+        if (found != flights_.end()) {
+          joined = found->second.future;
         }
         else {
           mine = std::make_shared<std::promise<T>>();
-          flight_key_ = key;
-          flight_future_ = mine->get_future().share();
-          flight_ = mine;
+          flights_[key] = flight_t { mine, mine->get_future().share() };
         }
       }
       if (joined.valid()) return joined.get();
 
+      const auto began = std::chrono::steady_clock::now();
+      const auto land = [&]() {
+        const auto found = flights_.find(key);
+        if (found != flights_.end() && found->second.promise == mine) flights_.erase(found);
+      };
       try {
         auto value = collect();
         {
           std::lock_guard lock { mutex_ };
+          // The result is as old as the moment the probe ended, not the moment it began: a six second probe is still fresh a second after it.
+          const auto took = std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now() - began).count();
           result_ = value;
           result_key_ = key;
-          result_at_ = now_s;
+          result_at_ = now_s + took;
           has_result_ = true;
-          if (flight_ == mine) flight_.reset();
+          land();
         }
         mine->set_value(value);
         return value;
@@ -67,7 +76,7 @@ namespace single_flight {
       catch (...) {
         {
           std::lock_guard lock { mutex_ };
-          if (flight_ == mine) flight_.reset();
+          land();
         }
         mine->set_exception(std::current_exception());
         throw;
@@ -80,8 +89,10 @@ namespace single_flight {
     std::string result_key_;
     std::int64_t result_at_ = 0;
     bool has_result_ = false;
-    std::shared_ptr<std::promise<T>> flight_;
-    std::string flight_key_;
-    std::shared_future<T> flight_future_;
+    struct flight_t {
+      std::shared_ptr<std::promise<T>> promise;
+      std::shared_future<T> future;
+    };
+    std::map<std::string, flight_t> flights_;
   };
 }  // namespace single_flight

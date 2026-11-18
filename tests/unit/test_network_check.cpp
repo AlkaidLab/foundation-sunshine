@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <future>
 #include <thread>
 
 #include "src/network_check.h"
@@ -291,8 +292,12 @@ TEST(NetworkCheckJson, ContractShapeIsStable) {
 TEST(NetworkCheckRun, StepsRunThenResultsAndOnlyOneRunAtATime) {
   inputs_t inputs;
   std::atomic<int> probes { 0 };
+  // the probe waits here, so the first state of the run is read before any step reports: no sleeping, no race
+  std::promise<void> release;
+  const auto gate = release.get_future().share();
   inputs.probe = [&](const request_t &, const std::function<void(std::string_view, bool)> &progress) {
     ++probes;
+    gate.wait();
     progress("listening", false);
     std::this_thread::sleep_for(120ms);
     progress("listening", true);
@@ -308,6 +313,7 @@ TEST(NetworkCheckRun, StepsRunThenResultsAndOnlyOneRunAtATime) {
   const auto again = start(inputs, {});
   EXPECT_EQ(again->id, first->id);
 
+  release.set_value();
   std::this_thread::sleep_for(60ms);
   const auto during = network_check::find(first->id);
   ASSERT_NE(during, nullptr);
@@ -433,4 +439,106 @@ TEST(NetworkCheckRun, AStepThatFinishedAtOnceKeepsItsOwnTime) {
   const auto done = network_check::find(first->id);
   ASSERT_NE(done, nullptr);
   EXPECT_LT(find(done->steps, "listening")->elapsed_ms, 100);
+}
+
+// ---- review of the pull request ----
+
+TEST(NetworkCheckSummary, AMissingUdpRuleDoesNotMakeTcpUnreachable) {
+  auto snapshot = healthy();
+  for (auto &entry : snapshot.ports) {
+    if (entry.proto == "udp") entry.firewall = reachability::firewall_e::blocked;
+  }
+  const auto discovery = stun();
+  const auto steps = steps_of(snapshot, discovery);
+  EXPECT_EQ(find(steps, "firewall")->state, step_state_e::fail) << "the step still names the blocked UDP ports";
+  const auto summary = summarize({}, snapshot, discovery, steps);
+  EXPECT_NE(summary.tcp.state, protocol_state_e::unreachable);
+  for (const auto &reason : summary.tcp.because) EXPECT_NE(reason, "firewall_blocked");
+  // a blocked TCP port still is the reason
+  auto tcp_blocked = healthy();
+  for (auto &entry : tcp_blocked.ports) {
+    if (entry.proto == "tcp" && entry.role == "https") entry.firewall = reachability::firewall_e::blocked;
+  }
+  const auto blocked = summarize({}, tcp_blocked, discovery, steps_of(tcp_blocked, discovery));
+  EXPECT_EQ(blocked.tcp.state, protocol_state_e::unreachable);
+  EXPECT_EQ(blocked.tcp.because.front(), "firewall_blocked");
+}
+
+TEST(NetworkCheckRun, AnAnswerFromOutsideReachesTheSummaryOfARun) {
+  auto snapshot = healthy();
+  snapshot.public_reachability.endpoints = { with_outside(endpoint("203.0.113.9:60000", false, "timeout", true), "reachable") };
+  snapshot = settle(snapshot);
+  inputs_t inputs;
+  inputs.probe = [snapshot](const request_t &, const std::function<void(std::string_view, bool)> &) { return snapshot; };
+  inputs.discover = [](const request_t &) { return stun(); };
+  inputs.saved_endpoints = { "203.0.113.9:60000" };
+  const auto first = start(inputs, {});
+  ASSERT_TRUE(wait_idle(5s));
+  const auto done = network_check::find(first->id);
+  ASSERT_NE(done, nullptr);
+  const auto count = std::count_if(done->steps.begin(), done->steps.end(), [](const step_t &entry) { return entry.id == "external_tcp"; });
+  EXPECT_EQ(count, 1) << "the plan's step is replaced by the result, not kept beside it";
+  EXPECT_EQ(find(done->steps, "external_tcp")->state, step_state_e::ok);
+  EXPECT_EQ(done->summary.tcp.state, protocol_state_e::reachable);
+  EXPECT_EQ(done->summary.tcp.because.front(), "outside_probe");
+}
+
+TEST(NetworkCheckRun, AProbeThatThrowsEndsTheRunWithoutEndingTheProcess) {
+  inputs_t inputs;
+  inputs.probe = [](const request_t &, const std::function<void(std::string_view, bool)> &) -> reachability::snapshot_t { throw std::runtime_error("boom"); };
+  inputs.discover = [](const request_t &) -> nat_discovery::discovery_t { throw std::runtime_error("boom"); };
+  const auto first = start(inputs, {});
+  ASSERT_TRUE(wait_idle(5s));
+  const auto done = network_check::find(first->id);
+  ASSERT_NE(done, nullptr);
+  EXPECT_EQ(done->state, run_state_e::done);
+  EXPECT_FALSE(done->timed_out);
+  EXPECT_EQ(find(done->steps, "listening")->state, step_state_e::warn);
+  EXPECT_EQ(find(done->steps, "listening")->reason, "probe_failed");
+  EXPECT_EQ(find(done->steps, "listening")->next, "retry");
+}
+
+TEST(NetworkCheckRun, AnAddressDiscoveryThatIsLateDoesNotTakeAwayTheFindingsOfThisComputer) {
+  inputs_t inputs;
+  inputs.deadline = 200ms;
+  inputs.probe = [](const request_t &, const std::function<void(std::string_view, bool)> &) {
+    auto snapshot = healthy();
+    for (auto &entry : snapshot.ports) {
+      if (entry.proto == "tcp" && entry.role == "https") entry.listening = false;
+    }
+    return settle(snapshot);
+  };
+  inputs.discover = [](const request_t &) {
+    std::this_thread::sleep_for(800ms);
+    return stun();
+  };
+  const auto first = start(inputs, {});
+  ASSERT_TRUE(wait_idle(3s));
+  const auto done = network_check::find(first->id);
+  ASSERT_NE(done, nullptr);
+  EXPECT_TRUE(done->timed_out);
+  EXPECT_EQ(find(done->steps, "listening")->state, step_state_e::fail) << "the finding of the probe that did finish stays";
+  EXPECT_EQ(find(done->steps, "listening")->next, "restart");
+  EXPECT_EQ(find(done->steps, "addresses")->reason, "timeout");
+  EXPECT_EQ(find(done->steps, "cgnat")->reason, "timeout");
+  std::this_thread::sleep_for(900ms);
+}
+
+TEST(NetworkCheckRun, AFinishedRunDoesNotChangeWhenALateProbeReports) {
+  inputs_t inputs;
+  inputs.deadline = 100ms;
+  inputs.probe = [](const request_t &, const std::function<void(std::string_view, bool)> &progress) {
+    progress("listening", false);
+    std::this_thread::sleep_for(400ms);
+    progress("listening", true);
+    return healthy();
+  };
+  inputs.discover = [](const request_t &) { return stun(); };
+  const auto first = start(inputs, {});
+  ASSERT_TRUE(wait_idle(3s));
+  const auto before = *network_check::find(first->id);
+  std::this_thread::sleep_for(500ms);
+  const auto after = *network_check::find(first->id);
+  EXPECT_EQ(find(before.steps, "listening")->checked, find(after.steps, "listening")->checked);
+  EXPECT_EQ(find(before.steps, "listening")->elapsed_ms, find(after.steps, "listening")->elapsed_ms);
 }

@@ -303,6 +303,16 @@ namespace network_check {
     return steps;
   }
 
+  namespace {
+    // the firewall step names the ports it found blocked as "tcp/47984", "udp/47998"
+    bool
+    blocks_tcp(const step_t &firewall) {
+      const auto found = firewall.detail.find("blocked");
+      if (found == firewall.detail.end() || !found->is_array()) return false;
+      return std::any_of(found->begin(), found->end(), [](const nlohmann::json &port) { return port.is_string() && port.get<std::string>().rfind("tcp/", 0) == 0; });
+    }
+  }  // namespace
+
   summary_t
   summarize(const request_t &, const reachability::snapshot_t &snapshot, const nat_discovery::discovery_t &discovery, const std::vector<step_t> &steps) {
     summary_t summary;
@@ -345,7 +355,8 @@ namespace network_check {
         tcp.state = protocol_state_e::unreachable;
         add(tcp, "not_listening");
       }
-      else if (firewall && firewall->state == step_state_e::fail) {
+      else if (firewall && firewall->state == step_state_e::fail && blocks_tcp(*firewall)) {
+        // only a blocked TCP port says anything about TCP: a UDP rule that is missing leaves the step failed and TCP untouched
         tcp.state = protocol_state_e::unreachable;
         add(tcp, "firewall_blocked");
       }
@@ -444,6 +455,8 @@ namespace network_check {
     void
     set_running(job_t &job, const std::function<bool(const step_t &)> &select, bool finished) {
       std::lock_guard lock { job.mutex };
+      // a probe that reports after the deadline finds the run already over: what a finished run says does not change when it is read again
+      if (job.run.state == run_state_e::done) return;
       const auto now = since(job.began);
       for (auto &entry : job.run.steps) {
         if (!select(entry)) continue;
@@ -466,6 +479,7 @@ namespace network_check {
       std::mutex mutex;
       std::condition_variable ready;
       std::optional<T> value;
+      bool failed = false;  ///< the probing thread ended with an exception: there is no value to wait for
     };
 
     std::shared_ptr<const run_t>
@@ -480,23 +494,38 @@ namespace network_check {
       auto probe_slot = std::make_shared<slot_t<reachability::snapshot_t>>();
       auto discover_slot = std::make_shared<slot_t<nat_discovery::discovery_t>>();
 
+      // An exception must never leave a detached thread: it would end the whole process. A probe that throws is a probe that has no result.
       std::thread { [inputs, request, probe_slot, job]() {
-        auto snapshot = inputs.probe(request, [&job](std::string_view stage, bool finished) {
-          set_running(*job, [id = std::string(stage)](const step_t &entry) { return id == "endpoints" ? entry.id == step::endpoint : entry.id == id; }, finished);
-        });
-        std::lock_guard lock { probe_slot->mutex };
-        probe_slot->value = std::move(snapshot);
-        probe_slot->ready.notify_all();
+        try {
+          auto snapshot = inputs.probe(request, [&job](std::string_view stage, bool finished) {
+            set_running(*job, [id = std::string(stage)](const step_t &entry) { return id == "endpoints" ? entry.id == step::endpoint : entry.id == id; }, finished);
+          });
+          std::lock_guard lock { probe_slot->mutex };
+          probe_slot->value = std::move(snapshot);
+          probe_slot->ready.notify_all();
+        }
+        catch (...) {
+          std::lock_guard lock { probe_slot->mutex };
+          probe_slot->failed = true;
+          probe_slot->ready.notify_all();
+        }
       } }.detach();
 
       if (inputs.stun_enabled) {
         set_running(*job, [](const step_t &entry) { return entry.id == step::addresses || entry.id == step::cgnat; }, false);
         std::thread { [inputs, request, discover_slot, job]() {
-          auto discovery = inputs.discover(request);
-          set_running(*job, [](const step_t &entry) { return entry.id == step::addresses; }, true);
-          std::lock_guard lock { discover_slot->mutex };
-          discover_slot->value = std::move(discovery);
-          discover_slot->ready.notify_all();
+          try {
+            auto discovery = inputs.discover(request);
+            set_running(*job, [](const step_t &entry) { return entry.id == step::addresses; }, true);
+            std::lock_guard lock { discover_slot->mutex };
+            discover_slot->value = std::move(discovery);
+            discover_slot->ready.notify_all();
+          }
+          catch (...) {
+            std::lock_guard lock { discover_slot->mutex };
+            discover_slot->failed = true;
+            discover_slot->ready.notify_all();
+          }
         } }.detach();
       }
       else {
@@ -508,19 +537,28 @@ namespace network_check {
 
       const auto wait_for = [&](auto &slot) {
         std::unique_lock lock { slot->mutex };
-        slot->ready.wait_until(lock, deadline, [&]() { return slot->value.has_value(); });
+        slot->ready.wait_until(lock, deadline, [&]() { return slot->value.has_value() || slot->failed; });
         return slot->value.has_value();
       };
       const bool have_probe = wait_for(probe_slot);
       const bool have_discovery = wait_for(discover_slot);
+      const bool probe_failed = [&]() { std::lock_guard lock { probe_slot->mutex }; return probe_slot->failed; }();
 
       std::lock_guard lock { job->mutex };
       auto &run = job->run;
       run.elapsed_ms = since(job->began);
       run.finished_at = reachability::format_utc_iso(reachability::now_epoch_seconds());
-      if (have_probe && have_discovery) {
+      if (have_probe) {
+        // The local probe has its result: it is used even when the address discovery did not finish in time; only the steps that depend on the discovery say "timeout".
         const auto snapshot = *probe_slot->value;
-        const auto discovery = *discover_slot->value;
+        nat_discovery::discovery_t discovery;
+        if (have_discovery) {
+          discovery = *discover_slot->value;
+        }
+        else {
+          discovery.enabled = true;
+          run.timed_out = true;
+        }
         auto results = results_from(request, snapshot, discovery);
         // Keep the plan's timings; replace what the steps found.
         std::vector<step_t> merged;
@@ -528,7 +566,8 @@ namespace network_check {
         for (const auto &planned : run.steps) {
           bool replaced = false;
           for (std::size_t index = 0; index < results.size(); ++index) {
-            if (used[index] || results[index].id != planned.id || results[index].subject != planned.subject) continue;
+            // a step that exists once matches by its id; only the endpoint steps, one per address, also match by the address
+            if (used[index] || results[index].id != planned.id || (planned.id == step::endpoint && results[index].subject != planned.subject)) continue;
             auto entry = results[index];
             entry.started_ms = planned.started_ms;
             entry.elapsed_ms = planned.checked ? planned.elapsed_ms : run.elapsed_ms - planned.started_ms;
@@ -552,15 +591,25 @@ namespace network_check {
           if (!used[index]) merged.push_back(results[index]);
         }
         run.steps = std::move(merged);
+        if (!have_discovery) {
+          for (auto &entry : run.steps) {
+            if (entry.id != step::addresses && entry.id != step::cgnat) continue;
+            entry.state = step_state_e::warn;
+            entry.reason = "timeout";
+            entry.next = "retry";
+            entry.detail = nlohmann::json::object();
+            entry.elapsed_ms = run.elapsed_ms - entry.started_ms;
+          }
+        }
         run.summary = summarize(request, snapshot, discovery, run.steps);
       }
       else {
-        // The run reached its deadline: the steps that did not finish say so, and nothing is concluded from them.
-        run.timed_out = true;
+        // The run reached its deadline, or the probe could not run: the steps that did not finish say so, and nothing is concluded from them.
+        run.timed_out = !probe_failed;
         for (auto &entry : run.steps) {
           if (entry.state == step_state_e::pending || entry.state == step_state_e::running) {
             entry.state = step_state_e::warn;
-            entry.reason = "timeout";
+            entry.reason = probe_failed ? "probe_failed" : "timeout";
             entry.next = "retry";
             entry.elapsed_ms = run.elapsed_ms - entry.started_ms;
           }

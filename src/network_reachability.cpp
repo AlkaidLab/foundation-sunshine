@@ -560,9 +560,13 @@ namespace reachability {
       return result;
     }
     // A connection from the internet that found nothing (and no handshake from inside got through): the address does not lead to this host from outside.
-    if (!inputs.endpoints.empty() && std::any_of(inputs.endpoints.begin(), inputs.endpoints.end(), [](const endpoint_result_t &endpoint) {
-          return endpoint.scope == scope_e::public_address && (endpoint.outside.state == "closed" || endpoint.outside.state == "timeout" || endpoint.outside.state == "another_host");
-        })) {
+    // That is said only when every public address has such a result: one address that failed from outside does not condemn another that nothing has tried from outside.
+    const auto is_public = [](const endpoint_result_t &endpoint) { return endpoint.scope == scope_e::public_address; };
+    const auto failed_from_outside = [](const endpoint_result_t &endpoint) {
+      return endpoint.outside.state == "closed" || endpoint.outside.state == "timeout" || endpoint.outside.state == "another_host";
+    };
+    if (std::any_of(inputs.endpoints.begin(), inputs.endpoints.end(), is_public) &&
+        std::all_of(inputs.endpoints.begin(), inputs.endpoints.end(), [&](const endpoint_result_t &endpoint) { return !is_public(endpoint) || failed_from_outside(endpoint); })) {
       result.reasons.push_back("not_reached_from_outside");
       result.verdict = verdict_e::unreachable;
       return result;

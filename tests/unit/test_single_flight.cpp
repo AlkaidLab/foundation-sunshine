@@ -80,3 +80,29 @@ TEST(SingleFlight, AFailureReachesEveryWaiterAndTheNextCallTriesAgain) {
   EXPECT_EQ(thrown.load(), 3);
   EXPECT_EQ(cell.get("k", true, 110, TTL, REUSE, []() { return 9; }), 9);
 }
+
+TEST(SingleFlight, ASlowProbeOfAnotherKeyDoesNotHideARunningOneFromASecondCaller) {
+  single_flight::cell_t<int> cell;
+  std::atomic<int> runs_a { 0 };
+  std::atomic<int> runs_b { 0 };
+  std::thread first([&]() { cell.get("a", true, 100, TTL, REUSE, [&]() { ++runs_a; std::this_thread::sleep_for(400ms); return 1; }); });
+  std::this_thread::sleep_for(40ms);
+  std::thread other([&]() { cell.get("b", true, 100, TTL, REUSE, [&]() { ++runs_b; std::this_thread::sleep_for(100ms); return 2; }); });
+  std::this_thread::sleep_for(40ms);
+  const auto value = cell.get("a", true, 100, TTL, REUSE, [&]() { ++runs_a; return 3; });  // joins the first run of "a", it does not start a second
+  first.join();
+  other.join();
+  EXPECT_EQ(value, 1);
+  EXPECT_EQ(runs_a.load(), 1);
+  EXPECT_EQ(runs_b.load(), 1);
+}
+
+TEST(SingleFlight, TheReuseWindowCountsFromTheEndOfAProbeNotItsStart) {
+  single_flight::cell_t<int> cell;
+  int runs = 0;
+  // a probe that began at second 100 and took a bit over a second: it ended at about 101, so a refresh at 102 is inside the two seconds
+  EXPECT_EQ(cell.get("k", true, 100, TTL, REUSE, [&]() { std::this_thread::sleep_for(1100ms); return ++runs; }), 1);
+  EXPECT_EQ(cell.get("k", true, 102, TTL, REUSE, [&]() { return ++runs; }), 1);
+  EXPECT_EQ(runs, 1);
+  EXPECT_EQ(cell.get("k", true, 104, TTL, REUSE, [&]() { return ++runs; }), 2);
+}

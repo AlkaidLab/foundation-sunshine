@@ -1224,6 +1224,25 @@ TEST(NetworkReachabilityOutside, AServiceThatDidNotAnswerChangesNothing) {
   EXPECT_TRUE(result.endpoints.at(0).inconclusive);
 }
 
+TEST(NetworkReachabilityOutside, OneAddressThatFailedFromOutsideDoesNotCondemnAnotherThatNothingHasTriedFromOutside) {
+  public_inputs_t inputs;
+  inputs.ports = healthy_ports();
+  inputs.router = public_router(true);
+  inputs.endpoints = { failing_from_inside("203.0.113.9:60000", "closed"), failing_from_inside("198.51.100.7:60000", "unavailable", "no_answer") };
+  inputs.endpoints[1].inconclusive = true;
+  const auto result = evaluate_public(inputs, NOW);
+  EXPECT_NE(result.verdict, verdict_e::unreachable) << "the second address may well work: this computer cannot reach it and the service did not answer";
+  EXPECT_FALSE(has_reason(result.reasons, "not_reached_from_outside"));
+  // every public address failing from outside is a finding
+  inputs.endpoints = { failing_from_inside("203.0.113.9:60000", "closed"), failing_from_inside("198.51.100.7:60000", "timeout") };
+  const auto both = evaluate_public(inputs, NOW);
+  EXPECT_EQ(both.verdict, verdict_e::unreachable);
+  EXPECT_TRUE(has_reason(both.reasons, "not_reached_from_outside"));
+  // and one that did reach outranks the rest
+  inputs.endpoints = { failing_from_inside("203.0.113.9:60000", "closed"), failing_from_inside("198.51.100.7:60000", "reachable") };
+  EXPECT_EQ(evaluate_public(inputs, NOW).verdict, verdict_e::verified);
+}
+
 TEST(NetworkReachabilityOutside, TheJsonCarriesTheStateAndTheReasonOrNullWhenItWasNotAsked) {
   snapshot_t snapshot;
   snapshot.checked_at = format_utc_iso(NOW);

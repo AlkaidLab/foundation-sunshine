@@ -90,3 +90,42 @@ TEST(NetworkExternalSetting, OnlyEnabledTurnsItOn) {
   EXPECT_TRUE(enabled("enabled"));
   for (const char *value : { "", "disabled", "true", "on", "Enabled" }) EXPECT_FALSE(enabled(value)) << value;
 }
+
+TEST(NetworkExternalResponse, AMalformedAnswerIsABadAnswerNeverAnException) {
+  for (const char *body : {
+         R"({"v":null,"tcp":[]})",
+         R"({"v":"1","tcp":[{"role":"http","port":60000,"state":"open"}]})",
+         R"({"v":1,"tcp":[{"role":5,"port":60000,"state":"open"}]})",
+         R"({"v":1,"tcp":[{"role":"http","port":"60000","state":"open"}]})",
+         R"({"v":1,"tcp":[{"role":"http","port":70000,"state":"open"}]})",
+         R"({"v":1,"tcp":[{"role":"http","port":60000,"state":"open","identity":7}]})",
+         R"({"v":1,"tcp":[{"role":"http","port":60000,"state":"open","ms":"slow"}]})",
+         R"([])",
+         "not json",
+       }) {
+    const auto result = parse_response(200, 0, body);
+    EXPECT_EQ(result.availability, availability_e::unavailable) << body;
+    EXPECT_EQ(result.reason, "bad_answer") << body;
+    EXPECT_TRUE(result.tcp.empty()) << body;
+  }
+  // a refusal whose fields have the wrong type is not a refusal of the target
+  const auto odd = parse_response(403, 0, R"({"error":7,"reason":false})");
+  EXPECT_EQ(odd.availability, availability_e::unavailable);
+}
+
+TEST(NetworkExternalResponse, AStateThatTheProtocolDoesNotKnowIsNoEvidenceAndNotAClosedPort) {
+  const auto result = parse_response(200, 0, R"({"v":1,"tcp":[{"role":"http","port":47989,"state":"error"}]})");
+  EXPECT_EQ(result.availability, availability_e::unavailable);
+  EXPECT_EQ(result.reason, "bad_answer");
+  EXPECT_EQ(tcp_summary(result), "unknown");
+  for (const char *state : { "open", "closed", "timeout", "blocked" }) {
+    const auto known = parse_response(200, 0, std::string(R"({"v":1,"tcp":[{"role":"http","port":47989,"state":")") + state + R"("}]})");
+    EXPECT_EQ(known.availability, availability_e::answered) << state;
+  }
+}
+
+TEST(NetworkExternalProbe, ARequestThatThrowsIsNoAnswer) {
+  const auto result = probe("https://service.example", ask(), [](const std::string &, const std::string &, std::string &, long &) -> int { throw std::runtime_error("down"); });
+  EXPECT_EQ(result.availability, availability_e::unavailable);
+  EXPECT_EQ(result.reason, "no_answer");
+}

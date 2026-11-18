@@ -1626,8 +1626,9 @@ provide the desktop of a separate RDP session.
         <td colspan="2">
             `enabled`: when the network check runs, a service on the internet (the Worker behind the statistics endpoint) connects from outside to each public address you entered and to the TCP ports of this
             host, and reads this host's GameStream `serverinfo` to compare its unique id with the one this host sends. That is the only way to show that the internet reaches this host: a computer
-            cannot prove it by connecting to its own public address. What leaves the computer is the address you entered, the ports of this host and its unique id; the service only connects to the
-            address the request came from, stores nothing, and answers per port. UDP cannot be tried this way and is always reported as not verified. When the service does not answer, the check says so and
+            cannot prove it by connecting to its own public address. What leaves the computer is the address you entered, the ports of this host, its unique id and an install identifier that the service uses
+            to limit how often one installation may ask: the install identifier of the statistics when statistics are on, otherwise a random value made once per run of the program (it is not kept and is
+            new after a restart). The service only connects to the address the request came from, stores nothing, and answers per port. UDP cannot be tried this way and is always reported as not verified. When the service does not answer, the check says so and
             keeps the result of this computer alone. Any other value turns it off.
         </td>
     </tr>
