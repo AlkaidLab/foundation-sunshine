@@ -414,6 +414,26 @@ target_link_libraries(ds5_arrival_policy_unit_tests PRIVATE gtest_main sunshine_
 set_target_properties(ds5_arrival_policy_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME ds5_arrival_policy_unit_tests COMMAND ds5_arrival_policy_unit_tests)
 
+add_executable(ds5_report_delta_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_ds5_report_delta.cpp)
+target_include_directories(ds5_report_delta_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(ds5_report_delta_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(ds5_report_delta_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME ds5_report_delta_unit_tests COMMAND ds5_report_delta_unit_tests)
+
+add_executable(interrupt_pacing_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_interrupt_pacing.cpp)
+target_include_directories(interrupt_pacing_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(interrupt_pacing_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(interrupt_pacing_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME interrupt_pacing_unit_tests COMMAND interrupt_pacing_unit_tests)
+
+if (WIN32)
+    add_executable(paced_reply_queue_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_paced_reply_queue.cpp)
+    target_include_directories(paced_reply_queue_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+    target_link_libraries(paced_reply_queue_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+    set_target_properties(paced_reply_queue_unit_tests PROPERTIES CXX_STANDARD 23)
+    add_test(NAME paced_reply_queue_unit_tests COMMAND paced_reply_queue_unit_tests)
+endif ()
+
 add_executable(ds5_haptics_wire_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_ds5_haptics_wire.cpp)
 target_include_directories(ds5_haptics_wire_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(ds5_haptics_wire_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)

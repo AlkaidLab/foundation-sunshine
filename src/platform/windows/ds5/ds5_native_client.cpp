@@ -34,6 +34,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cwctype>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -55,6 +56,7 @@
 #include "src/ds5/control_extension.h"
 #include "src/ds5/feature_reports.h"
 #include "src/ds5/output_fields.h"
+#include "src/ds5/report_delta.h"
 #include "src/ds5/rumble_policy.h"
 #include "src/ds5/rumble_test.h"
 #include "src/ds5/sensor_clock.h"
@@ -307,6 +309,36 @@ namespace platf::ds5 {
       std::optional<remote_usb::endpoint> live_endpoint;
       usbip_trace trace;
       std::vector<std::uint8_t> report = std::vector<std::uint8_t>(64, 0);
+      /* What the report looked like at the last submit, to tell a change from a repeat. */
+      std::array<std::uint8_t, 64> seen_report {};
+      /* The button bytes (8 to 10) as they were at each button change not yet answered. The reply to
+       * a button change carries them in the live report, so a press and a release that follow each
+       * other closely stay two reports while the sticks, the motion data and the timestamp of every
+       * reply are the newest (they must never go back). */
+      std::deque<std::array<std::uint8_t, 3>> edge_snapshots;
+      static constexpr std::size_t kMaxEdgeSnapshots = 8;
+
+      /**
+       * Compare the report with the one the previous submit left.  The sequence counter and the
+       * sensor timestamp move on their own and say nothing about the state.  Call with the lock held.
+       * @return nullopt when the state is the same as before: nothing to answer early.
+       */
+      std::optional<::platf::report_change>
+      classify_report_locked() {
+        const auto delta = ::ds5::input_report_delta(seen_report, report);
+        std::copy_n(report.begin(), std::min(report.size(), seen_report.size()), seen_report.begin());
+        switch (delta) {
+          case ::ds5::report_delta::buttons:
+            edge_snapshots.push_back({ report[8], report[9], report[10] });
+            if (edge_snapshots.size() > kMaxEdgeSnapshots) edge_snapshots.pop_front();
+            return ::platf::report_change::edge;
+          case ::ds5::report_delta::stream:
+            return ::platf::report_change::stream;
+          case ::ds5::report_delta::none:
+            break;
+        }
+        return std::nullopt;
+      }
       ::ds5::control_extension::output_t sent_extension {};
       std::uint8_t jack_bits { 0 };
       std::uint8_t battery_status { 0 };
@@ -453,7 +485,9 @@ namespace platf::ds5 {
       ::ds5::control_extension::output_t game_extension {};
       std::uint64_t session_id { 0 };
       std::uint64_t sequence { 1 };
-      paced_reply_queue replies { [this](std::vector<std::uint8_t> wire) { return bridge.send_reply(std::move(wire)); } };
+      paced_reply_queue replies { [this](std::vector<std::uint8_t> wire) { return bridge.send_reply(std::move(wire)); },
+        paced_reply_queue::interrupt_config {},
+        [] { return static_cast<unsigned>(::ds5::tuning::runtime::state().active_controllers.load(std::memory_order_acquire)); } };
       struct pcm_counters_t {
         std::uint64_t packets {};
         std::uint64_t frames {};
@@ -830,6 +864,7 @@ namespace platf::ds5 {
         report[0] = 1;
         report[1] = report[2] = report[3] = report[4] = 128;
         report[8] = 8;
+        std::copy_n(report.begin(), seen_report.size(), seen_report.begin());
         sweep_stale_ports();
       }
       void
@@ -1034,6 +1069,7 @@ namespace platf::ds5 {
              * mutex while building an interrupt reply. */
             replies.clear();
             std::lock_guard lock(mutex);
+            edge_snapshots.clear();
             imported = false;
             if (core) alk_ds5_core_clear(core);
             condition.notify_all();
@@ -1141,6 +1177,7 @@ namespace platf::ds5 {
         host.stop();
         replies.clear();
         lock.lock();
+        edge_snapshots.clear();
         if (feedback && global_index >= 0 && rumble_tracker.take_stop()) {
           feedback->raise(gamepad_feedback_msg_t::make_rumble(static_cast<std::uint16_t>(client_index), 0, 0));
         }
@@ -1210,11 +1247,15 @@ namespace platf::ds5 {
           std::array<std::uint8_t, 8> setup {};
           std::copy_n(wire.data() + 40, setup.size(), setup.begin());
           replies.schedule_interrupt(paced_reply_queue::lane::interrupt_in, sequence_number,
-            [this, sequence_number, endpoint, direction, length, setup] {
+            [this, sequence_number, endpoint, direction, length, setup](bool edge) {
               std::vector<std::uint8_t> current_report;
               {
                 std::lock_guard lock(mutex);
                 current_report = report;
+                if (edge && !edge_snapshots.empty()) {
+                  std::copy(edge_snapshots.front().begin(), edge_snapshots.front().end(), current_report.begin() + 8);
+                  edge_snapshots.pop_front();
+                }
                 ++stats.input_reports;
                 maybe_log_summary_locked();
               }
@@ -1521,6 +1562,21 @@ namespace platf::ds5 {
     return 0;
   }
 
+  namespace {
+    /**
+     * Tells the interrupt pacing that a report changed.  Declared before the pad lock so it
+     * runs after the lock is released: the queue worker builds replies under its own lock and
+     * then takes the pad lock, so the two must never nest the other way round.
+     */
+    struct report_changed_notifier {
+      native_impl *pad;
+      std::optional<::platf::report_change> change;
+      ~report_changed_notifier() {
+        if (change) pad->replies.notify_interrupt_data(paced_reply_queue::lane::interrupt_in, *change);
+      }
+    };
+  }  // namespace
+
   void
   native_client_t::free(int index) {
     std::unique_ptr<native_impl> released;
@@ -1543,6 +1599,7 @@ namespace platf::ds5 {
     std::shared_lock registry(_impl->registry);
     auto *const pad = _impl->find(index);
     if (pad == nullptr) return;
+    report_changed_notifier notifier { pad, std::nullopt };
     std::unique_lock lock(pad->mutex);
     auto input_state = state;
     const auto triggers = ::ds5::tuning::runtime::shape_triggers(input_state.lt, input_state.rt);
@@ -1574,6 +1631,7 @@ namespace platf::ds5 {
       std::copy(sensors_and_status.begin(), sensors_and_status.end(), pad->report.begin() + 16);
       pad->report[7] = static_cast<std::uint8_t>(value.sequence);
     }
+    notifier.change = pad->classify_report_locked();
     const bool mute_down = (input_state.buttonFlags & MISC_BUTTON) != 0;
     const bool mute_edge = mute_down && !pad->mute_button_down;
     pad->mute_button_down = mute_down;
@@ -1597,6 +1655,7 @@ namespace platf::ds5 {
     std::shared_lock registry(_impl->registry);
     auto *const pad = _impl->find(touch.id.globalIndex);
     if (pad == nullptr) return;
+    report_changed_notifier notifier { pad, std::nullopt };
     std::lock_guard lock(pad->mutex);
     const auto offset = touch.pointerId & 1u ? 37u : 33u;
     const auto x = static_cast<std::uint16_t>(touch.x * 1920.f);
@@ -1605,6 +1664,7 @@ namespace platf::ds5 {
     pad->report[offset + 1] = static_cast<std::uint8_t>(x);
     pad->report[offset + 2] = static_cast<std::uint8_t>((x >> 8) | (y << 4));
     pad->report[offset + 3] = static_cast<std::uint8_t>(y >> 4);
+    notifier.change = pad->classify_report_locked();
   }
 
   void
@@ -1617,6 +1677,7 @@ namespace platf::ds5 {
     std::shared_lock registry(_impl->registry);
     auto *const pad = _impl->find(motion.id.globalIndex);
     if (pad == nullptr) return;
+    report_changed_notifier notifier { pad, std::nullopt };
     std::lock_guard lock(pad->mutex);
     float counts_per_unit = 0.0f;
     std::size_t offset = 0;
@@ -1655,6 +1716,7 @@ namespace platf::ds5 {
       put_le16(pad->report.data() + offset, 0);
       put_le16(pad->report.data() + offset + 2, 0);
       put_le16(pad->report.data() + offset + 4, 0);
+      notifier.change = pad->classify_report_locked();
       return;
     }
     const auto to_counts = [counts_per_unit](float value) {
@@ -1670,6 +1732,7 @@ namespace platf::ds5 {
         pad->report[28 + byte] = static_cast<std::uint8_t>(ticks >> (8 * byte));
       }
     }
+    notifier.change = pad->classify_report_locked();
   }
 
   void
@@ -1677,6 +1740,7 @@ namespace platf::ds5 {
     std::shared_lock registry(_impl->registry);
     auto *const pad = _impl->find(battery.id.globalIndex);
     if (pad == nullptr) return;
+    report_changed_notifier notifier { pad, std::nullopt };
     std::lock_guard lock(pad->mutex);
     const auto percentage = battery.percentage == LI_BATTERY_PERCENTAGE_UNKNOWN ? 50u : std::min<unsigned>(battery.percentage, 100u);
     std::uint8_t level = static_cast<std::uint8_t>((percentage + 5u) / 10u);
@@ -1690,6 +1754,7 @@ namespace platf::ds5 {
     }
     pad->battery_status = static_cast<std::uint8_t>((charging << 4) | (level & 0x0f));
     pad->report[53] = pad->battery_status;
+    notifier.change = pad->classify_report_locked();
   }
 
   void
@@ -1697,6 +1762,7 @@ namespace platf::ds5 {
     std::shared_lock registry(_impl->registry);
     auto *const pad = _impl->find(status.id.globalIndex);
     if (pad == nullptr) return;
+    report_changed_notifier notifier { pad, std::nullopt };
     std::lock_guard lock(pad->mutex);
     namespace ext = ::ds5::control_extension;
     if (status.valid_mask & ext::in_headset) {
@@ -1709,5 +1775,6 @@ namespace platf::ds5 {
       pad->jack_bits = static_cast<std::uint8_t>((pad->jack_bits & ~0x04u) | (status.microphone_muted ? 0x04u : 0u));
     }
     pad->report[54] = pad->jack_bits;
+    notifier.change = pad->classify_report_locked();
   }
 }  // namespace platf::ds5
