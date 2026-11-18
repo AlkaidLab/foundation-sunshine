@@ -1381,8 +1381,8 @@ TEST(Ds5TuningDescriptors, WireExtensionKeysReportExactReasons) {
   EXPECT_NE(key_entry(snapshot, 96).at("reason").get<std::string>().find("capture source"), std::string::npos);
   EXPECT_NE(key_entry(snapshot, 97).at("reason").get<std::string>().find("audio_control2"), std::string::npos);
   EXPECT_NE(key_entry(snapshot, 98).at("reason").get<std::string>().find("client"), std::string::npos);
-  // 101 is applied by the host now: no reason, a note that names the client's own limit
-  EXPECT_TRUE(key_entry(snapshot, 101).at("reason").get<std::string>().empty());
+  // 101 is applied by the host now: not unavailable, and a note that names the client's own limit
+  EXPECT_NE(key_entry(snapshot, 101).at("status").get<std::string>(), "unavailable");
   EXPECT_NE(key_entry(snapshot, 101).at("note").get<std::string>().find("its own limit"), std::string::npos);
   EXPECT_NE(key_entry(snapshot, 102).at("reason").get<std::string>().find("ALK-DS5T/1"), std::string::npos);
 }
