@@ -142,10 +142,8 @@ void main_cs(uint3 DTid : SV_DispatchThreadID)
     // can straddle a 16-pixel output tile at non-integer scaling ratios.
     uint2 cell = DTid.xy;
     if (any(cell >= hdr_analysis_snapshot_size)) return;
-    uint2 extent = uint2(out_rect_size);
-    uint2 begin = cell * extent / hdr_analysis_snapshot_size;
-    uint2 end = (cell + 1) * extent / hdr_analysis_snapshot_size;
-    uint2 representative = (begin + end - 1) / 2;
+    uint2 begin, end, representative;
+    GetHdrAnalysisCellGeometry(cell, uint2(out_rect_size), begin, end, representative);
     float min_nits = 10000.0;
     float max_nits = 0.0;
     float sum_nits = 0.0;
