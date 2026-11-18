@@ -107,6 +107,8 @@ namespace telemetry {
     std::function<std::optional<std::string>(const std::string &endpoint, const std::string &install_id, const std::string &version, const std::string &image)> session_shot;
     /** The fixed word that says why the latest session_shot call gave no reference (crash::session_shot_state()); null in tests that do not need it. */
     std::function<std::string()> session_shot_state;
+    /** When the computer started, ms since the epoch (0 = not known): tells a restart of the computer from a run that ended by itself. */
+    std::function<std::int64_t()> boot_ms;
     /** Runs inside flush() before each batch write to the disk queue; the tests use it to move a consent change into the middle of a flush. */
     std::function<void()> before_queue_write;
   };
@@ -140,7 +142,7 @@ namespace telemetry {
     // ---- events ----
     /** Shape against the contract, apply consent, put in the buffer. -> true when it was kept. Thread safe, never blocks on I/O. */
     bool
-    emit(kind_e kind, std::string_view name, const nlohmann::json &props, std::string_view product = "host", std::string_view version = {}, int priority = -1, std::string_view report_id = {});
+    emit(kind_e kind, std::string_view name, const nlohmann::json &props, std::string_view product = "host", std::string_view version = {}, int priority = -1, std::string_view report_id = {}, std::string_view session_id = {});
     /** Events from a page (panel, web) through the host API: the same, with the page allow-list. -> the number kept. */
     std::size_t ingest(std::string_view product, std::string_view version, const nlohmann::json &events, ingest_report_t *report = nullptr);
     /** Writes one feedback report to the disk queue now (its own batch, priority 0). true only when the batch is on disk. */
@@ -148,7 +150,19 @@ namespace telemetry {
 
     // ---- streams ----
     void stream_begin(const stream_dims_t &dims, std::uint32_t session_id, std::string_view client_key);
-    void stream_end(std::uint32_t session_id, std::string_view stop_reason);
+    void stream_end(std::uint32_t session_id, std::string_view stop_reason, std::string_view clip_offer = {}, std::string_view clip_flow = {});
+    /** The host learns the encoder family only after a stream began (a probe may be running): the sender thread asks this for a stream that has none. */
+    void set_encoder_resolver(std::function<std::string()> resolver) { encoder_resolver_ = std::move(resolver); }
+    /** A stage of a stream start took `ms`: reported only when it is over the stage's bound (stage_is_slow). */
+    void stream_stage(std::string_view stage, std::int64_t ms);
+    /** A stream start failed at `stage` with `code` (fixed words and a stable error code, no text). */
+    void stream_failed(std::string_view stage, std::string_view code);
+    /** A driver operation failed (driver: vdd | gamepad | microphone | usbip | other; op: create | remove | start | stop | probe | other; code: a result code as letters and digits, or empty). */
+    void driver_failed(std::string_view driver, std::string_view op, std::string_view code);
+    /** At the start: if the previous run left the marker "running" it did not end by itself, which is reported once for that run (session_abnormal, with that run's session id). Then the marker says "running" for this run. */
+    void begin_run_marker();
+    /** At a clean stop: the marker says "exited". */
+    void end_run_marker();
     void record_encoded_frame(std::uint32_t session_id) noexcept;
     void record_encode_ms(std::uint32_t session_id, double ms) noexcept;
     void record_capture_ms(std::uint32_t session_id, double ms) noexcept;
@@ -265,6 +279,12 @@ namespace telemetry {
     disk_queue_t queue_;
     mutable std::mutex queue_mutex_;  // the queue's directory: the sender thread's pump and a flush from another thread (shutdown) never overlap on it
     std::string session_id_;
+    std::function<std::string()> encoder_resolver_;
+    std::atomic<int> stage_events_ { 0 };
+    std::atomic<int> driver_events_ { 0 };
+    static constexpr int MAX_STAGE_EVENTS_PER_RUN = 20;
+    static constexpr int MAX_DRIVER_EVENTS_PER_RUN = 20;
+    void write_run_marker(std::string_view status, std::int64_t boot);
 
     mutable std::mutex mutex_;  // the buffer and the id; never held across I/O
     std::deque<event_t> ring_;

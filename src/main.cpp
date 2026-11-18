@@ -331,6 +331,8 @@ main(int argc, char *argv[]) {
 
   // Usage statistics, error counts and stream quality (docs/privacy_telemetry.md). Each kind is sent only while its own choice is on; nothing here can fail the start.
   telemetry::start();
+  // a stream that began while the encoder probe was running learns its encoder later
+  telemetry::set_encoder_resolver([] { return video::session_encoder_name(); });
   telemetry::set_session_probe([] {
     std::vector<telemetry::session_probe_t> probes;
     for (const auto &info : stream::session::get_all_sessions_info()) {

@@ -9,6 +9,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -550,6 +551,16 @@ namespace telemetry {
       deps.session_log_state = [] { return std::string { crash::session_log_state() }; };
       deps.session_shot = [](const std::string &endpoint, const std::string &install_id, const std::string &version, const std::string &image) { return crash::upload_session_shot(endpoint, install_id, version, image); };
       deps.session_shot_state = [] { return std::string { crash::session_shot_state() }; };
+      deps.boot_ms = [] {
+        const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+#ifdef _WIN32
+        return static_cast<std::int64_t>(now - static_cast<std::int64_t>(GetTickCount64()));
+#else
+        timespec ts {};
+        if (clock_gettime(CLOCK_BOOTTIME, &ts) != 0) return std::int64_t { 0 };
+        return static_cast<std::int64_t>(now - (static_cast<std::int64_t>(ts.tv_sec) * 1000 + ts.tv_nsec / 1'000'000));
+#endif
+      };
       start_steady_ms.store(steady_ms());
       auto service = std::make_shared<service_t>(std::move(options), std::move(deps));
       context_t ctx;
@@ -560,6 +571,7 @@ namespace telemetry {
       ctx.locale = config::sunshine.locale;
       service->set_context(std::move(ctx));
       service->reconcile_consent();  // a choice that was turned off while the host was not running (the config file edited) gets its record now; the first run only remembers the choices
+      service->begin_run_marker();  // the previous run did not end by itself? reported once, for that run
       {
         std::lock_guard lock { slot_mutex };
         service_slot() = service;
@@ -616,6 +628,7 @@ namespace telemetry {
     try {
       if (const auto service = current()) {
         service->emit(kind_e::usage, "app_exit", json { { "uptime_s", std::chrono::duration_cast<std::chrono::seconds>(clock_t::now() - process_start).count() } });
+        service->end_run_marker();
         // events go to the disk queue (no network wait while the host is shutting down); the next start sends them
         finished = runner->stop();
         service->flush(true);
@@ -818,11 +831,31 @@ namespace telemetry {
   }
 
   void
-  stream_ended(std::uint32_t session_id, std::string_view stop_reason) {
+  stream_ended(std::uint32_t session_id, std::string_view stop_reason, std::string_view clip_offer, std::string_view clip_flow) {
     if (const auto service = current()) {
       service->crumb(crumb_e::stream, "stop");
-      service->stream_end(session_id, stop_reason);
+      service->stream_end(session_id, stop_reason, clip_offer, clip_flow);
     }
+  }
+
+  void
+  set_encoder_resolver(std::function<std::string()> resolver) {
+    if (const auto service = current()) service->set_encoder_resolver(std::move(resolver));
+  }
+
+  void
+  stream_stage(std::string_view stage, std::int64_t ms) {
+    if (const auto service = current()) service->stream_stage(stage, ms);
+  }
+
+  void
+  stream_failed(std::string_view stage, std::string_view code) {
+    if (const auto service = current()) service->stream_failed(stage, code);
+  }
+
+  void
+  driver_failed(std::string_view driver, std::string_view op, std::string_view code) {
+    if (const auto service = current()) service->driver_failed(driver, op, code);
   }
 
   void

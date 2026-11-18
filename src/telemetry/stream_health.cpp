@@ -144,6 +144,18 @@ namespace telemetry::health {
     last_done_ns_ = steady_ns;
   }
 
+  std::string
+  stream_health_t::encoder() const {
+    std::lock_guard lock { encoder_mutex_ };
+    return late_encoder_.empty() ? dims_.encoder : late_encoder_;
+  }
+
+  void
+  stream_health_t::set_encoder(std::string encoder) {
+    std::lock_guard lock { encoder_mutex_ };
+    late_encoder_ = std::move(encoder);
+  }
+
   std::optional<window_t>
   stream_health_t::tick(std::int64_t now_ms, const probe_t &probe) {
     std::lock_guard window { window_mutex_ };
@@ -397,7 +409,7 @@ namespace telemetry::health {
     props["client_kind"] = dims_.client_kind;
     props["client_os"] = dims_.client_os;
     if (target_n_ > 0) props["bitrate_band"] = bitrate_band(static_cast<int>(target_sum_ / static_cast<double>(target_n_)));
-    if (!dims_.encoder.empty()) props["encoder"] = dims_.encoder;
+    if (const auto enc = encoder(); !enc.empty()) props["encoder"] = enc;
     if (!dims_.capture_backend.empty()) props["capture_backend"] = dims_.capture_backend;
     if (!dims_.gpu_driver.empty()) props["gpu_driver"] = dims_.gpu_driver;
 
