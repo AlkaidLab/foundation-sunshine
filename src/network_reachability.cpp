@@ -363,14 +363,18 @@ namespace reachability {
     }
 
     endpoint_result_t
-    probe_one_endpoint(const public_address::endpoint_t &endpoint, std::uint16_t default_http_port, const std::string &wan_ip, const endpoint_prober_t &prober) {
+    probe_one_endpoint(const public_address::endpoint_t &endpoint, std::uint16_t default_http_port, const std::string &wan_ip, const endpoint_prober_t &prober,
+      const std::vector<port_status_t> *table) {
       endpoint_result_t result;
       result.input = public_address::format_endpoint(endpoint);
       result.host = endpoint.host;
       result.kind = endpoint.kind;
       result.port_explicit = endpoint.port != 0;
       result.port = public_address::http_port_of(endpoint, default_http_port);
-      result.https_port = public_address::https_port_of(result.port);
+      result.ports = external_tcp_ports(result.port, table);
+      for (const auto &entry : result.ports) {
+        if (entry.role == port_role::https) result.https_port = entry.port;
+      }
 
       std::vector<std::string> raw;
       if (endpoint.kind == public_address::kind_e::ip) {
@@ -452,14 +456,38 @@ namespace reachability {
     }
   }  // namespace
 
+  std::vector<external_port_t>
+  external_tcp_ports(std::uint16_t http_port, const std::vector<port_status_t> *table) {
+    std::vector<external_port_t> result;
+    // The offsets of the host's own port family: the port the person entered stands for the HTTP port, and each other TCP port keeps its distance from it.
+    std::int32_t http_internal = 0;
+    std::vector<std::pair<std::string, std::int32_t>> internal;
+    if (table) {
+      for (const auto &entry : *table) {
+        if (entry.proto != "tcp") continue;
+        if (entry.role == port_role::http) http_internal = entry.port;
+        if (entry.role == port_role::http || entry.role == port_role::https || entry.role == port_role::rtsp) internal.emplace_back(entry.role, entry.port);
+      }
+    }
+    if (http_internal == 0) {
+      internal = { { std::string(port_role::https), 47984 }, { std::string(port_role::http), 47989 }, { std::string(port_role::rtsp), 48010 } };
+      http_internal = 47989;
+    }
+    for (const auto &[role, port] : internal) {
+      const auto moved = static_cast<std::int32_t>(http_port) + (port - http_internal);
+      if (moved >= 1 && moved <= 65535) result.push_back({ role, static_cast<std::uint16_t>(moved) });
+    }
+    return result;
+  }
+
   std::vector<endpoint_result_t>
   probe_endpoints(const std::vector<public_address::endpoint_t> &endpoints, std::uint16_t default_http_port,
-    std::string_view wan_ip, const endpoint_prober_t &prober) {
+    std::string_view wan_ip, const endpoint_prober_t &prober, const std::vector<port_status_t> *table) {
     const std::string wan { wan_ip };
     std::vector<std::future<endpoint_result_t>> jobs;
     const auto count = std::min(endpoints.size(), public_address::MAX_ENDPOINTS);
     for (std::size_t index = 0; index < count; ++index) {
-      jobs.push_back(std::async(std::launch::async, [&, index]() { return probe_one_endpoint(endpoints[index], default_http_port, wan, prober); }));
+      jobs.push_back(std::async(std::launch::async, [&, index]() { return probe_one_endpoint(endpoints[index], default_http_port, wan, prober, table); }));
     }
     std::vector<endpoint_result_t> results;
     for (auto &job : jobs) results.push_back(job.get());
@@ -819,6 +847,7 @@ namespace reachability {
         { "port", endpoint.port },
         { "port_explicit", endpoint.port_explicit },
         { "https_port", endpoint.https_port },
+        { "ports", [&]() { auto list = nlohmann::json::array(); for (const auto &entry : endpoint.ports) list.push_back({ { "role", entry.role }, { "port", entry.port } }); return list; }() },
         { "resolved", endpoint.resolved },
         { "scope", to_string(endpoint.scope) },
         { "matches_wan", endpoint.matches_wan },

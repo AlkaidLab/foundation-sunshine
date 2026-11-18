@@ -144,6 +144,12 @@ namespace reachability {
     handshake_t handshake;
   };
 
+  /// A TCP port as the internet reaches it: the port the person entered, moved by the host's own offsets between its ports.
+  struct external_port_t {
+    std::string role;  ///< "http", "https" or "rtsp"
+    std::uint16_t port = 0;
+  };
+
   /// What the host found out about one public endpoint of the configuration.
   struct endpoint_result_t {
     std::string input;  ///< canonical text as configured
@@ -151,7 +157,8 @@ namespace reachability {
     public_address::kind_e kind = public_address::kind_e::empty;
     std::uint16_t port = 0;  ///< HTTP port: the given one, or the default
     bool port_explicit = false;
-    std::uint16_t https_port = 0;  ///< port - 5; the port that was tested
+    std::uint16_t https_port = 0;  ///< the HTTPS port as the internet reaches it: the HTTP port moved by the host's configured offset between them; the port that was tested
+    std::vector<external_port_t> ports;  ///< the TCP ports of this endpoint (http, https, rtsp), from the host's port table
     std::vector<std::string> resolved;  ///< addresses of a host name, or the IP literal itself
     scope_e scope = scope_e::unknown;
     bool matches_wan = false;
@@ -266,12 +273,19 @@ namespace reachability {
 
   /**
    * @brief Probe every endpoint: resolve host names, then a TLS handshake against each address on the
-   *        endpoint's HTTPS port (its HTTP port minus five). Endpoints run in parallel, so the time is
+   *        endpoint's HTTPS port (its HTTP port moved by the host's configured offset between the two). Endpoints run in parallel, so the time is
    *        bounded by one resolve plus one handshake, not by their number.
    */
   std::vector<endpoint_result_t>
   probe_endpoints(const std::vector<public_address::endpoint_t> &endpoints, std::uint16_t default_http_port,
-    std::string_view wan_ip, const endpoint_prober_t &prober);
+    std::string_view wan_ip, const endpoint_prober_t &prober, const std::vector<port_status_t> *table = nullptr);
+
+  /**
+   * @brief The TCP ports a client needs at an endpoint whose HTTP port is `http_port`: every TCP port of the host's own table (https, http, rtsp)
+   *        keeps its distance from the HTTP port. Without a table, the default port family (https 5 below, rtsp 21 above). A port that falls outside 1..65535 is left out.
+   */
+  std::vector<external_port_t>
+  external_tcp_ports(std::uint16_t http_port, const std::vector<port_status_t> *table);
 
   /**
    * @brief The addresses of a one-off test (`GET /api/network/reachability?test=host[:port],...`) as the canonical list the probe takes:

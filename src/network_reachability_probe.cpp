@@ -1086,7 +1086,7 @@ namespace reachability {
       prober.resolve = [](const std::string &host) { return resolve_host(host, std::chrono::seconds { 2 }); };
       prober.handshake = [&options](const std::string &address, std::uint16_t port) { return handshake_to(address, port, options.certificate_path); };
       stage("endpoints", false);
-      public_inputs.endpoints = probe_endpoints(endpoint_list.endpoints, default_http_port, router_status.wan_ip, prober);
+      public_inputs.endpoints = probe_endpoints(endpoint_list.endpoints, default_http_port, router_status.wan_ip, prober, &snapshot.ports);
       stage("endpoints", true);
 
       // The first endpoint also fills the single-address fields older clients of the API read.

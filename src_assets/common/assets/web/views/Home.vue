@@ -300,7 +300,7 @@ const catalogueInput = computed(() => {
   const sy = sys.value
   return {
     sampleSec: SAMPLE_SEC, vddStore: live.vdd.value ? vddStore : null,
-    reach: reach.view.report, reachChecking: reach.view.status === 'loading',
+    reach: reach.view.report, reachChecking: reach.view.status === 'loading', reachStatus: reach.view.status, reachCause: reach.view.cause, reachHttp: reach.view.http, reachProgress: reach.view.progress,
     sysinfo: nics.info.value,
     host: { version: versionLabel.value, update: updateLabel.value },
     session: s ? { ...s, fpsMeasured: perf.value?.fps, latencyMs: perf.value?.avgMs, latencyP95Ms: perf.value?.p95Ms, uptimeMs: perf.value?.uptimeMs, frameRates: perf.value?.frameRates, perfCapture: perf.value?.capture } : null,

@@ -1108,3 +1108,68 @@ TEST(NetworkReachabilityJson, EndpointsSayWhenTheFailureIsInconclusive) {
   EXPECT_EQ(endpoint["error"], "timeout");
   EXPECT_TRUE(endpoint["inconclusive"].get<bool>());
 }
+
+// ---- ports from the host's own table, no guessing (net-check-1118) ----
+
+TEST(NetworkReachabilityPorts, EveryTcpPortKeepsItsDistanceFromTheHttpPortOfTheHostsOwnTable) {
+  const auto table = healthy_ports();
+  const auto ports = external_tcp_ports(60000, &table);
+  std::map<std::string, std::uint16_t> by_role;
+  for (const auto &entry : ports) by_role[entry.role] = entry.port;
+  EXPECT_EQ(by_role["http"], 60000);
+  EXPECT_EQ(by_role["https"], 59995);
+  EXPECT_EQ(by_role["rtsp"], 60021);
+  EXPECT_EQ(by_role.count("web"), 0U);  // the Web UI is not a streaming port
+}
+
+TEST(NetworkReachabilityPorts, ADifferentPortFamilyMovesTheHttpsPortByItsOwnOffset) {
+  // a host whose HTTPS port is not five below its HTTP port: the table says so, and nothing subtracts five
+  std::vector<port_status_t> table = { make_port("tcp", 47979, "https"), make_port("tcp", 47989, "http"), make_port("tcp", 48010, "rtsp") };
+  const auto ports = external_tcp_ports(60000, &table);
+  std::map<std::string, std::uint16_t> by_role;
+  for (const auto &entry : ports) by_role[entry.role] = entry.port;
+  EXPECT_EQ(by_role["https"], 59990);
+  fake_network_t network;
+  network.tls["203.0.113.9|59990"] = ours(5);
+  const auto results = probe_endpoints({ endpoint_of("203.0.113.9:60000") }, 47989, "", network.prober(), &table);
+  ASSERT_EQ(results.size(), 1U);
+  EXPECT_TRUE(results[0].reached);
+  EXPECT_EQ(results[0].https_port, 59990);
+}
+
+TEST(NetworkReachabilityPorts, WithoutATableTheDefaultFamilyAppliesAndPortsOutsideTheRangeAreLeftOut) {
+  const auto defaults = external_tcp_ports(47989, nullptr);
+  ASSERT_EQ(defaults.size(), 3U);
+  const auto low = external_tcp_ports(10, nullptr);
+  for (const auto &entry : low) EXPECT_GE(entry.port, 1);
+  const auto high = external_tcp_ports(65530, nullptr);
+  for (const auto &entry : high) EXPECT_NE(entry.role, "rtsp");  // 65551 does not exist
+}
+
+TEST(NetworkReachabilityJson, EndpointsListTheirTcpPorts) {
+  fake_network_t network;
+  network.tls["203.0.113.9|59995"] = ours(5);
+  const auto table = healthy_ports();
+  snapshot_t snapshot;
+  snapshot.checked_at = format_utc_iso(NOW);
+  snapshot.public_reachability.endpoints = probe_endpoints({ endpoint_of("203.0.113.9:60000") }, 47989, "", network.prober(), &table);
+  const auto json = to_json(snapshot);
+  const auto &ports = json["public"]["endpoints"].at(0)["ports"];
+  ASSERT_EQ(ports.size(), 3U);
+  EXPECT_EQ(ports.at(0)["role"], "https");
+  EXPECT_EQ(ports.at(0)["port"], 59995);
+}
+
+TEST(PublicEndpointSyntax, AWildcardAddressIsNoAddress) {
+  const auto error_of = [](const char *text) { return public_address::parse_endpoint(text).error; };
+  for (const char *text : { "0.0.0.0", "0.0.0.0:57989", "0.1.2.3", "::", "[::]:57989", "0:0:0:0:0:0:0:0", "[0:0:0:0:0:0:0:0]" }) EXPECT_EQ(error_of(text), endpoint_error_e::unspecified) << text;
+  EXPECT_TRUE(public_address::parse_endpoint("127.0.0.1").ok());
+  EXPECT_TRUE(public_address::parse_endpoint("[::1]:57989").ok());
+  EXPECT_EQ(public_address::parse_endpoint("home.example.net:57989").error, endpoint_error_e::none);
+  EXPECT_EQ(public_address::parse_endpoint("203.0.113.9").error, endpoint_error_e::none);
+  // a list drops it and keeps the rest; the rejected text is reported
+  const auto list = public_address::parse_endpoint_list("0.0.0.0, home.example.net");
+  ASSERT_EQ(list.endpoints.size(), 1U);
+  ASSERT_EQ(list.rejected.size(), 1U);
+  EXPECT_EQ(list.rejected[0], "0.0.0.0");
+}
