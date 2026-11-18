@@ -1350,6 +1350,14 @@ namespace nvhttp {
         shutdown_event->raise(true);
         return;
       }
+      catch (const std::exception &err) {
+        if (shutdown_event->peek()) {
+          return;
+        }
+        BOOST_LOG(fatal) << "nvhttps server stopped on ports ["sv << server->config.port << "]: "sv << err.what();
+        shutdown_event->raise(true);
+        return;
+      }
     };
 
     auto accept_and_run_http = [&](nvhttp::http_server_t *server) {
@@ -1364,6 +1372,14 @@ namespace nvhttp {
         }
 
         BOOST_LOG(fatal) << "Couldn't start nvhttp server on ports ["sv << server->config.port << "]: "sv << err.what();
+        shutdown_event->raise(true);
+        return;
+      }
+      catch (const std::exception &err) {
+        if (shutdown_event->peek()) {
+          return;
+        }
+        BOOST_LOG(fatal) << "nvhttp server stopped on ports ["sv << server->config.port << "]: "sv << err.what();
         shutdown_event->raise(true);
         return;
       }

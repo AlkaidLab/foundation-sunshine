@@ -125,6 +125,17 @@ TEST_F(BeastHttp, PlainHttpRoutesAndQueryValuesUseTheSameApplicationInterface) {
   EXPECT_EQ(response.result(), http::status::ok);
 }
 
+TEST_F(BeastHttp, StopBeforeStartReturnsInsteadOfThrowing) {
+  // A shutdown that begins while the listener threads are still starting calls stop() first; start() then has nothing to serve and must return,
+  // not throw out of its thread (that ended the host as an uncaught exception 1 s after the launch).
+  plain = std::make_unique<web::Server<web::HTTP>>();
+  plain->config.address = "127.0.0.1";
+  plain->config.port = 0;
+  plain->stop();
+  EXPECT_NO_THROW(plain->start());
+  plain->stop();
+}
+
 TEST_F(BeastHttp, TlsKeepAliveRetainsPipelinedRequestsAndBinaryBodies) {
   encrypted = secure_server();
   encrypted->resource["^/echo$"]["POST"] = [](auto response, auto request) { response->write(request->content.string()); };
