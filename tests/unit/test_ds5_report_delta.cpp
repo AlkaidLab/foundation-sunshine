@@ -69,3 +69,33 @@ TEST(Ds5ReportDelta, ShortReportsAreComparedOverTheirCommonLength) {
   const std::array<std::uint8_t, 4> c { 1, 128, 129, 128 };
   EXPECT_EQ(ds5::input_report_delta(a, c), report_delta::stream);
 }
+
+TEST(Ds5ReportDelta, AButtonThatWentUpIsARelease) {
+  auto down = idle();
+  down[9] = 0x20;  // R2 button
+  auto up = idle();
+  EXPECT_EQ(delta(idle(), down), report_delta::buttons);
+  EXPECT_EQ(delta(down, up), report_delta::release);
+  down[8] = static_cast<std::uint8_t>(0x40 | 8);  // cross
+  EXPECT_EQ(delta(idle(), down), report_delta::buttons);
+  up[9] = 0x20;
+  EXPECT_EQ(delta(down, up), report_delta::release);
+}
+
+TEST(Ds5ReportDelta, TheHatLeavingADirectionIsARelease) {
+  auto north = idle();
+  north[8] = 0;
+  auto east = idle();
+  east[8] = 2;
+  EXPECT_EQ(delta(idle(), north), report_delta::buttons);
+  EXPECT_EQ(delta(north, idle()), report_delta::release);
+  EXPECT_EQ(delta(north, east), report_delta::release);
+}
+
+TEST(Ds5ReportDelta, ADownAndAnUpInTheSameReportIsARelease) {
+  auto before = idle();
+  before[9] = 0x01;
+  auto after = idle();
+  after[9] = 0x02;
+  EXPECT_EQ(delta(before, after), report_delta::release);
+}

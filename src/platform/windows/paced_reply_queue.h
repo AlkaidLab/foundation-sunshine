@@ -145,8 +145,12 @@ namespace platf {
     void
     schedule_interrupt(lane which, std::uint32_t sequence, interrupt_wire_t make_wire) {
       std::lock_guard lock(mutex_);
-      interrupt_[static_cast<std::size_t>(which)].hold(sequence, std::move(make_wire));
-      SetEvent(wake_);
+      auto &lane_state = interrupt_[static_cast<std::size_t>(which)];
+      const bool was_empty = lane_state.held() == 0;
+      lane_state.hold(sequence, std::move(make_wire));
+      /* The due time of a held reply does not depend on which URB it answers, so another URB
+       * behind one that is already held needs no wake of the worker. */
+      if (was_empty) SetEvent(wake_);
     }
 
     /**
@@ -165,7 +169,7 @@ namespace platf {
       const bool had_edge = lane_state.pending_edges() != 0;
       const bool was_dirty = lane_state.dirty();
       lane_state.new_data(change);
-      const bool earlier = change == report_change::edge ? !had_edge : !had_edge && !was_dirty;
+      const bool earlier = change != report_change::stream ? !had_edge : !had_edge && !was_dirty;
       if (earlier && lane_state.held() != 0) SetEvent(wake_);
     }
 
@@ -251,10 +255,17 @@ namespace platf {
           for (const auto &lane_state : interrupt_) {
             if (const auto due = lane_state.next_due(active); due && (!wake || *due < *wake)) wake = *due;
           }
-          if (!wake)
-            CancelWaitableTimer(timer_);
-          else
-            arm_timer(*wake - clock::now());
+          /* A wake caused by an event, not by the timer, usually leaves the due time where it was:
+           * the timer is then still armed for it and is not set again. */
+          const auto now = clock::now();
+          if (!wake) {
+            if (armed_) CancelWaitableTimer(timer_);
+            armed_.reset();
+          }
+          else if (!armed_ || *armed_ != *wake || *armed_ <= now) {
+            arm_timer(*wake - now);
+            armed_ = *wake;
+          }
         }
         WaitForMultipleObjects(static_cast<DWORD>(handles.size()), handles.data(), FALSE, INFINITE);
       }
@@ -266,6 +277,7 @@ namespace platf {
     std::multimap<clock::time_point, item_t> items_;
     std::array<clock::time_point, static_cast<std::size_t>(lane::count_)> next_free_ {};
     std::array<interrupt_lane_t, static_cast<std::size_t>(lane::count_)> interrupt_;
+    std::optional<clock::time_point> armed_;  ///< the time the timer is set for, while it is armed
     bool stop_ { false };
     bool high_resolution_ { false };
     HANDLE wake_ { nullptr };

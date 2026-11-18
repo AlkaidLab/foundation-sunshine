@@ -329,9 +329,10 @@ namespace platf::ds5 {
         std::copy_n(report.begin(), std::min(report.size(), seen_report.size()), seen_report.begin());
         switch (delta) {
           case ::ds5::report_delta::buttons:
+          case ::ds5::report_delta::release:
             edge_snapshots.push_back({ report[8], report[9], report[10] });
             if (edge_snapshots.size() > kMaxEdgeSnapshots) edge_snapshots.pop_front();
-            return ::platf::report_change::edge;
+            return delta == ::ds5::report_delta::release ? ::platf::report_change::release : ::platf::report_change::edge;
           case ::ds5::report_delta::stream:
             return ::platf::report_change::stream;
           case ::ds5::report_delta::none:
