@@ -769,7 +769,7 @@ namespace ds5::tuning {
       case 55:
         return "The analog axis becomes 0 or 255 by the threshold decision; the digital bit is set in either mode.";
       case 101:
-        return "The rate the host asks every client for motion reports (accelerometer and gyro); it applies at once to a running stream. A client reports at most this often and no faster than its pad samples: a DualSense gives about 250 Hz over USB. Buttons and sticks are not capped. A client that does not honour the request keeps its own rate.";
+        return "The rate the host asks every client for motion reports (accelerometer and gyro); it applies at once to a running stream. A client reports at the lower of this value and its own limit (Moonlight Enhanced: Settings > Input > Gamepad > Motion Report Rate Limit, 250 Hz by default), and no faster than its pad samples: a DualSense gives about 250 Hz over USB. Buttons and sticks are not capped. A client that does not honour the request keeps its own rate.";
       case 106:
         return "Applies to the next virtual controller allocation; active devices keep their current identity.";
       default:
