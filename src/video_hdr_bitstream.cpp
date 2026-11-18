@@ -297,18 +297,20 @@ namespace video::hdr_bitstream {
   }
 
   bool
-  insert(codec_e codec, std::span<const uint8_t> units, std::vector<uint8_t> &bitstream) {
-    if (units.empty()) {
-      return false;
-    }
-
-    const auto offset = insert_offset(codec, bitstream);
+  copy_with_metadata(codec_e codec, std::span<const uint8_t> bitstream, std::span<const uint8_t> units, std::vector<uint8_t> &out) {
+    const auto offset = units.empty() ? std::nullopt : insert_offset(codec, bitstream);
     if (!offset) {
+      out.assign(bitstream.begin(), bitstream.end());
       return false;
     }
 
-    bitstream.insert(
-      bitstream.begin() + static_cast<std::ptrdiff_t>(*offset), units.begin(), units.end());
+    const auto prefix = bitstream.first(*offset);
+    const auto picture = bitstream.subspan(*offset);
+    out.clear();
+    out.reserve(bitstream.size() + units.size());
+    out.insert(out.end(), prefix.begin(), prefix.end());
+    out.insert(out.end(), units.begin(), units.end());
+    out.insert(out.end(), picture.begin(), picture.end());
     return true;
   }
 

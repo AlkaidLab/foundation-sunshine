@@ -844,6 +844,9 @@ namespace platf::dxgi {
       vpe_analysis_y_srv.reset();
       vpe_analysis_uv_srv.reset();
       vpe_analysis_cbuf.reset();
+      hdr_analysis_input_srv.reset();
+      hdr_analysis_input_tex.reset();
+      hdr_analysis_input_retry_at = {};
       ::video::unregister_hdr_pipeline_status(runtime_status_id);
       runtime_status_id = 0;
       hdr_luminance_stats_out = {};
@@ -2006,7 +2009,9 @@ namespace platf::dxgi {
     // CPU only reads 1 FinalResult (no iteration over thousands of groups)
     cs_t hdr_pass1_cs;                     // First pass: per-tile analysis
     cs_t hdr_pass2_cs;                     // Second pass: global reduction
-    texture2d_t hdr_analysis_input_tex;    // Dedicated copy of the HDR frame for analysis outside the keyed mutex
+    D3D11_TEXTURE2D_DESC hdr_analysis_input_desc {}; // Matches the full-frame analysis constant buffer
+    std::chrono::steady_clock::time_point hdr_analysis_input_retry_at {};
+    texture2d_t hdr_analysis_input_tex;    // Allocated on the first compatible full-frame fallback
     shader_res_t hdr_analysis_input_srv;   // SRV for the copied HDR frame
     texture2d_t hdr_analysis_snapshot_tex; // Capped per-cell scalar statistics from the P010 converter
     shader_res_t hdr_analysis_snapshot_srv;
@@ -2104,9 +2109,10 @@ namespace platf::dxgi {
 
     bool
     should_dispatch_hdr_analysis() {
-      const bool should_dispatch = (hdr_analysis_frame_index % HDR_ANALYSIS_INTERVAL) == 0;
+      const bool sample_due = (hdr_analysis_frame_index % HDR_ANALYSIS_INTERVAL) == 0;
+      // A pending readback skips this sample without shifting the next sampling frame.
       ++hdr_analysis_frame_index;
-      return should_dispatch;
+      return sample_due && !hdr_analysis_pending;
     }
 
     /**
@@ -2158,28 +2164,16 @@ namespace platf::dxgi {
       uint32_t groups_y = (hdr_analysis_height + 15) / 16;
       hdr_num_groups = groups_x * groups_y;
 
-      // --- Dedicated HDR analysis input copy ---
-      D3D11_TEXTURE2D_DESC analysis_input_desc = {};
-      analysis_input_desc.Width = width;
-      analysis_input_desc.Height = height;
-      analysis_input_desc.MipLevels = 1;
-      analysis_input_desc.ArraySize = 1;
-      analysis_input_desc.SampleDesc.Count = 1;
-      analysis_input_desc.Usage = D3D11_USAGE_DEFAULT;
-      analysis_input_desc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
-      analysis_input_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-
-      status = device->CreateTexture2D(&analysis_input_desc, nullptr, &hdr_analysis_input_tex);
-      if (FAILED(status)) {
-        BOOST_LOG(warning) << "Failed to create HDR analysis input texture: " << util::log_hex(status);
-        return -1;
-      }
-
-      status = device->CreateShaderResourceView(hdr_analysis_input_tex.get(), nullptr, &hdr_analysis_input_srv);
-      if (FAILED(status)) {
-        BOOST_LOG(warning) << "Failed to create HDR analysis input SRV: " << util::log_hex(status);
-        return -1;
-      }
+      // Keep the capture extent for validating fallback frames. Snapshot and
+      // VPE analysis have their own inputs and need no full-size scRGB copy.
+      hdr_analysis_input_desc.Width = width;
+      hdr_analysis_input_desc.Height = height;
+      hdr_analysis_input_desc.MipLevels = 1;
+      hdr_analysis_input_desc.ArraySize = 1;
+      hdr_analysis_input_desc.SampleDesc.Count = 1;
+      hdr_analysis_input_desc.Usage = D3D11_USAGE_DEFAULT;
+      hdr_analysis_input_desc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+      hdr_analysis_input_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 
       // --- Constant buffer for pass 1 (analysis resolution) ---
       AnalysisParams analysis_cb_data = {
@@ -2429,12 +2423,11 @@ namespace platf::dxgi {
 
       // Pixel-shader fallback: preserve the source outside the encoder keyed
       // mutex, then analyze the same unmodified scRGB signal used for encoding.
-      if (!hdr_analysis_input_tex || !encoder_texture) {
+      if (!encoder_texture) {
         return {};
       }
-      D3D11_TEXTURE2D_DESC analysis_desc {};
+      const auto &analysis_desc = hdr_analysis_input_desc;
       D3D11_TEXTURE2D_DESC encoder_desc {};
-      hdr_analysis_input_tex->GetDesc(&analysis_desc);
       encoder_texture->GetDesc(&encoder_desc);
       if (analysis_desc.Width != encoder_desc.Width ||
           analysis_desc.Height != encoder_desc.Height ||
@@ -2447,6 +2440,24 @@ namespace platf::dxgi {
         // analysis resources. Dropping this sample is safer than copying
         // incompatible resources and reusing stale luminance metadata.
         return {};
+      }
+      if (!hdr_analysis_input_tex) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now < hdr_analysis_input_retry_at) return {};
+
+        texture2d_t texture;
+        shader_res_t srv;
+        auto status = device->CreateTexture2D(&analysis_desc, nullptr, &texture);
+        if (SUCCEEDED(status)) {
+          status = device->CreateShaderResourceView(texture.get(), nullptr, &srv);
+        }
+        if (FAILED(status)) {
+          BOOST_LOG(warning) << "Failed to allocate HDR fallback analysis input: " << util::log_hex(status);
+          hdr_analysis_input_retry_at = now + std::chrono::seconds(5);
+          return {};
+        }
+        hdr_analysis_input_tex = std::move(texture);
+        hdr_analysis_input_srv = std::move(srv);
       }
       device_ctx->CopyResource(hdr_analysis_input_tex.get(), encoder_texture);
       return {
@@ -3107,8 +3118,12 @@ namespace platf::dxgi {
         device_ctx->CSSetConstantBuffers(3, 1, &hdr_params);
       }
 
-      // Dispatch covers only the active rect (precomputed in init_compute_path).
-      device_ctx->Dispatch((UINT) cs_dispatch_groups_x, (UINT) cs_dispatch_groups_y, 1);
+      // The scaled snapshot shader converts all pixels in one analysis cell per thread.
+      if (write_hdr_analysis_snapshot && cs_is_scaled) {
+        device_ctx->Dispatch((hdr_analysis_width + 15) / 16, (hdr_analysis_height + 15) / 16, 1);
+      } else {
+        device_ctx->Dispatch((UINT) cs_dispatch_groups_x, (UINT) cs_dispatch_groups_y, 1);
+      }
       if (timing) {
         device_ctx->End(timing->after_dispatch.get());
       }

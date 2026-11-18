@@ -79,14 +79,13 @@ namespace video::hdr_bitstream {
   insert_offset(codec_e codec, std::span<const uint8_t> bitstream);
 
   /**
-   * Splice units built by append_t35_unit() into an encoded frame.
+   * Copy an encoded frame into out, inserting units built by append_t35_unit().
+   * The input spans must refer to storage separate from out.
    *
-   * Returns false and leaves bitstream byte-identical when there is nothing to
-   * insert or no insertion point exists, so a caller can send the untouched
-   * frame rather than dropping it.
+   * Returns true if units were inserted. Otherwise out receives the original frame.
    */
   bool
-  insert(codec_e codec, std::span<const uint8_t> units, std::vector<uint8_t> &bitstream);
+  copy_with_metadata(codec_e codec, std::span<const uint8_t> bitstream, std::span<const uint8_t> units, std::vector<uint8_t> &out);
 
   /**
    * Remove every Dolby Vision RPU NAL (HEVC unspecified NAL type 62) from an
