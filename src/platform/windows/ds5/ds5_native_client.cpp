@@ -488,6 +488,7 @@ namespace platf::ds5 {
       ::ds5::mic_route::ring_t mic_ring;
       std::atomic_bool mic_capturing { false };  ///< an application records: interface 2 has its alternate setting 1 selected
       std::atomic_bool mic_muted { false };  ///< the feature unit of the microphone is muted
+      std::atomic<int> mic_served_peak { 0 };  ///< the loudest sample handed to the bus since the recording began (0..32767)
       std::atomic_bool mute_watch_stop { false };
       std::thread mute_watch;
       ::ds5::control_extension::output_t game_extension {};
@@ -1332,13 +1333,15 @@ namespace platf::ds5 {
       note_capture_interface(bool on) {
         mic_capturing.store(on, std::memory_order_release);
         const auto before = mic_ring.stats();
+        const auto peak = mic_served_peak.exchange(0, std::memory_order_acq_rel);
         mic_ring.flush();
         if (on) {
           BOOST_LOG(info) << "Native DS5 microphone: an application records from pad "sv << global_index << ", route "sv
                           << (::ds5::tuning::runtime::state().mic_route.load(std::memory_order_acquire) == 0u ? "controller (the client microphone)"sv : "silence"sv);
           return;
         }
-        BOOST_LOG(info) << "Native DS5 microphone: recording from pad "sv << global_index << " ended; client audio written "sv
+        BOOST_LOG(info) << "Native DS5 microphone: recording from pad "sv << global_index << " ended; loudest sample on the bus "sv << peak
+                        << (mic_muted.load(std::memory_order_acquire) ? ", the endpoint is muted"sv : ""sv) << "; client audio written "sv
                         << before.frames_written << " frames, served "sv << before.frames_served << ", discarded while idle "sv
                         << before.frames_idle_discarded << ", trimmed "sv << before.frames_trimmed << ", dropped "sv << before.frames_dropped
                         << ", underruns "sv << before.underruns << " ("sv << before.underrun_frames << " silent frames)"sv;
@@ -1367,8 +1370,12 @@ namespace platf::ds5 {
         for (std::size_t index = 0; index < packets.size(); ++index) {
           const auto available = std::min(packets[index][1], 192u);
           const auto frames = std::min<std::size_t>(available / 4u, mono.size());
-          if (route_controller && recording)
+          if (route_controller && recording) {
             mic_ring.serve_packet(mono.data(), frames, now);
+            int peak = 0;
+            for (std::size_t sample = 0; sample < frames; ++sample) peak = std::max(peak, std::abs(static_cast<int>(mono[sample])));
+            if (peak > mic_served_peak.load(std::memory_order_relaxed)) mic_served_peak.store(peak, std::memory_order_relaxed);
+          }
           else
             mono.fill(0);
           ::ds5::mic_route::to_stereo(mono.data(), frames, muted, stereo.data());
