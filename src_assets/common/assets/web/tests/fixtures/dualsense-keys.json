@@ -860,7 +860,7 @@
 "group": 9,
 "tier": "advanced",
 "label": "Audio mic Route",
-"implemented": false,
+"implemented": true,
 "authority": "host"
 },
 {

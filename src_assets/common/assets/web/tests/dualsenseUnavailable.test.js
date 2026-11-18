@@ -10,7 +10,7 @@ const locale = async (name) => JSON.parse(await read(`../public/assets/locale/${
 // the keys the host reports as unavailable (tests/unit/test_ds5_tuning.cpp) with the cause code it sends for each
 const HOST_REASONS = [
   [10, 'transport'], [98, 'transport'], [100, 'transport'],
-  [31, 'slope'], [96, 'mic'], [97, 'preamp'],
+  [31, 'slope'], [97, 'preamp'],
   [102, 'control-channel'], [103, 'control-channel'], [104, 'control-channel'],
   [105, 'client'],
 ]

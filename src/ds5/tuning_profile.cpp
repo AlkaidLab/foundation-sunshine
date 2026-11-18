@@ -707,9 +707,6 @@ namespace ds5::tuning {
       return "Stick and trigger-axis shaping runs in the client input path, not in this host feedback bridge.";
     }
     if (id >= 64 && id <= 73) return "Motion filtering and orientation run in the client input path.";
-    if (id == 96) {
-      return "The DualSense microphone endpoint has no capture source on this host yet (it answers silence); the virtual microphone is a separate task, so there is no route to choose.";
-    }
     if (id == 97) {
       return "The 0x5515 output extension carries no audio_control2 field, so the speaker preamp cannot reach the client.";
     }
@@ -755,7 +752,6 @@ namespace ds5::tuning {
     if (id >= 24 && id <= 34) return "trigger-scale";
     if (id >= 74 && id <= 80) return "pointer";
     if (id >= 35 && id <= 73) return "client";
-    if (id == 96) return "mic";
     if (id == 97) return "preamp";
     if (id >= 102 && id <= 104) return "control-channel";
     if (id == 2) return "haptics-switch";
@@ -805,6 +801,8 @@ namespace ds5::tuning {
       case 52:
       case 55:
         return "The analog axis becomes 0 or 255 by the threshold decision; the digital bit is set in either mode.";
+      case 96:
+        return "controller: the DualSense microphone endpoint carries the client's microphone (client microphone redirection must be on, with the USB/IP virtual microphone or VB-Cable available); none: it answers silence; host: capturing the host's own microphone is not implemented, the endpoint stays silent. Applies at once.";
       case 101:
         return "The rate the host asks every client for motion reports (accelerometer and gyro); it applies at once to a running stream. A client reports at the lower of this value and its own limit (Moonlight Enhanced: Settings > Input > Gamepad > Motion Report Rate Limit, 250 Hz by default), and no faster than its pad samples: a DualSense gives about 250 Hz over USB. Buttons and sticks are not capped. A client that does not honour the request keeps its own rate.";
       case 106:
