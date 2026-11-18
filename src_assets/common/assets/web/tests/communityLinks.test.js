@@ -28,6 +28,12 @@ test('every link has a label in both languages and the Chinese mirror is used in
   assert.equal(resolveLink(PROJECT_LINKS[0], 'en'), 'https://www.alkaidlab.com/')
 })
 
+test('the QQ link uses the existing community group distribution', () => {
+  const qq = PROJECT_LINKS.find((link) => link.id === 'qq')
+  assert.equal(resolveLink(qq, 'zh', 0.09), 'https://qm.qq.com/q/AfMQoyKrkc')
+  assert.equal(resolveLink(qq, 'zh', 0.1), 'https://qm.qq.com/q/vIVhpjDMic')
+})
+
 test('the partner tag follows the one client list: the team\'s four clients (HarmonyOS V+ is official) are not partners, every other client is', () => {
   const { first, partner } = clientSections()
   assert.deepEqual(first.map((c) => c.id), ['vplus-desktop', 'vplus-android', 'macos-enhanced', 'vplus-harmony'])

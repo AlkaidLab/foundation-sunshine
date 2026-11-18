@@ -1,7 +1,10 @@
 // The client download page's community links and project links.
 // Every address is one of the host repository's own (README.md, config/resources.js); a test keeps the list complete.
 
+import { QUICK_START_RESOURCES, resolveRandomResourceHref } from './resources.js'
+
 const REPO = 'https://github.com/AlkaidLab/foundation-sunshine'
+const COMMUNITY_GROUP = QUICK_START_RESOURCES.find((resource) => resource.id === 'community-group')
 
 export const PROJECT_LINKS = Object.freeze([
   { id: 'site', icon: 'public', url: 'https://www.alkaidlab.com/', zh: 'https://www.alkaidlab.cn/' },
@@ -9,7 +12,7 @@ export const PROJECT_LINKS = Object.freeze([
   { id: 'github', icon: 'code', url: REPO },
   { id: 'changelog', icon: 'history', url: `${REPO}/releases` },
   { id: 'license', icon: 'balance', url: `${REPO}/blob/master/LICENSE` },
-  { id: 'qq', icon: 'groups', url: 'https://qm.qq.com/q/AfMQoyKrkc' },
+  { id: 'qq', icon: 'groups', url: COMMUNITY_GROUP.href },
   { id: 'issues', icon: 'bug_report', url: `${REPO}/issues` },
 ])
 
@@ -43,4 +46,7 @@ const TEXTS = {
 }
 export const communityTexts = (locale = 'en') => (/^zh/i.test(String(locale)) ? TEXTS.zh : TEXTS.en)
 export const linkLabel = (texts, link) => (link.id === 'project' ? texts.projectPage : texts[link.id] || link.id)
-export const resolveLink = (link, locale = 'en') => (/^zh/i.test(String(locale)) && link.zh ? link.zh : link.url)
+export const resolveLink = (link, locale = 'en', randomValue) => {
+  if (link.id === 'qq') return resolveRandomResourceHref(COMMUNITY_GROUP, randomValue)
+  return /^zh/i.test(String(locale)) && link.zh ? link.zh : link.url
+}
