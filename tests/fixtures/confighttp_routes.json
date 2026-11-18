@@ -425,6 +425,14 @@
     "method": "GET"
   },
   {
+    "pattern": "^/api/network/check$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/network/check$",
+    "method": "POST"
+  },
+  {
     "pattern": "^/api/doctor$",
     "method": "GET"
   },

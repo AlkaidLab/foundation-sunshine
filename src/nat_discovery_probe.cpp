@@ -10,6 +10,7 @@
  * local port as test I.
  */
 #include "nat_discovery.h"
+#include "single_flight.h"
 
 #include <algorithm>
 #include <chrono>
@@ -383,10 +384,7 @@ namespace nat_discovery {
     }
 #endif
 
-    std::mutex cache_mutex;
-    discovery_t cached;
-    std::int64_t cached_at = 0;
-    std::string cache_key;
+    single_flight::cell_t<discovery_t> discovery_cell;
   }  // namespace
 
   std::string
@@ -511,14 +509,18 @@ namespace nat_discovery {
   }
 
   discovery_t
+  collect_discovery(const discover_options_t &options, std::int64_t now);
+
+  discovery_t
   discover(const discover_options_t &options, bool refresh) {
-    std::lock_guard lock { cache_mutex };
+    // One discovery at a time; a caller that asks while it runs waits for it (single_flight.h).
     const auto now = reachability::now_epoch_seconds();
     const auto key = (options.enabled ? "on|"s : "off|"s) + options.region + "|" + join_servers(options.servers);
-    if (!refresh && cached_at != 0 && key == cache_key && now - cached_at < CACHE_TTL_SECONDS) {
-      return cached;
-    }
+    return discovery_cell.get(key, refresh, now, CACHE_TTL_SECONDS, reachability::REFRESH_REUSE_SECONDS, [&]() { return collect_discovery(options, now); });
+  }
 
+  discovery_t
+  collect_discovery(const discover_options_t &options, std::int64_t now) {
     discovery_t discovery;
     discovery.checked_at = reachability::format_utc_iso(now);
     discovery.enabled = options.enabled;
@@ -559,9 +561,6 @@ namespace nat_discovery {
       }
     }
 
-    cached = discovery;
-    cached_at = now;
-    cache_key = key;
-    return cached;
+    return discovery;
   }
 }  // namespace nat_discovery
