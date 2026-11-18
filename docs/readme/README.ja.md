@@ -11,7 +11,7 @@
 
 [简体中文](../../README.md) · [English](README.en.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · 日本語
 
-[公式サイト](https://www.alkaidlab.com/) · [公式サイト（中国）](https://www.alkaidlab.cn/) · [QQ コミュニティ（中国語）](https://qm.qq.com/q/AfMQoyKrkc) · [問題を報告](https://github.com/AlkaidLab/foundation-sunshine/issues)
+[公式サイト](https://www.alkaidlab.com/) · [公式サイト（中国）](https://www.alkaidlab.cn/) · [QQ コミュニティ（中国語）](https://qm.qq.com/q/vIVhpjDMic) · [問題を報告](https://github.com/AlkaidLab/foundation-sunshine/issues)
 
 </div>
 
@@ -196,7 +196,7 @@ macOS では [Moonlight V+ for PC](https://github.com/qiin2333/moonlight-qt/rele
 
 - [ドキュメント（英語）](../en/README.md)：インストール、機能、FAQ、開発をタスク別に整理。
 - [FAQ（英語）](../en/faq.md)：カクつき、接続、オーディオの問題。
-- [公式サイト](https://www.alkaidlab.com/) · [公式サイト（中国）](https://www.alkaidlab.cn/) · [QQ コミュニティ（中国語）](https://qm.qq.com/q/AfMQoyKrkc)。
+- [公式サイト](https://www.alkaidlab.com/) · [公式サイト（中国）](https://www.alkaidlab.cn/) · [QQ コミュニティ（中国語）](https://qm.qq.com/q/vIVhpjDMic)。
 - [問題を報告](https://github.com/AlkaidLab/foundation-sunshine/issues) · [ディスカッション](https://github.com/AlkaidLab/foundation-sunshine/discussions) · [コントリビュート](../contributing.en.md)。
 
 [LizardByte/Sunshine](https://github.com/LizardByte/Sunshine)、[Moonlight](https://moonlight-stream.org/)、[ZakoDisplay](https://github.com/qiin2333/zako-vdd) とすべてのコントリビューターに感謝します。ライセンス：[GPL-3.0](https://github.com/AlkaidLab/foundation-sunshine/blob/master/LICENSE)。
