@@ -175,6 +175,12 @@ namespace telemetry::health {
 
     const dims_t &
     dims() const { return dims_; }
+    /** The encoder family of the stream. The stream may begin before the host knows which encoder it uses (a probe is running), so it can be set later: the sender thread and the thread that ends
+     * the stream both read it. Empty while it is not known. */
+    std::string
+    encoder() const;
+    void
+    set_encoder(std::string encoder);
     const thresholds_t &
     thresholds() const { return thresholds_; }
 
@@ -190,6 +196,8 @@ namespace telemetry::health {
 
     thresholds_t thresholds_;
     dims_t dims_;
+    mutable std::mutex encoder_mutex_;
+    std::string late_encoder_;
     std::int64_t window_start_ms_;
     std::int64_t chunk_start_ms_;
 

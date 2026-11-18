@@ -77,11 +77,16 @@ namespace clipboard_http {
 
     void
     prune_dead_subscribers_locked() {
+      const auto before = g_subs.size();
       g_subs.erase(std::remove_if(g_subs.begin(), g_subs.end(),
                      [](const std::shared_ptr<subscriber_t> &s) {
                        return !s->alive.load(std::memory_order_acquire);
                      }),
         g_subs.end());
+
+      if (g_subs.size() != before) {
+        BOOST_LOG(info) << "Clipboard sync: "sv << (before - g_subs.size()) << " clipboard stream subscriber(s) went away, "sv << g_subs.size() << " left"sv;
+      }
 
       if (g_subs.empty() && g_inbound_sink_installed) {
         clipboard_bridge::bridge_t::instance().set_inbound_sink({});
@@ -285,6 +290,7 @@ namespace clipboard_http {
       std::lock_guard<std::mutex> lk(g_mu);
       g_subs.push_back(std::move(sub));
       ensure_inbound_sink_locked();
+      BOOST_LOG(info) << "Clipboard sync: the Panel agent subscribed to the clipboard stream ("sv << g_subs.size() << " subscribers)"sv;
     }
 
     // ---- Out-of-band blob endpoints ----

@@ -1823,6 +1823,12 @@ namespace video {
     return encoder ? std::string { encoder->name } : std::string {};
   }
 
+  std::string
+  session_encoder_name() {
+    const auto encoder = current_encoder();
+    return encoder ? std::string { encoder->name } : std::string {};
+  }
+
   void
   reset_display(std::shared_ptr<platf::display_t> &disp, const platf::mem_type_e &type, const std::string &display_name, const config_t &config) {
 #ifdef _WIN32

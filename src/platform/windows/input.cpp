@@ -28,6 +28,7 @@
 #include "src/logging.h"
 #include "src/platform/common.h"
 #include "src/platform/gamepad_selection.h"
+#include "src/telemetry/telemetry.h"
 #include "virtual_mouse.h"
 
 // Note: HSYNTHETICPOINTERDEVICE and related functions are now included in
@@ -290,6 +291,7 @@ namespace platf {
         auto status = vigem_connect(client.get());
         if (!VIGEM_SUCCESS(status)) {
           BOOST_LOG(warning) << "Couldn't setup connection to ViGEm for gamepad support ["sv << util::hex(status).to_string_view() << ']';
+          telemetry::driver_failed("gamepad", "probe", std::string { util::hex(status).to_string_view() });
           client.reset();
           return -1;
         }
@@ -320,6 +322,7 @@ namespace platf {
       auto status = vigem_target_add(client.get(), gamepad.gp.get());
       if (!VIGEM_SUCCESS(status)) {
         BOOST_LOG(error) << "Couldn't add Gamepad to ViGEm connection ["sv << util::hex(status).to_string_view() << ']';
+        telemetry::driver_failed("gamepad", "create", std::string { util::hex(status).to_string_view() });
 
         return -1;
       }

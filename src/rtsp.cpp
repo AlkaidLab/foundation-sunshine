@@ -1236,8 +1236,19 @@ namespace rtsp_stream {
       // Advertise clipboard sync only when the user opted in AND a user-session
       // GUI agent is currently subscribed; otherwise the client would attempt
       // sync into a black hole.
-      if (config::input.clipboard_sync && clipboard_bridge::bridge_t::instance().gui_alive()) {
-        caps |= platf::platform_caps::clipboard_text | platf::platform_caps::clipboard_image;
+      {
+        // The decision is made once per session, here, so a client that reports "clipboard does not work" can be answered from the log: say why it was not offered.
+        auto &clipboard = clipboard_bridge::bridge_t::instance();
+        std::int64_t agent_age_ms = -1;
+        const auto offer = config::input.clipboard_sync ? clipboard.agent_state(&agent_age_ms) : clipboard_bridge::offer_e::off_config;
+        clipboard.note_offer(session.id, offer);
+        if (offer == clipboard_bridge::offer_e::offered) {
+          caps |= platf::platform_caps::clipboard_text | platf::platform_caps::clipboard_image;
+        }
+        else {
+          BOOST_LOG(info) << "Clipboard sync is not offered to this client: "sv << clipboard_bridge::offer_name(offer)
+                          << (agent_age_ms >= 0 ? ", the Panel agent was last heard "s + std::to_string(agent_age_ms / 1000) + " s ago"s : ", the Panel agent has not checked in since the service started"s);
+        }
       }
       if (cursor_channel::producer_available()) {
         caps |= platf::platform_caps::cursor_shape;
