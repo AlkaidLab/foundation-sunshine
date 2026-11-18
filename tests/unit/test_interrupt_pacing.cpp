@@ -319,10 +319,10 @@ TEST(InterruptLane, ManyButtonChangesAtOnceAreCappedAndTheRestFallBackToTheStrea
 }
 
 /* The HID class of Windows keeps 32 reports per reader.  With 500 Hz sticks and a press, a
- * reader that stalls for 160 ms must still find the press when it comes back; at the old fixed
- * 4 ms pacing it needs 128 ms or less, so the lane must do at least as well. */
-TEST(InterruptLane, AButtonReplySurvivesTheHidQueueOfAStalledReader) {
-  for (const auto stall : { 80ms, 120ms, 160ms }) {
+ * reader that stalls must still find the press when it comes back, as long as it did with the old
+ * fixed 4 ms pacing (32 x 4 ms = 128 ms). */
+TEST(InterruptLane, AButtonReplySurvivesTheHidQueueAsLongAsWithTheFixedPacing) {
+  for (const auto stall : { 40ms, 80ms, 120ms, 127ms }) {
     host_t host { 2 };
     const auto press = t0 + 1s;
     auto events = merged(train(t0, t0 + 3s, 500), { { press, report_change::edge }, { press + 30ms, report_change::edge } });
@@ -341,35 +341,58 @@ TEST(InterruptLane, AButtonReplySurvivesTheHidQueueOfAStalledReader) {
   }
 }
 
-TEST(InterruptLane, TheProtectionWindowThinsTheRepliesAndThenEnds) {
+/* Without the protection the same press would be gone after 64 ms of 500 Hz replies. */
+TEST(InterruptLane, WithoutTheProtectionAFastStreamPushesAPressOutOfTheQueue) {
+  lane_t::config settings;
+  settings.protect_window = 0ms;
+  host_t host { 2 };
+  host.lane = lane_t { settings };
+  host.lane.hold(100, 0);
+  host.lane.hold(101, 0);
+  const auto press = t0 + 1s;
+  host.run(t0, t0 + 3s, merged(train(t0, t0 + 3s, 500), { { press, report_change::edge } }));
+  std::deque<reply_t> queue;
+  for (const auto &reply : host.replies) {
+    if (reply.at >= press && reply.at <= press + 100ms) {
+      queue.push_back(reply);
+      if (queue.size() > 32) queue.pop_front();
+    }
+  }
+  EXPECT_FALSE(std::any_of(queue.begin(), queue.end(), [](const reply_t &r) { return r.edge; }));
+}
+
+TEST(InterruptLane, TheProtectionWindowKeepsTheFixedRateAndThenEnds) {
   host_t host { 2 };
   const auto press = t0 + 1s;
   host.run(t0, t0 + 3s, merged(train(t0, t0 + 3s, 500), { { press, report_change::edge } }));
-  /* within the window: at most one reply per 6 ms, plus the button reply */
-  EXPECT_LE(host.count(press, press + 180ms), 32u);
+  /* within the window: the old 250 per second, plus the button reply */
+  EXPECT_LE(host.count(press, press + 132ms), 34u);
   /* after the window: back to the stream rate */
-  EXPECT_NEAR(static_cast<double>(host.count(press + 300ms, press + 800ms)), 250.0, 5.0 + 250.0);
-  EXPECT_GE(host.count(press + 300ms, press + 800ms), 240u);
+  EXPECT_NEAR(static_cast<double>(host.count(press + 300ms, press + 800ms)), 250.0, 5.0);
   /* the heartbeat never stops, protection or not */
-  EXPECT_LE(host.longest_silence(t0, t0 + 3s), 6100us);
+  EXPECT_LE(host.longest_silence(t0, t0 + 3s), 4100us);
 }
 
-TEST(InterruptLane, ProtectionDoesNotWaitForAWindowThatIsOver) {
+TEST(InterruptLane, StreamRepliesWaitTheHeartbeatWhileTheProtectionLastsAndTheFloorAfterwards) {
   lane_t lane;
   lane.hold(1, 1);
   lane.new_data(report_change::edge);
   ASSERT_TRUE(lane.take_if_due(t0, 1)->edge);
   lane.hold(2, 2);
-  EXPECT_EQ(lane.next_due(1), t0 + 6ms);  // heartbeat stretched to the protect interval
-  ASSERT_TRUE(lane.take_if_due(t0 + 6ms, 1));
+  lane.new_data(report_change::stream);
+  EXPECT_EQ(lane.next_due(1), t0 + 4ms);  // not 1 ms
+  ASSERT_TRUE(lane.take_if_due(t0 + 4ms, 1));
+  /* the window ends 132 ms after the button reply; a reply 130 ms in is followed at the window's end */
   lane.hold(3, 3);
-  /* a reply 175 ms after the press: the window ends in 5 ms, so the next one waits for that, not for 6 ms */
-  ASSERT_TRUE(lane.take_if_due(t0 + 175ms, 1));
+  lane.new_data(report_change::stream);
+  ASSERT_TRUE(lane.take_if_due(t0 + 130ms, 1));
   lane.hold(4, 4);
-  EXPECT_EQ(lane.next_due(1), t0 + 180ms);
-  ASSERT_TRUE(lane.take_if_due(t0 + 180ms, 1));
+  lane.new_data(report_change::stream);
+  EXPECT_EQ(lane.next_due(1), t0 + 132ms);
+  ASSERT_TRUE(lane.take_if_due(t0 + 132ms, 1));
   lane.hold(5, 5);
-  EXPECT_EQ(lane.next_due(1), t0 + 184ms);
+  lane.new_data(report_change::stream);
+  EXPECT_EQ(lane.next_due(1), t0 + 133ms);  // the floor again
 }
 
 /* Timers are never exact: a heartbeat that leaves a little late must not push the next one back. */

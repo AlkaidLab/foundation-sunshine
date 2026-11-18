@@ -17,10 +17,13 @@
  *    hard 1 ms floor, whatever the stream floor is; two changes are never
  *    merged into one reply.
  *  - The Windows HID class keeps the last 32 reports of a reader and drops the
- *    oldest ones.  After a button reply the lane therefore answers at most
- *    once per protect_interval for protect_window, so those 32 replies reach
- *    back over that window and a reader that stalls for less than that still
- *    sees the press.
+ *    oldest ones.  The fixed 4 ms pacing of the heartbeat made those 32 reports
+ *    reach back 128 ms; early stream replies would shorten that and a reader
+ *    that stalls for 80 ms or more could miss a short press.  After a button
+ *    reply the lane therefore answers at most once per protect_interval (the
+ *    heartbeat period) for protect_window (32 of them), so a press stays in the
+ *    queue as long as it did with the fixed pacing.  Stream data keeps its fast
+ *    path the rest of the time.
  *
  * The host may keep several URBs outstanding.  The time a held URB becomes due
  * is derived from the moment the last reply left; no per-URB schedule is
@@ -61,10 +64,10 @@ namespace platf {
       duration heartbeat { std::chrono::milliseconds(4) };
       /** Replies per second all active pads may use together for stream changes. */
       unsigned budget_per_second { 1500 };
-      /** After a button reply, for this long ... */
-      duration protect_window { std::chrono::milliseconds(180) };
-      /** ... at most one reply per this interval (the HID queue holds 32 reports). */
-      duration protect_interval { std::chrono::milliseconds(6) };
+      /** After a button reply, for this long ... (32 reports of the HID queue at 4 ms, plus a margin) */
+      duration protect_window { std::chrono::milliseconds(132) };
+      /** ... at most one reply per this interval (the heartbeat period: what the fixed pacing gave). */
+      duration protect_interval { std::chrono::milliseconds(4) };
     };
 
     struct taken_t {
