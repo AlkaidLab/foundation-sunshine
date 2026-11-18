@@ -212,5 +212,23 @@ class ShardTest(unittest.TestCase):
         self.assertEqual(self.gate(adapter_config="failure"), 1)
 
 
+class SizeBudgetTest(unittest.TestCase):
+    def setUp(self):
+        self.build = load()["jobs"]["build_win"]
+
+    def test_the_size_budget_runs_on_the_finished_installer_before_the_assets_are_renamed(self):
+        names = [s.get("name") for s in self.build["steps"]]
+        gate = step(self.build, "Installer size budget")
+        self.assertEqual(gate["if"], "needs.changes.outputs.package == 'true'")
+        self.assertGreater(names.index("Installer size budget"), names.index("Run the installer worker (smoke test)"))
+        self.assertLess(names.index("Installer size budget"), names.index("Rename release assets"))
+        self.assertIn("scripts/ci/check-size-budget.py", gate["run"])
+        self.assertIn("artifacts/sunshine-windows-installer.exe", gate["run"])
+        for measured in ("sunshine-windows-portable.zip", "inno_staging/sunshine.exe", "inno_staging/assets/gui/sunshine-gui.exe"):
+            self.assertIn(measured, gate["run"])
+        # a failing script must fail the step: pwsh does not stop on a native exit code by itself
+        self.assertIn("exit $LASTEXITCODE", gate["run"])
+
+
 if __name__ == "__main__":
     unittest.main()

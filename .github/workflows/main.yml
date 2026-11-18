@@ -1509,6 +1509,18 @@ jobs:
           if (-not (Test-Path $engine) -or (Get-FileHash -LiteralPath $engine -Algorithm SHA256).Hash -ne $expected) { throw 'the extracted engine differs from the packaged one' }
           if (-not (Select-String -Path (Join-Path $dir 'events.jsonl') -Pattern 'WorkerStarted' -Quiet)) { throw 'the worker wrote no first event' }
 
+      # 体积门禁：安装器超过 scripts/ci/size-budget.json 的上限就失败，超过上限的 90% 打印警告。便携包、sunshine.exe、
+      # sunshine-gui.exe 只记录大小，写进 job summary，方便看趋势。上限由车主批准后才能改。
+      - name: Installer size budget
+        if: needs.changes.outputs.package == 'true'
+        shell: pwsh
+        run: |
+          python scripts/ci/check-size-budget.py --installer artifacts/sunshine-windows-installer.exe `
+            --measure "便携包 sunshine-windows-portable.zip=artifacts/sunshine-windows-portable.zip" `
+            --measure "sunshine.exe（随包，已 strip）=build/inno_staging/sunshine.exe" `
+            --measure "sunshine-gui.exe（随包）=build/inno_staging/assets/gui/sunshine-gui.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Rename release assets
         if: needs.changes.outputs.package == 'true'
         shell: msys2 {0}
