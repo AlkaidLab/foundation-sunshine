@@ -344,7 +344,8 @@ const {
 } = useApps()
 
 // the edits of the list belong to the window's unsaved state (one bar, one save), so they stay when the person goes to another page
-useAppsPending({ apps, originalApps, locale: () => locale.value, loaded: isLoaded })
+const stopAppsPending = useAppsPending({ apps, originalApps, locale: () => locale.value, loaded: isLoaded })
+onBeforeUnmount(stopAppsPending)
 const webShell = inject('webShell', null)
 const showEnv = ref(false)
 const broken = reactive(new Set())

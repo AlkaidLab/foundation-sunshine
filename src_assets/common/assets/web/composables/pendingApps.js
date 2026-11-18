@@ -5,6 +5,11 @@ import { usePending } from 'foundation-ui/pending'
 const clone = (v) => JSON.parse(JSON.stringify(v))
 const strip = (app) => { const { index, ...rest } = app || {}; return rest }
 const same = (a, b) => JSON.stringify(strip(a)) === JSON.stringify(strip(b))
+let onSavedAppsReverted = null
+
+export function syncRevertedApps(apps) {
+  onSavedAppsReverted?.(apps)
+}
 
 export function appsEntries(original, current, T) {
   const out = []
@@ -51,9 +56,17 @@ export function useAppsPending({ apps, originalApps, locale, loaded }) {
   const T = () => texts(locale())
   let restored = false
   const stop = []
+  const syncReverted = (savedApps) => {
+    const unsaved = appsEntries(originalApps.value, apps.value, T())
+    originalApps.value = clone(savedApps)
+    apps.value = applyAppEntries(savedApps, unsaved)
+  }
+  onSavedAppsReverted = syncReverted
+  stop.push(() => { if (onSavedAppsReverted === syncReverted) onSavedAppsReverted = null })
   const detach = pending.attach('apps', {
     revert: (key) => { apps.value = revertAppEntries(apps.value, pending.entries('apps').filter((e) => e.key === key)) },
     revertAll: () => { apps.value = clone(originalApps.value) },
+    saved: (entries) => { originalApps.value = applyAppEntries(originalApps.value, entries) },
   })
   stop.push(detach)
   stop.push(watch(() => (loaded.value ? JSON.stringify([apps.value.map(strip), originalApps.value.map(strip)]) : null), (json) => {
