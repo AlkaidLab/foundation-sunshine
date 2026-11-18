@@ -42,7 +42,6 @@ namespace platf::dxgi {
     BOOST_LOG(debug) << "[vdd] borrowed texture stats: attempts="sv << vdd_borrow_attempts
                      << " successes="sv << vdd_borrow_successes
                      << " fallbacks="sv << vdd_borrow_fallbacks
-                     << " disabled_frames="sv << vdd_borrow_disabled_frames
                      << " cooldown_frames="sv << vdd_borrow_cooldown_frames
                      << " cooldown_events="sv << vdd_borrow_cooldown_events
                      << " cooldown_ms="sv << cooldown_ms
@@ -248,18 +247,6 @@ namespace platf::dxgi {
       return capture_e::ok;
     };
 
-    if (!cursor_only &&
-        !vdd_borrow_enabled &&
-        vdd_borrow_deferred_images.empty() &&
-        vdd_borrow_inflight_frames->load(std::memory_order_relaxed) == 0) {
-      std::shared_ptr<platf::img_t> img;
-      if (!pull_free_image_cb(img)) {
-        return capture_e::interrupted;
-      }
-      auto d3d_img = std::static_pointer_cast<img_d3d_t>(img);
-      return copy_frame_to(current_frame, std::move(img), std::move(d3d_img));
-    }
-
     const auto producer_replaced_unread = dup.replaced_unread_frames();
     const auto producer_dropped_consumer_held = dup.dropped_consumer_held_frames();
     const auto producer_dropped_acquire_failures = dup.dropped_acquire_failures();
@@ -373,10 +360,6 @@ namespace platf::dxgi {
 
       // A borrowed producer texture cannot be modified in place.
       if (cursor_overlay_required) {
-        return borrow_fallback();
-      }
-      if (!vdd_borrow_enabled) {
-        ++vdd_borrow_disabled_frames;
         return borrow_fallback();
       }
       if (!vdd_borrow_deferred_images.empty()) {

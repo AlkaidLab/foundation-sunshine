@@ -1,0 +1,67 @@
+diff a/src/platform/windows/display_base.cpp b/src/platform/windows/display_base.cpp	(rejected hunks)
+@@ -1289,30 +1289,49 @@ namespace platf {
+     // Build list of capture methods to try
+     std::vector<std::string> try_types;
+ 
+-    const auto capture_backend = config.capture_backend_override.empty() ? config::video.capture : config.capture_backend_override;
++    // Plan4: a per-session window-follow request forces the WGC backend for
++    // this single display instance. The global capture configuration is left
++    // untouched, so other sessions/streams keep their existing behaviour.
++    const bool window_follow_requested =
++      config.capture_target && config.capture_target->window_override().enabled;
+ 
+-    if (capture_backend.empty()) {
++    if (window_follow_requested) {
+       if (is_running_as_system_user) {
+-        // WGC is not available in service mode
++        // WGC (and therefore window capture) is unavailable in service mode.
++        BOOST_LOG(warning) << "Window-follow capture is not available in service mode; falling back to DDX capture"sv;
+         try_types = { "ddx" };
+-        BOOST_LOG(info) << "Running in service mode, using DDX capture (WGC not available in services)"sv;
+       }
+       else {
+-        try_types = { "ddx", "wgc" };
++        // DDX is only a last-resort fallback when WGC itself cannot be created.
++        try_types = { "wgc", "ddx" };
+       }
+     }
+-    else if (capture_backend == "wgc" && is_running_as_system_user) {
+-      // WGC explicitly requested but unavailable in service mode
+-      BOOST_LOG(warning) << "WGC capture is not available in service mode. Automatically switching to DDX capture."sv;
+-      try_types = { "ddx" };
+-    }
+-    else if (capture_backend == "vdd") {
+-      // Direct VDD capture is preferred, but DDX remains a safe last resort
+-      // when the producer cannot represent the selected desktop mode.
+-      try_types = { "vdd", "ddx" };
+-    }
+     else {
+-      try_types = { capture_backend };
++      const auto capture_backend = config.capture_backend_override.empty() ? config::video.capture : config.capture_backend_override;
++
++      if (capture_backend.empty()) {
++        if (is_running_as_system_user) {
++          // WGC is not available in service mode
++          try_types = { "ddx" };
++          BOOST_LOG(info) << "Running in service mode, using DDX capture (WGC not available in services)"sv;
++        }
++        else {
++          try_types = { "ddx", "wgc" };
++        }
++      }
++      else if (capture_backend == "wgc" && is_running_as_system_user) {
++        // WGC explicitly requested but unavailable in service mode
++        BOOST_LOG(warning) << "WGC capture is not available in service mode. Automatically switching to DDX capture."sv;
++        try_types = { "ddx" };
++      }
++      else if (capture_backend == "vdd") {
++        // Direct VDD capture is preferred, but DDX remains a safe last resort
++        // when the producer cannot represent the selected desktop mode.
++        try_types = { "vdd", "ddx" };
++      }
++      else {
++        try_types = { capture_backend };
++      }
+     }
+ 
+     for (const auto &type : try_types) {

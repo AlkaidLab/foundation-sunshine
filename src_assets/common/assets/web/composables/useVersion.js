@@ -1,7 +1,8 @@
 import { ref, computed } from 'vue'
 import { marked } from 'marked'
 import SunshineVersion from '../sunshine_version.js'
-import { trackEvents } from '../config/firebase.js'
+import { trackEvents } from '../config/telemetry.js'
+import { apiJson } from '../utils/apiFetch.js'
 
 const GITHUB_API_BASE = 'https://api.github.com/repos/qiin2333/Sunshine/releases'
 
@@ -50,28 +51,27 @@ export function useVersion() {
   const githubVersion = ref(null)
   const preReleaseVersion = ref(null)
   const notifyPreReleases = ref(false)
+  // the build record of GET /api/version; `dirty` there is the only thing that says the tree had uncommitted changes (the version string never does:
+  // ".杂鱼" is on every CI release). A host without the endpoint leaves it null.
+  const buildInfo = ref(null)
   const versionCheckStatus = ref(VERSION_CHECK_STATUS.IDLE)
   const loading = computed(() => versionCheckStatus.value === VERSION_CHECK_STATUS.CHECKING)
 
   // 计算属性
-  const installedVersionNotStable = computed(() => 
-    githubVersion.value?.isLessThan?.(version.value) ?? false
+  // the installed build is newer than the newest stable release: a pre-release or a local build (versions compare by their date part only)
+  const installedVersionNotStable = computed(() =>
+    !!version.value && (githubVersion.value?.isLessThan(version.value) ?? false)
   )
 
-  const stableBuildAvailable = computed(() => 
+  const stableBuildAvailable = computed(() =>
     githubVersion.value?.isGreater?.(version.value) ?? false
   )
 
-  const preReleaseBuildAvailable = computed(() => 
+  const preReleaseBuildAvailable = computed(() =>
     preReleaseVersion.value?.isGreater?.(version.value) ?? false
   )
 
-  const buildVersionIsDirty = computed(() => {
-    const v = version.value?.version
-    if (!v) return false
-    const parts = v.split('.')
-    return parts.length === 5 && v.includes('dirty')
-  })
+  const buildVersionIsDirty = computed(() => buildInfo.value?.dirty === true)
 
   const parsedStableBody = computed(() => 
     parseMarkdown(githubVersion.value?.release?.body)
@@ -92,6 +92,13 @@ export function useVersion() {
     try {
       notifyPreReleases.value = toBoolean(config.notify_pre_releases)
       version.value = new SunshineVersion(null, config.version)
+      // the build record is a nicety: an older host without it, or a failed read, never fails the version check
+      try {
+        const record = await apiJson('/api/version')
+        buildInfo.value = record && typeof record === 'object' && !Array.isArray(record) ? record : null
+      } catch {
+        buildInfo.value = null
+      }
       
       // 稳定版检查始终执行，预发布列表仅在用户订阅时请求
       const latestData = await fetchGitHub(`${GITHUB_API_BASE}/latest`)
@@ -122,6 +129,7 @@ export function useVersion() {
     githubVersion,
     preReleaseVersion,
     notifyPreReleases,
+    buildInfo,
     versionCheckStatus,
     loading,
     installedVersionNotStable,

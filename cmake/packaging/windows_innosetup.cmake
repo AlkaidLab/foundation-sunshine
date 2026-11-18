@@ -23,6 +23,11 @@ if(NOT ISCC_EXECUTABLE)
     return()
 endif()
 
+find_program(INSTALLER_PAYLOAD_PYTHON_EXECUTABLE python3 python)
+if(NOT INSTALLER_PAYLOAD_PYTHON_EXECUTABLE)
+    message(FATAL_ERROR "Python is required to assemble the native installer payload")
+endif()
+
 message(STATUS "Found Inno Setup: ${ISCC_EXECUTABLE}")
 
 # Configure the .iss template with CMake variables
@@ -62,6 +67,14 @@ add_custom_target(innosetup
     
     # Run Inno Setup compiler
     COMMAND "${ISCC_EXECUTABLE}" "${CMAKE_BINARY_DIR}/sunshine_installer.iss"
+
+    # Wrap the generated Inno engine in the native shell. The shell is the
+    # user-facing executable; the engine remains only as the per-run payload.
+    COMMAND "${INSTALLER_PAYLOAD_PYTHON_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tools/append_installer_payload.py"
+            "${CMAKE_BINARY_DIR}/tools/sunshine-installer-shell.exe"
+            "${CPACK_PACKAGE_DIRECTORY}/Sunshine-engine.exe"
+            "${CPACK_PACKAGE_DIRECTORY}/Sunshine.exe"
     
     WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
     VERBATIM
@@ -69,6 +82,7 @@ add_custom_target(innosetup
 
 # Make sure sunshine is built before creating the installer
 add_dependencies(innosetup sunshine)
+add_dependencies(innosetup sunshine-installer-shell)
 if(TARGET web-ui)
     add_dependencies(innosetup web-ui)
 endif()

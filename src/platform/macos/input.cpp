@@ -309,6 +309,12 @@ const KeyCodeMap kKeyCodesMap[] = {
     BOOST_LOG(info) << "free_gamepad: Gamepad not yet implemented for MacOS."sv;
   }
 
+  std::string_view
+  gamepad_virtual_type(input_t &, int) {
+    // No virtual gamepad exists on this platform; sessions report no pad type.
+    return {};
+  }
+
   bool
   gamepad_is_ds5(input_t &, int) {
     return false;
@@ -563,6 +569,11 @@ const KeyCodeMap kKeyCodesMap[] = {
   void
   gamepad_battery(input_t &input, const gamepad_battery_t &battery) {
     // Unimplemented
+  }
+
+  void
+  gamepad_ds5_status(input_t &input, const gamepad_ds5_status_t &status) {
+    // No virtual DualSense on this platform.
   }
 
   input_t

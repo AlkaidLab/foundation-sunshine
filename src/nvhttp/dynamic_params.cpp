@@ -8,9 +8,11 @@
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
 
+#include "src/log_text.h"
 #include "src/logging.h"
 #include "src/rtsp.h"
 #include "src/stream.h"
+#include "src/streaming/video_pacing.h"
 #include "src/utility.h"
 #include "src/video.h"
 
@@ -99,8 +101,8 @@ namespace nvhttp::dynamic_params {
         tree.put("root.<xmlattr>.bitrate", bitrate);
         tree.put("root.<xmlattr>.clientname", client_name);
         tree.put("root.<xmlattr>.status_message", "Bitrate change request sent to client session");
-        BOOST_LOG(info) << "NVHTTP API: Dynamic bitrate change requested for client '"
-                        << client_name << "': " << bitrate << " Kbps";
+        BOOST_LOG(info) << "NVHTTP API: Dynamic bitrate change requested for client "
+                        << logging::quoted_name(client_name) << ": " << bitrate << " Kbps";
       }
       else {
         tree.put("root.bitrate", 0);
@@ -181,9 +183,9 @@ namespace nvhttp::dynamic_params {
         }
         case video::dynamic_param_type_e::FPS: {
           float fps = std::stof(param_value);
-          if (fps <= 0.0f || fps > 1000.0f) {
+          if (!streaming::dynamic_fps_in_range(fps)) {
             BOOST_LOG(warning) << "Change dynamic param error: invalid FPS value";
-            set_error(tree, 400, "Invalid FPS value. Must be between 0 and 1000");
+            set_error(tree, 400, "Invalid FPS value. Must be between 1 and 1000");
             return;
           }
           param.value.float_value = fps;
@@ -267,8 +269,8 @@ namespace nvhttp::dynamic_params {
         tree.put("root.<xmlattr>.param_value", param_value);
         tree.put("root.<xmlattr>.clientname", client_name);
         tree.put("root.<xmlattr>.status_message", "Dynamic parameter change request sent to client session");
-        BOOST_LOG(info) << "NVHTTP API: Dynamic parameter change requested for client '"
-                        << client_name << "': type=" << param_type << ", value=" << param_value;
+        BOOST_LOG(info) << "NVHTTP API: Dynamic parameter change requested for client "
+                        << logging::quoted_name(client_name) << ": type=" << param_type << ", value=" << logging::quoted_name(param_value);
       }
       else {
         BOOST_LOG(warning) << "Change dynamic param error: no active streaming session found for client";

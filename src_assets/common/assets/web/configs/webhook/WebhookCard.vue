@@ -1,7 +1,7 @@
 <script setup>
-import { computed, nextTick, onUnmounted, ref } from 'vue'
+import { computed, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { cycleDialogFocus, FOCUSABLE_SELECTOR, getFocusableElements } from '../../utils/focus.js'
+import { MBanner, MButton, MFieldItem, MFooter, MGroup, MItem, MLoading, MChip, MSection, MSheet, MSnackbar, MSwitchItem } from 'foundation-ui/vue'
 import {
   loadWebhookConfig,
   saveWebhookConfig,
@@ -19,9 +19,6 @@ import {
 
 const { t } = useI18n()
 const modalOpen = ref(false)
-const modalRef = ref(null)
-const cardRef = ref(null)
-const lastFocusedElement = ref(null)
 const loading = ref(false)
 const loaded = ref(false)
 const saving = ref(false)
@@ -52,6 +49,27 @@ const webhookEventOptions = [
 ]
 
 const enabled = computed(() => form.value.webhook_enabled === 'enabled')
+
+// The switches of the sheet; the host stores the words enabled / disabled
+const enabledSwitch = computed({
+  get: () => enabled.value,
+  set: (value) => { form.value.webhook_enabled = value ? 'enabled' : 'disabled' },
+})
+const skipSslSwitch = computed({
+  get: () => form.value.webhook_skip_ssl_verify === 'enabled',
+  set: (value) => { form.value.webhook_skip_ssl_verify = value ? 'enabled' : 'disabled' },
+})
+const urlModel = computed({
+  get: () => form.value.webhook_url,
+  set: (value) => { form.value.webhook_url = String(value).trim() },
+})
+const toggleEvent = (id, on) => {
+  const next = new Set(selectedEvents.value)
+  if (on) next.add(id)
+  else next.delete(id)
+  selectedEvents.value = [...next].sort((a, b) => a - b)
+}
+const onSheet = (open) => { if (!open) close() }
 
 const timeoutSeconds = computed({
   get: () => webhookTimeoutToSeconds(form.value.webhook_timeout),
@@ -275,13 +293,10 @@ const load = async () => {
 }
 
 const open = async () => {
-  lastFocusedElement.value = document.activeElement
   showWebhookUrl.value = false
   modalOpen.value = true
   ++copyGeneration
   copiedCommand.value = ''
-  await nextTick()
-  modalRef.value?.focus()
   await load()
 }
 
@@ -298,13 +313,6 @@ const close = () => {
     clearTimeout(copyResetTimer)
     copyResetTimer = null
   }
-  const target = lastFocusedElement.value || cardRef.value
-  lastFocusedElement.value = null
-  void nextTick(() => {
-    if (target && document.contains(target)) {
-      target.focus?.()
-    }
-  })
 }
 
 const save = async () => {
@@ -433,12 +441,6 @@ const copyCurlCommand = async (template) => {
   copyResetTimer = timer
 }
 
-const trapFocus = (event) => {
-  const focusable = getFocusableElements(modalRef.value, `${FOCUSABLE_SELECTOR}, summary, [href]`)
-    .filter((element) => element.offsetParent !== null)
-  cycleDialogFocus(event, modalRef.value, focusable)
-}
-
 onUnmounted(() => {
   ++loadGeneration.value
   ++copyGeneration
@@ -455,691 +457,102 @@ onUnmounted(() => {
 
 <template>
   <section id="webhook" class="webhook-card-section">
-    <button ref="cardRef" type="button" class="notification-card" @click="open">
-      <span class="notification-card-icon">
-        <i class="fas fa-paper-plane"></i>
-      </span>
-      <span class="notification-card-content">
-        <span class="notification-card-title">{{ $t('notifications.webhook.title') }}</span>
-        <span class="notification-card-description">{{ $t('notifications.webhook.description') }}</span>
-        <span class="notification-card-state">
-          <template v-if="savedEnabled !== null">
-            <span class="status-dot" :class="{ enabled: savedEnabled }"></span>
-            {{ $t(savedEnabled ? '_common.enabled' : '_common.disabled') }}
-          </template>
-          <template v-else>
-            {{ $t('notifications.webhook.status_unknown') }}
-          </template>
-        </span>
-      </span>
-      <span class="notification-card-action">
-        {{ $t('notifications.webhook.configure') }}
-        <i class="fas fa-chevron-right"></i>
-      </span>
-    </button>
+    <MGroup>
+      <MItem action icon="send" :title="$t('notifications.webhook.title')" @click="open">
+        <template #trail>
+          <MChip v-if="savedEnabled !== null" :tone="savedEnabled ? 'ok' : 'neutral'">{{ $t(savedEnabled ? '_common.enabled' : '_common.disabled') }}</MChip>
+          <MChip v-else>{{ $t('notifications.webhook.status_unknown') }}</MChip>
+        </template>
+      </MItem>
+    </MGroup>
 
-    <Teleport to="body">
-      <Transition name="notification-modal">
-        <div v-if="modalOpen" class="notification-modal-overlay">
-          <div
-            ref="modalRef"
-            class="notification-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="webhook-modal-title"
-            tabindex="-1"
-            @keydown.esc.prevent.stop
-            @keydown.tab="trapFocus"
-          >
-            <div class="notification-modal-header">
-              <div>
-                <h5 id="webhook-modal-title">
-                  <i class="fas fa-paper-plane me-2"></i>
-                  {{ $t('notifications.webhook.title') }}
-                </h5>
-                <p>{{ $t('notifications.webhook.hot_apply_note') }}</p>
-              </div>
+    <MSheet :model-value="modalOpen" :title="$t('notifications.webhook.title')" side="end" :close-label="$t('_common.close')" :persistent="saving || testing" @update:model-value="onSheet">
+      <div class="webhook-form">
+        <MFooter>{{ $t('notifications.webhook.hot_apply_note') }}</MFooter>
+
+        <div v-if="loading" class="webhook-loading" role="status"><MLoading size="28px" /><span>{{ $t('notifications.webhook.loading') }}</span></div>
+
+        <template v-else-if="loaded">
+          <MBanner v-if="errorMessage" tone="error" icon="error">{{ errorMessage }}</MBanner>
+          <MBanner v-if="successMessage" tone="info" icon="check_circle">{{ successMessage }}</MBanner>
+
+          <MGroup>
+            <MSwitchItem v-model="enabledSwitch" :title="$t('config.webhook_enabled')" :info="$t('config.webhook_enabled_desc')" :disabled="saving || testing" />
+          </MGroup>
+
+          <MSection :title="$t('config.webhook_url')">
+            <MGroup>
+              <MFieldItem v-model="urlModel" :label="$t('config.webhook_url')" :type="showWebhookUrl ? 'url' : 'password'" :info="$t('config.webhook_url_desc')" placeholder="https://example.invalid/webhook" autocomplete="off" :disabled="saving || testing" />
+              <MSwitchItem v-model="showWebhookUrl" :title="$t(showWebhookUrl ? 'notifications.webhook.hide_url' : 'notifications.webhook.show_url')" :disabled="saving || testing" />
+            </MGroup>
+            <MBanner v-if="usesPlainHttp" tone="warn" icon="warning">{{ $t('notifications.webhook.http_warning') }}</MBanner>
+          </MSection>
+
+          <MGroup>
+            <MSwitchItem v-model="skipSslSwitch" :title="$t('config.webhook_skip_ssl_verify')" :info="$t('config.webhook_skip_ssl_verify_desc')" :disabled="saving || testing" />
+            <MFieldItem v-model="timeoutSeconds" :label="$t('config.webhook_timeout')" type="number" :min="1" :max="15" :step="1" :info="$t('config.webhook_timeout_desc')" :disabled="saving || testing" />
+          </MGroup>
+          <MBanner v-if="skipSslSwitch" tone="warn" icon="shield">{{ $t('notifications.webhook.skip_ssl_verify_warning') }}</MBanner>
+
+          <MSection :title="$t('config.webhook_events')">
+            <div class="webhook-event-actions">
+              <MButton variant="tonal" size="sm" :disabled="saving || testing" @click="selectAllEvents">{{ $t('config.webhook_events_select_all') }}</MButton>
+              <MButton variant="tonal" size="sm" :disabled="saving || testing" @click="clearEvents">{{ $t('config.webhook_events_clear') }}</MButton>
             </div>
+            <MGroup>
+              <MSwitchItem
+                v-for="event in webhookEventOptions"
+                :key="event.id"
+                :model-value="selectedEvents.includes(event.id)"
+                :title="$t(event.label)"
+                :text="`ID ${event.id}`"
+                :disabled="saving || testing"
+                @update:model-value="(on) => toggleEvent(event.id, on)"
+              />
+            </MGroup>
+            <MFooter>{{ $t('config.webhook_events_desc') }}</MFooter>
+          </MSection>
 
-            <div class="notification-modal-body">
-              <div v-if="loading" class="notification-loading" role="status">
-                <i class="fas fa-spinner fa-spin"></i>
-                <span>{{ $t('notifications.webhook.loading') }}</span>
-              </div>
+          <MSection :title="$t('config.webhook_test')">
+            <MGroup>
+              <MFieldItem v-model="testRetries" :label="$t('notifications.webhook.test_retries')" type="number" :min="0" :max="3" :step="1" :disabled="saving || testing" />
+            </MGroup>
+            <MButton variant="tonal" size="lg" :icon="testing ? '' : 'send'" :loading="testing" :disabled="saving || testing || !form.webhook_url.trim()" @click="test">{{ $t('config.webhook_test') }}</MButton>
+          </MSection>
 
-              <template v-else-if="loaded">
-                <div v-if="errorMessage" class="alert alert-danger" role="alert">{{ errorMessage }}</div>
-                <div v-if="successMessage" class="alert alert-success" role="status">{{ successMessage }}</div>
+          <MSection :title="$t('config.webhook_curl_command')">
+            <MFooter>{{ $t('config.webhook_curl_command_desc') }}</MFooter>
+            <MGroup>
+              <MItem v-for="template in curlTemplates" :key="template.id" icon="terminal" :title="template.label" stack>
+                <template #trail>
+                  <MButton variant="text" size="sm" icon="content_copy" :disabled="!template.command" @click="copyCurlCommand(template)">{{ copiedCommand === template.id ? $t('_common.success') : $t('_common.copy') }}</MButton>
+                </template>
+                <template #control><pre class="m-tip webhook-curl">{{ template.command }}</pre></template>
+              </MItem>
+            </MGroup>
+          </MSection>
+        </template>
 
-                <div class="mb-3 webhook-switch-setting">
-                  <div class="form-check form-switch">
-                    <input
-                      id="webhook_enabled"
-                      v-model="form.webhook_enabled"
-                      class="form-check-input"
-                      type="checkbox"
-                      true-value="enabled"
-                      false-value="disabled"
-                      :disabled="saving || testing"
-                    />
-                    <label for="webhook_enabled" class="form-check-label">
-                      {{ $t('config.webhook_enabled') }}
-                    </label>
-                  </div>
-                  <div class="form-text">{{ $t('config.webhook_enabled_desc') }}</div>
-                </div>
-
-                <div class="mb-3">
-                  <label for="webhook_url" class="form-label">{{ $t('config.webhook_url') }}</label>
-                  <div class="input-group">
-                    <input
-                      id="webhook_url"
-                      v-model.trim="form.webhook_url"
-                      :type="showWebhookUrl ? 'url' : 'password'"
-                      class="form-control"
-                      maxlength="4096"
-                      placeholder="https://example.invalid/webhook"
-                      autocomplete="off"
-                      spellcheck="false"
-                      :disabled="saving || testing"
-                    />
-                    <button
-                      type="button"
-                      class="btn btn-outline-secondary webhook-url-visibility"
-                      :disabled="saving || testing"
-                      :aria-label="$t(showWebhookUrl ? 'notifications.webhook.hide_url' : 'notifications.webhook.show_url')"
-                      :title="$t(showWebhookUrl ? 'notifications.webhook.hide_url' : 'notifications.webhook.show_url')"
-                      :aria-pressed="showWebhookUrl"
-                      @click="showWebhookUrl = !showWebhookUrl"
-                    >
-                      <i :class="showWebhookUrl ? 'fas fa-eye-slash' : 'fas fa-eye'" aria-hidden="true"></i>
-                    </button>
-                  </div>
-                  <div class="form-text">{{ $t('config.webhook_url_desc') }}</div>
-                  <div v-if="usesPlainHttp" class="alert alert-warning mt-2 mb-0" role="alert">
-                    <i class="fas fa-exclamation-triangle me-2"></i>
-                    {{ $t('notifications.webhook.http_warning') }}
-                  </div>
-                </div>
-
-                <div class="mb-3 webhook-switch-setting">
-                  <div class="form-check form-switch">
-                    <input
-                      id="webhook_skip_ssl_verify"
-                      v-model="form.webhook_skip_ssl_verify"
-                      class="form-check-input"
-                      type="checkbox"
-                      true-value="enabled"
-                      false-value="disabled"
-                      :disabled="saving || testing"
-                    />
-                    <label for="webhook_skip_ssl_verify" class="form-check-label">
-                      {{ $t('config.webhook_skip_ssl_verify') }}
-                    </label>
-                  </div>
-                  <div class="form-text">{{ $t('config.webhook_skip_ssl_verify_desc') }}</div>
-                  <div
-                    v-if="form.webhook_skip_ssl_verify === 'enabled'"
-                    class="alert alert-warning mt-2 mb-0"
-                    role="alert"
-                  >
-                    <i class="fas fa-shield-alt me-2"></i>
-                    {{ $t('notifications.webhook.skip_ssl_verify_warning') }}
-                  </div>
-                </div>
-
-                <div class="mb-3">
-                  <label for="webhook_timeout" class="form-label">{{ $t('config.webhook_timeout') }}</label>
-                  <input
-                    id="webhook_timeout"
-                    v-model.number="timeoutSeconds"
-                    type="number"
-                    min="1"
-                    max="15"
-                    step="1"
-                    class="form-control"
-                    :disabled="saving || testing"
-                  />
-                  <div class="form-text">{{ $t('config.webhook_timeout_desc') }}</div>
-                </div>
-
-                <fieldset class="mb-3">
-                  <legend class="form-label fs-6">{{ $t('config.webhook_events') }}</legend>
-                  <div class="d-flex flex-wrap gap-2 mb-3">
-                    <button
-                      type="button"
-                      class="btn btn-sm btn-outline-secondary"
-                      :disabled="saving || testing"
-                      @click="selectAllEvents"
-                    >
-                      {{ $t('config.webhook_events_select_all') }}
-                    </button>
-                    <button
-                      type="button"
-                      class="btn btn-sm btn-outline-secondary"
-                      :disabled="saving || testing"
-                      @click="clearEvents"
-                    >
-                      {{ $t('config.webhook_events_clear') }}
-                    </button>
-                  </div>
-                  <div class="row g-2">
-                    <div v-for="event in webhookEventOptions" :key="event.id" class="col-sm-6">
-                      <div class="form-check notification-event">
-                        <input
-                          :id="`webhook_event_${event.id}`"
-                          v-model="selectedEvents"
-                          class="form-check-input"
-                          type="checkbox"
-                          :value="event.id"
-                          :disabled="saving || testing"
-                        />
-                        <label class="form-check-label" :for="`webhook_event_${event.id}`">
-                          <span class="event-id">{{ event.id }}</span>
-                          {{ $t(event.label) }}
-                        </label>
-                      </div>
-                    </div>
-                  </div>
-                  <div class="form-text mt-2">{{ $t('config.webhook_events_desc') }}</div>
-                </fieldset>
-
-                <div class="webhook-tools">
-                  <div class="webhook-test-controls">
-                    <div>
-                      <label for="webhook_test_retries" class="form-label">
-                        {{ $t('notifications.webhook.test_retries') }}
-                      </label>
-                      <input
-                        id="webhook_test_retries"
-                        v-model.number="testRetries"
-                        type="number"
-                        min="0"
-                        max="3"
-                        step="1"
-                        class="form-control"
-                        :disabled="saving || testing"
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      class="btn btn-outline-info"
-                      :disabled="saving || testing || !form.webhook_url.trim()"
-                      @click="test"
-                    >
-                      <i :class="testing ? 'fas fa-spinner fa-spin me-1' : 'fas fa-paper-plane me-1'"></i>
-                      {{ $t('config.webhook_test') }}
-                    </button>
-                  </div>
-
-                  <details class="curl-details" :class="{ disabled: !curlCommands.linux }">
-                    <summary>
-                      <i class="fas fa-terminal me-1"></i>
-                      {{ $t('config.webhook_curl_command') }}
-                    </summary>
-                    <p>{{ $t('config.webhook_curl_command_desc') }}</p>
-                    <div
-                      v-for="template in curlTemplates"
-                      :key="template.id"
-                      class="curl-template"
-                    >
-                      <strong>{{ template.label }}</strong>
-                      <pre>{{ template.command }}</pre>
-                      <button
-                        type="button"
-                        class="btn btn-sm btn-outline-secondary"
-                        :disabled="!template.command"
-                        @click="copyCurlCommand(template)"
-                      >
-                        <i class="fas fa-copy me-1"></i>
-                        {{ copiedCommand === template.id ? $t('_common.success') : $t('_common.copy') }}
-                      </button>
-                    </div>
-                  </details>
-                </div>
-              </template>
-
-              <div v-else class="notification-load-error">
-                <i class="fas fa-exclamation-circle"></i>
-                <p>{{ errorMessage || $t('notifications.webhook.load_failed') }}</p>
-                <button type="button" class="btn btn-outline-primary" @click="load">
-                  {{ $t('notifications.webhook.retry') }}
-                </button>
-              </div>
-            </div>
-
-            <div class="notification-modal-footer">
-              <button type="button" class="btn btn-secondary" :disabled="saving || testing" @click="close">
-                {{ $t('_common.cancel') }}
-              </button>
-              <button
-                type="button"
-                class="btn btn-primary"
-                :disabled="loading || !loaded || saving || testing"
-                @click="save"
-              >
-                <i v-if="saving" class="fas fa-spinner fa-spin me-1"></i>
-                <i v-else class="fas fa-save me-1"></i>
-                {{ $t('_common.save') }}
-              </button>
-            </div>
-          </div>
+        <div v-else class="webhook-load-error">
+          <MBanner tone="error" icon="error">{{ errorMessage || $t('notifications.webhook.load_failed') }}</MBanner>
+          <MButton variant="tonal" icon="refresh" @click="load">{{ $t('notifications.webhook.retry') }}</MButton>
         </div>
-      </Transition>
-      <Transition name="webhook-toast">
-        <div v-if="toastVisible" class="webhook-toast-container">
-          <div
-            class="toast align-items-center border-0 show"
-            :class="toastTone === 'warning' ? 'text-bg-warning' : 'text-bg-success'"
-            role="alert"
-            aria-live="assertive"
-            aria-atomic="true"
-          >
-            <div class="d-flex">
-              <div class="toast-body">
-                <i
-                  class="me-2"
-                  :class="toastTone === 'warning' ? 'fas fa-exclamation-triangle' : 'fas fa-check-circle'"
-                ></i>
-                {{ toastMessage }}
-              </div>
-              <button
-                type="button"
-                class="btn-close"
-                :class="{ 'btn-close-white': toastTone !== 'warning' }"
-                :aria-label="$t('_common.close')"
-                @click="dismissToast"
-              ></button>
-            </div>
-          </div>
-        </div>
-      </Transition>
-    </Teleport>
+      </div>
+
+      <template #actions>
+        <MButton variant="text" :disabled="saving || testing" @click="close">{{ $t('_common.cancel') }}</MButton>
+        <MButton icon="save" :loading="saving" :disabled="loading || !loaded || saving || testing" @click="save">{{ $t('_common.save') }}</MButton>
+      </template>
+    </MSheet>
+
+    <MSnackbar v-model="toastVisible" :message="toastMessage" />
   </section>
 </template>
 
-<style scoped lang="less">
-.webhook-card-section {
-  margin-top: 1.5rem;
-}
-
-.notification-card {
-  width: 100%;
-  min-height: 170px;
-  display: grid;
-  grid-template-columns: auto 1fr auto;
-  align-items: center;
-  gap: 1.25rem;
-  padding: 1.5rem;
-  border: 1px solid var(--bs-border-color);
-  border-radius: 1.25rem;
-  color: var(--bs-body-color);
-  background:
-    radial-gradient(circle at 12% 20%, rgba(13, 110, 253, 0.16), transparent 34%),
-    var(--bs-body-bg);
-  text-align: left;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.08);
-  transition: transform 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
-
-  &:hover,
-  &:focus-visible {
-    transform: translateY(-2px);
-    border-color: rgba(13, 110, 253, 0.65);
-    box-shadow: 0 16px 38px rgba(13, 110, 253, 0.14);
-    outline: none;
-  }
-}
-
-.notification-card-icon {
-  width: 70px;
-  height: 70px;
-  display: grid;
-  place-items: center;
-  border-radius: 1.25rem;
-  color: #fff;
-  background: linear-gradient(135deg, #0d6efd, #6f42c1);
-  font-size: 1.75rem;
-  box-shadow: 0 10px 24px rgba(13, 110, 253, 0.28);
-}
-
-.notification-card-content {
-  display: flex;
-  min-width: 0;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-
-.notification-card-title {
-  font-size: 1.25rem;
-  font-weight: 700;
-}
-
-.notification-card-description,
-.notification-card-state {
-  color: var(--bs-secondary-color);
-}
-
-.notification-card-state {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.45rem;
-  margin-top: 0.3rem;
-  font-size: 0.9rem;
-}
-
-.status-dot {
-  width: 0.65rem;
-  height: 0.65rem;
-  border-radius: 50%;
-  background: var(--bs-secondary);
-
-  &.enabled {
-    background: var(--bs-success);
-    box-shadow: 0 0 0 4px rgba(25, 135, 84, 0.14);
-  }
-}
-
-.notification-card-action {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.65rem;
-  color: var(--bs-primary);
-  font-weight: 600;
-}
-
-.notification-modal-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 10020;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1.25rem;
-  background: rgba(0, 0, 0, 0.68);
-  backdrop-filter: blur(8px);
-}
-
-.webhook-toast-container {
-  position: fixed;
-  top: 1.5rem;
-  left: 50%;
-  z-index: 10030;
-  width: min(420px, calc(100vw - 3rem));
-  transform: translateX(-50%);
-
-  .toast {
-    width: 100%;
-    max-width: none;
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.24);
-  }
-
-  .btn-close {
-    margin: auto 0.75rem auto 0;
-  }
-}
-
-.notification-modal {
-  width: min(820px, 100%);
-  max-height: calc(100vh - 2.5rem);
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  border: 1px solid var(--bs-border-color);
-  border-radius: 1.25rem;
-  color: var(--ui-text-primary);
-  background: var(--ui-surface-strong);
-  box-shadow: 0 28px 70px rgba(0, 0, 0, 0.34);
-}
-
-.notification-modal-header,
-.notification-modal-footer {
-  flex: 0 0 auto;
-  padding: 1.15rem 1.35rem;
-}
-
-.notification-modal-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 1rem;
-  border-bottom: 1px solid var(--bs-border-color);
-
-  h5 {
-    margin: 0;
-    color: var(--ui-text-primary);
-  }
-
-  p {
-    margin: 0.35rem 0 0;
-    color: var(--ui-text-secondary);
-    font-size: 0.9rem;
-  }
-}
-
-.notification-modal-body {
-  flex: 1 1 auto;
-  overflow-y: auto;
-  padding: 1.35rem;
-  overscroll-behavior: contain;
-  touch-action: pan-y;
-  -webkit-overflow-scrolling: touch;
-}
-
-.notification-modal {
-  .form-label,
-  .form-check-label,
-  legend {
-    color: var(--ui-text-primary);
-    font-weight: 600;
-  }
-
-  .form-text,
-  .curl-details p {
-    color: var(--ui-text-secondary);
-  }
-
-  .form-control {
-    color: var(--ui-text-primary);
-  }
-}
-
-[data-bs-theme='light'] .notification-modal {
-  background: #f8fbff;
-
-  .form-text,
-  .curl-details p,
-  .notification-loading,
-  .notification-load-error {
-    color: #475569;
-  }
-}
-
-.webhook-switch-setting {
-  .form-check {
-    min-height: 1.75rem;
-  }
-
-  .form-check-input {
-    width: 2.5rem;
-    height: 1.25rem;
-    margin-right: 0.65rem;
-  }
-}
-
-.webhook-url-visibility {
-  min-width: 2.75rem;
-  border-color: var(--ui-border);
-  color: var(--ui-text-primary);
-
-  &:hover,
-  &:focus-visible {
-    border-color: var(--ui-border-strong);
-    background: var(--ui-accent-soft);
-    color: var(--ui-accent-text);
-  }
-}
-
-.notification-modal-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.75rem;
-  border-top: 1px solid var(--bs-border-color);
-}
-
-.notification-loading,
-.notification-load-error {
-  min-height: 260px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
-  gap: 0.85rem;
-  color: var(--bs-secondary-color);
-  text-align: center;
-
-  i {
-    font-size: 1.75rem;
-  }
-}
-
-.notification-event {
-  height: 100%;
-  padding: 0.75rem 0.75rem 0.75rem 2.25rem;
-  border: 1px solid var(--bs-border-color);
-  border-radius: 0.75rem;
-}
-
-.event-id {
-  display: inline-grid;
-  min-width: 1.55rem;
-  height: 1.55rem;
-  place-items: center;
-  margin-right: 0.35rem;
-  border-radius: 0.45rem;
-  color: var(--bs-primary);
-  background: rgba(13, 110, 253, 0.12);
-  font-size: 0.78rem;
-  font-weight: 700;
-}
-
-.webhook-tools {
-  display: grid;
-  gap: 0.9rem;
-  margin-top: 1.25rem;
-}
-
-.webhook-test-controls {
-  display: grid;
-  grid-template-columns: minmax(8rem, 12rem) auto;
-  align-items: end;
-  gap: 0.75rem;
-
-  .btn {
-    justify-self: start;
-  }
-}
-
-.curl-details {
-  padding: 0.9rem;
-  border: 1px solid var(--bs-border-color);
-  border-radius: 0.75rem;
-
-  &.disabled {
-    opacity: 0.55;
-    pointer-events: none;
-  }
-
-  summary {
-    cursor: pointer;
-    color: var(--bs-primary);
-    font-weight: 600;
-  }
-
-  p {
-    margin: 0.75rem 0;
-    color: var(--bs-secondary-color);
-  }
-
-  pre {
-    max-height: 220px;
-    overflow: auto;
-    padding: 0.85rem;
-    border-radius: 0.6rem;
-    background: var(--bs-tertiary-bg);
-    white-space: pre-wrap;
-    word-break: break-all;
-  }
-
-  .curl-template + .curl-template {
-    margin-top: 1rem;
-  }
-
-  .curl-template strong {
-    display: block;
-    margin-bottom: 0.4rem;
-  }
-}
-
-.notification-modal-enter-active,
-.notification-modal-leave-active {
-  transition: opacity 160ms ease;
-
-  .notification-modal {
-    transition: transform 160ms ease, opacity 160ms ease;
-  }
-}
-
-.notification-modal-enter-from,
-.notification-modal-leave-to {
-  opacity: 0;
-
-  .notification-modal {
-    opacity: 0;
-    transform: translateY(12px) scale(0.985);
-  }
-}
-
-.webhook-toast-enter-active,
-.webhook-toast-leave-active {
-  transition: opacity 160ms ease, transform 160ms ease;
-}
-
-.webhook-toast-enter-from,
-.webhook-toast-leave-to {
-  opacity: 0;
-  transform: translate(-50%, -10px);
-}
-
-@media (max-width: 575.98px) {
-  .webhook-test-controls {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 640px) {
-  .notification-card {
-    grid-template-columns: auto 1fr;
-  }
-
-  .notification-card-action {
-    grid-column: 1 / -1;
-    justify-content: flex-end;
-  }
-
-  .notification-modal-overlay {
-    padding: 0;
-  }
-
-  .notification-modal {
-    width: 100%;
-    max-height: 100vh;
-    min-height: 100vh;
-    border-radius: 0;
-  }
-
-  .webhook-toast-container {
-    top: 1rem;
-    width: calc(100vw - 2rem);
-  }
-}
+<style>
+.webhook-form { display: flex; flex-direction: column; gap: 16px; }
+.webhook-loading { display: flex; align-items: center; gap: 12px; color: var(--md-sys-color-on-surface-variant); }
+.webhook-event-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+.webhook-curl { white-space: pre-wrap; word-break: break-all; font-family: var(--md-ref-typeface-mono, ui-monospace, 'Consolas', monospace); font-size: 12.5px; }
+.webhook-load-error { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; }
 </style>

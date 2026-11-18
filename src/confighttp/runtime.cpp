@@ -11,18 +11,25 @@
 #include "src/display_device/color_profile.h"
 #include "src/display_device/display_device.h"
 #include "src/globals.h"
+#include "src/hdr/calibration.h"
 #include "src/image_enhancement/config.h"
+#include "src/log_text.h"
 #include "src/logging.h"
 #include "src/rtsp.h"
 #include "src/stream.h"
 #include "src/streaming/perf_recorder.h"
+#include "src/system_load.h"
 #include "src/video.h"
 #include <boost/algorithm/string.hpp>
+#include <chrono>
 #include <cmath>
 #include <set>
 #include <sstream>
 #ifdef _WIN32
+  #include "src/display_device/session.h"
+  #include "src/display_device/vdd_utils.h"
   #include "src/platform/windows/display_device/color_profile.h"
+  #include "src/platform/windows/display_device/windows_utils.h"
 #endif
 
 using namespace std::literals;
@@ -39,10 +46,10 @@ namespace confighttp::runtime {
 
       print_req(request);
 
-      if (!require_localhost(response, request, "getting runtime sessions")) {
-        return;
-      }
-
+      // authenticate() already enforces the Web UI address policy, session
+      // credentials, and CSRF rules. A read-only session snapshot therefore
+      // follows the same authenticated Web UI boundary from the LAN
+      // [lt3-rfc6265bis-20261107] [lt3-w3c-fetch-metadata-20261107].
       try {
         // 获取所有活动会话信息
         auto sessions_info = stream::session::get_all_sessions_info();
@@ -59,6 +66,7 @@ namespace confighttp::runtime {
           json session_obj;
           session_obj["client_name"] = session_info.client_name;
           session_obj["client_uuid"] = session_info.client_uuid;
+          stream::add_session_client_json(session_obj, session_info);
           session_obj["client_address"] = session_info.client_address;
           session_obj["state"] = session_info.state;
           session_obj["session_id"] = session_info.session_id;
@@ -66,6 +74,7 @@ namespace confighttp::runtime {
           session_obj["height"] = session_info.height;
           session_obj["fps"] = session_info.fps;
           session_obj["bitrate"] = session_info.bitrate;
+          session_obj["measured_bitrate_kbps"] = session_info.measured_bitrate_kbps;
           session_obj["host_audio"] = session_info.host_audio;
           session_obj["enable_hdr"] = session_info.enable_hdr;
           session_obj["enable_mic"] = session_info.enable_mic;
@@ -77,13 +86,15 @@ namespace confighttp::runtime {
           session_obj["hdr_max_full_frame_nits"] = session_info.hdr_max_full_frame_nits;
           session_obj["app_name"] = session_info.app_name;
           session_obj["app_id"] = session_info.app_id;
+          stream::add_session_quality_json(session_obj, session_info);
+          stream::add_session_gamepad_json(session_obj, session_info);
 
           sessions_array.push_back(session_obj);
         }
 
         response_json["sessions"] = sessions_array;
 
-        BOOST_LOG(debug) << "Config API: Runtime sessions info requested, returned " << sessions_info.size() << " sessions";
+        BOOST_LOG(verbose) << "Config API: Runtime sessions info requested, returned " << sessions_info.size() << " sessions";
 
         response->write(response_json.dump());
         response->close_connection_after_response = true;
@@ -94,6 +105,30 @@ namespace confighttp::runtime {
       }
       catch (...) {
         BOOST_LOG(error) << "getRuntimeSessions: Unknown exception";
+        write_runtime_error(response, web::StatusCode::internal_server_error, 500, "Unknown error");
+      }
+    }
+
+    void
+    getRuntimeSystem(resp_https_t response, req_https_t request) {
+      if (!authenticate(response, request)) return;
+
+      print_req(request);
+
+      if (!require_localhost(response, request, "getting runtime system load")) {
+        return;
+      }
+
+      try {
+        response->write(system_load::to_json(system_load::sample()).dump());
+        response->close_connection_after_response = true;
+      }
+      catch (const std::exception &e) {
+        BOOST_LOG(error) << "getRuntimeSystem: " << e.what();
+        write_runtime_error(response, web::StatusCode::internal_server_error, 500, std::string(e.what()));
+      }
+      catch (...) {
+        BOOST_LOG(error) << "getRuntimeSystem: Unknown exception";
         write_runtime_error(response, web::StatusCode::internal_server_error, 500, "Unknown error");
       }
     }
@@ -160,72 +195,148 @@ namespace confighttp::runtime {
       }
     }
 
+#ifdef _WIN32
+    std::optional<hdr::calibration_binding_t>
+    inspect_calibration(json &output) {
+      output = {
+        { "success", true }, { "supported", true }, { "vddActive", false },
+        { "hdrEnabled", false }, { "calibrated", false }, { "profileName", nullptr },
+        { "profileHash", nullptr }, { "maxNits", nullptr }, { "minNits", nullptr },
+        { "maxFullFrameNits", nullptr }, { "state", "waiting_stream" },
+        { "sharedVdd", config::video.vdd_reuse }, { "activeClients", json::array() },
+        { "canCalibrate", false }, { "clientUuid", "" }, { "deviceId", "" }, { "sessionId", 0 }
+      };
+      std::set<std::string> clients;
+      std::size_t active_sessions = 0;
+      for (const auto &session : stream::session::get_all_sessions_info()) {
+        if (session.state == "RUNNING" && session.enable_hdr && session.use_vdd) {
+          ++active_sessions;
+          output["sessionId"] = session.session_id;
+          if (clients.insert(session.client_uuid).second) {
+            output["activeClients"].push_back({ { "uuid", session.client_uuid }, { "name", session.client_name } });
+          }
+        }
+      }
+      if (config::video.vdd_reuse) {
+        output["state"] = "shared_vdd";
+        return std::nullopt;
+      }
+      if (active_sessions > 1) {
+        output["state"] = "multiple_streams";
+        return std::nullopt;
+      }
+      const auto target = display_device::session_t::get().vdd_context();
+      if (active_sessions != 1 || clients.begin()->empty() || target.client_id != *clients.begin()) {
+        return std::nullopt;
+      }
+      output["clientUuid"] = target.client_id;
+      output["deviceId"] = target.device_id;
+      if (target.device_id.empty()) {
+        output["state"] = "waiting_vdd";
+        return std::nullopt;
+      }
+      if (display_device::w_utils::is_user_session_locked()) {
+        output["state"] = "locked";
+        return std::nullopt;
+      }
+      const auto states = display_device::get_current_hdr_states({ target.device_id });
+      const auto state = states.find(target.device_id);
+      output["vddActive"] = state != states.end();
+      const bool enabled = state != states.end() && state->second == display_device::hdr_state_e::enabled;
+      output["hdrEnabled"] = enabled;
+      const auto inspection = display_device::win_color_profile::current_hdr_calibration(target.device_id);
+      output["diagnostic"] = {
+        { "stage", inspection.stage }, { "hresult", inspection.error }, { "userSid", inspection.user_sid },
+        { "scope", inspection.scope ? json(*inspection.scope) : json(nullptr) }
+      };
+      using state_e = display_device::win_color_profile::calibration_result_t::state_e;
+      output["canCalibrate"] = enabled && !inspection.user_sid.empty();
+      if (inspection.state == state_e::unavailable)
+        output["state"] = "unavailable";
+      else if (!enabled)
+        output["state"] = "waiting_hdr";
+      else if (inspection.state == state_e::invalid)
+        output["state"] = "invalid_profile";
+      else
+        output["state"] = "ready";
+
+      if (inspection.profile) {
+        const auto &profile = *inspection.profile;
+        output["profileName"] = profile.profile_name;
+        output["profileHash"] = profile.fingerprint;
+        output["maxNits"] = profile.luminance.max_nits;
+        output["minNits"] = profile.luminance.min_nits;
+        output["maxFullFrameNits"] = profile.luminance.max_full_frame_nits;
+        const auto binding = hdr::client_calibration(config::get_clients_config(), target.client_id);
+        const hdr::calibration_binding_t candidate {
+          inspection.user_sid, display_device::vdd_utils::generate_client_guid(target.client_id), profile
+        };
+        const bool bound = binding && hdr::calibration_matches(*binding, candidate.user_sid, candidate.vdd_id, profile);
+        output["calibrated"] = enabled && bound;
+        if (enabled) {
+          output["state"] = bound ? "calibrated" : "unbound_profile";
+          return candidate;
+        }
+      }
+      return std::nullopt;
+    }
+
+#endif
+
     void
     getRuntimeHdrCalibration(resp_https_t response, req_https_t request) {
       if (!authenticate(response, request)) return;
       print_req(request);
       if (!require_localhost(response, request, "getting HDR calibration status")) return;
-
       try {
-        json output {
-          { "success", true },
-          { "supported", false },
-          { "vddActive", false },
-          { "hdrEnabled", false },
-          { "calibrated", false },
-          { "profileName", nullptr },
-          { "maxNits", nullptr },
-          { "minNits", nullptr },
-          { "maxFullFrameNits", nullptr },
-          { "state", "unsupported" },
-          { "sharedVdd", config::video.vdd_reuse },
-          { "activeClients", json::array() },
-        };
-
-        for (const auto &session : stream::session::get_all_sessions_info()) {
-          if (session.state == "RUNNING" && session.enable_hdr && session.use_vdd) {
-            output["activeClients"].push_back({
-              { "uuid", session.client_uuid },
-              { "name", session.client_name },
-            });
-          }
-        }
-
 #ifdef _WIN32
-        output["supported"] = true;
-        const auto vdd_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
-        if (!vdd_id.empty()) {
-          output["vddActive"] = true;
-          const auto hdr_states = display_device::get_current_hdr_states({ vdd_id });
-          const auto hdr_state = hdr_states.find(vdd_id);
-          const bool hdr_enabled = hdr_state != hdr_states.end() &&
-                                   hdr_state->second == display_device::hdr_state_e::enabled;
-          output["hdrEnabled"] = hdr_enabled;
-          output["state"] = hdr_enabled ? "ready" : "waiting_hdr";
-
-          if (const auto calibration = display_device::win_color_profile::current_hdr_calibration(vdd_id)) {
-            output["calibrated"] = true;
-            output["profileName"] = calibration->profile_name;
-            output["maxNits"] = calibration->max_nits;
-            output["minNits"] = calibration->min_nits;
-            output["maxFullFrameNits"] = calibration->max_full_frame_nits;
-            output["state"] = "calibrated";
-          }
-        }
-        else {
-          output["state"] = "waiting_vdd";
-        }
-#endif
-
+        json output;
+        inspect_calibration(output);
         send_response(response, output);
+#else
+        send_response(response, json { { "success", true }, { "supported", false }, { "calibrated", false }, { "state", "unsupported" } });
+#endif
       }
       catch (const std::exception &e) {
         BOOST_LOG(error) << "getRuntimeHdrCalibration: " << e.what();
         write_runtime_error(response, web::StatusCode::internal_server_error, 500, e.what());
       }
-      catch (...) {
-        BOOST_LOG(error) << "getRuntimeHdrCalibration: Unknown exception";
-        write_runtime_error(response, web::StatusCode::internal_server_error, 500, "Unknown error");
+    }
+
+    void
+    saveRuntimeHdrCalibration(resp_https_t response, req_https_t request) {
+      if (!check_content_type(response, request, "application/json")) return;
+      if (!authenticate(response, request)) return;
+      if (!require_localhost(response, request, "updating HDR calibration")) return;
+      try {
+#ifdef _WIN32
+        const auto input = json::parse(request->content.string());
+        json output;
+        const auto binding = inspect_calibration(output);
+        // Match the exact snapshot the user chose, including the stream instance.
+        // A stale panel must not bind a new client's or Windows user's default ICC.
+        if (!binding || input.value("clientUuid", std::string {}) != output.at("clientUuid").get_ref<const std::string &>() ||
+            input.value("deviceId", std::string {}) != output.at("deviceId").get_ref<const std::string &>() ||
+            input.at("sessionId") != output.at("sessionId") ||
+            input.value("userSid", std::string {}) != binding->user_sid ||
+            input.value("profileName", std::string {}) != binding->profile.profile_name ||
+            input.value("profileHash", std::string {}) != binding->profile.fingerprint) {
+          throw std::invalid_argument("The HDR client, display, user or profile changed; refresh the calibration status");
+        }
+        if (!config::save_client_hdr_calibration(output.at("clientUuid").get<std::string>(), json(*binding))) {
+          write_runtime_error(response, web::StatusCode::internal_server_error, 500, "Failed to save the client HDR calibration");
+          return;
+        }
+        output["calibrated"] = true;
+        output["state"] = "calibrated";
+        send_response(response, output);
+#else
+        throw std::invalid_argument("HDR calibration requires Windows");
+#endif
+      }
+      catch (const std::exception &e) {
+        BOOST_LOG(warning) << "saveRuntimeHdrCalibration: " << e.what();
+        write_runtime_error(response, web::StatusCode::bad_request, 400, e.what());
       }
     }
 
@@ -395,10 +506,14 @@ namespace confighttp::runtime {
           // 继续执行，即使获取会话信息失败，仍然尝试修改码率
         }
 
-        BOOST_LOG(info) << "Config API: Attempting to change bitrate for client '" << client_name
-                        << "' to " << bitrate << " Kbps";
-        if (!available_clients.empty()) {
-          BOOST_LOG(info) << "Available RUNNING clients: " << boost::algorithm::join(available_clients, ", ");
+        BOOST_LOG(info) << "Config API: Attempting to change bitrate for client " << logging::quoted_name(client_name)
+                        << " to " << bitrate << " Kbps";
+        // names go into the log between double quotes (see src/log_text.h)
+        std::vector<std::string> logged_clients;
+        logged_clients.reserve(available_clients.size());
+        for (const auto &name : available_clients) logged_clients.push_back(logging::quoted_name(name));
+        if (!logged_clients.empty()) {
+          BOOST_LOG(info) << "Available RUNNING clients: " << boost::algorithm::join(logged_clients, ", ");
         }
 
         // 调用底层 API 修改码率
@@ -417,8 +532,8 @@ namespace confighttp::runtime {
           response_json["bitrate"] = bitrate;
           response_json["client_name"] = client_name;
 
-          BOOST_LOG(info) << "Config API: Dynamic bitrate change requested for client '"
-                          << client_name << "': " << bitrate << " Kbps";
+          BOOST_LOG(info) << "Config API: Dynamic bitrate change requested for client "
+                          << logging::quoted_name(client_name) << ": " << bitrate << " Kbps";
         }
         else {
           std::string error_msg = "No active streaming session found for client: " + client_name;
@@ -433,7 +548,10 @@ namespace confighttp::runtime {
           response_json["status_code"] = 404;
           response_json["status_message"] = error_msg;
 
-          BOOST_LOG(warning) << "Config API: Failed to change bitrate - " << error_msg;
+          // the response above keeps the plain names; the log gets them between double quotes
+          std::string logged_msg = "No active streaming session found for client: " + logging::quoted_name(client_name);
+          logged_msg += logged_clients.empty() ? std::string { ". No RUNNING sessions available." } : ". Available clients: " + boost::algorithm::join(logged_clients, ", ");
+          BOOST_LOG(warning) << "Config API: Failed to change bitrate - " << logged_msg;
         }
 
         response->write(
@@ -451,15 +569,44 @@ namespace confighttp::runtime {
       }
     }
 
+    void
+    changeRuntimeHostAudio(resp_https_t response, req_https_t request) {
+      if (!authenticate(response, request)) return;
+      if (!require_localhost(response, request, "changing runtime host audio")) return;
+
+      json body;
+      if (!read_json_body(response, request, body)) return;
+      const auto client = body.value("clientname", std::string {});
+      if (client.empty() || !body.contains("enabled") || !body["enabled"].is_boolean()) {
+        write_runtime_error(response, web::StatusCode::bad_request, 400,
+          "clientname and boolean enabled are required");
+        return;
+      }
+      const bool enabled = body["enabled"].get<bool>();
+      const bool success = stream::session::set_host_audio_for_client(client, enabled);
+      json result {
+        { "success", success },
+        { "status_code", success ? 200 : 404 },
+        { "client_name", client },
+        { "host_audio", enabled },
+      };
+      if (!success) result["status_message"] = "No active streaming session found for client: " + client;
+      response->write(success ? web::StatusCode::ok : web::StatusCode::not_found, result.dump());
+      response->close_connection_after_response = true;
+    }
+
   }  // namespace
 
   void
   register_routes(https_server_t &server) {
     server.resource["^/api/runtime/sessions$"]["GET"] = getRuntimeSessions;
     server.resource["^/api/runtime/sessions/stop$"]["POST"] = stopRuntimeSessions;
+    server.resource["^/api/runtime/system$"]["GET"] = getRuntimeSystem;
     server.resource["^/api/runtime/hdr$"]["GET"] = getRuntimeHdrStatus;
     server.resource["^/api/runtime/hdr-calibration$"]["GET"] = getRuntimeHdrCalibration;
+    server.resource["^/api/runtime/hdr-calibration$"]["POST"] = saveRuntimeHdrCalibration;
     server.resource["^/api/runtime/bitrate$"]["GET"] = changeRuntimeBitrate;
+    server.resource["^/api/runtime/audio$"]["POST"] = changeRuntimeHostAudio;
     server.resource["^/api/perf/current$"]["GET"] = getPerfCurrent;
     server.resource["^/api/perf/frame-rates$"]["POST"] = setPerfFrameRates;
   }

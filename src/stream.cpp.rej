@@ -1,0 +1,38 @@
+diff a/src/stream.cpp b/src/stream.cpp	(rejected hunks)
+@@ -4356,6 +4356,36 @@ namespace stream {
+       return streaming::select_current_capture(sessions, client_cert_uuid);
+     }
+ 
++    std::vector<video_session_control_t>
++    list_video_sessions_for_control() {
++      std::vector<video_session_control_t> sessions;
++
++      // try_ref() avoids recreating the broadcast context when no stream is active.
++      auto broadcast_ref = broadcast_shared.try_ref();
++      if (!broadcast_ref) {
++        return sessions;
++      }
++
++      auto lg = broadcast_ref->control_server._sessions.lock();
++      sessions.reserve(broadcast_ref->control_server._sessions->size());
++      for (const auto session : *broadcast_ref->control_server._sessions) {
++        if (!session) {
++          continue;
++        }
++
++        video_session_control_t info;
++        info.session_id = session->launch_session_id;
++        info.client_cert_uuid = session->client_cert_uuid;
++        info.client_name = session->client_name;
++        info.app_name = session->app_name;
++        info.running = session->lifecycle.state() == state_e::RUNNING;
++        info.control_only = session->control_only;
++        info.capture_target = session->config.monitor.capture_target;
++        sessions.push_back(std::move(info));
++      }
++      return sessions;
++    }
++
+     void
+     join(session_t &session) {
+       // Current Nvidia drivers have a bug where NVENC can deadlock the encoder thread with hardware-accelerated

@@ -5,39 +5,62 @@
 
 #include "session_target.h"
 
-#include "client_display_capabilities.h"
+#include "calibration.h"
 #include "src/config.h"
-#include "src/display_device/display_device.h"
-#include "src/globals.h"
 #include "src/logging.h"
 #include "src/rtsp.h"
 
 #ifdef _WIN32
+  #include "src/display_device/vdd_utils.h"
   #include "src/platform/windows/display_device/color_profile.h"
 #endif
 
 namespace hdr {
-  void
-  adopt_vdd_calibration_if_needed(rtsp_stream::launch_session_t &session) {
+  static std::optional<calibration_binding_t>
+  bound_vdd_calibration(const std::string &uuid) {
 #ifdef _WIN32
-    if (!session.enable_hdr || !session.use_vdd ||
-        session.hdr_target_source != target_source_e::safe_defaults) return;
+    if (config::video.vdd_reuse) return std::nullopt;
+    auto binding = client_calibration(config::get_clients_config(), uuid);
+    if (!binding) return std::nullopt;
+    const auto installed = display_device::win_color_profile::read_hdr_calibration(binding->profile.profile_name);
+    if (!installed.profile || !calibration_matches(*binding, installed.user_sid,
+                                display_device::vdd_utils::generate_client_guid(uuid), *installed.profile)) {
+      BOOST_LOG(warning) << "Ignoring saved HDR calibration for client " << uuid
+                         << ": profile or ownership no longer matches; stage=" << installed.stage
+                         << ", HRESULT=" << installed.error;
+      return std::nullopt;
+    }
+    binding->profile = *installed.profile;
+    return binding;
+#else
+    (void) uuid;
+    return std::nullopt;
+#endif
+  }
 
-    const auto vdd_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
-    if (vdd_id.empty()) return;
-    const auto calibration = display_device::win_color_profile::current_hdr_calibration(vdd_id);
-    if (!calibration) return;
-
-    auto capabilities = session.hdr_capabilities;
-    capabilities.reported = true;
-    capabilities.max_nits = calibration->max_nits;
-    capabilities.min_nits = calibration->min_nits;
-    capabilities.max_full_frame_nits = calibration->max_full_frame_nits;
-    session.set_hdr_target(capabilities, target_source_e::windows_hdr_calibration);
-    BOOST_LOG(info) << "Using Windows HDR Calibration profile " << calibration->profile_name
-                    << " for VDD HDR luminance";
+  bool
+  apply_vdd_calibration(const rtsp_stream::launch_session_t &session, const std::string &device_id) {
+#ifdef _WIN32
+    if (!session.enable_hdr || !session.use_vdd) return true;
+    if (const auto binding = bound_vdd_calibration(session.client_cert_uuid)) {
+      const auto brightness = [](const client_display_capabilities_t &value) {
+        return display_device::vdd_utils::hdr_brightness_t { value.max_nits, value.min_nits, value.max_full_frame_nits };
+      };
+      if ((session.hdr_target_source == target_source_e::windows_hdr_calibration ||
+            session.hdr_target_source == target_source_e::safe_defaults) &&
+          brightness(session.hdr_capabilities) != brightness(binding->profile.luminance)) {
+        // A profile may become available or be replaced while Windows is locked.
+        // The active VDD still advertises the values selected at session start.
+        BOOST_LOG(warning) << "HDR calibration luminance changed since display preparation; reconnect to apply it";
+        return false;
+      }
+      return display_device::win_color_profile::apply_hdr_calibration(device_id, *binding);
+    }
+    return session.hdr_target_source != target_source_e::windows_hdr_calibration;
 #else
     (void) session;
+    (void) device_id;
+    return true;
 #endif
   }
 
@@ -57,6 +80,13 @@ namespace hdr {
     }
 
     session.set_hdr_target(target.capabilities, target.source);
-    adopt_vdd_calibration_if_needed(session);
+    // Resolve ownership before any VDD exists or is replaced. Looking up the
+    // currently visible Zako display here can import the previous client's ICC.
+    if (session.enable_hdr && session.use_vdd && target.source == target_source_e::safe_defaults) {
+      if (const auto binding = bound_vdd_calibration(session.client_cert_uuid)) {
+        session.set_hdr_target(binding->profile.luminance, target_source_e::windows_hdr_calibration);
+        BOOST_LOG(info) << "Using saved HDR calibration " << binding->profile.profile_name << " for client " << session.client_cert_uuid;
+      }
+    }
   }
 }  // namespace hdr

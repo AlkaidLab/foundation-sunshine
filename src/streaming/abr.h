@@ -16,6 +16,7 @@
 #include <chrono>
 #include <deque>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <unordered_map>
 
@@ -34,6 +35,9 @@ namespace abr {
     int min_bitrate_kbps = 2000;
     int max_bitrate_kbps = 150000;
     mode_e mode = mode_e::BALANCED;
+    /// What the client asked for before the host ceiling was applied (0 = nothing, -1 = not given: min/max above are the client's). enable() keeps them so a later change of the ceiling can recompute the range.
+    int client_min_kbps = -1;
+    int client_max_kbps = -1;
   };
 
   /// Network feedback from client
@@ -81,6 +85,12 @@ namespace abr {
     /// Fallback probe-up will move toward this target. 0 = no recommendation yet.
     int llm_target_bitrate_kbps = 0;
 
+    /// The inputs of the range under the host ceiling (streaming::abr_range_under_ceiling).
+    int client_min_kbps = 0;
+    int client_max_kbps = 0;
+    int preset_min_kbps = 0;
+    int preset_max_kbps = 0;
+
     /// Rate limiting: minimum interval between LLM calls
     std::chrono::steady_clock::time_point last_llm_call;
     static constexpr int LLM_MIN_INTERVAL_SECONDS = 10;
@@ -118,6 +128,12 @@ namespace abr {
   enable(const std::string &client_name, const config_t &cfg, int initial_bitrate_kbps, const std::string &app_name);
 
   /**
+   * @brief The host's bitrate ceiling changed (0 = none): every enabled session takes the range, the current bitrate and the LLM target under it now, and gets its own range back when it is raised.
+   */
+  void
+  apply_host_ceiling(int ceiling_kbps);
+
+  /**
    * @brief Disable ABR for a client session.
    */
   void
@@ -141,6 +157,21 @@ namespace abr {
    */
   action_t
   process_feedback(const std::string &client_name, const network_feedback_t &feedback);
+
+  /// Latest packet loss and dropped frame count a client reported through process_feedback().
+  struct reported_loss_t {
+    double packet_loss = 0.0;  ///< Packet loss percentage (0-100), after sanitising
+    int dropped_frames = 0;    ///< Dropped frames in the latest report
+  };
+
+  /**
+   * @brief Read the most recent feedback a client reported (thread-safe, read-only).
+   * @param client_name Client identifier (the key the other functions use).
+   * @return The latest reported values, or nothing when ABR is not enabled for the client or it has
+   *         reported no feedback since ABR was enabled.
+   */
+  std::optional<reported_loss_t>
+  latest_reported_loss(const std::string &client_name);
 
   /**
    * @brief Get ABR capabilities for capability negotiation.

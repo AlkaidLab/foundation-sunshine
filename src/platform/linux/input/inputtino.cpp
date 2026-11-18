@@ -133,6 +133,12 @@ namespace platf {
     return false;
   }
 
+  std::string_view
+  gamepad_virtual_type(input_t &, int) {
+    // The emulated joypad is not named in the DS4/DualSense vocabulary used by the session API.
+    return {};
+  }
+
   bool
   gamepad_has_ds5_audio_haptics(input_t &) {
     return false;
@@ -160,6 +166,11 @@ namespace platf {
   gamepad_battery(input_t &input, const gamepad_battery_t &battery) {
     auto raw = (input_raw_t *) input.get();
     platf::gamepad::battery(raw, battery);
+  }
+
+  void
+  gamepad_ds5_status(input_t &input, const gamepad_ds5_status_t &status) {
+    // No virtual DualSense on this platform: the headset and microphone state has nowhere to go.
   }
 
   platform_caps::caps_t

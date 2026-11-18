@@ -1,0 +1,322 @@
+{
+  "_comment": "Telemetry scrub vectors. ONE file, three identical copies: host tests/data/telemetry_scrub_vectors.json (C++ scrub_text and scrub_log_message), m3e src/telemetry/scrub-vectors.json (JS scrubText), Worker test/scrub-vectors.json (TS scrubText). Each implementation must remove every string in `forbidden` from the output of the input and keep every string in `required`. Planted values are fictional.",
+  "version": 1,
+  "vectors": [
+    {
+      "name": "email",
+      "input": "contact me at john.doe+tag@example.co.uk please",
+      "forbidden": [
+        "john.doe",
+        "example.co.uk"
+      ],
+      "required": [
+        "contact me at",
+        "please"
+      ]
+    },
+    {
+      "name": "ipv4 with port",
+      "input": "connect 192.0.2.57:47989 failed",
+      "forbidden": [
+        "192.0.2.57"
+      ],
+      "required": [
+        "failed"
+      ]
+    },
+    {
+      "name": "public ipv4",
+      "input": "peer 203.0.113.77 timed out",
+      "forbidden": [
+        "203.0.113.77"
+      ],
+      "required": [
+        "timed out"
+      ]
+    },
+    {
+      "name": "ipv6 link-local",
+      "input": "bound fe80::1ff:fe23:4567:890a on eth0",
+      "forbidden": [
+        "fe80::1ff",
+        "890a"
+      ],
+      "required": [
+        "on eth0"
+      ]
+    },
+    {
+      "name": "ipv6 global",
+      "input": "client 2001:db8:85a3::8a2e:370:7334 joined",
+      "forbidden": [
+        "2001:db8",
+        "7334"
+      ],
+      "required": [
+        "joined"
+      ]
+    },
+    {
+      "name": "mac",
+      "input": "adapter 00:1A:2B:3C:4D:5E is down",
+      "forbidden": [
+        "00:1A:2B:3C:4D:5E",
+        "3C:4D"
+      ],
+      "required": [
+        "is down"
+      ]
+    },
+    {
+      "name": "mac dashes",
+      "input": "adapter 00-1a-2b-3c-4d-5e is down",
+      "forbidden": [
+        "3c-4d"
+      ],
+      "required": [
+        "is down"
+      ]
+    },
+    {
+      "name": "windows home path",
+      "input": "open C:\\Users\\test-user\\AppData\\Local\\Sunshine\\sunshine.log failed",
+      "forbidden": [
+        "test-user"
+      ],
+      "required": [
+        "failed"
+      ]
+    },
+    {
+      "name": "windows home path with a space in the account name",
+      "input": "open C:\\Users\\Test User\\Desktop\\a.txt failed",
+      "forbidden": [
+        "Test User",
+        "Hua"
+      ],
+      "required": []
+    },
+    {
+      "name": "windows home path, forward slashes",
+      "input": "read C:/Users/test-user/Documents/x.cfg now",
+      "forbidden": [
+        "test-user"
+      ],
+      "required": [
+        "now"
+      ]
+    },
+    {
+      "name": "windows home path, Chinese account name",
+      "input": "open C:\\Users\\小明\\Desktop\\a.png failed",
+      "forbidden": [
+        "小明"
+      ],
+      "required": []
+    },
+    {
+      "name": "windows path elsewhere (a folder a person named)",
+      "input": "scan D:\\Games\\我的游戏\\Genshin Impact\\launcher.exe ok",
+      "forbidden": [
+        "我的游戏",
+        "Genshin"
+      ],
+      "required": []
+    },
+    {
+      "name": "unc path",
+      "input": "share \\\\SKYPC-01\\media\\movies\\x.mkv missing",
+      "forbidden": [
+        "SKYPC-01",
+        "movies"
+      ],
+      "required": [
+        "missing"
+      ]
+    },
+    {
+      "name": "unix home path",
+      "input": "load /home/test-user/.config/sunshine/sunshine.conf failed",
+      "forbidden": [
+        "test-user"
+      ],
+      "required": [
+        "failed"
+      ]
+    },
+    {
+      "name": "macOS home path",
+      "input": "cache /Users/test-user/Library/Caches/x done",
+      "forbidden": [
+        "test-user"
+      ],
+      "required": [
+        "done"
+      ]
+    },
+    {
+      "name": "uuid",
+      "input": "paired client 550e8400-e29b-41d4-a716-446655440000 ok",
+      "forbidden": [
+        "550e8400",
+        "446655440000"
+      ],
+      "required": [
+        "paired client",
+        "ok"
+      ]
+    },
+    {
+      "name": "guid in braces",
+      "input": "device {3F2504E0-4F89-11D3-9A0C-0305E82C3301} lost",
+      "forbidden": [
+        "3F2504E0",
+        "0305E82C3301"
+      ],
+      "required": [
+        "lost"
+      ]
+    },
+    {
+      "name": "long hex token",
+      "input": "key 3q2d7a9f1c5b8e0a4d6c2b7e9f1a3c5d7e9b1d3f5a7c9e1b3d5f7a9c1e3b5d7f used",
+      "forbidden": [
+        "3q2d7a9f1c5b8e0a",
+        "1e3b5d7f"
+      ],
+      "required": [
+        "used"
+      ]
+    },
+    {
+      "name": "bearer token",
+      "input": "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.abc.def failed",
+      "forbidden": [
+        "eyJhbGciOiJIUzI1NiJ9"
+      ],
+      "required": []
+    },
+    {
+      "name": "secret named by its key",
+      "input": "login password=hunter2secret rejected",
+      "forbidden": [
+        "hunter2secret"
+      ],
+      "required": [
+        "rejected"
+      ]
+    },
+    {
+      "name": "cookie",
+      "input": "Cookie: session=abc123def456; theme=dark",
+      "forbidden": [
+        "abc123def456"
+      ],
+      "required": []
+    },
+    {
+      "name": "pairing pin",
+      "input": "pair with PIN: 4821 timed out",
+      "forbidden": [
+        "4821"
+      ],
+      "required": [
+        "timed out"
+      ]
+    },
+    {
+      "name": "mirror cdk",
+      "input": "cdk=ABCD1234EFGH5678 rejected",
+      "forbidden": [
+        "ABCD1234EFGH5678"
+      ],
+      "required": [
+        "rejected"
+      ]
+    },
+    {
+      "name": "url with a query",
+      "input": "GET https://192.0.2.5:47990/api/pair?pin=1234&name=EvaPhone failed",
+      "forbidden": [
+        "192.0.2.5",
+        "EvaPhone",
+        "1234"
+      ],
+      "required": [
+        "failed"
+      ]
+    },
+    {
+      "name": "local host name",
+      "input": "resolve SKYPC.local refused",
+      "forbidden": [
+        "SKYPC"
+      ],
+      "required": [
+        "refused"
+      ]
+    },
+    {
+      "name": "windows default computer name",
+      "input": "from DESKTOP-4F7K2QD closed",
+      "forbidden": [
+        "DESKTOP-4F7K2QD",
+        "4F7K2QD"
+      ],
+      "required": [
+        "closed"
+      ]
+    },
+    {
+      "name": "steam id",
+      "input": "account 76561198012345678 owns the app",
+      "forbidden": [
+        "76561198012345678"
+      ],
+      "required": [
+        "owns the app"
+      ]
+    },
+    {
+      "name": "windows sid",
+      "input": "owner S-1-5-21-1234567890-2345678901-3456789012-1001 denied",
+      "forbidden": [
+        "1234567890",
+        "1001"
+      ],
+      "required": [
+        "denied"
+      ]
+    },
+    {
+      "name": "control characters and bidi",
+      "input": "line\u0000one‮twothree",
+      "forbidden": [
+        "\u0000",
+        "‮",
+        ""
+      ],
+      "required": [
+        "lineone"
+      ]
+    },
+    {
+      "name": "nothing personal stays as it was",
+      "input": "Couldn't create the encoder: access denied (0xC0000005)",
+      "forbidden": [],
+      "required": [
+        "Couldn't create the encoder",
+        "access denied",
+        "0xC0000005"
+      ]
+    },
+    {
+      "name": "a version number is not an address",
+      "input": "driver version 546.33.0.1 loaded",
+      "forbidden": [],
+      "required": [
+        "546.33.0.1"
+      ]
+    }
+  ]
+}

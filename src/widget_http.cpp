@@ -172,7 +172,7 @@ namespace widget_http {
               if (error) {
                 BOOST_LOG(debug) << "widget_http: restart response did not reach the client: "sv << error.message();
               }
-              platf::restart();
+              platf::restart("widget");
             });
         }
         else {

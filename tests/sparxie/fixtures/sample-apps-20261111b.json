@@ -1,0 +1,392 @@
+{
+  "apps": [
+    {
+      "auto-detach": "true",
+      "default-id": "desktop",
+      "elevated": "",
+      "exclude-global-prep-cmd": "false",
+      "exit-timeout": "5",
+      "hero": "desktop-hero.png",
+      "image-path": "desktop",
+      "menu-cmd": [
+        {
+          "cmd": ".\\tools\\qiin-tabtip.exe",
+          "elevated": "false",
+          "id": "kcENAT5r9P",
+          "name": "触摸键盘"
+        },
+        {
+          "cmd": ".\\assets\\gui\\sunshine-gui.exe --toolbar",
+          "elevated": "false",
+          "id": "rjeOKHmcdL",
+          "name": "桌宠"
+        }
+      ],
+      "name": "桌面",
+      "wait-all": "true"
+    },
+    {
+      "auto-detach": "true",
+      "cmd": "steam://open/bigpicture",
+      "default-id": "steam",
+      "hero": "steam-hero.png",
+      "image-path": "steam.png",
+      "name": "Steam Big Picture 模式",
+      "wait-all": "true"
+    },
+    {
+      "auto-detach": "true",
+      "cmd": "cmd /c \"start xbox:\"",
+      "default-id": "xbox",
+      "hero": "box-hero.png",
+      "image-path": "box.png",
+      "name": "Xbox 游戏",
+      "wait-all": "true"
+    },
+    {
+      "auto-detach": "true",
+      "cmd": "steam://rungameid/2868840",
+      "detached": "",
+      "elevated": "false",
+      "exclude-global-prep-cmd": "false",
+      "exit-timeout": "5",
+      "image-path": "https://cdn.akamai.steamstatic.com/steam/apps/2868840/header.jpg",
+      "index": "-1",
+      "menu-cmd": "",
+      "name": "Slay the Spire 2",
+      "output": "",
+      "prep-cmd": "",
+      "wait-all": "true",
+      "working-dir": "C:\\Program Files (x86)\\Steam\\steamapps\\common\\Slay the Spire 2"
+    },
+    {
+      "auto-detach": "true",
+      "default-id": "big-screen",
+      "detached": [
+        ".\\assets\\gui\\sunshine-gui.exe --desktop"
+      ],
+      "exclude-global-prep-cmd": "false",
+      "exit-timeout": "5",
+      "hero": "bigscreen-hero.png",
+      "image-path": "bigscreen.png",
+      "name": "大屏",
+      "prep-cmd": [
+        {
+          "do": "",
+          "elevated": "false",
+          "undo": ".\\assets\\gui\\sunshine-gui.exe --close-desktop"
+        }
+      ],
+      "wait-all": "true"
+    },
+    {
+      "cmd": "\"C:\\Program Files\\Sunshine\\tools\\sparxie-launch.exe\" --sparxie \"C:\\Program Files\\Sunshine\\config\\components\\sparxie\\Sparxie.exe\" --profile genshin-cn-1",
+      "elevated": "true",
+      "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\genshin-cn\\hero-badge.jpg",
+      "image-path": "app_6de14b94_1794411249.png",
+      "name": "原神触屏",
+      "sparxie": {
+        "artUpdated": "92a99b0d88182fd97689c8c81dbec67e_8179057238173878114",
+        "artVersion": "92a99b0d88182fd97689c8c81dbec67e_8179057238173878114",
+        "candidates": [],
+        "cover": "official",
+        "dir": "C:\\Games\\mihoyo\\Genshin",
+        "exe": "C:\\Games\\mihoyo\\Genshin\\YuanShen.exe",
+        "game": "genshin",
+        "install": "genshin-cn",
+        "launchTemplate": "\"{sparxie-launch}\" --sparxie \"{sparxie}\" --profile {profile}",
+        "launchTemplateProvisional": true,
+        "markers": [
+          "exe",
+          "dir",
+          "registry"
+        ],
+        "mode": "touch",
+        "options": {
+          "bgFps": 10,
+          "bgLimit": true,
+          "followPreset": false,
+          "fps": 120,
+          "fpsUnlock": false,
+          "preset30": 60,
+          "preset60": 1000,
+          "priority": "normal",
+          "scale": 400,
+          "scaleOverride": false
+        },
+        "profile": "genshin-cn-1",
+        "region": "cn",
+        "restore": "restore",
+        "settings": {
+          "display": "fullscreen",
+          "fps": 60,
+          "hdr": false,
+          "preset": "high",
+          "renderScale": 1.0,
+          "resolution": "1920x1080",
+          "vsync": false
+        },
+        "settingsMode": "preset"
+      },
+      "working-dir": "C:\\Games\\mihoyo\\Genshin"
+    },
+    {
+      "cmd": "\"C:\\Games\\mihoyo\\Genshin\\YuanShen.exe\"",
+      "elevated": "false",
+      "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\genshin-cn\\hero.jpg",
+      "image-path": "app_6de14b94_1794411249.png",
+      "name": "原神",
+      "sparxie": {
+        "artUpdated": "92a99b0d88182fd97689c8c81dbec67e_8179057238173878114",
+        "artVersion": "92a99b0d88182fd97689c8c81dbec67e_8179057238173878114",
+        "candidates": [],
+        "cover": "official",
+        "dir": "C:\\Games\\mihoyo\\Genshin",
+        "exe": "C:\\Games\\mihoyo\\Genshin\\YuanShen.exe",
+        "game": "genshin",
+        "install": "genshin-cn",
+        "launchTemplate": "\"{sparxie}\" --profile {profile}",
+        "launchTemplateProvisional": true,
+        "markers": [
+          "exe",
+          "dir",
+          "registry"
+        ],
+        "mode": "pc",
+        "options": {
+          "bgFps": 10,
+          "bgLimit": true,
+          "followPreset": false,
+          "fps": 120,
+          "fpsUnlock": false,
+          "preset30": 60,
+          "preset60": 1000,
+          "priority": "normal",
+          "scale": 400,
+          "scaleOverride": false
+        },
+        "profile": "",
+        "region": "cn",
+        "restore": "restore",
+        "settings": {
+          "display": "fullscreen",
+          "fps": 60,
+          "hdr": false,
+          "preset": "high",
+          "renderScale": 1.0,
+          "resolution": "1920x1080",
+          "vsync": false
+        }
+      },
+      "working-dir": "C:\\Games\\mihoyo\\Genshin"
+    },
+    {
+      "cmd": "\"C:\\Program Files\\Sunshine\\tools\\sparxie-launch.exe\" --sparxie \"C:\\Program Files\\Sunshine\\config\\components\\sparxie\\Sparxie.exe\" --profile starrail-cn-1",
+      "elevated": "true",
+      "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\starrail-cn\\hero-badge.jpg",
+      "image-path": "app_ff8a9a3d_1794411249.png",
+      "name": "星铁触屏",
+      "sparxie": {
+        "artUpdated": "ce3ebbe8a36cd9d322f90b5e0d27d4c4_4237664407428768550",
+        "artVersion": "ce3ebbe8a36cd9d322f90b5e0d27d4c4_4237664407428768550",
+        "candidates": [],
+        "cover": "official",
+        "dir": "C:\\Games\\mihoyo\\StarRail",
+        "exe": "C:\\Games\\mihoyo\\StarRail\\StarRail.exe",
+        "game": "starrail",
+        "install": "starrail-cn",
+        "launchTemplate": "\"{sparxie-launch}\" --sparxie \"{sparxie}\" --profile {profile}",
+        "launchTemplateProvisional": true,
+        "markers": [
+          "exe",
+          "dir",
+          "registry"
+        ],
+        "mode": "touch",
+        "options": {
+          "bgFps": 10,
+          "bgLimit": true,
+          "followPreset": false,
+          "fps": 120,
+          "fpsUnlock": false,
+          "preset30": 60,
+          "preset60": 1000,
+          "priority": "normal",
+          "scale": 400,
+          "scaleOverride": false
+        },
+        "profile": "starrail-cn-1",
+        "region": "cn",
+        "restore": "restore",
+        "settings": {
+          "display": "fullscreen",
+          "fps": 60,
+          "hdr": false,
+          "preset": "high",
+          "renderScale": 1.0,
+          "resolution": "1920x1080",
+          "vsync": false
+        },
+        "settingsMode": "preset"
+      },
+      "working-dir": "C:\\Games\\mihoyo\\StarRail"
+    },
+    {
+      "cmd": "\"C:\\Program Files\\Sunshine\\tools\\sparxie-launch.exe\" --sparxie \"C:\\Program Files\\Sunshine\\config\\components\\sparxie\\Sparxie.exe\" --profile starrail-cn-2",
+      "elevated": true,
+      "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\starrail-cn\\hero-badge.jpg",
+      "image-path": "app_ff8a9a3d_1794411249.png",
+      "name": "星穹铁道",
+      "sparxie": {
+        "artUpdated": "ce3ebbe8a36cd9d322f90b5e0d27d4c4_4237664407428768550",
+        "artVersion": "ce3ebbe8a36cd9d322f90b5e0d27d4c4_4237664407428768550",
+        "candidates": [],
+        "cover": "official",
+        "dir": "C:\\Games\\mihoyo\\StarRail",
+        "exe": "C:\\Games\\mihoyo\\StarRail\\StarRail.exe",
+        "game": "starrail",
+        "install": "starrail-cn",
+        "launchTemplate": "\"{sparxie-launch}\" --sparxie \"{sparxie}\" --profile {profile}",
+        "launchTemplateProvisional": true,
+        "markers": [
+          "exe",
+          "dir",
+          "registry"
+        ],
+        "mode": "touch",
+        "options": {
+          "bgFps": 10,
+          "bgLimit": true,
+          "followPreset": false,
+          "fps": 120,
+          "fpsUnlock": true,
+          "input": "kbm",
+          "isDefault": true,
+          "preset30": 60,
+          "preset60": 1000,
+          "priority": "normal",
+          "scale": 400,
+          "scaleOverride": false
+        },
+        "profile": "starrail-cn-2",
+        "region": "cn",
+        "restore": "restore",
+        "settings": {
+          "display": "fullscreen",
+          "hdr": false,
+          "preset": "high",
+          "renderScale": 1.0,
+          "resolution": "1920x1080",
+          "vsync": true
+        },
+        "settingsMode": "preset"
+      },
+      "working-dir": "C:\\Games\\mihoyo\\StarRail"
+    },
+    {
+      "cmd": "\"C:\\Program Files\\Sunshine\\tools\\sparxie-launch.exe\" --sparxie \"C:\\Program Files\\Sunshine\\config\\components\\sparxie\\Sparxie.exe\" --profile zzz-cn-1",
+      "elevated": "true",
+      "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\zzz-cn\\hero-badge.jpg",
+      "image-path": "app_1fe3afde_1794411249.png",
+      "name": "绝区零触屏",
+      "sparxie": {
+        "artUpdated": "bca19f05a213ae991b0e45a8e83b391a_4777448468433556029",
+        "artVersion": "bca19f05a213ae991b0e45a8e83b391a_4777448468433556029",
+        "candidates": [],
+        "cover": "official",
+        "dir": "C:\\Games\\mihoyo\\ZZZ",
+        "exe": "C:\\Games\\mihoyo\\ZZZ\\ZenlessZoneZero.exe",
+        "game": "zzz",
+        "install": "zzz-cn",
+        "launchTemplate": "\"{sparxie-launch}\" --sparxie \"{sparxie}\" --profile {profile}",
+        "launchTemplateProvisional": true,
+        "markers": [
+          "exe",
+          "dir",
+          "registry"
+        ],
+        "mode": "touch",
+        "options": {
+          "bgFps": 10,
+          "bgLimit": true,
+          "followPreset": false,
+          "fps": 120,
+          "fpsUnlock": false,
+          "preset30": 60,
+          "preset60": 1000,
+          "priority": "normal",
+          "scale": 400,
+          "scaleOverride": false
+        },
+        "profile": "zzz-cn-1",
+        "region": "cn",
+        "restore": "restore",
+        "settings": {
+          "display": "fullscreen",
+          "fps": 60,
+          "hdr": false,
+          "preset": "high",
+          "renderScale": 1.0,
+          "resolution": "1920x1080",
+          "vsync": false
+        },
+        "settingsMode": "preset"
+      },
+      "working-dir": "C:\\Games\\mihoyo\\ZZZ"
+    },
+    {
+      "cmd": "\"C:\\Games\\mihoyo\\ZZZ\\ZenlessZoneZero.exe\"",
+      "elevated": "false",
+      "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\zzz-cn\\hero.jpg",
+      "image-path": "app_1fe3afde_1794411249.png",
+      "name": "绝区零",
+      "sparxie": {
+        "artUpdated": "bca19f05a213ae991b0e45a8e83b391a_4777448468433556029",
+        "artVersion": "bca19f05a213ae991b0e45a8e83b391a_4777448468433556029",
+        "candidates": [],
+        "cover": "official",
+        "dir": "C:\\Games\\mihoyo\\ZZZ",
+        "exe": "C:\\Games\\mihoyo\\ZZZ\\ZenlessZoneZero.exe",
+        "game": "zzz",
+        "install": "zzz-cn",
+        "launchTemplate": "\"{sparxie}\" --profile {profile}",
+        "launchTemplateProvisional": true,
+        "markers": [
+          "exe",
+          "dir",
+          "registry"
+        ],
+        "mode": "pc",
+        "options": {
+          "bgFps": 10,
+          "bgLimit": true,
+          "followPreset": false,
+          "fps": 120,
+          "fpsUnlock": false,
+          "preset30": 60,
+          "preset60": 1000,
+          "priority": "normal",
+          "scale": 400,
+          "scaleOverride": false
+        },
+        "profile": "",
+        "region": "cn",
+        "restore": "restore",
+        "settings": {
+          "display": "fullscreen",
+          "fps": 60,
+          "hdr": false,
+          "preset": "high",
+          "renderScale": 1.0,
+          "resolution": "1920x1080",
+          "vsync": false
+        }
+      },
+      "working-dir": "C:\\Games\\mihoyo\\ZZZ"
+    }
+  ],
+  "default-apps-seen": [
+    "big-screen"
+  ],
+  "env": ""
+}

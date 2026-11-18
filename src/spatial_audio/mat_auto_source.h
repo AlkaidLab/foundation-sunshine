@@ -6,11 +6,14 @@ namespace spatial_audio {
 
 #if defined(_WIN32)
   #include "native_mat_guard.h"
+  #include "mat_installation.h"
   #include <shlobj.h>
-  #pragma comment(lib, "advapi32.lib")
-  #pragma comment(lib, "shell32.lib")
-  #pragma comment(lib, "ole32.lib")
-  #pragma comment(lib, "uuid.lib")
+  #if defined(_MSC_VER)
+    #pragma comment(lib, "advapi32.lib")
+    #pragma comment(lib, "shell32.lib")
+    #pragma comment(lib, "ole32.lib")
+    #pragma comment(lib, "uuid.lib")
+  #endif
 
 namespace spatial_audio {
   // Inputs are canonical paths. The tool deploys each executable below its SHA256.
@@ -37,7 +40,9 @@ namespace spatial_audio {
     const std::filesystem::path programs(folder);
     CoTaskMemFree(folder);
     try {
-      const auto image = std::filesystem::canonical(native_mat_guard::image(process));
+      const auto original = std::filesystem::path(native_mat_guard::image(process));
+      if (mat_installed_image(original)) return true;
+      const auto image = std::filesystem::canonical(original);
       return mat_auto_image(image, std::filesystem::canonical(programs), native_mat_guard::sha256(image));
     }
     catch (...) {

@@ -42,7 +42,17 @@ if ($appsJson.apps) {
         }
 
         $imagePath = $app.'image-path'
-        
+
+        # The official poster of a game application (a Sparxie block) belongs to the host: covers\sparxie-<install>-*.png and the posters folder are not the person's own
+        # pictures, and a copy named app_<hash>_<time> would make the host take them for one (the application then lost its badged or plain variant).
+        if ($app.sparxie) {
+            $leaf = Split-Path $imagePath -Leaf
+            if ($leaf -like 'sparxie-*' -or $imagePath -match '[\\/]sparxie[\\/]posters[\\/]') {
+                Write-Host "Skipping a host poster: $($app.name) -> $imagePath"
+                continue
+            }
+        }
+
         # Skip if already using desktop or boxart path
         if ($imagePath -eq 'desktop' -or $imagePath -match '^[^/\\]+\.png$') {
             Write-Host "Skipping already migrated: $($app.name) -> $imagePath"

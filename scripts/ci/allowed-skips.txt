@@ -1,0 +1,3 @@
+# CTest tests that may report "skipped". Any other skipped test fails the run (scripts/ci/report-junit.py).
+# ds5_native_usbip_smoke needs a DualSense device and skips itself without one.
+ds5_native_usbip_smoke

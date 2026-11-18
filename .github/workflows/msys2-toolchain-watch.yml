@@ -1,0 +1,152 @@
+# 工具链固定版本的每周巡检：仓库里出现更新的 MAJOR（openssl 还看 MINOR）时，派发一次「不固定版本」的验证构建，
+# 并打开/更新唯一一个跟踪 issue；固定版本追上后自动关闭。没有变化时不发 issue。
+# 定时事件只在默认分支上运行（GitHub Docs, "Events that trigger workflows", schedule；源 gh-events-20261116），
+# 所以这里只有合并到 master 后才会每周跑；手动运行可以在任意分支上演练整条路径。
+
+name: MSYS2 Toolchain Watch
+
+on:
+  schedule:
+    - cron: '23 3 * * 1'
+  workflow_dispatch:
+    inputs:
+      simulate-newer:
+        description: '模拟的仓库最新版本（如 openssl=4.2.0-1,gcc=17.1.0-1），用来演练告警路径；为空时读真实仓库'
+        type: string
+        default: ''
+      trigger-probe:
+        description: '发现（或模拟出）更新时，同时派发一次「不固定版本」的验证构建；定时运行总是派发'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: '${{ github.workflow }}-${{ github.ref }}'
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    name: Compare the toolchain pins with the repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: write  # dispatch the probe build with the newest packages
+      issues: write   # open, update and close the single tracking issue
+    steps:
+      - name: Checkout the CI scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          sparse-checkout: scripts/ci
+          persist-credentials: false
+
+      # 一个读不到仓库的巡检等于没有巡检：数据库拉不下来时脚本直接失败（不会得到「没有变化」的假结果）。
+      - name: Compare the pins with the repository
+        id: pins
+        env:
+          SIMULATE: ${{ inputs.simulate-newer }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$SIMULATE" ]]; then
+            python3 scripts/ci/msys2-pins.py check --json --simulate "$SIMULATE" > result.json
+          else
+            python3 scripts/ci/msys2-pins.py check --json > result.json
+          fi
+          cat result.json
+          {
+            echo "changed=$(jq -r '.changed' result.json)"
+            echo "simulated=$(jq -r '.simulated' result.json)"
+            echo "title=$(jq -r '.title' result.json)"
+            echo "bumps=$(jq -r '.bumps | length' result.json)"
+          } >> "$GITHUB_OUTPUT"
+
+      # GITHUB_TOKEN 触发的事件不会产生新的工作流运行，workflow_dispatch 是例外（GitHub Docs, "Events that
+      # trigger workflows"；源 gh-events-20261116），所以这里可以用仓库自带的令牌派发验证构建。定时运行探测默认
+      # 分支；手动运行探测它所在的分支，合并前就能在分支上试一遍派发。
+      - name: Dispatch the probe build (newest packages)
+        id: probe
+        if: steps.pins.outputs.changed == 'true' && (github.event_name == 'schedule' || inputs.trigger-probe == true)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          REF: ${{ github.event_name == 'schedule' && github.event.repository.default_branch || github.ref_name }}
+        run: |
+          set -euo pipefail
+          since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          gh workflow run main.yml --repo "$REPOSITORY" --ref "$REF" -f toolchain_probe=true
+          url=""
+          for _ in $(seq 1 30); do
+            sleep 5
+            runs="$(gh run list --repo "$REPOSITORY" --workflow main.yml --event workflow_dispatch --branch "$REF" --limit 5 --json url,createdAt 2>/dev/null || echo '[]')"
+            url="$(printf '%s' "$runs" | jq -r --arg since "$since" 'map(select(.createdAt >= $since)) | .[0].url // ""')"
+            [[ -n "$url" ]] && break
+          done
+          echo "dispatched=true" >> "$GITHUB_OUTPUT"
+          if [[ -z "$url" ]]; then
+            echo "::warning::the probe build was dispatched, but its run URL could not be found"
+            echo "url=" >> "$GITHUB_OUTPUT"
+          else
+            echo "url=$url" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 只维护一个跟踪 issue：标签定位已打开的那一个，有更新就改标题和正文，没有就关闭。
+      - name: Find the tracking issue
+        id: issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh label create toolchain-watch --repo "$REPOSITORY" --color B60205 --description "MSYS2 工具链固定版本的大版本更新跟踪" 2>/dev/null || true
+          number="$(gh issue list --repo "$REPOSITORY" --label toolchain-watch --state open --json number --jq '.[0].number' 2>/dev/null || true)"
+          echo "number=${number:-}" >> "$GITHUB_OUTPUT"
+
+      - name: Open or update the tracking issue
+        if: steps.pins.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          NUMBER: ${{ steps.issue.outputs.number }}
+          TITLE: ${{ steps.pins.outputs.title }}
+          PROBE_URL: ${{ steps.probe.outputs.url }}
+          PROBE_DISPATCHED: ${{ steps.probe.outputs.dispatched }}
+          SIMULATED: ${{ steps.pins.outputs.simulated }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## $TITLE"
+            echo
+            echo "MSYS2 工具链的固定包在仓库里有了新的大版本："
+            echo
+            echo "| 包 | 固定版本 | 仓库最新 | 级别 |"
+            echo "|---|---|---|---|"
+            jq -r '.bumps[] | "| \(.name) | \(.pinned) | \(.newest) | \(.level) |"' result.json
+            echo
+            if [[ "$SIMULATED" == true ]]; then
+              echo "本次为模拟检测（simulate-newer 输入），版本不是真实的仓库数据，也未派发验证构建。"
+            elif [[ "$PROBE_DISPATCHED" == true && -n "$PROBE_URL" ]]; then
+              echo "新版本验证构建：$PROBE_URL"
+            else
+              echo "新版本验证构建：未派发（手动运行默认不派发，可用 trigger-probe 输入强制）。"
+            fi
+            echo
+            echo "升级步骤：跑 `python3 scripts/ci/msys2-pins.py bump`，核对 diff（版本与 sha256），按需要适配代码，跑一次 Windows 构建后合并。详见 docs/ci.md 的「工具链固定与升级」。"
+            echo
+            echo "固定版本覆盖这些新版本后，下一次每周巡检会自动关闭本 issue。"
+          } > issue-body.md
+          if [[ -n "$NUMBER" ]]; then
+            gh issue edit "$NUMBER" --repo "$REPOSITORY" --title "$TITLE" --body-file issue-body.md
+          else
+            gh issue create --repo "$REPOSITORY" --title "$TITLE" --body-file issue-body.md --label toolchain-watch
+          fi
+
+      - name: Close the tracking issue when the pins cover the repository again
+        if: steps.pins.outputs.changed == 'false' && steps.issue.outputs.number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          NUMBER: ${{ steps.issue.outputs.number }}
+        run: gh issue close "$NUMBER" --repo "$REPOSITORY" --comment "固定版本已覆盖仓库版本，关闭本跟踪 issue。"
+

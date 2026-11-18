@@ -5,9 +5,9 @@
  * Analyzes captured scRGB FP16 frames to extract per-frame luminance statistics
  * for generating accurate HDR dynamic metadata (CUVA HDR Vivid / HDR10+).
  *
- * Input: either an scRGB FP16 frame or the converter's capped FP16 statistics
- *   snapshot. For the full-frame fallback, each analysis thread scans one disjoint
- *   integer cell so extrema and the average cover every source pixel.
+ * Input: an scRGB FP16 frame, the converter's capped statistics snapshot, or
+ *   converted PQ/HLG P010 plane views. Full-frame inputs are partitioned into
+ *   disjoint cells so extrema and the average cover every active picture pixel.
  *
  * Output: Per-group scalar reductions in a structured buffer, plus a frame-global
  *   histogram accumulated by atomics. The PQ-domain sum is accumulated per pixel
@@ -47,9 +47,9 @@ cbuffer AnalysisParams : register(b0) {
     uint analysisHeight;
     uint sourceWidth;
     uint sourceHeight;
-    uint inputHasCellStatistics;
+    uint inputMode;
     float maxAnalysisNits;
-    uint2 _pad;
+    uint2 sourceOffset;
 };
 
 // Per-group reduction results (scalars only — the histogram goes straight to the
@@ -83,6 +83,8 @@ float HdrAnalysisMaxRgbNits(float3 sc_rgb)
     return min(max(max(rec2020_nits.r, rec2020_nits.g), rec2020_nits.b), maxAnalysisNits);
 }
 
+#include "include/hdr_analysis_p010.hlsl"
+
 [numthreads(16, 16, 1)]
 void main_cs(uint3 DTid : SV_DispatchThreadID,
              uint3 GTid : SV_GroupThreadID,
@@ -111,7 +113,10 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
         uint2 cellExtent = cellEnd - cellBegin;
         pixelCount = cellExtent.x * cellExtent.y;
 
-        if (inputHasCellStatistics != 0) {
+        if (pixelCount == 0) {
+            // A downscaled VPE output can be smaller than the allocated analysis grid.
+            valid = false;
+        } else if (inputMode == 1) {
             // R/G/B/A = cell min/max/average/representative maxRGB nits.
             float4 cellStats = inputTexture.Load(int3(analysisPosition, 0));
             minMaxRGB_nits = cellStats.r;
@@ -125,8 +130,7 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
             // source-to-analysis ratios.
             for (uint y = cellBegin.y; y < cellEnd.y; ++y) {
                 for (uint x = cellBegin.x; x < cellEnd.x; ++x) {
-                    float3 pixel = inputTexture.Load(int3(uint2(x, y), 0)).rgb;
-                    float maxrgb_nits = HdrAnalysisMaxRgbNits(pixel);
+                    float maxrgb_nits = LoadAnalysisMaxRgbNits(uint2(x, y));
                     minMaxRGB_nits = min(minMaxRGB_nits, maxrgb_nits);
                     maxMaxRGB_nits = max(maxMaxRGB_nits, maxrgb_nits);
                     sumMaxRGB_nits += maxrgb_nits;
@@ -135,8 +139,7 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
             }
 
             uint2 representativePosition = (cellBegin + cellEnd - 1) / 2;
-            float3 representative = inputTexture.Load(int3(representativePosition, 0)).rgb;
-            representativeMaxRGB_nits = HdrAnalysisMaxRgbNits(representative);
+            representativeMaxRGB_nits = LoadAnalysisMaxRgbNits(representativePosition);
         }
     }
 

@@ -1,0 +1,124 @@
+diff a/src/platform/windows/display.h b/src/platform/windows/display.h	(rejected hunks)
+@@ -8,6 +8,7 @@
+ #include <chrono>
+ #include <cstdint>
+ #include <memory>
++#include <mutex>
+ #include <optional>
+ #include <string>
+ #include <vector>
+@@ -25,6 +26,7 @@
+ #include <AMF/core/CurrentTime.h>
+ 
+ #include "src/platform/common.h"
++#include "src/streaming/capture_target.h"
+ #include "src/streaming/frame_rate_tracker.h"
+ #include "src/platform/windows/frame_contract.h"
+ #include "src/utility.h"
+@@ -199,6 +201,34 @@ namespace platf::dxgi {
+ 
+     bool captures_monitor = true;
+ 
++    /**
++     * @brief Rectangle of the captured window in virtual-screen coordinates.
++     *
++     * WGC window capture has no fixed monitor: the window can move between
++     * displays (including displays with different DPI scales). Absolute
++     * mouse/touch/pen input must therefore be mapped to this rectangle instead
++     * of the monitor that happened to host the window at init time.
++     * Offsets are relative to the virtual-screen origin, matching display_t's
++     * offset_x/offset_y convention.
++     */
++    struct window_capture_rect_t {
++      int offset_x = 0;
++      int offset_y = 0;
++      int width = 0;
++      int height = 0;
++
++      bool
++      valid() const {
++        return width > 0 && height > 0;
++      }
++    };
++
++    window_capture_rect_t window_capture_rect;
++    bool has_window_capture_rect = false;
++    // Guards window_capture_rect/has_window_capture_rect between the capture
++    // thread (window movement) and the encoder thread (absolute input port).
++    std::mutex window_capture_rect_mutex;
++
+     int
+     init(const ::video::config_t &config, const std::string &display_name);
+ 
+@@ -526,6 +556,18 @@ namespace platf::dxgi {
+   void
+   recover_secure_desktop();
+ 
++  /**
++   * @brief A WGC window frame size change requires a full backend reinit.
++   *
++   * Reusing the staging texture or an image buffer from the previous size is
++   * unsafe: a same-width/increased-height frame would overflow the old
++   * allocation, and the encoder/SWS session would keep the old source size.
++   */
++  inline bool
++  wgc_window_size_requires_reinit(int target_width, int target_height, int frame_width, int frame_height) {
++    return frame_width != target_width || frame_height != target_height;
++  }
++
+   /**
+    * Display duplicator that uses the Windows.Graphics.Capture API.
+    */
+@@ -538,9 +580,20 @@ namespace platf::dxgi {
+     winrt::Windows::Graphics::Capture::Direct3D11CaptureFrame produced_frame { nullptr }, consumed_frame { nullptr };
+     SRWLOCK frame_lock = SRWLOCK_INIT;
+     CONDITION_VARIABLE frame_present_cv;
++    display_base_t *display = nullptr;
+     void
+     on_frame_arrived(winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool const &sender, winrt::Windows::Foundation::IInspectable const &);
+ 
++    /**
++     * @brief Refresh the captured window rectangle on the owning display.
++     *
++     * Called on every frame so a moving/resized window keeps absolute input
++     * aligned, and after init/switch so the first frame already uses the new
++     * target. Clears the rectangle for display capture.
++     */
++    void
++    refresh_window_capture_rect();
++
+   public:
+     HWND captured_window_hwnd { nullptr };  // Store window handle if capturing a window
+     std::string desired_window_title;  // Store desired window title (for logging/debugging)
+@@ -564,6 +617,31 @@ namespace platf::dxgi {
+      */
+     bool
+     is_window_valid() const;
++
++    // ---- Plan4: per-session window-follow capture -------------------------
++    // Copied from video::config_t::capture_target at init(). The override is
++    // session-scoped: only the session that owns this display object can
++    // request it, and the global Sunshine capture settings are untouched.
++    streaming::window_capture_override_t window_override;
++    bool window_override_active { false };
++    std::shared_ptr<streaming::capture_target_t> capture_target_handle;
++    std::chrono::steady_clock::time_point override_poll_time {};
++    std::chrono::steady_clock::time_point override_last_switch {};
++    // Candidate filter (foreground mode): Sunshine-launched app process tree
++    // and processes started around/after the override was enabled.
++    std::uint32_t override_root_pid { 0 };
++    std::int64_t override_enabled_at_unix_ms { 0 };
++
++    /**
++     * @brief Poll the active window-follow override.
++     *
++     * Returns @ref capture_e::reinit when the capture target changed and the
++     * capture thread must rebuild the display backend (new window target, or a
++     * window became available after a display-capture fallback). Returns
++     * @ref capture_e::ok otherwise.
++     */
++    capture_e
++    poll_window_override();
+   };
+ 
+   /**

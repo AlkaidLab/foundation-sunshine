@@ -87,3 +87,21 @@ TEST(StreamSessionObservability, SerializesSessionBoundaries) {
   EXPECT_TRUE(json["video_idle_ms"].is_null());
   EXPECT_TRUE(json["audio_idle_ms"].is_null());
 }
+
+TEST(StreamSessionObservability, SerializesCodecAndReportedLoss) {
+  stream::session_info_t info {};
+  info.video_format = 1;
+  info.codec = stream::codec_name(info.video_format);
+
+  auto json = nvhttp::sessions::make_session_json(info);
+  EXPECT_EQ(json["video_format"], 1);
+  EXPECT_EQ(json["codec"], "hevc");
+  EXPECT_TRUE(json["packet_loss"].is_null());
+  EXPECT_TRUE(json["dropped_frames"].is_null());
+
+  info.packet_loss = 2.5;
+  info.dropped_frames = 3;
+  json = nvhttp::sessions::make_session_json(info);
+  EXPECT_DOUBLE_EQ(json["packet_loss"].get<double>(), 2.5);
+  EXPECT_EQ(json["dropped_frames"], 3);
+}

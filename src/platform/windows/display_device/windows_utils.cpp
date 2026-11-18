@@ -8,11 +8,14 @@
 #include <algorithm>
 #include <cstdint>
 #include <iostream>
+#include <string>
 #include <system_error>
+#include <vector>
 
 // local includes
 #include "display_scale_steps.h"
 #include "src/logging.h"
+#include "src/platform/common.h"
 #include "src/platform/windows/misc.h"
 #include "src/utility.h"
 #include "windows_utils.h"
@@ -245,7 +248,7 @@ namespace display_device::w_utils {
         // ERROR_FILE_NOT_FOUND (2) is expected for some displays (virtual, RDP, etc.)
         // Code has fallback mechanism, so this is not a critical error
         if (status == ERROR_FILE_NOT_FOUND) {
-          BOOST_LOG(debug) << get_error_string(status) << " \"RegQueryValueExW\" failed when getting size (EDID not found, using fallback).";
+          BOOST_LOG(verbose) << get_error_string(status) << " \"RegQueryValueExW\" failed when getting size (EDID not found, using fallback).";
         }
         else {
           BOOST_LOG(warning) << get_error_string(status) << " \"RegQueryValueExW\" failed when getting size.";
@@ -257,12 +260,9 @@ namespace display_device::w_utils {
 
       status = RegQueryValueExW(reg_key, L"EDID", nullptr, nullptr, edid.data(), &required_size_in_bytes);
       if (status != ERROR_SUCCESS) {
-        // ERROR_FILE_NOT_FOUND (2) is expected for some displays (virtual, RDP, etc.)
-        // Code has fallback mechanism, so this is not a critical error
-        if (status == ERROR_FILE_NOT_FOUND) {
-          BOOST_LOG(debug) << get_error_string(status) << " \"RegQueryValueExW\" failed when getting size (EDID not found, using fallback).";
-        }
-        else {
+        // ERROR_FILE_NOT_FOUND is expected for some displays (virtual, RDP,
+        // etc.). The caller uses the device path fallback in that case.
+        if (status != ERROR_FILE_NOT_FOUND) {
           BOOST_LOG(warning) << get_error_string(status) << " \"RegQueryValueExW\" failed when getting size.";
         }
         return false;
@@ -413,6 +413,8 @@ namespace display_device::w_utils {
           break;
         }
 
+        // friendlyNameFromEdid describes the name source, not EDID availability.
+        // Keep the registry lookup and device-path fallback so saved IDs remain valid.
         if (!get_device_edid(dev_info_handle, dev_info_data, device_id_data)) {
           // Error already logged
           break;
@@ -943,38 +945,14 @@ namespace display_device::w_utils {
 
   bool
   is_user_session_locked() {
-    LPWSTR buffer { nullptr };
-    const auto cleanup_guard {
-      util::fail_guard([&buffer]() {
-        if (buffer) {
-          WTSFreeMemory(buffer);
-        }
-      })
-    };
-
-    DWORD buffer_size_in_bytes { 0 };
-    if (WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, WTSGetActiveConsoleSessionId(), WTSSessionInfoEx, &buffer, &buffer_size_in_bytes)) {
-      if (buffer_size_in_bytes > 0) {
-        const auto wts_info { reinterpret_cast<const WTSINFOEXW *>(buffer) };
-        if (wts_info && wts_info->Level == 1) {
-          const bool is_locked { wts_info->Data.WTSInfoExLevel1.SessionFlags == WTS_SESSIONSTATE_LOCK };
-          const auto session_flags = wts_info->Data.WTSInfoExLevel1.SessionFlags;
-          
-          BOOST_LOG(info) << "Session lock check - Locked: " << is_locked 
-                           << ", SessionFlags: " << session_flags 
-                           << " (LOCK=" << WTS_SESSIONSTATE_LOCK 
-                           << ", UNLOCK=" << WTS_SESSIONSTATE_UNLOCK << ")";
-          return is_locked;
-        }
-      }
-
-      BOOST_LOG(warning) << "Failed to get session info in is_user_session_locked.";
-    }
-    else {
-      BOOST_LOG(error) << get_error_string(GetLastError()) << " failed while calling WTSQuerySessionInformationW!";
+    const auto locked = platf::query_session_locked();
+    if (!locked) {
+      BOOST_LOG(warning) << "Failed to query the session lock state in is_user_session_locked.";
+      return false;
     }
 
-    return false;
+    BOOST_LOG(info) << "Session lock check - Locked: " << *locked;
+    return *locked;
   }
 
   bool
@@ -1003,6 +981,10 @@ namespace display_device::w_utils {
 
   bool
   togglePnpDeviceByFriendlyName(const std::string &friendlyName, const bool &stat) {
+    // The caller passes a UTF-8 name (the display settings are UTF-8 end to
+    // end). Comparing it with the ANSI property buffer never matched a
+    // Chinese device name, so read the wide property and compare wide text.
+    const std::wstring wanted_name = platf::from_utf8(friendlyName);
     HDEVINFO deviceInfoSet = SetupDiGetClassDevs(NULL, NULL, NULL, DIGCF_PRESENT | DIGCF_ALLCLASSES);
     if (deviceInfoSet == INVALID_HANDLE_VALUE) {
       std::cerr << "Failed to get device information set." << std::endl;
@@ -1014,9 +996,9 @@ namespace display_device::w_utils {
 
     bool deviceFound = false;
     for (DWORD i = 0; SetupDiEnumDeviceInfo(deviceInfoSet, i, &deviceInfoData); ++i) {
-      TCHAR deviceFriendlyName[256];
-      if (SetupDiGetDeviceRegistryProperty(deviceInfoSet, &deviceInfoData, SPDRP_FRIENDLYNAME, NULL, (PBYTE) deviceFriendlyName, sizeof(deviceFriendlyName), NULL)) {
-        if (friendlyName == deviceFriendlyName) {
+      std::vector<wchar_t> deviceFriendlyName(1024, L'\0');
+      if (SetupDiGetDeviceRegistryPropertyW(deviceInfoSet, &deviceInfoData, SPDRP_FRIENDLYNAME, NULL, reinterpret_cast<PBYTE>(deviceFriendlyName.data()), static_cast<DWORD>(deviceFriendlyName.size() * sizeof(wchar_t)), NULL)) {
+        if (!wanted_name.empty() && wanted_name == deviceFriendlyName.data()) {
           deviceFound = true;
           break;
         }
@@ -1046,51 +1028,23 @@ namespace display_device::w_utils {
     SetupDiDestroyDeviceInfoList(deviceInfoSet);
     return true;
   }
-  
-  // 检测RDP会话
-  bool is_any_rdp_session_active() {
-    PWTS_SESSION_INFO pSessionInfo = nullptr;
-    DWORD sessionCount = 0;
 
-    if (!WTSEnumerateSessions(WTS_CURRENT_SERVER_HANDLE, 0, 1, &pSessionInfo, &sessionCount)) {
-      BOOST_LOG(warning) << "[Check_RDP_Session] WTSEnumerateSessions failed: " << GetLastError();
-      return false; // 异常默认返回false
+  bool
+  is_current_session_rdp() {
+    LPWSTR buffer = nullptr;
+    DWORD bytes_returned = 0;
+    if (!WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, WTS_CURRENT_SESSION,
+          WTSClientProtocolType, &buffer, &bytes_returned)) {
+      BOOST_LOG(warning) << "[Check_RDP_Session] Could not query the capture session: " << GetLastError();
+      return false;
     }
-    
-    BOOST_LOG(debug) << "[Check_RDP_Session] Checking " << sessionCount << " sessions";
-    
-    // 遍历所有会话，检测是否有rdp会话
-    for (DWORD i = 0; i < sessionCount; ++i) {
-      WTS_SESSION_INFO si = pSessionInfo[i];
 
-      if (si.State != WTSActive){
-        continue;
-      }
-
-      LPTSTR buffer = nullptr;
-      DWORD bytesReturned = 0;
-
-      if (WTSQuerySessionInformation(WTS_CURRENT_SERVER_HANDLE, si.SessionId, WTSClientProtocolType, &buffer, &bytesReturned)) {
-        USHORT protocolType = *(USHORT*)buffer;
-        WTSFreeMemory(buffer);
-        
-        BOOST_LOG(debug) << "[Check_RDP_Session] Session " << si.SessionId 
-                         << " - State: " << si.State 
-                         << ", Protocol: " << protocolType 
-                         << " (Console=0, RDP=2)";
-        
-        if (protocolType == 2) { // RDP 协议
-          BOOST_LOG(info) << "[Check_RDP_Session] Active RDP session detected, session ID = " << si.SessionId;
-          WTSFreeMemory(pSessionInfo);
-          return true;
-        }
-      } else {
-        BOOST_LOG(warning) << "[Check_RDP_Session] WTSQuerySessionInformation failed for session " << si.SessionId << ", error = " << GetLastError();
-      }
+    const bool is_rdp = buffer != nullptr && bytes_returned >= sizeof(USHORT) &&
+                        *reinterpret_cast<const USHORT *>(buffer) == 2;
+    if (buffer != nullptr) {
+      WTSFreeMemory(buffer);
     }
-    WTSFreeMemory(pSessionInfo);
-    BOOST_LOG(debug) << "[Check_RDP_Session] No active RDP session found.";
-    return false;
+    return is_rdp;
   }
 
   bool

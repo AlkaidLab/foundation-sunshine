@@ -10,6 +10,7 @@
 #include <fstream>
 #include <future>
 #include <iostream>
+#include <optional>
 #include <thread>
 #include <utility>
 
@@ -17,29 +18,37 @@
 #include <rs.h>
 
 // local includes
+#include "build_info.h"
 #include "client_fingerprint.h"
 #include "confighttp.h"
+#include "crash/crash.h"
+#include "crash/crash_env.h"
+#include "default_apps.h"
 #include "display_device/session.h"
 #include "entry_handler.h"
 #include "file_handler.h"
 #include "globals.h"
 #include "httpcommon.h"
+#include "image_enhancement/config.h"
 #include "logging.h"
 #include "main.h"
 #include "nvhttp.h"
 #include "process.h"
+#include "pyrowave/runtime.h"
+#include "startup_gate.h"
+#include "stream.h"
+#include "telemetry/hooks.h"
+#include "telemetry/telemetry.h"
 #include "tray/system_tray.h"
 #include "upnp.h"
-#include "version.h"
 #include "video.h"
 #include "webhook/webhook.h"
 #include "webhook/webhook_auth.h"
-#include "ds5/config.h"
-#include "image_enhancement/config.h"
 
 #ifdef _WIN32
   #include "platform/windows/misc.h"
   #include "platform/windows/win_dark_mode.h"
+  #include "spatial_audio/mat_capture_process.h"
 #endif
 
 #ifdef _WIN32
@@ -47,12 +56,36 @@
     #define WIN32_LEAN_AND_MEAN
   #endif
   #include <windows.h>
+  #include "../tools/sunshinesvc_state.h"
 
 namespace {
   // Captures the value main() ends up returning so the atexit terminator can use it.
   // Defaults to 0 (success) for the common case where main returns lifetime::desired_exit_code.
   std::atomic<int> g_final_exit_code { 0 };
-}
+  // Held for the life of the process. Closing it would drop the single-instance mutex.
+  HANDLE host_instance_mutex = nullptr;
+
+  bool
+  another_installation_instance() {
+    wchar_t module_path[32768];
+    const auto length = GetModuleFileNameW(nullptr, module_path, 32768);
+    if (length == 0 || length >= 32768) {
+      return false;
+    }
+    const auto name = sunshinesvc::instance_mutex_name(std::wstring_view { module_path, length });
+    SetLastError(ERROR_SUCCESS);
+    host_instance_mutex = CreateMutexW(nullptr, FALSE, name.c_str());
+    const auto claim = sunshinesvc::instance_claim(host_instance_mutex != nullptr, GetLastError());
+    if (claim != sunshinesvc::instance_claim_e::other_running) {
+      return false;
+    }
+    if (host_instance_mutex != nullptr) {
+      CloseHandle(host_instance_mutex);
+      host_instance_mutex = nullptr;
+    }
+    return true;
+  }
+}  // namespace
 #endif
 
 using namespace std::literals;
@@ -206,8 +239,15 @@ main(int argc, char *argv[]) {
   // code and can restart Sunshine as usual.
   std::atexit([]() {
     TerminateProcess(GetCurrentProcess(),
-                     static_cast<UINT>(g_final_exit_code.load(std::memory_order_acquire)));
+      static_cast<UINT>(g_final_exit_code.load(std::memory_order_acquire)));
   });
+
+  // WCS uses HKCU internally. Disable its per-process cache before any Windows
+  // component can pin it to SYSTEM, so later impersonation sees the user's ICCs.
+  if (!platf::initialize_user_registry()) {
+    std::cerr << "Failed to initialize per-user registry access" << std::endl;
+    return 1;
+  }
 
   // Avoid searching the PATH in case a user has configured their system insecurely
   // by placing a user-writable directory in the system-wide PATH variable.
@@ -230,15 +270,54 @@ main(int argc, char *argv[]) {
   mail::man = std::make_shared<safe::mail_raw_t>();
   for (int i = 1; i < argc; ++i) {
     if (std::string_view(argv[i]) == "--version"sv) {
-      std::cout << PROJECT_NAME << " version: " << PROJECT_VER << std::endl;
+      // `--version --json`: the build identity (build_info.h), one JSON object on stdout
+      for (int j = 1; j < argc; ++j) {
+        if (std::string_view(argv[j]) == "--json"sv) {
+          std::cout << build_info::to_json(build_info::current()).dump() << std::endl;
+          return 0;
+        }
+      }
+      std::cout << build_info::product_name() << " version: " << build_info::version() << std::endl;
       return 0;
     }
+  }
+
+  // Crash, abort and hang reports (crash/crash.h): installed before anything else can fail, pointed at the real config file once it is known.
+  {
+    crash::options_t crash_options;
+    crash_options.version = build_info::version();
+    crash_options.config_dir = platf::appdata();
+  #ifdef _WIN32
+    crash_options.os_version = platf::windows_version();
+  #else
+    crash_options.os_version = "linux";
+  #endif
+    crash::install(crash_options);
+    crash::set_environment_provider(crash::env::describe_machine);  // read when a report is uploaded, on the computer that crashed
   }
 
   // parse config file
   if (config::parse(argc, argv)) {
     return 0;
   }
+  crash::set_config_file(file_handler::path_from_utf8(config::sunshine.config_file));
+
+#ifdef _WIN32
+  // A second process of this installation exits before it binds a port or probes an encoder.
+  // Session 0 (the service) and a console session share the global namespace, so one mutex
+  // covers both [dr-ms-kernel-namespaces-20261109] [dr-ms-createmutexw-20261109].
+  // It also exits before it opens the log: the running process has sunshine.log open, and a start keeps the previous log as sunshine.log.1 and writes a fresh
+  // one, so a second process that got that far would push the real previous log out of the kept set and truncate the log of the running one.
+  // A command (--creds, --help ...) runs next to the running host and returns before the host starts, so it does not claim the instance.
+  if (config::sunshine.cmd.name.empty() && another_installation_instance()) {
+    std::cerr << "Another Sunshine from this installation is already running; this process exits without opening ports or probing encoders." << std::endl;
+    return 0;
+  }
+  // The service adopts a running core only when this says it is ready and not stopping.
+  if (config::sunshine.cmd.name.empty()) {
+    lifetime::core_state_open();
+  }
+#endif
 
   auto log_deinit_guard = logging::init(config::sunshine.min_log_level, config::sunshine.log_file, config::sunshine.restore_log);
   if (!log_deinit_guard) {
@@ -248,7 +327,24 @@ main(int argc, char *argv[]) {
   // logging can begin at this point
   // if anything is logged prior to this point, it will appear in stdout, but not in the log viewer in the UI
   // the version should be printed to the log before anything else
-  BOOST_LOG(info) << PROJECT_NAME << " version: " << PROJECT_VER;
+  BOOST_LOG(info) << build_info::product_name() << " version: " << build_info::version();
+
+  // Usage statistics, error counts and stream quality (docs/privacy_telemetry.md). Each kind is sent only while its own choice is on; nothing here can fail the start.
+  telemetry::start();
+  telemetry::set_session_probe([] {
+    std::vector<telemetry::session_probe_t> probes;
+    for (const auto &info : stream::session::get_all_sessions_info()) {
+      telemetry::session_probe_t probe;
+      probe.session_id = info.session_id;
+      if (info.rtt_ms) probe.rtt_ms = *info.rtt_ms;
+      probe.loss_pct = info.packet_loss;
+      probe.dropped_frames = info.dropped_frames;
+      probe.measured_kbps = info.measured_bitrate_kbps;
+      probe.target_kbps = info.bitrate;
+      probes.push_back(probe);
+    }
+    return probes;
+  });
 
 #ifdef _WIN32
   // Cache the result of is_running_as_system() check once at startup
@@ -294,6 +390,15 @@ main(int argc, char *argv[]) {
 
     return fn->second(argv[0], config::sunshine.cmd.argc, config::sunshine.cmd.argv);
   }
+
+  // The second and later passes of the uploader find what a crash left; the first waits out the start. SUNSHINE_TEST_CRASH makes this process
+  // fail on purpose (tests only), after the handlers and the consent are in place.
+  crash::start_uploader();
+  crash::run_test_switch();
+  // The start is one busy stretch of the main thread: a driver call that never returns here shows up as a "hang" report.
+  crash::watched_thread_t crash_main_watch("main-startup", 300000);
+  std::optional<crash::busy_scope_t> crash_startup_busy;
+  crash_startup_busy.emplace(crash_main_watch.slot);
 
   // Adding this guard here first as it also performs recovery after crash,
   // otherwise people could theoretically end up without display output.
@@ -399,50 +504,59 @@ main(int argc, char *argv[]) {
   SetConsoleCtrlHandler(ConsoleCtrlHandler, TRUE);
 #endif
 
+#ifdef _WIN32
+  // The Windows host offers Big Screen once to an apps.json that is older than the entry (default_apps.h); Foundation Desktop is a Windows component.
+  default_apps::migrate_file(config::stream.file_apps, config::sunshine.locale);
+#endif
+
   proc::refresh(config::stream.file_apps);
 
   if (!image_enhancement::manager().initialize()) {
     BOOST_LOG(warning) << "HDR enhancement configuration or selected component is unavailable; optional processing is disabled";
   }
 
-#ifdef _WIN32
-  ds5_config::load_result_t ds5_settings_result {
-    ds5_config::load_status_t::INVALID,
-    {}
-  };
-  try {
-    ds5_settings_result = ds5_config::load(
-      ds5_config::path_for(file_handler::path_from_utf8(config::sunshine.config_file))
-    );
-  }
-  catch (...) {
-  }
-  if (ds5_settings_result.status == ds5_config::load_status_t::INVALID ||
-      !ds5_config::configure(std::move(ds5_settings_result.settings))) {
-    BOOST_LOG(error) << "DualSense configuration is invalid; using default DualSense settings"sv;
-    ds5_config::configure({});
-  }
-#endif
-
   // If any of the following fail, we log an error and continue event though sunshine will not function correctly.
   // This allows access to the UI to fix configuration problems or view the logs.
 
-  auto platf_deinit_guard = platf::init();
+  // Every phase of the start writes its duration (`[startup] <phase> <ms> ms (at +<ms> ms)`): the first second and a half after nvprefs used to log nothing.
+  const auto log_phase = [](const std::string &line) { BOOST_LOG(info) << line; };
+
+  std::unique_ptr<platf::deinit_t> platf_deinit_guard;
+  {
+    startup::phase_t phase("platf::init", log_phase);
+    platf_deinit_guard = platf::init();
+  }
   if (!platf_deinit_guard) {
     BOOST_LOG(error) << "Platform failed to initialize"sv;
   }
 
-  auto proc_deinit_guard = proc::init();
+  std::unique_ptr<platf::deinit_t> proc_deinit_guard;
+  {
+    startup::phase_t phase("proc::init", log_phase);
+    proc_deinit_guard = proc::init();
+  }
   if (!proc_deinit_guard) {
     BOOST_LOG(error) << "Proc failed to initialize"sv;
   }
 
   reed_solomon_init();
-  auto input_deinit_guard = input::init();
 
-  if (input::probe_gamepads()) {
-    BOOST_LOG(warning) << "No gamepad input is available"sv;
-  }
+  // The PyroWave runtime probe creates a Vulkan device; run it now beside the other start-up work instead of inside the
+  // first RTSP DESCRIBE (which also serves every other RTSP request on the same thread).
+  pyrowave::prewarm_server_runtime();
+
+  // The input devices (the HID enumeration of the virtual mouse, the gamepad back ends) are opened beside the encoder probe, not before it: neither needs the other,
+  // and a stream waits for both (startup::await_stream_ready). The guard keeps the place it had, so the order of the tear-down is the one it was.
+  std::unique_ptr<platf::deinit_t> input_deinit_guard;
+  auto input_init = std::async(std::launch::async, [&log_phase]() {
+    startup::phase_t phase("input::init", log_phase);
+    auto guard = input::init();
+    if (input::probe_gamepads()) {
+      BOOST_LOG(warning) << "No gamepad input is available"sv;
+    }
+    startup::input_gate().open();
+    return guard;
+  });
 
   if (http::init()) {
     BOOST_LOG(fatal) << "HTTP interface failed to initialize"sv;
@@ -489,8 +603,7 @@ main(int argc, char *argv[]) {
   };
   try {
     webhook_auth_result = webhook::auth::load(
-      webhook::auth::path_for(config::sunshine.config_file)
-    );
+      webhook::auth::path_for(config::sunshine.config_file));
   }
   catch (...) {
     // Treat path construction failures exactly like an invalid Webhook file.
@@ -520,21 +633,29 @@ main(int argc, char *argv[]) {
   // under its own mutex, so bringing it up early races with nothing. nvhttp and
   // rtsp_stream do depend on the probe (codec support flags, YUV444 support),
   // so they stay behind it.
+#ifdef _WIN32
+  if (config::audio.mat_live && config::audio.stream) spatial_audio::mat_capture_process.start();
+#endif
   std::thread configThread { confighttp::start };
 
-  probe_encoders_with_watchdog();
-
+  // The servers of the clients open before the probe: a client that asks while the probe runs waits for it (startup::probe_gate) and is told that the host is
+  // starting when a stuck driver call outlasts the bound. rtsp only answers a session that /launch made, and /launch waits for the probe and the input devices.
   std::thread httpThread { nvhttp::start };
   std::thread rtspThread { rtsp_stream::start };
 
+  {
+    startup::phase_t phase("encoder probe", log_phase);
+    probe_encoders_with_watchdog();
+  }
+  startup::probe_gate().open();
+  input_deinit_guard = input_init.get();
+
 #if defined(_WIN32) && defined(SUNSHINE_GUI_TRAY) && SUNSHINE_GUI_TRAY >= 1
-  // The service wrapper owns user-session agent startup in service mode.
-  // Standalone and portable runs need to reconcile the same bundled agent here.
+  // The service wrapper owns user-session agent startup in service mode, and
+  // it restarts the agent when the process is killed. Standalone and portable
+  // runs are not SYSTEM, so Core watches the agent itself.
   if (!platf::is_running_as_system()) {
-    const auto gui_agent_error = platf::launch_gui_agent();
-    if (gui_agent_error) {
-      BOOST_LOG(warning) << "Failed to launch bundled GUI agent: "sv << gui_agent_error.message();
-    }
+    platf::supervise_gui_agent();
   }
 #endif
 
@@ -564,11 +685,27 @@ main(int argc, char *argv[]) {
   }
 #endif
 
+  telemetry::host_ready();
+  // An exit that was already asked for (a required listener failed during the probe sets the event directly) must not look ready.
+  if (!shutdown_event->peek()) {
+    lifetime::core_state_ready();
+  }
+  crash_startup_busy.reset();
   mainThreadLoop(shutdown_event);
+  // Every way out of the loop is an exit: the service must not adopt this process from here on, whichever path raised the event.
+  lifetime::core_state_stopping();
+
+#ifdef _WIN32
+  spatial_audio::mat_capture_process.stop();
+#endif
 
   // Cover tray/HTTP requests and signals before any cleanup can block.
   lifetime::start_shutdown_watchdog();
   BOOST_LOG(info) << "Shutdown requested; allowing up to 10 seconds for cleanup"sv;
+
+#if defined(_WIN32) && defined(SUNSHINE_GUI_TRAY) && SUNSHINE_GUI_TRAY >= 1
+  platf::stop_gui_agent_supervisor();
+#endif
 
   client_fingerprint_deinit_guard.reset();
 
@@ -589,6 +726,9 @@ main(int argc, char *argv[]) {
   httpThread.join();
   configThread.join();
   rtspThread.join();
+
+  // the sessions have ended: the last events go to the disk queue (no wait for the network) and the sender stops
+  telemetry::stop();
 
   task_pool.stop();
   task_pool.join();

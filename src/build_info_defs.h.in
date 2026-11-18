@@ -1,0 +1,16 @@
+/**
+ * @file src/build_info_defs.h.in
+ * @brief Build identity recorded at configure time (cmake/prep/build_info.cmake).
+ * @note The final `build_info_defs.h` is generated from this file during the CMake build.
+ */
+#pragma once
+
+#define SUNSHINE_BUILD_COMMIT "@BUILD_INFO_COMMIT@"
+#define SUNSHINE_BUILD_BRANCH "@BUILD_INFO_BRANCH@"
+#define SUNSHINE_BUILD_DIRTY @BUILD_INFO_DIRTY@
+#define SUNSHINE_BUILD_CHANNEL "@BUILD_INFO_CHANNEL@"
+#define SUNSHINE_BUILD_TIME_UTC "@BUILD_INFO_TIME_UTC@"
+#define SUNSHINE_BUILD_VARIANT "@BUILD_INFO_VARIANT@"
+#define SUNSHINE_BUILD_PACKAGE "@BUILD_INFO_PACKAGE@"
+#define SUNSHINE_BUILD_BUILDER "@BUILD_INFO_BUILDER@"
+#define SUNSHINE_BUILD_CI_RUN "@BUILD_INFO_CI_RUN@"

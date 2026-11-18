@@ -1,0 +1,800 @@
+diff a/src/platform/windows/display_wgc.cpp b/src/platform/windows/display_wgc.cpp	(rejected hunks)
+@@ -5,13 +5,16 @@
+ // platform includes
+ #include <winsock2.h>
+ #include <windows.h>
++#include <tlhelp32.h>
+ #include <algorithm>
+ #include <atomic>
+ #include <chrono>
++#include <cstdint>
+ #include <dxgi1_2.h>
+ #include <filesystem>
+ #include <fstream>
+ #include <mutex>
++#include <string_view>
+ #include <thread>
+ 
+ // local includes
+@@ -418,6 +421,538 @@ namespace platf::dxgi {
+     return nullptr;
+   }
+ 
++  /**
++   * @brief True when @p hwnd belongs to one of the shell hosts that use the
++   *        generic Windows.UI.Core.CoreWindow class.
++   *
++   * Windows.UI.Core.CoreWindow is also the class of ordinary UWP applications
++   * (Settings, Calculator, Store apps), so the class name alone is not a valid
++   * shell filter. Only the specific shell processes are excluded here.
++   */
++  static bool
++  is_shell_core_window(HWND hwnd) {
++    DWORD pid = 0;
++    GetWindowThreadProcessId(hwnd, &pid);
++    if (pid == 0) {
++      return false;
++    }
++
++    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
++    if (!process) {
++      return false;
++    }
++
++    wchar_t image_path[MAX_PATH] = {};
++    DWORD image_path_size = static_cast<DWORD>(std::size(image_path));
++    const bool queried = QueryFullProcessImageNameW(process, 0, image_path, &image_path_size) != FALSE;
++    CloseHandle(process);
++    if (!queried || image_path_size == 0) {
++      return false;
++    }
++
++    std::wstring_view image_name { image_path, image_path_size };
++    if (const auto slash = image_name.find_last_of(L"\\/"); slash != std::wstring_view::npos) {
++      image_name.remove_prefix(slash + 1);
++    }
++
++    std::wstring lower_name { image_name };
++    std::transform(lower_name.begin(), lower_name.end(), lower_name.begin(), ::towlower);
++
++    static constexpr std::wstring_view shell_processes[] = {
++      L"explorer.exe",
++      L"startmenuexperiencehost.exe",
++      L"shellexperiencehost.exe",
++      L"searchhost.exe",
++      L"searchapp.exe",
++      L"textinputhost.exe",
++      L"lockapp.exe",
++      L"peopleexperiencehost.exe",
++    };
++    for (const auto shell_process : shell_processes) {
++      if (lower_name == shell_process) {
++        return true;
++      }
++    }
++    return false;
++  }
++
++  /**
++   * @brief Plan4: decide whether a top-level window may be followed by the
++   *        per-session window-follow capture.
++   *
++   * Conservative by design: shell surfaces, tool windows, cloaked windows,
++   * minimized windows and Sunshine's own process are never followed.
++   */
++  static bool
++  is_window_capture_eligible(HWND hwnd) {
++    if (!hwnd || !IsWindow(hwnd) || !IsWindowVisible(hwnd) || IsIconic(hwnd)) {
++      return false;
++    }
++
++    DWORD pid = 0;
++    GetWindowThreadProcessId(hwnd, &pid);
++    if (pid == 0 || pid == GetCurrentProcessId()) {
++      return false;
++    }
++
++    LONG_PTR ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
++    if ((ex_style & WS_EX_TOOLWINDOW) != 0) {
++      return false;
++    }
++
++    if (GetWindowTextLengthW(hwnd) <= 0) {
++      return false;
++    }
++
++    RECT rect {};
++    if (!GetWindowRect(hwnd, &rect) || rect.right <= rect.left || rect.bottom <= rect.top) {
++      return false;
++    }
++
++    // Skip DWM-cloaked surfaces: they have no user-visible content.
++    BOOL cloaked = FALSE;
++    if (SUCCEEDED(DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked) {
++      return false;
++    }
++
++    wchar_t class_name[256] = {};
++    if (GetClassNameW(hwnd, class_name, std::size(class_name)) > 0) {
++      static constexpr std::wstring_view shell_classes[] = {
++        L"Progman",
++        L"WorkerW",
++        L"Shell_TrayWnd",
++        L"Shell_SecondaryTrayWnd",
++        L"TaskListThumbnailWnd",
++        L"MultitaskingViewFrame",
++        L"ForegroundStaging",
++      };
++      const std::wstring_view cls { class_name };
++      for (const auto shell_class : shell_classes) {
++        if (cls == shell_class) {
++          return false;
++        }
++      }
++
++      // CoreWindow is shared by the shell and ordinary UWP apps; filter only
++      // the known shell hosts instead of rejecting every UWP window.
++      if (cls == L"Windows.UI.Core.CoreWindow" && is_shell_core_window(hwnd)) {
++        return false;
++      }
++    }
++
++    return true;
++  }
++
++  /**
++   * @brief Plan4: first eligible window owned by @p process_id, preferring the
++   *        current foreground window.
++   */
++  static HWND
++  find_window_for_process_id(DWORD process_id) {
++    if (process_id == 0) {
++      return nullptr;
++    }
++
++    struct enum_state_t {
++      DWORD process_id;
++      HWND foreground_match;
++      HWND first_match;
++    } state { process_id, nullptr, nullptr };
++
++    EnumWindows(
++      [](HWND hwnd, LPARAM lparam) -> BOOL {
++        auto *data = reinterpret_cast<enum_state_t *>(lparam);
++        DWORD window_pid = 0;
++        GetWindowThreadProcessId(hwnd, &window_pid);
++        if (window_pid != data->process_id || !is_window_capture_eligible(hwnd)) {
++          return TRUE;
++        }
++        if (!data->first_match) {
++          data->first_match = hwnd;
++        }
++        if (GetForegroundWindow() == hwnd) {
++          data->foreground_match = hwnd;
++          return FALSE;
++        }
++        return TRUE;
++      },
++      reinterpret_cast<LPARAM>(&state));
++
++    return state.foreground_match ? state.foreground_match : state.first_match;
++  }
++
++  /**
++   * @brief Plan4: eligible foreground top-level window, or nullptr.
++   */
++  static HWND
++  find_eligible_foreground_window() {
++    HWND foreground = GetForegroundWindow();
++    if (is_window_capture_eligible(foreground)) {
++      return foreground;
++    }
++
++    // A child/owned popup can be reported as foreground; try its root window.
++    HWND root = foreground ? GetAncestor(foreground, GA_ROOT) : nullptr;
++    if (root && root != foreground && is_window_capture_eligible(root)) {
++      return root;
++    }
++    return nullptr;
++  }
++
++  /**
++   * @brief Plan4: creation time of @p process_id in Unix-epoch milliseconds,
++   *        or 0 when it cannot be queried (process gone / access denied).
++   */
++  static std::int64_t
++  process_start_unix_ms(DWORD process_id) {
++    if (process_id == 0) {
++      return 0;
++    }
++
++    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, process_id);
++    if (!process) {
++      return 0;
++    }
++
++    FILETIME creation {}, exit {}, kernel {}, user {};
++    std::int64_t result = 0;
++    if (GetProcessTimes(process, &creation, &exit, &kernel, &user)) {
++      ULARGE_INTEGER ticks {};
++      ticks.LowPart = creation.dwLowDateTime;
++      ticks.HighPart = creation.dwHighDateTime;
++      // FILETIME counts 100ns intervals since 1601-01-01 UTC.
++      constexpr std::uint64_t unix_epoch_offset_100ns = 116444736000000000ULL;
++      if (ticks.QuadPart > unix_epoch_offset_100ns) {
++        result = static_cast<std::int64_t>((ticks.QuadPart - unix_epoch_offset_100ns) / 10000ULL);
++      }
++    }
++
++    CloseHandle(process);
++    return result;
++  }
++
++  /**
++   * @brief Plan4: true when @p process_id is a descendant of @p root_process_id.
++   */
++  static bool
++  is_process_descendant_of(DWORD root_process_id, DWORD process_id) {
++    if (root_process_id == 0 || process_id == 0 || root_process_id == process_id) {
++      return false;
++    }
++
++    std::vector<std::pair<DWORD, DWORD>> pid_to_parent;  // pid -> parent pid
++    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
++    if (snapshot == INVALID_HANDLE_VALUE) {
++      return false;
++    }
++
++    PROCESSENTRY32W entry {};
++    entry.dwSize = sizeof(entry);
++    if (Process32FirstW(snapshot, &entry)) {
++      do {
++        pid_to_parent.emplace_back(
++          static_cast<DWORD>(entry.th32ProcessID),
++          static_cast<DWORD>(entry.th32ParentProcessID));
++      } while (Process32NextW(snapshot, &entry));
++    }
++    CloseHandle(snapshot);
++
++    auto find_parent = [&pid_to_parent](DWORD pid) -> DWORD {
++      for (const auto &pair : pid_to_parent) {
++        if (pair.first == pid) {
++          return pair.second;
++        }
++      }
++      return 0;
++    };
++
++    DWORD current = process_id;
++    for (int guard = 0; guard < 64; ++guard) {
++      const DWORD parent = find_parent(current);
++      if (parent == 0) {
++        return false;
++      }
++      if (parent == root_process_id) {
++        return true;
++      }
++      current = parent;
++    }
++    return false;
++  }
++
++  /**
++   * @brief Plan4: process filter for window-follow candidates.
++   *
++   * Only the Sunshine-launched application process tree, plus processes started
++   * around/after the override was enabled, may be followed. This keeps a
++   * game-exit transient (desktop, browser, launcher or any unrelated app) from
++   * being streamed to the client.
++   */
++  static bool
++  is_override_pid_allowed(DWORD process_id, std::uint32_t root_process_id, std::int64_t enabled_at_unix_ms) {
++    if (process_id == 0) {
++      return false;
++    }
++
++    if (root_process_id != 0 &&
++        (process_id == root_process_id || is_process_descendant_of(root_process_id, process_id))) {
++      return true;
++    }
++
++    if (enabled_at_unix_ms > 0) {
++      const auto started_at = process_start_unix_ms(process_id);
++      // 10 seconds of slack: the game may have started slightly before the
++      // control client's (delayed) enable request.
++      if (started_at != 0 && started_at + 10000 >= enabled_at_unix_ms) {
++        return true;
++      }
++    }
++
++    return false;
++  }
++
++  /**
++   * @brief Plan4: topmost eligible top-level window in Z-order, optionally
++   *        restricted to descendants of the Sunshine-launched app process.
++   */
++  static HWND
++  find_topmost_override_window(std::uint32_t root_process_id, std::int64_t enabled_at_unix_ms, bool descendants_only) {
++    struct state_t {
++      std::uint32_t root_process_id;
++      std::int64_t enabled_at_unix_ms;
++      bool descendants_only;
++      HWND result;
++    } state { root_process_id, enabled_at_unix_ms, descendants_only, nullptr };
++
++    EnumWindows(
++      [](HWND hwnd, LPARAM lparam) -> BOOL {
++        auto *data = reinterpret_cast<state_t *>(lparam);
++        if (!is_window_capture_eligible(hwnd)) {
++          return TRUE;
++        }
++        DWORD window_pid = 0;
++        GetWindowThreadProcessId(hwnd, &window_pid);
++        if (!is_override_pid_allowed(window_pid, data->root_process_id, data->enabled_at_unix_ms)) {
++          return TRUE;
++        }
++        if (data->descendants_only) {
++          if (data->root_process_id == 0 || window_pid == data->root_process_id ||
++              !is_process_descendant_of(data->root_process_id, window_pid)) {
++            return TRUE;
++          }
++        }
++        data->result = hwnd;
++        return FALSE;
++      },
++      reinterpret_cast<LPARAM>(&state));
++
++    return state.result;
++  }
++
++  /**
++   * @brief Plan4: eligible foreground window for window-follow mode.
++   *
++   * The game window (a descendant of the Sunshine-launched app) is preferred
++   * over the launcher's own fullscreen window: capturing Playnite itself looks
++   * like the whole screen and made the capture flap between Playnite and the
++   * game. When there is no foreground window at all (locked/disconnected RDP
++   * session), the topmost eligible window in Z-order is used instead.
++   */
++  static HWND
++  find_override_foreground_window(std::uint32_t root_process_id, std::int64_t enabled_at_unix_ms) {
++    HWND child_window = find_topmost_override_window(root_process_id, enabled_at_unix_ms, true);
++
++    HWND candidate = find_eligible_foreground_window();
++    if (candidate) {
++      DWORD candidate_pid = 0;
++      GetWindowThreadProcessId(candidate, &candidate_pid);
++      if (is_override_pid_allowed(candidate_pid, root_process_id, enabled_at_unix_ms)) {
++        const bool is_launcher = root_process_id != 0 && candidate_pid == root_process_id;
++        return is_launcher && child_window ? child_window : candidate;
++      }
++    }
++
++    if (child_window) {
++      return child_window;
++    }
++
++    return find_topmost_override_window(root_process_id, enabled_at_unix_ms, false);
++  }
++
++  /**
++   * @brief Plan4: resolve the requested window-follow target.
++   *
++   * Returns nullptr when no eligible window is currently available; callers
++   * fall back to display capture and retry later.
++   */
++  static HWND
++  resolve_window_override_target(
++    const streaming::window_capture_override_t &override,
++    std::uint32_t root_process_id,
++    std::int64_t enabled_at_unix_ms) {
++    switch (override.mode) {
++      case streaming::window_capture_mode_e::title: {
++        if (override.window_title.empty()) {
++          return find_override_foreground_window(root_process_id, enabled_at_unix_ms);
++        }
++        HWND hwnd = find_window_by_title(override.window_title);
++        return is_window_capture_eligible(hwnd) ? hwnd : nullptr;
++      }
++      case streaming::window_capture_mode_e::pid:
++        return find_window_for_process_id(override.process_id);
++      case streaming::window_capture_mode_e::foreground:
++      default:
++        return find_override_foreground_window(root_process_id, enabled_at_unix_ms);
++    }
++  }
++
++  /**
++   * @brief Plan4: try to bring a captured window to the foreground.
++   *
++   * Sunshine is a background process, so Windows' foreground lock normally
++   * rejects SetForegroundWindow(). run_command() grants ASFW_ANY before spawning
++   * the app, but that does not cover windows created later, so retry here with
++   * the AttachThreadInput helper. Mouse and gamepad input follow the foreground
++   * window, therefore the captured game window must become foreground for the
++   * client to control it.
++   */
++  static void
++  focus_capture_window(HWND hwnd) {
++    if (!hwnd || !IsWindow(hwnd)) {
++      return;
++    }
++
++    if (IsIconic(hwnd)) {
++      ShowWindow(hwnd, SW_RESTORE);
++    }
++
++    // Locked/disconnected sessions reject SetForegroundWindow(); raising the
++    // window in the Z-order still makes it visible in display capture and lets
++    // the injected mouse/gamepad input reach it in active sessions.
++    BringWindowToTop(hwnd);
++    SetWindowPos(hwnd, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
++    SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
++    SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
++
++    if (SetForegroundWindow(hwnd)) {
++      return;
++    }
++
++    const HWND foreground = GetForegroundWindow();
++    const DWORD foreground_thread = foreground ? GetWindowThreadProcessId(foreground, nullptr) : 0;
++    const DWORD current_thread = GetCurrentThreadId();
++    bool attached = false;
++    if (foreground_thread != 0 && foreground_thread != current_thread) {
++      attached = AttachThreadInput(current_thread, foreground_thread, TRUE) != FALSE;
++    }
++
++    SetForegroundWindow(hwnd);
++
++    if (attached) {
++      AttachThreadInput(current_thread, foreground_thread, FALSE);
++    }
++  }
++
++  /**
++   * @brief Plan4: publish the actually captured window into the session state
++   *        so control/status requests can report it.
++   */
++  static void
++  fill_observed_window(HWND hwnd, streaming::window_capture_observed_t &observed) {
++    observed = {};
++    if (!hwnd) {
++      return;
++    }
++    observed.active = true;
++    wchar_t title[256] = {};
++    GetWindowTextW(hwnd, title, std::size(title));
++    observed.window_title = platf::to_utf8(title);
++    DWORD pid = 0;
++    GetWindowThreadProcessId(hwnd, &pid);
++    observed.process_id = static_cast<std::uint32_t>(pid);
++    observed.hwnd = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(hwnd));
++  }
++
++  /**
++   * @brief Query the visible window rectangle in physical virtual-screen pixels.
++   *
++   * Sunshine opts into per-monitor DPI awareness before creating the display
++   * backend, so GetWindowRect()/DWM return physical pixels even when the window
++   * moves to a monitor with a different scale. DWMWA_EXTENDED_FRAME_BOUNDS
++   * excludes the invisible resize border and better matches what WGC captures.
++   */
++  static bool
++  query_window_screen_rect(HWND hwnd, RECT &rect) {
++    if (!hwnd || !IsWindow(hwnd)) {
++      return false;
++    }
++
++    RECT candidate {};
++    if (SUCCEEDED(DwmGetWindowAttribute(hwnd, DWMWA_EXTENDED_FRAME_BOUNDS, &candidate, sizeof(candidate))) &&
++        candidate.right > candidate.left && candidate.bottom > candidate.top) {
++      rect = candidate;
++    }
++    else if (!GetWindowRect(hwnd, &candidate) ||
++             candidate.right <= candidate.left || candidate.bottom <= candidate.top) {
++      return false;
++    }
++    else {
++      rect = candidate;
++    }
++
++    const int virtual_x = GetSystemMetrics(SM_XVIRTUALSCREEN);
++    const int virtual_y = GetSystemMetrics(SM_YVIRTUALSCREEN);
++    const int virtual_width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
++    const int virtual_height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
++    if (virtual_width <= 0 || virtual_height <= 0) {
++      return false;
++    }
++
++    // Clamp to the current virtual desktop. A window straddling monitors must
++    // never produce an absolute pointer outside the normalized 0..65535 range.
++    rect.left = std::clamp<LONG>(rect.left, virtual_x, virtual_x + virtual_width);
++    rect.top = std::clamp<LONG>(rect.top, virtual_y, virtual_y + virtual_height);
++    rect.right = std::clamp<LONG>(rect.right, virtual_x, virtual_x + virtual_width);
++    rect.bottom = std::clamp<LONG>(rect.bottom, virtual_y, virtual_y + virtual_height);
++    return rect.right > rect.left && rect.bottom > rect.top;
++  }
++
++  void
++  wgc_capture_t::refresh_window_capture_rect() {
++    if (!display) {
++      return;
++    }
++
++    if (!captured_window_hwnd) {
++      std::lock_guard lock(display->window_capture_rect_mutex);
++      display->has_window_capture_rect = false;
++      display->window_capture_rect = {};
++      return;
++    }
++
++    RECT rect {};
++    if (!query_window_screen_rect(captured_window_hwnd, rect)) {
++      // Keep the last known rectangle while the window is temporarily
++      // unqueryable; is_window_valid() will request a reinit if it disappears.
++      return;
++    }
++
++    const int virtual_x = GetSystemMetrics(SM_XVIRTUALSCREEN);
++    const int virtual_y = GetSystemMetrics(SM_YVIRTUALSCREEN);
++
++    std::lock_guard lock(display->window_capture_rect_mutex);
++    display->window_capture_rect.offset_x = rect.left - virtual_x;
++    display->window_capture_rect.offset_y = rect.top - virtual_y;
++    display->window_capture_rect.width = rect.right - rect.left;
++    display->window_capture_rect.height = rect.bottom - rect.top;
++    display->has_window_capture_rect = display->window_capture_rect.valid();
++
++    // Keep the absolute-input environment in sync with monitor topology changes
++    // (hot-plug, resolution change, DPI change) while the window is captured.
++    display->env_width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
++    display->env_height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
++  }
++
+   wgc_capture_t::wgc_capture_t() {
+     InitializeConditionVariable(&frame_present_cv);
+   }
+@@ -444,8 +979,15 @@ namespace platf::dxgi {
+    */
+   int
+   wgc_capture_t::init(display_base_t *display, const ::video::config_t &config) {
++    this->display = display;
+     frame_counter = display->frame_rate_source();
+     frame_counter->kind.store(perf::capture_source_kind_e::wgc_arrivals, std::memory_order_relaxed);
++    display->captures_monitor = true;
++    {
++      std::lock_guard lock(display->window_capture_rect_mutex);
++      display->has_window_capture_rect = false;
++      display->window_capture_rect = {};
++    }
+     // WGC is not supported in service mode (running as SYSTEM user)
+     // Fail fast to avoid unnecessary attempts and potential deadlocks
+     if (is_running_as_system_user) {
+@@ -489,8 +1031,24 @@ namespace platf::dxgi {
+     bool capture_window = false;
+     std::string window_title;
+ 
++    // Priority 0 (Plan4): per-session window-follow override. Session-scoped:
++    // only this display instance is affected, global settings stay untouched.
++    window_override = config.capture_target ? config.capture_target->window_override()
++                                           : streaming::window_capture_override_t {};
++    window_override_active = window_override.enabled;
++    capture_target_handle = config.capture_target;
++    override_root_pid = proc::proc.get_app_pid();
++    override_enabled_at_unix_ms = capture_target_handle ? capture_target_handle->window_override_enabled_at_unix_ms() : 0;
++    override_poll_time = std::chrono::steady_clock::now();
++    override_last_switch = std::chrono::steady_clock::time_point {};
++
++    if (window_override_active) {
++      capture_window = true;
++      window_title = window_override.mode == streaming::window_capture_mode_e::title ? window_override.window_title : std::string {};
++      desired_window_title = window_title;
++    }
+     // Priority 1: Check capture_target configuration from global config
+-    if (config::video.capture_target == "window") {
++    else if (config::video.capture_target == "window") {
+       capture_window = true;
+       window_title = config::video.window_title;
+       desired_window_title = window_title;
+@@ -548,7 +1106,81 @@ namespace platf::dxgi {
+     }
+ 
+     if (capture_window) {
+-      if (window_title.empty()) {
++      if (window_override_active) {
++        // Short retry window: capture must not block the stream for long.
++        // When the game window is not up yet we fall back to display capture;
++        // poll_window_override() reinitializes as soon as a window appears.
++        constexpr int max_override_retries = 4;
++        constexpr int override_retry_interval_ms = 250;
++        HWND target_hwnd = nullptr;
++        for (int retry = 0; retry < max_override_retries; ++retry) {
++          target_hwnd = resolve_window_override_target(window_override, override_root_pid, override_enabled_at_unix_ms);
++          if (target_hwnd) {
++            break;
++          }
++          if (retry < max_override_retries - 1) {
++            Sleep(override_retry_interval_ms);
++          }
++        }
++
++        if (!target_hwnd) {
++          BOOST_LOG(info) << "Window-follow: no eligible window yet; using display capture until one appears (mode="
++                          << static_cast<int>(window_override.mode) << ')';
++          capture_window = false;
++
++          streaming::window_capture_observed_t observed;
++          observed.fallback_to_display = true;
++          observed.fallback_reason =
++            window_override.mode == streaming::window_capture_mode_e::title ? "window_not_found"
++            : (window_override.mode == streaming::window_capture_mode_e::pid ? "process_window_not_found"
++                                                                            : "no_eligible_foreground_window");
++          if (capture_target_handle) {
++            capture_target_handle->set_observed_window(observed);
++          }
++        }
++        else {
++          wchar_t actual_title[256] = {};
++          GetWindowTextW(target_hwnd, actual_title, std::size(actual_title));
++          DWORD target_pid = 0;
++          GetWindowThreadProcessId(target_hwnd, &target_pid);
++          BOOST_LOG(info) << "Window-follow: capturing window ["sv << platf::to_utf8(actual_title)
++                          << "] pid="sv << target_pid << " (mode="sv << static_cast<int>(window_override.mode) << ')';
++
++          // Deliberately do NOT maximize or force foreground here: the point of
++          // the override is to leave the host desktop interaction untouched
++          // while the client still receives the window fullscreen.
++          if (FAILED(status = capture_factory->CreateForWindow(target_hwnd, winrt::guid_of<winrt::IGraphicsCaptureItem>(), winrt::put_abi(item)))) {
++            BOOST_LOG(error) << "Window-follow: failed to create capture item for window [0x"
++                            << util::hex(status).to_string_view() << "], falling back to display capture"sv;
++            capture_window = false;
++            streaming::window_capture_observed_t observed;
++            observed.fallback_to_display = true;
++            observed.fallback_reason = "create_capture_item_failed";
++            if (capture_target_handle) {
++              capture_target_handle->set_observed_window(observed);
++            }
++          }
++          else {
++            captured_window_hwnd = target_hwnd;
++            display->captures_monitor = false;
++            refresh_window_capture_rect();
++            // The client's mouse/gamepad input is routed to the foreground
++            // window; make the captured game window the foreground window.
++            focus_capture_window(target_hwnd);
++            auto window_size = item.Size();
++            window_capture_width = static_cast<int>(window_size.Width);
++            window_capture_height = static_cast<int>(window_size.Height);
++            BOOST_LOG(info) << "Window-follow: window capture initialized ("sv << window_capture_width << 'x' << window_capture_height
++                            << ", display "sv << display->width << 'x' << display->height << ')';
++            streaming::window_capture_observed_t observed;
++            fill_observed_window(target_hwnd, observed);
++            if (capture_target_handle) {
++              capture_target_handle->set_observed_window(observed);
++            }
++          }
++        }
++      }
++      else if (window_title.empty()) {
+         BOOST_LOG(warning) << "Window capture requested but window_title is empty and no app is running. Falling back to display capture."sv;
+         capture_window = false;
+       }
+@@ -599,6 +1231,7 @@ namespace platf::dxgi {
+           // A window can move between monitors while this capture stays open.
+           // It has no fixed current monitor for display-scale control.
+           display->captures_monitor = false;
++          refresh_window_capture_rect();
+ 
+           auto window_size = item.Size();
+           window_capture_width = static_cast<int>(window_size.Width);
+@@ -622,6 +1255,12 @@ namespace platf::dxgi {
+     // If not capturing window (either not requested or fallback), capture display
+     if (!capture_window) {
+       captured_window_hwnd = nullptr;  // Not capturing a window
++      display->captures_monitor = true;
++      {
++        std::lock_guard lock(display->window_capture_rect_mutex);
++        display->has_window_capture_rect = false;
++        display->window_capture_rect = {};
++      }
+       window_capture_width = 0;
+       window_capture_height = 0;
+       if (display->output == nullptr) {
+@@ -737,6 +1376,7 @@ namespace platf::dxgi {
+   capture_e
+   wgc_capture_t::next_frame(std::chrono::milliseconds timeout, ID3D11Texture2D **out, uint64_t &out_time) {
+     // this CONSUMER runs in the capture thread
++    refresh_window_capture_rect();
+     release_frame();
+ 
+     AcquireSRWLockExclusive(&frame_lock);
+@@ -810,6 +1450,50 @@ namespace platf::dxgi {
+     return true;
+   }
+ 
++  capture_e
++  wgc_capture_t::poll_window_override() {
++    if (!window_override_active) {
++      return capture_e::ok;
++    }
++
++    // Foreground/window probing is cheap but this runs per captured frame, so
++    // keep it at a few Hz. A short debounce prevents flapping between windows
++    // (e.g. transient popups) during reinitialization.
++    constexpr auto poll_interval = std::chrono::milliseconds(250);
++    constexpr auto switch_debounce = std::chrono::milliseconds(500);
++    const auto now = std::chrono::steady_clock::now();
++    if (now - override_poll_time < poll_interval) {
++      return capture_e::ok;
++    }
++    override_poll_time = now;
++
++    HWND desired = resolve_window_override_target(window_override, override_root_pid, override_enabled_at_unix_ms);
++
++    if (captured_window_hwnd != nullptr) {
++      // Follow window changes only when a different, eligible window exists.
++      // Keeping the current window is the safe default when the requested
++      // target temporarily disappears (alt-tab, UAC prompt, etc).
++      if (desired != nullptr && desired != captured_window_hwnd && now - override_last_switch >= switch_debounce) {
++        wchar_t title[256] = {};
++        GetWindowTextW(desired, title, std::size(title));
++        BOOST_LOG(info) << "Window-follow: switching captured window to ["sv << platf::to_utf8(title) << ']';
++        override_last_switch = now;
++        return capture_e::reinit;
++      }
++      return capture_e::ok;
++    }
++
++    // Currently falling back to display capture: reinitialize as soon as an
++    // eligible window exists so the client switches from desktop to the game.
++    if (desired != nullptr && now - override_last_switch >= switch_debounce) {
++      override_last_switch = now;
++      BOOST_LOG(info) << "Window-follow: window available again, reinitializing window capture"sv;
++      return capture_e::reinit;
++    }
++
++    return capture_e::ok;
++  }
++
+   std::shared_ptr<img_t>
+   display_wgc_ram_t::alloc_img() {
+     auto img = std::make_shared<img_t>();
+@@ -857,6 +1541,12 @@ namespace platf::dxgi {
+    */
+   capture_e
+   display_wgc_ram_t::snapshot(const pull_free_image_cb_t &pull_free_image_cb, std::shared_ptr<platf::img_t> &img_out, std::chrono::milliseconds timeout, bool cursor_visible) {
++    // Plan4: react to window-follow target changes before touching the frame
++    // queue; reinit lets the capture thread rebuild the backend.
++    if (const auto override_status = dup.poll_window_override(); override_status != capture_e::ok) {
++      return override_status;
++    }
++
+     // Check if window is still valid (if capturing a window)
+     if (!dup.is_window_valid()) {
+       BOOST_LOG(warning) << "Captured window is no longer valid, reinitializing capture"sv;
+@@ -888,15 +1578,17 @@ namespace platf::dxgi {
+     int frame_width = static_cast<int>(desc.Width);
+     int frame_height = static_cast<int>(desc.Height);
+ 
+-    // For window capture, update stored dimensions if they changed
++    // For window capture, a size change invalidates the staging texture, the
++    // image pool and the encoder/SWS session dimensions. Never mutate img in
++    // place: the memory pool may still contain buffers for the old height, and
++    // a same-width/increased-height frame would then write past the allocation.
+     if (dup.captured_window_hwnd != nullptr) {
+-      if (dup.window_capture_width != frame_width || dup.window_capture_height != frame_height) {
++      if (wgc_window_size_requires_reinit(
++            dup.window_capture_width, dup.window_capture_height,
++            frame_width, frame_height)) {
+         BOOST_LOG(info) << "Window capture size changed: "sv << dup.window_capture_width << 'x' << dup.window_capture_height
+-                        << " -> "sv << frame_width << 'x' << frame_height;
+-        dup.window_capture_width = frame_width;
+-        dup.window_capture_height = frame_height;
+-        // Reset texture to force recreation with new size
+-        texture.reset();
++                        << " -> "sv << frame_width << 'x' << frame_height << ", reinitializing capture"sv;
++        return capture_e::reinit;
+       }
+     }
+     else {

@@ -10,14 +10,16 @@ streaming session:
   slow/stalled consumption, route/capability loss, fresh-session reconnect and EOS
   drain. A virtual clock drives 500 cycles with arrival jitter; accepted, written
   and consumed bytes must have identical SHA256. No MAT decoder is simulated.
-- The independent `MAT software regressions` job runs six own-process CTests
-  from `tools/sonic-mat-live`, plus operator package/identity/deployment checks.
+- The independent `MAT software regressions` job builds the bundled runtime and
+  runs eight CTests from `tools/sonic-mat-live`, plus operator package/identity/deployment
+  checks. Automatic ownership/stop and ACL checks reuse the pipe suite; packaging
+  stages files and checks the publisher's embedded DLL identities without installing.
 - Existing RTSP lease and Web UI tests cover the lease expiry and status UI.
 
 Run the same callback/IPC/pipe checks locally:
 
 ```powershell
-./tools/sonic-mat-live/build.ps1 -Output ./build/mat-smoke-new -TestsOnly
+./tools/sonic-mat-live/build.ps1 -Output ./build/mat-smoke-new
 ./tools/sonic-mat-live/test-manage-live.ps1 -Output ./build/mat-operator-new
 ctest --test-dir <host-build> -R '^mat_(live_(host|crypto)|mock_output)_tests$' --output-on-failure
 ```
@@ -69,7 +71,8 @@ certificates, config and ports, checks pairing/start/stop, and never attaches a
 native source. Pass explicit `--host-build` and `--client-build` directories.
 `--ui-preflight` additionally checks the MAT switch, retirement of manual source
 parameters and read-only status polling against a pending exclusive auto pipe.
-No publisher is started.
+The isolated copy omits installed capture binaries: enabling MAT reports the
+installation error without elevation or capture. No publisher is started.
 `--ticket-preflight` instead holds two overlapping incomplete RTSP connections
 past the original launch deadline, then checks asynchronous expiry after the last
 claim closes. It disables audio and never sends ANNOUNCE/PLAY; no media starts.

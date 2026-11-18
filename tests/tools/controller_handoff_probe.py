@@ -23,8 +23,10 @@ reset_handler = source[start:source.index("  class deinit_t", start)]
 fixture = r'''
 #include <moonlight-common-c/src/Input.h>
 #include <moonlight-common-c/src/Limelight.h>
+#include <array>
 #include <atomic>
 #include <cassert>
+#include <cstdint>
 #include <chrono>
 #include <functional>
 #include <iostream>
@@ -32,6 +34,9 @@ fixture = r'''
 #include <mutex>
 #include <sstream>
 #include <vector>
+#include "src/ds5/arrival_policy.h"
+#include "src/ds5/tuning_runtime.h"
+#include "src/platform/gamepad_selection.h"
 using namespace std::chrono_literals;
 using namespace std::literals;
 struct job_t { std::function<void()> action; bool cancelled = false; };
@@ -48,7 +53,7 @@ struct scheduler_t {
   void run(job_t* job) { assert(job && !job->cancelled); job->action(); }
 } task_pool;
 namespace platf {
-  constexpr std::uint32_t BACK = BACK_FLAG, HOME = SPECIAL_FLAG;
+  constexpr std::uint32_t BACK = BACK_FLAG, HOME = SPECIAL_FLAG, TOUCHPAD_BUTTON = 0x100000;
   struct gamepad_state_t {
     std::uint32_t buttonFlags {};
     unsigned char lt {}, rt {};
@@ -59,7 +64,14 @@ namespace platf {
   std::vector<gamepad_state_t> writes;
   int alloc_gamepad(int&, gamepad_id_t, arrival_t, int, int) { return 0; }
   bool gamepad_is_ds5(int&, int) { return false; }
+  std::string_view gamepad_virtual_type(int&, int) { return {}; }
   void gamepad_update(int&, int id, gamepad_state_t state) { assert(id >= 0); writes.push_back(state); }
+  struct touchpad_input_t {
+    std::uint8_t eventType; std::uint8_t buttonState; std::uint16_t rotation; std::uint16_t deviceWidthMm;
+    std::uint16_t deviceHeightMm; std::uint32_t pointerId; float x, y, pressure, contactAreaMajor, contactAreaMinor;
+  };
+  void button_mouse(int&, int, bool) {}
+  void touchpad_update(int*, const touchpad_input_t&) {}
   struct pen_input_t { int eventType {}; };
   void pen_update(int*, int, pen_input_t) {}
 }
@@ -83,7 +95,12 @@ struct input_t {
   struct { void reset() {} } pen_roll_probe;
   job_t* mouse_left_button_timeout {};
   std::shared_ptr<int> client_context;
+  std::array<ds5::tuning::runtime::touchpad_pointer_t, 16> touchpad_pointer;
+  std::array<bool, 16> precision_touchpad_button {}, precision_touchpad_active {};
+  std::array<std::uint32_t, 16> precision_touchpad_pointer {};
+  std::array<float, 16> precision_touchpad_x {}, precision_touchpad_y {};
 };
+void set_pad_facts(input_t &, int, platf::gamepad_selection::pad_facts_t) {}
 job_t* key_press_repeat_id {};
 void reset_input_state() {}
 void log_unallocated_controller(const input_t&, int) {}
@@ -190,7 +207,7 @@ with tempfile.TemporaryDirectory(prefix="sunshine-controller-handoff-") as direc
     if not compiler:
         raise RuntimeError("A C++ compiler is required")
     binary = path / ("probe.exe" if os.name == "nt" else "probe")
-    subprocess.run([compiler, "-std=c++17", "-Wall", "-Wextra", "-Werror", "-Wno-sign-compare",
-                    "-I" + str(ROOT / "third-party"), str(path / "probe.cpp"),
+    subprocess.run([compiler, "-std=c++23", "-Wall", "-Wextra", "-Werror", "-Wno-sign-compare",
+                    "-I" + str(ROOT / "third-party"), "-I" + str(ROOT), str(path / "probe.cpp"),
                     "-o", str(binary)], check=True)
     subprocess.run([str(binary)], check=True)

@@ -128,18 +128,26 @@
     },
     "macos-enhanced": {
       "captions": [
-        "Ajusta brillo, color y presentación del vídeo",
-        "Métodos de entrada locales, adaptación de atajos y control con trackpad",
-        "Ecualizador, corrección de auriculares y sonido envolvente",
-        "Ajusta vídeo, audio y anfitrión durante la transmisión"
+        "HDR en pantallas compatibles",
+        "Controles de escritorio familiares",
+        "Sincroniza texto e imágenes",
+        "Envía tu voz local al PC de juego",
+        "Accede a carpetas compartidas del anfitrión",
+        "Ajusta la transmisión y el modo de ratón",
+        "Host haptics, adaptive triggers, lightbar colour and gyroscope",
+        "Métodos de entrada locales, adaptación de atajos y control con trackpad"
       ],
       "description": "Mejora la transmisión con una interfaz Mac nativa, entrada de texto local y trackpad. Ajusta el HDR, el audio de auriculares y la transmisión.",
       "detail": "Cliente nativo mejorado para macOS",
       "features": [
-        "Ajustes de HDR y color",
-        "Entrada Mac y trackpad",
-        "Ajustes de auriculares y audio",
-        "Controles durante la transmisión"
+        "Vídeo HDR",
+        "Teclado y mandos",
+        "Portapapeles bidireccional",
+        "Micrófono remoto",
+        "Archivos compartidos del anfitrión",
+        "Controles durante la transmisión",
+        "DualSense haptics, triggers and motion",
+        "Entrada Mac y trackpad"
       ],
       "name": "macOS",
       "note": "macOS 12+, Apple Silicon e Intel. Portapapeles, micrófono y controles del anfitrión requieren su soporte.",
@@ -197,6 +205,7 @@
     "downloadAddress": "Dirección de descarga",
     "enhanced": "Mejorada",
     "failed": "El código QR no está disponible. Usa el botón de descarga.",
+    "filesFailed": "No se pudo leer la lista de descargas",
     "friendLink": "Enlace asociado",
     "getApp": "Obtener aplicación",
     "mirror": "Descarga alternativa",

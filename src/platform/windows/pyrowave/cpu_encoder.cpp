@@ -297,7 +297,7 @@ namespace platf::pyrowave_windows {
         packet_boundary,
         full_range,
         dynamic_range,
-        video::cap_initial_encoder_bitrate(bitrate_kbps, config::video.max_bitrate, 0),
+        video::cap_initial_encoder_bitrate(bitrate_kbps, config::host_max_bitrate_kbps(), 0),
         frame_rate_num,
         frame_rate_den,
         perf_session_id);

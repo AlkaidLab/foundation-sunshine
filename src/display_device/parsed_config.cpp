@@ -422,7 +422,11 @@ namespace display_device {
       requested_device_is_vdd = device->second.friendly_name == ZAKO_NAME;
     }
 #else
-    requested_device_exists = !find_one_of_the_available_devices(intent.device_id).empty();
+    // The enumeration behind find_one_of_the_available_devices exists on
+    // Windows only (CCD). Other platforms cannot verify the configured id;
+    // keep the intent, as the locked-desktop case above keeps it, and let
+    // stream startup resolve the display.
+    requested_device_exists = true;
 #endif
 
     if (requested_device_is_vdd) {

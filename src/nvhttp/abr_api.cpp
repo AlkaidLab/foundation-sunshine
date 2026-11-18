@@ -61,7 +61,7 @@ namespace nvhttp::abr_api {
 
     int
     host_max_bitrate_kbps() {
-      return std::max(config::video.max_bitrate, 0);
+      return std::max(config::host_max_bitrate_kbps(), 0);
     }
 
     bool
@@ -185,6 +185,8 @@ namespace nvhttp::abr_api {
         return;
       }
 
+      cfg.client_min_kbps = cfg.min_bitrate_kbps;
+      cfg.client_max_kbps = cfg.max_bitrate_kbps;
       apply_host_bitrate_cap(cfg);
       const auto capped_by_host = host_max_bitrate > 0 && requested_max_bitrate > 0 && cfg.max_bitrate_kbps < requested_max_bitrate;
       const auto inherited_host_cap = host_max_bitrate > 0 && requested_max_bitrate <= 0;

@@ -9,11 +9,16 @@
 // cannot do it and receives the verified directory from the publisher.
 #include "../../src/spatial_audio/native_mat_guard.h"
 #include <appmodel.h>
-#include <winver.h>
 #include <cstdio>
 #include <string>
 #include <string_view>
 #include <vector>
+#include <winrt/Windows.ApplicationModel.h>
+#include <winrt/Windows.Foundation.Collections.h>
+#include <winrt/Windows.Management.Deployment.h>
+#include <winrt/Windows.Storage.h>
+#include <winver.h>
+#pragma comment(lib, "windowsapp.lib")
 #pragma comment(lib, "version.lib")
 
 namespace mat_compat {
@@ -75,21 +80,43 @@ namespace sonic_live {
   };
 
   inline DolbyAccess
-  find_dolby_access() {
+  find_dolby_access(const std::wstring &user_sid = {}) {
     DolbyAccess result;
-    UINT32 count = 0, length = 0;
-    if (GetPackagesByPackageFamily(mat_compat::dolby_family, &count, nullptr, &length, nullptr) != ERROR_INSUFFICIENT_BUFFER || !count) return result;
-    std::vector<PWSTR> names(count);
-    std::vector<wchar_t> buffer(length);
-    if (GetPackagesByPackageFamily(mat_compat::dolby_family, &count, names.data(), &length, buffer.data()) != ERROR_SUCCESS) return result;
-    for (UINT32 i = 0; i < count; ++i) {
-      const std::wstring_view full = names[i];
+    // The installed host runs as SYSTEM. Query the interactive session user's
+    // registration explicitly, rather than SYSTEM's unrelated package catalog.
+    std::vector<std::pair<std::wstring, std::wstring>> packages;
+    if (!user_sid.empty()) {
+      try {
+        winrt::init_apartment(winrt::apartment_type::multi_threaded);
+        struct Apartment {
+          ~Apartment() { winrt::uninit_apartment(); }
+        } apartment;
+        winrt::Windows::Management::Deployment::PackageManager manager;
+        for (const auto &package : manager.FindPackagesForUser(user_sid, mat_compat::dolby_family))
+          packages.emplace_back(package.Id().FullName().c_str(), package.InstalledLocation().Path().c_str());
+      }
+      catch (...) {
+        return result;
+      }
+    }
+    else {
+      UINT32 count = 0, length = 0;
+      if (GetPackagesByPackageFamily(mat_compat::dolby_family, &count, nullptr, &length, nullptr) != ERROR_INSUFFICIENT_BUFFER || !count) return result;
+      std::vector<PWSTR> names(count);
+      std::vector<wchar_t> buffer(length);
+      if (GetPackagesByPackageFamily(mat_compat::dolby_family, &count, names.data(), &length, buffer.data()) != ERROR_SUCCESS) return result;
+      for (UINT32 i = 0; i < count; ++i) {
+        UINT32 path_length = 0;
+        if (GetPackagePathByFullName(names[i], &path_length, nullptr) != ERROR_INSUFFICIENT_BUFFER || !path_length) continue;
+        std::wstring root(path_length, L'\0');
+        if (GetPackagePathByFullName(names[i], &path_length, root.data()) != ERROR_SUCCESS) continue;
+        root.resize(wcslen(root.c_str()));
+        packages.emplace_back(names[i], std::move(root));
+      }
+    }
+    for (const auto &[name, root] : packages) {
+      const std::wstring_view full = name;
       if (!full.starts_with(mat_compat::dolby_package_prefix) || !full.ends_with(mat_compat::dolby_package_suffix)) continue;
-      UINT32 path_length = 0;
-      if (GetPackagePathByFullName(names[i], &path_length, nullptr) != ERROR_INSUFFICIENT_BUFFER || !path_length) continue;
-      std::wstring root(path_length, L'\0');
-      if (GetPackagePathByFullName(names[i], &path_length, root.data()) != ERROR_SUCCESS) continue;
-      root.resize(wcslen(root.c_str()));
       auto version = full.substr(mat_compat::dolby_package_prefix.size());
       version.remove_suffix(mat_compat::dolby_package_suffix.size());
       result.component.version.clear();

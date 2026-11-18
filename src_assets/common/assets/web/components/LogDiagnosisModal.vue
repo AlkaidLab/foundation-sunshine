@@ -1,162 +1,62 @@
 <template>
-  <Transition name="fade">
-    <div v-if="show" class="diagnosis-overlay" @click.self="$emit('close')">
-      <div class="diagnosis-modal">
-        <div class="diagnosis-header">
-          <h5>
-            <i class="fas fa-robot me-2"></i>{{ $t('troubleshooting.ai_diagnosis_title') }}
-          </h5>
-          <button class="btn-close" :aria-label="$t('close')" @click="$emit('close')"></button>
-        </div>
+  <MSheet :model-value="show" :title="$t('troubleshooting.ai_diagnosis_title')" side="end" :close-label="$t('_common.close')" @update:model-value="onSheet">
+    <MSection>
+      <MGroup>
+        <MItem action icon="tune" :title="$t('troubleshooting.ai_config')" :aria-expanded="showConfig" @click="showConfig = !showConfig">
+          <template #trail><MLoading v-if="isConfigLoading || isSavingConfig" size="20px" :label="loadingStatusText" /><MIcon :name="showConfig ? 'keyboard_arrow_up' : 'keyboard_arrow_down'" /></template>
+        </MItem>
+        <template v-if="showConfig">
+          <MItem :title="diagnosisText('status')" :value="config?.enabled ? diagnosisText('enabled') : diagnosisText('disabled')" />
+          <MItem :title="$t('troubleshooting.ai_provider')" :value="config?.provider || '-'" />
+          <MItem :title="diagnosisText('compatibility')" :value="config?.compatibility || '-'" />
+          <MItem :title="$t('troubleshooting.ai_model')" :value="config?.model || '-'" />
+        </template>
+      </MGroup>
+      <MFooter v-if="showConfig">{{ diagnosisText('managedConfig') }} {{ diagnosisText('keysLocal') }}</MFooter>
+    </MSection>
 
-        <div class="diagnosis-body">
-          <!-- Config Section (collapsible) -->
-          <div class="config-section mb-3">
-            <button
-              class="btn btn-sm btn-outline-secondary w-100 text-start"
-              @click="showConfig = !showConfig"
-            >
-              <i class="fas fa-cog me-1"></i>
-              {{ $t('troubleshooting.ai_config') }}
-              <i class="fas ms-1" :class="showConfig ? 'fa-chevron-up' : 'fa-chevron-down'"></i>
-            </button>
+    <MSection v-if="localFindings?.length" :title="diagnosisText('localPreDiagnosis')">
+      <MGroup>
+        <MCheckItem v-for="finding in localFindings" :key="finding.id" :state="checkState(finding.severity)" :title="getFindingLabel(finding)" :text="finding.count > 1 ? `×${finding.count}` : ''">
+          <template v-if="finding.evidence?.[0]?.text" #default><code class="m-tip">{{ finding.evidence[0].text }}</code></template>
+        </MCheckItem>
+      </MGroup>
+    </MSection>
 
-            <div v-if="showConfig" class="config-form mt-2">
-              <div class="alert alert-info py-2 mb-2">
-                <i class="fas fa-circle-info me-1"></i>
-                {{ diagnosisText('managedConfig') }}
-              </div>
-              <div class="row g-2">
-                <div class="col-md-3">
-                  <label class="form-label form-label-sm">{{ diagnosisText('status') }}</label>
-                  <div class="form-control form-control-sm bg-body-secondary">
-                    {{ config?.enabled ? diagnosisText('enabled') : diagnosisText('disabled') }}
-                  </div>
-                </div>
-                <div class="col-md-3">
-                  <label class="form-label form-label-sm">{{ $t('troubleshooting.ai_provider') }}</label>
-                  <div class="form-control form-control-sm bg-body-secondary">{{ config?.provider || '-' }}</div>
-                </div>
-                <div class="col-md-3">
-                  <label class="form-label form-label-sm">{{ diagnosisText('compatibility') }}</label>
-                  <div class="form-control form-control-sm bg-body-secondary">{{ config?.compatibility || '-' }}</div>
-                </div>
-                <div class="col-md-3">
-                  <label class="form-label form-label-sm">{{ $t('troubleshooting.ai_model') }}</label>
-                  <div class="form-control form-control-sm bg-body-secondary">{{ config?.model || '-' }}</div>
-                </div>
-              </div>
-              <div class="text-muted small mt-2">
-                <i class="fas fa-lock me-1"></i>
-                {{ diagnosisText('keysLocal') }}
-                <span v-if="isConfigLoading || isSavingConfig" class="ms-1" role="status" aria-live="polite">
-                  <span class="spinner-border spinner-border-sm"></span>
-                  <span class="visually-hidden">{{ loadingStatusText }}</span>
-                </span>
-              </div>
-            </div>
-          </div>
+    <MSection v-if="localSuggestions?.length" :title="diagnosisText('suggestedFixes')">
+      <MGroup>
+        <MCheckItem v-for="suggestion in localSuggestions" :key="suggestion.id" :state="checkState(suggestion.severity)" :title="getSuggestionTitle(suggestion)">
+          <ul class="m-tip">
+            <li v-for="(action, index) in getSuggestionActions(suggestion)" :key="`${index}-${action}`">{{ action }}</li>
+          </ul>
+        </MCheckItem>
+      </MGroup>
+    </MSection>
 
-          <div v-if="localFindings?.length" class="local-diagnostics mb-3">
-            <div class="local-diagnostics-header">
-              <i class="fas fa-magnifying-glass-chart me-1"></i>
-              <strong>{{ diagnosisText('localPreDiagnosis') }}</strong>
-            </div>
-            <div class="local-finding-list">
-              <div
-                v-for="finding in localFindings"
-                :key="finding.id"
-                class="local-finding"
-                :class="`local-finding--${finding.severity || 'info'}`"
-              >
-                <div class="local-finding-title">
-                  {{ getFindingLabel(finding) }}
-                  <span v-if="finding.count > 1" class="badge bg-secondary ms-1">x{{ finding.count }}</span>
-                </div>
-                <code v-if="finding.evidence?.[0]?.text" class="local-finding-evidence">
-                  {{ finding.evidence[0].text }}
-                </code>
-              </div>
-            </div>
-          </div>
+    <div v-if="isLoading && !result" class="diag-wait"><MLoading /><span>{{ $t('troubleshooting.ai_analyzing_logs') }}</span></div>
 
-          <div v-if="localSuggestions?.length" class="local-suggestions mb-3">
-            <div class="local-diagnostics-header">
-              <i class="fas fa-screwdriver-wrench me-1"></i>
-              <strong>{{ diagnosisText('suggestedFixes') }}</strong>
-            </div>
-            <div class="local-suggestion-list">
-              <div
-                v-for="suggestion in localSuggestions"
-                :key="suggestion.id"
-                class="local-suggestion"
-                :class="`local-suggestion--${suggestion.severity || 'info'}`"
-              >
-                <div class="local-finding-title">{{ getSuggestionTitle(suggestion) }}</div>
-                <ul class="local-suggestion-actions">
-                  <li v-for="(action, index) in getSuggestionActions(suggestion)" :key="`${index}-${action}`">{{ action }}</li>
-                </ul>
-              </div>
-            </div>
-          </div>
+    <MBanner v-if="error" tone="error" icon="error">
+      <b>{{ $t('troubleshooting.ai_error') }}</b> {{ error }}
+    </MBanner>
 
-          <!-- Diagnose Button -->
-          <div class="text-center mb-3" v-if="!result && !error">
-            <button class="btn btn-primary" :disabled="isLoading" @click="$emit('diagnose')">
-              <span v-if="isLoading">
-                <span class="spinner-border spinner-border-sm me-1"></span>
-                {{ $t('troubleshooting.ai_analyzing') }}
-              </span>
-              <span v-else>
-                <i class="fas fa-search-plus me-1"></i>
-                {{ $t('troubleshooting.ai_start_diagnosis') }}
-              </span>
-            </button>
-          </div>
-
-          <!-- Loading -->
-          <div v-if="isLoading && !result" class="text-center text-muted py-4">
-            <div class="spinner-border text-primary mb-2"></div>
-            <p>{{ $t('troubleshooting.ai_analyzing_logs') }}</p>
-          </div>
-
-          <!-- Error -->
-          <div v-if="error" class="alert alert-danger d-flex align-items-start">
-            <i class="fas fa-exclamation-circle me-2 mt-1"></i>
-            <div>
-              <strong>{{ $t('troubleshooting.ai_error') }}</strong>
-              <p class="mb-1">{{ error }}</p>
-              <button class="btn btn-sm btn-outline-danger" @click="$emit('diagnose')">
-                <i class="fas fa-redo me-1"></i>{{ $t('troubleshooting.ai_retry') }}
-              </button>
-            </div>
-          </div>
-
-          <!-- Result -->
-          <div v-if="result" class="diagnosis-result">
-            <div class="result-header mb-2">
-              <i class="fas fa-clipboard-check text-success me-1"></i>
-              <strong>{{ $t('troubleshooting.ai_result') }}</strong>
-              <button class="btn btn-sm btn-outline-secondary ms-auto" @click="copyResult">
-                <i class="fas fa-copy me-1"></i>{{ $t('troubleshooting.ai_copy_result') }}
-              </button>
-            </div>
-            <div class="result-content" v-html="renderMarkdown(result)"></div>
-            <div class="text-center mt-3">
-              <button class="btn btn-sm btn-outline-primary" @click="$emit('diagnose')">
-                <i class="fas fa-redo me-1"></i>{{ $t('troubleshooting.ai_reanalyze') }}
-              </button>
-            </div>
-          </div>
-        </div>
+    <MSection v-if="result" :title="$t('troubleshooting.ai_result')">
+      <div class="m-tip diag-result">
+        <MIconButton class="diag-copy" icon="content_copy" :label="$t('troubleshooting.ai_copy_result')" @click="copyResult" />
+        <div class="result-content" v-html="renderMarkdown(result)"></div>
       </div>
-    </div>
-  </Transition>
+    </MSection>
+
+    <template #actions>
+      <MButton v-if="!result && !error" size="lg" :loading="isLoading" :disabled="isLoading" icon="wand_stars" @click="$emit('diagnose')">{{ isLoading ? $t('troubleshooting.ai_analyzing') : $t('troubleshooting.ai_start_diagnosis') }}</MButton>
+      <MButton v-else variant="tonal" size="lg" :loading="isLoading" :disabled="isLoading" icon="refresh" @click="$emit('diagnose')">{{ error ? $t('troubleshooting.ai_retry') : $t('troubleshooting.ai_reanalyze') }}</MButton>
+    </template>
+  </MSheet>
 </template>
 
 <script setup>
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { MBanner, MButton, MCheckItem, MFooter, MGroup, MIcon, MIconButton, MItem, MLoading, MSection, MSheet } from 'foundation-ui/vue'
 
 const { locale } = useI18n()
 
@@ -178,7 +78,9 @@ const props = defineProps({
   },
 })
 
-defineEmits(['close', 'diagnose'])
+const emit = defineEmits(['close', 'diagnose'])
+const checkState = (severity) => (severity === 'fatal' || severity === 'error' ? 'error' : severity === 'warning' ? 'warn' : 'info')
+const onSheet = (open) => { if (!open) emit('close') }
 
 const showConfig = ref(false)
 
@@ -264,202 +166,18 @@ function renderMarkdown(text) {
     .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
     .replace(/^\s*[-*]\s+(.+)$/gm, '<li>$1</li>')
     .replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>')
-    .replace(/^### (.+)$/gm, '<h6 class="mt-3 mb-1">$1</h6>')
-    .replace(/^## (.+)$/gm, '<h5 class="mt-3 mb-1">$1</h5>')
-    .replace(/^# (.+)$/gm, '<h4 class="mt-3 mb-1">$1</h4>')
+    .replace(/^### (.+)$/gm, '<h6>$1</h6>')
+    .replace(/^## (.+)$/gm, '<h5>$1</h5>')
+    .replace(/^# (.+)$/gm, '<h4>$1</h4>')
     .replace(/\n/g, '<br>')
 }
 </script>
 
-<style scoped>
-.diagnosis-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  padding: 1rem;
-  background: var(--ui-overlay);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1050;
-  backdrop-filter: blur(4px);
-}
-
-.diagnosis-modal {
-  background: var(--ui-surface-strong);
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-lg);
-  width: 100%;
-  max-width: 700px;
-  max-height: 80vh;
-  display: flex;
-  flex-direction: column;
-  box-shadow: var(--ui-shadow-md);
-  color: var(--ui-text-primary);
-}
-
-.diagnosis-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 1rem 1.5rem;
-  border-bottom: 1px solid var(--ui-border);
-}
-
-.diagnosis-header h5 {
-  margin: 0;
-  font-weight: 600;
-}
-
-.diagnosis-body {
-  padding: 1.5rem;
-  overflow-y: auto;
-  flex: 1;
-}
-
-.config-form {
-  background: var(--ui-surface);
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-md);
-  padding: 1rem;
-}
-
-.local-diagnostics {
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-md);
-  padding: 0.75rem;
-  background: var(--ui-surface);
-}
-
-.local-diagnostics-header {
-  display: flex;
-  align-items: center;
-  margin-bottom: 0.5rem;
-}
-
-.local-finding-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.local-suggestion-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.local-finding {
-  border-left: 4px solid var(--ui-accent);
-  border-radius: 6px;
-  padding: 0.5rem 0.65rem;
-  background: var(--ui-surface-strong);
-}
-
-.local-suggestions {
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-md);
-  padding: 0.75rem;
-  background: var(--ui-surface);
-}
-
-.local-suggestion {
-  border-left: 4px solid var(--ui-accent);
-  border-radius: 6px;
-  padding: 0.5rem 0.65rem;
-  background: var(--ui-surface-strong);
-}
-
-.local-finding--error,
-.local-finding--fatal,
-.local-suggestion--error,
-.local-suggestion--fatal {
-  border-left-color: var(--ui-danger);
-}
-
-.local-finding--warning,
-.local-suggestion--warning {
-  border-left-color: var(--ui-warning);
-}
-
-.local-finding-title {
-  font-weight: 600;
-  line-height: 1.35;
-}
-
-.local-finding-evidence {
-  display: block;
-  margin-top: 0.35rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--ui-text-secondary);
-  background: var(--ui-accent-soft);
-  padding: 0.25rem 0.4rem;
-  border-radius: 4px;
-}
-
-.local-suggestion-actions {
-  margin: 0.4rem 0 0;
-  padding-left: 1.25rem;
-  color: var(--ui-text-secondary);
-}
-
-.local-suggestion-actions li {
-  margin-bottom: 0.25rem;
-}
-
-.result-header {
-  display: flex;
-  align-items: center;
-}
-
-.result-content {
-  background: var(--ui-surface);
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-md);
-  padding: 1rem 1.25rem;
-  font-size: 0.9rem;
-  line-height: 1.6;
-  max-height: 400px;
-  overflow-y: auto;
-}
-
-.result-content :deep(code) {
-  background: var(--ui-accent-soft);
-  color: var(--ui-text-primary);
-  padding: 0.15em 0.4em;
-  border-radius: 3px;
-  font-size: 0.85em;
-}
-
-.result-content :deep(.code-block) {
-  background: #1e1e1e;
-  color: #d4d4d4;
-  padding: 0.75rem 1rem;
-  border-radius: 6px;
-  font-size: 0.8rem;
-  overflow-x: auto;
-}
-
-.result-content :deep(ul) {
-  padding-left: 1.5rem;
-  margin: 0.5rem 0;
-}
-
-.result-content :deep(li) {
-  margin-bottom: 0.25rem;
-}
-
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.2s ease;
-}
-
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
+<style>
+.diag-wait { display: flex; align-items: center; gap: 12px; padding: 16px; color: var(--md-sys-color-on-surface-variant); }
+.diag-result { position: relative; padding-inline-end: 56px; }
+.diag-copy { position: absolute; top: 8px; right: 8px; }
+.diag-result .result-content { font: var(--m-body-medium); line-height: 1.6; word-break: break-word; }
+.diag-result h4, .diag-result h5, .diag-result h6 { margin: 12px 0 4px; }
+.diag-result .code-block { margin: 8px 0; padding: 12px; border-radius: 12px; background: var(--md-sys-color-surface-container-highest); overflow: auto; white-space: pre-wrap; }
 </style>

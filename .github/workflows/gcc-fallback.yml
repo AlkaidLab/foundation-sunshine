@@ -1,0 +1,76 @@
+# GCC 是 Clang 发布工具链的回退，所以要证明它随时能用：每晚在默认分支上派发一次 GCC 的完整构建（冷编译、全部原生测试、PE 发布门禁、
+# 打包），等它结束；失败就打开或更新唯一一个跟踪 issue，成功就自动关闭。
+# 定时事件只在默认分支上运行（GitHub Docs, "Events that trigger workflows", schedule；源 gh-events-20261116），
+# 所以合并到 master 后才会每晚跑；手动运行可以在任意分支上演练整条路径。
+# GCC 构建不保存编译缓存（主工具链才保存，见 main.yml 的 Save compiler cache），所以它每晚都是 8 个分片的冷编译，也不会挤掉 Clang 的缓存。
+
+name: GCC Fallback
+
+on:
+  schedule:
+    - cron: '47 21 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: '${{ github.workflow }}'
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Full build and tests with GCC
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    permissions:
+      contents: read
+      actions: write  # dispatch the GCC build of main.yml
+      issues: write   # open, update and close the single tracking issue
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPOSITORY: ${{ github.repository }}
+      REF: ${{ github.ref_name }}
+    steps:
+      - name: Dispatch the GCC build and wait for it
+        id: build
+        run: |
+          set -euo pipefail
+          started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          gh workflow run main.yml --repo "$REPOSITORY" --ref "$REF" -f toolchain=gcc
+          run_id=""
+          for _ in $(seq 1 30); do
+            sleep 10
+            run_id="$(gh run list --repo "$REPOSITORY" --workflow main.yml --branch "$REF" --event workflow_dispatch --limit 10 --json databaseId,createdAt --jq "[.[] | select(.createdAt >= \"$started\")] | sort_by(.createdAt) | (.[0].databaseId // empty)")"
+            if [[ -n "$run_id" ]]; then break; fi
+          done
+          if [[ -z "$run_id" ]]; then echo "::error::the GCC build was dispatched but no run appeared"; exit 1; fi
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "GCC build: https://github.com/$REPOSITORY/actions/runs/$run_id" | tee -a "$GITHUB_STEP_SUMMARY"
+          gh run watch "$run_id" --repo "$REPOSITORY" --interval 60 --exit-status
+
+      - name: Open or update the tracking issue
+        if: failure()
+        env:
+          RUN_ID: ${{ steps.build.outputs.run_id }}
+        run: |
+          set -euo pipefail
+          gh label create gcc-fallback --repo "$REPOSITORY" --color B60205 --description "GCC 回退构建的夜间验证失败" 2>/dev/null || true
+          url="https://github.com/$REPOSITORY/actions/runs/${RUN_ID:-}"
+          [[ -n "${RUN_ID:-}" ]] || url="https://github.com/$REPOSITORY/actions/runs/${GITHUB_RUN_ID}"
+          printf '%s\n' "GCC 回退构建（完整编译、原生测试、发布门禁）今晚失败：$url" "" "发布用 Clang，GCC 是回退工具链；回退必须一直可用。请修复后重新运行本工作流，成功后本 issue 会自动关闭。" > issue-body.md
+          number="$(gh issue list --repo "$REPOSITORY" --label gcc-fallback --state open --json number --jq '.[0].number' 2>/dev/null || true)"
+          if [[ -n "$number" ]]; then
+            gh issue comment "$number" --repo "$REPOSITORY" --body-file issue-body.md
+          else
+            gh issue create --repo "$REPOSITORY" --title "GCC 回退构建失败" --body-file issue-body.md --label gcc-fallback
+          fi
+
+      - name: Close the tracking issue
+        if: success()
+        run: |
+          set -euo pipefail
+          number="$(gh issue list --repo "$REPOSITORY" --label gcc-fallback --state open --json number --jq '.[0].number' 2>/dev/null || true)"
+          if [[ -n "$number" ]]; then
+            gh issue close "$number" --repo "$REPOSITORY" --comment "GCC 回退构建今晚通过，关闭本跟踪 issue。"
+          fi

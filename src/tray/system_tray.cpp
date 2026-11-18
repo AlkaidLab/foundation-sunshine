@@ -44,7 +44,7 @@
   #include "tray/src/tray.h"
 
   // local includes
-  #include "src/confighttp.h"
+#include "src/confighttp.h"
   #include "src/display_device/session.h"
   #include "src/display_device/vdd_utils.h"
   #include "src/file_handler.h"
@@ -400,7 +400,7 @@ namespace system_tray {
 
   auto tray_restart_cb = [](struct tray_menu *item) {
     BOOST_LOG(info) << "Restarting from system tray"sv;
-    platf::restart();
+    platf::restart("tray");
   };
 
   auto terminate_gui_processes = []() {
@@ -712,7 +712,7 @@ namespace system_tray {
         if (!is_safe_config_content(config_content)) {
           BOOST_LOG(error) << "[tray_import_config] Config import rejected: unsafe content: " << file_path;
           std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_TITLE));
-          std::wstring message = L"配置文件内容无效、太大或格式错误。\n最大文件大小：1MB";
+          std::wstring message = L"配置文件内容无效、太大或格式错误。\n最大文件大小：1 MB";
           MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
           return;
         }
@@ -759,7 +759,7 @@ namespace system_tray {
           if (result == IDYES) {
             BOOST_LOG(info) << "[tray_import_config] User chose to restart Sunshine"sv;
             // 重启Sunshine
-            platf::restart();
+            platf::restart("import");
           }
           else {
             BOOST_LOG(info) << "[tray_import_config] User chose not to restart Sunshine"sv;

@@ -95,9 +95,10 @@ namespace {
     std::uint32_t endpoint,
     std::int32_t transfer_length,
     std::int32_t number_of_packets = -1,
-    std::vector<std::uint8_t> data = {}) {
+    std::vector<std::uint8_t> data = {},
+    std::vector<std::uint8_t> iso_descriptors = {}) {
     const auto payload_size = direction == 0 ? data.size() : 0;
-    std::vector<std::uint8_t> wire(48 + payload_size, 0);
+    std::vector<std::uint8_t> wire(48 + payload_size + iso_descriptors.size(), 0);
     put_u32_be(wire.data(), 1);
     put_u32_be(wire.data() + 4, seqnum);
     put_u32_be(wire.data() + 8, devid);
@@ -112,6 +113,7 @@ namespace {
     if (payload_size != 0) {
       std::copy(data.begin(), data.end(), wire.begin() + 48);
     }
+    std::copy(iso_descriptors.begin(), iso_descriptors.end(), wire.begin() + 48 + payload_size);
     return wire;
   }
 
@@ -124,8 +126,9 @@ namespace {
     std::int32_t actual_length,
     const std::vector<std::uint8_t> &payload,
     std::int32_t number_of_packets = -1,
-    std::int32_t error_count = 0) {
-    std::vector<std::uint8_t> wire(48 + payload.size(), 0);
+    std::int32_t error_count = 0,
+    const std::vector<std::uint8_t> &iso_descriptors = {}) {
+    std::vector<std::uint8_t> wire(48 + payload.size() + iso_descriptors.size(), 0);
     put_u32_be(wire.data(), 3);
     put_u32_be(wire.data() + 4, seqnum);
     put_u32_be(wire.data() + 8, devid);
@@ -138,6 +141,7 @@ namespace {
     if (!payload.empty()) {
       std::copy(payload.begin(), payload.end(), wire.begin() + 48);
     }
+    std::copy(iso_descriptors.begin(), iso_descriptors.end(), wire.begin() + 48 + payload.size());
     return wire;
   }
 
@@ -149,10 +153,11 @@ namespace {
     std::int32_t status,
     std::vector<std::uint8_t> data = {},
     std::int32_t number_of_packets = -1,
-    std::int32_t error_count = 0) {
+    std::int32_t error_count = 0,
+    const std::vector<std::uint8_t> &iso_descriptors = {}) {
     const auto payload = direction == 1 ? data : std::vector<std::uint8_t> {};
     return make_submit_reply_wire(seqnum, devid, direction, endpoint, status,
-      static_cast<std::int32_t>(data.size()), payload, number_of_packets, error_count);
+      static_cast<std::int32_t>(data.size()), payload, number_of_packets, error_count, iso_descriptors);
   }
 
   std::vector<std::uint8_t>
@@ -161,10 +166,11 @@ namespace {
     std::int32_t status,
     std::vector<std::uint8_t> data = {},
     std::int32_t number_of_packets = -1,
-    std::int32_t error_count = 0) {
+    std::int32_t error_count = 0,
+    const std::vector<std::uint8_t> &iso_descriptors = {}) {
     const auto payload = request_direction == 1 ? data : std::vector<std::uint8_t> {};
     return make_submit_reply_wire(seqnum, 0, 0, 0, status,
-      static_cast<std::int32_t>(data.size()), payload, number_of_packets, error_count);
+      static_cast<std::int32_t>(data.size()), payload, number_of_packets, error_count, iso_descriptors);
   }
 
   std::vector<std::uint8_t>
@@ -374,8 +380,8 @@ namespace {
 
   bool
   perform_devlist(tcp::socket &socket,
-                  std::size_t interface_count = 2,
-                  std::string *busid = nullptr) {
+    std::size_t interface_count = 2,
+    std::string *busid = nullptr) {
     if (!write_all(socket, make_control(0x8005))) {
       return false;
     }
@@ -385,13 +391,13 @@ namespace {
         get_u32_be(devlist.data() + 8) != 1) {
       return false;
     }
-    /* The bridge must not expose the platform path in USB/IP metadata. */
+    /* usbip-win2 consumes the topology path while creating the devnode. */
     const std::string path(reinterpret_cast<const char *>(devlist.data() + 12));
-    if (path.empty() || path.size() > 31) {
+    if (path != "/sys/devices/test-usb") {
       return false;
     }
     if (busid != nullptr) {
-      *busid = path;
+      *busid = std::string(reinterpret_cast<const char *>(devlist.data() + 12 + 256));
     }
     return true;
   }
@@ -411,7 +417,7 @@ namespace {
       return false;
     }
     const std::string path(reinterpret_cast<const char *>(imported.data() + 8));
-    return path == busid;
+    return path == "/sys/devices/test-usb";
   }
 
   bool
@@ -425,25 +431,24 @@ namespace {
       return false;
     }
     const std::string path(reinterpret_cast<const char *>(imported.data() + 8));
-    return path == busid;
+    return path == "/sys/devices/test-usb";
   }
 
 }  // namespace
 
-TEST(LoopbackUsbipBridge, GeneratesFreshOpaqueBusidPerStart) {
+TEST(LoopbackUsbipBridge, PreservesUsbTopologyBusidPerStart) {
   harness events;
   remote_usb::loopback_usbip_bridge bridge;
   boost::system::error_code error;
   const auto first = bridge.start(test_device(), events.callbacks(), error);
   ASSERT_TRUE(first.has_value()) << error.message();
-  ASSERT_EQ(first->busid.size(), 30U);
+  ASSERT_EQ(first->busid, "1-2");
   bridge.stop();
 
   const auto second = bridge.start(test_device(), events.callbacks(), error);
   ASSERT_TRUE(second.has_value()) << error.message();
-  EXPECT_EQ(second->busid.size(), 30U);
-  EXPECT_EQ(second->busid.rfind("usbip-", 0), 0U);
-  EXPECT_NE(first->busid, second->busid);
+  EXPECT_EQ(second->busid, "1-2");
+  EXPECT_EQ(first->busid, second->busid);
   bridge.stop();
 }
 
@@ -456,9 +461,7 @@ TEST(LoopbackUsbipBridge, ServesControlAndSubmitRoundTrip) {
   EXPECT_EQ(endpoint->address, "127.0.0.1");
   EXPECT_NE(endpoint->port, 0);
   EXPECT_NE(endpoint->port, 3240);
-  EXPECT_EQ(endpoint->busid.size(), 30U);
-  EXPECT_EQ(endpoint->busid.rfind("usbip-", 0), 0U);
-  EXPECT_NE(endpoint->busid, "1-2");
+  EXPECT_EQ(endpoint->busid, "1-2");
   ASSERT_TRUE(bridge.running());
 
   asio::io_context client_io;
@@ -493,6 +496,30 @@ TEST(LoopbackUsbipBridge, ServesControlAndSubmitRoundTrip) {
   EXPECT_FALSE(bridge.running());
 }
 
+TEST(LoopbackUsbipBridge, ForwardsNonzeroUsbTransferFlags) {
+  harness events;
+  remote_usb::loopback_usbip_bridge bridge;
+  boost::system::error_code error;
+  const auto endpoint = bridge.start(test_device(), events.callbacks(), error);
+  ASSERT_TRUE(endpoint.has_value()) << error.message();
+  asio::io_context client_io;
+  tcp::socket socket(client_io);
+  socket.connect(tcp::endpoint(asio::ip::make_address(endpoint->address), endpoint->port), error);
+  ASSERT_FALSE(error) << error.message();
+  ASSERT_TRUE(perform_import(socket));
+  auto submit = make_submit(81, 0x00010002, 1, 4, 64);
+  put_u32_be(submit.data() + 20, 0x00000002u);
+  ASSERT_TRUE(write_all(socket, submit));
+  ASSERT_TRUE(events.wait_request_count(1));
+  ASSERT_TRUE(bridge.send_reply(make_canonical_submit_reply(81, 1, 0, std::vector<std::uint8_t>(64))));
+  std::vector<std::uint8_t> reply(112);
+  ASSERT_TRUE(read_exact(socket, reply));
+  EXPECT_EQ(get_u32_be(reply.data()), 3U);
+  EXPECT_EQ(get_u32_be(reply.data() + 4), 81U);
+  socket.close(error);
+  bridge.stop();
+}
+
 TEST(LoopbackUsbipBridge, AcceptsDirectImportWithoutDevlist) {
   harness events;
   remote_usb::loopback_usbip_bridge bridge;
@@ -521,7 +548,9 @@ TEST(LoopbackUsbipBridge, AcceptsDirectImportWithoutDevlist) {
     EXPECT_EQ(get_u32_be(events.requests.front().data() + 8), devid);
   }
 
-  ASSERT_TRUE(bridge.send_reply(make_canonical_submit_reply(seqnum, 1, 0)));
+  /* usbip-win2 and the spike server use zero for a non-isochronous reply even
+   * when CMD_SUBMIT carried the protocol's -1 marker. */
+  ASSERT_TRUE(bridge.send_reply(make_canonical_submit_reply(seqnum, 1, 0, {}, 0, 0)));
   std::vector<std::uint8_t> reply(48);
   ASSERT_TRUE(read_exact(socket, reply));
   EXPECT_EQ(get_u32_be(reply.data()), 3U);
@@ -532,7 +561,7 @@ TEST(LoopbackUsbipBridge, AcceptsDirectImportWithoutDevlist) {
   bridge.stop();
 }
 
-TEST(LoopbackUsbipBridge, RejectsIsochronousAndReportsProtocolClose) {
+TEST(LoopbackUsbipBridge, ForwardsIsochronousSubmitAndReportsDescriptors) {
   harness events;
   remote_usb::loopback_usbip_bridge bridge;
   boost::system::error_code error;
@@ -546,9 +575,20 @@ TEST(LoopbackUsbipBridge, RejectsIsochronousAndReportsProtocolClose) {
   ASSERT_FALSE(error) << error.message();
   ASSERT_TRUE(perform_import(socket));
 
-  ASSERT_TRUE(write_all(socket, make_submit(9, 0x00010002, 1, 1, 8, 1)));
-  ASSERT_TRUE(wait_for_close(socket));
-  EXPECT_TRUE(events.wait_closed(remote_usb::close_reason::protocol_error));
+  std::vector<std::uint8_t> request_descriptors(16, 0);
+  put_u32_be(request_descriptors.data() + 4, 8);
+  ASSERT_TRUE(write_all(socket, make_submit(9, 0x00010002, 1, 1, 8, 1, {}, request_descriptors)));
+  ASSERT_TRUE(events.wait_request_count(1));
+  std::vector<std::uint8_t> reply_descriptors(16, 0);
+  put_u32_be(reply_descriptors.data() + 4, 8);
+  put_u32_be(reply_descriptors.data() + 8, 8);
+  ASSERT_TRUE(bridge.send_reply(make_canonical_submit_reply(9, 1, 0, {}, 1, 0, reply_descriptors)));
+  std::vector<std::uint8_t> reply(64);
+  ASSERT_TRUE(read_exact(socket, reply));
+  EXPECT_EQ(get_u32_be(reply.data()), 3U);
+  EXPECT_EQ(get_u32_be(reply.data() + 4), 9U);
+  EXPECT_EQ(get_i32_be(reply.data() + 32), 1);
+  EXPECT_EQ(get_i32_be(reply.data() + 36), 0);
   bridge.stop();
 }
 
@@ -846,7 +886,7 @@ TEST(LoopbackUsbipBridge, ForwardsUnlinkForUnknownTarget) {
   bridge.stop();
 }
 
-TEST(LoopbackUsbipBridge, RejectsUnlinkWithNonzeroDirection) {
+TEST(LoopbackUsbipBridge, AcceptsUnlinkWithNonzeroDirection) {
   harness events;
   remote_usb::loopback_usbip_bridge bridge;
   boost::system::error_code error;
@@ -861,16 +901,16 @@ TEST(LoopbackUsbipBridge, RejectsUnlinkWithNonzeroDirection) {
   ASSERT_TRUE(perform_import(socket));
 
   ASSERT_TRUE(write_all(socket, make_unlink(61, 0x00010002, 60, 1, 0)));
-  EXPECT_TRUE(wait_for_close(socket));
-  EXPECT_TRUE(events.wait_closed(remote_usb::close_reason::protocol_error));
+  ASSERT_TRUE(events.wait_request_count(1));
   {
     std::lock_guard lock(events.mutex);
-    EXPECT_TRUE(events.requests.empty());
+    EXPECT_EQ(get_u32_be(events.requests.front().data() + 12), 1U);
   }
+  ASSERT_TRUE(bridge.send_reply(make_canonical_unlink_reply(61, 0)));
   bridge.stop();
 }
 
-TEST(LoopbackUsbipBridge, RejectsUnlinkWithNonzeroEndpoint) {
+TEST(LoopbackUsbipBridge, AcceptsUnlinkWithNonzeroEndpoint) {
   harness events;
   remote_usb::loopback_usbip_bridge bridge;
   boost::system::error_code error;
@@ -885,12 +925,12 @@ TEST(LoopbackUsbipBridge, RejectsUnlinkWithNonzeroEndpoint) {
   ASSERT_TRUE(perform_import(socket));
 
   ASSERT_TRUE(write_all(socket, make_unlink(71, 0x00010002, 70, 0, 1)));
-  EXPECT_TRUE(wait_for_close(socket));
-  EXPECT_TRUE(events.wait_closed(remote_usb::close_reason::protocol_error));
+  ASSERT_TRUE(events.wait_request_count(1));
   {
     std::lock_guard lock(events.mutex);
-    EXPECT_TRUE(events.requests.empty());
+    EXPECT_EQ(get_u32_be(events.requests.front().data() + 16), 1U);
   }
+  ASSERT_TRUE(bridge.send_reply(make_canonical_unlink_reply(71, 0)));
   bridge.stop();
 }
 
@@ -1042,10 +1082,11 @@ TEST(LoopbackUsbipBridge, AllowsSelfStopFromClosedCallback) {
   replacement_callbacks.on_request = [](std::vector<std::uint8_t>) { return true; };
   boost::system::error_code restart_error;
   EXPECT_FALSE(bridge.start(test_device(), std::move(replacement_callbacks),
-                            restart_error).has_value());
+                       restart_error)
+      .has_value());
   EXPECT_EQ(restart_error,
-            boost::system::errc::make_error_code(
-              boost::system::errc::device_or_resource_busy));
+    boost::system::errc::make_error_code(
+      boost::system::errc::device_or_resource_busy));
   {
     std::lock_guard lock(callback_mutex);
     release_callback = true;
