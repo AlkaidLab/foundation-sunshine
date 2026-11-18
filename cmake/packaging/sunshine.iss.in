@@ -472,6 +472,26 @@ var
   // the journal the host reports at its next start (JournalWrite below)
   JournalRun, PreviousVersion: String;
 
+function InstallerMessageBox(const Text: String; const Typ: TMsgBoxType;
+  const Buttons, DefaultAnswer: Integer): Integer;
+var
+  Silent: Boolean;
+begin
+  // Authority: installer-inno-suppressible-msgbox-20261118 (Description),
+  // installer-inno-silent-state-20261118, installer-inno-uninstall-state-20261118
+  // and installer-inno-is-uninstaller-20261118 (Description).
+  // /SILENT alone does not suppress script dialogs. Never require a desktop
+  // response in either silent mode; otherwise keep the original interactive UI.
+  if IsUninstaller then
+    Silent := UninstallSilent
+  else
+    Silent := WizardSilent;
+  if Silent then
+    Result := DefaultAnswer
+  else
+    Result := SuppressibleMsgBox(Text, Typ, Buttons, DefaultAnswer);
+end;
+
 function InstallerParameterValue(Name: String): String;
 // Authority: installer-inno-script-functions-20261107 (GetCmdTail,
 // SaveStringToFile); installer-inno-command-line-20261107 (silent switches).
@@ -783,7 +803,7 @@ begin
   begin
     Detail := CustomMessage('MsgVDDInstallFailed') + #13#10 + #13#10 +
               'Exit code: ' + IntToStr(ResultCode);
-    MsgBox(Detail, mbError, MB_OK);
+    InstallerMessageBox(Detail, mbError, MB_OK, IDOK);
   end;
 end;
 
@@ -1181,12 +1201,10 @@ begin
   EmitInstallerEvent('service', 'failed', 'StatusInstallService', 100);
   JournalComponent('service', 'verify', 100);
   Log('Service verification failed. ' + Detail);
-  // MsgBox() ignores /SILENT (only /SUPPRESSMSGBOXES auto-answers it), so an
-  // unattended install without that switch would sit here forever now that we
-  // no longer abort. The log line above carries the same information.
+  // Silent callers receive the failure through the exit code and log above.
   // CustomMessage() returns the string verbatim, so {app} needs ExpandConstant.
   if not WizardSilent then
-    MsgBox(ExpandConstant(CustomMessage('MsgServiceInstallFailed')) + #13#10 + #13#10 + Detail, mbError, MB_OK);
+    InstallerMessageBox(ExpandConstant(CustomMessage('MsgServiceInstallFailed')) + #13#10 + #13#10 + Detail, mbError, MB_OK, IDOK);
 end;
 
 // Report a nonzero exit code when the service could not be verified. Inno
@@ -1299,11 +1317,12 @@ begin
   // metadata. Offer to clean it up rather than blocking the install entirely.
   if (UninstallExe = '') or (not FileExists(UninstallExe)) then
   begin
-    if MsgBox(CustomMessage('MsgOldNSISStaleRegistry'), mbConfirmation, MB_YESNO) = IDYES then
+    // Without interactive consent, preserve old installation metadata and stop.
+    if InstallerMessageBox(CustomMessage('MsgOldNSISStaleRegistry'), mbConfirmation, MB_YESNO, IDNO) = IDYES then
     begin
       if not CleanupOldNSISRegistry() then
       begin
-        MsgBox(CustomMessage('MsgOldNSISCleanupFailed'), mbError, MB_OK);
+        InstallerMessageBox(CustomMessage('MsgOldNSISCleanupFailed'), mbError, MB_OK, IDOK);
         Result := False;
       end;
     end
@@ -1314,7 +1333,8 @@ begin
     Exit;
   end;
 
-  if MsgBox(CustomMessage('MsgOldNSISDetected'), mbConfirmation, MB_YESNO) <> IDYES then
+  // Do not silently run an older uninstaller that could remove user data.
+  if InstallerMessageBox(CustomMessage('MsgOldNSISDetected'), mbConfirmation, MB_YESNO, IDNO) <> IDYES then
   begin
     Result := False;
     Exit;
@@ -1349,18 +1369,18 @@ begin
   if (InstallDir = '') or (not DirExists(InstallDir)) or
      (not FileExists(UninstallExe)) then
   begin
-    if MsgBox(CustomMessage('MsgOldNSISStaleRegistry'), mbConfirmation, MB_YESNO) = IDYES then
+    if InstallerMessageBox(CustomMessage('MsgOldNSISStaleRegistry'), mbConfirmation, MB_YESNO, IDNO) = IDYES then
     begin
       if not CleanupOldNSISRegistry() then
       begin
-        MsgBox(CustomMessage('MsgOldNSISCleanupFailed'), mbError, MB_OK);
+        InstallerMessageBox(CustomMessage('MsgOldNSISCleanupFailed'), mbError, MB_OK, IDOK);
         Result := False;
       end;
       Exit;
     end;
   end;
 
-  MsgBox(CustomMessage('MsgOldNSISFailed'), mbError, MB_OK);
+  InstallerMessageBox(CustomMessage('MsgOldNSISFailed'), mbError, MB_OK, IDOK);
   Result := False;
 end;
 
@@ -1462,8 +1482,8 @@ var
 begin
   if CurUninstallStep = usUninstall then
   begin
-    // Ask about virtual gamepad
-    if MsgBox(CustomMessage('MsgUninstallGamepad'), mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+    // The driver may be shared with other applications; silence must keep it.
+    if InstallerMessageBox(CustomMessage('MsgUninstallGamepad'), mbConfirmation, MB_YESNO or MB_DEFBUTTON2, IDNO) = IDYES then
     begin
       Exec(ExpandConstant('{app}\scripts\uninstall-gamepad.bat'), '', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     end;
@@ -1475,15 +1495,11 @@ begin
     // installation cannot lock future installs to a stale drive/path.
     DeleteInstallDirRegistry();
 
-    // Ask about data removal
-    if MsgBox(FmtMessage(CustomMessage('MsgUninstallData'), [ExpandConstant('{app}')]),
-      mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDNO then
+    // Only explicit consent may delete configuration, paired clients and covers.
+    // An unattended uninstall keeps user data, even without /SUPPRESSMSGBOXES.
+    if InstallerMessageBox(FmtMessage(CustomMessage('MsgUninstallData'), [ExpandConstant('{app}')]),
+      mbConfirmation, MB_YESNO or MB_DEFBUTTON2, IDNO) = IDYES then
     begin
-      // User chose to keep data, do nothing
-    end
-    else
-    begin
-      // Remove the installation directory
       DelTree(ExpandConstant('{app}'), True, True, True);
     end;
   end;
