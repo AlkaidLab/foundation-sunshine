@@ -130,7 +130,7 @@ namespace Alkaid {
     public static extern bool SetupDiEnumDeviceInfo(
       IntPtr DeviceInfoSet, uint MemberIndex, ref SP_DEVINFO_DATA DeviceInfoData);
 
-    [DllImport("setupapi.dll", SetLastError = true)]
+    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool SetupDiGetDeviceRegistryProperty(
       IntPtr DeviceInfoSet, ref SP_DEVINFO_DATA DeviceInfoData, uint Property,
@@ -143,7 +143,7 @@ namespace Alkaid {
       IntPtr DeviceInfoSet, ref SP_DEVINFO_DATA DeviceInfoData,
       StringBuilder DeviceInstanceId, uint DeviceInstanceIdSize, out uint RequiredSize);
 
-    [DllImport("setupapi.dll", SetLastError = true)]
+    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool SetupDiSetDeviceRegistryProperty(
       IntPtr DeviceInfoSet, ref SP_DEVINFO_DATA DeviceInfoData, uint Property,
@@ -168,7 +168,7 @@ namespace Alkaid {
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool DiInstallDevice(
       IntPtr hwndParent, IntPtr DeviceInfoSet, ref SP_DEVINFO_DATA DeviceInfoData,
-      uint Flags, [MarshalAs(UnmanagedType.Bool)] out bool NeedReboot);
+      IntPtr DriverInfoData, uint Flags, [MarshalAs(UnmanagedType.Bool)] out bool NeedReboot);
   }
 }
 '@
@@ -384,7 +384,7 @@ function New-RootDevice {
     }
     [bool]$needReboot = $false
     if (-not [Alkaid.SetupApi]::DiInstallDevice(
-        [IntPtr]::Zero, $set, [ref]$data, 0, [ref]$needReboot)) {
+        [IntPtr]::Zero, $set, [ref]$data, [IntPtr]::Zero, 0, [ref]$needReboot)) {
       Throw-Win32 'DiInstallDevice'
     }
     return [pscustomobject]@{ Set = $set; Data = $data; NeedReboot = $needReboot }

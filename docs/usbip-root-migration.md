@@ -20,9 +20,27 @@ class installation now have separate failure diagnostics
 (`ms-setupapi-classparams-20261118` and `ms-setupapi-classinstaller-20261118`,
 Return value). Last-error values are meaningful only for the failed operation
 (`ms-win32-getlasterror-20261118`, Return value and Remarks). An older combined
-diagnostic cannot distinguish the two calls; identifying which produced an
-observed error 203 requires another native run. Required registration failures
+diagnostic could not distinguish the two calls. Required registration failures
 and duplicate cleanup failures still propagate.
+
+A clean Windows 11 run measured the two defects behind the observed error 203
+(creation path, no controller present):
+
+- `DiInstallDevice` was declared with five parameters. Its documented
+  signature has six, with `DriverInfoData` between the device data and the
+  flags (`ms-newdev-diinstalldevice-20261107`, Syntax); the call ended in an
+  access violation.
+- `SetupDiSetDeviceRegistryProperty` and `SetupDiGetDeviceRegistryProperty`
+  were bound to the ANSI entry point, while the buffers are UTF-16
+  (`ms-setupapi-setdeviceregistrypropertyw-20261107`). The hardware ID
+  `ROOT\USBIP_WIN2\UDE` was stored as one-character IDs, no driver matched
+  (`There are no compatible drivers for this device`), and `DiInstallDevice`
+  failed with Win32 error 203.
+
+Both declarations are corrected; the creation path then registers the
+controller, loads the VHCI driver and is idempotent on a second run. The
+regression test reads the production declarations, because the substituted
+SetupAPI cannot see them.
 
 The installer retains Windows PowerShell 5.1 and its existing C# interop. The
 current documented PnPUtil device commands provide device state and package
