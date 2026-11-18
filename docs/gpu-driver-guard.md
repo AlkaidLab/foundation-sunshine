@@ -46,10 +46,11 @@ The `ctx.phase` word of the reports (docs/crash-reports.md) is `encoder-probe` w
 
 ## What the person sees
 
-* **Panel overview, Web UI overview, tray notification**: the same sentences. The components are in foundation-ui (`MDriverGuardNotice`, `foundation-ui/driver-guard`);
+* **Panel overview, Web UI overview, tray notification**: the same sentences. The components are in foundation-ui (`MDriverGuardNotice`, `foundation-ui/driverGuard`);
   the tray notification is made by the host from `src/gpu_driver_text.h`, and a Web UI test compares each line of that file with the foundation-ui texts.
 * The notice names the vendor, the driver version, the module and the phase ("The Intel graphics driver crashed at startup"), says it is not a fault of Sunshine, and offers
-  the vendor's official download page, and its support page for the case that the driver is already the latest version.
+  the vendor's official download page, and its support page for the case that the driver is already the latest version. Intel's download pages are split by hardware generation, so
+  no single page covers them: its "update" button opens the Graphics category of the Intel download center, and a second button opens the Intel Driver & Support Assistant, which finds the right driver.
 * **Once per driver version**: the notice is shown until it is dismissed; a dismissal is kept per `vendor:version` (`gpu_driver_notice.json`); the tray shows it once per version. A notice
   whose driver version differs from the one installed now is not shown (the person has updated); it comes back only when the failure happens again under the new version.
 * The safe mode notice says what was skipped, when it ends, and has a **Retry encoder check** button.
