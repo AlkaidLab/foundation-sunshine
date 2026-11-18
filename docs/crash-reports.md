@@ -51,7 +51,7 @@ test vector.
 
 ## Tests
 
-`SUNSHINE_TEST_CRASH=null-deref|null-call|abort|terminate|throw|hang|upload-only` (host), `null-deref|abort|panic` (Panel), `throw|task|upload-only`
+`SUNSHINE_TEST_CRASH=null-deref|null-call|abort|terminate|throw|hang|upload-only` (`null-call`, a call through a null function pointer, is Windows only) (host), `null-deref|abort|panic` (Panel), `throw|task|upload-only`
 (`sparxie-launch`). `tests/tools/crash_e2e.py` runs each mode in a scratch copy against a local mock of `/v1/crash` and checks the pending
 folder, the dump header, the upload and the deletion; it also checks consent off and a 500 answer. `tests/unit/test_crash.cpp` (25 cases),
 `src-tauri/src/crash/{meta,upload}.rs` tests and `tools/sparxie-launch-tests/CrashReportTests.cs` cover the pure parts and the upload.
