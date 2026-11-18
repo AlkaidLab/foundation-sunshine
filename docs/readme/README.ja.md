@@ -132,10 +132,13 @@ macOS では [Moonlight V+ for PC](https://github.com/qiin2333/moonlight-qt/rele
 
 #### パートナー クライアント
 
-- **VoidLink · iOS / iPadOS：** [紹介](https://github.com/The-Fried-Fish/VoidLink-previously-moonlight-zwm#readme) · [App Store（中国・韓国・ベトナム）](https://apps.apple.com/app/voidlink/id6747717070) · [App Store（その他の地域）](https://apps.apple.com/app/voidlink-extreme/id6755103808)（ストア配信は有料）
-- **VoidLink TestFlight Beta · Apple TV：** [TestFlight に参加](https://testflight.apple.com/join/k7gs61mZ)
+- **VoidLink · iOS / iPadOS / Apple TV（おすすめ）：** [紹介](https://github.com/The-Fried-Fish/VoidLink-previously-moonlight-zwm#readme) · [App Store（中国）](https://apps.apple.com/cn/app/voidlink/id6747717070) · [App Store（米国）](https://apps.apple.com/us/app/voidlink-extreme/id6755103808)（ストア配信は有料）
 - **Crown Edition · Android：** [ダウンロード](https://github.com/WACrown/moonlight-android/releases) · [紹介](https://github.com/WACrown/moonlight-android#readme)
 - **Baozi Edition · HarmonyOS：** [プロジェクトとダウンロード](https://gitee.com/smdsbz/moonlight-ohos)
+
+#### パートナーツール
+
+- **皎月连（Natpierce）：** [ネットワーク接続ツール](https://docs.qq.com/aio/DRFVhWERDaFhKd1ZE)
 
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/h-start-dark.webp"><img src="../../assets/readme/h-start.webp" height="50" alt=""></picture>&nbsp;クイック スタート
 

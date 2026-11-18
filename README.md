@@ -139,10 +139,13 @@ macOS 也可使用 [Moonlight V+ for PC](https://github.com/qiin2333/moonlight-q
 
 #### 合作客户端
 
-- **VoidLink · iOS / iPadOS：** [项目介绍](https://github.com/The-Fried-Fish/VoidLink-previously-moonlight-zwm#readme) · [中国大陆、韩国、越南 App Store](https://apps.apple.com/app/voidlink/id6747717070) · [其他地区 App Store](https://apps.apple.com/app/voidlink-extreme/id6755103808)（商店分发收费）
-- **VoidLink TestFlight Beta · 支持 Apple TV：** [加入 TestFlight 测试](https://testflight.apple.com/join/k7gs61mZ)
+- **VoidLink · iOS / iPadOS / Apple TV（推荐）：** [项目介绍](https://github.com/The-Fried-Fish/VoidLink-previously-moonlight-zwm#readme) · [中国区 App Store](https://apps.apple.com/cn/app/voidlink/id6747717070) · [美区／外区 App Store](https://apps.apple.com/us/app/voidlink-extreme/id6755103808)（商店分发收费）
 - **王冠版 · Android：** [下载](https://github.com/WACrown/moonlight-android/releases) · [项目介绍](https://github.com/WACrown/moonlight-android#readme)
 - **包子版 · 鸿蒙：** [项目与下载](https://gitee.com/smdsbz/moonlight-ohos)
+
+#### 合作工具
+
+- **皎月连：** [网络穿透工具](https://docs.qq.com/aio/DRFVhWERDaFhKd1ZE)
 
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="assets/readme/h-start-dark.webp"><img src="assets/readme/h-start.webp" height="50" alt=""></picture>&nbsp;快速开始
 

@@ -227,6 +227,11 @@ Type: files; Name: "{app}\concrt140.dll"
 Type: filesandordirs; Name: "{app}\tools\sunshine-ds5-component"
 Type: files; Name: "{app}\tools\ds5-sidecar-package.json"
 Type: files; Name: "{app}\Sunshine.Ds5Sidecar.manifest.json"
+; These files now live in licenses\libwebp. Preserve any unrelated files.
+Type: files; Name: "{app}\tools\library\libwebp\LICENSE.txt"
+Type: files; Name: "{app}\tools\library\libwebp\PATENTS.txt"
+Type: dirifempty; Name: "{app}\tools\library\libwebp"
+Type: dirifempty; Name: "{app}\tools\library"
 
 [Files]
 ; Embedded only for PrepareToInstall; it is not part of the installed layout.
@@ -248,9 +253,6 @@ Source: "{#MySourceDir}\tools\mat-capture\*.dll"; DestDir: "{app}\tools\mat-capt
 Source: "{#MySourceDir}\tools\mat-capture\LICENSE.MinHook.txt"; DestDir: "{app}\tools\mat-capture"; Flags: ignoreversion; Components: application
 #endif
 Source: "{#MySourceDir}\tools\nefconw.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
-; The bundled WebP decoder's license and patent grant.
-Source: "{#MySourceDir}\tools\library\libwebp\LICENSE.txt"; DestDir: "{app}\tools\library\libwebp"; Flags: ignoreversion; Components: application
-Source: "{#MySourceDir}\tools\library\libwebp\PATENTS.txt"; DestDir: "{app}\tools\library\libwebp"; Flags: ignoreversion; Components: application
 ; the protocol launcher of the Sparxie touch applications (published from tools/sparxie-launch when the build has dotnet)
 Source: "{#MySourceDir}\tools\sparxie-launch.exe"; DestDir: "{app}\tools"; Flags: ignoreversion skipifsourcedoesntexist; Components: application
 

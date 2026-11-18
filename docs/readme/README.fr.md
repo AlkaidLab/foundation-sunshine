@@ -132,10 +132,13 @@ Sous macOS, [Moonlight V+ for PC](https://github.com/qiin2333/moonlight-qt/relea
 
 #### Clients partenaires
 
-- **VoidLink · iOS / iPadOS :** [Présentation](https://github.com/The-Fried-Fish/VoidLink-previously-moonlight-zwm#readme) · [App Store (Chine, Corée du Sud, Vietnam)](https://apps.apple.com/app/voidlink/id6747717070) · [App Store (autres régions)](https://apps.apple.com/app/voidlink-extreme/id6755103808) (distribution payante sur les stores)
-- **VoidLink TestFlight Beta · Apple TV :** [Rejoindre le TestFlight](https://testflight.apple.com/join/k7gs61mZ)
+- **VoidLink · iOS / iPadOS / Apple TV (recommandé) :** [Présentation](https://github.com/The-Fried-Fish/VoidLink-previously-moonlight-zwm#readme) · [App Store (Chine)](https://apps.apple.com/cn/app/voidlink/id6747717070) · [App Store (États-Unis)](https://apps.apple.com/us/app/voidlink-extreme/id6755103808) (distribution payante sur les stores)
 - **Crown Edition · Android :** [Téléchargement](https://github.com/WACrown/moonlight-android/releases) · [Présentation](https://github.com/WACrown/moonlight-android#readme)
 - **Baozi Edition · HarmonyOS :** [Projet et téléchargements](https://gitee.com/smdsbz/moonlight-ohos)
+
+#### Outils partenaires
+
+- **Natpierce (Jiaoyuelian) :** [Outil de tunnel réseau](https://docs.qq.com/aio/DRFVhWERDaFhKd1ZE)
 
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/h-start-dark.webp"><img src="../../assets/readme/h-start.webp" height="50" alt=""></picture>&nbsp;Démarrage rapide
 
