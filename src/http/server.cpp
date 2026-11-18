@@ -618,7 +618,10 @@ namespace web::detail {
     std::function<void(std::shared_ptr<Request>, const error_code &)> on_error) {
     {
       std::lock_guard lock(impl->setup_mutex);
-      if (impl->started || impl->stopping) throw std::logic_error("HTTP server cannot restart");
+      // stop() can win the race against the thread that calls start(): a shutdown that begins while the listeners are still starting is not an error,
+      // there is just nothing left to serve (this used to throw out of the thread and end the process as an uncaught exception).
+      if (impl->stopping) return;
+      if (impl->started) throw std::logic_error("HTTP server cannot restart");
       if (!config.thread_pool_size || config.thread_pool_size > 32 || !config.max_connections || !config.header_limit || !config.max_request_streambuf_size || !config.max_response_buffer_size || config.timeout_request <= 0 || config.timeout_content <= 0 || config.timeout_stream.count() <= 0 || config.send_buffer_bytes < 0)
         throw std::invalid_argument("Invalid HTTP server resource limits");
       impl->config = std::move(config);
