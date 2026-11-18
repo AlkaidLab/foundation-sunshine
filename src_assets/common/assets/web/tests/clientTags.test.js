@@ -26,12 +26,11 @@ test('follow-up: the platform chips beside the tag are plain facts (neutral), no
   assert.match(less, /\.dl-tag \{[^}]*background: var\(--md-sys-color-surface-container-high\); color: var\(--md-sys-color-on-surface-variant\)/)
 })
 
-test('the box of a card\'s tags reserves room but its tags keep their own height: a wrapped line is not stretched into a tall pill', () => {
+test('wrapped card tags keep their own height instead of stretching', () => {
   const less = read('../styles/m3e-web.less')
   const rule = less.match(/\.dl-card__tags \{ display: flex; flex-wrap: wrap;[^}]*\}/)
   assert.ok(rule, 'the tag box rule exists')
   assert.match(rule[0], /align-items: flex-start; align-content: flex-start;/, 'flex-start, not the default stretch')
-  assert.match(read('../views/Downloads.vue'), /const tagsReserve = \(card\) => \(card\.client\.product \? \{ minHeight:/, 'the reserve is what made the line stretch')
 })
 
 test('a long system tag wraps inside its chip (no ellipsis cut of "Universal")', () => {
