@@ -38,6 +38,7 @@
 #include <functional>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -70,7 +71,7 @@ namespace platf {
 
     paced_reply_queue(send_t send, interrupt_config config):
         send_(std::move(send)) {
-      for (auto &pacing : interrupt_) pacing = interrupt_pacing<clock>(config.min_interval, config.heartbeat);
+      for (auto &lane_state : interrupt_) lane_state = interrupt_lane_t(config.min_interval, config.heartbeat);
 #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
   #define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
 #endif
@@ -133,39 +134,29 @@ namespace platf {
 
     /**
      * Hold an interrupt reply: due at once when new data is waiting (at least
-     * min_interval after the previous reply), after the heartbeat otherwise.
-     * The payload is built when the reply is due so it carries the latest state.
+     * min_interval after the previous reply), one heartbeat after the previous
+     * reply otherwise.  The payload is built when the reply is due so it
+     * carries the latest state.
      */
     void
     schedule_interrupt(lane which, std::uint32_t sequence, make_wire_t make_wire) {
       std::lock_guard lock(mutex_);
-      const auto due = interrupt_[static_cast<std::size_t>(which)].schedule(clock::now());
-      insert_locked(due, sequence, std::move(make_wire), which, true);
+      interrupt_[static_cast<std::size_t>(which)].hold(sequence, std::move(make_wire));
+      SetEvent(wake_);
     }
 
     /**
-     * A new report exists.  Moves the held interrupt reply up to the earliest
-     * allowed time, or marks the lane so the next URB is answered at once.
-     * Never call it while holding a lock the reply builder takes: the worker
-     * runs the builder under this queue's lock.
+     * A new report exists: the held interrupt reply may leave after the
+     * minimum interval instead of the heartbeat, or, when no URB is held, the
+     * next one does.  Never call it while holding a lock the reply builder
+     * takes: the worker runs the builder under this queue's lock.
      */
     void
     notify_interrupt_data(lane which) {
       std::lock_guard lock(mutex_);
-      auto &pacing = interrupt_[static_cast<std::size_t>(which)];
-      auto held = items_.end();
-      for (auto item = items_.begin(); item != items_.end(); ++item) {
-        if (item->second.interrupt && item->second.which == which) {
-          held = item;
-          break;
-        }
-      }
-      clock::time_point moved_to {};
-      if (!pacing.new_data(clock::now(), held != items_.end(), held != items_.end() ? held->first : clock::time_point {}, moved_to)) return;
-      auto node = items_.extract(held);
-      node.key() = moved_to;
-      items_.insert(std::move(node));
-      SetEvent(wake_);
+      auto &lane_state = interrupt_[static_cast<std::size_t>(which)];
+      lane_state.new_data();
+      if (lane_state.held() != 0) SetEvent(wake_);
     }
 
     /** Remove a held reply.  Returns false when it was already sent. */
@@ -178,6 +169,9 @@ namespace platf {
           return true;
         }
       }
+      for (auto &lane_state : interrupt_) {
+        if (lane_state.cancel(sequence)) return true;
+      }
       return false;
     }
 
@@ -187,27 +181,28 @@ namespace platf {
       std::lock_guard lock(mutex_);
       items_.clear();
       next_free_.fill(clock::time_point {});
-      for (auto &pacing : interrupt_) pacing.reset();
+      for (auto &lane_state : interrupt_) lane_state.reset();
     }
 
     std::size_t
     held() const {
       std::lock_guard lock(mutex_);
-      return items_.size();
+      std::size_t count = items_.size();
+      for (const auto &lane_state : interrupt_) count += lane_state.held();
+      return count;
     }
 
   private:
     struct item_t {
       std::uint32_t sequence;
       make_wire_t make_wire;
-      lane which { lane::iso_out };
-      bool interrupt { false };
     };
 
+    using interrupt_lane_t = interrupt_lane<make_wire_t, clock>;
+
     void
-    insert_locked(clock::time_point due, std::uint32_t sequence, make_wire_t make_wire,
-      lane which = lane::iso_out, bool interrupt = false) {
-      items_.emplace(due, item_t { sequence, std::move(make_wire), which, interrupt });
+    insert_locked(clock::time_point due, std::uint32_t sequence, make_wire_t make_wire) {
+      items_.emplace(due, item_t { sequence, std::move(make_wire) });
       SetEvent(wake_);
     }
 
@@ -231,13 +226,21 @@ namespace platf {
           if (stop_) return;
           while (!items_.empty() && items_.begin()->first <= clock::now()) {
             auto node = items_.extract(items_.begin());
-            if (node.mapped().interrupt) interrupt_[static_cast<std::size_t>(node.mapped().which)].sent(clock::now());
             send_(node.mapped().make_wire());
           }
-          if (items_.empty())
+          for (auto &lane_state : interrupt_) {
+            /* Taking a reply starts the next interval, so at most one leaves per call. */
+            if (auto make_wire = lane_state.take_if_due(clock::now())) send_((*make_wire)());
+          }
+          std::optional<clock::time_point> wake;
+          if (!items_.empty()) wake = items_.begin()->first;
+          for (const auto &lane_state : interrupt_) {
+            if (const auto due = lane_state.next_due(); due && (!wake || *due < *wake)) wake = *due;
+          }
+          if (!wake)
             CancelWaitableTimer(timer_);
           else
-            arm_timer(items_.begin()->first - clock::now());
+            arm_timer(*wake - clock::now());
         }
         WaitForMultipleObjects(static_cast<DWORD>(handles.size()), handles.data(), FALSE, INFINITE);
       }
@@ -247,7 +250,7 @@ namespace platf {
     mutable std::mutex mutex_;
     std::multimap<clock::time_point, item_t> items_;
     std::array<clock::time_point, static_cast<std::size_t>(lane::count_)> next_free_ {};
-    std::array<interrupt_pacing<clock>, static_cast<std::size_t>(lane::count_)> interrupt_;
+    std::array<interrupt_lane_t, static_cast<std::size_t>(lane::count_)> interrupt_;
     bool stop_ { false };
     bool high_resolution_ { false };
     HANDLE wake_ { nullptr };

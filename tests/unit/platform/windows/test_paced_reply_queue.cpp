@@ -8,9 +8,11 @@
  */
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <chrono>
 #include <condition_variable>
 #include <mutex>
+#include <thread>
 #include <vector>
 
 #include "src/platform/windows/paced_reply_queue.h"
@@ -142,4 +144,47 @@ TEST(PacedReplyQueue, CancelRemovesAHeldInterruptReply) {
   EXPECT_TRUE(queue.cancel(2));
   queue.notify_interrupt_data(queue_t::lane::interrupt_in);
   EXPECT_FALSE(rec.wait_for(2, 50ms));
+}
+
+/* Events must not push the heartbeat out: after a burst the replies keep coming at the heartbeat.
+ * The old schedule left the heartbeat silent for as long as the burst had lasted (600 ms here);
+ * the bound is generous so a loaded runner does not trip it. */
+TEST(PacedReplyQueue, TheHeartbeatResumesAfterABurstOfEvents) {
+  recorder_t rec;
+  queue_t queue { [&](auto wire) { return rec.send(std::move(wire)); }, { 1ms, 20ms } };
+  std::uint32_t sequence = 1;
+  std::atomic<bool> stop { false };
+  /* A host that keeps three URBs outstanding and posts a new one after each reply. */
+  for (int i = 0; i < 3; ++i) queue.schedule_interrupt(queue_t::lane::interrupt_in, sequence++, [] { return std::vector<std::uint8_t> { 1 }; });
+  std::thread host([&] {
+    std::size_t seen = 0;
+    while (!stop) {
+      std::unique_lock lock(rec.mutex);
+      rec.changed.wait_for(lock, 5ms, [&] { return rec.sent.size() > seen; });
+      const auto now_sent = rec.sent.size();
+      lock.unlock();
+      for (; seen < now_sent; ++seen) queue.schedule_interrupt(queue_t::lane::interrupt_in, sequence++, [] { return std::vector<std::uint8_t> { 1 }; });
+    }
+  });
+  const auto burst_end = clock_t_::now() + 600ms;
+  while (clock_t_::now() < burst_end) {
+    queue.notify_interrupt_data(queue_t::lane::interrupt_in);
+    std::this_thread::sleep_for(4ms);
+  }
+  const auto quiet_start = clock_t_::now();
+  std::this_thread::sleep_for(500ms);
+  stop = true;
+  host.join();
+  std::lock_guard lock(rec.mutex);
+  clock_t_::time_point previous = quiet_start;
+  std::chrono::milliseconds longest { 0 };
+  std::size_t quiet_replies = 0;
+  for (const auto &[tag, at] : rec.sent) {
+    if (at < quiet_start) continue;
+    ++quiet_replies;
+    longest = std::max(longest, std::chrono::duration_cast<std::chrono::milliseconds>(at - previous));
+    previous = at;
+  }
+  EXPECT_GE(quiet_replies, 5u);
+  EXPECT_LT(longest, 150ms);
 }
