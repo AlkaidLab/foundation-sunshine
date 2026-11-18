@@ -20,10 +20,10 @@
  *    oldest ones.  The fixed 4 ms pacing of the heartbeat made those 32 reports
  *    reach back 128 ms; early stream replies would shorten that and a reader
  *    that stalls for 80 ms or more could miss a short press.  After a button
- *    reply the lane therefore answers at most once per protect_interval (the
- *    heartbeat period) for protect_window (32 of them), so a press stays in the
- *    queue as long as it did with the fixed pacing.  Stream data keeps its fast
- *    path the rest of the time.
+ *    reply the lane therefore answers at most once per protect_interval for
+ *    protect_window (32 replies); at 4.5 ms the 32 slots hold the press, the
+ *    reply to its release and 29 more for the full 128 ms of the fixed pacing.
+ *    Stream data keeps its fast path the rest of the time.
  *
  * The host may keep several URBs outstanding.  The time a held URB becomes due
  * is derived from the moment the last reply left; no per-URB schedule is
@@ -64,10 +64,10 @@ namespace platf {
       duration heartbeat { std::chrono::milliseconds(4) };
       /** Replies per second all active pads may use together for stream changes. */
       unsigned budget_per_second { 2000 };
-      /** After a button reply, for this long ... (32 reports of the HID queue at 4 ms, plus a margin) */
-      duration protect_window { std::chrono::milliseconds(132) };
-      /** ... at most one reply per this interval (the heartbeat period: what the fixed pacing gave). */
-      duration protect_interval { std::chrono::milliseconds(4) };
+      /** After a button reply, for this long ... (32 reports of the HID queue at 4.5 ms) */
+      duration protect_window { std::chrono::milliseconds(144) };
+      /** ... at most one reply per this interval (a little over the old 4 ms: the release of the press needs a slot too). */
+      duration protect_interval { std::chrono::microseconds(4500) };
     };
 
     struct taken_t {
@@ -110,11 +110,16 @@ namespace platf {
     std::optional<time_point>
     next_due(unsigned pads) const {
       if (held_.empty()) return std::nullopt;
-      if (pending_edges_ != 0) return last_sent_ + settings_.min_interval;
-      const auto normal = last_sent_ + (dirty_ ? stream_floor(pads) : settings_.heartbeat);
+      /* No reply ever leaves less than min_interval after the previous one actually left. */
+      const auto earliest = last_sent_ + settings_.min_interval;
+      if (pending_edges_ != 0) return earliest;
+      /* The heartbeat counts from its place on the grid, a stream reply from the moment the last one left. */
+      const auto interval = dirty_ ? stream_floor(pads) : settings_.heartbeat;
+      const auto anchor = dirty_ ? last_sent_ : grid_;
+      const auto normal = std::max(anchor + interval, earliest);
       /* While the protection lasts the interval is longer; it ends at protect_until_ whatever
        * the clock does in between, so the due time never waits for a protection that is over. */
-      const auto protected_due = last_sent_ + std::max(dirty_ ? stream_floor(pads) : settings_.heartbeat, settings_.protect_interval);
+      const auto protected_due = std::max(anchor + std::max(interval, settings_.protect_interval), earliest);
       return std::max(normal, std::min(protected_due, protect_until_));
     }
 
@@ -134,9 +139,11 @@ namespace platf {
       taken_t taken { std::move(held_.front().item), edge };
       held_.pop_front();
       /* A heartbeat that leaves a little late (timers are never exact) does not move the next one:
-       * the beat stays on its 4 ms grid instead of drifting by the lateness of every timer. Replies
-       * stay at least min_interval apart, and a long gap (idle, first URB) starts a new grid. */
-      last_sent_ = heartbeat && now - *due <= settings_.heartbeat - settings_.min_interval ? *due : now;
+       * the beat stays on its 4 ms grid instead of drifting by the lateness of every timer, and a
+       * long gap (idle, first URB) starts a new grid.  last_sent_ is always the real send time, so
+       * the floor between two replies holds whatever the grid says. */
+      grid_ = heartbeat && now - *due <= settings_.heartbeat - settings_.min_interval ? *due : now;
+      last_sent_ = now;
       if (edge) {
         --pending_edges_;
         protect_until_ = now + settings_.protect_window;
@@ -161,6 +168,7 @@ namespace platf {
     reset() {
       held_.clear();
       last_sent_ = time_point {};
+      grid_ = time_point {};
       protect_until_ = time_point {};
       pending_edges_ = 0;
       dirty_ = false;
@@ -181,7 +189,8 @@ namespace platf {
 
     std::deque<entry_t> held_;
     config settings_ {};
-    time_point last_sent_ {};
+    time_point last_sent_ {};  ///< when the last reply really left
+    time_point grid_ {};  ///< where the heartbeat grid stands: last_sent_, or a little before it after a late timer
     time_point protect_until_ {};
     unsigned pending_edges_ { 0 };
     bool dirty_ { false };

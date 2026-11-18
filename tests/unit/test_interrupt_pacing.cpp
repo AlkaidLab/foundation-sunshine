@@ -23,6 +23,7 @@ namespace {
   struct reply_t {
     tp at;
     bool edge;
+    int edge_number;  ///< 1 for the reply to the first button change, 2 for the second, 0 for any other reply
   };
 
   /**
@@ -35,6 +36,7 @@ namespace {
     std::uint32_t next_sequence { 1 };
     std::vector<reply_t> replies;
     std::vector<tp> resubmits;
+    int edge_replies { 0 };
 
     explicit host_t(int outstanding, unsigned active_pads = 1):
         pads(active_pads) {
@@ -51,7 +53,7 @@ namespace {
           lane.hold(next_sequence++, 0);
         }
         if (const auto taken = lane.take_if_due(now, pads)) {
-          replies.push_back({ now, taken->edge });
+          replies.push_back({ now, taken->edge, taken->edge ? ++edge_replies : 0 });
           resubmits.push_back(now + 60us);
         }
       }
@@ -337,8 +339,9 @@ TEST(InterruptLane, AButtonReplySurvivesTheHidQueueAsLongAsWithTheFixedPacing) {
         if (queue.size() > 32) queue.pop_front();
       }
     }
-    const auto still_there = std::any_of(queue.begin(), queue.end(), [](const reply_t &r) { return r.edge; });
-    EXPECT_TRUE(still_there) << "stall " << stall.count() << " ms";
+    /* edge reply 1 is the press, edge reply 2 the release 30 ms later: the press itself must survive */
+    const auto press_there = std::any_of(queue.begin(), queue.end(), [](const reply_t &r) { return r.edge_number == 1; });
+    EXPECT_TRUE(press_there) << "stall " << stall.count() << " ms";
   }
 }
 
@@ -359,41 +362,41 @@ TEST(InterruptLane, WithoutTheProtectionAFastStreamPushesAPressOutOfTheQueue) {
       if (queue.size() > 32) queue.pop_front();
     }
   }
-  EXPECT_FALSE(std::any_of(queue.begin(), queue.end(), [](const reply_t &r) { return r.edge; }));
+  EXPECT_FALSE(std::any_of(queue.begin(), queue.end(), [](const reply_t &r) { return r.edge_number == 1; }));
 }
 
 TEST(InterruptLane, TheProtectionWindowKeepsTheFixedRateAndThenEnds) {
   host_t host { 2 };
   const auto press = t0 + 1s;
   host.run(t0, t0 + 3s, merged(train(t0, t0 + 3s, 500), { { press, report_change::edge } }));
-  /* within the window: the old 250 per second, plus the button reply */
-  EXPECT_LE(host.count(press, press + 132ms), 34u);
+  /* within the window: at most one reply per 4.5 ms, plus the button reply */
+  EXPECT_LE(host.count(press, press + 144ms), 34u);
   /* after the window: back to the stream rate */
   EXPECT_NEAR(static_cast<double>(host.count(press + 300ms, press + 800ms)), 250.0, 5.0);
   /* the heartbeat never stops, protection or not */
-  EXPECT_LE(host.longest_silence(t0, t0 + 3s), 4100us);
+  EXPECT_LE(host.longest_silence(t0, t0 + 3s), 4600us);
 }
 
-TEST(InterruptLane, StreamRepliesWaitTheHeartbeatWhileTheProtectionLastsAndTheFloorAfterwards) {
+TEST(InterruptLane, StreamRepliesWaitTheProtectIntervalWhileTheProtectionLastsAndTheFloorAfterwards) {
   lane_t lane;
   lane.hold(1, 1);
   lane.new_data(report_change::edge);
   ASSERT_TRUE(lane.take_if_due(t0, 1)->edge);
   lane.hold(2, 2);
   lane.new_data(report_change::stream);
-  EXPECT_EQ(lane.next_due(1), t0 + 4ms);  // not 1 ms
-  ASSERT_TRUE(lane.take_if_due(t0 + 4ms, 1));
-  /* the window ends 132 ms after the button reply; a reply 130 ms in is followed at the window's end */
+  EXPECT_EQ(lane.next_due(1), t0 + 4500us);  // not 1 ms
+  ASSERT_TRUE(lane.take_if_due(t0 + 4500us, 1));
+  /* the window ends 144 ms after the button reply; a reply 141 ms in is followed at the window's end */
   lane.hold(3, 3);
   lane.new_data(report_change::stream);
-  ASSERT_TRUE(lane.take_if_due(t0 + 130ms, 1));
+  ASSERT_TRUE(lane.take_if_due(t0 + 141ms, 1));
   lane.hold(4, 4);
   lane.new_data(report_change::stream);
-  EXPECT_EQ(lane.next_due(1), t0 + 132ms);
-  ASSERT_TRUE(lane.take_if_due(t0 + 132ms, 1));
+  EXPECT_EQ(lane.next_due(1), t0 + 144ms);
+  ASSERT_TRUE(lane.take_if_due(t0 + 144ms, 1));
   lane.hold(5, 5);
   lane.new_data(report_change::stream);
-  EXPECT_EQ(lane.next_due(1), t0 + 133ms);  // the floor again
+  EXPECT_EQ(lane.next_due(1), t0 + 145ms);  // the floor again
 }
 
 /* Timers are never exact: a heartbeat that leaves a little late must not push the next one back. */
@@ -443,4 +446,40 @@ TEST(InterruptLane, IdleRateDoesNotDriftWithTimerLateness) {
   /* 1000 replies on a 4 ms grid take 4000 ms plus one lateness, not 1000 latenesses */
   EXPECT_LE(now - t0, 4s + 200us);
   EXPECT_EQ(replies, 1000u);
+}
+
+/* A late heartbeat keeps the grid, but the floor between two replies counts from when it really left. */
+TEST(InterruptLane, AStreamChangeAfterALateHeartbeatStillWaitsTheFloorFromTheRealSendTime) {
+  lane_t lane;
+  lane.hold(1, 1);
+  ASSERT_TRUE(lane.take_if_due(t0, 1));
+  lane.hold(2, 2);
+  const auto sent = t0 + 4ms + 2500us;  // due at 4 ms, left 2.5 ms late
+  ASSERT_TRUE(lane.take_if_due(sent, 1));
+  lane.hold(3, 3);
+  lane.new_data(report_change::stream);
+  EXPECT_GE(*lane.next_due(1) - sent, 1ms);
+  EXPECT_FALSE(lane.take_if_due(sent + 999us, 1));
+}
+
+TEST(InterruptLane, AButtonChangeAfterALateHeartbeatStillWaitsTheFloorFromTheRealSendTime) {
+  lane_t lane;
+  lane.hold(1, 1);
+  ASSERT_TRUE(lane.take_if_due(t0, 1));
+  lane.hold(2, 2);
+  const auto sent = t0 + 4ms + 2500us;
+  ASSERT_TRUE(lane.take_if_due(sent, 1));
+  lane.hold(3, 3);
+  lane.new_data(report_change::edge);
+  EXPECT_GE(*lane.next_due(1) - sent, 1ms);
+}
+
+TEST(InterruptLane, TheNextHeartbeatAfterALateOneIsStillOnTheGrid) {
+  lane_t lane;
+  lane.hold(1, 1);
+  ASSERT_TRUE(lane.take_if_due(t0, 1));
+  lane.hold(2, 2);
+  ASSERT_TRUE(lane.take_if_due(t0 + 4ms + 2500us, 1));
+  lane.hold(3, 3);
+  EXPECT_EQ(lane.next_due(1), t0 + 8ms);
 }

@@ -864,6 +864,7 @@ namespace platf::ds5 {
         report[0] = 1;
         report[1] = report[2] = report[3] = report[4] = 128;
         report[8] = 8;
+        std::copy_n(report.begin(), seen_report.size(), seen_report.begin());
         sweep_stale_ports();
       }
       void

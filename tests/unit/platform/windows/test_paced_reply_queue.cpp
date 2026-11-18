@@ -189,6 +189,8 @@ TEST(PacedReplyQueue, TheHeartbeatResumesAfterABurstOfEvents) {
     longest = std::max(longest, std::chrono::duration_cast<std::chrono::milliseconds>(at - previous));
     previous = at;
   }
+  /* the silence between the last reply and the end of the observation counts as well */
+  longest = std::max(longest, std::chrono::duration_cast<std::chrono::milliseconds>(clock_t_::now() - previous));
   EXPECT_GE(quiet_replies, 5u);
   EXPECT_LT(longest, 150ms);
 }
