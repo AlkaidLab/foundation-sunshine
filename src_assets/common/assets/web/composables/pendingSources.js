@@ -9,6 +9,7 @@ import { useDualsenseShared, useDualsenseTuning } from './dualsenseShared.js'
 import { apiFetch, apiJson } from '../utils/apiFetch.js'
 import { AppService } from '../services/appService.js'
 import { appsEntries, applyAppEntries, revertAppEntries } from './pendingApps.js'
+import { postPendingMessage } from './pendingBridge.js'
 import { needsRestart } from './restartKeys.js'
 import { optionLabelOf } from './optionLabels.js'
 
@@ -175,7 +176,7 @@ export function registerPending({ t, te, locale, embedded = false }) {
 
   // the frame of the control panel shows the one bar
   if (embedded) exposePending(pending, {
-    post: (message) => window.parent.postMessage(message, '*'),
+    post: (message) => postPendingMessage(window.parent, message),
     listen: (fn) => { const on = (event) => { if (event.source === window.parent) fn(event.data) }; window.addEventListener('message', on); return () => window.removeEventListener('message', on) },
   })
 }

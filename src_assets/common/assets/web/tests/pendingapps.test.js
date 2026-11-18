@@ -1,10 +1,36 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { appsEntries, applyAppEntries, revertAppEntries } from '../composables/pendingApps.js'
+import { appsEntries, applyAppEntries, revertAppEntries, useAppsPending } from '../composables/pendingApps.js'
+import { nextTick, ref } from 'vue'
+import { resetPending, usePending } from 'foundation-ui/pending'
 
 const T = { add: 'Add', del: 'Delete', mod: 'Change', added: 'Added', deleted: 'Deleted', changed: 'Changed', existing: 'Existing', was: 'Before', order: 'Order', oldOrder: 'Old', newOrder: 'New' }
 const app = (name, extra = {}) => ({ name, cmd: '', ...extra })
 const original = [app('Desktop'), app('Steam'), app('Forza')]
+
+test('saving updates the baseline without discarding edits made during the save', async () => {
+  resetPending()
+  const pending = usePending()
+  let finishSave
+  pending.define('apps', { save: () => new Promise((resolve) => { finishSave = resolve }) })
+  const apps = ref(original.map((a) => ({ ...a })))
+  const originalApps = ref(original.map((a) => ({ ...a })))
+  const stop = useAppsPending({ apps, originalApps, locale: () => 'en', loaded: ref(true) })
+  try {
+    apps.value = [apps.value[1], apps.value[0], apps.value[2]]
+    await nextTick()
+    const saving = pending.saveSource('apps')
+    apps.value[2].cmd = 'new-command'
+    finishSave({ ok: true })
+    await saving
+    await nextTick()
+    assert.deepEqual(originalApps.value.map((a) => a.name), ['Steam', 'Desktop', 'Forza'])
+    assert.deepEqual(pending.entries('apps').map((e) => e.key), ['mod:Forza'])
+  } finally {
+    stop()
+    resetPending()
+  }
+})
 
 test('every added, removed and changed application is one entry and an unchanged list has none', () => {
   assert.deepEqual(appsEntries(original, JSON.parse(JSON.stringify(original)), T), [])

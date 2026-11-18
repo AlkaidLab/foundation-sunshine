@@ -54,6 +54,7 @@ export function useAppsPending({ apps, originalApps, locale, loaded }) {
   const detach = pending.attach('apps', {
     revert: (key) => { apps.value = revertAppEntries(apps.value, pending.entries('apps').filter((e) => e.key === key)) },
     revertAll: () => { apps.value = clone(originalApps.value) },
+    saved: (entries) => { originalApps.value = applyAppEntries(originalApps.value, entries) },
   })
   stop.push(detach)
   stop.push(watch(() => (loaded.value ? JSON.stringify([apps.value.map(strip), originalApps.value.map(strip)]) : null), (json) => {
