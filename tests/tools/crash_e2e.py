@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """End-to-end check of crash capture against a local mock of POST /v1/crash.
 
-  crash_e2e.py --exe <program> --config-dir <dir> [--arg X ...] [--expect-dump] [--modes null-deref,abort,throw,terminate,hang]
+  crash_e2e.py --exe <program> --config-dir <dir> [--arg X ...] [--expect-dump] [--modes null-deref,null-call,abort,throw,terminate,hang]
 
 For each mode the program is started with SUNSHINE_TEST_CRASH=<mode> (it must fail or, for hang, report and exit), the pending folder
 <config-dir>/crashes/pending is checked for a meta (and a minidump on Windows), then the program is started again with the uploader
@@ -84,13 +84,18 @@ for mode in a.modes.split(','):
     check(len(names) == 1, f'{mode}: one meta in pending ({names})')
     if not names: continue
     meta = json.load(open(os.path.join(pending, names[0]), encoding='utf-8'))
-    want_kind = {'null-deref': 'crash', 'abort': 'abort', 'throw': 'abort', 'terminate': 'abort', 'hang': 'hang', 'panic': 'panic', 'task': 'unhandled-dotnet'}[mode]
+    want_kind = {'null-deref': 'crash', 'null-call': 'crash', 'abort': 'abort', 'throw': 'abort', 'terminate': 'abort', 'hang': 'hang', 'panic': 'panic', 'task': 'unhandled-dotnet'}[mode]
     want_kind = dict(kv.split('=') for kv in a.kinds.split(',') if kv).get(mode, want_kind)
     check(meta.get('kind') == want_kind, f'{mode}: kind {meta.get("kind")} == {want_kind}')
     check(meta.get('v') == 1 and meta.get('product') and meta.get('version') is not None, f'{mode}: v/product/version present')
     check(len(meta.get('signature', '')) == 64, f'{mode}: signature {meta.get("signature", "")[:12]}...')
     check(bool(meta.get('frames')) and 'module' in meta and 'module_offset' in meta, f'{mode}: {len(meta.get("frames", []))} frames, module {meta.get("module")} {meta.get("module_offset")}')
     if mode == 'null-deref' and a.expect_dump: check(meta.get('exception_code') == '0xC0000005', f'null-deref: exception_code {meta.get("exception_code")}')
+    if mode == 'null-call' and a.expect_dump:
+        # a call through a null pointer faults where there is no code: the walk must start at the caller, not end with an empty (shared) signature
+        check(meta.get('exception_code') == '0xC0000005', f'null-call: exception_code {meta.get("exception_code")}')
+        check(meta.get('module') not in (None, '', 'unknown') and meta.get('signature') != 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+              f'null-call: caller frame {meta.get("module")} {meta.get("module_offset")}, signature {meta.get("signature", "")[:12]}')
     dump = os.path.join(pending, names[0][:-5] + '.dmp')
     if a.expect_dump and mode not in a.no_dump_modes.split(','):
         ok = os.path.isfile(dump) and open(dump, 'rb').read(4) == b'MDMP'
