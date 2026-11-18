@@ -239,14 +239,15 @@ TEST(InterruptLane, IdleReplyRateIsTheHeartbeat) {
   EXPECT_NEAR(static_cast<double>(host.count(t0 + 1s, t0 + 2s)), 250.0, 2.0);
 }
 
-/* The reply budget: every pad answers at 1500 / pads at most while a stream moves. */
+/* The reply budget: every pad answers at 2000 / pads at most while a stream moves. */
 TEST(InterruptLane, TheStreamFloorGrowsWithTheNumberOfActivePads) {
   lane_t lane;
   EXPECT_EQ(lane.stream_floor(1), 1ms);
   EXPECT_EQ(lane.stream_floor(0), 1ms);
-  EXPECT_EQ(lane.stream_floor(2), std::chrono::duration_cast<clock_type::duration>(std::chrono::duration<double>(2.0 / 1500)));
-  const auto four_pads_ms = std::chrono::duration<double, std::milli>(lane.stream_floor(4)).count();
-  EXPECT_NEAR(four_pads_ms, 2.667, 0.001);
+  EXPECT_EQ(lane.stream_floor(2), 1ms);
+  EXPECT_EQ(lane.stream_floor(4), 2ms);
+  EXPECT_EQ(lane.stream_floor(8), 4ms);
+  EXPECT_EQ(lane.stream_floor(16), 8ms);
 }
 
 TEST(InterruptLane, FourPadsTogetherStayWithinTheBudget) {
@@ -257,8 +258,8 @@ TEST(InterruptLane, FourPadsTogetherStayWithinTheBudget) {
   const auto one_rate = static_cast<double>(one.count(t0 + 1s, t0 + 2s));
   const auto four_rate = static_cast<double>(four.count(t0 + 1s, t0 + 2s)) * 4.0;
   EXPECT_NEAR(one_rate, 1000.0, 10.0);
-  EXPECT_LE(four_rate, 1500.0 * 1.02);
-  EXPECT_GE(four_rate, 1500.0 * 0.95);
+  EXPECT_LE(four_rate, 2000.0 * 1.02);
+  EXPECT_GE(four_rate, 2000.0 * 0.95);
 }
 
 TEST(InterruptLane, TheBudgetNeverSlowsTheHeartbeat) {
@@ -289,12 +290,12 @@ TEST(InterruptLane, EachButtonChangeGetsItsOwnReply) {
 TEST(InterruptLane, AButtonReplyIgnoresTheStreamFloor) {
   lane_t lane;
   lane.hold(1, 1);
-  ASSERT_TRUE(lane.take_if_due(t0, 4));
+  ASSERT_TRUE(lane.take_if_due(t0, 8));
   lane.hold(2, 2);
   lane.new_data(report_change::stream);
-  EXPECT_GT(*lane.next_due(4), t0 + 2ms);  // 2.67 ms with four pads
+  EXPECT_EQ(lane.next_due(8), t0 + 4ms);  // eight pads: 4 ms
   lane.new_data(report_change::edge);
-  EXPECT_EQ(lane.next_due(4), t0 + 1ms);
+  EXPECT_EQ(lane.next_due(8), t0 + 1ms);
 }
 
 TEST(InterruptLane, AButtonReplyLeavesTheStreamChangeForTheNextReply) {

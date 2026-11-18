@@ -63,7 +63,7 @@ namespace platf {
       /** Period of the reply when nothing changed. */
       duration heartbeat { std::chrono::milliseconds(4) };
       /** Replies per second all active pads may use together for stream changes. */
-      unsigned budget_per_second { 1500 };
+      unsigned budget_per_second { 2000 };
       /** After a button reply, for this long ... (32 reports of the HID queue at 4 ms, plus a margin) */
       duration protect_window { std::chrono::milliseconds(132) };
       /** ... at most one reply per this interval (the heartbeat period: what the fixed pacing gave). */
