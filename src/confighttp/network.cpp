@@ -12,6 +12,7 @@
 #include "src/confighttp/common.h"
 #include "src/logging.h"
 #include "src/nat_discovery.h"
+#include "src/network_check.h"
 #include "src/network.h"
 #include "src/network_reachability.h"
 #include "src/nvhttp.h"
@@ -112,10 +113,63 @@ namespace confighttp::network {
         write_json_error(response, web::StatusCode::internal_server_error, error.what());
       }
     }
+
+    network_check::inputs_t
+    check_inputs() {
+      network_check::inputs_t inputs;
+      const auto region = nat_discovery::region_of(config::sunshine.locale, nat_discovery::host_time_zone());
+      const auto list = nat_discovery::parse_server_list(config::nvhttp.stun_servers, region);
+      inputs.stun_enabled = !list.disabled;
+      const auto saved = public_address::effective_endpoints(config::nvhttp.external_endpoints, config::nvhttp.external_ip);
+      for (const auto &endpoint : saved.endpoints) inputs.saved_endpoints.push_back(public_address::format_endpoint(endpoint));
+
+      inputs.probe = [](const network_check::request_t &, const std::function<void(std::string_view, bool)> &progress) {
+        auto options = configured_probe();
+        options.progress = progress;
+        return reachability::probe(options, true);
+      };
+      inputs.discover = [list, region](const network_check::request_t &) {
+        nat_discovery::discover_options_t options;
+        options.servers = list.servers;
+        options.enabled = !list.disabled;
+        options.region = list.configured ? "configured" : region == nat_discovery::region_e::china ? "china" : "global";
+        return nat_discovery::discover(options, true);
+      };
+      return inputs;
+    }
+
+    /// POST /api/network/check: start a run, or return the one that is going. The answer is the run, with the state of every step.
+    void
+    startCheck(resp_https_t response, req_https_t request) {
+      if (!authenticate(response, request)) return;
+      try {
+        const auto run = network_check::start(check_inputs(), {});
+        write_json(response, web::StatusCode::ok, network_check::to_json(*run));
+      }
+      catch (const std::exception &error) {
+        write_json_error(response, web::StatusCode::internal_server_error, error.what());
+      }
+    }
+
+    /// GET /api/network/check[?id=...]: the latest run (or the named one) with the state of every step.
+    void
+    getCheck(resp_https_t response, req_https_t request) {
+      if (!authenticate(response, request)) return;
+      const auto query = request->parse_query_string();
+      const auto id = query.find("id");
+      const auto run = network_check::find(id == query.end() ? std::string {} : id->second);
+      if (!run) {
+        write_json_error(response, web::StatusCode::not_found, "no_run");
+        return;
+      }
+      write_json(response, web::StatusCode::ok, network_check::to_json(*run));
+    }
   }  // namespace
 
   void
   register_routes(https_server_t &server) {
+    server.resource["^/api/network/check$"]["POST"] = startCheck;
+    server.resource["^/api/network/check$"]["GET"] = getCheck;
     server.resource["^/api/network/reachability$"]["GET"] = getReachability;
     server.resource["^/api/network/overview$"]["GET"] = getOverview;
   }

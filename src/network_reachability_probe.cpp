@@ -1008,8 +1008,15 @@ namespace reachability {
       snapshot.checked_at = format_utc_iso(now);
       snapshot.ports = options.ports;
 
+      const auto stage = [&options](std::string_view name, bool finished) {
+        if (options.progress) options.progress(name, finished);
+      };
+      stage("listening", false);
       apply_sockets(snapshot.ports, own_sockets(options.process_id));
+      stage("listening", true);
+      stage("firewall", false);
       apply_windows_firewall(snapshot.ports);
+      stage("firewall", true);
 
       const auto adapters = enumerate_adapters();
       std::string host_public_ip;
@@ -1067,8 +1074,10 @@ namespace reachability {
       public_inputs.web_ui_exposed_to_wan = origin == "wan";
       public_inputs.evidence = evidence;
 
+      stage("router", false);
       const auto router = query_router(snapshot.ports);
       router_status_t router_status = router;
+      stage("router", true);
 
       // The endpoints in force (external_endpoints, or the legacy external_ip), probed in parallel.
       const auto endpoint_list = public_address::effective_endpoints(options.external_endpoints, options.external_ip);
@@ -1076,7 +1085,9 @@ namespace reachability {
       endpoint_prober_t prober;
       prober.resolve = [](const std::string &host) { return resolve_host(host, std::chrono::seconds { 2 }); };
       prober.handshake = [&options](const std::string &address, std::uint16_t port) { return handshake_to(address, port, options.certificate_path); };
+      stage("endpoints", false);
       public_inputs.endpoints = probe_endpoints(endpoint_list.endpoints, default_http_port, router_status.wan_ip, prober);
+      stage("endpoints", true);
 
       // The first endpoint also fills the single-address fields older clients of the API read.
       configured_address_t configured;

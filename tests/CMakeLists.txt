@@ -946,6 +946,24 @@ add_test(NAME rc_version_encoding COMMAND ${CMAKE_COMMAND} -P ${CMAKE_SOURCE_DIR
 # A git archive tree (no .git) records its commit from cmake/prep/build_identity_archive.txt (export-subst).
 add_test(NAME build_info_archive COMMAND ${CMAKE_COMMAND} -P ${CMAKE_SOURCE_DIR}/tests/cmake/test_build_info_archive.cmake WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
+# Network check run (net-check-1118): the steps of a run, what each found, and the TCP and UDP results.
+add_executable(network_check_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/network_check.cpp
+        ${CMAKE_SOURCE_DIR}/src/nat_discovery.cpp
+        ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
+        ${CMAKE_SOURCE_DIR}/src/public_address.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_network_check.cpp)
+target_include_directories(network_check_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(network_check_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json alkaidlab_stun_codec
+        sunshine_project_options sunshine_coverage ${Boost_LIBRARIES})
+target_compile_options(network_check_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(network_check_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    target_link_libraries(network_check_unit_tests PRIVATE ws2_32 iphlpapi)
+    set_target_properties(network_check_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME network_check_unit_tests COMMAND network_check_unit_tests)
+
 add_executable(network_reachability_sample
         ${CMAKE_SOURCE_DIR}/tests/tools/network_reachability_sample.cpp
         ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
