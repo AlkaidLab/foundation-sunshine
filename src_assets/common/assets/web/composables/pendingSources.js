@@ -8,7 +8,7 @@ import { useSharedConfig, setConfigLoadedHook } from './configStore.js'
 import { useDualsenseShared, useDualsenseTuning } from './dualsenseShared.js'
 import { apiFetch, apiJson } from '../utils/apiFetch.js'
 import { AppService } from '../services/appService.js'
-import { appsEntries, applyAppEntries, revertAppEntries } from './pendingApps.js'
+import { appsEntries, applyAppEntries, revertAppEntries, syncRevertedApps } from './pendingApps.js'
 import { postPendingMessage } from './pendingBridge.js'
 import { needsRestart } from './restartKeys.js'
 import { optionLabelOf } from './optionLabels.js'
@@ -170,7 +170,12 @@ export function registerPending({ t, te, locale, embedded = false }) {
       try { await AppService.saveApps(applyAppEntries(await AppService.getApps(), entries), null); return { ok: true } } catch (error) { return { ok: false, error: error.message } }
     },
     revertSaved: async (entries) => {
-      try { await AppService.saveApps(revertAppEntries(await AppService.getApps(), entries), null); return { ok: true } } catch (error) { return { ok: false, error: error.message } }
+      try {
+        const restored = revertAppEntries(await AppService.getApps(), entries)
+        await AppService.saveApps(restored, null)
+        syncRevertedApps(restored)
+        return { ok: true }
+      } catch (error) { return { ok: false, error: error.message } }
     },
   })
 
