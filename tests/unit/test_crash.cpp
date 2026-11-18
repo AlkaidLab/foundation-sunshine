@@ -258,6 +258,66 @@ TEST(CrashSignature, AllRuntimeFramesFallBackToTheWholeList) {
   EXPECT_EQ(crash::first_caller_frame(f, 2), 0u);
 }
 
+TEST(CrashPhase, TheProbeThreadKeepsItsWordWhileTheMainThreadMovesOn) {
+  using crash::context::phase_e;
+  auto &state = crash::context::state();
+  crash::context::set_phase(phase_e::listeners);
+  crash::context::begin_encoder_probe();
+  EXPECT_EQ(state.phase.load(), static_cast<int>(phase_e::encoder_probe));
+  // the main thread goes on: its words do not replace the probe's
+  crash::context::set_phase(phase_e::input_wait);
+  crash::context::set_phase(phase_e::tray);
+  EXPECT_EQ(state.phase.load(), static_cast<int>(phase_e::encoder_probe));
+  // the start is over before the probe is
+  crash::context::set_phase(phase_e::none);
+  EXPECT_EQ(state.phase.load(), static_cast<int>(phase_e::encoder_probe));
+  crash::context::end_encoder_probe();
+  EXPECT_EQ(state.phase.load(), static_cast<int>(phase_e::none));
+}
+
+TEST(CrashPhase, AProbeThatEndsBeforeTheStartDoesRestoreTheMainThreadsPhase) {
+  using crash::context::phase_e;
+  auto &state = crash::context::state();
+  crash::context::set_phase(phase_e::listeners);
+  crash::context::begin_encoder_probe();
+  crash::context::set_phase(phase_e::tray);
+  crash::context::end_encoder_probe();
+  EXPECT_EQ(state.phase.load(), static_cast<int>(phase_e::tray));
+  crash::context::set_phase(phase_e::none);
+  EXPECT_EQ(state.phase.load(), static_cast<int>(phase_e::none));
+}
+
+TEST(CrashDriverFrame, ATopFrameInADriverModuleIsADriverCrash) {
+  // the null-call crash of an Intel driver: the walk starts at the caller, which lies in the driver
+  crash::frame_t f[] = { frame("igd12umd64.dll", 0x4a2b10), frame("igd12umd64.dll", 0x4a1000), frame("d3d11.dll", 0x77), frame("sunshine.exe", 0x500) };
+  const auto hit = crash::driver_frame(f, 4);
+  EXPECT_EQ(hit.vendor, crash::gpu_driver::vendor_e::intel);
+  EXPECT_EQ(hit.index, 0u);
+}
+
+TEST(CrashDriverFrame, RuntimeFramesOnTopAreSkippedLikeInTheSignature) {
+  // a hang: the stuck thread waits in ntdll, called from the NVIDIA driver
+  crash::frame_t f[] = { frame("ntdll.dll", 0x10), frame("KERNELBASE.dll", 0x20), frame("nvwgf2umx.dll", 0x9c0), frame("sunshine.exe", 0x500) };
+  const auto hit = crash::driver_frame(f, 4);
+  EXPECT_EQ(hit.vendor, crash::gpu_driver::vendor_e::nvidia);
+  EXPECT_EQ(hit.index, 2u);
+}
+
+TEST(CrashDriverFrame, ADriverBelowTheHostIsNotBlamed) {
+  // the host calls into the driver and crashes in its own code afterwards: the top frame is the host's
+  crash::frame_t f[] = { frame("sunshine.exe", 0x500), frame("nvwgf2umx.dll", 0x9c0), frame("sunshine.exe", 0x600) };
+  EXPECT_EQ(crash::driver_frame(f, 3).vendor, crash::gpu_driver::vendor_e::none);
+  // nor a crash in the system's own graphics runtime
+  crash::frame_t g[] = { frame("d3d11.dll", 0x10), frame("amdxx64.dll", 0x20), frame("sunshine.exe", 0x600) };
+  EXPECT_EQ(crash::driver_frame(g, 3).vendor, crash::gpu_driver::vendor_e::none);
+}
+
+TEST(CrashDriverFrame, NothingToLookAt) {
+  EXPECT_EQ(crash::driver_frame(nullptr, 0).vendor, crash::gpu_driver::vendor_e::none);
+  crash::frame_t f[] = { frame("ntdll.dll", 1), frame("kernel32.dll", 2) };
+  EXPECT_EQ(crash::driver_frame(f, 2).vendor, crash::gpu_driver::vendor_e::none);
+}
+
 TEST(CrashTime, FormatsUtc) {
   char out[24];
   crash::format_iso_utc(0, out);

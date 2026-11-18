@@ -157,7 +157,7 @@ namespace display_device {
   }
 
   std::unique_ptr<session_t::deinit_t>
-  session_t::init() {
+  session_t::init(bool skip_recovery) {
 #ifdef _WIN32
     // Remove a registration left behind by a terminated Sunshine process
     // before recovering display state or accepting a new stream.
@@ -173,7 +173,10 @@ namespace display_device {
     // recovery a bounded time; a call that does not return runs on by itself and holds the session lock, so a stream that starts later waits behind it
     // instead of changing the display under a recovery that has not finished.
     constexpr std::chrono::seconds recovery_wait { 20 };
-    if (!run_bounded([] { session_t::get().restore_state(); }, recovery_wait)) {
+    if (skip_recovery) {
+      BOOST_LOG(warning) << "Safe mode: the display recovery of the start is skipped";
+    }
+    else if (!run_bounded([] { session_t::get().restore_state(); }, recovery_wait)) {
       BOOST_LOG(error) << "The display recovery did not finish within " << recovery_wait.count()
                        << " s (the display driver does not answer); the host starts without waiting for it";
     }

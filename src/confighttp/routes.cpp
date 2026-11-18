@@ -15,6 +15,7 @@
 #include "src/confighttp/configuration.h"
 #include "src/confighttp/diagnostics.h"
 #include "src/confighttp/doctor.h"
+#include "src/confighttp/gpu_driver_guard.h"
 #include "src/confighttp/dualsense.h"
 #include "src/confighttp/integrations.h"
 #include "src/confighttp/network.h"
@@ -45,6 +46,7 @@ namespace confighttp {
     confighttp::pairing::register_routes(server);
     confighttp::diagnostics::register_routes(server);
     confighttp::doctor::register_routes(server);
+    confighttp::gpu_driver_guard::register_routes(server);
     confighttp::runtime::register_routes(server);
     confighttp::integrations::register_routes(server);
     confighttp::network::register_routes(server);

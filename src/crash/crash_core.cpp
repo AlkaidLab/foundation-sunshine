@@ -227,6 +227,19 @@ namespace crash {
     return 0;
   }
 
+  driver_frame_t
+  driver_frame(const frame_t *frames, std::size_t count) {
+    driver_frame_t hit;
+    if (!frames || !count) return hit;
+    const auto from = first_caller_frame(frames, count);
+    const auto vendor = gpu_driver::vendor_of_module(frames[from].module);
+    if (vendor != gpu_driver::vendor_e::none) {
+      hit.vendor = vendor;
+      hit.index = from;
+    }
+    return hit;
+  }
+
   namespace {
     /// The part of a module name after the last directory separator: a module is named by its file, never by where it lies (a path holds the account name).
     const char *

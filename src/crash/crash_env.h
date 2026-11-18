@@ -27,4 +27,9 @@ namespace crash::env {
   std::string
   describe_machine();
 
+  /// Reads the graphics driver versions from the system and hands them to the crash handlers (gpu_driver.h), so a driver mark says which version failed.
+  /// Blocking (the system inventory): call it on a thread of its own.
+  void
+  publish_gpu_driver_versions();
+
 }  // namespace crash::env

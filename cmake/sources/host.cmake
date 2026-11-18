@@ -94,7 +94,7 @@ set(SUNSHINE_HOST_SOURCES
     src/system_info.cpp src/system_info.h
     src/build_info.cpp src/build_info.h
     src/crash/crash.h src/crash/crash_core.cpp src/crash/crash_core.h src/crash/crash_state.h
-    src/crash/crash_common.cpp src/crash/crash_win.cpp src/crash/crash_posix.cpp src/crash/crash_upload.cpp src/crash/log_scrub.cpp src/crash/log_scrub.h src/crash/crash_log.cpp src/crash/crash_log.h src/crash/crash_env.cpp src/crash/crash_env_text.cpp src/crash/crash_env.h src/crash/crash_context.h
+    src/crash/crash_common.cpp src/crash/crash_win.cpp src/crash/crash_posix.cpp src/crash/crash_upload.cpp src/crash/log_scrub.cpp src/crash/log_scrub.h src/crash/crash_log.cpp src/crash/crash_log.h src/crash/crash_env.cpp src/crash/crash_env_text.cpp src/crash/crash_env.h src/crash/crash_context.h src/crash/gpu_driver.h
     src/system_info_cache.cpp
     src/system_info_probe.cpp
     src/stat_trackers.cpp src/stat_trackers.h
@@ -228,6 +228,8 @@ set(SUNSHINE_HOST_SOURCES
     src/confighttp/pair_link.cpp src/confighttp/pair_link.h
     src/confighttp/diagnostics.cpp src/confighttp/diagnostics.h
     src/confighttp/doctor.cpp src/confighttp/doctor.h
+    src/confighttp/gpu_driver_guard.cpp src/confighttp/gpu_driver_guard.h
+    src/gpu_driver_guard.h src/gpu_driver_text.h src/background_probe.h
     src/confighttp/network.cpp src/confighttp/network.h
     src/confighttp/systeminfo.cpp src/confighttp/systeminfo.h
     src/confighttp/runtime.cpp src/confighttp/runtime.h
