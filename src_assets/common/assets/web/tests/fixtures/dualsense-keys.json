@@ -905,7 +905,7 @@
 "group": 10,
 "tier": "advanced",
 "label": "Compat report Rate Cap Hz",
-"implemented": false,
+"implemented": true,
 "authority": "client"
 },
 {

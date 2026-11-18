@@ -2041,10 +2041,7 @@ namespace platf {
         feedback_queue,
         true);
       if (result == 0) {
-        /* 250 Hz is above the legacy 100 Hz request while keeping client and
-         * host scheduling overhead below the 1000 Hz USB report ceiling. */
-        feedback_queue->raise(gamepad_feedback_msg_t::make_motion_event_state(id.clientRelativeIndex, LI_MOTION_TYPE_ACCEL, 250));
-        feedback_queue->raise(gamepad_feedback_msg_t::make_motion_event_state(id.clientRelativeIndex, LI_MOTION_TYPE_GYRO, 250));
+        /* The request for motion reports (default 250 Hz, key 101) went out with the allocation. */
         return 0;
       }
       BOOST_LOG(warning) << "DualSense allocation failed for "sv << selection_source

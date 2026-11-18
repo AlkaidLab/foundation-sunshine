@@ -477,6 +477,7 @@ namespace platf::ds5 {
       ::ds5::tuning::trigger::tracker_t trigger_tracker;
       int global_index { -1 };
       int client_index { 0 };
+      std::uint16_t announced_motion_rate { 0 };  ///< the rate the client was last asked for (key 101); 0 before the first request
       std::wstring leased_serial;
       bool mute_button_down { false };
       std::optional<bool> published_mute;
@@ -895,10 +896,34 @@ namespace platf::ds5 {
 
       ~native_impl() { stop(); }
 
+      /**
+       * Tell the client at what rate to report motion (key 101).  The first call after allocation always
+       * sends; later calls send when the saved rate changed, so a stream already running follows a save.
+       * Call with the lock held.
+       */
+      void
+      announce_motion_rate_locked(bool force) {
+        if (!feedback || global_index < 0 || stopping) return;
+        const auto rate = ::ds5::tuning::runtime::motion_report_rate();
+        if (!force && rate == announced_motion_rate) return;
+        announced_motion_rate = rate;
+        feedback->raise(gamepad_feedback_msg_t::make_motion_event_state(static_cast<std::uint16_t>(client_index), LI_MOTION_TYPE_ACCEL, rate));
+        feedback->raise(gamepad_feedback_msg_t::make_motion_event_state(static_cast<std::uint16_t>(client_index), LI_MOTION_TYPE_GYRO, rate));
+        trace.feedback("motion_event_state", static_cast<std::uint16_t>(client_index), 2 * sizeof(rate));
+        BOOST_LOG(info) << "Native DS5 motion report rate: pad "sv << global_index << " client number "sv << client_index << " asked for "sv << rate << " Hz"sv;
+      }
+
+      void
+      announce_motion_rate(bool force) {
+        std::lock_guard lock(mutex);
+        announce_motion_rate_locked(force);
+      }
+
       void
       push_tuning_state() {
         std::lock_guard lock(mutex);
         if (!feedback || global_index < 0 || stopping || core == nullptr) return;
+        announce_motion_rate_locked(false);
         const auto extension_before = sent_extension;
         send_extension_changes_locked();
         const bool extension_sent = !(extension_before == sent_extension);
@@ -1556,10 +1581,15 @@ namespace platf::ds5 {
     }
     auto controller = std::make_unique<native_impl>();
     if (!controller->start(id, std::move(queue), audio_haptics)) return -1;
-    std::unique_lock registry(_impl->registry);
-    _impl->controllers.push_back(std::move(controller));
-    published_audio_haptics.store(audio_haptics || published_audio_haptics.load(boost::memory_order_relaxed),
-      boost::memory_order_release);
+    auto *const pad = controller.get();
+    {
+      std::unique_lock registry(_impl->registry);
+      _impl->controllers.push_back(std::move(controller));
+      published_audio_haptics.store(audio_haptics || published_audio_haptics.load(boost::memory_order_relaxed),
+        boost::memory_order_release);
+    }
+    /* The first request for motion reports at the saved rate (key 101); allocation and release run on the input thread. */
+    pad->announce_motion_rate(true);
     return 0;
   }
 
