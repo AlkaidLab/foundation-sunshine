@@ -354,10 +354,19 @@ namespace crash {
       const char *client = context::client_word(c.client.load(std::memory_order_relaxed));
       const int width = c.width.load(std::memory_order_relaxed), height = c.height.load(std::memory_order_relaxed), fps = c.fps.load(std::memory_order_relaxed);
       const int hdr = c.hdr.load(std::memory_order_relaxed);
-      if (streaming >= 0) {
-        w.raw(",\"ctx\":{\"streaming\":");
-        w.raw(streaming ? "true" : "false");
-        if (streaming) {
+      const char *phase = context::phase_word(c.phase.load(std::memory_order_relaxed));
+      if (streaming >= 0 || phase) {
+        w.raw(",\"ctx\":{");
+        if (phase) {
+          w.raw("\"phase\":");
+          w.str(phase);
+          if (streaming >= 0) w.put(',');
+        }
+        if (streaming >= 0) {
+          w.raw("\"streaming\":");
+          w.raw(streaming ? "true" : "false");
+        }
+        if (streaming > 0) {
           if (codec) {
             w.raw(",\"codec\":");
             w.str(codec);

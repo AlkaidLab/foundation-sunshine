@@ -712,3 +712,31 @@ TEST(CrashMeta, CarriesWhatTheHostWasDoingAsFixedWordsAndNumbers) {
   EXPECT_EQ(ended["ctx"], json::parse(R"({"streaming":false})"));
   crash::context::state().streaming = -1;
 }
+
+TEST(CrashMeta, ANameForTheStartUpPhaseIsAFixedWordAndOnlyWhileTheHostIsStarting) {
+  crash::frame_t frames[] = { frame("sunshine.exe", 0x10) };
+  crash::meta_t meta;
+  meta.frames = frames;
+  meta.frame_count = 1;
+  char buffer[crash::meta_buffer_size];
+  auto render = [&] { return json::parse(std::string(buffer, crash::render_meta(meta, buffer, sizeof(buffer)))); };
+  crash::context::state().streaming = -1;
+  crash::context::set_phase(crash::context::phase_e::display_restore);
+  EXPECT_EQ(render()["ctx"], json::parse(R"({"phase":"display-restore"})"));  // a start has no stream: the phase alone is a context
+  crash::context::stream_started("h264", 1920, 1080, 60, false, "enet", "moonlight-pc");
+  EXPECT_EQ(render()["ctx"]["phase"], "display-restore");
+  EXPECT_EQ(render()["ctx"]["streaming"], true);
+  crash::context::stream_ended();
+  crash::context::set_phase(crash::context::phase_e::none);
+  EXPECT_EQ(render()["ctx"], json::parse(R"({"streaming":false})"));
+  crash::context::state().streaming = -1;
+  EXPECT_FALSE(render().contains("ctx"));
+  // every phase has one lowercase ASCII word; nothing outside the list has one
+  for (int i = 1; i <= static_cast<int>(crash::context::phase_e::tray); ++i) {
+    const char *word = crash::context::phase_word(i);
+    ASSERT_NE(word, nullptr) << i;
+    for (const char *c = word; *c; ++c) EXPECT_TRUE((*c >= 'a' && *c <= 'z') || *c == '-') << word;
+  }
+  EXPECT_EQ(crash::context::phase_word(0), nullptr);
+  EXPECT_EQ(crash::context::phase_word(static_cast<int>(crash::context::phase_e::tray) + 1), nullptr);
+}
