@@ -148,6 +148,9 @@ namespace ds5::tuning {
   authority_name(Authority authority);
   std::string
   wire_reason(std::uint32_t id);
+  /** The cause of an unavailable key as a code (settings/availability.js REASONS in foundation-ui); empty for an applied key. */
+  std::string
+  wire_reason_code(std::uint32_t id);
   std::string
   wire_note(std::uint32_t id);
   std::filesystem::path

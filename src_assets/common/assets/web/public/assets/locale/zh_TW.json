@@ -1517,9 +1517,9 @@
     "only_modified": "Only modified",
     "pending": {
       "count": "{count} 項",
-      "not_yet": "尚未提供",
-      "reason": "當前版本暫未開放",
-      "title": "暫未開放"
+      "not_yet": "主機這邊不可用",
+      "reason": "目前不可用",
+      "title": "目前不可用的設定"
     },
     "pergame": {
       "conflict": "列表在別處已更改，已重新載入。",
@@ -1566,29 +1566,30 @@
     "save": "Save changes",
     "save_failed": "The tuning update was rejected.",
     "save_ok": "Saved {count} key(s).",
-    "save_partial": "Saved {applied} key(s); {unavailable} key(s) are not wired and were not stored.",
+    "save_partial": "已儲存 {applied} 項；另有 {unavailable} 項目前不可用，沒有儲存。",
     "saving": "儲存中…",
     "search": "Search keys",
-    "show_pending": "顯示暫未開放的項",
+    "show_pending": "顯示不可用的設定",
     "summary": {
       "absent": "當前版本不含此功能",
       "active": "{count} 個手柄正在使用",
       "idle": "沒有手柄在使用",
-      "wired": "{wired} 項可調 · {pending} 項本版本尚未接入"
+      "wired": "{wired} 項可調 · {pending} 項目前不可用"
     },
     "test": {
       "open_tool": "開啟手柄測試工具"
     },
     "test_panel": {
       "haptics": "HD haptics",
-      "identify": "識別手柄",
-      "idle": "Ready for a preview action.",
-      "note": "The native test endpoint is not wired in this build. These controls show what the selected profile would send; they never write the profile.",
-      "preview_only": "Preview only: {action}. No hardware command was sent.",
-      "stop": "停止",
+      "note": "向正在串流的手把發一次短震動，確認震動能傳到用戶端的手把。",
       "title": "Per-controller test",
-      "trigger_left": "左扳機",
-      "trigger_right": "右扳機"
+      "result": {
+        "sent": "已發出短震動（{pads} 個手把）。用戶端的手把是否真的震動，主機無法得知。",
+        "no_pad": "沒有手把在使用：先開始串流，並讓用戶端連接手把。",
+        "unsupported": "這個系統沒有原生 DualSense 通道，不能測試。",
+        "busy": "上一次測試還在進行。",
+        "failed": "測試請求失敗。"
+      }
     },
     "title": "DualSense host tuning",
     "trigger_preview": {

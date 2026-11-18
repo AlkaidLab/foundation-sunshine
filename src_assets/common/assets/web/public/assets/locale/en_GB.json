@@ -1517,9 +1517,9 @@
     "only_modified": "Changed only",
     "pending": {
       "count": "{count} options",
-      "not_yet": "Not available yet",
-      "reason": "Not available in this version",
-      "title": "Not available yet"
+      "not_yet": "Unavailable on the host",
+      "reason": "Unavailable",
+      "title": "Unavailable settings"
     },
     "pergame": {
       "conflict": "The list changed elsewhere; reloaded.",
@@ -1566,7 +1566,7 @@
     "save": "Save",
     "save_failed": "The update was rejected.",
     "save_ok": "Saved {count} option(s).",
-    "save_partial": "Saved {applied}; {unavailable} not available yet and left unchanged.",
+    "save_partial": "Saved {applied}; {unavailable} unavailable and left unchanged.",
     "saving": "Saving…",
     "search": "Filter",
     "show_pending": "Show unavailable",
@@ -1574,21 +1574,22 @@
       "absent": "Not included in this build",
       "active": "{count} controller(s) in use",
       "idle": "No controller in use",
-      "wired": "{wired} adjustable · {pending} not connected in this build yet"
+      "wired": "{wired} adjustable · {pending} unavailable"
     },
     "test": {
       "open_tool": "Open the controller test tool"
     },
     "test_panel": {
       "haptics": "Haptics",
-      "identify": "Identify",
-      "idle": "Ready",
-      "note": "Not available yet; the buttons only show what would happen.",
-      "preview_only": "Preview only: {action}. Nothing was sent.",
-      "stop": "Stop",
+      "note": "Sends one short rumble pulse to the controllers of the running stream, to check that rumble reaches the client's pad.",
       "title": "Controller test",
-      "trigger_left": "Left trigger",
-      "trigger_right": "Right trigger"
+      "result": {
+        "sent": "Sent a short rumble to {pads} controller(s). The host cannot tell whether the client's pad moved.",
+        "no_pad": "No controller is in use: start a stream with a controller connected on the client first.",
+        "unsupported": "This system has no native DualSense path, so there is nothing to test.",
+        "busy": "The previous test is still running.",
+        "failed": "The test request failed."
+      }
     },
     "title": "DualSense tuning",
     "trigger_preview": {

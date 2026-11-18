@@ -14,12 +14,13 @@
     :cancel-label="$t('_common.cancel')"
     :data-ds5-key="descriptor.id"
     :data-cfg="cfgId"
+    :data-tip="disabledReason || undefined"
     @update:model-value="selectValue"
   >
     <template v-if="tags || reset" #trail><MChip v-if="descriptor.expert" tone="warn">{{ $t('ds5.expert') }}</MChip><MChip v-if="descriptor.live === 4" :data-tip="$t('ds5.next_connection_hint')">{{ $t('ds5.next_connection') }}</MChip><MIconButton v-if="reset" icon="restart_alt" :label="$t('ds5.reset_key')" @click.stop="$emit('reset')" /></template>
   </MChoiceItem>
 
-  <MItem v-else :title="fieldLabel" :disabled="disabled" :stack="stacked" class="ds5-field" :class="{ 'is-modified': modified }" :data-ds5-key="descriptor.id" :data-cfg="cfgId" :data-tip="disabled ? $t('ds5.pending.reason') : undefined">
+  <MItem v-else :title="fieldLabel" :text="disabledReason || undefined" :disabled="disabled" :stack="stacked" class="ds5-field" :class="{ 'is-modified': modified }" :data-ds5-key="descriptor.id" :data-cfg="cfgId" :data-tip="disabledReason || undefined">
     <template #trail>
       <MChip v-if="descriptor.expert" tone="warn">{{ $t('ds5.expert') }}</MChip>
       <MChip v-if="descriptor.live === 4" :data-tip="$t('ds5.next_connection_hint')">{{ $t('ds5.next_connection') }}</MChip>
@@ -56,6 +57,7 @@
 
 <script setup>
 import { MChip, MChoiceItem, MIconButton, MItem, MSeg, MSlider, MSwitch } from 'foundation-ui/vue'
+import { ds5Availability } from 'foundation-ui/settings/index.js'
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import CurvePreview from './CurvePreview.vue'
@@ -72,6 +74,8 @@ const emit = defineEmits(['update:modelValue', 'reset'])
 const { locale } = useI18n()
 
 const fieldLabel = computed(() => localizedKeyLabel(props.descriptor, locale.value))
+// why a disabled key cannot be used: the sentence of the reason the host reported (foundation-ui settings/availability.js)
+const disabledReason = computed(() => (props.disabled ? ds5Availability(props.descriptor, { locale: locale.value })?.reason ?? '' : ''))
 const isInteger = computed(() => props.descriptor.type === 'u32' || props.descriptor.type === 'i32')
 const numeric = computed(() => ['f32', 'u32', 'i32'].includes(props.descriptor.type))
 
