@@ -371,3 +371,52 @@ TEST(InterruptLane, ProtectionDoesNotWaitForAWindowThatIsOver) {
   lane.hold(5, 5);
   EXPECT_EQ(lane.next_due(1), t0 + 184ms);
 }
+
+/* Timers are never exact: a heartbeat that leaves a little late must not push the next one back. */
+TEST(InterruptLane, TheHeartbeatStaysOnItsGridWhenTheTimerIsLate) {
+  lane_t lane;
+  lane.hold(1, 1);
+  ASSERT_TRUE(lane.take_if_due(t0, 1));
+  lane.hold(2, 2);
+  ASSERT_TRUE(lane.take_if_due(t0 + 4ms + 70us, 1));  // 70 us late
+  lane.hold(3, 3);
+  EXPECT_EQ(lane.next_due(1), t0 + 8ms);
+}
+
+TEST(InterruptLane, AHeartbeatThatIsVeryLateStartsANewGrid) {
+  lane_t lane;
+  lane.hold(1, 1);
+  ASSERT_TRUE(lane.take_if_due(t0, 1));
+  lane.hold(2, 2);
+  ASSERT_TRUE(lane.take_if_due(t0 + 20ms, 1));  // 16 ms late
+  lane.hold(3, 3);
+  EXPECT_EQ(lane.next_due(1), t0 + 24ms);
+}
+
+TEST(InterruptLane, ALateHeartbeatNeverLeavesTwoRepliesCloserThanTheFloor) {
+  lane_t lane;
+  lane.hold(1, 1);
+  ASSERT_TRUE(lane.take_if_due(t0, 1));
+  lane.hold(2, 2);
+  ASSERT_TRUE(lane.take_if_due(t0 + 7ms, 1));  // 3 ms late: the next one is due 1 ms later
+  lane.hold(3, 3);
+  EXPECT_GE(*lane.next_due(1) - (t0 + 7ms), 1ms);
+}
+
+TEST(InterruptLane, IdleRateDoesNotDriftWithTimerLateness) {
+  lane_t lane;
+  const auto late = 70us;
+  tp now = t0;
+  lane.hold(1, 1);
+  ASSERT_TRUE(lane.take_if_due(now, 1));
+  std::size_t replies = 0;
+  for (int i = 0; i < 1000; ++i) {
+    lane.hold(2, 2);
+    now = *lane.next_due(1) + late;
+    ASSERT_TRUE(lane.take_if_due(now, 1));
+    ++replies;
+  }
+  /* 1000 replies on a 4 ms grid take 4000 ms plus one lateness, not 1000 latenesses */
+  EXPECT_LE(now - t0, 4s + 200us);
+  EXPECT_EQ(replies, 1000u);
+}

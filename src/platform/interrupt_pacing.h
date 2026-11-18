@@ -127,9 +127,13 @@ namespace platf {
       const auto due = next_due(pads);
       if (!due || *due > now) return std::nullopt;
       const bool edge = pending_edges_ != 0;
+      const bool heartbeat = !edge && !dirty_;
       taken_t taken { std::move(held_.front().item), edge };
       held_.pop_front();
-      last_sent_ = now;
+      /* A heartbeat that leaves a little late (timers are never exact) does not move the next one:
+       * the beat stays on its 4 ms grid instead of drifting by the lateness of every timer. Replies
+       * stay at least min_interval apart, and a long gap (idle, first URB) starts a new grid. */
+      last_sent_ = heartbeat && now - *due <= settings_.heartbeat - settings_.min_interval ? *due : now;
       if (edge) {
         --pending_edges_;
         protect_until_ = now + settings_.protect_window;
