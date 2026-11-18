@@ -60,17 +60,33 @@ writes it in `view_json()`. Session-0 runs check every key against `emptyView()`
 customize, back, toggle-component, select-all, uninstall, open-panel, restart-pc, copy-details, open-log-folder,
 minimise, exit.
 
-### WebView2 Runtime missing: fall back, do not bootstrap
+### WebView2 Runtime missing: the window falls back, the worker downloads the Runtime afterwards
 
 The Runtime ships with Windows 11. On earlier systems, Microsoft says other apps have usually installed the Evergreen
 Runtime, but "some devices might not have the Runtime pre-installed", so an app should check first
 (installer-ms-webview2-distribution-20261109). The shell checks `pv` under
-`HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-…}` and under HKCU. A missing value, an empty one
-or 0.0.0.0 counts as not installed. In that case the shell uses its native window.
+`HKLM\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-…}` and under HKCU, in both registry views (the 32-bit view of HKLM is
+`WOW6432Node`). A missing value, an empty one or 0.0.0.0 counts as not installed. In that case the setup window is the native
+one: a Tauri exe does not start without the Runtime.
 
-Bootstrapping was rejected for three reasons. The Evergreen Bootstrapper downloads the Runtime, which breaks an
-offline install. The Standalone Installer is far larger than the whole package. Also, the native front end already
-works for these machines.
+The Panel needs the Runtime, so the elevated worker installs it after a successful engine run
+(`tools/installer_webview2.h`, steps in `tools/installer_shell.cpp`):
+
+- Installed: nothing is downloaded or run (`"webview2":"present"` in `install-result.json`).
+- Missing: it downloads Microsoft's Evergreen Bootstrapper from the fixed link
+  (`https://go.microsoft.com/fwlink/p/?LinkId=2124703`, HTTPS only, never a redirect to http, 8 MB cap, two attempts within one 90 s deadline that is checked between reads, a second attempt only if 30 s are left, and each WinHTTP wait (resolve, connect, send, receive: 10, 10, 15 and 15 s) is bounded, so the worst case is about 110 s) into the
+  protected run directory, checks its Authenticode signature (`WinVerifyTrust`, and the organisation of the signing certificate
+  must be exactly `Microsoft Corporation`), and runs `/silent /install` per machine. The hash is not pinned because Microsoft
+  replaces the file behind the link; the signature is the check. The downloaded file is deleted afterwards.
+- Whether it worked is read from the registry, not from the bootstrapper's exit code.
+- A failure (offline, a proxy, a bad status, a signature that is not Microsoft's, the bootstrapper failing) never fails the
+  install of the host. The events file gets a `webview2` phase with state `failed`, and `install-result.json` gets
+  `"webview2":"missing","webview2_reason":"download_failed|signature_invalid|install_failed","webview2_code":<n>,
+  "webview2_manual_url":"<the link>"`. The done page then tells the person the Runtime is missing and gives the link, and the
+  Panel reports the missing Runtime when it starts (its native fallback, exit code 0x5352, which the service does not restart in a loop).
+
+The installer used to carry the bootstrapper (1.9 MB, about 1.8 MB of the download). It no longer does. The Standalone
+Installer for a fully offline machine stays the person's choice: it is far larger than the whole package.
 
 ### Silent mode
 
@@ -111,10 +127,9 @@ Unchanged: `/VERYSILENT` or `/SILENT` goes straight to `worker_main()` before an
    pages), then `cargo build --release --manifest-path installer-ui/Cargo.toml` in `msvc-env.cmd`. Output:
    `installer-ui/target/release/foundation-setup-ui.exe`, or `%CARGO_TARGET_DIR%`.
 2. Host repo: the CMake target `sunshine-installer-shell` as before.
-3. `append_installer_payload.py <shell> <engine> <output> --ui foundation-setup-ui.exe --wv2 MicrosoftEdgeWebview2Setup.exe`.
-   The bootstrapper is the same pinned, signature-checked file CI uses: `scripts/fetch-installer-inputs.ps1 -Destination <new dir>`
-   downloads it (pinned by sha256 in `scripts/installer-inputs.json`) to `<dir>/MicrosoftEdgeWebview2Setup.exe`. The footer keeps
-   the V1 keys first, so an older shell still finds the engine. Without `--ui`, the package is the native installer.
+3. `append_installer_payload.py <shell> <engine> <output> --ui foundation-setup-ui.exe`. There is no WebView2 bootstrapper in
+   the package (see above). The footer keeps the V1 keys first, so an older shell still finds the engine. Without `--ui`, the
+   package is the native installer.
 
 ### CI (`.github/workflows/main.yml`, job Windows)
 
@@ -128,8 +143,11 @@ submodule or foundation-ui bump that has no published build yet, a failed downlo
 `build_setup_ui_from_submodule`, `scripts/build-setup-ui.ps1` builds the setup UI from the committed Panel submodule instead.
 To adopt a new build: run the Panel workflow (`setup-ui.yml`, optional `foundation_ui_sha`) for the new commits, then update
 `setupUi` (`commit`, `foundationUi`, `asset`, `sha256`) together with the submodule bump.
-`scripts/fetch-installer-inputs.ps1` downloads the Panel GUI bundle and Microsoft's WebView2 bootstrapper, pinned by tag and
-sha256 in `scripts/installer-inputs.json` (the pinned Panel commit must equal the submodule, so a submodule bump fails the
-job until the pin moves with it; the bootstrapper must also carry Microsoft's signature). ISCC writes
-`Sunshine-engine.exe`; the step "Assemble installer" wraps it with `append_installer_payload.py --ui --wv2` and checks
-the footer hashes. Only the full installer name contains "Windows".
+`scripts/fetch-installer-inputs.ps1` downloads the Panel GUI bundle, pinned by tag and sha256 in
+`scripts/installer-inputs.json` (the pinned Panel commit must equal the submodule, so a submodule bump fails the job until the
+pin moves with it). ISCC writes `Sunshine-engine.exe`; the step "Assemble installer" wraps it with
+`append_installer_payload.py --ui` and checks the footer hashes and that no `wv2` section is there. The step "Installer
+WebView2 download and signature check" runs `--selftest-webview2 <dir>` of the finished installer: it downloads the
+bootstrapper from Microsoft's link, checks that it is signed by Microsoft Corporation, deletes it, and checks that an
+unsigned file (the installer itself) is refused. Nothing is installed. The decision of the worker (installed / missing and
+downloaded / download fails) is `tests/unit/test_installer_webview2.cpp`, run with the native tests. Only the full installer name contains "Windows".
