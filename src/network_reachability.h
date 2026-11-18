@@ -157,6 +157,10 @@ namespace reachability {
     bool matches_wan = false;
     bool reached = false;  ///< a handshake completed and the certificate is this host's own
     std::string error;  ///< why it failed: dns_failed, refused, timeout, unreachable, tls_failed, identity_mismatch or not_tried
+    /// The failure says nothing about the internet: a public address that this computer cannot reach itself (a router without NAT loopback,
+    /// a route that leaves through another interface) looks the same as one that nobody can reach. Set for a refusal, a timeout, a missing
+    /// route and a local failure on a public endpoint; never for a name that does not resolve or for another device that answered.
+    bool inconclusive = false;
     std::string tested_address;  ///< address of the attempt that decided the result; empty when none was made
     std::int64_t latency_ms = 0;  ///< latency of that attempt
     std::vector<endpoint_attempt_t> attempts;
@@ -240,7 +244,13 @@ namespace reachability {
     std::uint16_t default_http_port = 0;  ///< HTTP port an endpoint without a port stands for.
     std::uint16_t hairpin_port = 0;
     std::uint32_t process_id = 0;  ///< Process whose listeners are inspected; 0 means this process.
+    /// Called when a stage of the probe starts and ends (listeners, firewall, interface, router, endpoints), from the probing thread; a step list that shows progress uses it.
+    std::function<void(std::string_view stage, bool finished)> progress;
   };
+
+  /// True for the failures of an attempt that a public endpoint's own computer cannot judge (see endpoint_result_t::inconclusive).
+  bool
+  is_inconclusive_failure(std::string_view error);
 
   /// True for the UDP stream ports, which this process binds when the first session starts.
   bool
@@ -334,6 +344,7 @@ namespace reachability {
   /// Collect a snapshot from the host, reusing the cached result unless refresh is requested.
   snapshot_t
   probe(const probe_options_t &options, bool refresh);
+
 
   /// Record a client address observed on a completed session launch or resume.
   void

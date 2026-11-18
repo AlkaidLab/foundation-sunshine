@@ -82,6 +82,11 @@ Each entry has:
 | `configured_address` | Deprecated. The first endpoint in the single-address form older clients read, see below |
 | `evidence` | recent sessions that arrived from a public address, masked |
 
+A completed handshake through this host's own certificate outranks the listener table and the firewall policy: those are inferences, the handshake is a
+connection that was made. It makes the verdict `verified` whatever they say.
+
+The step-by-step run of the same check is described in [network-check.md](network-check.md).
+
 Verdict rules:
 
 - `verified`: a session arrived from a public address within the last 7 days,
@@ -156,6 +161,7 @@ save. The pairing QR code uses the first endpoint, with its port.
 | `tested` | `{address, port, latency_ms}` of the attempt that decided the state, or `null` when none was made |
 | `attempts` | Every attempt: `address`, `port`, `connected`, `identity_match`, `error`, `latency_ms`; at most 4 addresses per entry, in parallel |
 | `reasons` | `address_mismatch`, `scope_lan`, `scope_mesh`, `scope_loopback` |
+| `inconclusive` | `true` when the failure says nothing about the internet: a public address this computer cannot reach itself (a router without NAT loopback, a missing route) is not an address nobody can reach. Set for `refused`, `timeout`, `unreachable` and `failed` on a public endpoint; never for `dns_failed`, `identity_mismatch` or `tls_failed` |
 
 `state` is `reached` when a TLS handshake against `address:https_port`
 completed and the certificate is this host's own (the hairpin). `error` is:

@@ -1024,3 +1024,87 @@ TEST(ReachabilityTestEndpoints, IsBoundedBeforeParsingAndKeepsAtMostTheLimit) {
   const auto kept = test_endpoints_option(many);
   EXPECT_EQ(static_cast<std::size_t>(std::count(kept.begin(), kept.end(), ',')) + 1, public_address::MAX_ENDPOINTS);
 }
+
+// ---- network-check redo (net-check-1118) ----
+
+TEST(NetworkReachabilityPublic, AHandshakeThatWasMadeOutranksTheListenerAndFirewallGuesses) {
+  fake_network_t network;
+  network.tls["203.0.113.9|47984"] = ours(12);
+  public_inputs_t inputs;
+  inputs.ports = healthy_ports(false, firewall_e::blocked);
+  inputs.endpoints = probe_endpoints({ endpoint_of("203.0.113.9") }, 47989, "", network.prober());
+  const auto result = evaluate_public(inputs, NOW);
+  EXPECT_EQ(result.verdict, verdict_e::verified);
+  EXPECT_TRUE(has_reason(result.reasons, "hairpin_verified"));
+  for (const auto &reason : result.reasons) {
+    EXPECT_EQ(reason.rfind("not_listening", 0), std::string::npos) << reason;
+    EXPECT_EQ(reason.rfind("firewall_blocked", 0), std::string::npos) << reason;
+  }
+}
+
+TEST(NetworkReachabilityPublic, AReachedLanEndpointDoesNotOutrankAFailingListener) {
+  fake_network_t network;
+  network.tls["10.0.1.10|47984"] = ours(1);
+  public_inputs_t inputs;
+  inputs.ports = healthy_ports(false);
+  inputs.endpoints = probe_endpoints({ endpoint_of("10.0.1.10") }, 47989, "203.0.113.9", network.prober());
+  EXPECT_EQ(evaluate_public(inputs, NOW).verdict, verdict_e::unreachable);
+}
+
+TEST(NetworkReachabilityPublic, ALegacyHairpinThroughTheConfiguredAddressOutranksAFirewallGuess) {
+  public_inputs_t inputs;
+  inputs.ports = healthy_ports(true, firewall_e::blocked);
+  inputs.configured = evaluate_configured_address("203.0.113.9", {}, "203.0.113.9");
+  inputs.hairpin = { true, true, 47984, true, "203.0.113.9" };
+  EXPECT_EQ(evaluate_public(inputs, NOW).verdict, verdict_e::verified);
+}
+
+TEST(NetworkReachabilityEndpoints, SilenceFromAPublicEndpointIsInconclusiveNotAFailure) {
+  fake_network_t network;
+  network.tls["203.0.113.9|47984"] = failed("timeout", 2500);
+  network.tls["198.51.100.7|47984"] = failed("refused", 4);
+  network.tls["192.0.2.55|47984"] = failed("unreachable", 1);
+  const auto results = probe_endpoints({ endpoint_of("203.0.113.9"), endpoint_of("198.51.100.7"), endpoint_of("192.0.2.55") }, 47989, "203.0.113.9", network.prober());
+  ASSERT_EQ(results.size(), 3U);
+  for (const auto &result : results) {
+    EXPECT_FALSE(result.reached);
+    EXPECT_TRUE(result.inconclusive) << result.input << " " << result.error;
+  }
+}
+
+TEST(NetworkReachabilityEndpoints, AnotherDeviceAnsweringOrANameThatDoesNotResolveIsAFinding) {
+  fake_network_t network;
+  network.dns["gone.example.net"] = {};
+  handshake_t other;
+  other.connected = true;
+  other.identity_match = false;
+  other.latency_ms = 9;
+  network.tls["203.0.113.9|47984"] = other;
+  const auto results = probe_endpoints({ endpoint_of("gone.example.net"), endpoint_of("203.0.113.9") }, 47989, "203.0.113.9", network.prober());
+  ASSERT_EQ(results.size(), 2U);
+  EXPECT_EQ(results[0].error, "dns_failed");
+  EXPECT_FALSE(results[0].inconclusive);
+  EXPECT_EQ(results[1].error, "identity_mismatch");
+  EXPECT_FALSE(results[1].inconclusive);
+}
+
+TEST(NetworkReachabilityEndpoints, SilenceFromALanEndpointIsNotMarkedInconclusive) {
+  fake_network_t network;
+  network.tls["10.0.1.10|47984"] = failed("timeout", 2500);
+  const auto results = probe_endpoints({ endpoint_of("10.0.1.10") }, 47989, "203.0.113.9", network.prober());
+  ASSERT_EQ(results.size(), 1U);
+  EXPECT_FALSE(results[0].inconclusive);
+}
+
+TEST(NetworkReachabilityJson, EndpointsSayWhenTheFailureIsInconclusive) {
+  fake_network_t network;
+  network.tls["203.0.113.9|47984"] = failed("timeout", 2500);
+  snapshot_t snapshot;
+  snapshot.checked_at = format_utc_iso(NOW);
+  snapshot.public_reachability.endpoints = probe_endpoints({ endpoint_of("203.0.113.9") }, 47989, "203.0.113.9", network.prober());
+  const auto json = to_json(snapshot);
+  const auto &endpoint = json["public"]["endpoints"].at(0);
+  EXPECT_EQ(endpoint["state"], "failed");
+  EXPECT_EQ(endpoint["error"], "timeout");
+  EXPECT_TRUE(endpoint["inconclusive"].get<bool>());
+}

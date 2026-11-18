@@ -341,6 +341,13 @@ namespace reachability {
     return scope_e::unknown;
   }
 
+  bool
+  is_inconclusive_failure(std::string_view error) {
+    // A refusal and a timeout are what a router without NAT loopback answers to its own outside address; "unreachable" is a route this computer lacks
+    // (an IPv6 address on an IPv4-only host, a proxy that swallows the packet); "failed" is a local error. None of them is about the internet.
+    return error == "refused" || error == "timeout" || error == "unreachable" || error == "failed";
+  }
+
   namespace {
     constexpr std::size_t MAX_ADDRESSES_PER_ENDPOINT = 4;
 
@@ -440,6 +447,7 @@ namespace reachability {
       result.tested_address = decisive->address;
       result.latency_ms = decisive->handshake.latency_ms;
       if (!result.reached) result.error = answered_by_other ? "identity_mismatch" : worst_error.empty() ? "failed" : worst_error;
+      result.inconclusive = !result.reached && result.scope == scope_e::public_address && is_inconclusive_failure(result.error);
       return result;
     }
   }  // namespace
@@ -501,6 +509,20 @@ namespace reachability {
     }
 
     bool evidence_public = !result.evidence.empty();
+
+    // A completed handshake through our own certificate is a connection that was made: it proves the HTTPS listener exists and the firewall let it
+    // in, so it outranks every local guess (the listener table, the firewall policy) that says otherwise.
+    const bool endpoint_reached = std::any_of(inputs.endpoints.begin(), inputs.endpoints.end(), [](const endpoint_result_t &endpoint) {
+      return endpoint.scope == scope_e::public_address && endpoint.reached;
+    });
+    const bool legacy_reached = inputs.endpoints.empty() && inputs.hairpin.tried && inputs.hairpin.ok && inputs.hairpin.identity_match &&
+                                inputs.configured.kind != public_address::kind_e::empty && !inputs.configured.is_private;
+    if (!evidence_public && (endpoint_reached || legacy_reached)) {
+      result.reasons.clear();
+      result.reasons.push_back("hairpin_verified");
+      result.verdict = verdict_e::verified;
+      return result;
+    }
 
     if (evidence_public) {
       result.verdict = verdict_e::verified;
@@ -802,6 +824,7 @@ namespace reachability {
         { "matches_wan", endpoint.matches_wan },
         { "state", endpoint.reached ? "reached" : "failed" },
         { "error", endpoint.error.empty() ? nlohmann::json(nullptr) : nlohmann::json(endpoint.error) },
+        { "inconclusive", endpoint.inconclusive },
         { "tested", std::move(tested) },
         { "attempts", std::move(attempts) },
         { "reasons", endpoint.reasons },
