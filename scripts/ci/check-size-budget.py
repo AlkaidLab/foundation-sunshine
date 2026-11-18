@@ -12,6 +12,7 @@ import json
 import os
 import pathlib
 import sys
+import zipfile
 
 DEFAULT_BUDGET = pathlib.Path(__file__).with_name("size-budget.json")
 
@@ -27,6 +28,15 @@ def load_budget(path):
     if isinstance(fraction, bool) or not isinstance(fraction, (int, float)) or not 0 < fraction <= 1:
         raise ValueError(f"{path}: warn_fraction 必须在 0 到 1 之间")
     return limit, float(fraction)
+
+
+def zip_member_size(archive, member):
+    """Uncompressed size of a member, or None when the archive or the member is missing."""
+    try:
+        with zipfile.ZipFile(archive) as bundle:
+            return bundle.getinfo(member).file_size
+    except (OSError, KeyError, zipfile.BadZipFile):
+        return None
 
 
 def mb(count):
@@ -64,6 +74,7 @@ def main(argv=None):
     parser.add_argument("--budget", default=str(DEFAULT_BUDGET))
     parser.add_argument("--installer", required=True)
     parser.add_argument("--measure", action="append", default=[], metavar="名称=路径", help="只记录大小的文件，可重复")
+    parser.add_argument("--measure-zip", action="append", default=[], metavar="名称=压缩包::成员", help="只记录压缩包内某个文件解压后的大小，可重复")
     parser.add_argument("--summary", default=os.environ.get("GITHUB_STEP_SUMMARY"), help="追加 markdown 的文件")
     args = parser.parse_args(argv)
     # The Windows runner's console code page (cp1252) cannot print the Chinese messages
@@ -89,6 +100,14 @@ def main(argv=None):
             return 2
         target = pathlib.Path(path)
         extra.append((name, target.stat().st_size if target.is_file() else None))
+
+    for item in args.measure_zip:
+        name, separator, spec = item.partition("=")
+        archive, member_separator, member = spec.rpartition("::")
+        if not separator or not name or not member_separator or not archive or not member:
+            print(f"::error::--measure-zip 要写成 名称=压缩包::成员：{item}")
+            return 2
+        extra.append((name, zip_member_size(archive, member)))
 
     installer_bytes = installer.stat().st_size
     status, message = evaluate(installer_bytes, limit, fraction)

@@ -7,6 +7,7 @@ import json
 import pathlib
 import tempfile
 import unittest
+import zipfile
 
 HERE = pathlib.Path(__file__).resolve().parent
 spec = importlib.util.spec_from_file_location("check_size_budget", HERE / "check-size-budget.py")
@@ -63,6 +64,19 @@ class MainTest(unittest.TestCase):
         self.assertIn("| sunshine.exe | 700 |", text)
         self.assertIn("| 便携包 | 未生成 |", text)
         self.assertIn("结果：通过。", text)
+
+    def test_a_file_inside_the_portable_zip_is_measured_uncompressed(self):
+        archive = self.root / "portable.zip"
+        with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
+            bundle.writestr("Sunshine/sunshine.exe", b"\0" * 5000)
+        code, _ = self.run_tool("--measure-zip", f"sunshine.exe={archive}::Sunshine/sunshine.exe",
+                                "--measure-zip", f"gui={archive}::Sunshine/assets/gui/sunshine-gui.exe")
+        self.assertEqual(code, 0)
+        text = self.summary.read_text(encoding="utf-8")
+        self.assertIn("| sunshine.exe | 5,000 |", text)
+        self.assertIn("| gui | 未生成 |", text)
+        code, out = self.run_tool("--measure-zip", "broken")
+        self.assertEqual(code, 2)
 
     def test_the_warning_is_printed_but_does_not_fail(self):
         code, out = self.run_tool(installer=self.file("big.exe", 950))

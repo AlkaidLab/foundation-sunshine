@@ -1518,8 +1518,8 @@ jobs:
           $env:PYTHONUTF8 = '1'
           python scripts/ci/check-size-budget.py --installer artifacts/sunshine-windows-installer.exe `
             --measure "便携包 sunshine-windows-portable.zip=artifacts/sunshine-windows-portable.zip" `
-            --measure "sunshine.exe（随包，已 strip）=build/inno_staging/sunshine.exe" `
-            --measure "sunshine-gui.exe（随包）=build/inno_staging/assets/gui/sunshine-gui.exe"
+            --measure-zip "sunshine.exe（便携包内，解压后）=artifacts/sunshine-windows-portable.zip::Sunshine/sunshine.exe" `
+            --measure-zip "sunshine-gui.exe（便携包内，解压后）=artifacts/sunshine-windows-portable.zip::Sunshine/assets/gui/sunshine-gui.exe"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Rename release assets
