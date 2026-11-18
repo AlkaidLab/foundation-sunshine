@@ -1034,7 +1034,7 @@ namespace reachability {
           if (classify_wan_ip(address) != ip_class_e::public_address) continue;
           const auto parsed = boost::asio::ip::make_address(address);
           if (host_public_ip.empty() || (parsed.is_v4() && boost::asio::ip::make_address(host_public_ip).is_v6())) {
-            host_public_ip = address;
+            host_public_ip = address.substr(0, address.find('%'));  // an address, not its zone
           }
         }
       }

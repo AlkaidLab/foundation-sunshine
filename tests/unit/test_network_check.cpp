@@ -418,3 +418,19 @@ TEST(NetworkCheckOutside, ABlockedConnectionFromOutsideMakesTcpUnreachableButAnU
   summary = summarize({}, unknown, discovery, steps_of(unknown, discovery));
   EXPECT_NE(summary.tcp.state, protocol_state_e::unreachable);
 }
+
+TEST(NetworkCheckRun, AStepThatFinishedAtOnceKeepsItsOwnTime) {
+  inputs_t inputs;
+  inputs.probe = [](const request_t &, const std::function<void(std::string_view, bool)> &progress) {
+    progress("listening", false);
+    progress("listening", true);  // no time passes: 0 ms is a time, not a missing one
+    std::this_thread::sleep_for(150ms);
+    return healthy();
+  };
+  inputs.discover = [](const request_t &) { return stun(); };
+  const auto first = start(inputs, {});
+  ASSERT_TRUE(wait_idle(5s));
+  const auto done = network_check::find(first->id);
+  ASSERT_NE(done, nullptr);
+  EXPECT_LT(find(done->steps, "listening")->elapsed_ms, 100);
+}

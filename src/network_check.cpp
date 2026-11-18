@@ -531,7 +531,7 @@ namespace network_check {
             if (used[index] || results[index].id != planned.id || results[index].subject != planned.subject) continue;
             auto entry = results[index];
             entry.started_ms = planned.started_ms;
-            entry.elapsed_ms = planned.elapsed_ms != 0 ? planned.elapsed_ms : run.elapsed_ms - planned.started_ms;
+            entry.elapsed_ms = planned.checked ? planned.elapsed_ms : run.elapsed_ms - planned.started_ms;
             entry.checked = true;
             merged.push_back(std::move(entry));
             used[index] = true;

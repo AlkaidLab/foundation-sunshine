@@ -88,11 +88,11 @@ namespace reachability {
       const auto bytes = value.to_bytes();
       if (is_unspecified(value)) return false;
       if (value.is_loopback()) return false;
-      if (prefix_match(bytes, v6_link_local, 10)) return false;
-      if (prefix_match(bytes, v6_unique_local, 7)) return false;
-      if (prefix_match(bytes, v6_multicast, 8)) return false;
       if (value.is_v4_mapped()) return is_public_v4(boost::asio::ip::make_address_v4(boost::asio::ip::v4_mapped, value));
-      return true;
+      // Only global unicast is public: 2000::/3 (RFC 4291 section 2.4, IANA IPv6 Global Unicast Address Assignments). Site-local fec0::/10 (deprecated by RFC 3879, still handed out
+      // by some virtual switches), unique local fc00::/7, link-local fe80::/10, multicast and the rest are not addresses the internet reaches: reporting one as public made a host that
+      // had only a site-local address "verified".
+      return (bytes[0] & 0xe0) == 0x20;
     }
 
     /// Mirror of src/network.cpp address classification for the Web UI origin policy.

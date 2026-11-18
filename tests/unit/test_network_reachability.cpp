@@ -1236,3 +1236,22 @@ TEST(NetworkReachabilityOutside, TheJsonCarriesTheStateAndTheReasonOrNullWhenItW
   EXPECT_EQ(json["public"]["endpoints"].at(0)["outside"]["reason"], "rate_limited");
   EXPECT_TRUE(json["public"]["endpoints"].at(1)["outside"].is_null());
 }
+
+TEST(NetworkReachabilityClassification, OnlyGlobalUnicastIsAPublicIpv6Address) {
+  for (const char *text : { "2001:db8::10", "2a00:1450:4001::1", "240e:b8f::1", "2600::1" }) EXPECT_EQ(classify_wan_ip(text), ip_class_e::public_address) << text;
+  // what a virtual switch or a LAN hands out is not an address the internet reaches
+  for (const char *text : { "fec0::caa2:ff71:164e:c0db", "fec0::1%1", "fd12:3456::1", "fe80::1", "::1", "ff02::1", "64:ff9b::808:808", "100::1", "::ffff:10.0.0.1" }) {
+    EXPECT_NE(classify_wan_ip(text), ip_class_e::public_address) << text;
+  }
+  EXPECT_EQ(classify_wan_ip("::ffff:203.0.113.9"), ip_class_e::public_address);
+  EXPECT_EQ(scope_of("fec0::1"), scope_e::lan);
+}
+
+TEST(NetworkReachabilityPublic, AHostWithOnlyASiteLocalAddressIsNotVerified) {
+  public_inputs_t inputs;
+  inputs.ports = healthy_ports();
+  inputs.host_public_ip = "";  // what the probe now finds: fec0::/10 is not a public address
+  inputs.router.protocol = "none";
+  const auto result = evaluate_public(inputs, NOW);
+  EXPECT_NE(result.verdict, verdict_e::verified);
+}
