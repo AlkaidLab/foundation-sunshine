@@ -23,6 +23,7 @@ test('undoing a saved order updates the open list and keeps later command edits'
     assert.deepEqual(usePending().entries('apps').map((e) => e.key), ['mod:Forza'])
   } finally {
     stop()
+    usePending().sync('apps', [])
     resetPending()
   }
 })
@@ -47,6 +48,7 @@ test('saving updates the baseline without discarding edits made during the save'
     assert.deepEqual(pending.entries('apps').map((e) => e.key), ['mod:Forza'])
   } finally {
     stop()
+    pending.sync('apps', [])
     resetPending()
   }
 })
