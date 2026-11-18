@@ -1587,7 +1587,7 @@
     },
     "test_panel": {
       "haptics": "HD haptics",
-      "note": "Sends one short rumble pulse to the controllers of the running stream, to check that rumble reaches the client's pad.",
+      "note": "Sends a test to the controllers of the running stream: a short rumble, the light bar flashing three times, a resistance on each trigger for 1.5 s. The client has to carry out the light and the trigger as the host asks; the host cannot tell whether the client's pad did it.",
       "title": "Per-controller test",
       "result": {
         "sent": "Sent a short rumble to {pads} controller(s). The host cannot tell whether the client's pad moved.",
@@ -1595,6 +1595,16 @@
         "unsupported": "This system has no native DualSense path, so there is nothing to test.",
         "busy": "The previous test is still running.",
         "failed": "The test request failed."
+      },
+      "identify": "Identify controller",
+      "trigger_left": "Left trigger",
+      "trigger_right": "Right trigger",
+      "stop": "Stop",
+      "sent": {
+        "identify": "The light bar flashed three times and shows its earlier colour again ({pads} controller(s)). The host cannot tell whether the client's pad flashed.",
+        "trigger_left": "The left trigger resisted for 1.5 s and was released ({pads} controller(s)). The host cannot tell whether the client's trigger resisted.",
+        "trigger_right": "The right trigger resisted for 1.5 s and was released ({pads} controller(s)). The host cannot tell whether the client's trigger resisted.",
+        "stop": "The light, trigger and rumble tests are stopped."
       }
     },
     "title": "DualSense host tuning",

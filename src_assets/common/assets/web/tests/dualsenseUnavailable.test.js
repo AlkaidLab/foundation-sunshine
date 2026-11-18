@@ -53,13 +53,17 @@ test('the page of the unavailable keys is not behind the advanced warning and is
   assert.equal(DS5_SUB.isGroup(DS5_SUB.pending), true, 'foundation-ui still counts it as a group: the page does the exception')
 })
 
-test('the test page sends a real rumble pulse and says what the host did', async () => {
+test('the test page sends real tests (rumble, light bar, triggers) and says what the host did', async () => {
   const subs = await read('../components/dualsense/DualSenseSubs.vue')
   assert.match(subs, /\/api\/dualsense\/rumble-test/)
+  assert.match(subs, /\/api\/dualsense\/pad-test/)
   assert.ok(!/preview_only/.test(subs))
-  for (const name of ['zh', 'en']) {
+  for (const name of ['zh', 'zh_TW', 'en']) {
     const test_panel = (await locale(name)).ds5.test_panel
     for (const result of ['sent', 'no_pad', 'unsupported', 'busy', 'failed']) assert.ok(test_panel.result[result], `${name} ${result}`)
+    for (const action of ['identify', 'trigger_left', 'trigger_right', 'stop']) assert.ok(test_panel[action], `${name} ${action}`)
+    for (const action of ['identify', 'trigger_left', 'trigger_right', 'stop']) assert.ok(test_panel.sent[action], `${name} sent ${action}`)
+    assert.ok(!/暂未开放|演示|仅预览|preview only/i.test(JSON.stringify(test_panel)), name)
   }
 })
 

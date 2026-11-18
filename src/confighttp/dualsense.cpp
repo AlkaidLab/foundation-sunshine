@@ -1,6 +1,6 @@
 /**
  * @file src/confighttp/dualsense.cpp
- * @brief DualSense tuning profile API and the short test rumble of the gamepad test tool.
+ * @brief DualSense tuning profile API and the tests of the gamepad test page: a short rumble, identify, a trigger.
  *
  * The route follows the Web UI authentication and browser-origin rules in
  * confighttp::authenticate(): every request passes authorize_browser_request()
@@ -17,6 +17,7 @@
 #include "src/config.h"
 #include "src/confighttp/auth.h"
 #include "src/confighttp/common.h"
+#include "src/ds5/pad_test.h"
 #include "src/ds5/rumble_test.h"
 #include "src/ds5/tuning_profile.h"
 #include "src/ds5/tuning_runtime.h"
@@ -154,6 +155,38 @@ namespace confighttp::dualsense {
       };
       write_json(response, web::StatusCode::ok, output);
     }
+
+    /* POST /api/dualsense/pad-test: body {"action": "identify" | "trigger_left" | "trigger_right" | "stop"}.  The test goes
+     * through the feedback queue of every live virtual pad (ds5/pad_test.h) and what the pad showed before is given back.
+     * The answer says what the host did and, honestly, that it cannot know whether the client's pad did it: result "sent"
+     * (reached_client "unknown"), "no_pad", "unsupported" or "busy". */
+    void
+    postPadTest(resp_https_t response, req_https_t request) {
+      if (!authenticate(response, request)) return;
+      print_req(request);
+      if (!check_content_type(response, request, "application/json")) return;
+      if (request->content.size() > 1024) {
+        write_json_error(response, web::StatusCode::payload_too_large, "pad test request body is too large");
+        return;
+      }
+      json body;
+      if (!read_json_body(response, request, body)) return;
+      const auto action = body.is_object() && body.contains("action") && body["action"].is_string() ? ds5::pad_test::parse_action(body["action"].get<std::string>()) : std::nullopt;
+      if (!action) {
+        write_json_error(response, web::StatusCode::bad_request, "action must be identify, trigger_left, trigger_right or stop");
+        return;
+      }
+      const auto test = ds5::pad_test::run(*action, [](std::chrono::milliseconds wait) { std::this_thread::sleep_for(wait); });
+      BOOST_LOG(info) << "DualSense pad test: "sv << body["action"].get<std::string>() << ", "sv << ds5::pad_test::to_string(test.outcome) << ", "sv << test.pads << " pad(s)"sv;
+      json output = {
+        { "status", test.outcome == ds5::pad_test::outcome_e::sent },
+        { "result", ds5::pad_test::to_string(test.outcome) },
+        { "pads", test.pads },
+        { "action", body["action"] },
+        { "reached_client", "unknown" },
+      };
+      write_json(response, web::StatusCode::ok, output);
+    }
   }  // namespace
 
   void
@@ -165,5 +198,6 @@ namespace confighttp::dualsense {
     server.resource["^/api/dualsense/tuning$"]["GET"] = getTuning;
     server.resource["^/api/dualsense/tuning$"]["POST"] = postTuning;
     server.resource["^/api/dualsense/rumble-test$"]["POST"] = postRumbleTest;
+    server.resource["^/api/dualsense/pad-test$"]["POST"] = postPadTest;
   }
 }  // namespace confighttp::dualsense

@@ -57,6 +57,7 @@
 #include "src/ds5/feature_reports.h"
 #include "src/ds5/mic_route.h"
 #include "src/ds5/output_fields.h"
+#include "src/ds5/pad_test.h"
 #include "src/ds5/report_delta.h"
 #include "src/ds5/rumble_policy.h"
 #include "src/ds5/rumble_test.h"
@@ -976,6 +977,68 @@ namespace platf::ds5 {
         return true;
       }
 
+      /**
+       * One step of a pad test (pad_test.h).  What the pad showed before is given back: the light bar as the
+       * tuning and the game's last colour make it, the triggers as the game holds them.
+       */
+      bool
+      test_step(::ds5::pad_test::step_e step) {
+        using ::ds5::pad_test::step_e;
+        std::lock_guard lock(mutex);
+        if (!feedback || global_index < 0 || stopping || core == nullptr) return false;
+        const auto id = static_cast<std::uint16_t>(client_index);
+        const auto send_light = [&](std::uint8_t red, std::uint8_t green, std::uint8_t blue) {
+          feedback->raise(gamepad_feedback_msg_t::make_rgb_led(id, red, green, blue));
+          trace.feedback("rgb_led", id, 3);
+        };
+        const auto send_triggers = [&](std::uint8_t flags, const ::ds5::tuning::trigger::block_t &left, const ::ds5::tuning::trigger::block_t &right) {
+          std::array<std::uint8_t, 10> left_parameters {};
+          std::array<std::uint8_t, 10> right_parameters {};
+          std::copy_n(left.data() + 1, 10, left_parameters.begin());
+          std::copy_n(right.data() + 1, 10, right_parameters.begin());
+          feedback->raise(gamepad_feedback_msg_t::make_adaptive_triggers(id, flags, left[0], right[0], left_parameters, right_parameters));
+          trace.feedback("adaptive_triggers", id, 22);
+        };
+        const auto restore_triggers = [&] {
+          trigger_tracker.forget_sent();
+          raise_trigger_plan(trigger_tracker.plan(nullptr, 0u, ::ds5::tuning::trigger::read_config()));
+        };
+        const auto restore_light = [&] {
+          std::uint8_t red {};
+          std::uint8_t green {};
+          std::uint8_t blue {};
+          ::ds5::tuning::runtime::apply_lightbar(red, green, blue, have_game_lightbar ? game_lightbar[0] : std::uint8_t { 0 },
+            have_game_lightbar ? game_lightbar[1] : std::uint8_t { 0 }, have_game_lightbar ? game_lightbar[2] : std::uint8_t { 0 });
+          lightbar_out = { red, green, blue };
+          lightbar_sent = true;
+          send_light(red, green, blue);
+        };
+        const auto off = ::ds5::tuning::trigger::off_block();
+        const auto effect = ::ds5::pad_test::trigger_test_block();
+        switch (step) {
+          case step_e::lightbar_white: send_light(255, 255, 255); break;
+          case step_e::lightbar_off: send_light(0, 0, 0); break;
+          case step_e::lightbar_restore: restore_light(); break;
+          case step_e::trigger_left_on: send_triggers(0x08u, effect, off); break;
+          case step_e::trigger_right_on: send_triggers(0x04u, off, effect); break;
+          case step_e::trigger_left_off:
+            send_triggers(0x08u, off, off);
+            restore_triggers();
+            break;
+          case step_e::trigger_right_off:
+            send_triggers(0x04u, off, off);
+            restore_triggers();
+            break;
+          case step_e::stop_all:
+            send_triggers(0x0cu, off, off);
+            restore_triggers();
+            restore_light();
+            break;
+        }
+        BOOST_LOG(info) << "Native DS5 pad test: pad "sv << global_index << " client number "sv << client_index << " step "sv << static_cast<int>(step);
+        return true;
+      }
+
       void
       run_endpoint_setup() {
         static std::atomic<bool> pruned { false };
@@ -1627,6 +1690,14 @@ namespace platf::ds5 {
       return pads;
     }
 
+    unsigned
+    test_step_all(::ds5::pad_test::step_e step) {
+      std::lock_guard lock(live_clients_mutex);
+      unsigned pads = 0;
+      for (auto *client : live_clients) pads += client->test_step(step);
+      return pads;
+    }
+
     void
     feed_microphone_all(const std::int16_t *samples, std::size_t frames) {
       std::lock_guard lock(live_clients_mutex);
@@ -1650,6 +1721,7 @@ namespace platf::ds5 {
     ::ds5::tuning::runtime::published_handler().store(&push_saved_lightbar, std::memory_order_release);
     ::ds5::rumble_test::handler().store(&test_rumble_all, std::memory_order_release);
     ::ds5::mic_route::handler().store(&feed_microphone_all, std::memory_order_release);
+    ::ds5::pad_test::handler().store(&test_step_all, std::memory_order_release);
   }
   native_client_t::~native_client_t() {
     std::lock_guard lock(live_clients_mutex);
@@ -1664,6 +1736,17 @@ namespace platf::ds5 {
   native_client_t::feed_microphone(const std::int16_t *samples, std::size_t frames) {
     std::shared_lock registry(_impl->registry);
     for (const auto &controller : _impl->controllers) controller->feed_microphone(samples, frames);
+  }
+  unsigned
+  native_client_t::test_step(::ds5::pad_test::step_e step) {
+    std::shared_lock registry(_impl->registry);
+    unsigned pads = 0;
+    for (const auto &controller : _impl->controllers) {
+      if (!controller->test_step(step)) continue;
+      ++pads;
+      if (step == ::ds5::pad_test::step_e::stop_all) controller->test_rumble(0, 0, true);
+    }
+    return pads;
   }
   unsigned
   native_client_t::test_rumble(std::uint8_t left, std::uint8_t right, bool restore) {
