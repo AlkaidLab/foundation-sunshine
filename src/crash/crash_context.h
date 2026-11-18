@@ -21,6 +21,26 @@ namespace crash::context {
     std::atomic<int> transport { 0 };
     std::atomic<int> client { 0 };
     std::atomic<int> hdr { -1 };
+    std::atomic<int> phase { 0 };  ///< the start-up phase the main thread is in (phase_e), 0 once the host is up
+  };
+
+  /// What the main thread is doing while the host starts. The words are fixed lowercase ASCII: a hang or a crash during the start names the phase it was in,
+  /// so it can be sorted without symbols. The telemetry Worker accepts exactly these words (cleanCrashCtx).
+  enum class phase_e : int {
+    none = 0,
+    display_restore,  ///< recovery of the display state after a crash (display_device)
+    nvprefs,  ///< NVIDIA control panel settings
+    apps,  ///< apps.json and the app list
+    enhancement,  ///< HDR/image enhancement components
+    platform_init,  ///< platf::init (capture, audio, input back ends)
+    proc_init,  ///< proc::init
+    pyrowave,  ///< PyroWave runtime probe
+    network,  ///< http::init, client fingerprint rules, mDNS and UPnP
+    webhook,  ///< webhook configuration and runtime
+    listeners,  ///< the HTTP/RTSP listener threads
+    encoder_probe,  ///< the encoder probe (graphics driver calls)
+    input_wait,  ///< waiting for the input devices
+    tray,  ///< system tray and GUI agent
   };
 
   inline state_t &
@@ -29,6 +49,25 @@ namespace crash::context {
     return s;
   }
 
+  inline const char *
+  phase_word(int v) {
+    switch (static_cast<phase_e>(v)) {
+      case phase_e::display_restore: return "display-restore";
+      case phase_e::nvprefs: return "nvprefs";
+      case phase_e::apps: return "apps";
+      case phase_e::enhancement: return "enhancement";
+      case phase_e::platform_init: return "platform-init";
+      case phase_e::proc_init: return "proc-init";
+      case phase_e::pyrowave: return "pyrowave";
+      case phase_e::network: return "network";
+      case phase_e::webhook: return "webhook";
+      case phase_e::listeners: return "listeners";
+      case phase_e::encoder_probe: return "encoder-probe";
+      case phase_e::input_wait: return "input-wait";
+      case phase_e::tray: return "tray";
+      default: return nullptr;
+    }
+  }
   inline const char *
   codec_word(int v) {
     switch (v) {
@@ -103,6 +142,11 @@ namespace crash::context {
   inline void
   stream_ended() noexcept {
     state().streaming = 0;
+  }
+  /// The main thread enters a start-up phase; `phase_e::none` when the start is over.
+  inline void
+  set_phase(phase_e phase) noexcept {
+    state().phase.store(static_cast<int>(phase), std::memory_order_relaxed);
   }
 
 }  // namespace crash::context
