@@ -1521,6 +1521,20 @@ namespace platf::ds5 {
     return 0;
   }
 
+  namespace {
+    /**
+     * Tells the interrupt pacing that a report changed.  Declared before the pad lock so it
+     * runs after the lock is released: the queue worker builds replies under its own lock and
+     * then takes the pad lock, so the two must never nest the other way round.
+     */
+    struct report_changed_notifier {
+      native_impl *pad;
+      ~report_changed_notifier() {
+        pad->replies.notify_interrupt_data(paced_reply_queue::lane::interrupt_in);
+      }
+    };
+  }  // namespace
+
   void
   native_client_t::free(int index) {
     std::unique_ptr<native_impl> released;
@@ -1543,6 +1557,7 @@ namespace platf::ds5 {
     std::shared_lock registry(_impl->registry);
     auto *const pad = _impl->find(index);
     if (pad == nullptr) return;
+    const report_changed_notifier notifier { pad };
     std::unique_lock lock(pad->mutex);
     auto input_state = state;
     const auto triggers = ::ds5::tuning::runtime::shape_triggers(input_state.lt, input_state.rt);
@@ -1597,6 +1612,7 @@ namespace platf::ds5 {
     std::shared_lock registry(_impl->registry);
     auto *const pad = _impl->find(touch.id.globalIndex);
     if (pad == nullptr) return;
+    const report_changed_notifier notifier { pad };
     std::lock_guard lock(pad->mutex);
     const auto offset = touch.pointerId & 1u ? 37u : 33u;
     const auto x = static_cast<std::uint16_t>(touch.x * 1920.f);
@@ -1617,6 +1633,7 @@ namespace platf::ds5 {
     std::shared_lock registry(_impl->registry);
     auto *const pad = _impl->find(motion.id.globalIndex);
     if (pad == nullptr) return;
+    const report_changed_notifier notifier { pad };
     std::lock_guard lock(pad->mutex);
     float counts_per_unit = 0.0f;
     std::size_t offset = 0;
@@ -1677,6 +1694,7 @@ namespace platf::ds5 {
     std::shared_lock registry(_impl->registry);
     auto *const pad = _impl->find(battery.id.globalIndex);
     if (pad == nullptr) return;
+    const report_changed_notifier notifier { pad };
     std::lock_guard lock(pad->mutex);
     const auto percentage = battery.percentage == LI_BATTERY_PERCENTAGE_UNKNOWN ? 50u : std::min<unsigned>(battery.percentage, 100u);
     std::uint8_t level = static_cast<std::uint8_t>((percentage + 5u) / 10u);
@@ -1697,6 +1715,7 @@ namespace platf::ds5 {
     std::shared_lock registry(_impl->registry);
     auto *const pad = _impl->find(status.id.globalIndex);
     if (pad == nullptr) return;
+    const report_changed_notifier notifier { pad };
     std::lock_guard lock(pad->mutex);
     namespace ext = ::ds5::control_extension;
     if (status.valid_mask & ext::in_headset) {

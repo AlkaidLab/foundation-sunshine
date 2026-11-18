@@ -14,6 +14,10 @@
  * the virtual devices use bInterval 4 at high speed (eight microframes, one
  * millisecond per packet) and the DualSense interrupt IN endpoint uses
  * bInterval 6 (32 microframes, 4 ms).
+ *
+ * The interrupt IN endpoint is not a stream.  Its reply leaves as soon as a
+ * new report exists (notify_interrupt_data), never sooner than one millisecond
+ * after the previous reply; with nothing new it keeps the 4 ms heartbeat.
  */
 #pragma once
 
@@ -24,6 +28,8 @@
   #define NOMINMAX
 #endif
 #include <windows.h>
+
+#include "src/platform/interrupt_pacing.h"
 
 #include <algorithm>
 #include <array>
@@ -53,8 +59,18 @@ namespace platf {
     static constexpr auto kIsoPacketPeriod = std::chrono::milliseconds(1);
     static constexpr auto kInterruptPeriod = std::chrono::milliseconds(4);
 
+    /** Interrupt pacing: reply floor for new data and idle heartbeat. */
+    struct interrupt_config {
+      clock::duration min_interval { std::chrono::milliseconds(1) };
+      clock::duration heartbeat { std::chrono::milliseconds(4) };
+    };
+
     explicit paced_reply_queue(send_t send):
+        paced_reply_queue(std::move(send), interrupt_config {}) {}
+
+    paced_reply_queue(send_t send, interrupt_config config):
         send_(std::move(send)) {
+      for (auto &pacing : interrupt_) pacing = interrupt_pacing<clock>(config.min_interval, config.heartbeat);
 #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
   #define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
 #endif
@@ -116,16 +132,40 @@ namespace platf {
     }
 
     /**
-     * Hold an interrupt reply for one endpoint period after the previous one.
+     * Hold an interrupt reply: due at once when new data is waiting (at least
+     * min_interval after the previous reply), after the heartbeat otherwise.
      * The payload is built when the reply is due so it carries the latest state.
      */
     void
     schedule_interrupt(lane which, std::uint32_t sequence, make_wire_t make_wire) {
       std::lock_guard lock(mutex_);
-      auto &next = next_free_[static_cast<std::size_t>(which)];
-      const auto due = std::max(clock::now(), next);
-      next = due + kInterruptPeriod;
-      insert_locked(due, sequence, std::move(make_wire));
+      const auto due = interrupt_[static_cast<std::size_t>(which)].schedule(clock::now());
+      insert_locked(due, sequence, std::move(make_wire), which, true);
+    }
+
+    /**
+     * A new report exists.  Moves the held interrupt reply up to the earliest
+     * allowed time, or marks the lane so the next URB is answered at once.
+     * Never call it while holding a lock the reply builder takes: the worker
+     * runs the builder under this queue's lock.
+     */
+    void
+    notify_interrupt_data(lane which) {
+      std::lock_guard lock(mutex_);
+      auto &pacing = interrupt_[static_cast<std::size_t>(which)];
+      auto held = items_.end();
+      for (auto item = items_.begin(); item != items_.end(); ++item) {
+        if (item->second.interrupt && item->second.which == which) {
+          held = item;
+          break;
+        }
+      }
+      clock::time_point moved_to {};
+      if (!pacing.new_data(clock::now(), held != items_.end(), held != items_.end() ? held->first : clock::time_point {}, moved_to)) return;
+      auto node = items_.extract(held);
+      node.key() = moved_to;
+      items_.insert(std::move(node));
+      SetEvent(wake_);
     }
 
     /** Remove a held reply.  Returns false when it was already sent. */
@@ -147,6 +187,7 @@ namespace platf {
       std::lock_guard lock(mutex_);
       items_.clear();
       next_free_.fill(clock::time_point {});
+      for (auto &pacing : interrupt_) pacing.reset();
     }
 
     std::size_t
@@ -159,11 +200,14 @@ namespace platf {
     struct item_t {
       std::uint32_t sequence;
       make_wire_t make_wire;
+      lane which { lane::iso_out };
+      bool interrupt { false };
     };
 
     void
-    insert_locked(clock::time_point due, std::uint32_t sequence, make_wire_t make_wire) {
-      items_.emplace(due, item_t { sequence, std::move(make_wire) });
+    insert_locked(clock::time_point due, std::uint32_t sequence, make_wire_t make_wire,
+      lane which = lane::iso_out, bool interrupt = false) {
+      items_.emplace(due, item_t { sequence, std::move(make_wire), which, interrupt });
       SetEvent(wake_);
     }
 
@@ -187,6 +231,7 @@ namespace platf {
           if (stop_) return;
           while (!items_.empty() && items_.begin()->first <= clock::now()) {
             auto node = items_.extract(items_.begin());
+            if (node.mapped().interrupt) interrupt_[static_cast<std::size_t>(node.mapped().which)].sent(clock::now());
             send_(node.mapped().make_wire());
           }
           if (items_.empty())
@@ -202,6 +247,7 @@ namespace platf {
     mutable std::mutex mutex_;
     std::multimap<clock::time_point, item_t> items_;
     std::array<clock::time_point, static_cast<std::size_t>(lane::count_)> next_free_ {};
+    std::array<interrupt_pacing<clock>, static_cast<std::size_t>(lane::count_)> interrupt_;
     bool stop_ { false };
     bool high_resolution_ { false };
     HANDLE wake_ { nullptr };

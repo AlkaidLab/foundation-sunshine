@@ -712,7 +712,7 @@ namespace ds5::tuning {
       return "Bluetooth audio and output path are client radio decisions; this host bridge is USB only. The macOS client implements this key.";
     }
     if (id == 101) {
-      return "The cap limits client sampling of the physical pad. The host accepts pushed reports and has no polling loop to cap.";
+      return "The cap limits client sampling of the physical pad (its motion sensors only). Buttons and sticks are reported when they change and are not capped; the host answers them as soon as they arrive.";
     }
     if (id >= 102 && id <= 104) {
       return "Needs an ALK-DS5T/1 peer with HELLO/PATCH/SNAPSHOT/ACK and the section 16.3 layer merge; this build has no tuning control channel for the override gates or rate cap.";
