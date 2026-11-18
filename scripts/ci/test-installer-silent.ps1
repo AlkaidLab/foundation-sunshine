@@ -78,6 +78,23 @@ function Invoke-BoundedProcess([string]$File, [string]$Arguments, [string]$Phase
     }
 }
 
+function Wait-UninstallSecondPhase([string]$AppDir, [string]$Phase) {
+    # The launching uninstaller exits 0 and removes itself once it has started the second-phase copy; the script's
+    # own prompts (usUninstall, usPostUninstall) run in that copy. Waiting for the launcher alone would let a prompt that
+    # blocks the copy pass: binaries and registration are already gone and the user files are still untouched.
+    # Authority: installer-inno-uninstall-cli-20261118 (silent switches and exit); installer-ms-wait-for-exit-20261118.
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    do {
+        $pending = @(Get-CimInstance -ClassName Win32_Process | Where-Object {
+            $_.CommandLine -and $_.CommandLine -like '*/SECONDPHASE=*' -and $_.CommandLine -like "*$AppDir*"
+        })
+        if (-not $pending.Count) { return }
+        Start-Sleep -Milliseconds 200
+    } while ([DateTime]::UtcNow -lt $deadline)
+    # Leave the recorded PIDs for runner teardown; never terminate by name.
+    throw "$Phase second phase still running after $TimeoutSeconds seconds (PID $($pending.ProcessId -join ',')); an uninstall prompt is probably waiting for input."
+}
+
 try {
     Assert-CleanMachine
     # Spaces exercise Inno's command-line quoting. Keep logs outside the
@@ -88,7 +105,7 @@ try {
         $installLog = Join-Path $EvidenceDirectory "$mode-install.log"
         $uninstallLog = Join-Path $EvidenceDirectory "$mode-uninstall.log"
         $arguments = "/$mode /SP- /NORESTART /LANG=english /TYPE=custom /COMPONENTS=application,assets,gui /TASKS= /DIR=`"$app`" /LOG=`"$installLog`""
-        Invoke-BoundedProcess $Installer $arguments "$mode-install"
+        Invoke-BoundedProcess -File $Installer -Arguments $arguments -Phase "$mode-install"
         $binaries = @('sunshine.exe', 'tools\sunshinesvc.exe', 'assets\gui\sunshine-gui.exe', 'unins000.exe')
         foreach ($file in $binaries) {
             if (-not (Test-Path -LiteralPath (Join-Path $app $file) -PathType Leaf)) {
@@ -122,9 +139,9 @@ try {
             $hashes[$file] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash
         }
         $uninstaller = Join-Path $app 'unins000.exe'
-        Invoke-BoundedProcess $uninstaller "/$mode /NORESTART /LOG=`"$uninstallLog`"" "$mode-uninstall"
-        # Self-deletion may finish just after the launching process exits. Bound
-        # that wait too: a detached worker stuck on a dialog must fail the check.
+        Invoke-BoundedProcess -File $uninstaller -Arguments "/$mode /NORESTART /LOG=`"$uninstallLog`"" -Phase "$mode-uninstall"
+        Wait-UninstallSecondPhase -AppDir $app -Phase "$mode-uninstall"
+        # Self-deletion may finish just after the second phase ends. Bound that wait too.
         $deadline = [DateTime]::UtcNow.AddSeconds(15)
         do {
             $remaining = @($binaries | Where-Object { Test-Path -LiteralPath (Join-Path $app $_) })
