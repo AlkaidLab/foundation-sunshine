@@ -547,6 +547,7 @@ namespace ds5::tuning {
       out["status"] = !implemented ? "unavailable" : (active ? "applied" : "ready");
       out["reason"] = !implemented ? wire_reason(descriptor.id) :
                                      (active ? std::string {} : std::string { "Native DualSense path is idle; the saved value applies on the next native feedback." });
+      out["reason_code"] = !implemented ? wire_reason_code(descriptor.id) : std::string {};
       out["note"] = wire_note(descriptor.id);
       /* A key the host applies but only a client can finish: which clients honour it, so the page can say who needs to be new enough. */
       out["client_support"] = nlohmann::json::array();
@@ -726,6 +727,39 @@ namespace ds5::tuning {
       default:
         return "No native consumer is wired for this key in this build.";
     }
+  }
+
+  /**
+   * @brief The reason a key is unavailable as a code the Web UI and the panel turn into a sentence in the
+   * person's language (foundation-ui settings/availability.js REASONS).  Empty for a key the host applies.
+   * The codes are the same as the sentences of wire_reason() above, one per cause.
+   */
+  std::string
+  wire_reason_code(std::uint32_t id) {
+    if (runtime::key_implemented(id)) return {};
+    switch (id) {
+      case 10:
+      case 98:
+      case 100:
+        return "transport";
+      case 31:
+        return "slope";
+      case 105:
+        return "client";
+      default:
+        break;
+    }
+    if (!runtime::native_path_compiled()) return "platform";
+    if (id >= 4 && id <= 12) return "haptics-shaping";
+    if (id >= 19 && id <= 23) return "feedback-merge";
+    if (id >= 24 && id <= 34) return "trigger-scale";
+    if (id >= 74 && id <= 80) return "pointer";
+    if (id >= 35 && id <= 73) return "client";
+    if (id == 96) return "mic";
+    if (id == 97) return "preamp";
+    if (id >= 102 && id <= 104) return "control-channel";
+    if (id == 2) return "haptics-switch";
+    return "unwired";
   }
 
   std::string

@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
+#include <map>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -207,8 +208,24 @@ TEST(Ds5TuningDescriptors, ReportsEveryKeyWithAHostConsumerAsImplemented) {
     if (!implemented) {
       EXPECT_EQ(key_entry(snapshot, id).at("status").get<std::string>(), "unavailable") << id;
       EXPECT_FALSE(key_entry(snapshot, id).at("reason").get<std::string>().empty()) << id;
+      EXPECT_FALSE(key_entry(snapshot, id).at("reason_code").get<std::string>().empty()) << id;
+    }
+    else {
+      EXPECT_TRUE(key_entry(snapshot, id).at("reason_code").get<std::string>().empty()) << id;
     }
   }
+}
+
+/* The code is what the UI turns into a sentence: one per real cause, never "not open yet". */
+TEST(Ds5TuningDescriptors, EveryUnavailableKeyNamesItsRealCause) {
+  const auto snapshot = ds5::tuning::store_t("/tmp/ds5-tuning-unused.json").snapshot_json();
+  const std::map<std::uint32_t, std::string> expected {
+    { 10, "transport" }, { 98, "transport" }, { 100, "transport" },
+    { 31, "slope" }, { 96, "mic" }, { 97, "preamp" },
+    { 102, "control-channel" }, { 103, "control-channel" }, { 104, "control-channel" },
+    { 105, "client" },
+  };
+  for (const auto &[id, code] : expected) EXPECT_EQ(key_entry(snapshot, id).at("reason_code").get<std::string>(), code) << id;
 }
 
 TEST_F(Ds5TuningStore, PublishesInputTuningValuesToTheReportRuntime) {

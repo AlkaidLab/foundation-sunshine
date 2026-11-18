@@ -1444,6 +1444,10 @@
       "hint": "These options run in the client's input and audio path. The host does not store them; they are listed here so every option has its place.",
       "title": "Applied by the client"
     },
+    "client_support": {
+      "needs": "Needs client support: {clients}. Other clients keep their own rate.",
+      "since": "{version} and later"
+    },
     "collapse": "Collapse",
     "color": {
       "blue": "Blue",
@@ -1583,14 +1587,15 @@
     },
     "test_panel": {
       "haptics": "HD haptics",
-      "identify": "Identify",
-      "idle": "Ready for a preview action.",
-      "note": "The native test endpoint is not wired in this build. These controls show what the selected profile would send; they never write the profile.",
-      "preview_only": "Preview only: {action}. No hardware command was sent.",
-      "stop": "Detener",
+      "note": "Sends one short rumble pulse to the controllers of the running stream, to check that rumble reaches the client's pad.",
       "title": "Per-controller test",
-      "trigger_left": "Left trigger",
-      "trigger_right": "Right trigger"
+      "result": {
+        "sent": "Sent a short rumble to {pads} controller(s). The host cannot tell whether the client's pad moved.",
+        "no_pad": "No controller is in use: start a stream with a controller connected on the client first.",
+        "unsupported": "This system has no native DualSense path, so there is nothing to test.",
+        "busy": "The previous test is still running.",
+        "failed": "The test request failed."
+      }
     },
     "title": "DualSense host tuning",
     "trigger_preview": {

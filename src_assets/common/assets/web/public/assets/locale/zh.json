@@ -1492,9 +1492,9 @@
     "only_modified": "只看已修改",
     "pending": {
       "count": "{count} 项",
-      "reason": "当前版本暂未开放",
-      "title": "暂未开放",
-      "not_yet": "尚未提供"
+      "reason": "当前不可用",
+      "title": "当前不可用的设置",
+      "not_yet": "主机这边不可用"
     },
     "presets": {
       "applied": "已应用“{name}”预设，保存后生效。",
@@ -1516,26 +1516,27 @@
     "save": "保存",
     "save_failed": "保存被拒绝。",
     "save_ok": "已保存 {count} 项。",
-    "save_partial": "已保存 {applied} 项；另有 {unavailable} 项暂未开放，没有保存。",
+    "save_partial": "已保存 {applied} 项；另有 {unavailable} 项当前不可用，没有保存。",
     "saving": "保存中…",
     "search": "筛选",
-    "show_pending": "显示暂未开放的项",
+    "show_pending": "显示不可用的设置",
     "summary": {
       "absent": "当前版本不含此功能",
       "active": "{count} 个手柄正在使用",
       "idle": "没有手柄在使用",
-      "wired": "{wired} 项可调 · {pending} 项本版本尚未接入"
+      "wired": "{wired} 项可调 · {pending} 项当前不可用"
     },
     "test_panel": {
       "haptics": "触觉",
-      "identify": "识别手柄",
-      "idle": "就绪",
-      "note": "暂未开放，按钮只演示会发生什么。",
-      "preview_only": "仅演示：{action}，没有发送到手柄。",
-      "stop": "停止",
+      "note": "向正在串流的手柄发一次短震动，确认震动能传到客户端的手柄。",
       "title": "手柄测试",
-      "trigger_left": "左扳机",
-      "trigger_right": "右扳机"
+      "result": {
+        "sent": "已发出短震动（{pads} 个手柄）。客户端的手柄是否真的震动，主机无法得知。",
+        "no_pad": "没有手柄在使用：先开始串流，并让客户端连接手柄。",
+        "unsupported": "这个系统没有原生 DualSense 通道，不能测试。",
+        "busy": "上一次测试还在进行。",
+        "failed": "测试请求失败。"
+      }
     },
     "title": "DualSense 手柄调校",
     "trigger_preview": {
@@ -1596,6 +1597,10 @@
       "title": "由客户端执行",
       "chip": "客户端",
       "hint": "这些选项在客户端的输入与音频路径中执行，主机不保存它们。"
+    },
+    "client_support": {
+      "needs": "需要客户端支持：{clients}；其他客户端保持自己的频率。",
+      "since": "{version} 起"
     },
     "gamepad_advanced": "手柄高级",
     "restore_confirm": "把所有 DualSense 选项恢复为默认值吗？更改保存后生效。"
