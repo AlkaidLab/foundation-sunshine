@@ -138,9 +138,11 @@ namespace crash::detail {
       // A call through a null or wild function pointer faults at an address that holds no code: there is no unwind data for it and the walk used to
       // end with no frame, so every such crash got the same empty signature (feedback "access violation, unknown module"). The call pushed its
       // return address, it is the top of the stack: start at the caller instead.
+      bool from_return_address = false;
       if (!executable(ctx.Rip) && readable(ctx.Rsp, 8)) {
         ctx.Rip = *(const DWORD64 *) (std::uintptr_t) ctx.Rsp;
         ctx.Rsp += 8;
+        from_return_address = true;
       }
       for (; n < cap; ++n) {
         const std::uint64_t pc = ctx.Rip;
@@ -150,8 +152,9 @@ namespace crash::detail {
           ++n;
           break;
         }
-        // frames after the first are return addresses: look the function up one byte earlier, a call at the very end of one is common
-        const std::uint64_t lookup = n ? pc - 1 : pc;
+        // frames after the first are return addresses (so is the first one when it was taken from the stack): look the function up one byte earlier,
+        // a call at the very end of one is common
+        const std::uint64_t lookup = (n || from_return_address) ? pc - 1 : pc;
         DWORD64 image_base = 0;
         auto *entry = RtlLookupFunctionEntry(lookup, &image_base, nullptr);
         if (!entry) {
