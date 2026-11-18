@@ -25,6 +25,14 @@ host's folder when it can (the host uploads), else `%LOCALAPPDATA%\Sunshine\cras
 the folder of the Panel and `sparxie-launch` (tests).
 
 Meta: `{v, product, [install_id], version, os_version, time (ISO-8601 UTC), uptime_s, exception_code, module, module_offset, frames[<=64], signature, kind}`.
+
+`ctx` (fixed words and numbers, nothing is written for what is not known): `streaming`, `codec`, `width`, `height`, `fps`, `transport`, `client_family`, `hdr` while a stream runs, and `phase` while the host is
+starting. `phase` is one of `display-restore`, `nvprefs`, `apps`, `enhancement`, `platform-init`, `proc-init`, `pyrowave`, `network`, `webhook`, `listeners`, `encoder-probe`, `input-wait`, `tray`
+(lowercase ASCII, `crash/crash_context.h`); it names where the main thread was when a start-up hang (`hang:main-startup`) or an early crash was reported, so these sort without symbols. The word list is
+also the allowlist of the telemetry Worker, a new word needs both.
+
+A fault at an address that holds no code (a call through a null function pointer, typical for a graphics driver callback) has no unwind data: the walk starts at the return address on top of the stack, so the
+frames and the signature name the caller instead of staying empty.
 Offsets are hex strings (`"0x1f4a"`): 64-bit values do not survive a JSON number. Frames after the first are return addresses.
 Signature: SHA-256 over the first 8 frames, starting at the first frame that is not a runtime or system module (ntdll, kernelbase, ucrtbase,
 libstdc++, System.\*, ...), each `module(lower case)+0x<offset lower hex>`, joined by `\n`. The host, the Panel and `sparxie-launch` share one
@@ -43,7 +51,7 @@ test vector.
 
 ## Tests
 
-`SUNSHINE_TEST_CRASH=null-deref|abort|terminate|throw|hang|upload-only` (host), `null-deref|abort|panic` (Panel), `throw|task|upload-only`
+`SUNSHINE_TEST_CRASH=null-deref|null-call|abort|terminate|throw|hang|upload-only` (`null-call`, a call through a null function pointer, is Windows only) (host), `null-deref|abort|panic` (Panel), `throw|task|upload-only`
 (`sparxie-launch`). `tests/tools/crash_e2e.py` runs each mode in a scratch copy against a local mock of `/v1/crash` and checks the pending
 folder, the dump header, the upload and the deletion; it also checks consent off and a 500 answer. `tests/unit/test_crash.cpp` (25 cases),
 `src-tauri/src/crash/{meta,upload}.rs` tests and `tools/sparxie-launch-tests/CrashReportTests.cs` cover the pure parts and the upload.

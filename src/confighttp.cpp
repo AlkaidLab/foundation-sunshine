@@ -97,6 +97,8 @@ namespace confighttp {
           BOOST_LOG(debug) << "Configuration UI listener ["sv << listener_name << "] ready at [https://"
                            << listener_address << ':' << port << "]"sv;
         });
+        // start() also returns, without a ready call, when shutdown stopped the server before it began: whoever waits for the start must not wait on.
+        signal_startup();
       }
       catch (boost::system::system_error &err) {
         signal_startup();
