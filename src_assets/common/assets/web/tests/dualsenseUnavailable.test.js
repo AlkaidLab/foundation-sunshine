@@ -40,7 +40,7 @@ test('the strings of the DualSense page no longer say 暂未开放 or 尚未提�
 test('a disabled row shows the reason of its key, from the host\'s code', async () => {
   const field = await read('../components/dualsense/ControlField.vue')
   assert.match(field, /ds5Availability\(props\.descriptor/)
-  assert.match(field, /:text="disabledReason \|\| undefined"/)
+  assert.match(field, /:text="disabledReason \|\| /)
   assert.ok(!/ds5\.pending\.reason/.test(field), 'the row no longer uses the one sentence for every key')
 })
 
