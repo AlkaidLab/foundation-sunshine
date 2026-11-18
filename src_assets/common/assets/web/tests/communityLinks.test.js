@@ -32,6 +32,9 @@ test('the QQ link uses the existing community group distribution', () => {
   const qq = PROJECT_LINKS.find((link) => link.id === 'qq')
   assert.equal(resolveLink(qq, 'zh', 0.09), 'https://qm.qq.com/q/AfMQoyKrkc')
   assert.equal(resolveLink(qq, 'zh', 0.1), 'https://qm.qq.com/q/vIVhpjDMic')
+  assert.equal(resolveLink(qq, 'zh', 0.549), 'https://qm.qq.com/q/vIVhpjDMic')
+  assert.equal(resolveLink(qq, 'zh', 0.55), 'https://qm.qq.com/q/p0quekk7QI')
+  assert.equal(resolveLink(qq, 'zh', 0.999), 'https://qm.qq.com/q/p0quekk7QI')
 })
 
 test('the partner tag follows the one client list: the team\'s four clients (HarmonyOS V+ is official) are not partners, every other client is', () => {
