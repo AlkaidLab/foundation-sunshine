@@ -49,14 +49,18 @@ namespace {
   };
 
   queue_t::interrupt_config
-  slow_heartbeat() { return { 1ms, 300ms }; }
+  slow_heartbeat(std::chrono::milliseconds heartbeat = 300ms) {
+    queue_t::interrupt_config config;
+    config.heartbeat = heartbeat;
+    return config;
+  }
 }  // namespace
 
 TEST(PacedReplyQueue, FirstInterruptReplyIsImmediate) {
   recorder_t rec;
   queue_t queue { [&](auto wire) { return rec.send(std::move(wire)); }, slow_heartbeat() };
   const auto start = clock_t_::now();
-  queue.schedule_interrupt(queue_t::lane::interrupt_in, 1, [] { return std::vector<std::uint8_t> { 1 }; });
+  queue.schedule_interrupt(queue_t::lane::interrupt_in, 1, [](bool) { return std::vector<std::uint8_t> { 1 }; });
   ASSERT_TRUE(rec.wait_for(1, 200ms));
   EXPECT_LT(rec.at(0) - start, 150ms);
 }
@@ -64,9 +68,9 @@ TEST(PacedReplyQueue, FirstInterruptReplyIsImmediate) {
 TEST(PacedReplyQueue, IdleInterruptReplyWaitsForTheHeartbeat) {
   recorder_t rec;
   queue_t queue { [&](auto wire) { return rec.send(std::move(wire)); }, slow_heartbeat() };
-  queue.schedule_interrupt(queue_t::lane::interrupt_in, 1, [] { return std::vector<std::uint8_t> { 1 }; });
+  queue.schedule_interrupt(queue_t::lane::interrupt_in, 1, [](bool) { return std::vector<std::uint8_t> { 1 }; });
   ASSERT_TRUE(rec.wait_for(1, 200ms));
-  queue.schedule_interrupt(queue_t::lane::interrupt_in, 2, [] { return std::vector<std::uint8_t> { 2 }; });
+  queue.schedule_interrupt(queue_t::lane::interrupt_in, 2, [](bool) { return std::vector<std::uint8_t> { 2 }; });
   ASSERT_TRUE(rec.wait_for(2, 2000ms));
   EXPECT_GE(rec.at(1) - rec.at(0), 280ms);
 }
@@ -74,9 +78,9 @@ TEST(PacedReplyQueue, IdleInterruptReplyWaitsForTheHeartbeat) {
 TEST(PacedReplyQueue, NewDataAnswersAHeldInterruptReplyAtOnce) {
   recorder_t rec;
   queue_t queue { [&](auto wire) { return rec.send(std::move(wire)); }, slow_heartbeat() };
-  queue.schedule_interrupt(queue_t::lane::interrupt_in, 1, [] { return std::vector<std::uint8_t> { 1 }; });
+  queue.schedule_interrupt(queue_t::lane::interrupt_in, 1, [](bool) { return std::vector<std::uint8_t> { 1 }; });
   ASSERT_TRUE(rec.wait_for(1, 200ms));
-  queue.schedule_interrupt(queue_t::lane::interrupt_in, 2, [] { return std::vector<std::uint8_t> { 2 }; });
+  queue.schedule_interrupt(queue_t::lane::interrupt_in, 2, [](bool) { return std::vector<std::uint8_t> { 2 }; });
   queue.notify_interrupt_data(queue_t::lane::interrupt_in);
   ASSERT_TRUE(rec.wait_for(2, 250ms));
   EXPECT_GE(rec.at(1) - rec.at(0), 900us);  // never closer than the floor
@@ -86,10 +90,10 @@ TEST(PacedReplyQueue, NewDataAnswersAHeldInterruptReplyAtOnce) {
 TEST(PacedReplyQueue, DataBeforeTheNextUrbAnswersItWithoutTheHeartbeat) {
   recorder_t rec;
   queue_t queue { [&](auto wire) { return rec.send(std::move(wire)); }, slow_heartbeat() };
-  queue.schedule_interrupt(queue_t::lane::interrupt_in, 1, [] { return std::vector<std::uint8_t> { 1 }; });
+  queue.schedule_interrupt(queue_t::lane::interrupt_in, 1, [](bool) { return std::vector<std::uint8_t> { 1 }; });
   ASSERT_TRUE(rec.wait_for(1, 200ms));
   queue.notify_interrupt_data(queue_t::lane::interrupt_in);
-  queue.schedule_interrupt(queue_t::lane::interrupt_in, 2, [] { return std::vector<std::uint8_t> { 2 }; });
+  queue.schedule_interrupt(queue_t::lane::interrupt_in, 2, [](bool) { return std::vector<std::uint8_t> { 2 }; });
   ASSERT_TRUE(rec.wait_for(2, 250ms));
   EXPECT_GE(rec.at(1) - rec.at(0), 900us);
 }
@@ -97,11 +101,11 @@ TEST(PacedReplyQueue, DataBeforeTheNextUrbAnswersItWithoutTheHeartbeat) {
 TEST(PacedReplyQueue, TheReplyCarriesTheStateOfTheMomentItLeaves) {
   recorder_t rec;
   queue_t queue { [&](auto wire) { return rec.send(std::move(wire)); }, slow_heartbeat() };
-  queue.schedule_interrupt(queue_t::lane::interrupt_in, 1, [] { return std::vector<std::uint8_t> { 1 }; });
+  queue.schedule_interrupt(queue_t::lane::interrupt_in, 1, [](bool) { return std::vector<std::uint8_t> { 1 }; });
   ASSERT_TRUE(rec.wait_for(1, 200ms));
   std::mutex state_mutex;
   std::uint8_t state = 10;
-  queue.schedule_interrupt(queue_t::lane::interrupt_in, 2, [&] {
+  queue.schedule_interrupt(queue_t::lane::interrupt_in, 2, [&](bool) {
     std::lock_guard lock(state_mutex);
     return std::vector<std::uint8_t> { state };
   });
@@ -138,9 +142,9 @@ TEST(PacedReplyQueue, ADataNotificationDoesNotTouchIsochronousReplies) {
 TEST(PacedReplyQueue, CancelRemovesAHeldInterruptReply) {
   recorder_t rec;
   queue_t queue { [&](auto wire) { return rec.send(std::move(wire)); }, slow_heartbeat() };
-  queue.schedule_interrupt(queue_t::lane::interrupt_in, 1, [] { return std::vector<std::uint8_t> { 1 }; });
+  queue.schedule_interrupt(queue_t::lane::interrupt_in, 1, [](bool) { return std::vector<std::uint8_t> { 1 }; });
   ASSERT_TRUE(rec.wait_for(1, 200ms));
-  queue.schedule_interrupt(queue_t::lane::interrupt_in, 2, [] { return std::vector<std::uint8_t> { 2 }; });
+  queue.schedule_interrupt(queue_t::lane::interrupt_in, 2, [](bool) { return std::vector<std::uint8_t> { 2 }; });
   EXPECT_TRUE(queue.cancel(2));
   queue.notify_interrupt_data(queue_t::lane::interrupt_in);
   EXPECT_FALSE(rec.wait_for(2, 50ms));
@@ -151,11 +155,11 @@ TEST(PacedReplyQueue, CancelRemovesAHeldInterruptReply) {
  * the bound is generous so a loaded runner does not trip it. */
 TEST(PacedReplyQueue, TheHeartbeatResumesAfterABurstOfEvents) {
   recorder_t rec;
-  queue_t queue { [&](auto wire) { return rec.send(std::move(wire)); }, { 1ms, 20ms } };
+  queue_t queue { [&](auto wire) { return rec.send(std::move(wire)); }, slow_heartbeat(20ms) };
   std::uint32_t sequence = 1;
   std::atomic<bool> stop { false };
   /* A host that keeps three URBs outstanding and posts a new one after each reply. */
-  for (int i = 0; i < 3; ++i) queue.schedule_interrupt(queue_t::lane::interrupt_in, sequence++, [] { return std::vector<std::uint8_t> { 1 }; });
+  for (int i = 0; i < 3; ++i) queue.schedule_interrupt(queue_t::lane::interrupt_in, sequence++, [](bool) { return std::vector<std::uint8_t> { 1 }; });
   std::thread host([&] {
     std::size_t seen = 0;
     while (!stop) {
@@ -163,7 +167,7 @@ TEST(PacedReplyQueue, TheHeartbeatResumesAfterABurstOfEvents) {
       rec.changed.wait_for(lock, 5ms, [&] { return rec.sent.size() > seen; });
       const auto now_sent = rec.sent.size();
       lock.unlock();
-      for (; seen < now_sent; ++seen) queue.schedule_interrupt(queue_t::lane::interrupt_in, sequence++, [] { return std::vector<std::uint8_t> { 1 }; });
+      for (; seen < now_sent; ++seen) queue.schedule_interrupt(queue_t::lane::interrupt_in, sequence++, [](bool) { return std::vector<std::uint8_t> { 1 }; });
     }
   });
   const auto burst_end = clock_t_::now() + 600ms;
@@ -187,4 +191,38 @@ TEST(PacedReplyQueue, TheHeartbeatResumesAfterABurstOfEvents) {
   }
   EXPECT_GE(quiet_replies, 5u);
   EXPECT_LT(longest, 150ms);
+}
+
+TEST(PacedReplyQueue, AButtonChangeIsAnsweredByAReplyOfItsOwn) {
+  recorder_t rec;
+  queue_t queue { [&](auto wire) { return rec.send(std::move(wire)); }, slow_heartbeat() };
+  queue.schedule_interrupt(queue_t::lane::interrupt_in, 1, [](bool) { return std::vector<std::uint8_t> { 0 }; });
+  ASSERT_TRUE(rec.wait_for(1, 200ms));
+  for (std::uint32_t i = 2; i <= 3; ++i) {
+    queue.schedule_interrupt(queue_t::lane::interrupt_in, i, [](bool edge) { return std::vector<std::uint8_t> { static_cast<std::uint8_t>(edge ? 2 : 1) }; });
+  }
+  queue.notify_interrupt_data(queue_t::lane::interrupt_in, platf::report_change::edge);
+  queue.notify_interrupt_data(queue_t::lane::interrupt_in, platf::report_change::edge);
+  ASSERT_TRUE(rec.wait_for(3, 250ms));
+  std::lock_guard lock(rec.mutex);
+  EXPECT_EQ(rec.sent[1].first, 2);
+  EXPECT_EQ(rec.sent[2].first, 2);
+  EXPECT_GE(rec.sent[2].second - rec.sent[1].second, 900us);
+}
+
+TEST(PacedReplyQueue, MorePadsStretchTheStreamFloorButNotAButtonReply) {
+  recorder_t rec;
+  queue_t::interrupt_config config = slow_heartbeat();
+  config.budget_per_second = 100;  // with four pads: 40 ms between two stream replies
+  queue_t queue { [&](auto wire) { return rec.send(std::move(wire)); }, config, [] { return 4u; } };
+  queue.schedule_interrupt(queue_t::lane::interrupt_in, 1, [](bool) { return std::vector<std::uint8_t> { 0 }; });
+  ASSERT_TRUE(rec.wait_for(1, 200ms));
+  queue.schedule_interrupt(queue_t::lane::interrupt_in, 2, [](bool) { return std::vector<std::uint8_t> { 1 }; });
+  queue.notify_interrupt_data(queue_t::lane::interrupt_in);
+  ASSERT_TRUE(rec.wait_for(2, 250ms));
+  EXPECT_GE(rec.at(1) - rec.at(0), 38ms);
+  queue.schedule_interrupt(queue_t::lane::interrupt_in, 3, [](bool) { return std::vector<std::uint8_t> { 2 }; });
+  queue.notify_interrupt_data(queue_t::lane::interrupt_in, platf::report_change::edge);
+  ASSERT_TRUE(rec.wait_for(3, 250ms));
+  EXPECT_LT(rec.at(2) - rec.at(1), 30ms);
 }

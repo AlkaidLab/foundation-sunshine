@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <deque>
 #include <vector>
 
 #include "src/platform/interrupt_pacing.h"
@@ -15,37 +16,42 @@ namespace {
   using clock_type = std::chrono::steady_clock;
   using tp = clock_type::time_point;
   using lane_t = platf::interrupt_lane<int, clock_type>;
+  using platf::report_change;
 
   const tp t0 = tp {} + 1000s;
 
+  struct reply_t {
+    tp at;
+    bool edge;
+  };
+
   /**
    * A host that keeps @p outstanding URBs queued and posts a new one 60 us after each reply,
-   * with a game that changes a report at @p event_hz between @p events_from and @p events_to.
+   * with a game that changes the report at the times it is given.
    */
   struct host_t {
     lane_t lane;
+    unsigned pads { 1 };
     std::uint32_t next_sequence { 1 };
-    std::vector<tp> replies;
+    std::vector<reply_t> replies;
     std::vector<tp> resubmits;
 
-    explicit host_t(int outstanding) {
+    explicit host_t(int outstanding, unsigned active_pads = 1):
+        pads(active_pads) {
       for (int i = 0; i < outstanding; ++i) lane.hold(next_sequence++, 0);
     }
 
     void
-    run(tp from, tp to, int event_hz, tp events_from, tp events_to) {
-      auto next_event = events_from;
+    run(tp from, tp to, const std::vector<std::pair<tp, report_change>> &events) {
+      auto next_event = events.begin();
       for (auto now = from; now < to; now += 10us) {
-        if (event_hz > 0 && now >= events_from && now < events_to && now >= next_event) {
-          next_event += std::chrono::microseconds(1000000 / event_hz);
-          lane.new_data();
-        }
+        while (next_event != events.end() && next_event->first <= now) lane.new_data((next_event++)->second);
         while (!resubmits.empty() && resubmits.front() <= now) {
           resubmits.erase(resubmits.begin());
           lane.hold(next_sequence++, 0);
         }
-        if (lane.take_if_due(now)) {
-          replies.push_back(now);
+        if (const auto taken = lane.take_if_due(now, pads)) {
+          replies.push_back({ now, taken->edge });
           resubmits.push_back(now + 60us);
         }
       }
@@ -55,93 +61,108 @@ namespace {
     longest_silence(tp from, tp to) const {
       std::chrono::microseconds longest { 0 };
       tp previous = from;
-      for (const auto at : replies) {
-        if (at < from) continue;
-        if (at > to) break;
-        longest = std::max(longest, std::chrono::duration_cast<std::chrono::microseconds>(at - previous));
-        previous = at;
+      for (const auto &reply : replies) {
+        if (reply.at < from) continue;
+        if (reply.at > to) break;
+        longest = std::max(longest, std::chrono::duration_cast<std::chrono::microseconds>(reply.at - previous));
+        previous = reply.at;
       }
       return std::max(longest, std::chrono::duration_cast<std::chrono::microseconds>(to - previous));
     }
 
     std::size_t
     count(tp from, tp to) const {
-      return static_cast<std::size_t>(std::count_if(replies.begin(), replies.end(), [&](tp at) { return at >= from && at < to; }));
+      return static_cast<std::size_t>(std::count_if(replies.begin(), replies.end(), [&](const reply_t &r) { return r.at >= from && r.at < to; }));
     }
   };
+
+  std::vector<std::pair<tp, report_change>>
+  train(tp from, tp to, int hz, report_change kind = report_change::stream) {
+    std::vector<std::pair<tp, report_change>> events;
+    for (auto at = from; at < to; at += std::chrono::microseconds(1000000 / hz)) events.emplace_back(at, kind);
+    return events;
+  }
+
+  std::vector<std::pair<tp, report_change>>
+  merged(std::vector<std::pair<tp, report_change>> a, const std::vector<std::pair<tp, report_change>> &b) {
+    a.insert(a.end(), b.begin(), b.end());
+    std::stable_sort(a.begin(), a.end(), [](const auto &x, const auto &y) { return x.first < y.first; });
+    return a;
+  }
 }  // namespace
 
 TEST(InterruptLane, FirstUrbIsAnsweredAtOnce) {
   lane_t lane;
   lane.hold(1, 7);
-  const auto item = lane.take_if_due(t0);
-  ASSERT_TRUE(item.has_value());
-  EXPECT_EQ(*item, 7);
+  const auto taken = lane.take_if_due(t0, 1);
+  ASSERT_TRUE(taken.has_value());
+  EXPECT_EQ(taken->item, 7);
+  EXPECT_FALSE(taken->edge);
 }
 
 TEST(InterruptLane, NothingHeldMeansNothingDue) {
   lane_t lane;
-  EXPECT_FALSE(lane.next_due().has_value());
-  EXPECT_FALSE(lane.take_if_due(t0).has_value());
+  EXPECT_FALSE(lane.next_due(1).has_value());
+  EXPECT_FALSE(lane.take_if_due(t0, 1).has_value());
 }
 
 TEST(InterruptLane, IdleKeepsTheFourMillisecondHeartbeat) {
   lane_t lane;
   lane.hold(1, 1);
-  ASSERT_TRUE(lane.take_if_due(t0));
+  ASSERT_TRUE(lane.take_if_due(t0, 1));
   lane.hold(2, 2);
-  EXPECT_FALSE(lane.take_if_due(t0 + 3999us));
-  EXPECT_TRUE(lane.take_if_due(t0 + 4ms));
+  EXPECT_FALSE(lane.take_if_due(t0 + 3999us, 1));
+  EXPECT_TRUE(lane.take_if_due(t0 + 4ms, 1));
   lane.hold(3, 3);
-  EXPECT_EQ(lane.next_due(), t0 + 8ms);
+  EXPECT_EQ(lane.next_due(1), t0 + 8ms);
 }
 
-TEST(InterruptLane, NewDataAnswersAHeldUrbAfterTheOneMillisecondFloor) {
+TEST(InterruptLane, StreamDataAnswersAHeldUrbAfterTheOneMillisecondFloor) {
   lane_t lane;
   lane.hold(1, 1);
-  ASSERT_TRUE(lane.take_if_due(t0));
+  ASSERT_TRUE(lane.take_if_due(t0, 1));
   lane.hold(2, 2);
-  lane.new_data();
-  EXPECT_EQ(lane.next_due(), t0 + 1ms);
-  EXPECT_FALSE(lane.take_if_due(t0 + 999us));
-  EXPECT_TRUE(lane.take_if_due(t0 + 1ms));
+  lane.new_data(report_change::stream);
+  EXPECT_EQ(lane.next_due(1), t0 + 1ms);
+  EXPECT_FALSE(lane.take_if_due(t0 + 999us, 1));
+  EXPECT_TRUE(lane.take_if_due(t0 + 1ms, 1));
 }
 
 TEST(InterruptLane, DataBeforeTheNextUrbAnswersItAtOnceAfterTheFloor) {
   lane_t lane;
   lane.hold(1, 1);
-  ASSERT_TRUE(lane.take_if_due(t0));
-  lane.new_data();
+  ASSERT_TRUE(lane.take_if_due(t0, 1));
+  lane.new_data(report_change::stream);
   lane.hold(2, 2);
-  EXPECT_EQ(lane.next_due(), t0 + 1ms);
+  EXPECT_EQ(lane.next_due(1), t0 + 1ms);
 }
 
 TEST(InterruptLane, SendingClearsTheDirtyFlag) {
   lane_t lane;
   lane.hold(1, 1);
-  lane.new_data();
-  ASSERT_TRUE(lane.take_if_due(t0));
+  lane.new_data(report_change::stream);
+  ASSERT_TRUE(lane.take_if_due(t0, 1));
   EXPECT_FALSE(lane.dirty());
   lane.hold(2, 2);
-  EXPECT_EQ(lane.next_due(), t0 + 4ms);
+  EXPECT_EQ(lane.next_due(1), t0 + 4ms);
 }
 
 TEST(InterruptLane, ALateTimerNeverBringsTwoRepliesCloserThanTheFloor) {
   lane_t lane;
   lane.hold(1, 1);
-  ASSERT_TRUE(lane.take_if_due(t0 + 3ms));  // the timer fired late
+  ASSERT_TRUE(lane.take_if_due(t0 + 3ms, 1));  // the timer fired late
   lane.hold(2, 2);
-  lane.new_data();
-  EXPECT_EQ(lane.next_due(), t0 + 4ms);
+  lane.new_data(report_change::stream);
+  EXPECT_EQ(lane.next_due(1), t0 + 4ms);
 }
 
 TEST(InterruptLane, RepliesHeldTogetherLeaveOneIntervalApart) {
   lane_t lane;
   for (std::uint32_t i = 1; i <= 3; ++i) lane.hold(i, static_cast<int>(i));
-  EXPECT_EQ(lane.take_if_due(t0), 1);
-  EXPECT_FALSE(lane.take_if_due(t0 + 1ms));
-  EXPECT_EQ(lane.take_if_due(t0 + 4ms), 2);
-  EXPECT_EQ(lane.take_if_due(t0 + 8ms), 3);
+  EXPECT_EQ(lane.take_if_due(t0, 1)->item, 1);
+  EXPECT_FALSE(lane.take_if_due(t0 + 1ms, 1));
+  EXPECT_EQ(lane.take_if_due(t0 + 4ms, 1)->item, 2);
+  EXPECT_EQ(lane.take_if_due(t0 + 8ms, 1)->item, 3);
 }
 
 TEST(InterruptLane, CancelRemovesOnlyAHeldReply) {
@@ -151,41 +172,45 @@ TEST(InterruptLane, CancelRemovesOnlyAHeldReply) {
   EXPECT_TRUE(lane.cancel(2));
   EXPECT_FALSE(lane.cancel(2));
   EXPECT_EQ(lane.held(), 1u);
-  ASSERT_TRUE(lane.take_if_due(t0));
+  ASSERT_TRUE(lane.take_if_due(t0, 1));
   EXPECT_FALSE(lane.cancel(1));
 }
 
 TEST(InterruptLane, ResetForgetsTheClock) {
   lane_t lane;
   lane.hold(1, 1);
-  lane.new_data();
-  ASSERT_TRUE(lane.take_if_due(t0));
+  lane.new_data(report_change::stream);
+  lane.new_data(report_change::edge);
+  ASSERT_TRUE(lane.take_if_due(t0, 1));
   lane.hold(2, 2);
   lane.reset();
   EXPECT_EQ(lane.held(), 0u);
   EXPECT_FALSE(lane.dirty());
+  EXPECT_EQ(lane.pending_edges(), 0u);
   lane.hold(3, 3);
-  EXPECT_TRUE(lane.take_if_due(t0 + 1us));
+  EXPECT_TRUE(lane.take_if_due(t0 + 1us, 1));
 }
 
 TEST(InterruptLane, ConfiguredPeriodsApply) {
-  lane_t lane { 2ms, 10ms };
+  lane_t::config settings;
+  settings.min_interval = 2ms;
+  settings.heartbeat = 10ms;
+  lane_t lane { settings };
   lane.hold(1, 1);
-  ASSERT_TRUE(lane.take_if_due(t0));
+  ASSERT_TRUE(lane.take_if_due(t0, 1));
   lane.hold(2, 2);
-  EXPECT_EQ(lane.next_due(), t0 + 10ms);
-  lane.new_data();
-  EXPECT_EQ(lane.next_due(), t0 + 2ms);
+  EXPECT_EQ(lane.next_due(1), t0 + 10ms);
+  lane.new_data(report_change::stream);
+  EXPECT_EQ(lane.next_due(1), t0 + 2ms);
 }
 
 /* The heartbeat must go on between sparse events: a game that presses buttons at 125 Hz still
- * has the 4 ms heartbeat underneath, whatever the number of URBs the host keeps outstanding. */
-TEST(InterruptLane, HeartbeatContinuesBetweenSparseEvents) {
+ * has the heartbeat underneath, whatever the number of URBs the host keeps outstanding. */
+TEST(InterruptLane, HeartbeatContinuesBetweenSparseStreamEvents) {
   for (const int outstanding : { 1, 2, 4, 8, 32 }) {
     host_t host { outstanding };
-    host.run(t0, t0 + 6s, 125, t0, t0 + 6s);
+    host.run(t0, t0 + 6s, train(t0, t0 + 6s, 125));
     EXPECT_LE(host.longest_silence(t0, t0 + 6s), 4100us) << "outstanding " << outstanding;
-    /* 125 events a second plus the heartbeat that falls between them: no fewer than 250 a second. */
     EXPECT_GE(host.count(t0 + 1s, t0 + 6s), 5u * 250u - 5u) << "outstanding " << outstanding;
   }
 }
@@ -194,23 +219,155 @@ TEST(InterruptLane, HeartbeatContinuesBetweenSparseEvents) {
 TEST(InterruptLane, HeartbeatResumesWithinFourMillisecondsAfterABurst) {
   for (const int outstanding : { 1, 2, 4, 8, 32 }) {
     host_t host { outstanding };
-    host.run(t0, t0 + 4s, 500, t0 + 500ms, t0 + 1500ms);
-    EXPECT_LE(host.longest_silence(t0 + 1500ms, t0 + 4s), 4100us) << "outstanding " << outstanding;
+    host.run(t0, t0 + 4s, train(t0 + 500ms, t0 + 1500ms, 500));
     EXPECT_LE(host.longest_silence(t0, t0 + 4s), 4100us) << "outstanding " << outstanding;
   }
 }
 
-TEST(InterruptLane, EventsAnswerAtTheirOwnRateAndNeverCloserThanTheFloor) {
+TEST(InterruptLane, StreamEventsAnswerAtTheirOwnRateAndNeverCloserThanTheFloor) {
   host_t host { 2 };
-  host.run(t0, t0 + 2s, 500, t0, t0 + 2s);
+  host.run(t0, t0 + 2s, train(t0, t0 + 2s, 500));
   for (std::size_t i = 1; i < host.replies.size(); ++i) {
-    EXPECT_GE(host.replies[i] - host.replies[i - 1], 1ms) << "reply " << i;
+    EXPECT_GE(host.replies[i].at - host.replies[i - 1].at, 1ms) << "reply " << i;
   }
   EXPECT_NEAR(static_cast<double>(host.count(t0 + 500ms, t0 + 1500ms)), 500.0, 5.0);
 }
 
 TEST(InterruptLane, IdleReplyRateIsTheHeartbeat) {
   host_t host { 3 };
-  host.run(t0, t0 + 3s, 0, t0, t0);
+  host.run(t0, t0 + 3s, {});
   EXPECT_NEAR(static_cast<double>(host.count(t0 + 1s, t0 + 2s)), 250.0, 2.0);
+}
+
+/* The reply budget: every pad answers at 1500 / pads at most while a stream moves. */
+TEST(InterruptLane, TheStreamFloorGrowsWithTheNumberOfActivePads) {
+  lane_t lane;
+  EXPECT_EQ(lane.stream_floor(1), 1ms);
+  EXPECT_EQ(lane.stream_floor(0), 1ms);
+  EXPECT_EQ(lane.stream_floor(2), std::chrono::duration_cast<clock_type::duration>(std::chrono::duration<double>(2.0 / 1500)));
+  const auto four_pads_ms = std::chrono::duration<double, std::milli>(lane.stream_floor(4)).count();
+  EXPECT_NEAR(four_pads_ms, 2.667, 0.001);
+}
+
+TEST(InterruptLane, FourPadsTogetherStayWithinTheBudget) {
+  host_t one { 2, 1 };
+  host_t four { 2, 4 };
+  one.run(t0, t0 + 3s, train(t0, t0 + 3s, 1000));
+  four.run(t0, t0 + 3s, train(t0, t0 + 3s, 1000));
+  const auto one_rate = static_cast<double>(one.count(t0 + 1s, t0 + 2s));
+  const auto four_rate = static_cast<double>(four.count(t0 + 1s, t0 + 2s)) * 4.0;
+  EXPECT_NEAR(one_rate, 1000.0, 10.0);
+  EXPECT_LE(four_rate, 1500.0 * 1.02);
+  EXPECT_GE(four_rate, 1500.0 * 0.95);
+}
+
+TEST(InterruptLane, TheBudgetNeverSlowsTheHeartbeat) {
+  host_t host { 2, 8 };
+  host.run(t0, t0 + 2s, {});
+  EXPECT_NEAR(static_cast<double>(host.count(t0 + 500ms, t0 + 1500ms)), 250.0, 2.0);
+}
+
+/* Buttons. */
+TEST(InterruptLane, EachButtonChangeGetsItsOwnReply) {
+  lane_t lane;
+  lane.hold(1, 1);
+  ASSERT_TRUE(lane.take_if_due(t0, 1));
+  for (std::uint32_t i = 2; i <= 4; ++i) lane.hold(i, static_cast<int>(i));
+  lane.new_data(report_change::edge);  // press
+  lane.new_data(report_change::edge);  // release 100 us later
+  EXPECT_EQ(lane.pending_edges(), 2u);
+  const auto first = lane.take_if_due(t0 + 1ms, 1);
+  ASSERT_TRUE(first.has_value());
+  EXPECT_TRUE(first->edge);
+  EXPECT_FALSE(lane.take_if_due(t0 + 1999us, 1));
+  const auto second = lane.take_if_due(t0 + 2ms, 1);
+  ASSERT_TRUE(second.has_value());
+  EXPECT_TRUE(second->edge);
+  EXPECT_EQ(lane.pending_edges(), 0u);
+}
+
+TEST(InterruptLane, AButtonReplyIgnoresTheStreamFloor) {
+  lane_t lane;
+  lane.hold(1, 1);
+  ASSERT_TRUE(lane.take_if_due(t0, 4));
+  lane.hold(2, 2);
+  lane.new_data(report_change::stream);
+  EXPECT_GT(*lane.next_due(4), t0 + 2ms);  // 2.67 ms with four pads
+  lane.new_data(report_change::edge);
+  EXPECT_EQ(lane.next_due(4), t0 + 1ms);
+}
+
+TEST(InterruptLane, AButtonReplyLeavesTheStreamChangeForTheNextReply) {
+  lane_t lane;
+  for (std::uint32_t i = 1; i <= 3; ++i) lane.hold(i, static_cast<int>(i));
+  ASSERT_TRUE(lane.take_if_due(t0, 1));
+  lane.new_data(report_change::stream);
+  lane.new_data(report_change::edge);
+  ASSERT_TRUE(lane.take_if_due(t0 + 1ms, 1)->edge);
+  EXPECT_TRUE(lane.dirty());
+  const auto next = lane.take_if_due(t0 + 20ms, 1);
+  ASSERT_TRUE(next.has_value());
+  EXPECT_FALSE(next->edge);
+  EXPECT_FALSE(lane.dirty());
+}
+
+TEST(InterruptLane, ManyButtonChangesAtOnceAreCappedAndTheRestFallBackToTheStream) {
+  lane_t lane;
+  for (int i = 0; i < 12; ++i) lane.new_data(report_change::edge);
+  EXPECT_EQ(lane.pending_edges(), lane_t::kMaxPendingEdges);
+  EXPECT_TRUE(lane.dirty());
+}
+
+/* The HID class of Windows keeps 32 reports per reader.  With 500 Hz sticks and a press, a
+ * reader that stalls for 160 ms must still find the press when it comes back; at the old fixed
+ * 4 ms pacing it needs 128 ms or less, so the lane must do at least as well. */
+TEST(InterruptLane, AButtonReplySurvivesTheHidQueueOfAStalledReader) {
+  for (const auto stall : { 80ms, 120ms, 160ms }) {
+    host_t host { 2 };
+    const auto press = t0 + 1s;
+    auto events = merged(train(t0, t0 + 3s, 500), { { press, report_change::edge }, { press + 30ms, report_change::edge } });
+    host.run(t0, t0 + 3s, events);
+    /* the reader stalls from the press until press + stall; it then sees the newest 32 replies */
+    const auto stall_end = press + stall;
+    std::deque<reply_t> queue;
+    for (const auto &reply : host.replies) {
+      if (reply.at >= press && reply.at <= stall_end) {
+        queue.push_back(reply);
+        if (queue.size() > 32) queue.pop_front();
+      }
+    }
+    const auto still_there = std::any_of(queue.begin(), queue.end(), [](const reply_t &r) { return r.edge; });
+    EXPECT_TRUE(still_there) << "stall " << stall.count() << " ms";
+  }
+}
+
+TEST(InterruptLane, TheProtectionWindowThinsTheRepliesAndThenEnds) {
+  host_t host { 2 };
+  const auto press = t0 + 1s;
+  host.run(t0, t0 + 3s, merged(train(t0, t0 + 3s, 500), { { press, report_change::edge } }));
+  /* within the window: at most one reply per 6 ms, plus the button reply */
+  EXPECT_LE(host.count(press, press + 180ms), 32u);
+  /* after the window: back to the stream rate */
+  EXPECT_NEAR(static_cast<double>(host.count(press + 300ms, press + 800ms)), 250.0, 5.0 + 250.0);
+  EXPECT_GE(host.count(press + 300ms, press + 800ms), 240u);
+  /* the heartbeat never stops, protection or not */
+  EXPECT_LE(host.longest_silence(t0, t0 + 3s), 6100us);
+}
+
+TEST(InterruptLane, ProtectionDoesNotWaitForAWindowThatIsOver) {
+  lane_t lane;
+  lane.hold(1, 1);
+  lane.new_data(report_change::edge);
+  ASSERT_TRUE(lane.take_if_due(t0, 1)->edge);
+  lane.hold(2, 2);
+  EXPECT_EQ(lane.next_due(1), t0 + 6ms);  // heartbeat stretched to the protect interval
+  ASSERT_TRUE(lane.take_if_due(t0 + 6ms, 1));
+  lane.hold(3, 3);
+  /* a reply 175 ms after the press: the window ends in 5 ms, so the next one waits for that, not for 6 ms */
+  ASSERT_TRUE(lane.take_if_due(t0 + 175ms, 1));
+  lane.hold(4, 4);
+  EXPECT_EQ(lane.next_due(1), t0 + 180ms);
+  ASSERT_TRUE(lane.take_if_due(t0 + 180ms, 1));
+  lane.hold(5, 5);
+  EXPECT_EQ(lane.next_due(1), t0 + 184ms);
 }
