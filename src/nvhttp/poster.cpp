@@ -293,7 +293,9 @@ namespace nvhttp::apps::poster {
       // schedule() runs for every application on every app-list and every poster request, so the same file version arrives again and again. The variants are named after
       // the file's path, size and modification time: when the preview is already on disk (made by an earlier run) or was built or tried in this run, there is nothing to do.
       // Without this each request decoded the poster and encoded it again (several seconds of one core for a large one).
-      if (std::filesystem::is_regular_file(preview_cache_path(*source, true)) || std::filesystem::is_regular_file(preview_cache_path(*source, false))) return;
+      // The error_code overloads: a cache name that the file system refuses (a source name close to the length limit, with the prefix and key added) must count as a miss, not throw out of the worker.
+      std::error_code probe_error;
+      if (std::filesystem::is_regular_file(preview_cache_path(*source, true), probe_error) || std::filesystem::is_regular_file(preview_cache_path(*source, false), probe_error)) return;
       {
         auto &queue = work_queue();
         std::lock_guard lock(queue.mutex);
