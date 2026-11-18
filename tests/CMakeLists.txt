@@ -947,6 +947,17 @@ add_test(NAME rc_version_encoding COMMAND ${CMAKE_COMMAND} -P ${CMAKE_SOURCE_DIR
 add_test(NAME build_info_archive COMMAND ${CMAKE_COMMAND} -P ${CMAKE_SOURCE_DIR}/tests/cmake/test_build_info_archive.cmake WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
 
 # Network check run (net-check-1118): the steps of a run, what each found, and the TCP and UDP results.
+add_executable(single_flight_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_single_flight.cpp)
+target_include_directories(single_flight_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(single_flight_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage Threads::Threads)
+target_compile_options(single_flight_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(single_flight_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(single_flight_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME single_flight_unit_tests COMMAND single_flight_unit_tests)
+
 add_executable(network_check_unit_tests
         ${CMAKE_SOURCE_DIR}/src/network_check.cpp
         ${CMAKE_SOURCE_DIR}/src/nat_discovery.cpp

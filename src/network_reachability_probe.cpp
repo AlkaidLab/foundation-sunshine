@@ -7,6 +7,7 @@
  * IGD service and a TLS handshake against the host's own WAN address.
  */
 #include "network_reachability.h"
+#include "single_flight.h"
 
 #include <algorithm>
 #include <array>
@@ -1151,10 +1152,7 @@ namespace reachability {
       return snapshot;
     }
 
-    std::mutex cache_mutex;
-    snapshot_t cached_snapshot;
-    std::int64_t cached_at = 0;
-    std::string cache_key;
+    single_flight::cell_t<snapshot_t> probe_cell;
 
     std::string
     options_key(const probe_options_t &options) {
@@ -1170,15 +1168,8 @@ namespace reachability {
 
   snapshot_t
   probe(const probe_options_t &options, bool refresh) {
-    std::lock_guard lock { cache_mutex };
+    // One probe at a time per set of options; a caller that asks while it runs waits for it (single_flight.h), and a refresh right after a finished run is answered by that run.
     const auto now = now_epoch_seconds();
-    const auto key = options_key(options);
-    if (!refresh && cached_at != 0 && key == cache_key && now - cached_at < CACHE_TTL_SECONDS) {
-      return cached_snapshot;
-    }
-    cached_snapshot = collect_snapshot(options, now);
-    cached_at = now;
-    cache_key = key;
-    return cached_snapshot;
+    return probe_cell.get(options_key(options), refresh, now, CACHE_TTL_SECONDS, REFRESH_REUSE_SECONDS, [&]() { return collect_snapshot(options, now); });
   }
 }  // namespace reachability

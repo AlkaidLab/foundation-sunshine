@@ -29,6 +29,9 @@ namespace reachability {
   /// Interval during which a cached snapshot is reused without probing again.
   constexpr std::int64_t CACHE_TTL_SECONDS = 60;
 
+  /// A refresh asked for within this many seconds of a finished probe with the same options is answered by that probe: it is what the refresh would find.
+  constexpr std::int64_t REFRESH_REUSE_SECONDS = 2;
+
   /// Port offsets from a public method so the route module can name them.
   namespace port_role {
     constexpr std::string_view http = "http";
