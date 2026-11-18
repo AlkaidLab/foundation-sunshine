@@ -15,44 +15,90 @@ try {
     if ($fixture.present) { Set-Content -LiteralPath (Join-Path $usbRoot 'usbip.exe') -Value 'fixture' }
     if ($fixture.extras) {
       Set-Content -LiteralPath (Join-Path $usbRoot 'wusbip.exe') -Value 'fixture'
+      foreach ($name in 'devnode.exe', 'libusbip.dll') { Set-Content -LiteralPath (Join-Path $usbRoot $name) -Value 'fixture' }
       New-Item -ItemType Directory -Force (Join-Path $usbRoot 'include'), (Join-Path $usbRoot 'lib') | Out-Null
       Set-Content -LiteralPath (Join-Path $usbRoot 'lib/libusbip.lib') -Value 'fixture'
+    }
+    # The upstream setup leaves its own uninstaller and uninstall data in the install directory.
+    if ($fixture.present -and -not $fixture.receipt) {
+      foreach ($name in 'unins000.exe', 'unins000.dat') { Set-Content -LiteralPath (Join-Path $usbRoot $name) -Value 'fixture' }
     }
     $source = Join-Path $hostRoot 'scripts/usbip/USBip-0.9.8.1-x64.exe'
     if ($fixture.legacy) {
       New-Item -ItemType Directory -Force (Split-Path -Parent $source) | Out-Null
       Set-Content -LiteralPath $source -Value 'fixture upstream installer'
     }
+    # The earlier release installer's evidence: a guard transaction in the host log, and when the setup created its files.
+    $variant = if ($fixture.PSObject.Properties['proofVariant']) { $fixture.proofVariant } else { '' }
+    $hubs = 'root hubs: USB\ROOT_HUB30\5&1DACDAE8&0&0 status=OK problem=0'
+    $snapshot = "2026-11-16 10:00:02 [usbip-guard] snapshot: $hubs; filter packages: " + $(if ($variant -eq 'filter-before') { 'oem12.inf' } else { '' })
+    $logLines = @("2026-11-16 10:00:00 [usbip-guard] preflight ok. $hubs", $snapshot)
+    if ($variant -eq 'rollback-inside') { $logLines += "2026-11-16 10:00:20 [usbip-guard] ROLLBACK: physical root hub fault after the usbip-win2 install" }
+    if ($variant -ne 'open-window') { $logLines += "2026-11-16 10:00:30 [usbip-guard] verify ok. $hubs" }
+    if ($variant -ne '' -and $variant -ne 'no-log') {
+      New-Item -ItemType Directory -Force (Join-Path $hostRoot 'scripts') | Out-Null
+      # As Windows PowerShell 5.1 writes it (Add-Content -Encoding UTF8): byte order mark, CRLF.
+      [IO.File]::WriteAllText((Join-Path $hostRoot 'scripts/usbip-roothub-guard.log'), (($logLines -join "`r`n") + "`r`n"), (New-Object Text.UTF8Encoding($true)))
+    }
+    if ($variant -eq 'two-uninstallers') { Set-Content -LiteralPath (Join-Path $usbRoot 'unins001.exe') -Value 'fixture' }
+    $created = [datetime]'2026-11-16 10:00:10'
+    if ($variant -eq 'before-window') { $created = [datetime]'2026-11-16 09:00:00' }
+    if ($variant -eq 'after-window') { $created = [datetime]'2026-11-16 11:00:00' }
+    $written = if ($variant -eq 'written-outside') { [datetime]'2026-11-17 08:00:00' } else { $created.AddSeconds(2) }
+    $inno = [ordered]@{ 'Inno Setup: Selected Components' = 'main,client,gui,sdk,pdb'; 'Inno Setup: Deselected Components' = ''; InstallDate = '20261116' }
+    if ($variant -eq 'custom-components') { $inno['Inno Setup: Selected Components'] = 'main,client' }
+    if ($variant -eq 'deselected') { $inno['Inno Setup: Deselected Components'] = 'pdb' }
+    if ($variant -eq 'other-day') { $inno['InstallDate'] = '20261115' }
+    if ($variant -eq 'no-date') { $inno.Remove('InstallDate') }
     # Simulated ARP registry values. Filesystem probes use actual isolated layouts.
     & $module {
-      param($f, $root, $source, $suffix)
+      param($f, $root, $source, $suffix, $inno, $created, $written)
       $script:Fixture = $f
       $script:Suffix = $suffix
       $script:FixtureRoot = $root
       $script:Source = $source
+      $script:Inno = $inno
+      $script:Created = $created
+      $script:Written = $written
       $script:UsbipUninstallBases = if ($f.PSObject.Properties['twoViews']) { @('fixture-registry-a', 'fixture-registry-b') } else { @('fixture-registry') }
       $script:UsbipSourceHash = if ($f.legacy) { (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash } else { 'fixture-source' }
+      function script:Get-UsbipFileTimes {
+        param([string]$Path)
+        [pscustomobject]@{ Created = $script:Created; Written = $(if ($Path -like '*.dat') { $script:Written } else { $script:Created }) }
+      }
       function script:Test-Path {
-        param($LiteralPath, $ErrorAction)
+        param($LiteralPath, $PathType, $ErrorAction)
         if ($LiteralPath -like '*fixture-registry*') {
           if ($LiteralPath -like '*AlkaidLabUSBip') { return $script:Fixture.receipt }
           return $script:Fixture.present -and -not $script:Fixture.receipt
         }
         if ($LiteralPath -like 'HKLM:*') { return $false }
+        if ($PathType) { return Microsoft.PowerShell.Management\Test-Path -LiteralPath $LiteralPath -PathType $PathType -ErrorAction Stop }
         Microsoft.PowerShell.Management\Test-Path -LiteralPath $LiteralPath -ErrorAction Stop
       }
       function script:Get-ItemProperty {
         param($LiteralPath, $ErrorAction)
-        [pscustomobject]@{ DisplayVersion = $script:Fixture.version; InstallLocation = ($script:FixtureRoot + $script:Suffix);
+        $record = [pscustomobject]@{ DisplayVersion = $script:Fixture.version; InstallLocation = ($script:FixtureRoot + $script:Suffix);
           InstallLayout = 'usbip-slim-v1'; SourceSHA256 = $script:UsbipSourceHash
           UninstallString = '"' + $(if ($script:Fixture.PSObject.Properties['uninstallerElsewhere']) { $script:FixtureRoot + '-other' } else { $script:FixtureRoot }) + '\unins000.exe" /LOG' }
+        if ($LiteralPath -notlike '*AlkaidLabUSBip') { foreach ($name in $script:Inno.Keys) { $record | Add-Member -NotePropertyName $name -NotePropertyValue $script:Inno[$name] } }
+        $record
       }
-    } $fixture $usbRoot $source $(if ($fixture.PSObject.Properties['locationSuffix']) { $fixture.locationSuffix } else { '' })
+    } $fixture $usbRoot $source $(if ($fixture.PSObject.Properties['locationSuffix']) { $fixture.locationSuffix } else { '' }) $inno $created $written
     $result = Get-UsbipOwnership $usbRoot $hostRoot
     if ($result.ownership -ne $fixture.ownership) { throw "$($fixture.name): expected $($fixture.ownership), got $($result | ConvertTo-Json -Compress)" }
+    if ($fixture.PSObject.Properties['reason'] -and $result.reason -ne $fixture.reason) { throw "$($fixture.name): expected reason $($fixture.reason), got $($result | ConvertTo-Json -Compress)" }
+    if ($fixture.PSObject.Properties['missing'] -and (@($result.proofMissing | Sort-Object) -join ',') -ne (@($fixture.missing | Sort-Object) -join ',')) {
+      throw "$($fixture.name): expected missing proof signals [$(@($fixture.missing) -join ',')], got [$(@($result.proofMissing) -join ',')]"
+    }
+    if ($result.replaceable -ne $fixture.replaceable) { throw "$($fixture.name): expected replaceable=$($fixture.replaceable), got $($result | ConvertTo-Json -Compress)" }
     if ($fixture.name -eq 'observed-full-double-install' -and -not $result.compatible) { throw 'Observed full install must be reusable' }
+    # A confirmed replacement takes over exactly the replaceable installs and changes nothing else.
+    $confirmed = Get-UsbipOwnership $usbRoot $hostRoot -ConfirmedReplace
+    $expected = if ($fixture.replaceable) { 'legacy-owned' } else { $fixture.ownership }
+    if ($confirmed.ownership -ne $expected) { throw "$($fixture.name): confirmed replacement expected $expected, got $($confirmed | ConvertTo-Json -Compress)" }
     $passed++
-    Write-Host "PASS ownership/$($fixture.name): $($result.ownership) compatible=$($result.compatible)"
+    Write-Host "PASS ownership/$($fixture.name): $($result.ownership) ($($result.reason)) compatible=$($result.compatible) replaceable=$($result.replaceable) confirmed=$($confirmed.ownership)"
   }
   & $module { function script:Get-UsbipInventory { throw 'simulated registry access denied' } }
   $result = Get-UsbipOwnership $usbRoot $hostRoot
@@ -120,6 +166,52 @@ Export-ModuleMember -Function Get-UsbipOwnership
     $passed++
     Write-Host "PASS ownership-under-lock/$action external-after-wait no-state-or-guard"
   }
+  # `replace` is the one action that may take over an install we did not prove to be ours, and only when ownership
+  # resolves to legacy-owned with the confirmation. In every other case it refuses with 107 and changes nothing.
+  foreach ($owner in 'external', 'managed', 'absent') {
+    @"
+function Get-UsbipOwnership { param([string]`$Root, [string]`$HostRoot, [switch]`$ConfirmedReplace)
+  [pscustomobject]@{ownership='$owner'; compatible=`$true; reason='fixture'; replaceable=`$false; version='0.9.8.1'} }
+Export-ModuleMember -Function Get-UsbipOwnership
+"@ | Set-Content -LiteralPath (Join-Path $scripts 'usbip-package-ownership.psm1')
+    & (Join-Path $scripts 'usbip-package.ps1') -Action replace -InstallRoot $usbRoot -HostRoot $hostRoot -State (Join-Path $scripts 'must-not-exist/state.json')
+    if ($LASTEXITCODE -ne 107) { throw "Replace of a $owner install returned $LASTEXITCODE, expected 107" }
+    if (Test-Path -LiteralPath (Join-Path $scripts 'result-usbip-steps.txt')) { throw 'Refused replace wrote a step log' }
+    if (Test-Path -LiteralPath (Join-Path $scripts 'must-not-exist')) { throw 'Refused replace created state' }
+    $passed++
+    Write-Host "PASS replace-entrypoint/$owner refused with 107, no-state-or-guard"
+  }
+  # The status of an external install tells the panel whether the person may ask for a replacement.
+  @"
+function Get-UsbipOwnership { param([string]`$Root, [string]`$HostRoot, [switch]`$ConfirmedReplace)
+  [pscustomobject]@{ownership='external'; compatible=`$true; reason='gui-or-sdk'; replaceable=`$true; version='0.9.8.1'} }
+Export-ModuleMember -Function Get-UsbipOwnership
+"@ | Set-Content -LiteralPath (Join-Path $scripts 'usbip-package-ownership.psm1')
+  $status = (& (Join-Path $scripts 'usbip-package.ps1') -Action status -InstallRoot $usbRoot -HostRoot $hostRoot -State (Join-Path $scripts 'must-not-exist/state.json') | Out-String) | ConvertFrom-Json
+  if ($status.ownership -ne 'external' -or $status.replaceable -ne $true -or $status.version -ne '0.9.8.1' -or $status.reason -ne 'gui-or-sdk') { throw "Status lacks the replace facts: $($status | ConvertTo-Json -Compress)" }
+  $passed++
+  Write-Host 'PASS replace-entrypoint/status reports replaceable and version'
+  # Under the lock the confirmation is decided again, with the confirmation: if the install changed while this process
+  # waited (first read replaceable, second read not), nothing is touched and the result is 107.
+  $counter = Join-Path $scripts 'ownership-reads.txt'
+  Remove-Item -LiteralPath $counter -Force -ErrorAction SilentlyContinue
+  @"
+function Get-UsbipOwnership { param([string]`$Root, [string]`$HostRoot, [switch]`$ConfirmedReplace)
+  `$n = if (Test-Path -LiteralPath '$counter') { @(Get-Content -LiteralPath '$counter').Count } else { 0 }
+  Add-Content -LiteralPath '$counter' -Value "confirmed=`$(`$ConfirmedReplace.IsPresent)"
+  if (`$n -eq 0 -and `$ConfirmedReplace) { [pscustomobject]@{ownership='legacy-owned'; compatible=`$true; reason='user-confirmed-replace'; replaceable=`$false; version='0.9.8.1'} }
+  else { [pscustomobject]@{ownership='external'; compatible=`$true; reason='fixture'; replaceable=`$false; version='0.9.8.1'} }
+}
+Export-ModuleMember -Function Get-UsbipOwnership
+"@ | Set-Content -LiteralPath (Join-Path $scripts 'usbip-package-ownership.psm1')
+  & (Join-Path $scripts 'usbip-package.ps1') -Action replace -InstallRoot $usbRoot -HostRoot $hostRoot -State (Join-Path $scripts 'must-not-exist/state.json')
+  if ($LASTEXITCODE -ne 107) { throw "Replace that lost its eligibility under the lock returned $LASTEXITCODE, expected 107" }
+  $reads = @(Get-Content -LiteralPath $counter)
+  if ($reads.Count -ne 2 -or @($reads | Where-Object { $_ -ne 'confirmed=True' }).Count -ne 0) { throw "Replace must read ownership twice, both with the confirmation: $($reads -join ';')" }
+  if (Test-Path -LiteralPath (Join-Path $scripts 'result-usbip-steps.txt')) { throw 'Replace that lost eligibility wrote a step log' }
+  if (Test-Path -LiteralPath (Join-Path $scripts 'must-not-exist')) { throw 'Replace that lost eligibility created state' }
+  $passed++
+  Write-Host 'PASS replace-entrypoint/eligibility-lost-under-lock refused with 107, both reads confirmed'
   Write-Host "USB/IP ownership regressions: $passed passed, 0 skipped, 0 failed"
 } finally {
   Remove-Module usbip-package-functions, usbip-package-ownership -Force -ErrorAction SilentlyContinue
