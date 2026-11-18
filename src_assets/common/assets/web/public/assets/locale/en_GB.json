@@ -1443,6 +1443,10 @@
       "hint": "These options run in the client's input and audio path. The host does not store them.",
       "title": "Applied by the client"
     },
+    "client_support": {
+      "needs": "Needs client support: {clients}. Other clients keep their own rate.",
+      "since": "{version} and later"
+    },
     "collapse": "Hide",
     "color": {
       "blue": "Blue",

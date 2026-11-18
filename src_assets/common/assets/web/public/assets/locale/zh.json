@@ -1598,6 +1598,10 @@
       "chip": "客户端",
       "hint": "这些选项在客户端的输入与音频路径中执行，主机不保存它们。"
     },
+    "client_support": {
+      "needs": "需要客户端支持：{clients}；其他客户端保持自己的频率。",
+      "since": "{version} 起"
+    },
     "gamepad_advanced": "手柄高级",
     "restore_confirm": "把所有 DualSense 选项恢复为默认值吗？更改保存后生效。"
   },

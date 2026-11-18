@@ -1444,6 +1444,10 @@
       "hint": "These options run in the client's input and audio path. The host does not store them; they are listed here so every option has its place.",
       "title": "Застосовано клієнтом"
     },
+    "client_support": {
+      "needs": "Needs client support: {clients}. Other clients keep their own rate.",
+      "since": "{version} and later"
+    },
     "collapse": "Collapse",
     "color": {
       "blue": "Синій",

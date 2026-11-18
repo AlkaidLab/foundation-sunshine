@@ -1598,6 +1598,10 @@
       "chip": "Client",
       "hint": "These options run in the client's input and audio path. The host does not store them."
     },
+    "client_support": {
+      "needs": "Needs client support: {clients}. Other clients keep their own rate.",
+      "since": "{version} and later"
+    },
     "gamepad_advanced": "Gamepad advanced",
     "restore_confirm": "Restore every DualSense option to its default? The changes apply after you save."
   },

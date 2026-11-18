@@ -62,3 +62,15 @@ test('the test page sends a real rumble pulse and says what the host did', async
     for (const result of ['sent', 'no_pad', 'unsupported', 'busy', 'failed']) assert.ok(test_panel.result[result], `${name} ${result}`)
   }
 })
+
+test('a key only a client can finish says which clients do, from which version', async () => {
+  const field = await read('../components/dualsense/ControlField.vue')
+  assert.match(field, /descriptor\.client_support/)
+  assert.match(field, /:text="disabledReason \|\| supportText \|\| undefined"/)
+  for (const name of ['zh', 'zh_TW', 'en']) {
+    const support = (await locale(name)).ds5.client_support
+    assert.match(support.needs, /\{clients\}/, name)
+    assert.match(support.since, /\{version\}/, name)
+  }
+  assert.match((await locale('zh')).ds5.client_support.needs, /^需要客户端支持/)
+})
