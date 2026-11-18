@@ -1,10 +1,19 @@
 import './helpers/foundationUi.mjs'
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { CLIENT_DEVICES, clientsForDevice } from '../utils/clientDeviceSelection.js'
+import { CLIENT_DEVICES, clientsForDevice, deviceForPlatform } from '../utils/clientDeviceSelection.js'
 import { CLIENT_PLATFORMS } from '../config/clientDownloads.js'
 
 const { CLIENTS } = await import('foundation-ui/clients')
+
+test('partner platform deep links select the device containing the requested client', () => {
+  for (const [platform, device] of [['crown', 'android'], ['baozi', 'harmony']]) {
+    assert.equal(deviceForPlatform(platform), device)
+    assert.ok(clientsForDevice(CLIENTS, deviceForPlatform(platform)).some(({ target }) => target.platform === platform))
+  }
+  assert.equal(deviceForPlatform('windows'), 'windows')
+  assert.equal(deviceForPlatform('unknown'), undefined)
+})
 
 test('each playing device has its own client selection', () => {
   assert.deepEqual(CLIENT_DEVICES, ['android', 'windows', 'harmony', 'ios', 'macos', 'linux', 'steam', 'android-tv', 'quest', 'apple-tv'])

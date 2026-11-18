@@ -6,7 +6,7 @@ import { MButton, MChipSet, MClientTag, MDialog, MFooter, MGroup, MIcon, MItem, 
 import { CLIENTS, clientTags, clientTexts, clientUrl, connectTexts, mirrorName, readOs, writeOs } from 'foundation-ui/clients'
 import { MClientAssets, useReleaseAssets } from 'foundation-ui/vue'
 import { fetchReleaseAssetTypes } from '../utils/clientReleaseDownloads.js'
-import { CLIENT_DEVICES, clientsForDevice } from '../utils/clientDeviceSelection.js'
+import { CLIENT_DEVICES, clientsForDevice, deviceForPlatform } from '../utils/clientDeviceSelection.js'
 import { extraLinks, targetName, useClientDialog } from '../utils/clientDialog.js'
 import { downloadMessages } from '../i18n/downloads/index.js'
 import english from '../i18n/downloads/en.json'
@@ -28,7 +28,7 @@ const queryPlatform = new URLSearchParams(window.location.search).get('platform'
 const queryType = new URLSearchParams(window.location.search).get('type')
 const TYPE_DEVICE = { phone: 'android', tablet: 'ios', computer: 'windows', tv: 'android-tv' }
 const deviceOfOs = (os) => (os === 'tv' ? 'android-tv' : os)
-const initialDevice = CLIENT_DEVICES.includes(queryPlatform) ? queryPlatform : deviceOfOs(queryOs || TYPE_DEVICE[queryType] || readOs())
+const initialDevice = deviceForPlatform(queryPlatform) || deviceOfOs(queryOs || TYPE_DEVICE[queryType] || readOs())
 const selectedDevice = ref(CLIENT_DEVICES.includes(initialDevice) ? initialDevice : 'android')
 watch(selectedDevice, (id) => {
   const target = CLIENTS.flatMap((client) => client.targets).find((item) => item.platform === id)
