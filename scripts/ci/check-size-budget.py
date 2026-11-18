@@ -66,6 +66,10 @@ def main(argv=None):
     parser.add_argument("--measure", action="append", default=[], metavar="名称=路径", help="只记录大小的文件，可重复")
     parser.add_argument("--summary", default=os.environ.get("GITHUB_STEP_SUMMARY"), help="追加 markdown 的文件")
     args = parser.parse_args(argv)
+    # The Windows runner's console code page (cp1252) cannot print the Chinese messages
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
 
     try:
         limit, fraction = load_budget(args.budget)

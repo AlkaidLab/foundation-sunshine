@@ -87,6 +87,20 @@ class MainTest(unittest.TestCase):
             code, _ = self.run_tool()
             self.assertEqual(code, 2, bad)
 
+    def test_messages_print_on_a_console_that_is_not_utf8(self):
+        raw = io.BytesIO()
+        console = io.TextIOWrapper(raw, encoding="cp1252", errors="strict")
+        argv = ["--budget", str(self.budget), "--summary", str(self.summary), "--installer", self.file("setup.exe", 500)]
+        saved = budget_tool.sys.stdout
+        budget_tool.sys.stdout = console
+        try:
+            code = budget_tool.main(argv)
+            console.flush()
+        finally:
+            budget_tool.sys.stdout = saved
+        self.assertEqual(code, 0)
+        self.assertIn("体积门禁".encode("utf-8"), raw.getvalue())
+
     def test_the_shipped_budget_is_valid_and_documents_the_approval_rule(self):
         path = HERE / "size-budget.json"
         limit, fraction = budget_tool.load_budget(path)

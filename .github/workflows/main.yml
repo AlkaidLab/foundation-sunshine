@@ -1515,6 +1515,7 @@ jobs:
         if: needs.changes.outputs.package == 'true'
         shell: pwsh
         run: |
+          $env:PYTHONUTF8 = '1'
           python scripts/ci/check-size-budget.py --installer artifacts/sunshine-windows-installer.exe `
             --measure "便携包 sunshine-windows-portable.zip=artifacts/sunshine-windows-portable.zip" `
             --measure "sunshine.exe（随包，已 strip）=build/inno_staging/sunshine.exe" `
