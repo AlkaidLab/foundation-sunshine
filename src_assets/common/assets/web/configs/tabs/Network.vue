@@ -127,7 +127,7 @@ const portRows = computed(() => {
       <MWebAccess v-model:scope="scope" v-model:bind="bind" :locale="String(locale)" :port="+effectivePort" :listeners="listenerInfo" :password="true" :pending="!!listenerPending" :qr="qrMatrix" :copy="copyText" :open="openBind" @restart="restartAsk = true" @password="goPassword" />
     </MSection>
     <MSection :title="rc.overview.label">
-      <MReachOverview address-editable data-cfg="external_endpoints" :label="$t('config.external_endpoints')" :endpoints="endpointsOfConfig(config).join(', ')" :address-busy="addressBusy" :report="reach.view.report" :status="reach.view.status" :http="reach.view.http" :cause="reach.view.cause" :lan="lan" :locale="String(locale)" :platform="platform" @recheck="reach.refresh(true)" @fix="reachFix" @save-address="saveAddress" />
+      <MReachOverview address-editable data-cfg="external_endpoints" :label="$t('config.external_endpoints')" :endpoints="endpointsOfConfig(config).join(', ')" :address-busy="addressBusy" :report="reach.view.report" :status="reach.view.status" :http="reach.view.http" :cause="reach.view.cause" :progress="reach.view.progress" :lan="lan" :locale="String(locale)" :platform="platform" @recheck="reach.refresh(true)" @fix="reachFix" @save-address="saveAddress" />
       <MButton variant="text" icon="help" @click="openTutorial('')">{{ rc.tutorial }}</MButton>
     </MSection>
     <MSection :title="$t('config.network_port_details')">
