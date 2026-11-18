@@ -336,6 +336,12 @@ target_link_libraries(display_scale_steps_unit_tests PRIVATE gtest_main sunshine
 set_target_properties(display_scale_steps_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME display_scale_steps_unit_tests COMMAND display_scale_steps_unit_tests)
 
+add_executable(display_bounded_call_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_display_bounded_call.cpp)
+target_include_directories(display_bounded_call_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(display_bounded_call_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(display_bounded_call_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME display_bounded_call_unit_tests COMMAND display_bounded_call_unit_tests)
+
 add_executable(vdd_mode_list_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_vdd_mode_list.cpp)
 target_include_directories(vdd_mode_list_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(vdd_mode_list_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json

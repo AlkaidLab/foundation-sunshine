@@ -1,0 +1,5 @@
+{
+  "说明": "安装器体积上限，由 Build and Release 工作流的「体积门禁」一步读取。安装器超过 installer_max_bytes 时该步失败；达到上限的 warn_fraction 倍时打印警告。修改上限必须先经车主批准，批准后在提交说明里写明理由和新旧数值。当前值约为 2026-11-18 基线（44,220,433 字节）加 4%。",
+  "installer_max_bytes": 46000000,
+  "warn_fraction": 0.9
+}

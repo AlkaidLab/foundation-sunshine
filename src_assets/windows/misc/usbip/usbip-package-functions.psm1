@@ -38,8 +38,8 @@ function Get-UsbipLegacyEntries {
   }
 }
 
-function Remove-UsbipLegacy([string]$Root, [string]$HostRoot) {
-  $owner = Get-UsbipOwnership $Root $HostRoot
+function Remove-UsbipLegacy([string]$Root, [string]$HostRoot, [switch]$ConfirmedReplace) {
+  $owner = Get-UsbipOwnership $Root $HostRoot -ConfirmedReplace:$ConfirmedReplace
   if ($owner.ownership -ne 'legacy-owned') { return }
   foreach ($entry in @(Get-UsbipLegacyEntries)) {
     # Inno Setup registers the uninstaller as: "<dir>\unins000.exe" /LOG  (observed with usbip-win2 0.9.8.1).
@@ -178,11 +178,11 @@ function Test-UsbipExternalReady([string]$Root) {
   } catch { return $false }
 }
 
-function Install-UsbipPackage([string]$Payload, [string]$Root, [string]$Scripts, [string]$HostRoot) {
-  $owner = Get-UsbipOwnership $Root $HostRoot
+function Install-UsbipPackage([string]$Payload, [string]$Root, [string]$Scripts, [string]$HostRoot, [switch]$ConfirmedReplace) {
+  $owner = Get-UsbipOwnership $Root $HostRoot -ConfirmedReplace:$ConfirmedReplace
   if ($owner.ownership -eq 'external') { throw 'Externally managed USB/IP must not be replaced' }
   $manifest = Read-UsbipManifest $Payload
-  Remove-UsbipLegacy $Root $HostRoot
+  Remove-UsbipLegacy $Root $HostRoot -ConfirmedReplace:$ConfirmedReplace
   # A partial prior slim install must be removed before replacing its tools.
   if ((Test-Path -LiteralPath $script:RecordKey) -or (Test-Path -LiteralPath (Join-Path $Root 'payload.json'))) { Remove-UsbipPackage $Root }
   New-Item -ItemType Directory -Path $Root -Force | Out-Null

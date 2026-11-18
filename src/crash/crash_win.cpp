@@ -123,10 +123,27 @@ namespace crash::detail {
       return address + bytes <= (std::uint64_t) (std::uintptr_t) mbi.BaseAddress + mbi.RegionSize;
     }
 
+    /// True when the address lies in committed memory that can be executed.
+    bool
+    executable(std::uint64_t address) {
+      MEMORY_BASIC_INFORMATION mbi;
+      if (!address || !VirtualQuery((LPCVOID) (std::uintptr_t) address, &mbi, sizeof(mbi))) return false;
+      return mbi.State == MEM_COMMIT && (mbi.Protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) && !(mbi.Protect & PAGE_GUARD);
+    }
+
     /// Frames of a context from the unwind data of the images; stops at a stack it cannot read.
     std::size_t
     unwind(CONTEXT ctx, frame_t *frames, std::size_t cap, bool system_lookup) {
       std::size_t n = 0;
+      // A call through a null or wild function pointer faults at an address that holds no code: there is no unwind data for it and the walk used to
+      // end with no frame, so every such crash got the same empty signature (feedback "access violation, unknown module"). The call pushed its
+      // return address, it is the top of the stack: start at the caller instead.
+      bool from_return_address = false;
+      if (!executable(ctx.Rip) && readable(ctx.Rsp, 8)) {
+        ctx.Rip = *(const DWORD64 *) (std::uintptr_t) ctx.Rsp;
+        ctx.Rsp += 8;
+        from_return_address = true;
+      }
       for (; n < cap; ++n) {
         const std::uint64_t pc = ctx.Rip;
         if (!pc) break;
@@ -135,8 +152,9 @@ namespace crash::detail {
           ++n;
           break;
         }
-        // frames after the first are return addresses: look the function up one byte earlier, a call at the very end of one is common
-        const std::uint64_t lookup = n ? pc - 1 : pc;
+        // frames after the first are return addresses (so is the first one when it was taken from the stack): look the function up one byte earlier,
+        // a call at the very end of one is common
+        const std::uint64_t lookup = (n || from_return_address) ? pc - 1 : pc;
         DWORD64 image_base = 0;
         auto *entry = RtlLookupFunctionEntry(lookup, &image_base, nullptr);
         if (!entry) {
@@ -271,6 +289,7 @@ namespace crash::detail {
 
       frame_t frames[max_frames + 4];
       auto count = unwind(ctx, frames, max_frames + 4, true);
+      if (!count) return;  // keep the meta with the faulting frame: an empty frame list would replace it and give every such crash one signature
       std::size_t from = (std::size_t) skip < count ? (std::size_t) skip : 0;
       if (count - from > max_frames) count = from + max_frames;
       write_meta(meta_path, kind, code, frames + from, count - from);
@@ -483,6 +502,11 @@ namespace crash::detail {
     if (mode == "null-deref") {
       volatile int *p = nullptr;
       *p = 42;
+    }
+    else if (mode == "null-call") {
+      // a call through a null function pointer, the way a driver callback that was never filled in faults
+      volatile auto target = reinterpret_cast<void (*)()>(static_cast<std::uintptr_t>(0));
+      target();
     }
     else if (mode == "abort") {
       std::abort();
