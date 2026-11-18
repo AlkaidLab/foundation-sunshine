@@ -25,12 +25,11 @@ editing the `conf` file in a text editor. Use the examples as reference.
 
 ### Windows capture session
 
-The Windows service selects the active interactive session by default, preferring the physical
-console and falling back to an active RDP user. The GUI selects the interactive user independently
-and receives permission to read that user's local authentication token.
+The GUI independently selects the active interactive user, preferring the console and falling back
+to an active RDP user, and receives permission to read that user's local authentication token.
 
-To keep capture on the physical console, set `session_binding = 1` in `sunshine.conf`. Set it to
-`0` or omit it to use automatic selection. Restart the Sunshine service after changing this
+Capture uses the console by default. Set `session_binding = 0` in `sunshine.conf` to use automatic
+selection, or `1` to explicitly select the console. Restart the Sunshine service after changing this
 setting. A console without a signed-in user may show the Windows sign-in screen and does not
 provide the desktop of a separate RDP session.
 
