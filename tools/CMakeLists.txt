@@ -137,6 +137,7 @@ if(WIN32)
         installer_state.h
         installer_maintenance.h
         installer_ui.h
+        installer_webview2.h
         installer_icon.inc)
     set_target_properties(sunshine-installer-shell PROPERTIES
         CXX_STANDARD 23
@@ -144,7 +145,7 @@ if(WIN32)
     target_compile_definitions(sunshine-installer-shell PRIVATE UNICODE _UNICODE)
     target_include_directories(sunshine-installer-shell PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
     target_link_libraries(sunshine-installer-shell
-        PRIVATE d2d1 dwrite windowscodecs dwmapi shell32 advapi32 user32 ole32 uuid)
+        PRIVATE d2d1 dwrite windowscodecs dwmapi shell32 advapi32 user32 ole32 uuid winhttp wintrust crypt32)
     target_compile_options(sunshine-installer-shell PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
     if(MINGW)
         # static: the installer must start on a PC that has none of the MSYS2 runtime DLLs

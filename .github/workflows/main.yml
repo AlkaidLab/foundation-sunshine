@@ -597,7 +597,7 @@ jobs:
           unpinned: ${{ inputs.toolchain_probe == true }}
           toolchain: ${{ env.TOOLCHAIN }}
 
-      # The same pinned Panel bundle and WebView2 bootstrapper build_win uses (scripts/installer-inputs.json), so the configure
+      # The same pinned Panel bundle build_win uses (scripts/installer-inputs.json), so the configure
       # downloads nothing ("latest") and needs no token. Nothing here reads a token: the configure step below must not see one.
       - name: Fetch pinned installer inputs
         shell: pwsh
@@ -1042,7 +1042,7 @@ jobs:
             echo "::warning title=A compile shard failed::this job compiles the objects that no shard cache has"
           fi
 
-      # The Panel bundle and the WebView2 bootstrapper, pinned by tag/sha256 in scripts/installer-inputs.json and verified (never
+      # The Panel bundle, pinned by tag/sha256 in scripts/installer-inputs.json and verified (never
       # "latest"). The pinned Panel commit must be the committed submodule. A manual run with gui_run_id replaces the GUI below.
       - name: Fetch pinned installer inputs
         shell: pwsh
@@ -1051,7 +1051,6 @@ jobs:
           $dest = "$env:RUNNER_TEMP/installer-inputs/pinned"
           ./scripts/fetch-installer-inputs.ps1 -Destination $dest
           "GUI_BUNDLE_DIR=$dest/gui" >> $env:GITHUB_ENV
-          "WEBVIEW2_BOOTSTRAPPER=$dest/MicrosoftEdgeWebview2Setup.exe" >> $env:GITHUB_ENV
 
       - name: Fetch paired GUI artifact
         if: github.event_name == 'workflow_dispatch' && inputs.gui_run_id != ''
@@ -1470,7 +1469,7 @@ jobs:
           mv ./cpack_artifacts/Sunshine.zip ../artifacts/sunshine-windows-portable.zip
 
       # The user-facing installer, the same package tools/append_installer_payload.py makes for a local build
-      # (cmake/packaging/windows_innosetup.cmake): [shell][setup UI][WebView2 bootstrapper][Inno engine][footer].
+      # (cmake/packaging/windows_innosetup.cmake): [shell][setup UI][Inno engine][footer]; no WebView2 bootstrapper, the worker downloads it when needed.
       - name: Assemble installer
         if: needs.changes.outputs.package == 'true'
         shell: pwsh
@@ -1479,15 +1478,16 @@ jobs:
           $shell = 'build/tools/sunshine-installer-shell.exe'
           $engine = 'build/cpack_artifacts/Sunshine-engine.exe'
           $output = 'artifacts/sunshine-windows-installer.exe'
-          python tools/append_installer_payload.py $shell $engine $output --ui $env:SETUP_UI_EXE --wv2 $env:WEBVIEW2_BOOTSTRAPPER
+          python tools/append_installer_payload.py $shell $engine $output --ui $env:SETUP_UI_EXE
           # Read the footer back: every section is present and carries the hash of the file it was made from.
           $bytes = [IO.File]::ReadAllBytes($output)
           $tail = [Text.Encoding]::ASCII.GetString($bytes, [Math]::Max(0, $bytes.Length - 2048), [Math]::Min(2048, $bytes.Length))
           $footer = $tail.Substring($tail.LastIndexOf("ALKAID-SHELL-PAYLOAD-V1"))
-          foreach ($section in @(@('', $engine), @('ui-', $env:SETUP_UI_EXE), @('wv2-', $env:WEBVIEW2_BOOTSTRAPPER))) {
+          foreach ($section in @(@('', $engine), @('ui-', $env:SETUP_UI_EXE))) {
             $hash = (Get-FileHash -LiteralPath $section[1] -Algorithm SHA256).Hash.ToLowerInvariant()
             if ($footer -notmatch "(?m)^$($section[0])sha256=$hash\r?$") { throw "Installer footer lacks $($section[0])sha256=$hash" }
           }
+          if ($footer -match '(?m)^wv2-') { throw 'The installer must not carry the WebView2 bootstrapper' }
           Write-Output $footer
 
       # The CI never ran the installer, which is how a stack overflow in its first step shipped. The package is run here as the
@@ -1527,6 +1527,24 @@ jobs:
         if: needs.changes.outputs.package == 'true'
         timeout-minutes: 12
         uses: ./.github/actions/test-installer-silent
+
+      # The WebView2 step of the worker against Microsoft's real link: the bootstrapper downloads, its signature is Microsoft
+      # Corporation's, and an unsigned file (this very installer) is refused. Nothing is installed or run. The decision itself
+      # (installed / missing and downloaded / download fails) is tests/unit/test_installer_webview2.cpp.
+      - name: Installer WebView2 download and signature check
+        if: needs.changes.outputs.package == 'true'
+        shell: pwsh
+        run: |
+          $installer = (Resolve-Path 'artifacts/sunshine-windows-installer.exe').Path
+          $dir = Join-Path $env:RUNNER_TEMP 'installer-webview2-smoke'
+          if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
+          $process = Start-Process -FilePath $installer -ArgumentList '--selftest-webview2', $dir -PassThru
+          if (-not $process.WaitForExit(180000)) { $process.Kill(); throw 'the WebView2 check did not finish in 180 s' }
+          $process.Refresh()
+          if (Test-Path (Join-Path $dir 'selftest-webview2.json')) { Get-Content (Join-Path $dir 'selftest-webview2.json') }
+          if ($process.ExitCode -ne 0) { throw ('the WebView2 check exited with {0} (20: download failed, 21: not signed by Microsoft, 22: an unsigned file passed)' -f $process.ExitCode) }
+          if (Get-ChildItem $dir -Filter '*.exe') { throw 'the downloaded bootstrapper was not removed' }
+
       - name: Rename release assets
         if: needs.changes.outputs.package == 'true'
         shell: msys2 {0}
