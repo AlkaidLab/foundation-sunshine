@@ -40,6 +40,18 @@ float HdrAnalysisMaxRgbNits(float3 sc_rgb)
     );
 }
 
+void GetHdrAnalysisCellGeometry(
+    uint2 cell,
+    uint2 extent,
+    out uint2 cell_begin,
+    out uint2 cell_end,
+    out uint2 representative)
+{
+    cell_begin = (cell * extent) / hdr_analysis_snapshot_size;
+    cell_end = ((cell + 1) * extent) / hdr_analysis_snapshot_size;
+    representative = (cell_begin + cell_end - 1) / 2;
+}
+
 bool GetHdrAnalysisCell(
     int2 output_position,
     int2 output_size,
@@ -50,16 +62,15 @@ bool GetHdrAnalysisCell(
     uint2 position = uint2(output_position);
     uint2 extent = uint2(output_size);
 
-    // This is the inverse of the floor-partition below:
+    // Invert the floor partition used by GetHdrAnalysisCellGeometry:
     // [floor(i * extent / cells), floor((i + 1) * extent / cells)).
     analysis_position = min(
         (((position + 1) * hdr_analysis_snapshot_size) - 1) / extent,
         hdr_analysis_snapshot_size - 1
     );
-    cell_begin = (analysis_position * extent) / hdr_analysis_snapshot_size;
-    cell_end = ((analysis_position + 1) * extent) / hdr_analysis_snapshot_size;
-    uint2 selected_output_position = (cell_begin + cell_end - 1) / 2;
-    return all(position == selected_output_position);
+    uint2 representative;
+    GetHdrAnalysisCellGeometry(analysis_position, extent, cell_begin, cell_end, representative);
+    return all(position == representative);
 }
 
 void StoreHdrAnalysisCellStats(

@@ -1276,21 +1276,22 @@ namespace amf {
       return result;
     }
 
-    auto data_ptr = static_cast<uint8_t *>(buffer->GetNative());
-    auto data_size = buffer->GetSize();
-    result.data.assign(data_ptr, data_ptr + data_size);
+    const std::span<const uint8_t> bitstream { static_cast<const uint8_t *>(buffer->GetNative()), buffer->GetSize() };
 
     // Splice this frame's dynamic HDR metadata into the finished bitstream. A frame
     // whose units cannot be placed (a header-only access unit, or an AV1 temporal
     // unit that cannot be walked) is sent unchanged rather than dropped: losing a
     // frame is worse than a frame without dynamic metadata.
     auto staged = staged_metadata_units.find(result.frame_index);
-    if (staged != staged_metadata_units.end()) {
-      if (dynamic_metadata_codec &&
-          !video::hdr_bitstream::insert(*dynamic_metadata_codec, staged->second, result.data)) {
+    if (staged != staged_metadata_units.end() && dynamic_metadata_codec) {
+      if (!video::hdr_bitstream::copy_with_metadata(*dynamic_metadata_codec, bitstream, staged->second, result.data)) {
         BOOST_LOG(debug) << "AMF: no insertion point for dynamic HDR metadata in frame "
                          << result.frame_index << ", sending it without";
       }
+    } else {
+      result.data.assign(bitstream.begin(), bitstream.end());
+    }
+    if (staged != staged_metadata_units.end()) {
       staged_metadata_units.erase(staged);
     }
     while (staged_metadata_units.size() > MAX_TRACKED_FRAMES) {
@@ -1322,7 +1323,7 @@ namespace amf {
                                    (video_format == 1) ? AMF_VIDEO_ENCODER_HEVC_STATISTIC_AVERAGE_QP :
                                                          AMF_VIDEO_ENCODER_AV1_STATISTIC_AVERAGE_Q_INDEX;
       if (output_data->GetProperty(avg_qp_prop, &avg_qp) == AMF_OK) {
-        BOOST_LOG(debug) << "AMF: frame " << result.frame_index << " avg_qp=" << avg_qp << " size=" << data_size;
+        BOOST_LOG(debug) << "AMF: frame " << result.frame_index << " avg_qp=" << avg_qp << " size=" << bitstream.size();
       }
     }
     if (psnr_enabled) {
