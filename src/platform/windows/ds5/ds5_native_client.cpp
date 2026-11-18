@@ -311,9 +311,11 @@ namespace platf::ds5 {
       std::vector<std::uint8_t> report = std::vector<std::uint8_t>(64, 0);
       /* What the report looked like at the last submit, to tell a change from a repeat. */
       std::array<std::uint8_t, 64> seen_report {};
-      /* The report as it was at each button change not yet answered; the replies to button
-       * changes carry these, so a press and a release that follow each other closely stay two reports. */
-      std::deque<std::vector<std::uint8_t>> edge_snapshots;
+      /* The button bytes (8 to 10) as they were at each button change not yet answered. The reply to
+       * a button change carries them in the live report, so a press and a release that follow each
+       * other closely stay two reports while the sticks, the motion data and the timestamp of every
+       * reply are the newest (they must never go back). */
+      std::deque<std::array<std::uint8_t, 3>> edge_snapshots;
       static constexpr std::size_t kMaxEdgeSnapshots = 8;
 
       /**
@@ -327,7 +329,7 @@ namespace platf::ds5 {
         std::copy_n(report.begin(), std::min(report.size(), seen_report.size()), seen_report.begin());
         switch (delta) {
           case ::ds5::report_delta::buttons:
-            edge_snapshots.push_back(report);
+            edge_snapshots.push_back({ report[8], report[9], report[10] });
             if (edge_snapshots.size() > kMaxEdgeSnapshots) edge_snapshots.pop_front();
             return ::platf::report_change::edge;
           case ::ds5::report_delta::stream:
@@ -1248,12 +1250,10 @@ namespace platf::ds5 {
               std::vector<std::uint8_t> current_report;
               {
                 std::lock_guard lock(mutex);
+                current_report = report;
                 if (edge && !edge_snapshots.empty()) {
-                  current_report = std::move(edge_snapshots.front());
+                  std::copy(edge_snapshots.front().begin(), edge_snapshots.front().end(), current_report.begin() + 8);
                   edge_snapshots.pop_front();
-                }
-                else {
-                  current_report = report;
                 }
                 ++stats.input_reports;
                 maybe_log_summary_locked();
