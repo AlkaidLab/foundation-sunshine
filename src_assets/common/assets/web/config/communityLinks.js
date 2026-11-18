@@ -9,7 +9,7 @@ export const PROJECT_LINKS = Object.freeze([
   { id: 'github', icon: 'code', url: REPO },
   { id: 'changelog', icon: 'history', url: `${REPO}/releases` },
   { id: 'license', icon: 'balance', url: `${REPO}/blob/master/LICENSE` },
-  { id: 'qq', icon: 'groups', url: 'https://qm.qq.com/cgi-bin/qm/qr?k=5qnkzSaLIrIaU4FvumftZH_6Hg7fUuLD&jump_from=webapi' },
+  { id: 'qq', icon: 'groups', url: 'https://qm.qq.com/q/AfMQoyKrkc' },
   { id: 'issues', icon: 'bug_report', url: `${REPO}/issues` },
 ])
 

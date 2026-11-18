@@ -11,7 +11,7 @@
 
 简体中文 · [English](docs/readme/README.en.md) · [Deutsch](docs/readme/README.de.md) · [Français](docs/readme/README.fr.md) · [日本語](docs/readme/README.ja.md)
 
-[官网](https://www.alkaidlab.com/) · [国内官网](https://www.alkaidlab.cn/) · [QQ 交流群](https://qm.qq.com/cgi-bin/qm/qr?k=5qnkzSaLIrIaU4FvumftZH_6Hg7fUuLD&jump_from=webapi) · [问题反馈](https://github.com/AlkaidLab/foundation-sunshine/issues)
+[官网](https://www.alkaidlab.com/) · [国内官网](https://www.alkaidlab.cn/) · [QQ 交流群](https://qm.qq.com/q/AfMQoyKrkc) · [问题反馈](https://github.com/AlkaidLab/foundation-sunshine/issues)
 
 </div>
 
@@ -255,7 +255,7 @@ macOS 也可使用 [Moonlight V+ for PC](https://github.com/qiin2333/moonlight-q
 - [FAQ 与排障](docs/zh-CN/faq.md)：卡顿、丢帧、连接、声音和 DualSense 自动滚动等问题。
 - [升级说明](docs/zh-CN/upgrading.md)：正式版、测试版、配置保留与更新后检查。
 - [文档目录](docs/zh-CN/README.md)：按任务找到使用与开发指南。
-- [官网](https://www.alkaidlab.com/) · [国内官网](https://www.alkaidlab.cn/) · [QQ 交流群](https://qm.qq.com/cgi-bin/qm/qr?k=5qnkzSaLIrIaU4FvumftZH_6Hg7fUuLD&jump_from=webapi)。
+- [官网](https://www.alkaidlab.com/) · [国内官网](https://www.alkaidlab.cn/) · [QQ 交流群](https://qm.qq.com/q/AfMQoyKrkc)。
 - [提交问题](https://github.com/AlkaidLab/foundation-sunshine/issues) · [讨论与建议](https://github.com/AlkaidLab/foundation-sunshine/discussions) · [贡献指南](docs/contributing.md)。
 
 感谢 [LizardByte/Sunshine](https://github.com/LizardByte/Sunshine)、[Moonlight](https://moonlight-stream.org/)、[ZakoDisplay](https://github.com/qiin2333/zako-vdd)，以及开发、测试和翻译贡献者。项目遵循 [GPL-3.0 许可证](https://github.com/AlkaidLab/foundation-sunshine/blob/master/LICENSE)。

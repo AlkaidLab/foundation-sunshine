@@ -11,7 +11,7 @@
 
 [简体中文](../../README.md) · English · [Deutsch](README.de.md) · [Français](README.fr.md) · [日本語](README.ja.md)
 
-[Website](https://www.alkaidlab.com/) · [Website (China)](https://www.alkaidlab.cn/) · [QQ community (Chinese)](https://qm.qq.com/cgi-bin/qm/qr?k=5qnkzSaLIrIaU4FvumftZH_6Hg7fUuLD&jump_from=webapi) · [Report an issue](https://github.com/AlkaidLab/foundation-sunshine/issues)
+[Website](https://www.alkaidlab.com/) · [Website (China)](https://www.alkaidlab.cn/) · [QQ community (Chinese)](https://qm.qq.com/q/AfMQoyKrkc) · [Report an issue](https://github.com/AlkaidLab/foundation-sunshine/issues)
 
 </div>
 
@@ -257,7 +257,7 @@ Each topic brings capabilities, requirements, and setup instructions together:
 - [FAQ and troubleshooting](../en/faq.md): stutter, frame drops, connections, audio, and DualSense auto-scrolling.
 - [Upgrading](../en/upgrading.md): regular and test releases, preserving configuration, and checking an update.
 - [Documentation](../en/README.md): user and developer guides organized by task.
-- [Website](https://www.alkaidlab.com/) · [Website (China)](https://www.alkaidlab.cn/) · [QQ community (Chinese)](https://qm.qq.com/cgi-bin/qm/qr?k=5qnkzSaLIrIaU4FvumftZH_6Hg7fUuLD&jump_from=webapi).
+- [Website](https://www.alkaidlab.com/) · [Website (China)](https://www.alkaidlab.cn/) · [QQ community (Chinese)](https://qm.qq.com/q/AfMQoyKrkc).
 - [Report a problem](https://github.com/AlkaidLab/foundation-sunshine/issues) · [Discussions](https://github.com/AlkaidLab/foundation-sunshine/discussions) · [Contributing](../contributing.en.md).
 
 Thanks to [LizardByte/Sunshine](https://github.com/LizardByte/Sunshine), [Moonlight](https://moonlight-stream.org/), [ZakoDisplay](https://github.com/qiin2333/zako-vdd), and all code, testing, and translation contributors. Licensed under [GPL-3.0](https://github.com/AlkaidLab/foundation-sunshine/blob/master/LICENSE).

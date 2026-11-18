@@ -11,7 +11,7 @@
 
 [简体中文](../../README.md) · [English](README.en.md) · [Deutsch](README.de.md) · Français · [日本語](README.ja.md)
 
-[Site officiel](https://www.alkaidlab.com/) · [Site (Chine)](https://www.alkaidlab.cn/) · [Communauté QQ (chinois)](https://qm.qq.com/cgi-bin/qm/qr?k=5qnkzSaLIrIaU4FvumftZH_6Hg7fUuLD&jump_from=webapi) · [Signaler un problème](https://github.com/AlkaidLab/foundation-sunshine/issues)
+[Site officiel](https://www.alkaidlab.com/) · [Site (Chine)](https://www.alkaidlab.cn/) · [Communauté QQ (chinois)](https://qm.qq.com/q/AfMQoyKrkc) · [Signaler un problème](https://github.com/AlkaidLab/foundation-sunshine/issues)
 
 </div>
 
@@ -196,7 +196,7 @@ Sous macOS, [Moonlight V+ for PC](https://github.com/qiin2333/moonlight-qt/relea
 
 - [Documentation (anglais)](../en/README.md) : installation, fonctions, FAQ et développement, classés par tâche.
 - [FAQ (anglais)](../en/faq.md) : saccades, connexion et audio.
-- [Site officiel](https://www.alkaidlab.com/) · [Site (Chine)](https://www.alkaidlab.cn/) · [Communauté QQ (chinois)](https://qm.qq.com/cgi-bin/qm/qr?k=5qnkzSaLIrIaU4FvumftZH_6Hg7fUuLD&jump_from=webapi).
+- [Site officiel](https://www.alkaidlab.com/) · [Site (Chine)](https://www.alkaidlab.cn/) · [Communauté QQ (chinois)](https://qm.qq.com/q/AfMQoyKrkc).
 - [Signaler un problème](https://github.com/AlkaidLab/foundation-sunshine/issues) · [Discussions](https://github.com/AlkaidLab/foundation-sunshine/discussions) · [Contribuer](../contributing.en.md).
 
 Merci à [LizardByte/Sunshine](https://github.com/LizardByte/Sunshine), [Moonlight](https://moonlight-stream.org/), [ZakoDisplay](https://github.com/qiin2333/zako-vdd) et à toutes les personnes qui contribuent. Licence [GPL-3.0](https://github.com/AlkaidLab/foundation-sunshine/blob/master/LICENSE).

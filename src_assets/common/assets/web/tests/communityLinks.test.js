@@ -9,7 +9,7 @@ const { CLIENTS, clientSections, clientsForOs } = await import('foundation-ui/cl
 const FROM_ABOUT = [
   'https://www.alkaidlab.com/', 'https://www.alkaidlab.cn/', 'https://www.alkaidlab.com/docs/', 'https://www.alkaidlab.cn/docs/',
   'https://github.com/AlkaidLab/foundation-sunshine', 'https://github.com/AlkaidLab/foundation-sunshine/releases', 'https://github.com/AlkaidLab/foundation-sunshine/blob/master/LICENSE',
-  'https://qm.qq.com/cgi-bin/qm/qr?k=5qnkzSaLIrIaU4FvumftZH_6Hg7fUuLD&jump_from=webapi', 'https://github.com/AlkaidLab/foundation-sunshine/issues',
+  'https://qm.qq.com/q/AfMQoyKrkc', 'https://github.com/AlkaidLab/foundation-sunshine/issues',
   'https://github.com/The-Fried-Fish/VoidLink-previously-moonlight-zwm#readme', 'https://apps.apple.com/cn/app/voidlink/id6747717070', 'https://apps.apple.com/us/app/voidlink-extreme/id6755103808',
   'https://github.com/WACrown/moonlight-android/releases', 'https://github.com/WACrown/moonlight-android#readme', 'https://gitee.com/smdsbz/moonlight-ohos',
 ]
