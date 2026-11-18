@@ -1127,6 +1127,18 @@ TEST(TelemetryUserReport, TheQueueKeepsAReportWhenErrorReportsAreOff) {
   EXPECT_EQ(filter_by_consent(off, true, false), 0u);
 }
 
+namespace {
+  /** The event of that name in the posted batches (the latest one when `latest`, else the first); a null json when there is none. A feedback report also leaves a small feedback_submit event of its own. */
+  json
+  posted_event(const std::vector<json> &posted, const std::string &name, bool latest = false) {
+    json found;
+    for (const auto &batch : posted)
+      for (const auto &e : batch["events"])
+        if (e.value("name", "") == name && (latest || found.is_null())) found = e;
+    return found;
+  }
+}  // namespace
+
 TEST(TelemetryUserReport, TheSessionLogGoesUpFirstAndItsReferenceTravelsInTheReport) {
   harness_t h;
   h.consent = { false, true };
@@ -1135,14 +1147,14 @@ TEST(TelemetryUserReport, TheSessionLogGoesUpFirstAndItsReferenceTravelsInTheRep
   EXPECT_EQ(h.svc->ingest("web", "1", report), 1u);
   EXPECT_EQ(h.log_calls, 1);
   h.svc->flush();
-  ASSERT_EQ(h.svc->pump(), 1);
-  EXPECT_EQ(h.posted.at(0)["events"][0]["props"]["log_ref"], *h.log_ref);  // the page cannot name a reference itself
+  ASSERT_GE(h.svc->pump(), 1);
+  EXPECT_EQ(posted_event(h.posted, "user_report")["props"]["log_ref"], *h.log_ref);  // the page cannot name a reference itself
   // no log (error reports off, no endpoint, nothing to send): the report goes without one
   h.log_ref.reset();
   EXPECT_EQ(h.svc->ingest("web", "1", report), 1u);
   h.svc->flush();
-  ASSERT_EQ(h.svc->pump(), 1);
-  EXPECT_FALSE(h.posted.back()["events"][0]["props"].contains("log_ref"));
+  ASSERT_GE(h.svc->pump(), 1);
+  EXPECT_FALSE(posted_event(h.posted, "user_report", true)["props"].contains("log_ref"));
   // other events never ask for a log
   const auto before = h.log_calls;
   h.svc->ingest("web", "1", json::array({ json { { "kind", "error" }, { "name", "error" }, { "props", json { { "component", "web" }, { "code", "E_LOST" } } } } }));
@@ -1241,7 +1253,8 @@ TEST(TelemetryScreenshot, AnUploadThatFailsLeavesTheReportWithTheWordWhy) {
   ASSERT_GE(h.svc->pump(), 1);
   std::set<std::string> words;
   for (const auto &batch : h.posted)
-    for (const auto &e : batch["events"]) words.insert(e["props"].value("shot_state", ""));
+    for (const auto &e : batch["events"])
+      if (e.value("name", "") == "user_report") words.insert(e["props"].value("shot_state", ""));
   EXPECT_EQ(words, (std::set<std::string> { "unreachable", "refused", "bad_answer", "unavailable" }));
   // a report without a picture asks for nothing and says nothing about one
   const auto calls = h.shot_calls;
@@ -3852,4 +3865,360 @@ TEST(TelemetryServiceAggregate, ThePreviewOfHeldRecordsHonoursItsLimit) {
   h.svc->flush();
   EXPECT_LE(h.svc->preview(1).size(), 1u);
   EXPECT_EQ(h.svc->preview(0).size(), 0u);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// diagnostic sufficiency (2026-11-18): the encoder, the clipboard words, where a start was slow or failed, drivers, the previous run
+
+namespace {
+  stream_dims_t
+  diag_dims(std::string encoder = "nvenc") {
+    stream_dims_t dims;
+    dims.client_kind = "moonlight-macos";
+    dims.client_os = "macos";
+    dims.codec = "hevc";
+    dims.width = 1920;
+    dims.height = 1080;
+    dims.fps = 60;
+    dims.transport = "enet";
+    dims.app_kind = "desktop";
+    dims.encoder = std::move(encoder);
+    dims.capture_backend = "wgc";
+    return dims;
+  }
+
+  json
+  first_event(const std::vector<json> &posted, const std::string &name) {
+    json found;
+    for (const auto &batch : posted)
+      for (const auto &e : batch["events"])
+        if (e.value("name", "") == name && found.is_null()) found = e;
+    return found;
+  }
+}  // namespace
+
+TEST(TelemetryDiag, TheQualityEventNamesTheEncoderAndTheCapturePath) {
+  harness_t h;
+  h.svc->stream_begin(diag_dims(), 11, "client-a");
+  h.svc->record_encoded_frame(11);
+  h.now += 5000;
+  h.svc->stream_end(11, "client_cancel");
+  h.svc->flush();
+  ASSERT_GE(h.svc->pump(), 1);
+  const auto quality = first_event(h.posted, "stream_quality");
+  ASSERT_FALSE(quality.is_null());
+  EXPECT_EQ(quality["props"]["encoder"], "nvenc");
+  EXPECT_EQ(quality["props"]["capture_backend"], "wgc");
+}
+
+TEST(TelemetryDiag, AnEncoderLearntAfterTheStreamBeganReachesItsEvents) {
+  harness_t h;
+  h.svc->set_encoder_resolver([] { return std::string { "vulkan" }; });
+  h.svc->stream_begin(diag_dims(""), 12, "client-a");
+  h.svc->record_encoded_frame(12);
+  h.now += 5000;
+  h.svc->stream_end(12, "client_cancel");
+  h.svc->flush();
+  ASSERT_GE(h.svc->pump(), 1);
+  EXPECT_EQ(first_event(h.posted, "stream_quality")["props"]["encoder"], "vulkan");
+}
+
+TEST(TelemetryDiag, ANoEncoderAtAllLeavesTheFieldOutInsteadOfAWord) {
+  harness_t h;
+  h.svc->stream_begin(diag_dims(""), 13, "client-a");
+  h.svc->record_encoded_frame(13);
+  h.now += 5000;
+  h.svc->stream_end(13, "client_cancel");
+  h.svc->flush();
+  ASSERT_GE(h.svc->pump(), 1);
+  const auto quality = first_event(h.posted, "stream_quality");
+  ASSERT_FALSE(quality.is_null());  // the event itself was sent: only then does a missing field mean anything
+  ASSERT_TRUE(quality.contains("props"));
+  EXPECT_FALSE(quality["props"].contains("encoder"));
+}
+
+TEST(TelemetryDiag, TheStreamEndCarriesTheClipboardWordsAndOnlyTheFixedOnes) {
+  harness_t h;
+  h.svc->stream_begin(diag_dims(), 14, "client-a");
+  h.svc->record_encoded_frame(14);
+  h.now += 5000;
+  h.svc->stream_end(14, "client_cancel", "agent_stale", "dropped");
+  h.svc->stream_begin(diag_dims(), 15, "client-b");
+  h.now += 5000;
+  h.svc->stream_end(15, "client_cancel", "C:\\Users\\someone\\secret", "none");
+  h.svc->flush(true);
+  ASSERT_GE(h.svc->pump(), 1);
+  std::vector<json> ends;
+  for (const auto &batch : h.posted)
+    for (const auto &e : batch["events"])
+      if (e["name"] == "stream_end") ends.push_back(e);
+  ASSERT_FALSE(ends.empty());
+  std::set<std::string> offers, flows;
+  for (const auto &e : ends) {
+    if (e["props"].contains("clip_offer")) offers.insert(e["props"]["clip_offer"]);
+    if (e["props"].contains("clip_flow")) flows.insert(e["props"]["clip_flow"]);
+  }
+  EXPECT_TRUE(offers.count("agent_stale") == 1 || ends.size() == 1u);
+  for (const auto &word : offers) EXPECT_TRUE(word == "offered" || word == "off_config" || word == "no_agent" || word == "agent_stale" || word == "unknown") << word;
+  for (const auto &word : flows) EXPECT_TRUE(word == "none" || word == "ok" || word == "dropped") << word;
+  EXPECT_EQ(names_of(h.posted).count("stream_end"), 1u);
+  EXPECT_EQ(json(h.posted).dump().find("someone"), std::string::npos);
+}
+
+TEST(TelemetryDiag, OnlyAStageOverItsBoundIsReported) {
+  EXPECT_FALSE(stage_is_slow("display_prepare", 3000));
+  EXPECT_TRUE(stage_is_slow("display_prepare", 3001));
+  EXPECT_FALSE(stage_is_slow("vdd_create", 2999));
+  EXPECT_TRUE(stage_is_slow("encoder_init", 4000));
+  EXPECT_FALSE(stage_is_slow("first_frame", 5000));
+  EXPECT_TRUE(stage_is_slow("first_frame", 5001));
+  EXPECT_FALSE(stage_is_slow("app_launch", 4999));
+  harness_t h;
+  h.svc->stream_stage("display_prepare", 1200);
+  h.svc->stream_stage("display_prepare", 9100);
+  h.svc->stream_stage("not_a_stage", 99999);  // a word outside the list never becomes an event
+  h.svc->flush(true);
+  ASSERT_GE(h.svc->pump(), 1);
+  int stages = 0;
+  for (const auto &batch : h.posted)
+    for (const auto &e : batch["events"])
+      if (e["name"] == "stream_stage") {
+        ++stages;
+        EXPECT_EQ(e["props"]["stage"], "display_prepare");
+        EXPECT_EQ(e["props"]["ms"], 9100);
+      }
+  EXPECT_EQ(stages, 1);
+}
+
+TEST(TelemetryDiag, AFailedStartNamesItsStageAndCodeAndNeverSendsMoreThanTheRunLimit) {
+  harness_t h;
+  h.svc->stream_failed("vdd_create", "VDD_DRIVER_NOT_INSTALLED");
+  h.svc->stream_failed("encoder_init", "NO WORKING ENCODER at C:\\x");  // not a code: the event is not kept
+  for (int i = 0; i < 40; ++i) h.svc->stream_failed("launch_accept", "NO_APP_TO_RESUME");
+  h.svc->flush(true);
+  ASSERT_GE(h.svc->pump(), 1);
+  int failed = 0;
+  bool saw_vdd = false;
+  for (const auto &batch : h.posted)
+    for (const auto &e : batch["events"])
+      if (e["name"] == "stream_failed") {
+        ++failed;
+        if (e["props"]["stage"] == "vdd_create") {
+          saw_vdd = true;
+          EXPECT_EQ(e["props"]["code"], "VDD_DRIVER_NOT_INSTALLED");
+        }
+        EXPECT_EQ(e["props"]["code"].get<std::string>().find(' '), std::string::npos);
+      }
+  EXPECT_TRUE(saw_vdd);
+  EXPECT_LE(failed, 20);
+}
+
+TEST(TelemetryDiag, ADriverFailureKeepsOnlyTheFixedWordsAndACleanCode) {
+  harness_t h;
+  h.svc->driver_failed("gamepad", "create", "0xE0000001 (C:\\Users\\me)");
+  h.svc->driver_failed("vdd", "create", "VDD_IOCTL_FAILED");
+  h.svc->driver_failed("not_a_driver", "create", "X");  // a word outside the list becomes "other", never itself
+  h.svc->flush(true);
+  ASSERT_GE(h.svc->pump(), 1);
+  std::vector<json> events;
+  for (const auto &batch : h.posted)
+    for (const auto &e : batch["events"])
+      if (e["name"] == "driver_event") events.push_back(e);
+  ASSERT_EQ(events.size(), 3u);
+  std::set<std::string> drivers;
+  for (const auto &e : events) drivers.insert(e["props"]["driver"]);
+  EXPECT_EQ(drivers, (std::set<std::string> { "gamepad", "vdd", "other" }));
+  bool saw_vdd_code = false;
+  for (const auto &e : events) {
+    EXPECT_EQ(e["kind"], "error");
+    EXPECT_EQ(e["props"]["result"], "failed");
+    if (e["props"]["driver"] == "gamepad") {
+      // not a code (a path in it): the whole value is left out, no part of the directory stays behind
+      EXPECT_FALSE(e["props"].contains("hresult")) << e.dump();
+      EXPECT_EQ(e.dump().find("Users"), std::string::npos);
+    }
+    if (e["props"]["driver"] == "vdd") {
+      saw_vdd_code = true;
+      EXPECT_EQ(e["props"]["hresult"], "VDD_IOCTL_FAILED");  // a clean code stays
+    }
+  }
+  EXPECT_TRUE(saw_vdd_code);
+}
+
+namespace {
+  struct diag_run_t {
+    std::vector<json> posted;
+    std::unique_ptr<service_t> svc;
+    diag_run_t(const fs::path &dir, std::int64_t boot_ms, std::int64_t now, std::optional<std::string> boot_id = std::nullopt) {
+      service_options_t options;
+      options.dir = dir;
+      service_deps_t deps;
+      deps.now_ms = [now] { return now; };
+      deps.consent = [] { return consent_t { true, true }; };
+      deps.boot_ms = [boot_ms] { return boot_ms; };
+      if (boot_id) deps.boot_id = [word = *boot_id] { return word; };
+      deps.post = [this](const std::string &, const std::string &body) {
+        posted.push_back(json::parse(body));
+        return post_result_t { 200 };
+      };
+      svc = std::make_unique<service_t>(options, deps);
+      context_t c;
+      c.version = "5.2.0";
+      c.channel = "stable";
+      c.os = "windows";
+      svc->set_context(c);
+    }
+  };
+}  // namespace
+
+TEST(TelemetryDiag, ARunThatLeftNoCleanMarkerIsReportedOnceUnderItsOwnSession) {
+  temp_dir_t dir;
+  std::string first_session;
+  {
+    diag_run_t first(dir.path, 1'700'000'000'000, 1'800'000'000'000);
+    first_session = first.svc->session_id();
+    first.svc->begin_run_marker();  // started, never ended
+  }
+  diag_run_t second(dir.path, 1'700'000'000'000, 1'800'000'100'000);
+  second.svc->begin_run_marker();
+  second.svc->flush(true);
+  ASSERT_GE(second.svc->pump(), 1);
+  bool found = false;
+  for (const auto &batch : second.posted)
+    for (const auto &e : batch["events"])
+      if (e["name"] == "session_abnormal") {
+        found = true;
+        EXPECT_EQ(batch["session_id"], first_session);
+        EXPECT_NE(batch["session_id"], second.svc->session_id());
+        EXPECT_EQ(e["props"]["abnormal_mechanism"], "unknown");
+      }
+  EXPECT_TRUE(found);
+  // this run ends by itself: the next start says nothing
+  second.svc->end_run_marker();
+  diag_run_t third(dir.path, 1'700'000'000'000, 1'800'000'200'000);
+  third.svc->begin_run_marker();
+  third.svc->flush(true);
+  third.svc->pump();
+  EXPECT_EQ(names_of(third.posted).count("session_abnormal"), 0u);
+}
+
+TEST(TelemetryDiag, AnotherBootBetweenTheRunsMeansTheComputerWasShutDown) {
+  temp_dir_t dir;
+  {
+    diag_run_t first(dir.path, 1'700'000'000'000, 1'800'000'000'000);
+    first.svc->begin_run_marker();
+  }
+  diag_run_t second(dir.path, 1'790'000'000'000, 1'800'000'100'000);
+  second.svc->begin_run_marker();
+  second.svc->flush(true);
+  ASSERT_GE(second.svc->pump(), 1);
+  const auto abnormal = first_event(second.posted, "session_abnormal");
+  ASSERT_FALSE(abnormal.is_null());
+  EXPECT_EQ(abnormal["props"]["abnormal_mechanism"], "shutdown");
+}
+
+TEST(TelemetryDiag, AFeedbackReportLeavesACountThatTheDailyIssueLimitDoesNotHide) {
+  harness_t h;
+  h.consent = { true, true };
+  const json report = json::array({ json { { "kind", "error" }, { "name", "user_report" }, { "props", json { { "category", "suggestion" }, { "component", "panel" }, { "message", "please add" } } } } });
+  EXPECT_EQ(h.svc->ingest("web", "1", report), 1u);
+  h.svc->flush(true);
+  ASSERT_GE(h.svc->pump(), 1);
+  const auto submit = first_event(h.posted, "feedback_submit");
+  ASSERT_FALSE(submit.is_null());
+  EXPECT_EQ(submit["props"]["category"], "feature");
+  EXPECT_EQ(json(submit).dump().find("please add"), std::string::npos);
+}
+
+TEST(TelemetryDiag, ThePanelMaySendItsClipboardRecordAndAPageOtherThanThePanelMayNot) {
+  harness_t h;
+  h.consent = { true, true };
+  const json record = json::array({ json { { "kind", "experience" }, { "name", "clipboard_health" }, { "props", json { { "first_connect_ms", 1800 }, { "connected_pct", "gt90" }, { "reconnects", 2 }, { "heartbeat_fail", 0 }, { "last_error", "/etc/passwd" }, { "apply_ok", 5 }, { "apply_fail", 0 }, { "post_ok", 7 }, { "post_fail", 1 }, { "runtime_s", 3600 } } } } });
+  EXPECT_EQ(h.svc->ingest("panel", "1.0", record), 1u);
+  EXPECT_EQ(h.svc->ingest("web", "1.0", record), 0u);
+  h.svc->flush(true);
+  ASSERT_GE(h.svc->pump(), 1);
+  const auto health = first_event(h.posted, "clipboard_health");
+  ASSERT_FALSE(health.is_null());
+  EXPECT_EQ(health["props"]["connected_pct"], "gt90");
+  EXPECT_EQ(health["props"]["post_fail"], 1);
+  EXPECT_EQ(health["props"]["last_error"], "other");  // a word outside the list becomes "other": the path never leaves
+}
+
+namespace {
+  // what a start after a run that left no clean marker reports as the mechanism, for a first run and a second run with these boot words and start times (nullopt: no boot word known to that run)
+  std::string
+  abnormal_mechanism_after(std::optional<std::string> first_word, std::int64_t first_boot, std::optional<std::string> second_word, std::int64_t second_boot) {
+    temp_dir_t dir;
+    {
+      diag_run_t first(dir.path, first_boot, 1'800'000'000'000, first_word);
+      first.svc->begin_run_marker();
+    }
+    diag_run_t second(dir.path, second_boot, 1'800'000'100'000, second_word);
+    second.svc->begin_run_marker();
+    second.svc->flush(true);
+    second.svc->pump();
+    const auto abnormal = first_event(second.posted, "session_abnormal");
+    return abnormal.is_null() ? std::string { "none" } : abnormal["props"]["abnormal_mechanism"].get<std::string>();
+  }
+}  // namespace
+
+TEST(TelemetryDiag, AClockThatWasSetBetweenTwoRunsOfOneBootIsNotARestart) {
+  // the start time worked out from the wall clock moved by ten minutes, the boot word did not: the computer was not restarted
+  EXPECT_EQ(abnormal_mechanism_after("boot-a", 1'700'000'000'000, "boot-a", 1'700'000'600'000), "unknown");
+}
+
+TEST(TelemetryDiag, ANewBootWordIsARestartWhateverTheClockSays) {
+  EXPECT_EQ(abnormal_mechanism_after("boot-a", 1'700'000'000'000, "boot-b", 1'700'000'000'000), "shutdown");
+}
+
+TEST(TelemetryDiag, WithoutTheBootWordOfBothRunsARestartIsNeverClaimed) {
+  EXPECT_EQ(abnormal_mechanism_after(std::nullopt, 1'700'000'000'000, "boot-b", 1'790'000'000'000), "unknown");  // the earlier run knew no word (an older version)
+  EXPECT_EQ(abnormal_mechanism_after("boot-a", 1'700'000'000'000, "", 1'790'000'000'000), "unknown");  // this run cannot read it
+}
+
+TEST(TelemetryDiag, AFeedbackReportThatWasWrittenByTheFlushIsCountedToo) {
+  harness_t h;
+  h.consent = { true, true };
+  // a report that reached the buffer without having been written by ingest (emitted directly): the flush writes it, and the count goes out with it
+  ASSERT_TRUE(h.svc->emit(kind_e::error, "user_report", json { { "category", "bug" }, { "component", "panel" }, { "message", "broken" } }, "web", "1"));
+  h.svc->flush(true);
+  h.svc->flush(true);  // the count the first flush made is in the buffer now
+  ASSERT_GE(h.svc->pump(), 1);
+  const auto submit = first_event(h.posted, "feedback_submit");
+  ASSERT_FALSE(submit.is_null());
+  EXPECT_EQ(submit["props"]["category"], "bug");
+}
+
+TEST(TelemetryDiag, AWaitKeepsTheRecordOfAnEarlierRunUnderThatRunsSessionAndTheFaultsOfOneRunApart) {
+  harness_t h;
+  h.next_body = R"({"cfg":{"backoff_s":600}})";
+  ASSERT_TRUE(h.svc->emit(kind_e::usage, "app_start", json { { "cold", true } }));
+  h.svc->flush();
+  ASSERT_EQ(h.svc->pump(), 1);  // the answer asks for a wait
+  h.posted.clear();
+  h.next_body.clear();
+  const auto earlier = new_uuid_v4();
+  ASSERT_TRUE(h.svc->emit(kind_e::error, "session_abnormal", json { { "abnormal_mechanism", "unknown" } }, "host", {}, -1, {}, earlier));
+  h.svc->driver_failed("vdd", "create", "VDD_IOCTL_FAILED");
+  h.svc->driver_failed("microphone", "start", "MIC_START_FAILED");  // a second driver in the same run: not folded into the first
+  h.svc->flush(true);
+  int posts = 0;
+  std::set<std::string> drivers;
+  bool abnormal_under_earlier = false;
+  for (int i = 0; i < 3; ++i) {
+    posts += h.svc->pump();
+    h.now += 120'000;
+  }
+  EXPECT_GE(posts, 2);
+  for (const auto &batch : h.posted)
+    for (const auto &e : batch["events"]) {
+      if (e["name"] == "session_abnormal") abnormal_under_earlier = batch["session_id"] == earlier;
+      if (e["name"] == "driver_event") {
+        drivers.insert(e["props"]["driver"].get<std::string>());
+        EXPECT_NE(batch["session_id"], earlier);
+      }
+    }
+  EXPECT_TRUE(abnormal_under_earlier);
+  EXPECT_EQ(drivers.size(), 2u);
 }

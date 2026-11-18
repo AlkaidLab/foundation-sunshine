@@ -237,8 +237,8 @@ FindActiveUserSessionId() {
   return { active_user_session_id, false };
 }
 
-// Capture follows the active user by default. `session_binding = 1` selects
-// the physical console instead; GUI selection is independent.
+// Capture uses the console by default. `session_binding = 0` follows the
+// active interactive user instead; GUI selection is independent.
 std::wstring
 InstallDirectory();
 

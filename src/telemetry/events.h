@@ -65,10 +65,14 @@ namespace telemetry {
     std::string report_id;  ///< a feedback report sent with both switches off: its one-time random id, used in place of an install id (empty for every other event)
     std::string report_install;  ///< a feedback report: the install id it was given when it was accepted (empty when it has a one-time `report_id` instead, and for every other event). The identity of a report is fixed at that moment and never looked up again
     std::uint64_t count = 1;  ///< occurrences the sender merged into this record (see aggregate_events); 1 is a single event
+    std::string session_id;  ///< a record about an earlier run (session_abnormal): that run's session id, sent in an envelope of its own; empty = this run
   };
 
   /** True for the high-volume usage and experience families the sender holds and merges before it uploads. */
   bool high_volume_event(std::string_view name);
+
+  /** True when a stage of a stream start took longer than its bound (3 s; 5 s for the app launch and the first frame): only those are worth an event. */
+  bool stage_is_slow(std::string_view stage, std::int64_t ms);
 
   /**
    * Merges the high-volume events of one batch by name, kind, version and their non-numeric properties. Counters and bucket vectors (page_vitals, api_latency) are summed, the other numbers are

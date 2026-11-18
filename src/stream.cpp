@@ -2452,15 +2452,14 @@ namespace stream {
     server->map(packetTypes[IDX_CLIPBOARD], [](session_t *session, const std::string_view &payload) {
       // Forward opaque payload to the user-session GUI agent. Drop silently if
       // disabled by config or if the GUI is not currently subscribed.
-      if (!config::input.clipboard_sync) {
-        return;
-      }
       auto &bridge = clipboard_bridge::bridge_t::instance();
-      if (!bridge.gui_alive()) {
+      if (!config::input.clipboard_sync || !bridge.gui_alive()) {
+        bridge.note_inbound(session->launch_session_id, false);
         return;
       }
       clipboard_bridge::payload_t bytes(payload.begin(), payload.end());
-      bridge.on_inbound(session->launch_session_id, std::move(bytes));
+      const bool dispatched = bridge.on_inbound(session->launch_session_id, std::move(bytes));
+      bridge.note_inbound(session->launch_session_id, dispatched);
     });
 
     server->map(packetTypes[IDX_CURSOR], [](session_t *session, const std::string_view &payload) {
@@ -2789,7 +2788,9 @@ namespace stream {
               if (msg.target != clipboard_bridge::kBroadcast && s->launch_session_id != msg.target) {
                 continue;
               }
-              send_clipboard(s, msg.bytes);
+              if (send_clipboard(s, msg.bytes) == 0) {
+                clipboard_bridge::bridge_t::instance().note_outbound(s->launch_session_id);
+              }
             }
           }
         }
@@ -4892,7 +4893,13 @@ namespace stream {
 
       session.nvidia_vsync_lease.reset();
       perf::end_session(session.launch_session_id);
-      telemetry::stream_ended(session.launch_session_id, stop_reason_name(session.lifecycle.snapshot().stop_reason));
+      {
+        // what the clipboard did in this session, as fixed words (counts and the offer decision only; never content)
+        const auto clipboard = clipboard_bridge::bridge_t::instance().take_note(session.launch_session_id);
+        const char *flow = clipboard.inbound_dropped > 0 ? "dropped" : (clipboard.inbound_forwarded > 0 || clipboard.outbound_sent > 0) ? "ok" : "none";
+        telemetry::stream_ended(session.launch_session_id, stop_reason_name(session.lifecycle.snapshot().stop_reason),
+          clipboard.offer == clipboard_bridge::offer_e::unknown ? std::string_view {} : std::string_view { clipboard_bridge::offer_name(clipboard.offer) }, flow);
+      }
 
       // Clean up ABR state for this client
       abr::cleanup(session.client_name);
@@ -5092,7 +5099,7 @@ namespace stream {
             info.sparxie_app = sparxie.is_sparxie;
             info.sparxie_game = sparxie.game;
           }
-          info.encoder = video::active_encoder_name();
+          info.encoder = video::session_encoder_name();
           info.capture_backend = ::config::video.capture.empty() ? "auto" : ::config::video.capture;
           info.altp = false;  // ALTP is not a stream transport on this branch line; when it is, this is the one place to set it
           telemetry::stream_started(info);

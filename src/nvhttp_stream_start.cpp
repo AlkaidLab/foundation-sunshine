@@ -19,6 +19,7 @@
 #include "display_device/vdd_capability.h"
 #include "hdr/session_target.h"
 #include "logging.h"
+#include "telemetry/telemetry.h"
 #include "touch_keyboard_session.h"
 #include "video.h"
 
@@ -676,6 +677,17 @@ namespace nvhttp::stream_start {
     tree.put("root.sunshine_error_source", source);
     tree.put("root.sunshine_error_stage", stage);
     tree.put("root.sunshine_recoverable", recoverable ? 1 : 0);
+
+    // Every launch that is refused passes here with a stable code: the one place that says where a stream start failed (statistics: fixed words and the code, no text)
+    try {
+      const char *failed_stage = error_code.rfind("VDD_", 0) == 0 ? "vdd_create" :
+                                 source == "display"             ? "display_prepare" :
+                                 source == "video"               ? "encoder_init" :
+                                                                   "launch_accept";
+      telemetry::stream_failed(failed_stage, error_code);
+    }
+    catch (...) {
+    }
   }
 
   bool
@@ -699,7 +711,9 @@ namespace nvhttp::stream_start {
 
     // Display configuration can change the active capture target, so probe
     // encoders only after the display stack has settled.
+    const auto display_started = std::chrono::steady_clock::now();
     auto display_result = display_device::session_t::get().configure_display(config::video, launch_session, is_reconfigure);
+    telemetry::stream_stage(use_vdd ? "vdd_create" : "display_prepare", std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - display_started).count());
     auto outcome = classify_configure_result(display_result.result);
 
 #ifdef _WIN32
@@ -737,7 +751,9 @@ namespace nvhttp::stream_start {
       outcome == configure_outcome_e::ok || outcome == configure_outcome_e::retry_later;
     if (initial_state_can_be_probed) {
       const auto configured_probe_target = make_configured_probe_target(intent, probe_target);
+      const auto probe_started = std::chrono::steady_clock::now();
       const auto probe_result = video::probe_encoders(configured_probe_target);
+      telemetry::stream_stage("encoder_init", std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - probe_started).count());
       probe_matches_display_state = true;
       if (!probe_result) {
         return true;

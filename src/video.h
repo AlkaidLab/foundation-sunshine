@@ -645,6 +645,13 @@ namespace video {
   std::string
   active_encoder_name();
 
+  /**
+   * @brief The encoder family of the snapshot the running sessions use, even while a later probe failed or is running (active_encoder_name answers empty then).
+   * @return Encoder identifier, or an empty string when no probe ever succeeded.
+   */
+  std::string
+  session_encoder_name();
+
   void
   capture(
     safe::mail_t mail,

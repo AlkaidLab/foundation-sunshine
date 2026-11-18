@@ -102,7 +102,14 @@ namespace telemetry {
     bool altp = false;  ///< the session runs over ALTP (no such flag on this branch line yet: the stream code passes false)
   };
   void stream_started(const stream_info_t &info);
-  void stream_ended(std::uint32_t session_id, std::string_view stop_reason);
+  /** `clip_offer` and `clip_flow` are the clipboard words of the session (clipboard_bridge::offer_name and none | ok | dropped); empty leaves them out. */
+  void stream_ended(std::uint32_t session_id, std::string_view stop_reason, std::string_view clip_offer = {}, std::string_view clip_flow = {});
+  /** The host's encoder family now (video::active_encoder_name), asked for by the sender for a stream that began before the encoder was known. Set once after start(). */
+  void set_encoder_resolver(std::function<std::string()> resolver);
+  /** A stage of a stream start took `ms` (reported only when slow), a start failed at `stage` with a stable error code, a driver operation failed. All fixed words; no text. */
+  void stream_stage(std::string_view stage, std::int64_t ms);
+  void stream_failed(std::string_view stage, std::string_view code);
+  void driver_failed(std::string_view driver, std::string_view op, std::string_view code = {});
   void frame_encoded(std::uint32_t session_id) noexcept;
   void encode_ms(std::uint32_t session_id, double ms) noexcept;
   void capture_ms(std::uint32_t session_id, double ms) noexcept;

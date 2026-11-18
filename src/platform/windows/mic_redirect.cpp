@@ -18,6 +18,7 @@
 #include "src/config.h"
 #include "src/logging.h"
 #include "src/platform/windows/virtual_microphone.h"
+#include "src/telemetry/telemetry.h"
 #include "src/platform/windows/virtual_microphone_selftest.h"
 
 namespace platf::audio {
@@ -189,6 +190,8 @@ namespace platf::audio {
         BOOST_LOG(info) << "Using the USB/IP virtual microphone backend"sv;
         return 0;
       }
+      // the code names the step that failed (MIC_USBIP_*); it is reported whether or not the VB-Cable path below takes over
+      telemetry::driver_failed("microphone", "create", usbip_fallback_reason);
       if (backend == "usbip_experimental") {
         report_mic_redirect_backend({}, usbip_fallback_reason);
         BOOST_LOG(error) << "The USB/IP virtual microphone backend failed: "sv << usbip_fallback_reason;
@@ -204,6 +207,7 @@ namespace platf::audio {
     }
     if (mic_redirect_device->init() != 0) {
       BOOST_LOG(warning) << "Failed to initialize client mic redirection device";
+      telemetry::driver_failed("microphone", "start", "MIC_DEVICE_INIT_FAILED");
       mic_redirect_device.reset();
       report_mic_redirect_backend({}, backend == "auto" && !usbip_fallback_reason.empty() ? usbip_fallback_reason : "MIC_TEST_DEVICE_UNAVAILABLE");
       release_owner();
