@@ -548,6 +548,9 @@ namespace ds5::tuning {
       out["reason"] = !implemented ? wire_reason(descriptor.id) :
                                      (active ? std::string {} : std::string { "Native DualSense path is idle; the saved value applies on the next native feedback." });
       out["note"] = wire_note(descriptor.id);
+      /* A key the host applies but only a client can finish: which clients honour it, so the page can say who needs to be new enough. */
+      out["client_support"] = nlohmann::json::array();
+      if (descriptor.id == 101) out["client_support"].push_back({ { "client", "Moonlight Enhanced" }, { "platform", "macOS" }, { "since", "1.3.9-rc.8" } });
       out["unit"] = descriptor.unit ? nlohmann::json(descriptor.unit) : nlohmann::json(nullptr);
       out["legacy_key"] = descriptor.legacy_key ? nlohmann::json(descriptor.legacy_key) : nlohmann::json(nullptr);
       out["title_i18n_key"] = descriptor.title_i18n_key;

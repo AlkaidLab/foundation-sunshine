@@ -932,6 +932,12 @@ TEST_F(Ds5TuningStore, PublishesTheMotionReportRateTheHostAsksClientsFor) {
   EXPECT_TRUE(key_entry(result.body, 101).at("implemented").get<bool>());
   EXPECT_NE(key_entry(result.body, 101).at("status").get<std::string>(), "unavailable");
   EXPECT_FALSE(key_entry(result.body, 101).at("note").get<std::string>().empty());
+  /* the clients that honour the request, with the first version that does */
+  const auto &support = key_entry(result.body, 101).at("client_support");
+  ASSERT_EQ(support.size(), 1u);
+  EXPECT_EQ(support.at(0).at("client").get<std::string>(), "Moonlight Enhanced");
+  EXPECT_EQ(support.at(0).at("since").get<std::string>(), "1.3.9-rc.8");
+  EXPECT_TRUE(key_entry(result.body, 14).at("client_support").empty());
 }
 
 TEST(Ds5TuningRuntime, TheMotionReportRateStaysWithinTheRangeOfTheKey) {
