@@ -2458,8 +2458,8 @@ namespace stream {
         return;
       }
       clipboard_bridge::payload_t bytes(payload.begin(), payload.end());
-      bridge.on_inbound(session->launch_session_id, std::move(bytes));
-      bridge.note_inbound(session->launch_session_id, true);
+      const bool dispatched = bridge.on_inbound(session->launch_session_id, std::move(bytes));
+      bridge.note_inbound(session->launch_session_id, dispatched);
     });
 
     server->map(packetTypes[IDX_CURSOR], [](session_t *session, const std::string_view &payload) {
@@ -2788,8 +2788,9 @@ namespace stream {
               if (msg.target != clipboard_bridge::kBroadcast && s->launch_session_id != msg.target) {
                 continue;
               }
-              send_clipboard(s, msg.bytes);
-              clipboard_bridge::bridge_t::instance().note_outbound(s->launch_session_id);
+              if (send_clipboard(s, msg.bytes) == 0) {
+                clipboard_bridge::bridge_t::instance().note_outbound(s->launch_session_id);
+              }
             }
           }
         }

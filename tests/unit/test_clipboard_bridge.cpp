@@ -84,3 +84,30 @@ TEST(ClipboardBridgeNotes, TheTableOfNotesIsBounded) {
   EXPECT_LE(kept, 66u);
   EXPECT_GE(kept, 1u);
 }
+
+TEST(ClipboardBridgeNotes, ATableThatIsFullGivesUpARecordOfALaunchAndKeepsTheOnesOfLiveStreams) {
+  auto &bridge = bridge_t::instance();
+  constexpr clipboard_bridge::session_id live = 2'000'000;
+  bridge.note_offer(live, offer_e::offered);  // the oldest record, and its stream is running
+  bridge.session_started(live);
+  for (clipboard_bridge::session_id sid = 1; sid <= 200; ++sid) bridge.note_offer(2'000'000 + sid, offer_e::off_config);
+  bridge.note_inbound(live, true);
+  bridge.note_outbound(live);
+  const auto note = bridge.take_note(live);
+  EXPECT_EQ(note.offer, offer_e::offered);  // the counts of the stream that is running were not thrown out
+  EXPECT_EQ(note.inbound_forwarded, 1u);
+  EXPECT_EQ(note.outbound_sent, 1u);
+  bridge.session_stopped(live);
+  for (clipboard_bridge::session_id sid = 1; sid <= 200; ++sid) bridge.take_note(2'000'000 + sid);
+}
+
+TEST(ClipboardBridgeInbound, ReportsWhetherASinkTookThePayload) {
+  bridge_reset_t reset;
+  auto &bridge = bridge_t::instance();
+  bridge.set_inbound_sink({});
+  EXPECT_FALSE(bridge.on_inbound(7, { 1, 2, 3 }));
+  int calls = 0;
+  bridge.set_inbound_sink([&calls](clipboard_bridge::session_id, const clipboard_bridge::payload_t &) { ++calls; });
+  EXPECT_TRUE(bridge.on_inbound(7, { 1, 2, 3 }));
+  EXPECT_EQ(calls, 1);
+}

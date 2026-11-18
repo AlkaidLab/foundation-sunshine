@@ -74,7 +74,8 @@ namespace clipboard_bridge {
     static bridge_t &instance();
 
     // ---- Inbound: stream.cpp -> GUI ----
-    void on_inbound(session_id sid, payload_t bytes);
+    /// Returns true when a sink took the payload, false when none was registered at that moment.
+    bool on_inbound(session_id sid, payload_t bytes);
     void set_inbound_sink(inbound_sink_fn cb);
 
     // ---- Outbound: GUI -> stream sessions ----

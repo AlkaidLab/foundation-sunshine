@@ -3931,7 +3931,10 @@ TEST(TelemetryDiag, ANoEncoderAtAllLeavesTheFieldOutInsteadOfAWord) {
   h.svc->stream_end(13, "client_cancel");
   h.svc->flush();
   ASSERT_GE(h.svc->pump(), 1);
-  EXPECT_FALSE(first_event(h.posted, "stream_quality")["props"].contains("encoder"));
+  const auto quality = first_event(h.posted, "stream_quality");
+  ASSERT_FALSE(quality.is_null());  // the event itself was sent: only then does a missing field mean anything
+  ASSERT_TRUE(quality.contains("props"));
+  EXPECT_FALSE(quality["props"].contains("encoder"));
 }
 
 TEST(TelemetryDiag, TheStreamEndCarriesTheClipboardWordsAndOnlyTheFixedOnes) {
@@ -4025,25 +4028,35 @@ TEST(TelemetryDiag, ADriverFailureKeepsOnlyTheFixedWordsAndACleanCode) {
   std::set<std::string> drivers;
   for (const auto &e : events) drivers.insert(e["props"]["driver"]);
   EXPECT_EQ(drivers, (std::set<std::string> { "gamepad", "vdd", "other" }));
+  bool saw_vdd_code = false;
   for (const auto &e : events) {
     EXPECT_EQ(e["kind"], "error");
     EXPECT_EQ(e["props"]["result"], "failed");
-    const auto code = e["props"]["hresult"].get<std::string>();
-    EXPECT_EQ(code.find_first_of(" \\/()"), std::string::npos) << code;
+    if (e["props"]["driver"] == "gamepad") {
+      // not a code (a path in it): the whole value is left out, no part of the directory stays behind
+      EXPECT_FALSE(e["props"].contains("hresult")) << e.dump();
+      EXPECT_EQ(e.dump().find("Users"), std::string::npos);
+    }
+    if (e["props"]["driver"] == "vdd") {
+      saw_vdd_code = true;
+      EXPECT_EQ(e["props"]["hresult"], "VDD_IOCTL_FAILED");  // a clean code stays
+    }
   }
+  EXPECT_TRUE(saw_vdd_code);
 }
 
 namespace {
   struct diag_run_t {
     std::vector<json> posted;
     std::unique_ptr<service_t> svc;
-    diag_run_t(const fs::path &dir, std::int64_t boot_ms, std::int64_t now) {
+    diag_run_t(const fs::path &dir, std::int64_t boot_ms, std::int64_t now, std::optional<std::string> boot_id = std::nullopt) {
       service_options_t options;
       options.dir = dir;
       service_deps_t deps;
       deps.now_ms = [now] { return now; };
       deps.consent = [] { return consent_t { true, true }; };
       deps.boot_ms = [boot_ms] { return boot_ms; };
+      if (boot_id) deps.boot_id = [word = *boot_id] { return word; };
       deps.post = [this](const std::string &, const std::string &body) {
         posted.push_back(json::parse(body));
         return post_result_t { 200 };
@@ -4130,4 +4143,82 @@ TEST(TelemetryDiag, ThePanelMaySendItsClipboardRecordAndAPageOtherThanThePanelMa
   EXPECT_EQ(health["props"]["connected_pct"], "gt90");
   EXPECT_EQ(health["props"]["post_fail"], 1);
   EXPECT_EQ(health["props"]["last_error"], "other");  // a word outside the list becomes "other": the path never leaves
+}
+
+namespace {
+  // what a start after a run that left no clean marker reports as the mechanism, for a first run and a second run with these boot words and start times (nullopt: no boot word known to that run)
+  std::string
+  abnormal_mechanism_after(std::optional<std::string> first_word, std::int64_t first_boot, std::optional<std::string> second_word, std::int64_t second_boot) {
+    temp_dir_t dir;
+    {
+      diag_run_t first(dir.path, first_boot, 1'800'000'000'000, first_word);
+      first.svc->begin_run_marker();
+    }
+    diag_run_t second(dir.path, second_boot, 1'800'000'100'000, second_word);
+    second.svc->begin_run_marker();
+    second.svc->flush(true);
+    second.svc->pump();
+    const auto abnormal = first_event(second.posted, "session_abnormal");
+    return abnormal.is_null() ? std::string { "none" } : abnormal["props"]["abnormal_mechanism"].get<std::string>();
+  }
+}  // namespace
+
+TEST(TelemetryDiag, AClockThatWasSetBetweenTwoRunsOfOneBootIsNotARestart) {
+  // the start time worked out from the wall clock moved by ten minutes, the boot word did not: the computer was not restarted
+  EXPECT_EQ(abnormal_mechanism_after("boot-a", 1'700'000'000'000, "boot-a", 1'700'000'600'000), "unknown");
+}
+
+TEST(TelemetryDiag, ANewBootWordIsARestartWhateverTheClockSays) {
+  EXPECT_EQ(abnormal_mechanism_after("boot-a", 1'700'000'000'000, "boot-b", 1'700'000'000'000), "shutdown");
+}
+
+TEST(TelemetryDiag, WithoutTheBootWordOfBothRunsARestartIsNeverClaimed) {
+  EXPECT_EQ(abnormal_mechanism_after(std::nullopt, 1'700'000'000'000, "boot-b", 1'790'000'000'000), "unknown");  // the earlier run knew no word (an older version)
+  EXPECT_EQ(abnormal_mechanism_after("boot-a", 1'700'000'000'000, "", 1'790'000'000'000), "unknown");  // this run cannot read it
+}
+
+TEST(TelemetryDiag, AFeedbackReportThatWasWrittenByTheFlushIsCountedToo) {
+  harness_t h;
+  h.consent = { true, true };
+  // a report that reached the buffer without having been written by ingest (emitted directly): the flush writes it, and the count goes out with it
+  ASSERT_TRUE(h.svc->emit(kind_e::error, "user_report", json { { "category", "bug" }, { "component", "panel" }, { "message", "broken" } }, "web", "1"));
+  h.svc->flush(true);
+  h.svc->flush(true);  // the count the first flush made is in the buffer now
+  ASSERT_GE(h.svc->pump(), 1);
+  const auto submit = first_event(h.posted, "feedback_submit");
+  ASSERT_FALSE(submit.is_null());
+  EXPECT_EQ(submit["props"]["category"], "bug");
+}
+
+TEST(TelemetryDiag, AWaitKeepsTheRecordOfAnEarlierRunUnderThatRunsSessionAndTheFaultsOfOneRunApart) {
+  harness_t h;
+  h.next_body = R"({"cfg":{"backoff_s":600}})";
+  ASSERT_TRUE(h.svc->emit(kind_e::usage, "app_start", json { { "cold", true } }));
+  h.svc->flush();
+  ASSERT_EQ(h.svc->pump(), 1);  // the answer asks for a wait
+  h.posted.clear();
+  h.next_body.clear();
+  const auto earlier = new_uuid_v4();
+  ASSERT_TRUE(h.svc->emit(kind_e::error, "session_abnormal", json { { "abnormal_mechanism", "unknown" } }, "host", {}, -1, {}, earlier));
+  h.svc->driver_failed("vdd", "create", "VDD_IOCTL_FAILED");
+  h.svc->driver_failed("microphone", "start", "MIC_START_FAILED");  // a second driver in the same run: not folded into the first
+  h.svc->flush(true);
+  int posts = 0;
+  std::set<std::string> drivers;
+  bool abnormal_under_earlier = false;
+  for (int i = 0; i < 3; ++i) {
+    posts += h.svc->pump();
+    h.now += 120'000;
+  }
+  EXPECT_GE(posts, 2);
+  for (const auto &batch : h.posted)
+    for (const auto &e : batch["events"]) {
+      if (e["name"] == "session_abnormal") abnormal_under_earlier = batch["session_id"] == earlier;
+      if (e["name"] == "driver_event") {
+        drivers.insert(e["props"]["driver"].get<std::string>());
+        EXPECT_NE(batch["session_id"], earlier);
+      }
+    }
+  EXPECT_TRUE(abnormal_under_earlier);
+  EXPECT_EQ(drivers.size(), 2u);
 }

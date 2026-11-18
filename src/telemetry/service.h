@@ -109,6 +109,11 @@ namespace telemetry {
     std::function<std::string()> session_shot_state;
     /** When the computer started, ms since the epoch (0 = not known): tells a restart of the computer from a run that ended by itself. */
     std::function<std::int64_t()> boot_ms;
+    /**
+     * A word that is the same for every process of one boot of the computer and differs after the next boot (empty = not known). A clock that was set between two runs cannot fake a restart through it.
+     * When it is set, a restart is only claimed when both runs know their word and the words differ; when it is null (tests), the start times in boot_ms are compared.
+     */
+    std::function<std::string()> boot_id;
     /** Runs inside flush() before each batch write to the disk queue; the tests use it to move a consent change into the middle of a flush. */
     std::function<void()> before_queue_write;
   };

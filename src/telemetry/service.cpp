@@ -350,6 +350,15 @@ namespace telemetry {
     }
   }
 
+  namespace {
+    // the category of a feedback report in the Worker's words (feedback_submit); the page's own words map to four
+    json
+    feedback_submit_props(const json &report_props) {
+      const auto category = report_props.is_object() && report_props.contains("category") && report_props["category"].is_string() ? report_props["category"].get<std::string>() : std::string {};
+      return json { { "category", category == "bug" ? "bug" : category == "suggestion" ? "feature" : category == "performance" || category == "compat" ? "improvement" : "other" } };
+    }
+  }  // namespace
+
   bool
   service_t::persist_report(const event_t &event) {
     try {
@@ -438,8 +447,7 @@ namespace telemetry {
             ++kept;
           }
           // the count of feedback reports that survives the daily limit of issues of the Worker (a report is only an issue until the limit): one small event, the category in the Worker's words
-          const auto category = props.is_object() && props.contains("category") && props["category"].is_string() ? props["category"].get<std::string>() : std::string {};
-          emit(kind_e::error, "feedback_submit", json { { "category", category == "bug" ? "bug" : category == "suggestion" ? "feature" : category == "performance" || category == "compat" ? "improvement" : "other" } });
+          emit(kind_e::error, "feedback_submit", feedback_submit_props(props));
         }
         else {
           std::lock_guard lock { mutex_ };
@@ -1029,11 +1037,11 @@ namespace telemetry {
     try {
       if (driver_events_.fetch_add(1, std::memory_order_relaxed) >= MAX_DRIVER_EVENTS_PER_RUN) return;
       json props { { "driver", std::string { driver } }, { "op", std::string { op } }, { "result", "failed" } };
-      // the code is a result code (letters, digits and _ . : + -), never text: anything else is cut out
-      std::string clean;
-      for (const char c : code)
-        if (clean.size() < 64 && ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_' || c == '.' || c == ':' || c == '+' || c == '-')) clean.push_back(c);
-      if (!clean.empty()) props["hresult"] = clean;
+      // the code is a result code (letters, digits and _ . : + -), never text: a value with anything else in it is not a code and is left out whole (cutting the other characters out would keep the rest of a path or a name)
+      const bool is_code = !code.empty() && code.size() <= 64 && std::all_of(code.begin(), code.end(), [](const char c) {
+        return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_' || c == '.' || c == ':' || c == '+' || c == '-';
+      });
+      if (is_code) props["hresult"] = std::string { code };
       emit(kind_e::error, "driver_event", props);
     }
     catch (...) {
@@ -1053,8 +1061,17 @@ namespace telemetry {
       const auto boot = deps_.boot_ms ? deps_.boot_ms() : 0;
       if (previous.is_object() && previous.value("status", "") == "running" && previous.contains("session_id") && previous["session_id"].is_string()) {
         // the previous run left no sign that it ended by itself. Another boot since then: the computer was shut down or restarted, which is not the program's doing.
-        const auto before = previous.value("boot_ms", std::int64_t { 0 });
-        const bool rebooted = boot > 0 && before > 0 && std::llabs(boot - before) > 120'000;
+        bool rebooted = false;
+        if (deps_.boot_id) {
+          // the boot word is what tells the boots apart; a start time worked out from the wall clock moves with every clock that is set, so it is never the proof: without both words the answer is "unknown"
+          const auto now_word = deps_.boot_id();
+          const auto before_word = previous.value("boot_id", std::string {});
+          rebooted = !now_word.empty() && !before_word.empty() && now_word != before_word;
+        }
+        else {
+          const auto before = previous.value("boot_ms", std::int64_t { 0 });
+          rebooted = boot > 0 && before > 0 && std::llabs(boot - before) > 120'000;
+        }
         emit(kind_e::error, "session_abnormal", json { { "abnormal_mechanism", rebooted ? "shutdown" : "unknown" } }, "host", {}, -1, {}, previous["session_id"].get<std::string>());
       }
       write_run_marker("running", boot);
@@ -1077,7 +1094,9 @@ namespace telemetry {
       const auto tmp = options_.dir / "run_marker.json.tmp";
       {
         std::ofstream out(tmp, std::ios::trunc);
-        out << json { { "session_id", session_id_ }, { "status", std::string { status } }, { "boot_ms", boot }, { "t", deps_.now_ms() } }.dump();
+        std::string boot_word;
+        if (deps_.boot_id) boot_word = deps_.boot_id();
+        out << json { { "session_id", session_id_ }, { "status", std::string { status } }, { "boot_ms", boot }, { "boot_id", boot_word }, { "t", deps_.now_ms() } }.dump();
       }
       fs::rename(tmp, path, ec);
     }
@@ -1229,8 +1248,14 @@ namespace telemetry {
         by_product[{ e.product, priority, e.session_id }].push_back(std::move(e));
       }
       std::vector<event_t> failed;  // what could not be written: it goes back to the buffer, never lost to a failed write
-      for (const auto &e : alone)
-        if (!persist_report(e)) failed.push_back(e);
+      for (const auto &e : alone) {
+        if (!persist_report(e)) {
+          failed.push_back(e);
+          continue;
+        }
+        // a report whose first write failed in ingest() is written here, and is counted here (ingest counted only the writes that went through): no lock is held
+        if (is_user_report(e.kind, e.name)) emit(kind_e::error, "feedback_submit", feedback_submit_props(e.props));
+      }
       if (!by_product.empty()) {
         auto ctx = context();
         ctx.install_id = install_id();
@@ -1372,6 +1397,8 @@ namespace telemetry {
             continue;
           }
           std::string key = name + "|" + p.value("component", std::string {}) + "|" + p.value("code", std::string {}) + "|" + p.value("fingerprint", std::string {}) + "|" + p.value("metric", std::string {});
+          // a driver fault is told apart by driver, operation, result and code: a failed virtual display must not hide a failed microphone start
+          if (name == "driver_event") key += "|" + p.value("driver", std::string {}) + "|" + p.value("op", std::string {}) + "|" + p.value("result", std::string {}) + "|" + p.value("hresult", std::string {});
           const auto found = seen.find(key);
           if (found == seen.end()) {
             seen[key] = events.size();
@@ -1429,7 +1456,10 @@ namespace telemetry {
           if (handle_answer(answer, report->batch["events"].size(), { report->path }) && answer.status >= 200 && answer.status < 300) ++sent;
           return sent;
         }
-        const auto group_of = [](const disk_queue_t::entry_t &e) { return e.batch.value("product", std::string {}) + "\n" + e.batch.value("version", std::string {}); };
+        // the session id belongs to the group: a record about an earlier run (session_abnormal) goes out under that run's id, never merged into the envelope of this run
+        const auto group_of = [](const disk_queue_t::entry_t &e) {
+          return e.batch.value("product", std::string {}) + "\n" + e.batch.value("version", std::string {}) + "\n" + e.batch.value("session_id", std::string {});
+        };
         const auto now = deps_.now_ms();
         const auto first = std::find_if(entries.begin(), entries.end(), [&](const auto &e) {
           const auto sent = p0_group_sent_at_.find(group_of(e));

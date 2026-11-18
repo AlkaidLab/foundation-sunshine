@@ -52,16 +52,18 @@ namespace clipboard_bridge {
 
   bridge_t::~bridge_t() = default;
 
-  void
+  bool
   bridge_t::on_inbound(session_id sid, payload_t bytes) {
     inbound_sink_fn cb;
     {
       std::lock_guard<std::mutex> lk(_impl->mu);
       cb = _impl->inbound_sink;
     }
-    if (cb) {
-      cb(sid, bytes);
+    if (!cb) {
+      return false;
     }
+    cb(sid, bytes);
+    return true;
   }
 
   void
@@ -138,7 +140,15 @@ namespace clipboard_bridge {
     std::lock_guard<std::mutex> lk(_impl->mu);
     // a client that sets up the same launch twice keeps the latest decision; the table is bounded so a session that never ends cannot grow it
     if (_impl->notes.size() > 64 && _impl->notes.find(sid) == _impl->notes.end()) {
-      _impl->notes.erase(_impl->notes.begin());
+      // drop a record whose session is not streaming (a launch that never started); only when every record belongs to a live stream is the oldest one given up
+      auto victim = _impl->notes.begin();
+      for (auto it = _impl->notes.begin(); it != _impl->notes.end(); ++it) {
+        if (_impl->active_sessions.find(it->first) == _impl->active_sessions.end()) {
+          victim = it;
+          break;
+        }
+      }
+      _impl->notes.erase(victim);
     }
     _impl->notes[sid].offer = offer;
   }

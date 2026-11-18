@@ -19,6 +19,10 @@
 #ifndef _WIN32
   #include <unistd.h>
 #endif
+#ifdef __APPLE__
+  #include <sys/sysctl.h>
+  #include <sys/time.h>
+#endif
 #ifdef _WIN32
   #ifndef NOMINMAX
     #define NOMINMAX
@@ -524,6 +528,47 @@ namespace telemetry {
 
     std::unique_ptr<runner_t> runner;
     std::mutex lifecycle_mutex;
+
+    // A word that every process of one boot of the computer sees alike and the next boot does not: the kernel's own boot id where there is one. Empty when it cannot be read (the run is then reported as "unknown", never as a restart).
+    std::string
+    boot_identity() {
+#ifdef _WIN32
+      // no boot id in the API: a volatile key of the registry is deleted by the system at every boot, so the word stored in it lives exactly as long as one boot (the first reader after the boot makes it)
+      try {
+        HKEY key = nullptr;
+        DWORD disposition = 0;
+        if (RegCreateKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\FoundationSunshine\\BootId", 0, nullptr, REG_OPTION_VOLATILE, KEY_QUERY_VALUE | KEY_SET_VALUE, nullptr, &key, &disposition) != ERROR_SUCCESS) return {};
+        wchar_t word[80] = {};
+        DWORD size = sizeof(word) - sizeof(wchar_t);
+        DWORD type = 0;
+        std::string result;
+        if (RegQueryValueExW(key, L"Word", nullptr, &type, reinterpret_cast<LPBYTE>(word), &size) == ERROR_SUCCESS && type == REG_SZ && size >= sizeof(wchar_t)) {
+          for (const wchar_t c : std::wstring { word })
+            if (c < 128) result.push_back(static_cast<char>(c));
+        }
+        else {
+          const auto fresh = new_uuid_v4();
+          std::wstring wide(fresh.begin(), fresh.end());
+          if (RegSetValueExW(key, L"Word", 0, REG_SZ, reinterpret_cast<const BYTE *>(wide.c_str()), static_cast<DWORD>((wide.size() + 1) * sizeof(wchar_t))) == ERROR_SUCCESS) result = fresh;
+        }
+        RegCloseKey(key);
+        return result;
+      }
+      catch (...) {
+        return {};
+      }
+#elif defined(__APPLE__)
+      char word[64] = {};
+      std::size_t size = sizeof(word) - 1;
+      if (sysctlbyname("kern.bootsessionuuid", word, &size, nullptr, 0) != 0) return {};
+      return std::string { word };
+#else
+      std::ifstream in { "/proc/sys/kernel/random/boot_id" };
+      std::string word;
+      if (in) std::getline(in, word);
+      return word;
+#endif
+    }
   }  // namespace
 
   void
@@ -555,12 +600,24 @@ namespace telemetry {
         const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 #ifdef _WIN32
         return static_cast<std::int64_t>(now - static_cast<std::int64_t>(GetTickCount64()));
-#else
+#elif defined(__APPLE__)
+        // macOS has no CLOCK_BOOTTIME: the kernel keeps the time of the boot itself
+        (void) now;
+        timeval boot {};
+        std::size_t size = sizeof(boot);
+        int name[2] = { CTL_KERN, KERN_BOOTTIME };
+        if (sysctl(name, 2, &boot, &size, nullptr, 0) != 0 || boot.tv_sec <= 0) return std::int64_t { 0 };
+        return static_cast<std::int64_t>(boot.tv_sec) * 1000 + boot.tv_usec / 1000;
+#elif defined(CLOCK_BOOTTIME)
         timespec ts {};
         if (clock_gettime(CLOCK_BOOTTIME, &ts) != 0) return std::int64_t { 0 };
         return static_cast<std::int64_t>(now - (static_cast<std::int64_t>(ts.tv_sec) * 1000 + ts.tv_nsec / 1'000'000));
+#else
+        (void) now;
+        return std::int64_t { 0 };
 #endif
       };
+      deps.boot_id = [] { return boot_identity(); };
       start_steady_ms.store(steady_ms());
       auto service = std::make_shared<service_t>(std::move(options), std::move(deps));
       context_t ctx;
