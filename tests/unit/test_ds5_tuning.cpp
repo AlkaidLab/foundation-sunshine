@@ -44,6 +44,7 @@ namespace {
       state.rumble_curve.store(1.0f);
       state.rumble_noise_gate.store(0.020f);
       state.hd_gain.store(1.0f);
+      state.motion_report_rate_hz.store(250);
       state.haptics_mode.store(0);
       state.hd_low_band_db.store(0.0f);
       state.hd_high_band_db.store(0.0f);
@@ -195,9 +196,10 @@ TEST(Ds5TuningDescriptors, CoversTheStableOneHundredSixKeys) {
 TEST(Ds5TuningDescriptors, ReportsEveryKeyWithAHostConsumerAsImplemented) {
   const auto snapshot = ds5::tuning::store_t("/tmp/ds5-tuning-unused.json").snapshot_json();
   // Keys with no consumer on this host: Bluetooth output and fallback (10, 98, 100), the vendor slope
-  // block (31), the microphone route and preamp (96, 97: no capture source and no wire field), the client
-  // polling cap (101), cross-end sync (102 to 104) and the feedback target (105).
-  const std::set<std::uint32_t> unavailable { 10, 31, 96, 97, 98, 100, 101, 102, 103, 104, 105 };
+  // block (31), the microphone route and preamp (96, 97: no capture source and no wire field),
+  // cross-end sync (102 to 104) and the feedback target (105).  The motion report rate (101) is the rate
+  // the host asks clients for, so it has a host consumer.
+  const std::set<std::uint32_t> unavailable { 10, 31, 96, 97, 98, 100, 102, 103, 104, 105 };
   EXPECT_EQ(snapshot.at("implemented_count").get<std::uint32_t>(), 106u - unavailable.size());
   for (std::uint32_t id = 1; id <= 106; ++id) {
     const bool implemented = key_entry(snapshot, id).at("implemented").get<bool>();
@@ -916,6 +918,38 @@ TEST_F(Ds5TuningStore, PublishesReleaseAndCompatIntoTheRuntime) {
   EXPECT_EQ(key_entry(result.body, 99).at("value").get<std::string>(), "legacyAll");
 }
 
+TEST_F(Ds5TuningStore, PublishesTheMotionReportRateTheHostAsksClientsFor) {
+  ds5::tuning::store_t store(profile_path);
+  ASSERT_TRUE(store.load());
+  EXPECT_EQ(ds5::tuning::runtime::motion_report_rate(), 250u);
+  const auto result = store.apply_json({
+    { "schema", "ALK-DS5T/1" },
+    { "values", { { "ds5.compat.reportRateCapHz", 500 } } },
+  });
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(ds5::tuning::runtime::state().motion_report_rate_hz.load(), 500u);
+  EXPECT_EQ(ds5::tuning::runtime::motion_report_rate(), 500u);
+  EXPECT_TRUE(key_entry(result.body, 101).at("implemented").get<bool>());
+  EXPECT_NE(key_entry(result.body, 101).at("status").get<std::string>(), "unavailable");
+  EXPECT_FALSE(key_entry(result.body, 101).at("note").get<std::string>().empty());
+  /* the clients that honour the request, with the first version that does */
+  const auto &support = key_entry(result.body, 101).at("client_support");
+  ASSERT_EQ(support.size(), 1u);
+  EXPECT_EQ(support.at(0).at("client").get<std::string>(), "Moonlight Enhanced");
+  EXPECT_EQ(support.at(0).at("since").get<std::string>(), "1.3.9-rc.8");
+  EXPECT_TRUE(key_entry(result.body, 14).at("client_support").empty());
+}
+
+TEST(Ds5TuningRuntime, TheMotionReportRateStaysWithinTheRangeOfTheKey) {
+  auto &state = ds5::tuning::runtime::state();
+  state.motion_report_rate_hz.store(5);
+  EXPECT_EQ(ds5::tuning::runtime::motion_report_rate(), 30u);
+  state.motion_report_rate_hz.store(5000);
+  EXPECT_EQ(ds5::tuning::runtime::motion_report_rate(), 1000u);
+  state.motion_report_rate_hz.store(250);
+  EXPECT_EQ(ds5::tuning::runtime::motion_report_rate(), 250u);
+}
+
 TEST(Ds5TuningRuntime, TriggerThresholdDecidesTheDigitalBitAndAsButtonBinarisesTheAxis) {
   auto &state = ds5::tuning::runtime::state();
   state.left_trigger_threshold.store(0.5f);
@@ -1347,7 +1381,9 @@ TEST(Ds5TuningDescriptors, WireExtensionKeysReportExactReasons) {
   EXPECT_NE(key_entry(snapshot, 96).at("reason").get<std::string>().find("capture source"), std::string::npos);
   EXPECT_NE(key_entry(snapshot, 97).at("reason").get<std::string>().find("audio_control2"), std::string::npos);
   EXPECT_NE(key_entry(snapshot, 98).at("reason").get<std::string>().find("client"), std::string::npos);
-  EXPECT_NE(key_entry(snapshot, 101).at("reason").get<std::string>().find("sampling"), std::string::npos);
+  // 101 is applied by the host now: not unavailable, and a note that names the client's own limit
+  EXPECT_NE(key_entry(snapshot, 101).at("status").get<std::string>(), "unavailable");
+  EXPECT_NE(key_entry(snapshot, 101).at("note").get<std::string>().find("its own limit"), std::string::npos);
   EXPECT_NE(key_entry(snapshot, 102).at("reason").get<std::string>().find("ALK-DS5T/1"), std::string::npos);
 }
 

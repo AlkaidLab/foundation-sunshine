@@ -443,6 +443,7 @@ namespace ds5::tuning {
       state.gyro_yaw_offset_deg.store(number(71, 0.0f), std::memory_order_release);
       state.gyro_pitch_offset_deg.store(number(72, 0.0f), std::memory_order_release);
       state.gyro_roll_offset_deg.store(number(73, 0.0f), std::memory_order_release);
+      state.motion_report_rate_hz.store(std::clamp<std::uint32_t>(unsigned_value(101, 250), 30u, 1000u), std::memory_order_release);
       runtime::notify_published();
     }
 
@@ -547,6 +548,9 @@ namespace ds5::tuning {
       out["reason"] = !implemented ? wire_reason(descriptor.id) :
                                      (active ? std::string {} : std::string { "Native DualSense path is idle; the saved value applies on the next native feedback." });
       out["note"] = wire_note(descriptor.id);
+      /* A key the host applies but only a client can finish: which clients honour it, so the page can say who needs to be new enough. */
+      out["client_support"] = nlohmann::json::array();
+      if (descriptor.id == 101) out["client_support"].push_back({ { "client", "Moonlight Enhanced" }, { "platform", "macOS" }, { "since", "1.3.9-rc.8" } });
       out["unit"] = descriptor.unit ? nlohmann::json(descriptor.unit) : nlohmann::json(nullptr);
       out["legacy_key"] = descriptor.legacy_key ? nlohmann::json(descriptor.legacy_key) : nlohmann::json(nullptr);
       out["title_i18n_key"] = descriptor.title_i18n_key;
@@ -711,9 +715,6 @@ namespace ds5::tuning {
     if (id == 98 || id == 100) {
       return "Bluetooth audio and output path are client radio decisions; this host bridge is USB only. The macOS client implements this key.";
     }
-    if (id == 101) {
-      return "The cap limits client sampling of the physical pad (its motion sensors only). Buttons and sticks are reported when they change and are not capped; the host answers them as soon as they arrive.";
-    }
     if (id >= 102 && id <= 104) {
       return "Needs an ALK-DS5T/1 peer with HELLO/PATCH/SNAPSHOT/ACK and the section 16.3 layer merge; this build has no tuning control channel for the override gates or rate cap.";
     }
@@ -770,6 +771,8 @@ namespace ds5::tuning {
       case 52:
       case 55:
         return "The analog axis becomes 0 or 255 by the threshold decision; the digital bit is set in either mode.";
+      case 101:
+        return "The rate the host asks every client for motion reports (accelerometer and gyro); it applies at once to a running stream. A client reports at the lower of this value and its own limit (Moonlight Enhanced: Settings > Input > Gamepad > Motion Report Rate Limit, 250 Hz by default), and no faster than its pad samples: a DualSense gives about 250 Hz over USB. Buttons and sticks are not capped. A client that does not honour the request keeps its own rate.";
       case 106:
         return "Applies to the next virtual controller allocation; active devices keep their current identity.";
       default:
