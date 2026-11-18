@@ -110,7 +110,7 @@ TEST(NetworkCheckPlan, ListsEveryStepPendingInTheOrderTheyAreShown) {
   const auto steps = planned_steps({}, true, { "a.example.net:60000" });
   std::vector<std::string> ids;
   for (const auto &entry : steps) ids.push_back(entry.id);
-  EXPECT_EQ(ids, (std::vector<std::string> { "listening", "firewall", "addresses", "cgnat", "router", "endpoint" }));
+  EXPECT_EQ(ids, (std::vector<std::string> { "listening", "firewall", "addresses", "cgnat", "router", "endpoint", "external_tcp", "external_udp" }));
   for (const auto &entry : steps) EXPECT_EQ(entry.state, step_state_e::pending);
   EXPECT_EQ(find(steps, "endpoint")->subject, "a.example.net:60000");
 }
@@ -123,8 +123,11 @@ TEST(NetworkCheckPlan, WithoutStunTheAddressStepIsSkippedFromTheStart) {
 
 TEST(NetworkCheckSteps, AHealthyHostIsOkEverywhere) {
   const auto steps = steps_of(healthy(), stun());
-  EXPECT_EQ(steps.size(), 5U);
-  for (const auto &entry : steps) EXPECT_EQ(entry.state, step_state_e::ok) << entry.id << " " << entry.reason;
+  EXPECT_EQ(steps.size(), 7U);
+  for (const auto &entry : steps) {
+    if (entry.id == "external_tcp" || entry.id == "external_udp") continue;  // nothing from outside has tried: see the outside tests
+    EXPECT_EQ(entry.state, step_state_e::ok) << entry.id << " " << entry.reason;
+  }
 }
 
 TEST(NetworkCheckSteps, ANotListeningPortFailsWithTheRestartAction) {
@@ -345,4 +348,73 @@ TEST(NetworkCheckRun, ARunThatPassesItsDeadlineEndsAndNamesTheOpenSteps) {
   EXPECT_EQ(listening->next, "retry");
   EXPECT_EQ(done->summary.tcp.state, protocol_state_e::unknown);
   std::this_thread::sleep_for(800ms);  // the late probe finishes into a slot nobody reads
+}
+
+// ---- the outside steps (net-check-1118) ----
+
+namespace {
+  reachability::endpoint_result_t
+  with_outside(reachability::endpoint_result_t entry, const std::string &state, const std::string &reason = {}) {
+    entry.outside.asked = true;
+    entry.outside.state = state;
+    entry.outside.reason = reason;
+    return entry;
+  }
+}  // namespace
+
+TEST(NetworkCheckOutside, WithoutTheCheckTheOutsideStepsSaySoAndUdpIsNeverVerified) {
+  const auto steps = steps_of(healthy(), stun());
+  EXPECT_EQ(find(steps, "external_tcp")->state, step_state_e::skipped);
+  EXPECT_EQ(find(steps, "external_tcp")->reason, "external_off");
+  EXPECT_EQ(find(steps, "external_udp")->reason, "udp_not_verified");
+}
+
+TEST(NetworkCheckOutside, AConnectionFromOutsideMakesTcpReachableAndUdpStaysNotVerified) {
+  auto snapshot = healthy();
+  snapshot.public_reachability.endpoints = { with_outside(endpoint("203.0.113.9:60000", false, "timeout", true), "reachable") };
+  snapshot = settle(snapshot);
+  const auto discovery = stun();
+  const auto steps = steps_of(snapshot, discovery);
+  EXPECT_EQ(find(steps, "external_tcp")->state, step_state_e::ok);
+  EXPECT_EQ(find(steps, "endpoint", "203.0.113.9:60000")->state, step_state_e::ok);
+  const auto summary = summarize({}, snapshot, discovery, steps);
+  EXPECT_EQ(summary.tcp.state, protocol_state_e::reachable);
+  EXPECT_EQ(summary.tcp.because.front(), "outside_probe");
+  EXPECT_EQ(summary.udp.state, protocol_state_e::unverified);
+}
+
+TEST(NetworkCheckOutside, EachKindOfOutsideAnswerHasItsOwnFindingAndNextAction) {
+  const auto step_for = [](const std::string &state, const std::string &reason = {}) {
+    auto snapshot = healthy();
+    snapshot.public_reachability.endpoints = { with_outside(endpoint("203.0.113.9:60000", false, "timeout", true), state, reason) };
+    const auto steps = steps_of(snapshot, stun());
+    return *find(steps, "external_tcp");
+  };
+  EXPECT_EQ(step_for("closed").reason, "not_reached_from_outside");
+  EXPECT_EQ(step_for("closed").next, "forward");
+  EXPECT_EQ(step_for("timeout").state, step_state_e::fail);
+  EXPECT_EQ(step_for("another_host").reason, "another_host_answers");
+  EXPECT_EQ(step_for("unavailable", "ip_mismatch").reason, "address_not_this_computer");
+  EXPECT_EQ(step_for("unavailable", "ip_mismatch").state, step_state_e::warn);
+  EXPECT_EQ(step_for("unavailable", "dns_mismatch").next, "address");
+  // a service that does not answer is not a failure of the host
+  const auto down = step_for("unavailable", "no_answer");
+  EXPECT_EQ(down.state, step_state_e::skipped);
+  EXPECT_EQ(down.reason, "external_unavailable");
+  EXPECT_EQ(step_for("unavailable", "rate_limited").reason, "external_unavailable");
+}
+
+TEST(NetworkCheckOutside, ABlockedConnectionFromOutsideMakesTcpUnreachableButAnUnavailableServiceDoesNot) {
+  auto snapshot = healthy();
+  snapshot.public_reachability.endpoints = { with_outside(endpoint("203.0.113.9:60000", false, "timeout", true), "timeout") };
+  snapshot = settle(snapshot);
+  auto discovery = stun();
+  auto summary = summarize({}, snapshot, discovery, steps_of(snapshot, discovery));
+  EXPECT_EQ(summary.tcp.state, protocol_state_e::unreachable);
+  EXPECT_EQ(summary.tcp.because.front(), "not_reached_from_outside");
+  auto unknown = healthy();
+  unknown.public_reachability.endpoints = { with_outside(endpoint("203.0.113.9:60000", false, "timeout", true), "unavailable", "no_answer") };
+  unknown = settle(unknown);
+  summary = summarize({}, unknown, discovery, steps_of(unknown, discovery));
+  EXPECT_NE(summary.tcp.state, protocol_state_e::unreachable);
 }

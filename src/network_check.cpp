@@ -133,7 +133,7 @@ namespace network_check {
         { "matches_wan", endpoint.matches_wan },
       };
       step_t result;
-      if (endpoint.reached) {
+      if (endpoint.reached || endpoint.outside.state == "reachable") {
         result = make_step(step::endpoint, step_state_e::ok, {}, {}, detail);
       }
       else if (endpoint.inconclusive) {
@@ -157,6 +157,41 @@ namespace network_check {
       }
       result.subject = endpoint.input;
       return result;
+    }
+
+    step_t
+    external_tcp_step(const reachability::snapshot_t &snapshot) {
+      const auto &endpoints = snapshot.public_reachability.endpoints;
+      bool asked = false;
+      const reachability::endpoint_result_t *reached = nullptr;
+      const reachability::endpoint_result_t *not_reached = nullptr;
+      const reachability::endpoint_result_t *another = nullptr;
+      const reachability::endpoint_result_t *refused = nullptr;
+      const reachability::endpoint_result_t *unavailable = nullptr;
+      for (const auto &endpoint : endpoints) {
+        if (!endpoint.outside.asked) continue;
+        asked = true;
+        const auto &state = endpoint.outside.state;
+        if (state == "reachable") reached = reached ? reached : &endpoint;
+        else if (state == "closed" || state == "timeout") not_reached = not_reached ? not_reached : &endpoint;
+        else if (state == "another_host") another = another ? another : &endpoint;
+        else if (state == "unavailable" && (endpoint.outside.reason == "ip_mismatch" || endpoint.outside.reason == "dns_mismatch" || endpoint.outside.reason == "dns_failed")) refused = refused ? refused : &endpoint;
+        else unavailable = unavailable ? unavailable : &endpoint;
+      }
+      const auto subject = [](step_t step, const reachability::endpoint_result_t *endpoint) {
+        if (endpoint) {
+          step.subject = endpoint->input;
+          step.detail["outside"] = endpoint->outside.state;
+          if (!endpoint->outside.reason.empty()) step.detail["why"] = endpoint->outside.reason;
+        }
+        return step;
+      };
+      if (reached) return subject(make_step(step::external_tcp, step_state_e::ok), reached);
+      if (not_reached) return subject(make_step(step::external_tcp, step_state_e::fail, "not_reached_from_outside", "forward"), not_reached);
+      if (another) return subject(make_step(step::external_tcp, step_state_e::fail, "another_host_answers", "address"), another);
+      if (refused) return subject(make_step(step::external_tcp, step_state_e::warn, "address_not_this_computer", "address"), refused);
+      if (unavailable) return subject(make_step(step::external_tcp, step_state_e::skipped, "external_unavailable"), unavailable);
+      return make_step(step::external_tcp, step_state_e::skipped, asked ? "external_unavailable" : "external_off");
     }
 
     // ---- summary ---------------------------------------------------------------------------------
@@ -248,6 +283,8 @@ namespace network_check {
       entry.subject = input;
       steps.push_back(std::move(entry));
     }
+    steps.push_back(make_step(step::external_tcp, step_state_e::pending));
+    steps.push_back(make_step(step::external_udp, step_state_e::pending));
     return steps;
   }
 
@@ -260,6 +297,9 @@ namespace network_check {
     steps.push_back(cgnat_step(snapshot, discovery));
     steps.push_back(router_step(snapshot));
     for (const auto &endpoint : snapshot.public_reachability.endpoints) steps.push_back(endpoint_step(endpoint));
+    steps.push_back(external_tcp_step(snapshot));
+    // UDP cannot be tried from outside by a service that speaks TCP: it is not verified, whatever else is known
+    steps.push_back(make_step(step::external_udp, step_state_e::skipped, "udp_not_verified"));
     return steps;
   }
 
@@ -291,8 +331,17 @@ namespace network_check {
       tcp.state = protocol_state_e::reachable;
       add(tcp, "session_evidence");
     }
+    const auto *outside = find_step(steps, step::external_tcp);
+    if (outside && outside->state == step_state_e::ok) {
+      tcp.state = protocol_state_e::reachable;
+      add(tcp, "outside_probe");
+    }
     if (tcp.state != protocol_state_e::reachable) {
-      if (listening && listening->state == step_state_e::fail) {
+      if (outside && outside->state == step_state_e::fail) {
+        tcp.state = protocol_state_e::unreachable;
+        add(tcp, "not_reached_from_outside");
+      }
+      else if (listening && listening->state == step_state_e::fail) {
         tcp.state = protocol_state_e::unreachable;
         add(tcp, "not_listening");
       }

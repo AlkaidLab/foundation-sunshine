@@ -964,6 +964,22 @@ if (WIN32)
 endif ()
 add_test(NAME network_check_unit_tests COMMAND network_check_unit_tests)
 
+add_executable(network_external_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/network_external.cpp
+        ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
+        ${CMAKE_SOURCE_DIR}/src/public_address.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_network_external.cpp)
+target_include_directories(network_external_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(network_external_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
+        sunshine_project_options sunshine_coverage ${Boost_LIBRARIES})
+target_compile_options(network_external_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(network_external_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    target_link_libraries(network_external_unit_tests PRIVATE ws2_32 iphlpapi)
+    set_target_properties(network_external_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME network_external_unit_tests COMMAND network_external_unit_tests)
+
 add_executable(network_reachability_sample
         ${CMAKE_SOURCE_DIR}/tests/tools/network_reachability_sample.cpp
         ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp

@@ -451,6 +451,7 @@ namespace reachability {
       result.tested_address = decisive->address;
       result.latency_ms = decisive->handshake.latency_ms;
       if (!result.reached) result.error = answered_by_other ? "identity_mismatch" : worst_error.empty() ? "failed" : worst_error;
+      // The handshake from inside is inconclusive for a public address, unless a connection from outside answered: then that answer is the evidence.
       result.inconclusive = !result.reached && result.scope == scope_e::public_address && is_inconclusive_failure(result.error);
       return result;
     }
@@ -541,13 +542,14 @@ namespace reachability {
     // A completed handshake through our own certificate is a connection that was made: it proves the HTTPS listener exists and the firewall let it
     // in, so it outranks every local guess (the listener table, the firewall policy) that says otherwise.
     const bool endpoint_reached = std::any_of(inputs.endpoints.begin(), inputs.endpoints.end(), [](const endpoint_result_t &endpoint) {
-      return endpoint.scope == scope_e::public_address && endpoint.reached;
+      return endpoint.scope == scope_e::public_address && (endpoint.reached || endpoint.outside.state == "reachable");
     });
     const bool legacy_reached = inputs.endpoints.empty() && inputs.hairpin.tried && inputs.hairpin.ok && inputs.hairpin.identity_match &&
                                 inputs.configured.kind != public_address::kind_e::empty && !inputs.configured.is_private;
     if (!evidence_public && (endpoint_reached || legacy_reached)) {
       result.reasons.clear();
-      result.reasons.push_back("hairpin_verified");
+      const bool outside_verified = std::any_of(inputs.endpoints.begin(), inputs.endpoints.end(), [](const endpoint_result_t &endpoint) { return endpoint.outside.state == "reachable"; });
+      result.reasons.push_back(outside_verified ? "outside_verified" : "hairpin_verified");
       result.verdict = verdict_e::verified;
       return result;
     }
@@ -555,6 +557,14 @@ namespace reachability {
     if (evidence_public) {
       result.verdict = verdict_e::verified;
       result.reasons.insert(result.reasons.begin(), "session_evidence");
+      return result;
+    }
+    // A connection from the internet that found nothing (and no handshake from inside got through): the address does not lead to this host from outside.
+    if (!inputs.endpoints.empty() && std::any_of(inputs.endpoints.begin(), inputs.endpoints.end(), [](const endpoint_result_t &endpoint) {
+          return endpoint.scope == scope_e::public_address && (endpoint.outside.state == "closed" || endpoint.outside.state == "timeout" || endpoint.outside.state == "another_host");
+        })) {
+      result.reasons.push_back("not_reached_from_outside");
+      result.verdict = verdict_e::unreachable;
       return result;
     }
     if (!all_listening) {
@@ -854,6 +864,7 @@ namespace reachability {
         { "state", endpoint.reached ? "reached" : "failed" },
         { "error", endpoint.error.empty() ? nlohmann::json(nullptr) : nlohmann::json(endpoint.error) },
         { "inconclusive", endpoint.inconclusive },
+        { "outside", endpoint.outside.asked ? nlohmann::json({ { "state", endpoint.outside.state }, { "reason", endpoint.outside.reason.empty() ? nlohmann::json(nullptr) : nlohmann::json(endpoint.outside.reason) } }) : nlohmann::json(nullptr) },
         { "tested", std::move(tested) },
         { "attempts", std::move(attempts) },
         { "reasons", endpoint.reasons },

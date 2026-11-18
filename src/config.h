@@ -199,6 +199,7 @@ namespace config {
     std::string external_ip;  ///< legacy single public address; external_endpoints wins when both are set
     std::string external_endpoints;  ///< public endpoints, `host[:port]` separated by commas
     std::string stun_servers;  ///< STUN servers of the network overview; empty: built-in list, "none": off
+    std::string network_external_check;  ///< "enabled": the network check asks a service on the internet to connect to the public addresses (network_external.h); anything else: off
     std::vector<std::string> resolutions;
     std::vector<std::string> fps;  // 支持小数刷新率，如 "119.88"
 

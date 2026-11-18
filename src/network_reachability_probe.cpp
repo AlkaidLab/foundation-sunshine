@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <future>
 #include <fstream>
 #include <map>
 #include <memory>
@@ -1087,6 +1088,25 @@ namespace reachability {
       prober.handshake = [&options](const std::string &address, std::uint16_t port) { return handshake_to(address, port, options.certificate_path); };
       stage("endpoints", false);
       public_inputs.endpoints = probe_endpoints(endpoint_list.endpoints, default_http_port, router_status.wan_ip, prober, &snapshot.ports);
+      // The outside check of the public endpoints (when it is on): in parallel, bounded by the service's own timeouts.
+      if (options.outside) {
+        std::vector<std::future<outside_t>> asks;
+        std::vector<std::size_t> which;
+        for (std::size_t index = 0; index < public_inputs.endpoints.size(); ++index) {
+          const auto &endpoint = public_inputs.endpoints[index];
+          if (endpoint.scope != scope_e::public_address || which.size() >= 2) continue;
+          which.push_back(index);
+          asks.push_back(std::async(std::launch::async, [&options, endpoint]() { return options.outside(endpoint); }));
+        }
+        for (std::size_t n = 0; n < asks.size(); ++n) {
+          auto answer = asks[n].get();
+          auto &endpoint = public_inputs.endpoints[which[n]];
+          endpoint.outside = answer;
+          // an answer from outside settles what the handshake from inside could not: a failure is a failure, a connection that reached another device is a finding
+          if (answer.state == "closed" || answer.state == "timeout" || answer.state == "another_host") endpoint.inconclusive = false;
+          if (answer.state == "reachable") endpoint.inconclusive = false;
+        }
+      }
       stage("endpoints", true);
 
       // The first endpoint also fills the single-address fields older clients of the API read.

@@ -1173,3 +1173,66 @@ TEST(PublicEndpointSyntax, AWildcardAddressIsNoAddress) {
   ASSERT_EQ(list.rejected.size(), 1U);
   EXPECT_EQ(list.rejected[0], "0.0.0.0");
 }
+
+// ---- the outside check (net-check-1118) ----
+
+namespace {
+  endpoint_result_t
+  failing_from_inside(const std::string &input, const std::string &outside_state, const std::string &reason = {}) {
+    fake_network_t network;
+    network.tls["203.0.113.9|59995"] = failed("timeout", 2500);
+    auto results = probe_endpoints({ endpoint_of(input) }, 47989, "203.0.113.9", network.prober());
+    auto endpoint = results.at(0);
+    endpoint.outside.asked = true;
+    endpoint.outside.state = outside_state;
+    endpoint.outside.reason = reason;
+    if (outside_state == "closed" || outside_state == "timeout" || outside_state == "another_host" || outside_state == "reachable") endpoint.inconclusive = false;
+    return endpoint;
+  }
+}  // namespace
+
+TEST(NetworkReachabilityOutside, AConnectionFromTheInternetThatReachedThisHostVerifiesWhateverTheHandshakeFromInsideSaid) {
+  public_inputs_t inputs;
+  inputs.ports = healthy_ports(false, firewall_e::blocked);
+  inputs.endpoints = { failing_from_inside("203.0.113.9:60000", "reachable") };
+  const auto result = evaluate_public(inputs, NOW);
+  EXPECT_EQ(result.verdict, verdict_e::verified);
+  EXPECT_TRUE(has_reason(result.reasons, "outside_verified"));
+  EXPECT_FALSE(has_reason(result.reasons, "hairpin_verified"));
+}
+
+TEST(NetworkReachabilityOutside, ABlockedConnectionFromTheInternetIsAFindingNotASilence) {
+  for (const char *state : { "closed", "timeout", "another_host" }) {
+    public_inputs_t inputs;
+    inputs.ports = healthy_ports();
+    inputs.endpoints = { failing_from_inside("203.0.113.9:60000", state) };
+    const auto result = evaluate_public(inputs, NOW);
+    EXPECT_EQ(result.verdict, verdict_e::unreachable) << state;
+    EXPECT_TRUE(has_reason(result.reasons, "not_reached_from_outside")) << state;
+    EXPECT_FALSE(result.endpoints.at(0).inconclusive) << state;
+  }
+}
+
+TEST(NetworkReachabilityOutside, AServiceThatDidNotAnswerChangesNothing) {
+  public_inputs_t inputs;
+  inputs.ports = healthy_ports();
+  inputs.router = public_router(true);
+  inputs.endpoints = { failing_from_inside("203.0.113.9:60000", "unavailable", "no_answer") };
+  inputs.endpoints[0].inconclusive = true;
+  const auto result = evaluate_public(inputs, NOW);
+  EXPECT_NE(result.verdict, verdict_e::unreachable);
+  EXPECT_TRUE(result.endpoints.at(0).inconclusive);
+}
+
+TEST(NetworkReachabilityOutside, TheJsonCarriesTheStateAndTheReasonOrNullWhenItWasNotAsked) {
+  snapshot_t snapshot;
+  snapshot.checked_at = format_utc_iso(NOW);
+  snapshot.public_reachability.endpoints = { failing_from_inside("203.0.113.9:60000", "unavailable", "rate_limited") };
+  fake_network_t network;
+  auto plain = probe_endpoints({ endpoint_of("203.0.113.9") }, 47989, "", network.prober());
+  snapshot.public_reachability.endpoints.push_back(plain.at(0));
+  const auto json = to_json(snapshot);
+  EXPECT_EQ(json["public"]["endpoints"].at(0)["outside"]["state"], "unavailable");
+  EXPECT_EQ(json["public"]["endpoints"].at(0)["outside"]["reason"], "rate_limited");
+  EXPECT_TRUE(json["public"]["endpoints"].at(1)["outside"].is_null());
+}

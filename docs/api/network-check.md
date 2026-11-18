@@ -58,6 +58,8 @@ its result comes with the run.
 | `addresses` | The public IPv4 and IPv6 address as STUN servers see them. | `stun_no_answer`, `no_route`, `proxy_dns`, `proxy_exit_suspected`, `stun_off` (skipped) |
 | `cgnat` | Whether the router's outside address is shared (RFC 6598, `100.64.0.0/10`). | `cgnat` (`mesh_or_ipv6`), `cgnat_unknown` |
 | `router` | UPnP IGD answers and, per port, whether the mapping exists (`detail.missing`). | `no_igd` (`forward`), `mapping_missing` (`upnp`) |
+| `external_tcp` | The outside check (`network_external_check = enabled`): a connection from the internet to the TCP ports of each public address, comparing the unique id of this host. | `not_reached_from_outside` (`forward`), `another_host_answers` (`address`), `address_not_this_computer` (`address`, the service says the entered address is not the one the internet sees from this computer), `external_unavailable` (skipped: the service did not answer), `external_off` (skipped) |
+| `external_udp` | UDP cannot be tried from outside by a service that speaks TCP. Always skipped. | `udp_not_verified` |
 | `endpoint` | One per saved public address (`subject`): a TLS handshake against its HTTPS port. | `loopback_unverifiable` (`outside_test`), `dns_failed`, `identity_mismatch`, `tls_failed`, `address_private` (`address`), `mesh_address`, `not_tried` |
 
 A run that reaches its deadline (20 seconds) ends: the steps that were still open are `warn` with `timeout` and `next: retry`, `timed_out` is `true`, and nothing is concluded from them.
@@ -73,6 +75,8 @@ device answered with a certificate that is not this host's, a server that is not
 `tcp.state` is `reachable` (a connection from outside was made: a handshake through a public address, or a session from a public address), `likely` (everything this computer can see says yes), `unreachable`
 (something proves it cannot be: not listening, blocked by the firewall, a shared address with no IPv6) or `unknown`. A handshake that was made outranks the listener table and the firewall policy: both are
 inferences, the handshake is a connection.
+
+`tcp.state` is also `reachable` when the outside check reached this host (`because`: `outside_probe`) and `unreachable` when it did not (`not_reached_from_outside`); a service that did not answer changes nothing.
 
 `udp.state` is `reachable` only when a session came from a public address. Otherwise it is `unverified`, never `unreachable`: a TCP handshake says nothing about UDP, and nothing here connects to a UDP port from
 outside. `because` ends with `not_verified_from_outside`.

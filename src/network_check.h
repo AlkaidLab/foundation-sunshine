@@ -49,6 +49,8 @@ namespace network_check {
     constexpr std::string_view cgnat = "cgnat";
     constexpr std::string_view router = "router";  ///< UPnP and the port mappings, TCP and UDP
     constexpr std::string_view endpoint = "endpoint";  ///< one per public address: a TLS handshake
+    constexpr std::string_view external_tcp = "external_tcp";  ///< a connection from the internet to the TCP ports (the outside check)
+    constexpr std::string_view external_udp = "external_udp";  ///< UDP cannot be tried from outside: always not verified
   }  // namespace step
 
   struct step_t {

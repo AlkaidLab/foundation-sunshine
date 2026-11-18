@@ -572,6 +572,7 @@ namespace config {
     {},  // external_ip
     {},  // external_endpoints
     {},  // stun_servers
+    "disabled",  // network_external_check
     {
       "1280x720"s,
       "1920x1080"s,
@@ -1544,6 +1545,7 @@ namespace config {
       nvhttp.external_endpoints = public_address::join_endpoints(list.endpoints);
     }
     string_f(vars, "stun_servers", nvhttp.stun_servers);
+    string_f(vars, "network_external_check", nvhttp.network_external_check);
     {
       const auto list = nat_discovery::parse_server_list(nvhttp.stun_servers);
       if (!list.rejected.empty()) {
