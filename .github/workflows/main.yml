@@ -450,6 +450,7 @@ jobs:
       - name: Run USB/IP package and root-hub guard regressions
         shell: pwsh
         run: |
+          & .\scripts\packaging\test-usbip-root.ps1
           & .\src_assets\windows\misc\usbip\smoke-test-usbip-package.ps1
           & .\src_assets\windows\misc\usbip\smoke-test-usbip-roothub-guard.ps1
   mat_smoke:

@@ -130,7 +130,7 @@ namespace Alkaid {
     public static extern bool SetupDiEnumDeviceInfo(
       IntPtr DeviceInfoSet, uint MemberIndex, ref SP_DEVINFO_DATA DeviceInfoData);
 
-    [DllImport("setupapi.dll", SetLastError = true)]
+    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool SetupDiGetDeviceRegistryProperty(
       IntPtr DeviceInfoSet, ref SP_DEVINFO_DATA DeviceInfoData, uint Property,
@@ -143,7 +143,7 @@ namespace Alkaid {
       IntPtr DeviceInfoSet, ref SP_DEVINFO_DATA DeviceInfoData,
       StringBuilder DeviceInstanceId, uint DeviceInstanceIdSize, out uint RequiredSize);
 
-    [DllImport("setupapi.dll", SetLastError = true)]
+    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool SetupDiSetDeviceRegistryProperty(
       IntPtr DeviceInfoSet, ref SP_DEVINFO_DATA DeviceInfoData, uint Property,
@@ -168,7 +168,7 @@ namespace Alkaid {
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool DiInstallDevice(
       IntPtr hwndParent, IntPtr DeviceInfoSet, ref SP_DEVINFO_DATA DeviceInfoData,
-      uint Flags, [MarshalAs(UnmanagedType.Bool)] out bool NeedReboot);
+      IntPtr DriverInfoData, uint Flags, [MarshalAs(UnmanagedType.Bool)] out bool NeedReboot);
   }
 }
 '@
@@ -316,8 +316,12 @@ function Set-DeviceState([IntPtr]$Set, $Data, [uint32]$State) {
   $memory = [Runtime.InteropServices.Marshal]::AllocHGlobal($size)
   try {
     [Runtime.InteropServices.Marshal]::StructureToPtr($params, $memory, $false)
-    if (-not [Alkaid.SetupApi]::SetupDiSetClassInstallParams($Set, [ref]$Data, $memory, $size) -or
-        -not [Alkaid.SetupApi]::SetupDiCallClassInstaller($DIF_PROPERTYCHANGE, $Set, [ref]$Data)) {
+    # ms-setupapi-classparams-20261118 and ms-setupapi-classinstaller-20261118,
+    # Return value: identify which operation failed before attempting the next.
+    if (-not [Alkaid.SetupApi]::SetupDiSetClassInstallParams($Set, [ref]$Data, $memory, $size)) {
+      Throw-Win32 'SetupDiSetClassInstallParams(DIF_PROPERTYCHANGE)'
+    }
+    if (-not [Alkaid.SetupApi]::SetupDiCallClassInstaller($DIF_PROPERTYCHANGE, $Set, [ref]$Data)) {
       Throw-Win32 'SetupDiCallClassInstaller(DIF_PROPERTYCHANGE)'
     }
   }
@@ -340,11 +344,15 @@ function Remove-DeviceRecord($Record) {
   }
 }
 
-function Disable-LegacyDevice {
+function Disable-LegacyDevice([string]$CanonicalInstanceId) {
   $records = @(Get-DeviceRecords $true)
   try {
     foreach ($record in $records) {
-      if ($record.InstanceId -ieq $OldInstanceId) {
+      # The sole exact-HWID node can itself be the reused controller. Never
+      # disable it, or an unrelated device that happens to have the old ID.
+      # ms-setupapi-propchange-20261118, StateChange/DICS_DISABLE.
+      if ($record.InstanceId -ieq $OldInstanceId -and
+          $record.InstanceId -ine $CanonicalInstanceId -and (Test-HardwareId $record)) {
         try {
           Set-DeviceState $record.Set $record.Data $DICS_DISABLE
           Write-Verbose "Disabled legacy device $OldInstanceId."
@@ -376,7 +384,7 @@ function New-RootDevice {
     }
     [bool]$needReboot = $false
     if (-not [Alkaid.SetupApi]::DiInstallDevice(
-        [IntPtr]::Zero, $set, [ref]$data, 0, [ref]$needReboot)) {
+        [IntPtr]::Zero, $set, [ref]$data, [IntPtr]::Zero, 0, [ref]$needReboot)) {
       Throw-Win32 'DiInstallDevice'
     }
     return [pscustomobject]@{ Set = $set; Data = $data; NeedReboot = $needReboot }
@@ -389,6 +397,9 @@ function New-RootDevice {
 }
 
 function Ensure-RootDevice {
+  # ms-powershell-return-20261118, Long description;
+  # ms-powershell-streams-20261118, Success/Verbose streams: callers receive
+  # exactly one result object. Progress text must not enter the success stream.
   $records = @(Get-DeviceRecords $true | Where-Object { Test-HardwareId $_ })
   $created = $null
   try {
@@ -408,19 +419,19 @@ function Ensure-RootDevice {
         Description = $RootName
         FriendlyName = $RootName
       }
-      Write-Output "Created root device $RootName ($($canonical.InstanceId))."
+      Write-Verbose "Created root device $RootName ($($canonical.InstanceId))."
     }
     else {
-      Write-Output "Reusing root device $($canonical.InstanceId)."
+      Write-Verbose "Reusing root device $($canonical.InstanceId)."
       if ($canonical.FriendlyName -ine $RootName) {
         try { Set-StringProperty $canonical.Set $canonical.Data $SPDRP_FRIENDLYNAME $RootName } catch { Write-Verbose $_ }
       }
     }
     foreach ($duplicate in @($records | Where-Object { $_.InstanceId -ne $canonical.InstanceId })) {
       $removed = Remove-DeviceRecord $duplicate
-      Write-Output "$(if ($removed) { 'Removed' } else { 'Disabled' }) duplicate usbip root $($duplicate.InstanceId)."
+      Write-Verbose "$(if ($removed) { 'Removed' } else { 'Disabled' }) duplicate usbip root $($duplicate.InstanceId)."
     }
-    Disable-LegacyDevice
+    Disable-LegacyDevice $canonical.InstanceId
     return [pscustomobject]@{ RootPresent = $true; InstanceId = $canonical.InstanceId; NeedReboot = [bool]($created -and $created.NeedReboot) }
   }
   catch {
