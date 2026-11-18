@@ -210,7 +210,7 @@ Test-Case 'native_declarations_match_the_documented_signatures' {
   # ms-setupapi-setdeviceregistrypropertyw-20261107: the buffers are UTF-16, so the Unicode entry point must be bound;
   # the ANSI one splits "ROOT\USBIP_WIN2\UDE" into one-character hardware IDs and no driver matches (Win32 error 203).
   $source = Get-Content -Raw -LiteralPath $HelperScript
-  if ($source -notmatch '(?s)DiInstallDevice\(\s*IntPtr hwndParent,\s*IntPtr DeviceInfoSet,\s*ref SP_DEVINFO_DATA DeviceInfoData,\s*IntPtr DriverInfoData,\s*uint Flags,') { throw 'DiInstallDevice must declare DriverInfoData' }
+  if ($source -notmatch '(?s)DiInstallDevice\(\s*IntPtr hwndParent,\s*IntPtr DeviceInfoSet,\s*ref SP_DEVINFO_DATA DeviceInfoData,\s*IntPtr DriverInfoData,\s*uint Flags,\s*\[MarshalAs\(UnmanagedType\.Bool\)\] out bool NeedReboot\);') { throw 'DiInstallDevice must declare all six parameters (BOOL out NeedReboot last)' }
   if ($source -notmatch '(?s)DiInstallDevice\(\s*\[IntPtr\]::Zero, \$set, \[ref\]\$data, \[IntPtr\]::Zero, 0, \[ref\]\$needReboot') { throw 'DiInstallDevice call must pass six arguments' }
   foreach ($name in 'SetupDiSetDeviceRegistryProperty', 'SetupDiGetDeviceRegistryProperty') {
     if ($source -notmatch ('\[DllImport\("setupapi\.dll", CharSet = CharSet\.Unicode, SetLastError = true\)\]\s*\[return: MarshalAs\(UnmanagedType\.Bool\)\]\s*public static extern bool ' + $name + '\(')) { throw "$name must use the Unicode entry point" }
