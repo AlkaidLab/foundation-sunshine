@@ -84,7 +84,7 @@ namespace platf {
        *  earlier presses of such a burst are gone from the queue after a stall anyway, so the protection falls back
        *  to what the fixed 4 ms pacing gave (124 ms). */
       duration burst_gap { std::chrono::milliseconds(32) };
-      duration burst_window { std::chrono::milliseconds(120) };
+      duration burst_window { std::chrono::milliseconds(124) };
       duration burst_interval { std::chrono::milliseconds(4) };
     };
 

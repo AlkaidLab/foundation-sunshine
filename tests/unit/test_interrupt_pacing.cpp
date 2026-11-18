@@ -606,6 +606,29 @@ TEST(InterruptLane, AReleaseWellAfterAnotherOneGetsTheLongerProtection) {
   EXPECT_EQ(lane.next_due(1), t0 + 70ms + 4500us);
 }
 
+/* The burst protection keeps the 124 ms of the fixed 4 ms pacing: a reader that was away since the press of the last tap of a burst
+ * still finds a report that shows it down when it is back 123 ms after the release. */
+TEST(InterruptLane, ABurstOfPressesKeepsTheLastDownReportFor124Milliseconds) {
+  host_t host { 2 };
+  const auto press = t0 + 1s;
+  host.run(t0, t0 + 3s,
+    merged(train(t0, t0 + 3s, 500),
+      { { press, report_change::edge }, { press + 10ms, report_change::release }, { press + 20ms, report_change::edge }, { press + 30ms, report_change::release } }));
+  std::size_t second_press = 0, second_release = 0;
+  for (std::size_t i = 0; i != host.replies.size(); ++i) {
+    if (host.replies[i].edge_number == 3) second_press = i;
+    if (host.replies[i].edge_number == 4) second_release = i;
+  }
+  ASSERT_GT(second_release, second_press);
+  const auto back = host.replies[second_release].at + 123ms;
+  std::deque<std::size_t> queue;
+  for (std::size_t i = second_press; i != host.replies.size() && host.replies[i].at <= back; ++i) {
+    queue.push_back(i);
+    if (queue.size() > 32) queue.pop_front();
+  }
+  EXPECT_TRUE(std::any_of(queue.begin(), queue.end(), [&](std::size_t i) { return i >= second_press && i < second_release; }));
+}
+
 /* A press every 70 ms for 30 ms keeps the 139 ms the longer protection promises, even 160 ms stalls lose nothing. */
 TEST(InterruptLane, ShortTapsSurviveAStallOf160MillisecondsThatStartsWithThePress) {
   for (const auto hold : { 30ms, 50ms, 80ms }) {
