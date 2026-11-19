@@ -21,11 +21,13 @@
 #include "src/nvhttp.h"
 #include "src/network.h"
 #include "src/platform/common.h"
+#include "src/settings_reset.h"
 #include "src/stream.h"
 #include "src/telemetry/telemetry.h"
 #include "src/utility.h"
 #include "src/video.h"
 #include <boost/property_tree/json_parser.hpp>
+#include <chrono>
 #include <sstream>
 
 using namespace std::literals;
@@ -368,12 +370,137 @@ namespace confighttp::configuration {
       outputTree.put("status", "true");
     }
 
+    // ---- 恢复默认设置: copy sunshine.conf, write the defaults, restart (src/settings_reset.h). Paired devices live in the state file and are not touched.
+    settings_reset::gate_t &
+    reset_gate() {
+      static settings_reset::gate_t gate;
+      return gate;
+    }
+
+    settings_reset::paths_t
+    reset_paths() {
+      return { file_handler::path_from_utf8(config::sunshine.config_file), file_handler::path_from_utf8(config::stream.file_apps), file_handler::path_from_utf8(SUNSHINE_ASSETS_DIR "/apps.json") };
+    }
+
+    settings_reset::parse_t
+    reset_parser() {
+      return [](std::string_view text) {
+        const auto parsed = config::parse_config(text);
+        return std::map<std::string, std::string> { parsed.begin(), parsed.end() };
+      };
+    }
+
+    settings_reset::now_t
+    reset_clock() {
+      return [] { return static_cast<std::int64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()); };
+    }
+
+    web::StatusCode
+    reset_status_of(settings_reset::error_e error) {
+      switch (error) {
+        case settings_reset::error_e::none:
+          return web::StatusCode::ok;
+        case settings_reset::error_e::busy:
+          return web::StatusCode::conflict;
+        case settings_reset::error_e::no_backup:
+          return web::StatusCode::not_found;
+        default:
+          return web::StatusCode::internal_server_error;
+      }
+    }
+
+    void
+    write_reset_error(resp_https_t response, settings_reset::error_e error) {
+      auto headers = json_headers();
+      response->write(reset_status_of(error), nlohmann::json { { "status", false }, { "code", std::string { settings_reset::error_code(error) } }, { "error", std::string { settings_reset::error_code(error) } } }.dump(), headers);
+    }
+
+    /// The copies that exist (newest first), for the page that offers the restore.
+    void
+    getConfigReset(resp_https_t response, req_https_t request) {
+      if (!authenticate(response, request)) return;
+      json output { { "status", true }, { "limit", settings_reset::kept_copies }, { "backups", json::array() } };
+      for (const auto &backup : settings_reset::list_backups(reset_paths())) {
+        output["backups"].push_back({ { "stamp", backup.stamp }, { "created_ms", backup.created_ms }, { "has_apps", backup.has_apps } });
+      }
+      send_response(response, output);
+    }
+
+    /// Both POST routes answer first and restart after the answer has gone out (the page waits for the host to come back).
+    void
+    answer_and_restart(resp_https_t response, const json &body) {
+      web::CaseInsensitiveMultimap headers = json_headers();
+      response->write(body.dump(), headers);
+      response->send([](const auto &error) {
+        if (error) BOOST_LOG(debug) << "Settings reset: the answer did not reach the client: "sv << error.message();
+        platf::restart("settings");
+      });
+    }
+
+    void
+    resetConfig(resp_https_t response, req_https_t request) {
+      if (!check_content_type(response, request, "application/json")) return;
+      if (!authenticate(response, request)) return;
+      print_req(request);
+
+      json body;
+      if (!read_json_body(response, request, body)) return;
+      const auto clear_apps = body.is_object() ? body.find("clear_apps") : body.end();
+      if (!body.is_object() || (clear_apps != body.end() && !clear_apps->is_boolean())) {
+        write_json(std::move(response), web::StatusCode::bad_request, { { "status", false }, { "code", "bad_request" }, { "error", "clear_apps must be true or false" } });
+        return;
+      }
+      const bool with_apps = clear_apps != body.end() && clear_apps->get<bool>();
+
+      auto &gate = reset_gate();
+      if (!gate.try_enter()) {
+        write_reset_error(std::move(response), settings_reset::error_e::busy);
+        return;
+      }
+      settings_reset::result_t result;
+      config::with_config_file_locked([&] { result = settings_reset::reset_to_defaults(reset_paths(), with_apps, reset_parser(), reset_clock()); });
+      gate.leave(static_cast<bool>(result));
+      if (!result) {
+        BOOST_LOG(warning) << "Settings reset failed: "sv << settings_reset::error_code(result.error);
+        write_reset_error(std::move(response), result.error);
+        return;
+      }
+      BOOST_LOG(info) << "Settings reset to the defaults (application list "sv << (result.apps_changed ? "replaced"sv : "kept"sv) << "), restarting"sv;
+      answer_and_restart(std::move(response), { { "status", true }, { "backup", result.backup }, { "apps_cleared", result.apps_changed }, { "restarting", true } });
+    }
+
+    void
+    restoreConfigReset(resp_https_t response, req_https_t request) {
+      if (!check_content_type(response, request, "application/json")) return;
+      if (!authenticate(response, request)) return;
+      print_req(request);
+
+      auto &gate = reset_gate();
+      if (!gate.try_enter()) {
+        write_reset_error(std::move(response), settings_reset::error_e::busy);
+        return;
+      }
+      settings_reset::result_t result;
+      config::with_config_file_locked([&] { result = settings_reset::restore_latest(reset_paths(), reset_parser(), reset_clock()); });
+      gate.leave(static_cast<bool>(result));
+      if (!result) {
+        BOOST_LOG(warning) << "Settings restore failed: "sv << settings_reset::error_code(result.error);
+        write_reset_error(std::move(response), result.error);
+        return;
+      }
+      BOOST_LOG(info) << "Settings restored from the copy of "sv << result.restored << ", restarting"sv;
+      answer_and_restart(std::move(response), { { "status", true }, { "restored", result.restored }, { "backup", result.backup }, { "apps_restored", result.apps_changed }, { "restarting", true } });
+    }
+
   }  // namespace
 
   void
   register_routes(https_server_t &server) {
     server.resource["^/api/config$"]["GET"] = getConfig;
     server.resource["^/api/config$"]["POST"] = saveConfig;
+    server.resource["^/api/config/reset$"]["GET"] = getConfigReset;
+    server.resource["^/api/config/reset$"]["POST"] = resetConfig;
+    server.resource["^/api/config/reset/restore$"]["POST"] = restoreConfigReset;
     server.resource["^/api/gamepad/config$"]["GET"] = getGamepadConfig;
     server.resource["^/api/gamepad/config$"]["POST"] = saveGamepadConfig;
     server.resource["^/api/configLocale$"]["GET"] = getLocale;

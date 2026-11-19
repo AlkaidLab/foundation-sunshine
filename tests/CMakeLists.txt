@@ -352,6 +352,18 @@ if (WIN32)
 endif ()
 add_test(NAME log_retention_unit_tests COMMAND log_retention_unit_tests)
 
+# Restoring the host settings to their defaults (the copy, the kept keys, the rotation, the restore, the one-at-a-time gate): std::filesystem only.
+add_executable(settings_reset_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_settings_reset.cpp
+        ${CMAKE_SOURCE_DIR}/src/settings_reset.cpp)
+target_include_directories(settings_reset_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(settings_reset_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(settings_reset_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(settings_reset_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME settings_reset_unit_tests COMMAND settings_reset_unit_tests)
+
 add_executable(default_apps_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_default_apps.cpp)
 target_sources(default_apps_unit_tests PRIVATE
         ${CMAKE_SOURCE_DIR}/src/default_apps.cpp
@@ -1546,6 +1558,7 @@ list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/usbip/external_readonly_
         ${CMAKE_SOURCE_DIR}/tests/unit/test_default_apps.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_encoder_snapshot.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_log_retention.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_settings_reset.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_launch_splash.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_display_scale_steps.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_endpoint_refresh.cpp

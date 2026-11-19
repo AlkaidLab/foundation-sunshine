@@ -207,6 +207,7 @@ const labels = computed(() => ({
 const commands = computed(() => ({
   restart,
   resetDisplay: platform.value === 'windows' ? resetDisplayDevicePersistence : undefined,
+  resetSettings: shell?.nav ? () => shell.nav.go('reset') : undefined,
   ai: openDiagnosis,
   diagnose: () => aiDiagnose(actualLogs.value),
   downloadLogs,
