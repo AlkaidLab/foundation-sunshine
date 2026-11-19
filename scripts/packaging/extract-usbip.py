@@ -20,8 +20,8 @@ import zipfile
 
 
 INNOUNP_URL = ('https://github.com/jrathlev/InnoUnpacker-Windows-GUI/'
-               'releases/download/ui_2_2_13/innounp-2.zip')
-INNOUNP_SHA256 = 'f8e45c9676bebc7d7570108ab572673b541fcf7a7d3d24a04319ac6b5315b4e8'
+               'releases/download/ui_2_2_14/innounp-2.zip')
+INNOUNP_SHA256 = '078ddb005aa17e669f0b5545980bff92200f7401418174172dca0d75f9e5d8f0'
 REDIST_SHA256 = '843068991daaa1f73ad9f6239bce4d0f6a07a51f18c37ea2a867e9beca71295c'
 
 
