@@ -10,6 +10,7 @@ import RangeField from './RangeField.vue'
 import ColorWell from './ColorWell.vue'
 import DualSenseLive from './DualSenseLive.vue'
 import AdvancedWarningDialog from './AdvancedWarningDialog.vue'
+import InputRateDialog from './InputRateDialog.vue'
 import { blocksOf, rowsOf } from './tuningIcons.js'
 import { useDualsenseShared, useDualsenseTuning } from '../../composables/dualsenseShared.js'
 
@@ -20,7 +21,7 @@ const { t, locale } = useI18n()
 const nav = inject('cfgNav')
 const store = useDualsenseShared()
 const tuning = useDualsenseTuning(t, locale.value)
-const { edited, cards, advancedGroups, unavailable, advancedOpen, valueOf, setValue, onValue, resetKey, setColor, saveMessage } = store
+const { edited, cards, advancedGroups, unavailable, advancedOpen, valueOf, setValue, onValue, resetKey, setColor, saveMessage, rateAsk, confirmRate, cancelRate } = store
 const embedded = window.isTauri === true && window.parent !== window
 
 const snack = ref(false)
@@ -149,6 +150,7 @@ const openTool = () => window.parent.postMessage({ type: 'foundation-open', page
   </CfgSub>
 
   <AdvancedWarningDialog :show="warningOpen" @cancel="cancelWarning" @confirm="confirmWarning" />
+  <InputRateDialog :show="rateAsk !== null" :option="String(rateAsk?.value ?? 'auto')" @cancel="cancelRate" @confirm="confirmRate" />
   <MSnackbar v-model="snack" :message="saveMessage" />
 </template>
 

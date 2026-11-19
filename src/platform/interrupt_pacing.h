@@ -136,7 +136,7 @@ namespace platf {
     next_due(unsigned pads) const {
       if (held_.empty()) return std::nullopt;
       /* No reply ever leaves less than min_interval after the previous one actually left. */
-      const auto earliest = last_sent_ + settings_.min_interval;
+      const auto earliest = last_sent_ + floor();
       if (!edges_.empty()) return earliest;
       /* The heartbeat counts from its place on the grid, a stream reply from the moment the last one left. */
       const auto interval = dirty_ ? stream_floor(pads) : settings_.heartbeat;
@@ -170,7 +170,7 @@ namespace platf {
        * one: the beat stays on its 4 ms grid instead of drifting by the lateness of every timer, and a
        * long gap (idle, first URB) starts a new grid.  last_sent_ is always the real send time, so
        * the floor between two replies holds whatever the grid says. */
-      grid_ = on_grid && now - *due <= settings_.heartbeat - settings_.min_interval ? *due : now;
+      grid_ = on_grid && now - *due <= std::max(settings_.heartbeat - floor(), duration::zero()) ? *due : now;
       last_sent_ = now;
       if (edge) {
         /* The reply to a release starts the protection of the last report that showed the button down. */
@@ -210,18 +210,31 @@ namespace platf {
       dirty_ = false;
     }
 
+    /**
+     * A lower rate than the hard floor allows, asked for by the user (ds5.compat.inputReportRate): no reply, of any kind, follows the
+     * previous one sooner than @p floor.  At the heartbeat (4 ms) or longer the lane answers like the fixed 4 ms pacing, button changes
+     * included, and needs no protection of a press: 32 replies then span at least 128 ms.  Zero removes it.
+     */
+    void
+    set_floor(duration floor) noexcept { extra_floor_ = floor; }
+
     /** The stream floor for @p pads active pads. */
     duration
     stream_floor(unsigned pads) const {
-      if (pads <= settings_.full_rate_pads) return settings_.min_interval;
+      if (pads <= settings_.full_rate_pads) return floor();
       const auto shared = std::chrono::duration_cast<duration>(std::chrono::duration<double>(static_cast<double>(std::max(pads, 1u)) / std::max(settings_.budget_per_second, 1u)));
       /* never slower than the heartbeat: a changed report must not wait longer than an unchanged one */
-      return std::min(std::max(settings_.min_interval, shared), std::max(settings_.heartbeat, settings_.min_interval));
+      return std::min(std::max(floor(), shared), std::max(settings_.heartbeat, floor()));
     }
 
   private:
+    /** The hard floor between two replies: the settled one, or the user's lower rate when that is slower. */
+    duration
+    floor() const noexcept { return std::max(settings_.min_interval, extra_floor_); }
+
     void
     start_guard(time_point now) {
+      if (floor() >= settings_.heartbeat) return;  // every reply is a heartbeat apart: the press needs no protection
       const bool burst = last_release_ != time_point {} && now - last_release_ < settings_.burst_gap;
       last_release_ = now;
       guard_interval_ = burst ? settings_.burst_interval : settings_.protect_interval;
@@ -240,6 +253,7 @@ namespace platf {
     time_point protect_until_ {};
     time_point last_release_ {};  ///< when the previous release was answered
     duration guard_interval_ { std::chrono::microseconds(4500) };  ///< the protect interval of the protection that runs
+    duration extra_floor_ {};
     std::deque<bool> edges_;  ///< one entry per button change waiting for its own reply: true for a release
     bool guard_owed_ { false };  ///< a release found no room of its own; its protection starts with the next reply
     bool dirty_ { false };

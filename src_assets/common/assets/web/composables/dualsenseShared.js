@@ -1,5 +1,5 @@
 import { computed, reactive, ref } from 'vue'
-import { DS5_CARDS, isClientKey } from 'foundation-ui/settings/index.js'
+import { DS5_CARDS, isClientKey, inputRateNeedsConfirm } from 'foundation-ui/settings/index.js'
 import { isAdvancedWarningHidden, setAdvancedWarningHidden } from '../utils/advancedWarning.js'
 import { localizedKeyLabel } from '../config/dualsenseI18n.js'
 import { askConfirm } from './askDialog.js'
@@ -69,7 +69,12 @@ const setValue = (id, value) => {
   saveMessage.value = ''
 }
 const setColor = ({ r, g, b }) => { setValue(82, r); setValue(83, g); setValue(84, b) }
+// a speed above 250 Hz waits here until the rate dialog is confirmed; cancelling leaves the value as it was
+const rateAsk = ref(null)
+const confirmRate = () => { const ask = rateAsk.value; rateAsk.value = null; if (ask) setValue(ask.id, ask.value) }
+const cancelRate = () => { rateAsk.value = null }
 const onValue = (id, value) => {
+  if (inputRateNeedsConfirm(descriptor(id)?.key, edited[id], value)) { rateAsk.value = { id, value }; return }
   if (id === 81 && value === 'fixed' && !Number(edited[82]) && !Number(edited[83]) && !Number(edited[84])) setColor(FIRST_FIXED_COLOR)
   setValue(id, value)
 }
@@ -180,5 +185,5 @@ export function useDualsenseTuning(t = (key) => key, locale = 'en') {
 export const useDualsenseShared = () => ({
   snapshot, edited, dirty, loading, loaded, loadError, loadWarning, saving, saveMessage, selectedPreset, advancedOpen,
   dirtyCount, cards, advancedGroups, unavailable, descriptor, isWired, valueOf, keysByName, setValue, setColor, onValue, resetKey,
-  warningHidden, rememberWarning,
+  rateAsk, confirmRate, cancelRate, warningHidden, rememberWarning,
 })

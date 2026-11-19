@@ -497,7 +497,8 @@ namespace platf::ds5 {
       std::uint64_t sequence { 1 };
       paced_reply_queue replies { [this](std::vector<std::uint8_t> wire) { return bridge.send_reply(std::move(wire)); },
         paced_reply_queue::interrupt_config {},
-        [] { return static_cast<unsigned>(::ds5::tuning::runtime::state().active_controllers.load(std::memory_order_acquire)); } };
+        [] { return static_cast<unsigned>(::ds5::tuning::runtime::state().active_controllers.load(std::memory_order_acquire)); },
+        [] { return ::ds5::tuning::runtime::state().input_report_rate_hz.load(std::memory_order_acquire); } };
       struct pcm_counters_t {
         std::uint64_t packets {};
         std::uint64_t frames {};

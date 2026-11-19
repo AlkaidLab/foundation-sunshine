@@ -126,6 +126,8 @@ namespace ds5::tuning::runtime {
     std::atomic<float> gyro_roll_offset_deg { 0.0f };
     // Key 101: the rate, in Hz, at which the host asks the client to report motion (accelerometer and gyro).
     std::atomic<std::uint32_t> motion_report_rate_hz { 250 };
+    // Key 107: the most replies per second the host answers one controller's changes with; 0 answers a change at once (no cap).
+    std::atomic<std::uint32_t> input_report_rate_hz { 0 };
     // Keys 74-80.  The resolved output is 0 controller, 1 host pointer,
     // 2 precision touchpad, 3 off.
     std::atomic<std::uint32_t> touchpad_output { 0 };
@@ -323,6 +325,7 @@ namespace ds5::tuning::runtime {
       case 73:  // ds5.gyro.rollOffsetDeg
       case 101:  // ds5.compat.reportRateCapHz
       case 96:  // ds5.audio.micRoute
+      case 107:  // ds5.compat.inputReportRate
       case 106:  // ds5.identity.profile
         return true;
       default:

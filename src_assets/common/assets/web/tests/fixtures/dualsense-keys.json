@@ -952,5 +952,14 @@
 "label": "Identity profile",
 "implemented": true,
 "authority": "host"
+},
+{
+"id": 107,
+"key": "ds5.compat.inputReportRate",
+"group": 10,
+"tier": "advanced",
+"label": "Input report rate",
+"implemented": true,
+"authority": "host"
 }
 ]

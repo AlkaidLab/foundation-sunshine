@@ -71,10 +71,13 @@ namespace platf {
     /**
      * @param active_pads How many pads share the reply budget (the stream floor of
      *                    every pad grows with it); null counts as one.
+     * @param rate_cap_hz The most replies per second the user allows a pad (0 or null: no cap); the
+     *                    interrupt lane keeps every reply at least 1 / cap after the previous one.
      */
-    paced_reply_queue(send_t send, interrupt_config config, std::function<unsigned()> active_pads = {}):
+    paced_reply_queue(send_t send, interrupt_config config, std::function<unsigned()> active_pads = {}, std::function<unsigned()> rate_cap_hz = {}):
         send_(std::move(send)),
-        active_pads_(std::move(active_pads)) {
+        active_pads_(std::move(active_pads)),
+        rate_cap_hz_(std::move(rate_cap_hz)) {
       for (auto &lane_state : interrupt_) lane_state = interrupt_lane_t(config);
 #ifndef CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
   #define CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 0x00000002
@@ -246,6 +249,9 @@ namespace platf {
             send_(node.mapped().make_wire());
           }
           const auto active = pads();
+          const auto cap = rate_cap_hz_ ? rate_cap_hz_() : 0u;
+          const auto floor = cap == 0u ? clock::duration::zero() : std::chrono::duration_cast<clock::duration>(std::chrono::seconds(1)) / cap;
+          for (auto &lane_state : interrupt_) lane_state.set_floor(floor);
           for (auto &lane_state : interrupt_) {
             /* Taking a reply starts the next interval, so at most one leaves per call. */
             if (auto taken = lane_state.take_if_due(clock::now(), active)) send_(taken->item(taken->edge));
@@ -273,6 +279,7 @@ namespace platf {
 
     send_t send_;
     std::function<unsigned()> active_pads_;
+    std::function<unsigned()> rate_cap_hz_;
     mutable std::mutex mutex_;
     std::multimap<clock::time_point, item_t> items_;
     std::array<clock::time_point, static_cast<std::size_t>(lane::count_)> next_free_ {};
