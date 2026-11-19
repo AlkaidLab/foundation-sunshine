@@ -1548,8 +1548,8 @@ jobs:
           # a folder that has things in it: not refused, the product's folder name goes inside it and the page says so
           $r = Probe $env:RUNNER_TEMP -Pick
           Expect $r 'path' $r.path (Join-Path $env:RUNNER_TEMP 'Foundation Sunshine'); Expect $r 'appended' $r.appended $true; Expect $r 'redirected' $r.redirected $true; Expect $r 'error' $r.error ''
-          # typed text is the folder as typed (with the quotes Explorer's "Copy as path" adds)
-          $r = Probe "`"$drive\Typed Folder`""
+          # typed text is the folder as typed (spaces at the ends are dropped; the quotes of "Copy as path" are in the unit tests: the page sends the text as JSON, not as a command line)
+          $r = Probe "  $drive\Typed Folder  "
           Expect $r 'path' $r.path "$drive\Typed Folder"; Expect $r 'appended' $r.appended $false
           # problems: never usable
           $r = Probe "$drive\"; Expect $r 'error' $r.error 'root'
