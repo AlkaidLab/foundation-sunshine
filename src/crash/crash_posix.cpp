@@ -21,6 +21,7 @@
   #include <string_view>
   #include <sys/stat.h>
   #include <thread>
+  #include <time.h>
   #include <unistd.h>
 
 namespace crash::detail {
@@ -200,8 +201,13 @@ namespace crash::detail {
 
   std::uint64_t
   platform_awake_ms() {
-    // CLOCK_MONOTONIC (Linux) and CLOCK_UPTIME_RAW (macOS), the clocks behind std::chrono::steady_clock, do not count the time the system sleeps
+  #ifdef __APPLE__
+    // CLOCK_UPTIME_RAW does not count the time the system sleeps; read directly, so it does not depend on the clock the C++ library picks for steady_clock
+    return clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1000000ull;
+  #else
+    // CLOCK_MONOTONIC does not count the time the system sleeps
     return now_ms();
+  #endif
   }
 
   void

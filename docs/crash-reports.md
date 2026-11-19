@@ -16,7 +16,7 @@ The watchdog counts a thread's busy time on `crash::awake_ms`, a clock that stan
 `QueryUnbiasedInterruptTime`, which the documentation says leaves that time out; elsewhere the monotonic clock of the platform, which does). `std::chrono::steady_clock`
 on Windows (`QueryPerformanceCounter`) has no such guarantee, and the reports show it kept counting: the 24 start-up hang reports of 2026-11-14 to 2026-11-18 had `uptime_s`
 (taken from the steady clock) between 37 minutes and 14 hours, none near the 300 s of the timeout; that fits a start that was running when the machine went to sleep, with the report written when it woke.
-A report whose `uptime_s` is far above its timeout is such a case from an older build. The encoder probe's own "stuck in the driver" judgement
+`uptime_s` is the age of the process, not the busy time of the thread, so a large value is a clue and no proof (a `video-encode` hang an hour into a stream also has one); for a start-up hang, which normally ends within a minute, it points to a sleep. The encoder probe's own "stuck in the driver" judgement
 (`probe_encoders_with_watchdog`) reads the same clock.
 
 The crashing thread only copies its context and wakes a worker made at start; the worker writes the dump, then a meta with the faulting
