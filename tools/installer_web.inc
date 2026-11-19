@@ -149,6 +149,9 @@ view_json() {
   j += "}";
   j += std::string(",\"windowsBuild\":") + std::to_string(windows_build());
   j += std::string(",\"uacCancelled\":") + b(v.uac_cancelled);
+  j += ",\"installDir\":{\"path\":" + json_text(utf8(v.dir)) + ",\"editable\":" + b(v.dir_editable) + ",\"freeBytes\":" +
+       (v.dir_free >= 0 ? std::to_string(v.dir_free) : std::string("null")) + ",\"neededBytes\":" + std::to_string(installer_dir::kNeededBytes) +
+       ",\"maxLength\":" + std::to_string(installer_dir::kMaxLength) + ",\"error\":" + (v.dir_error.empty() ? std::string("null") : json_text(v.dir_error)) + "}";
   j += ",\"progress\":{\"groups\":[";
   static const char *groups[kGroups] = { "prepare", "files", "drivers", "system" };
   for (int g = 0; g < kGroups; ++g)
@@ -289,8 +292,27 @@ web_action(const std::string &line) {
   else if (type == "select-all") {
     if (page == pg::components) click(kSelectAll);
   }
+  else if (type == "choose-dir") {
+    // the system folder picker over the setup window; the page shows its Change button busy until this answer, so a cancelled picker answers too
+    choose_install_dir();
+    web_push(true);
+    return;
+  }
   else if (type == "install" || type == "retry") {
     const bool allowed = type == "install" ? (page == pg::welcome || page == pg::maintenance || page == pg::components) : page == pg::failed;
+    if (allowed && g_choosing_dir) {
+      web_push(true);  // the folder picker is open: nothing starts until it is closed
+      return;
+    }
+    if (allowed && S.v.dir_editable) {
+      // a refused folder never reaches the UAC prompt: the page already has Install off, and this is the check behind it
+      refresh_install_dir();
+      if (!S.v.dir_error.empty()) {
+        S.v.page = pg::welcome;
+        web_push();
+        return;
+      }
+    }
     if (allowed) {
       // The page sees the wait for Windows' consent at once: ShellExecuteEx(runas) below does not return before the
       // person answers the UAC prompt, and this thread sends nothing meanwhile.
@@ -543,6 +565,7 @@ web_main() {
     const std::wstring dir = install_dir();
     S.v.upgrade = !dir.empty() && GetFileAttributesW((dir + L"\\sunshine.exe").c_str()) != INVALID_FILE_ATTRIBUTES;
   }
+  init_install_dir();
   apply_os_limits(S.v);
   S.v.zh = PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_CHINESE;
   WNDCLASSW window_class {};

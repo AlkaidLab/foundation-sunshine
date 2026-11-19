@@ -78,6 +78,43 @@ function Invoke-BoundedProcess([string]$File, [string]$Arguments, [string]$Phase
     }
 }
 
+function Assert-ProtectedFolder([string]$Folder, [string]$Phase) {
+    # The service runs the programs of the install folder as SYSTEM, so outside Program Files the folder has the protection of Program Files (HardenInstallDir in
+    # sunshine.iss.in): no inheritance, owner Administrators, and nothing but read and execute for anybody who is not SYSTEM, Administrators or TrustedInstaller.
+    # Authority: installer-ms-icacls-20261119, installer-ms-well-known-sids-20261119, installer-ms-filesystemrights-20261119.
+    $trusted = @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+    $acl = Get-Acl -LiteralPath $Folder
+    if (-not $acl.AreAccessRulesProtected) { throw "$Phase`: $Folder still inherits permissions from its parent." }
+    $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+    if ($owner -ne 'S-1-5-32-544') { throw "$Phase`: the owner of $Folder is $owner, not Administrators." }
+    $write = [Security.AccessControl.FileSystemRights]::WriteData -bor [Security.AccessControl.FileSystemRights]::AppendData -bor
+        [Security.AccessControl.FileSystemRights]::WriteExtendedAttributes -bor [Security.AccessControl.FileSystemRights]::WriteAttributes -bor
+        [Security.AccessControl.FileSystemRights]::Delete -bor [Security.AccessControl.FileSystemRights]::DeleteSubdirectoriesAndFiles -bor
+        [Security.AccessControl.FileSystemRights]::ChangePermissions -bor [Security.AccessControl.FileSystemRights]::TakeOwnership
+    foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+        if ($rule.AccessControlType -ne 'Allow' -or $trusted -contains $rule.IdentityReference.Value) { continue }
+        if (($rule.FileSystemRights -band $write) -ne 0) {
+            throw "$Phase`: $($rule.IdentityReference.Value) can write to $Folder ($($rule.FileSystemRights), inherited: $($rule.IsInherited)).`n$(icacls $Folder | Out-String)"
+        }
+    }
+    # Users can read and run what is in the folder: an allow entry that applies to the folder itself (not inherit-only) carrying ReadAndExecute
+    $readExecute = [Security.AccessControl.FileSystemRights]::ReadAndExecute
+    $users = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]) | Where-Object {
+        $_.IdentityReference.Value -eq 'S-1-5-32-545' -and $_.AccessControlType -eq 'Allow' -and
+        ($_.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -eq 0 -and
+        ($_.FileSystemRights -band $readExecute) -eq $readExecute })
+    if (-not $users.Count) { throw "$Phase`: Users cannot read and run what is in $Folder." }
+    # a file the install created below it inherits that
+    $exe = Get-Acl -LiteralPath (Join-Path $Folder 'sunshine.exe')
+    $exeOwner = $exe.GetOwner([Security.Principal.SecurityIdentifier]).Value
+    if ($trusted -notcontains $exeOwner) { throw "$Phase`: the owner of sunshine.exe is $exeOwner, who could change its permissions." }
+    foreach ($rule in $exe.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+        if ($rule.AccessControlType -eq 'Allow' -and $trusted -notcontains $rule.IdentityReference.Value -and ($rule.FileSystemRights -band $write) -ne 0) {
+            throw "$Phase`: $($rule.IdentityReference.Value) can write to sunshine.exe."
+        }
+    }
+}
+
 function Wait-UninstallSecondPhase([string]$AppDir, [string]$Phase) {
     # The launching uninstaller exits 0 and removes itself once it has started the second-phase copy; the script's
     # own prompts (usUninstall, usPostUninstall) run in that copy. Waiting for the launcher alone would let a prompt that
@@ -115,6 +152,7 @@ try {
         $registered = Get-ItemPropertyValue -LiteralPath "HKLM:\$installKey" -Name InstallDir
         if ($registered.TrimEnd('\') -ine $app.TrimEnd('\')) { throw "Unexpected registered directory: $registered" }
         if (-not (Test-Path -LiteralPath "HKLM:\$uninstallRoot\$appKey")) { throw 'Missing uninstall registration.' }
+        Assert-ProtectedFolder -Folder $app -Phase "$mode-install"
 
         # Stop only the service created by this install before hashing fixtures,
         # so background first-run configuration writes cannot race the check.

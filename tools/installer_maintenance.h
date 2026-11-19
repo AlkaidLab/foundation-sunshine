@@ -79,6 +79,8 @@ namespace installer_maintenance {
     installed_info existing;
     if (!read_installed_info(&existing)) return false;
     view.maintenance = true;
+    view.dir = existing.directory;  // an installed copy stays where it is; to move it, uninstall and install again
+    view.dir_editable = false;
     view.page = decltype(view.page)::maintenance;
     view.installed_version = existing.version.empty() ? L"未知" : existing.version;
     view.package_version = SUNSHINE_INSTALLER_VERSION_W;
