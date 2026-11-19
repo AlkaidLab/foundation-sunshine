@@ -96,14 +96,29 @@ checks as the window's (see "Install location").
 
 ### Install location
 
-A fresh install shows the folder on its first page: the default (`Program Files\Sunshine`), the free space of its drive and a
-Change button that opens the system folder picker (`IFileOpenDialog`, `FOS_PICKFOLDERS`), over the setup window in both front
-ends. An upgrade or the maintenance page shows the folder of the installed copy and cannot change it: to move, uninstall and
-install again. The folder travels to the elevated worker as `--dir "<path>"` and from there to the engine as `/DIR="<path>"`;
-the default folder is never passed, so its behaviour (an older copy there, the previous folder of an update) is unchanged.
+A fresh install shows the folder on its first page: the default (`Program Files\Sunshine`), the free space of its drive, a field
+the path can be typed in, and a Change button that opens the system folder picker (`IFileOpenDialog`, `FOS_PICKFOLDERS`), over the
+setup window in both front ends. An upgrade or the maintenance page shows the folder of the installed copy and cannot change it: to
+move, uninstall and install again. The folder travels to the elevated worker as `--dir "<path>"` and from there to the engine as
+`/DIR="<path>"`; the default folder is never passed, so its behaviour (an older copy there, the previous folder of an update) is unchanged.
+
+**Which folder.** What is typed is the folder as typed (spaces at the ends and one pair of quotes, which "Copy as path" adds, are
+dropped). A folder picked in the picker gets `\Foundation Sunshine` appended, and the page shows the whole path: this is what Inno Setup
+does after Browse (`AppendDefaultDirName`, authority `installer-inno-appenddefaultdirname-20261119`) and what NSIS does with the last
+part of `InstallDir` (`installer-nsis-installdir-20261119`); Windows Installer's own browse dialog (`PathEdit`,
+`installer-msi-pathedit-20261119`; WiX `WixUI_InstallDir`, `installer-wixui-installdir-20261119`) takes the selected path as it is, which
+is what typing gives here. Nothing is appended to the default folder, to a folder already named `Foundation Sunshine`, or to an
+existing Sunshine install. The root of a disk (`D:\`) gets it too, so it is never the install folder. After the append the page offers
+"Use the selected folder itself" (`use-picked-dir` / the text button of the native window) for as long as the path is the picked one
+with the name added; the folder picked is then checked like any other. A picked folder that has somebody's files in it is not
+refused: the files are left alone, a folder inside it is used, and the page says so (`note: redirected`); only choosing that folder
+itself is refused (rule 4), which protects the person's files from the uninstaller's cleanup.
 
 The rules are `tools/installer_dir.h` (pure functions, `tests/unit/test_installer_dir.cpp`), the machine's answers are
-`tools/installer_dir_win.h`. The page shows the first rule that fails under the row and keeps Install and Customize off:
+`tools/installer_dir_win.h`. There are two kinds of answer. A **problem** refuses the folder: the page shows the first rule that
+fails under the row and keeps Install and Customize off. A **warning** lets the folder through after the person confirmed it once.
+
+Problems:
 
 1. the text: a full drive path (no UNC, `\\?\`, relative or `..` part), parts Windows allows (no reserved name, no trailing space or dot),
    none of the characters the batch scripts, PATH and the engine's constants cannot carry (`! % ^ & ; , = ' ` { } $`); non-ASCII
@@ -111,16 +126,34 @@ The rules are `tools/installer_dir.h` (pure functions, `tests/unit/test_installe
    (MAX_PATH minus the longest path of the package and a margin; `scripts/ci/check-install-path-budget.py` keeps that true);
 2. the disk: a fixed disk of this PC (`GetDriveType`, and not a `subst` drive), NTFS or ReFS (FAT32 and exFAT have no
    permissions to protect the program with);
-3. the place: not inside the Windows folder, a synced folder (OneDrive's folders, or a part named OneDrive, Dropbox, ...) or a
-   user's folder (profile, Desktop, Documents, Downloads);
-4. the folders above it: no existing folder between the drive root and the install folder may be renamed, deleted or
-   re-permissioned by an ordinary user, and none may have a non-system owner (see "Protection" below);
-5. the folder itself: new, or empty, or an existing Sunshine folder (the registered one, one with the program and its
+3. the place: not inside the Windows folder or a synced folder (OneDrive's folders, or a part named OneDrive, Dropbox, ...);
+4. the folder itself: new, or empty, or an existing Sunshine folder (the registered one, one with the program and its
    uninstaller, or one that holds only the `config` folder an uninstall left behind with the person's settings); not a file, a junction or link (here or above), not unreadable;
-6. room: `kNeededBytes` free on the drive.
+5. room: `kNeededBytes` free on the drive.
 
-The elevated worker checks the folder again (it never takes the shell's word), refuses a second place for an installed copy,
-and writes `dir_error` into `install-result.json` when it refuses, which the window shows on the first page.
+Warnings (`installDir.warning`), the folder works and is protected itself, but sits where others can replace it from above:
+
+- `parent`: an existing folder between the drive root and the install folder can be renamed, deleted or re-permissioned by an ordinary user, or has a non-system owner (see "Protection" below);
+- `user`: inside a user's folder (profile, Desktop, Documents, Downloads, including a redirected one). `user` is named before `parent` when both apply.
+
+A refused folder shows its reason only; a warning shows the risk (the service runs the programs as SYSTEM, so what others can swap from above
+runs with those rights) and a button to the safe place (`use-safe-dir`): the default folder when the warning is on the system drive, otherwise
+`<drive>:\Foundation Sunshine` directly on the drive (`installer_dir::safe_alternative`). Install stays on. Pressing it asks once: the host
+sets `installDir.confirm`, the web page opens a dialog (`InstallerDirConfirm`) and the native window shows the same question as a page, with the
+risk, the folder and the safe place; the safe place is the primary button, "Install anyway" counts down `kConfirmSeconds` (5, the countdown of the
+other risky questions of the product) and Esc cancels. The host keeps the delay too: `confirm-dir-risk` is taken only while the question is open and
+after the seconds, so a page that counts wrong cannot skip them. What was confirmed holds for that folder only: any other folder, or a refusal by the
+worker, asks again. The install folder itself is made as protected as Program Files in every case.
+
+The elevated worker checks the folder again (it never takes the shell's word), refuses a second place for an installed copy, and writes
+`dir_error` into `install-result.json` when it refuses, which the window shows on the first page. A warning is passed to it as
+`--dir-unsafe-ok` only after the confirmation; without that argument (and without `/ALLOWUNSAFEPARENT` in silent mode) the worker
+refuses a warning like a problem, with `detail: needs_allowunsafeparent`.
+
+The web page sends `set-dir` for the typed path (after a pause in typing, on Enter and when it loses focus), `choose-dir`, `use-picked-dir`,
+`use-safe-dir`, `confirm-dir-risk` and `cancel-dir-risk`; every answer is a new snapshot with `installDir` (`error`, `warning`, `safePath`,
+`pickedPath`, `note`, `confirm`, `confirmSeconds`). The native window has the same on its first page: an edit window (an owned pop-up, so that the
+Direct2D surface does not paint over it; IME and the clipboard work as in any edit), the Change button, the two text buttons and the question page.
 
 #### Protection
 
@@ -136,9 +169,9 @@ permissions). The worker creates the folder, and any missing folder above it, wi
 gets owner and permissions of everything in it reset by the engine before the install (`takeown /R`, `icacls /reset /T`), because the owner of a file can always change its permissions.
 
 Protecting the folder is not enough when a folder above it can be renamed: the service path would then lead into someone
-else's tree. Rule 4 therefore refuses an existing parent that ordinary users can rename, delete or re-permission (which is what a
-folder made by a person under the root of a data drive is), and a folder directly on the drive or a missing chain that the
-worker creates is accepted.
+else's tree. That is the `parent` warning: an existing parent that ordinary users can rename, delete or re-permission (which is what a
+folder made by a person under the root of a data drive is) is a risk the person is told about and has to confirm, and the safe place (directly on the drive, or
+the default folder) has no such parent. A folder directly on the drive or a missing chain that the worker creates has no warning.
 
 ## Fixes in the same change
 

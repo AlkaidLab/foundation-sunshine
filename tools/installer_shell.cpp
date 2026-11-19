@@ -75,6 +75,7 @@ namespace {
     std::wstring shell_pid;  // pid of the user-level window; the engine must not kill it
     bool dir_given = false;  // --dir or /DIR= was on the command line, even with an empty value: an empty folder is refused, not read as "no folder"
     std::wstring dir;  // the install folder to pass as /DIR= (empty = the engine's own: the installed copy's, or Program Files\\Sunshine); checked again by the worker
+    bool dir_unsafe_ok = false;  // a warning about the folder (installer_dir.h: a parent that others can replace, a user folder) was confirmed: the window's --dir-unsafe-ok, the silent /ALLOWUNSAFEPARENT
     std::wstring worker_copy;  // the copy of this exe the elevated worker runs from
     std::wstring selftest_directory;  // --selftest-worker: run the worker steps up to the engine in this directory, no install
   };
@@ -622,8 +623,11 @@ namespace {
       return 0;
     }
     DWORD win32 = 0;
-    if (const auto problem = installer_dir_win::prepare(g_run.dir, &win32))
-      return refuse(std::string(installer_dir::code(*problem)), ",\"win32\":" + std::to_string(win32));
+    if (const auto problem = installer_dir_win::prepare(g_run.dir, &win32, g_run.dir_unsafe_ok)) {
+      // a warning that was not confirmed is refused like a problem, and says what would allow it (a silent run has nobody to ask)
+      const std::string detail = installer_dir::is_warning(*problem) ? ",\"detail\":\"needs_allowunsafeparent\"" : ",\"win32\":" + std::to_string(win32);
+      return refuse(std::string(installer_dir::code(*problem)), detail);
+    }
     return 0;
   }
 
@@ -729,6 +733,7 @@ wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
       if (ch >= L'0' && ch <= L'9') g_run.shell_pid.push_back(ch);
     g_run.dir = installer_dir::option_value(command_line, L"--dir");
     g_run.dir_given = has_argument(L"--dir");
+    g_run.dir_unsafe_ok = has_argument(L"--dir-unsafe-ok");
     const std::wstring tasks = command_value(command_line, L"--tasks");
     g_run.tasks = tasks == L"desktopicon" || tasks == L"none" ? tasks : L"";
     return worker_main();
@@ -780,6 +785,8 @@ wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
       g_run.dir = *dir;
       g_run.dir_given = true;  // /DIR="" is a folder that is refused, not "no folder"
     }
+    // a silent run has nobody to ask: a folder with only a warning is installed into when the command line says so
+    g_run.dir_unsafe_ok = installer_dir::has_switch(command_line, L"/ALLOWUNSAFEPARENT");
     return worker_main();
   }
   if (has_argument(L"--bench")) {

@@ -7,8 +7,17 @@
 // folders are worth that: a fixed disk of this PC with a file system that has permissions (NTFS, ReFS), a folder that is new, empty or already ours, and not one
 // that Windows, the user or a sync client owns.
 //
+// There are two kinds of answer. A *problem* is a folder that cannot work or would lose data (a network disk, a file system without permissions, the Windows folder, a synced
+// folder, a folder with somebody's files in it, ...): never accepted. A *warning* is a folder that works and is protected itself, but sits somewhere that ordinary users or
+// programs of the same user can rename or replace from above (a folder somebody made under the root of a data drive, the user's own folders): accepted after the person
+// confirmed it (the page asks once, with a delay), by the silent switch /ALLOWUNSAFEPARENT, and never otherwise.
+//
 // The same function answers the page (a refused folder keeps the install buttons off and says why), the elevated worker (it never trusts the shell's answer) and
 // the silent switch /DIR=.
+//
+// Which folder is the install folder: what the person typed is taken as it is. A folder picked in the system picker gets the product's folder name appended, as Inno Setup does
+// after Browse (AppendDefaultDirName) and NSIS does with the last part of InstallDir; the picked folder itself is one click away (from_pick()).
+// Authority: installer-inno-appenddefaultdirname-20261119, installer-nsis-installdir-20261119, installer-msi-pathedit-20261119, installer-wixui-installdir-20261119.
 #include <cstdint>
 #include <cwctype>
 #include <optional>
@@ -28,9 +37,9 @@ namespace installer_dir {
     fs,  // not NTFS or ReFS
     root,  // the root of a disk
     system,  // inside the Windows folder
-    user,  // inside a user's folder
+    user,  // inside a user's folder: a warning, not a problem (the user and the programs that run as that user can replace the folder from above)
     synced,  // inside a synced folder (OneDrive and the like)
-    parent,  // a folder above it can be renamed, replaced or re-permissioned by ordinary users: the program could be swapped out from above
+    parent,  // a folder above it can be renamed, replaced or re-permissioned by ordinary users: the program could be swapped out from above (a warning)
     not_empty,  // has files and is not an install of ours
     too_long,  // the longest path of the package would pass MAX_PATH
     no_space,  // the drive is too full
@@ -58,6 +67,12 @@ namespace installer_dir {
     return "invalid";
   }
 
+  /** The two codes that are warnings (the folder can be used after the person confirmed it); every other code is a problem. */
+  inline bool
+  is_warning(const error e) {
+    return e == error::parent || e == error::user;
+  }
+
   // The longest path inside an install, relative to the folder, with its leading backslash. The package itself stays well below it (scripts/ci/check-install-path-budget.py
   // measures the staged tree and fails when the package grows past this); the rest is what the host writes at run time: the cover and poster previews of
   // config\\covers are named after the app and a hash and reach 141 characters, so the budget holds a few more.
@@ -71,6 +86,10 @@ namespace installer_dir {
 
   /** The default folder name below Program Files. */
   inline constexpr std::wstring_view kDefaultName = L"Sunshine";
+  /** The folder name that is appended to a folder the person picked: the product's name, as it stands in the Start menu. */
+  inline constexpr std::wstring_view kProductFolder = L"Foundation Sunshine";
+  /** How long the confirmation of a warning stays closed (the same seconds as the other risky questions of the product: foundation-ui RESET_SECONDS). */
+  constexpr int kConfirmSeconds = 5;
 
   inline wchar_t
   fold(const wchar_t c) {
@@ -88,6 +107,21 @@ namespace installer_dir {
   inline bool
   starts_with_text(std::wstring_view s, std::wstring_view prefix) {
     return s.size() >= prefix.size() && same_text(s.substr(0, prefix.size()), prefix);
+  }
+
+  /** A typed or pasted path without what a person did not mean: spaces and tabs at both ends (a folder name never ends in a space), and one pair of quotes around it ("Copy as path" in Explorer gives `"D:\\x"`). */
+  inline std::wstring
+  tidy(std::wstring_view text) {
+    const auto blank = [](const wchar_t c) { return c == L' ' || c == L'\t'; };
+    while (!text.empty() && blank(text.front())) text.remove_prefix(1);
+    while (!text.empty() && blank(text.back())) text.remove_suffix(1);
+    if (text.size() >= 2 && text.front() == L'"' && text.back() == L'"') {
+      text.remove_prefix(1);
+      text.remove_suffix(1);
+      while (!text.empty() && blank(text.front())) text.remove_prefix(1);
+      while (!text.empty() && blank(text.back())) text.remove_suffix(1);
+    }
+    return std::wstring(text);
   }
 
   /** The path as the installer compares and stores it: backslashes, no trailing backslash except on a drive root ("D:\"). Nothing else is changed. */
@@ -256,13 +290,14 @@ namespace installer_dir {
   }
 
   struct verdict {
-    error problem = error::none;
+    error problem = error::none;  // the first thing that makes the folder unusable
+    error warning = error::none;  // parent or user: usable once the person confirmed it; set only when there is no problem
     std::wstring path;  // normalised
   };
 
   /**
    * The whole decision, in the order a person can act on it: the text of the path, then the disk (fixed, a file system with permissions, room), then the place
-   * (not Windows, not a synced folder, not a user folder), then the folder itself (opens, empty or ours).
+   * (not Windows, not a synced folder; a user folder or an unsafe parent is a warning), then the folder itself (opens, empty or ours).
    * `needed` is the space the install needs; `max_length` the longest path; both are parameters so that the tests can move them.
    */
   inline verdict
@@ -301,33 +336,72 @@ namespace installer_dir {
       out.problem = error::synced;
       return out;
     }
+    // the user's folders and a parent that others can replace are warnings: they do not stop the folder from working, and the rest is looked at too
     for (const auto &root : machine.user_roots)
       if (inside(s.path, root)) {
-        out.problem = error::user;
-        return out;
+        out.warning = error::user;
+        break;
       }
-    if (machine.parent_unsafe) {
-      out.problem = error::parent;
+    if (machine.parent_unsafe && out.warning == error::none) out.warning = error::parent;
+    // a refused folder shows its reason only, never a warning with it
+    const auto refuse = [&out](const error e) {
+      out.problem = e;
+      out.warning = error::none;
       return out;
-    }
+    };
     // a junction or symbolic link on the way, whether or not the folder itself exists yet: the program would land somewhere else
-    if (machine.reparse_point) {
-      out.problem = error::no_access;
-      return out;
-    }
+    if (machine.reparse_point) return refuse(error::no_access);
     if (machine.exists) {
       // a file in the way, or a folder that cannot be listed
-      if (!machine.is_directory || !machine.accessible) {
-        out.problem = error::no_access;
-        return out;
-      }
-      if (!machine.empty && !machine.ours) {
-        out.problem = error::not_empty;
-        return out;
-      }
+      if (!machine.is_directory || !machine.accessible) return refuse(error::no_access);
+      if (!machine.empty && !machine.ours) return refuse(error::not_empty);
     }
     // an install that is already there needs no new room for what it holds, but the update still unpacks: the same rule for both
-    if (machine.free_bytes && *machine.free_bytes < needed) out.problem = error::no_space;
+    if (machine.free_bytes && *machine.free_bytes < needed) return refuse(error::no_space);
+    return out;
+  }
+
+  // ---------------------------------------------------------------- which folder: a picked one, a typed one, a safe one
+
+  struct pick {
+    std::wstring path;  // the install folder
+    bool appended = false;  // the product's folder name was added to what was picked (the picked folder itself is one click away)
+    bool redirected = false;  // the picked folder had somebody's files in it, which is why a folder inside it is used
+  };
+
+  /**
+   * The install folder for a folder picked in the system picker. The product's folder name is appended (Inno Setup after Browse, NSIS with the last part of InstallDir) unless the
+   * picked folder already is the default folder, is named like the product, or is an install of ours (`ours`: it is updated in place). The root of a disk gets it too: "D:\" is
+   * never an install folder. `occupied`: the picked folder exists, is not an install of ours and has something in it (the root of a disk does not count): the person is told that
+   * the files are left alone and a folder inside the picked one is used. Typed text is not passed here: it is the folder as typed.
+   */
+  inline pick
+  from_pick(std::wstring_view picked, const bool ours, const bool occupied, std::wstring_view default_dir) {
+    pick out;
+    out.path = normalise(std::wstring(picked));
+    if (out.path.empty()) return out;
+    if (ours || same_text(out.path, default_dir)) return out;
+    const size_t slash = out.path.find_last_of(L'\\');
+    if (slash != std::wstring::npos && slash + 1 < out.path.size() && same_text(std::wstring_view(out.path).substr(slash + 1), kProductFolder)) return out;
+    if (out.path.back() != L'\\') out.path.push_back(L'\\');
+    out.path.append(kProductFolder);
+    out.appended = true;
+    out.redirected = occupied;
+    return out;
+  }
+
+  /**
+   * The safe place to offer for a folder that only has a warning: the default folder when it is on the system drive (the drive of `default_dir`), else the product folder directly
+   * on the drive of the path ("D:\Foundation Sunshine"). Directly on the root, with nothing above it that others could replace; the folder itself is protected by the setup.
+   */
+  inline std::wstring
+  safe_alternative(std::wstring_view path, std::wstring_view default_dir) {
+    if (path.size() < 2 || path[1] != L':' || default_dir.empty()) return std::wstring(default_dir);
+    const wchar_t drive = fold(path[0]);
+    if (drive == fold(default_dir[0])) return std::wstring(default_dir);
+    std::wstring out(1, static_cast<wchar_t>(std::towupper(static_cast<wint_t>(path[0]))));
+    out += L":\\";
+    out.append(kProductFolder);
     return out;
   }
 
@@ -373,6 +447,14 @@ namespace installer_dir {
     for (const auto &arg : split_arguments(line))
       if (arg.size() >= 5 && starts_with_text(arg, L"/DIR=")) return arg.substr(5);
     return std::nullopt;
+  }
+
+  /** A whole-argument switch of the silent command line (`/ALLOWUNSAFEPARENT`), any case. */
+  inline bool
+  has_switch(std::wstring_view line, std::wstring_view name) {
+    for (const auto &arg : split_arguments(line))
+      if (same_text(arg, name)) return true;
+    return false;
   }
 
   /** `/DIR=...` for the engine's command line. The path was checked: it holds no quote, so the quoted form cannot be left early. */
