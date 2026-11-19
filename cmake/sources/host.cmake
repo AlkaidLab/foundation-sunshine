@@ -58,7 +58,7 @@ set(SUNSHINE_HOST_SOURCES
     src/launch_session_manager.cpp src/launch_session_manager.h
     src/confighttp.cpp src/confighttp.h
     src/widget_http.cpp src/widget_http.h
-    src/rtsp.cpp src/rtsp.h
+    src/rtsp.cpp src/rtsp.h src/rtsp_limits.h
     src/session_info.cpp src/session_info.h
     src/system_load.cpp src/system_load.h src/system_load_stub.cpp
     src/stream.cpp src/stream.h
