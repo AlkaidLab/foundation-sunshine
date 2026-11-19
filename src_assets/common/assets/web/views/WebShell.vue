@@ -64,7 +64,7 @@ import { computed, defineAsyncComponent, defineComponent, getCurrentInstance, h,
 import { useI18n } from 'vue-i18n'
 import QRCode from 'qrcode'
 import { trackEvents, setTelemetryContext } from '../config/telemetry.js'
-import { answerRedactRequests, MFeedbackButton, openFeedbackHere, homeTexts, MContextProvider, useTelemetryConsent, MErrorHost, installErrorHandlers, setErrorContext, startAutoReport, MPageLoading, useNotify, useSystemNotices, MStatusBell, MPage, MGroup, MItem, MSection, MIcon, MBrand, MCaption, MCaptionVersion, MCaptionBack, MBackChip, useCaptionRoom, createJumpHistory, useBackVariant, showsButton, showsChip, captionTexts, MCoachMarks, MConnectDialog, MPairPrompt, MPinHost, pinSpecForPage, pinTexts, pinToHome, isPinnedOnHome, createPairingPending, MSnackbar, connectTexts, useConnectDialog, MUnifiedSearch, useUnifiedSearch, requestPageFilter, searchTexts, actionDocs, settingDocs, clientDocs, appDocs, tileDocs, addTileToHome, MHostOffline, useHostConnection, MButton, MContextMenu, MNavList, MScene, aboutTexts, latencyClockTexts, statusTexts, networkOverviewTexts, doctorTexts, testToolTexts, createNav, announcementTexts, useAnnouncements, MAnnouncementButton, MAnnouncementPage, MAnnouncementPopup, ackedAt, useAppearance, useSettingsList, useErrors, useDeveloperMode, DevReportHost, registerDevReport } from 'foundation-ui/vue'
+import { answerRedactRequests, MFeedbackButton, openFeedbackHere, homeTexts, MContextProvider, useTelemetryConsent, MErrorHost, installErrorHandlers, setErrorContext, startAutoReport, MPageLoading, useNotify, useSystemNotices, MStatusBell, MPage, MGroup, MItem, MSection, MIcon, MBrand, MCaption, MCaptionVersion, MCaptionBack, MBackChip, useCaptionRoom, createJumpHistory, useBackVariant, showsButton, showsChip, captionTexts, MCoachMarks, MConnectDialog, MPairPrompt, MPinHost, pinSpecForPage, pinTexts, pinToHome, isPinnedOnHome, createPairingPending, MSnackbar, connectTexts, useConnectDialog, MUnifiedSearch, useUnifiedSearch, requestPageFilter, searchTexts, actionDocs, settingDocs, clientDocs, appDocs, tileDocs, addTileToHome, MHostOffline, useHostConnection, MButton, MContextMenu, MNavList, MScene, resetTexts, aboutTexts, latencyClockTexts, statusTexts, networkOverviewTexts, doctorTexts, testToolTexts, createNav, announcementTexts, useAnnouncements, MAnnouncementButton, MAnnouncementPage, MAnnouncementPopup, ackedAt, useAppearance, useSettingsList, useErrors, useDeveloperMode, DevReportHost, registerDevReport } from 'foundation-ui/vue'
 import { afterCheck, afterOpened, noticeView, readNotice, writeNotice } from 'foundation-ui/update'
 import { SEARCH_INDEX } from '../config/settingsData/index.js'
 import { categoryOfRow, labelOf, parseSettingsHash, rowIdOf, settingsHash } from 'foundation-ui/settings/index.js'
@@ -123,6 +123,7 @@ const VIEWS = {
   'stream-timer': lazy(() => import('./StreamTimer.vue')),
   components: lazy(() => import('./ComponentStatus.vue')),
   doctor: lazy(() => import('./Doctor.vue')),
+  reset: lazy(() => import('./Reset.vue')),
   network: lazy(() => import('./NetworkOverview.vue')),
 }
 // the destinations of 输入与外设 and 显示 that are the configuration opened at a place (the panel has a page for each: here it is the same page of the settings)
@@ -196,6 +197,8 @@ const PAGES = {
   network: { rail: 'system', path: null, hash: 'network-overview', icon: 'lan', tone: 'primary', text: (locale) => networkOverviewTexts(locale).title },
   troubleshooting: { rail: 'system', path: '/troubleshooting', icon: 'stethoscope', tone: 'warn', label: 'shell.logs_diagnostics' },
   doctor: { rail: 'system', path: null, hash: 'doctor', icon: 'health_and_safety', tone: 'success', text: (locale) => doctorTexts(locale).title },
+  // 恢复默认设置: the search finds it as an action (resetSettings below), so the page is not a second result of the same name
+  reset: { rail: 'system', path: null, hash: 'reset', icon: 'restart_alt', tone: 'warn', text: (locale) => resetTexts(locale).title },
   'settings-hub': { rail: 'config', list: false, path: null, hash: 'settings' },
   // 串流 of a narrow window: the pages of the stream rail as one page of grouped rows, like 设置 (the rail's list page does not exist on a phone)
   'stream-hub': { rail: 'stream', list: false, hub: true, path: null, hash: 'streaming' },
@@ -467,7 +470,7 @@ async function onContextSelect(entry, item) {
   if (menuHandler) { menuHandler(entry, item); return }
   if (entry.id === 'open') nav.go(item.route || item.id, item.params)
   else if (entry.id === 'pin') pinHost.value.toggle(rowPinSpec(item))
-  else if (entry.id === 'copy') { try { await navigator.clipboard.writeText(new URL(PAGES[item.route || item.id].path, location.origin).href) } catch { /* clipboard unavailable */ } }
+  else if (entry.id === 'copy') { try { const page = PAGES[item.route || item.id]; await navigator.clipboard.writeText(new URL(page.hash ? `${normalise(location.pathname)}#${page.hash}` : page.path, location.origin).href) } catch { /* clipboard unavailable */ } }
   else { nav.go(item.route || item.id, item.params); pending.value = entry.id }
 }
 const sceneTexts = computed(() => ({ resize: t('shell.resize'), main: t('navbar.home'), expand: t('shell.expand_nav'), collapse: t('shell.collapse_nav'), shortcuts: t('shell.shortcuts'), back: t('shell.back'), search: t('shell.search'), help: t('shell.shortcut_help'), section: t('shell.section'), close: t('shell.clear') }))
@@ -547,13 +550,14 @@ const actionHandlers = computed(() => ({
   stopApp: async () => snackDone(await postOk('/api/apps/close'), 'troubleshooting.force_close_success', 'troubleshooting.force_close_error'),
   ...(hostPlatform.value === 'windows' ? { resetDisplay: async () => snackDone(await postOk('/api/reset-display-device-persistence'), 'troubleshooting.reset_display_device_success_windows', 'troubleshooting.reset_display_device_error_windows') } : {}),
   doctor: () => jumpNav.go('doctor', { autostart: true }),
+  resetSettings: () => jumpNav.go('reset'),
   // 反馈: the form of MErrorHost, which this shell mounts (an embedded frame has no such shell); 帮助与关于 has the same row
   feedback: () => { useErrors().reportFeedback() },
   setupGuide: reopenGuide,
   quitHost: async () => { try { await apiFetch('/api/boom') } catch { /* the host stops before it answers */ } },
   openDesktop: () => openBigScreenOnHost().catch((e) => { connectNotice.value = `${homeTexts(String(uiLocale.value)).openDesktopFailed}${e?.message ? `: ${e.message}` : ''}` }),
 }))
-const pageDocsOf = computed(() => Object.entries(PAGES).filter(([id, p]) => p.icon && p.rail !== 'config').filter(onThisHost).map(([id, p]) => ({ id, title: pageLabel(p), icon: p.icon, route: id, path: railLabel(p.rail), keywords: rowKeywords(ROW_OF_PAGE[id]) })))
+const pageDocsOf = computed(() => Object.entries(PAGES).filter(([id, p]) => p.icon && p.rail !== 'config' && id !== 'reset').filter(onThisHost).map(([id, p]) => ({ id, title: pageLabel(p), icon: p.icon, route: id, path: railLabel(p.rail), keywords: rowKeywords(ROW_OF_PAGE[id]) })))
 const searchDocs = computed(() => [
   ...settingDocs([...pageDocsOf.value, ...settingsList.searchItems.value], { prefix: settingsPlace, locale: String(uiLocale.value) }),
   // the big screen opens on the host's own machine: a page anywhere else does not offer the action

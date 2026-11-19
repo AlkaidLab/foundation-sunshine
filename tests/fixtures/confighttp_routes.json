@@ -168,6 +168,18 @@
     "method": "GET"
   },
   {
+    "pattern": "^/api/config/reset$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/config/reset$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/config/reset/restore$",
+    "method": "POST"
+  },
+  {
     "pattern": "^/api/reset-display-device-persistence$",
     "method": "POST"
   },

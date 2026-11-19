@@ -8,6 +8,7 @@
 #include <bitset>
 #include <cctype>
 #include <chrono>
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -333,6 +334,13 @@ namespace config {
 
   bool
   update_config(const std::map<std::string, std::string> &updates);
+
+  /**
+   * Run `work` while no other save of the settings file runs (the lock of update_config and update_full_config), so that a reset of the settings file does not
+   * interleave with a save. `work` must not call back into the functions of this header that save.
+   */
+  void
+  with_config_file_locked(const std::function<void()> &work);
 
   std::optional<std::map<std::string, std::string>>
   get_config_snapshot();

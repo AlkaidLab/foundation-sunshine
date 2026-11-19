@@ -2055,6 +2055,12 @@ namespace config {
     }
   }
 
+  void
+  with_config_file_locked(const std::function<void()> &work) {
+    std::lock_guard lock { config_file_mutex };
+    work();
+  }
+
   std::optional<std::map<std::string, std::string>>
   get_config_snapshot() {
     std::lock_guard lock { config_file_mutex };
