@@ -572,6 +572,11 @@ namespace ui {
     bool webview2_missing = false;  // done: the Panel's WebView2 Runtime is absent (offline, bootstrapper failed)
     std::string planned;  // the engine's 'plan' event: comma list of step ids (installer_web.inc names)
     int permille[d_count] = {};  // own progress of a step, 0..1000 ('permille' of its events); -1 = none
+    // where the program goes (installer_dir.h): the default folder, the picked one, or the folder of the installed copy
+    std::wstring dir = L"C:\\Program Files\\Sunshine";
+    bool dir_editable = true;  // a fresh install on its first page; an installed copy keeps its place
+    long long dir_free = -1;  // free bytes on the drive of `dir`, -1 = unknown
+    std::string dir_error;  // installer_dir::code of the reason the folder is refused, empty = usable
   };
 
   inline int

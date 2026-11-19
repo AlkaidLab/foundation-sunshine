@@ -1411,6 +1411,9 @@ jobs:
           fi
           test ! -e ./inno_staging/assets/hdr-components.json
           
+          # The setup lets a person choose the install folder: the longest path of the package has to fit under MAX_PATH below the longest folder it accepts.
+          python3 ../scripts/ci/check-install-path-budget.py ./inno_staging
+
           # Run the Inno Setup compiler and prove that it consumed only the
           # lightweight package manifest, not the self-contained runtime.
           inno_start=$(date +%s.%N)

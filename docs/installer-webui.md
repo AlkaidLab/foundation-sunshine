@@ -57,8 +57,9 @@ native modules. A second bin there would rebuild with all of them and would shar
 `foundation-ui src/vue/installer/bridge.js` is the contract (JSDoc), with a scripted mock host that runs the same
 state machine as the shell. `InstallerView` is the JSON form of `tools/installer_d2d.h struct view`. The host
 writes it in `view_json()`. Session-0 runs check every key against `emptyView()`. Actions: ready, install, retry,
-customize, back, toggle-component, select-all, uninstall, open-panel, restart-pc, copy-details, open-log-folder,
-minimise, exit.
+customize, back, toggle-component, select-all, choose-dir, uninstall, open-panel, restart-pc, copy-details,
+open-log-folder, minimise, exit. `installDir` (path, editable, freeBytes, neededBytes, maxLength, error) is the install
+location; see "Install location" below.
 
 ### WebView2 Runtime missing: the window falls back, the worker downloads the Runtime afterwards
 
@@ -90,7 +91,54 @@ Installer for a fully offline machine stays the person's choice: it is far large
 
 ### Silent mode
 
-Unchanged: `/VERYSILENT` or `/SILENT` goes straight to `worker_main()` before any UI code.
+`/VERYSILENT` or `/SILENT` goes straight to `worker_main()` before any UI code. `/DIR=` is forwarded to the engine after the same
+checks as the window's (see "Install location").
+
+### Install location
+
+A fresh install shows the folder on its first page: the default (`Program Files\Sunshine`), the free space of its drive and a
+Change button that opens the system folder picker (`IFileOpenDialog`, `FOS_PICKFOLDERS`), over the setup window in both front
+ends. An upgrade or the maintenance page shows the folder of the installed copy and cannot change it: to move, uninstall and
+install again. The folder travels to the elevated worker as `--dir "<path>"` and from there to the engine as `/DIR="<path>"`;
+the default folder is never passed, so its behaviour (an older copy there, the previous folder of an update) is unchanged.
+
+The rules are `tools/installer_dir.h` (pure functions, `tests/unit/test_installer_dir.cpp`), the machine's answers are
+`tools/installer_dir_win.h`. The page shows the first rule that fails under the row and keeps Install and Customize off:
+
+1. the text: a full drive path (no UNC, `\\?\`, relative or `..` part), parts Windows allows (no reserved name, no trailing space or dot),
+   none of the characters the batch scripts, PATH and the engine's constants cannot carry (`! % ^ & ; , = ' ` { } $`); non-ASCII
+   (Chinese and the like) is accepted and counted in UTF-16 units; not the root of a disk; at most `kMaxLength` characters
+   (MAX_PATH minus the longest path of the package and a margin; `scripts/ci/check-install-path-budget.py` keeps that true);
+2. the disk: a fixed disk of this PC (`GetDriveType`, and not a `subst` drive), NTFS or ReFS (FAT32 and exFAT have no
+   permissions to protect the program with);
+3. the place: not inside the Windows folder, a synced folder (OneDrive's folders, or a part named OneDrive, Dropbox, ...) or a
+   user's folder (profile, Desktop, Documents, Downloads);
+4. the folders above it: no existing folder between the drive root and the install folder may be renamed, deleted or
+   re-permissioned by an ordinary user, and none may have a non-system owner (see "Protection" below);
+5. the folder itself: new, or empty, or an existing Sunshine folder (the registered one, one with the program and its
+   uninstaller, or one that holds only the `config` folder an uninstall left behind with the person's settings); not a file, a junction or link (here or above), not unreadable;
+6. room: `kNeededBytes` free on the drive.
+
+The elevated worker checks the folder again (it never takes the shell's word), refuses a second place for an installed copy,
+and writes `dir_error` into `install-result.json` when it refuses, which the window shows on the first page.
+
+#### Protection
+
+The service runs the programs of the install folder as SYSTEM. Program Files is protected on every level; a folder below the
+root of another drive inherits "Authenticated Users: Modify" from that root, so any local user could replace `sunshine.exe` or
+`sunshinesvc.exe` and be SYSTEM at the next start. The install folder outside Program Files is therefore given the same
+protection (`kProtectedSddl`, and `HardenInstallDir` in the Inno script, which replaces the whole DACL again on every install and update, so
+that nothing a parent left behind survives: a new folder gets an entry for the person who made it from the parent's CREATOR OWNER entry,
+and "remove inheritance" does not touch that one): inheritance removed; SYSTEM, Administrators and NT SERVICE\TrustedInstaller full control; Users and ALL APPLICATION PACKAGES read
+and execute; all of it for the folder and everything in it; the owner is Administrators (the owner can always change the
+permissions). The worker creates the folder, and any missing folder above it, with that DACL from the first instant
+(`CreateDirectory` with a security descriptor), and sets owner and DACL on an existing empty folder. An existing folder that is not the registered install but holds something (the `config` folder of an uninstalled copy, or files of someone else)
+gets owner and permissions of everything in it reset by the engine before the install (`takeown /R`, `icacls /reset /T`), because the owner of a file can always change its permissions.
+
+Protecting the folder is not enough when a folder above it can be renamed: the service path would then lead into someone
+else's tree. Rule 4 therefore refuses an existing parent that ordinary users can rename, delete or re-permission (which is what a
+folder made by a person under the root of a data drive is), and a folder directly on the drive or a missing chain that the
+worker creates is accepted.
 
 ## Fixes in the same change
 

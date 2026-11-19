@@ -132,6 +132,8 @@ if(WIN32)
         installer_web.inc
         installer_json.h
         installer_d2d.h
+        installer_dir.h
+        installer_dir_win.h
         installer_failure.h
         installer_guide.h
         installer_state.h

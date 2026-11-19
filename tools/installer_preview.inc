@@ -66,6 +66,14 @@ preview_main(const std::wstring &out_dir) {
     { "welcome-tab", pg::welcome, "", nullptr },  // the same page after a Tab: the focus ring is shown
     { "welcome-upgrade", pg::welcome, "", [](view &v) { v.upgrade = true; } },
     { "welcome-uac-cancelled", pg::welcome, "", [](view &v) { v.uac_cancelled = true; } },
+    // the install location (installer_dir.h): a folder the person picked, and the folders that are refused with their reason under the row
+    { "welcome-dir-custom", pg::welcome, "", [](view &v) { v.dir = L"D:\\Games\\安装\\Foundation Sunshine"; v.dir_free = 412LL << 30; } },
+    { "welcome-dir-long", pg::welcome, "", [](view &v) { v.dir = L"D:\\Programs and Games\\Streaming Host\\Foundation Sunshine Game Streaming Server"; v.dir_free = 412LL << 30; } },
+    { "welcome-dir-not-empty", pg::welcome, "", [](view &v) { v.dir = L"D:\\Games"; v.dir_free = 412LL << 30; v.dir_error = "not-empty"; } },
+    { "welcome-dir-parent", pg::welcome, "", [](view &v) { v.dir = L"D:\\Games\\Sunshine"; v.dir_free = 412LL << 30; v.dir_error = "parent"; } },
+    { "welcome-dir-fs", pg::welcome, "", [](view &v) { v.dir = L"F:\\Sunshine"; v.dir_free = 58LL << 30; v.dir_error = "fs"; } },
+    { "welcome-dir-no-space", pg::welcome, "", [](view &v) { v.dir = L"E:\\Sunshine"; v.dir_free = 400LL << 20; v.dir_error = "no-space"; } },
+    { "welcome-dir-upgrade-error", pg::welcome, "", [](view &v) { v.upgrade = true; v.dir = L"D:\\Games"; v.dir_error = "system"; } },
     { "maintenance-newer", pg::maintenance, "", [](view &v) {
         v.maintenance = true; v.has_uninstaller = true; v.package_version = L"2026.1109.120000"; v.installed_version = L"2026.1107.120000";
       } },
@@ -119,7 +127,13 @@ preview_main(const std::wstring &out_dir) {
     apply_events(v, sc.events);
     v.finished = sc.page == pg::failed || sc.page == pg::done;
     if (sc.page == pg::failed && sc.events.find("\"installer\"") == std::string::npos) v.finished = true;
+    v.dir_free = 238LL << 30;
     if (sc.tweak) sc.tweak(v);
+    if (v.maintenance) {  // an installed copy keeps its place: shown, not editable
+      v.dir = L"D:\\Programs\\Foundation Sunshine";
+      v.dir_editable = false;
+      v.dir_free = 311LL << 30;
+    }
     IWICBitmap *bitmap = nullptr;
     ID2D1RenderTarget *target = nullptr;
     ID2D1Bitmap *brand = nullptr;
@@ -146,7 +160,7 @@ preview_main(const std::wstring &out_dir) {
       c.translate(b.x * sc.scale, b.y * sc.scale);
       btn_state st;
       if (sc.page != pg::components && b.id == kBtnPrimary && b.enabled && std::string(sc.name) == "welcome-tab") st.focus = true;
-      draw_button(c, b, st, pal.card);
+      draw_button(c, b, st, under_color(pal, v, b.id));
       c.restore();
     }
     target->EndDraw();
