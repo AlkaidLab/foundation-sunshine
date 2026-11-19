@@ -2,7 +2,6 @@
   <div class="home-page">
     <MPage :title="$t('home.dash.title')" wide full>
       <template #actions>
-        <ShellUtils placement="bar" />
         <MButton v-if="edit" variant="tonal" icon="check" @click="edit = false">{{ $t('home.grid.done') }}</MButton>
         <MIconButton v-else icon="edit" data-coach="home-edit" :label="$t('home.grid.edit')" @click="edit = true" />
       </template>
@@ -74,7 +73,6 @@ import { useSharedConfig } from '../composables/configStore.js'
 import VersionCard from '../components/common/VersionCard.vue'
 import ConfirmDialog from '../components/common/ConfirmDialog.vue'
 import ResourceSheet from '../components/common/ResourceSheet.vue'
-import ShellUtils from '../components/layout/ShellUtils.vue'
 import { VERSION_CHECK_STATUS, useVersion } from '../composables/useVersion.js'
 import { useLogs } from '../composables/useLogs.js'
 import { useSetupWizard } from '../composables/useSetupWizard.js'
