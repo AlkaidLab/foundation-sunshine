@@ -109,9 +109,11 @@ namespace ds5::mic_route {
     void
     serve_packet(std::int16_t *out, std::size_t frames, std::chrono::steady_clock::time_point now) noexcept {
       const bool talking = remote_active(now);
+      const bool flushing = flush_request_.exchange(false, std::memory_order_acq_rel);
+      /* the head is read after the request is taken: whatever was queued before the request is dropped with it */
       auto head = head_.load(std::memory_order_acquire);
       auto tail = tail_.load(std::memory_order_relaxed);
-      if (flush_request_.exchange(false, std::memory_order_acq_rel)) {
+      if (flushing) {
         tail = head;
         tail_.store(tail, std::memory_order_release);
         playing_ = false;
@@ -121,7 +123,7 @@ namespace ds5::mic_route {
         ratio_ = 1.0;
       }
       std::uint64_t fill = head - tail;
-      ++packets_served_;
+      bump(packets_served_, 1);
       if (!playing_) {
         if (fill >= tuning_.start_frames) {
           playing_ = true;
@@ -131,7 +133,7 @@ namespace ds5::mic_route {
         }
         else {
           std::fill(out, out + frames, std::int16_t { 0 });
-          if (talking && underrunning_) underrun_frames_ += frames;
+          if (talking && underrunning_) bump(underrun_frames_, frames);
           return;
         }
       }
@@ -139,7 +141,7 @@ namespace ds5::mic_route {
         const auto drop = fill - tuning_.target_frames;
         tail += drop;
         tail_.store(tail, std::memory_order_release);
-        trimmed_ += drop;
+        bump(trimmed_, drop);
         fill = tuning_.target_frames;
       }
       fill_average_ += (static_cast<double>(fill) - fill_average_) * 0.02;
@@ -158,9 +160,9 @@ namespace ds5::mic_route {
         tail_.store(head, std::memory_order_release);
         playing_ = false;
         if (talking) {
-          if (!underrunning_) ++underruns_;
+          if (!underrunning_) bump(underruns_, 1);
           underrunning_ = true;
-          underrun_frames_ += frames;
+          bump(underrun_frames_, frames);
         }
         return;
       }
@@ -184,7 +186,9 @@ namespace ds5::mic_route {
         tail += consumed;
       }
       tail_.store(tail, std::memory_order_release);
-      served_ += frames;
+      bump(served_, frames);
+      ratio_pub_.store(ratio_, std::memory_order_relaxed);
+      fill_average_pub_.store(fill_average_, std::memory_order_relaxed);
     }
 
     stats_t
@@ -193,13 +197,13 @@ namespace ds5::mic_route {
       result.frames_written = written_.load(std::memory_order_relaxed);
       result.frames_idle_discarded = idle_discarded_.load(std::memory_order_relaxed);
       result.frames_dropped = dropped_.load(std::memory_order_relaxed);
-      result.frames_trimmed = trimmed_;
-      result.frames_served = served_;
-      result.underrun_frames = underrun_frames_;
-      result.underruns = underruns_;
-      result.packets_served = packets_served_;
-      result.ratio = ratio_;
-      result.fill_average = fill_average_;
+      result.frames_trimmed = trimmed_.load(std::memory_order_relaxed);
+      result.frames_served = served_.load(std::memory_order_relaxed);
+      result.underrun_frames = underrun_frames_.load(std::memory_order_relaxed);
+      result.underruns = underruns_.load(std::memory_order_relaxed);
+      result.packets_served = packets_served_.load(std::memory_order_relaxed);
+      result.ratio = ratio_pub_.load(std::memory_order_relaxed);
+      result.fill_average = fill_average_pub_.load(std::memory_order_relaxed);
       return result;
     }
 
@@ -209,6 +213,12 @@ namespace ds5::mic_route {
     }
 
   private:
+    template<class T, class N>
+    static void
+    bump(std::atomic<T> &counter, N amount) noexcept {
+      counter.store(static_cast<T>(counter.load(std::memory_order_relaxed) + amount), std::memory_order_relaxed);
+    }
+
     bool
     remote_active(std::chrono::steady_clock::time_point now) const noexcept {
       const auto last = last_write_ns_.load(std::memory_order_relaxed);
@@ -233,11 +243,14 @@ namespace ds5::mic_route {
     double fraction_ { 0.0 };
     double ratio_ { 1.0 };
     double fill_average_ { 0.0 };
-    std::uint64_t trimmed_ { 0 };
-    std::uint64_t served_ { 0 };
-    std::uint64_t underrun_frames_ { 0 };
-    std::uint32_t underruns_ { 0 };
-    std::uint64_t packets_served_ { 0 };
+    /* counters the session thread reads while the reply thread writes them: one writer, relaxed */
+    std::atomic<std::uint64_t> trimmed_ { 0 };
+    std::atomic<std::uint64_t> served_ { 0 };
+    std::atomic<std::uint64_t> underrun_frames_ { 0 };
+    std::atomic<std::uint32_t> underruns_ { 0 };
+    std::atomic<std::uint64_t> packets_served_ { 0 };
+    std::atomic<double> ratio_pub_ { 1.0 };
+    std::atomic<double> fill_average_pub_ { 0.0 };
   };
 
   /** One mono packet to the two channels of the endpoint (the same signal on both), @p muted giving silence. */

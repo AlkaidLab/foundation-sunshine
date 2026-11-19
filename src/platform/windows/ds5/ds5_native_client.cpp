@@ -1377,8 +1377,11 @@ namespace platf::ds5 {
             for (std::size_t sample = 0; sample < frames; ++sample) peak = std::max(peak, std::abs(static_cast<int>(mono[sample])));
             if (peak > mic_served_peak.load(std::memory_order_relaxed)) mic_served_peak.store(peak, std::memory_order_relaxed);
           }
-          else
+          else {
+            /* a route that is not the client microphone leaves nothing queued for when it comes back */
+            if (!route_controller) mic_ring.flush();
             mono.fill(0);
+          }
           ::ds5::mic_route::to_stereo(mono.data(), frames, muted, stereo.data());
           payload.insert(payload.end(), stereo.begin(), stereo.begin() + static_cast<std::ptrdiff_t>(frames * 4u));
           payload.insert(payload.end(), available - static_cast<std::uint32_t>(frames * 4u), 0);
