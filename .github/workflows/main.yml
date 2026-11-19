@@ -1601,7 +1601,8 @@ jobs:
       # A pre-release is deleted, with its assets, once two newer ones exist (LizardByte/create-release-action keeps the latest two), and builds come
       # several times a day: the Symbols-x64.zip of most builds is gone within hours, and a crash dump of such a build can only be read as module+offset.
       # The same package therefore goes up once more on its own, named by the build: 4-5 MB, found by name without downloading the 100+ MB package
-      # above, and kept for the longest time an artifact can be kept. The symbol store of the feedback repository copies from here (scripts/symbol_store.py).
+      # above, and kept for the longest time an artifact can be kept. Until the symbol store of the feedback repository copies from here (a change of that repository),
+      # the artifact is downloaded by hand.
       - name: Keep the symbols of this build
         if: needs.changes.outputs.package == 'true'
         uses: actions/upload-artifact@v7

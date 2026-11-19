@@ -171,7 +171,7 @@ strip 和签名都不会改变它，崩溃转储（minidump）靠它找到符号
 - `sunshine.exe` 或 `sunshinesvc.exe` 没有符号时打包失败。
 - 发布里的符号包活不长：自动预发布只保留最新两个（`LizardByte/create-release-action` 的 `keepPreReleaseCount`），旧的连同资产一起删除，一天构建好几次，
   多数版本的 `Symbols-x64.zip` 几小时后就没了，崩溃转储只能显示模块加偏移。所以每次构建把这个包再单独上传一次，工件名 `sunshine-symbols-<版本号>`
-  （例如 `sunshine-symbols-v2026.1118.144543`），保留 90 天；反馈仓库的符号库（`scripts/symbol_store.py`）从这里按版本取，不必下载 100 多 MB 的整包。
+  （例如 `sunshine-symbols-v2026.1118.144543`），保留 90 天，可以按名字单独下载，不必下载 100 多 MB 的整包。反馈仓库的符号库自动从这里复制，由反馈仓库里的对应改动接入，合并前只能手动下载。
 - 解析崩溃：`minidump-stackwalk --symbols-path <解压目录> x.dmp`。
 - 符号文件格式与目录布局见 Breakpad 文档，`--build-id` 见 GNU ld 手册，二者登记在 `docs/authority/source-index.tsv`（`breakpad-symbol-files-20261115`、`gnu-ld-options-20261115`）。
 
