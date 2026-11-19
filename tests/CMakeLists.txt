@@ -963,6 +963,7 @@ add_executable(network_check_unit_tests
         ${CMAKE_SOURCE_DIR}/src/nat_discovery.cpp
         ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
         ${CMAKE_SOURCE_DIR}/src/public_address.cpp
+        ${CMAKE_SOURCE_DIR}/src/network_pin.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_network_check.cpp)
 target_include_directories(network_check_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(network_check_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json alkaidlab_stun_codec
@@ -975,11 +976,26 @@ if (WIN32)
 endif ()
 add_test(NAME network_check_unit_tests COMMAND network_check_unit_tests)
 
+add_executable(network_pin_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/network_pin.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_network_pin.cpp)
+target_include_directories(network_pin_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(network_pin_unit_tests PRIVATE gtest_main
+        sunshine_project_options sunshine_coverage)
+target_compile_options(network_pin_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(network_pin_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    target_link_libraries(network_pin_unit_tests PRIVATE ws2_32 iphlpapi)
+    set_target_properties(network_pin_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME network_pin_unit_tests COMMAND network_pin_unit_tests)
+
 add_executable(network_reachability_sample
         ${CMAKE_SOURCE_DIR}/tests/tools/network_reachability_sample.cpp
         ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
         ${CMAKE_SOURCE_DIR}/src/public_address.cpp
-        ${CMAKE_SOURCE_DIR}/src/network_reachability_probe.cpp)
+        ${CMAKE_SOURCE_DIR}/src/network_reachability_probe.cpp
+        ${CMAKE_SOURCE_DIR}/src/network_pin.cpp)
 target_include_directories(network_reachability_sample PRIVATE
         "${CMAKE_SOURCE_DIR}"
         "${CMAKE_SOURCE_DIR}/third-party")
@@ -1000,7 +1016,8 @@ add_executable(network_overview_sample
         ${CMAKE_SOURCE_DIR}/src/nat_discovery_probe.cpp
         ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
         ${CMAKE_SOURCE_DIR}/src/public_address.cpp
-        ${CMAKE_SOURCE_DIR}/src/network_reachability_probe.cpp)
+        ${CMAKE_SOURCE_DIR}/src/network_reachability_probe.cpp
+        ${CMAKE_SOURCE_DIR}/src/network_pin.cpp)
 target_include_directories(network_overview_sample PRIVATE
         "${CMAKE_SOURCE_DIR}"
         "${CMAKE_SOURCE_DIR}/third-party")
