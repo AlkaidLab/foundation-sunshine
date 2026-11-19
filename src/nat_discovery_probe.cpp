@@ -381,8 +381,12 @@ namespace nat_discovery {
     family_discovery_t
     discover_family(int family, const std::vector<server_t> &servers, const std::vector<std::string> &local_addresses, const std::string &bind_address, bool bypass) {
       const auto resolved = resolve_all(servers, family);  // the names do not depend on the adapter
+      // A server on this computer or the local network is reached on the system route, so there is nothing to pin for it.
+      const bool any_public = std::any_of(resolved.begin(), resolved.end(), [](const std::vector<std::string> &addresses) {
+        return std::any_of(addresses.begin(), addresses.end(), [](const std::string &address) { return network_pin::pinnable_host(address); });
+      });
       family_discovery_t result;
-      network_pin::attempt(bypass, [&](const network_pin::pin_t *pin) {
+      network_pin::attempt(bypass && any_public, [&](const network_pin::pin_t *pin) {
         bool pin_failed = false;
         bool talked = false;
         result = discover_family_once(family, servers, resolved, local_addresses, bind_address, pin, pin_failed, talked);

@@ -157,10 +157,8 @@ namespace network_external {
     constexpr long KEPT = 600;
     constexpr long SHORT = 60;
     if (result.availability == availability_e::answered) {
-      // a port that was found closed or silent may be opened in the next minute: that answer is not kept long
-      const auto found_closed = std::any_of(result.tcp.begin(), result.tcp.end(), [](const tcp_port_t &entry) { return entry.state == "closed" || entry.state == "timeout"; });
-      const auto reached = std::any_of(result.tcp.begin(), result.tcp.end(), [](const tcp_port_t &entry) { return entry.state == "open"; });
-      return found_closed && !reached ? SHORT : KEPT;
+      // what is kept long is a connection that reached this host; any other conclusion (a port that was found closed or silent, another device that answered) may change in the next minute
+      return tcp_summary(result) == "reachable" ? KEPT : SHORT;
     }
     // a refusal (the service saw another address than the target, for example a proxy on the router) may be fixed in the next minute
     if (result.availability == availability_e::refused) return SHORT;
@@ -193,8 +191,15 @@ namespace network_external {
     std::lock_guard lock { mutex_ };
     // a handful of addresses at most: drop the expired ones first, then the oldest
     for (auto entry = entries_.begin(); entry != entries_.end();) entry = entry->second.expires_at <= now_s ? entries_.erase(entry) : std::next(entry);
-    if (entries_.size() >= 16) entries_.erase(entries_.begin());
-    entries_[key] = { result, now_s + ttl_seconds(result) };
+    if (entries_.size() >= 16) {
+      // the oldest answer is the one that was stored earliest: it is the one that expires first
+      auto oldest = entries_.begin();
+      for (auto entry = entries_.begin(); entry != entries_.end(); ++entry) {
+        if (entry->second.stored_at < oldest->second.stored_at) oldest = entry;
+      }
+      entries_.erase(oldest);
+    }
+    entries_[key] = { result, now_s + ttl_seconds(result), ++stored_counter_ };
   }
 
   void

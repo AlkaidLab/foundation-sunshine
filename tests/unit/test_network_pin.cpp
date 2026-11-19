@@ -29,7 +29,7 @@ namespace {
 
   pin_t
   pin_of(std::string name = "Ethernet", std::uint32_t index = 7) {
-    return { index, std::move(name), 0 };
+    return { index, 0, std::move(name), 0 };
   }
 }  // namespace
 
@@ -290,23 +290,23 @@ TEST(NetworkPinSocket, AnInterfaceThatDoesNotExistFailsWithoutThrowing) {
   const int handle = ::socket(AF_INET, SOCK_DGRAM, 0);
   ASSERT_GE(handle, 0);
   bool result = true;
-  EXPECT_NO_THROW(result = pin_socket(handle, 4, { 9999, "nopin0", 0 }));
+  EXPECT_NO_THROW(result = pin_socket(handle, 4, { 9999, 0, "nopin0", 0 }));
   EXPECT_FALSE(result);
-  EXPECT_NO_THROW(result = pin_socket(handle, 6, { 9999, std::string(64, 'x'), 0 }));  // longer than IFNAMSIZ
+  EXPECT_NO_THROW(result = pin_socket(handle, 6, { 9999, 0, std::string(64, 'x'), 0 }));  // longer than IFNAMSIZ
   EXPECT_FALSE(result);
-  EXPECT_FALSE(pin_socket(handle, 4, { 0, "", 0 }));
+  EXPECT_FALSE(pin_socket(handle, 4, { 0, 0, "", 0 }));
   ::close(handle);
 }
 
 TEST(NetworkPinSocket, AnInvalidHandleFailsWithoutThrowing) {
-  EXPECT_NO_THROW(EXPECT_FALSE(pin_socket(-1, 4, { 1, "eth0", 0 })));
+  EXPECT_NO_THROW(EXPECT_FALSE(pin_socket(-1, 4, { 1, 0, "eth0", 0 })));
 }
 
 TEST(NetworkPinSocket, TheHookSetsFailedWhenThePinIsRefused) {
   const int handle = ::socket(AF_INET, SOCK_DGRAM, 0);
   ASSERT_GE(handle, 0);
   auto failed = std::make_shared<bool>(false);
-  const auto hook = socket_hook({ 9999, "nopin0", 0 }, failed);
+  const auto hook = socket_hook({ 9999, 0, "nopin0", 0 }, failed);
   hook(4, static_cast<std::uintptr_t>(handle));
   EXPECT_TRUE(*failed);
   ::close(handle);
@@ -344,4 +344,38 @@ TEST(NetworkPinDestination, TheHostOfAUrl) {
   EXPECT_FALSE(pinnable_url("http://192.168.1.20/x"));
   EXPECT_FALSE(pinnable_url("http://[::1]:8787/x"));
   EXPECT_FALSE(pinnable_url("not a url"));
+}
+
+TEST(NetworkPinClassify, ATunTapDeviceIsATunnelWhateverItIsCalled) {
+  linux_facts_t corp;
+  corp.name = "corp0";
+  corp.has_device = false;
+  corp.arphrd_type = 1;  // a TAP presents itself as Ethernet
+  corp.tun_tap = true;
+  EXPECT_EQ(classify_linux(corp), kind_e::tunnel);
+  corp.tun_tap = false;
+  EXPECT_EQ(classify_linux(corp), kind_e::ethernet) << "a plain bridge that carries the host address stays a candidate";
+}
+
+TEST(NetworkPinTargets, LocalhostIsThisComputerAndNeverPinned) {
+  EXPECT_FALSE(pinnable_host("localhost"));
+  EXPECT_FALSE(pinnable_host("LOCALHOST"));
+  EXPECT_FALSE(pinnable_host("service.localhost"));
+  EXPECT_TRUE(pinnable_host("reach.example.net"));
+  EXPECT_FALSE(pinnable_url("http://localhost:8787/"));
+  EXPECT_TRUE(pinnable_url("https://reach.example.net/"));
+}
+
+TEST(NetworkPinChoice, TheIpv6IndexTravelsWithThePin) {
+  adapter_t adapter;
+  adapter.name = "Ethernet";
+  adapter.index = 12;
+  adapter.index_v6 = 7;
+  adapter.kind = kind_e::ethernet;
+  adapter.up = true;
+  adapter.has_gateway = true;
+  const auto chosen = choose_physical({ adapter });
+  ASSERT_TRUE(chosen.has_value());
+  EXPECT_EQ(chosen->index, 12U);
+  EXPECT_EQ(chosen->index_v6, 7U);
 }

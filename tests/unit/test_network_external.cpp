@@ -194,3 +194,23 @@ TEST(NetworkExternalResponse, AServiceThatHasUsedUpItsDayIsToldApartFromOneThatI
   EXPECT_EQ(parse_response(503, 0, "").reason, "disabled");
   EXPECT_EQ(parse_response(404, 0, R"({"reason":"budget"})").reason, "disabled") << "only a 503 says it";
 }
+
+TEST(NetworkExternalCache, AnyConclusionButReachedIsKeptOneMinute) {
+  // an HTTP port found closed beside an HTTPS port that is open: the check says "closed", so the answer is not kept ten minutes
+  const auto mixed = parse_response(200, 0, R"({"v":1,"tcp":[{"role":"http","port":60000,"state":"closed"},{"role":"https","port":59995,"state":"open"}]})");
+  EXPECT_EQ(tcp_summary(mixed), "closed");
+  EXPECT_EQ(ttl_seconds(mixed), 60);
+  // another device answering is not kept long either, and a host that was reached is
+  const auto other = parse_response(200, 0, R"({"v":1,"tcp":[{"role":"http","port":60000,"state":"open","identity":"mismatch"}]})");
+  EXPECT_EQ(ttl_seconds(other), 60);
+  EXPECT_EQ(ttl_seconds(parse_response(200, 0, ANSWER)), 600);
+}
+
+TEST(NetworkExternalCache, TheOldestAnswerIsTheOneThatIsForgotten) {
+  cache_t cache;
+  const auto answer = parse_response(200, 0, ANSWER);
+  // stored in the reverse order of the keys: the first key in the order of the keys is the newest
+  for (int i = 39; i >= 0; --i) cache.put("host" + std::string(i < 10 ? "0" : "") + std::to_string(i), answer, 100);
+  EXPECT_FALSE(cache.find("host39", 101).has_value()) << "stored first, forgotten first";
+  EXPECT_TRUE(cache.find("host00", 101).has_value()) << "stored last, kept even though it sorts first";
+}

@@ -1626,7 +1626,7 @@ provide the desktop of a separate RDP session.
         <td colspan="2">
             `enabled`: when you press "check" on the network page, a service on the internet connects from outside to each public address you entered and to the TCP ports of this host, and reads this
             host's GameStream `serverinfo` to compare its unique id with the one this host sends. That is the only way to show that the internet reaches this host: a computer cannot prove it by
-            connecting to its own public address. Nothing is sent while you do not run the check, and an answer is kept for 10 minutes, so pressing the button again does not ask again.
+            connecting to its own public address. Nothing is sent while you do not run the check, and an answer is kept for 10 minutes, so pressing the button again does not ask again. The exceptions are the answers that may be out of date in a minute: a port that was found closed or silent, and a refusal (the service saw another address than the one you entered) are kept 1 minute, and a service that asks to wait is not asked before the time it names (1 to 10 minutes).
             What leaves the computer is the address you entered, the ports of this host, its unique id and an install identifier that the service uses to limit how often one installation may ask:
             the install identifier of the statistics when statistics are on, otherwise a random value made once per run of the program (it is not kept and is new after a restart). The service only
             connects to the address the request came from, stores nothing, and answers per port. UDP cannot be tried this way and is always reported as not verified. The service has a daily budget:

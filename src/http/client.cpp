@@ -188,6 +188,9 @@ namespace web::detail {
         catch (...) {
           // a hook that fails leaves the socket as it is
         }
+        // the hook may have stopped the client: nothing is connected for a request that has ended or was cancelled
+        if (completed) return;
+        if (cancellation_requested) return finish(net::error::operation_aborted);
         lowest.async_connect(endpoint, [self, endpoints, index](error_code ec) {
           if (self->completed) return;
           if (!ec) return self->connected();

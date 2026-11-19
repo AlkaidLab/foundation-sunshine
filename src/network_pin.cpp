@@ -132,6 +132,7 @@ namespace network_pin {
   classify_linux(const linux_facts_t &facts) {
     const auto name = lower(facts.name);
     if (name == "lo") return kind_e::loopback;
+    if (facts.tun_tap) return kind_e::tunnel;
     if (!facts.has_device) {
       for (const auto prefix : { "tun"sv, "tap"sv, "wg"sv, "utun"sv, "zt"sv, "tailscale"sv }) {
         if (starts_with(name, prefix)) return kind_e::tunnel;
@@ -216,6 +217,7 @@ namespace network_pin {
     for (auto *adapter = reinterpret_cast<IP_ADAPTER_ADDRESSES *>(buffer.data()); adapter; adapter = adapter->Next) {
       adapter_t entry;
       entry.index = adapter->IfIndex;
+      entry.index_v6 = adapter->Ipv6IfIndex;
       entry.name = adapter->FriendlyName ? wide_to_utf8(adapter->FriendlyName) : std::string(adapter->AdapterName ? adapter->AdapterName : "");
       entry.description = wide_to_utf8(adapter->Description);
       entry.kind = classify_windows(adapter->IfType, entry.name + " " + entry.description);
@@ -256,6 +258,7 @@ namespace network_pin {
       facts.name = name;
       facts.has_device = std::filesystem::exists(item.path() / "device", ignored);
       facts.wireless = std::filesystem::exists(item.path() / "wireless", ignored) || std::filesystem::exists(item.path() / "phy80211", ignored);
+      facts.tun_tap = std::filesystem::exists(item.path() / "tun_flags", ignored);
       {
         std::istringstream type { read_file(item.path() / "type") };
         int value = -1;
@@ -269,10 +272,11 @@ namespace network_pin {
         state >> value;
         entry.up = value == "up" || value == "unknown";
       }
+      // An adapter is ranked by its default routes that have a gateway: a route without one makes it no candidate and must not give it a better place.
       bool found_route = false;
       for (const auto &route : routes) {
-        if (route.iface != name) continue;
-        entry.has_gateway = entry.has_gateway || route.gateway;
+        if (route.iface != name || !route.gateway) continue;
+        entry.has_gateway = true;
         entry.metric = found_route ? std::min(entry.metric, route.metric) : route.metric;
         found_route = true;
       }
@@ -300,7 +304,9 @@ namespace network_pin {
       return true;
     }
     if (inet_pton(AF_INET6, text.c_str(), bytes) == 1) return (bytes[0] & 0xE0) == 0x20;  // 2000::/3: global unicast
-    return true;  // a host name
+    // a host name: "localhost" (and a name under it) is this computer; any other name may lead anywhere
+    const auto lowered = lower(text);
+    return !(lowered == "localhost" || (lowered.size() > 10 && lowered.compare(lowered.size() - 10, 10, ".localhost") == 0));
   }
 
   bool
@@ -327,7 +333,7 @@ namespace network_pin {
       const auto socket_handle = static_cast<SOCKET>(handle);
       if (family == 6) {
         // IPV6_UNICAST_IF takes the interface index in host byte order.
-        const DWORD index = pin.index;
+        const DWORD index = pin.index_v6 != 0 ? pin.index_v6 : pin.index;
         return setsockopt(socket_handle, IPPROTO_IPV6, IPV6_UNICAST_IF, reinterpret_cast<const char *>(&index), sizeof(index)) == 0;
       }
       // IP_UNICAST_IF takes the interface index in network byte order.
@@ -357,7 +363,7 @@ namespace network_pin {
     if (found_valid && now - found_at < FIND_KEEP) return found_pin;
     found_pin.reset();
     try {
-      if (const auto adapter = choose_physical(enumerate_adapters())) found_pin = pin_t { adapter->index, adapter->name, 0 };
+      if (const auto adapter = choose_physical(enumerate_adapters())) found_pin = pin_t { adapter->index, adapter->index_v6, adapter->name, 0 };
     }
     catch (...) {
       // no enumeration: no pin

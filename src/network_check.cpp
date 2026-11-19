@@ -604,11 +604,6 @@ namespace network_check {
           if (!used[index]) merged.push_back(results[index]);
         }
         run.steps = std::move(merged);
-        if (run.bypass.state == network_pin::state_e::fallback) {
-          for (auto &entry : run.steps) {
-            if (entry.id == step::addresses) entry.detail["bypass"] = "fallback";
-          }
-        }
         if (!have_discovery) {
           for (auto &entry : run.steps) {
             if (entry.id != step::addresses && entry.id != step::cgnat) continue;
@@ -617,6 +612,12 @@ namespace network_check {
             entry.next = "retry";
             entry.detail = nlohmann::json::object();
             entry.elapsed_ms = run.elapsed_ms - entry.started_ms;
+          }
+        }
+        // after the timeouts: the step that timed out keeps its state and its note
+        if (run.bypass.state == network_pin::state_e::fallback) {
+          for (auto &entry : run.steps) {
+            if (entry.id == step::addresses) entry.detail["bypass"] = "fallback";
           }
         }
         run.summary = summarize(request, snapshot, discovery, run.steps);

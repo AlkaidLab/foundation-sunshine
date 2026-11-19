@@ -350,6 +350,8 @@ namespace reachability {
     const auto seen = boost::asio::ip::make_address(outside.caller, seen_error);
     const auto wan = boost::asio::ip::make_address(router.wan_ip, wan_error);
     if (seen_error || wan_error) return outside.caller != router.wan_ip;
+    // the service may have been reached over IPv6 while the router's address is IPv4 (or the other way round): they are not comparable, and that says nothing about a proxy
+    if (seen.is_v4() != wan.is_v4()) return false;
     return seen != wan;
   }
 

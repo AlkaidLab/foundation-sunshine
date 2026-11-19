@@ -35,7 +35,8 @@ namespace network_pin {
   struct adapter_t {
     std::string name;  ///< the friendly name (Windows) or the interface name (Linux)
     std::string description;  ///< Windows adapter description; empty on Linux
-    std::uint32_t index = 0;  ///< the interface index
+    std::uint32_t index = 0;  ///< the interface index (IPv4)
+    std::uint32_t index_v6 = 0;  ///< the interface index for IPv6 when the system numbers it separately (Windows `Ipv6IfIndex`); 0: the same as `index`
     kind_e kind = kind_e::other;
     bool up = false;
     bool has_gateway = false;  ///< a default route goes through it
@@ -65,6 +66,7 @@ namespace network_pin {
     bool has_device = false;  ///< /sys/class/net/<name>/device exists: backed by hardware
     bool wireless = false;  ///< /sys/class/net/<name>/wireless or phy80211 exists
     int arphrd_type = -1;  ///< /sys/class/net/<name>/type (1: Ethernet); -1 when unknown
+    bool tun_tap = false;  ///< /sys/class/net/<name>/tun_flags exists: a TUN/TAP device of the kernel, whatever its name
   };
 
   /// A Linux interface: a name with a tunnel or container prefix and no hardware behind it is a tunnel or virtual adapter; otherwise Wi-Fi when wireless, Ethernet by its ARP type (a bridge that carries the host address counts).
@@ -106,6 +108,7 @@ namespace network_pin {
 
   struct pin_t {
     std::uint32_t index = 0;
+    std::uint32_t index_v6 = 0;  ///< for IPv6 sockets; 0: `index`
     std::string name;
     int family = 0;  ///< 4, 6 or 0 (either); `pin_socket` takes the family of the socket as its own argument
   };
@@ -125,7 +128,7 @@ namespace network_pin {
   // ---- outcome of a pinned probe ----------------------------------------------------------------
 
   enum class state_e {
-    pinned,  ///< left through the physical adapter and was answered
+    pinned,  ///< the probe left through the physical adapter (the system route was tried too when nothing answered); it does not say that anything was reached
     fallback,  ///< nothing answered through the physical adapter; the system route was used and answered
     off,  ///< the configuration turned it off
     unavailable,  ///< no physical adapter was found, the system refused to pin, or this system cannot pin

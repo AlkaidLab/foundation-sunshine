@@ -109,7 +109,9 @@ namespace network_external {
     struct entry_t {
       result_t result;
       std::int64_t expires_at = 0;
+      std::uint64_t stored_at = 0;  ///< the order in which answers were stored
     };
+    std::uint64_t stored_counter_ = 0;
     std::mutex mutex_;
     std::map<std::string, entry_t> entries_;
   };

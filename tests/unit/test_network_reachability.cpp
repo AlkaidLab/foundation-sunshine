@@ -1332,3 +1332,18 @@ TEST(NetworkReachabilityOutside, TheJsonCarriesTheAddressTheServiceSaw) {
   EXPECT_EQ(json["public"]["endpoints"].at(0)["outside"]["caller"], "198.51.100.7");
   EXPECT_EQ(json["public"]["endpoints"].at(0)["outside"]["reason"], "router_proxy");
 }
+
+TEST(NetworkReachabilityOutside, AnAddressOfAnotherFamilyThanTheRoutersSaysNothingAboutAProxy) {
+  router_status_t router;
+  router.protocol = "upnp-igd";
+  router.wan_ip = "203.0.113.9";
+  router.wan_ip_class = ip_class_e::public_address;
+  outside_t refused;
+  refused.asked = true;
+  refused.state = "unavailable";
+  refused.reason = "ip_mismatch";
+  refused.caller = "2001:db8::10";  // the service was reached over IPv6; the router's address is IPv4
+  EXPECT_FALSE(router_proxy_suspected(router, refused));
+  refused.caller = "198.51.100.7";
+  EXPECT_TRUE(router_proxy_suspected(router, refused));
+}
