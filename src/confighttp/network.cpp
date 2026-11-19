@@ -15,6 +15,7 @@
 #include "src/nat_discovery.h"
 #include "src/network_check.h"
 #include "src/network_external.h"
+#include "src/network_pin.h"
 #include "src/httpcommon.h"
 #include "src/telemetry/telemetry.h"
 #include "src/telemetry/transport.h"
@@ -61,9 +62,11 @@ namespace confighttp::network {
     options.default_http_port = net::map_port(nvhttp::PORT_HTTP);
     options.origin_web_ui_allowed = config::nvhttp.origin_web_ui_allowed.empty() ? "pc" : config::nvhttp.origin_web_ui_allowed;
     options.hairpin_port = net::map_port(nvhttp::PORT_HTTPS);
+    // The probes leave through the physical adapter unless `network_bypass_proxy` says otherwise (network_pin.h).
+    options.bypass = network_pin::enabled(config::nvhttp.network_bypass_proxy);
     // The outside check (network_external.h): only when it is switched on in the configuration (`network_external_check = enabled`).
     if (network_external::enabled(config::nvhttp.network_external_check)) {
-      options.outside = [ask_outside](const reachability::endpoint_result_t &endpoint) {
+      options.outside = [ask_outside, bypass = options.bypass](const reachability::endpoint_result_t &endpoint) {
         network_external::request_t request;
         auto install = telemetry::install_id();
         if (install.empty()) {
@@ -85,8 +88,15 @@ namespace confighttp::network {
         if (!answer) {
           // Not asked for by a person: nothing is sent, and what the host does not know it does not say.
           if (!ask_outside) return reachability::outside_t {};
-          answer = network_external::probe(network_external::endpoint_of(config::nvhttp.network_external_endpoint), request, [](const std::string &url, const std::string &body, std::string &out, long &retry_after) {
-            const auto posted = telemetry::post_once(url, "application/json", body, "foundation-sunshine-network-check", 8, 4);
+          answer = network_external::probe(network_external::endpoint_of(config::nvhttp.network_external_endpoint), request, [bypass](const std::string &url, const std::string &body, std::string &out, long &retry_after) {
+            // Pinned to the physical adapter; when nothing answers through it, once more on the system route (a service on this computer or the LAN is not pinned).
+            telemetry::post_result_t posted;
+            network_pin::attempt(bypass && network_pin::pinnable_url(url), [&](const network_pin::pin_t *pin) {
+              auto failed = std::make_shared<bool>(false);
+              posted = telemetry::post_once(url, "application/json", body, "foundation-sunshine-network-check", 8, 4,
+                pin ? network_pin::socket_hook(*pin, failed) : std::function<void(int, std::uintptr_t)> {});
+              return network_pin::attempt_t { posted.status != 0, *failed };
+            });
             out = posted.body;
             retry_after = posted.retry_after_s;
             return posted.status;
@@ -165,6 +175,7 @@ namespace confighttp::network {
         options.servers = list.servers;
         options.enabled = !list.disabled;
         options.region = list.configured ? "configured" : region == nat_discovery::region_e::china ? "china" : "global";
+        options.bypass = network_pin::enabled(config::nvhttp.network_bypass_proxy);
         // The STUN exchanges and the reachability probes are independent; run them side by side.
         auto discovery = std::async(std::launch::async, [options, refresh]() { return nat_discovery::discover(options, refresh); });
         const auto snapshot = reachability::probe(configured_probe(false), refresh);
@@ -186,6 +197,7 @@ namespace confighttp::network {
       const auto region = nat_discovery::region_of(config::sunshine.locale, nat_discovery::host_time_zone());
       const auto list = nat_discovery::parse_server_list(config::nvhttp.stun_servers, region);
       inputs.stun_enabled = !list.disabled;
+      inputs.bypass = network_pin::enabled(config::nvhttp.network_bypass_proxy);
       const auto saved = public_address::effective_endpoints(config::nvhttp.external_endpoints, config::nvhttp.external_ip);
       for (const auto &endpoint : saved.endpoints) inputs.saved_endpoints.push_back(public_address::format_endpoint(endpoint));
 
@@ -194,8 +206,9 @@ namespace confighttp::network {
         options.progress = progress;
         return reachability::probe(options, true);
       };
-      inputs.discover = [list, region](const network_check::request_t &) {
+      inputs.discover = [list, region, bypass = inputs.bypass](const network_check::request_t &) {
         nat_discovery::discover_options_t options;
+        options.bypass = bypass;
         options.servers = list.servers;
         options.enabled = !list.disabled;
         options.region = list.configured ? "configured" : region == nat_discovery::region_e::china ? "china" : "global";

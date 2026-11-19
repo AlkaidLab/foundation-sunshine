@@ -264,6 +264,7 @@ namespace reachability {
     std::uint16_t default_http_port = 0;  ///< HTTP port an endpoint without a port stands for.
     std::uint16_t hairpin_port = 0;
     std::uint32_t process_id = 0;  ///< Process whose listeners are inspected; 0 means this process.
+    bool bypass = false;  ///< the handshakes leave through the physical adapter, not a proxy tunnel (network_pin.h); the host sets it from `network_bypass_proxy`
     /// The outside check of one public endpoint (network_external.h); empty: not asked. Called from the probing thread for the endpoints that are public.
     std::function<outside_t(const endpoint_result_t &)> outside;
     /// Called when a stage of the probe starts and ends (listeners, firewall, interface, router, endpoints), from the probing thread; a step list that shows progress uses it.

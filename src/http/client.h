@@ -6,6 +6,7 @@
 #include "types.h"
 #include <boost/asio/io_context.hpp>
 #include <boost/system/system_error.hpp>
+#include <cstdint>
 #include <functional>
 #include <future>
 #include <memory>
@@ -21,6 +22,9 @@ namespace web {
     // Webhook delivery depends only on the final status and headers. It must
     // not wait for a streaming/oversized response body or replay a POST.
     bool headers_only = false;
+    // Called with the address family (4 or 6) and the native socket handle of every socket after it is opened and before it connects; the network check
+    // uses it to pin its requests to the physical adapter. Empty (the default): the socket connects as the system routes it.
+    std::function<void(int family, std::uintptr_t native_handle)> on_socket_open;
   };
   struct ClientResponse {
     std::string http_version, status_code;

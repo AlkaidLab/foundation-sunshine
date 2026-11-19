@@ -381,6 +381,24 @@ TEST_F(BeastHttp, ClientReusesItsConfigurationAndPreservesHttpBodyBytes) {
   EXPECT_EQ(client.request("POST", "/echo", "again")->content.string(), "again");
 }
 
+TEST_F(BeastHttp, ClientCallsTheSocketHookBeforeConnectingAndSurvivesAHookThatThrows) {
+  plain = std::make_unique<web::Server<web::HTTP>>();
+  plain->resource["^/echo$"]["POST"] = [](auto response, auto request) { response->write(request->content.string()); };
+  web::Client<web::HTTP> client("127.0.0.1:" + std::to_string(start(*plain)));
+  std::atomic_int opened { 0 };
+  int family = 0;
+  client.config.on_socket_open = [&](int family_of_socket, std::uintptr_t handle) {
+    ++opened;
+    family = family_of_socket;
+    EXPECT_NE(handle, std::uintptr_t { 0 });
+  };
+  EXPECT_EQ(client.request("POST", "/echo", "hello")->content.string(), "hello");
+  EXPECT_EQ(opened, 1);
+  EXPECT_EQ(family, 4);
+  client.config.on_socket_open = [](int, std::uintptr_t) { throw std::runtime_error("hook"); };
+  EXPECT_EQ(client.request("POST", "/echo", "again")->content.string(), "again");
+}
+
 TEST_F(BeastHttp, ClientVerifiesTlsHostnameAndUsesExplicitTrustAnchors) {
   encrypted = secure_server();
   encrypted->resource["^/echo$"]["POST"] = [](auto response, auto) { response->write("secure"); };
