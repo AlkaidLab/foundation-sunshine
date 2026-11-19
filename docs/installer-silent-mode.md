@@ -43,14 +43,21 @@ critical errors, pre-command-line failures and Windows elevation can still
 display UI. Always use `/NORESTART` in automation. Inno's separate
 `/SUPPRESSMSGBOXES` option remains available for engine-owned dialogs.
 
-## Install folder (`/DIR=`)
+## Install folder (`/DIR=`, `/ALLOWUNSAFEPARENT`)
 
-`Sunshine-setup.exe /VERYSILENT /DIR="D:\Sunshine"` installs into that folder. The shell checks it with the rules of the
-window (`docs/installer-webui.md`, "Install location") and gives it the protection of Program Files before the engine
-starts; a refused folder ends the run with exit code 110 and `dir_error` in `install-result.json`, and nothing is installed.
+`Sunshine-setup.exe /VERYSILENT /DIR="D:\Sunshine"` installs into that folder, exactly as given: the product folder name that the window adds to a
+picked folder is not added here. The shell checks it with the rules of the window (`docs/installer-webui.md`, "Install location") and gives it the protection
+of Program Files before the engine starts; a refused folder ends the run with exit code 110 and `dir_error` in `install-result.json`, and nothing is installed.
 Without `/DIR=` the engine keeps its behaviour: the folder of the installed copy, or `Program Files\Sunshine`. An installed
 copy cannot be moved with `/DIR=`: a folder other than the registered one is refused (uninstall first). Both spellings of the
 switch (`/DIR="D:\My Games\Sunshine"` and `"/DIR=D:\My Games\Sunshine"`) work, and the path may be Chinese or other non-ASCII text.
+
+The folders that work but sit where others can replace them from above (`dir_error` `parent`: a folder above the install folder that ordinary users can
+rename or replace, for example `D:\Games\Sunshine` made by a person; `user`: inside a user's folder, for example `C:\Users\me\Sunshine`) are refused too: a
+silent run has nobody to ask. Add `/ALLOWUNSAFEPARENT` to install into such a folder anyway; the install folder itself is protected like Program Files either
+way. The refusal says so (`"detail":"needs_allowunsafeparent"`). The switch changes nothing else: a folder with a problem (a network or removable
+drive, FAT32 or exFAT, the Windows folder, a synced folder, somebody's files in it, a bad path) stays refused with it.
+
 The engine run directly (`Sunshine-engine.exe`) also protects a folder outside Program Files, but does not check the
 rules above. Because the owner of a file can always change its permissions, an existing folder outside Program Files that
 is not the registered install and already holds something is taken over: the owner of everything in it becomes
