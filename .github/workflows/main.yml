@@ -1598,6 +1598,20 @@ jobs:
             artifacts/checksums.json
           if-no-files-found: error
 
+      # A pre-release is deleted, with its assets, once two newer ones exist (LizardByte/create-release-action keeps the latest two), and builds come
+      # several times a day: the Symbols-x64.zip of most builds is gone within hours, and a crash dump of such a build can only be read as module+offset.
+      # The same package therefore goes up once more on its own, named by the build: 4-5 MB, found by name without downloading the 100+ MB package
+      # above, and kept for the longest time an artifact can be kept. The symbol store of the feedback repository copies from here (scripts/symbol_store.py).
+      - name: Keep the symbols of this build
+        if: needs.changes.outputs.package == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: sunshine-symbols-${{ needs.setup_release.outputs.release_tag }}
+          path: artifacts/Sunshine.*.Symbols-x64.zip
+          retention-days: 90
+          compression-level: 0
+          if-no-files-found: error
+
       # Automatic pre-releases (a push to master with AUTO_PRERELEASE=true). A manual publish is the `publish` job below:
       # this action only creates a release for a push to master.
       - name: Create/Update GitHub Release

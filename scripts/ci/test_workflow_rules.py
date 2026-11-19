@@ -230,5 +230,17 @@ class SizeBudgetTest(unittest.TestCase):
         self.assertIn("exit $LASTEXITCODE", gate["run"])
 
 
+    def test_the_symbols_of_every_build_are_kept_as_an_artifact_of_their_own(self):
+        # a pre-release (and its Symbols-x64.zip) is deleted once two newer ones exist: the artifact outlives it by name
+        keep = step(self.build, "Keep the symbols of this build")
+        self.assertEqual(keep["if"], "needs.changes.outputs.package == 'true'")
+        self.assertEqual(keep["with"]["name"], "sunshine-symbols-${{ needs.setup_release.outputs.release_tag }}")
+        self.assertEqual(keep["with"]["path"], "artifacts/Sunshine.*.Symbols-x64.zip")
+        self.assertEqual(keep["with"]["retention-days"], 90)
+        self.assertEqual(keep["with"]["if-no-files-found"], "error")
+        names = [s.get("name") for s in self.build["steps"]]
+        self.assertGreater(names.index("Keep the symbols of this build"), names.index("Rename release assets"))
+
+
 if __name__ == "__main__":
     unittest.main()
