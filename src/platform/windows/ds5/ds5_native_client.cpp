@@ -55,6 +55,7 @@
 #include "src/ds5/button_map.h"
 #include "src/ds5/control_extension.h"
 #include "src/ds5/feature_reports.h"
+#include "src/ds5/mic_route.h"
 #include "src/ds5/output_fields.h"
 #include "src/ds5/report_delta.h"
 #include "src/ds5/rumble_policy.h"
@@ -482,6 +483,12 @@ namespace platf::ds5 {
       bool mute_button_down { false };
       std::optional<bool> published_mute;
       std::atomic<int> usb_capture_mute { -1 };
+      /* The client microphone on the capture endpoint (key 96).  mic_ring is written by the microphone receive thread and
+       * read by this pad's reply worker; the two flags are set by the control requests of the USB bus. */
+      ::ds5::mic_route::ring_t mic_ring;
+      std::atomic_bool mic_capturing { false };  ///< an application records: interface 2 has its alternate setting 1 selected
+      std::atomic_bool mic_muted { false };  ///< the feature unit of the microphone is muted
+      std::atomic<int> mic_served_peak { 0 };  ///< the loudest sample handed to the bus since the recording began (0..32767)
       std::atomic_bool mute_watch_stop { false };
       std::thread mute_watch;
       ::ds5::control_extension::output_t game_extension {};
@@ -810,6 +817,7 @@ namespace platf::ds5 {
         jack_bits = static_cast<std::uint8_t>((jack_bits & ~0x04u) | (muted ? 0x04u : 0u));
         report[54] = jack_bits;
         microphone.mute = muted ? 1u : 0u;
+        mic_muted.store(muted, std::memory_order_release);
         namespace ext = ::ds5::control_extension;
         game_extension.valid_mask |= ext::out_mic_mute | ext::out_mute_led;
         game_extension.mic_mute = muted ? 1u : 0u;
@@ -1320,12 +1328,97 @@ namespace platf::ds5 {
         return bridge.send_reply(ret_submit(sequence_number, kPipeError, {}));
       }
 
+      /** The capture interface was selected (an application records) or released: the ring starts from nothing either way. */
+      void
+      note_capture_interface(bool on) {
+        mic_capturing.store(on, std::memory_order_release);
+        const auto before = mic_ring.stats();
+        const auto peak = mic_served_peak.exchange(0, std::memory_order_acq_rel);
+        mic_ring.flush();
+        if (on) {
+          BOOST_LOG(info) << "Native DS5 microphone: an application records from pad "sv << global_index << ", route "sv
+                          << (::ds5::tuning::runtime::state().mic_route.load(std::memory_order_acquire) == 0u ? "controller (the client microphone)"sv : "silence"sv);
+          return;
+        }
+        BOOST_LOG(info) << "Native DS5 microphone: recording from pad "sv << global_index << " ended; loudest sample on the bus "sv << peak
+                        << (mic_muted.load(std::memory_order_acquire) ? ", the endpoint is muted"sv : ""sv) << "; client audio written "sv
+                        << before.frames_written << " frames, served "sv << before.frames_served << ", discarded while idle "sv
+                        << before.frames_idle_discarded << ", trimmed "sv << before.frames_trimmed << ", dropped "sv << before.frames_dropped
+                        << ", underruns "sv << before.underruns << " ("sv << before.underrun_frames << " silent frames), average fill "sv
+                        << static_cast<int>(before.fill_average) << " frames ("sv << static_cast<int>(before.fill_average / 48.0) << " ms)"sv;
+      }
+
+      /** Called with the client microphone block (mono, 48 kHz): the route decides whether this endpoint gets it. */
+      void
+      feed_microphone(const std::int16_t *samples, std::size_t frames) {
+        if (::ds5::tuning::runtime::state().mic_route.load(std::memory_order_acquire) != 0u) return;
+        mic_ring.write(samples, frames, mic_capturing.load(std::memory_order_acquire), std::chrono::steady_clock::now());
+      }
+
+      /** The reply of an isochronous IN URB of the capture endpoint, built when its slot has ended: the freshest microphone samples. */
+      std::vector<std::uint8_t>
+      capture_reply(std::uint32_t sequence_number, std::uint32_t endpoint, std::uint32_t direction, std::uint32_t length,
+        const std::vector<std::array<std::uint32_t, 2>> &packets, const std::array<std::uint8_t, 4> &start_frame, std::array<std::uint8_t, 8> setup) {
+        const bool route_controller = ::ds5::tuning::runtime::state().mic_route.load(std::memory_order_acquire) == 0u;
+        const bool recording = mic_capturing.load(std::memory_order_acquire);
+        const bool muted = mic_muted.load(std::memory_order_acquire);
+        const auto now = std::chrono::steady_clock::now();
+        std::vector<std::uint8_t> payload;
+        std::vector<std::uint8_t> descriptors(packets.size() * 16u, 0);
+        std::array<std::int16_t, 48> mono {};
+        std::array<std::uint8_t, 192> stereo {};
+        std::uint32_t actual = 0;
+        for (std::size_t index = 0; index < packets.size(); ++index) {
+          const auto available = std::min(packets[index][1], 192u);
+          const auto frames = std::min<std::size_t>(available / 4u, mono.size());
+          if (route_controller && recording) {
+            mic_ring.serve_packet(mono.data(), frames, now);
+            int peak = 0;
+            for (std::size_t sample = 0; sample < frames; ++sample) peak = std::max(peak, std::abs(static_cast<int>(mono[sample])));
+            if (peak > mic_served_peak.load(std::memory_order_relaxed)) mic_served_peak.store(peak, std::memory_order_relaxed);
+          }
+          else {
+            /* a route that is not the client microphone leaves nothing queued for when it comes back */
+            if (!route_controller) mic_ring.flush();
+            mono.fill(0);
+          }
+          ::ds5::mic_route::to_stereo(mono.data(), frames, muted, stereo.data());
+          payload.insert(payload.end(), stereo.begin(), stereo.begin() + static_cast<std::ptrdiff_t>(frames * 4u));
+          payload.insert(payload.end(), available - static_cast<std::uint32_t>(frames * 4u), 0);
+          put_be(descriptors.data() + index * 16u, packets[index][0]);
+          put_be(descriptors.data() + index * 16u + 4, packets[index][1]);
+          put_be(descriptors.data() + index * 16u + 8, available);
+          actual += available;
+        }
+        trace.urb(sequence_number, endpoint, direction, length, 0, actual, setup, payload);
+        auto reply = ret_submit(sequence_number, 0, payload, actual, static_cast<std::uint32_t>(packets.size()), descriptors);
+        std::copy(start_frame.begin(), start_frame.end(), reply.begin() + 28);  // start_frame echoes the request
+        return reply;
+      }
+
       bool
       iso_reply(std::uint32_t sequence_number, const std::vector<std::uint8_t> &wire, bool capture) {
         const auto direction = get_be(wire.data() + 12);
         const auto length = get_be(wire.data() + 24);
         const auto count = get_be(wire.data() + 32);
         const auto payload_offset = kUsbipHeader + (direction == 0 ? length : 0u);
+        if (capture) {
+          std::vector<std::array<std::uint32_t, 2>> packets;
+          for (std::uint32_t index = 0; index < count; ++index) {
+            const auto *descriptor = wire.data() + payload_offset + index * 16u;
+            packets.push_back({ get_be(descriptor), get_be(descriptor + 4) });
+          }
+          std::array<std::uint8_t, 4> start_frame {};
+          std::copy_n(wire.data() + 28, start_frame.size(), start_frame.begin());
+          std::array<std::uint8_t, 8> setup {};
+          std::copy_n(wire.data() + 40, setup.size(), setup.begin());
+          const auto endpoint = get_be(wire.data() + 16);
+          replies.schedule_iso_lazy(paced_reply_queue::lane::iso_in, sequence_number, count, std::chrono::milliseconds(1),
+            [this, sequence_number, endpoint, direction, length, packets = std::move(packets), start_frame, setup]() {
+              return capture_reply(sequence_number, endpoint, direction, length, packets, start_frame, setup);
+            });
+          return true;
+        }
         std::vector<std::uint8_t> payload;
         std::vector<std::uint8_t> descriptors(static_cast<std::size_t>(count) * 16u, 0);
         std::uint32_t actual = 0;
@@ -1333,19 +1426,16 @@ namespace platf::ds5 {
           const auto *descriptor = wire.data() + payload_offset + index * 16u;
           const auto offset = get_be(descriptor);
           const auto packet_length = get_be(descriptor + 4);
-          const auto available = std::min(packet_length, 192u);
           put_be(descriptors.data() + index * 16u, offset);
           put_be(descriptors.data() + index * 16u + 4, packet_length);
-          put_be(descriptors.data() + index * 16u + 8, capture ? available : packet_length);
-          if (capture) payload.insert(payload.end(), available, 0);
-          actual += capture ? available : packet_length;
+          put_be(descriptors.data() + index * 16u + 8, packet_length);
+          actual += packet_length;
         }
         trace.urb(sequence_number, get_be(wire.data() + 16), direction, length, 0, actual,
           std::span<const std::uint8_t>(wire.data() + 40, 8), payload);
         auto reply = ret_submit(sequence_number, 0, payload, actual, count, descriptors);
         std::copy_n(wire.data() + 28, 4, reply.data() + 28);  // start_frame echoes the request
-        replies.schedule_iso(capture ? paced_reply_queue::lane::iso_in : paced_reply_queue::lane::iso_out,
-          sequence_number, count, std::move(reply));
+        replies.schedule_iso(paced_reply_queue::lane::iso_out, sequence_number, count, std::move(reply));
         return true;
       }
 
@@ -1472,7 +1562,10 @@ namespace platf::ds5 {
             const auto input_value = data_length >= 2 ? static_cast<int32_t>(static_cast<int16_t>(get_le16(data))) :
                                                         (data_length == 1 ? data[0] : 0);
             if (alk_usbip_uac_feature_set(&unit, control, input_value) != ALK_USBIP_OK) return stall(sequence_number);
-            if (&unit == &microphone && control == 1) usb_capture_mute.store(input_value != 0 ? 1 : 0, std::memory_order_release);
+            if (&unit == &microphone && control == 1) {
+              usb_capture_mute.store(input_value != 0 ? 1 : 0, std::memory_order_release);
+              mic_muted.store(input_value != 0, std::memory_order_release);
+            }
             reply = {};
           }
         }
@@ -1483,6 +1576,8 @@ namespace platf::ds5 {
           reply = { 1 };
         }
         else if (request == 11 && !in) {
+          /* SET_INTERFACE.  Interface 2 is the microphone: alternate setting 1 means an application records. */
+          if ((index & 0xffu) == 2u) note_capture_interface(value != 0);
           reply = {};
         }
         else if (request == 10 && in) {
@@ -1533,6 +1628,12 @@ namespace platf::ds5 {
     }
 
     void
+    feed_microphone_all(const std::int16_t *samples, std::size_t frames) {
+      std::lock_guard lock(live_clients_mutex);
+      for (auto *client : live_clients) client->feed_microphone(samples, frames);
+    }
+
+    void
     push_saved_lightbar() {
       std::lock_guard lock(live_clients_mutex);
       BOOST_LOG(info) << "DualSense tuning saved: pushing to "sv << live_clients.size() << " native client(s), "sv
@@ -1548,6 +1649,7 @@ namespace platf::ds5 {
     }
     ::ds5::tuning::runtime::published_handler().store(&push_saved_lightbar, std::memory_order_release);
     ::ds5::rumble_test::handler().store(&test_rumble_all, std::memory_order_release);
+    ::ds5::mic_route::handler().store(&feed_microphone_all, std::memory_order_release);
   }
   native_client_t::~native_client_t() {
     std::lock_guard lock(live_clients_mutex);
@@ -1557,6 +1659,11 @@ namespace platf::ds5 {
   native_client_t::push_tuning_state() {
     std::shared_lock registry(_impl->registry);
     for (const auto &controller : _impl->controllers) controller->push_tuning_state();
+  }
+  void
+  native_client_t::feed_microphone(const std::int16_t *samples, std::size_t frames) {
+    std::shared_lock registry(_impl->registry);
+    for (const auto &controller : _impl->controllers) controller->feed_microphone(samples, frames);
   }
   unsigned
   native_client_t::test_rumble(std::uint8_t left, std::uint8_t right, bool restore) {

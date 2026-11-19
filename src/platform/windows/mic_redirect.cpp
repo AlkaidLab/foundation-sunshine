@@ -15,6 +15,7 @@
 #include <mutex>
 
 #include "mic_write.h"
+#include "src/ds5/mic_route.h"
 #include "src/config.h"
 #include "src/logging.h"
 #include "src/platform/windows/virtual_microphone.h"
@@ -246,6 +247,8 @@ namespace platf::audio {
       while (peak > known && !mic_input_peak.compare_exchange_weak(known, static_cast<std::uint32_t>(peak), std::memory_order_relaxed)) {}
       mic_input_last_ns.store(steady_now_ns(), std::memory_order_relaxed);
       mic_input_frames.fetch_add(frame_count, std::memory_order_relaxed);
+      /* The same block also goes to the capture endpoint of a virtual DualSense (ds5.audio.micRoute = controller). */
+      ::ds5::mic_route::feed(samples, frame_count);
     }
     if (usbip_session) return usbip_session->write_pcm(samples, frame_count);
     if (!mic_redirect_device || mic_redirect_device->is_cleaning_up.load()) {
