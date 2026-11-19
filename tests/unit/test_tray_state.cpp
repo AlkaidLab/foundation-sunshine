@@ -70,6 +70,17 @@ TEST_F(TrayStateTest, TouchKeyboardPreferenceFollowsOwningSessions) {
   EXPECT_TRUE(tray_state::to_json().at("touch_keyboard").at("enabled").get<bool>());
   second.reset();
   EXPECT_TRUE(tray_state::to_json().at("touch_keyboard").is_null());
+
+  first = touch_kb::acquire(0);
+  second = touch_kb::acquire(1);
+  ASSERT_TRUE(first);
+  ASSERT_TRUE(second);
+  const auto revision = tray_state::get().revision;
+  second.reset();
+  EXPECT_FALSE(tray_state::to_json().at("touch_keyboard").at("enabled").get<bool>());
+  EXPECT_EQ(tray_state::get().revision, revision);
+  first.reset();
+  EXPECT_TRUE(tray_state::to_json().at("touch_keyboard").is_null());
 }
 #endif
 

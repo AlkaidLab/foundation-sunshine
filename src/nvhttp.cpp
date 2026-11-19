@@ -168,7 +168,7 @@ namespace nvhttp {
   }
 
 #ifdef _WIN32
-  void
+  int
   prepare_touch_keyboard(rtsp_stream::launch_session_t &session) {
     int intent = session.touch_keyboard;
     if (intent < 0 && config::get_client_touch_keyboard_enabled(session.client_cert_uuid)) {
@@ -176,7 +176,7 @@ namespace nvhttp {
     }
     const bool touch_client = intent == 1 || (session.touch_keyboard < 0 && session.touch_family);
     session.env["SUNSHINE_CLIENT_TOUCH"] = touch_client ? "true" : "false";
-    session.touch_keyboard_lease = touch_kb::acquire(intent);
+    return intent;
   }
 #endif
 
@@ -713,7 +713,7 @@ namespace nvhttp {
     }
     launch_session->touch_family = request_is_touch_family(args, request->header);
 #ifdef _WIN32
-    prepare_touch_keyboard(*launch_session);
+    const auto touch_keyboard_intent = prepare_touch_keyboard(*launch_session);
 #endif
     hdr::resolve_session_target(*launch_session);
     if (launch_session->highly_suspected_unknown_client) {
@@ -755,6 +755,7 @@ namespace nvhttp {
     }
 
 #ifdef _WIN32
+    launch_session->touch_keyboard_lease = touch_kb::acquire(touch_keyboard_intent);
     if (display_device::resolve_display_intent(config::video, *launch_session).target ==
         display_device::display_intent_t::target_e::vdd) {
       launch_session->nvidia_vsync_lease = nvprefs_instance.acquire_vsync();
@@ -934,7 +935,7 @@ namespace nvhttp {
     }
     launch_session->touch_family = request_is_touch_family(args, request->header);
 #ifdef _WIN32
-    prepare_touch_keyboard(*launch_session);
+    const auto touch_keyboard_intent = prepare_touch_keyboard(*launch_session);
 #endif
     hdr::resolve_session_target(*launch_session);
     if (launch_session->highly_suspected_unknown_client) {
@@ -968,6 +969,7 @@ namespace nvhttp {
     }
 
 #ifdef _WIN32
+    launch_session->touch_keyboard_lease = touch_kb::acquire(touch_keyboard_intent);
     if (display_device::resolve_display_intent(config::video, *launch_session).target ==
         display_device::display_intent_t::target_e::vdd) {
       launch_session->nvidia_vsync_lease = nvprefs_instance.acquire_vsync();
