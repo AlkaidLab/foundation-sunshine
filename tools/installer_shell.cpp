@@ -747,6 +747,29 @@ wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     if (g_run.selftest_directory.empty()) return 1223;
     return worker_main();
   }
+  // CI smoke test of the install location rules with this machine's real answers (drive type, file system, folders, permissions): --selftest-dir <path> [--pick] --out <file>
+  // writes what the window would show for that path: typed as it is, or (--pick) as the folder picker's result with the product's folder name added. Nothing is created or changed.
+  if (has_argument(L"--selftest-dir")) {
+    const std::wstring raw = installer_dir::option_value(command_line, L"--selftest-dir");
+    const std::wstring out = installer_dir::option_value(command_line, L"--out");
+    if (out.empty()) return 1223;
+    std::wstring path = installer_dir::normalise(installer_dir::tidy(raw));
+    bool appended = false, redirected = false;
+    if (has_argument(L"--pick")) {
+      const installer_dir::pick chosen = installer_dir_win::resolve_pick(path);
+      path = chosen.path;
+      appended = chosen.appended;
+      redirected = chosen.redirected;
+    }
+    const installer_dir::verdict verdict = installer_dir_win::verdict_for(path);
+    const auto free = installer_dir_win::free_bytes_of(path);
+    const std::wstring safe = verdict.warning != installer_dir::error::none ? installer_dir::safe_alternative(verdict.path, installer_dir_win::default_dir()) : std::wstring();
+    const auto yes = [](bool x) { return x ? "true" : "false"; };
+    write_text_atomic(out, "{\"input\":" + json_text(utf8(raw)) + ",\"path\":" + json_text(utf8(path)) + ",\"appended\":" + yes(appended) + ",\"redirected\":" + yes(redirected) +
+                             ",\"error\":" + json_text(std::string(installer_dir::code(verdict.problem))) + ",\"warning\":" + json_text(std::string(installer_dir::code(verdict.warning))) +
+                             ",\"safe\":" + json_text(utf8(safe)) + ",\"free_bytes\":" + (free ? std::to_string(*free) : std::string("null")) + "}\n");
+    return 0;
+  }
   // CI smoke test of the Runtime step: --selftest-webview2 <directory> downloads Microsoft's bootstrapper from the fixed link
   // into that directory and checks its signature (no run, nothing installed), then checks that an unsigned file, this
   // exe, is refused. Exit 0, or 20 (download failed), 21 (the file is not signed by Microsoft), 22 (an unsigned file passed).
