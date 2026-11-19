@@ -24,10 +24,25 @@ cmake -B build -S . -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr \
   -DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
   -DCMAKE_CUDA_COMPILER_LAUNCHER=sccache -DBUILD_TESTS=ON
 ninja -C build sunshine
-cd build && ctest          # baseline: 31 suites, 30 pass; the single Encoder SetUpTestSuite
+cd build && ctest          # baseline: 82 suites, 81 pass; the single Encoder SetUpTestSuite
                            # failure inside test_sunshine is headless-only (needs cap_sys_admin)
-                           # (680 cases, 672 pass, 8 skip, 0 assertion failures)
+                           # (1174 cases, 1167 pass, 6 skip, 1 env-dependent failure: NvhttpApps
+                           #  needs /usr/share/sunshine/box.png)
 ```
+
+Two source prerequisites are not in this repo (upstream CI clones them into sibling dirs):
+
+- **web UI**: `cmake/targets/web_ui.cmake` defaults `FOUNDATION_UI_DIR` to
+  `${PROJECT_SOURCE_DIR}/../ds5-ui-m3e`, and the control-panel submodule pins
+  `"foundation-ui": "file:../ds5-ui-m3e"` — check out `AlkaidLab/foundation-ui` at
+  `scripts/ci/foundation-ui.sha`, `npm ci`, and point `-DFOUNDATION_UI_DIR=` at it.
+  Without it `ninja` fails on `'.../ds5-ui-m3e/package.json', needed by 'web-ui.stamp'`.
+- **`third-party/build-deps`** is a ~1.8 GB pack; a full fetch is reset by TLS every time.
+  Use a sparse partial clone: `git fetch --depth=1 --filter=blob:none origin dist`,
+  `remote.origin.partialclonefilter=blob:none`,
+  `core.sparseCheckout` keeping only `dist/Linux-x86_64/`, then `git checkout <sha>`.
+- `third-party/moonlight-common-c` is a single-branch clone (`+refs/heads/master`); the
+  gitlink usually points at the `mic` branch: `git fetch origin '+refs/heads/*:refs/remotes/origin/*'`.
 
 CUDA is the default (`SUNSHINE_ENABLE_CUDA` defaults to ON on Linux; a missing
 toolkit just skips the CUDA sources). Setting `CMAKE_CUDA_ARCHITECTURES` to the
@@ -128,6 +143,14 @@ User installs packages themselves (sudo needs a password).
   `X509_EXTENSION_create_by_NID` produces a cert OpenSSL refuses to parse
   (`ossl_x509v3_cache_extensions:invalid certificate`).
 - Only one sunshine instance at a time (ports 47984/47989/47990/48010).
+- `test_ds5_tuning.cpp` and `test_ds5_button_map.cpp` are excluded from the aggregate
+  `test_sunshine` on non-Windows builds (`tests/CMakeLists.txt`): the tuning suite needs
+  `DS5_TUNING_TEST_NATIVE_PATH`, which only its own `ds5_tuning_unit_tests` target defines,
+  and the button-map suite needs the vendored ds5 core that only the WIN32 link line adds.
+  Both run as their own ctest entries — do not "fix" them by defining the macro globally.
+- `src/ds5/tuning_runtime.h:native_path_compiled()` is false off Windows by design, so the
+  tuning page reports the native keys as UNAVAILABLE on Linux; only the analysis keys
+  (`src/haptics/authored_ir.cpp`) have a Linux consumer.
 
 ## Windows parity conventions (enforced — the user audits these)
 

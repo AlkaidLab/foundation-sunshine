@@ -1,8 +1,8 @@
 # Linux 移植遗留差距清单
 
 - **基线**：`linux-migration` 分支（包版本跟随二进制版本戳，如
-  `2026.1111.075157.<commit>-1`；2026-11-11 已并入上游 `origin/master` `6d41627e`，
-  同步链 `ed415026` → `7a0995e2` → `c211d711` → `0219abe2` → `6d41627e`）
+  `2026.1119.121500.<commit>-1`；2026-11-19 已并入上游 `origin/master` `d4508310`，
+  同步链 `ed415026` → `7a0995e2` → `c211d711` → `0219abe2` → `6d41627e` → `d4508310`）
 - **对照**：fork Windows 版（AlkaidLab master `3d76d35d`）的全部增强功能
 - **用途**：**结论清单**（2026-10-22 起）。可做的都已落地或已评估收束；每项含代码位置、证据与
   **重启判据**（什么条件变化才值得重新开启）
@@ -345,6 +345,12 @@ registry 里 `zwlr_foreign_toplevel_manager_v1` 与 `ext_foreign_toplevel_list_v
   - 上游侧车是 Windows 工具链：`scripts/build-ds5-sidecar.ps1` + 完整 .NET 运行时 ZIP +
     `tools/hidmaestro-core-patch/`（HIDMaestro 打补丁 + 注册表隔离）。Linux 侧要重写的是
     `/dev/hidraw` 直写 + 触觉报告编解码，且基础 rumble 已由 inputtino 覆盖。
+- **2026-11-19 复核**：上游 `e9c4d4b9 refactor(ds5)!` 已把 .NET sidecar 整条删掉
+  （`tools/sunshine-ds5-sidecar/` 全删，`src/platform/windows/input.cpp` 改为
+  `#include "ds5/ds5_native_client.h"` + `dsu_server.h`），换成 Windows 原生 USB/IP 客户端与共享
+  `src/ds5/*`。结论不变（本机仍无 DualSense 可验收），但"侧车是 Windows 工具链"这条证据过期了：
+  现在缺的是 **Windows USB/IP 设备端 + `hidraw` 采集**这一对平台件，Linux 侧对应物仍是
+  inputtino 的 `/dev/hidraw` 直写。
 - **重启判据**：有一台能被 Linux 直连（USB 或蓝牙）的 DualSense 挂在本机 —— 那时才谈得上
   "波形与 Windows 一致"的验收。
 
@@ -549,6 +555,15 @@ registry 里 `zwlr_foreign_toplevel_manager_v1` 与 `ext_foreign_toplevel_list_v
   `set_battery`，**没有** actuator PCM 或 haptics 状态接口。
 - **本分支与上游一致的部分**：`inputtino_gamepad.cpp:46` 确实会造 `PS5Joypad`
   （054C:0CE6），DS5 的触控板、运动、电池、扳机效果、LED 都在用——缺的只是"音频触觉"这一路。
+- **2026-11-19 上游同步后的重判**：`#1186`~`#1224` 那批触觉工作在上游 `d4508310` 里已经长成
+  共享层 `src/ds5/*`（`haptics_wire.h`、`rumble_shape.h`、`arrival_policy.h`、`button_map.h`、
+  `touchpad_mapper.h`、`tuning_profile.cpp`、`tuning_runtime.h`），并且
+  `src/haptics/authored_ir.cpp` 在 `cmake/sources/host.cmake` 里 → **Linux 已经有 authored-IR 的
+  分析侧**（`authored_ir_extended_unit_tests` 在 Linux 跑绿）。缺的仍然只有投递端，
+  而且上游把这条缺口写成了显式能力位：`src/ds5/tuning_runtime.h:171 native_path_compiled()` 在
+  非 Windows 返回 false，`key_implemented()` 因此只放行 analysis 键（band/gate/IR/rumble 时序），
+  其余 native 键在调参页显示 UNAVAILABLE。**这是上游设计好的降级，不是本分支的缺陷。**
+  本分支仍保持 `src/platform/linux/input/inputtino.cpp:131 gamepad_is_ds5()` 返回 false。
 - **重启判据**：inputtino（或我们自己写的 uhid 写端）能发出 DualSense actuator PCM（48 kHz
   stereo S16LE，240 帧内）时，把 `gamepad_is_ds5` 改成按 `joypad` 的 `variant` 判定、把
   `gamepad_has_ds5_audio_haptics` 改成按能力位判定，即可让共享层自然打开。
@@ -835,3 +850,63 @@ Windows 没有这两层：绝对触控天然覆盖整个虚拟桌面。于是本
 `third-party/moonlight-common-c` `a7895e84` 到位，`endpoint_refresh` 测试在 Linux 通过）、
 `#1206` 向客户端上报会话锁定状态、`#1205` HDR 校准隔离与锁屏重连恢复、`#1188` DPI 改向当前采集
 （Linux 侧目标是 kmsgrab/wlgrab 的 `display_t`，逻辑在共享层）、`#1207` 的 `huge` 设备尺寸。
+
+---
+
+## 九、2026-11-19 上游同步（`6d41627e..d4508310`，76 个提交）
+
+规模：**76 提交 / 1617 文件 / +231375 −43620**；三个子模块前进
+`sunshine-control-panel` `4104f9f2`→`6867f53f`、`build-deps` `8e569811`→`1b6a3546`、
+`moonlight-common-c` `a7895e84`→`61dcbc33`。合并提交 `94a370bb`，14 个冲突的逐条解法写在
+commit body 里（要点：`src/crypto.cpp` 整体取上游——上游 `260f07a6` 自己做了 OpenSSL 4 适配，
+我们那套 SAN 构造退场；`tests/unit/test_config_runtime.cpp` 取上游 257 行无桩版，我们 118 行
+Linux 桩不再需要；`src/confighttp/diagnostics.cpp` 只把上游的 `/api/usbip-root/*` 与 usbip helper
+关进 `#ifdef _WIN32`，`getVddStatus()` 与 `/api/vdd/status` 保持跨平台；`vdd_utils.cpp` 的 Windows
+半边补出三参 `wait_for_mode_publication()` 以匹配共享调用点）。
+
+### §9.1 新构建前置条件（Linux 从零构建会撞上，已写入 AGENTS.md）
+
+1. **web UI 需要一个 sibling 检出**：`cmake/targets/web_ui.cmake:33` 把 `FOUNDATION_UI_DIR` 默认指向
+   `${PROJECT_SOURCE_DIR}/../ds5-ui-m3e`，control-panel 子模块 `package.json:48` 写死
+   `"foundation-ui": "file:../ds5-ui-m3e"`；上游 CI（`.github/workflows/main.yml:264-275`）把
+   `AlkaidLab/foundation-ui` 按 `scripts/ci/foundation-ui.sha`（`b7a03fd3`）检出到
+   `$GITHUB_WORKSPACE/../ds5-ui-m3e` 再 `npm ci`。缺它时 `ninja` 直接报
+   `'…/ds5-ui-m3e/package.json', needed by 'web-ui.stamp', missing`。
+2. **`Boost::random` 也是 header-only 依赖**：上游 `pairing_pending_unit_tests` 链接它，Arch 的 Boost
+   CONFIG 包在未请求该组件时不导出 target → 我们把 `cmake/dependencies/Boost_Sunshine.cmake` 的兜底
+   扩成 `foreach(_boost_header_only format optional random)`（原先只有 format/optional）。
+3. **`build-deps` 只能是稀疏部分克隆**：该仓库 fs 上是 1.78GB 的 `pack`，完整 `fetch` 每次都被
+   重置（`curl 35 Recv failure` / `SSL_read … unexpected eof`）；可行路径是
+   `git fetch --depth=1 --filter=blob:none origin dist` + `promisor/partialclonefilter=blob:none`
+   + `core.sparseCheckout` 只留 `dist/Linux-x86_64/`，再 `git checkout 1b6a3546`。
+
+### §9.2 本分支在共享代码上必须补的三处（Linux-only，Windows 分支字节不变）
+
+| 位置 | 症状 | 处理 |
+| --- | --- | --- |
+| `tests/CMakeLists.txt`（非 WIN32 分支） | `test_ds5_button_map.cpp` 找不到 `alkaidlab/ds5_core/ds5_core.h` —— ds5 core 是仓库内 vendored，但 test_sunshine 只在 `if (WIN32)` 里链接它 | `REMOVE_ITEM`，该文件已有独立 target `ds5_button_map_unit_tests` |
+| 同上 | `Ds5TuningDescriptors.*`/`Ds5TuningStore.*` 16 例全红：`none of the submitted keys are implemented by the running path` | `REMOVE_ITEM test_ds5_tuning.cpp`；它依赖 `DS5_TUNING_TEST_NATIVE_PATH`，只有 `ds5_tuning_unit_tests`（`tests/CMakeLists.txt:359`）定义该宏，Linux 聚合套件里不可能绿 |
+| `tests/unit/{config_runtime_stubs,pairing_pending_platform_stubs}.cpp` | `ZAKO_DEVICE_ID`/`ZAKO_NAME`、`system_tray::update_tray_require_pin()` 链接期 undefined（上游把它们定义在 `#ifdef _WIN32` 里 / 没链接托盘源） | 各补一个 `#else` / `#ifndef _WIN32` 空实现 |
+
+### §9.3 缺口变化
+
+- **§5.6 DS5 触觉（重判，仍 ⏸）**：上游 `e9c4d4b9 refactor(ds5)!` 删掉整个 .NET sidecar
+  （`tools/sunshine-ds5-sidecar/` 全删），换成共享 `src/ds5/*` 协议/调参/触觉描述符 + Windows 原生
+  USB/IP 客户端。共享层在 Linux 编译，`src/haptics/authored_ir.cpp` 进 `cmake/sources/host.cmake`
+  → **Linux 现在有 authored-IR 分析侧**（`authored_ir_extended_unit_tests` 在 Linux 跑绿）；
+  投递端仍缺，且上游把这条缺口写成显式能力位：`src/ds5/tuning_runtime.h:171 native_path_compiled()`
+  非 Windows 返回 false ⇒ 只放行 analysis 键，native 键在调参页显示 UNAVAILABLE（设计好的降级）。
+  本分支继续让 `src/platform/linux/input/inputtino.cpp:131 gamepad_is_ds5()` 返回 false。
+- **§5.7 MAT 实况采集**：无变化（`src/spatial_transport/mat_live_session.h` 的 `prepare_live()`
+  非 Windows 仍 `return {}`）。
+- 其余上游新特性在 Linux 侧已自动落地：`#1303` clang/Windows CI、`8f282b54` 的 Boost.Asio/Beast
+  分离编译、`6225dcbd` 借纹理开关移除、`b0f7bd55` 无头次模下的 VDD 主屏、`4ead3433` 不带源 id 0
+  的枚举——都落在共享层或 Windows 分支。
+
+### §9.4 测试基线
+
+`ctest` **82 个套件 / 81 通过**（套件数从 31 涨到 82 全是上游逐个 `add_test` 带进来的）；
+`test_sunshine` **1174 用例 / 1167 通过 / 6 跳过 / 1 失败**，唯一失败是环境依赖的
+`NvhttpApps.StreamsLargeAssetOverTlsAndPreservesNotFoundAndBadArguments`（缺
+`/usr/share/sunshine/box.png`），外加 headless 的 `EncoderVariants/EncoderTest: SetUpTestSuite`
+（缺 `cap_sys_admin`）。

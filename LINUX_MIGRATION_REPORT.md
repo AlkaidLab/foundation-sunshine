@@ -1171,14 +1171,74 @@ Dolby MAT 实况采集 `prepare_live()` 在非 Windows 直接返回空——见 
 
 ---
 
+### 6.36 2026-11-19 上游同步（`6d41627e..d4508310`，76 个提交）
+
+规模 **76 提交 / 1617 文件 / +231375 −43620**，三个子模块前进（control-panel `6867f53f`、
+build-deps `1b6a3546`、moonlight-common-c `61dcbc33`），合并提交 `94a370bb`。
+
+**14 个冲突的解法**（细节在 commit body，这里只留会被人反复问到的几条）：
+
+| 文件 | 取法 | 理由 |
+| --- | --- | --- |
+| `src/crypto.cpp` | 整体取上游 | 上游 `260f07a6` 自己做了 OpenSSL 4 适配（`is_dns_host_name()` :554、`X509V3_EXT_conf_nid()` 造 SAN），§6.34 里我们手写的那套构造（`sk_GENERAL_NAME_new_null()` + `X509V3_EXT_i2d()`）退场 |
+| `tests/unit/test_config_runtime.cpp` | 取上游 257 行无桩版 | 上游 #1258 之后该套件直接链真实 host 库，我们 118 行 Linux 桩不再需要 |
+| `src/confighttp/diagnostics.cpp` | 并集 | 只把上游 `/api/usbip-root/{status,repair}` 与 usbip helper 关进 `#ifdef _WIN32`；`getVddStatus()` 与 `/api/vdd/status` 保持跨平台（6.33 的判据仍要能被 Linux 调用） |
+| `src/display_device/session.cpp` | 两处取 HEAD | `wait_for_mode_publication(vdd_device_id, requested_mode, client_identifier)` 三参版是我方 6.33 的会话模式判定依据，上游仍是 `config.device_id` 两参 |
+| `src/display_device/vdd_utils.cpp` | 补 Windows 半边定义 | `vdd_utils.h:302` 只声明三参（带默认值）、`session.cpp` 是共享代码 → Windows 半边的定义改成三参 `wait_for_mode_publication(device_id, requested_mode, std::string_view /*client_identifier*/)`，否则 `build_win` 链接期 undefined |
+| `src/remote_usb/remote_usb_host_controller.h`、`src/main.cpp`、`cmake/dependencies/Boost_Sunshine.cmake` | 并集 | `linux_vhci_ready_` + `sweep_mutex_`；`clipboard_host::start()` + 上游 telemetry/lifetime 钩子；我们的 format/optional 兜底 + 上游 clang libiconv 过滤 |
+
+**Linux 从零构建的三条新前置条件**（已写进 `AGENTS.md`，`LINUX_PORT_GAPS.md` §9.1 有完整证据）：
+
+1. web UI 需要一个 sibling 的 `../ds5-ui-m3e`（`AlkaidLab/foundation-ui` @ `scripts/ci/foundation-ui.sha`
+   `b7a03fd3`，`npm ci`），否则 `web-ui.stamp` 缺依赖。
+2. `Boost::random` 也是 header-only 依赖 → `cmake/dependencies/Boost_Sunshine.cmake` 的兜底从
+   format/optional 扩成 `foreach(_boost_header_only format optional random)`。
+3. `third-party/build-deps` 只能稀疏部分克隆（`--depth=1 --filter=blob:none` + `sparseCheckout`
+   只留 `dist/Linux-x86_64/`），完整 fetch 每次都被 TLS 重置。
+
+**三处 Linux-only 测试/链接修复**（Windows 分支字节不变，`tools/audit-windows-parity.py` 复查
+0 行落入 Windows 区域、29 个 Linux-only 源 0 unlisted/0 leak）：
+
+1. `tests/CMakeLists.txt` 非 WIN32 分支 `REMOVE_ITEM test_ds5_button_map.cpp`——ds5 core 是仓库内
+   vendored（`third-party/alkaidlab-ds5-core`），但 test_sunshine 只在 `if (WIN32)` 里链接
+   `alkaidlab_ds5_core`；该文件有独立 target。
+2. 同上 `REMOVE_ITEM test_ds5_tuning.cpp`——16 个 `Ds5Tuning*` 用例报
+   `none of the submitted keys are implemented by the running path`，根因是
+   `src/ds5/tuning_runtime.h:171 native_path_compiled()` 在 Linux 返回 false（上游设计），而
+   `DS5_TUNING_TEST_NATIVE_PATH` 只在 `ds5_tuning_unit_tests`（`tests/CMakeLists.txt:359`）里定义。
+3. `tests/unit/config_runtime_stubs.cpp` 的 `#else` 补 `VDD_NAME`/`ZAKO_NAME`/`ZAKO_DEVICE_ID` 与空的
+   `enum_available_devices_checked()`；`tests/unit/pairing_pending_platform_stubs.cpp` 的
+   `#ifndef _WIN32` 补 `system_tray::update_tray_require_pin(std::string)`（调用点在
+   `src/nvhttp/pairing_pending.cpp:208`，实现只在 `src/tray/system_tray.cpp:1695`）。
+
+**DS5 重判**：上游 `e9c4d4b9 refactor(ds5)!` 删掉 .NET sidecar，改为共享 `src/ds5/*` +
+Windows 原生 USB/IP 客户端；`src/haptics/authored_ir.cpp` 进 host 源 → Linux 有了 authored-IR
+分析侧，投递端仍缺（`gamepad_is_ds5()` 恒 false），`native_path_compiled()` 让 native 键在 Linux
+显示 UNAVAILABLE。详见 `LINUX_PORT_GAPS.md` §5.6 的 2026-11-19 复核。
+
+**验证**：构建 `Sunshine version: 2026.1119.115957.94a370bb.杂鱼`；`ctest` 82 套件 81 通过；
+`test_sunshine` 1174 用例 / 1167 通过 / 6 跳过 / 1 失败（`NvhttpApps.*` 缺
+`/usr/share/sunshine/box.png`）+ `EncoderVariants/EncoderTest: SetUpTestSuite`（缺 `cap_sys_admin`）。
+
 ## 九、测试基线
 
-2026-11-12（修完 6.35 的探测冷却与拓扑回滚之后），CUDA=ON 构建树：
+2026-11-19（并入上游 `d4508310` 之后），CUDA=ON 构建树：
+
+```
+ctest: 82 个套件，81 通过，1 失败（test_sunshine）
+test_sunshine: 1174 用例，1167 通过，6 跳过，1 失败
+```
+
+2026-11-12（修完 6.35 的探测冷却与拓扑回滚之后）当时是：
 
 ```
 ctest: 31 个套件，30 通过，1 失败（test_sunshine）
 test_sunshine: 680 用例，672 通过，8 跳过，0 失败
 ```
+
+套件数 31 → 82 全是上游 76 个提交里逐个 `add_test` 带进来的（`ds5_*`、`haptics_*`、
+`device_scale_*`、`authored_ir_*` 等）；用例 680 → 1174 同理，唯一净增来自本分支的是
+`test_vdd_compositor_verdict.cpp`（5 例，见 6.35）。
 
 套件数从 24 涨到 31 是上游新增（`authored_ir_extended_unit_tests`、`display_scale_steps_unit_tests`、
 `vdd_mode_list_unit_tests`、`current_capture_target_unit_tests`、`hdr_calibration_unit_tests`、
@@ -1197,7 +1257,8 @@ test_sunshine: 680 用例，672 通过，8 跳过，0 失败
 | 本次（第四轮 review 修复之后） | 客户域会话模式等 4 项修复 | 665 / 660 |
 | 第五轮 review 修复之后 | 设备归属、跨卡编号、PulseAudio 判空与两处打包缺陷 | 665 / 660 |
 | 并入上游 `6d41627e`（#1227）+ OpenSSL 4 适配 | 25 个上游提交 + `crypto.cpp` 的 SAN/API 适配 | 675 / 670 |
-| 修完 6.35 探测冷却/拓扑回滚（当前） | 三态探测、冷却旁路、15s 预算、失败回滚拓扑 | 680 / 672 |
+| 修完 6.35 探测冷却/拓扑回滚 | 三态探测、冷却旁路、15s 预算、失败回滚拓扑 | 680 / 672 |
+| 并入上游 `d4508310`（76 提交，当前） | 14 冲突 + 三处 Linux-only 测试/链接修复 | 1174 / 1167 |
 
 从 843 降到 650 是上游 `c211d711`（#1176 测试清理）删掉重复、空跑与外网用例
 所致——`tests/unit/test_audio.cpp`、`test_mouse.cpp`、`test_entry_handler.cpp`、
