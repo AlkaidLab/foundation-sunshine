@@ -146,6 +146,7 @@ namespace platf {
        * protect_until_ whatever the clock does in between, so the due time never waits for a
        * protection that is over. */
       const auto protected_due = std::max(grid_ + std::max(interval, guard_interval_), earliest);
+      if (!guarding()) return normal;
       return std::max(normal, std::min(protected_due, protect_until_));
     }
 
@@ -163,7 +164,7 @@ namespace platf {
       const bool edge = !edges_.empty();
       const bool heartbeat = !edge && !dirty_;
       /* A stream reply inside the protection follows the grid like the heartbeat does. */
-      const bool on_grid = heartbeat || (!edge && *due < protect_until_);
+      const bool on_grid = heartbeat || (!edge && guarding() && *due < protect_until_);
       taken_t taken { std::move(held_.front().item), edge };
       held_.pop_front();
       /* A reply on the grid that leaves a little late (timers are never exact) does not move the next
@@ -213,7 +214,7 @@ namespace platf {
     /**
      * A lower rate than the hard floor allows, asked for by the user (ds5.compat.inputReportRate): no reply, of any kind, follows the
      * previous one sooner than @p floor.  At the heartbeat (4 ms) or longer the lane answers like the fixed 4 ms pacing, button changes
-     * included, and needs no protection of a press: 32 replies then span at least 128 ms.  Zero removes it.
+     * included, and the protection of a press is idle (32 replies then span at least 128 ms), though still recorded.  Zero removes the floor.
      */
     void
     set_floor(duration floor) noexcept { extra_floor_ = floor; }
@@ -228,13 +229,20 @@ namespace platf {
     }
 
   private:
+    /**
+     * Whether a release's protection works: at the heartbeat (4 ms) or slower, every reply is already a heartbeat apart and 32 replies span at
+     * least 128 ms, so a press needs none.  The protection of a release is still recorded then, so a faster rate chosen right after it finds
+     * the rest of it.
+     */
+    bool
+    guarding() const noexcept { return floor() < settings_.heartbeat; }
+
     /** The hard floor between two replies: the settled one, or the user's lower rate when that is slower. */
     duration
     floor() const noexcept { return std::max(settings_.min_interval, extra_floor_); }
 
     void
     start_guard(time_point now) {
-      if (floor() >= settings_.heartbeat) return;  // every reply is a heartbeat apart: the press needs no protection
       const bool burst = last_release_ != time_point {} && now - last_release_ < settings_.burst_gap;
       last_release_ = now;
       guard_interval_ = burst ? settings_.burst_interval : settings_.protect_interval;

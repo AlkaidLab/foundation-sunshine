@@ -78,7 +78,13 @@ const onValue = (id, value) => {
   if (id === 81 && value === 'fixed' && !Number(edited[82]) && !Number(edited[83]) && !Number(edited[84])) setColor(FIRST_FIXED_COLOR)
   setValue(id, value)
 }
-const resetKey = (id) => { const key = descriptor(id); if (key?.implemented) setValue(id, key.default) }
+// the reset of the rate key from 250 Hz goes above 250 Hz too: it asks like a choice does
+const resetKey = (id) => {
+  const key = descriptor(id)
+  if (!key?.implemented) return
+  if (inputRateNeedsConfirm(key.key, edited[id], key.default)) { rateAsk.value = { id, value: key.default }; return }
+  setValue(id, key.default)
+}
 
 const detectPreset = () => {
   for (const [name, values] of Object.entries(presetValues)) {
@@ -134,11 +140,15 @@ export function useDualsenseTuning(t = (key) => key, locale = 'en') {
     saveMessage.value = t('ds5.presets.applied', { name: t(`ds5.presets.${name}`) })
   }
   const restoreDefaults = () => {
+    let rateKey = null
     for (const key of snapshot.value?.keys || []) {
       if (!key.implemented || String(edited[key.id]) === String(key.default)) continue
+      // the rate key from 250 Hz back to its default asks first; the others are restored at once
+      if (inputRateNeedsConfirm(key.key, edited[key.id], key.default)) { rateKey = key; continue }
       edited[key.id] = key.default
       dirty[key.id] = true
     }
+    if (rateKey) rateAsk.value = { id: rateKey.id, value: rateKey.default }
     detectPreset()
     saveMessage.value = t('ds5.defaults_restored')
   }

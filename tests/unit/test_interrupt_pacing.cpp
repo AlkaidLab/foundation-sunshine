@@ -721,3 +721,15 @@ TEST(InterruptLane, ANoFloorLeavesTheLaneAsItWas) {
   lane.new_data(report_change::stream);
   EXPECT_EQ(lane.next_due(1), t0 + 1ms);
 }
+
+TEST(InterruptLane, AFasterRateChosenRightAfterAReleaseFindsTheRestOfItsProtection) {
+  lane_t lane;
+  lane.set_floor(4ms);
+  lane.hold(1, 1);
+  lane.new_data(report_change::release);
+  ASSERT_TRUE(lane.take_if_due(t0, 1)->edge);
+  lane.set_floor(0ms);  // the rate setting moved to automatic inside the protection window
+  lane.hold(2, 2);
+  lane.new_data(report_change::stream);
+  EXPECT_EQ(lane.next_due(1), t0 + 4500us) << "the protection of the release still runs: not 1 ms";
+}

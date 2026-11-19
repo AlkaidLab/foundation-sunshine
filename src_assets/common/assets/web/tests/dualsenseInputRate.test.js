@@ -20,3 +20,9 @@ test('the rate dialog takes its text and its countdown from foundation-ui and un
   assert.match(dialog, /ready && emit\('confirm'\)/, 'a click before the countdown ends does nothing')
   assert.doesNotMatch(dialog, /\$t\(/, 'no copy of its own: the text is the shared one')
 })
+
+test('resetting the rate key from 250 Hz, one key or all defaults, asks like a choice does', async () => {
+  const store = await read('../composables/dualsenseShared.js')
+  assert.match(store, /const resetKey = \(id\) => \{[\s\S]*?inputRateNeedsConfirm\(key\.key, edited\[id\], key\.default\)\) \{ rateAsk\.value = \{ id, value: key\.default \}; return \}/)
+  assert.match(store, /const restoreDefaults = \(\) => \{[\s\S]*?inputRateNeedsConfirm\(key\.key, edited\[key\.id\], key\.default\)\) \{ rateKey = key; continue \}[\s\S]*?if \(rateKey\) rateAsk\.value = \{ id: rateKey\.id, value: rateKey\.default \}/)
+})
