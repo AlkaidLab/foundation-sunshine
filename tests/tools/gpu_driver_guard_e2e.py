@@ -51,9 +51,15 @@ def run(mode, stand_in=True, phase=None):
     except subprocess.TimeoutExpired as e:
         return None, '', time.time() - t0
 
+SENTINEL = '.gpu_driver_guard_e2e'
+
 def fresh():
+    # only a directory this script made (or an empty one) is cleared: a wrong --config-dir must not take a real configuration with it
+    if os.path.isdir(a.config_dir) and os.listdir(a.config_dir) and not os.path.exists(os.path.join(a.config_dir, SENTINEL)):
+        sys.exit(f'refusing to clear {a.config_dir}: it is not empty and was not made by this script')
     shutil.rmtree(a.config_dir, ignore_errors=True)
     os.makedirs(a.config_dir, exist_ok=True)
+    open(os.path.join(a.config_dir, SENTINEL), 'w').close()
 
 def mark():
     try:

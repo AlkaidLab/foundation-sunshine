@@ -234,6 +234,7 @@ namespace crash::gpu_driver {
   struct facts_t {
     std::atomic<int> phase { 0 };
     char driver[4][version_cap] = {};  ///< indexed by vendor_e; the version the host read from the system at start
+    std::atomic<bool> driver_ready[4] = {};  ///< the bytes of the version are complete (released after they are written; the handler reads them only then)
   };
   inline facts_t g_facts;
 
@@ -252,19 +253,25 @@ namespace crash::gpu_driver {
   inline void
   set_driver_version(vendor_e vendor, std::string_view version) noexcept {
     if (vendor == vendor_e::none) return;
-    auto &slot = g_facts.driver[static_cast<int>(vendor)];
+    const auto index = static_cast<int>(vendor);
+    char text[version_cap] = {};
     std::size_t n = 0;
     for (const char c : version) {
       if (n + 1 >= version_cap) break;
       const bool ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '.' || c == '-' || c == '_' || c == '+';
-      if (ok) slot[n++] = c;
+      if (ok) text[n++] = c;
     }
-    slot[n] = 0;
+    // the host sets each version once, from one thread (a later call only replaces it in tests): the handler never sees a half-written one
+    g_facts.driver_ready[index].store(false, std::memory_order_release);
+    for (std::size_t i = 0; i < version_cap; ++i) g_facts.driver[index][i] = text[i];
+    g_facts.driver_ready[index].store(true, std::memory_order_release);
   }
 
   inline const char *
   driver_version_of(vendor_e vendor) noexcept {
-    return vendor == vendor_e::none ? "" : g_facts.driver[static_cast<int>(vendor)];
+    if (vendor == vendor_e::none) return "";
+    const auto index = static_cast<int>(vendor);
+    return g_facts.driver_ready[index].load(std::memory_order_acquire) ? g_facts.driver[index] : "";
   }
 
   // --- the mark ----------------------------------------------------------------------------------------------------------------------------------

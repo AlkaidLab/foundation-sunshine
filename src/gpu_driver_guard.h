@@ -264,6 +264,8 @@ namespace gpu_guard {
       const bool was = state_.safe;
       if (was) {
         leave_safe(std::max(0, policy_.loop_threshold - 1));
+        // the try is watched from now on: a run that was already stable must not count as the success of this one
+        state_.run = run_t { clock_(), false, false, false };
         save();
       }
       return was;

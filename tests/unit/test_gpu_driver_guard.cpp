@@ -299,6 +299,26 @@ TEST(GpuGuard, ManualRetryLeavesSafeModeAndOneMoreFailureBringsItBack) {
   EXPECT_TRUE(next.begin());
 }
 
+TEST(GpuGuard, ManualRetryAfterALongRunWatchesTheTryFromItsStart) {
+  const auto dir = scratch("retry-late");
+  clock_t_ clock;
+  for (int i = 0; i < 3; ++i) start_and_die(dir, clock, 2);
+  {
+    gpu_guard::guard_t guard { dir, {}, clock.fn() };
+    ASSERT_TRUE(guard.begin());
+    for (int s = 0; s < 12; ++s) {  // the run is already stable when the person asks for the try
+      clock.now += 1;
+      guard.tick();
+    }
+    ASSERT_TRUE(guard.snapshot().run.stable);
+    EXPECT_TRUE(guard.request_retry());
+    EXPECT_FALSE(guard.snapshot().run.stable);
+    clock.now += 2;  // the try fails at once
+  }
+  gpu_guard::guard_t next { dir, {}, clock.fn() };
+  EXPECT_TRUE(next.begin());  // back in the safe mode
+}
+
 TEST(GpuGuard, ManualRetryThatWorksResetsTheCount) {
   const auto dir = scratch("retry-ok");
   clock_t_ clock;

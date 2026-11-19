@@ -230,10 +230,18 @@ probe_encoders_with_watchdog() {
     }
   });
 
-  const bool probe_failed = video::probe_encoders();
+  bool probe_failed = true;
+  std::exception_ptr probe_error;
+  try {
+    probe_failed = video::probe_encoders();
+  }
+  catch (...) {
+    probe_error = std::current_exception();
+  }
 
   probe_finished.set_value();
   watchdog.join();
+  if (probe_error) std::rethrow_exception(probe_error);
 
   const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
     std::chrono::steady_clock::now() - probe_started_at);
@@ -496,8 +504,9 @@ main(int argc, char *argv[]) {
 
   // Crash-loop protection (src/gpu_driver_guard.h): how the last runs ended decides whether this start is in the safe mode. It comes before the test switch below so
   // a crash that is made on purpose counts like a real one. The versions of the graphics drivers go to the crash handlers from a thread of its own (the system inventory).
-  gpu_guard::guard_t startup_guard { platf::appdata() };
-  gpu_guard::notice_store_t notice_store { platf::appdata() };
+  // both live for the whole process: the thread below may be let go while it still reads them
+  auto &startup_guard = *new gpu_guard::guard_t { platf::appdata() };
+  auto &notice_store = *new gpu_guard::notice_store_t { platf::appdata() };
   const bool safe_mode = startup_guard.begin();
   gpu_guard::g_guard.store(&startup_guard);
   gpu_guard::g_notices.store(&notice_store);

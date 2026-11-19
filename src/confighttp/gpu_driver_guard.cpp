@@ -47,6 +47,8 @@ namespace confighttp::gpu_driver_guard {
     void
     start_retry_probe() {
       static std::atomic<bool> running { false };
+      // the check of the start is still going on: it ends with its own state, and a second one would only wait for the same lock; leave the state as it is
+      if (const auto now = ::gpu_guard::get_probe(); now == ::gpu_guard::probe_e::pending || now == ::gpu_guard::probe_e::running) return;
       if (running.exchange(true)) return;
       ::gpu_guard::set_probe(::gpu_guard::probe_e::running);
       crash::gpu_driver::set_phase(crash::gpu_driver::phase_e::probe);
@@ -87,10 +89,10 @@ namespace confighttp::gpu_driver_guard {
       if (!read_json_body(response, request, body)) return;
       const auto action = body.is_object() && body.contains("action") && body["action"].is_string() ? body["action"].get<std::string>() : std::string {};
       if (action == "dismiss") {
-        // the key names the driver the page showed; a mark that was replaced meanwhile (another driver failed) is not dismissed by it
+        // the key names the driver the page showed; a mark that was replaced meanwhile (another driver failed) is not dismissed by it, and a request without a key dismisses nothing
         const auto mark = ::gpu_guard::read_mark(platf::appdata());
         const auto key = body.contains("key") && body["key"].is_string() ? body["key"].get<std::string>() : std::string {};
-        if (mark && (key.empty() || key == mark->key())) notices().dismiss(mark->key());
+        if (mark && !key.empty() && key == mark->key()) notices().dismiss(mark->key());
       }
       else if (action == "retry") {
         if (auto *guard = ::gpu_guard::g_guard.load()) guard->request_retry();

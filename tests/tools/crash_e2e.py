@@ -131,6 +131,9 @@ conf = os.path.join(a.config_dir, 'sunshine.conf')
 old = open(conf, encoding='utf-8').read() if os.path.exists(conf) else None
 os.makedirs(a.config_dir, exist_ok=True)
 open(conf, 'w', encoding='utf-8').write('telemetry_errors = off\n')
+if a.driver_vendor:
+    try: os.remove(os.path.join(a.config_dir, 'crashes', 'gpu_driver_mark.json'))  # only this run may have written it
+    except OSError: pass
 rc, took = run('abort', 100000, endpoint, a.crash_timeout)
 check(not reports(), 'consent off: a crash leaves nothing on disk')
 if a.driver_vendor:
