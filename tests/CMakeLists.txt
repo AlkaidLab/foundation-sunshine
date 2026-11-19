@@ -426,6 +426,12 @@ target_link_libraries(ds5_mic_route_unit_tests PRIVATE gtest_main sunshine_proje
 set_target_properties(ds5_mic_route_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME ds5_mic_route_unit_tests COMMAND ds5_mic_route_unit_tests)
 
+add_executable(ds5_pad_test_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_ds5_pad_test.cpp)
+target_include_directories(ds5_pad_test_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(ds5_pad_test_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(ds5_pad_test_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME ds5_pad_test_unit_tests COMMAND ds5_pad_test_unit_tests)
+
 add_executable(interrupt_pacing_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_interrupt_pacing.cpp)
 target_include_directories(interrupt_pacing_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(interrupt_pacing_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)

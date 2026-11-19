@@ -140,6 +140,10 @@
     "method": "POST"
   },
   {
+    "pattern": "^/api/dualsense/pad-test$",
+    "method": "POST"
+  },
+  {
     "pattern": "^/api/configLocale$",
     "method": "GET"
   },
