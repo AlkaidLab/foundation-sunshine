@@ -1528,7 +1528,7 @@ jobs:
 
       - name: Check unattended install and uninstall
         if: needs.changes.outputs.package == 'true'
-        timeout-minutes: 12
+        timeout-minutes: 20
         uses: ./.github/actions/test-installer-silent
 
       # The WebView2 step of the worker against Microsoft's real link: the bootstrapper downloads, its signature is Microsoft

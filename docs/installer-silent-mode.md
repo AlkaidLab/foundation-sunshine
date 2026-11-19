@@ -58,6 +58,32 @@ Administrators and its permissions are reset to what the folder has. Never point
 personal files (`/DIR=D:\Projects` would make the projects unwritable for their owner); the shell refuses such a folder
 before the engine starts.
 
+## Updating an installation that is in use
+
+An update that fails halfway must leave the installation that was there. Inno Setup removes what it created in a run when
+it is rolled back, but it does not bring back a file it overwrote, and it does not undo an `[InstallDelete]` entry. So the
+engine works in this order:
+
+1. **Before anything is copied** (`PrepareToInstall`), `update-quiesce.ps1` stops the service of this folder, ends every
+   program that runs from the folder (by image path, repeatedly, until nothing has come back for a few seconds, because a
+   tray can be started again a moment after it was ended) and checks that no file of the folder is held by something else.
+   The installer's own copies in `updates\` and what started the script are left alone, except the installed Control
+   Panel when it is the updater that started the installer: it holds `sunshine-gui.exe`. Once they are ended, `sunshine.exe`,
+   `tools\sunshinesvc.exe` and `assets\gui\sunshine-gui.exe` are renamed to `<name>.parked`, so that nothing (a supervisor,
+   a shortcut) can start them while the files are copied. The new files take their place and the parked ones are deleted;
+   when the installation does not finish, the parked ones are put back.
+2. A folder that cannot be made ready ends the run in this stage: exit code **7** (Preparing to Install), the message names
+   what is in the way, nothing was changed, and the service is started again.
+3. **Just before the copy** (`ssInstall`) the same check runs once more; the Web UI folder `assets\web` is then moved to
+   `assets\web.previous` (a rename) instead of being deleted.
+4. When the installation reaches its post-install step with a complete new folder, the old one is deleted. Otherwise
+   (`DeinitializeSetup` runs after a rollback) the half-copied folder is removed and the old one is put back.
+5. A run that was killed between 3 and 4 leaves `assets\web.previous`; the next run puts it back first, and the host does
+   the same when it starts and finds the live folder missing.
+
+The host answers a missing page with a notice in Chinese and English that says the installation is incomplete and how to
+repair it, and the Control Panel offers to repair when the folder is still missing a minute after it started.
+
 ## Windows CI acceptance
 
 `.github/actions/test-installer-silent/action.yml` runs
@@ -68,6 +94,10 @@ from that installation. Optional hardware drivers are deliberately excluded.
 The engine test isolates the Inno code under test with an explicit destination;
 the outer download shell does not forward that destination/component selection.
 This check does not claim to exercise the outer shell or hardware drivers.
+The same script then runs the update cases (`Test-UpdateSafety`): a program of the folder is running, a file is held, a
+program of the folder is started again as fast as it is ended (it finds nothing to start), the copy fails after the Web UI folder was moved aside, and
+a run that was killed after it moved the folder aside. Each ends with the installed files, the Web UI folder included,
+exactly as they were before the update.
 
 Each child must finish within 120 seconds and return zero. The check requires
 the application, service wrapper, GUI and uninstaller to exist after install
