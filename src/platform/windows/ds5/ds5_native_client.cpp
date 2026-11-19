@@ -1344,7 +1344,8 @@ namespace platf::ds5 {
                         << (mic_muted.load(std::memory_order_acquire) ? ", the endpoint is muted"sv : ""sv) << "; client audio written "sv
                         << before.frames_written << " frames, served "sv << before.frames_served << ", discarded while idle "sv
                         << before.frames_idle_discarded << ", trimmed "sv << before.frames_trimmed << ", dropped "sv << before.frames_dropped
-                        << ", underruns "sv << before.underruns << " ("sv << before.underrun_frames << " silent frames)"sv;
+                        << ", underruns "sv << before.underruns << " ("sv << before.underrun_frames << " silent frames), average fill "sv
+                        << static_cast<int>(before.fill_average) << " frames ("sv << static_cast<int>(before.fill_average / 48.0) << " ms)"sv;
       }
 
       /** Called with the client microphone block (mono, 48 kHz): the route decides whether this endpoint gets it. */
