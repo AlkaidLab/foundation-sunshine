@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -51,6 +52,12 @@ namespace tray_state {
     bool highly_suspected_unknown_client = false;
   };
 
+  struct touch_keyboard_t {
+    bool enabled = false;
+    std::uint32_t session_id = 0;
+    bool operator==(const touch_keyboard_t &) const = default;
+  };
+
   /// The launch splash the GUI agent draws (src/launch_splash). `id` stays after the launch ends, with active false, so the agent closes the splash of that id.
   struct launch_t {
     std::string id;
@@ -80,6 +87,7 @@ namespace tray_state {
     operation_t operation;
     launch_t launch;
     std::vector<client_session_t> sessions;
+    std::optional<touch_keyboard_t> touch_keyboard;
     std::uint64_t revision = 0;
     std::int64_t updated_at_ms = 0;
   };
@@ -135,6 +143,10 @@ namespace tray_state {
 
   void
   clear_sessions();
+
+  /// The GUI applies this preference only in the matching desktop session.
+  void
+  set_touch_keyboard(std::optional<touch_keyboard_t> preference);
 
   /// Publishes the state of the launch splash. Nothing is published (no revision, no event) when it equals the one already there.
   void

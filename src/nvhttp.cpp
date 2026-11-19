@@ -80,6 +80,7 @@
 #include "rtsp.h"
 #include "startup_gate.h"
 #include "stream.h"
+#include "touch_keyboard_session.h"
 #include "tray/system_tray.h"
 #include "utility.h"
 #include "uuid.h"
@@ -166,6 +167,19 @@ namespace nvhttp {
     session.client_name = client_family::session_client_name(session.client_name, paired ? std::string_view { paired->name } : std::string_view {});
   }
 
+#ifdef _WIN32
+  void
+  prepare_touch_keyboard(rtsp_stream::launch_session_t &session) {
+    int intent = session.touch_keyboard;
+    if (intent < 0 && config::get_client_touch_keyboard_enabled(session.client_cert_uuid)) {
+      intent = 1;
+    }
+    const bool touch_client = intent == 1 || (session.touch_keyboard < 0 && session.touch_family);
+    session.env["SUNSHINE_CLIENT_TOUCH"] = touch_client ? "true" : "false";
+    session.touch_keyboard_lease = touch_kb::acquire(intent);
+  }
+#endif
+
   std::shared_ptr<rtsp_stream::launch_session_t>
   make_launch_session(bool host_audio, const args_t &args) {
     auto launch_session = std::make_shared<rtsp_stream::launch_session_t>();
@@ -228,7 +242,8 @@ namespace nvhttp {
     launch_session->use_vdd = util::from_view(get_arg(args, "useVdd", "0"));
     launch_session->custom_screen_mode = util::from_view(get_arg(args, "customScreenMode", "-1"));
     // Client-declared touch-keyboard intent (Sunshine protocol extension).
-    // -1 undeclared: fall back to the per-client server profile.
+    // -1 undeclared: fall back to the per-client server profile; 0 and 1
+    // request that the GUI suppress or enable auto-invoke for the session.
     launch_session->touch_keyboard = util::from_view(get_arg(args, "touchKeyboard", "-1"));
     // Client-declared controller emulation type (Sunshine protocol extension
     // carried on the /launch and /resume query string). Values outside the
@@ -697,6 +712,9 @@ namespace nvhttp {
       observe_client_family(client_cert_uuid, make_family_observation(args, request->header));
     }
     launch_session->touch_family = request_is_touch_family(args, request->header);
+#ifdef _WIN32
+    prepare_touch_keyboard(*launch_session);
+#endif
     hdr::resolve_session_target(*launch_session);
     if (launch_session->highly_suspected_unknown_client) {
       BOOST_LOG(warning) << "Launch request highly resembles a known unauthorized client fork"
@@ -915,6 +933,9 @@ namespace nvhttp {
       observe_client_family(client_cert_uuid, make_family_observation(args, request->header));
     }
     launch_session->touch_family = request_is_touch_family(args, request->header);
+#ifdef _WIN32
+    prepare_touch_keyboard(*launch_session);
+#endif
     hdr::resolve_session_target(*launch_session);
     if (launch_session->highly_suspected_unknown_client) {
       BOOST_LOG(warning) << "Resume request highly resembles a known unauthorized client fork"

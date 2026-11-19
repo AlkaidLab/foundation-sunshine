@@ -350,6 +350,19 @@ namespace tray_state {
   }
 
   void
+  set_touch_keyboard(std::optional<touch_keyboard_t> preference) {
+    {
+      std::lock_guard lock { state_mutex };
+      if (current_state.touch_keyboard == preference) {
+        return;
+      }
+      current_state.touch_keyboard = std::move(preference);
+      touch_locked();
+    }
+    notify_changed();
+  }
+
+  void
   set_launch(launch_t launch) {
     {
       std::lock_guard lock { state_mutex };
@@ -417,17 +430,30 @@ namespace tray_state {
       });
     }
 
+    nlohmann::json touch_keyboard = nullptr;
+    if (snapshot.touch_keyboard) {
+      touch_keyboard = {
+        { "enabled", snapshot.touch_keyboard->enabled },
+        { "session_id", snapshot.touch_keyboard->session_id },
+      };
+    }
+    auto capabilities = nlohmann::json::array({ "state-v1", "events-v1", "sessions-v1", "actions-v1", "operations-v1", "notification-ack", "pairing", "vdd", "shutdown", "launch-splash-v1", "launch-splash-shown-v1" });
+#ifdef _WIN32
+    capabilities.push_back("touch-keyboard-v1");
+#endif
+
     return {
       { "protocol_version", protocol_version },
       { "instance_id", instance_id() },
       { "owner", tray_owner() },
-      { "capabilities", nlohmann::json::array({ "state-v1", "events-v1", "sessions-v1", "actions-v1", "operations-v1", "notification-ack", "pairing", "vdd", "shutdown", "launch-splash-v1", "launch-splash-shown-v1" }) },
+      { "capabilities", std::move(capabilities) },
       { "status", current_presentation.status },
       { "icon", current_presentation.icon },
       { "tooltip", current_presentation.tooltip },
       { "app_name", snapshot.app_name },
       { "pairing_client_name", snapshot.pairing_client_name },
       { "sessions", std::move(sessions) },
+      { "touch_keyboard", std::move(touch_keyboard) },
       { "revision", snapshot.revision },
       { "updated_at_ms", snapshot.updated_at_ms },
       { "vdd",
