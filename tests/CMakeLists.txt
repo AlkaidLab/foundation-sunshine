@@ -1472,6 +1472,18 @@ else ()
     # Windows-host test sources must not reach non-Windows builds.
     list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/unit/platform/windows/")
 
+    # test_ds5_button_map.cpp drives the vendored DS5 core C library and runs in
+    # its own ds5_button_map_unit_tests target, whose link line carries that
+    # library's include directory. The aggregate suite only links the DS5 core
+    # libraries on Windows (see the WIN32 block above), so keep the single copy.
+    list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_ds5_button_map.cpp)
+    # test_ds5_tuning.cpp asserts the native-path key table, which needs
+    # DS5_TUNING_TEST_NATIVE_PATH; ds5_tuning_unit_tests defines it. The
+    # aggregate host build compiles tuning_profile.cpp without a native DS5
+    # path on Linux (tuning_runtime.h returns false there), so its copy would
+    # only ever see the analysis keys and fail every store case.
+    list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_ds5_tuning.cpp)
+
     # The Mutter codec test builds sd-bus messages by hand, so it needs the
     # session-bus headers. Without libsystemd the backend under test is the
     # inert half, and there is nothing to assert.

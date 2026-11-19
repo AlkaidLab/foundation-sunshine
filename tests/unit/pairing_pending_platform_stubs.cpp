@@ -64,6 +64,17 @@ namespace platf {
   }
 }  // namespace platf
 
+#ifndef _WIN32
+  // This suite links no core-tray backend, but the host definitions enable it
+  // (SUNSHINE_TRAY=1), so pairing_pending.cpp reports the pending pin to the
+  // tray indicator. The state machine is what the suite asserts here.
+namespace system_tray {
+  void
+  update_tray_require_pin(std::string) {
+  }
+}  // namespace system_tray
+#endif
+
 namespace nvprefs {
 
   nvprefs_interface::nvprefs_interface() = default;

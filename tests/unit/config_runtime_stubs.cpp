@@ -107,6 +107,20 @@ namespace display_device {
     return device_info_map_t {};
   }
 }  // namespace display_device
+#else
+// parsed_config.cpp resolves an explicit virtual-display intent through these
+// identifiers on every platform, and globals.cpp/device_topology.cpp are not
+// linked into this suite either.
+const std::string VDD_NAME = "ZakoHDR";
+const std::string ZAKO_NAME = "Zako HDR";
+const std::string ZAKO_DEVICE_ID = "23172";
+
+namespace display_device {
+  boost::optional<device_info_map_t>
+  enum_available_devices_checked() {
+    return device_info_map_t {};
+  }
+}  // namespace display_device
 #endif
 
 namespace logging {

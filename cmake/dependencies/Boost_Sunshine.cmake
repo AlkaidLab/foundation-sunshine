@@ -171,24 +171,20 @@ if(NOT Boost_FOUND)
     endforeach()
 endif()
 
-# Boost.Format became header-only and stopped shipping a CMake package, so the
-# system-package path (find_package(Boost CONFIG ...)) leaves Boost::format
-# undefined even though <boost/format.hpp> is installed. The Windows
-# FetchContent path still defines the target, so this only fills the gap.
-if(NOT TARGET Boost::format AND TARGET Boost::headers)
-    add_library(Boost::format INTERFACE IMPORTED)
-    target_link_libraries(Boost::format INTERFACE Boost::headers)
-endif()
-
-# Boost.Optional is header-only as well, and a CONFIG package only defines
-# Boost::optional when it was requested as a component. Upstream's
-# vdd_mode_list test links it directly, so provide the same header-only
-# fallback instead of making the dependency list carry a component nothing
-# else needs.
-if(NOT TARGET Boost::optional AND TARGET Boost::headers)
-    add_library(Boost::optional INTERFACE IMPORTED)
-    target_link_libraries(Boost::optional INTERFACE Boost::headers)
-endif()
+# Some Boost libraries became header-only and stopped shipping a CMake package,
+# so the system-package path (find_package(Boost CONFIG ...)) leaves their
+# targets undefined even though the headers are installed:
+#   Boost.Format    -> <boost/format.hpp>
+#   Boost.Optional  -> <boost/optional.hpp> (upstream's vdd_mode_list test links it)
+#   Boost.Random    -> <boost/random.hpp> (upstream's pairing_pending test links it)
+# The Windows FetchContent path still defines these targets, so this only fills
+# the gap and never shadows a real library.
+foreach(_boost_header_only format optional random)
+    if(NOT TARGET Boost::${_boost_header_only} AND TARGET Boost::headers)
+        add_library(Boost::${_boost_header_only} INTERFACE IMPORTED)
+        target_link_libraries(Boost::${_boost_header_only} INTERFACE Boost::headers)
+    endif()
+endforeach()
 
 # A stale Boost.Locale package can carry an explicit MinGW import-library path.
 # With -static, omit that path so Clang/LLD selects libiconv.a instead of
