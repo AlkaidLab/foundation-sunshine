@@ -17,6 +17,7 @@
 #include "hdr/client_display_capabilities.h"
 #include "image_enhancement/config.h"
 #include "launch_session_manager.h"
+#include "rtsp_limits.h"
 #include "src/platform/frame_contract.h"
 
 namespace stream::session {
