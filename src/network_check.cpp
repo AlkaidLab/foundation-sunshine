@@ -167,6 +167,7 @@ namespace network_check {
       const reachability::endpoint_result_t *not_reached = nullptr;
       const reachability::endpoint_result_t *another = nullptr;
       const reachability::endpoint_result_t *refused = nullptr;
+      const reachability::endpoint_result_t *proxied = nullptr;
       const reachability::endpoint_result_t *unavailable = nullptr;
       for (const auto &endpoint : endpoints) {
         if (!endpoint.outside.asked) continue;
@@ -175,6 +176,7 @@ namespace network_check {
         if (state == "reachable") reached = reached ? reached : &endpoint;
         else if (state == "closed" || state == "timeout") not_reached = not_reached ? not_reached : &endpoint;
         else if (state == "another_host") another = another ? another : &endpoint;
+        else if (state == "unavailable" && endpoint.outside.reason == "router_proxy") proxied = proxied ? proxied : &endpoint;
         else if (state == "unavailable" && (endpoint.outside.reason == "ip_mismatch" || endpoint.outside.reason == "dns_mismatch" || endpoint.outside.reason == "dns_failed")) refused = refused ? refused : &endpoint;
         else unavailable = unavailable ? unavailable : &endpoint;
       }
@@ -189,6 +191,13 @@ namespace network_check {
       if (reached) return subject(make_step(step::external_tcp, step_state_e::ok), reached);
       if (not_reached) return subject(make_step(step::external_tcp, step_state_e::fail, "not_reached_from_outside", "forward"), not_reached);
       if (another) return subject(make_step(step::external_tcp, step_state_e::fail, "another_host_answers", "address"), another);
+      // The service saw the exit of a proxy that runs on the router, not the router's own address: nothing here can bypass it, and it says nothing about whether the internet reaches this host.
+      if (proxied) {
+        auto step = subject(make_step(step::external_tcp, step_state_e::warn, "router_proxy"), proxied);
+        step.detail["seen_by_service"] = proxied->outside.caller;
+        step.detail["router_wan"] = snapshot.public_reachability.router.wan_ip;
+        return step;
+      }
       if (refused) return subject(make_step(step::external_tcp, step_state_e::warn, "address_not_this_computer", "address"), refused);
       if (unavailable) return subject(make_step(step::external_tcp, step_state_e::skipped, "external_unavailable"), unavailable);
       return make_step(step::external_tcp, step_state_e::skipped, asked ? "external_unavailable" : "external_off");
@@ -347,6 +356,8 @@ namespace network_check {
       add(tcp, "outside_probe");
     }
     if (tcp.state != protocol_state_e::reachable) {
+      // the outside check saw the exit of a proxy on the router: said first, and never a reason to call the host unreachable
+      if (outside && outside->reason == "router_proxy") add(tcp, "router_proxy");
       if (outside && outside->state == step_state_e::fail) {
         tcp.state = protocol_state_e::unreachable;
         add(tcp, "not_reached_from_outside");
@@ -419,6 +430,7 @@ namespace network_check {
       { "elapsed_ms", run.elapsed_ms },
       { "timed_out", run.timed_out },
       { "steps", steps },
+      { "bypass", { { "state", network_pin::to_string(run.bypass.state) }, { "adapter", run.bypass.adapter_name.empty() ? nlohmann::json(nullptr) : nlohmann::json(run.bypass.adapter_name) } } },
       { "summary", { { "tcp", protocol(run.summary.tcp) }, { "udp", protocol(run.summary.udp) }, { "cgnat", run.summary.cgnat },
                      { "ipv4", run.summary.ipv4.empty() ? nlohmann::json(nullptr) : nlohmann::json(run.summary.ipv4) },
                      { "ipv6", run.summary.ipv6.empty() ? nlohmann::json(nullptr) : nlohmann::json(run.summary.ipv6) },
@@ -548,6 +560,7 @@ namespace network_check {
       auto &run = job->run;
       run.elapsed_ms = since(job->began);
       run.finished_at = reachability::format_utc_iso(reachability::now_epoch_seconds());
+      run.bypass = network_pin::run_outcome();
       if (have_probe) {
         // The local probe has its result: it is used even when the address discovery did not finish in time; only the steps that depend on the discovery say "timeout".
         const auto snapshot = *probe_slot->value;
@@ -601,6 +614,12 @@ namespace network_check {
             entry.elapsed_ms = run.elapsed_ms - entry.started_ms;
           }
         }
+        // after the timeouts: the step that timed out keeps its state and its note
+        if (run.bypass.state == network_pin::state_e::fallback) {
+          for (auto &entry : run.steps) {
+            if (entry.id == step::addresses) entry.detail["bypass"] = "fallback";
+          }
+        }
         run.summary = summarize(request, snapshot, discovery, run.steps);
       }
       else {
@@ -632,6 +651,8 @@ namespace network_check {
     job->run.started_at = reachability::format_utc_iso(reachability::now_epoch_seconds());
     const std::vector<std::string> &endpoint_inputs = inputs.saved_endpoints;
     job->run.steps = planned_steps(request, inputs.stun_enabled, endpoint_inputs);
+    network_pin::begin_run(inputs.bypass);
+    job->run.bypass = network_pin::run_outcome();
     current_job = job;
     std::thread { [job, inputs, request]() { run_job(job, inputs, request); } }.detach();
     return copy_of(*job);
@@ -649,7 +670,10 @@ namespace network_check {
       std::lock_guard lock { job->mutex };
       if (!id.empty() && job->run.id != id) return nullptr;
       // A run that is going shows its elapsed time.
-      if (job->run.state == run_state_e::running) job->run.elapsed_ms = since(job->began);
+      if (job->run.state == run_state_e::running) {
+        job->run.elapsed_ms = since(job->began);
+        job->run.bypass = network_pin::run_outcome();
+      }
     }
     return copy_of(*job);
   }

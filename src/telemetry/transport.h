@@ -4,6 +4,8 @@
  */
 #pragma once
 
+#include <cstdint>
+#include <functional>
 #include <string>
 
 namespace telemetry {
@@ -20,8 +22,10 @@ namespace telemetry {
 
   /**
    * POST `body` to `url` ("http://host:port/path" or "https://host/path"). TLS is verified against the system trust store.
+   * `on_socket_open`: called with the family and the native handle of each socket before it connects (web::ClientConfig::on_socket_open); only the network check passes one, to pin its request to the physical adapter. Empty: the system route.
    * @return the HTTP status, 0 when nothing answered (no route, timeout, refused, TLS failure, a bad URL), and the Retry-After of the answer. Never throws.
    */
-  post_result_t post_once(const std::string &url, const std::string &content_type, const std::string &body, const std::string &user_agent, long timeout_s = 10, long connect_timeout_s = 5);
+  post_result_t post_once(const std::string &url, const std::string &content_type, const std::string &body, const std::string &user_agent, long timeout_s = 10, long connect_timeout_s = 5,
+    const std::function<void(int family, std::uintptr_t native_handle)> &on_socket_open = {});
 
 }  // namespace telemetry

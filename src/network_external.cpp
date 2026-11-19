@@ -63,10 +63,12 @@ namespace network_external {
     if (status == 403 && json.is_object() && json.contains("error") && json["error"].is_string() && json["error"].get<std::string>() == "target_not_caller") {
       result.availability = availability_e::refused;
       result.reason = json.contains("reason") && json["reason"].is_string() ? json["reason"].get<std::string>() : "ip_mismatch";
+      if (json.contains("caller") && json["caller"].is_string()) result.caller = json["caller"].get<std::string>().substr(0, 64);
       return result;
     }
     if (status == 503 || status == 404) {
-      result.reason = "disabled";  // the service is off or does not have the route
+      // the service is off or does not have the route; a 503 that says `budget` is a service that has used up its day
+      result.reason = status == 503 && json.is_object() && json.contains("reason") && json["reason"].is_string() && json["reason"].get<std::string>() == "budget" ? "budget" : "disabled";
       return result;
     }
     if (status == 400) {
@@ -103,6 +105,7 @@ namespace network_external {
       result.tcp.push_back(std::move(port));
     }
     if (result.tcp.empty()) return bad();
+    if (json.contains("caller") && json["caller"].is_string()) result.caller = json["caller"].get<std::string>().substr(0, 64);
     result.availability = availability_e::answered;
     return result;
   }
@@ -138,5 +141,70 @@ namespace network_external {
   bool
   enabled(std::string_view setting) {
     return setting == "enabled";
+  }
+
+  std::string
+  endpoint_of(std::string_view configured) {
+    std::string text { configured };
+    while (!text.empty() && (text.back() == '/' || text.back() == ' ')) text.pop_back();
+    while (!text.empty() && text.front() == ' ') text.erase(text.begin());
+    if (text.empty()) return std::string { DEFAULT_ENDPOINT };
+    return text;
+  }
+
+  long
+  ttl_seconds(const result_t &result) {
+    constexpr long KEPT = 600;
+    constexpr long SHORT = 60;
+    if (result.availability == availability_e::answered) {
+      // what is kept long is a connection that reached this host; any other conclusion (a port that was found closed or silent, another device that answered) may change in the next minute
+      return tcp_summary(result) == "reachable" ? KEPT : SHORT;
+    }
+    // a refusal (the service saw another address than the target, for example a proxy on the router) may be fixed in the next minute
+    if (result.availability == availability_e::refused) return SHORT;
+    // the service said when to come back: not before, and not for longer than the usual
+    if (result.retry_after_s > 0) return std::min(std::max(result.retry_after_s, SHORT), KEPT);
+    return KEPT;
+  }
+
+  std::string
+  cache_key(const request_t &request) {
+    std::string key = request.target;
+    for (const auto &port : request.ports) key += "|" + port.role + ":" + std::to_string(port.port);
+    return key;
+  }
+
+  std::optional<result_t>
+  cache_t::find(const std::string &key, std::int64_t now_s) {
+    std::lock_guard lock { mutex_ };
+    const auto found = entries_.find(key);
+    if (found == entries_.end()) return std::nullopt;
+    if (now_s >= found->second.expires_at) {
+      entries_.erase(found);
+      return std::nullopt;
+    }
+    return found->second.result;
+  }
+
+  void
+  cache_t::put(const std::string &key, const result_t &result, std::int64_t now_s) {
+    std::lock_guard lock { mutex_ };
+    // a handful of addresses at most: drop the expired ones first, then the oldest
+    for (auto entry = entries_.begin(); entry != entries_.end();) entry = entry->second.expires_at <= now_s ? entries_.erase(entry) : std::next(entry);
+    if (entries_.size() >= 16) {
+      // the oldest answer is the one that was stored earliest: it is the one that expires first
+      auto oldest = entries_.begin();
+      for (auto entry = entries_.begin(); entry != entries_.end(); ++entry) {
+        if (entry->second.stored_at < oldest->second.stored_at) oldest = entry;
+      }
+      entries_.erase(oldest);
+    }
+    entries_[key] = { result, now_s + ttl_seconds(result), ++stored_counter_ };
+  }
+
+  void
+  cache_t::clear() {
+    std::lock_guard lock { mutex_ };
+    entries_.clear();
   }
 }  // namespace network_external

@@ -87,6 +87,7 @@ set(SUNSHINE_HOST_SOURCES
     src/network_reachability_probe.cpp
     src/network_check.cpp src/network_check.h
     src/network_external.cpp src/network_external.h
+    src/network_pin.cpp src/network_pin.h
     src/nat_discovery.cpp src/nat_discovery.h
     src/nat_discovery_probe.cpp
     src/public_address.cpp src/public_address.h

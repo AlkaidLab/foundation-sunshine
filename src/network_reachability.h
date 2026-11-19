@@ -158,7 +158,8 @@ namespace reachability {
     bool asked = false;  ///< the check was on and was tried
     /// `reachable` (the HTTP port answered with this host's uniqueid), `another_host`, `closed`, `timeout`, `unknown` (something answered that is not a GameStream host) or `unavailable` (the service did not answer: nothing is known)
     std::string state;
-    std::string reason;  ///< why `unavailable`, or why the service refused the target (`ip_mismatch`, `dns_mismatch`, `dns_failed`)
+    std::string reason;  ///< why `unavailable`, or why the service refused the target (`ip_mismatch`, `dns_mismatch`, `dns_failed`, `router_proxy`)
+    std::string caller;  ///< the address the service saw the request come from (its own answer), empty when it did not say
   };
 
   /// What the host found out about one public endpoint of the configuration.
@@ -263,11 +264,19 @@ namespace reachability {
     std::uint16_t default_http_port = 0;  ///< HTTP port an endpoint without a port stands for.
     std::uint16_t hairpin_port = 0;
     std::uint32_t process_id = 0;  ///< Process whose listeners are inspected; 0 means this process.
+    bool bypass = false;  ///< the handshakes leave through the physical adapter, not a proxy tunnel (network_pin.h); the host sets it from `network_bypass_proxy`
     /// The outside check of one public endpoint (network_external.h); empty: not asked. Called from the probing thread for the endpoints that are public.
     std::function<outside_t(const endpoint_result_t &)> outside;
     /// Called when a stage of the probe starts and ends (listeners, firewall, interface, router, endpoints), from the probing thread; a step list that shows progress uses it.
     std::function<void(std::string_view stage, bool finished)> progress;
   };
+
+  /**
+   * @brief True when a proxy on the router (a transparent proxy or a gateway mode) is the likely reason that the outside check could not verify an address: the service refused the target
+   *        because the request came from another address than the target, the router says its outside address is a public one, and the service saw neither of them: it saw the exit of the proxy.
+   */
+  bool
+  router_proxy_suspected(const router_status_t &router, const outside_t &outside);
 
   /// True for the failures of an attempt that a public endpoint's own computer cannot judge (see endpoint_result_t::inconclusive).
   bool
