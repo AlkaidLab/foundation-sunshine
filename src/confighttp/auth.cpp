@@ -9,6 +9,7 @@
 #include "local_auth_token.h"
 #include "login_throttle.h"
 #include "session_store.h"
+#include "web_install.h"
 #include "src/config.h"
 #include "src/confighttp.h"
 #include "src/crypto.h"
@@ -702,7 +703,18 @@ load();
         { "X-Frame-Options", "DENY" },
         { "Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'" },
       };
-      response->write(web::StatusCode::ok, fallback, headers);
+      // This page is what an install without its Web UI folder shows: say so, in plain words, so
+      // it is not taken for a foreign site.
+      std::string fallback_page { fallback };
+      if (!web_install::is_complete(file_handler::path_from_utf8(WEB_DIR))) {
+        if (const auto style_end = fallback_page.find("</style>"); style_end != std::string::npos) {
+          fallback_page.insert(style_end, web_install::notice_style());
+        }
+        if (const auto main_start = fallback_page.find("<main>"); main_start != std::string::npos) {
+          fallback_page.insert(main_start + std::string_view { "<main>" }.size(), web_install::notice_html());
+        }
+      }
+      response->write(web::StatusCode::ok, fallback_page, headers);
     }
 
     void

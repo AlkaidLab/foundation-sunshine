@@ -6,6 +6,7 @@
 
 #include "assets.h"
 #include "asset_paths.h"
+#include "web_install.h"
 #include "src/confighttp.h"
 #include "src/confighttp/auth.h"
 #include "src/confighttp/common.h"
@@ -51,6 +52,16 @@ namespace confighttp::assets {
 
       print_req(request);
 
+      std::error_code page_error;
+      if (!fs::is_regular_file(file_handler::path_from_utf8(std::string(WEB_DIR) + pageName), page_error)) {
+        // An empty 200 left the Control Panel's embedded pages blank; name the problem instead.
+        BOOST_LOG(error) << "Web UI page is missing from the installation: "sv << pageName;
+        web::CaseInsensitiveMultimap missing_headers;
+        missing_headers.emplace("Content-Type", "text/html; charset=utf-8");
+        missing_headers.emplace("Cache-Control", "no-store");
+        response->write(web::StatusCode::service_unavailable, web_install::incomplete_page(), missing_headers);
+        return;
+      }
       std::string content = file_handler::read_file((std::string(WEB_DIR) + pageName).c_str());
       web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "text/html; charset=utf-8");
