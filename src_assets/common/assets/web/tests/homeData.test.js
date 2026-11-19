@@ -99,5 +99,5 @@ test('wechat sponsor follows the current language', () => {
   const wechat = SPONSORS.find((s) => s.id === 'wechat')
   assert.equal(sponsorUrl(wechat, 'zh-CN'), 'https://www.alkaidlab.cn/#sponsors')
   assert.equal(sponsorUrl(wechat, 'zh-TW'), 'https://www.alkaidlab.cn/#sponsors')
-  assert.equal(sponsorUrl(wechat, 'en'), 'https://www.alkaidlab.com/#sponsors')
+  assert.equal(sponsorUrl(wechat, 'en'), 'https://www.alkaidlab.com/en/#sponsors')
 })
