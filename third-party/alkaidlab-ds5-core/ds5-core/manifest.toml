@@ -1,0 +1,6 @@
+id = "interaction/ds5-core"
+version = "0.1.0"
+kind = "core-primitive"
+license = "Apache-2.0"
+entry = "alk_ds5_core"
+sources = ["ds5-linux-hid-playstation-20261031", "ds5-dualsense-report-20261031", "ds5-usb-audio-1-20261031"]

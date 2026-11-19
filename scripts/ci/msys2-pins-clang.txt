@@ -1,0 +1,11 @@
+# The exact MSYS2 UCRT64 packages of the Clang toolchain (TOOLCHAIN=clang): full package name, version, package file, sha256.
+# Same format and mechanism as msys2-pins.txt; scripts/ci/msys2-pacman.sh reads this file in addition when the job builds with
+# Clang, so GCC builds install nothing of it. The four packages are locked to one LLVM version of each other (clang and lld
+# depend on llvm-libs=<version>, clang on clang-libs=<version>): they are installed in one 'pacman -U' transaction with the
+# pinned set of msys2-pins.txt. Their other dependencies (zlib, zstd, libxml2, libffi) float like those of the GCC set.
+# Update with: python3 scripts/ci/msys2-pins.py bump   (it rewrites this file and msys2-pins.txt; versions and digests come from
+# the repository database). Resolved from https://repo.msys2.org/mingw/ucrt64/ucrt64.db on 2026-11-17.
+mingw-w64-ucrt-x86_64-clang 23.1.5-1 mingw-w64-ucrt-x86_64-clang-23.1.5-1-any.pkg.tar.zst 8cb3d0564b6abd43a73d2423f7c3d5c75c1e37ead7ef1a467bda8fd80fd29536
+mingw-w64-ucrt-x86_64-clang-libs 23.1.5-1 mingw-w64-ucrt-x86_64-clang-libs-23.1.5-1-any.pkg.tar.zst a55cd05e47ba0e2a5c1161cddb7129477c2fd2fd73cf97eb879a42f81f895b60
+mingw-w64-ucrt-x86_64-lld 23.1.5-1 mingw-w64-ucrt-x86_64-lld-23.1.5-1-any.pkg.tar.zst d3d355ef1116ede0bf081d359fa8f0c6a46206184703b17b66ca44eb6c3eaec0
+mingw-w64-ucrt-x86_64-llvm-libs 23.1.5-1 mingw-w64-ucrt-x86_64-llvm-libs-23.1.5-1-any.pkg.tar.zst 1739a965f2c3f8f306dfed2575fc30693d3bd0d17fe6e8d6ad99f71b3636e309

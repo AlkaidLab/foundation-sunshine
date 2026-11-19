@@ -18,6 +18,16 @@ function hasSavedLanguageThisSession() {
   return getSessionStorage()?.getItem(SETUP_WIZARD_LANGUAGE_SAVED_KEY) === 'true'
 }
 
+/** 语言已保存，页面即将重新加载：重新加载后向导（或新手引导）从语言之后继续。 */
+export function markLanguageSavedForReload() {
+  try {
+    getSessionStorage()?.setItem(SETUP_WIZARD_LANGUAGE_SAVED_KEY, 'true')
+  } catch (e) {
+    // If sessionStorage is unavailable, the saved locale still takes effect;
+    // the user may simply see the language step again in Chinese environments.
+  }
+}
+
 function clearSavedLanguageMarker() {
   getSessionStorage()?.removeItem(SETUP_WIZARD_LANGUAGE_SAVED_KEY)
 }
@@ -36,7 +46,7 @@ function isChineseBrowserLocale() {
   }
 }
 
-function shouldSkipLanguageStep(config) {
+export function shouldSkipLanguageStep(config) {
   if (hasSavedLanguageThisSession()) return true
   if (!config?.locale) return false
   return !(config.locale === 'en' && isChineseBrowserLocale())

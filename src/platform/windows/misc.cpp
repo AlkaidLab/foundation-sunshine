@@ -3,6 +3,7 @@
  * @brief Miscellaneous definitions for Windows.
  */
 #include <csignal>
+#include <cstdint>
 #include <filesystem>
 #include <iomanip>
 #include <limits>
@@ -43,12 +44,15 @@
 
 #include "misc.h"
 
+#include "src/config.h"
 #include "src/entry_handler.h"
 #include "src/globals.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
 #include "src/platform/run_command.h"
+#include "src/restart_reason.h"
 #include "src/utility.h"
+#include "tools/sunshinesvc_lifecycle.h"
 #include <iterator>
 
 #include "nvprefs/nvprefs_interface.h"
@@ -78,6 +82,20 @@ NtSetTimerResolution(ULONG DesiredResolution, BOOLEAN SetResolution, PULONG Curr
 namespace {
 
   std::atomic<bool> used_nt_set_timer_resolution = false;
+  std::atomic<std::int64_t> last_no_active_user_session_log_ms { 0 };
+  constexpr std::int64_t no_active_user_session_log_interval_ms = 30'000;
+
+  void
+  log_no_active_user_session() {
+    const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now().time_since_epoch())
+                          .count();
+    auto last_log_ms = last_no_active_user_session_log_ms.load(std::memory_order_relaxed);
+    if ((last_log_ms == 0 || now_ms - last_log_ms >= no_active_user_session_log_interval_ms) &&
+        last_no_active_user_session_log_ms.compare_exchange_strong(last_log_ms, now_ms)) {
+      BOOST_LOG(debug) << "There isn't an active user session, therefore it is not possible to execute commands under the user's profile.";
+    }
+  }
 
   bool
   nt_set_timer_resolution_max() {
@@ -230,17 +248,10 @@ namespace platf {
 
   void
   print_status(const std::string_view &prefix, HRESULT status) {
-    char err_string[1024];
-
-    DWORD bytes = FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
-      nullptr,
-      status,
-      MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
-      err_string,
-      sizeof(err_string),
-      nullptr);
-
-    BOOST_LOG(error) << prefix << ": "sv << std::string_view { err_string, bytes };
+    // FormatMessageW returns UTF-16 from the system message table. The ANSI
+    // form returned the text in the process code page, which is not UTF-8 on a
+    // Chinese Windows and made the log line unreadable in the viewer.
+    BOOST_LOG(error) << prefix << ": "sv << format_message_utf8(static_cast<DWORD>(status));
   }
 
   bool
@@ -270,27 +281,135 @@ namespace platf {
   }
 
   /**
+   * @brief Find the interactive session of the signed-in user.
+   * @return The session ID, or `0xFFFFFFFF` when no active user session exists.
+   * The physical console is preferred while it has a signed-in user; when it
+   * does not (for example while the user works over RDP), the first active RDP
+   * session and then any active session with a user is used, mirroring the
+   * session choice of the sunshinesvc launcher.
+   */
+  struct user_session_selection_t {
+    DWORD session_id;
+    bool query_failed;
+  };
+
+  user_session_selection_t
+  find_active_user_session_id() {
+    constexpr DWORD invalid_session_id = 0xFFFFFFFF;
+    const auto console_session_id = WTSGetActiveConsoleSessionId();
+
+    PWTS_SESSION_INFOW session_info = nullptr;
+    DWORD session_count = 0;
+    if (!WTSEnumerateSessionsW(WTS_CURRENT_SERVER_HANDLE, 0, 1, &session_info, &session_count)) {
+      return { invalid_session_id, true };
+    }
+
+    DWORD active_rdp_session_id = invalid_session_id;
+    DWORD active_user_session_id = invalid_session_id;
+    for (DWORD index = 0; index < session_count; ++index) {
+      const auto &session = session_info[index];
+      if (session.State != WTSActive) {
+        continue;
+      }
+
+      LPWSTR username = nullptr;
+      DWORD bytes_returned = 0;
+    const bool user_query_succeeded = WTSQuerySessionInformationW(
+        WTS_CURRENT_SERVER_HANDLE,
+        session.SessionId,
+        WTSUserName,
+        &username,
+      &bytes_returned);
+    const bool has_user = user_query_succeeded &&
+                          username != nullptr &&
+                          username[0] != L'\0';
+      if (username != nullptr) {
+        WTSFreeMemory(username);
+      }
+    if (!user_query_succeeded) {
+      WTSFreeMemory(session_info);
+      return { invalid_session_id, true };
+    }
+    if (!has_user) {
+        continue;
+      }
+
+      // If the physical console itself has an active user, keep preferring it.
+      if (session.SessionId == console_session_id) {
+        const auto selected_session_id = session.SessionId;
+        WTSFreeMemory(session_info);
+      return { selected_session_id, false };
+      }
+
+      LPWSTR protocol = nullptr;
+      bytes_returned = 0;
+      USHORT protocol_type = 0;
+      if (WTSQuerySessionInformationW(
+            WTS_CURRENT_SERVER_HANDLE,
+            session.SessionId,
+            WTSClientProtocolType,
+            &protocol,
+            &bytes_returned)) {
+        if (protocol != nullptr && bytes_returned >= sizeof(protocol_type)) {
+          protocol_type = *reinterpret_cast<USHORT *>(protocol);
+        }
+        if (protocol != nullptr) {
+          WTSFreeMemory(protocol);
+        }
+      }
+
+      if (protocol_type == 2 && active_rdp_session_id == invalid_session_id) {
+        active_rdp_session_id = session.SessionId;
+      }
+      if (active_user_session_id == invalid_session_id) {
+        active_user_session_id = session.SessionId;
+      }
+    }
+
+    WTSFreeMemory(session_info);
+    if (active_rdp_session_id != invalid_session_id) {
+    return { active_rdp_session_id, false };
+    }
+  return { active_user_session_id, false };
+  }
+
+  /**
    * @brief Obtain the current sessions user's primary token with elevated privileges.
    * @return The user's token. If user has admin capability it will be elevated, otherwise it will be a limited token. On error, `nullptr`.
    */
   HANDLE
   retrieve_users_token(bool elevated) {
-    DWORD consoleSessionId;
+    constexpr DWORD invalid_session_id = 0xFFFFFFFF;
     HANDLE userToken;
     TOKEN_ELEVATION_TYPE elevationType;
     DWORD dwSize;
 
-    // Get the session ID of the active console session
-    consoleSessionId = WTSGetActiveConsoleSessionId();
-    if (0xFFFFFFFF == consoleSessionId) {
-      // If there is no active console session, log a warning and return null
-      BOOST_LOG(warning) << "There isn't an active user session, therefore it is not possible to execute commands under the users profile.";
+    // Get the session ID of the active user's interactive session. The
+    // Console binding keeps the console-only behavior.
+    DWORD session_id = invalid_session_id;
+    if (config::sunshine.session_binding == config_session_binding::mode_e::console) {
+      session_id = WTSGetActiveConsoleSessionId();
+    }
+    else {
+      const auto selection = find_active_user_session_id();
+      if (selection.query_failed) {
+        return nullptr;
+      }
+      session_id = selection.session_id;
+      if (session_id == invalid_session_id) {
+        session_id = WTSGetActiveConsoleSessionId();
+      }
+    }
+    if (invalid_session_id == session_id) {
+      // No active user session is expected while Windows is at the sign-in
+      // screen. Keep the diagnostic useful without logging every retry.
+      log_no_active_user_session();
       return nullptr;
     }
 
-    // Get the user token for the active console session
-    if (!WTSQueryUserToken(consoleSessionId, &userToken)) {
-      BOOST_LOG(debug) << "QueryUserToken failed, this would prevent commands from launching under the users profile.";
+    // Get the user token for the active user session
+    if (!WTSQueryUserToken(session_id, &userToken)) {
+      BOOST_LOG(debug) << "QueryUserToken failed for session " << session_id << ", this would prevent commands from launching under the users profile.";
       return nullptr;
     }
 
@@ -459,7 +578,17 @@ namespace platf {
           return {};
       }
     }
-  }
+  }  // namespace
+
+  namespace {
+    // Registers the failure logging of the text encoding helpers (text_encoding.cpp).
+    [[maybe_unused]] const bool text_encoding_logging_installed = [] {
+      text_encoding_failure_hook = [](const char *what, DWORD winerr) {
+        BOOST_LOG(error) << what << ": "sv << winerr;
+      };
+      return true;
+    }();
+  }  // namespace
 
   std::string
   windows_version() {
@@ -516,23 +645,23 @@ namespace platf {
 
     size += 1 /* L'\0' */;
 
-    wchar_t env_block[size];
+    std::vector<wchar_t> env_block(size);
     int offset = 0;
     for (const auto &entry : env) {
       auto name = entry.get_name();
       auto value = entry.to_string();
 
       // Construct the NAME=VAL\0 string
-      append_string_to_environment_block(env_block, offset, from_utf8(name));
+      append_string_to_environment_block(env_block.data(), offset, from_utf8(name));
       env_block[offset++] = L'=';
-      append_string_to_environment_block(env_block, offset, from_utf8(value));
+      append_string_to_environment_block(env_block.data(), offset, from_utf8(value));
       env_block[offset++] = L'\0';
     }
 
     // Append a final null terminator
     env_block[offset++] = L'\0';
 
-    return std::wstring(env_block, offset);
+    return std::wstring(env_block.data(), offset);
   }
 
   LPPROC_THREAD_ATTRIBUTE_LIST
@@ -832,12 +961,14 @@ namespace platf {
             continue;
           }
 
-          // If not found in provided env, try the current process environment
-          // Use GetEnvironmentVariableA for Windows (case-insensitive)
-          char sys_val_buf[32768];
-          DWORD sys_len = GetEnvironmentVariableA(var_name.c_str(), sys_val_buf, sizeof(sys_val_buf));
-          if (sys_len > 0 && sys_len < sizeof(sys_val_buf)) {
-            result += sys_val_buf;
+          // If not found in provided env, try the current process environment.
+          // The command text is UTF-8, so the variable name and its value go
+          // through the wide API; the ANSI value was in the system code page.
+          const std::wstring wide_name = from_utf8(var_name);
+          std::wstring sys_val_buf(32768, L'\0');
+          DWORD sys_len = wide_name.empty() ? 0 : GetEnvironmentVariableW(wide_name.c_str(), sys_val_buf.data(), static_cast<DWORD>(sys_val_buf.size()));
+          if (sys_len > 0 && sys_len < sys_val_buf.size()) {
+            result += to_utf8(std::wstring(sys_val_buf.data(), sys_len));
             i = end + 1;
             continue;
           }
@@ -1266,18 +1397,21 @@ namespace platf {
     return create_boost_child_from_results(ret, cmd, ec, process_info);
   }
 
-  std::error_code
-  launch_gui_agent() {
+  HANDLE
+  launch_gui_agent_process(std::error_code &ec) {
+    ec.clear();
     std::wstring executable(32768, L'\0');
     const auto executable_length = GetModuleFileNameW(
       nullptr,
       executable.data(),
       static_cast<DWORD>(executable.size()));
     if (executable_length == 0) {
-      return { static_cast<int>(GetLastError()), std::system_category() };
+      ec = { static_cast<int>(GetLastError()), std::system_category() };
+      return nullptr;
     }
     if (executable_length >= executable.size()) {
-      return { ERROR_INSUFFICIENT_BUFFER, std::system_category() };
+      ec = { ERROR_INSUFFICIENT_BUFFER, std::system_category() };
+      return nullptr;
     }
     executable.resize(executable_length);
 
@@ -1286,19 +1420,41 @@ namespace platf {
     const auto gui_path = gui_dir / L"sunshine-gui.exe";
     const auto attributes = GetFileAttributesW(gui_path.c_str());
     if (attributes == INVALID_FILE_ATTRIBUTES) {
-      return { static_cast<int>(GetLastError()), std::system_category() };
+      ec = { static_cast<int>(GetLastError()), std::system_category() };
+      return nullptr;
     }
     if (attributes & FILE_ATTRIBUTE_DIRECTORY) {
-      return std::make_error_code(std::errc::no_such_file_or_directory);
+      ec = std::make_error_code(std::errc::no_such_file_or_directory);
+      return nullptr;
     }
 
     auto environment = boost::this_process::environment();
     auto working_dir = gui_dir;
-    std::error_code ec;
     const auto command = "\"" + to_utf8(gui_path.wstring()) + "\" --hidden";
     auto child = run_command(false, false, command, working_dir, environment, nullptr, ec, nullptr);
-    if (!ec) {
-      child.detach();
+    if (ec) {
+      return nullptr;
+    }
+    const auto process_id = static_cast<DWORD>(child.id());
+    HANDLE handle = nullptr;
+    if (process_id != 0) {
+      handle = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, process_id);
+    }
+    child.detach();
+    if (handle == nullptr) {
+      const auto error = GetLastError();
+      ec = { static_cast<int>(error == ERROR_SUCCESS ? ERROR_INVALID_HANDLE : error), std::system_category() };
+      return nullptr;
+    }
+    return handle;
+  }
+
+  std::error_code
+  launch_gui_agent() {
+    std::error_code ec;
+    const auto handle = launch_gui_agent_process(ec);
+    if (handle != nullptr) {
+      CloseHandle(handle);
     }
     return ec;
   }
@@ -1662,7 +1818,13 @@ namespace platf {
   }
 
   void
-  restart() {
+  restart(std::string_view reason) {
+    // Under the service the core exits with code 0 and the service starts it again: leave a note so the service knows the exit was asked for (it reports restarts that nobody asked for).
+    // The note names this process (id and start time), so only the exit of this very core takes it.
+    {
+      const std::string word { restart_reason::normalize(reason) };
+      sunshinesvc::lifecycle::note_restart_request(appdata() / "telemetry", sunshinesvc::lifecycle::unix_ms(), word.c_str(), GetCurrentProcessId(), sunshinesvc::lifecycle::process_start_unix_ms(GetCurrentProcess()));
+    }
     // If we're running standalone, we have to respawn ourselves via CreateProcess().
     // If we're running from the service, we should just exit and let it respawn us.
     if (GetConsoleWindow() != NULL) {
@@ -1943,7 +2105,9 @@ namespace platf {
 
     auto const max_bufs_per_msg = send_info.payload_buffers.size() + (send_info.headers ? 1 : 0);
 
-    WSABUF bufs[(send_info.headers ? send_info.block_count : 1) * max_bufs_per_msg];
+    // One buffer list per sending thread, reused by every batch: no allocation per send once it has grown.
+    static thread_local std::vector<WSABUF> bufs;
+    bufs.resize((send_info.headers ? send_info.block_count : 1) * max_bufs_per_msg);
     DWORD bufcount = 0;
     if (send_info.headers) {
       // Interleave buffers for headers and payloads
@@ -1970,7 +2134,7 @@ namespace platf {
       }
     }
 
-    msg.lpBuffers = bufs;
+    msg.lpBuffers = bufs.data();
     msg.dwBufferCount = bufcount;
     msg.dwFlags = 0;
 
@@ -2292,60 +2456,54 @@ namespace platf {
     return qpc_tick_magnitude_to_duration(tick_magnitude, negative, frequency);
   }
 
-  std::wstring
-  from_utf8(const std::string &string) {
-    // No conversion needed if the string is empty
-    if (string.empty()) {
-      return {};
-    }
-
-    // Get the output size required to store the string
-    auto output_size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, string.data(), string.size(), nullptr, 0);
-    if (output_size == 0) {
-      auto winerr = GetLastError();
-      BOOST_LOG(error) << "Failed to get UTF-16 buffer size: "sv << winerr;
-      return {};
-    }
-
-    // Perform the conversion
-    std::wstring output(output_size, L'\0');
-    output_size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, string.data(), string.size(), output.data(), output.size());
-    if (output_size == 0) {
-      auto winerr = GetLastError();
-      BOOST_LOG(error) << "Failed to convert string to UTF-16: "sv << winerr;
-      return {};
-    }
-
-    return output;
-  }
-
   std::string
-  to_utf8(const std::wstring &string) {
-    // No conversion needed if the string is empty
-    if (string.empty()) {
-      return {};
+  format_message_utf8(DWORD message_id, DWORD language_id) {
+    // HRESULT_FROM_WIN32 keeps the Win32 code in the low word; the system
+    // message table is indexed by that code, not by the full HRESULT.
+    DWORD table_id = message_id;
+    if ((message_id & 0xFFFF0000u) == 0x80070000u) {
+      table_id = message_id & 0xFFFFu;
     }
 
-    // Get the output size required to store the string
-    auto output_size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, string.data(), string.size(),
-      nullptr, 0, nullptr, nullptr);
-    if (output_size == 0) {
-      auto winerr = GetLastError();
-      BOOST_LOG(error) << "Failed to get UTF-8 buffer size: "sv << winerr;
-      return {};
+    wchar_t stack_buffer[1024];
+    DWORD length = FormatMessageW(
+      FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
+      nullptr,
+      table_id,
+      language_id,
+      stack_buffer,
+      static_cast<DWORD>(std::size(stack_buffer)),
+      nullptr);
+
+    std::wstring message;
+    if (length > 0) {
+      message.assign(stack_buffer, length);
+    }
+    else {
+      LPWSTR allocated = nullptr;
+      length = FormatMessageW(
+        FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS | FORMAT_MESSAGE_ALLOCATE_BUFFER,
+        nullptr,
+        table_id,
+        language_id,
+        reinterpret_cast<LPWSTR>(&allocated),
+        1024,
+        nullptr);
+      if (length > 0 && allocated != nullptr) {
+        message.assign(allocated, length);
+        LocalFree(allocated);
+      }
     }
 
-    // Perform the conversion
-    std::string output(output_size, '\0');
-    output_size = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, string.data(), string.size(),
-      output.data(), output.size(), nullptr, nullptr);
-    if (output_size == 0) {
-      auto winerr = GetLastError();
-      BOOST_LOG(error) << "Failed to convert string to UTF-8: "sv << winerr;
-      return {};
+    while (!message.empty() && (message.back() == L'\r' || message.back() == L'\n' || message.back() == L' ' || message.back() == L'\t')) {
+      message.pop_back();
     }
-
-    return output;
+    if (message.empty()) {
+      std::ostringstream fallback;
+      fallback << "unknown system message 0x" << std::hex << std::uppercase << message_id;
+      return fallback.str();
+    }
+    return to_utf8(message);
   }
 
   std::string

@@ -10,17 +10,19 @@
 #include "src/confighttp/common.h"
 #include "src/display_device/color_profile.h"
 #include "src/display_device/display_device.h"
-#include "src/hdr/calibration.h"
 #include "src/globals.h"
+#include "src/hdr/calibration.h"
 #include "src/image_enhancement/config.h"
+#include "src/log_text.h"
 #include "src/logging.h"
 #include "src/rtsp.h"
 #include "src/stream.h"
 #include "src/streaming/perf_recorder.h"
+#include "src/system_load.h"
 #include "src/video.h"
 #include <boost/algorithm/string.hpp>
-#include <cmath>
 #include <chrono>
+#include <cmath>
 #include <set>
 #include <sstream>
 #ifdef _WIN32
@@ -44,10 +46,10 @@ namespace confighttp::runtime {
 
       print_req(request);
 
-      if (!require_localhost(response, request, "getting runtime sessions")) {
-        return;
-      }
-
+      // authenticate() already enforces the Web UI address policy, session
+      // credentials, and CSRF rules. A read-only session snapshot therefore
+      // follows the same authenticated Web UI boundary from the LAN
+      // [lt3-rfc6265bis-20261107] [lt3-w3c-fetch-metadata-20261107].
       try {
         // 获取所有活动会话信息
         auto sessions_info = stream::session::get_all_sessions_info();
@@ -64,6 +66,7 @@ namespace confighttp::runtime {
           json session_obj;
           session_obj["client_name"] = session_info.client_name;
           session_obj["client_uuid"] = session_info.client_uuid;
+          stream::add_session_client_json(session_obj, session_info);
           session_obj["client_address"] = session_info.client_address;
           session_obj["state"] = session_info.state;
           session_obj["session_id"] = session_info.session_id;
@@ -71,6 +74,7 @@ namespace confighttp::runtime {
           session_obj["height"] = session_info.height;
           session_obj["fps"] = session_info.fps;
           session_obj["bitrate"] = session_info.bitrate;
+          session_obj["measured_bitrate_kbps"] = session_info.measured_bitrate_kbps;
           session_obj["host_audio"] = session_info.host_audio;
           session_obj["enable_hdr"] = session_info.enable_hdr;
           session_obj["enable_mic"] = session_info.enable_mic;
@@ -82,13 +86,15 @@ namespace confighttp::runtime {
           session_obj["hdr_max_full_frame_nits"] = session_info.hdr_max_full_frame_nits;
           session_obj["app_name"] = session_info.app_name;
           session_obj["app_id"] = session_info.app_id;
+          stream::add_session_quality_json(session_obj, session_info);
+          stream::add_session_gamepad_json(session_obj, session_info);
 
           sessions_array.push_back(session_obj);
         }
 
         response_json["sessions"] = sessions_array;
 
-        BOOST_LOG(debug) << "Config API: Runtime sessions info requested, returned " << sessions_info.size() << " sessions";
+        BOOST_LOG(verbose) << "Config API: Runtime sessions info requested, returned " << sessions_info.size() << " sessions";
 
         response->write(response_json.dump());
         response->close_connection_after_response = true;
@@ -99,6 +105,30 @@ namespace confighttp::runtime {
       }
       catch (...) {
         BOOST_LOG(error) << "getRuntimeSessions: Unknown exception";
+        write_runtime_error(response, web::StatusCode::internal_server_error, 500, "Unknown error");
+      }
+    }
+
+    void
+    getRuntimeSystem(resp_https_t response, req_https_t request) {
+      if (!authenticate(response, request)) return;
+
+      print_req(request);
+
+      if (!require_localhost(response, request, "getting runtime system load")) {
+        return;
+      }
+
+      try {
+        response->write(system_load::to_json(system_load::sample()).dump());
+        response->close_connection_after_response = true;
+      }
+      catch (const std::exception &e) {
+        BOOST_LOG(error) << "getRuntimeSystem: " << e.what();
+        write_runtime_error(response, web::StatusCode::internal_server_error, 500, std::string(e.what()));
+      }
+      catch (...) {
+        BOOST_LOG(error) << "getRuntimeSystem: Unknown exception";
         write_runtime_error(response, web::StatusCode::internal_server_error, 500, "Unknown error");
       }
     }
@@ -475,10 +505,14 @@ namespace confighttp::runtime {
           // 继续执行，即使获取会话信息失败，仍然尝试修改码率
         }
 
-        BOOST_LOG(info) << "Config API: Attempting to change bitrate for client '" << client_name
-                        << "' to " << bitrate << " Kbps";
-        if (!available_clients.empty()) {
-          BOOST_LOG(info) << "Available RUNNING clients: " << boost::algorithm::join(available_clients, ", ");
+        BOOST_LOG(info) << "Config API: Attempting to change bitrate for client " << logging::quoted_name(client_name)
+                        << " to " << bitrate << " Kbps";
+        // names go into the log between double quotes (see src/log_text.h)
+        std::vector<std::string> logged_clients;
+        logged_clients.reserve(available_clients.size());
+        for (const auto &name : available_clients) logged_clients.push_back(logging::quoted_name(name));
+        if (!logged_clients.empty()) {
+          BOOST_LOG(info) << "Available RUNNING clients: " << boost::algorithm::join(logged_clients, ", ");
         }
 
         // 调用底层 API 修改码率
@@ -497,8 +531,8 @@ namespace confighttp::runtime {
           response_json["bitrate"] = bitrate;
           response_json["client_name"] = client_name;
 
-          BOOST_LOG(info) << "Config API: Dynamic bitrate change requested for client '"
-                          << client_name << "': " << bitrate << " Kbps";
+          BOOST_LOG(info) << "Config API: Dynamic bitrate change requested for client "
+                          << logging::quoted_name(client_name) << ": " << bitrate << " Kbps";
         }
         else {
           std::string error_msg = "No active streaming session found for client: " + client_name;
@@ -513,7 +547,10 @@ namespace confighttp::runtime {
           response_json["status_code"] = 404;
           response_json["status_message"] = error_msg;
 
-          BOOST_LOG(warning) << "Config API: Failed to change bitrate - " << error_msg;
+          // the response above keeps the plain names; the log gets them between double quotes
+          std::string logged_msg = "No active streaming session found for client: " + logging::quoted_name(client_name);
+          logged_msg += logged_clients.empty() ? std::string { ". No RUNNING sessions available." } : ". Available clients: " + boost::algorithm::join(logged_clients, ", ");
+          BOOST_LOG(warning) << "Config API: Failed to change bitrate - " << logged_msg;
         }
 
         response->write(
@@ -531,16 +568,44 @@ namespace confighttp::runtime {
       }
     }
 
+    void
+    changeRuntimeHostAudio(resp_https_t response, req_https_t request) {
+      if (!authenticate(response, request)) return;
+      if (!require_localhost(response, request, "changing runtime host audio")) return;
+
+      json body;
+      if (!read_json_body(response, request, body)) return;
+      const auto client = body.value("clientname", std::string {});
+      if (client.empty() || !body.contains("enabled") || !body["enabled"].is_boolean()) {
+        write_runtime_error(response, web::StatusCode::bad_request, 400,
+          "clientname and boolean enabled are required");
+        return;
+      }
+      const bool enabled = body["enabled"].get<bool>();
+      const bool success = stream::session::set_host_audio_for_client(client, enabled);
+      json result {
+        { "success", success },
+        { "status_code", success ? 200 : 404 },
+        { "client_name", client },
+        { "host_audio", enabled },
+      };
+      if (!success) result["status_message"] = "No active streaming session found for client: " + client;
+      response->write(success ? web::StatusCode::ok : web::StatusCode::not_found, result.dump());
+      response->close_connection_after_response = true;
+    }
+
   }  // namespace
 
   void
   register_routes(https_server_t &server) {
     server.resource["^/api/runtime/sessions$"]["GET"] = getRuntimeSessions;
     server.resource["^/api/runtime/sessions/stop$"]["POST"] = stopRuntimeSessions;
+    server.resource["^/api/runtime/system$"]["GET"] = getRuntimeSystem;
     server.resource["^/api/runtime/hdr$"]["GET"] = getRuntimeHdrStatus;
     server.resource["^/api/runtime/hdr-calibration$"]["GET"] = getRuntimeHdrCalibration;
     server.resource["^/api/runtime/hdr-calibration$"]["POST"] = saveRuntimeHdrCalibration;
     server.resource["^/api/runtime/bitrate$"]["GET"] = changeRuntimeBitrate;
+    server.resource["^/api/runtime/audio$"]["POST"] = changeRuntimeHostAudio;
     server.resource["^/api/perf/current$"]["GET"] = getPerfCurrent;
     server.resource["^/api/perf/frame-rates$"]["POST"] = setPerfFrameRates;
   }

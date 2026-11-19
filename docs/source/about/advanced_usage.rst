@@ -861,7 +861,9 @@ min_fps_factor <https://localhost:47990/config/#min_fps_factor>`__
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 **Description**
-   If no external IP address is given, Sunshine will attempt to automatically detect external ip-address.
+   The public address clients use outside the network: an IP address or a DNS host name (for example a
+   dynamic DNS name). The value is validated; a malformed value is ignored with a warning. If it is not
+   set, Sunshine uses the automatically discovered address and clients fall back to discovery.
 
 **Default**
    Automatic
@@ -869,7 +871,8 @@ min_fps_factor <https://localhost:47990/config/#min_fps_factor>`__
 **Example**
    .. code-block:: text
 
-      external_ip = 123.456.789.12
+      external_ip = 203.0.113.9
+      external_ip = home.example.ddns.net
 
 `lan_encryption_mode <https://localhost:47990/config/#lan_encryption_mode>`__
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

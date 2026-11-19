@@ -4,6 +4,9 @@
  */
 #include "perf_recorder.h"
 
+#include "measured_bitrate.h"
+#include "src/telemetry/hooks.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -340,6 +343,9 @@ namespace perf {
       item["height"] = session.metadata.height;
       item["fps"] = session.metadata.fps;
       item["bitrate_kbps"] = session.metadata.bitrate_kbps;
+      const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+      item["measured_bitrate_kbps"] = streaming::measured_bitrate_kbps(
+        session.metadata.session_id, now_ms > 0 ? static_cast<std::uint64_t>(now_ms) : 0);
       item["encoder"] = session.metadata.encoder;
       item["capture"] = session.metadata.capture;
       item["uptime_ms"] = std::chrono::duration_cast<std::chrono::milliseconds>((session.active ? now : session.ended_at) - session.started_at).count();
@@ -459,6 +465,10 @@ namespace perf {
   }
 
   void record_pipeline_sample(std::uint32_t session_id, const pipeline_sample_t &sample, std::chrono::steady_clock::time_point now) {
+    // telemetry's own per-session sums (stream_quality): a null hook until telemetry runs, and never a wait
+    if (sample.encode_ms) telemetry::hooks::encode_ms(session_id, *sample.encode_ms);
+    if (sample.capture_to_convert_ms) telemetry::hooks::capture_ms(session_id, *sample.capture_to_convert_ms);
+    if (sample.convert_ms) telemetry::hooks::sample(session_id, telemetry::hooks::metric_e::convert_ms, *sample.convert_ms);
     std::lock_guard lock { recorder_mutex };
 
     auto it = sessions.find(session_id);
@@ -504,6 +514,7 @@ namespace perf {
   }
 
   void record_capture_frame(std::uint32_t session_id, const std::shared_ptr<capture_source_counter_t> &source, clock_t::time_point now) {
+    telemetry::hooks::count(session_id, telemetry::hooks::counter_e::captured);
     const auto generation = frame_rate_collection_epoch();
     if (!generation) return;
     std::lock_guard lock { recorder_mutex };
@@ -523,6 +534,7 @@ namespace perf {
   }
 
   void record_encode_submission(std::uint32_t session_id, bool repeat) {
+    if (!repeat) telemetry::hooks::count(session_id, telemetry::hooks::counter_e::submitted);
     const auto generation = frame_rate_collection_epoch();
     if (!generation) return;
     std::lock_guard lock { recorder_mutex };
@@ -534,6 +546,7 @@ namespace perf {
   }
 
   void record_encoded_frame(std::uint32_t session_id) {
+    telemetry::hooks::frame_encoded(session_id);
     const auto generation = frame_rate_collection_epoch();
     if (!generation) return;
     std::lock_guard lock { recorder_mutex };

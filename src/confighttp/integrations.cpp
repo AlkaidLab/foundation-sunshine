@@ -10,9 +10,6 @@
 #include "src/confighttp/common.h"
 #include "src/image_enhancement/api.h"
 #include "src/webhook/webhook_api.h"
-#ifdef _WIN32
-  #include "src/ds5/config_api.h"
-#endif
 
 using namespace std::literals;
 using json = nlohmann::json;
@@ -94,26 +91,6 @@ namespace confighttp::integrations {
       webhook::api::test_delivery(std::move(response), std::move(request));
     }
 
-#ifdef _WIN32
-    void
-    getDualSenseConfig(resp_https_t response, req_https_t request) {
-      if (!authenticate(response, request)) return;
-      ds5_config::api::get_config(std::move(response), config::sunshine.config_file);
-    }
-#endif
-
-#ifdef _WIN32
-    void
-    saveDualSenseConfig(resp_https_t response, req_https_t request) {
-      if (!check_content_type(response, request, "application/json")) return;
-      if (!authenticate(response, request)) return;
-      ds5_config::api::save_config(
-        std::move(response),
-        std::move(request),
-        config::sunshine.config_file);
-    }
-#endif
-
   }  // namespace
 
   void
@@ -128,12 +105,6 @@ namespace confighttp::integrations {
     server.resource["^/api/webhook/config$"]["GET"] = getWebhookConfig;
     server.resource["^/api/webhook/config$"]["POST"] = saveWebhookConfig;
     server.resource["^/api/webhook/test$"]["POST"] = testWebhook;
-#ifdef _WIN32
-    server.resource["^/api/dualsense/config$"]["GET"] = getDualSenseConfig;
-#endif
-#ifdef _WIN32
-    server.resource["^/api/dualsense/config$"]["POST"] = saveDualSenseConfig;
-#endif
   }
 
 }  // namespace confighttp::integrations

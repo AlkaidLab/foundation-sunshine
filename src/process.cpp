@@ -7,7 +7,10 @@
 #include "process.h"
 
 #include <algorithm>
+#include <array>
+#include <chrono>
 #include <filesystem>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -24,6 +27,7 @@
 
 #include "config.h"
 #include "crypto.h"
+#include "default_apps.h"
 #include "display_device/session.h"
 #include "file_handler.h"
 #include "httpcommon.h"
@@ -33,16 +37,16 @@
 #include "stream.h"
 #include "tray/system_tray.h"
 #include "tray/tray_state.h"
+#include "launch_splash/launch_splash.h"
 #include "utility.h"
+#include "src/sparxie/runtime.h"
 #include "webhook/webhook.h"
 
 #ifdef _WIN32
   // from_utf8() string conversion function
   #include "platform/windows/misc.h"
-
   // _SH constants for _wfsopen()
   #include <share.h>
-
   #define STB_IMAGE_IMPLEMENTATION
   #include "stb_image.h"
   #define STB_IMAGE_WRITE_IMPLEMENTATION
@@ -55,14 +59,24 @@ namespace proc {
   using namespace std::literals;
   namespace pt = boost::property_tree;
 
-  uint32_t calculate_crc32(const std::string &input);
+  uint32_t
+  calculate_crc32(const std::string &input);
 
   proc_t proc;
 
   class deinit_t: public platf::deinit_t {
   public:
     ~deinit_t() {
-      proc.terminate();
+      // a destructor cannot let an exception out: terminate() waits for the undo commands and a failed wait throws, which ended the host in std::terminate at shutdown
+      try {
+        proc.terminate();
+      }
+      catch (const std::exception &e) {
+        BOOST_LOG(error) << "Failed to terminate the running application during shutdown: "sv << e.what();
+      }
+      catch (...) {
+        BOOST_LOG(error) << "Failed to terminate the running application during shutdown"sv;
+      }
     }
   };
 
@@ -144,7 +158,8 @@ namespace proc {
 #else
       parts = boost::program_options::split_unix(cmd);
 #endif
-    } catch (boost::escaped_list_error &err) {
+    }
+    catch (boost::escaped_list_error &err) {
       BOOST_LOG(error) << "Boost failed to parse command ["sv << cmd << "] because " << err.what();
       return boost::filesystem::path();
     }
@@ -175,32 +190,28 @@ namespace proc {
     // Now that we have a complete path, we can just use parent_path()
     return cmd_path.parent_path();
   }
-
   int
   proc_t::execute(int app_id, std::shared_ptr<rtsp_stream::launch_session_t> launch_session) {
+    std::lock_guard lifecycle(_lifecycle_mutex);
     // Ensure starting from a clean slate
     terminate();
-
     auto iter = std::find_if(_apps.begin(), _apps.end(), [&app_id](const auto app) {
       return app.id == std::to_string(app_id);
     });
-
     if (iter == _apps.end()) {
       BOOST_LOG(error) << "Couldn't find app with ID ["sv << app_id << ']';
       return 404;
     }
-
     _app_id = app_id;
     _app = *iter;
+    client_interface::record_session_start(_app.id);
     _app_prep_begin = std::begin(_app.prep_cmds);
     _app_prep_it = _app_prep_begin;
-
     // Apply per-app mouse mode
     platf::set_mouse_mode(_app.mouse_mode);
     // Apply the app override before the input session creates virtual pads.
     // The global Sunshine setting remains unchanged.
     platf::set_gamepad_mode(_app.gamepad_mode);
-
     // Add Stream-specific environment variables
     // These variables are dynamically set for each streaming session and will be passed
     // to the launched application. They should be preserved during refresh() if an app is running.
@@ -235,13 +246,28 @@ namespace proc {
         break;
     }
     _env["SUNSHINE_CLIENT_AUDIO_SURROUND_PARAMS"] = launch_session->surround_params;
-
+    // Whether the client is a touch device is decided while the stream is prepared (nvhttp_stream_start.cpp) and
+    // sits on the launch session; the application only sees what is copied here. Without this line Sparxie's
+    // automatic Endfield input never learned the device and every client got the PC interface.
+    if (auto touch = launch_session->env.find("SUNSHINE_CLIENT_TOUCH"); touch != launch_session->env.end()) {
+      if (auto value = touch->to_string(); !value.empty()) {
+        _env["SUNSHINE_CLIENT_TOUCH"] = std::move(value);
+      }
+    }
+    // The launch splash: a command that starts a game shows its name and stage on the streamed display until the window is up (the Desktop has no command).
+    // A launcher that reports its own stages writes them to the file named here.
+    const bool splash_launcher_reports = launch_splash::command_reports_stages(_app.cmd);
+    if (!_app.cmd.empty()) {
+      if (const auto splash = launch_splash::begin(_app, launch_splash::kind_e::launch)) {
+        _env["SUNSHINE_LAUNCH_ID"] = splash->id;
+        _env["SUNSHINE_LAUNCH_STATUS_FILE"] = splash->status_file.string();
+      }
+    }
     if (!_app.output.empty() && _app.output != "null"sv) {
 #ifdef _WIN32
       // fopen() interprets the filename as an ANSI string on Windows, so we must convert it
       // to UTF-16 and use the wchar_t variants for proper Unicode log file path support.
       auto woutput = platf::from_utf8(_app.output);
-
       // Use _SH_DENYNO to allow us to open this log file again for writing even if it is
       // still open from a previous execution. This is required to handle the case of a
       // detached process executing again while the previous process is still running.
@@ -250,13 +276,11 @@ namespace proc {
       _pipe.reset(fopen(_app.output.c_str(), "a"));
 #endif
     }
-
     std::error_code ec;
     // Executed when returning from function
     auto fg = util::fail_guard([&]() {
       terminate();
     });
-
     for (; _app_prep_it != std::end(_app.prep_cmds); ++_app_prep_it) {
       auto &cmd = *_app_prep_it;
 
@@ -277,6 +301,7 @@ namespace proc {
         // permission_denied is typically returned when the user impersonation fails, which can happen when user is not signed in yet.
         if (!(_app.cmd.empty() && ec == std::errc::permission_denied)) {
           BOOST_LOG(error) << "Couldn't run ["sv << cmd.do_cmd << "]: System: "sv << ec.message();
+          launch_splash::fail("prep");
           return -1;
         }
 
@@ -295,6 +320,7 @@ namespace proc {
       auto ret = child.exit_code();
       if (ret != 0) {
         BOOST_LOG(error) << '[' << cmd.do_cmd << "] exited with code ["sv << ret << ']';
+        launch_splash::fail("prep");
         return -1;
       }
     }
@@ -322,11 +348,17 @@ namespace proc {
                                               find_working_directory(_app.cmd, _env) :
                                               boost_path_from_utf8(_app.working_dir);
       BOOST_LOG(info) << "Executing: ["sv << _app.cmd << "] in ["sv << boost_path_to_utf8(working_dir) << ']';
-      _process = platf::run_command(_app.elevated, true, _app.cmd, working_dir, _env, _pipe.get(), ec, &_process_group);
+      // the splash is on the streamed display before the game starts (the game was seen first in a 2026-11-12 test); never longer than launch_splash::shown_wait_ms
+      launch_splash::wait_shown();
+      // the game's settings and display for this stream; a game that starts directly may get size arguments for it
+      const std::string stream_arguments = sparxie::before_launch(_app.name, _app.cmd, { launch_session->width, launch_session->height, launch_session->fps });
+      _process = platf::run_command(_app.elevated, true, _app.cmd + stream_arguments, working_dir, _env, _pipe.get(), ec, &_process_group);
       if (ec) {
         BOOST_LOG(warning) << "Couldn't run ["sv << _app.cmd << "]: System: "sv << ec.message();
+        launch_splash::fail("start");
         return -1;
       }
+      launch_splash::note_started(static_cast<std::uint32_t>(_process.id()), splash_launcher_reports);
     }
 
     _app_launch_time = std::chrono::steady_clock::now();
@@ -378,9 +410,14 @@ namespace proc {
 
   void
   proc_t::terminate() {
+    std::lock_guard lifecycle(_lifecycle_mutex);
     std::error_code ec;
     placebo = false;
+    launch_splash::end();
+    const bool had_process = static_cast<bool>(_process);
     terminate_process_group(_process, _process_group, _app.exit_timeout);
+    // the application ended (the game quit or the stream did): the game settings its launch wrote go back
+    if (had_process && !_app.cmd.empty()) sparxie::after_session(_app.name, _app.cmd);
     _process = boost::process::v1::child();
     _process_group = boost::process::v1::group();
 
@@ -411,6 +448,9 @@ namespace proc {
 
     _pipe.reset();
     bool has_run = _app_id > 0;
+    if (has_run) {
+      client_interface::record_session_end(_app.id, _app_launch_time);
+    }
     // Only show the Stopped notification if we actually have an app to stop
     // Since terminate() is always run when a new app has started
     if (proc::proc.get_last_run_app_name().length() > 0 && has_run && !stream::session::has_active_video_sessions()) {
@@ -429,8 +469,7 @@ namespace proc {
           .type = webhook::event_type_t::NV_APP_TERMINATE,
           .timestamp = webhook::get_current_timestamp(),
           .app_name = _app.name,
-          .app_id = _app_id
-        });
+          .app_id = _app_id });
       }
       catch (...) {
         BOOST_LOG(error) << "Webhook app termination event construction failed"sv;
@@ -460,7 +499,7 @@ namespace proc {
     for (const auto &app : apps) {
       combined_info += app.id + app.name;
     }
-    
+
     // Use CRC32 for the tag, same as used elsewhere
     auto crc = calculate_crc32(combined_info);
     _apps_etag = std::to_string(crc);
@@ -468,9 +507,43 @@ namespace proc {
     _apps = std::move(apps);
   }
 
+  namespace {
+    // The art part of the list tag is read from the files (a few stats per application), at most once in two seconds: the tag is a function of the files, so it stays the same until
+    // a picture is written, and a client that asks often is not made to stat every application each time.
+    struct art_tag_cache_t {
+      std::mutex mutex;
+      const void *owner = nullptr;
+      std::string list_etag;
+      std::chrono::steady_clock::time_point at;
+      std::string tag;
+    };
+
+    art_tag_cache_t &
+    art_tag_cache() {
+      static art_tag_cache_t cache;
+      return cache;
+    }
+  }  // namespace
+
   std::string
   proc_t::get_apps_etag() const {
-    return _apps_etag;
+    // the play history is part of the list (FsLastPlayed, FsPlaySeconds): the file's time is part of the tag
+    const auto list_etag = client_interface::combine_list_etag(_apps_etag, client_interface::play_facts_tag());
+    // so is the art (FsArtVersion, and the hero/logo/icon/poster files behind it): a client that does not reopen the page asks for the list only when this tag changes
+    auto &cache = art_tag_cache();
+    std::lock_guard lock { cache.mutex };
+    const auto now = std::chrono::steady_clock::now();
+    if (cache.owner != this || cache.list_etag != _apps_etag || cache.at.time_since_epoch().count() == 0 || now - cache.at >= std::chrono::seconds(2)) {
+      std::string apps_art;
+      for (const auto &app : _apps) {
+        apps_art += app.id + ':' + app_art_version(app, true) + ';';
+      }
+      cache.owner = this;
+      cache.list_etag = _apps_etag;
+      cache.at = now;
+      cache.tag = std::move(apps_art);
+    }
+    return client_interface::combine_art_etag(list_etag, cache.tag);
   }
 
   const boost::process::v1::environment &
@@ -514,6 +587,14 @@ namespace proc {
       return app.id == std::to_string(app_id);
     });
     return iter == _apps.end() ? std::string() : iter->cmd;
+  }
+
+  std::optional<unsigned long>
+  proc_t::get_running_pid() const {
+    if (!_process.valid()) {
+      return std::nullopt;
+    }
+    return _process.id();
   }
 
   std::string
@@ -566,7 +647,8 @@ namespace proc {
         BOOST_LOG(info) << "Executing cmd ["sv << cmd << "]"sv;
         child.detach();
       }
-    } else {
+    }
+    else {
       BOOST_LOG(warning) << "Couldn't find cmd ["sv << cmd_id << "]"sv;
       for (auto &cmd : _app.menu_cmds) {
         BOOST_LOG(warning) << "Menu cmd: ["sv << cmd.id << "]"sv;
@@ -661,6 +743,63 @@ namespace proc {
   }
 
   std::string
+  app_art_asset_path(const ctx_t &app, std::string_view type) {
+    if (type == "poster") return validate_app_image_path(app.image_path);
+    std::string configured;
+    if (type == "hero") configured = app.fs_facts.hero_path;
+    if (type == "logo") configured = app.fs_facts.logo_path;
+    if (type == "icon") configured = app.fs_facts.icon_path;
+    if (configured.empty()) return {};
+    // only an image is served: the configured path is the host administrator's, the client asks by name
+    if (!client_interface::is_art_extension(file_handler::path_from_utf8(configured).extension().string())) return {};
+    const std::array paths {
+      file_handler::path_from_utf8(SUNSHINE_ASSETS_DIR) / file_handler::path_from_utf8(configured),
+      platf::appdata() / "covers" / file_handler::path_from_utf8(configured),
+      file_handler::path_from_utf8(configured),
+    };
+    for (const auto &path : paths) {
+      if (std::filesystem::exists(path)) return file_handler::path_to_utf8(path);
+    }
+    return {};
+  }
+
+  namespace {
+    // The poster file of a plain path as validate_app_image_path would find it (assets, covers, as given), without logging and without downloading or the desktop picture; empty when none exists.
+    std::string
+    existing_poster_quietly(const std::string &image_path) {
+      if (image_path.empty()) return DEFAULT_APP_IMAGE_PATH;
+      if (image_path == "desktop") return {};
+      const auto relative = file_handler::path_from_utf8(image_path);
+      const std::array candidates {
+        file_handler::path_from_utf8(SUNSHINE_ASSETS_DIR) / relative,
+        platf::appdata() / "covers" / relative,
+        relative,
+      };
+      std::error_code error;
+      for (const auto &path : candidates)
+        if (std::filesystem::exists(path, error)) return file_handler::path_to_utf8(path);
+      return {};
+    }
+  }  // namespace
+
+  /// The version tag of the art of an application as it is now: the configured paths' own tag plus the size and the time of every present art file, so a file replaced under
+  /// the same name is a new version (a client that was told `immutable` for a version asks again). A URL poster is not statted here: resolving it can download a picture.
+  std::string
+  app_art_version(const ctx_t &app, bool quiet) {
+    std::string files;
+    const auto append = [&files](const char *type, const std::string &path) {
+      if (path.empty()) return;
+      files += client_interface::art_file_fact(type, file_handler::path_from_utf8(path));
+    };
+    if (app.image_path.rfind("http://", 0) != 0 && app.image_path.rfind("https://", 0) != 0) {
+      // the list tag asks every couple of seconds: it takes the poster as the file system has it, and does not log a missing or unsupported poster each time
+      append("poster", quiet ? existing_poster_quietly(app.image_path) : validate_app_image_path(app.image_path));
+    }
+    for (const auto *type : { "hero", "logo", "icon" }) append(type, app_art_asset_path(app, type));
+    return client_interface::live_art_version(app.fs_facts.art_version, files);
+  }
+
+  std::string
   validate_app_image_path(std::string app_image_path) {
     if (app_image_path.empty()) {
       return DEFAULT_APP_IMAGE_PATH;
@@ -670,7 +809,7 @@ namespace proc {
     if (app_image_path.find("http://") == 0 || app_image_path.find("https://") == 0) {
       try {
         std::string original_url = app_image_path;
-        
+
         // 移除查询参数
         size_t query_start = app_image_path.find('?');
         if (query_start != std::string::npos) {
@@ -678,34 +817,39 @@ namespace proc {
         }
 
         // 从URL提取文件名
-        auto hash = std::hash<std::string>{}(original_url);
+        auto hash = std::hash<std::string> {}(original_url);
         auto ext = std::filesystem::path(app_image_path).extension().string();
-        
+
         // 安全检查：验证文件扩展名
         std::string ext_lower = ext;
         std::transform(ext_lower.begin(), ext_lower.end(), ext_lower.begin(), ::tolower);
-        if (ext_lower != ".png" && ext_lower != ".jpg" && ext_lower != ".jpeg" && 
+        if (ext_lower != ".png" && ext_lower != ".jpg" && ext_lower != ".jpeg" &&
             ext_lower != ".bmp" && ext_lower != ".webp" && ext_lower != ".ico") {
           BOOST_LOG(warning) << "Blocked download of non-image extension: " << ext;
-          return DEFAULT_APP_IMAGE_PATH; 
+          return DEFAULT_APP_IMAGE_PATH;
         }
 
         std::string filename = "url_" + std::to_string(hash) + (ext.empty() ? ".png" : ext);
-        
+
         // 保存到本地 covers 目录 (User requested to save to covers instead of assets)
         auto local_path = platf::appdata() / "covers" / filename;
-        
+
         // 如果文件不存在则下载
         if (!std::filesystem::exists(local_path)) {
+          // a cover that just failed is not asked for again (and not logged again) on every refresh of the list
+          if (http::cover_download_recently_failed(original_url)) {
+            return DEFAULT_APP_IMAGE_PATH;
+          }
           BOOST_LOG(info) << "Downloading image from URL: " << original_url;
           if (!http::download_public_cover_image(original_url, file_handler::path_to_utf8(local_path))) {
             BOOST_LOG(warning) << "Failed to download image (or rejected by magic check) from URL: " << original_url;
             return DEFAULT_APP_IMAGE_PATH;
           }
         }
-        
+
         app_image_path = file_handler::path_to_utf8(local_path);
-      } catch (const std::exception& e) {
+      }
+      catch (const std::exception &e) {
         BOOST_LOG(warning) << "Error processing image URL: " << e.what();
         return DEFAULT_APP_IMAGE_PATH;
       }
@@ -744,13 +888,13 @@ namespace proc {
       // 3. 检查绝对路径
       app_image_path
     };
-    
-    for (const auto& path : paths_to_check) {
+
+    for (const auto &path : paths_to_check) {
       if (!path.empty() && std::filesystem::exists(file_handler::path_from_utf8(path))) {
         return path;
       }
     }
-    
+
     // 如果所有路径都不存在，返回默认图像
     BOOST_LOG(warning) << "Couldn't find app image at path ["sv << app_image_path << ']';
     return DEFAULT_APP_IMAGE_PATH;
@@ -806,8 +950,8 @@ namespace proc {
     to_hash.push_back(app_name);
 
     // Fix for unstable AppID when wallpaper changes:
-    // If the image path is "desktop", use the literal string "desktop" for hashing 
-    // instead of the resolved wallpaper path/content. This ensures the AppID 
+    // If the image path is "desktop", use the literal string "desktop" for hashing
+    // instead of the resolved wallpaper path/content. This ensures the AppID
     // remains constant even if the user changes their wallpaper.
     if (app_image_path == "desktop") {
       to_hash.push_back("desktop");
@@ -849,7 +993,6 @@ namespace proc {
 
       auto &apps_node = tree.get_child("apps"s);
       auto &env_vars = tree.get_child("env"s);
-
       auto this_env = boost::this_process::environment();
 
       for (auto &[name, val] : env_vars) {
@@ -955,7 +1098,9 @@ namespace proc {
           ctx.image_path = parse_env_val(this_env, *image_path);
         }
 
-        ctx.elevated = elevated.value_or(false);
+        // a game application of the Sparxie component: the HoYoverse games and Sparxie itself ask for administrator rights in their manifest,
+        // so started without them CreateProcess fails with ERROR_ELEVATION_REQUIRED (740) whatever the entry says
+        ctx.elevated = elevated.value_or(false) || static_cast<bool>(app_node.get_child_optional("sparxie"s));
         ctx.auto_detach = auto_detach.value_or(true);
         ctx.wait_all = wait_all.value_or(true);
         ctx.mouse_mode = mouse_mode.value_or(0);
@@ -1011,7 +1156,7 @@ namespace proc {
           };
         }
 
-        auto possible_ids = calculate_app_id(name, ctx.image_path, i++);
+        auto possible_ids = calculate_app_id(default_apps::id_name(app_node, name), ctx.image_path, i++);
         if (ids.count(std::get<0>(possible_ids)) == 0) {
           // Avoid using index to generate id if possible
           ctx.id = std::get<0>(possible_ids);
@@ -1026,6 +1171,12 @@ namespace proc {
         ctx.prep_cmds = std::move(prep_cmds);
         ctx.menu_cmds = std::move(menu_cmds);
         ctx.detached = std::move(detached);
+
+        bool opens_big_screen = false;
+#ifdef _WIN32
+        opens_big_screen = default_apps::opens_big_screen(app_node);
+#endif
+        ctx.fs_facts = client_interface::make_app_facts(ctx.id, ctx.cmd, opens_big_screen, ctx.image_path, app_node);
 
         apps.emplace_back(std::move(ctx));
       }
@@ -1048,12 +1199,12 @@ namespace proc {
     if (proc_opt) {
       // 如果当前有应用正在运行，需要保留动态环境变量（SUNSHINE_*）
       // 这些变量是在 execute() 中动态添加的，不应该被配置文件中的环境变量覆盖
-      // 
+      //
       // 环境变量构成说明：
       // 1. 系统环境变量：从 boost::this_process::environment() 获取（PATH、HOME 等）
       // 2. 配置文件环境变量：从 apps.json 的 env 节点读取（用户自定义）
       // 3. SUNSHINE_* 动态变量：在 execute() 时设置（串流会话相关）
-      // 
+      //
       // refresh() 时的行为：
       // - 系统环境变量和配置文件环境变量会被重新读取（反映最新状态）
       // - SUNSHINE_* 变量会被保留（确保正在运行的进程正常工作）
@@ -1061,7 +1212,7 @@ namespace proc {
         // 保存当前环境变量中的 SUNSHINE_* 动态变量
         const boost::process::v1::environment &current_env = proc.get_env();
         boost::process::v1::environment new_env = proc_opt->get_env();
-        
+
         // 将当前环境变量中的 SUNSHINE_* 变量复制到新环境变量中
         for (const auto &entry : current_env) {
           const std::string &var_name = entry.get_name();
@@ -1069,7 +1220,7 @@ namespace proc {
             new_env[var_name] = entry.to_string();
           }
         }
-        
+
         proc.set_env(std::move(new_env));
       }
       else {

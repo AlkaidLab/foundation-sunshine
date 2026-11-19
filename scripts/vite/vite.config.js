@@ -1,8 +1,10 @@
 import fs from 'fs'
 import { resolve } from 'path'
+import { foundationUiAliases } from './foundationUi.js'
 import { defineConfig } from 'vite'
 import { ViteEjsPlugin } from './vite-plugin-ejs.js'
 import vue from '@vitejs/plugin-vue'
+import { fileURLToPath, pathToFileURL } from 'url'
 import process from 'process'
 
 /**
@@ -29,15 +31,36 @@ if (process.env.SUNSHINE_BUILD_HOMEBREW) {
 }
 
 const header = fs.readFileSync(resolve(assetsSrcPath, 'template_header.html'))
+// the first frame of the sign-in page: an inline script (login-boot.js) with the bundled default record (login-boot-defaults.json, made by tools gen-login-boot-defaults from a real first start)
+const bootDefaults = fs.existsSync(resolve(assetsSrcPath, 'login-boot-defaults.json')) ? fs.readFileSync(resolve(assetsSrcPath, 'login-boot-defaults.json'), 'utf8').trim() : 'null'
+const bootScript = fs.readFileSync(resolve(assetsSrcPath, 'login-boot.js'), 'utf8').replace('/*DEFAULTS*/null', () => bootDefaults)
 
 // https://vitejs.dev/config/
+// foundation-ui is the shared Material 3 Expressive package (sibling checkout, see its README).
+const foundationUi = process.env.FOUNDATION_UI_DIR || fileURLToPath(new URL('../../../ds5-ui-m3e', import.meta.url))
+
+// Release builds keep their source maps OUT of the shipped files: with SOURCEMAP_DIR set the maps are built "hidden" (no reference in the bundle) and moved to that folder, which CI keeps as a private
+// artifact; error reports carry minified positions, the private pipeline maps them back to source lines (foundation-ui src/build/privateSourcemaps.js, tools/map-stack.mjs). Unset: nothing changes.
+const privateMapsDir = process.env.SOURCEMAP_DIR
+const privateSourcemaps = privateMapsDir ? (await import(pathToFileURL(resolve(foundationUi, 'src', 'build', 'privateSourcemaps.js')).href)).privateSourcemaps : null
+
 export default defineConfig({
-  resolve: {
-    alias: {
-      vue: 'vue/dist/vue.esm-bundler.js',
-    },
+  // vue-production-20261117 §With Build Tools; vue-i18n-opt-20261117 §Feature build flags.
+  // SFC templates are compiled by plugin-vue. Keep the message compiler: locales are fetched as JSON.
+  define: {
+    __VUE_PROD_DEVTOOLS__: false,
+    __VUE_PROD_HYDRATION_MISMATCH_DETAILS__: false,
+    __VUE_I18N_LEGACY_API__: false,
+    __INTLIFY_PROD_DEVTOOLS__: false,
   },
-  plugins: [vue(), ViteEjsPlugin({ header })],
+  resolve: {
+    dedupe: ['vue'],
+    alias: [
+      { find: /^vue$/, replacement: 'vue/dist/vue.runtime.esm-bundler.js' },
+      ...foundationUiAliases(foundationUi),
+    ],
+  },
+  plugins: [vue({ template: { compilerOptions: { isCustomElement: (tag) => tag.startsWith('md-') } } }), ViteEjsPlugin({ header, bootScript }), ...(privateSourcemaps ? [privateSourcemaps({ dir: privateMapsDir })] : [])],
   root: resolve(assetsSrcPath),
   preview: {
     port: 3000,
@@ -50,12 +73,15 @@ export default defineConfig({
     chunkSizeWarningLimit: 1000,
     // Vite 8 使用 rolldown 内核：多入口 HTML 必须放在 rolldownOptions.input
     // 放到 rollupOptions.input 会被忽略，导致除 index.html 外其它页面 404
+    // Source: ds5-vite-build-20261031, Multi-Page App and build.rolldownOptions.
     rolldownOptions: {
       input: {
         apps: resolve(assetsSrcPath, 'apps.html'),
         downloads: resolve(assetsSrcPath, 'downloads.html'),
         config: resolve(assetsSrcPath, 'config.html'),
+        dualsense: resolve(assetsSrcPath, 'dualsense.html'),
         index: resolve(assetsSrcPath, 'index.html'),
+        login: resolve(assetsSrcPath, 'login.html'),
         password: resolve(assetsSrcPath, 'password.html'),
         pin: resolve(assetsSrcPath, 'pin.html'),
         troubleshooting: resolve(assetsSrcPath, 'troubleshooting.html'),
@@ -95,6 +121,6 @@ export default defineConfig({
   },
   // 优化依赖预构建
   optimizeDeps: {
-    include: ['vue', 'vue-i18n', 'bootstrap', '@popperjs/core', 'marked', 'nanoid', 'vuedraggable-es'],
+    include: ['vue', 'vue-i18n', 'marked', 'nanoid', 'vuedraggable-es'],
   },
 })

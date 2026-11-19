@@ -9,6 +9,7 @@ extern "C" {
 }
 
 #include "display.h"
+#include "src/amf/amf_runtime_pin.h"
 #include "misc.h"
 #include "src/config.h"
 #include "src/main.h"
@@ -29,17 +30,26 @@ namespace platf::dxgi {
   amd_capture_t::~amd_capture_t() {
     AMF_RESULT result;
 
-    // Before terminating the Display Capture component, we need to drain the remaining frames
-    result = captureComp->Drain();
-    if (result == AMF_OK) {
-      do {
-        result = captureComp->QueryOutput((amf::AMFData **) &capturedSurface);
-        Sleep(1);
-      } while (result != AMF_EOF);
+    // Before terminating the Display Capture component, we need to drain the remaining frames.
+    // Source: amf-sdk-v1.5.3-display-capture-api-20261116 (stop with Drain until QueryOutput returns AMF_EOF, then Terminate and release the component).
+    // A capture that never started has no component (and maybe no context): the destructor runs for it too.
+    if (captureComp) {
+      result = captureComp->Drain();
+      if (result == AMF_OK) {
+        do {
+          result = captureComp->QueryOutput((amf::AMFData **) &capturedSurface);
+          Sleep(1);
+        } while (result != AMF_EOF);
+      }
+      captureComp->Terminate();
     }
-    captureComp->Terminate();
 
-    context->Terminate();
+    // The last captured surface belongs to the component: release it before the
+    // component and its context are terminated, not when this object's members go.
+    capturedSurface = nullptr;
+    if (context) {
+      context->Terminate();
+    }
     captureComp = nullptr;
     context = nullptr;
     capturedSurface = nullptr;
@@ -98,6 +108,7 @@ namespace platf::dxgi {
   amd_capture_t::init(display_base_t *display, const ::video::config_t &config, int output_index) {
     // We have to load AMF before calling the base init() because we will need it loaded
     // when our test_capture() function is called.
+    amf::pin_runtime();
     amfrt_lib.reset(LoadLibraryW(AMF_DLL_NAME));
     if (!amfrt_lib) {
       // Probably not an AMD GPU system

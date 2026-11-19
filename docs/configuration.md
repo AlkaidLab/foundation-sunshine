@@ -290,6 +290,30 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
 </table>
 
+### telemetry_consent
+
+<table>
+    <tr><td>Description</td><td>Usage statistics: counts of what is used and numbers about how streams perform, sent to the developers' own server (api.alkaidlab.com). What is sent and what is never sent: <a href="privacy_telemetry.md">privacy_telemetry.md</a>. Changed in the control panel or the Web UI under About › Privacy; the change takes effect at once.</td></tr>
+    <tr><td>Default</td><td><code>on</code></td></tr>
+    <tr><td>Example</td><td><code>telemetry_consent = off</code></td></tr>
+</table>
+
+### telemetry_errors
+
+<table>
+    <tr><td>Description</td><td>Error reports: error records with personal details removed, and crash reports. A stored <code>telemetry_consent = off</code> from the earlier single choice also reads as off here until this key is set to <code>on</code>.</td></tr>
+    <tr><td>Default</td><td><code>on</code></td></tr>
+    <tr><td>Example</td><td><code>telemetry_errors = off</code></td></tr>
+</table>
+
+### telemetry_endpoint
+
+<table>
+    <tr><td>Description</td><td>The server the statistics and error reports go to (for a test server). Batches are posted to <code>&lt;endpoint&gt;/v1/events</code>.</td></tr>
+    <tr><td>Default</td><td><code>https://api.alkaidlab.com</code></td></tr>
+    <tr><td>Example</td><td><code>telemetry_endpoint = http://127.0.0.1:8787</code></td></tr>
+</table>
+
 ## [Input](https://localhost:47990/config/#input)
 
 ### [controller](https://localhost:47990/config/#controller)
@@ -859,17 +883,19 @@ editing the `conf` file in a text editor. Use the examples as reference.
         <td colspan="2">
             Selects how Moonlight microphone PCM is exposed to Windows applications.
             `vb_cable` writes to the VB-CABLE render endpoint and applications capture its paired endpoint.
-            `usbip_experimental` injects PCM directly into the signed Virtual Device Host microphone IN endpoint;
-            it does not use a render-to-capture loopback. `auto` tries USB/IP first and falls back to VB-CABLE.
+            `usbip_experimental` creates the host's own USB microphone ("Sunshine Virtual Microphone", USB Audio Class 1.0,
+            48 kHz mono) on the in-box usbip-win2 path and feeds it the decoded client microphone stream; applications
+            record it as a normal capture device and no VB-CABLE is needed. It does not use a render-to-capture loopback
+            and never changes the Windows default audio devices. `auto` tries the USB microphone first and falls back to VB-CABLE.
             `disabled` rejects microphone redirection while leaving the Moonlight microphone feature setting intact.
-            @warning{The USB/IP backend is experimental and currently uses the DualSense composite prototype profile.}
+            @note{The USB microphone needs the usbip-win2 host component (`usbip.exe` and its driver). See docs/virtual_microphone.md.}
             @note{This option is only supported on Windows.}
         </td>
     </tr>
     <tr>
         <td>Default</td>
         <td colspan="2">@code{}
-            vb_cable
+            auto
             @endcode</td>
     </tr>
     <tr>
@@ -1503,13 +1529,18 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
 </table>
 
-### [external_ip](https://localhost:47990/config/#external_ip)
+### [external_endpoints](https://localhost:47990/config/#external_endpoints)
 
 <table>
     <tr>
         <td>Description</td>
         <td colspan="2">
-            If no external IP address is given, Sunshine will attempt to automatically detect external ip-address.
+            The public addresses clients use from outside the network, written the way a host is added in Moonlight:
+            a DNS name, an IPv4 address or an IPv6 address, each with an optional port. The port is the HTTP port the
+            router exposes (the base port by default); the HTTPS pairing port is five below it. The external port need
+            not equal the internal one. Separate several entries with commas. An IPv6 address with a port is written
+            in brackets. At most 8 entries are used. The first entry goes into the pairing QR code, and the network
+            check tests every entry. If empty, the legacy @ref external_ip "external_ip" value is used.
         </td>
     </tr>
     <tr>
@@ -1519,11 +1550,63 @@ editing the `conf` file in a text editor. Use the examples as reference.
     <tr>
         <td>Example</td>
         <td colspan="2">@code{}
-            external_ip = 123.456.789.12
+            external_endpoints = home.example.net:60000, 203.0.113.9, [2001:db8::1]:57989
             @endcode</td>
     </tr>
 </table>
 
+### [external_ip](https://localhost:47990/config/#external_ip)
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            The public address clients use outside the network: an IP address or a DNS host name (for example a dynamic DNS name).
+            The value is validated; a malformed value is ignored with a warning. If it is not set, Sunshine uses the
+            automatically discovered address and clients fall back to discovery.
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">Automatic</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            external_ip = 203.0.113.9
+            external_ip = home.example.ddns.net
+            @endcode</td>
+    </tr>
+</table>
+
+
+### [stun_servers](https://localhost:47990/config/#stun_servers)
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            The STUN servers the network overview asks for the public IPv4 and IPv6 addresses and the NAT mapping
+            behaviour (RFC 8489, RFC 5780). Up to 8 entries of a host name or an IP address with an optional port
+            (3478 by default), separated by commas; an IPv6 address with a port is written in brackets. Leave it empty
+            for the built-in list: with a zh-CN locale or a China time zone it asks Xiaomi, Bilibili, Douyu and Mango TV
+            first, then Cloudflare; elsewhere Cloudflare, Google, then the mainland servers. `none` turns STUN off; the
+            overview then shows only the interface addresses and the router check. These are third-party servers: they
+            are contacted only when the network overview is opened, rechecked, or run by the doctor, never in the
+            background, and the result is kept 10 minutes. The page lists the servers it asked.
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">Built-in list (see docs/api/network-overview.md)</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            stun_servers = stun.miwifi.com, stun.chat.bilibili.com:3478, stun.cloudflare.com
+            @endcode</td>
+    </tr>
+</table>
 ### [lan_encryption_mode](https://localhost:47990/config/#lan_encryption_mode)
 
 <table>

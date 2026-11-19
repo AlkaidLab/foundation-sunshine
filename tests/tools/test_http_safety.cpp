@@ -89,9 +89,15 @@ namespace {
   template <class Predicate>
   bool
   wait_until(Predicate ready, std::chrono::seconds timeout = 8s) {
+    // Evaluate the predicate once per round: some callers consume a resource when it holds (a stream permit), and a final
+    // second evaluation after success would find that resource taken.
     const auto deadline = std::chrono::steady_clock::now() + timeout;
-    while (!ready() && std::chrono::steady_clock::now() < deadline) std::this_thread::sleep_for(10ms);
-    return ready();
+    auto holds = ready();
+    while (!holds && std::chrono::steady_clock::now() < deadline) {
+      std::this_thread::sleep_for(10ms);
+      holds = ready();
+    }
+    return holds;
   }
 
   // Send one SSE event and then remain silent. Detect curl closing its socket
@@ -457,8 +463,9 @@ TEST_F(HttpSafety, SingleHttpsThreadRemainsResponsiveAndDisconnectCancelsAllStre
     socket->lowest_layer().close(ec);
   }
   EXPECT_TRUE(wait_until([&] { return upstream.closed == 4; }));
-  // The permits are released as the cancelled jobs finish.
-  EXPECT_TRUE(wait_until([&] { return ai::http::submit_stream([] {}); }));
+  // The permits are released as the cancelled jobs finish; every one must come back before a new stream is admitted.
+  EXPECT_TRUE(wait_until([&] { return ai::http::production_executor().active() == 0; }));
+  EXPECT_TRUE(ai::http::submit_stream([] {}));
   EXPECT_EQ(client.request("POST", "/stream", "")->status_code, "400 Bad Request");
 }
 

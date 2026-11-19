@@ -19,7 +19,6 @@ namespace amf {
 
   struct amf_avcodec_compat_result {
     int hwsurfaces_in_queue_max = 16;
-    bool manages_rate_control = true;
     AMF_RESULT result = AMF_OK;
   };
 
@@ -76,6 +75,20 @@ namespace amf {
       const amf_config &config,
       const video::config_t &client_config,
       const video::sunshine_colorspace_t &colorspace);
+
+    // Shared rate-control derivation used by BOTH encoder paths (the standalone
+    // path and the avcodec-compatible one): honor an explicit rc_mode, otherwise
+    // pin CBR. Client requests always carry peak == target, so the soft-target
+    // driver default (Latency Constrained VBR) must never be left in charge —
+    // it lets short-term bursts exceed the client's bitrate by a wide margin.
+    static int
+    rate_control_h264(const amf_config &config, const video::config_t &client_config);
+
+    static int
+    rate_control_hevc(const amf_config &config, const video::config_t &client_config);
+
+    static int
+    rate_control_av1(const amf_config &config, const video::config_t &client_config);
 
     static int64_t
     vbv_buffer_size(int bitrate_kbps, const video::config_t &client_config);

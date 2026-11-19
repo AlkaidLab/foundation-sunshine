@@ -1,0 +1,956 @@
+[
+{
+"id": 1,
+"key": "ds5.profile.preset",
+"group": 0,
+"tier": "common",
+"label": "Profile preset",
+"implemented": true,
+"authority": "product"
+},
+{
+"id": 2,
+"key": "ds5.haptics.mode",
+"group": 1,
+"tier": "common",
+"label": "Haptics mode",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 3,
+"key": "ds5.haptics.hd.gain",
+"group": 1,
+"tier": "common",
+"label": "Haptics HD gain",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 4,
+"key": "ds5.haptics.hd.lowBandDb",
+"group": 1,
+"tier": "advanced",
+"label": "Haptics HD low Band dB",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 5,
+"key": "ds5.haptics.hd.highBandDb",
+"group": 1,
+"tier": "advanced",
+"label": "Haptics HD high Band dB",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 6,
+"key": "ds5.haptics.hd.crossoverHz",
+"group": 1,
+"tier": "advanced",
+"label": "Haptics HD crossover Hz",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 7,
+"key": "ds5.haptics.hd.noiseGate",
+"group": 1,
+"tier": "advanced",
+"label": "Haptics HD noise Gate",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 8,
+"key": "ds5.haptics.hd.latencyMs",
+"group": 1,
+"tier": "advanced",
+"label": "Haptics HD latency ms",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 9,
+"key": "ds5.haptics.hd.smoothingMs",
+"group": 1,
+"tier": "advanced",
+"label": "Haptics HD smoothing ms",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 10,
+"key": "ds5.haptics.bt.fallback",
+"group": 1,
+"tier": "advanced",
+"label": "Haptics BT fallback",
+"implemented": false,
+"authority": "client"
+},
+{
+"id": 11,
+"key": "ds5.haptics.ir.intensity",
+"group": 1,
+"tier": "advanced",
+"label": "Haptics IR intensity",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 12,
+"key": "ds5.haptics.ir.sharpness",
+"group": 1,
+"tier": "advanced",
+"label": "Haptics IR sharpness",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 13,
+"key": "ds5.rumble.enabled",
+"group": 2,
+"tier": "common",
+"label": "Rumble enabled",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 14,
+"key": "ds5.rumble.strength",
+"group": 2,
+"tier": "common",
+"label": "Rumble strength",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 15,
+"key": "ds5.rumble.curve",
+"group": 2,
+"tier": "advanced",
+"label": "Rumble curve",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 16,
+"key": "ds5.rumble.lowGain",
+"group": 2,
+"tier": "advanced",
+"label": "Rumble low Gain",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 17,
+"key": "ds5.rumble.highGain",
+"group": 2,
+"tier": "advanced",
+"label": "Rumble high Gain",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 18,
+"key": "ds5.rumble.noiseGate",
+"group": 2,
+"tier": "advanced",
+"label": "Rumble noise Gate",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 19,
+"key": "ds5.rumble.holdMs",
+"group": 2,
+"tier": "advanced",
+"label": "Rumble hold ms",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 20,
+"key": "ds5.rumble.sendIntervalMs",
+"group": 2,
+"tier": "advanced",
+"label": "Rumble send Interval ms",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 21,
+"key": "ds5.rumble.watchdogMs",
+"group": 2,
+"tier": "advanced",
+"label": "Rumble watchdog ms",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 22,
+"key": "ds5.rumble.maxDurationMs",
+"group": 2,
+"tier": "advanced",
+"label": "Rumble max Duration ms",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 23,
+"key": "ds5.rumble.maxRateHz",
+"group": 2,
+"tier": "advanced",
+"label": "Rumble max Rate Hz",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 24,
+"key": "ds5.trigger.adaptive.enabled",
+"group": 3,
+"tier": "common",
+"label": "Trigger adaptive enabled",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 25,
+"key": "ds5.trigger.adaptive.strength",
+"group": 3,
+"tier": "common",
+"label": "Trigger adaptive strength",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 26,
+"key": "ds5.trigger.adaptive.leftStrength",
+"group": 3,
+"tier": "advanced",
+"label": "Trigger adaptive left Strength",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 27,
+"key": "ds5.trigger.adaptive.rightStrength",
+"group": 3,
+"tier": "advanced",
+"label": "Trigger adaptive right Strength",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 28,
+"key": "ds5.trigger.adaptive.feedbackScale",
+"group": 3,
+"tier": "advanced",
+"label": "Trigger adaptive feedback Scale",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 29,
+"key": "ds5.trigger.adaptive.weaponScale",
+"group": 3,
+"tier": "advanced",
+"label": "Trigger adaptive weapon Scale",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 30,
+"key": "ds5.trigger.adaptive.vibrationScale",
+"group": 3,
+"tier": "advanced",
+"label": "Trigger adaptive vibration Scale",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 31,
+"key": "ds5.trigger.adaptive.slopeScale",
+"group": 3,
+"tier": "advanced",
+"label": "Trigger adaptive slope Scale",
+"implemented": false,
+"authority": "host"
+},
+{
+"id": 32,
+"key": "ds5.trigger.adaptive.offMode",
+"group": 3,
+"tier": "advanced",
+"label": "Trigger adaptive off Mode",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 33,
+"key": "ds5.trigger.adaptive.rawPassthrough",
+"group": 3,
+"tier": "advanced",
+"label": "Trigger adaptive raw Passthrough",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 34,
+"key": "ds5.trigger.adaptive.modeMask",
+"group": 3,
+"tier": "advanced",
+"label": "Trigger adaptive mode Mask",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 35,
+"key": "ds5.stick.shape",
+"group": 4,
+"tier": "advanced",
+"label": "Stick shape",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 36,
+"key": "gamepad.stick.left.deadzoneInner",
+"group": 4,
+"tier": "advanced",
+"label": "Stick left deadzone Inner",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 37,
+"key": "gamepad.stick.left.deadzoneOuter",
+"group": 4,
+"tier": "advanced",
+"label": "Stick left deadzone Outer",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 38,
+"key": "gamepad.stick.left.antiDeadzone",
+"group": 4,
+"tier": "advanced",
+"label": "Stick left anti Deadzone",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 39,
+"key": "gamepad.stick.left.sensitivity",
+"group": 4,
+"tier": "advanced",
+"label": "Stick left sensitivity",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 40,
+"key": "gamepad.stick.left.curve",
+"group": 4,
+"tier": "advanced",
+"label": "Stick left curve",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 41,
+"key": "gamepad.stick.left.invertX",
+"group": 4,
+"tier": "advanced",
+"label": "Stick left invert X",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 42,
+"key": "gamepad.stick.left.invertY",
+"group": 4,
+"tier": "advanced",
+"label": "Stick left invert Y",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 43,
+"key": "gamepad.stick.right.deadzoneInner",
+"group": 4,
+"tier": "advanced",
+"label": "Stick right deadzone Inner",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 44,
+"key": "gamepad.stick.right.deadzoneOuter",
+"group": 4,
+"tier": "advanced",
+"label": "Stick right deadzone Outer",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 45,
+"key": "gamepad.stick.right.antiDeadzone",
+"group": 4,
+"tier": "advanced",
+"label": "Stick right anti Deadzone",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 46,
+"key": "gamepad.stick.right.sensitivity",
+"group": 4,
+"tier": "advanced",
+"label": "Stick right sensitivity",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 47,
+"key": "gamepad.stick.right.curve",
+"group": 4,
+"tier": "advanced",
+"label": "Stick right curve",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 48,
+"key": "gamepad.stick.right.invertX",
+"group": 4,
+"tier": "advanced",
+"label": "Stick right invert X",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 49,
+"key": "gamepad.stick.right.invertY",
+"group": 4,
+"tier": "advanced",
+"label": "Stick right invert Y",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 50,
+"key": "gamepad.trigger.left.deadzone",
+"group": 5,
+"tier": "advanced",
+"label": "Trigger left deadzone",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 51,
+"key": "gamepad.trigger.left.threshold",
+"group": 5,
+"tier": "advanced",
+"label": "Trigger left threshold",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 52,
+"key": "gamepad.trigger.left.asButton",
+"group": 5,
+"tier": "advanced",
+"label": "Trigger left as Button",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 53,
+"key": "gamepad.trigger.right.deadzone",
+"group": 5,
+"tier": "advanced",
+"label": "Trigger right deadzone",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 54,
+"key": "gamepad.trigger.right.threshold",
+"group": 5,
+"tier": "advanced",
+"label": "Trigger right threshold",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 55,
+"key": "gamepad.trigger.right.asButton",
+"group": 5,
+"tier": "advanced",
+"label": "Trigger right as Button",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 56,
+"key": "ds5.axis.trigger.left.rangeMin",
+"group": 5,
+"tier": "advanced",
+"label": "Axis trigger left range Min",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 57,
+"key": "ds5.axis.trigger.left.rangeMax",
+"group": 5,
+"tier": "advanced",
+"label": "Axis trigger left range Max",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 58,
+"key": "ds5.axis.trigger.left.antiDeadzone",
+"group": 5,
+"tier": "advanced",
+"label": "Axis trigger left anti Deadzone",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 59,
+"key": "ds5.axis.trigger.left.curve",
+"group": 5,
+"tier": "advanced",
+"label": "Axis trigger left curve",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 60,
+"key": "ds5.axis.trigger.right.rangeMin",
+"group": 5,
+"tier": "advanced",
+"label": "Axis trigger right range Min",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 61,
+"key": "ds5.axis.trigger.right.rangeMax",
+"group": 5,
+"tier": "advanced",
+"label": "Axis trigger right range Max",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 62,
+"key": "ds5.axis.trigger.right.antiDeadzone",
+"group": 5,
+"tier": "advanced",
+"label": "Axis trigger right anti Deadzone",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 63,
+"key": "ds5.axis.trigger.right.curve",
+"group": 5,
+"tier": "advanced",
+"label": "Axis trigger right curve",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 64,
+"key": "ds5.gyro.activation",
+"group": 6,
+"tier": "common",
+"label": "Gyro activation",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 65,
+"key": "gamepad.gyro.sensitivity",
+"group": 6,
+"tier": "advanced",
+"label": "Gyro sensitivity",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 66,
+"key": "gamepad.gyro.deadzone",
+"group": 6,
+"tier": "advanced",
+"label": "Gyro deadzone",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 67,
+"key": "ds5.gyro.filter",
+"group": 6,
+"tier": "advanced",
+"label": "Gyro filter",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 68,
+"key": "ds5.gyro.filterHz",
+"group": 6,
+"tier": "advanced",
+"label": "Gyro filter Hz",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 69,
+"key": "ds5.gyro.filterBeta",
+"group": 6,
+"tier": "advanced",
+"label": "Gyro filter Beta",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 70,
+"key": "ds5.gyro.orientation",
+"group": 6,
+"tier": "advanced",
+"label": "Gyro orientation",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 71,
+"key": "ds5.gyro.yawOffsetDeg",
+"group": 6,
+"tier": "advanced",
+"label": "Gyro yaw Offset deg",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 72,
+"key": "ds5.gyro.pitchOffsetDeg",
+"group": 6,
+"tier": "advanced",
+"label": "Gyro pitch Offset deg",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 73,
+"key": "ds5.gyro.rollOffsetDeg",
+"group": 6,
+"tier": "advanced",
+"label": "Gyro roll Offset deg",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 74,
+"key": "gamepad.touchpad.mode",
+"group": 7,
+"tier": "advanced",
+"label": "Touchpad mode",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 75,
+"key": "ds5.touchpad.output",
+"group": 7,
+"tier": "common",
+"label": "Touchpad output",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 76,
+"key": "ds5.touchpad.sensitivity",
+"group": 7,
+"tier": "advanced",
+"label": "Touchpad sensitivity",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 77,
+"key": "ds5.touchpad.scrollSpeed",
+"group": 7,
+"tier": "advanced",
+"label": "Touchpad scroll Speed",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 78,
+"key": "ds5.touchpad.reverseScroll",
+"group": 7,
+"tier": "advanced",
+"label": "Touchpad reverse Scroll",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 79,
+"key": "ds5.touchpad.clickAction",
+"group": 7,
+"tier": "advanced",
+"label": "Touchpad click Action",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 80,
+"key": "ds5.touchpad.twoFingerAction",
+"group": 7,
+"tier": "advanced",
+"label": "Touchpad two Finger Action",
+"implemented": true,
+"authority": "client"
+},
+{
+"id": 81,
+"key": "ds5.led.lightbar.mode",
+"group": 8,
+"tier": "common",
+"label": "LED lightbar mode",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 82,
+"key": "ds5.led.lightbar.colorR",
+"group": 8,
+"tier": "common",
+"label": "LED lightbar color R",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 83,
+"key": "ds5.led.lightbar.colorG",
+"group": 8,
+"tier": "common",
+"label": "LED lightbar color G",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 84,
+"key": "ds5.led.lightbar.colorB",
+"group": 8,
+"tier": "common",
+"label": "LED lightbar color B",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 85,
+"key": "ds5.led.lightbar.brightness",
+"group": 8,
+"tier": "advanced",
+"label": "LED lightbar brightness",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 86,
+"key": "ds5.led.player.mode",
+"group": 8,
+"tier": "advanced",
+"label": "LED player mode",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 87,
+"key": "ds5.led.player.index",
+"group": 8,
+"tier": "advanced",
+"label": "LED player index",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 88,
+"key": "ds5.led.mute.mode",
+"group": 8,
+"tier": "advanced",
+"label": "LED mute mode",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 89,
+"key": "ds5.led.releaseOnEnd",
+"group": 8,
+"tier": "advanced",
+"label": "LED release On End",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 90,
+"key": "ds5.audio.speakerLevel",
+"group": 9,
+"tier": "advanced",
+"label": "Audio speaker Level",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 91,
+"key": "ds5.audio.headsetLevel",
+"group": 9,
+"tier": "advanced",
+"label": "Audio headset Level",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 92,
+"key": "ds5.audio.micLevel",
+"group": 9,
+"tier": "advanced",
+"label": "Audio mic Level",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 93,
+"key": "ds5.audio.speakerMute",
+"group": 9,
+"tier": "advanced",
+"label": "Audio speaker Mute",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 94,
+"key": "ds5.audio.micMute",
+"group": 9,
+"tier": "advanced",
+"label": "Audio mic Mute",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 95,
+"key": "ds5.audio.route",
+"group": 9,
+"tier": "common",
+"label": "Audio route",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 96,
+"key": "ds5.audio.micRoute",
+"group": 9,
+"tier": "advanced",
+"label": "Audio mic Route",
+"implemented": false,
+"authority": "host"
+},
+{
+"id": 97,
+"key": "ds5.audio.preamp",
+"group": 9,
+"tier": "advanced",
+"label": "Audio preamp",
+"implemented": false,
+"authority": "host"
+},
+{
+"id": 98,
+"key": "ds5.audio.btFallback",
+"group": 9,
+"tier": "advanced",
+"label": "Audio BT Fallback",
+"implemented": false,
+"authority": "client"
+},
+{
+"id": 99,
+"key": "ds5.compat.preset",
+"group": 10,
+"tier": "advanced",
+"label": "Compat preset",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 100,
+"key": "ds5.compat.btOutput",
+"group": 10,
+"tier": "advanced",
+"label": "Compat BT Output",
+"implemented": false,
+"authority": "client"
+},
+{
+"id": 101,
+"key": "ds5.compat.reportRateCapHz",
+"group": 10,
+"tier": "advanced",
+"label": "Compat report Rate Cap Hz",
+"implemented": false,
+"authority": "client"
+},
+{
+"id": 102,
+"key": "ds5.sync.allowHostOverrides",
+"group": 11,
+"tier": "advanced",
+"label": "Sync allow Host Overrides",
+"implemented": false,
+"authority": "client"
+},
+{
+"id": 103,
+"key": "ds5.sync.allowClientOverrides",
+"group": 11,
+"tier": "advanced",
+"label": "Sync allow Client Overrides",
+"implemented": false,
+"authority": "host"
+},
+{
+"id": 104,
+"key": "ds5.sync.maxRateHz",
+"group": 11,
+"tier": "advanced",
+"label": "Sync max Rate Hz",
+"implemented": false,
+"authority": "host"
+},
+{
+"id": 105,
+"key": "ds5.feedback.target",
+"group": 12,
+"tier": "advanced",
+"label": "Feedback target",
+"implemented": false,
+"authority": "client"
+},
+{
+"id": 106,
+"key": "ds5.identity.profile",
+"group": 10,
+"tier": "advanced",
+"label": "Identity profile",
+"implemented": true,
+"authority": "host"
+}
+]

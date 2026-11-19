@@ -108,10 +108,6 @@ src_assets/common/assets/web/dist/
 build.sh
 
 # Sunshine DualSense .NET build outputs
-tools/sunshine-ds5-sidecar/bin/
-tools/sunshine-ds5-sidecar/obj/
-tools/hidmaestro-core-patch/**/bin/
-tools/hidmaestro-core-patch/**/obj/
 .claude/
 
 # makepkg 产物与暂存目录（arch 本地调试包）

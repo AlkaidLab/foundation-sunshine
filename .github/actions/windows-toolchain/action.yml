@@ -1,0 +1,132 @@
+name: Windows toolchain
+description: MSYS2 UCRT64 build tools for the Windows host build, with Defender exclusions for the build directories.
+inputs:
+  toolchain:
+    description: "gcc or clang (MSYS2 UCRT64 Clang with libstdc++ and LLD; its packages are pinned in scripts/ci/msys2-pins-clang.txt)"
+    required: false
+    default: gcc
+  save-cache:
+    description: Save the pacman package cache even when the ref is not the default branch.
+    required: false
+    default: "false"
+  unpinned:
+    description: Install the newest MSYS2 repository packages instead of the ones pinned in scripts/ci/msys2-pins.txt (the weekly toolchain watch dispatches such a build to test a new major).
+    required: false
+    default: "false"
+runs:
+  using: composite
+  steps:
+    # Real-time scanning of the many small files a C++ build writes is the largest single cost of the short steps
+    # (pacman, configure, cache-hit builds). The runner is a disposable VM; only the build directories and the
+    # compiler processes are excluded.
+    - name: Defender exclusions
+      shell: pwsh
+      run: |
+        # Hosted runners differ in speed from run to run (timings of the same build varied by up to 1.5x), so every run
+        # records the machine it got next to its timings.
+        $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
+        "### Runner`n- CPU: $($cpu.Name), $($cpu.NumberOfLogicalProcessors) logical processors, $([math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory/1GB)) GB RAM`n- Image: $env:ImageVersion" | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+        Add-MpPreference -ExclusionPath 'C:\msys64', $env:GITHUB_WORKSPACE, 'D:\a', $env:RUNNER_TEMP
+        Add-MpPreference -ExclusionProcess 'gcc.exe','g++.exe','cc1.exe','cc1plus.exe','as.exe','ld.exe','ninja.exe','ccache.exe','cmake.exe','pacman.exe','bash.exe','git.exe','iscc.exe'
+
+    # MSYS2 is installed by setup-msys2 under the runner's temp directory (D:\a\_temp\msys64), not taken from the image's
+    # C:\msys64 (`release: false`). The compiler cache keys every translation unit on the absolute paths of the system
+    # headers, so a build whose MSYS2 lives elsewhere finds none of the cache of the others: measured on this repository, 98%
+    # hits with the temp directory install and 17% with `release: false`, from the same cache. Using the image's copy would
+    # save about 20 s of extraction and cost a cold build whenever the location changes.
+    # setup-msys2 only extracts and starts MSYS2 here (`update: false`, no `install`, `cache: false`). Its own `update: true` runs
+    # `pacman -Syuu` once, without a retry, and four of eight shards of master run 43736645013 died on a stalled mirror; the upgrade,
+    # the package install and the package cache are done below by scripts/ci/msys2-pacman.sh. The action cannot pin a
+    # package version itself (its `install` input is a plain `pacman -S`, source setup-msys2-readme-20261116); the pins
+    # live in scripts/ci/msys2-pins.txt and msys2-pacman.sh applies them.
+    - name: MSYS2
+      uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
+      with:
+        msystem: ucrt64
+        update: false
+        cache: false
+
+    # The package files of the last run. The key is never an exact hit: the newest entry of the prefix is restored, pacman uses
+    # the files whose version is still current and downloads the rest. Saved at the end only when the files differ. The restore
+    # prefix carries the toolchain mode (pinned/newest), so the probe builds the weekly toolchain watch dispatches never take
+    # the pinned entry over; the unprefixed line is the fallback to the entries saved before the mode existed.
+    - name: Restore the pacman package cache
+      id: pacman-cache
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ runner.temp }}\msys64\var\cache\pacman\pkg
+        key: msys2-pkgs-ucrt64-restore-only-${{ github.run_id }}
+        restore-keys: |
+          msys2-pkgs-ucrt64-${{ inputs.unpinned == 'true' && 'newest' || 'pinned' }}-
+          msys2-pkgs-ucrt64-
+
+    - name: Prepare pacman
+      shell: msys2 {0}
+      env:
+        TOOLCHAIN_UNPINNED: ${{ inputs.unpinned == 'true' && '1' || '' }}
+        TOOLCHAIN: ${{ inputs.toolchain }}
+      run: bash "$(cygpath -u "$GITHUB_WORKSPACE")/scripts/ci/msys2-pacman.sh" prepare
+
+    # The base system upgrade, in the two passes setup-msys2 uses. When msys2-runtime itself is upgraded, pacman closes every
+    # MSYS2 process to finish the job, which would kill an `msys2 {0}` step and fail it with exit 1; here the first pass is started
+    # from PowerShell and its exit status is ignored, the leftover MSYS2 processes are stopped, and the second pass must succeed.
+    # Each pass retries the database synchronisation and the downloads (scripts/ci/msys2-pacman.sh). The pinned toolchain
+    # packages are in IgnorePkg (written by prepare), so this upgrade touches the base system only.
+    - name: Upgrade MSYS2
+      shell: pwsh
+      env:
+        # prepare runs here a second time (after pacman.conf was replaced by its .pacnew); it must know the mode too,
+        # or an unpinned probe build would write IgnorePkg and pacman would prompt for every pinned name.
+        TOOLCHAIN_UNPINNED: ${{ inputs.unpinned == 'true' && '1' || '' }}
+        TOOLCHAIN: ${{ inputs.toolchain }}
+      run: |
+        $script = (Join-Path $env:GITHUB_WORKSPACE 'scripts/ci/msys2-pacman.sh') -replace '\\', '/'
+        $script = '/' + $script.Substring(0, 1).ToLower() + $script.Substring(2)
+        msys2.cmd -c "bash '$script' upgrade"
+        Write-Host "first pass: exit $LASTEXITCODE (ignored: pacman may have closed MSYS2 to upgrade its runtime)"
+        taskkill /F /FI "MODULES eq msys-2.0.dll"
+        # The upgrade of pacman.conf is left as pacman.conf.pacnew when the file was edited; the new one is wanted, then edited again.
+        msys2.cmd -c "mv -f /etc/pacman.conf.pacnew /etc/pacman.conf || true; bash '$script' prepare"
+        msys2.cmd -c "bash '$script' upgrade"
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+    # An explicit package list instead of the `toolchain` group: the group pulled in gdb and, through it, python, which
+    # CMake needs (installer packaging) but nothing declared. Every ucrt64 name of this list is pinned to an exact package
+    # file in scripts/ci/msys2-pins.txt (msys2-pacman.sh downloads the pinned set and installs it with `pacman -U`; a
+    # pinned name is never passed to `pacman -S`, source msys2-package-management-20261116). crt/headers/winpthreads are
+    # the package names; the *-git names this list used to install are provides of them now.
+    # NOTE: gcc/gcc-libs were once pinned to 15.1.0-5 to work around a broken upstream gcc 15.x. The pins file carries
+    # 16.2.0-7, the current line; an old gcc-libs makes cmake.exe fail to load (exit 127).
+    - name: Build tools
+      shell: msys2 {0}
+      env:
+        TOOLCHAIN_UNPINNED: ${{ inputs.unpinned == 'true' && '1' || '' }}
+        TOOLCHAIN: ${{ inputs.toolchain }}
+      run: |
+        set -euo pipefail
+        P=mingw-w64-ucrt-x86_64
+        packages=(git diffutils curl $P-ccache $P-cmake $P-ninja $P-gcc $P-binutils $P-crt $P-headers $P-winpthreads
+          $P-libwinpthread $P-pkgconf $P-make $P-python $P-cppwinrt $P-curl-winssl $P-MinHook $P-miniupnpc $P-nlohmann-json
+          $P-libvpl $P-openssl $P-opus)
+        # Clang and LLD are named here so an unpinned probe build installs them too; in the pinned mode they and their version-locked
+        # libraries come from scripts/ci/msys2-pins-clang.txt (msys2-pacman.sh reads it when TOOLCHAIN=clang).
+        if [[ "$TOOLCHAIN" == clang ]]; then packages+=($P-clang $P-lld); fi
+        script="$(cygpath -u "$GITHUB_WORKSPACE")/scripts/ci/msys2-pacman.sh"
+        bash "$script" install "${packages[@]}"
+        {
+          echo "### Toolchain"
+          pacman -Q $P-gcc $P-cmake $P-ninja $P-ccache $P-binutils | sed 's/^/- /'
+          if [[ "$TOOLCHAIN" == clang ]]; then pacman -Q $P-clang $P-lld | sed 's/^/- /'; fi
+        } | tee -a "$GITHUB_STEP_SUMMARY"
+        # Only the packages that are installed stay in the saved cache.
+        bash "$script" prune
+        echo "PACMAN_CACHE_KEY=msys2-pkgs-ucrt64-$(bash "$script" cache-key)" >> "$GITHUB_ENV"
+
+    # A pull request must not fill the repository's cache quota with a copy of the toolchain of its own: the default branch saves
+    # (every push and the nightly), other refs only restore. A fork run can force it with the `save-cache` input.
+    - name: Save the pacman package cache
+      if: success() && steps.pacman-cache.outputs.cache-matched-key != env.PACMAN_CACHE_KEY && (inputs.save-cache == 'true' || github.ref == format('refs/heads/{0}', github.event.repository.default_branch))
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ runner.temp }}\msys64\var\cache\pacman\pkg
+        key: ${{ env.PACMAN_CACHE_KEY }}

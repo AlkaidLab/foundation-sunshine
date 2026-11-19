@@ -72,3 +72,16 @@ test('diagnosis allows a local Ollama endpoint without an API key', async (t) =>
   assert.equal(diagnosis.error.value, '')
   assert.equal(diagnosis.result.value, 'Diagnosis completed.')
 })
+
+test("the health check result goes in front of the log, redacted like the log", async (t) => {
+  const requests = []
+  mockAiFetch(t, () => remoteConfig, requests)
+  const diagnosis = useAiDiagnosis()
+
+  await diagnosis.diagnose("Info: Streaming started", { context: "## 网络 [fail]\n✗ 端口: 没有监听:tcp 47990 (web)\n  → 重启 Sunshine" })
+
+  const chat = requests.find(({ url }) => url === API_ENDPOINTS.AI_CHAT_COMPLETIONS)
+  const content = JSON.parse(chat.options.body).messages[1].content
+  assert.ok(content.startsWith("Host health check (体检) result:"), content.slice(0, 80))
+  assert.ok(content.indexOf("tcp 47990") < content.indexOf("Please analyze these logs"))
+})

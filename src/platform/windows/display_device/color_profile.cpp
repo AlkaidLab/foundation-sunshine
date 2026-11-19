@@ -9,11 +9,11 @@
 // standard includes
 #include <algorithm>
 #include <bit>
+#include <cctype>
 #include <cstdint>
 #include <exception>
 #include <filesystem>
 #include <fstream>
-#include <cctype>
 #include <iomanip>
 #include <limits>
 #include <memory>
@@ -29,8 +29,8 @@
 
 // lib includes
 #include <icm.h>
-#include <sddl.h>
 #include <nlohmann/json.hpp>
+#include <sddl.h>
 
 // local includes
 #include "color_profile.h"
@@ -46,7 +46,9 @@ namespace display_device::win_color_profile {
 
     // Older MinGW headers stop at CPST_CUSTOM_WORKING_SPACE even though the
     // runtime API and current Windows SDK define STANDARD (7) and EXTENDED (8).
-    constexpr auto extended_display_color_mode = static_cast<COLORPROFILESUBTYPE>(8);
+    // Not constexpr: 8 is not an enumerator of the old header's enum, and a cast to a value outside the enum is not a
+    // constant expression (Clang rejects it, GCC accepts it).
+    const auto extended_display_color_mode = static_cast<COLORPROFILESUBTYPE>(8);
 
     using add_display_association_fn = HRESULT(WINAPI *)(
       WCS_PROFILE_MANAGEMENT_SCOPE,
@@ -86,6 +88,8 @@ namespace display_device::win_color_profile {
       UINT32,
       WCS_PROFILE_MANAGEMENT_SCOPE *);
     using get_color_directory_fn = BOOL(WINAPI *)(PCWSTR, PWSTR, PDWORD);
+    // CLASS_MONITOR from icm.h is the multi-character constant 'mntr'; spelled out as the DWORD the API takes.
+    constexpr DWORD kClassMonitor = 0x6D6E7472;
     using set_use_per_user_profiles_fn = BOOL(WINAPI *)(PCWSTR, DWORD, BOOL);
 
     template <typename Function>
@@ -606,7 +610,7 @@ namespace display_device::win_color_profile {
           DISPLAY_DEVICEW monitor {};
           monitor.cb = sizeof(monitor);
           if (target.display_name.empty() || !EnumDisplayDevicesW(target.display_name.c_str(), 0, &monitor, 0)) return E_FAIL;
-          if (!api.set_use_per_user_profiles(monitor.DeviceKey, CLASS_MONITOR, TRUE)) return HRESULT_FROM_WIN32(GetLastError());
+          if (!api.set_use_per_user_profiles(monitor.DeviceKey, kClassMonitor, TRUE)) return HRESULT_FROM_WIN32(GetLastError());
         }
         status = associate_default(api, target, name);
         if (FAILED(status)) return status;

@@ -128,18 +128,26 @@
     },
     "macos-enhanced": {
       "captions": [
-        "Upravte jas, barvy a zobrazení videa",
-        "Místní vstupní metody, převod zkratek a trackpad",
-        "Ekvalizér, korekce sluchátek a prostorový zvuk",
-        "Upravte obraz, zvuk a hostitele během streamu"
+        "HDR na kompatibilních displejích",
+        "Známé ovládání plochy",
+        "Synchronizujte text a obrázky",
+        "Odesílejte místní hlas do herního PC",
+        "Přistupujte ke sdíleným složkám hostitele",
+        "Upravte stream a režim myši",
+        "Host haptics, adaptive triggers, lightbar colour and gyroscope",
+        "Místní vstupní metody, převod zkratek a trackpad"
       ],
       "description": "Využijte nativní rozhraní Mac, místní zadávání textu a trackpad. Upravte HDR obraz, zvuk sluchátek a nastavení streamu.",
       "detail": "Nativní rozšířený klient pro macOS",
       "features": [
-        "Nastavení HDR a barev",
-        "Vstup Mac a trackpad",
-        "Nastavení sluchátek a zvuku",
-        "Ovládání během streamu"
+        "HDR obraz",
+        "Klávesnice a gamepady",
+        "Obousměrná schránka",
+        "Vzdálený mikrofon",
+        "Sdílené soubory hostitele",
+        "Ovládání během streamu",
+        "DualSense haptics, triggers and motion",
+        "Vstup Mac a trackpad"
       ],
       "name": "macOS",
       "note": "macOS 12+, Apple Silicon a Intel. Schránka, mikrofon a ovládání hostitele vyžadují jeho podporu.",
@@ -197,6 +205,7 @@
     "downloadAddress": "Adresa ke stažení",
     "enhanced": "Rozšířená",
     "failed": "QR kód není dostupný. Použijte tlačítko pro stažení.",
+    "filesFailed": "Seznam souborů ke stažení se nepodařilo načíst",
     "friendLink": "Partnerský odkaz",
     "getApp": "Získat aplikaci",
     "mirror": "Alternativní stažení",

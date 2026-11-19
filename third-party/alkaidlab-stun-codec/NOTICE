@@ -1,0 +1,5 @@
+AlkaidLab stun-codec is a standalone plain-C STUN wire codec (RFC 8489, with the
+RFC 5780 diagnostic attributes). It contains no third-party implementation code;
+HMAC and SHA digests come from the OpenSSL library the host already links.
+Primary protocol sources are recorded in docs/authority/source-index.tsv; this
+notice does not grant rights to those sources.

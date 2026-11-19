@@ -7,6 +7,8 @@
 #include <boost/log/sources/record_ostream.hpp>
 #include <boost/log/sources/severity_logger.hpp>
 
+#include "logging_site.h"
+
 extern boost::log::sources::severity_logger<int> verbose;
 extern boost::log::sources::severity_logger<int> debug;
 extern boost::log::sources::severity_logger<int> info;

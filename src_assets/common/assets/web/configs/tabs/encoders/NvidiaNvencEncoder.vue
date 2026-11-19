@@ -1,11 +1,20 @@
 <script setup>
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { MBanner, MFooter, MGroup, MSection } from 'foundation-ui/vue'
+import CfgExpert from '../../../components/cfg/CfgExpert.vue'
+import CfgSteps from '../../../components/cfg/CfgSteps.vue'
+import CfgChoice from '../../../components/cfg/CfgChoice.vue'
+import CfgField from '../../../components/cfg/CfgField.vue'
+import CfgSwitch from '../../../components/cfg/CfgSwitch.vue'
+import { keyedOptions } from '../../../utils/cfgOptions.js'
 
 const props = defineProps([
   'platform',
   'config',
 ])
 
+const { t } = useI18n()
 const config = ref(props.config)
 
 // Runtime report of the last real session's frame budget guard evaluation
@@ -20,229 +29,68 @@ const frameBudget = computed(() => {
     estimatedText: Number(report.configured_estimated_ms).toFixed(1),
   }
 })
+
+const presets = computed(() => [1, 2, 3, 4, 5, 6, 7].map((n) => ({
+  value: String(n),
+  label: [1, 4, 7].includes(n) ? `P${n} ${t(`config.nvenc_preset_${n}`)}` : `P${n}`,
+})))
+const presetSegments = computed(() => presets.value.map((o) => ({ value: o.value, label: `P${o.value}` })))
+const twopass = computed(() => keyedOptions(t, [['disabled', 'config.nvenc_twopass_disabled'], ['quarter_res', 'config.nvenc_twopass_quarter_res'], ['full_res', 'config.nvenc_twopass_full_res']]))
+const rateControl = computed(() => keyedOptions(t, [['cbr', 'config.nvenc_rate_control_cbr'], ['vbr', 'config.nvenc_rate_control_vbr']]))
+const splitEncode = computed(() => keyedOptions(t, [
+  ['disabled', '_common.disabled'],
+  ['driver_decides', 'config.nvenc_split_encode_driver_decides_def'],
+  ['enabled', '_common.enabled'],
+  ['two_strips', 'config.nvenc_split_encode_two_strips'],
+  ['three_strips', 'config.nvenc_split_encode_three_strips'],
+  ['four_strips', 'config.nvenc_split_encode_four_strips'],
+]))
+const driverOff = computed(() => config.value.nvenc_manage_driver_settings === 'disabled')
 </script>
-
 <template>
-  <div id="nvidia-nvenc-encoder" class="config-page">
-    <!-- Frame budget guard notice for the current session -->
-    <div v-if="frameBudget && frameBudget.clamped" class="alert alert-warning py-2" role="alert">
-      {{
-        $t('config.nvenc_frame_budget_clamped', {
-          configured: frameBudget.configured_preset,
-          effective: frameBudget.effective_preset,
-          width: frameBudget.width,
-          height: frameBudget.height,
-          fps: frameBudget.fpsText,
-          budget: frameBudget.budgetText,
-          estimated: frameBudget.estimatedText,
-        })
-      }}
-    </div>
+  <MBanner v-if="frameBudget && frameBudget.clamped" tone="warn" icon="warning">
+    {{
+      $t('config.nvenc_frame_budget_clamped', {
+        configured: frameBudget.configured_preset,
+        effective: frameBudget.effective_preset,
+        width: frameBudget.width,
+        height: frameBudget.height,
+        fps: frameBudget.fpsText,
+        budget: frameBudget.budgetText,
+        estimated: frameBudget.estimatedText,
+      })
+    }}
+  </MBanner>
 
-    <!-- Performance preset -->
-    <div class="mb-3">
-      <label for="nvenc_preset" class="form-label">{{ $t('config.nvenc_preset') }}</label>
-      <select id="nvenc_preset" class="form-select" v-model="config.nvenc_preset">
-        <option value="1">P1 {{ $t('config.nvenc_preset_1') }}</option>
-        <option value="2">P2</option>
-        <option value="3">P3</option>
-        <option value="4">P4 {{ $t('config.nvenc_preset_4') }}</option>
-        <option value="5">P5</option>
-        <option value="6">P6</option>
-        <option value="7">P7 {{ $t('config.nvenc_preset_7') }}</option>
-      </select>
-      <div class="form-text">{{ $t('config.nvenc_preset_desc') }}</div>
-    </div>
+  <MSection>
+    <MGroup>
+      <CfgSteps :config="config" k="nvenc_preset" :options="presetSegments" def="4" :axis-start="$t('config.preset_faster')" :axis-end="$t('config.preset_better')" icon="speed" />
+    </MGroup>
+  </MSection>
+  <MSection :title="$t('tabs.advanced')">
+    <MGroup>
+      <CfgExpert control="switch" :config="config" k="nvenc_frame_budget_guard" def="enabled" />
+      <CfgExpert control="seg" :config="config" k="nvenc_twopass" :options="twopass" />
+      <CfgExpert control="switch" :config="config" k="nvenc_spatial_aq" def="enabled" />
+      <CfgExpert control="seg" :config="config" k="nvenc_rate_control" :options="rateControl" />
+      <CfgExpert control="slider" v-if="config.nvenc_rate_control === 'vbr'" :config="config" k="nvenc_target_quality" />
+      <CfgExpert control="slider" :config="config" k="nvenc_vbv_increase" />
+    </MGroup>
+    <MFooter><a href="https://en.wikipedia.org/wiki/Video_buffering_verifier" target="_blank" rel="noopener noreferrer">VBV/HRD</a></MFooter>
+  </MSection>
 
-    <!-- Frame budget guard -->
-    <div class="mb-3">
-      <label for="nvenc_frame_budget_guard" class="form-label">{{ $t('config.nvenc_frame_budget_guard') }}</label>
-      <select id="nvenc_frame_budget_guard" class="form-select" v-model="config.nvenc_frame_budget_guard">
-        <option value="enabled">{{ $t('config.nvenc_frame_budget_guard_enabled') }}</option>
-        <option value="disabled">{{ $t('config.nvenc_frame_budget_guard_disabled') }}</option>
-      </select>
-      <div class="form-text">{{ $t('config.nvenc_frame_budget_guard_desc') }}</div>
-    </div>
-
-    <!-- Two-pass mode -->
-    <div class="mb-3">
-      <label for="nvenc_twopass" class="form-label">{{ $t('config.nvenc_twopass') }}</label>
-      <select id="nvenc_twopass" class="form-select" v-model="config.nvenc_twopass">
-        <option value="disabled">{{ $t('config.nvenc_twopass_disabled') }}</option>
-        <option value="quarter_res">{{ $t('config.nvenc_twopass_quarter_res') }}</option>
-        <option value="full_res">{{ $t('config.nvenc_twopass_full_res') }}</option>
-      </select>
-      <div class="form-text">{{ $t('config.nvenc_twopass_desc') }}</div>
-    </div>
-
-    <!-- Spatial AQ -->
-    <div class="mb-3">
-      <label for="nvenc_spatial_aq" class="form-label">{{ $t('config.nvenc_spatial_aq') }}</label>
-      <select id="nvenc_spatial_aq" class="form-select" v-model="config.nvenc_spatial_aq">
-        <option value="disabled">{{ $t('config.nvenc_spatial_aq_disabled') }}</option>
-        <option value="enabled">{{ $t('config.nvenc_spatial_aq_enabled') }}</option>
-      </select>
-      <div class="form-text">{{ $t('config.nvenc_spatial_aq_desc') }}</div>
-    </div>
-
-    <!-- Lookahead depth -->
-    <!-- <div class="mb-3">
-      <label for="nvenc_lookahead_depth" class="form-label">{{ $t('config.nvenc_lookahead_depth') }}</label>
-      <input type="number" min="0" max="32" class="form-control" id="nvenc_lookahead_depth" placeholder="0"
-             v-model.number="config.nvenc_lookahead_depth" />
-      <div class="form-text">{{ $t('config.nvenc_lookahead_depth_desc') }}</div>
-    </div> -->
-
-    <!-- Lookahead level -->
-    <!-- <div class="mb-3" v-if="config.nvenc_lookahead_depth > 0">
-      <label for="nvenc_lookahead_level" class="form-label">{{ $t('config.nvenc_lookahead_level') }}</label>
-      <select id="nvenc_lookahead_level" class="form-select" v-model="config.nvenc_lookahead_level">
-        <option value="disabled">{{ $t('config.nvenc_lookahead_level_disabled') }}</option>
-        <option value="0">{{ $t('config.nvenc_lookahead_level_0') }}</option>
-        <option value="1">{{ $t('config.nvenc_lookahead_level_1') }}</option>
-        <option value="2">{{ $t('config.nvenc_lookahead_level_2') }}</option>
-        <option value="3">{{ $t('config.nvenc_lookahead_level_3') }}</option>
-        <option value="autoselect">{{ $t('config.nvenc_lookahead_level_autoselect') }}</option>
-      </select>
-      <div class="form-text">{{ $t('config.nvenc_lookahead_level_desc') }}</div>
-    </div> -->
-
-    <!-- Temporal filter -->
-    <!-- <div class="mb-3">
-      <label for="nvenc_temporal_filter" class="form-label">{{ $t('config.nvenc_temporal_filter') }}</label>
-      <select id="nvenc_temporal_filter" class="form-select" v-model="config.nvenc_temporal_filter">
-        <option value="disabled">{{ $t('_common.disabled_def') }}</option>
-        <option value="0">{{ $t('config.nvenc_temporal_filter_disabled') }}</option>
-        <option value="4">{{ $t('config.nvenc_temporal_filter_4') }}</option>
-      </select>
-      <div class="form-text">{{ $t('config.nvenc_temporal_filter_desc') }}</div>
-    </div> -->
-
-    <!-- Rate control mode -->
-    <div class="mb-3">
-      <label for="nvenc_rate_control" class="form-label">{{ $t('config.nvenc_rate_control') }}</label>
-      <select id="nvenc_rate_control" class="form-select" v-model="config.nvenc_rate_control">
-        <option value="cbr">{{ $t('config.nvenc_rate_control_cbr') }}</option>
-        <option value="vbr">{{ $t('config.nvenc_rate_control_vbr') }}</option>
-      </select>
-      <div class="form-text">{{ $t('config.nvenc_rate_control_desc') }}</div>
-    </div>
-
-    <!-- Target quality (VBR mode only) -->
-    <div class="mb-3" v-if="config.nvenc_rate_control === 'vbr'">
-      <label for="nvenc_target_quality" class="form-label">{{ $t('config.nvenc_target_quality') }}</label>
-      <input type="number" min="0" max="63" class="form-control" id="nvenc_target_quality" placeholder="0"
-             v-model.number="config.nvenc_target_quality" />
-      <div class="form-text">{{ $t('config.nvenc_target_quality_desc') }}</div>
-    </div>
-
-    <!-- Single-frame VBV/HRD percentage increase -->
-    <div class="mb-3">
-      <label for="nvenc_vbv_increase" class="form-label">{{ $t('config.nvenc_vbv_increase') }}</label>
-      <input type="number" min="0" max="400" class="form-control" id="nvenc_vbv_increase" placeholder="0"
-             v-model="config.nvenc_vbv_increase" />
-      <div class="form-text">
-        {{ $t('config.nvenc_vbv_increase_desc') }}<br>
-        <br>
-        <a href="https://en.wikipedia.org/wiki/Video_buffering_verifier">VBV/HRD</a>
-      </div>
-    </div>
-
-    <!-- Miscellaneous options -->
-    <div class="accordion">
-      <div class="accordion-item">
-        <h2 class="accordion-header">
-          <button class="accordion-button" type="button" data-bs-toggle="collapse"
-                  data-bs-target="#panelsStayOpen-collapseOne">
-            {{ $t('config.misc') }}
-          </button>
-        </h2>
-        <div id="panelsStayOpen-collapseOne" class="accordion-collapse collapse show"
-             aria-labelledby="panelsStayOpen-headingOne">
-          <div class="accordion-body">
-            <!-- NVENC Realtime HAGS priority -->
-            <div class="mb-3" v-if="platform === 'windows'">
-              <label for="nvenc_realtime_hags" class="form-label">{{ $t('config.nvenc_realtime_hags') }}</label>
-              <select id="nvenc_realtime_hags" class="form-select" v-model="config.nvenc_realtime_hags">
-                <option value="disabled">{{ $t('_common.disabled') }}</option>
-                <option value="enabled">{{ $t('_common.enabled_def') }}</option>
-              </select>
-              <div class="form-text">
-                {{ $t('config.nvenc_realtime_hags_desc') }}<br>
-                <br>
-                <a href="https://devblogs.microsoft.com/directx/hardware-accelerated-gpu-scheduling/">HAGS</a>
-              </div>
-            </div>
-
-            <!-- Split frame encoding -->
-            <div class="mb-3" v-if="platform === 'windows'">
-              <label for="nvenc_split_encode" class="form-label">{{ $t('config.nvenc_split_encode') }}</label>
-              <select id="nvenc_split_encode" class="form-select" v-model="config.nvenc_split_encode">
-                <option value="disabled">{{ $t('_common.disabled') }}</option>
-                <option value="driver_decides">{{ $t('config.nvenc_split_encode_driver_decides_def') }}</option>
-                <option value="enabled">{{ $t('_common.enabled') }}</option>
-                <option value="two_strips">{{ $t('config.nvenc_split_encode_two_strips') }}</option>
-                <option value="three_strips">{{ $t('config.nvenc_split_encode_three_strips') }}</option>
-                <option value="four_strips">{{ $t('config.nvenc_split_encode_four_strips') }}</option>
-              </select>
-              <div class="form-text">{{ $t('config.nvenc_split_encode_desc') }}</div>
-            </div>
-
-            <div class="mb-3" v-if="platform === 'windows'">
-              <label for="nvenc_manage_driver_settings" class="form-label">{{ $t('config.nvenc_manage_driver_settings') }}</label>
-              <select id="nvenc_manage_driver_settings" class="form-select" v-model="config.nvenc_manage_driver_settings">
-                <option value="disabled">{{ $t('_common.disabled') }}</option>
-                <option value="enabled">{{ $t('_common.enabled_def') }}</option>
-              </select>
-              <div class="form-text">{{ $t('config.nvenc_manage_driver_settings_desc') }}</div>
-            </div>
-
-            <!-- Prefer lower encoding latency over power savings -->
-            <div class="mb-3" v-if="platform === 'windows'">
-              <label for="nvenc_latency_over_power" class="form-label">{{ $t('config.nvenc_latency_over_power') }}</label>
-              <select id="nvenc_latency_over_power" class="form-select" v-model="config.nvenc_latency_over_power" :disabled="config.nvenc_manage_driver_settings === 'disabled'">
-                <option value="disabled">{{ $t('_common.disabled') }}</option>
-                <option value="enabled">{{ $t('_common.enabled_def') }}</option>
-              </select>
-              <div class="form-text">{{ $t('config.nvenc_latency_over_power_desc') }}</div>
-            </div>
-
-            <!-- Present OpenGL/Vulkan on top of DXGI -->
-            <div class="mb-3" v-if="platform === 'windows'">
-              <label for="nvenc_opengl_vulkan_on_dxgi" class="form-label">{{ $t('config.nvenc_opengl_vulkan_on_dxgi') }}</label>
-              <select id="nvenc_opengl_vulkan_on_dxgi" class="form-select" v-model="config.nvenc_opengl_vulkan_on_dxgi" :disabled="config.nvenc_manage_driver_settings === 'disabled'">
-                <option value="disabled">{{ $t('_common.disabled') }}</option>
-                <option value="enabled">{{ $t('_common.enabled_def') }}</option>
-              </select>
-              <div class="form-text">{{ $t('config.nvenc_opengl_vulkan_on_dxgi_desc') }}</div>
-            </div>
-
-            <!-- 10-bit 4:4:4 CUDA array input -->
-            <div class="mb-3" v-if="platform === 'windows'">
-              <label for="nvenc_cuda_array_input" class="form-label">{{ $t('config.nvenc_cuda_array_input') }}</label>
-              <select id="nvenc_cuda_array_input" class="form-select" v-model="config.nvenc_cuda_array_input">
-                <option value="disabled">{{ $t('_common.disabled_def') }}</option>
-                <option value="enabled">{{ $t('_common.enabled') }}</option>
-              </select>
-              <div class="form-text">{{ $t('config.nvenc_cuda_array_input_desc') }}</div>
-            </div>
-
-            <!-- NVENC H264 CAVLC -->
-            <div>
-              <label for="nvenc_h264_cavlc" class="form-label">{{ $t('config.nvenc_h264_cavlc') }}</label>
-              <select id="nvenc_h264_cavlc" class="form-select" v-model="config.nvenc_h264_cavlc">
-                <option value="disabled">{{ $t('_common.disabled_def') }}</option>
-                <option value="enabled">{{ $t('_common.enabled') }}</option>
-              </select>
-              <div class="form-text">{{ $t('config.nvenc_h264_cavlc_desc') }}</div>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </div>
+  <MSection :title="$t('config.misc')">
+    <MGroup>
+      <template v-if="platform === 'windows'">
+        <CfgExpert control="switch" :config="config" k="nvenc_realtime_hags" def="enabled" />
+        <CfgExpert control="seg" :config="config" k="nvenc_split_encode" :options="splitEncode" def="driver_decides" />
+        <CfgExpert control="switch" :config="config" k="nvenc_manage_driver_settings" def="enabled" />
+        <CfgExpert control="switch" :config="config" k="nvenc_latency_over_power" def="enabled" :disabled="driverOff" />
+        <CfgExpert control="switch" :config="config" k="nvenc_opengl_vulkan_on_dxgi" def="enabled" :disabled="driverOff" />
+        <CfgExpert control="switch" :config="config" k="nvenc_cuda_array_input" def="disabled" />
+      </template>
+      <CfgExpert control="switch" :config="config" k="nvenc_h264_cavlc" def="disabled" />
+    </MGroup>
+    <MFooter v-if="platform === 'windows'"><a href="https://devblogs.microsoft.com/directx/hardware-accelerated-gpu-scheduling/" target="_blank" rel="noopener noreferrer">HAGS</a></MFooter>
+  </MSection>
 </template>
-
-<style scoped>
-
-</style>

@@ -706,7 +706,11 @@ namespace display_device {
     }
 
     bool
-    wait_for_mode_publication(const std::string &device_id, const display_mode_t &requested_mode) {
+    wait_for_mode_publication(const std::string &device_id, const display_mode_t &requested_mode,
+                              std::string_view /*client_identifier*/) {
+      // Windows keeps a single virtual display per session, so the requesting client
+      // cannot select between two candidates; the parameter only exists to keep one
+      // signature in the shared header.
       const auto deadline = std::chrono::steady_clock::now() + kModePublicationTimeout;
       auto poll_delay = kModePublicationInitialPoll;
 

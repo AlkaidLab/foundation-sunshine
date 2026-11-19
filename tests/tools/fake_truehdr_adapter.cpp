@@ -1,3 +1,5 @@
+// The ABI header declares the entry point with dllexport only when this is defined, as in the real adapter.
+#define FOUNDATION_RTX_VIDEO_ADAPTER_EXPORTS
 #include "src/platform/windows/image_enhancement/rtx_hdr/adapter_abi.h"
 
 namespace {
@@ -24,9 +26,9 @@ namespace {
 
   void FOUNDATION_RTX_VIDEO_CALL
   destroy_truehdr(void *) {}
-}
+}  // namespace
 
-extern "C" __declspec(dllexport) const foundation_truehdr_adapter_api_t *FOUNDATION_RTX_VIDEO_CALL
+extern "C" FOUNDATION_RTX_VIDEO_EXPORT const foundation_truehdr_adapter_api_t *FOUNDATION_RTX_VIDEO_CALL
 foundation_truehdr_adapter_get_api(uint32_t) {
   static const foundation_truehdr_adapter_api_t api {
 #ifdef FAKE_TRUEHDR_BAD_ABI

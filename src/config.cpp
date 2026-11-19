@@ -3,6 +3,7 @@
  * @brief Definitions for the configuration of Sunshine.
  */
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -23,19 +24,23 @@
 #include "config.h"
 #include "entry_handler.h"
 #include "file_handler.h"
-#include "logging.h"
-#include "nvhttp.h"
-#include "rtsp.h"
-#include "utility.h"
 #include "globals.h"
 #include "hdr/calibration.h"
+#include "logging.h"
+#include "nat_discovery.h"
+#include "nvhttp.h"
+#include "public_address.h"
+#include "rtsp.h"
+#include "streaming/bitrate.h"
+#include "utility.h"
 
 #include "display_device/parsed_config.h"
+#include "doctor/doctor.h"
 #include "platform/common.h"
 
 #ifdef _WIN32
-  #include <shellapi.h>
   #include "platform/windows/misc.h"
+  #include <shellapi.h>
 #endif
 
 #ifndef __APPLE__
@@ -85,7 +90,7 @@ namespace config {
       }
       return contents;
     }
-  }
+  }  // namespace
 
   namespace nv {
 
@@ -145,7 +150,8 @@ namespace config {
 
   namespace amd {
 #if !defined(_WIN32) || defined(DOXYGEN)
-  // values accurate as of 27/12/2022, but aren't strictly necessary for MacOS build
+  // values accurate as of the AMF SDK 1.5.3 headers in third-party/AMF, but
+  // aren't strictly necessary for MacOS build
   #define AMF_VIDEO_ENCODER_AV1_QUALITY_PRESET_SPEED 100
   #define AMF_VIDEO_ENCODER_AV1_QUALITY_PRESET_QUALITY 30
   #define AMF_VIDEO_ENCODER_AV1_QUALITY_PRESET_BALANCED 70
@@ -457,7 +463,6 @@ namespace config {
     false,  // vdd_keep_enabled
     false,  // vdd_headless_create_enabled
     false,  // vdd_reuse (default: recreate VDD for each client)
-    true,  // vdd_borrowed_texture
     true,  // vdd_vulkan_hdr_bridge (automatic for HDR VDD sessions)
     {},  // nv_legacy
 
@@ -522,13 +527,15 @@ namespace config {
     "auto"s,  // capture_compute_shader (automatic capability and benefit detection)
     false,  // wgc_disable_secure_desktop (disabled by default for security)
     true,  // dynamic_resolution_follow_display (default: on; matches existing behavior. Set false for legacy clients like PSVita Moonlight.)
+    64 * 1024,  // video_pacing_threshold (protect small-queue paths from large frame bursts)
   };
 
   audio_t audio {
     {},  // audio_sink
     {},  // virtual_sink
     false,  // keep_sink_default
-    "vb_cable"s,  // microphone_redirect_backend
+    false,  // host_audio
+    "auto"s,  // microphone_redirect_backend
     true,  // stream audio
     true,  // stream_mic (enable microphone streaming from client)
     true,  // install_steam_drivers
@@ -538,6 +545,7 @@ namespace config {
   stream_t stream {
     10s,  // ping_timeout
     false,  // stop_on_last_video_session
+    true,  // launch_splash
 
     APPS_JSON_PATH,
 
@@ -554,6 +562,7 @@ namespace config {
     CERTIFICATE_FILE,
 
     platf::get_host_name(),  // sunshine_name,
+    {},  // fs_host_icon
     "[]",
     "sunshine_state.json"s,  // file_state
     "[]"s,  // file_mappings
@@ -561,6 +570,8 @@ namespace config {
     false,  // usb_forwarding_enabled: explicit host opt-in
     0,  // usb_forwarding_port: automatic (main port + 7)
     {},  // external_ip
+    {},  // external_endpoints
+    {},  // stun_servers
     {
       "1280x720"s,
       "1920x1080"s,
@@ -603,8 +614,8 @@ namespace config {
     true,  // client gamepads with motion events are emulated as DS4
     true,  // client gamepads with touchpads are emulated as DS4
     true,  // ds5_inputtino_randomize_mac
-    false, // enable_dsu_server - disabled by default
-    26760, // dsu_server_port - default DSU server port
+    false,  // enable_dsu_server - disabled by default
+    26760,  // dsu_server_port - default DSU server port
 
     true,  // keyboard enabled
     true,  // mouse enabled
@@ -614,7 +625,7 @@ namespace config {
     true,  // native pen/touch support
     true,  // native touchpad optimization
     true,  // virtual mouse (use driver if available)
-    false, // amf_draw_mouse_cursor
+    false,  // amf_draw_mouse_cursor
     true,  // clipboard_sync (default on; effective only when the user-session GUI agent is alive and forwards data)
     true,  // client_gamepad_override (client-declared type wins; no official client sends it today)
   };
@@ -634,11 +645,16 @@ namespace config {
     47989,  // Base port number
     "ipv4",  // Address family
     {},  // Bind address
+    config_session_binding::mode_e::automatic,  // Interactive session binding
     file_handler::path_to_utf8(platf::appdata() / "sunshine.log"),  // log file
     false,  // restore_log - 默认不恢复日志文件
     50,  // max_log_size_mb - 默认50MB，超过自动轮转
     false,  // notify_pre_releases
     true,  // system_tray
+    30,  // session_idle_minutes
+    12,  // session_absolute_hours
+    7 * 24 * 60,  // session_remember_idle_minutes
+    30,  // session_remember_days
     {},  // prep commands
   };
 
@@ -758,7 +774,7 @@ namespace config {
     auto end_name = std::find_if_not(std::make_reverse_iterator(eq), std::make_reverse_iterator(begin), space_tab).base();
     auto begin_val = std::find_if_not(eq + 1, endc, space_tab);
 
-    if (begin_val == endl) {
+    if (begin_val == endc) {
       return std::make_pair(endl, std::nullopt);
     }
 
@@ -833,6 +849,9 @@ namespace config {
   string_restricted_f(std::unordered_map<std::string, std::string> &vars, const std::string &name, std::string &input, const std::vector<std::string_view> &allowed_vals) {
     std::string temp;
     string_f(vars, name, temp);
+    const auto begin = std::find_if_not(temp.begin(), temp.end(), whitespace);
+    const auto end = std::find_if_not(temp.rbegin(), temp.rend(), whitespace).base();
+    temp.assign(begin, end);
 
     for (auto &allowed_val : allowed_vals) {
       if (temp == allowed_val) {
@@ -982,6 +1001,17 @@ namespace config {
     }
 
     input = to_bool(tmp);
+  }
+
+  /// 启动画面 takes effect at the next launch: a saved value is in force at once, the way the bitrate ceiling is (a key that is gone from the file is the default, on).
+  template <class Map>
+  void
+  apply_live_launch_splash(const Map &saved) {
+    bool value = true;
+    if (const auto found = saved.find("launch_splash"); found != saved.end() && !found->second.empty()) {
+      value = to_bool(found->second);
+    }
+    stream.launch_splash = value;
   }
 
   void
@@ -1174,6 +1204,7 @@ namespace config {
           break;
         default:
           BOOST_LOG(warning) << "config: Unrecognized flag: ["sv << *line << ']' << std::endl;
+          doctor::record_config_problem("Unrecognized flag [" + std::string(1, *line) + "]");
           ret = -1;
       }
 
@@ -1194,7 +1225,8 @@ namespace config {
     return opts;
   }
 
-  void apply_config(std::unordered_map<std::string, std::string> &&vars) {
+  void
+  apply_config(std::unordered_map<std::string, std::string> &&vars) {
     for (auto &[name, val] : vars) {
       const auto log_value = (name == "file_mappings" || name == "widget_token") && !val.empty() ? "<redacted>"s : val;
       BOOST_LOG(info) << "config: '"sv << name << "' = "sv << log_value;
@@ -1314,14 +1346,21 @@ namespace config {
     int_between_f(vars, "amd_av1_latency_mode", video.amd.amd_av1_latency_mode, { 0, 3 });
 
     int_f(vars, "vt_coder", video.vt.vt_coder, vt::coder_from_view);
-    int_f(vars, "vt_software", video.vt.vt_allow_sw, vt::allow_software_from_view);
-    int_f(vars, "vt_software", video.vt.vt_require_sw, vt::force_software_from_view);
+    // One value feeds both fields: the first read erases the key, so a second
+    // int_f(vars, "vt_software", ...) would find nothing and leave the
+    // required-software flag at its previous value.
+    std::string vt_software;
+    string_f(vars, "vt_software", vt_software);
+    if (!vt_software.empty()) {
+      video.vt.vt_allow_sw = vt::allow_software_from_view(vt_software);
+      video.vt.vt_require_sw = vt::force_software_from_view(vt_software);
+    }
     int_f(vars, "vt_realtime", video.vt.vt_realtime, vt::rt_from_view);
 
     bool_f(vars, "vaapi_strict_rc_buffer", video.vaapi.strict_rc_buffer);
 
     string_f(vars, "capture", video.capture);
-    
+
 #ifdef _WIN32
     // Check if WGC is selected and we're running in service mode
     // If so, automatically switch to DDX since WGC doesn't work in system mode
@@ -1332,7 +1371,7 @@ namespace config {
       }
     }
 #endif
-    
+
     string_f(vars, "encoder", video.encoder);
     string_f(vars, "adapter_name", video.adapter_name);
     {
@@ -1341,8 +1380,7 @@ namespace config {
       std::string trimmed = (first == std::string::npos) ? std::string {} : video.adapter_name.substr(first, last - first + 1);
       std::string lower = trimmed;
       std::transform(lower.begin(), lower.end(), lower.begin(),
-        [](unsigned char c) { return std::tolower(c); }
-      );
+        [](unsigned char c) { return std::tolower(c); });
       if (trimmed.empty() || lower == "default" || lower == "auto") {
         video.adapter_name.clear();
       }
@@ -1351,23 +1389,23 @@ namespace config {
       }
     }
     string_f(vars, "output_name", video.output_name);
-    
+
 #ifdef _WIN32
     // Capture target: "display" (default) or "window"
     string_f(vars, "capture_target", video.capture_target);
     if (video.capture_target.empty()) {
       video.capture_target = "display";  // Default to display capture
     }
-    
+
     // Window title for window capture
     string_f(vars, "window_title", video.window_title);
-    
+
     // Validate capture_target
     if (video.capture_target != "display" && video.capture_target != "window") {
       BOOST_LOG(warning) << "Invalid capture_target: ["sv << video.capture_target << "], defaulting to 'display'"sv;
       video.capture_target = "display";
     }
-    
+
     // If window capture is selected, ensure window_title is provided
     if (video.capture_target == "window" && video.window_title.empty()) {
       BOOST_LOG(warning) << "capture_target=window but window_title is empty. Window capture may fail."sv;
@@ -1412,10 +1450,10 @@ namespace config {
     }
     bool_f(vars, "wgc_disable_secure_desktop", video.wgc_disable_secure_desktop);
     bool_f(vars, "dynamic_resolution_follow_display", video.dynamic_resolution_follow_display);
+    int_between_f(vars, "video_pacing_threshold", video.video_pacing_threshold, { 0, 16 * 1024 * 1024 });
     bool_f(vars, "vdd_keep_enabled", video.vdd_keep_enabled);
     bool_f(vars, "vdd_headless_create", video.vdd_headless_create_enabled);
     bool_f(vars, "vdd_reuse", video.vdd_reuse);
-    bool_f(vars, "vdd_borrowed_texture", video.vdd_borrowed_texture);
     bool_f(vars, "vdd_vulkan_hdr_bridge", video.vdd_vulkan_hdr_bridge);
 
     // Whether to composite the host mouse cursor into the captured frames.
@@ -1429,10 +1467,10 @@ namespace config {
       video.downscaling_quality = "balanced";  // Default to bicubic
     }
     // Validate downscaling_quality
-    if (video.downscaling_quality != "fast" && 
-        video.downscaling_quality != "balanced" && 
+    if (video.downscaling_quality != "fast" &&
+        video.downscaling_quality != "balanced" &&
         video.downscaling_quality != "high_quality") {
-      BOOST_LOG(warning) << "Invalid downscaling_quality: ["sv << video.downscaling_quality 
+      BOOST_LOG(warning) << "Invalid downscaling_quality: ["sv << video.downscaling_quality
                          << "], valid options are: fast, balanced, high_quality. Defaulting to 'balanced'"sv;
       video.downscaling_quality = "balanced";
     }
@@ -1453,6 +1491,7 @@ namespace config {
     path_f(vars, "pkey", nvhttp.pkey);
     path_f(vars, "cert", nvhttp.cert);
     string_f(vars, "sunshine_name", nvhttp.sunshine_name);
+    string_f(vars, "fs_host_icon", nvhttp.fs_host_icon);
     string_f(vars, "clients", nvhttp.clients);
     path_f(vars, "log_path", config::sunshine.log_file);
     path_f(vars, "file_state", nvhttp.file_state);
@@ -1465,7 +1504,8 @@ namespace config {
     int_f(vars, "usb_forwarding_port", usb_forwarding_port);
     if (usb_forwarding_port == 0 || (usb_forwarding_port >= 1024 && usb_forwarding_port <= 65535)) {
       nvhttp.usb_forwarding_port = static_cast<std::uint16_t>(usb_forwarding_port);
-    } else {
+    }
+    else {
       BOOST_LOG(warning) << "Ignoring invalid usb_forwarding_port: expected 0 or 1024-65535";
     }
 
@@ -1473,7 +1513,46 @@ namespace config {
     config::sunshine.credentials_file = config::nvhttp.file_state;
     path_f(vars, "credentials_file", config::sunshine.credentials_file);
 
+    int_between_f(vars, "session_idle_minutes", sunshine.session_idle_minutes, { 1, 1440 });
+    int_between_f(vars, "session_absolute_hours", sunshine.session_absolute_hours, { 1, 720 });
+    int_between_f(vars, "session_remember_idle_minutes", sunshine.session_remember_idle_minutes, { 1, 525600 });
+    int_between_f(vars, "session_remember_days", sunshine.session_remember_days, { 1, 365 });
+
     string_f(vars, "external_ip", nvhttp.external_ip);
+    {
+      const auto trimmed = public_address::trim(nvhttp.external_ip);
+      if (trimmed.empty()) {
+        nvhttp.external_ip.clear();
+      }
+      else if (public_address::is_valid(trimmed)) {
+        nvhttp.external_ip = public_address::normalize(trimmed);
+      }
+      else {
+        BOOST_LOG(warning) << "Ignoring invalid external_ip: expected an IP address or a DNS host name"sv;
+        nvhttp.external_ip.clear();
+      }
+    }
+    string_f(vars, "external_endpoints", nvhttp.external_endpoints);
+    {
+      const auto list = public_address::parse_endpoint_list(nvhttp.external_endpoints);
+      if (!list.rejected.empty()) {
+        BOOST_LOG(warning) << "Ignoring invalid external_endpoints entries: expected host, host:port, IPv4:port or [IPv6]:port"sv;
+      }
+      if (list.truncated) {
+        BOOST_LOG(warning) << "external_endpoints keeps the first "sv << public_address::MAX_ENDPOINTS << " entries"sv;
+      }
+      nvhttp.external_endpoints = public_address::join_endpoints(list.endpoints);
+    }
+    string_f(vars, "stun_servers", nvhttp.stun_servers);
+    {
+      const auto list = nat_discovery::parse_server_list(nvhttp.stun_servers);
+      if (!list.rejected.empty()) {
+        BOOST_LOG(warning) << "Ignoring invalid stun_servers entries: expected host or host:port"sv;
+      }
+      if (list.truncated) {
+        BOOST_LOG(warning) << "stun_servers keeps the first "sv << nat_discovery::MAX_SERVERS << " entries"sv;
+      }
+    }
     list_string_f(vars, "resolutions"s, nvhttp.resolutions);
     list_string_f(vars, "fps"s, nvhttp.fps);
     int_between_f(vars, "sleep_mode", nvhttp.sleep_mode, { SLEEP_MODE_SUSPEND, SLEEP_MODE_AWAY });
@@ -1492,19 +1571,18 @@ namespace config {
       vars,
       "client_fingerprint_rules_refresh_hours",
       nvhttp.client_fingerprint_rules_refresh_hours,
-      {1, 168}
-    );
+      { 1, 168 });
     list_prep_cmd_f(vars, "global_prep_cmd", config::sunshine.prep_cmds);
 
     string_f(vars, "audio_sink", audio.sink);
     string_f(vars, "virtual_sink", audio.virtual_sink);
     bool_f(vars, "keep_sink_default", audio.keep_sink_default);
+    bool_f(vars, "host_audio", audio.host_audio);
     string_restricted_f(
       vars,
       "microphone_redirect_backend",
       audio.microphone_redirect_backend,
-      { "vb_cable"sv, "usbip_experimental"sv, "auto"sv, "disabled"sv }
-    );
+      { "vb_cable"sv, "usbip_experimental"sv, "auto"sv, "disabled"sv });
     bool_f(vars, "stream_audio", audio.stream);
     bool_f(vars, "stream_mic", audio.stream_mic);
     bool_f(vars, "install_steam_audio_drivers", audio.install_steam_drivers);
@@ -1518,6 +1596,7 @@ namespace config {
       stream.ping_timeout = std::chrono::milliseconds(to);
     }
     bool_f(vars, "stop_on_last_video_session", stream.stop_on_last_video_session);
+    bool_f(vars, "launch_splash", stream.launch_splash);
 
     int_between_f(vars, "lan_encryption_mode", stream.lan_encryption_mode, { 0, 2 });
     int_between_f(vars, "wan_encryption_mode", stream.wan_encryption_mode, { 0, 2 });
@@ -1532,14 +1611,13 @@ namespace config {
       fs::permissions(
         file_apps_path,
         fs::perms::owner_read | fs::perms::owner_write,
-        fs::perm_options::add
-      );
+        fs::perm_options::add);
     }
 #endif
 
-    int_between_f(vars, "fec_percentage", stream.fec_percentage, {0, 255});
+    int_between_f(vars, "fec_percentage", stream.fec_percentage, { 0, 255 });
     bool_f(vars, "fec_auto", stream.fec_auto);
-    int_between_f(vars, "fec_auto_max_percentage", stream.fec_auto_max_percentage, {0, 100});
+    int_between_f(vars, "fec_auto_max_percentage", stream.fec_auto_max_percentage, { 0, 100 });
 
     map_int_int_f(vars, "keybindings"s, input.keybindings);
 
@@ -1578,7 +1656,7 @@ namespace config {
     bool_f(vars, "touchpad_as_ds4", input.touchpad_as_ds4);
     bool_f(vars, "enable_dsu_server", input.enable_dsu_server);
     bool_f(vars, "client_gamepad_override", input.client_gamepad_override);
-    
+
     int temp_port = static_cast<int>(input.dsu_server_port);
     int_between_f(vars, "dsu_server_port", temp_port, { 1024, 65535 });
     input.dsu_server_port = static_cast<uint16_t>(temp_port);
@@ -1604,8 +1682,19 @@ namespace config {
     int_between_f(vars, "port"s, port, { 1024 + nvhttp::PORT_HTTPS, 65535 - rtsp_stream::RTSP_SETUP_PORT });
     sunshine.port = (std::uint16_t) port;
 
-    string_restricted_f(vars, "address_family", sunshine.address_family, {"ipv4"sv, "both"sv});
+    string_restricted_f(vars, "address_family", sunshine.address_family, { "ipv4"sv, "both"sv });
     string_f(vars, "bind_address", sunshine.bind_address);
+
+    int session_binding_value = static_cast<int>(sunshine.session_binding);
+    int_between_f(
+      vars,
+      std::string { config_session_binding::key },
+      session_binding_value,
+      {
+        static_cast<int>(config_session_binding::mode_e::automatic),
+        static_cast<int>(config_session_binding::mode_e::console),
+      });
+    sunshine.session_binding = static_cast<config_session_binding::mode_e>(session_binding_value);
 
     bool upnp = false;
     bool_f(vars, "upnp"s, upnp);
@@ -1645,20 +1734,24 @@ namespace config {
                                                                    "fr"sv,  // French
                                                                    "it"sv,  // Italian
                                                                    "ja"sv,  // Japanese
+                                                                   "ko"sv,  // Korean
+                                                                   "pl"sv,  // Polish
                                                                    "pt"sv,  // Portuguese
+                                                                   "pt_BR"sv,  // Portuguese (Brazil)
                                                                    "ru"sv,  // Russian
                                                                    "sv"sv,  // Swedish
                                                                    "tr"sv,  // Turkish
+                                                                   "uk"sv,  // Ukrainian
                                                                    "zh"sv,  // Chinese
                                                                    "zh_TW"sv,  // Chinese (Traditional)
                                                                  });
 
     // 托盘菜单语言设置
     string_restricted_f(vars, "tray_locale", config::sunshine.tray_locale, {
-                                                                   "en"sv,  // English
-                                                                   "zh"sv,  // Chinese (Simplified)
-                                                                   "ja"sv,  // Japanese
-                                                                 });
+                                                                             "en"sv,  // English
+                                                                             "zh"sv,  // Chinese (Simplified)
+                                                                             "ja"sv,  // Japanese
+                                                                           });
 
     // Game Bar 小部件本地端点的访问令牌(X-Sunshine-Token);为空表示功能关闭
     string_f(vars, "widget_token"s, sunshine.widget_token);
@@ -1704,8 +1797,9 @@ namespace config {
       vars.erase(it);
     }
 
-    if (sunshine.min_log_level <= 3) {
-      for (auto &[var, _] : vars) {
+    for (auto &[var, _] : vars) {
+      doctor::record_config_problem("Unrecognized configurable option [" + var + "]");
+      if (sunshine.min_log_level <= 3) {
         std::cout << "Warning: Unrecognized configurable option ["sv << var << ']' << std::endl;
       }
     }
@@ -1879,7 +1973,7 @@ namespace config {
     // that carries "clients" updates the runtime value, one that omits it keeps
     // whatever is already active, and one that explicitly deletes it resets to [].
     if (const auto override_clients = command_line_config_overrides.find("clients");
-        override_clients != command_line_config_overrides.end()) {
+      override_clients != command_line_config_overrides.end()) {
       nvhttp.clients = hdr::preserve_client_calibrations(override_clients->second, nvhttp.clients);
       return;
     }
@@ -1904,7 +1998,7 @@ namespace config {
         return false;
       }
       const auto existing_config = parse_config(*file_content);
-      std::map<std::string, std::string> configMap {existing_config.begin(), existing_config.end()};
+      std::map<std::string, std::string> configMap { existing_config.begin(), existing_config.end() };
 
       // 更新配置项，同时检查是否有变化
       bool hasChanged = false;
@@ -1948,8 +2042,9 @@ namespace config {
       if (updates.contains("clients")) sync_clients_config_locked(configMap, deleted);
       if (const auto gamepad_update = updates.find("gamepad"); gamepad_update != updates.end()) {
         const auto gamepad = configMap.find("gamepad");
-        platf::set_global_gamepad_mode(gamepad == configMap.end() ? "auto"sv : std::string_view {gamepad->second});
+        platf::set_global_gamepad_mode(gamepad == configMap.end() ? "auto"sv : std::string_view { gamepad->second });
       }
+      if (updates.contains("launch_splash")) apply_live_launch_splash(configMap);
       BOOST_LOG(info) << "Config updated successfully";
       return true;
     }
@@ -1968,7 +2063,7 @@ namespace config {
         return std::nullopt;
       }
       const auto config = parse_config(*file_content);
-      return std::map<std::string, std::string> {config.begin(), config.end()};
+      return std::map<std::string, std::string> { config.begin(), config.end() };
     }
     catch (const std::exception &e) {
       BOOST_LOG(warning) << "Failed to read config snapshot: " << e.what();
@@ -1986,29 +2081,42 @@ namespace config {
     return snapshot;
   }
 
+  int
+  host_max_bitrate_kbps() {
+    return std::atomic_ref<int>(video.max_bitrate).load(std::memory_order_relaxed);
+  }
+
+  void
+  set_host_max_bitrate_kbps(int kbps) {
+    std::atomic_ref<int>(video.max_bitrate).store(std::max(0, kbps), std::memory_order_relaxed);
+  }
+
   bool
-  update_full_config(const std::map<std::string, std::string> &fullConfig) {
+  update_full_config(const std::map<std::string, std::string> &fullConfig, std::string *previous_locale) {
     std::lock_guard lock { config_file_mutex };
     try {
       // 不需要保存到配置文件的只读字段（API响应字段，不是配置项）
       const std::set<std::string> readonlyFields = {
-        "status",           // API响应状态，不是配置项
-        "platform",         // 平台信息，编译时确定，只读
-        "version",          // 版本号，只读
-        "active_encoder",   // 运行时探测后实际使用的编码器，只读
+        "status",  // API响应状态，不是配置项
+        "platform",  // 平台信息，编译时确定，只读
+        "version",  // 版本号，只读
+        "active_encoder",  // 运行时探测后实际使用的编码器，只读
+        "active_hevc_mode",  // 探测后 HEVC 实际提供的模式，只读
+        "active_av1_mode",  // 探测后 AV1 实际提供的模式，只读
         "nvidia_vsync",  // NVIDIA compatibility capability and runtime state, read-only
         "active_nvenc_frame_budget",  // NVENC 帧预算护栏的运行时报告，只读
         "display_devices",  // 显示设备列表，运行时枚举，只读
-        "adapters",         // 适配器列表，运行时枚举，只读
-        "pair_name",        // 配对名称，由系统生成，只读
+        "adapters",  // 适配器列表，运行时枚举，只读
+        "pair_name",  // 配对名称，由系统生成，只读
       };
 
       // 受保护的字段：由系统托盘控制，需要保留本地配置文件中的原有值
       const std::set<std::string> protectedFields = {
-        "vdd_keep_enabled",       // 由系统托盘控制，不通过Web UI修改
-        "vdd_headless_create",    // 由系统托盘控制，不通过Web UI修改
-        "tray_locale",            // 由系统托盘控制，不通过Web UI修改
-        "widget_token",           // Game Bar 小部件令牌：手动/配对流程写入，不经Web UI修改
+        "session_binding",
+        "vdd_keep_enabled",  // 由系统托盘控制，不通过Web UI修改
+        "vdd_headless_create",  // 由系统托盘控制，不通过Web UI修改
+        "tray_locale",  // 由系统托盘控制，不通过Web UI修改
+        "widget_token",  // Game Bar 小部件令牌：手动/配对流程写入，不经Web UI修改
       };
 
       const auto original_file_content = read_config_file_contents();
@@ -2016,7 +2124,12 @@ namespace config {
         return false;
       }
       const auto existing_config = parse_config(*original_file_content);
-      std::map<std::string, std::string> originalMap {existing_config.begin(), existing_config.end()};
+      std::map<std::string, std::string> originalMap { existing_config.begin(), existing_config.end() };
+      if (previous_locale) {
+        // the language of the file before this save (the host's default when the file does not name one)
+        const auto locale = originalMap.find("locale");
+        *previous_locale = locale == originalMap.end() || locale->second.empty() ? "en" : locale->second;
+      }
 
       // 使用 std::map 保证按字母顺序保存
       std::map<std::string, std::string> resultMap;
@@ -2078,8 +2191,19 @@ namespace config {
       }
 
       if (fullConfig.contains("clients")) sync_clients_config_locked(resultMap);
+      // The bitrate ceiling is live: the running process takes the saved value now (a key that is gone from the file means no ceiling, as at start-up). The caller then tells the running sessions
+      // (stream::session::apply_host_bitrate_cap), which is why the saved value and the one in force never differ.
+      {
+        const auto cap = resultMap.find("max_bitrate");
+        const auto next = cap == resultMap.end() ? 0 : streaming::parse_bitrate_ceiling_kbps(cap->second);
+        if (next != host_max_bitrate_kbps()) {
+          BOOST_LOG(info) << "Host bitrate ceiling: " << host_max_bitrate_kbps() << " -> " << next << " Kbps (0 = none)";
+          set_host_max_bitrate_kbps(next);
+        }
+      }
       const auto gamepad = resultMap.find("gamepad");
-      platf::set_global_gamepad_mode(gamepad == resultMap.end() ? "auto"sv : std::string_view {gamepad->second});
+      platf::set_global_gamepad_mode(gamepad == resultMap.end() ? "auto"sv : std::string_view { gamepad->second });
+      apply_live_launch_splash(resultMap);
 
       return true;
     }
@@ -2205,7 +2329,7 @@ namespace config {
       }
       // Keep the override shape at runtime: its fields win, bindings carry over.
       if (const auto override_clients = command_line_config_overrides.find("clients");
-          override_clients != command_line_config_overrides.end()) {
+        override_clients != command_line_config_overrides.end()) {
         nvhttp.clients = hdr::preserve_client_calibrations(override_clients->second, nvhttp.clients);
       }
       return true;

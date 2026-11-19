@@ -9,9 +9,9 @@ extern "C" {
 #include <moonlight-common-c/src/Limelight.h>
 }
 
-#include <bitset>
 #include <array>
 #include <atomic>
+#include <bitset>
 #include <chrono>
 #include <cmath>
 #include <list>
@@ -19,15 +19,20 @@ extern "C" {
 #include <unordered_map>
 
 #include "config.h"
-#include "globals.h"
-#include "input.h"
-#include "text_context/bridge.h"
-#include "input_activity.h"
-#include "pen_barrel_roll.h"
-#include "logging.h"
-#include "platform/common.h"
 #include "display_device/session.h"
 #include "display_device/vdd_utils.h"
+#include "globals.h"
+#include "ds5/arrival_policy.h"
+#include "input.h"
+#include "ds5/control_extension.h"
+#include "text_context/bridge.h"
+#include "input_activity.h"
+#include "logging.h"
+#include "pen_barrel_roll.h"
+#include "platform/common.h"
+#include "src/ds5/touchpad_mapper.h"
+#include "src/ds5/tuning_runtime.h"
+#include "text_context/bridge.h"
 #include "thread_pool.h"
 #include "tray/tray_state.h"
 #include "utility.h"
@@ -155,6 +160,11 @@ namespace input {
 
     std::atomic_bool ds5 { false };
 
+    /// Whether the pad was created by an arrival packet, and with what. A pad made by a
+    /// multi-controller packet has no metadata and is replaced by the real arrival.
+    bool from_arrival { false };
+    ds5::arrival::meta_t arrival_meta {};
+
     platf::gamepad_state_t gamepad_state;
 
     thread_pool_util::ThreadPool::task_id_t back_timeout_id;
@@ -209,7 +219,8 @@ namespace input {
       platf::feedback_queue_t feedback_queue,
       safe::mail_raw_t::event_t<std::chrono::steady_clock::time_point> input_activity_event,
       std::uint64_t session_id,
-      std::string client_gamepad):
+      std::string client_gamepad,
+      std::function<void()> on_pen_barrel_roll = {}):
         shortcutFlags {},
         gamepads(MAX_GAMEPADS),
 #ifdef SUNSHINE_TESTS
@@ -220,12 +231,14 @@ namespace input {
         touch_port_event { std::move(touch_port_event) },
         feedback_queue { std::move(feedback_queue) },
         input_activity_event { std::move(input_activity_event) },
-        session_id {session_id},
-        client_gamepad {std::move(client_gamepad)},
+        session_id { session_id },
+        client_gamepad { std::move(client_gamepad) },
+        on_pen_barrel_roll { std::move(on_pen_barrel_roll) },
         mouse_left_button_timeout {},
         touch_port { { 0, 0, 0, 0 }, 0, 0, 0, 0, 0.0f, 0.0f, 1.0f },
         accumulated_vscroll_delta {},
-        accumulated_hscroll_delta {} {}
+        accumulated_hscroll_delta {} {
+    }
 
     // Keep track of alt+ctrl+shift key combo
     int shortcutFlags;
@@ -234,6 +247,12 @@ namespace input {
     modifier_state_t alt_keys;
 
     std::vector<gamepad_t> gamepads;
+    std::array<ds5::tuning::runtime::touchpad_pointer_t, MAX_GAMEPADS> touchpad_pointer;
+    std::array<bool, MAX_GAMEPADS> precision_touchpad_button {};
+    std::array<bool, MAX_GAMEPADS> precision_touchpad_active {};
+    std::array<std::uint32_t, MAX_GAMEPADS> precision_touchpad_pointer {};
+    std::array<float, MAX_GAMEPADS> precision_touchpad_x {};
+    std::array<float, MAX_GAMEPADS> precision_touchpad_y {};
     activity::tracker_t activity_tracker;
     pen_wire::roll_probe_t pen_roll_probe;
     bool input_stopped = false;
@@ -245,6 +264,8 @@ namespace input {
     safe::mail_raw_t::event_t<std::chrono::steady_clock::time_point> input_activity_event;
     std::uint64_t session_id;
     std::string client_gamepad;
+    std::function<void()> on_pen_barrel_roll;
+    bool pen_barrel_roll_reported {};
 
     std::list<std::vector<uint8_t>> input_queue;
     std::mutex input_queue_lock;
@@ -257,9 +278,37 @@ namespace input {
     int32_t accumulated_hscroll_delta;
 
     std::array<std::chrono::steady_clock::time_point, MAX_GAMEPADS> last_unallocated_controller_log {};
+    std::array<std::chrono::steady_clock::time_point, MAX_GAMEPADS> last_arrival_log {};
+    std::array<unsigned, MAX_GAMEPADS> arrival_suppressed {};
+
+    /** @brief Latest headset and microphone facts per controller, kept until the controller exists. */
+    struct ds5_status_cache_t {
+      std::uint32_t valid_mask {};
+      std::uint8_t headset_present {};
+      std::uint8_t microphone_present {};
+      std::uint8_t microphone_muted {};
+    };
+    std::array<ds5_status_cache_t, MAX_GAMEPADS> ds5_status {};
+
+    /**
+     * 每个手柄槽位的只读事实（会话 API 回复用）。输入线程在分配/释放时持
+     * pad_facts_lock 写入，配置 API 经 input::pad_summary 读取。
+     */
+    std::array<platf::gamepad_selection::pad_facts_t, MAX_GAMEPADS> pad_facts {};
+    std::mutex pad_facts_lock;
   };
 
   constexpr auto CONTROLLER_WARNING_INTERVAL = 5s;
+
+  /** 槽位事实只由输入线程写入；越界编号（不可能出现）保持原样。 */
+  void
+  set_pad_facts(input_t &input, int controller_number, platf::gamepad_selection::pad_facts_t facts) {
+    if (controller_number < 0 || controller_number >= static_cast<int>(input.pad_facts.size())) {
+      return;
+    }
+    std::lock_guard lock(input.pad_facts_lock);
+    input.pad_facts[controller_number] = facts;
+  }
 
   /**
    * @brief 记录手柄未分配的告警，并按控制器编号限频。
@@ -296,6 +345,15 @@ namespace input {
     return false;
   }
 
+  platf::gamepad_selection::pad_facts_t
+  pad_summary(const std::shared_ptr<input_t> &input) {
+    if (!input) {
+      return {};
+    }
+    std::lock_guard lock(input->pad_facts_lock);
+    return platf::gamepad_selection::summarize_pads(input->pad_facts.data(), input->pad_facts.size());
+  }
+
   bool
   has_ds5_audio_haptics(const std::shared_ptr<input_t> &input) {
     if (!input) {
@@ -309,6 +367,46 @@ namespace input {
       }
     }
     return false;
+  }
+
+  /**
+   * @brief Hand the cached headset and microphone facts of a controller to its virtual device.
+   * @param input The session input context.
+   * @param controller The wire controller number.
+   */
+  void
+  apply_cached_ds5_status(input_t &input, std::size_t controller) {
+    if (controller >= input.gamepads.size()) {
+      return;
+    }
+    const auto &gamepad = input.gamepads[controller];
+    const auto &cache = input.ds5_status[controller];
+    if (gamepad.id < 0 || !gamepad.ds5.load(std::memory_order_relaxed) || cache.valid_mask == 0) {
+      return;
+    }
+    platf::gamepad_ds5_status_t status {
+      { gamepad.id, static_cast<std::uint8_t>(controller) },
+      cache.valid_mask,
+      cache.headset_present,
+      cache.microphone_present,
+      cache.microphone_muted,
+    };
+    platf::gamepad_ds5_status(platf_input, status);
+  }
+
+  void
+  ds5_input_status(const std::shared_ptr<input_t> &input, std::uint16_t controller, std::uint32_t valid_mask,
+    std::uint8_t headset_present, std::uint8_t microphone_present, std::uint8_t microphone_muted) {
+    if (!input || controller >= input->gamepads.size()) {
+      return;
+    }
+    auto &cache = input->ds5_status[controller];
+    namespace ext = ::ds5::control_extension;
+    if (valid_mask & ext::in_headset) cache.headset_present = headset_present;
+    if (valid_mask & ext::in_microphone) cache.microphone_present = microphone_present;
+    if (valid_mask & ext::in_mic_muted) cache.microphone_muted = microphone_muted;
+    cache.valid_mask |= valid_mask & ext::in_known;
+    apply_cached_ds5_status(*input, controller);
   }
 
   /**
@@ -795,8 +893,8 @@ namespace input {
       }
       const auto point = platf::get_mouse_loc(platf_input);
       BOOST_LOG(debug) << "Remote text context mouse input: release=" << release
-                      << ", x=" << point.x << ", y=" << point.y
-                      << ", has_viewport=" << static_cast<bool>(input->touch_port);
+                       << ", x=" << point.x << ", y=" << point.y
+                       << ", has_viewport=" << static_cast<bool>(input->touch_port);
       if (input->touch_port) {
         text_context::bridge_t::instance().record_mouse_button(
           input->session_id, release, point.x, point.y,
@@ -1169,9 +1267,43 @@ namespace input {
       return;
     }
 
-    if (input->gamepads[packet->controllerNumber].id >= 0) {
-      BOOST_LOG(warning) << "ControllerNumber already allocated ["sv << packet->controllerNumber << ']';
+    const int number = packet->controllerNumber;
+    auto &slot = input->gamepads[number];
+    const ds5::arrival::meta_t incoming { packet->type, util::endian::little(packet->capabilities),
+                                          util::endian::little(packet->supportedButtonFlags) };
+    const auto action = ds5::arrival::decide(slot.id >= 0, slot.from_arrival, slot.arrival_meta, incoming);
+    {
+      /* Every allocation decision is logged; a pad announced again is logged once, then once in five seconds. */
+      const auto now = std::chrono::steady_clock::now();
+      const bool repeat = action == ds5::arrival::action_e::ignore_duplicate || action == ds5::arrival::action_e::ignore_conflict;
+      auto &last = input->last_arrival_log[number];
+      if (!repeat || last == std::chrono::steady_clock::time_point {} || now - last >= CONTROLLER_WARNING_INTERVAL) {
+        BOOST_LOG(info) << "Controller arrival: controllerNumber="sv << number << " type="sv << static_cast<int>(incoming.type)
+                        << " capabilities="sv << incoming.capabilities << " supportedButtons=0x"sv << std::hex << incoming.supported_buttons
+                        << std::dec << " slot="sv << (slot.id < 0 ? "free"sv : slot.from_arrival ? "pad from arrival"sv : "pad from multi-controller packet"sv)
+                        << " -> "sv << ds5::arrival::to_string(action)
+                        << (input->arrival_suppressed[number] != 0 ? " (" + std::to_string(input->arrival_suppressed[number]) + " repeats held back)" : std::string {});
+        last = now;
+        input->arrival_suppressed[number] = 0;
+      }
+      else {
+        ++input->arrival_suppressed[number];
+      }
+    }
+    if (action == ds5::arrival::action_e::ignore_duplicate || action == ds5::arrival::action_e::ignore_conflict) {
       return;
+    }
+    if (action == ds5::arrival::action_e::replace) {
+      slot.reset_state();
+      free_gamepad(platf_input, slot.id);
+      slot.ds5.store(false, std::memory_order_relaxed);
+      slot.id = -1;
+      slot.from_arrival = false;
+      set_pad_facts(*input, number, {});
+      input->touchpad_pointer[number].reset();
+      input->precision_touchpad_button[number] = false;
+      input->precision_touchpad_active[number] = false;
+      input->precision_touchpad_pointer[number] = 0;
     }
 
     platf::gamepad_arrival_t arrival {
@@ -1193,9 +1325,18 @@ namespace input {
       return;
     }
 
+    slot.from_arrival = true;
+    slot.arrival_meta = incoming;
     input->gamepads[packet->controllerNumber].ds5.store(
       platf::gamepad_is_ds5(platf_input, id), std::memory_order_relaxed);
+    set_pad_facts(*input, number, platf::gamepad_selection::pad_facts_t {
+                                  .allocated = true,
+                                  .playstation_arrival = arrival.type == platf::gamepad_selection::playstation_arrival_type,
+                                  .dualsense_identity = platf::gamepad_selection::identifies_dualsense(arrival.type, arrival.capabilities),
+                                  .virtual_type = platf::gamepad_virtual_type(platf_input, id),
+                                });
     input->gamepads[packet->controllerNumber].id = id;
+    apply_cached_ds5_status(*input, packet->controllerNumber);
   }
 
   /**
@@ -1257,8 +1398,8 @@ namespace input {
     if (touch.eventType != LI_TOUCH_EVENT_MOVE && touch.eventType != LI_TOUCH_EVENT_HOVER &&
         touch.eventType != LI_TOUCH_EVENT_HOVER_LEAVE) {
       BOOST_LOG(debug) << "Remote text context touch input: type=" << static_cast<int>(touch.eventType)
-                      << ", x=" << screen_x << ", y=" << screen_y
-                      << ", viewport=" << touch_port.display_width << 'x' << touch_port.display_height;
+                       << ", x=" << screen_x << ", y=" << screen_y
+                       << ", viewport=" << touch_port.display_width << 'x' << touch_port.display_height;
     }
     // Capture geometry is the selected display's size, not the whole virtual
     // desktop: UIA/caret rectangles are reported desktop-global and the bridge
@@ -1334,7 +1475,7 @@ namespace input {
     // least as many contacts as the wire protocol can carry, otherwise the copy loop
     // below would write out of bounds.
     static_assert(platf::MAX_TOUCHPAD_FRAME_CONTACTS >= SS_TOUCHPAD_FRAME_MAX_CONTACTS,
-                  "platform touchpad frame capacity must cover the protocol maximum");
+      "platform touchpad frame capacity must cover the protocol maximum");
 
     auto rotation = util::endian::little(packet->rotation);
     if (rotation != LI_ROT_UNKNOWN) {
@@ -1438,6 +1579,18 @@ namespace input {
   }
 
   /**
+   * @brief Maps a controller touch event to a host-pointer phase.
+   */
+  ds5::tuning::runtime::TouchPhase
+  touch_pointer_phase(std::uint8_t event_type) {
+    using ds5::tuning::runtime::TouchPhase;
+    if (event_type == LI_TOUCH_EVENT_DOWN) return TouchPhase::down;
+    if (event_type == LI_TOUCH_EVENT_UP) return TouchPhase::up;
+    if (event_type == LI_TOUCH_EVENT_CANCEL_ALL) return TouchPhase::cancel;
+    return TouchPhase::move;
+  }
+
+  /**
    * @brief Called to pass a controller touch message to the platform backend.
    * @param input The input context pointer.
    * @param packet The controller touch packet.
@@ -1467,6 +1620,66 @@ namespace input {
       from_clamped_netfloat(packet->y, 0.0f, 1.0f),
       from_clamped_netfloat(packet->pressure, 0.0f, 1.0f),
     };
+
+    // Design section 16.4.7: controller keeps the contact in the virtual pad,
+    // hostPointer turns it into relative motion, precision feeds the platform
+    // synthetic touchpad.  The pointer math itself is in touchpad_mapper.h.
+    // Windows sources: ds5-ms-sendinput-20261031 for the pointer stream,
+    // ds5-ms-createsyntheticpointerdevice2-20261031 and
+    // ds5-ms-injectsyntheticpointerinput-20261031 for the touchpad.
+    auto control = ds5::tuning::runtime::touchpad_control();
+    if (control.output == ds5::tuning::runtime::TouchpadOutput::off) return;
+    if (control.output != ds5::tuning::runtime::TouchpadOutput::controller &&
+        touch.eventType != LI_TOUCH_EVENT_DOWN && touch.eventType != LI_TOUCH_EVENT_MOVE &&
+        touch.eventType != LI_TOUCH_EVENT_UP && touch.eventType != LI_TOUCH_EVENT_CANCEL_ALL) {
+      return;
+    }
+
+    if (control.output == ds5::tuning::runtime::TouchpadOutput::precision) {
+      // Precision touch is optional: a host without the synthetic touchpad
+      // capability keeps the contact on the virtual controller instead of
+      // dropping it.  Cache the probe, since the platform query is not part of
+      // the report hot path.
+      static const bool touchpad_supported = (platf::get_capabilities({}) & platf::platform_caps::touchpad) != 0;
+      if (!touchpad_supported || !input->client_context) {
+        platf::gamepad_touch(platf_input, touch);
+        return;
+      }
+      platf::touchpad_input_t touchpad {
+        touch.eventType,
+        static_cast<std::uint8_t>(input->precision_touchpad_button[packet->controllerNumber] ? 0x01 : 0x00),
+        LI_ROT_UNKNOWN,
+        0,
+        0,
+        touch.pointerId,
+        touch.x,
+        touch.y,
+        touch.pressure,
+        0.0f,
+        0.0f,
+      };
+      input->precision_touchpad_active[packet->controllerNumber] =
+        touch.eventType == LI_TOUCH_EVENT_DOWN || touch.eventType == LI_TOUCH_EVENT_MOVE;
+      input->precision_touchpad_pointer[packet->controllerNumber] = touch.pointerId;
+      input->precision_touchpad_x[packet->controllerNumber] = touch.x;
+      input->precision_touchpad_y[packet->controllerNumber] = touch.y;
+      platf::touchpad_update(input->client_context.get(), touchpad);
+      return;
+    }
+
+    if (control.output == ds5::tuning::runtime::TouchpadOutput::host_pointer) {
+      control.surface_width = input->touch_port.width > 0 ? input->touch_port.width : 1920;
+      control.surface_height = input->touch_port.height > 0 ? input->touch_port.height : 1080;
+      const auto event = input->touchpad_pointer[packet->controllerNumber].touch(
+        touch_pointer_phase(touch.eventType), touch.pointerId, touch.x, touch.y, control);
+      if (event.move_x != 0 || event.move_y != 0) {
+        platf::move_mouse(platf_input, event.move_x, event.move_y);
+      }
+      if (event.scroll != 0) {
+        platf::scroll(platf_input, event.scroll);
+      }
+      return;
+    }
 
     platf::gamepad_touch(platf_input, touch);
   }
@@ -1558,6 +1771,10 @@ namespace input {
       }
 
       gamepad.reset_state();
+      BOOST_LOG(info) << "Controller created by a multi-controller packet (no arrival data): controllerNumber="sv << packet->controllerNumber
+                      << " activeGamepadMask=0x"sv << std::hex << static_cast<unsigned>(static_cast<std::uint16_t>(packet->activeGamepadMask)) << std::dec
+                      << " buttons=0x"sv << std::hex << static_cast<unsigned>(static_cast<std::uint16_t>(packet->buttonFlags)) << std::dec
+                      << " sticks="sv << packet->leftStickX << ','  << packet->leftStickY << ' ' << packet->rightStickX << ',' << packet->rightStickY;
       if (platf::alloc_gamepad(
             platf_input, { id, (uint8_t) packet->controllerNumber }, {}, input->feedback_queue, input->client_gamepad)) {
         free_id(gamepadMask, id);
@@ -1566,13 +1783,24 @@ namespace input {
 
       gamepad.ds5.store(platf::gamepad_is_ds5(platf_input, id), std::memory_order_relaxed);
       gamepad.id = id;
+      gamepad.from_arrival = false;
+      set_pad_facts(*input, packet->controllerNumber, platf::gamepad_selection::pad_facts_t {
+                                                          .allocated = true,
+                                                          .virtual_type = platf::gamepad_virtual_type(platf_input, id),
+                                                        });
     }
     else if (!(packet->activeGamepadMask & (1 << packet->controllerNumber)) && gamepad.id >= 0) {
       // If this is the final event for a gamepad being removed, free the gamepad and return.
       gamepad.reset_state();
       free_gamepad(platf_input, gamepad.id);
+      set_pad_facts(*input, packet->controllerNumber, {});
       gamepad.ds5.store(false, std::memory_order_relaxed);
       gamepad.id = -1;
+      gamepad.from_arrival = false;
+      input->touchpad_pointer[packet->controllerNumber].reset();
+      input->precision_touchpad_button[packet->controllerNumber] = false;
+      input->precision_touchpad_active[packet->controllerNumber] = false;
+      input->precision_touchpad_pointer[packet->controllerNumber] = 0;
       return;
     }
 
@@ -1658,6 +1886,44 @@ namespace input {
       else if (gamepad.back_timeout_id) {
         task_pool.cancel(gamepad.back_timeout_id);
         gamepad.back_timeout_id = nullptr;
+      }
+    }
+
+    const auto touchpad_control = ds5::tuning::runtime::touchpad_control();
+    if (touchpad_control.output != ds5::tuning::runtime::TouchpadOutput::controller) {
+      const bool touchpad_pressed = (gamepad_state.buttonFlags & platf::TOUCHPAD_BUTTON) != 0;
+      if (touchpad_control.output == ds5::tuning::runtime::TouchpadOutput::host_pointer) {
+        const auto event = input->touchpad_pointer[packet->controllerNumber].button(touchpad_pressed, touchpad_control);
+        if (event.mouse_button != 0) {
+          platf::button_mouse(platf_input, event.mouse_button, event.mouse_release);
+        }
+        if (event.consume) gamepad_state.buttonFlags &= ~platf::TOUCHPAD_BUTTON;
+      }
+      else {
+        // Off and precision both take the click away from the virtual
+        // controller; precision replays it through the touchpad contact.
+        const bool previous = input->precision_touchpad_button[packet->controllerNumber];
+        input->precision_touchpad_button[packet->controllerNumber] = touchpad_pressed;
+        gamepad_state.buttonFlags &= ~platf::TOUCHPAD_BUTTON;
+        if (touchpad_control.output == ds5::tuning::runtime::TouchpadOutput::precision &&
+            previous != touchpad_pressed &&
+            input->precision_touchpad_active[packet->controllerNumber] &&
+            input->client_context) {
+          platf::touchpad_input_t button_only {
+            LI_TOUCH_EVENT_BUTTON_ONLY,
+            static_cast<std::uint8_t>(touchpad_pressed ? 0x01 : 0x00),
+            LI_ROT_UNKNOWN,
+            0,
+            0,
+            input->precision_touchpad_pointer[packet->controllerNumber],
+            input->precision_touchpad_x[packet->controllerNumber],
+            input->precision_touchpad_y[packet->controllerNumber],
+            0.0f,
+            0.0f,
+            0.0f,
+          };
+          platf::touchpad_update(input->client_context.get(), button_only);
+        }
       }
     }
 
@@ -2198,6 +2464,7 @@ namespace input {
    */
   void
   passthrough(std::shared_ptr<input_t> &input, std::vector<std::uint8_t> &&input_data) {
+    bool report_pen_barrel_roll = false;
     {
       std::lock_guard<std::mutex> lg(input->input_queue_lock);
       if (input->input_stopped) {
@@ -2230,12 +2497,20 @@ namespace input {
         auto *packet = reinterpret_cast<pen_wire::packet_t *>(input_data.data());
         if (util::endian::little(packet->pen.header.magic) == pen_wire::magic &&
             pen_wire::valid_size(input_data.size(), packet->pen.header.size)) {
+          if (!input->pen_barrel_roll_reported) {
+            input->pen_barrel_roll_reported = true;
+            report_pen_barrel_roll = true;
+          }
           auto azimuth = pen_wire::decode_roll(packet->pen.rotation);
           auto roll = input->pen_roll_probe.select(pen_wire::decode_roll(packet->barrelRoll), azimuth);
           packet->barrelRoll = util::endian::little(roll);
         }
       }
       input->input_queue.push_back(std::move(input_data));
+    }
+    if (report_pen_barrel_roll && input->on_pen_barrel_roll) {
+      auto callback = input->on_pen_barrel_roll;
+      task_pool.push([callback = std::move(callback)]() { callback(); });
     }
     task_pool.push(passthrough_next_message, input);
   }
@@ -2323,13 +2598,14 @@ namespace input {
   }
 
   std::shared_ptr<input_t>
-  alloc(safe::mail_t mail, std::uint64_t session_id, std::string client_gamepad) {
+  alloc(safe::mail_t mail, std::uint64_t session_id, std::string client_gamepad, std::function<void()> on_pen_barrel_roll) {
     auto input = std::make_shared<input_t>(
       mail->event<input::touch_port_t>(mail::touch_port),
       mail->queue<platf::gamepad_feedback_msg_t>(mail::gamepad_feedback),
       mail->event<std::chrono::steady_clock::time_point>(mail::input_activity),
       session_id,
-      std::move(client_gamepad));
+      std::move(client_gamepad),
+      std::move(on_pen_barrel_roll));
 
     // Workaround to ensure new frames will be captured when a client connects
     task_pool.pushDelayed([]() {
@@ -2361,7 +2637,7 @@ namespace input {
 
     void
     send_keyboard_packet(std::shared_ptr<input_t> &input, std::uint16_t key_code,
-                         std::uint8_t modifiers, std::uint8_t flags, bool release) {
+      std::uint8_t modifiers, std::uint8_t flags, bool release) {
       const auto magic = release ? KEY_UP_EVENT_MAGIC : KEY_DOWN_EVENT_MAGIC;
 
       NV_KEYBOARD_PACKET packet {};

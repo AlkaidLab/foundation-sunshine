@@ -17,6 +17,10 @@ namespace confighttp {
   void
   send_redirect(resp_https_t response, req_https_t request, const char *path);
 
+  /** Clear in-memory sessions and login backoff state (tests and shutdown). */
+  void
+  reset_session_state();
+
   namespace auth {
     void
     register_routes(https_server_t &server);
