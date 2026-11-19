@@ -50,6 +50,7 @@ namespace ds5::tuning {
     const char *const compat_bt_output_names[] = { "auto", "legacy", "ir", "off" };
     const char *const feedback_target_names[] = { "auto", "controller1", "controller2", "controller3", "controller4" };
     const char *const identity_names[] = { "auto", "xbox360", "ds4", "ds5" };
+    const char *const input_report_rate_names[] = { "auto", "hz500", "hz250" };
 
     const descriptor_t k_descriptor_table[] = {
 #include "tuning_descriptors.inc"
@@ -351,6 +352,10 @@ namespace ds5::tuning {
                                                                  0u,
         std::memory_order_release);
 
+      {
+        const auto rate = enum_value(107, "auto");
+        state.input_report_rate_hz.store(rate == "hz250" ? 250u : rate == "hz500" ? 500u : 0u, std::memory_order_release);
+      }
       const auto identity = enum_value(106, "auto");
       state.identity_mode.store(
         identity == "xbox360" ? 2u : identity == "ds4" ? 3u :
@@ -803,6 +808,8 @@ namespace ds5::tuning {
         return "The analog axis becomes 0 or 255 by the threshold decision; the digital bit is set in either mode.";
       case 96:
         return "controller: the DualSense microphone endpoint carries the client's microphone (client microphone redirection must be on, with the USB/IP virtual microphone or VB-Cable available); none: it answers silence; host: capturing the host's own microphone is not implemented, the endpoint stays silent. Applies at once.";
+      case 107:
+        return "How often a game can read a changed stick, trigger or button of one controller: auto answers a change at once (up to 1000 per second, shared when more than two controllers are active), 500 Hz and 250 Hz keep every reply that far apart. 250 Hz is the rhythm before the host answered at once: a game reads fewer reports, one stick sample later on average, and a computer that stalls for 160 ms loses fewer of the reports in between. Button taps are kept for the game to read, but a game that stops reading for longer than the controller queue holds (about 128 ms at 250 Hz, less when faster) can miss a short tap; in the measurements one tap in 344 was missed at 250 Hz and none at 500 Hz or faster. This is how fast the host answers the game; the motion rate (key 101) is how fast the client samples its sensors. Applies at once.";
       case 101:
         return "The rate the host asks every client for motion reports (accelerometer and gyro); it applies at once to a running stream. A client reports at the lower of this value and its own limit (Moonlight Enhanced: Settings > Input > Gamepad > Motion Report Rate Limit, 250 Hz by default), and no faster than its pad samples: a DualSense gives about 250 Hz over USB. Buttons and sticks are not capped. A client that does not honour the request keeps its own rate.";
       case 106:

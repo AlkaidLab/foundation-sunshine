@@ -2,7 +2,7 @@
 
 状态：2026-11-19。依据是 `src/ds5/tuning_runtime.h` 的 `key_implemented()`；`tests/unit/test_ds5_tuning.cpp` 的「ReportsEveryKeyWithAHostConsumerAsImplemented」逐个键核对这张表。
 
-106 个键里，Windows 发布构建上**97 个主机已经在用**（含 35～73 的摇杆、扳机、体感整形，74～80 触摸板，24～34 中除 31 以外的自适应扳机，以及 96 麦克风路由、101 体感上报频率上限），**9 个不可用**。非 Windows 构建没有原生 DualSense 通道，不可用的键更多，原因代码是 `platform`。
+107 个键（设计表的 106 个，加上主机侧新增的 107）里，Windows 发布构建上**98 个主机已经在用**（含 35～73 的摇杆、扳机、体感整形，74～80 触摸板，24～34 中除 31 以外的自适应扳机，以及 96 麦克风路由、101 体感上报频率上限、107 手柄输入回报频率），**9 个不可用**。非 Windows 构建没有原生 DualSense 通道，不可用的键更多，原因代码是 `platform`。
 
 ## 不可用的 9 个键
 
@@ -26,6 +26,8 @@
 | 将来落在 | `interaction.gamepad.capture`（客户端采样节拍）和 `interaction.gamepad.wire`（请求报文） | |
 | 96 | `ds5.audio.micRoute` | 客户端麦克风（主机原来就收下、混音、送给虚拟麦克风）同时送到 DualSense 麦克风端点：`controller` 是客户端的麦克风，`none` 是静音，`host`（采集主机自己的麦克风）没有做，端点保持静音。要开着客户端麦克风重定向，并且 USB/IP 虚拟麦克风或 VB-Cable 至少有一个可用。 |
 | 将来落在 | `interaction.gamepad.virtual-device`（`composite-usb-virtual-gamepad` 的采集端点） | |
+| 107 | `ds5.compat.inputReportRate` | **主机侧新增的键，不在设计表的 106 个里。** 一个手柄的摇杆、扳机、按键变化多久可以送给游戏一次：`auto`（默认，和以前一样，变化马上回复，最高每秒 1000 次，同时有两个以上手柄时按份额分）、`hz500`、`hz250`（每次回复至少隔 2 ms / 4 ms）。和 101 不是一回事：101 是客户端多久采样一次体感，107 是主机多久回复一次游戏的读取。保存后立即生效。从 250 Hz 改到更快时网页版弹 5 秒倒计时确认框，写本次实测。 |
+| 将来落在 | `interaction.gamepad.virtual-device`（回复节拍）；设置本身是 `ds5-core` 的 `compat` 分组 | |
 
 ## 原简报里有、实际已经可用的
 

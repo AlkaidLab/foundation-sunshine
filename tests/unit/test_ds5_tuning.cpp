@@ -17,6 +17,8 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace {
   using ds5::tuning::find_descriptor;
@@ -46,6 +48,7 @@ namespace {
       state.rumble_noise_gate.store(0.020f);
       state.hd_gain.store(1.0f);
       state.motion_report_rate_hz.store(250);
+      state.input_report_rate_hz.store(0);
       state.haptics_mode.store(0);
       state.hd_low_band_db.store(0.0f);
       state.hd_high_band_db.store(0.0f);
@@ -155,9 +158,9 @@ namespace {
   }
 }  // namespace
 
-TEST(Ds5TuningDescriptors, CoversTheStableOneHundredSixKeys) {
+TEST(Ds5TuningDescriptors, CoversTheOneHundredSevenKeys) {
   const auto &table = ds5::tuning::descriptors();
-  ASSERT_EQ(table.size(), 106u);
+  ASSERT_EQ(table.size(), 107u);
   std::set<std::uint32_t> ids;
   std::set<std::string> keys;
   std::set<std::uint32_t> common_groups;
@@ -166,7 +169,7 @@ TEST(Ds5TuningDescriptors, CoversTheStableOneHundredSixKeys) {
     EXPECT_TRUE(ids.insert(descriptor.id).second) << descriptor.id;
     EXPECT_TRUE(keys.insert(descriptor.key).second) << descriptor.key;
     ASSERT_GE(descriptor.id, 1u);
-    ASSERT_LE(descriptor.id, 106u);
+    ASSERT_LE(descriptor.id, 107u);
     if (descriptor.tier == ds5::tuning::Tier::common) {
       ++common_count;
       common_groups.insert(static_cast<std::uint32_t>(descriptor.group));
@@ -184,10 +187,10 @@ TEST(Ds5TuningDescriptors, CoversTheStableOneHundredSixKeys) {
       EXPECT_GT(descriptor.step, 0.0) << descriptor.key;
     }
   }
-  EXPECT_EQ(ids.size(), 106u);
+  EXPECT_EQ(ids.size(), 107u);
   EXPECT_EQ(ids, ([] {
     std::set<std::uint32_t> value;
-    for (std::uint32_t id = 1; id <= 106; ++id) value.insert(id);
+    for (std::uint32_t id = 1; id <= 107; ++id) value.insert(id);
     return value;
   }()));
   EXPECT_EQ(common_count, 14u);
@@ -201,8 +204,8 @@ TEST(Ds5TuningDescriptors, ReportsEveryKeyWithAHostConsumerAsImplemented) {
   // target (105).  The microphone route (96) puts the client microphone on the capture endpoint.  The motion report rate (101) is the rate
   // the host asks clients for, so it has a host consumer.
   const std::set<std::uint32_t> unavailable { 10, 31, 97, 98, 100, 102, 103, 104, 105 };
-  EXPECT_EQ(snapshot.at("implemented_count").get<std::uint32_t>(), 106u - unavailable.size());
-  for (std::uint32_t id = 1; id <= 106; ++id) {
+  EXPECT_EQ(snapshot.at("implemented_count").get<std::uint32_t>(), 107u - unavailable.size());
+  for (std::uint32_t id = 1; id <= 107; ++id) {
     const bool implemented = key_entry(snapshot, id).at("implemented").get<bool>();
     EXPECT_EQ(implemented, unavailable.count(id) == 0) << id;
     if (!implemented) {
@@ -955,6 +958,22 @@ TEST_F(Ds5TuningStore, PublishesTheMotionReportRateTheHostAsksClientsFor) {
   EXPECT_EQ(support.at(0).at("client").get<std::string>(), "Moonlight Enhanced");
   EXPECT_EQ(support.at(0).at("since").get<std::string>(), "1.3.9-rc.8");
   EXPECT_TRUE(key_entry(result.body, 14).at("client_support").empty());
+}
+
+TEST_F(Ds5TuningStore, PublishesTheInputReportRateTheHostAnswersAGameWith) {
+  ds5::tuning::store_t store(profile_path);
+  ASSERT_TRUE(store.load());
+  EXPECT_EQ(ds5::tuning::runtime::state().input_report_rate_hz.load(), 0u) << "auto: a change is answered at once";
+  for (const auto &[name, hz] : std::vector<std::pair<std::string, std::uint32_t>> { { "hz250", 250u }, { "hz500", 500u }, { "auto", 0u } }) {
+    const auto result = store.apply_json({ { "schema", "ALK-DS5T/1" }, { "values", { { "ds5.compat.inputReportRate", name } } } });
+    ASSERT_TRUE(result.ok) << result.error;
+    EXPECT_EQ(ds5::tuning::runtime::state().input_report_rate_hz.load(), hz) << name;
+    EXPECT_TRUE(key_entry(result.body, 107).at("implemented").get<bool>());
+    EXPECT_EQ(key_entry(result.body, 107).at("value").get<std::string>(), name);
+  }
+  EXPECT_FALSE(key_entry(store.snapshot_json(), 107).at("note").get<std::string>().empty());
+  const auto invalid = store.apply_json({ { "schema", "ALK-DS5T/1" }, { "values", { { "ds5.compat.inputReportRate", "hz1000" } } } });
+  EXPECT_FALSE(invalid.ok) << "only auto, 500 Hz and 250 Hz exist";
 }
 
 TEST(Ds5TuningRuntime, TheMotionReportRateStaysWithinTheRangeOfTheKey) {

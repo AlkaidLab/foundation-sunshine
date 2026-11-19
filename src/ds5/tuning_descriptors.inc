@@ -1,4 +1,4 @@
-// ALK-DS5T/1 descriptor rows.  Ids 1..106 are append-only.
+// ALK-DS5T/1 descriptor rows.  Ids 1..107 are append-only (107 is a host-side addition to the design's 106).
 // Source: docs/architecture/ds5-platform-design.zh.md sections 16.4.11-16.4.12
 // on branch docs/ds5-tuning-profile (commit 29f7673fb, read 2026-10-31).
 
@@ -108,3 +108,4 @@
   { 104, "ds5.sync.maxRateHz", ValueType::u32, 1, 60, 1, 20, nullptr, nullptr, 0, Group::sync, Control::slider, Tier::advanced, Scale::linear, Authority::host, Stage::host_source, Live::immediate, 32u, "Hz", nullptr, "ds5.sync.maxRateHz.title", "ds5.sync.maxRateHz.description" },
   { 105, "ds5.feedback.target", ValueType::enumeration, 0, 0, 0, 0, "auto", feedback_target_names, 5, Group::routing, Control::menu, Tier::advanced, Scale::linear, Authority::client, Stage::client_sink, Live::immediate, 32u, nullptr, "controllerFeedbackTarget", "ds5.feedback.target.title", "ds5.feedback.target.description" },
   { 106, "ds5.identity.profile", ValueType::enumeration, 0, 0, 0, 0, "auto", identity_names, 4, Group::compatibility, Control::segmented, Tier::advanced, Scale::linear, Authority::host, Stage::host_source, Live::next_session, 33u, nullptr, "controllerVirtualType", "ds5.identity.profile.title", "ds5.identity.profile.description" },
+  { 107, "ds5.compat.inputReportRate", ValueType::enumeration, 0, 0, 0, 0, "auto", input_report_rate_names, 3, Group::compatibility, Control::segmented, Tier::advanced, Scale::linear, Authority::host, Stage::host_endpoint, Live::immediate, 32u, "Hz", nullptr, "ds5.compat.inputReportRate.title", "ds5.compat.inputReportRate.description" },

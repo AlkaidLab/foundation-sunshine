@@ -636,3 +636,100 @@ TEST(InterruptLane, ShortTapsSurviveAStallOf160MillisecondsThatStartsWithThePres
     EXPECT_TRUE(down_report_in_queue(run, run.press + 160ms)) << "hold " << hold.count() << " ms";
   }
 }
+
+/* A lower rate asked for by the user (ds5.compat.inputReportRate): a floor longer than the hard one. */
+namespace {
+  std::chrono::microseconds
+  shortest_gap(const host_t &host, tp from, tp to) {
+    std::chrono::microseconds shortest { 1000000 };
+    const reply_t *previous = nullptr;
+    for (const auto &reply : host.replies) {
+      if (reply.at < from || reply.at > to) continue;
+      if (previous) shortest = std::min(shortest, std::chrono::duration_cast<std::chrono::microseconds>(reply.at - previous->at));
+      previous = &reply;
+    }
+    return shortest;
+  }
+}  // namespace
+
+TEST(InterruptLane, AFourMillisecondFloorAnswersChangesOnTheHeartbeatGrid) {
+  host_t host { 2 };
+  host.lane.set_floor(4ms);
+  host.run(t0, t0 + 3s, train(t0, t0 + 3s, 500));
+  EXPECT_GE(shortest_gap(host, t0 + 100ms, t0 + 3s), 3990us);
+  EXPECT_NEAR(static_cast<double>(host.count(t0 + 1s, t0 + 2s)), 250.0, 4.0);
+  EXPECT_LE(host.longest_silence(t0, t0 + 3s), 4100us);
+}
+
+TEST(InterruptLane, AFiveHundredHertzFloorAnswersEveryTwoMilliseconds) {
+  host_t host { 2 };
+  host.lane.set_floor(2ms);
+  host.run(t0, t0 + 3s, train(t0, t0 + 3s, 1000));
+  EXPECT_GE(shortest_gap(host, t0 + 100ms, t0 + 3s), 1990us);
+  EXPECT_NEAR(static_cast<double>(host.count(t0 + 1s, t0 + 2s)), 500.0, 6.0);
+}
+
+TEST(InterruptLane, WithAFourMillisecondFloorButtonRepliesFollowTheFloorToo) {
+  host_t host { 2 };
+  host.lane.set_floor(4ms);
+  const auto press = t0 + 1s;
+  host.run(t0, t0 + 3s, merged(train(t0, t0 + 3s, 500), { { press, report_change::edge }, { press + 30ms, report_change::release } }));
+  EXPECT_GE(shortest_gap(host, t0 + 100ms, t0 + 3s), 3990us) << "a press is answered on the grid like everything else";
+}
+
+TEST(InterruptLane, WithAFourMillisecondFloorAReleaseNeedsNoProtectionAndTheGridStaysFourMilliseconds) {
+  lane_t lane;
+  lane.set_floor(4ms);
+  lane.hold(1, 1);
+  lane.new_data(report_change::release);
+  ASSERT_TRUE(lane.take_if_due(t0, 1)->edge);
+  lane.hold(2, 2);
+  lane.new_data(report_change::stream);
+  EXPECT_EQ(lane.next_due(1), t0 + 4ms) << "not 4.5 ms";
+}
+
+TEST(InterruptLane, AShortPressSurvivesALongStallWithAFourMillisecondFloorWithoutTheProtection) {
+  lane_t::config settings;
+  settings.protect_window = 0ms;  // the protection is off in this run, as it is under the floor
+  const auto run = run_tap(settings, 30ms);
+  EXPECT_FALSE(down_report_in_queue(run, run.release + 100ms)) << "without a floor a fast stream pushes the press out";
+  /* the same press with the floor: 32 replies are at least 128 ms */
+  host_t host { 2 };
+  host.lane.set_floor(4ms);
+  const auto press = t0 + 1s;
+  host.run(t0, t0 + 3s, merged(train(t0, t0 + 3s, 500), { { press, report_change::edge }, { press + 30ms, report_change::release } }));
+  std::size_t press_reply = 0, release_reply = 0;
+  for (std::size_t i = 0; i != host.replies.size(); ++i) {
+    if (host.replies[i].edge_number == 1) press_reply = i;
+    if (host.replies[i].edge_number == 2) release_reply = i;
+  }
+  ASSERT_GT(release_reply, press_reply);
+  std::deque<std::size_t> queue;
+  for (std::size_t i = press_reply; i != host.replies.size() && host.replies[i].at <= press + 30ms + 120ms; ++i) {
+    queue.push_back(i);
+    if (queue.size() > 32) queue.pop_front();
+  }
+  EXPECT_TRUE(std::any_of(queue.begin(), queue.end(), [&](std::size_t i) { return i >= press_reply && i < release_reply; }));
+}
+
+TEST(InterruptLane, ANoFloorLeavesTheLaneAsItWas) {
+  lane_t lane;
+  lane.set_floor(0ms);
+  lane.hold(1, 1);
+  ASSERT_TRUE(lane.take_if_due(t0, 1));
+  lane.hold(2, 2);
+  lane.new_data(report_change::stream);
+  EXPECT_EQ(lane.next_due(1), t0 + 1ms);
+}
+
+TEST(InterruptLane, AFasterRateChosenRightAfterAReleaseFindsTheRestOfItsProtection) {
+  lane_t lane;
+  lane.set_floor(4ms);
+  lane.hold(1, 1);
+  lane.new_data(report_change::release);
+  ASSERT_TRUE(lane.take_if_due(t0, 1)->edge);
+  lane.set_floor(0ms);  // the rate setting moved to automatic inside the protection window
+  lane.hold(2, 2);
+  lane.new_data(report_change::stream);
+  EXPECT_EQ(lane.next_due(1), t0 + 4500us) << "the protection of the release still runs: not 1 ms";
+}
