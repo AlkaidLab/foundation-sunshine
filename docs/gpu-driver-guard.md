@@ -32,6 +32,9 @@ module of a graphics driver (`src/crash/gpu_driver.h`) it writes `<config>/crash
 * In the safe mode the start skips the **encoder check** and the **display recovery** (`display_device::session_t::init(true)`): the two places a driver call has held
   the start up. Everything else works. A stream still checks the encoders when it is asked for (the launch path does so every time, with the existing guard that skips an
   encoder the previous process ended in).
+* How long a run has stayed up is measured on the **monotonic clock** of the process, not on the date. A date that is set forward (a time sync after a start without a network)
+  cannot make a run that fails within seconds look stable, and a date set back cannot keep a good run from becoming stable. The times written into the file stay wall-clock times and only
+  document the run.
 * The safe mode ends after **5 minutes of running**, when **a stream has ended**, or when the person asks for another try (below). The count then starts at zero; a try that
   fails again puts the next start back into the safe mode after one more failed start.
 

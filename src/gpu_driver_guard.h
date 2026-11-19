@@ -13,6 +13,10 @@
  *
  * The driver mark itself (vendor, module, driver version, phase) is written by the crash handler (src/crash/gpu_driver.h).
  * Nothing here talks to a driver; every clock and folder is a parameter, so the unit tests need neither.
+ *
+ * Two clocks are used, each for what it is good at: the wall clock only writes the times in the files (a person or a tool reads them), and every duration that
+ * decides something (how long this run has stayed up) is measured on the monotonic clock of the process. A clock that is set forward or back (a time sync after a
+ * start without a network, a daylight-saving mistake, a person changing the date) can therefore neither make a failing run look stable nor keep a good one from becoming stable.
  */
 #pragma once
 
@@ -78,6 +82,12 @@ namespace gpu_guard {
   inline std::int64_t
   system_now() {
     return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+  }
+
+  /// Seconds on the monotonic clock of this machine: it never goes back and a change of the date does not move it. Only differences mean anything.
+  inline std::int64_t
+  monotonic_now() {
+    return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
   }
 
   namespace detail {
@@ -186,8 +196,9 @@ namespace gpu_guard {
   public:
     using clock_fn = std::function<std::int64_t()>;
 
-    explicit guard_t(std::filesystem::path dir, policy_t policy = {}, clock_fn clock = system_now):
-        path_ { dir / GUARD_FILE }, policy_ { policy }, clock_ { std::move(clock) } {}
+    /// `clock` is the wall clock (the times that are written down), `monotonic` the clock the running time is measured on.
+    explicit guard_t(std::filesystem::path dir, policy_t policy = {}, clock_fn clock = system_now, clock_fn monotonic = monotonic_now):
+        path_ { dir / GUARD_FILE }, policy_ { policy }, clock_ { std::move(clock) }, monotonic_ { std::move(monotonic) } {}
 
     /// The start: reads how the previous run ended, decides whether this start is in the safe mode and records this run. Returns the safe mode.
     bool
@@ -202,6 +213,7 @@ namespace gpu_guard {
         state_.safe_since = now;
       }
       state_.run = run_t { now, false, false, false };
+      watch_from_now();
       save();
       return state_.safe;
     }
@@ -216,8 +228,8 @@ namespace gpu_guard {
     void
     tick() {
       std::lock_guard lock(mutex_);
-      if (state_.run.start == 0) return;
-      const auto up = clock_() - state_.run.start;
+      if (!watching_) return;
+      const auto up = monotonic_() - watched_since_;
       bool changed = false;
       if (!state_.run.stable && up >= policy_.stable_after_s) {
         state_.run.stable = true;  // the next start sees a run that did not fail (unless it hangs later) and starts the count again
@@ -266,6 +278,7 @@ namespace gpu_guard {
         leave_safe(std::max(0, policy_.loop_threshold - 1));
         // the try is watched from now on: a run that was already stable must not count as the success of this one
         state_.run = run_t { clock_(), false, false, false };
+        watch_from_now();
         save();
       }
       return was;
@@ -283,6 +296,13 @@ namespace gpu_guard {
     }
 
   private:
+    /// The running time of the run on record counts from here, on the monotonic clock (the start time in the file is the wall clock and is not used for it).
+    void
+    watch_from_now() {
+      watched_since_ = monotonic_();
+      watching_ = true;
+    }
+
     void
     leave_safe(int consecutive) {
       state_.safe = false;
@@ -298,6 +318,9 @@ namespace gpu_guard {
     std::filesystem::path path_;
     policy_t policy_;
     clock_fn clock_;
+    clock_fn monotonic_;
+    std::int64_t watched_since_ = 0;
+    bool watching_ = false;
     mutable std::mutex mutex_;
     state_t state_;
   };
