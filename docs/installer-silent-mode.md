@@ -80,7 +80,7 @@ engine works in this order:
    a shortcut) can start them while the files are copied. The new files take their place and the parked ones are deleted;
    when the installation does not finish, the parked ones are put back.
 2. A folder that cannot be made ready ends the run in this stage: exit code **7** (Preparing to Install), the message names
-   what is in the way, nothing was changed, and the service is started again.
+   what is in the way, nothing was changed, and the service is started again (also when the Control Panel's updater, which the installer ends, had stopped it).
 3. **Just before the copy** (`ssInstall`) the same check runs once more; the Web UI folder `assets\web` is then moved to
    `assets\web.previous` (a rename) instead of being deleted.
 4. When the installation reaches its post-install step with a complete new folder, the old one is deleted. Otherwise
