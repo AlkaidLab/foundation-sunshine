@@ -1839,7 +1839,8 @@ begin
       if Report <> '' then
         Report := Report + #13#10;
       Report := Report + Lines[I];
-      if Pos('service: stopping', Lines[I]) = 1 then
+      // the service was running when this script came, or the Control Panel's updater had stopped it
+      if (Pos('service: stopping', Lines[I]) = 1) or (Pos('updater: ended', Lines[I]) = 1) then
         ServiceStoppedForUpdate := True;
     end;
 end;

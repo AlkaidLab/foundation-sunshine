@@ -109,6 +109,13 @@ class TheFolderIsMadeSafeBeforeAnythingIsCopied(unittest.TestCase):
             self.assertIn(relative, QUIESCE)
             self.assertIn(relative, procedure("SettleParkedImages"))
 
+    def test_a_service_the_updater_stopped_is_started_again_after_a_refusal(self):
+        # the Control Panel's updater stops the service before the installer starts; the installer ends that
+        # updater, so the refusal path has to start the service itself
+        self.assertIn("updater: ended", QUIESCE)
+        self.assertIn("--updater-helper", QUIESCE)
+        self.assertIn("Pos('updater: ended', Lines[I]) = 1", procedure("RunUpdateQuiesce"))
+
     def test_both_languages_have_the_refusal_text(self):
         for language in ("english", "chinesesimplified"):
             self.assertTrue(re.search(rf"^{language}\.MsgUpdateBlocked=", ISS, re.M), language)

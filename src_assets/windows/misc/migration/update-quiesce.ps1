@@ -171,6 +171,9 @@ if (-not $VerifyOnly) {
     $order = @{ 'sunshinesvc.exe' = 0; 'sunshine.exe' = 1 }
     foreach ($process in ($running | Sort-Object { if ($order.ContainsKey($_.Name.ToLowerInvariant())) { $order[$_.Name.ToLowerInvariant()] } else { 2 } })) {
       Add-Line "ending: $($process.Name) (PID $($process.ProcessId))"
+      # The Control Panel's updater stops the service before it starts the installer and, once it is
+      # ended here, nobody starts the service again after a refusal: say so, so the installer does.
+      if ($process.CommandLine -and $process.CommandLine.Contains('--updater-helper')) { Add-Line 'updater: ended (it had stopped the service)' }
       Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
     }
     Start-Sleep -Milliseconds 300
