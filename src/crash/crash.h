@@ -41,6 +41,11 @@ namespace crash {
   enabled();
 
   // --- hang watchdog -------------------------------------------------------------------------------------------------------------------
+  /// Monotonic milliseconds that stand still while the system sleeps or hibernates. The watchdog counts a thread's busy time on this clock: on the one
+  /// that does not stop (std::chrono::steady_clock on Windows) a start that was running when the machine went to sleep is a "hang" the moment it wakes.
+  std::uint64_t
+  awake_ms();
+
   /// Registers the calling thread under `name`; the slot is "hung" when it stays busy for `timeout_ms`. Returns the slot, -1 when full.
   int
   watch_register(const char *name, std::uint32_t timeout_ms);

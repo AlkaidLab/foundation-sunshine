@@ -21,6 +21,7 @@
   #include <string_view>
   #include <sys/stat.h>
   #include <thread>
+  #include <time.h>
   #include <unistd.h>
 
 namespace crash::detail {
@@ -196,6 +197,17 @@ namespace crash::detail {
   void
   platform_tick() {
     if (++g_tick % 30 == 0) refresh_modules();
+  }
+
+  std::uint64_t
+  platform_awake_ms() {
+  #ifdef __APPLE__
+    // CLOCK_UPTIME_RAW does not count the time the system sleeps; read directly, so it does not depend on the clock the C++ library picks for steady_clock
+    return clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1000000ull;
+  #else
+    // CLOCK_MONOTONIC does not count the time the system sleeps
+    return now_ms();
+  #endif
   }
 
   void

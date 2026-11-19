@@ -27,6 +27,16 @@ namespace crash {
   constexpr std::size_t module_name_size = 64;
   constexpr std::size_t meta_buffer_size = 16 * 1024;
 
+  /**
+   * @brief Whether a thread that went busy at `busy_since` has been busy for `timeout_ms` at `now`.
+   * Both readings are crash::awake_ms (the clock that does not count the time the system sleeps); 0 as `busy_since` is an idle thread.
+   * A `now` before `busy_since` (a reading from before the thread went busy, from another clock) is never overdue instead of wrapping around.
+   */
+  inline bool
+  hang_overdue(std::uint64_t busy_since, std::uint64_t now, std::uint32_t timeout_ms) {
+    return busy_since != 0 && now >= busy_since && now - busy_since >= timeout_ms;
+  }
+
   struct frame_t {
     char module[module_name_size] {};  ///< file name of the module, no directory (a person's user name can be in a path)
     std::uint64_t offset = 0;  ///< address minus the module's base; frames after the first are return addresses

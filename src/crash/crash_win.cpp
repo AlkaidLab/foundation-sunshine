@@ -461,6 +461,21 @@ namespace crash::detail {
     if (++g_tick % 30 == 0) refresh_modules();
   }
 
+  std::uint64_t
+  platform_awake_ms() {
+    // QueryUnbiasedInterruptTime counts 100 ns units and does not advance while the system sleeps or hibernates; the clock behind std::chrono::steady_clock
+    // (QueryPerformanceCounter) does. Looked up once at run time: it is in kernel32 from Windows 7 on, and a system without it falls back to the steady clock.
+    using query_t = BOOL(WINAPI *)(PULONGLONG);
+    static const query_t query = []() -> query_t {
+      HMODULE kernel = GetModuleHandleW(L"kernel32.dll");
+      FARPROC found = kernel ? GetProcAddress(kernel, "QueryUnbiasedInterruptTime") : nullptr;
+      return reinterpret_cast<query_t>(reinterpret_cast<void *>(found));
+    }();
+    ULONGLONG hundred_ns = 0;
+    if (query && query(&hundred_ns)) return (std::uint64_t) (hundred_ns / 10000);
+    return now_ms();
+  }
+
   void
   platform_bind_thread(slot_t &slot) {
     HANDLE h = nullptr;
