@@ -1781,14 +1781,22 @@ namespace platf::dxgi {
     void
     apply_nr_request() {
       const auto requested = ::video::requested_nr_settings(runtime_status_id);
-      if (!requested || (requested->enabled == runtime_status.nr_requested_enabled &&
+      // A component-unavailable degradation can clear without a new request:
+      // the selection may be enabled or maintenance may finish. Keep
+      // re-evaluating that case on later frames; the retry is a cheap
+      // validated-pointer acquire and skips DLL work while it still fails.
+      const bool retry_unavailable_component = requested && requested->enabled &&
+        runtime_status.nr_state == "degraded" &&
+        runtime_status.nr_failure_reason == "component_unavailable";
+      if (!requested || (!retry_unavailable_component &&
+          (requested->enabled == runtime_status.nr_requested_enabled &&
           requested->scale_percent == nr_filter_config.nr_scale_percent &&
           requested->intensity == nr_filter_config.nr_intensity &&
           requested->ui_correction == nr_filter_config.nr_ui_correction &&
           requested->motion_quality == nr_filter_config.nr_motion_quality &&
           requested->style == nr_filter_config.nr_style &&
           requested->skin_structure_strength == nr_filter_config.nr_skin_structure_strength &&
-          requested->auto_mask == nr_filter_config.nr_auto_mask)) return;
+          requested->auto_mask == nr_filter_config.nr_auto_mask))) return;
       nr_rollback_pending = requested->enabled && runtime_status.nr_state == "active";
       nr_attempt_request = *requested;
       nr_previous_request = { true, runtime_status.nr_scale_percent, runtime_status.nr_intensity,
@@ -1825,7 +1833,9 @@ namespace platf::dxgi {
         ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
         return;
       }
-      ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
+      if (!retry_unavailable_component) {
+        ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
+      }
 
       if (!nr_session_backend) nr_session_backend = image_enhancement::manager().acquire_selected(image_enhancement::backend_capability_e::nr);
       enhancement_backend = nr_session_backend;
@@ -1833,7 +1843,11 @@ namespace platf::dxgi {
         runtime_status.nr_state = "degraded";
         runtime_status.nr_failure_reason = "component_unavailable";
         rollback_failed_nr_request();
-        ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
+        // The retry path entered with this exact degraded status; do not
+        // republish identical content on every frame.
+        if (!retry_unavailable_component) {
+          ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
+        }
         return;
       }
       pre_encode_filter = make_pre_encode_filter(pre_encode_filter_e::external_neural_enhancement,

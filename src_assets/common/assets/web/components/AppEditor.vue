@@ -112,7 +112,7 @@
         </MSection>
         <MSection v-if="isWindows" title="DLSS NR">
           <MGroup>
-            <MChoiceItem v-model="formData.dlssnr.mode" :title="t('apps.dlssnr_mode')" :options="modeOptions" :cancel-label="t('_common.cancel')" />
+            <MChoiceItem v-model="formData.dlssnr.mode" :title="t('apps.dlssnr_mode')" :options="nrModeOptions" :cancel-label="t('_common.cancel')" />
             <template v-if="formData.dlssnr.mode === 'on'">
               <MFieldItem v-model="formData.dlssnr.intensity" type="number" :label="t('apps.dlssnr_intensity')" min="0" max="1" step="0.05" />
               <MFieldItem v-model="formData.dlssnr.style" type="number" :label="t('apps.dlssnr_style')" min="0" max="4" step="1" />
@@ -426,6 +426,11 @@ const COMMAND_EXAMPLES = [
 ]
 const modeOptions = computed(() => [
   { value: 'inherit', label: t('apps.rtx_hdr_inherit') },
+  { value: 'on', label: t('apps.rtx_hdr_on') },
+  { value: 'off', label: t('apps.rtx_hdr_off') },
+])
+const nrModeOptions = computed(() => [
+  { value: 'inherit', label: t('apps.mouse_mode_auto') },
   { value: 'on', label: t('apps.rtx_hdr_on') },
   { value: 'off', label: t('apps.rtx_hdr_off') },
 ])

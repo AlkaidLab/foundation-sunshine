@@ -257,7 +257,10 @@ namespace image_enhancement::api {
         return;
       }
       nr_defaults_t defaults;
-      defaults.enabled = p.nr_requested_enabled;
+      // The live switch is session-scoped: remember parameters only and keep
+      // the persisted on/off default untouched (自动 apps follow the selection).
+      const auto persisted = load_nr_defaults();
+      defaults.enabled = persisted ? persisted->enabled : false;
       auto &f = defaults.filter;
       f.nr_scale_percent = p.nr_scale_percent;
       f.nr_intensity = p.nr_intensity;
