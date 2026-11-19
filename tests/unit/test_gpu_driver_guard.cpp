@@ -25,11 +25,16 @@ namespace {
     return dir;
   }
 
-  /// A clock the test moves by hand.
+  /// Clocks the test moves by hand. `now` moves both of them; `wall_skew` moves only the wall clock, the way a changed date does.
   struct clock_t_ {
     std::int64_t now = 1'000'000;
+    std::int64_t wall_skew = 0;
     gpu_guard::guard_t::clock_fn
     fn() {
+      return [this] { return now + wall_skew; };
+    }
+    gpu_guard::guard_t::clock_fn
+    mono() {
       return [this] { return now; };
     }
   };
@@ -175,7 +180,7 @@ namespace {
   /// One start that ends after `lived` seconds without a shutdown request.
   bool
   start_and_die(const fs::path &dir, clock_t_ &clock, int lived, bool hang = false) {
-    gpu_guard::guard_t guard { dir, {}, clock.fn() };
+    gpu_guard::guard_t guard { dir, {}, clock.fn(), clock.mono() };
     const bool safe = guard.begin();
     for (int s = 0; s < lived; ++s) {
       clock.now += 1;
@@ -194,7 +199,7 @@ TEST(GpuGuard, ThreeShortRunsInARowPutTheFourthStartInSafeMode) {
   EXPECT_FALSE(start_and_die(dir, clock, 6));  // sees one failed run
   EXPECT_FALSE(start_and_die(dir, clock, 2));  // sees two
   EXPECT_TRUE(start_and_die(dir, clock, 4));  // sees three: safe mode
-  gpu_guard::guard_t next { dir, {}, clock.fn() };
+  gpu_guard::guard_t next { dir, {}, clock.fn(), clock.mono() };
   EXPECT_TRUE(next.begin());  // and it stays on while it keeps failing
 }
 
@@ -214,7 +219,7 @@ TEST(GpuGuard, AShutdownRequestIsNotAFailure) {
   const auto dir = scratch("clean");
   clock_t_ clock;
   for (int i = 0; i < 6; ++i) {
-    gpu_guard::guard_t guard { dir, {}, clock.fn() };
+    gpu_guard::guard_t guard { dir, {}, clock.fn(), clock.mono() };
     EXPECT_FALSE(guard.begin());
     clock.now += 1;
     guard.note_clean_exit();  // a restart from the settings, 1 s after the start
@@ -234,7 +239,7 @@ TEST(GpuGuard, AHangThatEndedInAShutdownRequestDoesNotCount) {
   const auto dir = scratch("hang-clean");
   clock_t_ clock;
   for (int i = 0; i < 5; ++i) {
-    gpu_guard::guard_t guard { dir, {}, clock.fn() };
+    gpu_guard::guard_t guard { dir, {}, clock.fn(), clock.mono() };
     EXPECT_FALSE(guard.begin());
     guard.note_hang();
     guard.note_clean_exit();
@@ -246,7 +251,7 @@ TEST(GpuGuard, SafeModeEndsAfterFiveMinutes) {
   const auto dir = scratch("five");
   clock_t_ clock;
   for (int i = 0; i < 3; ++i) start_and_die(dir, clock, 2);
-  gpu_guard::guard_t guard { dir, {}, clock.fn() };
+  gpu_guard::guard_t guard { dir, {}, clock.fn(), clock.mono() };
   ASSERT_TRUE(guard.begin());
   for (int s = 0; s < 299; ++s) {
     clock.now += 1;
@@ -257,7 +262,7 @@ TEST(GpuGuard, SafeModeEndsAfterFiveMinutes) {
   guard.tick();
   EXPECT_FALSE(guard.safe_mode());
   EXPECT_EQ(guard.snapshot().consecutive, 0);
-  gpu_guard::guard_t after { dir, {}, clock.fn() };
+  gpu_guard::guard_t after { dir, {}, clock.fn(), clock.mono() };
   EXPECT_FALSE(after.begin());  // written to disk
 }
 
@@ -265,7 +270,7 @@ TEST(GpuGuard, SafeModeEndsWhenAStreamHasEnded) {
   const auto dir = scratch("stream");
   clock_t_ clock;
   for (int i = 0; i < 3; ++i) start_and_die(dir, clock, 2);
-  gpu_guard::guard_t guard { dir, {}, clock.fn() };
+  gpu_guard::guard_t guard { dir, {}, clock.fn(), clock.mono() };
   ASSERT_TRUE(guard.begin());
   clock.now += 20;
   guard.tick();
@@ -277,7 +282,7 @@ TEST(GpuGuard, SafeModeEndsWhenAStreamHasEnded) {
 TEST(GpuGuard, AStreamEndingOutsideSafeModeChangesNothing) {
   const auto dir = scratch("stream-plain");
   clock_t_ clock;
-  gpu_guard::guard_t guard { dir, {}, clock.fn() };
+  gpu_guard::guard_t guard { dir, {}, clock.fn(), clock.mono() };
   EXPECT_FALSE(guard.begin());
   guard.note_stream_finished();
   EXPECT_FALSE(guard.safe_mode());
@@ -288,14 +293,14 @@ TEST(GpuGuard, ManualRetryLeavesSafeModeAndOneMoreFailureBringsItBack) {
   clock_t_ clock;
   for (int i = 0; i < 3; ++i) start_and_die(dir, clock, 2);
   {
-    gpu_guard::guard_t guard { dir, {}, clock.fn() };
+    gpu_guard::guard_t guard { dir, {}, clock.fn(), clock.mono() };
     ASSERT_TRUE(guard.begin());
     EXPECT_TRUE(guard.request_retry());
     EXPECT_FALSE(guard.safe_mode());
     EXPECT_FALSE(guard.request_retry());  // not in safe mode any more
     clock.now += 3;  // dies at once
   }
-  gpu_guard::guard_t next { dir, {}, clock.fn() };
+  gpu_guard::guard_t next { dir, {}, clock.fn(), clock.mono() };
   EXPECT_TRUE(next.begin());
 }
 
@@ -304,7 +309,7 @@ TEST(GpuGuard, ManualRetryAfterALongRunWatchesTheTryFromItsStart) {
   clock_t_ clock;
   for (int i = 0; i < 3; ++i) start_and_die(dir, clock, 2);
   {
-    gpu_guard::guard_t guard { dir, {}, clock.fn() };
+    gpu_guard::guard_t guard { dir, {}, clock.fn(), clock.mono() };
     ASSERT_TRUE(guard.begin());
     for (int s = 0; s < 12; ++s) {  // the run is already stable when the person asks for the try
       clock.now += 1;
@@ -315,7 +320,7 @@ TEST(GpuGuard, ManualRetryAfterALongRunWatchesTheTryFromItsStart) {
     EXPECT_FALSE(guard.snapshot().run.stable);
     clock.now += 2;  // the try fails at once
   }
-  gpu_guard::guard_t next { dir, {}, clock.fn() };
+  gpu_guard::guard_t next { dir, {}, clock.fn(), clock.mono() };
   EXPECT_TRUE(next.begin());  // back in the safe mode
 }
 
@@ -324,7 +329,7 @@ TEST(GpuGuard, ManualRetryThatWorksResetsTheCount) {
   clock_t_ clock;
   for (int i = 0; i < 3; ++i) start_and_die(dir, clock, 2);
   {
-    gpu_guard::guard_t guard { dir, {}, clock.fn() };
+    gpu_guard::guard_t guard { dir, {}, clock.fn(), clock.mono() };
     ASSERT_TRUE(guard.begin());
     guard.request_retry();
     for (int s = 0; s < 12; ++s) {
@@ -333,7 +338,7 @@ TEST(GpuGuard, ManualRetryThatWorksResetsTheCount) {
     }
     clock.now += 5;
   }
-  gpu_guard::guard_t next { dir, {}, clock.fn() };
+  gpu_guard::guard_t next { dir, {}, clock.fn(), clock.mono() };
   EXPECT_FALSE(next.begin());
   EXPECT_EQ(next.snapshot().consecutive, 0);
 }
@@ -342,7 +347,7 @@ TEST(GpuGuard, ADamagedFileStartsFresh) {
   const auto dir = scratch("damaged");
   std::ofstream(dir / gpu_guard::GUARD_FILE) << "garbage {{";
   clock_t_ clock;
-  gpu_guard::guard_t guard { dir, {}, clock.fn() };
+  gpu_guard::guard_t guard { dir, {}, clock.fn(), clock.mono() };
   EXPECT_FALSE(guard.begin());
 }
 
@@ -353,14 +358,93 @@ TEST(GpuGuard, ThePolicyIsConfigurable) {
   policy.loop_threshold = 2;
   policy.stable_after_s = 5;
   for (int i = 0; i < 2; ++i) {
-    gpu_guard::guard_t guard { dir, policy, clock.fn() };
+    gpu_guard::guard_t guard { dir, policy, clock.fn(), clock.mono() };
     guard.begin();
     clock.now += 4;
     guard.tick();
     clock.now += 1;
   }
-  gpu_guard::guard_t guard { dir, policy, clock.fn() };
+  gpu_guard::guard_t guard { dir, policy, clock.fn(), clock.mono() };
   EXPECT_TRUE(guard.begin());
+}
+
+// --- the clocks --------------------------------------------------------------------------------------------------------------------------------------
+
+TEST(GpuGuardClocks, AWallClockSetForwardDoesNotMakeAShortRunStable) {
+  const auto dir = scratch("skew-forward");
+  clock_t_ clock;
+  for (int i = 0; i < 3; ++i) {
+    gpu_guard::guard_t guard { dir, {}, clock.fn(), clock.mono() };
+    EXPECT_FALSE(guard.begin());
+    clock.now += 2;
+    clock.wall_skew += 86'400;  // a time sync sets the date a day forward while the host is still starting
+    guard.tick();
+    EXPECT_FALSE(guard.snapshot().run.stable);  // two seconds have passed, whatever the date says
+    clock.now += 1;  // the crash and the restart
+  }
+  gpu_guard::guard_t next { dir, {}, clock.fn(), clock.mono() };
+  EXPECT_TRUE(next.begin());  // three failed starts in a row: the protection still holds
+}
+
+TEST(GpuGuardClocks, AWallClockSetBackDoesNotKeepARunFromBecomingStable) {
+  const auto dir = scratch("skew-back");
+  clock_t_ clock;
+  gpu_guard::guard_t guard { dir, {}, clock.fn(), clock.mono() };
+  ASSERT_FALSE(guard.begin());
+  clock.wall_skew -= 3'600;  // the date goes an hour back
+  for (int s = 0; s < 12; ++s) {
+    clock.now += 1;
+    guard.tick();
+  }
+  EXPECT_TRUE(guard.snapshot().run.stable);  // it has stayed up for 12 s
+  gpu_guard::guard_t next { dir, {}, clock.fn(), clock.mono() };
+  EXPECT_FALSE(next.begin());
+  EXPECT_EQ(next.snapshot().consecutive, 0);  // and the next start does not count it as a failure
+}
+
+TEST(GpuGuardClocks, SafeModeEndsAfterFiveMinutesOfRunningWhateverTheDateDoes) {
+  const auto dir = scratch("skew-safe");
+  clock_t_ clock;
+  for (int i = 0; i < 3; ++i) start_and_die(dir, clock, 2);
+  gpu_guard::guard_t guard { dir, {}, clock.fn(), clock.mono() };
+  ASSERT_TRUE(guard.begin());
+  clock.now += 10;
+  clock.wall_skew += 7 * 86'400;  // a week forward
+  guard.tick();
+  EXPECT_TRUE(guard.safe_mode());  // ten seconds of running do not end it
+  clock.now += 290;
+  clock.wall_skew -= 14 * 86'400;  // and two weeks back
+  guard.tick();
+  EXPECT_FALSE(guard.safe_mode());  // 300 s of running do
+}
+
+TEST(GpuGuardClocks, ARetryIsWatchedOnTheRunningTimeToo) {
+  const auto dir = scratch("skew-retry");
+  clock_t_ clock;
+  for (int i = 0; i < 3; ++i) start_and_die(dir, clock, 2);
+  gpu_guard::guard_t guard { dir, {}, clock.fn(), clock.mono() };
+  ASSERT_TRUE(guard.begin());
+  clock.now += 60;
+  ASSERT_TRUE(guard.request_retry());
+  clock.wall_skew += 86'400;
+  clock.now += 3;
+  guard.tick();
+  EXPECT_FALSE(guard.snapshot().run.stable);  // three seconds into the try, not a day
+  clock.now += 8;
+  guard.tick();
+  EXPECT_TRUE(guard.snapshot().run.stable);
+}
+
+TEST(GpuGuardClocks, ADefaultGuardMeasuresOnTheMonotonicClock) {
+  const auto dir = scratch("default-clock");
+  const auto a = gpu_guard::monotonic_now();
+  const auto b = gpu_guard::monotonic_now();
+  EXPECT_LE(a, b);
+  gpu_guard::guard_t guard { dir };
+  EXPECT_FALSE(guard.begin());
+  guard.tick();  // runs on the real clocks without waiting
+  EXPECT_FALSE(guard.snapshot().run.stable);
+  EXPECT_NE(guard.snapshot().run.start, 0);
 }
 
 // --- the notice -------------------------------------------------------------------------------------------------------------------------------------------
@@ -420,7 +504,7 @@ TEST(GpuStatus, SafeModeAndTheDriverShowInTheStatus) {
   const auto dir = scratch("status");
   clock_t_ clock;
   for (int i = 0; i < 3; ++i) start_and_die(dir, clock, 2);
-  gpu_guard::guard_t guard { dir, {}, clock.fn() };
+  gpu_guard::guard_t guard { dir, {}, clock.fn(), clock.mono() };
   guard.begin();
   gpu_guard::notice_store_t store { dir };
   const auto j = gpu_guard::status_json(&guard, gpu_guard::probe_e::skipped, intel_mark("32.0.101.6325"), "32.0.101.6325", store);
