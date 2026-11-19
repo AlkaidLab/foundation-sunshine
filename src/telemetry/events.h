@@ -35,6 +35,7 @@ namespace telemetry {
   /** What the host tells the page about a batch besides how many events it kept. `shot`: what became of the screenshot of a feedback report in the batch ("uploaded", or why it was left out); empty when there was none. */
   struct ingest_report_t {
     std::string shot;
+    std::size_t queued = 0;  ///< feedback reports of this call that are on the disk now, waiting for the service (they are sent as soon as it takes them and survive a restart)
   };
 
   enum class kind_e {
@@ -86,6 +87,26 @@ namespace telemetry {
    */
   int
   event_priority(const event_t &event);
+
+  /**
+   * How a record must be delivered. A feedback report and an error (priority 0 of the error kind: the first report of an error, a fatal error, a failed install or update) are kept on disk until they arrive,
+   * leave as soon as the sender may send, and are the last to be dropped when the queue is full: feedback after errors, errors after everything else. Everything else is routine: it leaves with the
+   * install's daily share of reports (report_slot.h) and is the first to give way.
+   */
+  enum class delivery_e : int {
+    routine = 0,
+    error = 1,
+    feedback = 2,
+  };
+  delivery_e
+  delivery_of(const event_t &event);
+
+  /**
+   * True for the routine records that only a sample of the installs sends (and that carry the sample weight): usage, performance and health records of priority 1 or 2 and the per-stream health summaries.
+   * Never true for a record of the error kind, a feedback report or anything of priority 0 other than the health summary: failures are not sampled away.
+   */
+  bool
+  sampled_family(const event_t &event);
 
   /** Products the host sender accepts events for. */
   bool known_product(std::string_view product);
@@ -139,9 +160,11 @@ namespace telemetry {
     std::string arch;
     std::string gpu_vendor;
     std::string locale;
+    /** 1: every install reports. Above 1: this install is one of a sample and stands for that many (report_slot.h); the batch says so in `sample_weight`. */
+    double sample_weight = 1.0;
   };
 
-  /** The fields every batch carries besides its events, as they are sent (what the person sees in "see what will be sent"). */
+  /** The fields every batch carries besides its events, as they are sent (what the person sees in "see what will be sent"). `sample_weight` is only there when it is above 1. */
   nlohmann::json envelope_fields(const context_t &context, std::string_view product, const std::string &version);
 
   /**

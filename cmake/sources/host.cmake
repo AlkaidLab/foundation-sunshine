@@ -178,6 +178,7 @@ set(SUNSHINE_HOST_SOURCES
     src/telemetry/events.cpp src/telemetry/events.h
     src/telemetry/install_journal.cpp src/telemetry/install_journal.h
     src/telemetry/queue.cpp src/telemetry/queue.h
+    src/telemetry/report_slot.cpp src/telemetry/report_slot.h
     src/telemetry/error_report.cpp src/telemetry/error_report.h
     src/telemetry/self_baseline.cpp src/telemetry/self_baseline.h
     src/telemetry/opt_out.cpp src/telemetry/opt_out.h

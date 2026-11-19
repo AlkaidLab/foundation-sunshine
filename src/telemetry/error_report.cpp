@@ -3,6 +3,7 @@
  * @brief See error_report.h.
  */
 #include "error_report.h"
+#include "report_slot.h"
 
 #include <algorithm>
 #include <cctype>
@@ -184,6 +185,14 @@ namespace telemetry {
 
   json
   error_reporter_t::props_of(const group_t &g, const std::string &fingerprint, std::uint64_t count, bool detail) const {
+    if (g.page.is_object()) {
+      // a page's error: its own props with the count and without the stack, the actions and the log lines (those went with the first report of the day)
+      auto p = g.page;
+      p["count"] = std::max<std::uint64_t>(1, count);
+      if (!detail)
+        for (const char *key : { "frames", "crumbs", "log" }) p.erase(key);
+      return p;
+    }
     json p {
       { "component", crumb_word(g.error.component, 32) },
       { "lang", g.error.lang },
@@ -201,6 +210,12 @@ namespace telemetry {
     return p;
   }
 
+  void
+  error_reporter_t::set_aggregate_ms(std::int64_t ms) {
+    std::lock_guard lock { mutex_ };
+    aggregate_ms_ = std::max<std::int64_t>(ms, 1000);
+  }
+
   std::optional<json>
   error_reporter_t::report(const error_input_t &error, const std::vector<std::string> &crumbs, std::int64_t now_ms) {
     std::lock_guard lock { mutex_ };
@@ -209,17 +224,45 @@ namespace telemetry {
     if (input.code.empty()) return std::nullopt;
     const auto fp = fingerprint_of(input.component, input.code, input.frames.empty() && !input.loc.empty() ? std::vector<std::string> { input.loc } : input.frames);
     auto &g = groups_[fp];
-    const bool first = g.last_sent_ms == 0;
+    const auto day = slot::day_of(now_ms);
+    carry_over(g, day);
+    const bool first = g.full_day != day;
     g.error = input;
     g.crumbs = crumbs;
     while (!sent_.empty() && now_ms - sent_.front() >= 3'600'000) sent_.pop_front();
     if (first && static_cast<int>(sent_.size()) < MAX_PER_HOUR) {
+      g.full_day = day;
       g.last_sent_ms = now_ms;
       sent_.push_back(now_ms);
       return props_of(g, fp, 1, true);
     }
-    ++g.held;
-    if (groups_.size() > 200) groups_.erase(groups_.begin());
+    ++g.held[std::string {}];
+    if (groups_.size() > MAX_GROUPS) groups_.erase(groups_.begin());
+    return std::nullopt;
+  }
+
+  std::optional<json>
+  error_reporter_t::admit(std::string_view product, std::string_view version, const json &props, std::int64_t now_ms) {
+    if (!props.is_object() || !props.contains("fingerprint") || !props["fingerprint"].is_string()) return props;
+    std::lock_guard lock { mutex_ };
+    const auto key = "page:" + std::string { product } + "|" + props["fingerprint"].get<std::string>();
+    auto &g = groups_[key];
+    const auto day = slot::day_of(now_ms);
+    // a shaped event holds `count` as a signed integer of at least 1
+    const std::uint64_t count = props.contains("count") && props["count"].is_number_integer() ? static_cast<std::uint64_t>(std::max<std::int64_t>(1, props["count"].get<std::int64_t>())) : 1;
+    g.product = std::string { product };
+    carry_over(g, day);
+    while (!sent_.empty() && now_ms - sent_.front() >= 3'600'000) sent_.pop_front();
+    if (g.full_day != day && static_cast<int>(sent_.size()) < MAX_PER_HOUR) {
+      g.full_day = day;
+      g.last_sent_ms = now_ms;
+      g.page = props;
+      sent_.push_back(now_ms);
+      return props;
+    }
+    if (!g.page.is_object()) g.page = props;
+    g.held[std::string { version }] += count;
+    if (groups_.size() > MAX_GROUPS) groups_.erase(groups_.begin());
     return std::nullopt;
   }
 
@@ -230,21 +273,74 @@ namespace telemetry {
     sent_.clear();
   }
 
-  std::vector<json>
-  error_reporter_t::flush(std::int64_t now_ms) {
+  void
+  error_reporter_t::carry_over(group_t &g, std::int64_t day) {
+    // the first report of a new day: what was counted on an earlier day does not wait for the aggregate time of today, and does not become a count of today
+    if (g.full_day < 0 || g.full_day >= day || g.held.empty()) return;
+    for (auto &[version, count] : g.held) g.carried[version] += count;
+    g.held.clear();
+  }
+
+  std::vector<error_aggregate_t>
+  error_reporter_t::flush_groups(std::int64_t now_ms, bool all) {
     std::lock_guard lock { mutex_ };
-    std::vector<json> out;
-    for (auto &[fp, g] : groups_) {
-      if (g.held == 0) continue;
-      if (g.last_sent_ms != 0 && now_ms - g.last_sent_ms < AGGREGATE_MS) continue;
+    std::vector<error_aggregate_t> out;
+    const auto day = slot::day_of(now_ms);
+    const auto room = [&] {
       while (!sent_.empty() && now_ms - sent_.front() >= 3'600'000) sent_.pop_front();
-      if (static_cast<int>(sent_.size()) >= MAX_PER_HOUR) break;
-      out.push_back(props_of(g, fp, g.held, false));
-      g.held = 0;
-      g.last_sent_ms = now_ms;
-      sent_.push_back(now_ms);
+      return all || static_cast<int>(sent_.size()) < MAX_PER_HOUR;
+    };
+    for (auto &[key, g] : groups_) {
+      const auto fp = g.page.is_object() ? g.page.value("fingerprint", key) : key;
+      const auto leave = [&](std::map<std::string, std::uint64_t> &counts) {
+        for (auto it = counts.begin(); it != counts.end();) {
+          if (!room()) return false;
+          out.push_back({ g.product, it->first, props_of(g, fp, it->second, false) });
+          sent_.push_back(now_ms);
+          g.last_sent_ms = now_ms;
+          it = counts.erase(it);
+        }
+        return true;
+      };
+      // the counts of an earlier day first; the counts of today when the aggregate time has passed since the last send (or the day is over, or the host is stopping)
+      if (!leave(g.carried)) break;
+      if (g.held.empty()) continue;
+      // held counts leave when the aggregate time has passed since the last send, or when the day they were counted on is over
+      if (!all && g.last_sent_ms != 0 && now_ms - g.last_sent_ms < aggregate_ms_ && g.full_day >= day) continue;
+      if (!leave(g.held)) break;
     }
     return out;
+  }
+
+  std::vector<json>
+  error_reporter_t::flush(std::int64_t now_ms) {
+    std::vector<json> out;
+    for (auto &aggregate : flush_groups(now_ms)) out.push_back(std::move(aggregate.props));
+    return out;
+  }
+
+  json
+  error_reporter_t::state(std::int64_t now_ms) const {
+    std::lock_guard lock { mutex_ };
+    const auto day = slot::day_of(now_ms);
+    json keys = json::array();
+    for (const auto &[key, g] : groups_)
+      if (g.full_day == day) keys.push_back(key);
+    return json { { "day", day }, { "keys", std::move(keys) } };
+  }
+
+  void
+  error_reporter_t::restore(const json &state, std::int64_t now_ms) {
+    if (!state.is_object() || !state.contains("day") || !state["day"].is_number_integer() || !state.contains("keys") || !state["keys"].is_array()) return;
+    const auto day = slot::day_of(now_ms);
+    if (state["day"].get<std::int64_t>() != day) return;
+    std::lock_guard lock { mutex_ };
+    for (const auto &key : state["keys"]) {
+      if (!key.is_string() || groups_.size() >= MAX_GROUPS) continue;
+      auto &g = groups_[key.get<std::string>()];
+      g.full_day = day;
+      g.last_sent_ms = now_ms;
+    }
   }
 
   std::vector<std::string>

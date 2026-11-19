@@ -20,6 +20,7 @@ ENVELOPE = {
     "version": r'^\s+\{ "version", safe_version',
     "os_version": r'^\s+\{ "os_version", safe_os_version',
     "locale": r'^\s+\{ "locale", safe_locale',
+    "sample_weight": r'^\s+fields\["sample_weight"\] = ',
 }
 # rows that name the shared field list of the stream events or the allow-list itself
 SPECIAL = {

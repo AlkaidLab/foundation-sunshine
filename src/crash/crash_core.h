@@ -22,6 +22,8 @@ namespace crash {
   constexpr std::size_t signature_frames = 8;
   constexpr std::size_t max_pending = 20;
   constexpr std::uint64_t max_dump_bytes = 20ull * 1024 * 1024;
+  /// All the pending reports together (meta and dumps): the oldest go first, the newest report always stays.
+  constexpr std::uint64_t max_pending_bytes = 200ull * 1024 * 1024;
   constexpr std::size_t module_name_size = 64;
   constexpr std::size_t meta_buffer_size = 16 * 1024;
 
@@ -107,9 +109,9 @@ namespace crash {
   std::vector<pending_report_t>
   list_pending(const std::filesystem::path &dir);
 
-  /// Keep the newest `keep` reports, remove the rest (and everything older than `max_age_days`); returns how many went.
+  /// Keep the newest `keep` reports, remove the rest (and everything older than `max_age_days`, and the oldest while all of them together are over `max_bytes`; the newest always stays); returns how many went.
   std::size_t
-  trim_pending(const std::filesystem::path &dir, std::size_t keep = max_pending, int max_age_days = 30);
+  trim_pending(const std::filesystem::path &dir, std::size_t keep = max_pending, int max_age_days = 30, std::uint64_t max_bytes = max_pending_bytes);
 
   /// Removes every pending report.
   void

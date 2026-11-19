@@ -71,6 +71,20 @@ namespace telemetry {
     return 2;
   }
 
+  delivery_e
+  delivery_of(const event_t &e) {
+    if (is_user_report(e.kind, e.name)) return delivery_e::feedback;
+    if (e.kind == kind_e::error && event_priority(e) == 0) return delivery_e::error;
+    return delivery_e::routine;
+  }
+
+  bool
+  sampled_family(const event_t &e) {
+    if (e.kind == kind_e::error || is_user_report(e.kind, e.name)) return false;
+    if (e.name == "stream_health") return true;  // priority 0 by name for the Worker, but a summary of every stream: a sample of the installs is enough
+    return event_priority(e) >= 1;
+  }
+
   bool
   stage_is_slow(std::string_view stage, std::int64_t ms) {
     const std::int64_t bound = stage == "app_launch"sv || stage == "first_frame"sv ? 5000 : 3000;
@@ -1105,7 +1119,7 @@ namespace telemetry {
 
   json
   envelope_fields(const context_t &c, std::string_view product, const std::string &version) {
-    return json {
+    auto fields = json {
       { "v", WIRE_VERSION },
       { "install_id", c.install_id },
       { "session_id", c.session_id },
@@ -1118,6 +1132,12 @@ namespace telemetry {
       { "gpu_vendor", c.gpu_vendor },
       { "locale", safe_locale(c.locale) },
     };
+    // a whole number when it is one (10, not 10.0), at most the weight of the lowest sample rate
+    if (c.sample_weight > 1.0) {
+      const auto weight = std::min(c.sample_weight, 100.0);
+      fields["sample_weight"] = weight == std::floor(weight) ? json(static_cast<std::int64_t>(weight)) : json(std::round(weight * 100.0) / 100.0);
+    }
+    return fields;
   }
 
   namespace {

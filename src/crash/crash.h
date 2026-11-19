@@ -136,6 +136,10 @@ namespace crash {
   long
   upload_wait_hint_s();
 
+  /// The random share that spreads the waits and the start delay of the uploader (a number in [0, 1)); an empty function restores the random generator. For the tests.
+  void
+  set_upload_jitter_source(std::function<double()> source);
+
   // --- writing, used by the handlers and by other tools that share the folder -------------------------------------------------------------
   /// Writes a report from outside a crash (tests, tools): meta text and an optional dump file already on disk.
   bool
