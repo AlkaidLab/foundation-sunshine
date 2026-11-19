@@ -441,6 +441,14 @@
     "method": "GET"
   },
   {
+    "pattern": "^/api/gpu-driver-guard$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/gpu-driver-guard$",
+    "method": "POST"
+  },
+  {
     "pattern": "^/api/system/info$",
     "method": "GET"
   },

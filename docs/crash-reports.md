@@ -38,6 +38,9 @@ Signature: SHA-256 over the first 8 frames, starting at the first frame that is 
 libstdc++, System.\*, ...), each `module(lower case)+0x<offset lower hex>`, joined by `\n`. The host, the Panel and `sparxie-launch` share one
 test vector.
 
+A crash or a hang whose top frame lies in a graphics driver also leaves `<config>/crashes/gpu_driver_mark.json` (vendor, module file name, driver version, phase), whether or not
+error reports are on; the host then says the failure was the driver's and protects the start from a crash loop: see `docs/gpu-driver-guard.md`.
+
 ## Consent, identity, upload
 
 * Error reports follow the host key `telemetry_errors` (default on); without it an old `telemetry_consent = off` still means off. Turning it

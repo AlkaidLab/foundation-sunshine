@@ -6,6 +6,8 @@
  * fault). They end up as the "ctx" object of the crash report: fixed words and numbers, no names, no text.
  */
 #pragma once
+#include "gpu_driver.h"
+
 #include <atomic>
 #include <cstdint>
 #include <string_view>
@@ -22,6 +24,9 @@ namespace crash::context {
     std::atomic<int> client { 0 };
     std::atomic<int> hdr { -1 };
     std::atomic<int> phase { 0 };  ///< the start-up phase the main thread is in (phase_e), 0 once the host is up
+    std::atomic<bool> probe_running { false };  ///< the encoder probe runs on its own thread: its phase word stays until it ends
+    std::atomic<int> deferred_phase { 0 };  ///< what the main thread asked for meanwhile
+    std::atomic_flag phase_lock;  ///< orders set_phase, begin_ and end_encoder_probe against each other (never taken by a crash handler)
   };
 
   /// What the main thread is doing while the host starts. The words are fixed lowercase ASCII: a hang or a crash during the start names the phase it was in,
@@ -137,16 +142,58 @@ namespace crash::context {
     s.transport = transport_id(transport);
     s.client = client_id(client_kind);
     s.streaming = 1;
+    gpu_driver::set_phase(gpu_driver::phase_e::streaming);
   }
+  /// What the host runs when the last stream has ended (the crash-loop guard ends the safe mode: the driver worked for a whole stream). Set once at the start.
+  inline std::atomic<void (*)() noexcept> g_stream_end_hook { nullptr };
+
   /// The last stream has ended.
   inline void
   stream_ended() noexcept {
     state().streaming = 0;
+    gpu_driver::set_phase(gpu_driver::phase_e::idle);
+    if (auto hook = g_stream_end_hook.load()) hook();
   }
   /// The main thread enters a start-up phase; `phase_e::none` when the start is over.
+  struct phase_lock_t {
+    explicit phase_lock_t(std::atomic_flag &flag):
+        flag_ { flag } {
+      while (flag_.test_and_set(std::memory_order_acquire)) {}
+    }
+    ~phase_lock_t() {
+      flag_.clear(std::memory_order_release);
+    }
+    std::atomic_flag &flag_;
+  };
+
   inline void
   set_phase(phase_e phase) noexcept {
-    state().phase.store(static_cast<int>(phase), std::memory_order_relaxed);
+    auto &s = state();
+    phase_lock_t lock(s.phase_lock);
+    // While the encoder probe runs on its own thread (begin_encoder_probe), its word stays on the reports: the main thread goes on to input-wait, tray and none, and what it
+    // asks for is kept for when the probe is over.
+    if (s.probe_running.load(std::memory_order_relaxed) && phase != phase_e::encoder_probe) {
+      s.deferred_phase.store(static_cast<int>(phase), std::memory_order_relaxed);
+      return;
+    }
+    s.phase.store(static_cast<int>(phase), std::memory_order_relaxed);
+  }
+  /// The encoder probe starts on a thread of its own: its phase word is the one reports carry until end_encoder_probe().
+  inline void
+  begin_encoder_probe() noexcept {
+    auto &s = state();
+    phase_lock_t lock(s.phase_lock);
+    s.deferred_phase.store(s.phase.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    s.probe_running.store(true, std::memory_order_relaxed);
+    s.phase.store(static_cast<int>(phase_e::encoder_probe), std::memory_order_relaxed);
+  }
+  /// The probe is over: the phase the main thread asked for meanwhile (none once the start is over) takes its place.
+  inline void
+  end_encoder_probe() noexcept {
+    auto &s = state();
+    phase_lock_t lock(s.phase_lock);
+    s.probe_running.store(false, std::memory_order_relaxed);
+    s.phase.store(s.deferred_phase.load(std::memory_order_relaxed), std::memory_order_relaxed);
   }
 
 }  // namespace crash::context

@@ -8,6 +8,8 @@
  */
 #pragma once
 
+#include "gpu_driver.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -52,6 +54,17 @@ namespace crash {
   /// Index of the first frame that is not a runtime/system frame (0 when every frame is one).
   std::size_t
   first_caller_frame(const frame_t *frames, std::size_t count);
+
+  /**
+   * The graphics driver the stack ends in: the vendor of the first frame that is not a runtime/system frame, when that frame lies in a driver module
+   * (gpu_driver.h); `none` otherwise. `index` is that frame. A crash inside d3d11.dll or the host itself is not a driver crash, whatever lies below it.
+   */
+  struct driver_frame_t {
+    gpu_driver::vendor_e vendor = gpu_driver::vendor_e::none;
+    std::size_t index = 0;
+  };
+  driver_frame_t
+  driver_frame(const frame_t *frames, std::size_t count);
 
   /**
    * Signature: SHA-256 over the first 8 frames from the first caller frame on, each normalised as "<module lower case>+0x<offset lower hex>"
