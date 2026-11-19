@@ -109,16 +109,18 @@ if(${SUNSHINE_TRAY} STREQUAL 1)
     install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/web/public/images/logo-sunshine-256.png"
             DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/256x256/status"
             RENAME "sunshine-tray.png")
-    install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/web/public/images/sunshine-playing.png"
-            DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/256x256/status")
+    # The state icons are scalable SVGs upstream; the 16px PNG fallbacks are
+    # kept for indicator implementations that do not pick up a scalable status.
+    install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/web/public/images/sunshine-playing.svg"
+            DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/scalable/status")
+    install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/web/public/images/sunshine-pausing.svg"
+            DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/scalable/status")
+    install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/web/public/images/sunshine-locked.svg"
+            DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/scalable/status")
     install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/web/public/images/sunshine-playing-16.png"
             DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/16x16/status")
-    install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/web/public/images/sunshine-pausing.png"
-            DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/256x256/status")
     install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/web/public/images/sunshine-pausing-16.png"
             DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/16x16/status")
-    install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/web/public/images/sunshine-locked.png"
-            DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/256x256/status")
     install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/web/public/images/sunshine-locked-16.png"
             DESTINATION "${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/16x16/status")
 
