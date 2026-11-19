@@ -558,8 +558,10 @@ const actionHandlers = computed(() => ({
   openDesktop: () => openBigScreenOnHost().catch((e) => { connectNotice.value = `${homeTexts(String(uiLocale.value)).openDesktopFailed}${e?.message ? `: ${e.message}` : ''}` }),
 }))
 const pageDocsOf = computed(() => Object.entries(PAGES).filter(([id, p]) => p.icon && p.rail !== 'config' && id !== 'reset').filter(onThisHost).map(([id, p]) => ({ id, title: pageLabel(p), icon: p.icon, route: id, path: railLabel(p.rail), keywords: rowKeywords(ROW_OF_PAGE[id]) })))
+// the navigation bar itself: 音频, 显示与视频 ... open their list like the rail does (search for what the bar is called)
+const railDocsOf = computed(() => RAIL.map((r) => ({ id: `rail-${r.id}`, title: t(r.label), icon: r.icon, route: r.id, path: '', keywords: labelOf(String(uiLocale.value).startsWith('zh') ? 'en' : 'zh', r.label), railId: r.id })))
 const searchDocs = computed(() => [
-  ...settingDocs([...pageDocsOf.value, ...settingsList.searchItems.value], { prefix: settingsPlace, locale: String(uiLocale.value) }),
+  ...settingDocs([...railDocsOf.value, ...pageDocsOf.value, ...settingsList.searchItems.value], { prefix: settingsPlace, locale: String(uiLocale.value) }),
   // the big screen opens on the host's own machine: a page anywhere else does not offer the action
   ...actionDocs(String(uiLocale.value), actionHandlers.value, searchT.value.types.action).filter((d) => d.id !== 'action:openDesktop' || bigScreenHere.value),
   ...clientDocs(hostClients.value, { place: railLabel('stream') }),
@@ -573,7 +575,8 @@ const uni = useUnifiedSearch({
   isPinned: (doc) => isPinnedOnHome('web-home', doc.pin),
   recentSettings: recentSettingDocs,
   onChoose: (doc) => {
-    if (doc.type === 'setting' || doc.type === 'page') { settingsList.remember(doc.entry?.keyName); onNavigate(doc.entry) }
+    if (doc.type === 'page' && doc.entry?.railId) onRail({ id: doc.entry.railId })
+    else if (doc.type === 'setting' || doc.type === 'page') { settingsList.remember(doc.entry?.keyName); onNavigate(doc.entry) }
     else if (doc.type === 'client') { requestPageFilter('pin', doc.client?.name || doc.title); nav.go('pin') }
     else if (doc.type === 'app') { requestPageFilter('apps', doc.app?.name || doc.title); nav.go('apps') }
     else if (doc.type === 'tile') { addTileToHome('web-home', doc.tile); nav.go('home') }
