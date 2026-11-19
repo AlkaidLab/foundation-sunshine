@@ -2,7 +2,7 @@
 import { computed, inject, onMounted, ref, useId } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { MIcon, MIconButton, MSheet, MAppearance, MSponsorButton, aboutTexts, appearanceTexts, useAppearance } from 'foundation-ui/vue'
-import { SPONSORS } from '../../config/sponsors.js'
+import { SPONSORS, sponsorUrl } from '../../config/sponsors.js'
 import '../../config/settingsData/index.js'
 import { labelOf } from 'foundation-ui/settings/index.js'
 import { loadAutoTheme, setStoredTheme, setTheme } from '../../utils/theme.js'
@@ -19,7 +19,7 @@ const accountMenu = ref(null)
 const personalise = ref(false)
 const zh = () => locale.value && String(locale.value).startsWith('zh')
 const appearance = useAppearance()
-const supportSections = () => [{ title: zh() ? '赞助' : 'Sponsor', items: SPONSORS.map((x) => ({ id: x.id, icon: 'favorite', title: x.label, url: x.url })) }, { items: [{ id: 'star', icon: 'star', title: zh() ? '在 GitHub 点 Star' : 'Star on GitHub', url: 'https://github.com/AlkaidLab/foundation-sunshine' }, { id: 'qq', icon: 'groups', title: zh() ? 'QQ 交流群' : 'QQ group', url: 'https://qm.qq.com/q/AfMQoyKrkc' }] }]
+const supportSections = () => [{ title: zh() ? '赞助' : 'Sponsor', items: SPONSORS.map((x) => ({ id: x.id, icon: 'favorite', title: x.label, url: sponsorUrl(x, zh() ? 'zh' : 'en') })) }, { items: [{ id: 'star', icon: 'star', title: zh() ? '在 GitHub 点 Star' : 'Star on GitHub', url: 'https://github.com/AlkaidLab/foundation-sunshine' }, { id: 'qq', icon: 'groups', title: zh() ? 'QQ 交流群' : 'QQ group', url: 'https://qm.qq.com/q/AfMQoyKrkc' }] }]
 const openLink = (it) => window.open(it.url, '_blank', 'noopener,noreferrer')
 const theme = ref('auto')
 const THEMES = [{ id: 'light', icon: 'light_mode', label: 'navbar.theme_light' }, { id: 'dark', icon: 'dark_mode', label: 'navbar.theme_dark' }, { id: 'auto', icon: 'contrast', label: 'navbar.theme_auto' }]
