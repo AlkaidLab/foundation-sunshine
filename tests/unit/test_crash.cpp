@@ -12,6 +12,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <gtest/gtest.h>
@@ -293,6 +294,29 @@ TEST(CrashPhase, AProbeThatEndsBeforeTheStartDoesRestoreTheMainThreadsPhase) {
   EXPECT_EQ(state.phase.load(), static_cast<int>(phase_e::tray));
   crash::context::set_phase(phase_e::none);
   EXPECT_EQ(state.phase.load(), static_cast<int>(phase_e::none));
+}
+
+TEST(CrashWatchClock, TheAwakeClockRunsLikeTheSteadyOneWhileTheSystemIsUp) {
+  // a wrong unit (QueryUnbiasedInterruptTime counts 100 ns) would show here: the two clocks move together when nothing sleeps
+  const auto awake_before = crash::awake_ms();
+  const auto steady_before = std::chrono::steady_clock::now();
+  std::this_thread::sleep_for(std::chrono::milliseconds(300));
+  const auto awake_after = crash::awake_ms();
+  const auto steady_ms = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - steady_before).count();
+  ASSERT_GE(awake_after, awake_before);
+  const auto awake_delta = static_cast<long long>(awake_after - awake_before);
+  EXPECT_GE(awake_delta, 200);
+  EXPECT_LE(std::abs(awake_delta - steady_ms), 150);
+  EXPECT_GT(awake_before, 0u);
+}
+
+TEST(CrashWatchClock, AThreadIsOverdueOnlyAfterItsTimeoutOfAwakeTime) {
+  EXPECT_FALSE(crash::hang_overdue(0, 1000000, 300000));  // idle
+  EXPECT_FALSE(crash::hang_overdue(1000, 1000 + 299999, 300000));
+  EXPECT_TRUE(crash::hang_overdue(1000, 1000 + 300000, 300000));
+  EXPECT_TRUE(crash::hang_overdue(1000, 1000 + 36000000, 300000));
+  // a reading from before the thread went busy never wraps around into a hang
+  EXPECT_FALSE(crash::hang_overdue(5000, 4000, 300000));
 }
 
 TEST(CrashDriverFrame, ATopFrameInADriverModuleIsADriverCrash) {

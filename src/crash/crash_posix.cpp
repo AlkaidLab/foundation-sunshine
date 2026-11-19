@@ -198,6 +198,12 @@ namespace crash::detail {
     if (++g_tick % 30 == 0) refresh_modules();
   }
 
+  std::uint64_t
+  platform_awake_ms() {
+    // CLOCK_MONOTONIC (Linux) and CLOCK_UPTIME_RAW (macOS), the clocks behind std::chrono::steady_clock, do not count the time the system sleeps
+    return now_ms();
+  }
+
   void
   platform_bind_thread(slot_t &) {}
 

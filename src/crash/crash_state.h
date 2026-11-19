@@ -66,6 +66,9 @@ namespace crash::detail {
   platform_release_thread(slot_t &slot);
   void
   platform_test_crash(const char *what);
+  /// Monotonic milliseconds without the time the system slept (crash::awake_ms).
+  std::uint64_t
+  platform_awake_ms();
 }  // namespace crash::detail
 
 namespace crash {

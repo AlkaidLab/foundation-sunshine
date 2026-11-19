@@ -210,13 +210,18 @@ probe_encoders_with_watchdog() {
   auto probe_finished_future = probe_finished.get_future();
 
   BOOST_LOG(info) << "Probing for supported encoders..."sv;
-  const auto probe_started_at = std::chrono::steady_clock::now();
+  // The time the machine sleeps is not time the probe was stuck: a probe that was running when the system went to sleep must not wake up as a driver hang
+  // (that would mark the driver and push the next starts toward the safe mode), so the elapsed time is read from the clock that stands still in sleep.
+  const auto probe_started_ms = crash::awake_ms();
+  const auto probe_elapsed = [probe_started_ms]() {
+    return std::chrono::milliseconds(crash::awake_ms() - probe_started_ms);
+  };
 
-  std::thread watchdog([&probe_finished_future, poll_interval, report_interval, probe_hang_after, probe_started_at]() {
+  std::thread watchdog([&probe_finished_future, poll_interval, report_interval, probe_hang_after, probe_elapsed]() {
     auto next_report = report_interval;
     bool hang_noted = false;
     while (probe_finished_future.wait_for(poll_interval) == std::future_status::timeout) {
-      const auto elapsed = std::chrono::steady_clock::now() - probe_started_at;
+      const auto elapsed = probe_elapsed();
       if (!hang_noted && elapsed >= probe_hang_after) {
         hang_noted = true;
         if (auto *guard = gpu_guard::g_guard.load()) guard->note_hang();
@@ -243,8 +248,7 @@ probe_encoders_with_watchdog() {
   watchdog.join();
   if (probe_error) std::rethrow_exception(probe_error);
 
-  const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-    std::chrono::steady_clock::now() - probe_started_at);
+  const auto elapsed = probe_elapsed();
 
   if (probe_failed) {
     BOOST_LOG(error) << "Video failed to find working encoder (probe took "sv << elapsed.count() << "ms)"sv;

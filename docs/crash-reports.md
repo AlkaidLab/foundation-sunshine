@@ -12,6 +12,13 @@ Contract: the crash part of the report format in `docs/privacy_telemetry.md`. Th
 | `sunshine-gui.exe` (Panel) | panic hook (code location file:line is the first frame, never the message); native crash like the host; WebView2 `ProcessFailed` | `panic`, `crash`, `abort` | minidump for native crashes |
 | `sparxie-launch.exe` | `AppDomain.UnhandledException` (+ dump), `TaskScheduler.UnobservedTaskException` (meta only) | `unhandled-dotnet` | optional dump |
 
+The watchdog counts a thread's busy time on `crash::awake_ms`, a clock that stands still while the system sleeps or hibernates (Windows:
+`QueryUnbiasedInterruptTime`, which the documentation says leaves that time out; elsewhere the monotonic clock of the platform, which does). `std::chrono::steady_clock`
+on Windows (`QueryPerformanceCounter`) has no such guarantee, and the reports show it kept counting: the 24 start-up hang reports of 2026-11-14 to 2026-11-18 had `uptime_s`
+(taken from the steady clock) between 37 minutes and 14 hours, none near the 300 s of the timeout; that fits a start that was running when the machine went to sleep, with the report written when it woke.
+A report whose `uptime_s` is far above its timeout is such a case from an older build. The encoder probe's own "stuck in the driver" judgement
+(`probe_encoders_with_watchdog`) reads the same clock.
+
 The crashing thread only copies its context and wakes a worker made at start; the worker writes the dump, then a meta with the faulting
 frame, then the full meta. Nothing on that path allocates. The process then ends with the exit code the default handling gives.
 
