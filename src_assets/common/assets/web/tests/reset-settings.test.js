@@ -40,6 +40,8 @@ test('the shell registers the page in the system rail, opens it from the search,
   assert.match(shell, /reset: \{ rail: 'system', path: null, hash: 'reset'[^}]*text: \(locale\) => resetTexts\(locale\)\.title \}/)
   assert.match(shell, /resetSettings: \(\) => jumpNav\.go\('reset'\)/)
   assert.match(shell, /id !== 'reset'/, 'the page is not a second search result of the same name')
+  // the link a person copies is the address with the page's hash (a page without a path of its own had `null` in it)
+  assert.match(shell, /page\.hash \? `\$\{normalise\(location\.pathname\)\}#\$\{page\.hash\}` : page\.path/)
 })
 
 test('the bottom of the settings and 日志与诊断 both lead to it', () => {

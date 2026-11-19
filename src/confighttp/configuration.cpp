@@ -22,6 +22,7 @@
 #include "src/network.h"
 #include "src/platform/common.h"
 #include "src/settings_reset.h"
+#include "src/sparxie/apps_file_lock.h"
 #include "src/stream.h"
 #include "src/telemetry/telemetry.h"
 #include "src/utility.h"
@@ -458,7 +459,14 @@ namespace confighttp::configuration {
         return;
       }
       settings_reset::result_t result;
-      config::with_config_file_locked([&] { result = settings_reset::reset_to_defaults(reset_paths(), with_apps, reset_parser(), reset_clock()); });
+      // an exception on the way (a path that cannot be converted, no memory) opens the gate again: a failed call must not keep every later one out
+      auto open_gate = util::fail_guard([&gate] { gate.leave(false); });
+      {
+        // the application list is written by other routes under its own lock: the order is that lock, then the settings file's
+        std::lock_guard apps_lock(::sparxie::apps_file_mutex);
+        config::with_config_file_locked([&] { result = settings_reset::reset_to_defaults(reset_paths(), with_apps, reset_parser(), reset_clock()); });
+      }
+      open_gate.disable();
       gate.leave(static_cast<bool>(result));
       if (!result) {
         BOOST_LOG(warning) << "Settings reset failed: "sv << settings_reset::error_code(result.error);
@@ -481,7 +489,12 @@ namespace confighttp::configuration {
         return;
       }
       settings_reset::result_t result;
-      config::with_config_file_locked([&] { result = settings_reset::restore_latest(reset_paths(), reset_parser(), reset_clock()); });
+      auto open_gate = util::fail_guard([&gate] { gate.leave(false); });
+      {
+        std::lock_guard apps_lock(::sparxie::apps_file_mutex);
+        config::with_config_file_locked([&] { result = settings_reset::restore_latest(reset_paths(), reset_parser(), reset_clock()); });
+      }
+      open_gate.disable();
       gate.leave(static_cast<bool>(result));
       if (!result) {
         BOOST_LOG(warning) << "Settings restore failed: "sv << settings_reset::error_code(result.error);

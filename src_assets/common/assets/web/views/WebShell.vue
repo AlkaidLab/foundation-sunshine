@@ -470,7 +470,7 @@ async function onContextSelect(entry, item) {
   if (menuHandler) { menuHandler(entry, item); return }
   if (entry.id === 'open') nav.go(item.route || item.id, item.params)
   else if (entry.id === 'pin') pinHost.value.toggle(rowPinSpec(item))
-  else if (entry.id === 'copy') { try { await navigator.clipboard.writeText(new URL(PAGES[item.route || item.id].path, location.origin).href) } catch { /* clipboard unavailable */ } }
+  else if (entry.id === 'copy') { try { const page = PAGES[item.route || item.id]; await navigator.clipboard.writeText(new URL(page.hash ? `${normalise(location.pathname)}#${page.hash}` : page.path, location.origin).href) } catch { /* clipboard unavailable */ } }
   else { nav.go(item.route || item.id, item.params); pending.value = entry.id }
 }
 const sceneTexts = computed(() => ({ resize: t('shell.resize'), main: t('navbar.home'), expand: t('shell.expand_nav'), collapse: t('shell.collapse_nav'), shortcuts: t('shell.shortcuts'), back: t('shell.back'), search: t('shell.search'), help: t('shell.shortcut_help'), section: t('shell.section'), close: t('shell.clear') }))

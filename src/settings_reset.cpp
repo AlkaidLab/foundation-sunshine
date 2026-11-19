@@ -66,12 +66,17 @@ namespace settings_reset {
       return file.has_parent_path() ? file.parent_path() : fs::path { "." };
     }
 
+    /// The whole file, or nothing: a path that is not a regular file, or a read that came back shorter than the file, is not an empty file.
     std::optional<std::string>
     read_all(const fs::path &path) {
+      std::error_code probe;
+      if (!fs::is_regular_file(path, probe) || probe) return std::nullopt;
+      const auto size = fs::file_size(path, probe);
+      if (probe) return std::nullopt;
       std::ifstream input(path, std::ios::binary);
       if (!input.is_open()) return std::nullopt;
       std::string contents { std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>() };
-      if (input.bad()) return std::nullopt;
+      if (input.bad() || contents.size() != size) return std::nullopt;
       return contents;
     }
 
@@ -346,12 +351,13 @@ namespace settings_reset {
       }
       if (clear_apps) {
         if (!write_atomic(paths.apps, *bundled)) {
-          // the settings go back to what they were: nothing is half done
+          // the settings go back to what they were: nothing is half done. When even that fails, the copies stay: they hold the earlier settings.
+          bool back = true;
           if (current->existed)
-            write_atomic(paths.config, current->text);
+            back = write_atomic(paths.config, current->text);
           else
             remove_quietly(paths.config);
-          drop_copies();
+          if (back) drop_copies();
           result.error = error_e::write_failed;
           return result;
         }
@@ -420,11 +426,12 @@ namespace settings_reset {
       }
       if (latest.has_apps) {
         if (!write_atomic(paths.apps, *saved_apps)) {
+          bool back = true;
           if (current->existed)
-            write_atomic(paths.config, current->text);
+            back = write_atomic(paths.config, current->text);
           else
             remove_quietly(paths.config);
-          drop_copies();
+          if (back) drop_copies();
           result.error = error_e::write_failed;
           return result;
         }

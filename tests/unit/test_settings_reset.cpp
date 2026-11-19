@@ -253,12 +253,32 @@ TEST_F(SettingsReset, WithoutASettingsFileThereIsNothingToCopy) {
   EXPECT_TRUE(fs::exists(paths.config));
 }
 
-TEST_F(SettingsReset, AnUnreadableCopyIsNotRestored) {
+TEST_F(SettingsReset, ACopyThatIsNotAFileIsNotListedAndNothingIsRestored) {
   ASSERT_TRUE(reset_to_defaults(paths, false, parse, now));
   const auto latest = list_backups(paths).front();
-  // a copy that became a folder: the file is not a regular file, so it is not listed at all
+  // the copy is gone (a folder is not a copy): there is nothing to restore
   fs::remove(paths.config.string() + ".reset-" + latest.stamp);
   EXPECT_EQ(restore_latest(paths, parse, now).error, error_e::no_backup);
+}
+
+TEST_F(SettingsReset, AnApplicationListCopyThatCannotBeReadStopsTheRestoreBeforeAnyChange) {
+  const auto apps_before = read(paths.apps);
+  ASSERT_TRUE(reset_to_defaults(paths, true, parse, now));
+  const auto latest = list_backups(paths).front();
+  ASSERT_TRUE(latest.has_apps);
+  // the copy of the list became a folder: it cannot be read, and must not be taken for an empty list
+  const auto apps_copy = paths.apps.string() + ".reset-" + latest.stamp;
+  fs::remove(apps_copy);
+  fs::create_directories(apps_copy);
+  const auto config_before = read(paths.config);
+  const auto apps_now = read(paths.apps);
+  const auto result = restore_latest(paths, parse, now);
+  EXPECT_FALSE(result);
+  EXPECT_EQ(result.error, error_e::read_failed);
+  EXPECT_EQ(read(paths.config), config_before);
+  EXPECT_EQ(read(paths.apps), apps_now);
+  EXPECT_NE(apps_now, apps_before);
+  EXPECT_EQ(copies(), 1);
 }
 
 TEST_F(SettingsReset, TwoClicksAtOnceMakeOneCopy) {
