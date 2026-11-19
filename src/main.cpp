@@ -29,6 +29,8 @@
 #include "entry_handler.h"
 #include "file_handler.h"
 #include "globals.h"
+#include "gpu_driver_guard.h"
+#include "gpu_driver_text.h"
 #include "httpcommon.h"
 #include "image_enhancement/config.h"
 #include "logging.h"
@@ -36,11 +38,13 @@
 #include "nvhttp.h"
 #include "process.h"
 #include "pyrowave/runtime.h"
+#include "background_probe.h"
 #include "startup_gate.h"
 #include "stream.h"
 #include "telemetry/hooks.h"
 #include "telemetry/telemetry.h"
 #include "tray/system_tray.h"
+#include "tray/tray_state.h"
 #include "upnp.h"
 #include "video.h"
 #include "webhook/webhook.h"
@@ -187,14 +191,20 @@ mainThreadLoop(const std::shared_ptr<safe::event_t<bool>> &shutdown_event) {
  *
  * The probe talks to the graphics driver and cannot be safely interrupted from
  * the outside — a hung driver call owns its thread until it returns. So the
- * watchdog does not try to cancel anything; it only keeps writing to the log
- * while the probe is outstanding. That turns "Sunshine started but streaming
+ * watchdog does not try to cancel anything; it keeps writing to the log
+ * while the probe is outstanding, and after probe_hang_after it tells the start guard
+ * that this run hung in the driver (src/gpu_driver_guard.h), so a start that keeps
+ * ending there is taken to the safe mode. That turns "Sunshine started but streaming
  * never works and nobody knows why" into a timestamped line naming the phase
  * that is stuck.
+ *
+ * @return true when the probe found no working encoder.
  */
-void
+bool
 probe_encoders_with_watchdog() {
+  constexpr auto poll_interval = 5s;
   constexpr auto report_interval = 30s;
+  constexpr auto probe_hang_after = 45s;
 
   std::promise<void> probe_finished;
   auto probe_finished_future = probe_finished.get_future();
@@ -202,21 +212,36 @@ probe_encoders_with_watchdog() {
   BOOST_LOG(info) << "Probing for supported encoders..."sv;
   const auto probe_started_at = std::chrono::steady_clock::now();
 
-  std::thread watchdog([&probe_finished_future, report_interval, probe_started_at]() {
-    while (probe_finished_future.wait_for(report_interval) == std::future_status::timeout) {
-      const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-        std::chrono::steady_clock::now() - probe_started_at);
-      BOOST_LOG(warning) << "Encoder probe has been running for "sv << elapsed.count()
+  std::thread watchdog([&probe_finished_future, poll_interval, report_interval, probe_hang_after, probe_started_at]() {
+    auto next_report = report_interval;
+    bool hang_noted = false;
+    while (probe_finished_future.wait_for(poll_interval) == std::future_status::timeout) {
+      const auto elapsed = std::chrono::steady_clock::now() - probe_started_at;
+      if (!hang_noted && elapsed >= probe_hang_after) {
+        hang_noted = true;
+        if (auto *guard = gpu_guard::g_guard.load()) guard->note_hang();
+      }
+      if (elapsed < next_report) continue;
+      next_report += report_interval;
+      BOOST_LOG(warning) << "Encoder probe has been running for "sv << std::chrono::duration_cast<std::chrono::seconds>(elapsed).count()
                          << "s and has not returned. This usually means a graphics driver call "
                             "is stuck. Streaming will not work until it completes; the web UI is "
                             "already available so the configuration can be changed."sv;
     }
   });
 
-  const bool probe_failed = video::probe_encoders();
+  bool probe_failed = true;
+  std::exception_ptr probe_error;
+  try {
+    probe_failed = video::probe_encoders();
+  }
+  catch (...) {
+    probe_error = std::current_exception();
+  }
 
   probe_finished.set_value();
   watchdog.join();
+  if (probe_error) std::rethrow_exception(probe_error);
 
   const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
     std::chrono::steady_clock::now() - probe_started_at);
@@ -227,7 +252,90 @@ probe_encoders_with_watchdog() {
   else {
     BOOST_LOG(info) << "Encoder probe completed in "sv << elapsed.count() << "ms"sv;
   }
+  return probe_failed;
 }
+
+/**
+ * @brief Tells the tray, once per driver version, that the last failure lay in a graphics driver, and once per entry that the safe mode is on.
+ * The Panel shows what the host puts into the tray state as a notification; the sentences are those of the home page (src/gpu_driver_text.h).
+ */
+void
+announce_gpu_guard_state() {
+  try {
+    auto *guard = gpu_guard::g_guard.load();
+    auto *store = gpu_guard::g_notices.load();
+    if (!guard || !store) return;
+    const bool zh = gpu_guard::text::is_chinese(config::sunshine.locale);
+    if (const auto mark = gpu_guard::read_mark(platf::appdata())) {
+      const std::string installed = crash::gpu_driver::driver_version_of(mark->vendor);
+      if (gpu_guard::notice_due(*mark, installed, *store) && !store->notified(mark->key())) {
+        store->mark_notified(mark->key());
+        const auto note = gpu_guard::text::driver_notification(*mark, zh);
+        tray_state::set_notification(note.title, note.message);
+        return;
+      }
+    }
+    if (const auto state = guard->snapshot(); state.safe) {
+      const auto key = "safe:" + std::to_string(state.safe_since);
+      if (!store->notified(key)) {
+        store->mark_notified(key);
+        const auto note = gpu_guard::text::safe_mode_notification(guard->policy().safe_clear_after_s, zh);
+        tray_state::set_notification(note.title, note.message);
+      }
+    }
+  }
+  catch (...) {
+  }
+}
+
+/**
+ * @brief The encoder probe of the start, on a thread of its own (src/background_probe.h).
+ *
+ * The start no longer waits for it: the tray and the ready state come first, a request that needs the result waits on startup::probe_gate() for a bounded time,
+ * and the Web UI and the Panel say "checking the encoders" while gpu_guard::get_probe() is not final. The thread is watched like the main one (a stop inside the
+ * driver is a hang report and a driver mark). At the end of the process a probe that is still inside the driver does not hold the exit: it waits a short bound and lets go.
+ */
+class probe_task_t {
+public:
+  using log_fn = std::function<void(const std::string &)>;
+
+  void
+  start(log_fn log_phase) {
+    crash::gpu_driver::set_phase(crash::gpu_driver::phase_e::probe);
+    crash::context::begin_encoder_probe();
+    gpu_guard::set_probe(gpu_guard::probe_e::running);
+    thread_.start([log_phase = std::move(log_phase)]() {
+      {
+        crash::watched_thread_t watch("encoder-probe", 120000);
+        crash::busy_scope_t busy(watch.slot);
+        startup::run_probe(
+          [&log_phase]() {
+            startup::phase_t phase("encoder probe", log_phase);
+            return probe_encoders_with_watchdog();
+          },
+          startup::probe_gate(),
+          [](gpu_guard::probe_e state) { gpu_guard::set_probe(state); });
+      }
+      crash::context::end_encoder_probe();
+      crash::gpu_driver::set_phase(crash::gpu_driver::phase_e::idle);
+    });
+  }
+
+  /// Waits up to `bound` for the probe, then lets go of it (a thread stuck in a driver call cannot be joined).
+  void
+  finish(std::chrono::seconds bound) {
+    if (thread_.running() && !thread_.finish(bound)) {
+      BOOST_LOG(warning) << "The encoder probe is still inside the graphics driver; the host does not wait for it"sv;
+    }
+  }
+
+  ~probe_task_t() {
+    finish(3s);
+  }
+
+private:
+  startup::bounded_thread_t thread_ { 3s };
+};
 
 int
 main(int argc, char *argv[]) {
@@ -394,6 +502,33 @@ main(int argc, char *argv[]) {
     return fn->second(argv[0], config::sunshine.cmd.argc, config::sunshine.cmd.argv);
   }
 
+  // Crash-loop protection (src/gpu_driver_guard.h): how the last runs ended decides whether this start is in the safe mode. It comes before the test switch below so
+  // a crash that is made on purpose counts like a real one. The versions of the graphics drivers go to the crash handlers from a thread of its own (the system inventory).
+  // both live for the whole process: the thread below may be let go while it still reads them
+  auto &startup_guard = *new gpu_guard::guard_t { platf::appdata() };
+  auto &notice_store = *new gpu_guard::notice_store_t { platf::appdata() };
+  const bool safe_mode = startup_guard.begin();
+  gpu_guard::g_guard.store(&startup_guard);
+  gpu_guard::g_notices.store(&notice_store);
+  auto guard_reset = util::fail_guard([]() {
+    crash::context::g_stream_end_hook.store(nullptr);
+    gpu_guard::g_guard.store(nullptr);
+    gpu_guard::g_notices.store(nullptr);
+  });
+  gpu_guard::ticker_t startup_guard_ticker { startup_guard };
+  startup::bounded_thread_t gpu_facts;
+  gpu_facts.start([]() {
+    crash::env::publish_gpu_driver_versions();
+    announce_gpu_guard_state();
+  });
+  crash::context::g_stream_end_hook.store([]() noexcept {
+    if (auto *guard = gpu_guard::g_guard.load()) guard->note_stream_finished();
+  });
+  if (safe_mode) {
+    BOOST_LOG(warning) << "Safe mode: the previous starts ended within "sv << startup_guard.policy().stable_after_s << " s or hung in the graphics driver "sv
+                       << startup_guard.policy().loop_threshold << " times in a row; the encoder check and the display recovery of the start are skipped"sv;
+  }
+
   // The second and later passes of the uploader find what a crash left; the first waits out the start. SUNSHINE_TEST_CRASH makes this process
   // fail on purpose (tests only), after the handlers and the consent are in place.
   crash::start_uploader();
@@ -406,8 +541,9 @@ main(int argc, char *argv[]) {
   // Adding this guard here first as it also performs recovery after crash,
   // otherwise people could theoretically end up without display output.
   // It also should be run be destroyed before forced shutdown.
-  crash::context::set_phase(crash::context::phase_e::display_restore);
-  auto display_device_deinit_guard = display_device::session_t::init();
+  // the recovery is left out in the safe mode: the phase word names only what runs
+  if (!safe_mode) crash::context::set_phase(crash::context::phase_e::display_restore);
+  auto display_device_deinit_guard = display_device::session_t::init(safe_mode);
   if (!display_device_deinit_guard) {
     BOOST_LOG(error) << "Display device session failed to initialize"sv;
   }
@@ -605,6 +741,7 @@ main(int argc, char *argv[]) {
 
   // Do not start network services after shutdown has already been requested.
   if (shutdown_event->peek()) {
+    startup_guard.note_clean_exit();
     return lifetime::desired_exit_code;
   }
 
@@ -656,12 +793,17 @@ main(int argc, char *argv[]) {
   std::thread httpThread { nvhttp::start };
   std::thread rtspThread { rtsp_stream::start };
 
-  {
-    crash::context::set_phase(crash::context::phase_e::encoder_probe);
-    startup::phase_t phase("encoder probe", log_phase);
-    probe_encoders_with_watchdog();
+  // The probe runs on a thread of its own: the tray and the ready state do not wait for the driver. In the safe mode it is left out, and a stream checks the encoders
+  // when it is asked for (the launch path does it every time). The phase word "encoder-probe" stays on the reports while the probe runs, whatever phase the main thread is in.
+  probe_task_t probe_task;
+  if (safe_mode) {
+    gpu_guard::set_probe(gpu_guard::probe_e::skipped);
+    crash::gpu_driver::set_phase(crash::gpu_driver::phase_e::idle);
+    startup::probe_gate().open();
   }
-  startup::probe_gate().open();
+  else {
+    probe_task.start(log_phase);
+  }
   crash::context::set_phase(crash::context::phase_e::input_wait);
   input_deinit_guard = input_init.get();
   crash::context::set_phase(crash::context::phase_e::tray);
@@ -711,6 +853,10 @@ main(int argc, char *argv[]) {
   mainThreadLoop(shutdown_event);
   // Every way out of the loop is an exit: the service must not adopt this process from here on, whichever path raised the event.
   lifetime::core_state_stopping();
+  // The run ended because it was asked to: it is not a failed start, whatever the clean-up below meets.
+  startup_guard.note_clean_exit();
+  // A probe still inside the graphics driver does not hold the exit; one that is finishing gets a moment so the tear-down does not run under it.
+  probe_task.finish(3s);
 
 #ifdef _WIN32
   spatial_audio::mat_capture_process.stop();

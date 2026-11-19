@@ -197,10 +197,10 @@ TEST(Ds5TuningDescriptors, CoversTheStableOneHundredSixKeys) {
 TEST(Ds5TuningDescriptors, ReportsEveryKeyWithAHostConsumerAsImplemented) {
   const auto snapshot = ds5::tuning::store_t("/tmp/ds5-tuning-unused.json").snapshot_json();
   // Keys with no consumer on this host: Bluetooth output and fallback (10, 98, 100), the vendor slope
-  // block (31), the microphone route and preamp (96, 97: no capture source and no wire field),
-  // cross-end sync (102 to 104) and the feedback target (105).  The motion report rate (101) is the rate
+  // block (31), the speaker preamp (97: no wire field), cross-end sync (102 to 104) and the feedback
+  // target (105).  The microphone route (96) puts the client microphone on the capture endpoint.  The motion report rate (101) is the rate
   // the host asks clients for, so it has a host consumer.
-  const std::set<std::uint32_t> unavailable { 10, 31, 96, 97, 98, 100, 102, 103, 104, 105 };
+  const std::set<std::uint32_t> unavailable { 10, 31, 97, 98, 100, 102, 103, 104, 105 };
   EXPECT_EQ(snapshot.at("implemented_count").get<std::uint32_t>(), 106u - unavailable.size());
   for (std::uint32_t id = 1; id <= 106; ++id) {
     const bool implemented = key_entry(snapshot, id).at("implemented").get<bool>();
@@ -221,7 +221,7 @@ TEST(Ds5TuningDescriptors, EveryUnavailableKeyNamesItsRealCause) {
   const auto snapshot = ds5::tuning::store_t("/tmp/ds5-tuning-unused.json").snapshot_json();
   const std::map<std::uint32_t, std::string> expected {
     { 10, "transport" }, { 98, "transport" }, { 100, "transport" },
-    { 31, "slope" }, { 96, "mic" }, { 97, "preamp" },
+    { 31, "slope" }, { 97, "preamp" },
     { 102, "control-channel" }, { 103, "control-channel" }, { 104, "control-channel" },
     { 105, "client" },
   };
@@ -1395,7 +1395,8 @@ TEST(Ds5TuningRuntime, PlayerMuteAndAudioOutputMappingsMatchTheReportFields) {
 
 TEST(Ds5TuningDescriptors, WireExtensionKeysReportExactReasons) {
   const auto snapshot = ds5::tuning::store_t("/tmp/ds5-tuning-unused.json").snapshot_json();
-  EXPECT_NE(key_entry(snapshot, 96).at("reason").get<std::string>().find("capture source"), std::string::npos);
+  EXPECT_NE(key_entry(snapshot, 96).at("status").get<std::string>(), "unavailable");
+  EXPECT_NE(key_entry(snapshot, 96).at("note").get<std::string>().find("client's microphone"), std::string::npos);
   EXPECT_NE(key_entry(snapshot, 97).at("reason").get<std::string>().find("audio_control2"), std::string::npos);
   EXPECT_NE(key_entry(snapshot, 98).at("reason").get<std::string>().find("client"), std::string::npos);
   // 101 is applied by the host now: not unavailable, and a note that names the client's own limit
@@ -1485,7 +1486,8 @@ TEST_F(Ds5TuningStore, PublishesTheLedAndAudioKeysIntoTheRuntime) {
   EXPECT_TRUE(state.mic_mute.load());
   EXPECT_EQ(state.audio_route.load(), 2u);
   for (const auto id : { 86u, 87u, 88u, 90u, 94u, 95u }) EXPECT_TRUE(key_entry(result.body, id).at("implemented").get<bool>()) << id;
-  for (const auto id : { 96u, 97u }) EXPECT_FALSE(key_entry(result.body, id).at("implemented").get<bool>()) << id;
+  EXPECT_TRUE(key_entry(result.body, 96).at("implemented").get<bool>());
+  EXPECT_FALSE(key_entry(result.body, 97).at("implemented").get<bool>());
 }
 
 namespace {

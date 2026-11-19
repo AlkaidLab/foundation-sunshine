@@ -11,7 +11,8 @@
 namespace telemetry {
 
   post_result_t
-  post_once(const std::string &url, const std::string &content_type, const std::string &body, const std::string &user_agent, long timeout_s, long connect_timeout_s) {
+  post_once(const std::string &url, const std::string &content_type, const std::string &body, const std::string &user_agent, long timeout_s, long connect_timeout_s,
+    const std::function<void(int family, std::uintptr_t native_handle)> &on_socket_open) {
     try {
       const auto scheme_end = url.find("://");
       if (scheme_end == std::string::npos) return {};
@@ -30,6 +31,7 @@ namespace telemetry {
         client.config.timeout = timeout_s;
         client.config.timeout_connect = connect_timeout_s;
         client.config.max_response_streambuf_size = 64 * 1024;
+        client.config.on_socket_open = on_socket_open;
         auto response = client.request("POST", target, body, headers);
         post_result_t result;
         if (!response) return result;

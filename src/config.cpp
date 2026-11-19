@@ -572,7 +572,9 @@ namespace config {
     {},  // external_ip
     {},  // external_endpoints
     {},  // stun_servers
-    "disabled",  // network_external_check
+    "enabled",  // network_external_check
+    {},  // network_external_endpoint
+    "enabled",  // network_bypass_proxy
     {
       "1280x720"s,
       "1920x1080"s,
@@ -1546,6 +1548,8 @@ namespace config {
     }
     string_f(vars, "stun_servers", nvhttp.stun_servers);
     string_f(vars, "network_external_check", nvhttp.network_external_check);
+    string_f(vars, "network_external_endpoint", nvhttp.network_external_endpoint);
+    string_f(vars, "network_bypass_proxy", nvhttp.network_bypass_proxy);
     {
       const auto list = nat_discovery::parse_server_list(nvhttp.stun_servers);
       if (!list.rejected.empty()) {

@@ -23,6 +23,7 @@
 #include <nlohmann/json.hpp>
 
 #include "nat_discovery.h"
+#include "network_pin.h"
 #include "network_reachability.h"
 
 namespace network_check {
@@ -106,6 +107,7 @@ namespace network_check {
     request_t request;
     std::vector<step_t> steps;
     summary_t summary;
+    network_pin::outcome_t bypass;  ///< whether the probes left through the physical adapter (`bypass` in the JSON)
     bool timed_out = false;
   };
 
@@ -137,6 +139,8 @@ namespace network_check {
     /// Runs the STUN discovery.
     std::function<nat_discovery::discovery_t(const request_t &)> discover;
     bool stun_enabled = true;
+    /// The probes leave through the physical adapter, not a proxy tunnel (config `network_bypass_proxy`); the probes themselves take it from their own options.
+    bool bypass = false;
     /// How long a run may take before its open steps report `timeout`.
     std::chrono::milliseconds deadline = DEADLINE;
     /// The endpoints of the saved configuration, for the planned steps when the request names none.

@@ -342,6 +342,7 @@ namespace nat_discovery {
     std::vector<server_t> servers;
     bool enabled = true;
     std::string region;  ///< copied into discovery_t::region
+    bool bypass = false;  ///< leave through the physical adapter, not a proxy tunnel (network_pin.h); the host sets it from `network_bypass_proxy`
   };
 
   /// Enumerate interfaces and ask the servers, reusing the cached result unless refresh is requested.

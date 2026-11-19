@@ -54,6 +54,8 @@ namespace display_device {
 
     /**
      * @brief Initialize the singleton and perform the initial state recovery (if needed).
+     * @param skip_recovery Leave the recovery out (the safe mode after repeated failed starts, src/gpu_driver_guard.h): it reads the display stack, and a call
+     *                      into the graphics driver that does not return has held the start up before. The next normal start, or the end of the next stream, restores.
      * @returns A deinit_t instance that performs cleanup when destroyed.
      * @see deinit_t
      *
@@ -63,7 +65,7 @@ namespace display_device {
      * ```
      */
     static std::unique_ptr<deinit_t>
-    init();
+    init(bool skip_recovery = false);
 
     /**
      * @brief Result of trying to prepare display settings for a stream.

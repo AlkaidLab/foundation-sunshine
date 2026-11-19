@@ -70,6 +70,30 @@ namespace telemetry {
     }
   }  // namespace
 
+  namespace {
+    /** Writes `text` to `path` through a temporary file and a rename, so a crash leaves the old content or the new, never half of it. */
+    bool
+    write_file_atomic(const fs::path &path, const std::string &text) {
+      try {
+        std::error_code ec;
+        fs::create_directories(path.parent_path(), ec);
+        auto temp = path;
+        temp += ".tmp";
+        {
+          std::ofstream out(temp, std::ios::binary | std::ios::trunc);
+          out << text;
+          out.flush();
+          if (!out) return false;
+        }
+        fs::rename(temp, path, ec);
+        return !ec;
+      }
+      catch (...) {
+        return false;
+      }
+    }
+  }  // namespace
+
   std::string
   new_uuid_v4() {
     std::array<std::uint8_t, 16> b {};
@@ -129,6 +153,19 @@ namespace telemetry {
     }
     last_flush_ms_ = deps_.now_ms();
     last_aggregate_flush_ms_ = last_flush_ms_;
+    started_ms_ = last_flush_ms_;
+    try {
+      // the day whose routine batches were all sent, and what the error reporter sent in full today: both survive a restart, so a restart neither sends a day twice nor repeats an error in full
+      std::ifstream day(options_.dir / "routine_day");
+      std::int64_t done = 0;
+      if (day >> done) routine_day_done_ = done;
+      if (options_.routine_slot || options_.error_aggregate_ms > 0) reporter_.set_aggregate_ms(options_.error_aggregate_ms > 0 ? options_.error_aggregate_ms : slot::DAY_MS);
+      std::ifstream errors(options_.dir / "error_days.json");
+      const auto stored = errors ? json::parse(errors, nullptr, false) : json();
+      if (!stored.is_discarded() && consent_now().errors) reporter_.restore(stored, deps_.now_ms());
+    }
+    catch (...) {
+    }
     try {
       std::ifstream seen(options_.dir / "products_seen.json");
       const auto stored = seen ? json::parse(seen, nullptr, false) : json();
@@ -371,7 +408,7 @@ namespace telemetry {
       for (auto envelope : build_envelopes(ctx, event.product, { event })) {
         if (alone) envelope["report_only"] = true;
         std::lock_guard lock { queue_mutex_ };
-        if (!queue_.push(envelope, 0)) return false;
+        if (!queue_.push(envelope, 0, delivery_e::feedback)) return false;
       }
       return true;
     }
@@ -446,6 +483,7 @@ namespace telemetry {
             ++counts_.emitted;
             ++kept;
           }
+          if (report) ++report->queued;
           // the count of feedback reports that survives the daily limit of issues of the Worker (a report is only an issue until the limit): one small event, the category in the Worker's words
           emit(kind_e::error, "feedback_submit", feedback_submit_props(props));
         }
@@ -459,6 +497,32 @@ namespace telemetry {
           }
         }
         continue;
+      }
+      // the error report of a page: the first of a fingerprint each day goes in full, the repeats are only counted (the aggregate leaves later, under the product that raised them)
+      if (*kind == kind_e::error && name == "error_report") {
+        try {
+          auto shaped = shape_event(*kind, name, props, deps_.now_ms());
+          if (!shaped) continue;
+          std::optional<json> admitted;
+          {
+            std::lock_guard lock { errors_mutex_ };
+            if (!consent_now().errors) {
+              std::lock_guard counts_lock { mutex_ };
+              ++counts_.refused;
+              continue;
+            }
+            admitted = reporter_.admit(product, safe_version(version), shaped->props, deps_.now_ms());
+          }
+          // counted: the page is told it was accepted, the repeat is not lost
+          if (!admitted) {
+            ++kept;
+            continue;
+          }
+          props = *admitted;
+        }
+        catch (...) {
+          continue;
+        }
       }
       if (emit(*kind, name, props, product, version, -1, report_id)) ++kept;
     }
@@ -504,6 +568,8 @@ namespace telemetry {
     out.health = !cfg.contains("health") || !cfg["health"].is_boolean() || cfg["health"].get<bool>();
     out.backoff_s = static_cast<std::int64_t>(std::clamp(num("backoff_s", 0), 0.0, 21600.0));
     out.paused = cfg.contains("paused") && cfg["paused"].is_boolean() && cfg["paused"].get<bool>();
+    // the share of installs that send sampled records: a number in (0, 1] is believed (kept inside the lowest rate), anything else is "not given"
+    if (const auto rate = num("sample_rate", 0.0); rate > 0.0) out.sample_rate = slot::clamp_rate(rate);
     if (cfg.contains("debug") && cfg["debug"].is_array()) {
       for (const auto &c : cfg["debug"]) {
         if (!c.is_object() || !c.contains("until") || !c["until"].is_number() || c["until"].get<double>() <= static_cast<double>(now_ms)) continue;
@@ -519,6 +585,52 @@ namespace telemetry {
       }
     }
     return out;
+  }
+
+  double
+  service_t::effective_sample_rate() const {
+    std::lock_guard lock { mutex_ };
+    return slot::clamp_rate(config_.sample_rate > 0.0 ? config_.sample_rate : options_.sample_rate);
+  }
+
+  report_plan_t
+  service_t::plan() {
+    report_plan_t out;
+    out.sample_rate = effective_sample_rate();
+    const auto id = install_id();
+    out.sampled_in = id.empty() || slot::sampled_in(id, out.sample_rate);
+    out.weight = out.sample_rate < 1.0 ? slot::sample_weight(out.sample_rate) : 1.0;
+    out.slot_offset_ms = id.empty() ? 0 : slot::offset_ms(id);
+    out.routine_day_done = routine_day_done_;
+    return out;
+  }
+
+  bool
+  service_t::routine_due() {
+    if (!options_.routine_slot) return true;
+    const auto now = deps_.now_ms();
+    const auto id = install_id();
+    if (id.empty()) return false;  // nothing routine exists without an install id
+    const auto today = slot::day_of(now);
+    if (routine_day_done_ == today || now < routine_not_before_ms_) return false;
+    return now >= slot::due_ms(id, today, started_ms_);
+  }
+
+  void
+  service_t::save_error_state() {
+    try {
+      json state;
+      {
+        std::lock_guard lock { errors_mutex_ };
+        state = reporter_.state(deps_.now_ms());
+      }
+      const auto text = state.dump();
+      std::lock_guard lock { error_state_mutex_ };
+      if (text == error_state_written_) return;  // nothing new since the last write: no write every flush
+      if (write_file_atomic(options_.dir / "error_days.json", text)) error_state_written_ = text;
+    }
+    catch (...) {
+    }
   }
 
   remote_config_t
@@ -1185,17 +1297,17 @@ namespace telemetry {
   }
 
   void
-  service_t::flush(bool final) {
+  service_t::flush(bool final, bool release_held) {
     try {
       const auto now = deps_.now_ms();
       collect_logs(now, final);
       // errors held back by the rate limit leave as one aggregate per fingerprint
-      std::vector<json> held;
+      std::vector<error_aggregate_t> held;
       {
         std::lock_guard errors_lock { errors_mutex_ };
-        if (consent_now().errors) held = reporter_.flush(final ? now + error_reporter_t::AGGREGATE_MS : now);
+        if (consent_now().errors) held = reporter_.flush_groups(now, final);
       }
-      for (const auto &props : held) emit(kind_e::error, "error_report", props, "host", {}, 1);  // the counts of known errors: priority 1
+      for (const auto &aggregate : held) emit(kind_e::error, "error_report", aggregate.props, aggregate.product, aggregate.version, 1);  // the counts of known errors: priority 1
       std::deque<event_t> taken;
       consent_marks_t marks_at_take;
       {
@@ -1217,7 +1329,7 @@ namespace telemetry {
             aggregate_ring_.pop_front();
             ++counts_.dropped;
           }
-          if (final || now - last_aggregate_flush_ms_ >= options_.aggregate_interval_ms) {
+          if (final || release_held || now - last_aggregate_flush_ms_ >= options_.aggregate_interval_ms) {
             for (auto &e : aggregate_ring_) taken.push_back(std::move(e));
             aggregate_ring_.clear();
             last_aggregate_flush_ms_ = now;
@@ -1226,12 +1338,21 @@ namespace telemetry {
         marks_at_take = consent_marks_;
         last_flush_ms_ = now;
       }
-      if (taken.empty()) return;
+      if (taken.empty()) {
+        save_error_state();
+        return;
+      }
       const auto c = consent_now();
       // a batch holds events of one product and one priority, so the queue can drop, hold and send by priority
       // (a record about an earlier run, session_abnormal, has the session id of that run and goes out in an envelope of its own)
-      std::map<std::tuple<std::string, int, std::string>, std::vector<event_t>> by_product;
+      // (product, priority, session, delivery class, weighted): a batch holds events of one of each, so the queue keeps its own order and bounds and the envelope can carry one sample weight
+      std::map<std::tuple<std::string, int, std::string, int, bool>, std::vector<event_t>> by_product;
       std::vector<event_t> alone;  // reports with an id of their own (both switches off): one batch each, with no install id and no session of the host
+      // the sample: an install that is not in it sends no sampled record, one that is carries the weight (errors, feedback and the failures of priority 0 are never sampled)
+      const auto sample_rate = effective_sample_rate();
+      const bool sampling = sample_rate < 1.0;
+      const bool in_sample = !sampling || slot::sampled_in(install_id(), sample_rate);
+      std::uint64_t sampled_out = 0;
       for (auto &e : taken) {
         if (!c.allows(e.kind) && !is_user_report(e.kind, e.name)) continue;
         // a feedback report that reached the buffer without an identity (emitted directly, kept through a change of the switches): it gets one now, from the install id when there is one and a one-time id when there is not,
@@ -1245,7 +1366,16 @@ namespace telemetry {
           continue;
         }
         const auto priority = event_priority(e);
-        by_product[{ e.product, priority, e.session_id }].push_back(std::move(e));
+        const bool weighted = sampling && sampled_family(e);
+        if (weighted && !in_sample) {
+          ++sampled_out;
+          continue;
+        }
+        by_product[{ e.product, priority, e.session_id, static_cast<int>(delivery_of(e)), weighted }].push_back(std::move(e));
+      }
+      if (sampled_out > 0) {
+        std::lock_guard lock { mutex_ };
+        counts_.sampled_out += sampled_out;
       }
       std::vector<event_t> failed;  // what could not be written: it goes back to the buffer, never lost to a failed write
       for (const auto &e : alone) {
@@ -1263,6 +1393,7 @@ namespace telemetry {
         for (auto &[key, events] : by_product) {
           auto group_ctx = ctx;
           if (!std::get<2>(key).empty()) group_ctx.session_id = std::get<2>(key);
+          if (std::get<4>(key)) group_ctx.sample_weight = slot::sample_weight(sample_rate);
           // no install id (both switches went off since): nothing to write for these, they are the automatic events of a choice that was turned off
           if (ctx.install_id.empty()) continue;
           std::vector<std::vector<std::size_t>> origin;
@@ -1294,7 +1425,7 @@ namespace telemetry {
                 else {
                   envelope["events"] = std::move(kept);
                   std::lock_guard lock { queue_mutex_ };
-                  pushed = queue_.push(envelope, std::get<1>(key));
+                  pushed = queue_.push(envelope, std::get<1>(key), static_cast<delivery_e>(std::get<3>(key)));
                 }
               }
               catch (...) {
@@ -1336,6 +1467,8 @@ namespace telemetry {
           ++counts_.dropped;
         }
       }
+      // what was sent in full today survives a restart; only when every write of this flush went through (a full report that is still in the buffer must not be marked as sent)
+      if (failed.empty()) save_error_state();
     }
     catch (...) {
     }
@@ -1348,7 +1481,10 @@ namespace telemetry {
     if (status >= 200 && status < 300) {
       {
         std::lock_guard lock { queue_mutex_ };
-        for (const auto &p : paths) queue_.remove(p);
+        for (const auto &p : paths) {
+          queue_.remove(p);
+          proxy_refusals_.erase(p.string());
+        }
       }
       failures_ = 0;
       not_before_ms_ = 0;
@@ -1358,11 +1494,30 @@ namespace telemetry {
       counts_.sent_events += count;
       return true;
     }
+    // an answer that a proxy, a firewall or a service without the route yet gives is not about the batch: the batch is kept and tried again with the backoff, but not for ever (it would stop the ones behind it)
+    if (status == 401 || status == 403 || status == 404 || status == 405 || status == 410 || status == 421) {
+      bool give_up = false;
+      for (const auto &p : paths)
+        if (++proxy_refusals_[p.string()] >= MAX_PROXY_REFUSALS) give_up = true;
+      if (give_up) {
+        {
+          std::lock_guard lock { queue_mutex_ };
+          for (const auto &p : paths) {
+            queue_.remove(p);
+            proxy_refusals_.erase(p.string());
+          }
+        }
+        std::lock_guard lock { mutex_ };
+        ++counts_.rejected_batches;
+        return true;
+      }
+    }
     if (status_retryable(status)) {
       ++failures_;
-      // a 429 or 503 that says how long to wait is believed (up to an hour); otherwise the backoff decides
-      const auto asked = std::min<std::int64_t>(answer.retry_after_s, options_.max_backoff_ms / 1000) * 1000;
-      not_before_ms_ = now + std::max<std::int64_t>(asked, backoff_seconds(failures_, deps_.random01()) * 1000);
+      // a 429 or 503 that says how long to wait is believed (up to an hour); otherwise the backoff decides. Both are spread by a random share, so the installs that were told the same number do not return together
+      const auto jitter = deps_.random01();
+      const auto asked = retry_after_ms(answer.retry_after_s, jitter, options_.max_backoff_ms / 1000);
+      not_before_ms_ = now + std::max<std::int64_t>(asked, backoff_seconds(failures_, jitter) * 1000);
       std::lock_guard lock { mutex_ };
       ++counts_.failed_posts;
       return false;
@@ -1457,8 +1612,10 @@ namespace telemetry {
           return sent;
         }
         // the session id belongs to the group: a record about an earlier run (session_abnormal) goes out under that run's id, never merged into the envelope of this run
+        // errors and the rest never share a request: a refusal of the ordinary records must not reach the errors that travel with them
         const auto group_of = [](const disk_queue_t::entry_t &e) {
-          return e.batch.value("product", std::string {}) + "\n" + e.batch.value("version", std::string {}) + "\n" + e.batch.value("session_id", std::string {});
+          const auto urgent = disk_queue_t::delivery_of_name(e.path) != delivery_e::routine;
+          return e.batch.value("product", std::string {}) + "\n" + e.batch.value("version", std::string {}) + "\n" + e.batch.value("session_id", std::string {}) + (urgent ? "\nu" : "\nr") + "\n" + e.batch.value("sample_weight", json(1)).dump();
         };
         const auto now = deps_.now_ms();
         const auto first = std::find_if(entries.begin(), entries.end(), [&](const auto &e) {
@@ -1499,36 +1656,73 @@ namespace telemetry {
         if (handle_answer(answer, count, paths)) ++sent;
         return sent;
       }
-      for (int i = 0; i < options_.max_batches_per_pump; ++i) {
-        std::optional<disk_queue_t::entry_t> entry;
-        {
-          std::lock_guard lock { queue_mutex_ };
-          entry = queue_.front();
+      // Two lanes. What must arrive (feedback, errors) goes first and does not wait for anything but a failure's backoff. Routine batches follow when the install's share of the day has begun (routine_due) and only
+      // once today's share is not yet done; a day is done when the routine lane is empty.
+      enum class lane_result_e { empty, more, failed, paced };
+      const auto drain = [&](lane_e lane) {
+        for (int i = 0; i < options_.max_batches_per_pump; ++i) {
+          std::optional<disk_queue_t::entry_t> entry;
+          {
+            std::lock_guard lock { queue_mutex_ };
+            entry = queue_.front(2, lane);
+          }
+          if (!entry) return lane_result_e::empty;
+          const auto count = filter_by_consent(entry->batch, c.usage, c.errors);
+          if (count == 0) {
+            std::lock_guard lock { queue_mutex_ };
+            queue_.remove(entry->path);
+            continue;
+          }
+          // pace: the Worker takes 20 requests a minute per install, a backlog after a long offline time must not run into that
+          {
+            const auto at = deps_.now_ms();
+            while (!post_times_.empty() && at - post_times_.front() >= 60'000) post_times_.pop_front();
+            if (static_cast<int>(post_times_.size()) >= options_.max_posts_per_minute) return lane_result_e::paced;
+            post_times_.push_back(at);
+          }
+          post_result_t answer;
+          try {
+            if (deps_.post) answer = deps_.post(events_url(), entry->batch.dump());
+          }
+          catch (...) {
+            answer = {};
+          }
+          if (!handle_answer(answer, count, { entry->path })) return lane_result_e::failed;
+          if (answer.status >= 200 && answer.status < 300) {
+            ++sent;
+            if (lane == lane_e::routine) routine_failures_ = 0;  // three failures in a row, not three in a day
+          }
+          if (backing_off()) return lane_result_e::paced;  // the answer asked for a wait: the rest goes through the priority 0 path from now on
         }
-        if (!entry) break;
-        const auto count = filter_by_consent(entry->batch, c.usage, c.errors);
-        if (count == 0) {
-          std::lock_guard lock { queue_mutex_ };
-          queue_.remove(entry->path);
-          continue;
+        return lane_result_e::more;
+      };
+      // the routine lane waits until the lane of what must arrive is empty
+      auto urgent = drain(lane_e::urgent);
+      if (urgent != lane_result_e::empty) return sent;
+      if (!routine_due()) return sent;
+      const auto today = slot::day_of(deps_.now_ms());
+      if (options_.routine_slot && routine_flushed_day_ != today) {
+        // the share of the day begins: what the buffer holds (also what waits for the aggregate interval) goes to the disk first, so it leaves with this share; an error that this flush wrote is sent before the routine batches
+        routine_flushed_day_ = today;
+        flush(false, true);
+        urgent = drain(lane_e::urgent);
+        if (urgent != lane_result_e::empty) return sent;
+      }
+      const auto routine = drain(lane_e::routine);
+      if (routine == lane_result_e::empty) {
+        routine_failures_ = 0;
+        routine_not_before_ms_ = 0;
+        if (options_.routine_slot) {
+          routine_day_done_ = today;
+          write_file_atomic(options_.dir / "routine_day", std::to_string(today) + "\n");
         }
-        // pace: the Worker takes 20 requests a minute per install, a backlog after a long offline time must not run into that
-        {
-          const auto at = deps_.now_ms();
-          while (!post_times_.empty() && at - post_times_.front() >= 60'000) post_times_.pop_front();
-          if (static_cast<int>(post_times_.size()) >= options_.max_posts_per_minute) break;
-          post_times_.push_back(at);
+      }
+      else if (routine == lane_result_e::failed && options_.routine_slot) {
+        // a failed share is tried again with the backoff; after three failures in a row the server is not well, and the rest waits for the next day's share instead of coming back every hour
+        if (++routine_failures_ >= 3) {
+          routine_failures_ = 0;
+          routine_not_before_ms_ = slot::due_ms(install_id(), today + 1, started_ms_);
         }
-        post_result_t answer;
-        try {
-          if (deps_.post) answer = deps_.post(events_url(), entry->batch.dump());
-        }
-        catch (...) {
-          answer = {};
-        }
-        if (!handle_answer(answer, count, { entry->path })) break;
-        if (answer.status >= 200 && answer.status < 300) ++sent;
-        if (backing_off()) break;  // the answer asked for a wait: the rest goes through the priority 0 path from now on
       }
     }
     catch (...) {
@@ -1562,6 +1756,11 @@ namespace telemetry {
         std::lock_guard lock { errors_mutex_ };
         crumbs_.clear();
         reporter_.clear();
+        // what was sent in full today is gone with the choice too (turned on again, an error is sent in full again), also from the disk
+        std::error_code ec;
+        fs::remove(options_.dir / "error_days.json", ec);
+        std::lock_guard state_lock { error_state_mutex_ };
+        error_state_written_.clear();
       }
       std::lock_guard queue_lock { queue_mutex_ };
       if (!c.any()) {
@@ -1584,30 +1783,6 @@ namespace telemetry {
 
 
   // ---- the record that a choice was turned off (opt_out.h) ----
-
-  namespace {
-    /** Writes `text` to `path` through a temporary file and a rename, so a crash leaves the old content or the new, never half of it. */
-    bool
-    write_file_atomic(const fs::path &path, const std::string &text) {
-      try {
-        std::error_code ec;
-        fs::create_directories(path.parent_path(), ec);
-        auto temp = path;
-        temp += ".tmp";
-        {
-          std::ofstream out(temp, std::ios::binary | std::ios::trunc);
-          out << text;
-          out.flush();
-          if (!out) return false;
-        }
-        fs::rename(temp, path, ec);
-        return !ec;
-      }
-      catch (...) {
-        return false;
-      }
-    }
-  }  // namespace
 
   std::string
   service_t::peek_install_id() {
@@ -1743,7 +1918,10 @@ namespace telemetry {
   }
 
   json
-  service_t::preview(std::size_t max) const {
+  service_t::preview(std::size_t max) {
+    // an install outside the sample sends no sampled record: it is not shown as if it would leave
+    const auto sample_rate = effective_sample_rate();
+    const bool hide_sampled = sample_rate < 1.0 && !slot::sampled_in(install_id(), sample_rate);
     std::lock_guard lock { mutex_ };
     std::vector<event_t> shown { ring_.begin(), ring_.end() };
     // what waits for the aggregate interval is shown the way it will leave: merged
@@ -1751,6 +1929,7 @@ namespace telemetry {
       std::vector<std::vector<std::size_t>> origin;
       for (auto &m : aggregate_events(std::vector<event_t> { aggregate_ring_.begin(), aggregate_ring_.end() }, origin)) shown.push_back(std::move(m));
     }
+    if (hide_sampled) shown.erase(std::remove_if(shown.begin(), shown.end(), [](const event_t &e) { return sampled_family(e); }), shown.end());
     json out = json::array();
     const auto start = shown.size() > max ? shown.size() - max : 0;
     for (std::size_t i = start; i < shown.size(); ++i) {

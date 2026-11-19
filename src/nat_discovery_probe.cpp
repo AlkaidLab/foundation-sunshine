@@ -29,6 +29,7 @@
 #include <boost/asio/ip/udp.hpp>
 #include <boost/asio/ip/v6_only.hpp>
 
+#include "network_pin.h"
 #include "public_address.h"
 #include "utility.h"
 
@@ -212,11 +213,14 @@ namespace nat_discovery {
 
     /// `bind_address`: the source to test from (the stable global IPv6 address); empty lets the routing table choose,
     /// which for IPv6 picks a temporary address (RFC 6724 rule 7) that clients must not be given.
+    ///
+    /// `pin`: leave through this adapter (network_pin.h); `pin_failed` is set when the system refused it and the sockets ran on the system route. `talked` is set when the exchange was tried, so that
+    /// a family without any server to ask is not repeated.
     family_discovery_t
-    discover_family(int family, const std::vector<server_t> &servers, const std::vector<std::string> &local_addresses, const std::string &bind_address) {
+    discover_family_once(int family, const std::vector<server_t> &servers, const std::vector<std::vector<std::string>> &resolved, const std::vector<std::string> &local_addresses,
+      const std::string &bind_address, const network_pin::pin_t *pin, bool &pin_failed, bool &talked) {
       family_discovery_t result;
       result.family = family;
-      const auto resolved = resolve_all(servers, family);
 
       std::vector<std::size_t> asked;  // index into servers of each transaction
       std::optional<ip::udp::endpoint> first_target;
@@ -239,6 +243,7 @@ namespace nat_discovery {
         result.servers.push_back(std::move(observation));
       }
       if (!first_target) return result;
+      talked = true;
 
       boost::asio::io_context context;
       const auto protocol = family == 6 ? ip::udp::v6() : ip::udp::v4();
@@ -254,6 +259,7 @@ namespace nat_discovery {
       {
         ip::udp::socket route { context };
         route.open(protocol, error);
+        if (!error && pin && !network_pin::pin_socket(route.native_handle(), family, *pin)) pin_failed = true;
         if (!error && local_endpoint.address() != ip::address {}) {
           route.bind(local_endpoint, error);
           if (error) {
@@ -273,6 +279,7 @@ namespace nat_discovery {
 
       ip::udp::socket socket { context };
       socket.open(protocol, error);
+      if (!error && pin && !network_pin::pin_socket(socket.native_handle(), family, *pin)) pin_failed = true;
       if (!error && family == 6) socket.set_option(ip::v6_only(true), error);
       if (!error) socket.bind(local_endpoint, error);
       if (!error) socket.non_blocking(true, error);
@@ -367,6 +374,25 @@ namespace nat_discovery {
         result.tests.push_back({ "I", first_answer->server, first_answer->mapped });
       }
       result.mapping = classify_mapping(inputs);
+      return result;
+    }
+
+    /// One family discovery, pinned to the physical adapter when `bypass` is on; when no server answers through the adapter, once more on the system route (network_pin.h).
+    family_discovery_t
+    discover_family(int family, const std::vector<server_t> &servers, const std::vector<std::string> &local_addresses, const std::string &bind_address, bool bypass) {
+      const auto resolved = resolve_all(servers, family);  // the names do not depend on the adapter
+      // A server on this computer or the local network is reached on the system route, so there is nothing to pin for it.
+      const bool any_public = std::any_of(resolved.begin(), resolved.end(), [](const std::vector<std::string> &addresses) {
+        return std::any_of(addresses.begin(), addresses.end(), [](const std::string &address) { return network_pin::pinnable_host(address); });
+      });
+      family_discovery_t result;
+      network_pin::attempt(bypass && any_public, [&](const network_pin::pin_t *pin) {
+        bool pin_failed = false;
+        bool talked = false;
+        result = discover_family_once(family, servers, resolved, local_addresses, bind_address, pin, pin_failed, talked);
+        const bool answered = !talked || std::any_of(result.servers.begin(), result.servers.end(), [](const server_observation_t &observation) { return observation.answered; });
+        return network_pin::attempt_t { answered, pin_failed };
+      });
       return result;
     }
 
@@ -515,7 +541,7 @@ namespace nat_discovery {
   discover(const discover_options_t &options, bool refresh) {
     // One discovery at a time; a caller that asks while it runs waits for it (single_flight.h).
     const auto now = reachability::now_epoch_seconds();
-    const auto key = (options.enabled ? "on|"s : "off|"s) + options.region + "|" + join_servers(options.servers);
+    const auto key = (options.enabled ? "on|"s : "off|"s) + (options.bypass ? "pin|"s : "route|"s) + options.region + "|" + join_servers(options.servers);
     return discovery_cell.get(key, refresh, now, CACHE_TTL_SECONDS, reachability::REFRESH_REUSE_SECONDS, [&]() { return collect_discovery(options, now); });
   }
 
@@ -540,8 +566,8 @@ namespace nat_discovery {
       // IPv6 is tested from the stable global address, the one the overview shows; IPv4 from what the routing table picks.
       const auto stable_v6 = preferred_global(discovery.interfaces, 6);
       family_discovery_t v6;
-      std::thread worker { [&]() { v6 = discover_family(6, servers, local_addresses, stable_v6); } };
-      discovery.ipv4 = discover_family(4, servers, local_addresses, {});
+      std::thread worker { [&]() { v6 = discover_family(6, servers, local_addresses, stable_v6, options.bypass); } };
+      discovery.ipv4 = discover_family(4, servers, local_addresses, {}, options.bypass);
       worker.join();
       discovery.ipv6 = std::move(v6);
       // The servers this run sent a datagram to, for the page and the privacy note.

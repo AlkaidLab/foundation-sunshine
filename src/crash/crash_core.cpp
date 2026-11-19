@@ -227,6 +227,19 @@ namespace crash {
     return 0;
   }
 
+  driver_frame_t
+  driver_frame(const frame_t *frames, std::size_t count) {
+    driver_frame_t hit;
+    if (!frames || !count) return hit;
+    const auto from = first_caller_frame(frames, count);
+    const auto vendor = gpu_driver::vendor_of_module(frames[from].module);
+    if (vendor != gpu_driver::vendor_e::none) {
+      hit.vendor = vendor;
+      hit.index = from;
+    }
+    return hit;
+  }
+
   namespace {
     /// The part of a module name after the last directory separator: a module is named by its file, never by where it lies (a path holds the account name).
     const char *
@@ -616,7 +629,7 @@ namespace crash {
   }
 
   std::size_t
-  trim_pending(const fs::path &dir, std::size_t keep, int max_age_days) {
+  trim_pending(const fs::path &dir, std::size_t keep, int max_age_days, std::uint64_t max_bytes) {
     auto reports = list_pending(dir);
     std::size_t removed = 0;
     const auto now = fs::file_time_type::clock::now();
@@ -634,6 +647,27 @@ namespace crash {
     while (alive.size() > keep) {
       drop(alive.front());
       alive.erase(alive.begin());
+    }
+    // all together over the byte cap: the oldest go first, the newest report stays whatever its size. A report that cannot be deleted does not count as room, and the next older one is tried.
+    std::uint64_t total = 0;
+    for (const auto &r : alive) total += r.bytes;
+    for (std::size_t i = 0; i + 1 < alive.size() && total > max_bytes;) {
+      std::error_code ec;
+      // gone: deleted now, or looked at without an error and not there; a query that fails does not count as "gone"
+      const auto gone = [&ec](const fs::path &path) {
+        if (fs::remove(path, ec)) return true;
+        std::error_code query;
+        return !fs::exists(path, query) && !query;
+      };
+      const bool meta_gone = gone(alive[i].meta);
+      const bool dump_gone = alive[i].dump.empty() || gone(alive[i].dump);
+      if (meta_gone && dump_gone) {
+        total -= std::min(total, alive[i].bytes);
+        ++removed;
+        alive.erase(alive.begin() + static_cast<std::ptrdiff_t>(i));
+      }
+      else
+        ++i;
     }
     return removed;
   }

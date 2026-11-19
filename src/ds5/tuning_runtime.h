@@ -322,6 +322,7 @@ namespace ds5::tuning::runtime {
       case 72:  // ds5.gyro.pitchOffsetDeg
       case 73:  // ds5.gyro.rollOffsetDeg
       case 101:  // ds5.compat.reportRateCapHz
+      case 96:  // ds5.audio.micRoute
       case 106:  // ds5.identity.profile
         return true;
       default:

@@ -342,6 +342,20 @@ namespace reachability {
   }
 
   bool
+  router_proxy_suspected(const router_status_t &router, const outside_t &outside) {
+    if (outside.state != "unavailable" || (outside.reason != "ip_mismatch" && outside.reason != "dns_mismatch")) return false;
+    if (outside.caller.empty() || router.wan_ip.empty() || router.wan_ip_class != ip_class_e::public_address) return false;
+    boost::system::error_code seen_error;
+    boost::system::error_code wan_error;
+    const auto seen = boost::asio::ip::make_address(outside.caller, seen_error);
+    const auto wan = boost::asio::ip::make_address(router.wan_ip, wan_error);
+    if (seen_error || wan_error) return outside.caller != router.wan_ip;
+    // the service may have been reached over IPv6 while the router's address is IPv4 (or the other way round): they are not comparable, and that says nothing about a proxy
+    if (seen.is_v4() != wan.is_v4()) return false;
+    return seen != wan;
+  }
+
+  bool
   is_inconclusive_failure(std::string_view error) {
     // A refusal and a timeout are what a router without NAT loopback answers to its own outside address; "unreachable" is a route this computer lacks
     // (an IPv6 address on an IPv4-only host, a proxy that swallows the packet); "failed" is a local error. None of them is about the internet.
@@ -570,6 +584,10 @@ namespace reachability {
       result.reasons.push_back("not_reached_from_outside");
       result.verdict = verdict_e::unreachable;
       return result;
+    }
+    // A proxy on the router: the outside check saw its exit, not this network. Said once, as a note; the verdict stays what this computer's own evidence says.
+    if (std::any_of(inputs.endpoints.begin(), inputs.endpoints.end(), [](const endpoint_result_t &endpoint) { return endpoint.outside.reason == "router_proxy"; })) {
+      result.reasons.push_back("outside_router_proxy");
     }
     if (!all_listening) {
       result.verdict = verdict_e::unreachable;
@@ -868,7 +886,10 @@ namespace reachability {
         { "state", endpoint.reached ? "reached" : "failed" },
         { "error", endpoint.error.empty() ? nlohmann::json(nullptr) : nlohmann::json(endpoint.error) },
         { "inconclusive", endpoint.inconclusive },
-        { "outside", endpoint.outside.asked ? nlohmann::json({ { "state", endpoint.outside.state }, { "reason", endpoint.outside.reason.empty() ? nlohmann::json(nullptr) : nlohmann::json(endpoint.outside.reason) } }) : nlohmann::json(nullptr) },
+        { "outside", endpoint.outside.asked ? nlohmann::json({ { "state", endpoint.outside.state },
+                                                               { "reason", endpoint.outside.reason.empty() ? nlohmann::json(nullptr) : nlohmann::json(endpoint.outside.reason) },
+                                                               { "caller", endpoint.outside.caller.empty() ? nlohmann::json(nullptr) : nlohmann::json(endpoint.outside.caller) } }) :
+                                                nlohmann::json(nullptr) },
         { "tested", std::move(tested) },
         { "attempts", std::move(attempts) },
         { "reasons", endpoint.reasons },

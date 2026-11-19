@@ -7,6 +7,7 @@
 #include <src/crash/crash_context.h>
 #include <src/crash/crash_core.h>
 #include <src/crash/crash_log.h>
+#include <src/crash/upload_policy.h>
 
 #include <atomic>
 #include <chrono>
@@ -15,6 +16,7 @@
 #include <fstream>
 #include <gtest/gtest.h>
 #include <mutex>
+#include <set>
 #include <nlohmann/json.hpp>
 #include <thread>
 #include <vector>
@@ -85,6 +87,7 @@ namespace {
     std::atomic<int> retry_after { 0 };  ///< sent as a Retry-After header when not 0
     std::atomic<bool> stop { false };
     std::string reply_body;  ///< sent as the JSON body of every answer; set before the request, empty = no body
+    std::vector<int> script;  ///< statuses for the next requests, one each, taken from the front (under `mutex`); when empty `status` answers
 
     mock_server_t() {
   #ifdef _WIN32
@@ -135,11 +138,16 @@ namespace {
             targets.push_back(target);
           }
           std::string payload;
+          int answer_status = status.load();
           {
             std::lock_guard lock(mutex);
             payload = reply_body;
+            if (!script.empty()) {
+              answer_status = script.front();
+              script.erase(script.begin());
+            }
           }
-          const std::string reply = "HTTP/1.1 " + std::to_string(status.load()) + " X\r\n" + (retry_after.load() ? "Retry-After: " + std::to_string(retry_after.load()) + "\r\n" : std::string()) +
+          const std::string reply = "HTTP/1.1 " + std::to_string(answer_status) + " X\r\n" + (retry_after.load() ? "Retry-After: " + std::to_string(retry_after.load()) + "\r\n" : std::string()) +
                                     (payload.empty() ? std::string() : "Content-Type: application/json\r\n") + "Content-Length: " + std::to_string(payload.size()) + "\r\nConnection: close\r\n\r\n" + payload;
           ::send(client, reply.data(), (int) reply.size(), 0);
           close_sock(client);
@@ -256,6 +264,66 @@ TEST(CrashSignature, AllRuntimeFramesFallBackToTheWholeList) {
   crash::signature_hex(f, 2, sig);
   EXPECT_EQ(std::strlen(sig), 64u);
   EXPECT_EQ(crash::first_caller_frame(f, 2), 0u);
+}
+
+TEST(CrashPhase, TheProbeThreadKeepsItsWordWhileTheMainThreadMovesOn) {
+  using crash::context::phase_e;
+  auto &state = crash::context::state();
+  crash::context::set_phase(phase_e::listeners);
+  crash::context::begin_encoder_probe();
+  EXPECT_EQ(state.phase.load(), static_cast<int>(phase_e::encoder_probe));
+  // the main thread goes on: its words do not replace the probe's
+  crash::context::set_phase(phase_e::input_wait);
+  crash::context::set_phase(phase_e::tray);
+  EXPECT_EQ(state.phase.load(), static_cast<int>(phase_e::encoder_probe));
+  // the start is over before the probe is
+  crash::context::set_phase(phase_e::none);
+  EXPECT_EQ(state.phase.load(), static_cast<int>(phase_e::encoder_probe));
+  crash::context::end_encoder_probe();
+  EXPECT_EQ(state.phase.load(), static_cast<int>(phase_e::none));
+}
+
+TEST(CrashPhase, AProbeThatEndsBeforeTheStartDoesRestoreTheMainThreadsPhase) {
+  using crash::context::phase_e;
+  auto &state = crash::context::state();
+  crash::context::set_phase(phase_e::listeners);
+  crash::context::begin_encoder_probe();
+  crash::context::set_phase(phase_e::tray);
+  crash::context::end_encoder_probe();
+  EXPECT_EQ(state.phase.load(), static_cast<int>(phase_e::tray));
+  crash::context::set_phase(phase_e::none);
+  EXPECT_EQ(state.phase.load(), static_cast<int>(phase_e::none));
+}
+
+TEST(CrashDriverFrame, ATopFrameInADriverModuleIsADriverCrash) {
+  // the null-call crash of an Intel driver: the walk starts at the caller, which lies in the driver
+  crash::frame_t f[] = { frame("igd12umd64.dll", 0x4a2b10), frame("igd12umd64.dll", 0x4a1000), frame("d3d11.dll", 0x77), frame("sunshine.exe", 0x500) };
+  const auto hit = crash::driver_frame(f, 4);
+  EXPECT_EQ(hit.vendor, crash::gpu_driver::vendor_e::intel);
+  EXPECT_EQ(hit.index, 0u);
+}
+
+TEST(CrashDriverFrame, RuntimeFramesOnTopAreSkippedLikeInTheSignature) {
+  // a hang: the stuck thread waits in ntdll, called from the NVIDIA driver
+  crash::frame_t f[] = { frame("ntdll.dll", 0x10), frame("KERNELBASE.dll", 0x20), frame("nvwgf2umx.dll", 0x9c0), frame("sunshine.exe", 0x500) };
+  const auto hit = crash::driver_frame(f, 4);
+  EXPECT_EQ(hit.vendor, crash::gpu_driver::vendor_e::nvidia);
+  EXPECT_EQ(hit.index, 2u);
+}
+
+TEST(CrashDriverFrame, ADriverBelowTheHostIsNotBlamed) {
+  // the host calls into the driver and crashes in its own code afterwards: the top frame is the host's
+  crash::frame_t f[] = { frame("sunshine.exe", 0x500), frame("nvwgf2umx.dll", 0x9c0), frame("sunshine.exe", 0x600) };
+  EXPECT_EQ(crash::driver_frame(f, 3).vendor, crash::gpu_driver::vendor_e::none);
+  // nor a crash in the system's own graphics runtime
+  crash::frame_t g[] = { frame("d3d11.dll", 0x10), frame("amdxx64.dll", 0x20), frame("sunshine.exe", 0x600) };
+  EXPECT_EQ(crash::driver_frame(g, 3).vendor, crash::gpu_driver::vendor_e::none);
+}
+
+TEST(CrashDriverFrame, NothingToLookAt) {
+  EXPECT_EQ(crash::driver_frame(nullptr, 0).vendor, crash::gpu_driver::vendor_e::none);
+  crash::frame_t f[] = { frame("ntdll.dll", 1), frame("kernel32.dll", 2) };
+  EXPECT_EQ(crash::driver_frame(f, 2).vendor, crash::gpu_driver::vendor_e::none);
 }
 
 TEST(CrashTime, FormatsUtc) {
@@ -648,6 +716,7 @@ TEST(CrashUpload, TheMachineIsReadAtUploadAndNeverWhenAlreadyInTheReport) {
 
 TEST(CrashUpload, WaitsByRetryAfterThenByDoublingFromFifteenMinutesAndResetsOnSuccess) {
   mock_server_t server;
+  crash::set_upload_jitter_source([] { return 0.0; });  // the exact numbers; the random share has its own test below
   const auto config = scratch("backoff");
   write_pending(config, "a", false);
   server.status = 429;
@@ -664,6 +733,156 @@ TEST(CrashUpload, WaitsByRetryAfterThenByDoublingFromFifteenMinutesAndResetsOnSu
   server.status = 200;
   crash::upload_pending_once(config, server.url(), "x");
   EXPECT_EQ(crash::upload_wait_hint_s(), 0);
+  crash::set_upload_jitter_source({});
+  fs::remove_all(config);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// a crash report always arrives: what the uploader does with each answer, and the wait after a failure
+
+TEST(CrashUploadPolicy, OnlyAnAnswerAboutTheBodyItselfDropsAReport) {
+  using crash::upload_policy::judge;
+  using crash::upload_policy::verdict_e;
+  for (const long status : { 200, 201, 204 }) EXPECT_EQ(judge(status, true), verdict_e::delivered) << status;
+  for (const long status : { 400, 415, 422 }) EXPECT_EQ(judge(status, true), verdict_e::drop) << status;
+  EXPECT_EQ(judge(413, true), verdict_e::send_without_dump);
+  EXPECT_EQ(judge(413, false), verdict_e::drop);
+  EXPECT_EQ(judge(408, true), verdict_e::keep_going);
+  // a limit, a service that cannot store it yet, no answer, and the answers a proxy or an older service gives for other reasons: the report stays
+  for (const long status : { 0, 429, 500, 502, 503, 504, 401, 403, 404, 405, 410, 421, 301, 302, 418, 451 }) EXPECT_EQ(judge(status, true), verdict_e::wait) << status;
+}
+
+TEST(CrashUploadPolicy, TheWaitIsRetryAfterOrFifteenMinutesDoublingToFourHoursAndSpreadByAQuarterAtMost) {
+  using crash::upload_policy::wait_seconds;
+  EXPECT_EQ(wait_seconds(1, 0, 0.0), 15 * 60);
+  EXPECT_EQ(wait_seconds(2, 0, 0.0), 30 * 60);
+  EXPECT_EQ(wait_seconds(3, 0, 0.0), 60 * 60);
+  EXPECT_EQ(wait_seconds(6, 0, 0.0), 4 * 3600);
+  EXPECT_EQ(wait_seconds(40, 0, 0.0), 4 * 3600);
+  EXPECT_EQ(wait_seconds(1, 120, 0.0), 120);  // the service's word, not the 15 minutes
+  EXPECT_EQ(wait_seconds(1, 5, 0.0), 30);  // never shorter than 30 s
+  EXPECT_EQ(wait_seconds(1, 999999, 0.0), 4 * 3600);
+  EXPECT_EQ(wait_seconds(1, 900, 0.5), 1013);  // an eighth more, rounded
+  std::set<long> waits;
+  for (int i = 0; i < 100; ++i) {
+    const auto wait = wait_seconds(2, 0, i / 100.0);
+    EXPECT_GE(wait, 30 * 60);
+    EXPECT_LE(wait, 30 * 60 + 30 * 60 / 4);
+    waits.insert(wait);
+  }
+  EXPECT_GT(waits.size(), 50u) << "computers that failed together come back at different moments";
+}
+
+TEST(CrashUpload, TheWaitAfterAFailureIsSpreadByTheRandomShare) {
+  mock_server_t server;
+  const auto config = scratch("spread");
+  write_pending(config, "a", false);
+  server.status = 503;
+  server.retry_after = 60;
+  crash::set_upload_jitter_source([] { return 0.5; });
+  crash::upload_pending_once(config, server.url(), "x");
+  EXPECT_EQ(crash::upload_wait_hint_s(), 68);  // 60 s and an eighth, rounded
+  crash::set_upload_jitter_source([] { return 0.0; });
+  crash::upload_pending_once(config, server.url(), "x");
+  EXPECT_EQ(crash::upload_wait_hint_s(), 60);
+  crash::set_upload_jitter_source({});
+  fs::remove_all(config);
+}
+
+TEST(CrashUpload, AReportStaysWhenAProxyOrAnOlderServiceAnswersForOtherReasons) {
+  mock_server_t server;
+  const auto config = scratch("proxy");
+  write_pending(config, "a", true);
+  for (int status : { 401, 403, 404, 405, 410, 421, 302, 418 }) {
+    server.status = status;
+    EXPECT_EQ(crash::upload_pending_once(config, server.url(), "x"), 0) << status;
+    EXPECT_EQ(crash::list_pending(crash::pending_dir(config)).size(), 1u) << status;
+  }
+  // the service is reachable again: it goes
+  server.status = 200;
+  EXPECT_EQ(crash::upload_pending_once(config, server.url(), "x"), 1);
+  EXPECT_TRUE(crash::list_pending(crash::pending_dir(config)).empty());
+  fs::remove_all(config);
+}
+
+TEST(CrashUpload, AnAnswerThatTheBodyIsNeverAcceptedDropsItForEveryRefusalOfTheContract) {
+  mock_server_t server;
+  const auto config = scratch("refused");
+  for (int status : { 400, 415, 422 }) {
+    write_pending(config, "a", true);
+    server.status = status;
+    EXPECT_EQ(crash::upload_pending_once(config, server.url(), "x"), 1) << status;
+    EXPECT_TRUE(crash::list_pending(crash::pending_dir(config)).empty()) << status;
+  }
+  fs::remove_all(config);
+}
+
+TEST(CrashUpload, ADumpThatIsTooLargeIsLeftOutAndTheReportGoesAgainWithoutIt) {
+  mock_server_t server;
+  const auto config = scratch("toolarge");
+  write_pending(config, "a", true);
+  server.status = 413;
+  // the service refuses even the small request: the report is dropped after the second try
+  EXPECT_EQ(crash::upload_pending_once(config, server.url(), "x"), 1);
+  ASSERT_EQ(server.bodies.size(), 2u);
+  EXPECT_NE(server.bodies[0].find("name=\"dump\""), std::string::npos);
+  EXPECT_EQ(server.bodies[1].find("name=\"dump\""), std::string::npos) << "the second request has no dump";
+  EXPECT_TRUE(crash::list_pending(crash::pending_dir(config)).empty());
+  fs::remove_all(config);
+}
+
+TEST(CrashUpload, TheSecondRequestWithoutTheDumpIsDeliveredWhenTheServiceTakesIt) {
+  mock_server_t server;
+  const auto config = scratch("toolarge2");
+  write_pending(config, "a", true);
+  server.script = { 413, 200 };  // too large with the dump, taken without it
+  EXPECT_EQ(crash::upload_pending_once(config, server.url(), "x"), 1);
+  ASSERT_EQ(server.bodies.size(), 2u);
+  EXPECT_NE(server.bodies[0].find("name=\"dump\""), std::string::npos);
+  EXPECT_EQ(server.bodies[1].find("name=\"dump\""), std::string::npos);
+  EXPECT_TRUE(crash::list_pending(crash::pending_dir(config)).empty());
+  fs::remove_all(config);
+}
+
+TEST(CrashPending, TheByteCapDropsTheOldestAndTheNewestReportAlwaysStays) {
+  const auto config = scratch("bytes");
+  for (const char *name : { "a", "b", "c", "d" }) {
+    write_pending(config, name, true);
+    // older reports have older times
+  }
+  const auto dir = crash::pending_dir(config);
+  std::error_code ec;
+  int age = 40;
+  for (const char *name : { "a", "b", "c", "d" }) {
+    fs::last_write_time(dir / (std::string(name) + ".json"), fs::file_time_type::clock::now() - std::chrono::minutes(age), ec);
+    age -= 10;
+  }
+  const auto one = crash::list_pending(dir).front().bytes;
+  ASSERT_GT(one, 0u);
+  // room for two and a half: the two oldest go
+  EXPECT_EQ(crash::trim_pending(dir, crash::max_pending, 30, one * 5 / 2), 2u);
+  const auto left = crash::list_pending(dir);
+  ASSERT_EQ(left.size(), 2u);
+  EXPECT_EQ(left.back().meta.stem().string(), "d");
+  // a cap below one report still keeps the newest
+  EXPECT_EQ(crash::trim_pending(dir, crash::max_pending, 30, 1), 1u);
+  ASSERT_EQ(crash::list_pending(dir).size(), 1u);
+  EXPECT_EQ(crash::list_pending(dir).front().meta.stem().string(), "d");
+  fs::remove_all(config);
+}
+
+TEST(CrashUpload, WhatWaitsOnDiskSurvivesARestartAndIsSentByTheNextRun) {
+  // the uploader keeps nothing but files: a new process (a new call after the failure) finds the same reports and sends them
+  mock_server_t server;
+  const auto config = scratch("restart");
+  write_pending(config, "a", true);
+  write_pending(config, "b", false);
+  server.status = 503;
+  EXPECT_EQ(crash::upload_pending_once(config, server.url(), "x"), 0);
+  EXPECT_EQ(crash::list_pending(crash::pending_dir(config)).size(), 2u);
+  server.status = 200;
+  EXPECT_EQ(crash::upload_pending_once(config, server.url(), "x"), 2);
+  EXPECT_TRUE(crash::list_pending(crash::pending_dir(config)).empty());
   fs::remove_all(config);
 }
 

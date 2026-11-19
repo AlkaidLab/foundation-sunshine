@@ -140,6 +140,10 @@
     "method": "POST"
   },
   {
+    "pattern": "^/api/dualsense/pad-test$",
+    "method": "POST"
+  },
+  {
     "pattern": "^/api/configLocale$",
     "method": "GET"
   },
@@ -435,6 +439,14 @@
   {
     "pattern": "^/api/doctor$",
     "method": "GET"
+  },
+  {
+    "pattern": "^/api/gpu-driver-guard$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/gpu-driver-guard$",
+    "method": "POST"
   },
   {
     "pattern": "^/api/system/info$",

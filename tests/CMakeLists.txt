@@ -239,6 +239,48 @@ target_link_libraries(encoder_probe_guard_unit_tests PRIVATE gtest_main sunshine
 set_target_properties(encoder_probe_guard_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME encoder_probe_guard_unit_tests COMMAND encoder_probe_guard_unit_tests)
 
+# The crash handlers and the crash-loop guard in a real process that fails on purpose (tests/tools/gpu_driver_guard_e2e.py): the driver mark, the safe mode.
+add_executable(crash_mark_probe
+        ${CMAKE_SOURCE_DIR}/src/crash/crash_core.cpp
+        ${CMAKE_SOURCE_DIR}/src/crash/crash_common.cpp
+        ${CMAKE_SOURCE_DIR}/src/crash/crash_win.cpp
+        ${CMAKE_SOURCE_DIR}/src/crash/crash_posix.cpp
+        ${CMAKE_SOURCE_DIR}/src/crash/crash_upload.cpp
+        ${CMAKE_SOURCE_DIR}/src/crash/log_scrub.cpp
+        ${CMAKE_SOURCE_DIR}/src/crash/crash_log.cpp
+        ${CMAKE_SOURCE_DIR}/src/crash/crash_env_text.cpp
+        ${CMAKE_SOURCE_DIR}/tests/tools/crash_mark_probe.cpp)
+target_include_directories(crash_mark_probe PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(crash_mark_probe PRIVATE nlohmann_json::nlohmann_json sunshine::curl Boost::boost
+        sunshine_project_options sunshine_coverage Threads::Threads)
+if (WIN32)
+    target_link_libraries(crash_mark_probe PRIVATE ws2_32)
+    set_target_properties(crash_mark_probe PROPERTIES LINK_SEARCH_START_STATIC 1)
+else ()
+    target_link_options(crash_mark_probe PRIVATE -rdynamic)
+endif ()
+target_compile_options(crash_mark_probe PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(crash_mark_probe PROPERTIES CXX_STANDARD 23)
+find_program(GPU_GUARD_E2E_PYTHON NAMES python3 python)
+if (GPU_GUARD_E2E_PYTHON)
+    add_test(NAME gpu_driver_guard_e2e
+            COMMAND ${GPU_GUARD_E2E_PYTHON} ${CMAKE_SOURCE_DIR}/tests/tools/gpu_driver_guard_e2e.py
+            --exe $<TARGET_FILE:crash_mark_probe> --config-dir ${CMAKE_CURRENT_BINARY_DIR}/gpu_driver_guard_e2e)
+    set_tests_properties(gpu_driver_guard_e2e PROPERTIES TIMEOUT 300)
+endif ()
+
+add_executable(gpu_driver_guard_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_gpu_driver_guard.cpp)
+target_include_directories(gpu_driver_guard_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(gpu_driver_guard_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json sunshine_project_options sunshine_coverage Threads::Threads)
+set_target_properties(gpu_driver_guard_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME gpu_driver_guard_unit_tests COMMAND gpu_driver_guard_unit_tests)
+
+add_executable(background_probe_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_background_probe.cpp)
+target_include_directories(background_probe_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(background_probe_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json sunshine_project_options sunshine_coverage Threads::Threads)
+set_target_properties(background_probe_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME background_probe_unit_tests COMMAND background_probe_unit_tests)
+
 add_executable(poster_unit_tests
         ${CMAKE_SOURCE_DIR}/src/nvhttp/poster.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_poster.cpp)
@@ -419,6 +461,18 @@ target_include_directories(ds5_report_delta_unit_tests PRIVATE "${CMAKE_SOURCE_D
 target_link_libraries(ds5_report_delta_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
 set_target_properties(ds5_report_delta_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME ds5_report_delta_unit_tests COMMAND ds5_report_delta_unit_tests)
+
+add_executable(ds5_mic_route_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_ds5_mic_route.cpp)
+target_include_directories(ds5_mic_route_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(ds5_mic_route_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(ds5_mic_route_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME ds5_mic_route_unit_tests COMMAND ds5_mic_route_unit_tests)
+
+add_executable(ds5_pad_test_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_ds5_pad_test.cpp)
+target_include_directories(ds5_pad_test_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(ds5_pad_test_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(ds5_pad_test_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME ds5_pad_test_unit_tests COMMAND ds5_pad_test_unit_tests)
 
 add_executable(interrupt_pacing_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_interrupt_pacing.cpp)
 target_include_directories(interrupt_pacing_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
@@ -831,6 +885,7 @@ add_executable(telemetry_unit_tests
         ${CMAKE_SOURCE_DIR}/src/telemetry/events.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/install_journal.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/queue.cpp
+        ${CMAKE_SOURCE_DIR}/src/telemetry/report_slot.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/error_report.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/wer_event.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/self_baseline.cpp
@@ -841,6 +896,7 @@ add_executable(telemetry_unit_tests
         ${CMAKE_SOURCE_DIR}/src/telemetry/service.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_error_report.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_stream_health.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_report_delivery.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_telemetry.cpp)
 target_include_directories(telemetry_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(telemetry_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
@@ -968,6 +1024,7 @@ add_executable(network_check_unit_tests
         ${CMAKE_SOURCE_DIR}/src/nat_discovery.cpp
         ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
         ${CMAKE_SOURCE_DIR}/src/public_address.cpp
+        ${CMAKE_SOURCE_DIR}/src/network_pin.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_network_check.cpp)
 target_include_directories(network_check_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(network_check_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json alkaidlab_stun_codec
@@ -980,11 +1037,26 @@ if (WIN32)
 endif ()
 add_test(NAME network_check_unit_tests COMMAND network_check_unit_tests)
 
+add_executable(network_pin_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/network_pin.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_network_pin.cpp)
+target_include_directories(network_pin_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(network_pin_unit_tests PRIVATE gtest_main
+        sunshine_project_options sunshine_coverage)
+target_compile_options(network_pin_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(network_pin_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    target_link_libraries(network_pin_unit_tests PRIVATE ws2_32 iphlpapi)
+    set_target_properties(network_pin_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME network_pin_unit_tests COMMAND network_pin_unit_tests)
+
 add_executable(network_reachability_sample
         ${CMAKE_SOURCE_DIR}/tests/tools/network_reachability_sample.cpp
         ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
         ${CMAKE_SOURCE_DIR}/src/public_address.cpp
-        ${CMAKE_SOURCE_DIR}/src/network_reachability_probe.cpp)
+        ${CMAKE_SOURCE_DIR}/src/network_reachability_probe.cpp
+        ${CMAKE_SOURCE_DIR}/src/network_pin.cpp)
 target_include_directories(network_reachability_sample PRIVATE
         "${CMAKE_SOURCE_DIR}"
         "${CMAKE_SOURCE_DIR}/third-party")
@@ -1005,7 +1077,8 @@ add_executable(network_overview_sample
         ${CMAKE_SOURCE_DIR}/src/nat_discovery_probe.cpp
         ${CMAKE_SOURCE_DIR}/src/network_reachability.cpp
         ${CMAKE_SOURCE_DIR}/src/public_address.cpp
-        ${CMAKE_SOURCE_DIR}/src/network_reachability_probe.cpp)
+        ${CMAKE_SOURCE_DIR}/src/network_reachability_probe.cpp
+        ${CMAKE_SOURCE_DIR}/src/network_pin.cpp)
 target_include_directories(network_overview_sample PRIVATE
         "${CMAKE_SOURCE_DIR}"
         "${CMAKE_SOURCE_DIR}/third-party")
@@ -1460,6 +1533,8 @@ list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_host_bitrate_c
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_cover_failure_backoff.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_cover_download_outcome.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_encoder_probe_guard.cpp)
+list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_gpu_driver_guard.cpp)
+list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_background_probe.cpp)
 # MAT harnesses have independent entrypoints and explicit test targets.
 list(FILTER TEST_SOURCES EXCLUDE REGEX "/tests/mat-live/")
 # These files already run in registered standalone suites. Keep one copy of

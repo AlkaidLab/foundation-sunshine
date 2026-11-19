@@ -11,6 +11,8 @@
         <b>{{ $t('_common.error') }}</b> {{ $t('index.startup_errors').replace(/<[^>]+>/g, '') }}
       </MBanner>
       <!-- the host's startup problems as a compact card: one short line each, the original message behind a toggle, the log and (where known) the fix at the trailing end -->
+      <!-- the safe mode, the encoder check that runs after the start, and a failure that lay in the graphics driver (the same component as the Panel home) -->
+      <MDriverGuardNotice :guard="driverGuard" :locale="String(locale)" :open="openExternalUrl" @dismiss="dismissDriver" @retry="retryProbe" />
       <MStartupProblems v-if="startup.length" :problems="startup" :locale="String(locale)" @logs="go('troubleshooting')" @fix="onStartupFix" />
 
       <MAnnouncementStrip v-if="announcements.top.value" :item="announcements.top.value" :total="announcements.unread.value" :texts="announceTexts" @dismiss="announcements.dismiss" @open-url="openExternalUrl" @open-list="announceOpen = true" />
@@ -64,7 +66,7 @@
 <script setup>
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { coverKnown, heroArtReady, firstImage, recentErrorCount, micIsReady, startupProblems, MStartupProblems, MBanner, MButton, MIcon, MIconButton, MItem, MGroup, MPage, MSection, MSheet, MSnackbar, MSwitch, MHomeDash, MSupportSheet, MAnnouncementStrip, MAnnouncementSheet, useAnnouncements, useGuideCard, buildHomeModel, buildStartSteps, buildCards, useJourneyHome, useReleaseAssets, useStarCard, useSystemInfo, reachProblemOf, registeredComponentStatus, guideCardData, downloadCardData, sponsorCardData, GUIDE_TARGET, homeTexts, parseErrorLog, parseSessionLog } from 'foundation-ui/vue'
+import { coverKnown, heroArtReady, firstImage, recentErrorCount, micIsReady, startupProblems, MStartupProblems, MDriverGuardNotice, MBanner, MButton, MIcon, MIconButton, MItem, MGroup, MPage, MSection, MSheet, MSnackbar, MSwitch, MHomeDash, MSupportSheet, MAnnouncementStrip, MAnnouncementSheet, useAnnouncements, useGuideCard, buildHomeModel, buildStartSteps, buildCards, useJourneyHome, useReleaseAssets, useStarCard, useSystemInfo, reachProblemOf, registeredComponentStatus, guideCardData, downloadCardData, sponsorCardData, GUIDE_TARGET, homeTexts, parseErrorLog, parseSessionLog } from 'foundation-ui/vue'
 import { realSession, buildCatalogue, buildCatalogueDetails, createHistory, createPairQr, saveSettingKey, recentKeys, rememberRecent, createQueuedCalls, createSerialCalls } from 'foundation-ui/vue'
 import QRCode from 'qrcode'
 import { useVddSettings } from '../composables/useVddSettings.js'
@@ -78,6 +80,7 @@ import { useLogs } from '../composables/useLogs.js'
 import { useSetupWizard } from '../composables/useSetupWizard.js'
 import { useReach } from '../composables/useReach.js'
 import { useHostLive } from '../composables/useHostLive.js'
+import { useDriverGuard } from '../composables/useDriverGuard.js'
 import { canOpenBigScreen, openBigScreenOnHost } from '../composables/openBigScreen.js'
 import { useShellLive } from '../composables/useShellLive.js'
 import { trackEvents } from '../config/telemetry.js'
@@ -92,6 +95,7 @@ import { apiFetch, apiJson, apiPostJson } from '../utils/apiFetch.js'
 import { $tp, setPlatformHint } from '../platform-i18n'
 
 const { t, locale } = useI18n()
+const { guard: driverGuard, dismiss: dismissDriver, retry: retryProbe } = useDriverGuard()
 const webShell = inject('webShell', null)
 // the host's last answer (hostData keeps it): the page starts from it and the read below replaces it
 const hostConfig = ref(hostData.peek('config'))

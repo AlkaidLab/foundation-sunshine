@@ -52,25 +52,33 @@ const pair = (key) => Number(edited[key.id] ?? key.default)
 const colorWired = computed(() => [81, 82, 83, 84].every(store.isWired))
 // the light bar colour is edited by the colour row (swatches, hex, picker), not by three channel sliders
 const cardRows = (card) => (card.lighting && colorWired.value ? card.rows.filter((key) => ![82, 83, 84].includes(key.id)) : card.rows)
-// the test sends one short rumble pulse to the controllers of the running stream (POST /api/dualsense/rumble-test); the host cannot know whether the client's pad moved
+// the tests go to the controllers of the running stream: a short rumble (POST /api/dualsense/rumble-test), the light bar flashing, a trigger resisting
+// (POST /api/dualsense/pad-test); the host cannot know whether the client's pad did it and says so
+const TESTS = ['haptics', 'identify', 'trigger_left', 'trigger_right']
 const testNote = ref('')
 const testBusy = ref(false)
 let testTimer = null
-const runTest = async () => {
-  if (testBusy.value) return
-  testBusy.value = true
+// the answer of the newest request is the one shown: a test that was stopped answers late and must not overwrite the stop
+let testSeq = 0
+const post = (path, body) => fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(body) })
+const runTest = async (action) => {
+  const stopping = action === 'stop'
+  if (testBusy.value && !stopping) return
+  if (!stopping) testBusy.value = true
+  const mine = ++testSeq
   let result = 'failed'
   let pads = 0
   try {
-    const response = await fetch('/api/dualsense/rumble-test', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify({ duration_ms: 400 }) })
+    const response = action === 'haptics' ? await post('/api/dualsense/rumble-test', { duration_ms: 400 }) : await post('/api/dualsense/pad-test', { action })
     const body = await response.json().catch(() => ({}))
     if (response.ok && typeof body.result === 'string') { result = body.result; pads = Number(body.pads) || 0 }
   } catch {
     result = 'failed'
   } finally {
-    testBusy.value = false
+    if (!stopping) testBusy.value = false
   }
-  testNote.value = t(`ds5.test_panel.result.${result}`, { pads })
+  if (mine !== testSeq) return
+  testNote.value = result === 'sent' && action !== 'haptics' ? t(`ds5.test_panel.sent.${action}`, { pads }) : t(`ds5.test_panel.result.${result}`, { pads })
   clearTimeout(testTimer)
   testTimer = setTimeout(() => { testNote.value = '' }, 6000)
 }
@@ -130,7 +138,8 @@ const openTool = () => window.parent.postMessage({ type: 'foundation-open', page
         <MItem icon="gamepad" :title="t('ds5.test_panel.title')" :text="testNote || t('ds5.test_panel.note')" stack>
           <template #control>
             <div class="ds5-test">
-              <MButton variant="tonal" size="sm" :disabled="testBusy" @click="runTest">{{ t('ds5.test_panel.haptics') }}</MButton>
+              <MButton v-for="action in TESTS" :key="action" variant="tonal" size="sm" :disabled="testBusy" @click="runTest(action)">{{ t('ds5.test_panel.' + action) }}</MButton>
+              <MButton variant="text" size="sm" @click="runTest('stop')">{{ t('ds5.test_panel.stop') }}</MButton>
             </div>
           </template>
         </MItem>

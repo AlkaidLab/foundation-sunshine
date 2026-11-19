@@ -47,6 +47,7 @@ namespace crash::detail {
     std::atomic<int> g_snap_index { 0 };
 
     wchar_t g_pending_w[path_cap];
+    wchar_t g_mark_w[path_cap];
     minidump_write_t g_dump_fn = nullptr;
     HANDLE g_req_event = nullptr, g_done_event = nullptr, g_worker = nullptr;
     DWORD g_worker_tid = 0;
@@ -263,36 +264,59 @@ namespace crash::detail {
       if (write_file(tmp, buffer, len)) MoveFileExW(tmp, final_path, MOVEFILE_REPLACE_EXISTING);
     }
 
+    /// The top frame of a stack lies in a graphics driver: leave the mark (gpu_driver.h) for the next start. Written whether or not error reports are on: it never leaves
+    /// the computer and holds no personal data; it is what lets the host say that the driver failed.
+    void
+    mark_driver(const frame_t *frames, std::size_t count, const char *kind) {
+      const auto hit = driver_frame(frames, count);
+      if (hit.vendor == gpu_driver::vendor_e::none || !g_mark_w[0]) return;
+      const auto mark = gpu_driver::make_mark(hit.vendor, frames[hit.index].module, kind, now_unix());
+      char text[gpu_driver::mark_buffer_size];
+      const auto len = gpu_driver::render_mark(mark, text, sizeof(text));
+      if (!len) return;
+      wchar_t tmp[path_cap + 16];
+      tmp[0] = 0;
+      wcat(tmp, _countof(tmp), g_mark_w);
+      wcat(tmp, _countof(tmp), L".tmp");
+      if (write_file(tmp, text, len)) MoveFileExW(tmp, g_mark_w, MOVEFILE_REPLACE_EXISTING);
+    }
+
     /// One report: dump, then the meta with the faulting frame, then the full meta. Runs on the worker (crash) or the watchdog (hang).
     void
     write_reports(const char *kind, const char *code, EXCEPTION_POINTERS *ep, DWORD tid, const CONTEXT &ctx, int skip) {
-      if (!g.enabled.load()) return;
-      char stem[112];
-      stem_noalloc(stem, sizeof(stem), now_unix(), kind, GetCurrentProcessId());
-      wchar_t base[path_cap + 160];
-      base[0] = 0;
-      wcat(base, _countof(base), g_pending_w);
-      wcat(base, _countof(base), L"\\");
-      wcat_ascii(base, _countof(base), stem);
+      const bool reports = g.enabled.load();
       wchar_t dump_path[path_cap + 160], meta_path[path_cap + 160];
       dump_path[0] = meta_path[0] = 0;
-      wcat(dump_path, _countof(dump_path), base);
-      wcat(dump_path, _countof(dump_path), L".dmp");
-      wcat(meta_path, _countof(meta_path), base);
-      wcat(meta_path, _countof(meta_path), L".json");
-
-      write_dump(dump_path, ep, tid);
-
       frame_t first;
       resolve(ctx.Rip, first, false);
-      write_meta(meta_path, kind, code, &first, 1);
+      if (reports) {
+        char stem[112];
+        stem_noalloc(stem, sizeof(stem), now_unix(), kind, GetCurrentProcessId());
+        wchar_t base[path_cap + 160];
+        base[0] = 0;
+        wcat(base, _countof(base), g_pending_w);
+        wcat(base, _countof(base), L"\\");
+        wcat_ascii(base, _countof(base), stem);
+        wcat(dump_path, _countof(dump_path), base);
+        wcat(dump_path, _countof(dump_path), L".dmp");
+        wcat(meta_path, _countof(meta_path), base);
+        wcat(meta_path, _countof(meta_path), L".json");
+
+        write_dump(dump_path, ep, tid);
+        write_meta(meta_path, kind, code, &first, 1);
+      }
 
       frame_t frames[max_frames + 4];
       auto count = unwind(ctx, frames, max_frames + 4, true);
-      if (!count) return;  // keep the meta with the faulting frame: an empty frame list would replace it and give every such crash one signature
+      if (!count) {
+        // keep the meta with the faulting frame: an empty frame list would replace it and give every such crash one signature
+        mark_driver(&first, 1, kind);
+        return;
+      }
       std::size_t from = (std::size_t) skip < count ? (std::size_t) skip : 0;
       if (count - from > max_frames) count = from + max_frames;
-      write_meta(meta_path, kind, code, frames + from, count - from);
+      mark_driver(frames + from, count - from, kind);
+      if (reports) write_meta(meta_path, kind, code, frames + from, count - from);
     }
 
     DWORD WINAPI
@@ -325,7 +349,7 @@ namespace crash::detail {
         // another thread is reporting; this one waits for the process to end
         for (;;) Sleep(INFINITE);
       }
-      if (g.enabled.load() && g_worker) {
+      if (g_worker) {
         set_text(g_req.kind, sizeof(g_req.kind), kind);
         set_text(g_req.code, sizeof(g_req.code), code);
         g_req.tid = GetCurrentThreadId();
@@ -409,6 +433,7 @@ namespace crash::detail {
   void
   platform_install() {
     MultiByteToWideChar(CP_UTF8, 0, g.pending_utf8, -1, g_pending_w, (int) _countof(g_pending_w));
+    MultiByteToWideChar(CP_UTF8, 0, g.mark_utf8, -1, g_mark_w, (int) _countof(g_mark_w));
     refresh_modules();
     // dbghelp from System32 only; resolved now because the loader may be locked when it is needed
     wchar_t path[MAX_PATH];
@@ -466,20 +491,6 @@ namespace crash::detail {
     for (const char *s = slot.name; *s && n + 1 < sizeof(code); ++s) code[n++] = *s;
     code[n] = 0;
 
-    char stem[112];
-    stem_noalloc(stem, sizeof(stem), now_unix(), "hang", GetCurrentProcessId());
-    wchar_t base[path_cap + 160];
-    base[0] = 0;
-    wcat(base, _countof(base), g_pending_w);
-    wcat(base, _countof(base), L"\\");
-    wcat_ascii(base, _countof(base), stem);
-    wchar_t dump_path[path_cap + 160], meta_path[path_cap + 160];
-    dump_path[0] = meta_path[0] = 0;
-    wcat(dump_path, _countof(dump_path), base);
-    wcat(dump_path, _countof(dump_path), L".dmp");
-    wcat(meta_path, _countof(meta_path), base);
-    wcat(meta_path, _countof(meta_path), L".json");
-
     frame_t frames[max_frames + 4];
     std::size_t count = 0;
     if (have_context) count = unwind(ctx, frames, max_frames, true);
@@ -491,8 +502,24 @@ namespace crash::detail {
       frames[0].offset = 0;
       count = 1;
     }
-    write_dump(dump_path, nullptr, 0);  // the dump first: the meta is what the uploader looks for
-    write_meta(meta_path, "hang", code, frames, count);
+    mark_driver(frames, count, "hang");  // the thread stopped inside a graphics driver: marked whether or not reports are on
+    if (g.enabled.load()) {
+      char stem[112];
+      stem_noalloc(stem, sizeof(stem), now_unix(), "hang", GetCurrentProcessId());
+      wchar_t base[path_cap + 160];
+      base[0] = 0;
+      wcat(base, _countof(base), g_pending_w);
+      wcat(base, _countof(base), L"\\");
+      wcat_ascii(base, _countof(base), stem);
+      wchar_t dump_path[path_cap + 160], meta_path[path_cap + 160];
+      dump_path[0] = meta_path[0] = 0;
+      wcat(dump_path, _countof(dump_path), base);
+      wcat(dump_path, _countof(dump_path), L".dmp");
+      wcat(meta_path, _countof(meta_path), base);
+      wcat(meta_path, _countof(meta_path), L".json");
+      write_dump(dump_path, nullptr, 0);  // the dump first: the meta is what the uploader looks for
+      write_meta(meta_path, "hang", code, frames, count);
+    }
     if (suspended) ResumeThread(thread);
   }
 

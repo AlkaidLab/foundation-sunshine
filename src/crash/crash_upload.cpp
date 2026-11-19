@@ -3,10 +3,12 @@
  * @brief Uploads the pending crash reports to POST <endpoint>/v1/crash (multipart: "meta" JSON + optional "dump" + the anonymised session log of the run).
  *
  * Runs on its own thread and only ever waits on the network, never on anything the host needs to start. A report is deleted after a 2xx and
- * after a 4xx the server will never accept (except 408/429); a network failure or 5xx leaves it for the next pass. At most 20 stay on disk.
+ * after an answer that says the body will never be accepted (upload_policy.h); everything else, a network failure, a 5xx, a limit, a proxy's refusal, leaves it for a later pass, spread by a random share.
+ * At most 20 stay on disk (and a byte cap), none older than 30 days.
  */
 #include "crash_log.h"
 #include "crash_state.h"
+#include "upload_policy.h"
 
 #include <algorithm>
 #include <chrono>
@@ -14,6 +16,7 @@
 #include <condition_variable>
 #include <functional>
 #include <optional>
+#include <random>
 #include <curl/curl.h>
 #include <cstdio>
 #include <cstdlib>
@@ -165,9 +168,20 @@ namespace crash {
 
     std::mutex g_env_mutex;
     std::function<std::string()> g_environment;
-    /// After a 429/503 or a network failure the uploader waits longer (Retry-After, else 15 minutes doubling up to 4 hours: the numbers Crashpad uses for its retries).
+    /// After a 429/503 or a network failure the uploader waits longer (Retry-After, else 15 minutes doubling up to 4 hours: the numbers Crashpad uses for its retries), each spread by a random share.
     std::atomic<long> g_wait_hint_s { 0 };
     std::atomic<int> g_failures { 0 };
+    std::mutex g_jitter_mutex;
+    std::function<double()> g_jitter;
+
+    /// A number in [0, 1): the random share of a wait or of the start delay.
+    double
+    jitter01() {
+      std::lock_guard lock(g_jitter_mutex);
+      if (g_jitter) return g_jitter();
+      static std::mt19937_64 engine { std::random_device {}() };
+      return std::uniform_real_distribution<double>(0.0, 1.0)(engine);
+    }
 
     /// What names this account and this computer, for the privacy pass over a dump (redact_private_names).
     std::vector<std::string>
@@ -193,12 +207,6 @@ namespace crash {
       return names;
     }
 
-    bool
-    settled(long status) {
-      if (status >= 200 && status < 300) return true;
-      return status >= 400 && status < 500 && status != 408 && status != 429;  // it will not be accepted later either
-    }
-
     void
     uploader_main() {
       using namespace std::chrono_literals;
@@ -206,7 +214,8 @@ namespace crash {
         std::unique_lock lock(g_wait_mutex);
         return !g_wait_cv.wait_for(lock, s, [] { return g_stop_upload.load(); });
       };
-      std::chrono::seconds delay = 20s;
+      // 20 s after the start and up to two minutes more, so the computers that were started together (a power cut, a morning) do not all knock at once
+      std::chrono::seconds delay = 20s + std::chrono::seconds(static_cast<long>(jitter01() * 120.0));
       if (const char *env = std::getenv("SUNSHINE_CRASH_UPLOAD_DELAY_S"); env && *env) delay = std::chrono::seconds(std::max(0, std::atoi(env)));
       if (!wait(delay)) return;
       do {
@@ -214,7 +223,12 @@ namespace crash {
           const auto dir = current_config_dir();
           upload_pending_once(dir, endpoint_from(current_conf_text()), read_or_create_install_id(dir, true));
         }
-      } while (wait(std::chrono::seconds(std::max<long>(30 * 60, g_wait_hint_s.load()))));
+        // a pass that found nothing to wait for comes back in ten minutes (a report written by a hang is not left for half an hour); after a failure the wait the policy chose
+      } while (wait(std::chrono::seconds([] {
+        // after a failure the wait the policy chose (the service's Retry-After or the backoff, each spread by the random share); with nothing to wait for, ten minutes
+        const auto hint = g_wait_hint_s.load();
+        return hint > 0 ? hint : 10L * 60;
+      }())));
     }
   }  // namespace
 
@@ -293,24 +307,34 @@ namespace crash {
         catch (...) {
         }
       }
-      const auto answer = post(url, body, dump, log ? &*log : nullptr);
-      const long status = answer.status;
-      // 429 (a limit; wait Retry-After) and 503 (storage failed, nothing counted): keep everything and stop this pass; so does a network failure or a server error
-      if (status == 429 || status == 503 || status == 0 || status >= 500) {
+      auto answer = post(url, body, dump, log ? &*log : nullptr);
+      auto verdict = upload_policy::judge(answer.status, !dump.empty());
+      // 413: the dump is too large for the service, the report is not: it goes again without the dump (the log stays with it)
+      if (verdict == upload_policy::verdict_e::send_without_dump) {
+        answer = post(url, body, {}, log ? &*log : nullptr);
+        verdict = upload_policy::judge(answer.status, false);
+      }
+      // a limit (429, wait Retry-After), a service that could not store it (503), no answer, any other answer that is not about this report: keep everything and stop this pass
+      if (verdict == upload_policy::verdict_e::wait) {
         const long failures = g_failures.fetch_add(1) + 1;
-        const long backoff = std::min<long>(4 * 3600, 15 * 60L << std::min<long>(failures - 1, 5));
-        g_wait_hint_s.store(answer.retry_after > 0 ? std::clamp<long>(answer.retry_after, 30, 4 * 3600) : (status == 0 || status >= 500 ? backoff : 0));
+        g_wait_hint_s.store(upload_policy::wait_seconds(failures, answer.retry_after, jitter01()));
         break;
       }
       g_failures.store(0);
       g_wait_hint_s.store(0);
-      if (!settled(status)) continue;
+      if (verdict == upload_policy::verdict_e::keep_going) continue;
       std::error_code ec;
       fs::remove(report.meta, ec);
       if (!report.dump.empty()) fs::remove(report.dump, ec);
       ++done;
     }
     return done;
+  }
+
+  void
+  set_upload_jitter_source(std::function<double()> source) {
+    std::lock_guard lock(g_jitter_mutex);
+    g_jitter = std::move(source);
   }
 
   // lives here, not in crash_common.cpp: the service wrapper links the capture without the uploader

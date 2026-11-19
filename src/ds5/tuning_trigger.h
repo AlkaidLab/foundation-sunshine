@@ -402,6 +402,10 @@ namespace ds5::tuning::trigger {
       return result;
     }
 
+    /** What the pad shows is no longer what was sent (a test replaced it): the next plan sends the held blocks again. */
+    void
+    forget_sent() noexcept { sent_valid_ = false; }
+
   private:
     block_t left_state_ {};
     block_t right_state_ {};

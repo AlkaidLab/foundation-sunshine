@@ -112,7 +112,7 @@ namespace crash {
           }
           if (now - since < slot.timeout_ms || slot.reported.load(std::memory_order_relaxed)) continue;
           slot.reported.store(true, std::memory_order_relaxed);
-          if (g.enabled.load()) platform_report_hang(i);
+          platform_report_hang(i);  // writes its report only while reports are on; a hang inside a graphics driver is marked either way
         }
       }
     }
@@ -125,6 +125,16 @@ namespace crash {
     copy_to(g.version, sizeof(g.version), options.version);
     copy_to(g.os_version, sizeof(g.os_version), options.os_version);
     copy_to(g.pending_utf8, sizeof(g.pending_utf8), pending_dir(options.config_dir).string());
+    copy_to(g.mark_utf8, sizeof(g.mark_utf8), (options.config_dir / "crashes" / gpu_driver::mark_file_name).string());
+    if (const char *test = std::getenv("SUNSHINE_TEST_DRIVER_MODULE"); test && *test) {
+      // tests and the end-to-end tool only: "<module file name>=<intel|nvidia|amd>" stands a module of the host in for a driver
+      const std::string_view spec { test };
+      if (const auto eq = spec.find('='); eq != std::string_view::npos) {
+        if (const auto vendor = gpu_driver::vendor_from_word(spec.substr(eq + 1)); vendor != gpu_driver::vendor_e::none) {
+          gpu_driver::set_test_module(spec.substr(0, eq), vendor);
+        }
+      }
+    }
     g.start_unix = now_unix();
     g.start_ms = now_ms();
     {
