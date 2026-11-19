@@ -978,8 +978,11 @@ begin_install() {
         S.v.uac_cancelled = false;
         go(pg::welcome);
       }
-      else
-        refresh();  // a warning: the question is open, the page stays where it is
+      else {
+        // a warning: the question is open. It is asked on the first page or the components page; from any other (Try again after a failed run) the first page is where the folder is
+        if (S.v.page != pg::welcome && S.v.page != pg::components) go(pg::welcome);
+        refresh();
+      }
       return;
     }
     if (!installer_dir::same_text(installer_dir::normalise(S.v.dir), installer_dir_win::default_dir())) g_run.dir = installer_dir::normalise(S.v.dir);
