@@ -86,7 +86,7 @@ import { useShellLive } from '../composables/useShellLive.js'
 import { trackEvents } from '../config/telemetry.js'
 import { hostData } from '../composables/hostData.js'
 import { kept, SETTLE_CAP_MS } from '../composables/homeKept.js'
-import { SPONSORS } from '../config/sponsors.js'
+import { SPONSORS, sponsorUrl } from '../config/sponsors.js'
 import { deviceIconFor } from '../utils/homeData.js'
 import { openExternalUrl } from '../utils/helpers.js'
 import { getImagePreviewUrl } from '../utils/imageUtils.js'
@@ -368,7 +368,7 @@ function onAction(a) {
     case 'pin-open': webShell?.openSetting?.(a.value?.key); break
     case 'open-url': window.open(a.value, '_blank', 'noopener,noreferrer'); break
     case 'open-desktop': openBigScreenOnHost().catch((e) => say(`${T.value.openDesktopFailed}${e?.message ? `: ${e.message}` : ''}`)); break
-    case 'pair-qr-begin': pairQr.begin(); break
+    case 'pair-qr-begin': pairQr.begin(a.value === true); break
     case 'pair-qr-stop': pairQr.stop(); break
     case 'table-row': onTableRow(a.value); break
     case 'app': go('apps'); break
@@ -383,7 +383,7 @@ function onAction(a) {
     case 'setting': saveSetting(a.value); break
     case 'runtime-bitrate': runtimeBitrate(a.value); break
     case 'ds5-tune': ds5Tune(a.value); break
-    case 'sponsor': { const target = SPONSORS.find((x) => x.id === a.value); if (a.value === 'star') window.open('https://github.com/AlkaidLab/foundation-sunshine', '_blank', 'noopener,noreferrer'); else if (target) window.open(target.url, '_blank', 'noopener,noreferrer'); else sponsorSheet.value = true; break }
+    case 'sponsor': { const target = SPONSORS.find((x) => x.id === a.value); if (a.value === 'star') window.open('https://github.com/AlkaidLab/foundation-sunshine', '_blank', 'noopener,noreferrer'); else if (target) window.open(sponsorUrl(target, locale.value), '_blank', 'noopener,noreferrer'); else sponsorSheet.value = true; break }
     default: break
   }
 }
@@ -391,6 +391,7 @@ function onAction(a) {
 const hostApi = { getJson: (path) => apiJson(path), postJson: (path, body) => apiJson(path, { method: 'POST', body }) }
 // the QR code of the pairing card: a pairing window is open on the host only while the card shows it (the card asks and gives it back)
 const pairQr = createPairQr({
+  autoRenew: false,
   start: async () => { const d = await apiJson('/api/qr-pair', { method: 'POST' }); if (String(d.status) !== 'true') throw new Error(d.error || 'qr'); return d },
   poll: () => apiJson('/api/qr-pair'),
   cancel: () => apiFetch('/api/qr-pair/cancel', { method: 'POST' }),
@@ -427,7 +428,7 @@ const onDetail = (id) => { if (id === 'hero') versionSheet.value = true }
 const sponsorSheet = ref(false)
 const linksSheet = ref(false)
 const supportSections = computed(() => [
-  { title: t('home.dash.sponsor'), items: SPONSORS.map((x) => ({ id: x.id, icon: 'favorite', title: x.label, url: x.url })) },
+  { title: t('home.dash.sponsor'), items: SPONSORS.map((x) => ({ id: x.id, icon: 'favorite', title: x.label, url: sponsorUrl(x, locale.value) })) },
   { items: [
     { id: 'star', icon: 'star', title: t('home.dash.star'), url: 'https://github.com/AlkaidLab/foundation-sunshine' },
     { id: 'qq', icon: 'groups', title: t('home.dash.qq'), url: 'https://qm.qq.com/q/AfMQoyKrkc' },

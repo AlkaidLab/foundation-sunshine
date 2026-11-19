@@ -1,13 +1,13 @@
 <script setup>
 import { useI18n } from 'vue-i18n'
 import { MGroup, MIcon, MItem, MSheet } from 'foundation-ui/vue'
-import { SPONSORS } from '../../config/sponsors.js'
+import { SPONSORS, sponsorUrl } from '../../config/sponsors.js'
 import { openExternalUrl } from '../../utils/helpers.js'
 
 // One row per developer; the targets live in config/sponsors.js.
 const open = defineModel({ type: Boolean, default: false })
-const { t } = useI18n()
-const go = (sponsor) => openExternalUrl(sponsor.url).catch((error) => console.error('Failed to open sponsor link:', error))
+const { t, locale } = useI18n()
+const go = (sponsor) => openExternalUrl(sponsorUrl(sponsor, locale.value)).catch((error) => console.error('Failed to open sponsor link:', error))
 </script>
 
 <template>
