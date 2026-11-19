@@ -283,7 +283,9 @@ TEST(NetworkCheckJson, ContractShapeIsStable) {
   EXPECT_EQ(json["version"], 1);
   EXPECT_EQ(json["state"], "done");
   EXPECT_TRUE(json["timed_out"].is_boolean());
-  for (const auto *key : { "id", "started_at", "finished_at", "elapsed_ms", "steps", "summary" }) EXPECT_TRUE(json.contains(key)) << key;
+  for (const auto *key : { "id", "started_at", "finished_at", "elapsed_ms", "steps", "bypass", "summary" }) EXPECT_TRUE(json.contains(key)) << key;
+  EXPECT_EQ(json["bypass"]["state"], "off");
+  EXPECT_TRUE(json["bypass"]["adapter"].is_null());
   for (const auto *key : { "id", "subject", "state", "reason", "next", "checked", "detail", "started_ms", "elapsed_ms" }) EXPECT_TRUE(json["steps"][0].contains(key)) << key;
   EXPECT_EQ(json["summary"]["tcp"]["state"], "likely");
   EXPECT_TRUE(json["summary"]["tcp"]["because"].is_array());
@@ -561,4 +563,45 @@ TEST(NetworkCheckOutside, AProxyOnTheRouterIsWrittenDownAndNeverCalledUnreachabl
   EXPECT_NE(summary.tcp.state, protocol_state_e::unreachable);
   EXPECT_EQ(summary.tcp.because.front(), "router_proxy");
   EXPECT_EQ(summary.udp.state, protocol_state_e::unverified);
+}
+
+TEST(NetworkCheckBypass, TheRunReportsWhatTheProbesDidAndMarksTheAddressesStepOnAFallback) {
+  inputs_t inputs;
+  inputs.bypass = true;
+  inputs.probe = [](const request_t &, const std::function<void(std::string_view, bool)> &) { return healthy(); };
+  inputs.discover = [](const request_t &) {
+    // the STUN probe found no answer through the physical adapter and answered on the system route
+    network_pin::note({ network_pin::state_e::fallback, "Ethernet" });
+    return stun();
+  };
+  const auto first = start(inputs, {});
+  ASSERT_TRUE(wait_idle(5s));
+  const auto done = network_check::find(first->id);
+  ASSERT_NE(done, nullptr);
+  EXPECT_EQ(done->bypass.state, network_pin::state_e::fallback);
+  const auto json = to_json(*done);
+  EXPECT_EQ(json["bypass"]["state"], "fallback");
+  EXPECT_EQ(json["bypass"]["adapter"], "Ethernet");
+  const auto *addresses = find(done->steps, "addresses");
+  ASSERT_NE(addresses, nullptr);
+  EXPECT_EQ(addresses->detail["bypass"], "fallback");
+  // the warning is an addition: the state of the step is what the evidence says
+  EXPECT_EQ(addresses->state, step_state_e::ok);
+}
+
+TEST(NetworkCheckBypass, WithTheBypassOffTheRunSaysSoAndLeavesTheStepsAlone) {
+  inputs_t inputs;
+  inputs.bypass = false;
+  inputs.probe = [](const request_t &, const std::function<void(std::string_view, bool)> &) { return healthy(); };
+  inputs.discover = [](const request_t &) {
+    network_pin::note({ network_pin::state_e::fallback, "Ethernet" });  // a probe cannot make a run that is off report a fallback
+    return stun();
+  };
+  const auto first = start(inputs, {});
+  ASSERT_TRUE(wait_idle(5s));
+  const auto done = network_check::find(first->id);
+  ASSERT_NE(done, nullptr);
+  EXPECT_EQ(done->bypass.state, network_pin::state_e::off);
+  EXPECT_FALSE(find(done->steps, "addresses")->detail.contains("bypass"));
+  EXPECT_EQ(to_json(*done)["bypass"]["state"], "off");
 }

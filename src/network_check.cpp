@@ -430,6 +430,7 @@ namespace network_check {
       { "elapsed_ms", run.elapsed_ms },
       { "timed_out", run.timed_out },
       { "steps", steps },
+      { "bypass", { { "state", network_pin::to_string(run.bypass.state) }, { "adapter", run.bypass.adapter_name.empty() ? nlohmann::json(nullptr) : nlohmann::json(run.bypass.adapter_name) } } },
       { "summary", { { "tcp", protocol(run.summary.tcp) }, { "udp", protocol(run.summary.udp) }, { "cgnat", run.summary.cgnat },
                      { "ipv4", run.summary.ipv4.empty() ? nlohmann::json(nullptr) : nlohmann::json(run.summary.ipv4) },
                      { "ipv6", run.summary.ipv6.empty() ? nlohmann::json(nullptr) : nlohmann::json(run.summary.ipv6) },
@@ -559,6 +560,7 @@ namespace network_check {
       auto &run = job->run;
       run.elapsed_ms = since(job->began);
       run.finished_at = reachability::format_utc_iso(reachability::now_epoch_seconds());
+      run.bypass = network_pin::run_outcome();
       if (have_probe) {
         // The local probe has its result: it is used even when the address discovery did not finish in time; only the steps that depend on the discovery say "timeout".
         const auto snapshot = *probe_slot->value;
@@ -602,6 +604,11 @@ namespace network_check {
           if (!used[index]) merged.push_back(results[index]);
         }
         run.steps = std::move(merged);
+        if (run.bypass.state == network_pin::state_e::fallback) {
+          for (auto &entry : run.steps) {
+            if (entry.id == step::addresses) entry.detail["bypass"] = "fallback";
+          }
+        }
         if (!have_discovery) {
           for (auto &entry : run.steps) {
             if (entry.id != step::addresses && entry.id != step::cgnat) continue;
@@ -643,6 +650,8 @@ namespace network_check {
     job->run.started_at = reachability::format_utc_iso(reachability::now_epoch_seconds());
     const std::vector<std::string> &endpoint_inputs = inputs.saved_endpoints;
     job->run.steps = planned_steps(request, inputs.stun_enabled, endpoint_inputs);
+    network_pin::begin_run(inputs.bypass);
+    job->run.bypass = network_pin::run_outcome();
     current_job = job;
     std::thread { [job, inputs, request]() { run_job(job, inputs, request); } }.detach();
     return copy_of(*job);
@@ -660,7 +669,10 @@ namespace network_check {
       std::lock_guard lock { job->mutex };
       if (!id.empty() && job->run.id != id) return nullptr;
       // A run that is going shows its elapsed time.
-      if (job->run.state == run_state_e::running) job->run.elapsed_ms = since(job->began);
+      if (job->run.state == run_state_e::running) {
+        job->run.elapsed_ms = since(job->began);
+        job->run.bypass = network_pin::run_outcome();
+      }
     }
     return copy_of(*job);
   }

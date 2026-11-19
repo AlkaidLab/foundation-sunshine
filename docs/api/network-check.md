@@ -38,6 +38,7 @@ GET /api/network/check?id=<id>
   "elapsed_ms": 4120,
   "timed_out": false,
   "steps": [ { "id": "listening", "subject": null, "state": "ok", "reason": null, "next": null, "checked": true, "detail": {}, "started_ms": 0, "elapsed_ms": 12 } ],
+  "bypass": { "state": "pinned", "adapter": "Ethernet" },
   "summary": {
     "tcp": { "state": "reachable", "because": ["handshake_through_public_address"] },
     "udp": { "state": "unverified", "because": ["mappings_complete", "not_verified_from_outside"] },
@@ -61,6 +62,10 @@ its result comes with the run.
 | `external_tcp` | The outside check (`network_external_check = enabled`): a connection from the internet to the TCP ports of each public address, comparing the unique id of this host. | `not_reached_from_outside` (`forward`), `another_host_answers` (`address`), `address_not_this_computer` (`address`, the service says the entered address is not the one the internet sees from this computer), `router_proxy` (warn, no action: the service saw neither the entered address nor the router's outside address, so a proxy on the router sits on the path; `detail` has `seen_by_service` and `router_wan`; the result of TCP is never `unreachable` for it), `external_unavailable` (skipped: the service did not answer or has used up its day), `external_off` (skipped) |
 | `external_udp` | UDP cannot be tried from outside by a service that speaks TCP. Always skipped. | `udp_not_verified` |
 | `endpoint` | One per saved public address (`subject`): a TLS handshake against its HTTPS port. | `loopback_unverifiable` (`outside_test`), `dns_failed`, `identity_mismatch`, `tls_failed`, `address_private` (`address`), `mesh_address`, `not_tried` |
+
+`bypass` says how the probes left this computer (`network_bypass_proxy`): `pinned` (through the physical adapter `adapter`, and answered), `fallback` (nothing answered through the physical adapter, so the probe was repeated on the system route and answered:
+the physical adapter has no way out, and the `addresses` step carries `detail.bypass = "fallback"`; screens show the warning "the physical adapter has no way out, back to the system route"; the states of the steps are not changed by it), `off` (the setting is not `enabled`)
+or `unavailable` (no physical adapter was found, the system refused to pin the socket, or this system cannot pin: macOS). `adapter` is `null` unless a physical adapter was found.
 
 A run that reaches its deadline (20 seconds) ends: the steps that were still open are `warn` with `timeout` and `next: retry`, `timed_out` is `true`, and nothing is concluded from them.
 
