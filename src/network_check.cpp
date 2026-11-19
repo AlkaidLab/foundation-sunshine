@@ -167,6 +167,7 @@ namespace network_check {
       const reachability::endpoint_result_t *not_reached = nullptr;
       const reachability::endpoint_result_t *another = nullptr;
       const reachability::endpoint_result_t *refused = nullptr;
+      const reachability::endpoint_result_t *proxied = nullptr;
       const reachability::endpoint_result_t *unavailable = nullptr;
       for (const auto &endpoint : endpoints) {
         if (!endpoint.outside.asked) continue;
@@ -175,6 +176,7 @@ namespace network_check {
         if (state == "reachable") reached = reached ? reached : &endpoint;
         else if (state == "closed" || state == "timeout") not_reached = not_reached ? not_reached : &endpoint;
         else if (state == "another_host") another = another ? another : &endpoint;
+        else if (state == "unavailable" && endpoint.outside.reason == "router_proxy") proxied = proxied ? proxied : &endpoint;
         else if (state == "unavailable" && (endpoint.outside.reason == "ip_mismatch" || endpoint.outside.reason == "dns_mismatch" || endpoint.outside.reason == "dns_failed")) refused = refused ? refused : &endpoint;
         else unavailable = unavailable ? unavailable : &endpoint;
       }
@@ -189,6 +191,13 @@ namespace network_check {
       if (reached) return subject(make_step(step::external_tcp, step_state_e::ok), reached);
       if (not_reached) return subject(make_step(step::external_tcp, step_state_e::fail, "not_reached_from_outside", "forward"), not_reached);
       if (another) return subject(make_step(step::external_tcp, step_state_e::fail, "another_host_answers", "address"), another);
+      // The service saw the exit of a proxy that runs on the router, not the router's own address: nothing here can bypass it, and it says nothing about whether the internet reaches this host.
+      if (proxied) {
+        auto step = subject(make_step(step::external_tcp, step_state_e::warn, "router_proxy"), proxied);
+        step.detail["seen_by_service"] = proxied->outside.caller;
+        step.detail["router_wan"] = snapshot.public_reachability.router.wan_ip;
+        return step;
+      }
       if (refused) return subject(make_step(step::external_tcp, step_state_e::warn, "address_not_this_computer", "address"), refused);
       if (unavailable) return subject(make_step(step::external_tcp, step_state_e::skipped, "external_unavailable"), unavailable);
       return make_step(step::external_tcp, step_state_e::skipped, asked ? "external_unavailable" : "external_off");
@@ -347,6 +356,8 @@ namespace network_check {
       add(tcp, "outside_probe");
     }
     if (tcp.state != protocol_state_e::reachable) {
+      // the outside check saw the exit of a proxy on the router: said first, and never a reason to call the host unreachable
+      if (outside && outside->reason == "router_proxy") add(tcp, "router_proxy");
       if (outside && outside->state == step_state_e::fail) {
         tcp.state = protocol_state_e::unreachable;
         add(tcp, "not_reached_from_outside");

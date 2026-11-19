@@ -4,6 +4,7 @@
  */
 #include "network.h"
 
+#include <chrono>
 #include <future>
 
 #include "src/config.h"
@@ -27,8 +28,22 @@
 using namespace std::literals;
 
 namespace confighttp::network {
+  namespace {
+    network_external::cache_t &
+    outside_cache() {
+      static network_external::cache_t cache;
+      return cache;
+    }
+
+    std::int64_t
+    now_s() {
+      return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    }
+  }  // namespace
+
+  /// `ask_outside`: the person pressed "check" (or asked to test an address): the outside service may be asked. Without it the answers of the last 10 minutes are still used, and nothing is sent.
   reachability::probe_options_t
-  configured_probe() {
+  configured_probe(bool ask_outside) {
     reachability::probe_options_t options;
     options.ports = {
       { "tcp", net::map_port(nvhttp::PORT_HTTPS), std::string(reachability::port_role::https) },
@@ -48,7 +63,7 @@ namespace confighttp::network {
     options.hairpin_port = net::map_port(nvhttp::PORT_HTTPS);
     // The outside check (network_external.h): only when it is switched on in the configuration (`network_external_check = enabled`).
     if (network_external::enabled(config::nvhttp.network_external_check)) {
-      options.outside = [](const reachability::endpoint_result_t &endpoint) {
+      options.outside = [ask_outside](const reachability::endpoint_result_t &endpoint) {
         network_external::request_t request;
         auto install = telemetry::install_id();
         if (install.empty()) {
@@ -65,20 +80,28 @@ namespace confighttp::network {
         request.uniqueid = http::unique_id;
         request.target = endpoint.host;
         for (const auto &port : endpoint.ports) request.ports.push_back(port);
-        const auto answer = network_external::probe(telemetry::endpoint(), request, [](const std::string &url, const std::string &body, std::string &out, long &retry_after) {
-          const auto posted = telemetry::post_once(url, "application/json", body, "foundation-sunshine-network-check", 8, 4);
-          out = posted.body;
-          retry_after = posted.retry_after_s;
-          return posted.status;
-        });
+        const auto key = network_external::cache_key(request);
+        auto answer = outside_cache().find(key, now_s());
+        if (!answer) {
+          // Not asked for by a person: nothing is sent, and what the host does not know it does not say.
+          if (!ask_outside) return reachability::outside_t {};
+          answer = network_external::probe(network_external::endpoint_of(config::nvhttp.network_external_endpoint), request, [](const std::string &url, const std::string &body, std::string &out, long &retry_after) {
+            const auto posted = telemetry::post_once(url, "application/json", body, "foundation-sunshine-network-check", 8, 4);
+            out = posted.body;
+            retry_after = posted.retry_after_s;
+            return posted.status;
+          });
+          outside_cache().put(key, *answer, now_s());
+        }
         reachability::outside_t outside;
         outside.asked = true;
-        if (answer.availability == network_external::availability_e::answered) {
-          outside.state = network_external::tcp_summary(answer);
+        outside.caller = answer->caller;
+        if (answer->availability == network_external::availability_e::answered) {
+          outside.state = network_external::tcp_summary(*answer);
         }
         else {
           outside.state = "unavailable";
-          outside.reason = answer.reason;
+          outside.reason = answer->reason;
         }
         return outside;
       };
@@ -96,9 +119,10 @@ namespace confighttp::network {
       const auto found = query.find("refresh");
       if (found != query.end()) refresh = found->second == "1" || found->second == "true";
 
+      // `refresh=1` is the person asking for a new check, and so is a `test` address: only these may ask the outside service.
       // `test`: addresses to try without saving them. They replace the configured ones for this run only (the cache key holds the addresses, so
       // the next plain read is not answered with this run), and the run is never served from the cache.
-      auto options = configured_probe();
+      auto options = configured_probe(refresh || query.find("test") != query.end());
       const auto test = query.find("test");
       if (test != query.end()) {
         const auto addresses = reachability::test_endpoints_option(test->second);
@@ -143,7 +167,7 @@ namespace confighttp::network {
         options.region = list.configured ? "configured" : region == nat_discovery::region_e::china ? "china" : "global";
         // The STUN exchanges and the reachability probes are independent; run them side by side.
         auto discovery = std::async(std::launch::async, [options, refresh]() { return nat_discovery::discover(options, refresh); });
-        const auto snapshot = reachability::probe(configured_probe(), refresh);
+        const auto snapshot = reachability::probe(configured_probe(false), refresh);
         const auto result = discovery.get();
         const auto body = nat_discovery::overview_json(result, snapshot);
         BOOST_LOG(debug) << "Network overview: ipv4="sv << body["reachability"]["ipv4"]["verdict"].get<std::string>()
@@ -166,7 +190,7 @@ namespace confighttp::network {
       for (const auto &endpoint : saved.endpoints) inputs.saved_endpoints.push_back(public_address::format_endpoint(endpoint));
 
       inputs.probe = [](const network_check::request_t &, const std::function<void(std::string_view, bool)> &progress) {
-        auto options = configured_probe();
+        auto options = configured_probe(true);
         options.progress = progress;
         return reachability::probe(options, true);
       };

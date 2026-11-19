@@ -11,8 +11,13 @@
  */
 #pragma once
 
+#include <cstdint>
 #include <functional>
+#include <map>
+#include <mutex>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "network_reachability.h"
@@ -46,6 +51,7 @@ namespace network_external {
     std::string reason;
     std::vector<tcp_port_t> tcp;
     long retry_after_s = 0;
+    std::string caller;  ///< the address the service saw the request come from (it says so in an answer and in a refusal); empty when it did not
   };
 
   /// The JSON body of the request (v 1).
@@ -73,4 +79,42 @@ namespace network_external {
   /// The configuration value: "enabled" or "disabled" (anything else is disabled).
   bool
   enabled(std::string_view setting);
+
+  /// The service that is asked when the configuration names none (`network_external_endpoint`).
+  inline constexpr std::string_view DEFAULT_ENDPOINT = "https://reach.alkaidlab.com";
+
+  /// The base URL to ask: the configured one without a trailing slash, or the built-in service when it is empty.
+  std::string
+  endpoint_of(std::string_view configured);
+
+  /**
+   * @brief What one answer is worth and how long it is kept, so a person who presses "check" again does not ask the service again. An answer (an address that was reached, or one that was not for a
+   *        reason the service names) and a service that is out of budget or does not answer are kept 10 minutes; a connection that found a closed port is kept one minute, so that a person who has just
+   *        opened the port and checks again is told the truth.
+   */
+  long
+  ttl_seconds(const result_t &result);
+
+  /// The answers of the last minutes, by address and ports (never by install or unique id). Thread safe; the clock is the caller's.
+  class cache_t {
+  public:
+    std::optional<result_t>
+    find(const std::string &key, std::int64_t now_s);
+    void
+    put(const std::string &key, const result_t &result, std::int64_t now_s);
+    void
+    clear();
+
+  private:
+    struct entry_t {
+      result_t result;
+      std::int64_t expires_at = 0;
+    };
+    std::mutex mutex_;
+    std::map<std::string, entry_t> entries_;
+  };
+
+  /// The cache key of a request: the address and the ports asked, in the order given.
+  std::string
+  cache_key(const request_t &request);
 }  // namespace network_external

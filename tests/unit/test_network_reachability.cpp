@@ -1274,3 +1274,61 @@ TEST(NetworkReachabilityPublic, AHostWithOnlyASiteLocalAddressIsNotVerified) {
   const auto result = evaluate_public(inputs, NOW);
   EXPECT_NE(result.verdict, verdict_e::verified);
 }
+
+TEST(NetworkReachabilityOutside, AProxyOnTheRouterIsToldApartFromAnAddressThatIsNotThisComputers) {
+  router_status_t router;
+  router.protocol = "upnp-igd";
+  router.wan_ip = "203.0.113.9";
+  router.wan_ip_class = ip_class_e::public_address;
+  outside_t refused;
+  refused.asked = true;
+  refused.state = "unavailable";
+  refused.reason = "ip_mismatch";
+  refused.caller = "198.51.100.7";  // the exit of the proxy, not the router's address
+  EXPECT_TRUE(router_proxy_suspected(router, refused));
+  refused.reason = "dns_mismatch";
+  EXPECT_TRUE(router_proxy_suspected(router, refused));
+  // the service saw the router's own address: the target is just another address
+  refused.caller = "203.0.113.9";
+  EXPECT_FALSE(router_proxy_suspected(router, refused));
+  refused.caller = "198.51.100.7";
+  // no public router address to compare with, or no address from the service, or another kind of answer
+  auto no_wan = router;
+  no_wan.wan_ip.clear();
+  EXPECT_FALSE(router_proxy_suspected(no_wan, refused));
+  auto shared = router;
+  shared.wan_ip_class = ip_class_e::cgnat;
+  EXPECT_FALSE(router_proxy_suspected(shared, refused));
+  auto silent = refused;
+  silent.caller.clear();
+  EXPECT_FALSE(router_proxy_suspected(router, silent));
+  auto other = refused;
+  other.reason = "no_answer";
+  EXPECT_FALSE(router_proxy_suspected(router, other));
+  other.state = "closed";
+  other.reason = "ip_mismatch";
+  EXPECT_FALSE(router_proxy_suspected(router, other));
+}
+
+TEST(NetworkReachabilityOutside, TheProxyIsANoteAndNeverMakesTheAddressUnreachable) {
+  public_inputs_t inputs;
+  inputs.ports = healthy_ports();
+  inputs.router = public_router(true);
+  inputs.endpoints = { failing_from_inside("203.0.113.9:60000", "unavailable", "router_proxy") };
+  inputs.endpoints[0].inconclusive = true;
+  const auto result = evaluate_public(inputs, NOW);
+  EXPECT_NE(result.verdict, verdict_e::unreachable);
+  EXPECT_TRUE(has_reason(result.reasons, "outside_router_proxy"));
+  EXPECT_FALSE(has_reason(result.reasons, "not_reached_from_outside"));
+}
+
+TEST(NetworkReachabilityOutside, TheJsonCarriesTheAddressTheServiceSaw) {
+  snapshot_t snapshot;
+  snapshot.checked_at = format_utc_iso(NOW);
+  auto endpoint = failing_from_inside("203.0.113.9:60000", "unavailable", "router_proxy");
+  endpoint.outside.caller = "198.51.100.7";
+  snapshot.public_reachability.endpoints = { endpoint };
+  const auto json = to_json(snapshot);
+  EXPECT_EQ(json["public"]["endpoints"].at(0)["outside"]["caller"], "198.51.100.7");
+  EXPECT_EQ(json["public"]["endpoints"].at(0)["outside"]["reason"], "router_proxy");
+}

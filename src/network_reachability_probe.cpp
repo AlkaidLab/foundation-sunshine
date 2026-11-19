@@ -1103,6 +1103,7 @@ namespace reachability {
           auto answer = asks[n].get();
           auto &endpoint = public_inputs.endpoints[which[n]];
           endpoint.outside = answer;
+          if (router_proxy_suspected(router_status, endpoint.outside)) endpoint.outside.reason = "router_proxy";
           // an answer from outside settles what the handshake from inside could not: a failure is a failure, a connection that reached another device is a finding
           if (answer.state == "closed" || answer.state == "timeout" || answer.state == "another_host") endpoint.inconclusive = false;
           if (answer.state == "reachable") endpoint.inconclusive = false;

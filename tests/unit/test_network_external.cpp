@@ -129,3 +129,68 @@ TEST(NetworkExternalProbe, ARequestThatThrowsIsNoAnswer) {
   EXPECT_EQ(result.availability, availability_e::unavailable);
   EXPECT_EQ(result.reason, "no_answer");
 }
+
+TEST(NetworkExternalResponse, TheAddressTheServiceSawIsReadFromAnAnswerAndFromARefusal) {
+  const auto answered = parse_response(200, 0, R"({"v":1,"caller":"203.0.113.9","tcp":[{"role":"http","port":60000,"state":"open","identity":"match"}]})");
+  EXPECT_EQ(answered.availability, availability_e::answered);
+  EXPECT_EQ(answered.caller, "203.0.113.9");
+  const auto refused = parse_response(403, 0, R"({"error":"target_not_caller","reason":"ip_mismatch","caller":"198.51.100.7"})");
+  EXPECT_EQ(refused.availability, availability_e::refused);
+  EXPECT_EQ(refused.caller, "198.51.100.7");
+  // an older service says nothing: no address, no harm
+  EXPECT_TRUE(parse_response(200, 0, ANSWER).caller.empty());
+  // whatever it says is cut to a short text
+  EXPECT_LE(parse_response(403, 0, std::string(R"({"error":"target_not_caller","caller":")") + std::string(500, 'x') + R"("})").caller.size(), 64U);
+}
+
+TEST(NetworkExternalEndpoint, TheConfiguredServiceOrTheBuiltInOne) {
+  EXPECT_EQ(endpoint_of(""), "https://reach.alkaidlab.com");
+  EXPECT_EQ(endpoint_of("   "), "https://reach.alkaidlab.com");
+  EXPECT_EQ(endpoint_of("https://reach.example.net/"), "https://reach.example.net");
+  EXPECT_EQ(endpoint_of("http://127.0.0.1:8787"), "http://127.0.0.1:8787");
+}
+
+TEST(NetworkExternalCache, AnAnswerIsKeptTenMinutesAndAClosedPortOneMinute) {
+  cache_t cache;
+  auto request = ask();
+  const auto key = cache_key(request);
+  EXPECT_EQ(key, "home.example.net|https:59995|http:60000|rtsp:60021");
+  EXPECT_FALSE(cache.find(key, 1000).has_value());
+  const auto good = parse_response(200, 0, ANSWER);
+  cache.put(key, good, 1000);
+  EXPECT_TRUE(cache.find(key, 1599).has_value());
+  EXPECT_FALSE(cache.find(key, 1600).has_value()) << "ten minutes";
+  const auto closed = parse_response(200, 0, R"({"v":1,"tcp":[{"role":"http","port":60000,"state":"closed"},{"role":"https","port":59995,"state":"timeout"}]})");
+  EXPECT_EQ(ttl_seconds(closed), 60);
+  cache.put(key, closed, 2000);
+  EXPECT_TRUE(cache.find(key, 2059).has_value());
+  EXPECT_FALSE(cache.find(key, 2060).has_value()) << "a port that was closed is asked again after a minute";
+  // a service out of budget or silent is not asked again for ten minutes; one that says when to come back is not asked before
+  EXPECT_EQ(ttl_seconds(parse_response(503, 0, "")), 600);
+  EXPECT_EQ(ttl_seconds(parse_response(0, 0, "")), 600);
+  EXPECT_EQ(ttl_seconds(parse_response(429, 120, "")), 120);
+  EXPECT_EQ(ttl_seconds(parse_response(429, 5, "")), 60);
+  EXPECT_EQ(ttl_seconds(parse_response(429, 99999, "")), 600);
+  EXPECT_EQ(ttl_seconds(parse_response(403, 0, R"({"error":"target_not_caller","reason":"ip_mismatch"})")), 60) << "a refusal may be fixed in the next minute";
+}
+
+TEST(NetworkExternalCache, KeepsAFewAddressesAndForgetsTheOldest) {
+  cache_t cache;
+  const auto answer = parse_response(200, 0, ANSWER);
+  for (int i = 0; i < 40; ++i) cache.put("host" + std::to_string(i), answer, 100);
+  int kept = 0;
+  for (int i = 0; i < 40; ++i) kept += cache.find("host" + std::to_string(i), 101).has_value() ? 1 : 0;
+  EXPECT_LE(kept, 16);
+  EXPECT_TRUE(cache.find("host39", 101).has_value()) << "the newest stays";
+  cache.clear();
+  EXPECT_FALSE(cache.find("host39", 101).has_value());
+}
+
+TEST(NetworkExternalResponse, AServiceThatHasUsedUpItsDayIsToldApartFromOneThatIsOff) {
+  const auto budget = parse_response(503, 0, R"({"error":"unavailable","reason":"budget"})");
+  EXPECT_EQ(budget.availability, availability_e::unavailable);
+  EXPECT_EQ(budget.reason, "budget");
+  EXPECT_EQ(parse_response(503, 0, R"({"error":"unavailable","reason":"disabled"})").reason, "disabled");
+  EXPECT_EQ(parse_response(503, 0, "").reason, "disabled");
+  EXPECT_EQ(parse_response(404, 0, R"({"reason":"budget"})").reason, "disabled") << "only a 503 says it";
+}

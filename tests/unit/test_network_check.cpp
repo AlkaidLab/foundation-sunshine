@@ -542,3 +542,23 @@ TEST(NetworkCheckRun, AFinishedRunDoesNotChangeWhenALateProbeReports) {
   EXPECT_EQ(find(before.steps, "listening")->checked, find(after.steps, "listening")->checked);
   EXPECT_EQ(find(before.steps, "listening")->elapsed_ms, find(after.steps, "listening")->elapsed_ms);
 }
+
+TEST(NetworkCheckOutside, AProxyOnTheRouterIsWrittenDownAndNeverCalledUnreachable) {
+  auto snapshot = healthy();
+  auto entry = with_outside(endpoint("203.0.113.9:60000", false, "timeout", true), "unavailable", "router_proxy");
+  entry.outside.caller = "198.51.100.7";
+  snapshot.public_reachability.endpoints = { entry };
+  snapshot = settle(snapshot);
+  const auto discovery = stun();
+  const auto steps = steps_of(snapshot, discovery);
+  const auto *external = find(steps, "external_tcp");
+  ASSERT_NE(external, nullptr);
+  EXPECT_EQ(external->state, step_state_e::warn);
+  EXPECT_EQ(external->reason, "router_proxy");
+  EXPECT_EQ(external->detail["seen_by_service"], "198.51.100.7");
+  EXPECT_EQ(external->detail["router_wan"], "203.0.113.9");
+  const auto summary = summarize({}, snapshot, discovery, steps);
+  EXPECT_NE(summary.tcp.state, protocol_state_e::unreachable);
+  EXPECT_EQ(summary.tcp.because.front(), "router_proxy");
+  EXPECT_EQ(summary.udp.state, protocol_state_e::unverified);
+}
