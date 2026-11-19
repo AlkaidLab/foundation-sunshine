@@ -42,6 +42,8 @@
 #include <string_view>
 #include <vector>
 
+#include "installer_dir.h"
+#include "installer_dir_win.h"
 #include "installer_failure.h"
 #include "installer_guide.h"
 #include "installer_json.h"
@@ -71,6 +73,8 @@ namespace {
     std::wstring components;  // comma list for /COMPONENTS, empty = engine default
     std::wstring tasks;  // "desktopicon", "none" or empty
     std::wstring shell_pid;  // pid of the user-level window; the engine must not kill it
+    bool dir_given = false;  // --dir or /DIR= was on the command line, even with an empty value: an empty folder is refused, not read as "no folder"
+    std::wstring dir;  // the install folder to pass as /DIR= (empty = the engine's own: the installed copy's, or Program Files\\Sunshine); checked again by the worker
     std::wstring worker_copy;  // the copy of this exe the elevated worker runs from
     std::wstring selftest_directory;  // --selftest-worker: run the worker steps up to the engine in this directory, no install
   };
@@ -545,6 +549,8 @@ namespace {
     // inject switches into the engine command line.
     if (!g_run.components.empty()) command += L" /COMPONENTS=\"" + g_run.components + L"\"";
     if (!g_run.shell_pid.empty()) command += L" /SUNSHINE_SHELL_PID=" + g_run.shell_pid;
+    // The folder was checked by prepare_install_dir() just before: it holds no quote, so the quoted form cannot be left early.
+    if (!g_run.dir.empty()) command += installer_dir::engine_switch(g_run.dir);
     if (g_run.tasks == L"desktopicon")
       command += L" /MERGETASKS=\"desktopicon\"";
     else if (g_run.tasks == L"none")
@@ -590,6 +596,37 @@ namespace {
     return upper.find(L" /VERYSILENT") != std::wstring::npos || upper.find(L" /SILENT") != std::wstring::npos;
   }
 
+  // The install folder the person chose (--dir) or the silent switch gave (/DIR=), made ready before the engine starts. The worker never takes the shell's word:
+  // it checks the folder again with the same rules (installer_dir.h), refuses a second place for an installed copy (to move, uninstall and install again), and
+  // creates the folder, and any missing folder above it, with the protection of Program Files (installer_dir_win.h). 0 = ready, otherwise the exit code (110) after
+  // install-result.json said which rule it was ("dir_error": the code of the setup UI, so that the window can show it on the first page).
+  int
+  prepare_install_dir(const std::string &id_utf8) {
+    if (!g_run.dir_given) return 0;
+    if (g_run.dir.empty()) {
+      write_text_atomic(g_run.result, "{\"schema\":1,\"run\":\"" + id_utf8 + "\",\"state\":\"failed\",\"result_code\":110,\"message_key\":\"InstallDirRefused\",\"dir_error\":\"invalid\"}\n");
+      return 110;
+    }
+    g_run.dir = installer_dir::normalise(g_run.dir);
+    const auto refuse = [&](const std::string &reason, const std::string &detail) {
+      write_text_atomic(g_run.result, "{\"schema\":1,\"run\":\"" + id_utf8 + "\",\"state\":\"failed\",\"result_code\":110,\"message_key\":\"InstallDirRefused\",\"dir_error\":\"" + reason + "\"" + detail + "}\n");
+      append_event(g_run.events, "{\"schema\":1,\"run\":\"" + id_utf8 + "\",\"seq\":4,\"phase\":\"engine\",\"state\":\"failed\",\"result_code\":110,\"message_key\":\"InstallDirRefused\"}\n");
+      return 110;
+    };
+    const std::wstring installed = installer_maintenance::install_dir();
+    if (!installed.empty() && GetFileAttributesW(installed.c_str()) != INVALID_FILE_ATTRIBUTES && !installer_dir::same_text(installer_dir::normalise(installed), g_run.dir))
+      return refuse("no-access", ",\"detail\":\"installed_elsewhere\"");
+    if (installer_dir::same_text(g_run.dir, installer_dir_win::default_dir())) {
+      g_run.dir.clear();  // the default is the engine's own choice: Program Files\\Sunshine, or the installed copy (an installed copy elsewhere was refused above)
+      g_run.dir_given = false;
+      return 0;
+    }
+    DWORD win32 = 0;
+    if (const auto problem = installer_dir_win::prepare(g_run.dir, &win32))
+      return refuse(std::string(installer_dir::code(*problem)), ",\"win32\":" + std::to_string(win32));
+    return 0;
+  }
+
   int
   worker_main() {
     const std::wstring id = g_run.id;
@@ -613,6 +650,7 @@ namespace {
       write_text_atomic(g_run.result, "{\"schema\":1,\"state\":\"selftest-ok\",\"result_code\":0}\n");
       return 0;
     }
+    if (const int refused = prepare_install_dir(id_utf8); refused != 0) return refused;
     append_event(g_run.events, "{\"schema\":1,\"run\":\"" + id_utf8 +
                                  "\",\"seq\":2,\"phase\":\"engine\",\"state\":\"running\",\"result_code\":0,\"message_key\":\"EngineStarted\"}\n");
     DWORD code = 1;
@@ -665,16 +703,23 @@ namespace {
 int WINAPI
 wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
   const std::wstring command_line = GetCommandLineW();
+  // A mode is a whole argument of the command line, never a piece of one: /DIR="D:\\Tools--worker\\Sunshine" is a folder, not the worker.
+  const std::vector<std::wstring> arguments = installer_dir::split_arguments(command_line);
+  const auto has_argument = [&arguments](const wchar_t *name) {
+    for (const auto &argument : arguments)
+      if (argument == name) return true;
+    return false;
+  };
   // The floor: Windows 10 (any build, 1507 / 10240). Below it nothing of Foundation Sunshine runs; say so and stop.
   if (windows_build() == 0) {
-    if (!has_silent_switch(command_line) && command_line.find(L"--worker") == std::wstring::npos) {
+    if (!has_silent_switch(command_line) && !has_argument(L"--worker")) {
       const bool zh = PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_CHINESE;
       MessageBoxW(nullptr, zh ? L"Foundation Sunshine 需要 Windows 10 或更高版本。" : L"Foundation Sunshine needs Windows 10 or later.",
         L"Foundation Sunshine", MB_OK | MB_ICONINFORMATION);
     }
     return 1150;  // ERROR_OLD_WIN_VERSION
   }
-  if (command_line.find(L"--worker") != std::wstring::npos) {
+  if (has_argument(L"--worker")) {
     g_run.self = module_path();
     const std::wstring id = command_value(command_line, L"--run-id");
     if (id.empty()) return 1223;
@@ -682,13 +727,15 @@ wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     g_run.components = only_component_chars(command_value(command_line, L"--components"));
     for (const wchar_t ch : command_value(command_line, L"--shell-pid"))
       if (ch >= L'0' && ch <= L'9') g_run.shell_pid.push_back(ch);
+    g_run.dir = installer_dir::option_value(command_line, L"--dir");
+    g_run.dir_given = has_argument(L"--dir");
     const std::wstring tasks = command_value(command_line, L"--tasks");
     g_run.tasks = tasks == L"desktopicon" || tasks == L"none" ? tasks : L"";
     return worker_main();
   }
   // CI smoke test of the worker: --selftest-worker <directory> runs worker_main up to and including the payload
   // extraction into that directory (scripts/ci/check-windows-release.py needs a package built by the same job).
-  if (command_line.find(L"--selftest-worker ") != std::wstring::npos) {
+  if (has_argument(L"--selftest-worker")) {
     g_run.self = module_path();
     g_run.id = make_run_id();
     g_run.selftest_directory = command_value(command_line, L"--selftest-worker");
@@ -698,7 +745,7 @@ wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
   // CI smoke test of the Runtime step: --selftest-webview2 <directory> downloads Microsoft's bootstrapper from the fixed link
   // into that directory and checks its signature (no run, nothing installed), then checks that an unsigned file, this
   // exe, is refused. Exit 0, or 20 (download failed), 21 (the file is not signed by Microsoft), 22 (an unsigned file passed).
-  if (command_line.find(L"--selftest-webview2 ") != std::wstring::npos) {
+  if (has_argument(L"--selftest-webview2")) {
     const std::wstring dir = command_value(command_line, L"--selftest-webview2");
     if (dir.empty() || !make_directory_tree(dir)) return 1223;
     auto s = webview2_steps(dir, nullptr);
@@ -728,36 +775,38 @@ wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
   if (has_silent_switch(command_line)) {
     g_run.self = module_path();
     g_run.id = make_run_id();
+    // /DIR= goes to the engine as the person's own choice, after the same checks as the window's (docs/installer-silent-mode.md)
+    if (const auto dir = installer_dir::dir_switch(command_line)) {
+      g_run.dir = *dir;
+      g_run.dir_given = true;  // /DIR="" is a folder that is refused, not "no folder"
+    }
     return worker_main();
   }
-  const size_t bench = command_line.find(L"--bench");
-  if (bench != std::wstring::npos) {
+  if (has_argument(L"--bench")) {
     g_bench = true;
     g_bench_output = command_value(command_line, L"--bench");
     if (g_bench_output == L"--bench") g_bench_output.clear();
     return shell_main();
   }
-  if (command_line.find(L"--selftest-window ") != std::wstring::npos) {
+  if (has_argument(L"--selftest-window")) {
     g_selftest_out = command_value(command_line, L"--selftest-window");
     while (!g_selftest_out.empty() && g_selftest_out.front() == L'"') g_selftest_out.erase(g_selftest_out.begin());
     while (!g_selftest_out.empty() && g_selftest_out.back() == L'"') g_selftest_out.pop_back();
     return shell_main();  // the native window, always
   }
-  const size_t strip = command_line.find(L"--strip ");
-  if (strip != std::wstring::npos) {
-    std::wstring dir = command_line.substr(strip + 8);
+  if (has_argument(L"--strip")) {
+    std::wstring dir = command_line.substr(command_line.find(L"--strip ") + 8);
     while (!dir.empty() && (dir.front() == L' ' || dir.front() == L'"')) dir.erase(dir.begin());
     while (!dir.empty() && (dir.back() == L' ' || dir.back() == L'"')) dir.pop_back();
     return strip_main(dir);
   }
-  const size_t preview = command_line.find(L"--preview ");
-  if (preview != std::wstring::npos) {
-    std::wstring dir = command_line.substr(preview + 10);
+  if (has_argument(L"--preview")) {
+    std::wstring dir = command_line.substr(command_line.find(L"--preview ") + 10);
     while (!dir.empty() && (dir.front() == L' ' || dir.front() == L'"')) dir.erase(dir.begin());
     while (!dir.empty() && (dir.back() == L' ' || dir.back() == L'"')) dir.pop_back();
     return preview_main(dir);
   }
-  if (command_line.find(L"--native") == std::wstring::npos) {
+  if (!has_argument(L"--native")) {
     const int code = web_main();
     if (code != kWebFallback) return code;
   }

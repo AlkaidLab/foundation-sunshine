@@ -43,6 +43,21 @@ critical errors, pre-command-line failures and Windows elevation can still
 display UI. Always use `/NORESTART` in automation. Inno's separate
 `/SUPPRESSMSGBOXES` option remains available for engine-owned dialogs.
 
+## Install folder (`/DIR=`)
+
+`Sunshine-setup.exe /VERYSILENT /DIR="D:\Sunshine"` installs into that folder. The shell checks it with the rules of the
+window (`docs/installer-webui.md`, "Install location") and gives it the protection of Program Files before the engine
+starts; a refused folder ends the run with exit code 110 and `dir_error` in `install-result.json`, and nothing is installed.
+Without `/DIR=` the engine keeps its behaviour: the folder of the installed copy, or `Program Files\Sunshine`. An installed
+copy cannot be moved with `/DIR=`: a folder other than the registered one is refused (uninstall first). Both spellings of the
+switch (`/DIR="D:\My Games\Sunshine"` and `"/DIR=D:\My Games\Sunshine"`) work, and the path may be Chinese or other non-ASCII text.
+The engine run directly (`Sunshine-engine.exe`) also protects a folder outside Program Files, but does not check the
+rules above. Because the owner of a file can always change its permissions, an existing folder outside Program Files that
+is not the registered install and already holds something is taken over: the owner of everything in it becomes
+Administrators and its permissions are reset to what the folder has. Never point `/DIR=` of the engine at a folder with
+personal files (`/DIR=D:\Projects` would make the projects unwritable for their owner); the shell refuses such a folder
+before the engine starts.
+
 ## Windows CI acceptance
 
 `.github/actions/test-installer-silent/action.yml` runs

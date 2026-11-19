@@ -137,6 +137,7 @@ english.MsgOldNSISFailed=The previous installation could not be fully removed.%n
 english.MsgOldNSISStaleRegistry=The previous installation files appear to be gone, but registry entries remain.%nClean up the leftover registry and continue installing?
 english.MsgOldNSISCleanupFailed=Failed to clean up the previous installation registry entries.%nPlease remove HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine manually and try again.
 english.MsgServiceInstallFailed=Sunshine service could not be installed or verified.%n%nThe files were installed and are kept. Reboot and run "{app}\scripts\install-service.bat" as administrator, or use the repair action in the Sunshine GUI. The installer log in your TEMP folder has the details.
+english.MsgDirProtectFailed=The install folder could not be protected from changes by other users, so nothing was installed.%n%nThe service runs the programs in this folder as SYSTEM. Pick a folder on a local NTFS or ReFS drive and run setup again. The installer log in your TEMP folder has the details.
 english.MsgVDDInstallFailed=The virtual display driver could not be installed or verified.%n%nSunshine was installed but has not been started. Review the installer log in your TEMP folder, then use the repair action in the Sunshine GUI.
 english.MsgUninstallGamepad=Do you want to remove Virtual Gamepad?
 english.MsgUninstallData=Do you want to remove all data in %1?%n(This includes configuration, cover images, and settings)
@@ -184,6 +185,7 @@ chinesesimplified.MsgOldNSISFailed=无法完全移除旧版安装。%n请手动�
 chinesesimplified.MsgOldNSISStaleRegistry=旧版本的文件已经不存在，但注册表中仍残留旧版的卸载信息。%n是否清理残留的注册表项并继续安装？
 chinesesimplified.MsgOldNSISCleanupFailed=清理旧版注册表项失败。%n请手动删除 HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine 后重试。
 chinesesimplified.MsgServiceInstallFailed=无法安装或验证 Sunshine 服务。%n%n程序文件已经装好并会保留。请重启后以管理员身份运行 "{app}\scripts\install-service.bat"，或在 Sunshine 管理界面里使用修复功能。详细信息见 TEMP 目录下的安装日志。
+chinesesimplified.MsgDirProtectFailed=无法保护安装目录不被其他用户修改，所以没有安装任何文件。%n%n后台服务以 SYSTEM 身份运行这个目录里的程序。请选择本机 NTFS 或 ReFS 磁盘上的文件夹，再运行一次安装程序。详细信息见 TEMP 目录下的安装日志。
 chinesesimplified.MsgVDDInstallFailed=无法安装或验证基地虚拟显示器。%n%nSunshine 已安装但尚未启动。请检查 TEMP 目录中的安装日志，然后在 Sunshine 管理界面中使用修复功能。
 chinesesimplified.MsgUninstallGamepad=是否移除虚拟手柄（ViGEmBus）？
 chinesesimplified.MsgUninstallData=是否删除 %1 中的所有数据？%n（包括配置文件、封面图片和设置）
@@ -1082,6 +1084,172 @@ begin
   Result := Result and (InstallDir <> '') and DirExists(InstallDir);
 end;
 
+// The install folder is below Program Files: it inherits that folder's protection (Users read and execute only) and needs none of its own.
+function IsUnderProgramFiles(Dir: String): Boolean;
+var
+  Lower: String;
+begin
+  Lower := Lowercase(AddBackslash(RemoveBackslash(Dir)));
+  Result := (Pos(Lowercase(AddBackslash(ExpandConstant('{commonpf64}'))), Lower) = 1) or
+            (Pos(Lowercase(AddBackslash(ExpandConstant('{commonpf32}'))), Lower) = 1);
+end;
+
+function RunIcacls(Params: String): Boolean;
+var
+  ResultCode: Integer;
+begin
+  ResultCode := -1;
+  Result := Exec(ExpandConstant('{sys}\icacls.exe'), Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
+  Log('icacls ' + Params + ' -> ' + IntToStr(ResultCode));
+end;
+
+// Setup is a 32-bit process, so a pointer is a Cardinal here. SetNamedSecurityInfoW replaces the whole DACL of a folder at once (and propagates it to what is in it).
+function ConvertStringSecurityDescriptorToSecurityDescriptorW(StringSD: String; Revision: Cardinal; var SD: Cardinal; var SDSize: Cardinal): Integer;
+  external 'ConvertStringSecurityDescriptorToSecurityDescriptorW@advapi32.dll stdcall';
+function GetSecurityDescriptorDacl(SD: Cardinal; var Present: Integer; var Dacl: Cardinal; var Defaulted: Integer): Integer;
+  external 'GetSecurityDescriptorDacl@advapi32.dll stdcall';
+function SetNamedSecurityInfoW(ObjectName: String; ObjectType, SecurityInfo: Cardinal; Owner, Group, Dacl, Sacl: Cardinal): Cardinal;
+  external 'SetNamedSecurityInfoW@advapi32.dll stdcall';
+function LocalFree(Mem: Cardinal): Cardinal;
+  external 'LocalFree@kernel32.dll stdcall';
+
+// The DACL of the install folder, in SDDL (the same text as kProtectedSddl in tools/installer_dir_win.h):
+//   D:P  protected (nothing inherited);  SYSTEM, Administrators, NT SERVICE\TrustedInstaller: full control;  Users and ALL APPLICATION PACKAGES: read and execute;
+//   every entry for the folder and everything in it (OICI).
+function ProtectedDaclSddl(): String;
+begin
+  Result := 'D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;OICI;0x1200a9;;;BU)(A;OICI;0x1200a9;;;AC)';
+end;
+
+// Replace the whole DACL: whatever was on the folder before (an entry for the person who made it, which a CREATOR OWNER entry of the parent leaves behind and which
+// "remove inheritance" does not touch; Everyone; Authenticated Users; older grants) is gone, not merely outnumbered.
+// Authority: installer-ms-setnamedsecurityinfow-20261119, installer-ms-convertstringsecuritydescriptor-20261119.
+function SetProtectedDacl(Dir: String): Boolean;
+var
+  Descriptor, Size, Dacl: Cardinal;
+  Present, Defaulted: Integer;
+  Status: Cardinal;
+begin
+  Result := False;
+  Descriptor := 0;
+  Size := 0;
+  Dacl := 0;
+  Present := 0;
+  Defaulted := 0;
+  if ConvertStringSecurityDescriptorToSecurityDescriptorW(ProtectedDaclSddl(), 1, Descriptor, Size) = 0 then
+  begin
+    Log('SDDL for the install folder could not be converted.');
+    Exit;
+  end;
+  if (GetSecurityDescriptorDacl(Descriptor, Present, Dacl, Defaulted) <> 0) and (Present <> 0) then
+  begin
+    // SE_FILE_OBJECT = 1; DACL_SECURITY_INFORMATION = 4 or PROTECTED_DACL_SECURITY_INFORMATION = $80000000
+    Status := SetNamedSecurityInfoW(Dir, 1, $80000004, 0, 0, Dacl, 0);
+    Log('SetNamedSecurityInfo ' + Dir + ' -> ' + IntToStr(Status));
+    Result := Status = 0;
+  end;
+  LocalFree(Descriptor);
+end;
+
+// The permissions of a folder into the installer log: what a support report needs to see when the protection is in doubt.
+procedure LogFolderPermissions(Tag, Dir: String);
+var
+  ResultCode, I: Integer;
+  OutFile: String;
+  Lines: TArrayOfString;
+begin
+  OutFile := ExpandConstant('{tmp}\sunshine-folder-acl.txt');
+  DeleteFile(OutFile);
+  if Exec(ExpandConstant('{cmd}'), '/c icacls "' + Dir + '" > "' + OutFile + '" 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and
+     LoadStringsFromFile(OutFile, Lines) then
+    for I := 0 to GetArrayLength(Lines) - 1 do
+      if Trim(Lines[I]) <> '' then
+        Log(Tag + ': ' + Lines[I]);
+  DeleteFile(OutFile);
+end;
+
+// Whether the folder already holds anything: files of someone else, or what an uninstall that kept the person's settings left (the config folder).
+function DirHasContent(Dir: String): Boolean;
+var
+  Find: TFindRec;
+begin
+  Result := False;
+  if FindFirst(AddBackslash(Dir) + '*', Find) then
+  begin
+    try
+      repeat
+        if (Find.Name <> '.') and (Find.Name <> '..') then
+        begin
+          Result := True;
+          Break;
+        end;
+      until not FindNext(Find);
+    finally
+      FindClose(Find);
+    end;
+  end;
+end;
+
+// The service runs the programs of the install folder as SYSTEM, so no ordinary user may be able to replace one. Program Files is protected by inheritance; any other folder
+// inherits whatever its parent gives, and below the root of a data drive that is "Authenticated Users: Modify". The folder is therefore given the same protection as Program
+// Files: the owner is Administrators and the DACL is replaced by ProtectedDaclSddl (Microsoft's well-known SIDs; the SIDs are used because the group names are localized).
+// The setup shell's worker creates the folder with this DACL in the first place (installer_dir_win.h); this makes the same true when the engine runs on its own, for an
+// existing install in a folder that older setups left open, and again after every update. An existing folder that is not the registered install (files of someone else) gets
+// the owner and the permissions of everything in it reset first, because the owner of a file can always change its permissions (the config folder of the previous install
+// is reset like that and gets its own permissions back from migrate-config.bat).
+// Authority: installer-ms-icacls-20261119 (/setowner, /reset, *SID), installer-ms-takeown-20261119, installer-ms-well-known-sids-20261119.
+function HardenInstallDir(): String;
+var
+  Dir, Registered, Quoted: String;
+  Foreign, HasContent: Boolean;
+  ResultCode: Integer;
+begin
+  Result := '';
+  Dir := RemoveBackslash(ExpandConstant('{app}'));
+  if IsUnderProgramFiles(Dir) then
+    Exit;
+  Quoted := '"' + Dir + '"';
+  if not DirExists(Dir) then
+    if not ForceDirectories(Dir) then
+    begin
+      Log('Install folder could not be created: ' + Dir);
+      Result := CustomMessage('MsgDirProtectFailed');
+      Exit;
+    end;
+  Registered := '';
+  if not RegQueryStringValue(HKLM64, 'SOFTWARE\AlkaidLab\Sunshine', 'InstallDir', Registered) then
+    Registered := '';
+  HasContent := DirHasContent(Dir);
+  Foreign := (CompareText(RemoveBackslash(Registered), Dir) <> 0) and HasContent;
+  // The folder itself is protected before anything inside it is touched, and stays so: the content is handled below it, never by a reset that would hand the folder
+  // back to what its parent grants.
+  if not (RunIcacls(Quoted + ' /setowner *S-1-5-32-544 /C /Q') and SetProtectedDacl(Dir)) then
+  begin
+    Result := CustomMessage('MsgDirProtectFailed');
+    Exit;
+  end;
+  if Foreign then
+  begin
+    // not an install of ours that is being updated: take what is in it over (owner Administrators, for the whole tree)
+    ResultCode := -1;
+    if not Exec(ExpandConstant('{sys}\takeown.exe'), '/F ' + Quoted + ' /R /A /D Y', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) or (ResultCode <> 0) then
+    begin
+      Log('takeown of the install folder failed: ' + IntToStr(ResultCode));
+      Result := CustomMessage('MsgDirProtectFailed');
+      Exit;
+    end;
+  end;
+  // everything inside takes its permissions from the folder again: an entry that somebody gave to a program or a folder of the install (an older setup, a person) is gone.
+  // "Dir\*" is what is in the folder: the folder itself is not reset.
+  if HasContent and not RunIcacls('"' + AddBackslash(Dir) + '*" /reset /T /C /Q') then
+  begin
+    Result := CustomMessage('MsgDirProtectFailed');
+    Exit;
+  end;
+  Log('Install folder protected like Program Files: ' + Dir);
+  LogFolderPermissions('after protecting', Dir);
+end;
+
 function ShouldRepairInstallPermissions(): Boolean;
 var
   ResultCode: Integer;
@@ -1089,6 +1257,9 @@ var
 begin
   Result := False;
   if not ExistingInnoInstall then
+    Exit;
+  // Outside Program Files "reset to inherited" would hand the folder to whatever its parent grants: HardenInstallDir keeps it protected instead.
+  if not IsUnderProgramFiles(ExpandConstant('{app}')) then
     Exit;
 
   // Verification is read-only and substantially cheaper than rewriting every
@@ -1106,6 +1277,16 @@ begin
 
   if not Result then
     DeleteFile(VerifyLog);
+end;
+
+// The UTF-16 code of every character, for the log when two paths that look the same do not match.
+function StringCodes(Value: String): String;
+var
+  I: Integer;
+begin
+  Result := '';
+  for I := 1 to Length(Value) do
+    Result := Result + IntToStr(Ord(Value[I])) + ' ';
 end;
 
 procedure VerifyServiceInstalled();
@@ -1146,13 +1327,16 @@ begin
     if not Found then
       Found := RegQueryStringValue(HKLM64, 'SYSTEM\CurrentControlSet\Services\SunshineService',
                                    'ImagePath', ImagePath);
-    if Found and (Pos(Lower, Lowercase(ImagePath)) > 0) then
+    // exact first: the value was written from this very path, and a path with Chinese or other non-ASCII characters has to match as it is
+    if Found and ((Pos(ExpectedPath, ImagePath) > 0) or (Pos(Lower, Lowercase(ImagePath)) > 0)) then
     begin
       EmitInstallerEvent('service', 'done', 'StatusInstallService', 0);
       Exit;  // happy path
     end;
     Sleep(500);
   end;
+  if Found then
+    Log('Service ImagePath does not contain the expected path. Expected codes: ' + StringCodes(ExpectedPath) + ' ImagePath codes: ' + StringCodes(ImagePath));
 
   // Last-resort verification: query SCM and look for the expected absolute
   // path anywhere in the output. This remains locale-safe because we do not
@@ -1166,7 +1350,7 @@ begin
     for i := 0 to GetArrayLength(Lines) - 1 do
     begin
       Line := Lines[i];
-      if Pos(Lower, Lowercase(Line)) > 0 then
+      if (Pos(ExpectedPath, Line) > 0) or (Pos(Lower, Lowercase(Line)) > 0) then
       begin
         DeleteFile(TmpFile);
         EmitInstallerEvent('service', 'done', 'StatusInstallService', 0);
@@ -1410,6 +1594,10 @@ var
 begin
   Result := '';
   EmitInstallerEvent('prepare', 'running', 'PrepareToInstall', 0);
+  // before anything is copied or started in the install folder
+  Result := HardenInstallDir();
+  if Result <> '' then
+    Exit;
 
   ExtractTemporaryFile('cleanup-legacy-ds5.ps1');
   CleanupScript := ExpandConstant('{tmp}\cleanup-legacy-ds5.ps1');
@@ -1458,6 +1646,8 @@ begin
     // Sunshine service is allowed to start. A bound-but-not-ready device is
     // kept for Windows to finish during the requested reboot.
     InstallAndVerifyVDD();
+    if not IsUnderProgramFiles(ExpandConstant('{app}')) then
+      LogFolderPermissions('after install', RemoveBackslash(ExpandConstant('{app}')));
     // Delete portable scripts in installed version
     DeleteFile(ExpandConstant('{app}\install_portable.bat'));
     DeleteFile(ExpandConstant('{app}\uninstall_portable.bat'));

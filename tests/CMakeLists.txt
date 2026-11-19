@@ -928,6 +928,14 @@ target_compile_options(installer_guide_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:$
 set_target_properties(installer_guide_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME installer_guide_tests COMMAND installer_guide_tests)
 
+# Where the program may be installed: the rules for a folder (drive, file system, place, emptiness, length, room) and for the /DIR= switch, with a fake machine (pure rules, no Windows headers)
+add_executable(installer_dir_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_installer_dir.cpp)
+target_include_directories(installer_dir_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(installer_dir_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+target_compile_options(installer_dir_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(installer_dir_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME installer_dir_tests COMMAND installer_dir_tests)
+
 # WebView2 Runtime step of the install worker: installed / missing and downloaded / download fails, with fakes (pure rules, no Windows headers)
 add_executable(installer_webview2_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_installer_webview2.cpp)
 target_include_directories(installer_webview2_tests PRIVATE "${CMAKE_SOURCE_DIR}")

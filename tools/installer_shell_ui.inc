@@ -2,10 +2,10 @@
 
 using namespace ui;
 
-constexpr int kBtnPrimary = 101, kBtnSecond = 102, kBtnThird = 103, kTileBase = 120, kSelectAll = 130;
+constexpr int kBtnPrimary = 101, kBtnSecond = 102, kBtnThird = 103, kTileBase = 120, kSelectAll = 130, kChangeDir = 131;
 constexpr int kTitleMinimise = 140, kTitleClose = 141;
 constexpr int kTileCount = 8;
-constexpr int kSlots = 3 + kTileCount + 1;  // buttons, rows and the select-all text button; the two caption buttons follow
+constexpr int kSlots = 3 + kTileCount + 2;  // buttons, rows, the select-all text button and the change-folder text button; the two caption buttons follow
 constexpr int kStateSlots = kSlots + 2;
 constexpr double kTransitionSeconds = 0.300;  // Material 3 shared axis, see motion below
 constexpr float kBtnInflate = 4;  // logical px around a button for the focus ring
@@ -13,7 +13,7 @@ constexpr float kBtnInflate = 4;  // logical px around a button for the focus ri
 struct shell_state {
   view v;
   HWND window = nullptr;
-  HWND controls[3 + kTileCount + 1] {};
+  HWND controls[kSlots] {};
   HWND title_buttons[2] {};
   float max_scroll = 0, view_h = 0, row_h = 0, row_y[8] = {};
   ID2D1Factory *d2d = nullptr;
@@ -69,8 +69,8 @@ HWND g_uac_owner = nullptr;  // owner of the UAC prompt: the window the person l
 
 int
 slot_id(const int slot) {
-  return slot < 3 ? kBtnPrimary + slot : slot < 3 + kTileCount ? kTileBase + slot - 3 :
-                                                                 kSelectAll;
+  return slot < 3 ? kBtnPrimary + slot : slot < 3 + kTileCount ? kTileBase + slot - 3 : slot == 3 + kTileCount ? kSelectAll :
+                                                                                       kChangeDir;
 }
 
 // Windows 10+ DPI and DWM entry points are looked up at run time so the exe still starts on
@@ -92,6 +92,7 @@ slot_of_id(const int id) {
   if (id >= kBtnPrimary && id <= kBtnThird) return id - kBtnPrimary;
   if (id >= kTileBase && id < kTileBase + kTileCount) return 3 + id - kTileBase;
   if (id == kSelectAll) return 3 + kTileCount;
+  if (id == kChangeDir) return 4 + kTileCount;
   if (id == kTitleMinimise) return kSlots;
   if (id == kTitleClose) return kSlots + 1;
   return -1;
@@ -300,6 +301,56 @@ install_dir() {
   return buffer;
 }
 
+// ---------------------------------------------------------------- where the program goes (installer_dir.h)
+
+// The verdict of the page for the folder in S.v.dir: the room on its drive, and (for a folder the person picked) every rule of installer_dir.h. The default folder, Program
+// Files\\Sunshine, is the engine's own choice and keeps the behaviour it always had (its folder may hold an older copy); only its room is looked at. An installed copy's folder is
+// shown and not checked: it is not being chosen.
+void
+refresh_install_dir() {
+  if (S.v.dir.empty()) S.v.dir = installer_dir_win::default_dir();
+  const auto free = installer_dir_win::free_bytes_of(S.v.dir);
+  S.v.dir_free = free ? static_cast<long long>(*free) : -1;
+  S.v.dir_error.clear();
+  if (!S.v.dir_editable) return;
+  if (installer_dir::same_text(installer_dir::normalise(S.v.dir), installer_dir_win::default_dir())) {
+    if (free && *free < installer_dir::kNeededBytes) S.v.dir_error = "no-space";
+    return;
+  }
+  S.v.dir_error = std::string(installer_dir::code(installer_dir_win::verdict_for(S.v.dir).problem));
+}
+
+// The first state of the view: an installed copy keeps its place (shown, not editable), a fresh install starts on the default folder.
+void
+init_install_dir() {
+  const std::wstring installed = install_dir();
+  if (S.v.maintenance || S.v.upgrade) {
+    if (!installed.empty()) S.v.dir = installed;
+    S.v.dir_editable = false;
+  }
+  else {
+    S.v.dir = installer_dir_win::default_dir();
+    S.v.dir_editable = true;
+  }
+  refresh_install_dir();
+}
+
+bool g_choosing_dir = false;
+
+// "Change": the system folder picker over the setup window. The picker is modal and the window's message loop keeps running underneath it (the web page's actions
+// arrive as posted messages), so a second request while it is open is dropped.
+void
+choose_install_dir() {
+  if (g_choosing_dir || !S.v.dir_editable || S.v.page != pg::welcome) return;
+  g_choosing_dir = true;
+  const std::wstring picked =
+    installer_dir_win::pick_folder(g_uac_owner ? g_uac_owner : S.window, S.v.dir, S.v.zh ? L"选择安装位置" : L"Choose the install location");
+  g_choosing_dir = false;
+  if (picked.empty()) return;
+  S.v.dir = picked;
+  refresh_install_dir();
+}
+
 std::wstring
 panel_exe() {
   const std::wstring dir = install_dir();
@@ -445,9 +496,9 @@ draw_scene(ID2D1RenderTarget &rt, canvas &c, view &v, const bool live) {
     if (live && slot >= 0) {
       state.hover = S.hover_amt[slot];
       state.press = S.press_amt[slot];
-      state.focus = S.focus_visible && GetFocus() == S.controls[slot < 3 ? slot : 3 + kTileCount];
+      state.focus = S.focus_visible && GetFocus() == S.controls[slot];
     }
-    draw_button(c, button, state, S.pal.card);
+    draw_button(c, button, state, under_color(S.pal, v, button.id));
     c.restore();
   }
   return result;
@@ -793,6 +844,18 @@ component_list() {
 
 void
 begin_install() {
+  if (g_choosing_dir) return;  // the folder picker is open: the folder is not chosen yet, and an install now would use the one from before
+  // A folder the person picked is checked once more here (the drive may have changed since), and again by the elevated worker. A refusal goes back to the first page with its reason.
+  g_run.dir.clear();
+  if (S.v.dir_editable) {
+    refresh_install_dir();
+    if (!S.v.dir_error.empty()) {
+      S.v.uac_cancelled = false;
+      go(pg::welcome);
+      return;
+    }
+    if (!installer_dir::same_text(installer_dir::normalise(S.v.dir), installer_dir_win::default_dir())) g_run.dir = installer_dir::normalise(S.v.dir);
+  }
   g_run.id = make_run_id();
   g_run.directory = program_data() + L"\\" + kRunRoot + L"\\" + g_run.id;
   g_run.events = g_run.directory + L"\\events.jsonl";
@@ -813,6 +876,7 @@ begin_install() {
   std::wstring parameters = L"--worker --run-id " + g_run.id + L" --shell-pid " + std::to_wstring(GetCurrentProcessId());
   if (!g_run.components.empty()) parameters += L" --components " + g_run.components;
   if (!g_run.tasks.empty()) parameters += L" --tasks " + g_run.tasks;
+  if (!g_run.dir.empty()) parameters += L" --dir \"" + g_run.dir + L"\"";
   SHELLEXECUTEINFOW execute {};
   execute.cbSize = sizeof(execute);
   execute.fMask = SEE_MASK_NOCLOSEPROCESS;
@@ -858,6 +922,15 @@ finish_run(const std::string &result_json, DWORD fallback_code) {
   if (S.worker) {
     CloseHandle(S.worker);
     S.worker = nullptr;
+  }
+  if (const std::string refused = json_str(result_json, "dir_error"); !refused.empty() && S.v.dir_editable) {
+    // the worker refused the folder (it was changed on the way, or the room went): back to the first page with the reason, nothing installed
+    S.v.finished = false;
+    S.v.dir_error = refused;
+    refresh_install_dir();
+    if (S.v.dir_error.empty()) S.v.dir_error = refused;
+    go(pg::welcome);
+    return;
   }
   if (state == "success" || state == "needs-reboot") S.v.webview2_missing = !webview2_runtime_present();
   if (state == "success") {
@@ -926,6 +999,11 @@ click(int id) {
   if (id >= kTileBase && id < kTileBase + kTileCount) {
     if (component_min_build(id - kTileBase) > windows_build()) return;  // not offered on this Windows (os_limits)
     S.v.tiles[id - kTileBase] = !S.v.tiles[id - kTileBase];
+    refresh();
+    return;
+  }
+  if (id == kChangeDir) {
+    choose_install_dir();
     refresh();
     return;
   }
@@ -1394,6 +1472,7 @@ shell_main() {
     const std::wstring dir = install_dir();
     S.v.upgrade = !dir.empty() && GetFileAttributesW((dir + L"\\sunshine.exe").c_str()) != INVALID_FILE_ATTRIBUTES;
   }
+  init_install_dir();
   apply_os_limits(S.v);
   refresh_environment();
   WNDCLASSW window_class {};
