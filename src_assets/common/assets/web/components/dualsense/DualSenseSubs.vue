@@ -58,11 +58,14 @@ const TESTS = ['haptics', 'identify', 'trigger_left', 'trigger_right']
 const testNote = ref('')
 const testBusy = ref(false)
 let testTimer = null
+// the answer of the newest request is the one shown: a test that was stopped answers late and must not overwrite the stop
+let testSeq = 0
 const post = (path, body) => fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(body) })
 const runTest = async (action) => {
   const stopping = action === 'stop'
   if (testBusy.value && !stopping) return
   if (!stopping) testBusy.value = true
+  const mine = ++testSeq
   let result = 'failed'
   let pads = 0
   try {
@@ -74,6 +77,7 @@ const runTest = async (action) => {
   } finally {
     if (!stopping) testBusy.value = false
   }
+  if (mine !== testSeq) return
   testNote.value = result === 'sent' && action !== 'haptics' ? t(`ds5.test_panel.sent.${action}`, { pads }) : t(`ds5.test_panel.result.${result}`, { pads })
   clearTimeout(testTimer)
   testTimer = setTimeout(() => { testNote.value = '' }, 6000)

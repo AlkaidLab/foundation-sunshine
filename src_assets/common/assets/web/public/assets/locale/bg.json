@@ -1601,9 +1601,9 @@
       "trigger_right": "Right trigger",
       "stop": "Stop",
       "sent": {
-        "identify": "The light bar flashed three times and shows its earlier colour again ({pads} controller(s)). The host cannot tell whether the client's pad flashed.",
-        "trigger_left": "The left trigger resisted for 1.5 s and was released ({pads} controller(s)). The host cannot tell whether the client's trigger resisted.",
-        "trigger_right": "The right trigger resisted for 1.5 s and was released ({pads} controller(s)). The host cannot tell whether the client's trigger resisted.",
+        "identify": "Asked {pads} controller(s) to flash the light bar three times. The host cannot tell whether the client's pad flashed.",
+        "trigger_left": "Asked {pads} controller(s) for a 1.5 s resistance on the left trigger. The host cannot tell whether the client's trigger resisted.",
+        "trigger_right": "Asked {pads} controller(s) for a 1.5 s resistance on the right trigger. The host cannot tell whether the client's trigger resisted.",
         "stop": "The light, trigger and rumble tests are stopped."
       }
     },
