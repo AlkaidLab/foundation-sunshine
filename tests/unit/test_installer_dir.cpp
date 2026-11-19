@@ -29,13 +29,6 @@ namespace {
     return check(path, f).problem;
   }
 
-  // the warning of a folder that has no problem: usable after the person confirmed it
-  error
-  warning_of(std::wstring_view path, const facts &f = good_disk()) {
-    const verdict v = check(path, f);
-    return v.problem == error::none ? v.warning : v.problem;
-  }
-
 }  // namespace
 
 TEST(InstallerDirShape, aFullDrivePathIsAccepted) {
@@ -181,8 +174,9 @@ TEST(InstallerDirWarning, aFolderAboveItThatUsersCanReplaceIsAWarning) {
   f = good_disk();
   f.parent_unsafe = true;
   f.free_bytes = 1;
-  EXPECT_EQ(of(L"D:\\Games\\Foundation Sunshine", f), error::no_space);
-  EXPECT_EQ(warning_of(L"D:\\Games\\Foundation Sunshine", f), error::no_space);
+  const verdict low = check(L"D:\\Games\\Foundation Sunshine", f);
+  EXPECT_EQ(low.problem, error::no_space);
+  EXPECT_EQ(low.warning, error::none) << "a refused folder shows its reason only, the warning is cleared";
   EXPECT_EQ(of(L"C:\\Windows\\Foundation Sunshine", f), error::system) << "a place that is refused outright stays refused";
   f = good_disk();
   f.reparse_point = true;  // D:\\Apps\\Link is a junction and Sunshine is not there yet
@@ -370,6 +364,8 @@ TEST(InstallerDirJson, aTypedPathComesBackAsTyped) {
   EXPECT_EQ(installer_json::string_value(R"({"action":{"path":"D:\\\u4e32\u6d41"}})", "path"), "D:\\串流") << "\\u escapes are decoded";
   EXPECT_EQ(installer_json::string_value(R"({"action":{"path":"D:\\\ud83d\ude00"}})", "path"), "D:\\\xF0\x9F\x98\x80") << "a surrogate pair is one character";
   EXPECT_EQ(installer_json::string_value(R"({"action":{"path":"D:\\a\tb\"c"}})", "path"), "D:\\a\tb\"c") << "control characters and quotes stay in the text, so that the rules refuse them";
+  EXPECT_EQ(installer_json::string_value(R"({"action":{"path":"D:\\a\ud800b"}})", "path"), "D:\\a?b") << "a surrogate with no partner becomes a '?', which the rules refuse, never a replacement character";
+  EXPECT_EQ(look(L"D:\\a?b").problem, error::invalid);
   EXPECT_EQ(installer_json::string_value(R"({"action":{"type":"set-dir"}})", "path"), "");
   EXPECT_EQ(installer_json::string_value(R"({"action":{"path":""}})", "path"), "");
 }

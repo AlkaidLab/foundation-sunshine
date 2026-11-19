@@ -138,7 +138,7 @@ Warnings (`installDir.warning`), the folder works and is protected itself, but s
 
 A refused folder shows its reason only; a warning shows the risk (the service runs the programs as SYSTEM, so what others can swap from above
 runs with those rights) and a button to the safe place (`use-safe-dir`): the default folder when the warning is on the system drive, otherwise
-`<drive>:\Foundation Sunshine` directly on the drive (`installer_dir::safe_alternative`). Install stays on. Pressing it asks once: the host
+`<drive>:\Foundation Sunshine` directly on the drive (`installer_dir::safe_alternative`); the window checks that candidate with the same rules and offers it only when it has no problem or warning of its own (a drive root where ordinary users can delete folders would make it a risk again), otherwise there is no safe place to offer. Install stays on. Pressing it asks once: the host
 sets `installDir.confirm`, the web page opens a dialog (`InstallerDirConfirm`) and the native window shows the same question as a page, with the
 risk, the folder and the safe place; the safe place is the primary button, "Install anyway" counts down `kConfirmSeconds` (5, the countdown of the
 other risky questions of the product) and Esc cancels. The host keeps the delay too: `confirm-dir-risk` is taken only while the question is open and

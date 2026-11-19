@@ -761,14 +761,14 @@ wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
       appended = chosen.appended;
       redirected = chosen.redirected;
     }
-    const installer_dir::verdict verdict = installer_dir_win::verdict_for(path);
+    const installer_dir::verdict verdict = installer_dir_win::verdict_for_window(path);  // what the window says, the default folder's own rule included
     const auto free = installer_dir_win::free_bytes_of(path);
     const std::wstring safe = verdict.warning != installer_dir::error::none ? installer_dir::safe_alternative(verdict.path, installer_dir_win::default_dir()) : std::wstring();
     const auto yes = [](bool x) { return x ? "true" : "false"; };
-    write_text_atomic(out, "{\"input\":" + json_text(utf8(raw)) + ",\"path\":" + json_text(utf8(path)) + ",\"appended\":" + yes(appended) + ",\"redirected\":" + yes(redirected) +
+    const bool written = write_text_atomic(out, "{\"input\":" + json_text(utf8(raw)) + ",\"path\":" + json_text(utf8(path)) + ",\"appended\":" + yes(appended) + ",\"redirected\":" + yes(redirected) +
                              ",\"error\":" + json_text(std::string(installer_dir::code(verdict.problem))) + ",\"warning\":" + json_text(std::string(installer_dir::code(verdict.warning))) +
                              ",\"safe\":" + json_text(utf8(safe)) + ",\"free_bytes\":" + (free ? std::to_string(*free) : std::string("null")) + "}\n");
-    return 0;
+    return written ? 0 : 1223;  // an answer that could not be written is a failure, not an old file read as the new answer
   }
   // CI smoke test of the Runtime step: --selftest-webview2 <directory> downloads Microsoft's bootstrapper from the fixed link
   // into that directory and checks its signature (no run, nothing installed), then checks that an unsigned file, this

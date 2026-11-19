@@ -332,14 +332,18 @@ refresh_install_dir() {
   S.v.dir_warning.clear();
   S.v.dir_safe.clear();
   if (!S.v.dir_editable) return;
-  if (installer_dir::same_text(installer_dir::normalise(S.v.dir), installer_dir_win::default_dir())) {
-    if (free && *free < installer_dir::kNeededBytes) S.v.dir_error = "no-space";
-    return;
-  }
-  const installer_dir::verdict verdict = installer_dir_win::verdict_for(S.v.dir);
+  const installer_dir::verdict verdict = installer_dir_win::verdict_for_window(S.v.dir);
   S.v.dir_error = std::string(installer_dir::code(verdict.problem));
   S.v.dir_warning = std::string(installer_dir::code(verdict.warning));
-  if (!S.v.dir_warning.empty()) S.v.dir_safe = installer_dir::safe_alternative(verdict.path, installer_dir_win::default_dir());
+  if (!S.v.dir_warning.empty()) {
+    // the safe place is offered only when it has no warning of its own (a drive root where others can delete folders would make it a risk again); otherwise there is none to offer
+    const std::wstring safe = installer_dir::safe_alternative(verdict.path, installer_dir_win::default_dir());
+    if (installer_dir::same_text(safe, installer_dir_win::default_dir())) S.v.dir_safe = safe;
+    else {
+      const installer_dir::verdict there = installer_dir_win::verdict_for(safe);
+      if (there.problem == installer_dir::error::none && there.warning == installer_dir::error::none) S.v.dir_safe = safe;
+    }
+  }
 }
 
 // Another folder: whatever the person confirmed about the one before is void, and so is a question that is open.
@@ -393,7 +397,7 @@ void
 set_install_dir(const std::wstring &text) {
   if (g_choosing_dir || !S.v.dir_editable || S.v.page == pg::installing || S.v.page == pg::uac) return;
   const std::wstring typed = installer_dir::normalise(installer_dir::tidy(text));
-  if (typed == S.v.dir && S.v.dir_picked.empty() && S.v.dir_note.empty()) return;
+  if (typed == S.v.dir) return;  // the same folder: the pick it came from, and the note, stay
   S.v.dir = typed;
   S.v.dir_picked.clear();
   S.v.dir_note.clear();
@@ -591,7 +595,7 @@ page_rank(const pg page) {
 // One page: every pixel of it, buttons included, drawn into `rt` (the window or an offscreen copy of it).
 frame_result
 draw_scene(ID2D1RenderTarget &rt, canvas &c, view &v, const bool live) {
-  v.dir_live_edit = live && S.dir_edit != nullptr && g_selftest_out.empty();  // the edit window shows the path: the page does not draw it as well
+  v.dir_live_edit = live && S.dir_edit != nullptr && IsWindowVisible(S.dir_edit) && g_selftest_out.empty();  // the edit window shows the path: the page does not draw it as well
   frame_result result = draw_page(c, v, S.brand);
   if (live && (v.scroll > result.max_scroll || v.scroll < 0)) {  // the window or the list changed: clamp and draw again
     v.scroll = std::clamp(v.scroll, 0.f, result.max_scroll);
@@ -1062,7 +1066,9 @@ finish_run(const std::string &result_json, DWORD fallback_code) {
     S.dir_allow = false;  // what was confirmed no longer holds: the worker found it different
     S.v.dir_error = refused;
     refresh_install_dir();
-    if (S.v.dir_error.empty() && S.v.dir_warning.empty()) S.v.dir_error = refused;  // a warning the page knows again is asked about again
+    // a warning that the worker only wanted confirmed is asked about again; any other refusal (the folder could not be taken over, ...) keeps the worker's reason on the page
+    const bool only_unconfirmed = json_str(result_json, "detail") == "needs_allowunsafeparent" && S.v.dir_error.empty() && !S.v.dir_warning.empty();
+    if (!only_unconfirmed) S.v.dir_error = refused;
     go(pg::welcome);
     return;
   }
@@ -1347,7 +1353,10 @@ dir_edit_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
       if (wparam == VK_RETURN || wparam == VK_TAB) {
         commit_dir_edit();
         S.focus_visible = true;
-        apply_page_focus();
+        // Tab goes on to the Change button next to the field, Enter to the page's main button
+        HWND next = wparam == VK_TAB && !(GetKeyState(VK_SHIFT) & 0x8000) ? S.controls[slot_of_id(kChangeDir)] : nullptr;
+        if (next && IsWindowVisible(next) && IsWindowEnabled(next)) SetFocus(next);
+        else apply_page_focus();
         return 0;
       }
       if (wparam == VK_ESCAPE) {
@@ -1391,15 +1400,20 @@ sync_dir_edit() {
   if (!S.dir_edit) return;
   const bool want = S.edit_on && !g_web && S.v.page == pg::welcome && S.v.dir_editable && !S.v.dir_confirm && !S.tr_on && IsWindowVisible(S.window) && !IsIconic(S.window) && g_selftest_out.empty();
   if (!want) {
-    if (IsWindowVisible(S.dir_edit)) ShowWindow(S.dir_edit, SW_HIDE);
+    if (IsWindowVisible(S.dir_edit)) {
+      ShowWindow(S.dir_edit, SW_HIDE);
+      S.dirty = true;  // the page draws the path again
+    }
     return;
   }
+  const bool was_shown = IsWindowVisible(S.dir_edit) != FALSE;
   POINT at { static_cast<LONG>(S.edit_x * S.scale), static_cast<LONG>(S.edit_y * S.scale) };
   ClientToScreen(S.window, &at);
   const int w = static_cast<int>(S.edit_w * S.scale), h = static_cast<int>(S.edit_h * S.scale);
   if (!g_edit_font) update_edit_font();
   if (GetFocus() != S.dir_edit && dir_edit_text() != S.v.dir) SetWindowTextW(S.dir_edit, S.v.dir.c_str());
   SetWindowPos(S.dir_edit, nullptr, at.x, at.y, w, h, SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW);
+  if (!was_shown) S.dirty = true;  // the field now shows the path: the page stops drawing it
 }
 
 // The colours of the field: the page's text on the page's card (WM_CTLCOLOREDIT of the owner).
@@ -1555,9 +1569,12 @@ window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
     case WM_CTLCOLOREDIT:
       if (reinterpret_cast<HWND>(lparam) == S.dir_edit) return reinterpret_cast<LRESULT>(edit_colors(reinterpret_cast<HDC>(wparam)));
       return DefWindowProcW(window, message, wparam, lparam);
-    case WM_MOVE:
-      S.dirty = true;  // the field is a window of its own: it follows the page
-      return DefWindowProcW(window, message, wparam, lparam);
+    case WM_MOVE: {
+      const LRESULT moved = DefWindowProcW(window, message, wparam, lparam);
+      S.dirty = true;
+      sync_dir_edit();  // the field is a pop-up window of its own: it does not move with the main window, so it is placed again
+      return moved;
+    }
     case WM_COMMAND:
       if (HIWORD(wparam) == EN_CHANGE && reinterpret_cast<HWND>(lparam) == S.dir_edit) {
         SetTimer(window, kDirTimer, 450, nullptr);  // checked a moment after the last key
@@ -1630,7 +1647,9 @@ window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
     case WM_SIZE:
     case WM_SHOWWINDOW: {
       S.dirty = true;
-      return DefWindowProcW(window, message, wparam, lparam);
+      const LRESULT shown = DefWindowProcW(window, message, wparam, lparam);
+      sync_dir_edit();  // the field shows and hides with the window
+      return shown;
     }
     case WM_CLOSE:
       // Once the elevated worker runs, the window can be hidden but not abandoned mid-install.
@@ -1685,6 +1704,13 @@ WPARAM g_exit_code = 0;
 // One message: the list keys and the Return/Escape shortcuts first, then the normal dispatch.
 void
 handle_message(MSG &message) {
+  // Shift+Tab on the Change button goes back to the field of the path (a pop-up window is not in the tab order of the page)
+  if (message.message == WM_KEYDOWN && message.wParam == VK_TAB && (GetKeyState(VK_SHIFT) & 0x8000) && S.dir_edit && IsWindowVisible(S.dir_edit) &&
+      message.hwnd == S.controls[slot_of_id(kChangeDir)]) {
+    SetFocus(S.dir_edit);
+    SendMessageW(S.dir_edit, EM_SETSEL, 0, -1);
+    return;
+  }
   if (S.dir_edit && message.hwnd == S.dir_edit) {
     // the field of the path: its keys are its own (Enter, Tab and Escape are handled in its procedure), no dialog navigation
     TranslateMessage(&message);

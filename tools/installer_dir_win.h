@@ -299,6 +299,23 @@ namespace installer_dir_win {
   }
 
   /**
+   * What the window says about the folder it shows: the rules of verdict_for, except the default folder. That one is the engine's own choice and keeps the behaviour it always had
+   * (its folder may hold an older copy): only its room is looked at. The window and --selftest-dir both ask this, so they never disagree.
+   */
+  inline installer_dir::verdict
+  verdict_for_window(const std::wstring &raw) {
+    const std::wstring path = installer_dir::normalise(raw);
+    if (installer_dir::same_text(path, default_dir())) {
+      installer_dir::verdict v;
+      v.path = path;
+      const auto free = free_bytes_of(path);
+      if (free && *free < installer_dir::kNeededBytes) v.problem = installer_dir::error::no_space;
+      return v;
+    }
+    return verdict_for(raw);
+  }
+
+  /**
    * The install folder for a folder the person picked in the system picker (installer_dir::from_pick): the product's folder name is added, except to an install of ours, the
    * default folder and a folder that already has that name. The picked folder is looked at once, with its drive asked first (a network drive that does not answer must not hold the
    * window up); a path that is not a drive path is passed on as it is and refused by the rules.
@@ -307,12 +324,15 @@ namespace installer_dir_win {
   resolve_pick(const std::wstring &picked) {
     const installer_dir::shape s = installer_dir::look(picked);
     bool ours = false, occupied = false;
+    std::wstring chosen = picked;
     if (s.drive != 0 && !s.root && fixed_drive(s.drive)) {
-      const folder_state state = inspect_folder(long_form(s.path));
+      // the folder in its long name: an 8.3 alias of a folder already named like the product must be seen as that name, and what is looked at is the same folder
+      chosen = long_form(s.path);
+      const folder_state state = inspect_folder(chosen);
       ours = state.ours;
       occupied = state.exists && state.is_directory && !state.empty && !state.ours;
     }
-    return installer_dir::from_pick(picked, ours, occupied, default_dir());
+    return installer_dir::from_pick(chosen, ours, occupied, default_dir());
   }
 
   /** The system folder picker (FOS_PICKFOLDERS): the folder the person chose, empty when cancelled. `owner` is the window it opens over. */

@@ -392,7 +392,7 @@ namespace installer_dir {
 
   /**
    * The safe place to offer for a folder that only has a warning: the default folder when it is on the system drive (the drive of `default_dir`), else the product folder directly
-   * on the drive of the path ("D:\Foundation Sunshine"). Directly on the root, with nothing above it that others could replace; the folder itself is protected by the setup.
+   * on the drive of the path ("D:\Foundation Sunshine"). Directly on the root there is no folder above it that others could replace, unless the root itself lets ordinary users delete folders; the caller therefore checks the candidate with the same rules and offers it only when it has no warning of its own. The folder itself is protected by the setup.
    */
   inline std::wstring
   safe_alternative(std::wstring_view path, std::wstring_view default_dir) {

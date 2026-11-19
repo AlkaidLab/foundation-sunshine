@@ -67,7 +67,8 @@ namespace installer_json {
             cp = 0x10000 + ((cp - 0xD800) << 10) + (low - 0xDC00);
             k += 6;
           }
-          push(cp);
+          // a surrogate that has no partner is not text: a '?' stands in for it, which no folder path accepts, so the rules refuse it (it is never turned into a replacement character)
+          push(cp >= 0xD800 && cp < 0xE000 ? static_cast<uint32_t>('?') : cp);
           break;
         }
         default: out.push_back(line[k]);  // \\ \" \/ and anything else: the character itself
