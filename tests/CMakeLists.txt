@@ -737,6 +737,11 @@ target_link_libraries(tray_state_unit_tests
 target_compile_options(tray_state_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
 set_target_properties(tray_state_unit_tests PROPERTIES CXX_STANDARD 23)
 if (WIN32)
+    target_sources(tray_state_unit_tests PRIVATE
+            ${CMAKE_SOURCE_DIR}/src/platform/windows/touch_keyboard_session.cpp
+            ${CMAKE_SOURCE_DIR}/tests/tools/touch_keyboard_test_stubs.cpp)
+    target_link_libraries(tray_state_unit_tests PRIVATE Boost::log Boost::format)
+    target_compile_definitions(tray_state_unit_tests PRIVATE ${SUNSHINE_DEFINITIONS})
     set_target_properties(tray_state_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
 add_test(NAME tray_state_unit_tests COMMAND tray_state_unit_tests)

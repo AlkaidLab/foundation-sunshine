@@ -66,6 +66,7 @@ namespace rtsp_stream {
 
     // Shared with the active stream after RTSP allocation; released on failure/expiry.
     std::shared_ptr<void> nvidia_vsync_lease;
+    std::shared_ptr<void> touch_keyboard_lease;
 
     bool host_audio;
     std::string unique_id;
@@ -86,9 +87,8 @@ namespace rtsp_stream {
 
     // Client-declared intent to use the on-screen touch keyboard during the
     // session.  Tri-state: -1 undeclared (fall back to the per-client server
-    // profile), 0 explicitly off, 1 explicitly on.  When effective-on, the
-    // host attaches the virtual USB touchscreen and applies the touch
-    // keyboard AutoInvoke registry key group for the session.
+    // profile), 0 explicitly off and 1 explicitly on. The GUI applies the
+    // preference when it runs in the same Windows session as the capture.
     int touch_keyboard { -1 };
     // The client's product family is a touch device (VoidLink runs on phones and tablets). It only answers the
     // application's question "is this a touch client" (SUNSHINE_CLIENT_TOUCH) when touch_keyboard is undeclared;

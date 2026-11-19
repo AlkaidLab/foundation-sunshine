@@ -2276,6 +2276,7 @@ namespace rtsp_stream {
     session.mat_live_selected = config.audio.codec == audio::CODEC_MAT_LIVE;
     if (session.mat_live_selected) BOOST_LOG(info) << "Native live MAT negotiated: AEAD counter64; no finite replay";
     session.nvidia_vsync_lease.reset();
+    session.touch_keyboard_lease.reset();
 
     if (!session.client_cert_uuid.empty()) {
       family_observation.now = client_family::unix_now();

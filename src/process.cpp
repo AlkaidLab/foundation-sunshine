@@ -246,7 +246,7 @@ namespace proc {
         break;
     }
     _env["SUNSHINE_CLIENT_AUDIO_SURROUND_PARAMS"] = launch_session->surround_params;
-    // Whether the client is a touch device is decided while the stream is prepared (nvhttp_stream_start.cpp) and
+    // Whether the client is a touch device is decided during the launch request (nvhttp.cpp) and
     // sits on the launch session; the application only sees what is copied here. Without this line Sparxie's
     // automatic Endfield input never learned the device and every client got the PC interface.
     if (auto touch = launch_session->env.find("SUNSHINE_CLIENT_TOUCH"); touch != launch_session->env.end()) {
