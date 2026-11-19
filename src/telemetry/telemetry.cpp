@@ -587,6 +587,10 @@ namespace telemetry {
       options.dir = platf::appdata() / "telemetry";
       options.endpoint = endpoint;
       options.aggregate_interval_ms = 6 * 60 * 60 * 1000;  // high-volume usage and experience records leave merged, at most every six hours and at exit
+      // Routine records leave once a day, from the install's own moment of the day, and only for a sample of the installs (default one in ten; the service's answer replaces it); crash reports, error reports and
+      // feedback do not wait for either (report_slot.h, service.h)
+      options.routine_slot = true;
+      options.sample_rate = 0.1;
       for (const char *variable : { "COMPUTERNAME", "HOSTNAME", "USERNAME", "USER", "LOGNAME" })
         if (const char *value = std::getenv(variable)) options.redact_words.emplace_back(value);
       service_deps_t deps;
@@ -818,6 +822,15 @@ namespace telemetry {
         { "sent_events", counts.sent_events },
         { "rejected_batches", counts.rejected_batches },
         { "failed_posts", counts.failed_posts },
+        { "sampled_out", counts.sampled_out },
+      };
+      const auto plan = service->plan();
+      out["plan"] = json {
+        { "sample_rate", plan.sample_rate },
+        { "sampled_in", plan.sampled_in },
+        { "sample_weight", plan.weight },
+        { "slot_minute_utc", plan.slot_offset_ms / 60'000 },
+        { "routine_day_done", plan.routine_day_done },
       };
     }
     return out;
@@ -829,7 +842,8 @@ namespace telemetry {
     // the events and the fields every batch carries with them: what leaves this computer, exactly (no event of the web or the panel is added here that the host would refuse)
     json out { { "events", service ? service->preview() : json::array() }, { "endpoint", endpoint() + "/v1/events" } };
     if (service) {
-      const auto context = service->context();
+      auto context = service->context();
+      context.sample_weight = service->plan().weight;  // what a sampled batch carries
       out["envelope"] = envelope_fields(context, "host", context.version);
     }
     return out;

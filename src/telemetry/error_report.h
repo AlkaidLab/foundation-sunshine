@@ -3,8 +3,8 @@
  * @brief Error reports with a location, a stack, a fingerprint and the user's last actions (breadcrumbs). Pure code (std + nlohmann).
  *
  * A report is built from fixed characters only: a source location is `src/file.cpp:line:function` (never an absolute path), a native frame is `module+0xoffset`, a breadcrumb is
- * `<seconds before>|<kind>|<id>` where the id is a lower-case word. Free text, input contents and paths cannot enter by construction. The reporter sends the first report of a fingerprint at once and
- * counts the rest into one aggregate every ten minutes; at most 20 reports leave in an hour.
+ * `<seconds before>|<kind>|<id>` where the id is a lower-case word. Free text, input contents and paths cannot enter by construction. The reporter sends the first report of a fingerprint of each UTC day at once, in full,
+ * and only counts the rest; the counts leave as one aggregate per fingerprint (every ten minutes by default, once a day when the host sets it so); at most 20 reports leave in an hour.
  */
 #pragma once
 
@@ -92,33 +92,72 @@ namespace telemetry {
     std::string page;  ///< the page or route, for the web
   };
 
+  /** The counts held for one fingerprint, as the event that carries them and the product (and its version, when it is not the host's) that raised the error. */
+  struct error_aggregate_t {
+    std::string product = "host";
+    std::string version;
+    nlohmann::json props;
+  };
+
   class error_reporter_t {
   public:
     static constexpr std::int64_t AGGREGATE_MS = 10 * 60'000;
     static constexpr int MAX_PER_HOUR = 20;
+    /** Kinds of error remembered at once: the most that can be admitted in a day (20 an hour), so a restart on the same day still knows every one that was sent in full. */
+    static constexpr std::size_t MAX_GROUPS = 600;
 
-    /** -> the props of an `error_report` event to send now, or nullopt (counted for the next aggregate). */
+    /** How long the repeats of a fingerprint are held before they leave as one aggregate (default AGGREGATE_MS; the host sets one day, so a repeating error costs one record a day). */
+    void
+    set_aggregate_ms(std::int64_t ms);
+    /**
+     * -> the props of an `error_report` event to send now, or nullopt (counted for the next aggregate). The first report of a fingerprint on each UTC day is sent in full (stack and actions); every later one that
+     * day is only counted.
+     */
     std::optional<nlohmann::json>
     report(const error_input_t &error, const std::vector<std::string> &crumbs, std::int64_t now_ms);
-    /** The counts held back, one event per fingerprint, when ten minutes have passed since it was last sent. */
+    /**
+     * The same for an error_report a page (panel, web) sent, already shaped (it carries its own fingerprint): the first of the day for that product and fingerprint is returned as it is, the others are counted into
+     * the aggregate with the product and the version they came from. -> nullopt when counted.
+     */
+    std::optional<nlohmann::json>
+    admit(std::string_view product, std::string_view version, const nlohmann::json &props, std::int64_t now_ms);
+    /** The counts held back, one event per fingerprint, when the aggregate time has passed since it was last sent. */
     std::vector<nlohmann::json>
     flush(std::int64_t now_ms);
+    /** The same, with the product and version of every aggregate (one per version that raised the error). `all`: whatever the time since the last send and whatever the hourly bound says (the host is stopping: every count goes to the disk now, none is lost to the bound). */
+    std::vector<error_aggregate_t>
+    flush_groups(std::int64_t now_ms, bool all = false);
     /** Forget everything held back and the count of what was sent: error reports were turned off, so nothing counted or kept while they were on may leave when they are turned on again. */
     void
     clear();
+    /** What a restart must remember so one fingerprint is not sent in full twice on one day: {day, keys} of the groups whose full report was sent today. */
+    nlohmann::json
+    state(std::int64_t now_ms) const;
+    /** Takes the state of an earlier run back; a state of another day is ignored. */
+    void
+    restore(const nlohmann::json &state, std::int64_t now_ms);
 
   private:
     struct group_t {
       error_input_t error;
       std::vector<std::string> crumbs;
       std::int64_t last_sent_ms = 0;
-      std::uint64_t held = 0;
+      std::int64_t full_day = -1;  ///< the UTC day of the last report sent in full
+      /// repeats counted since the last aggregate, by the version of the product that raised them (empty: the host's own)
+      std::map<std::string, std::uint64_t> held;
+      /// repeats counted on an earlier UTC day: they leave at the next flush, whatever the aggregate time says, and never mix with the counts of today
+      std::map<std::string, std::uint64_t> carried;
+      std::string product = "host";
+      nlohmann::json page;  ///< the first error_report of a page's fingerprint (null for an error of the host)
     };
+    static void
+    carry_over(group_t &g, std::int64_t day);
     nlohmann::json
     props_of(const group_t &g, const std::string &fingerprint, std::uint64_t count, bool detail) const;
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     std::map<std::string, group_t> groups_;
     std::deque<std::int64_t> sent_;
+    std::int64_t aggregate_ms_ = AGGREGATE_MS;
   };
 
   /** Stack frames of the calling thread as `module+0xoffset` (the module's file name only); empty where the platform has no way. */

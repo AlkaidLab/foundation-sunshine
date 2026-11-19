@@ -8,7 +8,10 @@
  * Rules (contract: docs/privacy_telemetry.md):
  *   - Nothing is kept or sent for a kind whose consent is off; a consent that turns off drops what waits, in memory and on disk.
  *   - emit() never blocks on I/O and never throws; a full buffer drops the oldest events.
- *   - A batch that cannot be sent waits on disk (size and file caps); a failure backs off 30 s doubling to an hour; a 4xx other than 408/425/429 drops the batch.
+ *   - A batch that cannot be sent waits on disk (size and file caps); a failure backs off 30 s doubling to an hour, a Retry-After is believed and both are spread by a random share; a 4xx that describes the batch itself drops it,
+ *     a 4xx a server in between may send (401, 403, 404, 405, 410, 421) keeps it.
+ *   - Delivery classes (events.h delivery_e): a feedback report and an error leave as soon as the sender may send, are the last to be dropped from a full queue and survive a restart; routine records leave with the install's
+ *     daily share (report_slot.h) and only for the installs in the sample, with the sample weight in the batch.
  */
 #pragma once
 
@@ -34,6 +37,7 @@
 #include "hooks.h"
 #include "opt_out.h"
 #include "queue.h"
+#include "report_slot.h"
 #include "self_baseline.h"
 #include "stream_stats.h"
 #include "transport.h"
@@ -67,6 +71,12 @@ namespace telemetry {
     std::int64_t anomaly_log_min_gap_ms = 10 * 60'000;
     std::int64_t anomaly_log_span_ms = 120'000;  ///< the excerpt reaches this far back
     std::size_t anomaly_log_max_bytes = 120 * 1024;
+    /** true: routine batches (everything but errors and feedback) leave once a day, from the install's moment of the day (report_slot.h); false: they leave as soon as they are written. */
+    bool routine_slot = false;
+    /** The share of installs that send sampled records (events.h sampled_family), in (0, 1]; 1 sends every install's. The Worker's answer (cfg.sample_rate) replaces it. */
+    double sample_rate = 1.0;
+    /** How long the repeats of one error are held before they leave as a count; 0: the reporter's default (ten minutes), or one day when `routine_slot` is on. */
+    std::int64_t error_aggregate_ms = 0;
   };
 
   /** What the Worker answers with (`cfg` in the body of /v1/events), kept in <dir>/remote_config.json and read at the next start. */
@@ -82,6 +92,7 @@ namespace telemetry {
     bool health = true;  ///< false: no stream-health events at all
     std::int64_t backoff_s = 0;  ///< wait this long before the next request
     bool paused = false;
+    double sample_rate = 0.0;  ///< the share of installs that send sampled records; 0: not given (the local option holds)
     std::vector<debug_cohort_t> debug;
   };
   remote_config_t
@@ -127,6 +138,16 @@ namespace telemetry {
     std::uint64_t rejected_batches = 0;
     std::uint64_t failed_posts = 0;
     std::uint64_t write_failed = 0;  ///< a batch that could not be written to the disk queue (its events went back to the buffer)
+    std::uint64_t sampled_out = 0;  ///< records of an install that is not in the sample (they are not written or sent)
+  };
+
+  /** Where this install stands in the sample and in the day. */
+  struct report_plan_t {
+    double sample_rate = 1.0;
+    bool sampled_in = true;
+    double weight = 1.0;  ///< carried by the sampled records of an install that is in the sample
+    std::int64_t slot_offset_ms = 0;  ///< the moment of the UTC day this install reports in
+    std::int64_t routine_day_done = -1;  ///< the UTC day whose routine batches were all sent (-1: none yet)
   };
 
   class service_t {
@@ -207,10 +228,16 @@ namespace telemetry {
     pump_logs();
 
     // ---- sender (the sender thread) ----
-    /** Turn the buffer (and the log tallies when their hour is over) into batches on disk. `final` also closes the current log hour. */
-    void flush(bool final = false);
+    /** Turn the buffer (and the log tallies when their hour is over) into batches on disk. `final` also closes the current log hour and gives every held count to the disk. `release_held`: the records held for the aggregate interval leave with this flush (the share of the day begins). */
+    void flush(bool final = false, bool release_held = false);
     /** Send queued batches until one fails (then back off). -> the batches sent. */
     int pump();
+    /** The sample, the weight and the moment of the day of this install (empty id: no install id yet, so it counts as in the sample). */
+    report_plan_t
+    plan();
+    /** The routine batches may leave now: the share of the day has begun and today's batches were not all sent yet (always true while `routine_slot` is off). */
+    bool
+    routine_due();
     /** The server asked for a wait and it has not ended. */
     bool
     backing_off() const { return deps_.now_ms() < backoff_until_ms_.load(std::memory_order_relaxed); }
@@ -233,8 +260,8 @@ namespace telemetry {
     int consecutive_failures() const { return failures_; }
     const std::string &endpoint() const { return options_.endpoint; }
     std::string events_url() const { return options_.endpoint + "/v1/events"; }
-    /** The events that wait in memory, as they would be sent (newest last), at most `max`. */
-    nlohmann::json preview(std::size_t max = 200) const;
+    /** The events that wait in memory, as they would be sent (newest last), at most `max`; an install outside the sample does not see the sampled records that will not leave. */
+    nlohmann::json preview(std::size_t max = 200);
     /** Called when the buffer reaches flush_events (the runner wakes its thread). */
     void set_wake(std::function<void()> wake) { wake_ = std::move(wake); }
 
@@ -355,6 +382,19 @@ namespace telemetry {
     bool anomaly_log_first_ = true;  // the first serious problem of this run always gets its excerpt (until the daily bound)
 
     std::int64_t not_before_ms_ = 0;
+    // the share of the day (sender thread only, except started_ms_)
+    std::int64_t started_ms_ = 0;
+    std::atomic<std::int64_t> routine_day_done_ { -1 };  ///< the UTC day whose routine batches were all sent; kept in <dir>/routine_day (read by plan() on other threads)
+    std::int64_t routine_flushed_day_ = -1;  ///< the day for which the buffer was flushed when the share began
+    std::int64_t routine_not_before_ms_ = 0;  ///< after several failures the routine batches wait for the next day's share
+    int routine_failures_ = 0;
+    std::map<std::string, int> proxy_refusals_;  ///< per queue file: answers of a proxy or an old service (401, 403, 404, 405, 410, 421); after MAX_PROXY_REFUSALS the batch is given up so it cannot hold the head of the queue for ever (sender thread only)
+    static constexpr int MAX_PROXY_REFUSALS = 8;
+    /** The sample rate in force: the Worker's if it said one, else the local option. */
+    double effective_sample_rate() const;
+    void save_error_state();
+    std::mutex error_state_mutex_;  // the text of error_days.json as it was last written
+    std::string error_state_written_;
     // the server asked the clients to wait (cfg.backoff_s, or paused): priority 1 and 2 wait, priority 0 leaves once as counts
     std::atomic<std::int64_t> backoff_until_ms_ { 0 };  // written by the sender thread, read by backing_off() on any thread
     std::map<std::string, std::int64_t> p0_group_sent_at_;  // product and version of the priority 0 batches that left during a wait, and when (sender thread only)

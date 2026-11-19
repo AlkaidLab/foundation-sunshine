@@ -3,7 +3,7 @@
  * @brief Telemetry routes of the Web UI server.
  *
  *   GET  /api/telemetry/identity  {install_id, session_id, endpoint, usage, errors}; 403 while both choices are off
- *   POST /api/telemetry/events    {product: "panel"|"web"|"sparxie-launch", version?, events: [{kind, name, props}]} -> {accepted, shot?}  (`shot`: what became of the screenshot of a feedback report)
+ *   POST /api/telemetry/events    {product: "panel"|"web"|"sparxie-launch", version?, events: [{kind, name, props}]} -> {accepted, queued, shot?}  (`queued`: feedback reports now waiting on disk to be sent; `shot`: what became of the screenshot of a feedback report)
  *   GET  /api/telemetry/status    the two choices, the endpoint and the counters of the sender
  *   GET  /api/telemetry/preview   the events that wait in memory for the next batch, exactly as they would be sent
  *
@@ -64,7 +64,9 @@ namespace confighttp::telemetry_api {
       // A choice that is off is not an error for the page: it simply keeps nothing, and the page has nothing to retry.
       ::telemetry::ingest_report_t report;
       const auto accepted = ::telemetry::ingest(product, version, body["events"], &report);
-      json answer { { "accepted", accepted } };
+      // `queued`: a feedback report is on the disk of this computer before this answer is given and leaves as soon as the service takes it (retried with a growing wait, kept over a restart). The page says it was
+      // saved and will be sent, not that it arrived.
+      json answer { { "accepted", accepted }, { "queued", report.queued } };
       // what became of the screenshot of a feedback report: the page says the picture was sent only when this is "uploaded"
       if (!report.shot.empty()) answer["shot"] = report.shot;
       write_json(response, web::StatusCode::ok, answer);

@@ -880,6 +880,7 @@ add_executable(telemetry_unit_tests
         ${CMAKE_SOURCE_DIR}/src/telemetry/events.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/install_journal.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/queue.cpp
+        ${CMAKE_SOURCE_DIR}/src/telemetry/report_slot.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/error_report.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/wer_event.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/self_baseline.cpp
@@ -890,6 +891,7 @@ add_executable(telemetry_unit_tests
         ${CMAKE_SOURCE_DIR}/src/telemetry/service.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_error_report.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_stream_health.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_report_delivery.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_telemetry.cpp)
 target_include_directories(telemetry_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(telemetry_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
