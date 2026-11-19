@@ -1,9 +1,9 @@
 {
   "gui": {
     "repository": "AlkaidLab/foundation-panel",
-    "tag": "v1.0.4",
-    "commit": "9b69aa7586abc03278ea0dbd4f808ac379922c41",
+    "tag": "v1.0.5",
+    "commit": "462c3853699f6b0078afd15f29b5a7bbc7ad0a8d",
     "asset": "sunshine-gui-windows-x64.zip",
-    "sha256": "99ca1eb4ae2f6d7cc8bcd891b53682610150375ded16bc7aa904e1e0f4ea0f49"
+    "sha256": "973564154c55285667724256bd6fcaa84fd46ab3c22c774fd918efa30d598145"
   }
 }
