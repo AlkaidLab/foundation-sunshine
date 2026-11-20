@@ -53,6 +53,14 @@ try {
     Require (-not (Test-UsbipReady $payload (Read-UsbipManifest $payload))) 'uninstalled fixture was ready'
   }
   if ($env:OS -eq 'Windows_NT') {
+    Check 'native removal declaration compiles and rejects an unknown instance' {
+      $rejected = $false
+      try { $null = Remove-UsbipAbsentNode 'ROOT\USBIP_NONEXISTENT_TEST\0000' } catch {
+        if (-not ('UsbipReplace.DeviceRemoval' -as [type])) { throw }
+        $rejected = $true
+      }
+      Require $rejected 'unknown instance unexpectedly succeeded'
+    }
     Check 'detach task keeps LocalService and shutdown event triggers' {
       $taskName = 'USBIP-package-test-' + [guid]::NewGuid().ToString('N')
       & $module { param($name); $script:DetachTask = $name } $taskName

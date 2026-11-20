@@ -61,7 +61,6 @@ function Remove-UsbipAbsentNode([string]$InstanceId) {
   if (-not ('UsbipReplace.DeviceRemoval' -as [type])) {
     Add-Type -TypeDefinition @'
 using System;
-using System.ComponentModel;
 using System.Runtime.InteropServices;
 namespace UsbipReplace {
   public static class DeviceRemoval {
@@ -80,12 +79,12 @@ namespace UsbipReplace {
     static extern bool SetupDiDestroyDeviceInfoList(IntPtr set);
     public static bool Remove(string id) {
       IntPtr set = SetupDiGetClassDevsW(IntPtr.Zero, null, IntPtr.Zero, 4);
-      if (set == new IntPtr(-1)) throw new Win32Exception(Marshal.GetLastWin32Error());
+      if (set == new IntPtr(-1)) throw new ExternalException("USB/IP device operation failed", Marshal.GetLastWin32Error());
       try {
         DeviceInfo data = new DeviceInfo(); data.Size = (uint)Marshal.SizeOf(typeof(DeviceInfo));
-        if (!SetupDiOpenDeviceInfoW(set, id, IntPtr.Zero, 0, ref data)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        if (!SetupDiOpenDeviceInfoW(set, id, IntPtr.Zero, 0, ref data)) throw new ExternalException("USB/IP device operation failed", Marshal.GetLastWin32Error());
         bool reboot;
-        if (!DiUninstallDevice(IntPtr.Zero, set, ref data, 0, out reboot)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        if (!DiUninstallDevice(IntPtr.Zero, set, ref data, 0, out reboot)) throw new ExternalException("USB/IP device operation failed", Marshal.GetLastWin32Error());
         return reboot;
       } finally { SetupDiDestroyDeviceInfoList(set); }
     }
