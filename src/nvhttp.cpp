@@ -920,6 +920,11 @@ namespace nvhttp {
     if (no_active_sessions && args.find("localAudioPlayMode"s) != std::end(args)) {
       host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     }
+    // Resume requests need not include an appid. Resolve per-app enhancement
+    // settings against the running app rather than treating it as Auto.
+    if (args.find("appid"s) == std::end(args)) {
+      args.emplace("appid", std::to_string(current_appid));
+    }
     const auto launch_session = make_launch_session(host_audio, args);
     if (!launch_session) {
       tree.put("root.resume", 0);
