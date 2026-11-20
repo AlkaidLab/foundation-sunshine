@@ -850,8 +850,6 @@ namespace nvenc {
       mastering_display.b.y = hdr_metadata->displayPrimaries[2].y;
       mastering_display.whitePoint.x = hdr_metadata->whitePoint.x;
       mastering_display.whitePoint.y = hdr_metadata->whitePoint.y;
-      // maxLuma is in nits, NVENC expects candelas per square meter (same as nits)
-      mastering_display.maxLuma = hdr_metadata->maxDisplayLuminance;
       // minLuma is in 1/10000th of a nit in SS_HDR_METADATA, NVENC expects same unit
       mastering_display.minLuma = hdr_metadata->minDisplayLuminance;
 
@@ -860,12 +858,15 @@ namespace nvenc {
 
       // Set HDR metadata for HEVC
       if (video_format == 1) {
+        // HEVC mastering-display SEI expresses both luminances in 0.0001 cd/m².
+        mastering_display.maxLuma = static_cast<uint32_t>(hdr_metadata->maxDisplayLuminance) * 10000u;
         pic_params.codecPicParams.hevcPicParams.pMasteringDisplay = &mastering_display;
         pic_params.codecPicParams.hevcPicParams.pMaxCll = &content_light_level;
       }
 #if NVENCAPI_MAJOR_VERSION >= 12
       // Set HDR metadata for AV1 (AV1 encoding support added in NVENC SDK 12.0)
       else if (video_format == 2) {
+        mastering_display.maxLuma = hdr_metadata->maxDisplayLuminance;
         pic_params.codecPicParams.av1PicParams.pMasteringDisplay = &mastering_display;
         pic_params.codecPicParams.av1PicParams.pMaxCll = &content_light_level;
       }

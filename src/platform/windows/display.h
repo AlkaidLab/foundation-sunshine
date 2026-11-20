@@ -304,7 +304,6 @@ namespace platf::dxgi {
 
     /**
      * @brief Current Windows SDR reference white for this DXGI output.
-     *        The DisplayConfig query is cached for one second.
      */
     std::optional<float>
     sdr_white_nits() const;
@@ -323,10 +322,6 @@ namespace platf::dxgi {
     std::optional<SS_HDR_METADATA> cached_hdr_metadata;
     std::chrono::steady_clock::time_point last_hdr_check_time;
     static constexpr std::chrono::milliseconds hdr_check_interval { 1000 };  // Check every 1 second
-
-    mutable std::optional<float> cached_sdr_white_nits;
-    mutable std::chrono::steady_clock::time_point last_sdr_white_check_time;
-    static constexpr std::chrono::milliseconds sdr_white_check_interval { 1000 };
 
   protected:
     std::uint64_t capture_adapter_luid = 0;
