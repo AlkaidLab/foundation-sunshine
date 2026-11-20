@@ -128,13 +128,14 @@ watch([liveSession, startReady], () => {
   startTimer = setTimeout(() => { session.value = liveSession.value }, SETTLE_CAP_MS)
 }, { immediate: true })
 onBeforeUnmount(() => clearTimeout(startTimer))
-// the host audio of the running client is a tile (live-audio, foundation-ui): its switch sends the command of the stream; a refusal puts the switch back
-async function setHostAudio({ client, enabled, failed }) {
+// the host audio of the running client is a tile (live-audio, foundation-ui): its switch sends the command of the stream, one command per client at a time in the order chosen (while one runs
+// only the newest choice waits, so the last choice wins); a refusal puts the switch back
+const setHostAudio = createQueuedCalls(async ({ client, enabled, failed }) => {
   try {
     const d = await apiPostJson('/api/runtime/audio', { clientname: client, enabled })
     if (!d?.success) throw new Error(d?.status_message || 'host audio')
   } catch { failed?.(); say($tp('config.host_audio_failed', 'Host audio could not be changed.')) }
-}
+}, (a) => a.client)
 const bitrateSample = (s) => (s && Number.isFinite(s.measured_bitrate_kbps) ? s.measured_bitrate_kbps : s?.bitrate)
 const perf = live.perf
 const sys = live.system
@@ -294,7 +295,7 @@ const catalogueInput = computed(() => {
     reach: reach.view.report, reachChecking: reach.view.status === 'loading', reachStatus: reach.view.status, reachCause: reach.view.cause, reachHttp: reach.view.http, reachProgress: reach.view.progress,
     sysinfo: nics.info.value,
     host: { version: versionLabel.value, update: updateLabel.value },
-    session: s ? { ...s, fpsMeasured: perf.value?.fps, latencyMs: perf.value?.avgMs, latencyP95Ms: perf.value?.p95Ms, uptimeMs: perf.value?.uptimeMs, frameRates: perf.value?.frameRates, perfCapture: perf.value?.capture, ...pipelineAverages({ pipeline: perf.value?.pipeline }) } : null,
+    session: s ? { ...s, fpsMeasured: perf.value?.fps, latencyMs: perf.value?.avgMs, latencyP95Ms: perf.value?.p95Ms, uptimeMs: perf.value?.uptimeMs, frameRates: perf.value?.frameRates, perfCapture: perf.value?.capture, ...pipelineAverages({ pipeline: perf.value?.sessionId === s.session_id ? perf.value?.pipeline : null }) } : null,
     mic: live.mic.value,
     history: { samples: history.samples, sessions: history.sessions, days: history.days, last: () => history.last() },
     sys: sy ? { memTotal: sy.memory_total || 0, memAvail: sy.memory_available || 0 } : null,
