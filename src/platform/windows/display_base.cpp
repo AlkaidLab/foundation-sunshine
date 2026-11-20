@@ -37,6 +37,7 @@ typedef enum _D3DKMT_GPU_PREFERENCE_QUERY_STATE: DWORD {
 #include "src/globals.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
+#include "src/streaming/client_framerate.h"
 #include "src/video.h"
 
 namespace platf {
@@ -320,6 +321,12 @@ namespace platf::dxgi {
     };
 
     DXGI_RATIONAL client_frame_rate_adjusted = adjust_client_frame_rate();
+    if (client_frame_rate_adjusted.Numerator == 0 || client_frame_rate_adjusted.Denominator == 0) {
+      // the pacing below divides by the numerator; never run it with a rate that is not a number
+      BOOST_LOG(warning) << "Capture rate " << client_frame_rate_adjusted.Numerator << '/' << client_frame_rate_adjusted.Denominator
+                         << " is not usable, pacing at " << client_frame_rate << " fps";
+      client_frame_rate_adjusted = { static_cast<UINT>(client_frame_rate), 1 };
+    }
     std::optional<std::chrono::steady_clock::time_point> frame_pacing_group_start;
     uint32_t frame_pacing_group_frames = 0;
 
@@ -867,7 +874,8 @@ namespace platf::dxgi {
       }
     }
 
-    client_frame_rate = config.framerate;
+    // The capture pacing divides by this rate: 0 here was an EXCEPTION_INT_DIVIDE_BY_ZERO at the first pacing group.
+    client_frame_rate = streaming::usable_client_framerate(config.framerate);
 
     if (config.frameRateNum > 0 && config.frameRateDen > 0) {
       client_frame_rate_rational = { static_cast<UINT>(config.frameRateNum), static_cast<UINT>(config.frameRateDen) };
@@ -875,7 +883,7 @@ namespace platf::dxgi {
                       << " (" << static_cast<double>(config.frameRateNum) / config.frameRateDen << " fps)";
     }
     else {
-      client_frame_rate_rational = { static_cast<UINT>(config.framerate), 1 };
+      client_frame_rate_rational = { static_cast<UINT>(client_frame_rate), 1 };
     }
 
     dxgi::output6_t output6 {};

@@ -4053,6 +4053,12 @@ namespace platf::dxgi {
       return -1;
     }
 
+    // dxgi::init() returns -1 when a required shader did not compile and the host goes on without a working capture (main.cpp "Platform failed to initialize"):
+    // the encoder probe then reached these blobs as null pointers (11-19 crash reports, EXCEPTION_ACCESS_VIOLATION in init_cursor_pipeline). Fail the display instead.
+    if (!cursor_vs_hlsl) {
+      BOOST_LOG(error) << "Shader cursor_vs_hlsl was not compiled"sv;
+      return -1;
+    }
     status = device->CreateVertexShader(cursor_vs_hlsl->GetBufferPointer(), cursor_vs_hlsl->GetBufferSize(), nullptr, &cursor_vs);
     if (status) {
       BOOST_LOG(error) << "Failed to create scene vertex shader [0x"sv << util::hex(status).to_string_view() << ']';
@@ -4072,6 +4078,10 @@ namespace platf::dxgi {
 
     if (config.dynamicRange && is_hdr()) {
       // This shader will normalize scRGB white levels to a user-defined white level
+      if (!cursor_ps_normalize_white_hlsl) {
+        BOOST_LOG(error) << "Shader cursor_ps_normalize_white_hlsl was not compiled"sv;
+        return -1;
+      }
       status = device->CreatePixelShader(cursor_ps_normalize_white_hlsl->GetBufferPointer(), cursor_ps_normalize_white_hlsl->GetBufferSize(), nullptr, &cursor_ps);
       if (status) {
         BOOST_LOG(error) << "Failed to create cursor blending (normalized white) pixel shader [0x"sv << util::hex(status).to_string_view() << ']';
@@ -4090,6 +4100,10 @@ namespace platf::dxgi {
       cursor_white_normalization_enabled = true;
     }
     else {
+      if (!cursor_ps_hlsl) {
+        BOOST_LOG(error) << "Shader cursor_ps_hlsl was not compiled"sv;
+        return -1;
+      }
       status = device->CreatePixelShader(cursor_ps_hlsl->GetBufferPointer(), cursor_ps_hlsl->GetBufferSize(), nullptr, &cursor_ps);
       if (status) {
         BOOST_LOG(error) << "Failed to create cursor blending pixel shader [0x"sv << util::hex(status).to_string_view() << ']';
@@ -4203,6 +4217,10 @@ namespace platf::dxgi {
       return -1;
     }
 
+    if (!simple_cursor_vs_hlsl || !simple_cursor_ps_hlsl) {
+      BOOST_LOG(error) << "Shader "sv << (simple_cursor_vs_hlsl ? "simple_cursor_ps_hlsl"sv : "simple_cursor_vs_hlsl"sv) << " was not compiled"sv;
+      return -1;
+    }
     auto status = device->CreateVertexShader(simple_cursor_vs_hlsl->GetBufferPointer(), simple_cursor_vs_hlsl->GetBufferSize(), nullptr, &cursor_vs);
     if (status) {
       BOOST_LOG(error) << "Failed to create simple cursor vertex shader [0x"sv << util::hex(status).to_string_view() << ']';
