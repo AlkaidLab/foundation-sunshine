@@ -259,7 +259,15 @@ export default defineConfig(({ mode }) => {
             return
           }
 
-          // 后端不可达（mock 模式）：返回 mock 响应，让页面无需登录也能渲染
+          // 只有 --mode mock 才用样例数据顶替后端；联调真机时的断连要如实报错，
+          // 否则样例（如已配对设备）会通过结构校验，把真实列表顶掉还清掉连接错误
+          if (!mockOnly) {
+            res.writeHead(502, { 'Content-Type': 'application/json' })
+            res.end(JSON.stringify({ error: 'Backend unreachable: ' + err.message }))
+            return
+          }
+
+          // mock 模式：返回 mock 响应，让页面无需登录也能渲染
           if (req.url === '/api/logs') {
             const mockData = mockResponses[req.url] || 'No logs available (mock)'
             res.writeHead(200, { 'Content-Type': 'text/plain' })

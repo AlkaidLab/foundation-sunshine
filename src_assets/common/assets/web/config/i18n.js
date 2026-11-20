@@ -82,6 +82,9 @@ export default async function() {
     if (!locale) {
         locale = detectSystemLocale();
     }
+    // zh 变体归一：消息文件只有 zh.json 与 zh_TW.json 两份，后端白名单也只有 zh/zh_TW——但旧配置可能残留 zh_CN 之类白名单外的值，
+    // 浏览器传入的 zh_Hans 之类还可能大小写不一。统一归到 zh，消息键与活动 locale（vue-i18n 只按 - 拆隐式父语言，下划线变体没有回退链）保持一致
+    if (/^zh/i.test(locale) && locale !== 'zh' && locale !== 'zh_TW') locale = 'zh';
     // the choice of the person (stored by this window): 跟随系统 gives the language of the system, a code is that language; without one the host's language stands
     const hostLocale = locale;
     const pref = readLocalePref();
@@ -96,12 +99,12 @@ export default async function() {
         en
     };
     try {
-        // 磁盘上只有 zh.json（简体基底）与 zh_TW.json（繁体覆盖）两份文件。zh 全系先归到 zh 基底——旧配置可能写过 zh_CN 之类后端白名单之外的值，缺文件时整页会静默回退英文；
-        // zh_TW 额外保留 zh 基底：繁体缺键时回退简体（下方 fallbackLocale: zh_TW -> zh）。
-        if (/^zh/i.test(locale)) {
-            if (locale === 'zh_TW') messages.zh = await (await fetch('/assets/locale/zh.json')).json();
-            const key = locale === 'zh_TW' ? 'zh_TW' : 'zh';
-            messages[key] = await (await fetch(`/assets/locale/${key}.json`)).json();
+        // locale 已在上方归一：中文只会是 zh（基底）或 zh_TW（繁体覆盖，缺键回退到基底）
+        if (locale === 'zh') {
+            messages.zh = await (await fetch('/assets/locale/zh.json')).json();
+        } else if (locale === 'zh_TW') {
+            messages.zh = await (await fetch('/assets/locale/zh.json')).json();
+            messages.zh_TW = await (await fetch('/assets/locale/zh_TW.json')).json();
         } else if (locale !== 'en') {
             messages[locale] = await (await fetch(`/assets/locale/${locale}.json`)).json();
         }
@@ -111,7 +114,7 @@ export default async function() {
     const i18n = createI18n({
         legacy: false, // 使用 Composition API 模式
         locale: locale, // set locale
-        fallbackLocale: { zh_TW: ['zh', 'en'], zh_CN: ['zh', 'en'], zh_SG: ['zh', 'en'], zh_MY: ['zh', 'en'], zh_HANS: ['zh', 'en'], default: ['en'] },
+        fallbackLocale: { zh_TW: ['zh', 'en'], default: ['en'] },
         messages: messages,
         globalInjection: true, // 允许在模板中使用 $t
         warnHtmlMessage: false, // 禁用 HTML 消息警告（因为我们使用 v-html 来渲染受信任的翻译内容）
@@ -126,19 +129,17 @@ export const resolveChoice = (choice) => (choice === LOCALE_SYSTEM || !SUPPORTED
 
 /** Shows a language at once: its messages are fetched when they are not loaded, the page's lang follows. */
 export async function applyLocale(locale) {
+    // zh 变体归一，与初始化同一规则（见 init 内注释）
+    if (/^zh/i.test(locale) && locale !== 'zh' && locale !== 'zh_TW') locale = 'zh';
     activeLocale.value = locale;
     if (!webI18n) return;
     try {
-        // 与初始化同一规则：zh 全系共用 zh 基底（zh_TW 繁体覆盖其上），变体键（zh_CN 等）由 fallbackLocale 回退到 zh
-        if (/^zh/i.test(locale)) {
-            if (!webI18n.global.availableLocales.includes('zh')) {
-                webI18n.global.setLocaleMessage('zh', await (await fetch('/assets/locale/zh.json')).json());
-            }
-            if (locale === 'zh_TW' && !webI18n.global.availableLocales.includes('zh_TW')) {
-                webI18n.global.setLocaleMessage('zh_TW', await (await fetch('/assets/locale/zh_TW.json')).json());
-            }
-        } else if (locale !== 'en' && !webI18n.global.availableLocales.includes(locale)) {
-            webI18n.global.setLocaleMessage(locale, await (await fetch(`/assets/locale/${locale}.json`)).json());
+        // zh 基底按需加载一次；zh_TW 在基底之上覆盖繁体
+        if (/^zh/i.test(locale) && !webI18n.global.availableLocales.includes('zh')) {
+            webI18n.global.setLocaleMessage('zh', await (await fetch('/assets/locale/zh.json')).json());
+        }
+        if (locale === 'zh_TW' && !webI18n.global.availableLocales.includes('zh_TW')) {
+            webI18n.global.setLocaleMessage('zh_TW', await (await fetch('/assets/locale/zh_TW.json')).json());
         }
     } catch (e) {
         console.error("Failed to download translations", e);
