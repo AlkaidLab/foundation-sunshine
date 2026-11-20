@@ -10,6 +10,12 @@ param(
   [int]$SimulateHubProblem = 0
 )
 Set-StrictMode -Version Latest
+# The Panel and the registered uninstaller can launch this script directly,
+# bypassing install-usbip.bat. Windows PowerShell needs .EXE in PATHEXT for
+# native commands in a pipeline, including the guard and pnputil.
+if (($env:PATHEXT -split ';') -notcontains '.EXE') {
+  $env:PATHEXT = '.EXE;' + $env:PATHEXT
+}
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'usbip-package-functions.psm1') -Force -DisableNameChecking
 if (-not $Payload) { $Payload = Join-Path $PSScriptRoot 'usbip' }

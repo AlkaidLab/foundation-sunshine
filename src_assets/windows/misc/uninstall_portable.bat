@@ -114,6 +114,11 @@ if /i "!vsink_choice!"=="Y" (
     call :LogInfo "%INFO_VSINK_UNINSTALL%..."
     REM Call virtual microphone uninstall script
     call "%SCRIPT_DIR%\uninstall-vsink.bat"
+    if !errorLevel! equ 0 (
+        call :LogSuccess "%SUCCESS_VSINK_UNINSTALL%"
+    ) else (
+        call :LogWarning "%WARNING_VSINK_UNINSTALL%"
+    )
 ) else (
     call :LogInfo "%INFO_VSINK_SKIP%"
 )
@@ -126,6 +131,7 @@ set /p firewall_choice="%FIREWALL_UNINSTALL_PROMPT% "
 if /i "!firewall_choice!"=="Y" (
     call :LogInfo "%INFO_FIREWALL_UNINSTALL%..."
     call "%SCRIPT_DIR%\delete-firewall-rule.bat"
+    if errorlevel 1 call :LogWarning "%WARNING_FIREWALL_UNINSTALL%"
 ) else (
     call :LogInfo "%INFO_FIREWALL_SKIP%"
 )

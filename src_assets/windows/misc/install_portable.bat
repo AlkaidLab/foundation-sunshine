@@ -132,8 +132,8 @@ echo.
 
 REM Step 2 - Install virtual microphone (VB-Cable)
 call :LogStep "2/4" "%STEP_VSINK%..."
-REM Check if virtual microphone is already installed
-reg query "HKLM\SOFTWARE\VB-Audio" >nul 2>&1
+REM A leftover vendor registry key alone does not mean the driver is installed.
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -Command "try { $devices = @(Get-CimInstance Win32_PnPSignedDriver -ErrorAction Stop | Where-Object { $_.DeviceName -eq 'VB-Audio Virtual Cable' -and $_.DriverProviderName -eq 'VB-Audio Software' }); if ($devices.Count) { exit 0 } else { exit 1 } } catch { exit 1 }" >nul 2>&1
 if !errorLevel! neq 0 (
     set "vsink_choice=Y"
     set /p vsink_choice="%VSINK_PROMPT% "
@@ -162,6 +162,7 @@ if /i "!firewall_choice!"=="Y" (
     call :LogInfo "%INFO_FIREWALL_INSTALL%"
     REM Call firewall configuration script
     call "%SCRIPT_DIR%\add-firewall-rule.bat"
+    if errorlevel 1 call :LogWarning "%WARNING_FIREWALL%"
 ) else (
     call :LogInfo "%INFO_FIREWALL_SKIP%"
 )
