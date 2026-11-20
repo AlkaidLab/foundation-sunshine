@@ -490,6 +490,11 @@ namespace stream {
       return !(bool) _host;
     }
 
+    void
+    close() {
+      _host.reset();
+    }
+
     // Get session associated with address.
     // If none are found, try to find a session not yet claimed. (It will be marked by a port of value 0
     // If none of those are found, return nullptr
@@ -3493,8 +3498,13 @@ namespace stream {
     auto broadcast_shutdown_event = mail::man->event<bool>(mail::broadcast_shutdown);
     auto &io = ctx.io_context;
 
-    std::array<udp::endpoint, 2> peers;
-    std::array<std::array<char, 2048>, 2> buffers;
+    // BOOST-ASIO-ASYNC-RECV-192 (Parameters) and BOOST-ASIO-IO-CONTEXT-DTOR-192 (Remarks):
+    // each queued handler owns the storage that Asio may still use after io.run() stops.
+    struct receive_buffer_t {
+      udp::endpoint peer;
+      std::array<char, 2048> bytes;
+    };
+    auto receive_buffers = std::make_shared<std::array<receive_buffer_t, 2>>();
     std::array<std::function<void(const boost::system::error_code, size_t)>, 2> recv_funcs;
 
     // 统一处理PING包逻辑
@@ -3590,8 +3600,8 @@ namespace stream {
 
     // 初始化接收函数
     auto init_recv_func = [&](auto &sock, size_t buf_idx, auto &session_map, auto &refresh_map, std::string_view type_str) {
-      recv_funcs[buf_idx] = [&, buf_idx, type_str](const boost::system::error_code &ec, size_t bytes) {
-        auto &peer = peers[buf_idx];
+      recv_funcs[buf_idx] = [&, receive_buffers, buf_idx, type_str](const boost::system::error_code &ec, size_t bytes) {
+        auto &[peer, buffer] = (*receive_buffers)[buf_idx];
 
         // 广播关闭时，已关闭的套接字不能再次挂接接收；其他终止错误说明共享接收链已经失效。
         if (is_terminal_udp_receive_error(ec)) {
@@ -3621,7 +3631,7 @@ namespace stream {
           }
 
           try {
-            sock.async_receive_from(asio::buffer(buffers[buf_idx]), peer, 0, recv_funcs[buf_idx]);
+            sock.async_receive_from(asio::buffer(buffer), peer, 0, recv_funcs[buf_idx]);
           }
           catch (const std::exception &e) {
             if (!broadcast_shutdown_event->peek()) {
@@ -3652,7 +3662,7 @@ namespace stream {
           // 即使是空包，也继续接收
         }
         else {
-          handle_ping(session_map, refresh_map, sock, peer, buffers[buf_idx], bytes, type_str);
+          handle_ping(session_map, refresh_map, sock, peer, buffer, bytes, type_str);
         }
       };
     };
@@ -3661,8 +3671,10 @@ namespace stream {
       init_recv_func(video_sock, 0, peer_to_video_session, video_refresh, "VIDEO");
       init_recv_func(audio_sock, 1, peer_to_audio_session, audio_refresh, "AUDIO");
 
-      video_sock.async_receive_from(asio::buffer(buffers[0]), peers[0], 0, recv_funcs[0]);
-      audio_sock.async_receive_from(asio::buffer(buffers[1]), peers[1], 0, recv_funcs[1]);
+      auto &[video_peer, video_buffer] = (*receive_buffers)[0];
+      auto &[audio_peer, audio_buffer] = (*receive_buffers)[1];
+      video_sock.async_receive_from(asio::buffer(video_buffer), video_peer, 0, recv_funcs[0]);
+      audio_sock.async_receive_from(asio::buffer(audio_buffer), audio_peer, 0, recv_funcs[1]);
 
       io.run();
       if (!broadcast_shutdown_event->peek()) {
@@ -4385,6 +4397,9 @@ namespace stream {
     if (!ec) ctx.audio_sock.native_non_blocking(true, ec);
     if (ec) {
       BOOST_LOG(error) << "Could not configure nonblocking media sockets: " << ec.message();
+      ctx.video_sock.close(ec);
+      ctx.audio_sock.close(ec);
+      ctx.control_server.close();
       return -1;
     }
 #endif

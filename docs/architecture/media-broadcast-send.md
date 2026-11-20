@@ -35,6 +35,9 @@ retrying or queueing it. Audio drops the affected datagram. The stream
 diagnostic counter `send_would_block_packets` records these datagrams
 separately from video queue clears. Pacing still charges the full batch.
 The Windows sockets close after their receive and media send workers exit.
+Asio completion handlers retain the receive buffers and sender endpoints
+through cancellation. If setting nonblocking mode fails, startup closes
+the sockets it opened.
 
 The steady-state batch still uses one send call and the existing
 scatter/gather buffers. Taking a snapshot adds one reference acquisition
@@ -63,4 +66,5 @@ MS-SO-SOCKET-20261120 (SO_SNDTIMEO), MS-OVERLAPPED-IO-20261120 (Overview),
 MS-SENDTO-20261120 (Remarks), MS-UDP-OPTIONS-20261120 (UDP_SEND_MSG_SIZE),
 MS-UDP-USO-20261120 (Overview, Transmitting UDP packets with USO),
 MS-CLOSESOCKET-20261120 (Remarks), and BOOST-ASIO-NATIVE-NONBLOCKING-192
-(Parameters, Example).
+(Parameters, Example). Handler lifetime follows BOOST-ASIO-ASYNC-RECV-192
+(Parameters) and BOOST-ASIO-IO-CONTEXT-DTOR-192 (Remarks).
