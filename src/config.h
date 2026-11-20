@@ -52,6 +52,8 @@ namespace config {
     bool vdd_headless_create_enabled;
     /** When true, reuse existing VDD on client switch instead of destroying and recreating. Default true. */
     bool vdd_reuse;
+    /** Native resolution in the built-in VDD EDID; independent of the stream mode. */
+    std::string vdd_edid_native_resolution;
     /** Automatically validate and expose Vulkan HDR colorspaces for HDR VDD sessions. */
     bool vdd_vulkan_hdr_bridge;
 
@@ -356,6 +358,7 @@ namespace config {
   std::optional<std::map<std::string, std::string>>
   get_effective_config_snapshot();
 
+  /** Validate EDID selection against effective modes and save Sunshine settings under the existing lock. */
   bool
   update_full_config(const std::map<std::string, std::string> &fullConfig, std::string *previous_locale = nullptr);
 

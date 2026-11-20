@@ -4,6 +4,7 @@ import { hostData, keepKey } from './hostData.js'
 import { apiFetch, apiJson } from '../utils/apiFetch.js'
 import { deepClone, safeJsonParse } from '../utils/helpers.js'
 import { validateListenerSettings } from '../utils/listenerSettings.js'
+import { validEdidResolutionSelection } from '../utils/vddEdidResolution.js'
 import { setRestartPlatform } from './restartKeys.js'
 
 // 平台相关的标签页排除规则
@@ -80,6 +81,7 @@ const DEFAULT_TABS = [
       install_steam_audio_drivers: 'enabled',
       output_name: '',
       hdr_luminance_analysis: 'auto',
+      vdd_edid_native_resolution: 'default',
       vdd_vulkan_hdr_bridge: 'enabled',
       nvenc_vdd_force_vsync: 'disabled',
       display_device_prep: 'no_operation',
@@ -650,6 +652,11 @@ export function useConfig() {
     saveError.value = ''
     validationError.value = validateListenerSettings(config.value)
     if (validationError.value) return false
+    if (platform.value === 'windows' && config.value.vdd_edid_native_resolution !== undefined &&
+        !validEdidResolutionSelection(config.value.vdd_edid_native_resolution, resolutions.value, fps.value)) {
+      validationError.value = 'config.vdd_edid_native_resolution_invalid'
+      return false
+    }
     if (parseHevcGopSize(config.value.amd_hevc_gop_size ?? -1) === undefined) {
       validationError.value = 'config.amd_hevc_gop_size_desc'
       return false
@@ -658,6 +665,11 @@ export function useConfig() {
 
     const configData = deepClone(config.value)
     removeDefaultValues(configData)
+    // Send Default explicitly: omission preserves the saved host preference
+    // for older API clients and must not retain a previous 4K choice on reset.
+    if (platform.value === 'windows' && config.value.vdd_edid_native_resolution !== undefined) {
+      configData.vdd_edid_native_resolution = config.value.vdd_edid_native_resolution
+    }
 
     try {
       const configResult = await apiJson('/api/config', {

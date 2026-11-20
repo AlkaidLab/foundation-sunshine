@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import './helpers/foundationUi.mjs'
 const { SEARCH_INDEX, LABELS } = await import('../config/settingsData/index.js')
-const { DISPLAY_TREE, homesOf } = await import('foundation-ui/settings/displayTree.js')
+const { DISPLAY_TREE, homesOf } = await import('../config/settingsData/hostSettings.js')
 const { parseSettingsHash } = await import('foundation-ui/settings/index.js')
 
 test('DT4 routes: an old address of 显示与视频 lands on the new place, by key and by place', () => {
