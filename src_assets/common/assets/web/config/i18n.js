@@ -134,12 +134,16 @@ export async function applyLocale(locale) {
     activeLocale.value = locale;
     if (!webI18n) return;
     try {
-        // zh 基底按需加载一次；zh_TW 在基底之上覆盖繁体
-        if (/^zh/i.test(locale) && !webI18n.global.availableLocales.includes('zh')) {
-            webI18n.global.setLocaleMessage('zh', await (await fetch('/assets/locale/zh.json')).json());
-        }
-        if (locale === 'zh_TW' && !webI18n.global.availableLocales.includes('zh_TW')) {
-            webI18n.global.setLocaleMessage('zh_TW', await (await fetch('/assets/locale/zh_TW.json')).json());
+        // zh 基底按需加载一次（变体已在入口归一）；zh_TW 在基底之上覆盖繁体；其余语言按需加载自己的文件（vue-i18n 惯例：先注册消息再切换语言）
+        if (/^zh/i.test(locale)) {
+            if (!webI18n.global.availableLocales.includes('zh')) {
+                webI18n.global.setLocaleMessage('zh', await (await fetch('/assets/locale/zh.json')).json());
+            }
+            if (locale === 'zh_TW' && !webI18n.global.availableLocales.includes('zh_TW')) {
+                webI18n.global.setLocaleMessage('zh_TW', await (await fetch('/assets/locale/zh_TW.json')).json());
+            }
+        } else if (locale !== 'en' && !webI18n.global.availableLocales.includes(locale)) {
+            webI18n.global.setLocaleMessage(locale, await (await fetch(`/assets/locale/${locale}.json`)).json());
         }
     } catch (e) {
         console.error("Failed to download translations", e);
