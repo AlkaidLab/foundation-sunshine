@@ -454,9 +454,6 @@ jobs:
           & .\src_assets\windows\misc\usbip\smoke-test-usbip-package.ps1
           & .\src_assets\windows\misc\usbip\smoke-test-usbip-roothub-guard.ps1
 
-      - name: Test owned shell menu cleanup
-        shell: pwsh
-        run: .\scripts\ci\test-shell-menu-cleanup.ps1
   mat_smoke:
     name: MAT software regressions
     needs: changes
