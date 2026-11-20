@@ -1,7 +1,8 @@
 @echo off
-set "PATH=%SystemRoot%\System32;%SystemRoot%;%SystemRoot%\System32\Wbem;%SystemRoot%\System32\WindowsPowerShell\v1.0"
-chcp 65001 >nul
 setlocal enabledelayedexpansion
+set "PATH=%SystemRoot%\System32;%SystemRoot%;%SystemRoot%\System32\Wbem;%SystemRoot%\System32\WindowsPowerShell\v1.0"
+set "PATHEXT=.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC"
+chcp 65001 >nul
 
 rem ============================================================================
 rem  Zako Virtual Mouse Driver - Uninstallation Script
