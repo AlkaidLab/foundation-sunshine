@@ -601,7 +601,7 @@ add_executable(http_safety_unit_tests
         ${CMAKE_SOURCE_DIR}/src/ai/proxy.cpp)
 target_include_directories(http_safety_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(http_safety_unit_tests PRIVATE ${SUNSHINE_EXTERNAL_LIBRARIES} gtest_main
-        sunshine_project_options sunshine_coverage sunshine_crypto sunshine_ai_provider sunshine_ai_stream sunshine_log_templates)
+        sunshine_project_options sunshine_coverage sunshine_crypto sunshine_ai_provider sunshine_ai_stream)
 target_compile_definitions(http_safety_unit_tests PRIVATE ${SUNSHINE_DEFINITIONS})
 set_target_properties(http_safety_unit_tests PROPERTIES CXX_STANDARD 23)
 if (WIN32)
@@ -1673,7 +1673,7 @@ if (WIN32)
     target_link_libraries(${PROJECT_NAME} PRIVATE alkaidlab_ds5_core alkaidlab_usbip_core)
 endif ()
 # The network overview in the host sources uses the STUN codec on every platform.
-target_link_libraries(${PROJECT_NAME} PRIVATE alkaidlab_stun_codec)
+target_link_libraries(${PROJECT_NAME} PRIVATE alkaidlab_stun_codec sunshine_log_templates)
 # The adapter definitions are set per source file in cmake/targets/common.cmake.
 if (TARGET sunshine_rtx_video_adapter)
     add_dependencies(${PROJECT_NAME} sunshine_rtx_video_adapter)
