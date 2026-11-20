@@ -57,6 +57,7 @@ function Remove-UsbipLegacy([string]$Root, [string]$HostRoot, [switch]$Confirmed
 # includes phantom nodes. usbip-replace-ms-diuninstall-20261121: remove the
 # exact device element and preserve the NeedReboot result.
 # usbip-replace-ms-openinfo-20261121: resolve the exact instance in the set.
+# usbip-replace-ms-addtype-20261121: compile native interop in Windows PowerShell.
 function Remove-UsbipAbsentNode([string]$InstanceId) {
   if (-not ('UsbipReplace.DeviceRemoval' -as [type])) {
     Add-Type -TypeDefinition @'
