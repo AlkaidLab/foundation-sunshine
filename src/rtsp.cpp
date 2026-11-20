@@ -52,6 +52,7 @@ extern "C" {
 #include "src/log_text.h"
 #include "stream.h"
 #include "streaming/expected_failures.h"
+#include "streaming/client_framerate.h"
 #include "streaming/fec.h"
 #include "sync.h"
 #include "text_context/bridge.h"
@@ -1898,6 +1899,11 @@ namespace rtsp_stream {
       monitor.width = getArg("x-nv-video[0].clientViewportWd"sv);
       BOOST_LOG(info) << "Client requested stream resolution (clientViewport): " << monitor.width << "x" << monitor.height;
       monitor.framerate = getArg("x-nv-video[0].maxFPS"sv);
+      if (const auto usable = streaming::usable_client_framerate(monitor.framerate); usable != monitor.framerate) {
+        // the capture pacing divides by this rate: a client that announces 0 would crash the host at its first frame
+        BOOST_LOG(warning) << "Client announced an unusable frame rate ("sv << monitor.framerate << "), streaming at "sv << usable << " fps"sv;
+        monitor.framerate = usable;
+      }
       monitor.bitrate = getArg("x-nv-vqos[0].bw.maximumBitrateKbps"sv);
       monitor.slicesPerFrame = getArg("x-nv-video[0].videoEncoderSlicesPerFrame"sv);
       monitor.numRefFrames = getArg("x-nv-video[0].maxNumReferenceFrames"sv);
