@@ -120,6 +120,7 @@ namespace nvenc {
     NV_ENC_REGISTERED_PTR registered_input_buffer = nullptr;  ///< Platform-specific input surface registered with `NvEncRegisterResource()`.
                                                               ///< Should be set in `create_and_register_input_buffer()`.
     void *async_event_handle = nullptr;  ///< (optional) Platform-specific handle of event object event.
+    bool async_event_registered = false;  ///< `async_event_handle` is registered with the encoder session (only then it can be unregistered).
                                          ///< Can be set in constructor or `init_library()`, must override `wait_for_async_event()`.
 
   private:
