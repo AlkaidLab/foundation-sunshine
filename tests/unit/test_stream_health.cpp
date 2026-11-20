@@ -237,6 +237,9 @@ TEST(StreamHealthChunk, IdleWindowsKeepSendBackpressureDrops) {
   const auto idle = h.tick(now, {});
   ASSERT_TRUE(idle);
   EXPECT_TRUE(idle->idle);
+  EXPECT_FALSE(h.chunk_due(now));
+  now = CHUNK_MAX_MS;
+  EXPECT_TRUE(h.chunk_due(now));
 
   const auto chunk = h.take_chunk(now);
   EXPECT_EQ(chunk["windows"], 0);

@@ -769,7 +769,7 @@ namespace telemetry {
     }
     const bool detail = stats.detail() && !backing_off() && remote_config().tier1_rate > 0;
     auto props = stats.health().take_chunk(now, detail);
-    if (props.value("windows", 0) == 0) return;  // only idle windows: nothing to say about a stream that sent no frames
+    if (props.value("windows", 0) == 0 && props.value("send_would_block_packets", 0) == 0) return;
     emit(kind_e::experience, "stream_health", props);
   }
 

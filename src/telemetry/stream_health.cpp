@@ -358,7 +358,8 @@ namespace telemetry::health {
   bool
   stream_health_t::chunk_due(std::int64_t now_ms) const {
     std::lock_guard window { window_mutex_ };
-    return chunk_windows_ > 0 && now_ms - chunk_start_ms_ >= CHUNK_MAX_MS;
+    const bool has_data = chunk_windows_ > 0 || chunk_counters_[idx(counter_e::send_would_block_packets)] > 0;
+    return has_data && now_ms - chunk_start_ms_ >= CHUNK_MAX_MS;
   }
 
   nlohmann::json

@@ -164,7 +164,7 @@ namespace telemetry::health {
     void
     frame_done(std::int64_t steady_ns) noexcept;
 
-    /** The chunk is due: it holds windows and its age passed CHUNK_MAX_MS, or `force`. */
+    /** The chunk is due once it reaches CHUNK_MAX_MS and has active windows or backpressure drops. */
     bool
     chunk_due(std::int64_t now_ms) const;
     bool

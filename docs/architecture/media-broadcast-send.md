@@ -35,8 +35,9 @@ retrying or queueing it. Audio data and parity both drop the affected
 datagram on backpressure. Sending progress still advances for live MAT,
 and genuine send failures still stop it. The stream diagnostic counter
 `send_would_block_packets` records these datagrams even in windows with
-too few sent video frames for latency statistics. Pacing still charges
-the full batch.
+too few sent video frames for latency statistics. A chunk with these
+drops can be reported even if every window was idle. Pacing still
+charges the full batch.
 The Windows sockets close after their receive and media send workers exit.
 Asio completion handlers retain the receive buffers and sender endpoints
 through cancellation. If setting nonblocking mode fails, startup closes
