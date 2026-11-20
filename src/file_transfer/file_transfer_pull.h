@@ -56,6 +56,8 @@ namespace file_transfer_pull {
     std::function<void(std::uint64_t sid, std::vector<std::uint8_t> payload)> send;
     /// How long a client has to post a chunk; zero means kChunkTimeout.
     std::chrono::milliseconds chunk_timeout { 0 };
+    /// Whether the reaper answers expired requests (a test turns it off to reach handle_chunk's own check).
+    bool reap = true;
   };
 
   /// Replace the hooks; an empty hooks_t restores the real ones.

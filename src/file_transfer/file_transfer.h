@@ -66,7 +66,7 @@ namespace file_transfer {
   /// What the registration produced: the offer, or an error word for the agent.
   struct register_result_t {
     std::optional<offer_t> offer;
-    std::string error;  ///< "no_paths", "not_found", "unreadable", "unsupported", "too_many_entries", "path_too_long", "duplicate_name", "no_user"
+    std::string error;  ///< "no_paths", "not_found", "unreadable", "bad_name" (not UTF-8), "unsupported", "too_many_entries", "path_too_long", "duplicate_name", "no_user"
     std::string detail;  ///< the path the error is about, when there is one
   };
 

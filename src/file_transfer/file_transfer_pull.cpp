@@ -138,6 +138,7 @@ namespace file_transfer_pull {
         std::vector<pending_t> expired;
         {
           std::lock_guard lk(g_mu);
+          if (!g_hooks.reap) return;
           for (auto it = g_pending.begin(); it != g_pending.end();) {
             if (it->second.deadline <= now) {
               expired.push_back(std::move(it->second));

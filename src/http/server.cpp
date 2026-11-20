@@ -592,7 +592,8 @@ namespace web::detail {
       // at most once a second) keeps the cost of small pieces (the file body
       // reads a few KiB at a time) negligible.
       const auto now = std::chrono::steady_clock::now();
-      const auto rearm = std::min<std::chrono::steady_clock::duration>(std::chrono::seconds(1), timeout / 4);
+      // Divided after the conversion: in whole seconds a 1-3 s timeout would give 0.
+      const auto rearm = std::min<std::chrono::steady_clock::duration>(std::chrono::seconds(1), std::chrono::steady_clock::duration(timeout) / 4);
       if (now - last_progress >= rearm) {
         last_progress = now;
         response_timer.expires_after(timeout);

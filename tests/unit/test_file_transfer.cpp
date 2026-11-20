@@ -158,7 +158,19 @@ TEST_F(FileTransfer, RefusesWhatItCannotOffer) {
     fs::permissions(root / "dir" / "sub", fs::perms::owner_all);
     EXPECT_EQ(result.error, "unreadable");
     EXPECT_NE(result.detail.find("sub"), std::string::npos) << result.detail;
+
+    // A file the user cannot read fails at registration too, not at the paste.
+    fs::permissions(root / "dir" / "b.bin", fs::perms::none);
+    const auto file_result = file_transfer::register_paths({ utf8(root / "dir") }, "clipboard");
+    fs::permissions(root / "dir" / "b.bin", fs::perms::owner_all);
+    EXPECT_EQ(file_result.error, "unreadable");
+    EXPECT_NE(file_result.detail.find("b.bin"), std::string::npos) << file_result.detail;
   }
+
+  // Names that are not UTF-8 would all become the same replacement characters.
+  fs::create_directories(root / "names");
+  write(root / "names" / std::string("\xff.txt"), "1");
+  EXPECT_EQ(file_transfer::register_paths({ utf8(root / "names") }, "clipboard").error, "bad_name");
 #endif
 }
 

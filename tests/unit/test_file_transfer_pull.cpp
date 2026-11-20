@@ -205,13 +205,13 @@ TEST_F(FileTransferPull, AChunkAfterItsDeadlineIsRefused) {
       cv.notify_all();
     },
     std::chrono::milliseconds(50),
+    false,  // the reaper stays out of it: the chunk reaches handle_chunk's own deadline check
   });
   auto agent = pull("offset=0&length=4");
   const auto ticket = next_frame().second["ticket"].get<std::string>();
   std::this_thread::sleep_for(std::chrono::milliseconds(150));
-  // Refused either here (past its deadline) or already by the reaper.
   const auto posted = chunk(ticket, "abcd");
-  EXPECT_TRUE(posted.starts_with("HTTP/1.1 410") || posted.starts_with("HTTP/1.1 404")) << posted.substr(0, 100);
+  EXPECT_TRUE(posted.starts_with("HTTP/1.1 410")) << posted.substr(0, 100);
   const auto answer = agent.get();
   EXPECT_TRUE(answer.starts_with("HTTP/1.1 504")) << answer.substr(0, 200);
 }

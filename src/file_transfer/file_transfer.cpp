@@ -163,10 +163,79 @@ namespace file_transfer {
       std::string detail;
     };
 
+    /// True when `text` is well-formed UTF-8. Names that are not (possible outside
+    /// Windows) would all turn into the same replacement characters in the offer.
+    bool
+    valid_utf8(std::string_view text) {
+      for (std::size_t i = 0; i < text.size();) {
+        const auto c = static_cast<unsigned char>(text[i]);
+        if (c < 0x80) {
+          ++i;
+          continue;
+        }
+        std::size_t extra = 0;
+        std::uint32_t cp = 0;
+        if ((c & 0xE0) == 0xC0) {
+          extra = 1;
+          cp = c & 0x1F;
+        }
+        else if ((c & 0xF0) == 0xE0) {
+          extra = 2;
+          cp = c & 0x0F;
+        }
+        else if ((c & 0xF8) == 0xF0) {
+          extra = 3;
+          cp = c & 0x07;
+        }
+        else {
+          return false;
+        }
+        if (text.size() - i <= extra) return false;
+        for (std::size_t k = 1; k <= extra; ++k) {
+          const auto cc = static_cast<unsigned char>(text[i + k]);
+          if ((cc & 0xC0) != 0x80) return false;
+          cp = (cp << 6) | (cc & 0x3F);
+        }
+        // Overlong forms, surrogates and values past U+10FFFF.
+        if ((extra == 1 && cp < 0x80) || (extra == 2 && cp < 0x800) || (extra == 3 && (cp < 0x10000 || cp > 0x10FFFF)) || (cp >= 0xD800 && cp <= 0xDFFF)) {
+          return false;
+        }
+        i += extra + 1;
+      }
+      return true;
+    }
+
+    /// Whether the user can open `source` for reading (open and close it right away): the type and size
+    /// can be read without that right, and the paste would only fail later.
+    bool
+    readable(const fs::path &source) {
+#ifdef _WIN32
+      HANDLE h = CreateFileW(source.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
+      if (h == INVALID_HANDLE_VALUE) return false;
+      CloseHandle(h);
+      return true;
+#else
+      const int fd = ::open(source.c_str(), O_RDONLY | O_CLOEXEC);
+      if (fd < 0) return false;
+      ::close(fd);
+      return true;
+#endif
+    }
+
     bool
     add_entry(listing_t &out, std::string rel, const fs::path &source, bool dir, std::uint64_t size) {
       if (out.entries.size() >= kMaxEntries) {
         out.error = "too_many_entries";
+        return false;
+      }
+      if (!valid_utf8(rel)) {
+        out.error = "bad_name";
+        out.detail = rel;
+        return false;
+      }
+      if (!dir && !readable(source)) {
+        out.error = "unreadable";
+        out.detail = to_utf8(source.u8string());
         return false;
       }
       entry_t e;
