@@ -283,6 +283,7 @@ Source: "{#MySourceDir}\scripts\languages\*"; DestDir: "{app}\scripts\languages"
 ; Service scripts
 Source: "{#MySourceDir}\scripts\install-service.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: application
 Source: "{#MySourceDir}\scripts\uninstall-service.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: application
+Source: "{#MySourceDir}\scripts\remove-shell-menus.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: application
 Source: "{#MySourceDir}\scripts\sleep.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: application
 
 ; Migration scripts
@@ -419,6 +420,8 @@ Filename: "{app}\assets\gui\{#MyAppGUIExeName}"; Parameters: "--remove-autostart
 Filename: "taskkill"; Parameters: "/f /im sunshine-gui.exe"; Flags: runhidden; RunOnceId: "KillGUI"
 Filename: "taskkill"; Parameters: "/f /im sunshine.exe"; Flags: runhidden; RunOnceId: "KillSunshine"
 Filename: "taskkill"; Parameters: "/f /im sunshinesvc.exe"; Flags: runhidden; RunOnceId: "KillSunshineSvc"
+; Stop the GUI first so it cannot recreate the verbs while they are removed.
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\remove-shell-menus.ps1"" -InstallRoot ""{app}"""; Flags: runhidden waituntilterminated logoutput; RunOnceId: "RemoveOwnedShellMenus"; Check: FileExists(ExpandConstant('{app}\scripts\remove-shell-menus.ps1'))
 Filename: "{app}\tools\mat-capture\sunshine-plugin-mat-capture.exe"; Parameters: "--wait-for-stop"; Flags: runhidden waituntilterminated; RunOnceId: "WaitMatCapture"; Check: FileExists(ExpandConstant('{app}\tools\mat-capture\sunshine-plugin-mat-capture.exe'))
 ; Remove system components
 Filename: "{app}\scripts\delete-firewall-rule.bat"; Flags: runhidden waituntilterminated; RunOnceId: "DelFirewall"
