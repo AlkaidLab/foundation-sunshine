@@ -51,8 +51,8 @@ extern "C" {
 #include "spatial_transport/mat_live_session.h"
 #include "src/log_text.h"
 #include "stream.h"
-#include "streaming/expected_failures.h"
 #include "streaming/client_framerate.h"
+#include "streaming/expected_failures.h"
 #include "streaming/fec.h"
 #include "sync.h"
 #include "text_context/bridge.h"
@@ -2085,25 +2085,15 @@ namespace rtsp_stream {
 
       int clientRefreshRateX100 = getArg("x-nv-video[0].clientRefreshRateX100"sv);
 
-      // Only use clientRefreshRateX100 if it's within 2% of maxFPS
-      bool useClientRefreshRate = false;
-      if (clientRefreshRateX100 > 0 && monitor.framerate > 0) {
-        double ratio = (clientRefreshRateX100 / 100.0) / monitor.framerate;
-        useClientRefreshRate = (ratio > 0.98 && ratio < 1.02);
-      }
+      // The fractional refresh (the client's display rate times 100) may only refine the effective rate,
+      // never exceed it: the fallback and the cap that replaced an unusable maxFPS bind this path too,
+      // or capture pacing and the encoder would run above the rate the announcement allows.
+      const auto frame_rate = streaming::effective_frame_rate(clientRefreshRateX100, monitor.framerate);
+      monitor.frameRateNum = frame_rate.num;
+      monitor.frameRateDen = frame_rate.den;
 
-      if (useClientRefreshRate) {
-        int remainder = clientRefreshRateX100 % 100;
-        monitor.frameRateNum = (remainder == 0) ? clientRefreshRateX100 / 100 : clientRefreshRateX100;
-        monitor.frameRateDen = (remainder == 0) ? 1 : 100;
-
-        BOOST_LOG(info) << "Client framerate: " << clientRefreshRateX100 / 100.0 << " fps ("
-                        << monitor.frameRateNum << "/" << monitor.frameRateDen << ")";
-      }
-      else {
-        monitor.frameRateNum = monitor.framerate;
-        monitor.frameRateDen = 1;
-      }
+      BOOST_LOG(info) << "Client framerate: " << monitor.get_effective_framerate() << " fps ("
+                      << monitor.frameRateNum << "/" << monitor.frameRateDen << ")";
 
       configuredBitrateKbps = getArg("x-ml-video.configuredBitrateKbps"sv);
 
