@@ -278,6 +278,8 @@ html[data-bs-theme] {
 
 /* touch (foundation-ui css/touch.css): the download links are a finger high (hit slop) and their rows far enough apart for it */
 @media (pointer: coarse) { .dl-links, .dl-card__links { gap: 16px 8px; } .dl-card__qr figcaption { font-size: 12px; } }
+/* the link buttons at the foot of a card sit at the clip edge of the card, which cuts their slop to the card: they are finger-high themselves */
+@media (pointer: coarse) { .dl-link { height: 40px; border-radius: 20px; } }
 @media (any-pointer: coarse) {
   .dl-link { position: relative; }
   .dl-link::after { content: ''; position: absolute; inset-block: min(0px, calc((100% - var(--m-hit, 48px)) / 2)); inset-inline: min(0px, calc((100% - var(--m-hit, 48px)) / 2)); }
