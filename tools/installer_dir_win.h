@@ -189,6 +189,50 @@ namespace installer_dir_win {
     return GetDriveTypeW(root.c_str()) == DRIVE_FIXED && !is_substituted(drive);
   }
 
+  /** What a folder holds, for the rules and for a picked folder: whether it exists as a directory, is empty, is an install of ours, could be listed. */
+  struct folder_state {
+    bool exists = false;
+    bool is_directory = false;
+    bool empty = false;
+    bool accessible = true;
+    bool ours = false;
+  };
+
+  inline folder_state
+  inspect_folder(const std::wstring &path) {
+    folder_state f;
+    const DWORD attributes = GetFileAttributesW(path.c_str());
+    f.exists = attributes != INVALID_FILE_ATTRIBUTES;
+    f.is_directory = f.exists && (attributes & FILE_ATTRIBUTE_DIRECTORY);
+    if (!f.is_directory) return f;
+    bool leftover_settings = false;
+    WIN32_FIND_DATAW entry {};
+    HANDLE find = FindFirstFileW((path + L"\\*").c_str(), &entry);
+    if (find == INVALID_HANDLE_VALUE) {
+      f.accessible = false;
+    }
+    else {
+      f.empty = true;
+      bool only_settings = true;  // nothing but the `config` folder: what an uninstall that kept the person's data leaves behind
+      bool more = true;
+      while (more) {
+        const std::wstring_view name = entry.cFileName;
+        if (name != L"." && name != L"..") {
+          f.empty = false;
+          if (!installer_dir::same_text(name, L"config") || !(entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || (entry.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) only_settings = false;
+        }
+        more = FindNextFileW(find, &entry) != FALSE;
+      }
+      // only "no more files" is the end of the list; any other error means that the folder was not read to the end, and it is not looked at as empty or as an old install
+      if (GetLastError() != ERROR_NO_MORE_FILES) f.accessible = false;
+      FindClose(find);
+      leftover_settings = f.accessible && !f.empty && only_settings;
+    }
+    const std::wstring registered = registered_install_dir();
+    f.ours = (!registered.empty() && installer_dir::same_text(registered, path)) || (file_exists(path + L"\\sunshine.exe") && file_exists(path + L"\\unins000.exe")) || leftover_settings;
+    return f;
+  }
+
   /** Everything installer_dir::check needs to know, read from this PC. `path` is normalised and passed installer_dir::look. */
   inline installer_dir::facts
   gather(const std::wstring &path, const wchar_t drive) {
@@ -202,40 +246,16 @@ namespace installer_dir_win {
     if (GetDiskFreeSpaceExW(there.c_str(), &free_to_caller, &total, &free_total)) f.free_bytes = free_to_caller.QuadPart;
 
     // the folder, and every folder on the way: a junction or a symbolic link anywhere sends the program somewhere else
-    const DWORD attributes = GetFileAttributesW(path.c_str());
-    f.exists = attributes != INVALID_FILE_ATTRIBUTES;
-    f.is_directory = f.exists && (attributes & FILE_ATTRIBUTE_DIRECTORY);
+    const folder_state state = inspect_folder(path);
+    f.exists = state.exists;
+    f.is_directory = state.is_directory;
+    f.empty = state.empty;
+    f.accessible = state.accessible;
+    f.ours = state.ours;
     for (size_t at = 3; at <= path.size(); ++at) {
       if (at != path.size() && path[at] != L'\\') continue;
       const DWORD a = GetFileAttributesW(path.substr(0, at).c_str());
       if (a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_REPARSE_POINT)) f.reparse_point = true;
-    }
-    bool leftover_settings = false;
-    if (f.is_directory) {
-      WIN32_FIND_DATAW entry {};
-      HANDLE find = FindFirstFileW((path + L"\\*").c_str(), &entry);
-      if (find == INVALID_HANDLE_VALUE) {
-        f.accessible = false;
-      }
-      else {
-        f.empty = true;
-        bool only_settings = true;  // nothing but the `config` folder: what an uninstall that kept the person's data leaves behind
-        bool more = true;
-        while (more) {
-          const std::wstring_view name = entry.cFileName;
-          if (name != L"." && name != L"..") {
-            f.empty = false;
-            if (!installer_dir::same_text(name, L"config") || !(entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || (entry.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT)) only_settings = false;
-          }
-          more = FindNextFileW(find, &entry) != FALSE;
-        }
-        // only "no more files" is the end of the list; any other error means that the folder was not read to the end, and it is not looked at as empty or as an old install
-        if (GetLastError() != ERROR_NO_MORE_FILES) f.accessible = false;
-        FindClose(find);
-        leftover_settings = f.accessible && !f.empty && only_settings;
-      }
-      const std::wstring registered = registered_install_dir();
-      f.ours = (!registered.empty() && installer_dir::same_text(registered, path)) || (file_exists(path + L"\\sunshine.exe") && file_exists(path + L"\\unins000.exe")) || leftover_settings;
     }
 
     f.parent_unsafe = !under_program_files(path) && parents_unsafe(path);
@@ -262,8 +282,8 @@ namespace installer_dir_win {
   inline installer_dir::verdict
   verdict_for(const std::wstring &raw) {
     const installer_dir::shape s = installer_dir::look(raw);
-    if (s.drive == 0 || (s.problem != installer_dir::error::none && s.problem != installer_dir::error::too_long)) return { s.problem, s.path };
-    if (!fixed_drive(s.drive)) return { installer_dir::error::not_fixed, s.path };  // nothing of a network or removable drive is read
+    if (s.drive == 0 || (s.problem != installer_dir::error::none && s.problem != installer_dir::error::too_long)) return { s.problem, installer_dir::error::none, s.path };
+    if (!fixed_drive(s.drive)) return { installer_dir::error::not_fixed, installer_dir::error::none, s.path };  // nothing of a network or removable drive is read
     const std::wstring path = long_form(s.path);
     return installer_dir::check(path, gather(path, s.drive));
   }
@@ -276,6 +296,43 @@ namespace installer_dir_win {
     ULARGE_INTEGER free_to_caller {}, total {}, free_total {};
     if (!GetDiskFreeSpaceExW(nearest_existing(s.path).c_str(), &free_to_caller, &total, &free_total)) return std::nullopt;
     return free_to_caller.QuadPart;
+  }
+
+  /**
+   * What the window says about the folder it shows: the rules of verdict_for, except the default folder. That one is the engine's own choice and keeps the behaviour it always had
+   * (its folder may hold an older copy): only its room is looked at. The window and --selftest-dir both ask this, so they never disagree.
+   */
+  inline installer_dir::verdict
+  verdict_for_window(const std::wstring &raw) {
+    const std::wstring path = installer_dir::normalise(raw);
+    if (installer_dir::same_text(path, default_dir())) {
+      installer_dir::verdict v;
+      v.path = path;
+      const auto free = free_bytes_of(path);
+      if (free && *free < installer_dir::kNeededBytes) v.problem = installer_dir::error::no_space;
+      return v;
+    }
+    return verdict_for(raw);
+  }
+
+  /**
+   * The install folder for a folder the person picked in the system picker (installer_dir::from_pick): the product's folder name is added, except to an install of ours, the
+   * default folder and a folder that already has that name. The picked folder is looked at once, with its drive asked first (a network drive that does not answer must not hold the
+   * window up); a path that is not a drive path is passed on as it is and refused by the rules.
+   */
+  inline installer_dir::pick
+  resolve_pick(const std::wstring &picked) {
+    const installer_dir::shape s = installer_dir::look(picked);
+    bool ours = false, occupied = false;
+    std::wstring chosen = picked;
+    if (s.drive != 0 && !s.root && fixed_drive(s.drive)) {
+      // the folder in its long name: an 8.3 alias of a folder already named like the product must be seen as that name, and what is looked at is the same folder
+      chosen = long_form(s.path);
+      const folder_state state = inspect_folder(chosen);
+      ours = state.ours;
+      occupied = state.exists && state.is_directory && !state.empty && !state.ours;
+    }
+    return installer_dir::from_pick(chosen, ours, occupied, default_dir());
   }
 
   /** The system folder picker (FOS_PICKFOLDERS): the folder the person chose, empty when cancelled. `owner` is the window it opens over. */
@@ -384,13 +441,16 @@ namespace installer_dir_win {
   /**
    * The folder of the install, made ready by the elevated worker before the engine starts: checked again here (the worker never takes the shell's word), every
    * missing folder on the way created protected, an existing empty or already installed folder given the owner and DACL. nullopt = ready; otherwise the reason.
+   * A warning (a folder above that others can replace, a user folder) is a reason too, unless `allow_warning`: the person confirmed it in the window, or the silent command
+   * line said /ALLOWUNSAFEPARENT. The install folder itself is protected the same either way.
    * Below Program Files nothing is changed: the folder inherits that protection and the engine creates it.
    */
   inline std::optional<installer_dir::error>
-  prepare(std::wstring &raw, DWORD *win32_error) {
+  prepare(std::wstring &raw, DWORD *win32_error, const bool allow_warning = false) {
     *win32_error = 0;
     const installer_dir::verdict v = verdict_for(raw);
     if (v.problem != installer_dir::error::none) return v.problem;
+    if (v.warning != installer_dir::error::none && !allow_warning) return v.warning;
     raw = v.path;  // the engine is given the checked path, in long names
     if (under_program_files(v.path)) return std::nullopt;
     // create the missing folders from the top down; one that appeared in the meantime was made by somebody else, and its permissions are not ours

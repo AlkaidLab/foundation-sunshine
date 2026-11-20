@@ -75,6 +75,7 @@ namespace {
     std::wstring shell_pid;  // pid of the user-level window; the engine must not kill it
     bool dir_given = false;  // --dir or /DIR= was on the command line, even with an empty value: an empty folder is refused, not read as "no folder"
     std::wstring dir;  // the install folder to pass as /DIR= (empty = the engine's own: the installed copy's, or Program Files\\Sunshine); checked again by the worker
+    bool dir_unsafe_ok = false;  // a warning about the folder (installer_dir.h: a parent that others can replace, a user folder) was confirmed: the window's --dir-unsafe-ok, the silent /ALLOWUNSAFEPARENT
     std::wstring worker_copy;  // the copy of this exe the elevated worker runs from
     std::wstring selftest_directory;  // --selftest-worker: run the worker steps up to the engine in this directory, no install
   };
@@ -622,8 +623,11 @@ namespace {
       return 0;
     }
     DWORD win32 = 0;
-    if (const auto problem = installer_dir_win::prepare(g_run.dir, &win32))
-      return refuse(std::string(installer_dir::code(*problem)), ",\"win32\":" + std::to_string(win32));
+    if (const auto problem = installer_dir_win::prepare(g_run.dir, &win32, g_run.dir_unsafe_ok)) {
+      // a warning that was not confirmed is refused like a problem, and says what would allow it (a silent run has nobody to ask)
+      const std::string detail = installer_dir::is_warning(*problem) ? ",\"detail\":\"needs_allowunsafeparent\"" : ",\"win32\":" + std::to_string(win32);
+      return refuse(std::string(installer_dir::code(*problem)), detail);
+    }
     return 0;
   }
 
@@ -729,6 +733,7 @@ wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
       if (ch >= L'0' && ch <= L'9') g_run.shell_pid.push_back(ch);
     g_run.dir = installer_dir::option_value(command_line, L"--dir");
     g_run.dir_given = has_argument(L"--dir");
+    g_run.dir_unsafe_ok = has_argument(L"--dir-unsafe-ok");
     const std::wstring tasks = command_value(command_line, L"--tasks");
     g_run.tasks = tasks == L"desktopicon" || tasks == L"none" ? tasks : L"";
     return worker_main();
@@ -741,6 +746,29 @@ wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     g_run.selftest_directory = command_value(command_line, L"--selftest-worker");
     if (g_run.selftest_directory.empty()) return 1223;
     return worker_main();
+  }
+  // CI smoke test of the install location rules with this machine's real answers (drive type, file system, folders, permissions): --selftest-dir <path> [--pick] --out <file>
+  // writes what the window would show for that path: typed as it is, or (--pick) as the folder picker's result with the product's folder name added. Nothing is created or changed.
+  if (has_argument(L"--selftest-dir")) {
+    const std::wstring raw = installer_dir::option_value(command_line, L"--selftest-dir");
+    const std::wstring out = installer_dir::option_value(command_line, L"--out");
+    if (out.empty()) return 1223;
+    std::wstring path = installer_dir::normalise(installer_dir::tidy(raw));
+    bool appended = false, redirected = false;
+    if (has_argument(L"--pick")) {
+      const installer_dir::pick chosen = installer_dir_win::resolve_pick(path);
+      path = chosen.path;
+      appended = chosen.appended;
+      redirected = chosen.redirected;
+    }
+    const installer_dir::verdict verdict = installer_dir_win::verdict_for_window(path);  // what the window says, the default folder's own rule included
+    const auto free = installer_dir_win::free_bytes_of(path);
+    const std::wstring safe = verdict.warning != installer_dir::error::none ? installer_dir::safe_alternative(verdict.path, installer_dir_win::default_dir()) : std::wstring();
+    const auto yes = [](bool x) { return x ? "true" : "false"; };
+    const bool written = write_text_atomic(out, "{\"input\":" + json_text(utf8(raw)) + ",\"path\":" + json_text(utf8(path)) + ",\"appended\":" + yes(appended) + ",\"redirected\":" + yes(redirected) +
+                             ",\"error\":" + json_text(std::string(installer_dir::code(verdict.problem))) + ",\"warning\":" + json_text(std::string(installer_dir::code(verdict.warning))) +
+                             ",\"safe\":" + json_text(utf8(safe)) + ",\"free_bytes\":" + (free ? std::to_string(*free) : std::string("null")) + "}\n");
+    return written ? 0 : 1223;  // an answer that could not be written is a failure, not an old file read as the new answer
   }
   // CI smoke test of the Runtime step: --selftest-webview2 <directory> downloads Microsoft's bootstrapper from the fixed link
   // into that directory and checks its signature (no run, nothing installed), then checks that an unsigned file, this
@@ -780,6 +808,8 @@ wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
       g_run.dir = *dir;
       g_run.dir_given = true;  // /DIR="" is a folder that is refused, not "no folder"
     }
+    // a silent run has nobody to ask: a folder with only a warning is installed into when the command line says so
+    g_run.dir_unsafe_ok = installer_dir::has_switch(command_line, L"/ALLOWUNSAFEPARENT");
     return worker_main();
   }
   if (has_argument(L"--bench")) {

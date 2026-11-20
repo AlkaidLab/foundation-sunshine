@@ -309,6 +309,12 @@ target_link_libraries(dynamic_param_protocol_unit_tests PRIVATE gtest_main sunsh
 set_target_properties(dynamic_param_protocol_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME dynamic_param_protocol_unit_tests COMMAND dynamic_param_protocol_unit_tests)
 
+add_executable(web_install_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_web_install.cpp)
+target_include_directories(web_install_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(web_install_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(web_install_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME web_install_unit_tests COMMAND web_install_unit_tests)
+
 add_executable(pair_link_unit_tests
         ${CMAKE_SOURCE_DIR}/src/confighttp/pair_link.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_pair_link.cpp)

@@ -136,6 +136,7 @@ english.MsgOldNSISDetected=Detected a previous NSIS installation of Sunshine.%nI
 english.MsgOldNSISFailed=The previous installation could not be fully removed.%nPlease uninstall it manually and try again.
 english.MsgOldNSISStaleRegistry=The previous installation files appear to be gone, but registry entries remain.%nClean up the leftover registry and continue installing?
 english.MsgOldNSISCleanupFailed=Failed to clean up the previous installation registry entries.%nPlease remove HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine manually and try again.
+english.MsgUpdateBlocked=Sunshine cannot be updated while something is still using its files. The existing installation has not been changed.%n%n%1%n%nClose what is using them and run the installer again.
 english.MsgServiceInstallFailed=Sunshine service could not be installed or verified.%n%nThe files were installed and are kept. Reboot and run "{app}\scripts\install-service.bat" as administrator, or use the repair action in the Sunshine GUI. The installer log in your TEMP folder has the details.
 english.MsgDirProtectFailed=The install folder could not be protected from changes by other users, so nothing was installed.%n%nThe service runs the programs in this folder as SYSTEM. Pick a folder on a local NTFS or ReFS drive and run setup again. The installer log in your TEMP folder has the details.
 english.MsgVDDInstallFailed=The virtual display driver could not be installed or verified.%n%nSunshine was installed but has not been started. Review the installer log in your TEMP folder, then use the repair action in the Sunshine GUI.
@@ -184,6 +185,7 @@ chinesesimplified.MsgOldNSISDetected=检测到旧版 NSIS 安装的 Sunshine。%
 chinesesimplified.MsgOldNSISFailed=无法完全移除旧版安装。%n请手动卸载后重试。
 chinesesimplified.MsgOldNSISStaleRegistry=旧版本的文件已经不存在，但注册表中仍残留旧版的卸载信息。%n是否清理残留的注册表项并继续安装？
 chinesesimplified.MsgOldNSISCleanupFailed=清理旧版注册表项失败。%n请手动删除 HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine 后重试。
+chinesesimplified.MsgUpdateBlocked=Sunshine 的文件仍被占用，无法更新。现有安装没有被改动。%n%n%1%n%n请关闭占用它们的程序后重新运行安装程序。
 chinesesimplified.MsgServiceInstallFailed=无法安装或验证 Sunshine 服务。%n%n程序文件已经装好并会保留。请重启后以管理员身份运行 "{app}\scripts\install-service.bat"，或在 Sunshine 管理界面里使用修复功能。详细信息见 TEMP 目录下的安装日志。
 chinesesimplified.MsgDirProtectFailed=无法保护安装目录不被其他用户修改，所以没有安装任何文件。%n%n后台服务以 SYSTEM 身份运行这个目录里的程序。请选择本机 NTFS 或 ReFS 磁盘上的文件夹，再运行一次安装程序。详细信息见 TEMP 目录下的安装日志。
 chinesesimplified.MsgVDDInstallFailed=无法安装或验证基地虚拟显示器。%n%nSunshine 已安装但尚未启动。请检查 TEMP 目录中的安装日志，然后在 Sunshine 管理界面中使用修复功能。
@@ -216,8 +218,10 @@ Name: "tools"; Description: "{cm:ComponentTools} — {cm:ComponentToolsDesc}"; T
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [InstallDelete]
-; Remove old hashed Web UI bundles before installing the freshly built frontend.
-Type: filesandordirs; Name: "{app}\assets\web"
+; The old hashed Web UI bundles are not deleted here: [InstallDelete] runs as the first step of
+; the installation and is not undone when Setup is rolled back, so a failed update would leave
+; the folder missing. BackUpWebUi() moves it aside instead, and removes it once the update has
+; finished. Authority: installer-inno-installdelete-20261119.
 ; The native GUI plugin replaces the legacy standalone diagnostic executable.
 Type: files; Name: "{app}\tools\stylus-input-probe.exe"
 ; Earlier RTX adapter builds placed the complete VC runtime beside Sunshine.
@@ -238,6 +242,7 @@ Type: dirifempty; Name: "{app}\tools\library"
 [Files]
 ; Embedded only for PrepareToInstall; it is not part of the installed layout.
 Source: "{#MySourceDir}\scripts\cleanup-legacy-ds5.ps1"; DestDir: "{tmp}"; Flags: dontcopy
+Source: "{#MySourceDir}\scripts\update-quiesce.ps1"; DestDir: "{tmp}"; Flags: dontcopy
 ; Main application
 Source: "{#MySourceDir}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion; Components: application
 Source: "{#MySourceDir}\zlib1.dll"; DestDir: "{app}"; Flags: ignoreversion; Components: application
@@ -431,6 +436,13 @@ Type: files; Name: "{app}\uninstall_portable.bat"
 ; Clean up temporary files
 Type: files; Name: "{app}\*.tmp"
 Type: files; Name: "{app}\*.old"
+; A program moved aside by an update that was stopped half way (update-quiesce.ps1 -Park).
+Type: files; Name: "{app}\sunshine.exe.parked"
+Type: files; Name: "{app}\tools\sunshinesvc.exe.parked"
+Type: files; Name: "{app}\assets\gui\sunshine-gui.exe.parked"
+; The marker an update writes after the last Web UI file, and the folder an unfinished update left aside.
+Type: files; Name: "{app}\assets\web\.install-complete"
+Type: filesandordirs; Name: "{app}\assets\web.previous"
 
 [Code]
 // =============================================================================
@@ -473,6 +485,15 @@ var
   RebootReasons: String;
   // the journal the host reports at its next start (JournalWrite below)
   JournalRun, PreviousVersion: String;
+  // The Web UI folder moved aside before the files are copied (BackUpWebUi), and whether the
+  // installation got as far as its post-install step: only then is the new folder the one to keep.
+  WebUiMovedAside, PostInstallReached, UpdateScriptExtracted, ServiceStoppedForUpdate: Boolean;
+  // The folder this run prepared for the update (programs moved aside, Web UI folder moved aside).
+  // Empty until PrepareToInstall prepared one, so a run that is cancelled before that touches nothing;
+  // kept as text because the wizard lets the person go back and choose another folder.
+  UpdateAppDir: String;
+  // The marker could not be written (a scanner refused the file) although every file was copied.
+  WebUiMarkerFailed: Boolean;
 
 function InstallerMessageBox(const Text: String; const Typ: TMsgBoxType;
   const Buttons, DefaultAnswer: Integer): Integer;
@@ -1469,8 +1490,200 @@ begin
     Result := 0;
 end;
 
+// ---- Programs that were moved aside so nothing could start them ----------------------------------
+// update-quiesce.ps1 -Park renames the host, the service and the tray to <name>.parked once they
+// have been ended: a supervisor that starts the tray again a moment later finds nothing to start.
+// Setup then installs the new files and the old ones are deleted; when it does not finish (the
+// rollback removes the new files it created) they are put back, so a failed update leaves the
+// programs that were there. Authority: installer-inno-renamefile-20261119.
+function PreparedDir(): String;
+begin
+  if UpdateAppDir <> '' then
+    Result := UpdateAppDir
+  else
+    Result := ExpandConstant('{app}');
+end;
+
+function ParkedImage(const Relative: String): String;
+begin
+  Result := PreparedDir() + '\' + Relative + '.parked';
+end;
+
+function LiveImage(const Relative: String): String;
+begin
+  Result := PreparedDir() + '\' + Relative;
+end;
+
+// At the start of a run: a run that was killed after parking left the old program under the other
+// name. Put it back when the real name is empty, drop it when a program is there again.
+procedure RecoverParkedImage(const Relative: String);
+begin
+  if not FileExists(ParkedImage(Relative)) then
+    Exit;
+  if FileExists(LiveImage(Relative)) then
+    DeleteFile(ParkedImage(Relative))
+  else if RenameFile(ParkedImage(Relative), LiveImage(Relative)) then
+    Log('Restored ' + Relative + ' left aside by an earlier update.')
+  else
+    Log('Could not restore ' + Relative + ' left aside by an earlier update.');
+end;
+
+procedure RecoverParkedImages();
+begin
+  RecoverParkedImage('sunshine.exe');
+  RecoverParkedImage('tools\sunshinesvc.exe');
+  RecoverParkedImage('assets\gui\sunshine-gui.exe');
+end;
+
+// At the end of a run (and when an update is refused): keep the new program and delete the old
+// one, or put the old one back in place of whatever the failed run left.
+procedure SettleParkedImage(const Relative: String; const Installed: Boolean);
+begin
+  if not FileExists(ParkedImage(Relative)) then
+    Exit;
+  if Installed and FileExists(LiveImage(Relative)) then
+    DeleteFile(ParkedImage(Relative))
+  else
+  begin
+    if FileExists(LiveImage(Relative)) then
+      DeleteFile(LiveImage(Relative));
+    if RenameFile(ParkedImage(Relative), LiveImage(Relative)) then
+      Log('The update did not finish; ' + Relative + ' was put back.')
+    else
+      Log('The update did not finish and ' + Relative + ' could not be put back.');
+  end;
+end;
+
+procedure SettleParkedImages(const Installed: Boolean);
+begin
+  SettleParkedImage('sunshine.exe', Installed);
+  SettleParkedImage('tools\sunshinesvc.exe', Installed);
+  SettleParkedImage('assets\gui\sunshine-gui.exe', Installed);
+end;
+
+// ---- The Web UI folder is replaced as one unit that can be put back ----------------------------
+// Setup rolls a failed installation back by removing what it created. It does not bring back a
+// file it overwrote or a folder an [InstallDelete] entry removed, so deleting assets\web up front
+// left an update that failed later with no Web UI at all. The old folder is moved aside instead
+// (a rename on the same volume), the new one is copied in, and the old one is deleted only once the
+// installation has finished. Authority: installer-inno-installdelete-20261119 ([InstallDelete]
+// runs as the first step of the installation), installer-inno-script-events-20261107
+// (PrepareToInstall, CurStepChanged, DeinitializeSetup), installer-inno-renamefile-20261119
+// (also renames a directory), installer-inno-deltree-20261119, installer-inno-exit-codes-20261119
+// (a text returned by PrepareToInstall ends Setup in the Preparing to Install stage, exit code 7),
+// installer-inno-closeapplications-20261119 (the Restart Manager check that follows it).
+function WebUiDir(): String;
+begin
+  Result := PreparedDir() + '\assets\web';
+end;
+
+function WebUiBackupDir(): String;
+begin
+  Result := PreparedDir() + '\assets\web.previous';
+end;
+
+// A Web UI folder is complete when the installer that copied it got to its end: the marker is
+// written after the last file. Two pages are not enough, they are copied first.
+function WebUiIsComplete(const Dir: String): Boolean;
+begin
+  Result := FileExists(Dir + '\.install-complete');
+end;
+
+// Put the old folder back when the live one was not finished: an earlier run was stopped (killed,
+// powered off) between moving it aside and finishing. False when it cannot be put back; then the
+// update must not go on, because the next step would delete the only complete copy.
+function RecoverWebUi(): Boolean;
+begin
+  Result := True;
+  if not DirExists(WebUiBackupDir()) then
+    Exit;
+  if WebUiIsComplete(WebUiDir()) then
+  begin
+    DelTree(WebUiBackupDir(), True, True, True);
+    WebUiMovedAside := False;
+    Exit;
+  end;
+  if DirExists(WebUiDir()) then
+    if not DelTree(WebUiDir(), True, True, True) then
+    begin
+      Log('Could not remove the unfinished Web UI folder of an earlier update.');
+      Result := False;
+      Exit;
+    end;
+  if RenameFile(WebUiBackupDir(), WebUiDir()) then
+  begin
+    // nothing is aside any more: a later refusal must not delete what was put back
+    WebUiMovedAside := False;
+    Log('Restored the Web UI folder left aside by an earlier update.');
+  end
+  else
+  begin
+    Log('Could not restore the Web UI folder left aside by an earlier update.');
+    Result := False;
+  end;
+end;
+
+// False when the old folder cannot be moved aside (something holds a handle of it): the update must
+// stop, or a failed copy would have nothing to put back.
+function BackUpWebUi(): Boolean;
+begin
+  Result := True;
+  if not DirExists(WebUiDir()) then
+    Exit;
+  if DirExists(WebUiBackupDir()) then
+    DelTree(WebUiBackupDir(), True, True, True);
+  if RenameFile(WebUiDir(), WebUiBackupDir()) then
+    WebUiMovedAside := True
+  else
+  begin
+    Log('The Web UI folder could not be moved aside.');
+    Result := False;
+  end;
+end;
+
+// The installer got to its end: the marker says the folder holds every file of this version.
+procedure MarkWebUiComplete();
+begin
+  if DirExists(WebUiDir()) then
+    if not SaveStringToFile(WebUiDir() + '\.install-complete', 'complete', False) then
+    begin
+      // every file was copied; a refused marker must not make Setup put the old folder back over them
+      WebUiMarkerFailed := True;
+      Log('The Web UI completion marker could not be written.');
+    end;
+end;
+
+// Called from DeinitializeSetup, which runs after a rollback ("Deinitializing Setup." follows
+// "Uninstallation process succeeded." in the Setup log).
+procedure FinishWebUiBackup();
+begin
+  if not WebUiMovedAside then
+    Exit;
+  if PostInstallReached and (WebUiIsComplete(WebUiDir()) or WebUiMarkerFailed) then
+  begin
+    DelTree(WebUiBackupDir(), True, True, True);
+    Log('The new Web UI folder is in place; the old one was deleted.');
+  end
+  else
+  begin
+    if DirExists(WebUiDir()) then
+      DelTree(WebUiDir(), True, True, True);
+    if RenameFile(WebUiBackupDir(), WebUiDir()) then
+      Log('The installation did not finish; the previous Web UI folder was put back.')
+    else
+      Log('The installation did not finish and the previous Web UI folder could not be put back.');
+  end;
+  WebUiMovedAside := False;
+end;
+
 procedure DeinitializeSetup();
 begin
+  // A run that was cancelled before PrepareToInstall prepared a folder owns nothing to settle.
+  if UpdateAppDir <> '' then
+  begin
+    FinishWebUiBackup();
+    SettleParkedImages(PostInstallReached);
+  end;
   EmitInstallerEvent('installer', 'done', 'InstallerFinished', GetCustomSetupExitCode());
 end;
 
@@ -1587,10 +1800,55 @@ begin
     Result := Result + ' /fi "PID ne ' + ShellPid + '"';
 end;
 
+// ---- Make the folder safe to update ------------------------------------------------------------
+// update-quiesce.ps1 stops the service, ends what still runs from the folder (repeatedly, since a
+// tray can be started again a moment after it was ended) and checks that no file of the folder is
+// held. It returns 0 when ready; the report says what is in the way otherwise.
+function RunUpdateQuiesce(const VerifyOnly: Boolean; var Report: String): Integer;
+var
+  Script, ReportFile, Params: String;
+  ResultCode: Integer;
+  Lines: TArrayOfString;
+  I: Integer;
+begin
+  Result := -1;
+  Report := '';
+  if not UpdateScriptExtracted then
+  begin
+    ExtractTemporaryFile('update-quiesce.ps1');
+    UpdateScriptExtracted := True;
+  end;
+  Script := ExpandConstant('{tmp}\update-quiesce.ps1');
+  ReportFile := ExpandConstant('{tmp}\update-quiesce-report.txt');
+  DeleteFile(ReportFile);
+  Params := '-NoProfile -ExecutionPolicy Bypass -File "' + Script + '" -Root "' + PreparedDir() +
+    '" -Report "' + ReportFile + '" -Park';
+  if VerifyOnly then
+    Params := Params + ' -VerifyOnly';
+  if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Params, '', SW_HIDE,
+    ewWaitUntilTerminated, ResultCode) then
+  begin
+    Log('The update preparation script could not be started: ' + SysErrorMessage(ResultCode));
+    Exit;
+  end;
+  Result := ResultCode;
+  if LoadStringsFromFile(ReportFile, Lines) then
+    for I := 0 to GetArrayLength(Lines) - 1 do
+    begin
+      Log('update-quiesce: ' + Lines[I]);
+      if Report <> '' then
+        Report := Report + #13#10;
+      Report := Report + Lines[I];
+      // the service was running when this script came, or the Control Panel's updater had stopped it
+      if (Pos('service: stopping', Lines[I]) = 1) or (Pos('updater: ended', Lines[I]) = 1) then
+        ServiceStoppedForUpdate := True;
+    end;
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
-  CleanupScript, CleanupRoot, CleanupParameters: String;
-  ResultCode: Integer;
+  CleanupScript, CleanupRoot, CleanupParameters, Report: String;
+  ResultCode, QuiesceCode: Integer;
 begin
   Result := '';
   EmitInstallerEvent('prepare', 'running', 'PrepareToInstall', 0);
@@ -1598,6 +1856,19 @@ begin
   Result := HardenInstallDir();
   if Result <> '' then
     Exit;
+  // The person went back and chose another folder: what was prepared in the first one goes back.
+  if (UpdateAppDir <> '') and (CompareText(UpdateAppDir, ExpandConstant('{app}')) <> 0) then
+  begin
+    FinishWebUiBackup();
+    SettleParkedImages(False);
+  end;
+  UpdateAppDir := ExpandConstant('{app}');
+  if not RecoverWebUi() then
+  begin
+    Result := FmtMessage(CustomMessage('MsgUpdateBlocked'), ['assets\web.previous (the Web UI folder of an earlier update could not be put back)']);
+    Exit;
+  end;
+  RecoverParkedImages();
 
   ExtractTemporaryFile('cleanup-legacy-ds5.ps1');
   CleanupScript := ExpandConstant('{tmp}\cleanup-legacy-ds5.ps1');
@@ -1611,12 +1882,41 @@ begin
     Log('Legacy DualSense cleanup script could not be started.')
   else if ResultCode <> 0 then
     Log('Legacy DualSense cleanup script returned ' + IntToStr(ResultCode) + '.');
-  // Stop the Sunshine service
-  Exec('net', 'stop SunshineService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  // Kill any running processes
-  Exec('taskkill', SunshineKillParameters(), '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec('taskkill', '/f /im sunshine-gui.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec('taskkill', '/f /im sunshinesvc.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  // Stop everything that runs from the install folder and make sure nothing holds a file of it.
+  // A tray the Control Panel's own updater left running, or one started again a moment after it
+  // was ended, used to hold sunshine-gui.exe; the copy then failed in the middle of the update.
+  // Refusing here changes nothing: the installation is exactly what it was.
+  QuiesceCode := RunUpdateQuiesce(False, Report);
+  if QuiesceCode > 0 then
+  begin
+    Log('The install folder cannot be updated now (code ' + IntToStr(QuiesceCode) + ').');
+    EmitInstallerEvent('prepare', 'failed', 'UpdateBlocked', QuiesceCode);
+    // the programs moved aside go back first: the service is started from them
+    SettleParkedImages(False);
+    if ServiceStoppedForUpdate then
+      Exec('net', 'start SunshineService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Result := FmtMessage(CustomMessage('MsgUpdateBlocked'), [Report]);
+    Exit;
+  end;
+  if QuiesceCode < 0 then
+  begin
+    // Without the script, stop the service and end the programs by name as earlier versions did.
+    Exec('net', 'stop SunshineService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec('taskkill', SunshineKillParameters(), '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec('taskkill', '/f /im sunshine-gui.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec('taskkill', '/f /im sunshinesvc.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  end;
+  // The old Web UI folder is moved aside now, while a refusal still costs nothing; if it cannot be
+  // moved, nothing could be put back after a failed copy, so the update stops here.
+  if not BackUpWebUi() then
+  begin
+    EmitInstallerEvent('prepare', 'failed', 'UpdateBlocked', 20);
+    Result := FmtMessage(CustomMessage('MsgUpdateBlocked'), ['held: assets\web (the folder could not be moved aside)']);
+    SettleParkedImages(False);
+    if ServiceStoppedForUpdate then
+      Exec('net', 'start SunshineService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exit;
+  end;
   if FileExists(ExpandConstant('{app}\tools\mat-capture\sunshine-plugin-mat-capture.exe')) then
   begin
     if not Exec(ExpandConstant('{app}\tools\mat-capture\sunshine-plugin-mat-capture.exe'),
@@ -1632,9 +1932,17 @@ end;
 
 // Clean up portable scripts during install
 procedure CurStepChanged(CurStep: TSetupStep);
+var
+  Report: String;
 begin
   if CurStep = ssInstall then
   begin
+    // The files are about to be copied. What ran between the preparation and now (the Restart
+    // Manager check, a supervisor starting a tray again) is ended once more, and if the folder
+    // still cannot be updated Setup stops before it has changed anything.
+    if RunUpdateQuiesce(True, Report) > 0 then
+      if RunUpdateQuiesce(False, Report) > 0 then
+        RaiseException(FmtMessage(CustomMessage('MsgUpdateBlocked'), [Report]));
     JournalStart();
     EmitInstallerEvent('plan', 'running', PlannedInstallerSteps(), 0);
     InstallProgressPermille := -20;
@@ -1642,6 +1950,8 @@ begin
   end;
   if CurStep = ssPostInstall then
   begin
+    PostInstallReached := True;
+    MarkWebUiComplete();
     // Upgrade older VDDs and make driver readiness a hard gate before the
     // Sunshine service is allowed to start. A bound-but-not-ready device is
     // kept for Windows to finish during the requested reboot.

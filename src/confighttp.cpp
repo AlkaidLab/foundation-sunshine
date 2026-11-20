@@ -10,9 +10,11 @@
 #include "confighttp/types.h"
 #include "globals.h"
 #include "image_enhancement/api.h"
+#include "file_handler.h"
 #include "logging.h"
 #include "network.h"
 #include "sparxie/runtime.h"
+#include "src/confighttp/web_install.h"
 #include <atomic>
 #include <latch>
 #include <optional>
@@ -24,6 +26,15 @@ namespace confighttp {
   void
   start() {
     auto shutdown_event = mail::man->event<bool>(mail::shutdown);
+
+    // An update that was stopped between moving the Web UI folder aside and finishing leaves the
+    // old folder beside the live one; use it when the live one is not complete.
+    if (confighttp::web_install::recover_previous(file_handler::path_from_utf8(WEB_DIR))) {
+      BOOST_LOG(warning) << "The Web UI folder was missing; the one an interrupted update left aside was put back"sv;
+    }
+    else if (!confighttp::web_install::is_complete(file_handler::path_from_utf8(WEB_DIR))) {
+      BOOST_LOG(error) << "The Web UI folder is missing or incomplete: this installation needs a repair (run the installer again)"sv;
+    }
 
     if (!local_auth_token::initialize()) {
       BOOST_LOG(error) << "Local Web UI credential initialization failed; local API requests will require another credential";

@@ -5,7 +5,8 @@
 import { provideSettingsData } from 'foundation-ui/settings/provider.js'
 import { SEARCH_INDEX } from './searchIndex.js'
 import { LABELS } from './labels.js'
+import { ALIASES } from './aliases.js'
 
-provideSettingsData({ searchIndex: SEARCH_INDEX, labels: LABELS })
+provideSettingsData({ searchIndex: SEARCH_INDEX, labels: LABELS, aliases: ALIASES })
 
-export { SEARCH_INDEX, LABELS }
+export { SEARCH_INDEX, LABELS, ALIASES }

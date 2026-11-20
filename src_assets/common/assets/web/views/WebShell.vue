@@ -10,7 +10,7 @@
     <MPinHost ref="pinHost" storage-key="web-home" :locale="String(uiLocale)">
     <MAnnouncementPopup v-if="!hideList" :item="announcements.popup.value" :locale="String(uiLocale)" @shown="announcements.markShown" @acknowledge="announcements.acknowledge" @hide="announcements.hide" @open-url="(u) => openExternalUrl(u).catch(() => {})" />
     <MCoachMarks v-if="!hideList" :locale="String(uiLocale)" storage-key="foundation.coach.web" guide-key="foundation.guide.web" />
-    <MCaption v-if="!hideList" bem="web-caption"><template v-if="backButton" #back><MCaptionBack :page="backPage" :locale="String(uiLocale)" @back="jumps.back()" /></template><template #version><MCaptionVersion :version="shellVersion" :build="buildInfo" :os="osName()" :locale="String(uiLocale)" :update="notice.version" @copied="onVersionCopied" @open-update="nav.go('about')" /></template><template #brand><MBrand class="web-caption__brand" :size="20" /></template><template #announcements><MStatusBell :locale="String(uiLocale)" /><MFeedbackButton :locale="String(uiLocale)" /><MAnnouncementButton :unread="announcements.unread.value" :locale="String(uiLocale)" @open="nav.go('announcements')" /></template><template #search><div class="web-caption__search"><MUnifiedSearch :search="uni" :texts="searchT" :compact="compactSearch || caption.tight.value" :height="38" /></div></template><template v-if="compactSearch" #account><ShellUtils placement="bar" /></template><template #connect><button type="button" class="m-caption-connect" :aria-label="connectT.title" :data-tip="connectT.title" @click="connect.show('pair')"><MIcon name="person_add" /><span>{{ connectT.title }}</span></button></template></MCaption>
+    <MCaption v-if="!hideList" bem="web-caption" more :more-label="captionTexts(String(uiLocale)).more" @more="moreOpen = true"><template v-if="backButton" #back><MCaptionBack :page="backPage" :locale="String(uiLocale)" @back="jumps.back()" /></template><template #version><MCaptionVersion :version="shellVersion" :build="buildInfo" :os="osName()" :locale="String(uiLocale)" :update="notice.version" @copied="onVersionCopied" @open-update="nav.go('about')" /></template><template #brand><MBrand class="web-caption__brand" :size="20" /></template><template #announcements><MStatusBell :locale="String(uiLocale)" /><MFeedbackButton :locale="String(uiLocale)" /><MAnnouncementButton :unread="announcements.unread.value" :locale="String(uiLocale)" @open="nav.go('announcements')" /></template><template #search><div class="web-caption__search"><MUnifiedSearch :search="uni" :texts="searchT" :compact="compactSearch || caption.tight.value" :height="38" /></div></template><template v-if="compactSearch" #account><ShellUtils placement="bar" /></template><template #connect><button type="button" class="m-caption-connect" :aria-label="connectT.title" :data-tip="connectT.title" @click="connect.show('pair')"><MIcon name="person_add" /><span>{{ connectT.title }}</span></button></template></MCaption>
     <MScene v-if="!hideList" :nav="nav" :caption-height="48" :jumps="jumps" :chip="backChip" :rail-items="railItems" :texts="sceneTexts" :bar-items="barItems" :bar-current="barCurrent" :overlay="hostUnusable" :status="hostUnusable" storage-key="foundation-ui.web.list" @rail="onRail">
       <template #back-chip><MBackChip :page="backPage" :locale="String(uiLocale)" @back="jumps.back()" /></template>
       <template #rail-foot><ShellUtils placement="rail" /></template>
@@ -31,6 +31,15 @@
       <template #supporting="{ entry }"><component :is="SUPPORTING[entry.id]" :params="entry.params" /></template>
     </MScene>
     <template v-else><div v-show="!hostUnusable" :inert="hostUnusable ? '' : undefined"><component :is="VIEWS[nav.current.value || 'home']" /></div><MHostOffline v-if="hostUnusable" :state="hostConn.state" :locale="String(uiLocale)" @retry="hostConn.retry" /></template>
+    <!-- 更多 of the caption bar: what the bar has no room for at this width (its tier, MCaption), in the order it has there -->
+    <MSheet v-model="moreOpen" :title="captionTexts(String(uiLocale)).more" side="end" :close-label="$t('_common.close')">
+      <div v-if="caption.tier.value >= 1 && shellVersion" class="m-more-version"><MCaptionVersion :version="shellVersion" :build="buildInfo" :os="osName()" :locale="String(uiLocale)" :update="notice.version" @copied="onVersionCopied" @open-update="moreGo(() => nav.go('about'))" /></div>
+      <MGroup>
+        <MItem v-if="caption.tier.value >= 5" action icon="person_add" :title="connectT.title" @click="moreGo(() => connect.show('pair'))" />
+        <MItem v-if="caption.tier.value >= 4" action icon="notifications" :title="announcementTexts(String(uiLocale)).button" @click="moreGo(() => nav.go('announcements'))" />
+        <MItem v-if="caption.tier.value >= 4" action icon="feedback" :title="feedbackTexts(String(uiLocale)).button" @click="moreGo(() => openFeedbackHere({}))" />
+      </MGroup>
+    </MSheet>
     <MContextMenu ref="contextMenu" @select="onContextSelect" />
     <MContextProvider :locale="String(uiLocale)" :callbacks="ctxCallbacks" :capabilities="{ product: 'web', print: true, developer: developerMode.enabled.value }" />
     <DevReportHost v-if="!embedded" :locale="String(uiLocale)" />
@@ -64,7 +73,7 @@ import { computed, defineAsyncComponent, defineComponent, getCurrentInstance, h,
 import { useI18n } from 'vue-i18n'
 import QRCode from 'qrcode'
 import { trackEvents, setTelemetryContext } from '../config/telemetry.js'
-import { answerRedactRequests, MFeedbackButton, openFeedbackHere, homeTexts, MContextProvider, useTelemetryConsent, MErrorHost, installErrorHandlers, setErrorContext, startAutoReport, MPageLoading, useNotify, useSystemNotices, MStatusBell, MPage, MGroup, MItem, MSection, MIcon, MBrand, MCaption, MCaptionVersion, MCaptionBack, MBackChip, useCaptionRoom, createJumpHistory, useBackVariant, showsButton, showsChip, captionTexts, MCoachMarks, MConnectDialog, MPairPrompt, MPinHost, pinSpecForPage, pinTexts, pinToHome, isPinnedOnHome, createPairingPending, MSnackbar, connectTexts, useConnectDialog, MUnifiedSearch, useUnifiedSearch, requestPageFilter, searchTexts, actionDocs, settingDocs, clientDocs, appDocs, tileDocs, addTileToHome, MHostOffline, useHostConnection, MButton, MContextMenu, MNavList, MScene, resetTexts, aboutTexts, latencyClockTexts, statusTexts, networkOverviewTexts, doctorTexts, testToolTexts, createNav, announcementTexts, useAnnouncements, MAnnouncementButton, MAnnouncementPage, MAnnouncementPopup, ackedAt, useAppearance, useSettingsList, useErrors, useDeveloperMode, DevReportHost, registerDevReport } from 'foundation-ui/vue'
+import { answerRedactRequests, announcementTexts, feedbackTexts, isCompactNav, MSheet, MFeedbackButton, openFeedbackHere, homeTexts, MContextProvider, useTelemetryConsent, MErrorHost, installErrorHandlers, setErrorContext, startAutoReport, MPageLoading, useNotify, useSystemNotices, MStatusBell, MPage, MGroup, MItem, MSection, MIcon, MBrand, MCaption, MCaptionVersion, MCaptionBack, MBackChip, useCaptionRoom, createJumpHistory, useBackVariant, showsButton, showsChip, captionTexts, MCoachMarks, MConnectDialog, MPairPrompt, MPinHost, pinSpecForPage, pinTexts, pinToHome, isPinnedOnHome, createPairingPending, MSnackbar, connectTexts, useConnectDialog, MUnifiedSearch, useUnifiedSearch, requestPageFilter, searchTexts, actionDocs, settingDocs, clientDocs, appDocs, tileDocs, addTileToHome, MHostOffline, useHostConnection, MButton, MContextMenu, MNavList, MScene, resetTexts, aboutTexts, latencyClockTexts, statusTexts, networkOverviewTexts, doctorTexts, testToolTexts, createNav, useAnnouncements, MAnnouncementButton, MAnnouncementPage, MAnnouncementPopup, ackedAt, useAppearance, useSettingsList, useErrors, useDeveloperMode, DevReportHost, registerDevReport } from 'foundation-ui/vue'
 import { afterCheck, afterOpened, noticeView, readNotice, writeNotice } from 'foundation-ui/update'
 import { SEARCH_INDEX } from '../config/settingsData/index.js'
 import { categoryOfRow, labelOf, parseSettingsHash, rowIdOf, settingsHash } from 'foundation-ui/settings/index.js'
@@ -243,7 +252,8 @@ const placeOf = (params) => Object.keys(PLACES).find((id) => Object.entries(PLAC
 const hashPage = (hash) => HASH_PAGES[String(hash || '').replace(/^#/, '')]
 // a phone has no list pages of the rails: 串流 is the stream hub, every other category is in the 设置 hub; Back from a page is that hub, whatever way the page was reached
 const HUB_OF = { stream: 'stream-hub', config: 'settings-hub', input: 'settings-hub', audio: 'settings-hub', display: 'settings-hub', system: 'settings-hub' }
-const isPhone = () => window.innerWidth < 600
+// the compact navigation (the bar at the bottom, or beside the content in a short window) keeps the phone's flow: one pane, the hubs
+const isPhone = () => isCompactNav(window.innerWidth, window.innerHeight)
 const nav = createNav({
   routes,
   home: 'home',
@@ -480,11 +490,13 @@ const onRail = (item) => (item.id === 'settings-hub' ? nav.go('settings-hub') : 
 const settingsPlace = (e) => (e.params?.tab === 'display' || e.params?.tab === 'audio' || e.params?.tab === 'input' ? '' : railLabel('config'))
 const onNavigate = (item) => (item.route === 'config' ? openConfig(item.params) : nav.go(item.route || item.id, item.params))
 // ---- the unified search: one bar over everything a person can look for (an icon and a full-screen view on a narrow window) ----
-const compactSearch = ref(window.innerWidth < 600)
+const compactSearch = ref(isPhone())
 // the version sits beside the name: when what is left of the bar cannot show the search field with its hint, the search is its icon (as on a phone) instead of being cut
 const caption = useCaptionRoom()
+const moreOpen = ref(false)
+const moreGo = (action) => { moreOpen.value = false; setTimeout(action, 120) }
 let wasPhone = isPhone()
-const onSearchResize = () => { compactSearch.value = window.innerWidth < 600; const now = isPhone(); if (now !== wasPhone) { wasPhone = now; if (now) nav.narrow(); else nav.widen() } }
+const onSearchResize = () => { compactSearch.value = isPhone(); const now = isPhone(); if (now !== wasPhone) { wasPhone = now; if (now) nav.narrow(); else nav.widen() } }
 const hostClients = ref([])
 const hostApps = ref([])
 async function loadSearchData() {
@@ -558,8 +570,10 @@ const actionHandlers = computed(() => ({
   openDesktop: () => openBigScreenOnHost().catch((e) => { connectNotice.value = `${homeTexts(String(uiLocale.value)).openDesktopFailed}${e?.message ? `: ${e.message}` : ''}` }),
 }))
 const pageDocsOf = computed(() => Object.entries(PAGES).filter(([id, p]) => p.icon && p.rail !== 'config' && id !== 'reset').filter(onThisHost).map(([id, p]) => ({ id, title: pageLabel(p), icon: p.icon, route: id, path: railLabel(p.rail), keywords: rowKeywords(ROW_OF_PAGE[id]) })))
+// the navigation bar itself: 音频, 显示与视频 ... open their list like the rail does (search for what the bar is called)
+const railDocsOf = computed(() => RAIL.map((r) => ({ id: `rail-${r.id}`, title: t(r.label), icon: r.icon, route: r.id, path: '', keywords: labelOf(String(uiLocale.value).startsWith('zh') ? 'en' : 'zh', r.label), railId: r.id })))
 const searchDocs = computed(() => [
-  ...settingDocs([...pageDocsOf.value, ...settingsList.searchItems.value], { prefix: settingsPlace, locale: String(uiLocale.value) }),
+  ...settingDocs([...railDocsOf.value, ...pageDocsOf.value, ...settingsList.searchItems.value], { prefix: settingsPlace, locale: String(uiLocale.value) }),
   // the big screen opens on the host's own machine: a page anywhere else does not offer the action
   ...actionDocs(String(uiLocale.value), actionHandlers.value, searchT.value.types.action).filter((d) => d.id !== 'action:openDesktop' || bigScreenHere.value),
   ...clientDocs(hostClients.value, { place: railLabel('stream') }),
@@ -573,7 +587,8 @@ const uni = useUnifiedSearch({
   isPinned: (doc) => isPinnedOnHome('web-home', doc.pin),
   recentSettings: recentSettingDocs,
   onChoose: (doc) => {
-    if (doc.type === 'setting' || doc.type === 'page') { settingsList.remember(doc.entry?.keyName); onNavigate(doc.entry) }
+    if (doc.type === 'page' && doc.entry?.railId) onRail({ id: doc.entry.railId })
+    else if (doc.type === 'setting' || doc.type === 'page') { settingsList.remember(doc.entry?.keyName); onNavigate(doc.entry) }
     else if (doc.type === 'client') { requestPageFilter('pin', doc.client?.name || doc.title); nav.go('pin') }
     else if (doc.type === 'app') { requestPageFilter('apps', doc.app?.name || doc.title); nav.go('apps') }
     else if (doc.type === 'tile') { addTileToHome('web-home', doc.tile); nav.go('home') }

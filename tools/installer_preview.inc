@@ -66,14 +66,29 @@ preview_main(const std::wstring &out_dir) {
     { "welcome-tab", pg::welcome, "", nullptr },  // the same page after a Tab: the focus ring is shown
     { "welcome-upgrade", pg::welcome, "", [](view &v) { v.upgrade = true; } },
     { "welcome-uac-cancelled", pg::welcome, "", [](view &v) { v.uac_cancelled = true; } },
-    // the install location (installer_dir.h): a folder the person picked, and the folders that are refused with their reason under the row
-    { "welcome-dir-custom", pg::welcome, "", [](view &v) { v.dir = L"D:\\Games\\安装\\Foundation Sunshine"; v.dir_free = 412LL << 30; } },
+    // the install location (installer_dir.h): a folder that was picked (the product's name added, "use the selected folder" offered), one that was typed, a long one,
+    // the problems that refuse a folder (their reason under the row), and the warnings that only ask (a banner, the safe place one press away, the question with its countdown)
+    { "welcome-dir-picked", pg::welcome, "", [](view &v) { v.dir = L"D:\\Games\\Foundation Sunshine"; v.dir_picked = L"D:\\Games"; v.dir_free = 412LL << 30; } },
+    { "welcome-dir-redirected", pg::welcome, "", [](view &v) { v.dir = L"D:\\Games\\Foundation Sunshine"; v.dir_picked = L"D:\\Games"; v.dir_note = "redirected"; v.dir_free = 412LL << 30; } },
+    { "welcome-dir-typed", pg::welcome, "", [](view &v) { v.dir = L"D:\\串流基地\\安装"; v.dir_free = 412LL << 30; } },
     { "welcome-dir-long", pg::welcome, "", [](view &v) { v.dir = L"D:\\Programs and Games\\Streaming Host\\Foundation Sunshine Game Streaming Server"; v.dir_free = 412LL << 30; } },
-    { "welcome-dir-not-empty", pg::welcome, "", [](view &v) { v.dir = L"D:\\Games"; v.dir_free = 412LL << 30; v.dir_error = "not-empty"; } },
-    { "welcome-dir-parent", pg::welcome, "", [](view &v) { v.dir = L"D:\\Games\\Sunshine"; v.dir_free = 412LL << 30; v.dir_error = "parent"; } },
+    { "welcome-dir-not-empty", pg::welcome, "", [](view &v) { v.dir = L"D:\\Games"; v.dir_picked = L"D:\\Games"; v.dir_free = 412LL << 30; v.dir_error = "not-empty"; } },
+    { "welcome-dir-root", pg::welcome, "", [](view &v) { v.dir = L"D:\\"; v.dir_free = 412LL << 30; v.dir_error = "root"; } },
     { "welcome-dir-fs", pg::welcome, "", [](view &v) { v.dir = L"F:\\Sunshine"; v.dir_free = 58LL << 30; v.dir_error = "fs"; } },
     { "welcome-dir-no-space", pg::welcome, "", [](view &v) { v.dir = L"E:\\Sunshine"; v.dir_free = 400LL << 20; v.dir_error = "no-space"; } },
-    { "welcome-dir-upgrade-error", pg::welcome, "", [](view &v) { v.upgrade = true; v.dir = L"D:\\Games"; v.dir_error = "system"; } },
+    { "welcome-dir-system", pg::welcome, "", [](view &v) { v.dir = L"C:\\Windows\\Foundation Sunshine"; v.dir_error = "system"; } },
+    { "welcome-dir-warning-parent", pg::welcome, "", [](view &v) {
+        v.dir = L"D:\\Games\\Foundation Sunshine"; v.dir_picked = L"D:\\Games"; v.dir_free = 412LL << 30; v.dir_warning = "parent"; v.dir_safe = L"D:\\Foundation Sunshine";
+      } },
+    { "welcome-dir-warning-user", pg::welcome, "", [](view &v) {
+        v.dir = L"C:\\Users\\Alice\\Foundation Sunshine"; v.dir_free = 238LL << 30; v.dir_warning = "user"; v.dir_safe = L"C:\\Program Files\\Sunshine";
+      } },
+    { "welcome-dir-confirm", pg::welcome, "", [](view &v) {
+        v.dir = L"D:\\Games\\Foundation Sunshine"; v.dir_warning = "parent"; v.dir_safe = L"D:\\Foundation Sunshine"; v.dir_confirm = true; v.dir_confirm_left = 5;
+      } },
+    { "welcome-dir-confirm-ready", pg::welcome, "", [](view &v) {
+        v.dir = L"C:\\Users\\Alice\\Foundation Sunshine"; v.dir_warning = "user"; v.dir_safe = L"C:\\Program Files\\Sunshine"; v.dir_confirm = true; v.dir_confirm_left = 0;
+      } },
     { "maintenance-newer", pg::maintenance, "", [](view &v) {
         v.maintenance = true; v.has_uninstaller = true; v.package_version = L"2026.1109.120000"; v.installed_version = L"2026.1107.120000";
       } },

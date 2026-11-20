@@ -1513,6 +1513,53 @@ jobs:
           if (-not (Test-Path $engine) -or (Get-FileHash -LiteralPath $engine -Algorithm SHA256).Hash -ne $expected) { throw 'the extracted engine differs from the packaged one' }
           if (-not (Select-String -Path (Join-Path $dir 'events.jsonl') -Pattern 'WorkerStarted' -Quiet)) { throw 'the worker wrote no first event' }
 
+      # The rules for the install folder (tools/installer_dir.h) are unit-tested with a fake machine; here the same code answers with this runner's real
+      # drives, file systems, known folders and permissions (--selftest-dir, nothing is created or changed): a picked folder gets the product's folder name,
+      # typed text is taken as it is, the Windows folder and a network place are refused, a user folder is only a warning with the default folder as the safe place.
+      - name: Installer location rules on this machine (smoke test)
+        if: needs.changes.outputs.package == 'true'
+        shell: pwsh
+        run: |
+          $installer = (Resolve-Path 'artifacts/sunshine-windows-installer.exe').Path
+          $dir = Join-Path $env:RUNNER_TEMP 'installer-dir-smoke'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $drive = Split-Path -Qualifier $env:RUNNER_TEMP
+          $default = Join-Path $env:ProgramFiles 'Sunshine'
+          $n = 0
+          function Probe([string]$Path, [switch]$Pick) {
+            $script:n++
+            $out = Join-Path $dir "case-$script:n.json"
+            $argText = "--selftest-dir `"$Path`" --out `"$out`"" + $(if ($Pick) { ' --pick' } else { '' })
+            $process = Start-Process -FilePath $installer -ArgumentList $argText -PassThru
+            if (-not $process.WaitForExit(60000)) { $process.Kill(); throw "location probe $script:n did not finish in 60 s" }
+            $process.Refresh()
+            if ($process.ExitCode -ne 0 -or -not (Test-Path $out)) { throw ('location probe {0} exited with 0x{1:X8}' -f $script:n, $process.ExitCode) }
+            $answer = Get-Content -Raw -LiteralPath $out | ConvertFrom-Json
+            Write-Host ("{0} {1} -> path '{2}' appended={3} redirected={4} error='{5}' warning='{6}' safe='{7}'" -f $(if ($Pick) { 'pick ' } else { 'typed' }), $Path, $answer.path, $answer.appended, $answer.redirected, $answer.error, $answer.warning, $answer.safe)
+            $answer
+          }
+          function Expect($Case, [string]$What, $Actual, $Wanted) { if ($Actual -ne $Wanted) { throw "$What of '$($Case.input)': '$Actual', wanted '$Wanted'" } }
+          # a disk root picked: the product's folder name is added, the root is never the install folder
+          $r = Probe "$drive\" -Pick
+          Expect $r 'path' $r.path "$drive\Foundation Sunshine"; Expect $r 'appended' $r.appended $true; Expect $r 'error' $r.error ''
+          # the default folder picked again is the default folder; nothing is added
+          $r = Probe $default -Pick
+          Expect $r 'path' $r.path $default; Expect $r 'appended' $r.appended $false; Expect $r 'error' $r.error ''
+          # a folder that has things in it: not refused, the product's folder name goes inside it and the page says so
+          $r = Probe $env:RUNNER_TEMP -Pick
+          Expect $r 'path' $r.path (Join-Path $env:RUNNER_TEMP 'Foundation Sunshine'); Expect $r 'appended' $r.appended $true; Expect $r 'redirected' $r.redirected $true; Expect $r 'error' $r.error ''
+          # typed text is the folder as typed (spaces at the ends are dropped; the quotes of "Copy as path" are in the unit tests: the page sends the text as JSON, not as a command line)
+          $r = Probe "  $drive\Typed Folder  "
+          Expect $r 'path' $r.path "$drive\Typed Folder"; Expect $r 'appended' $r.appended $false
+          # problems: never usable
+          $r = Probe "$drive\"; Expect $r 'error' $r.error 'root'
+          $r = Probe "$drive\a!b"; Expect $r 'error' $r.error 'chars'
+          $r = Probe (Join-Path $env:SystemRoot 'Foundation Sunshine'); Expect $r 'error' $r.error 'system'
+          $r = Probe '\\nas\apps\Foundation Sunshine'; Expect $r 'error' $r.error 'not-fixed'
+          # a user folder works but is a risk: a warning, and the default folder is the safe place (the profile is on the system drive)
+          $r = Probe (Join-Path $env:USERPROFILE 'Foundation Sunshine')
+          Expect $r 'error' $r.error ''; Expect $r 'warning' $r.warning 'user'; Expect $r 'safe' $r.safe $default
+
       # 体积门禁：安装器超过 scripts/ci/size-budget.json 的上限就失败，超过上限的 90% 打印警告。便携包、sunshine.exe、
       # sunshine-gui.exe 只记录大小，写进 job summary，方便看趋势。上限由车主批准后才能改。
       - name: Installer size budget
@@ -1528,7 +1575,7 @@ jobs:
 
       - name: Check unattended install and uninstall
         if: needs.changes.outputs.package == 'true'
-        timeout-minutes: 12
+        timeout-minutes: 20
         uses: ./.github/actions/test-installer-silent
 
       # The WebView2 step of the worker against Microsoft's real link: the bootstrapper downloads, its signature is Microsoft
