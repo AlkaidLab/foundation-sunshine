@@ -45,10 +45,6 @@ function Remove-VbCableDrivers([scriptblock]$ReadDrivers, [scriptblock]$RemovePa
     $packages = @(Get-VbCablePackages $drivers)
     $newPackages = @($packages | Where-Object { -not $attempted.Contains($_) })
     if ($newPackages.Count -eq 0) {
-      if ($script:RestartRequired) {
-        Write-Host 'A restart is required before VB-Cable removal can be verified.'
-        return
-      }
       if ($unchanged -ge 2) { throw 'VB-Cable is still present after driver removal. Use the VB-Audio uninstaller instead.' }
       $unchanged++
       & $WaitForRefresh
@@ -62,22 +58,18 @@ function Remove-VbCableDrivers([scriptblock]$ReadDrivers, [scriptblock]$RemovePa
     [void]$attempted.Add($package)
     Write-Host "Removing VB-Cable driver package $package..."
     $code = & $RemovePackage $package
-    if ($code -eq 3010) { $script:RestartRequired = $true }
-    elseif ($code -ne 0) { throw "Driver package $package could not be removed (exit $code)." }
+    if ($code -ne 0 -and $code -ne 3010) { throw "Driver package $package could not be removed (exit $code)." }
   }
   throw 'Could not verify VB-Cable driver removal.'
 }
 
-$script:RestartRequired = $false
 try {
   Remove-VbCableDrivers `
     { Get-CimInstance Win32_PnPSignedDriver -ErrorAction Stop } `
     { param($package) & (Join-Path $env:SystemRoot 'System32\pnputil.exe') /delete-driver $package /uninstall | Out-Host; $LASTEXITCODE } `
     { Start-Sleep -Milliseconds 500 }
-  if ($script:RestartRequired) { exit 3010 }
   exit 0
 } catch {
   [Console]::Error.WriteLine($_.Exception.Message)
-  if ($script:RestartRequired) { [Console]::Error.WriteLine('A restart is also required to finish an earlier driver removal.') }
   exit 1
 }

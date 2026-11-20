@@ -17,11 +17,6 @@ if %errorLevel% neq 0 (
 :: other products, registry settings and program files are not ours to remove.
 "%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%~dp0uninstall-vsink.ps1"
 set "UNINSTALL_RC=%ERRORLEVEL%"
-if "%UNINSTALL_RC%"=="3010" (
-    echo VB-Cable driver removal requires a restart.
-    pause
-    exit /b 3010
-)
 if not "%UNINSTALL_RC%"=="0" (
     echo ERROR: VB-Cable driver removal failed.
     pause

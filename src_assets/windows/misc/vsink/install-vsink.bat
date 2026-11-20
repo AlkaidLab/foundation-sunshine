@@ -76,11 +76,6 @@ if not "%SETUP_RC%"=="0" if not "%SETUP_RC%"=="3010" (
 echo Cleaning up temporary files...
 rd /s /q "%temp_dir%"
 
-if "%SETUP_RC%"=="3010" (
-    echo VB-Cable installation requires a restart.
-    pause
-    exit /b 3010
-)
 echo VB-Cable driver installation completed!
 pause
 exit /b 0

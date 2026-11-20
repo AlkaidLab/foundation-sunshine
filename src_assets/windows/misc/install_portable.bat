@@ -141,10 +141,7 @@ if !errorLevel! neq 0 (
         call :LogInfo "%INFO_VSINK_INSTALL%..."
         REM Call virtual microphone installation script
         call "%SCRIPT_DIR%\install-vsink.bat"
-        set "vsink_result=!ERRORLEVEL!"
-        if "!vsink_result!"=="0" (
-            call :LogSuccess "%SUCCESS_VSINK%"
-        ) else if "!vsink_result!"=="3010" (
+        if !errorLevel! equ 0 (
             call :LogSuccess "%SUCCESS_VSINK%"
         ) else (
             call :LogWarning "%WARNING_VSINK%"
