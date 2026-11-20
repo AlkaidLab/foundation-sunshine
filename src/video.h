@@ -509,17 +509,17 @@ namespace video {
     data_size() = 0;
 
     struct replace_t {
-      std::string_view old;
-      std::string_view _new;
+      std::string old;
+      std::string _new;
 
       KITTY_DEFAULT_CONSTR_MOVE(replace_t)
 
-      replace_t(std::string_view old, std::string_view _new) noexcept:
-          old { std::move(old) }, _new { std::move(_new) } {}
+      replace_t(std::string_view old, std::string_view _new):
+          old { old }, _new { _new } {}
     };
 
-    std::vector<replace_t> *replacements = nullptr;
-    void *channel_data = nullptr;
+    std::shared_ptr<const std::vector<replace_t>> replacements;
+    std::uint64_t channel_data = 0;
     bool after_ref_frame_invalidation = false;
     unsigned fec_percentage = 0;  // Protection budget when this frame was submitted.
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
@@ -656,7 +656,7 @@ namespace video {
   capture(
     safe::mail_t mail,
     config_t config,
-    void *channel_data,
+    std::uint64_t channel_data,
     std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events = std::nullopt,
     int packet_size = 0);
 

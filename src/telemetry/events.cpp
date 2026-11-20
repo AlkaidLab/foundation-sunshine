@@ -554,6 +554,7 @@ namespace telemetry {
             { "submitted", type_e::integer, 0, 100000000 },
             { "queue_flushes", type_e::integer, 0, 1000000 },
             { "queue_frames_dropped", type_e::integer, 0, 100000000 },
+            { "send_would_block_packets", type_e::integer, 0, 1000000000 },
             { "idr_requests", type_e::integer, 0, 1000000 },
             { "rfi_requests", type_e::integer, 0, 1000000 },
             { "anomalies", type_e::integer, 0, 1000000 },
@@ -744,7 +745,6 @@ namespace telemetry {
       }();
       return table;
     }
-
     // -> the cleaned value, or nullopt when the value does not fit the spec
     std::optional<json>
     clean(const prop_spec_t &spec, const json &value) {

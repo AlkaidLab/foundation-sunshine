@@ -709,8 +709,6 @@ namespace video {
       frame_timestamps = std::move(other.frame_timestamps);
       dynamic_metadata_temporal = std::move(other.dynamic_metadata_temporal);
       dynamic_metadata_target_peak_nits = other.dynamic_metadata_target_peak_nits;
-      sps = std::move(other.sps);
-      vps = std::move(other.vps);
 
       inject = other.inject;
 
@@ -822,16 +820,13 @@ namespace video {
     avcodec_ctx_t avcodec_ctx;
     std::unique_ptr<platf::avcodec_encode_device_t> device;
 
-    std::vector<packet_raw_t::replace_t> replacements;
+    std::shared_ptr<const std::vector<packet_raw_t::replace_t>> replacements;
     frame_timestamp_ring_t frame_timestamps;
 
     // Scene-aware temporal state is session-local so a new stream cannot inherit
     // metadata history from the previous stream.
     hdr_metadata::dynamic_metadata_temporal_state_t dynamic_metadata_temporal;
     uint16_t dynamic_metadata_target_peak_nits = 1000;
-
-    cbs::nal_t sps;
-    cbs::nal_t vps;
 
     // inject sps/vps data into idr pictures
     int inject;
@@ -1208,7 +1203,7 @@ namespace video {
 
     config_t config;
     int frame_nr;
-    void *channel_data;
+    std::uint64_t channel_data;
   };
 
   struct sync_session_t {
@@ -2475,7 +2470,7 @@ namespace video {
     int64_t frame_nr,
     avcodec_encode_session_t &session,
     safe::mail_raw_t::queue_t<packet_t> &packets,
-    void *channel_data,
+    std::uint64_t channel_data,
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
     std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
     const auto submitted_frame_index = static_cast<uint64_t>(frame_nr);
@@ -2488,9 +2483,6 @@ namespace video {
     frame->pts = frame_nr;
 
     auto &ctx = session.avcodec_ctx;
-
-    auto &sps = session.sps;
-    auto &vps = session.vps;
 
     // Update per-frame dynamic metadata. HDR10+ and HDR Vivid intentionally use
     // their own temporal models because their standards define different fields.
@@ -2538,27 +2530,22 @@ namespace video {
       }
 
       if (session.inject) {
+        auto replacements = std::make_shared<std::vector<packet_raw_t::replace_t>>();
+        const auto add = [&](const auto &nalu) {
+          replacements->emplace_back(
+            std::string_view((const char *) nalu.old.begin(), nalu.old.size()),
+            std::string_view((const char *) nalu._new.begin(), nalu._new.size()));
+        };
         if (session.inject == 1) {
-          auto h264 = cbs::make_sps_h264(ctx.get(), av_packet);
-
-          sps = std::move(h264.sps);
+          add(cbs::make_sps_h264(ctx.get(), av_packet).sps);
         }
         else {
-          auto hevc = cbs::make_sps_hevc(ctx.get(), av_packet);
-
-          sps = std::move(hevc.sps);
-          vps = std::move(hevc.vps);
-
-          session.replacements.emplace_back(
-            std::string_view((char *) std::begin(vps.old), vps.old.size()),
-            std::string_view((char *) std::begin(vps._new), vps._new.size()));
+          const auto hevc = cbs::make_sps_hevc(ctx.get(), av_packet);
+          add(hevc.vps);
+          add(hevc.sps);
         }
-
         session.inject = 0;
-
-        session.replacements.emplace_back(
-          std::string_view((char *) std::begin(sps.old), sps.old.size()),
-          std::string_view((char *) std::begin(sps._new), sps._new.size()));
+        session.replacements = std::move(replacements);
       }
 
       if (av_packet && av_packet->pts >= 0) {
@@ -2572,7 +2559,7 @@ namespace video {
         }
       }
 
-      packet->replacements = &session.replacements;
+      if (packet->is_idr()) packet->replacements = session.replacements;
       packet->channel_data = channel_data;
       perf::record_encoded_frame(session.perf_session_id);
       packets->raise(std::move(packet));
@@ -2586,7 +2573,7 @@ namespace video {
     int64_t frame_nr,
     nvenc_encode_session_t &session,
     safe::mail_raw_t::queue_t<packet_t> &packets,
-    void *channel_data,
+    std::uint64_t channel_data,
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
     std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
     const auto submitted_frame_index = static_cast<uint64_t>(frame_nr);
@@ -2637,7 +2624,7 @@ namespace video {
     amf::amf_encoded_frame encoded_frame,
     amf_encode_session_t &session,
     safe::mail_raw_t::queue_t<packet_t> &packets,
-    void *channel_data) {
+    std::uint64_t channel_data) {
     if (encoded_frame.fatal) {
       // Encoder is in unrecoverable state (device lost or repeated failures);
       // propagate fatal so the session reinitializes instead of silently
@@ -2672,7 +2659,7 @@ namespace video {
   }
 
   int
-  collect_amf_outputs(encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, void *channel_data) {
+  collect_amf_outputs(encode_session_t &session, safe::mail_raw_t::queue_t<packet_t> &packets, std::uint64_t channel_data) {
     auto amf_session = dynamic_cast<amf_encode_session_t *>(&session);
     if (!amf_session) return 0;
 
@@ -2693,7 +2680,7 @@ namespace video {
     int64_t frame_nr,
     amf_encode_session_t &session,
     safe::mail_raw_t::queue_t<packet_t> &packets,
-    void *channel_data,
+    std::uint64_t channel_data,
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
     std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
     const auto submitted_frame_index = static_cast<uint64_t>(frame_nr);
@@ -2735,7 +2722,7 @@ namespace video {
     int64_t frame_nr,
     std::unique_ptr<encode_session_t> &session_ptr,
     safe::mail_raw_t::queue_t<packet_t> &packets,
-    void *channel_data,
+    std::uint64_t channel_data,
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
     std::optional<platf::frame_pipeline_trace_t> pipeline_trace,
     const encoder_rebuild_context_t *rebuild_context = nullptr) {
@@ -3621,7 +3608,7 @@ namespace video {
     std::unique_ptr<platf::encode_device_t> encode_device,
     safe::signal_t &reinit_event,
     const encoder_t &encoder,
-    void *channel_data,
+    std::uint64_t channel_data,
     std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events,
     std::function<std::unique_ptr<encode_session_t>()> session_factory = {},
     std::function<void()> backend_failure_handler = {}) {
@@ -4367,7 +4354,7 @@ namespace video {
   capture_async(
     safe::mail_t mail,
     config_t &config,
-    void *channel_data,
+    std::uint64_t channel_data,
     std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events,
     int packet_size) {
     auto shutdown_event = mail->event<bool>(mail::shutdown);
@@ -4772,7 +4759,7 @@ namespace video {
   capture(
     safe::mail_t mail,
     config_t config,
-    void *channel_data,
+    std::uint64_t channel_data,
     std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events,
     int packet_size) {
     // The encoder is taken once for this session. Nothing resets it to null any more (the probe publishes a new snapshot or leaves the old one), so this

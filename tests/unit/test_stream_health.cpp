@@ -208,11 +208,14 @@ TEST(StreamHealthAnomaly, FramesCapturedButNeverSubmittedAreSkipped) {
 TEST(StreamHealthChunk, HistogramsAddUpToTheWindowsAndTheChunkResets) {
   std::int64_t now = 0;
   stream_health_t h { now, dims60() };
+  h.count(counter_e::send_would_block_packets, 7);
   for (int i = 0; i < 4; ++i) one_window(h, now, 3000, 10 + 30 * i, 5);
   const auto chunk = h.take_chunk(now);
   EXPECT_EQ(chunk["windows"], 4);
   EXPECT_EQ(chunk["window_s"], 240);
   EXPECT_EQ(chunk["frames"], 12000);
+  EXPECT_EQ(chunk["send_would_block_packets"], 7);
+  EXPECT_EQ(chunk["queue_frames_dropped"], 0);
   const auto &host_p95 = chunk["h"]["host_p95"];
   ASSERT_EQ(host_p95.size(), BUCKET_COUNT);
   int host_total = 0;

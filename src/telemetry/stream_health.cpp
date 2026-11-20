@@ -384,6 +384,7 @@ namespace telemetry::health {
     props["submitted"] = chunk_counters_[idx(counter_e::submitted)];
     props["queue_flushes"] = chunk_counters_[idx(counter_e::queue_flushes)];
     props["queue_frames_dropped"] = chunk_counters_[idx(counter_e::queue_frames_dropped)];
+    props["send_would_block_packets"] = chunk_counters_[idx(counter_e::send_would_block_packets)];
     props["idr_requests"] = chunk_counters_[idx(counter_e::idr_requests)];
     props["rfi_requests"] = chunk_counters_[idx(counter_e::rfi_requests)];
     props["anomalies"] = chunk_anomalies_;
