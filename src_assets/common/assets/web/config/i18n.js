@@ -130,13 +130,13 @@ export const resolveChoice = (choice) => (choice === LOCALE_SYSTEM || !SUPPORTED
 // 语言热切换的请求序号：下载消息期间用户可能又选了别的语言，只有最新一次调用能提交语言状态（旧调用保留已注册的消息即可）
 let localeRequestId = 0;
 
-/** Shows a language at once: its messages are fetched when they are not loaded, the page's lang follows. */
+/** Shows a language at once: its messages are fetched when they are not loaded, the page's lang follows. Returns whether this call committed the language — false when a newer choice superseded it while its messages were loading. */
 export async function applyLocale(locale) {
     // zh 变体归一，与初始化同一规则（见 init 内注释）
     if (/^zh/i.test(locale) && locale !== 'zh' && locale !== 'zh_TW') locale = 'zh';
     const request = ++localeRequestId;
     activeLocale.value = locale;
-    if (!webI18n) return;
+    if (!webI18n) return false;
     try {
         // zh 基底按需加载一次（变体已在入口归一）；zh_TW 在基底之上覆盖繁体；其余语言按需加载自己的文件（vue-i18n 惯例：先注册消息再切换语言）
         if (/^zh/i.test(locale)) {
@@ -153,19 +153,20 @@ export async function applyLocale(locale) {
         console.error("Failed to download translations", e);
     }
     // 等待下载期间有了更新的选择：这次调用只贡献已注册的消息，语言状态交给最新那次
-    if (request !== localeRequestId) return;
+    if (request !== localeRequestId) return false;
     webI18n.global.locale.value = locale;
     document.querySelector('html').setAttribute('lang', locale.replace(/_/g, '-'));
+    return true;
 }
 
-/** The choice of the language, applied at once and stored as made ('system' is stored, not the code it gives). Returns the code that is shown. */
+/** The choice of the language, applied at once and stored as made ('system' is stored, not the code it gives). Returns the code that is shown, or null when a newer choice superseded it while its messages were loading (the caller then skips persisting the stale code). */
 export async function setLocaleChoice(choice) {
     const value = choice === LOCALE_SYSTEM || SUPPORTED_LOCALES.includes(choice) ? choice : LOCALE_SYSTEM;
     writeLocalePref(value);
     localeChoice.value = value;
     const code = resolveChoice(value);
-    await applyLocale(code);
-    return code;
+    const applied = await applyLocale(code);
+    return applied ? code : null;
 }
 
 // the operating system changes its language: a window that follows it changes with it

@@ -297,6 +297,8 @@ export function useGuide() {
     setLocale: async (choice) => {
       const { setLocaleChoice } = await import('../config/i18n.js') // loaded when a language is picked: the translations of the page are not part of the guide's own code
       const code = await setLocaleChoice(choice)
+      // superseded by a newer pick while this one's messages were loading: its code is stale, don't save it over the newer choice
+      if (code == null) return
       try { await saveSettingKey({ getJson: (path) => apiJson(path), postJson: (path, body) => apiJson(path, { method: 'POST', body }) }, 'locale', code) } catch { /* not signed in yet: the host keeps its language */ }
     },
     // The apps page takes the request from the address and opens the matching dialog
