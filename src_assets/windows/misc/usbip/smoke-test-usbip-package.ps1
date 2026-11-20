@@ -101,6 +101,44 @@ try {
     $nodes = @(Get-UsbipNodes -IncludeAbsent)
     Require ($nodes.Count -eq 1 -and $nodes[0].InstanceId -eq 'ROOT\USB\0000') 'uninstall would skip devnode remove'
   }
+  Check 'replacement removes only absent matching controllers and preserves reboot result' {
+    $hostDir = Join-Path $scratch 'node-host'
+    New-Item -ItemType Directory -Path (Join-Path $hostDir 'scripts') -Force | Out-Null
+    & $module {
+      $script:RemovedNodes = [Collections.Generic.List[string]]::new()
+      function script:Get-PnpDevice {
+        param([switch]$PresentOnly, $ErrorAction)
+        [pscustomobject]@{ InstanceId = 'ROOT\USB\0000' }
+        if (-not $PresentOnly) {
+          [pscustomobject]@{ InstanceId = 'ROOT\USB\0001' }
+          [pscustomobject]@{ InstanceId = 'ROOT\UNRELATED\0002' }
+        }
+      }
+      function script:Get-PnpDeviceProperty {
+        param($InstanceId, $KeyName, $ErrorAction)
+        [pscustomobject]@{ Data = $(if ($InstanceId -like 'ROOT\USB\*') { @('ROOT\USBIP_WIN2\UDE') } else { @('other') }) }
+      }
+      function script:Remove-UsbipAbsentNode { param($InstanceId); $script:RemovedNodes.Add($InstanceId); return $true }
+    }
+    Remove-UsbipAbsentLegacyNodes $hostDir
+    $removed = @(& $module { $script:RemovedNodes.ToArray() })
+    Require ($removed.Count -eq 1 -and $removed[0] -eq 'ROOT\USB\0001') 'wrong device selected for removal'
+    Require ((Get-UsbipRestartCode) -eq 3010) 'node removal reboot request was lost'
+    Require ((Get-Content -Raw (Join-Path $hostDir 'scripts\usbip-replace-nodes.log')).Contains('ROOT\USB\0001')) 'removed instance was not logged'
+  }
+  # Restore module state and the basic PnP fixtures for subsequent checks.
+  $module = Import-Module (Join-Path $PSScriptRoot 'usbip-package-functions.psm1') -Force -PassThru -DisableNameChecking
+  & $module {
+    function script:Get-PnpDevice {
+      param([switch]$PresentOnly, $ErrorAction)
+      [pscustomobject]@{ InstanceId = 'ROOT\USB\0000' }
+      [pscustomobject]@{ InstanceId = 'ROOT\UNRELATED\0001' }
+    }
+    function script:Get-PnpDeviceProperty {
+      param($InstanceId, $KeyName, $ErrorAction)
+      [pscustomobject]@{ Data = $(if ($InstanceId -eq 'ROOT\USB\0000') { @('ROOT\USBIP_WIN2\UDE') } else { @('other') }) }
+    }
+  }
   & $module {
     function script:Get-UsbipOwnership { [pscustomobject]@{ ownership = 'managed' } }
     $script:Calls = [Collections.Generic.List[string]]::new()
