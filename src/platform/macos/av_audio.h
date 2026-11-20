@@ -19,6 +19,7 @@
 @property (nonatomic, assign) AVCaptureConnection *audioConnection;
 @property (nonatomic, assign) NSCondition *samplesArrivedSignal;
 
++ (NSArray<AVCaptureDevice *> *)microphones;
 + (NSArray *)microphoneNames;
 + (AVCaptureDevice *)findMicrophone:(NSString *)name;
 

@@ -3242,7 +3242,7 @@ namespace stream {
       retry_receive_after_error = false;
       retry_delay = 300ms;
 
-      BOOST_LOG(info) << "[mic_udp] Received " << received_bytes << " bytes on port 48001 from " << peer.address().to_string();
+      BOOST_LOG(verbose) << "[mic_udp] Received " << received_bytes << " bytes on port 48001 from " << peer.address().to_string();
 
       if (received_bytes < sizeof(RTP_PACKET)) {
         return;
