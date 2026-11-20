@@ -78,6 +78,7 @@ export function pickPerf(snapshot, sessionId = null) {
     encoder: item.encoder || '',
     capture: item.capture || '',
     frameRates: item.frame_rates && typeof item.frame_rates === 'object' ? item.frame_rates : null, // the stage rates as the host reports them
+    pipeline: item.pipeline && typeof item.pipeline === 'object' ? item.pipeline : null, // the stages of the host pipeline (the 帧时间占用 tile), as the host reports them
     uptimeMs: num(item.uptime_ms),
   }
 }

@@ -16,13 +16,6 @@
 
       <MAnnouncementStrip v-if="announcements.top.value" :item="announcements.top.value" :total="announcements.unread.value" :texts="announceTexts" @dismiss="announcements.dismiss" @open-url="openExternalUrl" @open-list="announceOpen = true" />
       <MHomeDash v-model:edit="edit" :cards="cards" :details="allDetails" :ctx="dashCtx" storage-key="web-home" :texts="dashTexts" :config="hostConfig" :locale="locale" @action="onAction" />
-      <MSection v-if="session" class="home-live-controls" :title="$tp('config.host_audio', 'Host audio')">
-        <MGroup>
-          <MItem icon="volume_up" :title="$tp('config.host_audio', 'Play audio on host')" :text="$tp('config.host_audio_desc', 'Apply to the current stream without reconnecting when supported.')">
-            <template #trail><MSwitch :model-value="session.host_audio === true" :disabled="audioBusy" :label="$tp('config.host_audio', 'Host audio')" @update:model-value="setHostAudio" /></template>
-          </MItem>
-        </MGroup>
-      </MSection>
     </MPage>
 
     <!-- Update sheet: current -> new, channel, driver notice, short release notes, link to the release (this page cannot install) -->
@@ -65,8 +58,8 @@
 <script setup>
 import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { coverKnown, heroArtReady, firstImage, recentErrorCount, micIsReady, startupProblems, MStartupProblems, MDriverGuardNotice, MBanner, MButton, MIcon, MIconButton, MItem, MGroup, MPage, MSection, MSheet, MSnackbar, MSwitch, MHomeDash, MSupportSheet, MAnnouncementStrip, MAnnouncementSheet, useAnnouncements, useGuideCard, buildHomeModel, buildStartSteps, buildCards, useJourneyHome, useReleaseAssets, useStarCard, useSystemInfo, reachProblemOf, registeredComponentStatus, guideCardData, downloadCardData, sponsorCardData, GUIDE_TARGET, homeTexts, parseErrorLog, parseSessionLog } from 'foundation-ui/vue'
-import { realSession, buildCatalogue, buildCatalogueDetails, createHistory, createPairQr, saveSettingKey, recentKeys, rememberRecent, createQueuedCalls, createSerialCalls } from 'foundation-ui/vue'
+import { coverKnown, heroArtReady, firstImage, recentErrorCount, micIsReady, startupProblems, MStartupProblems, MDriverGuardNotice, MBanner, MButton, MIcon, MIconButton, MPage, MSheet, MSnackbar, MHomeDash, MSupportSheet, MAnnouncementStrip, MAnnouncementSheet, useAnnouncements, useGuideCard, buildHomeModel, buildStartSteps, buildCards, useJourneyHome, useReleaseAssets, useStarCard, useSystemInfo, reachProblemOf, registeredComponentStatus, guideCardData, downloadCardData, sponsorCardData, GUIDE_TARGET, homeTexts, parseErrorLog, parseSessionLog } from 'foundation-ui/vue'
+import { realSession, buildCatalogue, buildCatalogueDetails, createHistory, createPairQr, saveSettingKey, recentKeys, rememberRecent, createQueuedCalls, createSerialCalls, pipelineAverages } from 'foundation-ui/vue'
 import QRCode from 'qrcode'
 import { useVddSettings } from '../composables/useVddSettings.js'
 import { useSharedConfig } from '../composables/configStore.js'
@@ -135,16 +128,12 @@ watch([liveSession, startReady], () => {
   startTimer = setTimeout(() => { session.value = liveSession.value }, SETTLE_CAP_MS)
 }, { immediate: true })
 onBeforeUnmount(() => clearTimeout(startTimer))
-const audioBusy = ref(false)
-async function setHostAudio(enabled) {
-  const s = session.value
-  if (!s || audioBusy.value) return
-  audioBusy.value = true
+// the host audio of the running client is a tile (live-audio, foundation-ui): its switch sends the command of the stream; a refusal puts the switch back
+async function setHostAudio({ client, enabled, failed }) {
   try {
-    const d = await apiPostJson('/api/runtime/audio', { clientname: s.client_name, enabled })
+    const d = await apiPostJson('/api/runtime/audio', { clientname: client, enabled })
     if (!d?.success) throw new Error(d?.status_message || 'host audio')
-    await live.refreshAux?.()
-  } catch { say($tp('config.host_audio_failed', 'Host audio could not be changed.')) } finally { audioBusy.value = false }
+  } catch { failed?.(); say($tp('config.host_audio_failed', 'Host audio could not be changed.')) }
 }
 const bitrateSample = (s) => (s && Number.isFinite(s.measured_bitrate_kbps) ? s.measured_bitrate_kbps : s?.bitrate)
 const perf = live.perf
@@ -305,7 +294,7 @@ const catalogueInput = computed(() => {
     reach: reach.view.report, reachChecking: reach.view.status === 'loading', reachStatus: reach.view.status, reachCause: reach.view.cause, reachHttp: reach.view.http, reachProgress: reach.view.progress,
     sysinfo: nics.info.value,
     host: { version: versionLabel.value, update: updateLabel.value },
-    session: s ? { ...s, fpsMeasured: perf.value?.fps, latencyMs: perf.value?.avgMs, latencyP95Ms: perf.value?.p95Ms, uptimeMs: perf.value?.uptimeMs, frameRates: perf.value?.frameRates, perfCapture: perf.value?.capture } : null,
+    session: s ? { ...s, fpsMeasured: perf.value?.fps, latencyMs: perf.value?.avgMs, latencyP95Ms: perf.value?.p95Ms, uptimeMs: perf.value?.uptimeMs, frameRates: perf.value?.frameRates, perfCapture: perf.value?.capture, ...pipelineAverages({ pipeline: perf.value?.pipeline }) } : null,
     mic: live.mic.value,
     history: { samples: history.samples, sessions: history.sessions, days: history.days, last: () => history.last() },
     sys: sy ? { memTotal: sy.memory_total || 0, memAvail: sy.memory_available || 0 } : null,
@@ -380,6 +369,7 @@ function onAction(a) {
     case 'link': window.open(a.value, '_blank', 'noopener,noreferrer'); break
     case 'setting': saveSetting(a.value); break
     case 'runtime-bitrate': runtimeBitrate(a.value); break
+    case 'runtime-host-audio': setHostAudio(a.value); break
     case 'ds5-tune': ds5Tune(a.value); break
     case 'sponsor': { const target = SPONSORS.find((x) => x.id === a.value); if (a.value === 'star') window.open('https://github.com/AlkaidLab/foundation-sunshine', '_blank', 'noopener,noreferrer'); else if (target) window.open(sponsorUrl(target, locale.value), '_blank', 'noopener,noreferrer'); else sponsorSheet.value = true; break }
     default: break
