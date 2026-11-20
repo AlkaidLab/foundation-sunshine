@@ -4,6 +4,11 @@ param(
     [string]$InstallRoot = $PSScriptRoot
 )
 
+# Windows PowerShell 5.1 also needs .EXE to invoke reg.exe by its full path.
+if (($env:PATHEXT -split ';') -notcontains '.EXE') {
+    $env:PATHEXT = '.EXE;' + $env:PATHEXT
+}
+
 $script:SunshineRemovedCount = 0
 
 # Remove only verbs whose command still belongs to this installation. The

@@ -139,6 +139,8 @@ english.MsgOldNSISStaleRegistry=The previous installation files appear to be gon
 english.MsgOldNSISCleanupFailed=Failed to clean up the previous installation registry entries.%nPlease remove HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine manually and try again.
 english.MsgUpdateBlocked=Sunshine cannot be updated while something is still using its files. The existing installation has not been changed.%n%n%1%n%nClose what is using them and run the installer again.
 english.MsgServiceInstallFailed=Sunshine service could not be installed or verified.%n%nThe files were installed and are kept. Reboot and run "{app}\scripts\install-service.bat" as administrator, or use the repair action in the Sunshine GUI. The installer log in your TEMP folder has the details.
+english.MsgServiceAutostartFailed=Sunshine was installed, but its automatic startup could not be configured or verified. Check the installer log or configure the service in the Sunshine panel.
+english.MsgServiceStartFailed=The Sunshine service was registered, but could not start now. Setup will still apply your automatic startup choice. Check the installer log and try starting the service again from the Sunshine panel.
 english.MsgDirProtectFailed=The install folder could not be protected from changes by other users, so nothing was installed.%n%nThe service runs the programs in this folder as SYSTEM. Pick a folder on a local NTFS or ReFS drive and run setup again. The installer log in your TEMP folder has the details.
 english.MsgVDDInstallFailed=The virtual display driver could not be installed or verified.%n%nSunshine was installed but has not been started. Review the installer log in your TEMP folder, then use the repair action in the Sunshine GUI.
 english.MsgUninstallGamepad=Do you want to remove Virtual Gamepad?
@@ -188,6 +190,8 @@ chinesesimplified.MsgOldNSISStaleRegistry=旧版本的文件已经不存在，�
 chinesesimplified.MsgOldNSISCleanupFailed=清理旧版注册表项失败。%n请手动删除 HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine 后重试。
 chinesesimplified.MsgUpdateBlocked=Sunshine 的文件仍被占用，无法更新。现有安装没有被改动。%n%n%1%n%n请关闭占用它们的程序后重新运行安装程序。
 chinesesimplified.MsgServiceInstallFailed=无法安装或验证 Sunshine 服务。%n%n程序文件已经装好并会保留。请重启后以管理员身份运行 "{app}\scripts\install-service.bat"，或在 Sunshine 管理界面里使用修复功能。详细信息见 TEMP 目录下的安装日志。
+chinesesimplified.MsgServiceAutostartFailed=Sunshine 已安装，但无法配置或验证开机自动启动。请查看安装日志，或在 Sunshine 管理界面中配置服务。
+chinesesimplified.MsgServiceStartFailed=Sunshine 服务已注册，但本次启动失败。安装程序仍会应用您选择的开机启动设置。请查看安装日志，并在 Sunshine 管理界面中重试启动服务。
 chinesesimplified.MsgDirProtectFailed=无法保护安装目录不被其他用户修改，所以没有安装任何文件。%n%n后台服务以 SYSTEM 身份运行这个目录里的程序。请选择本机 NTFS 或 ReFS 磁盘上的文件夹，再运行一次安装程序。详细信息见 TEMP 目录下的安装日志。
 chinesesimplified.MsgVDDInstallFailed=无法安装或验证基地虚拟显示器。%n%nSunshine 已安装但尚未启动。请检查 TEMP 目录中的安装日志，然后在 Sunshine 管理界面中使用修复功能。
 chinesesimplified.MsgUninstallGamepad=是否移除虚拟手柄（ViGEmBus）？
@@ -377,7 +381,8 @@ Root: HKLM64; Subkey: "SOFTWARE\AlkaidLab\Sunshine"; ValueType: string; ValueNam
 [Run]
 ; Post-install: drop explicit ACEs (inherit from parent) + clear READONLY
 ; attribute on files & dirs. The latter is what fixes the rare "Sunshine
-Filename: "{cmd}"; Parameters: "/c icacls ""{app}"" /reset /T /C > ""{tmp}\sunshine-icacls-reset.log"" 2>&1 & attrib -R ""{app}\*.*"" /S /D > ""{tmp}\sunshine-attrib-clear.log"" 2>&1"; StatusMsg: "{cm:StatusResetPermissions}"; Flags: runhidden waituntilterminated; Check: ShouldRepairInstallPermissions; BeforeInstall: EvtPermissions
+Filename: "{sys}\icacls.exe"; Parameters: """{app}"" /reset /T /C"; StatusMsg: "{cm:StatusResetPermissions}"; Flags: runhidden waituntilterminated logoutput; Check: ShouldRepairInstallPermissions; BeforeInstall: EvtPermissions
+Filename: "{sys}\attrib.exe"; Parameters: "-R ""{app}\*.*"" /S /D"; Flags: runhidden waituntilterminated logoutput; Check: PermissionsRepairStarted
 Filename: "{app}\scripts\update-path.bat"; Parameters: "add"; StatusMsg: "{cm:StatusUpdatePath}"; Flags: runhidden waituntilterminated; BeforeInstall: EvtPath
 Filename: "{app}\scripts\migrate-config.bat"; StatusMsg: "{cm:StatusMigrateConfig}"; Flags: runhidden waituntilterminated; BeforeInstall: EvtConfig
 ; Maintenance installs remove components that were selected before but are
@@ -392,8 +397,8 @@ Filename: "{app}\scripts\install-gamepad.bat"; StatusMsg: "{cm:StatusInstallGame
 Filename: "{app}\scripts\install-usbip.bat"; StatusMsg: "{cm:StatusInstallUsbip}"; Flags: runhidden waituntilterminated; Components: usbip; BeforeInstall: EvtUsbip; AfterInstall: EvtUsbipDone
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\tools\usbip-win2-root.ps1"" -Action install"; StatusMsg: "{cm:StatusInstallUsbipRoot}"; Flags: runhidden waituntilterminated; Check: ShouldRunUsbipRootInstall
 Filename: "{app}\scripts\vmouse\install-vmouse.bat"; StatusMsg: "{cm:StatusInstallVmouse}"; Flags: runhidden waituntilterminated; Components: vmouse; BeforeInstall: EvtVmouse; AfterInstall: EvtVmouseDone
-Filename: "{app}\scripts\install-service.bat"; Parameters: "{code:GetServiceInstallParameters}"; StatusMsg: "{cm:StatusInstallService}"; Flags: runhidden waituntilterminated; AfterInstall: VerifyServiceInstalled; BeforeInstall: EvtServiceStart
-Filename: "{app}\scripts\autostart-service.bat"; StatusMsg: "{cm:StatusAutostart}"; Flags: runhidden waituntilterminated; Components: autostart; Check: ShouldConfigureServiceAutostart; BeforeInstall: EvtAutostart; AfterInstall: EvtAutostartDone
+Filename: "{app}\scripts\install-service.bat"; Parameters: "{code:GetServiceInstallParameters}"; StatusMsg: "{cm:StatusInstallService}"; Flags: runhidden waituntilterminated logoutput; AfterInstall: VerifyServiceInstalled; BeforeInstall: EvtServiceStart
+Filename: "{app}\scripts\autostart-service.bat"; StatusMsg: "{cm:StatusAutostart}"; Flags: runhidden waituntilterminated logoutput; Components: autostart; Check: ShouldConfigureServiceAutostart; BeforeInstall: EvtAutostart; AfterInstall: VerifyServiceAutostart
 
 ; Finish page actions - user selectable
 Filename: "{cm:DocumentationURL}"; Description: "{cm:FinishOpenDocs}"; Flags: postinstall shellexec runasoriginaluser unchecked nowait skipifsilent
@@ -418,9 +423,9 @@ Filename: "{app}\assets\gui\{#MyAppGUIExeName}"; Parameters: "--remove-autostart
 ; Stop running processes first. We force-kill the service binary
 ; (sunshinesvc.exe) here as well, otherwise `sc stop` later may block waiting
 ; on its stop handler — which is the typical "uninstaller appears frozen" symptom.
-Filename: "taskkill"; Parameters: "/f /im sunshine-gui.exe"; Flags: runhidden; RunOnceId: "KillGUI"
-Filename: "taskkill"; Parameters: "/f /im sunshine.exe"; Flags: runhidden; RunOnceId: "KillSunshine"
-Filename: "taskkill"; Parameters: "/f /im sunshinesvc.exe"; Flags: runhidden; RunOnceId: "KillSunshineSvc"
+Filename: "{sys}\taskkill.exe"; Parameters: "/f /im sunshine-gui.exe"; Flags: runhidden; RunOnceId: "KillGUI"
+Filename: "{sys}\taskkill.exe"; Parameters: "/f /im sunshine.exe"; Flags: runhidden; RunOnceId: "KillSunshine"
+Filename: "{sys}\taskkill.exe"; Parameters: "/f /im sunshinesvc.exe"; Flags: runhidden; RunOnceId: "KillSunshineSvc"
 ; Stop the GUI first so it cannot recreate the verbs while they are removed.
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\remove-shell-menus.ps1"" -InstallRoot ""{app}"""; Flags: runhidden waituntilterminated logoutput; RunOnceId: "RemoveOwnedShellMenus"; Check: FileExists(ExpandConstant('{app}\scripts\remove-shell-menus.ps1'))
 Filename: "{app}\tools\mat-capture\sunshine-plugin-mat-capture.exe"; Parameters: "--wait-for-stop"; Flags: runhidden waituntilterminated; RunOnceId: "WaitMatCapture"; Check: FileExists(ExpandConstant('{app}\tools\mat-capture\sunshine-plugin-mat-capture.exe'))
@@ -478,6 +483,9 @@ var
   // callers still see a failure — the GUI updater runs us with /VERYSILENT
   // and treats exit code 0 as "update installed successfully".
   ServiceVerifyFailed: Boolean;
+  // Starting now is independent of registration and the user's boot setting.
+  ServiceStartFailed: Boolean;
+  PermissionsRepairInProgress: Boolean;
   // 0 = ready/not selected, 101 = failed, 3010 = reboot required.
   VDDResultCode: Integer;
   InstallRunDir: String;
@@ -671,7 +679,8 @@ end;
 
 // Phase events for the installer shell (one JSON line each; see EmitInstallerEvent). They only
 // report progress; they do not change what the [Run] entries do or in which order.
-procedure EvtPermissions(); begin EmitInstallerEvent('permissions', 'running', 'StatusResetPermissions', 0); end;
+procedure EvtPermissions(); begin PermissionsRepairInProgress := True; EmitInstallerEvent('permissions', 'running', 'StatusResetPermissions', 0); end;
+function PermissionsRepairStarted(): Boolean; begin Result := PermissionsRepairInProgress; end;
 procedure EvtPath(); begin EmitInstallerEvent('path', 'running', 'StatusUpdatePath', 0); end;
 procedure EvtConfig(); begin EmitInstallerEvent('config', 'running', 'StatusMigrateConfig', 0); end;
 procedure EvtFirewall(); begin EmitInstallerEvent('firewall', 'running', 'StatusFirewall', 0); end;
@@ -723,9 +732,8 @@ end;
 
 procedure EvtVmouse(); begin EmitInstallerEvent('vmouse', 'running', 'StatusInstallVmouse', 0); end;
 procedure EvtVmouseDone(); begin EmitInstallerEvent('vmouse', 'done', 'StatusInstallVmouse', 0); end;
-procedure EvtServiceStart(); begin EmitInstallerEvent('service', 'running', 'StatusInstallService', 0); end;
-procedure EvtAutostart(); begin EmitInstallerEvent('autostart', 'running', 'StatusAutostart', 0); end;
-procedure EvtAutostartDone(); begin EmitInstallerEvent('autostart', 'done', 'StatusAutostart', 0); end;
+procedure EvtServiceStart(); begin DeleteFile(ExpandConstant('{app}\scripts\result-service.txt')); EmitInstallerEvent('service', 'running', 'StatusInstallService', 0); end;
+procedure EvtAutostart(); begin DeleteFile(ExpandConstant('{app}\scripts\result-autostart.txt')); EmitInstallerEvent('autostart', 'running', 'StatusAutostart', 0); end;
 
 function VDDComponentSelected(): Boolean;
 begin
@@ -780,7 +788,7 @@ end;
 
 function ShouldConfigureServiceAutostart(): Boolean;
 begin
-  Result := VDDResultCode <> 101;
+  Result := (VDDResultCode <> 101) and (not ServiceVerifyFailed);
 end;
 
 procedure InstallAndVerifyVDD();
@@ -1185,7 +1193,7 @@ var
 begin
   OutFile := ExpandConstant('{tmp}\sunshine-folder-acl.txt');
   DeleteFile(OutFile);
-  if Exec(ExpandConstant('{cmd}'), '/c icacls "' + Dir + '" > "' + OutFile + '" 2>&1', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and
+  if Exec(ExpandConstant('{cmd}'), '/c ""' + ExpandConstant('{sys}\icacls.exe') + '" "' + Dir + '" > "' + OutFile + '" 2>&1"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and
      LoadStringsFromFile(OutFile, Lines) then
     for I := 0 to GetArrayLength(Lines) - 1 do
       if Trim(Lines[I]) <> '' then
@@ -1291,8 +1299,8 @@ begin
   // ACL. Only legacy installs with malformed/non-canonical ACLs take the slow
   // recursive reset path.
   VerifyLog := ExpandConstant('{tmp}\sunshine-icacls-verify.log');
-  Params := '/c icacls "' + ExpandConstant('{app}') +
-            '" /verify /T /C > "' + VerifyLog + '" 2>&1';
+  Params := '/c ""' + ExpandConstant('{sys}\icacls.exe') + '" "' + ExpandConstant('{app}') +
+            '" /verify /T /C > "' + VerifyLog + '" 2>&1"';
   ResultCode := -1;
   if not Exec(ExpandConstant('{cmd}'), Params, '', SW_HIDE,
               ewWaitUntilTerminated, ResultCode) then
@@ -1314,6 +1322,18 @@ begin
     Result := Result + IntToStr(Ord(Value[I])) + ' ';
 end;
 
+procedure ReportVerifiedService();
+begin
+  if ServiceStartFailed then
+  begin
+    EmitInstallerEvent('service', 'failed', 'StatusInstallService', 100);
+    if not WizardSilent then
+      InstallerMessageBox(CustomMessage('MsgServiceStartFailed'), mbError, MB_OK, IDOK);
+  end
+  else
+    EmitInstallerEvent('service', 'done', 'StatusInstallService', 0);
+end;
+
 procedure VerifyServiceInstalled();
 var
   ExpectedPath, ImagePath, Lower, Detail, TmpFile, Line: String;
@@ -1322,6 +1342,26 @@ var
   Lines: TArrayOfString;
 begin
   EmitInstallerEvent('service', 'running', 'StatusInstallService', 0);
+  ResultCode := TakeStepResult('service');
+  // The batch reserves 2 for a start failure after successful configuration.
+  // Still verify the service path before applying the autostart choice.
+  ServiceStartFailed := ResultCode = 2;
+  if ServiceStartFailed then
+  begin
+    Log('Service configuration succeeded, but starting it failed (script exit 2).');
+    JournalComponent('service', 'start', ResultCode);
+  end;
+  if (ResultCode <> 0) and (not ServiceStartFailed) then
+  begin
+    Detail := 'Service script exit: ' + IntToStr(ResultCode);
+    Log('Service installation failed. ' + Detail);
+    ServiceVerifyFailed := True;
+    EmitInstallerEvent('service', 'failed', 'StatusInstallService', 100);
+    JournalComponent('service', 'install', ResultCode);
+    if not WizardSilent then
+      InstallerMessageBox(ExpandConstant(CustomMessage('MsgServiceInstallFailed')) + #13#10 + #13#10 + Detail, mbError, MB_OK, IDOK);
+    Exit;
+  end;
   ExpectedPath := ExpandConstant('{app}\tools\sunshinesvc.exe');
   Lower := Lowercase(ExpectedPath);
 
@@ -1355,7 +1395,7 @@ begin
     // exact first: the value was written from this very path, and a path with Chinese or other non-ASCII characters has to match as it is
     if Found and ((Pos(ExpectedPath, ImagePath) > 0) or (Pos(Lower, Lowercase(ImagePath)) > 0)) then
     begin
-      EmitInstallerEvent('service', 'done', 'StatusInstallService', 0);
+      ReportVerifiedService();
       Exit;  // happy path
     end;
     Sleep(500);
@@ -1368,7 +1408,7 @@ begin
   // parse localized labels such as BINARY_PATH_NAME/NOMBRE_RUTA_BINARIO.
   TmpFile := ExpandConstant('{tmp}\sc_qc_sunshineservice_verify.txt');
   ResultCode := -1;
-  Exec(ExpandConstant('{cmd}'), '/c sc qc SunshineService > "' + TmpFile + '" 2>&1',
+  Exec(ExpandConstant('{cmd}'), '/c ""' + ExpandConstant('{sys}\sc.exe') + '" qc SunshineService > "' + TmpFile + '" 2>&1"',
        '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   if (ResultCode = 0) and LoadStringsFromFile(TmpFile, Lines) then
   begin
@@ -1378,7 +1418,7 @@ begin
       if (Pos(ExpectedPath, Line) > 0) or (Pos(Lower, Lowercase(Line)) > 0) then
       begin
         DeleteFile(TmpFile);
-        EmitInstallerEvent('service', 'done', 'StatusInstallService', 0);
+        ReportVerifiedService();
         Exit;
       end;
     end;
@@ -1414,6 +1454,36 @@ begin
   // CustomMessage() returns the string verbatim, so {app} needs ExpandConstant.
   if not WizardSilent then
     InstallerMessageBox(ExpandConstant(CustomMessage('MsgServiceInstallFailed')) + #13#10 + #13#10 + Detail, mbError, MB_OK, IDOK);
+end;
+
+procedure VerifyServiceAutostart();
+var
+  StartType: Cardinal;
+  Found: Boolean;
+  Detail: String;
+  ResultCode: Integer;
+begin
+  StartType := 0;
+  ResultCode := TakeStepResult('autostart');
+  Found := RegQueryDWordValue(HKLM, 'SYSTEM\CurrentControlSet\Services\SunshineService', 'Start', StartType);
+  if not Found then
+    Found := RegQueryDWordValue(HKLM64, 'SYSTEM\CurrentControlSet\Services\SunshineService', 'Start', StartType);
+  if (ResultCode = 0) and Found and (StartType = 2) then
+  begin
+    EmitInstallerEvent('autostart', 'done', 'StatusAutostart', 0);
+    Exit;
+  end;
+  if Found then
+    Detail := 'Start: ' + IntToStr(StartType)
+  else
+    Detail := 'Start: <missing>';
+  Detail := 'Autostart script exit: ' + IntToStr(ResultCode) + #13#10 + Detail;
+  Log('Service autostart verification failed. ' + Detail);
+  ServiceVerifyFailed := True;
+  EmitInstallerEvent('autostart', 'failed', 'StatusAutostart', 100);
+  JournalComponent('autostart', 'verify', 100);
+  if not WizardSilent then
+    InstallerMessageBox(CustomMessage('MsgServiceAutostartFailed') + #13#10 + #13#10 + Detail, mbError, MB_OK, IDOK);
 end;
 
 // Report a nonzero exit code when the service could not be verified. Inno
@@ -1486,7 +1556,7 @@ begin
   DecideRestart();
   if VDDResultCode = 101 then
     Result := 101
-  else if ServiceVerifyFailed then
+  else if ServiceVerifyFailed or ServiceStartFailed then
     Result := 100
   else if RebootReasons <> '' then
     Result := 3010
@@ -1898,17 +1968,17 @@ begin
     // the programs moved aside go back first: the service is started from them
     SettleParkedImages(False);
     if ServiceStoppedForUpdate then
-      Exec('net', 'start SunshineService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      Exec(ExpandConstant('{sys}\net.exe'), 'start SunshineService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     Result := FmtMessage(CustomMessage('MsgUpdateBlocked'), [Report]);
     Exit;
   end;
   if QuiesceCode < 0 then
   begin
     // Without the script, stop the service and end the programs by name as earlier versions did.
-    Exec('net', 'stop SunshineService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    Exec('taskkill', SunshineKillParameters(), '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    Exec('taskkill', '/f /im sunshine-gui.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    Exec('taskkill', '/f /im sunshinesvc.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec(ExpandConstant('{sys}\net.exe'), 'stop SunshineService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec(ExpandConstant('{sys}\taskkill.exe'), SunshineKillParameters(), '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec(ExpandConstant('{sys}\taskkill.exe'), '/f /im sunshine-gui.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec(ExpandConstant('{sys}\taskkill.exe'), '/f /im sunshinesvc.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   end;
   // The old Web UI folder is moved aside now, while a refusal still costs nothing; if it cannot be
   // moved, nothing could be put back after a failed copy, so the update stops here.
@@ -1918,7 +1988,7 @@ begin
     Result := FmtMessage(CustomMessage('MsgUpdateBlocked'), ['held: assets\web (the folder could not be moved aside)']);
     SettleParkedImages(False);
     if ServiceStoppedForUpdate then
-      Exec('net', 'start SunshineService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      Exec(ExpandConstant('{sys}\net.exe'), 'start SunshineService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     Exit;
   end;
   if FileExists(ExpandConstant('{app}\tools\mat-capture\sunshine-plugin-mat-capture.exe')) then

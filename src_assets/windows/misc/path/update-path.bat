@@ -15,6 +15,7 @@ rem 5-second SendMessageTimeout wait per top-level window).
 rem ============================================================================
 setlocal
 set "PATH=%SystemRoot%\System32;%SystemRoot%;%SystemRoot%\System32\Wbem;%SystemRoot%\System32\WindowsPowerShell\v1.0"
+set "PATHEXT=.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC"
 
 if "%~1"=="" (
     echo Usage: %~nx0 [add^|remove]

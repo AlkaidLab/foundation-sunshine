@@ -32,6 +32,11 @@ param(
 )
 
 Set-StrictMode -Version Latest
+# Setup can launch this script without going through a batch entry point.
+if (($env:PATHEXT -split ';') -notcontains '.EXE') {
+  $env:PATHEXT = '.EXE;' + $env:PATHEXT
+}
+
 $ErrorActionPreference = 'Stop'
 
 # usbip-policy-reg-20261117: an upstream AppId does not establish ownership.

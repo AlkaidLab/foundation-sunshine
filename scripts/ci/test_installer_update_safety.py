@@ -104,7 +104,7 @@ class TheFolderIsMadeSafeBeforeAnythingIsCopied(unittest.TestCase):
         self.assertIn("RecoverParkedImages();", procedure("PrepareToInstall"))
         # a refused update puts them back before the service is started from them
         prepare = procedure("PrepareToInstall")
-        self.assertLess(prepare.index("SettleParkedImages(False);"), prepare.index("net', 'start SunshineService'"))
+        self.assertLess(prepare.index("SettleParkedImages(False);"), prepare.index("net.exe'), 'start SunshineService'"))
         for relative in ("sunshine.exe", "tools\\sunshinesvc.exe", "assets\\gui\\sunshine-gui.exe"):
             self.assertIn(relative, QUIESCE)
             self.assertIn(relative, procedure("SettleParkedImages"))
@@ -121,7 +121,7 @@ class TheFolderIsMadeSafeBeforeAnythingIsCopied(unittest.TestCase):
             self.assertTrue(re.search(rf"^{language}\.MsgUpdateBlocked=", ISS, re.M), language)
 
     def test_the_script_stops_the_service_first_and_ends_processes_by_path(self):
-        self.assertLess(QUIESCE.index("sc.exe stop"), QUIESCE.index("Stop-Process"))
+        self.assertLess(QUIESCE.index("System32\\sc.exe') stop"), QUIESCE.index("Stop-Process"))
         self.assertIn("ExecutablePath", QUIESCE)
         self.assertIn("StartsWith($rootFull", QUIESCE)
 

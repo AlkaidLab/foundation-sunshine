@@ -27,6 +27,12 @@ param(
   [switch] $Park
 )
 
+# Windows PowerShell 5.1 consults PATHEXT even for a full .exe path in a pipeline.
+# Setup launches this script directly, without the batch environment bootstrap.
+if (($env:PATHEXT -split ';') -notcontains '.EXE') {
+  $env:PATHEXT = '.EXE;' + $env:PATHEXT
+}
+
 $ErrorActionPreference = 'Continue'
 $rootFull = [IO.Path]::GetFullPath($Root).TrimEnd('\') + '\'
 $lines = New-Object System.Collections.Generic.List[string]
@@ -141,7 +147,7 @@ if (-not $VerifyOnly) {
   $service = Get-FolderService | Select-Object -First 1
   if ($service -and $service.State -ne 'Stopped') {
     Add-Line "service: stopping $($service.Name)"
-    & sc.exe stop $service.Name 2>&1 | Out-Null
+    & (Join-Path $env:SystemRoot 'System32\sc.exe') stop $service.Name 2>&1 | Out-Null
     $deadline = (Get-Date).AddSeconds($ServiceTimeoutSeconds)
     do {
       Start-Sleep -Milliseconds 300
