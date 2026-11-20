@@ -328,6 +328,8 @@ Source: "{#MySourceDir}\scripts\autostart-service.bat"; DestDir: "{app}\scripts"
 ; Always copy so users can run them manually as admin if they unchecked firewall.
 Source: "{#MySourceDir}\scripts\add-firewall-rule.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#MySourceDir}\scripts\delete-firewall-rule.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "{#MySourceDir}\scripts\check-firewall-rules.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "{#MySourceDir}\scripts\remove-firewall-rules.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 
 ; Virtual Display Driver scripts & files
 Source: "{#MySourceDir}\scripts\install-vdd.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
@@ -355,6 +357,7 @@ Source: "{#MySourceDir}\scripts\vmouse\driver\*"; DestDir: "{app}\scripts\vmouse
 ; right-click + "Run as administrator" on install-vsink.bat to enable it.
 Source: "{#MySourceDir}\scripts\install-vsink.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#MySourceDir}\scripts\uninstall-vsink.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#MySourceDir}\scripts\uninstall-vsink.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion skipifsourcedoesntexist
 
 ; Optional diagnostic tools
 Source: "{#MySourceDir}\tools\dxgi-info.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: tools
@@ -392,7 +395,7 @@ Filename: "{app}\scripts\uninstall-vdd.bat"; StatusMsg: "{cm:StatusInstallVDD}";
 Filename: "{app}\scripts\uninstall-gamepad.bat"; StatusMsg: "{cm:StatusInstallGamepad}"; Flags: runhidden waituntilterminated; Check: ShouldRemoveComponent('gamepad')
 Filename: "{app}\scripts\vmouse\uninstall-vmouse.bat"; StatusMsg: "{cm:StatusInstallVmouse}"; Flags: runhidden waituntilterminated; Check: ShouldRemoveComponent('vmouse')
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\tools\usbip-win2-root.ps1"" -Action uninstall"; StatusMsg: "{cm:StatusInstallUsbipRoot}"; Flags: runhidden waituntilterminated; Check: ShouldRemoveComponent('usbip')
-Filename: "{app}\scripts\add-firewall-rule.bat"; StatusMsg: "{cm:StatusFirewall}"; Flags: runhidden waituntilterminated; Components: firewall; BeforeInstall: EvtFirewall; AfterInstall: EvtFirewallDone
+Filename: "{app}\scripts\add-firewall-rule.bat"; StatusMsg: "{cm:StatusFirewall}"; Flags: runhidden waituntilterminated logoutput; Components: firewall; BeforeInstall: EvtFirewall; AfterInstall: EvtFirewallDone
 Filename: "{app}\scripts\install-gamepad.bat"; StatusMsg: "{cm:StatusInstallGamepad}"; Flags: runhidden waituntilterminated; Components: gamepad; BeforeInstall: EvtGamepad; AfterInstall: EvtGamepadDone
 Filename: "{app}\scripts\install-usbip.bat"; StatusMsg: "{cm:StatusInstallUsbip}"; Flags: runhidden waituntilterminated; Components: usbip; BeforeInstall: EvtUsbip; AfterInstall: EvtUsbipDone
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\tools\usbip-win2-root.ps1"" -Action install"; StatusMsg: "{cm:StatusInstallUsbipRoot}"; Flags: runhidden waituntilterminated; Check: ShouldRunUsbipRootInstall
@@ -683,8 +686,7 @@ procedure EvtPermissions(); begin PermissionsRepairInProgress := True; EmitInsta
 function PermissionsRepairStarted(): Boolean; begin Result := PermissionsRepairInProgress; end;
 procedure EvtPath(); begin EmitInstallerEvent('path', 'running', 'StatusUpdatePath', 0); end;
 procedure EvtConfig(); begin EmitInstallerEvent('config', 'running', 'StatusMigrateConfig', 0); end;
-procedure EvtFirewall(); begin EmitInstallerEvent('firewall', 'running', 'StatusFirewall', 0); end;
-procedure EvtFirewallDone(); begin EmitInstallerEvent('firewall', 'done', 'StatusFirewall', 0); end;
+procedure EvtFirewall(); begin DeleteFile(ExpandConstant('{app}\scripts\result-firewall.txt')); EmitInstallerEvent('firewall', 'running', 'StatusFirewall', 0); end;
 procedure EvtGamepad(); begin EmitInstallerEvent('gamepad', 'running', 'StatusInstallGamepad', 0); end;
 procedure EvtUsbip(); begin EmitInstallerEvent('usbip', 'running', 'StatusInstallUsbip', 0); end;
 
@@ -712,6 +714,15 @@ begin
     EmitInstallerEvent(Phase, 'needs-reboot', Key, 3010)
   else
     EmitInstallerEvent(Phase, 'failed', Key, Code);
+end;
+
+procedure EvtFirewallDone();
+var
+  ResultCode: Integer;
+begin
+  ResultCode := TakeStepResult('firewall');
+  EmitStepResult('firewall', 'StatusFirewall', ResultCode);
+  JournalComponent('firewall', 'install', ResultCode);
 end;
 
 procedure EvtGamepadDone();

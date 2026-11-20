@@ -1,35 +1,32 @@
 @echo off
-setlocal
+setlocal DisableDelayedExpansion
 set "PATH=%SystemRoot%\System32;%SystemRoot%;%SystemRoot%\System32\Wbem;%SystemRoot%\System32\WindowsPowerShell\v1.0"
 set "PATHEXT=.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC"
 :: Uninstall VB-Cable virtual audio device
 :: Requires administrator privileges
 
 :: Check if running as administrator
-net session >nul 2>&1
+"%SystemRoot%\System32\net.exe" session >nul 2>&1
 if %errorLevel% neq 0 (
     echo Please run this script as administrator
     pause
-    exit /b
+    exit /b 1
 )
 
-:: Stop and remove VB-Cable service
-echo Stopping VB-Cable service...
-net stop "VB-Audio Virtual Cable" >nul 2>&1
-
-echo Removing VB-Cable driver...
-pnputil /delete-driver oem*.inf /uninstall /force >nul 2>&1
-
-:: Clean registry entries
-echo Cleaning registry...
-reg delete "HKLM\SYSTEM\CurrentControlSet\Services\VB-Audio Virtual Cable" /f >nul 2>&1
-reg delete "HKLM\SOFTWARE\VB-Audio" /f >nul 2>&1
-
-:: Remove program files
-echo Removing program files...
-rd /s /q "%ProgramFiles%\VB\Cable" >nul 2>&1
-rd /s /q "%ProgramFiles(x86)%\VB\Cable" >nul 2>&1
-
-echo Uninstallation complete!
-echo Please restart your computer for changes to take effect
+:: Remove only the driver packages identified as VB-Cable. The provider's
+:: other products, registry settings and program files are not ours to remove.
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%~dp0uninstall-vsink.ps1"
+set "UNINSTALL_RC=%ERRORLEVEL%"
+if "%UNINSTALL_RC%"=="3010" (
+    echo VB-Cable driver removal requires a restart.
+    pause
+    exit /b 3010
+)
+if not "%UNINSTALL_RC%"=="0" (
+    echo ERROR: VB-Cable driver removal failed.
+    pause
+    exit /b 1
+)
+echo VB-Cable driver removal complete.
 pause
+exit /b 0
