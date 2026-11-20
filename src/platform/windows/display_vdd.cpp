@@ -1511,12 +1511,12 @@ namespace platf::dxgi {
                     << " generation="sv << dup.producer_channel_generation()
                     << " borrowed_texture=automatic"sv;
 
-    // A cursor pipeline that cannot be built (a shader that did not compile, a device that refused a state object) fails the display, as it does for DDX, so
-    // display() goes on to the next capture method instead of serving frames that never carry the cursor. The driver's cursor export itself stays optional.
+    // Cursor export is optional and older drivers do not expose it. A cursor pipeline that cannot be built (a shader that did not compile, a device that
+    // refused a state object) does not fail VDD capture: DDX uses the same cursor shaders, so falling back would end with no display at all, while VDD can
+    // still stream without the cursor overlay. init_cursor_pipeline() checks every shader blob before use, so this path no longer dereferences null.
     if (init_cursor_pipeline(config) != 0) {
       cursor_pipeline_ready = false;
-      BOOST_LOG(error) << "[vdd] cursor pipeline init failed; requesting DDX fallback"sv;
-      return -1;
+      BOOST_LOG(error) << "[vdd] cursor pipeline init failed; continuing without cursor overlay"sv;
     }
     return 0;
   }
