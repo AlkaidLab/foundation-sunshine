@@ -51,6 +51,7 @@ extern "C" {
 #include "spatial_transport/mat_live_session.h"
 #include "src/log_text.h"
 #include "stream.h"
+#include "streaming/expected_failures.h"
 #include "streaming/fec.h"
 #include "sync.h"
 #include "text_context/bridge.h"
@@ -777,6 +778,12 @@ namespace rtsp_stream {
 
     void
     handle_accept(const boost::system::error_code &ec) {
+      if (streaming::accept_was_cancelled(ec)) {
+        // stop() closes the acceptor, which cancels the pending accept: this is the normal shutdown, not a failure
+        BOOST_LOG(debug) << "RTSP accept cancelled: "sv << ec.message();
+        return;
+      }
+
       if (ec) {
         BOOST_LOG(error) << "Couldn't accept incoming connections: "sv << ec.message();
 

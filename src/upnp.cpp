@@ -15,6 +15,7 @@
 #include "nvhttp.h"
 #include "rtsp.h"
 #include "stream.h"
+#include "streaming/expected_failures.h"
 #include "upnp.h"
 #include "utility.h"
 
@@ -318,6 +319,8 @@ namespace upnp {
       IGDdatas data;
       urls_t mapped_urls;
       auto address_family = net::af_from_enum_string(config::sunshine.address_family);
+      streaming::repeated_failure_gate discovery_failures;
+      constexpr int kNoDeviceFailure = -1;  // upnpDiscover() found nothing, as opposed to a status of UPNP_GetValidIGD()
 
       // Refresh UPnP rules every few minutes. They can be lost if the router reboots,
       // WAN IP address changes, or various other conditions.
@@ -325,7 +328,10 @@ namespace upnp {
         int err = 0;
         device_t device { upnpDiscover(2000, nullptr, nullptr, 0, IPv4, 2, &err) };
         if (!device || err) {
-          BOOST_LOG(warning) << "Couldn't discover any IPv4 UPNP devices"sv;
+          // a network without a UPnP router fails like this at every refresh: say it once
+          if (discovery_failures.failed(kNoDeviceFailure)) {
+            BOOST_LOG(warning) << "Couldn't discover any IPv4 UPNP devices"sv;
+          }
           mapped = false;
           continue;
         }
@@ -339,10 +345,14 @@ namespace upnp {
         urls_t urls;
         auto status = upnp::UPNP_GetValidIGDStatus(device, &urls, &data, lan_addr);
         if (status != 1 && status != 2) {
-          BOOST_LOG(error) << status_string(status);
+          // routers without a usable IGD are common and do not change between refreshes: log the first time, as a warning
+          if (discovery_failures.failed(status)) {
+            BOOST_LOG(warning) << status_string(status);
+          }
           mapped = false;
           continue;
         }
+        discovery_failures.succeeded();
 
         std::string lan_addr_str { lan_addr.data() };
 

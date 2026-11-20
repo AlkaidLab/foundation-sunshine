@@ -221,6 +221,12 @@ target_link_libraries(video_pacing_unit_tests PRIVATE gtest_main sunshine_projec
 set_target_properties(video_pacing_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME video_pacing_unit_tests COMMAND video_pacing_unit_tests)
 
+add_executable(expected_failures_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_expected_failures.cpp)
+target_include_directories(expected_failures_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(expected_failures_unit_tests PRIVATE gtest_main Boost::asio sunshine_project_options sunshine_coverage)
+set_target_properties(expected_failures_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME expected_failures_unit_tests COMMAND expected_failures_unit_tests)
+
 add_executable(cover_failure_backoff_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_cover_failure_backoff.cpp)
 target_include_directories(cover_failure_backoff_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(cover_failure_backoff_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
