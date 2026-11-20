@@ -69,6 +69,30 @@ TEST(BroadcastSend, FallbackAccountsForAcceptedPacketsAndDropsBlockedTail) {
   EXPECT_EQ(result.dropped_for_backpressure, 3u);
 }
 
+TEST(BroadcastSend, MatDataAndParityBackpressureCountDropsWithoutLatchingFailure) {
+  int accepted = 0;
+  int dropped = 0;
+  bool mat_send_failed = false;
+  const auto account = [&](bool sent, bool would_block) {
+    streaming::account_audio_datagram(
+      sent, would_block, [&] { ++accepted; }, [&] { ++dropped; }, [&] { mat_send_failed = true; });
+  };
+
+  account(false, true);  // data datagram
+  account(false, true);  // parity datagram
+  EXPECT_EQ(dropped, 2);
+  EXPECT_EQ(accepted, 0);
+  EXPECT_FALSE(mat_send_failed);
+
+  account(true, false);
+  EXPECT_EQ(accepted, 1);
+  EXPECT_FALSE(mat_send_failed);
+
+  account(false, false);
+  EXPECT_TRUE(mat_send_failed);
+  EXPECT_EQ(dropped, 2);
+}
+
 TEST(BroadcastSend, StopDuringFallbackPreventsFurtherSends) {
   batch_fixture_t f;
   bool active = true;

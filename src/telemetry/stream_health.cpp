@@ -311,6 +311,8 @@ namespace telemetry::health {
   stream_health_t::add_to_chunk(const window_t &w) {
     if (w.idle) {
       ++chunk_idle_;
+      const auto blocked = idx(counter_e::send_would_block_packets);
+      chunk_counters_[blocked] += w.counters[blocked];
       return;
     }
     ++chunk_windows_;

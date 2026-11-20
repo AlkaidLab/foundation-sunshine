@@ -228,6 +228,24 @@ TEST(StreamHealthChunk, HistogramsAddUpToTheWindowsAndTheChunkResets) {
   EXPECT_EQ(h.take_chunk(now)["windows"], 0);
 }
 
+TEST(StreamHealthChunk, IdleWindowsKeepSendBackpressureDrops) {
+  std::int64_t now = 0;
+  stream_health_t h { now, dims60() };
+  h.count(counter_e::send_would_block_packets, 7);
+  h.count(counter_e::captured, 12);
+  now += WINDOW_MS;
+  const auto idle = h.tick(now, {});
+  ASSERT_TRUE(idle);
+  EXPECT_TRUE(idle->idle);
+
+  const auto chunk = h.take_chunk(now);
+  EXPECT_EQ(chunk["windows"], 0);
+  EXPECT_EQ(chunk["idle_windows"], 1);
+  EXPECT_EQ(chunk["captured"], 0);
+  EXPECT_EQ(chunk["send_would_block_packets"], 7);
+  EXPECT_EQ(h.take_chunk(now)["send_would_block_packets"], 0);
+}
+
 TEST(StreamHealthChunk, EveryKeyOfTheContractIsThere) {
   std::int64_t now = 0;
   stream_health_t h { now, dims60() };

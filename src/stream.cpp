@@ -4265,6 +4265,17 @@ namespace stream {
       session->audio.sequenceNumber++;
       session->audio.timestamp += session->config.audio.packetDuration;
 
+      const bool is_mat = audio::is_mat_codec(session->config.audio.codec);
+      const auto send_audio = [&](platf::send_info_t &info) {
+        // The audio peer's port stays 0 until the client's audio ping arrives.
+        const bool sent = peer_port != 0 && session->lifecycle.state() == session::state_e::RUNNING && platf::send(info);
+        streaming::account_audio_datagram(
+          sent, info.would_block,
+          [&] { note_measured_send(session.get(), info.header_size + static_cast<std::uint64_t>(info.payload_size)); },
+          [&] { telemetry::hooks::count(session->launch_session_id, telemetry::hooks::counter_e::send_would_block_packets); },
+          [&] { if (is_mat) session->audio.mat_send_failed.store(true); });
+      };
+
       try {
         auto send_info = platf::send_info_t {
           (const char *) &audio_packet,
@@ -4276,15 +4287,7 @@ namespace stream {
           peer_port,
           source_address,
         };
-        // The audio peer's port stays 0 until the client's audio ping arrives. Audio that is encoded before that has
-        // no destination: sending it floods the log with WSAEFAULT (10014) and gets no data to the client either way.
-        const auto can_send = [&] { return peer_port != 0 && session->lifecycle.state() == session::state_e::RUNNING; };
-        const bool audio_sent = can_send() && platf::send(send_info);
-        if (send_info.would_block) telemetry::hooks::count(session->launch_session_id, telemetry::hooks::counter_e::send_would_block_packets);
-        if (audio_sent) {
-          note_measured_send(session.get(), sizeof(audio_packet) + static_cast<std::uint64_t>(bytes));
-        }
-        if (!audio_sent && audio::is_mat_codec(session->config.audio.codec)) session->audio.mat_send_failed.store(true);
+        send_audio(send_info);
 
         auto &fec_packet = session->audio.fec_packet;
         // initialize the FEC header at the beginning of the FEC block
@@ -4311,22 +4314,18 @@ namespace stream {
               peer_port,
               source_address,
             };
-            const bool parity_sent = can_send() && platf::send(send_info);
-            if (send_info.would_block) telemetry::hooks::count(session->launch_session_id, telemetry::hooks::counter_e::send_would_block_packets);
-            if (parity_sent) {
-              note_measured_send(session.get(), sizeof(fec_packet) + static_cast<std::uint64_t>(bytes));
-            }
-            if (!parity_sent && audio::is_mat_codec(session->config.audio.codec)) session->audio.mat_send_failed.store(true);
+            send_audio(send_info);
             BOOST_LOG(verbose) << "Audio FEC ["sv << (sequenceNumber & ~(RTPA_DATA_SHARDS - 1)) << ' ' << x << "] ::  send..."sv;
           }
         }
       }
       catch (const std::exception &e) {
         BOOST_LOG(error) << "Broadcast audio failed "sv << e.what();
-        if (audio::is_mat_codec(session->config.audio.codec)) session->audio.mat_send_failed.store(true);
+        if (is_mat) session->audio.mat_send_failed.store(true);
         std::this_thread::sleep_for(100ms);
       }
-      if (audio::is_mat_codec(session->config.audio.codec)) session->audio.mat_sent.fetch_add(1, std::memory_order_release);
+      // A dropped datagram still advances the producer's pacing acknowledgement.
+      if (is_mat) session->audio.mat_sent.fetch_add(1, std::memory_order_release);
     }
 
     shutdown_event->raise(true);

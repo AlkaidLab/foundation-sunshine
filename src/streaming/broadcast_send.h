@@ -41,6 +41,21 @@ namespace streaming {
     std::unordered_map<std::uint64_t, std::weak_ptr<Session>> _sessions;
   };
 
+  // MS-WSASENDMSG-20261120 (Return value): would-block is a transient drop.
+  template <class Sent, class Dropped, class Failed>
+  void
+  account_audio_datagram(bool sent, bool would_block, Sent record_sent, Dropped record_drop, Failed record_failure) {
+    if (sent) {
+      record_sent();
+    }
+    else if (would_block) {
+      record_drop();
+    }
+    else {
+      record_failure();
+    }
+  }
+
   struct video_batch_result_t {
     std::size_t sent = 0;
     std::size_t dropped_for_backpressure = 0;
