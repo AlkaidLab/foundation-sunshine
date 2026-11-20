@@ -116,6 +116,12 @@ namespace nvenc {
 
   #include <comdef.h>
   #include <d3d11.h>
+  #include <wrl/client.h>
+
+extern "C" {
+  #include <libavcodec/avcodec.h>
+  #include <libavcodec/cbs_sei.h>
+}
 
 namespace {
   _COM_SMARTPTR_TYPEDEF(IDXGIFactory1, IID_IDXGIFactory1);
@@ -190,6 +196,67 @@ TEST_P(NvencVersionTests, CreateAndEncode) {
   };
   ASSERT_TRUE(nvenc->create_encoder({}, config, colorspace, platf::pix_fmt_e::nv12, false));
   ASSERT_FALSE(nvenc->encode_frame(0, false).data.empty());
+}
+
+TEST_P(NvencVersionTests, HevcMasteringLuminanceInEncodedSei) {
+  const auto [factory_init, version] = GetParam();
+  const auto sdk = nvenc_sdk_version_number(version);
+  if (sdk < 1202 || sdk > suite.max_version) {
+    GTEST_SKIP() << "HEVC per-frame mastering metadata requires a supported SDK >= 12.2";
+  }
+  auto factory = factory_init(suite.dll);
+  ASSERT_TRUE(factory);
+  for (bool hlg : { false, true }) {
+    SCOPED_TRACE(hlg ? "HLG" : "PQ");
+    auto encoder = factory->create_nvenc_d3d11_native(suite.device);
+    ASSERT_TRUE(encoder);
+    video::config_t config { .width = 640, .height = 360, .framerate = 60, .bitrate = 12000 };
+    config.videoFormat = 1;
+    config.dynamicRange = hlg ? 2 : 1;
+    config.numRefFrames = 1;
+    const video::sunshine_colorspace_t colorspace { hlg ? video::colorspace_e::bt2020hlg : video::colorspace_e::bt2020, false, 10 };
+    if (!encoder->create_encoder({}, config, colorspace, platf::pix_fmt_e::p010, true)) {
+      GTEST_SKIP() << "Could not start a hardware HEVC Main 10 session";
+    }
+
+    nvenc::nvenc_hdr_metadata metadata {};
+    metadata.displayPrimaries[0] = { 35400, 14600 };
+    metadata.displayPrimaries[1] = { 8500, 39850 };
+    metadata.displayPrimaries[2] = { 6550, 2300 };
+    metadata.whitePoint = { 15635, 16450 };
+    metadata.maxDisplayLuminance = hlg ? 4000 : 1000;
+    metadata.minDisplayLuminance = 1;
+    metadata.maxContentLightLevel = 900;
+    metadata.maxFrameAverageLightLevel = 300;
+    encoder->set_hdr_metadata(metadata);
+    Microsoft::WRL::ComPtr<ID3D11DeviceContext> context;
+    suite.device->GetImmediateContext(&context);
+    const std::vector<uint16_t> gray(config.width * config.height * 3 / 2, 512u << 6);
+    context->UpdateSubresource(encoder->get_input_texture(), 0, nullptr, gray.data(), config.width * 2, 0);
+    const auto frame = encoder->encode_frame(0, true);
+    ASSERT_FALSE(frame.data.empty());
+
+    CodedBitstreamContext *cbs = nullptr;
+    CodedBitstreamFragment fragment {};
+    auto cleanup = util::fail_guard([&] {
+      ff_cbs_fragment_free(&fragment);
+      ff_cbs_close(&cbs);
+    });
+    ASSERT_EQ(ff_cbs_init(&cbs, AV_CODEC_ID_HEVC, nullptr), 0);
+    ASSERT_EQ(ff_cbs_read(cbs, &fragment, nullptr, frame.data.data(), frame.data.size()), 0);
+    SEIRawMessage *message = nullptr;
+    ASSERT_EQ(ff_cbs_sei_find_message(cbs, &fragment, SEI_TYPE_MASTERING_DISPLAY_COLOUR_VOLUME, &message), 0);
+    const auto *mastering = static_cast<const SEIRawMasteringDisplayColourVolume *>(message->payload);
+    ASSERT_NE(mastering, nullptr);
+    EXPECT_EQ(mastering->max_display_mastering_luminance, hlg ? 40000000u : 10000000u);
+    EXPECT_EQ(mastering->min_display_mastering_luminance, 1u);
+    message = nullptr;
+    ASSERT_EQ(ff_cbs_sei_find_message(cbs, &fragment, SEI_TYPE_CONTENT_LIGHT_LEVEL_INFO, &message), 0);
+    const auto *light = static_cast<const SEIRawContentLightLevelInfo *>(message->payload);
+    ASSERT_NE(light, nullptr);
+    EXPECT_EQ(light->max_content_light_level, 900u);
+    EXPECT_EQ(light->max_pic_average_light_level, 300u);
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(NvencFactoryTestsPrivate, NvencVersionTests, testing::ValuesIn(factory_priorities),

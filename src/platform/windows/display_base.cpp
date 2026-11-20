@@ -930,8 +930,6 @@ namespace platf::dxgi {
     // Initialize HDR metadata cache for change detection
     cached_hdr_metadata.reset();
     last_hdr_check_time = std::chrono::steady_clock::now();
-    cached_sdr_white_nits.reset();
-    last_sdr_white_check_time = {};
 
     return 0;
   }
@@ -969,22 +967,15 @@ namespace platf::dxgi {
 
   std::optional<float>
   display_base_t::sdr_white_nits() const {
-    const auto now = std::chrono::steady_clock::now();
-    if (last_sdr_white_check_time.time_since_epoch().count() != 0 &&
-        now - last_sdr_white_check_time < sdr_white_check_interval) {
-      return cached_sdr_white_nits;
-    }
-    last_sdr_white_check_time = now;
-
     if (display_device_name.empty()) {
-      return cached_sdr_white_nits;
+      return std::nullopt;
     }
 
     UINT32 path_count = 0;
     UINT32 mode_count = 0;
     LONG status = GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &path_count, &mode_count);
     if (status != ERROR_SUCCESS) {
-      return cached_sdr_white_nits;
+      return std::nullopt;
     }
 
     // Display topology can change between sizing and querying. Retry once with
@@ -1008,7 +999,7 @@ namespace platf::dxgi {
         }
       }
       if (status != ERROR_SUCCESS) {
-        return cached_sdr_white_nits;
+        return std::nullopt;
       }
 
       paths.resize(queried_path_count);
@@ -1029,22 +1020,22 @@ namespace platf::dxgi {
         white_level.header.adapterId = path.targetInfo.adapterId;
         white_level.header.id = path.targetInfo.id;
         if (DisplayConfigGetDeviceInfo(&white_level.header) != ERROR_SUCCESS) {
-          return cached_sdr_white_nits;
+          return std::nullopt;
         }
 
         // DISPLAYCONFIG_SDR_WHITE_LEVEL is an x1000 multiplier of the nominal
         // 80-nit scRGB reference white.
         const float nits = static_cast<float>(white_level.SDRWhiteLevel) * 80.0f / 1000.0f;
         if (std::isfinite(nits) && nits >= 1.0f && nits <= 10000.0f) {
-          cached_sdr_white_nits = nits;
+          return nits;
         }
-        return cached_sdr_white_nits;
+        return std::nullopt;
       }
 
-      return cached_sdr_white_nits;
+      return std::nullopt;
     }
 
-    return cached_sdr_white_nits;
+    return std::nullopt;
   }
 
   bool

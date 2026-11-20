@@ -5,7 +5,7 @@
 cbuffer hdr_encoding_cbuffer : register(b3) {
     float hdr_nominal_peak_nits;
     float hdr_hlg_system_gamma;
-    float2 hdr_encoding_padding;
+    uint sdr_output_primaries; // H.273 colour_primaries, or 0 to disable Method B
 };
 
 #endif

@@ -96,14 +96,18 @@ void main(uint3 id : SV_DispatchThreadID) {
     ComPtr<ID3D11Buffer> readback;
     ASSERT_HRESULT_SUCCEEDED(device->CreateBuffer(&desc, nullptr, &readback));
 
-    // Exercise the old b3 white-gain slots as well as their neutral values.
-    // They must no longer alter pixels; HLG must still honor peak and gamma.
-    for (const auto legacy : { std::array<float, 2> { 1.0f, 0.0f }, { 2.5f, 2.5f }, { 0.5f, 5.0f } }) {
-      const std::array<float, 4> params { peak, gamma, legacy[0], legacy[1] };
+    // Native HDR ignores the shared buffer's SDR output primaries.
+    struct alignas(16) EncodingParams {
+      float peak_nits;
+      float system_gamma;
+      uint32_t sdr_primaries;
+    };
+    for (const uint32_t primaries : { 0u, 1u, 6u, 9u }) {
+      const EncodingParams params { peak, gamma, primaries };
       D3D11_BUFFER_DESC cb_desc {};
       cb_desc.ByteWidth = sizeof(params);
       cb_desc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-      const D3D11_SUBRESOURCE_DATA initial { params.data(), 0, 0 };
+      const D3D11_SUBRESOURCE_DATA initial { &params, 0, 0 };
       ComPtr<ID3D11Buffer> cbuffer;
       ASSERT_HRESULT_SUCCEEDED(device->CreateBuffer(&cb_desc, &initial, &cbuffer));
       context->CSSetShader(shader.Get(), nullptr, 0);
@@ -121,7 +125,7 @@ void main(uint3 id : SV_DispatchThreadID) {
       for (size_t i = 0; i < nits.size(); ++i) {
         for (size_t channel = 0; channel < 3; ++channel) {
           EXPECT_NEAR(decode_nits(pixels[i * 4 + channel], hlg, peak, gamma), nits[i], 0.1)
-            << "patch=" << nits[i] << ", channel=" << channel << ", legacy gain=" << legacy[0];
+            << "patch=" << nits[i] << ", channel=" << channel << ", SDR primaries=" << primaries;
         }
       }
       context->Unmap(readback.Get(), 0);
@@ -138,6 +142,154 @@ void main(uint3 id : SV_DispatchThreadID) {
 
   TEST(HdrEncoding, HlgPreservesLuminanceWithNonReferenceDisplayParameters) {
     check_luminance(true, 4000.0f, 1.48119f);
+  }
+
+  TEST(HdrEncoding, MethodBScRgbPatchesToLimitedRangeNv12) {
+    ComPtr<ID3D11Device> device;
+    ComPtr<ID3D11DeviceContext> context;
+    ASSERT_HRESULT_SUCCEEDED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0,
+      nullptr, 0, D3D11_SDK_VERSION, &device, nullptr, &context));
+    const auto path = std::filesystem::path(SUNSHINE_SHADERS_DIR) / "convert_yuv420_nv12_cs_linear.hlsl";
+    ComPtr<ID3DBlob> bytecode, errors;
+    ASSERT_HRESULT_SUCCEEDED(D3DCompileFromFile(path.c_str(), nullptr, D3D_COMPILE_STANDARD_FILE_INCLUDE, "main_cs", "cs_5_0",
+      D3DCOMPILE_ENABLE_STRICTNESS, 0, &bytecode, &errors))
+      << (errors ? static_cast<const char *>(errors->GetBufferPointer()) : "");
+    ComPtr<ID3D11ComputeShader> shader;
+    ASSERT_HRESULT_SUCCEEDED(device->CreateComputeShader(bytecode->GetBufferPointer(), bytecode->GetBufferSize(), nullptr, &shader));
+
+    // Independently calculated via XYZ -> Yu'v', tone mapping of Y, a
+    // constant-hue ICtCp gamut boundary search, and inverse BT.1886.
+    struct Patch {
+      std::array<uint16_t, 3> half_rgb;
+      std::array<int, 3> yuv;
+    };
+    constexpr std::array<Patch, 16> patches {{
+      { { 0, 0, 0 }, { 16, 128, 128 } },
+      { { 0x3400, 0x3400, 0x3400 }, { 104, 128, 128 } }, // 20 nits
+      { { 0x3800, 0x3800, 0x3800 }, { 128, 128, 128 } }, // 40
+      { { 0x3c00, 0x3c00, 0x3c00 }, { 158, 128, 128 } }, // 80
+      { { 0x4100, 0x4100, 0x4100 }, { 203, 128, 128 } }, // 200
+      { { 0x4113, 0x4113, 0x4113 }, { 204, 128, 128 } }, // 203 (rounded to FP16)
+      { { 0x4500, 0x4500, 0x4500 }, { 220, 128, 128 } }, // 400
+      { { 0x4a40, 0x4a40, 0x4a40 }, { 235, 128, 128 } }, // 1000
+      { { 0x5240, 0x5240, 0x5240 }, { 235, 128, 128 } }, // 4000
+      { { 0x3c00, 0, 0 }, { 50, 109, 209 } },
+      { { 0, 0x3c00, 0 }, { 120, 71, 60 } },
+      { { 0, 0, 0x3c00 }, { 28, 215, 120 } },
+      { { 0x4000, 0x3a00, 0x3400 }, { 153, 97, 163 } }, // warm, in gamut
+      { { 0x4000, 0xb000, 0xa800 }, { 56, 110, 222 } }, // outside BT.709
+      { { 0xb600, 0x3e00, 0xb000 }, { 134, 82, 51 } },
+      { { 0x4900, 0x3c00, 0x4500 }, { 214, 131, 142 } }, // bright magenta
+    }};
+    constexpr int width = patches.size() * 4;
+    std::array<std::array<uint16_t, 4>, width * 2> pixels;
+    for (size_t i = 0; i < pixels.size(); ++i) {
+      const auto &rgb = patches[(i % width) / 4].half_rgb;
+      pixels[i] = { rgb[0], rgb[1], rgb[2], 0x3c00 };
+    }
+    D3D11_TEXTURE2D_DESC desc {};
+    desc.Width = width;
+    desc.Height = 2;
+    desc.MipLevels = desc.ArraySize = desc.SampleDesc.Count = 1;
+    desc.Format = DXGI_FORMAT_R16G16B16A16_FLOAT;
+    desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+    const D3D11_SUBRESOURCE_DATA input { pixels.data(), desc.Width * 8, 0 };
+    ComPtr<ID3D11Texture2D> src, y, uv, staging, uv_staging;
+    ComPtr<ID3D11ShaderResourceView> srv;
+    ComPtr<ID3D11UnorderedAccessView> y_uav, uv_uav;
+    ASSERT_HRESULT_SUCCEEDED(device->CreateTexture2D(&desc, &input, &src));
+    ASSERT_HRESULT_SUCCEEDED(device->CreateShaderResourceView(src.Get(), nullptr, &srv));
+    desc.Format = DXGI_FORMAT_R8_UNORM;
+    desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+    ASSERT_HRESULT_SUCCEEDED(device->CreateTexture2D(&desc, nullptr, &y));
+    ASSERT_HRESULT_SUCCEEDED(device->CreateUnorderedAccessView(y.Get(), nullptr, &y_uav));
+    desc.BindFlags = 0;
+    desc.Usage = D3D11_USAGE_STAGING;
+    desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    ASSERT_HRESULT_SUCCEEDED(device->CreateTexture2D(&desc, nullptr, &staging));
+    desc.Width /= 2;
+    desc.Height /= 2;
+    desc.Format = DXGI_FORMAT_R8G8_UNORM;
+    desc.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+    desc.Usage = D3D11_USAGE_DEFAULT;
+    desc.CPUAccessFlags = 0;
+    ASSERT_HRESULT_SUCCEEDED(device->CreateTexture2D(&desc, nullptr, &uv));
+    ASSERT_HRESULT_SUCCEEDED(device->CreateUnorderedAccessView(uv.Get(), nullptr, &uv_uav));
+    desc.BindFlags = 0;
+    desc.Usage = D3D11_USAGE_STAGING;
+    desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    ASSERT_HRESULT_SUCCEEDED(device->CreateTexture2D(&desc, nullptr, &uv_staging));
+
+    auto bind_constants = [&](UINT slot, const auto &values) {
+      D3D11_BUFFER_DESC cb {};
+      cb.ByteWidth = sizeof(values);
+      cb.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+      const D3D11_SUBRESOURCE_DATA data { values.data(), 0, 0 };
+      ComPtr<ID3D11Buffer> buffer;
+      ASSERT_HRESULT_SUCCEEDED(device->CreateBuffer(&cb, &data, &buffer));
+      context->CSSetConstantBuffers(slot, 1, buffer.GetAddressOf());
+    };
+    // Same seven colours after conversion to each negotiated set of primaries.
+    constexpr std::array<std::array<int, 3>, 7> smpte_c {{
+      { 66, 112, 207 }, { 106, 96, 62 }, { 61, 178, 95 }, { 157, 93, 167 },
+      { 74, 109, 220 }, { 117, 98, 55 }, { 216, 130, 142 },
+    }};
+    constexpr std::array<std::array<int, 3>, 7> bt2020 {{
+      { 87, 105, 169 }, { 138, 90, 107 }, { 56, 195, 132 }, { 155, 101, 149 },
+      { 99, 101, 176 }, { 152, 89, 104 }, { 214, 131, 136 },
+    }};
+    constexpr std::array<int, 9> sdr_gray { 16, 133, 177, 235, 235, 235, 235, 235, 235 };
+    bind_constants(1, std::array<int32_t, 8> { 0, 0, width, 2, width, 2, 0, 0 });
+    context->CSSetShader(shader.Get(), nullptr, 0);
+    context->CSSetShaderResources(0, 1, srv.GetAddressOf());
+    for (const uint32_t primaries : { 1u, 6u, 9u, 0u }) {
+      SCOPED_TRACE(primaries);
+      const bool hdr_desktop = primaries != 0;
+      const float kr = primaries == 6 ? 0.299f : primaries == 9 ? 0.2627f : 0.2126f;
+      const float kb = primaries == 6 ? 0.114f : primaries == 9 ? 0.0593f : 0.0722f;
+      const float kg = 1.0f - kr - kb;
+      bind_constants(0, std::array<float, 16> { kr, kg, kb, 0,
+        -0.5f * kr / (1 - kb), -0.5f * kg / (1 - kb), 0.5f, 0,
+        0.5f, -0.5f * kg / (1 - kr), -0.5f * kb / (1 - kr), 0,
+        219.f / 255, 16.f / 255, 224.f / 255, 128.f / 255 });
+      auto expected = patches;
+      if (primaries == 6 || primaries == 9) {
+        const auto &colors = primaries == 6 ? smpte_c : bt2020;
+        for (size_t i = 0; i < colors.size(); ++i) {
+          expected[sdr_gray.size() + i].yuv = colors[i];
+        }
+      }
+      if (hdr_desktop) {
+        bind_constants(3, std::array<uint32_t, 4> { 0, 0, primaries, 0 });
+      } else {
+        ID3D11Buffer *unbound = nullptr;
+        context->CSSetConstantBuffers(3, 1, &unbound);
+      }
+      ID3D11UnorderedAccessView *uavs[] { y_uav.Get(), uv_uav.Get() };
+      context->CSSetUnorderedAccessViews(0, 2, uavs, nullptr);
+      context->Dispatch(width / 16, 1, 1);
+      ID3D11UnorderedAccessView *unbound[2] {};
+      context->CSSetUnorderedAccessViews(0, 2, unbound, nullptr);
+      context->CopyResource(staging.Get(), y.Get());
+      context->CopyResource(uv_staging.Get(), uv.Get());
+      D3D11_MAPPED_SUBRESOURCE mapped {};
+      ASSERT_HRESULT_SUCCEEDED(context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped));
+      const auto *codes = static_cast<const uint8_t *>(mapped.pData);
+      for (size_t i = 0; i < (hdr_desktop ? patches.size() : sdr_gray.size()); ++i) {
+        EXPECT_NEAR(codes[i * 4 + 2], hdr_desktop ? expected[i].yuv[0] : sdr_gray[i], 1) << "patch " << i;
+      }
+      context->Unmap(staging.Get(), 0);
+      if (hdr_desktop) {
+        ASSERT_HRESULT_SUCCEEDED(context->Map(uv_staging.Get(), 0, D3D11_MAP_READ, 0, &mapped));
+        codes = static_cast<const uint8_t *>(mapped.pData);
+        for (size_t i = 0; i < patches.size(); ++i) {
+          // The chroma tent at x=4i+2 samples only this patch.
+          EXPECT_NEAR(codes[i * 4 + 2], expected[i].yuv[1], 1) << "Cb patch " << i;
+          EXPECT_NEAR(codes[i * 4 + 3], expected[i].yuv[2], 1) << "Cr patch " << i;
+        }
+        context->Unmap(uv_staging.Get(), 0);
+      }
+    }
   }
 
   double
