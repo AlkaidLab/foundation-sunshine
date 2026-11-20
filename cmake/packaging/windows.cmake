@@ -132,6 +132,9 @@ install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/install_portable.bat"
 install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/uninstall_portable.bat"
         DESTINATION "."
         COMPONENT application)
+install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/shell/remove-shell-menus.ps1"
+        DESTINATION "scripts"
+        COMPONENT application)
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/languages/"
         DESTINATION "scripts/languages"
         COMPONENT application)

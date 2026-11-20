@@ -77,6 +77,12 @@ if "%CONFIRM_RESULT%" neq "1" (
 echo %UNINSTALL_PROCEEDING%
 echo.
 
+REM Remove Explorer verbs only when their command belongs to this copy.
+if exist "%SCRIPT_DIR%\remove-shell-menus.ps1" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%\remove-shell-menus.ps1" -InstallRoot "%SUNSHINE_ROOT%."
+    if errorlevel 1 echo WARNING: Some user shell menus could not be cleaned. See the warnings above.
+)
+
 REM ================================================
 REM Uninstall process
 REM ================================================
