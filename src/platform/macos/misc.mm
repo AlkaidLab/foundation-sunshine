@@ -651,3 +651,10 @@ namespace dyn {
     return err;
   }
 }  // namespace dyn
+
+namespace platf {
+  std::vector<std::string>
+  adapter_names() {
+    return { "Apple Silicon" };
+  }
+}  // namespace platf

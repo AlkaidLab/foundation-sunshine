@@ -165,7 +165,7 @@ namespace nvhttp::apps::poster {
       const auto normalized = std::filesystem::absolute(path, error).lexically_normal().string();
       if (error) return std::nullopt;
       const auto key = std::to_string(std::hash<std::string> {}(
-        normalized + ":" + std::to_string(size) + ":" + std::to_string(modified.time_since_epoch().count())));
+        normalized + ":" + std::to_string(size) + ":" + std::to_string(static_cast<long long>(modified.time_since_epoch().count()))));
       return source_info_t { path, size, modified, key };
     }
 

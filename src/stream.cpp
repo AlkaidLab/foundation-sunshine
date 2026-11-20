@@ -674,7 +674,8 @@ namespace stream {
       safe::mail_raw_t::event_t<video::dynamic_param_t> dynamic_param_change_events;  // 新增：动态参数调整事件
 
       std::unique_ptr<platf::deinit_t> qos;
-      std::atomic<endpoint_refresh_ptr> endpoint_refresh { nullptr };
+      endpoint_refresh_ptr endpoint_refresh_holder;
+      std::atomic<endpoint_refresh_t *> endpoint_refresh { nullptr };
     } video;
 
     struct {
@@ -697,7 +698,8 @@ namespace stream {
 
       bool enable_mic;
       bool mic_registered { false };
-      std::atomic<endpoint_refresh_ptr> endpoint_refresh { nullptr };
+      endpoint_refresh_ptr endpoint_refresh_holder;
+      std::atomic<endpoint_refresh_t *> endpoint_refresh { nullptr };
     } audio;
 
     struct {
@@ -2193,7 +2195,11 @@ namespace stream {
         });
         if (device_it != devices.end()) {
           temp_launch_session.env["SUNSHINE_CLIENT_DISPLAY_NAME"] = device_it->first;
+#ifdef _WIN32
           temp_launch_session.use_vdd = device_it->second.friendly_name == ZAKO_NAME;
+#else
+          temp_launch_session.use_vdd = false;
+#endif
         }
         else if (has_active_display) {
           active_display_resolved = false;
@@ -4477,10 +4483,12 @@ namespace stream {
       }
     }
     if (type == socket_e::video) {
-      session->video.endpoint_refresh.store(refresh, std::memory_order_release);
+      session->video.endpoint_refresh_holder = refresh;
+      session->video.endpoint_refresh.store(refresh.get(), std::memory_order_release);
     }
     else {
-      session->audio.endpoint_refresh.store(refresh, std::memory_order_release);
+      session->audio.endpoint_refresh_holder = refresh;
+      session->audio.endpoint_refresh.store(refresh.get(), std::memory_order_release);
     }
 
     // Only allow matches on the peer address for legacy clients
@@ -4498,10 +4506,12 @@ namespace stream {
 
       if (!validated) {
         if (type == socket_e::video) {
-          session->video.endpoint_refresh.store(endpoint_refresh_ptr {}, std::memory_order_release);
+          session->video.endpoint_refresh.store(nullptr, std::memory_order_release);
+          session->video.endpoint_refresh_holder.reset();
         }
         else {
-          session->audio.endpoint_refresh.store(endpoint_refresh_ptr {}, std::memory_order_release);
+          session->audio.endpoint_refresh.store(nullptr, std::memory_order_release);
+          session->audio.endpoint_refresh_holder.reset();
         }
       }
 
@@ -4571,7 +4581,8 @@ namespace stream {
       if (auto refresh = session->video.endpoint_refresh.load(std::memory_order_acquire)) {
         log_endpoint_refresh_summary(*session, "video", refresh->stats());
       }
-      session->video.endpoint_refresh.store(endpoint_refresh_ptr {}, std::memory_order_release);
+      session->video.endpoint_refresh.store(nullptr, std::memory_order_release);
+      session->video.endpoint_refresh_holder.reset();
       ref->message_queue_queue->raise(socket_e::video, av_session_id_t { session->video.ping_payload }, nullptr, nullptr);
     });
 
@@ -4611,7 +4622,8 @@ namespace stream {
       if (auto refresh = session->audio.endpoint_refresh.load(std::memory_order_acquire)) {
         log_endpoint_refresh_summary(*session, "audio", refresh->stats());
       }
-      session->audio.endpoint_refresh.store(endpoint_refresh_ptr {}, std::memory_order_release);
+      session->audio.endpoint_refresh.store(nullptr, std::memory_order_release);
+      session->audio.endpoint_refresh_holder.reset();
       ref->message_queue_queue->raise(socket_e::audio, av_session_id_t { session->audio.ping_payload }, nullptr, nullptr);
     });
 

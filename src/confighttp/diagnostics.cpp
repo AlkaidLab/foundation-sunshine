@@ -142,7 +142,7 @@ namespace confighttp::diagnostics {
       static constexpr std::uintmax_t MAX_LOG_CACHE_SIZE = 4 * 1024 * 1024;  // 4 MB
       static constexpr std::uintmax_t MAX_RESPONSE_SIZE = 4 * 1024 * 1024;  // 4 MB
 
-      static std::atomic<std::shared_ptr<const LogCacheSnapshot>> log_cache;
+      static std::shared_ptr<const LogCacheSnapshot> log_cache;
 
       // Check file status
       std::error_code ec;
@@ -159,7 +159,7 @@ namespace confighttp::diagnostics {
       auto current_mtime_ns = current_mtime.time_since_epoch().count();
 
       // Refresh cache if file changed
-      auto snapshot = log_cache.load();
+      auto snapshot = std::atomic_load(&log_cache);
       const bool cache_stale = !snapshot || current_size != snapshot->file_size || current_mtime_ns != snapshot->mtime_ns;
       if (cache_stale) {
         auto new_snap = std::make_shared<LogCacheSnapshot>();
@@ -195,7 +195,7 @@ namespace confighttp::diagnostics {
         }
 
         // CAS publish: avoid overwriting a newer snapshot from a concurrent thread
-        if (!log_cache.compare_exchange_strong(snapshot, new_snap)) {
+        if (!std::atomic_compare_exchange_strong(&log_cache, &snapshot, std::shared_ptr<const LogCacheSnapshot>(new_snap))) {
           // CAS failed: snapshot already updated by compare_exchange_strong
         }
         else {

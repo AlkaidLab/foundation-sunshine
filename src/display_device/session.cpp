@@ -12,10 +12,10 @@
 #include "src/globals.h"
 #include "src/hdr/session_target.h"
 #include "src/platform/common.h"
+#ifdef _WIN32
 #include "src/platform/windows/display_device/session_listener.h"
 #include "src/platform/windows/display_device/windows_utils.h"
-#ifdef _WIN32
-  #include "src/platform/windows/vulkan_hdr_bridge_session.h"
+#include "src/platform/windows/vulkan_hdr_bridge_session.h"
 #endif
 #include "src/rtsp.h"
 #include "to_string.h"
@@ -139,7 +139,6 @@ namespace display_device {
   session_t::deinit_t::~deinit_t() {
 #ifdef _WIN32
     platf::vulkan_hdr_bridge::shutdown_cleanup();
-#endif
     // 清理事件监听器
     SessionEventListener::deinit();
 
@@ -148,6 +147,7 @@ namespace display_device {
     if (!config::video.vdd_keep_enabled) {
       vdd_utils::destroy_vdd_monitor_nolog();
     }
+#endif
   }
 
   session_t &
@@ -165,8 +165,10 @@ namespace display_device {
 #endif
     session_t::get().settings.set_filepath(platf::appdata() / "original_display_settings.json");
 
+#ifdef _WIN32
     // 初始化会话事件监听器（用于检测解锁事件）
     SessionEventListener::init();
+#endif
 
     // The recovery reads the display stack (CCD), and DisplayConfigGetDeviceInfo can block for minutes in the graphics driver: most "host hangs at start"
     // reports (hang:main-startup) stand in get_monitor_device_path_wstr, with the web UI not yet bound and no way to read the log. Start-up waits for the
@@ -200,7 +202,9 @@ namespace display_device {
   void
   session_t::cancel_pending_display_retry() {
     pending_restore_ = false;
+#ifdef _WIN32
     SessionEventListener::clear_unlock_task();
+#endif
     timer->setup_timer(nullptr);
   }
 
@@ -238,6 +242,7 @@ namespace display_device {
       return {};
     }
 
+#ifdef _WIN32
     /**
      * @brief Wait for VDD device to be available (active or inactive).
      * @param device_zako Output parameter for the device ID.
@@ -323,6 +328,7 @@ namespace display_device {
 
       return false;
     }
+#endif  // _WIN32
 
     session_t::configure_result_t
     make_apply_configure_result(settings_t::apply_result_t apply_result) {
@@ -372,6 +378,7 @@ namespace display_device {
 
   }  // namespace
 
+#ifdef _WIN32
   session_t::vdd_stage_result_e
   session_t::apply_vdd_display_stage(const parsed_config_t &config,
     const boost::optional<device_info_map_t> &pre_vdd_devices) {
@@ -432,7 +439,11 @@ namespace display_device {
 
     // Parsing is side-effect free. From this point on, parsed_config is the
     // single source of truth for whether this session needs VDD preparation.
+#ifdef _WIN32
     const bool rdp_session_active = display_device::w_utils::is_current_session_rdp();
+#else
+    const bool rdp_session_active = false;
+#endif
     const bool is_rdp_blocking_vdd = !is_running_as_system_user && rdp_session_active;
     const bool use_vdd = parsed_config->use_vdd.value_or(false);
     const bool should_prepare_vdd = use_vdd && !is_rdp_blocking_vdd;
@@ -1074,6 +1085,7 @@ namespace display_device {
       // 设置待恢复标志
       pending_restore_ = true;
 
+#ifdef _WIN32
       // 添加恢复任务（自动处理锁屏检查和立即执行）
       SessionEventListener::add_unlock_task([this, reason]() {
         // 快速检查是否还需要恢复（最小化锁持有时间）
@@ -1104,6 +1116,11 @@ namespace display_device {
           stop_timer_and_clear_vdd_state();
         }
       });
+#else
+      settings.revert_settings(reason, true);
+      pending_restore_ = false;
+      stop_timer_and_clear_vdd_state();
+#endif
     }
   }
 
@@ -1139,6 +1156,94 @@ namespace display_device {
       return true;
     });
   }
+
+#else  // !_WIN32
+
+  session_t::vdd_stage_result_e
+  session_t::apply_vdd_display_stage(const parsed_config_t &,
+    const boost::optional<device_info_map_t> &) {
+    return vdd_stage_result_e::ready;
+  }
+
+  session_t::configure_result_t
+  session_t::configure_display(const config::video_t &config,
+    const rtsp_stream::launch_session_t &session,
+    bool is_reconfigure) {
+    std::lock_guard lock { mutex };
+
+    auto parsed_config = make_parsed_config(config, session, is_reconfigure);
+    if (!parsed_config) {
+      restore_state_impl(revert_reason_e::config_cleanup);
+      return {
+        configure_result_t::result_e::parse_fail,
+        "Failed to parse display configuration.",
+        "Set display, resolution, and refresh rate options to Auto or valid values, then try again."
+      };
+    }
+
+    auto apply_result = settings.apply_config(*parsed_config, session);
+    return make_apply_configure_result(apply_result);
+  }
+
+  bool
+  session_t::create_vdd_monitor(const std::string &) {
+    return false;
+  }
+
+  bool
+  session_t::create_vdd_monitor_noninteractive() {
+    return false;
+  }
+
+  bool
+  session_t::destroy_vdd_monitor() {
+    return false;
+  }
+
+  bool
+  session_t::is_display_on() {
+    return true;
+  }
+
+  bool
+  session_t::toggle_display_power() {
+    return false;
+  }
+
+  session_t::vdd_mode_update_e
+  session_t::update_vdd_resolution(const parsed_config_t &,
+    const vdd_utils::VddSettings &,
+    const std::string &) {
+    return vdd_mode_update_e::ready;
+  }
+
+  session_t::vdd_stage_result_e
+  session_t::prepare_vdd(parsed_config_t &, const rtsp_stream::launch_session_t &, boost::optional<device_info_map_t> &) {
+    return vdd_stage_result_e::ready;
+  }
+
+  void
+  session_t::restore_state_impl(revert_reason_e reason) {
+    settings.revert_settings(reason);
+  }
+
+  void
+  session_t::restore_state() {
+    std::lock_guard lock { mutex };
+    restore_state_impl(revert_reason_e::stream_ended);
+  }
+
+  void
+  session_t::reset_persistence() {
+    std::lock_guard lock { mutex };
+    settings.reset_persistence();
+  }
+
+  void
+  session_t::start_polling_restore(revert_reason_e) {
+  }
+
+#endif  // _WIN32
 
   session_t::session_t():
       timer { std::make_unique<StateRetryTimer>(mutex) } {

@@ -662,7 +662,7 @@ namespace crash {
       const bool meta_gone = gone(alive[i].meta);
       const bool dump_gone = alive[i].dump.empty() || gone(alive[i].dump);
       if (meta_gone && dump_gone) {
-        total -= std::min(total, alive[i].bytes);
+        total -= std::min<std::uint64_t>(total, alive[i].bytes);
         ++removed;
         alive.erase(alive.begin() + static_cast<std::ptrdiff_t>(i));
       }

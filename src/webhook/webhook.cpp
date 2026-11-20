@@ -53,7 +53,7 @@ namespace webhook {
     constexpr int MAX_PRODUCTION_ATTEMPTS = 3;
     constexpr auto RATE_LIMIT_WINDOW = 1min;
     constexpr auto MAX_RETRY_AFTER = 60s;
-    std::atomic<std::shared_ptr<const configuration_t>> active_configuration {
+    std::shared_ptr<const configuration_t> active_configuration {
       std::make_shared<const configuration_t>()
     };
 
@@ -1066,7 +1066,8 @@ namespace webhook {
       return false;
     }
 
-    active_configuration.store(
+    std::atomic_store_explicit(
+      &active_configuration,
       std::move(configuration.configuration_),
       std::memory_order_release);
     return true;
@@ -1080,7 +1081,7 @@ namespace webhook {
 
   configuration_t
   current_configuration() {
-    const auto configuration = active_configuration.load(std::memory_order_acquire);
+    const auto configuration = std::atomic_load_explicit(&active_configuration, std::memory_order_acquire);
     return *configuration;
   }
 
