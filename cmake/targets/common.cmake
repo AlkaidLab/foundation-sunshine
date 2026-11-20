@@ -2,6 +2,21 @@
 # this file will also load platform specific macros
 
 add_executable(sunshine "${CMAKE_SOURCE_DIR}/src/main.cpp")
+# cmake-add-custom-command-20261120, DEPENDS: regenerate when a log statement moves.
+find_package(Python3 3.8 REQUIRED COMPONENTS Interpreter)
+file(GLOB_RECURSE _log_sources CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/*.cpp"
+    "${CMAKE_SOURCE_DIR}/src/*.h" "${CMAKE_SOURCE_DIR}/src/*.mm" "${CMAKE_SOURCE_DIR}/src/*.hpp")
+set(_log_catalogue "${CMAKE_SOURCE_DIR}/scripts/telemetry/error_code_catalogue.py")
+set(_log_templates "${CMAKE_CURRENT_BINARY_DIR}/error_templates.generated.inc")
+add_custom_command(OUTPUT "${_log_templates}"
+    COMMAND "${Python3_EXECUTABLE}" "${_log_catalogue}" "${CMAKE_SOURCE_DIR}" --templates "${_log_templates}"
+    DEPENDS "${_log_catalogue}" "${CMAKE_CURRENT_LIST_FILE}" ${_log_sources}
+    VERBATIM)
+add_library(sunshine_log_templates STATIC src/telemetry/log_template.cpp "${_log_templates}")
+target_include_directories(sunshine_log_templates PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+target_compile_features(sunshine_log_templates PRIVATE cxx_std_20)
+target_link_libraries(sunshine PRIVATE sunshine_log_templates)
+
 include(${CMAKE_MODULE_PATH}/dependencies/mat_capture.cmake)
 if (TARGET sunshine_mat_capture)
     add_dependencies(sunshine sunshine_mat_capture)

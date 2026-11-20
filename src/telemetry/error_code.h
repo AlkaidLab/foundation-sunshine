@@ -1,6 +1,6 @@
 /**
  * @file src/telemetry/error_code.h
- * @brief The code an error line of the log is reported under: a hash of the fixed words the message starts with.
+ * @brief Current template codes and the legacy rendered-head catalogue.
  *
  * The line itself is never sent. Its code is a hash of the words it starts with, up to the first character that starts a value (a digit, '=', a quote, a bracket, a path separator, a colon after the
  * first few words): the fixed text of the message, so that the same error is one code and what a person chose is not in it. Pure code (std only), unit tested on its own.
@@ -21,7 +21,7 @@
 
 namespace telemetry {
 
-  /// 32-bit FNV-1a, the same function the code has used since the first release.
+  /// rfc9923-fnv-20261120, section 2: FNV-1a is a grouping hash, with no privacy or security guarantees.
   inline std::uint32_t
   fnv1a_32(std::string_view text) {
     std::uint32_t h = 2166136261u;
@@ -84,12 +84,17 @@ namespace telemetry {
     return head;
   }
 
-  /// "e" and eight hex digits.
+  /// The caller scrubs the fixed template or supplies the source site for opaque messages.
   inline std::string
-  error_code_of(std::string_view scrubbed_message) {
+  template_error_code(std::string_view scrubbed_template) {
     char code[16];
-    std::snprintf(code, sizeof(code), "e%08x", fnv1a_32(error_head(scrubbed_message)));
+    std::snprintf(code, sizeof(code), "e%08x", fnv1a_32(scrubbed_template));
     return code;
   }
 
+  /// Legacy catalogue: "e" and eight hex digits of the rendered head.
+  inline std::string
+  error_code_of(std::string_view scrubbed_message) {
+    return template_error_code(error_head(scrubbed_message));
+  }
 }  // namespace telemetry

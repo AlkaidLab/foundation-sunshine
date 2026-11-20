@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
 """The dictionary of the error codes the host reports: code -> the fixed words and the places in the source that log them.
 
-An `error` event carries only a code, `e` and eight hex digits, the FNV-1a hash of the fixed words a log message starts with (src/telemetry/error_code.h). This script finds every
+The legacy `error` event carried a code, `e` and eight hex digits, the FNV-1a hash of the fixed words a log message starts with (src/telemetry/error_code.h). This script finds every
 BOOST_LOG(error) / BOOST_LOG(fatal) statement in a source tree, takes the literal text it starts with, computes the same code and writes the table, so that an investigator can turn a code
 from the data into the message and the file:line that logs it. A statement that starts with a value (a variable, a call) has no fixed words: it is listed under the code of the empty head
-and with its place, which is all the data can say about it.
+and with its place.
+In --templates mode, emit the build catalogue of all static stream operands with placeholders for values.
 
-usage: error_code_catalogue.py SRC_DIR [--json OUT.json]
-Standard library only. `error_head` mirrors the C++ function; tests/unit/test_telemetry.cpp (ErrorCode*) and scripts/telemetry/test_error_code_catalogue.py hold the same vectors.
+usage: error_code_catalogue.py SRC_DIR [--json OUT.json | --templates OUT.inc]
+Standard library only. `error_head` mirrors the C++ function; tests/unit/test_error_code.cpp (ErrorCode*) and scripts/telemetry/test_error_code_catalogue.py hold the same vectors.
 """
 
 import json
 import os
 import re
 import sys
+from pathlib import Path
 
 LOG_START = re.compile(r"BOOST_LOG\((error|fatal)\)\s*<<")
 
@@ -207,14 +209,16 @@ def _skip_space_and_comments(text: str, start: int) -> int:
     return i
 
 
-def _mask_comments(text: str) -> str:
-    """Replace C++ comments with spaces while preserving strings and line numbers."""
+def _mask_comments(text: str, *, literals=False) -> str:
+    """Mask comments and optionally literals without changing offsets or line numbers."""
     out = list(text)
     i = 0
     n = len(text)
     while i < n:
         end = _literal_end(text, i)
         if end is not None:
+            if literals:
+                out[i:end] = ["\n" if c == "\n" else " " for c in text[i:end]]
             i = end
         elif text.startswith("//", i):
             end = _comment_end(text, i)
@@ -237,6 +241,7 @@ def statement_end(text: str, start: int) -> int:
     """The index of the semicolon that ends the statement, skipping literals and comments."""
     i = start
     n = len(text)
+    depth = 0
     while i < n:
         if text.startswith("//", i) or text.startswith("/*", i):
             i = _comment_end(text, i)
@@ -245,8 +250,15 @@ def statement_end(text: str, start: int) -> int:
         if end is not None:
             i = end
             continue
-        if text[i] == ";":
+        c = text[i]
+        if c == ";" and depth == 0:
             return i
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            if depth == 0:
+                return i
+            depth -= 1
         i += 1
     return n
 
@@ -254,6 +266,7 @@ def statement_end(text: str, start: int) -> int:
 def split_pieces(statement: str):
     """The operands of the `<<` chain, ignoring strings and C++ comments."""
     pieces, cur, i, n = [], [], 0, len(statement)
+    depth = 0
     while i < n:
         if statement.startswith("//", i) or statement.startswith("/*", i):
             end = _comment_end(statement, i)
@@ -265,12 +278,16 @@ def split_pieces(statement: str):
             cur.append(statement[i:end])
             i = end
             continue
-        if statement.startswith("<<", i):
+        if depth == 0 and statement.startswith("<<", i):
             pieces.append("".join(cur))
             cur = []
             i += 2
             continue
         c = statement[i]
+        if c in "([{":
+            depth += 1
+        elif c in ")]}":
+            depth -= 1
         cur.append(c)
         i += 1
     pieces.append("".join(cur))
@@ -385,28 +402,31 @@ def _literal_at(text: str, start: int):
     return value, _skip_space_and_comments(text, j), suffixed
 
 
+def _literal_operand(piece: str):
+    pos = 0
+    parts = bytearray()
+    found = False
+    suffixed = False
+    while (parsed := _literal_at(piece, pos)) is not None:
+        value, pos, has_suffix = parsed
+        parts.extend(value)
+        found = True
+        suffixed = suffixed or has_suffix
+    if not found or _skip_space_and_comments(piece, pos) != len(piece):
+        return None
+    if not suffixed and 0 in parts:
+        del parts[parts.index(0):]  # plain literals are inserted as C strings
+    return bytes(parts)
+
+
 def _leading_literal_bytes(statement: str) -> bytes:
-    """The literal bytes at the front of the `<<` chain."""
+    """The literal bytes at the front of the stream chain (legacy catalogue)."""
     out = bytearray()
     for piece in split_pieces(statement):
-        pos = 0
-        parts = bytearray()
-        found = False  # an empty literal "" is still a literal operand
-        suffixed = False
-        while True:
-            parsed = _literal_at(piece, pos)
-            if parsed is None:
-                break
-            value, pos, has_suffix = parsed
-            parts.extend(value)
-            found = True
-            suffixed = suffixed or has_suffix
-        if not found or _skip_space_and_comments(piece, pos) != len(piece):
+        literal = _literal_operand(piece)
+        if literal is None:
             break
-        if not suffixed and 0 in parts:
-            # a plain "..." operand is inserted as const char*: the stream stops at the first NUL; "..."sv / "..."s keep their length
-            del parts[parts.index(0):]
-        out.extend(parts)
+        out.extend(literal)
     return bytes(out)
 
 
@@ -435,10 +455,53 @@ def scan(root: str):
     return table
 
 
+def message_template(statement: str) -> bytes:
+    """Keep static stream operands on either side of each argument."""
+    parts = [_literal_operand(piece) for piece in split_pieces(statement)]
+    if not any(part and part.strip() for part in parts):
+        return b""  # no fixed words: the caller uses the source site
+    return b"".join(part if part is not None else b"{}" for part in parts)
+
+
+def _cpp_bytes(text: bytes) -> str:
+    return '"' + "".join(chr(c) if 32 <= c < 127 and c not in (34, 92)
+                         else f"\\{c:03o}" for c in text) + '"'
+
+
+def write_templates(root: Path, output: Path):
+    # cpp-lex-string-20261120, [lex.string]: join adjacent literals and
+    # preserve the compiled bytes. Every other stream operand is an argument.
+    rows = []
+    # python-pathlib-20261120, Path.rglob and Path.read_text.
+    for path in sorted((root / "src").rglob("*")):
+        if path.suffix not in (".cpp", ".h", ".mm", ".hpp"):
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        file = path.relative_to(root).as_posix()
+        for match in LOG_START.finditer(_mask_comments(text, literals=True)):
+            line = text.count("\n", 0, match.start()) + 1
+            template = message_template(text[match.end():statement_end(text, match.end())])
+            rows.append((file, line, template))
+    # An ambiguous physical site falls back to location. The runtime lookup
+    # has only the location of the statement, so it cannot pick either row.
+    counts = {}
+    for file, line, _ in rows:
+        counts[file, line] = counts.get((file, line), 0) + 1
+    lines = [
+        f'  {{ "{file}", {line}, {{ {_cpp_bytes(template)}, {len(template)} }} }},'
+        for file, line, template in sorted(rows) if template and counts[file, line] == 1
+    ]
+    content = "// Generated by error_code_catalogue.py. Do not edit.\n" + "\n".join(lines) + "\n"
+    output.write_text(content, encoding="ascii")
+
+
 if __name__ == "__main__":
     args = sys.argv[1:]
     if not args:
         sys.exit(__doc__)
+    if len(args) == 3 and args[1] == "--templates":
+        write_templates(Path(args[0]), Path(args[2]))
+        sys.exit()
     table = scan(args[0])
     if "--json" in args:
         with open(args[args.index("--json") + 1], "w", encoding="utf-8") as out:

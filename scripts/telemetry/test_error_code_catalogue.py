@@ -2,13 +2,14 @@ import os
 import sys
 import tempfile
 import unittest
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import error_code_catalogue as cat  # noqa: E402
 
 
 class Head(unittest.TestCase):
-    # the same vectors as tests/unit/test_telemetry.cpp (ErrorCode*)
+    # the same vectors as tests/unit/test_error_code.cpp (ErrorCode*)
     def test_vectors(self):
         self.assertEqual(cat.error_head("Couldn't read packet: end of file"), "couldn't read packet")
         self.assertEqual(cat.error_head("Couldn't accept incoming connections: aborted"), "couldn't accept incoming connections")
@@ -42,7 +43,7 @@ class Head(unittest.TestCase):
 
 class Bytes(unittest.TestCase):
     def test_long_multi_byte_messages_are_cut_at_bytes_like_the_host(self):
-        # the same two messages and codes as tests/unit/test_telemetry.cpp (ErrorCode.ALongMessageWithMultiByteCharactersIsCutAtBytesNotCharacters); the codes were taken from the C++ function
+        # the same two messages and codes as tests/unit/test_error_code.cpp (ErrorCode.ALongMessageWithMultiByteCharactersIsCutAtBytesNotCharacters); the codes were taken from the C++ function
         no_space = "x" + "错" * 40
         spaced = "加载失败" + " 加载失败" * 12
         self.assertEqual(len(cat.error_head_bytes(no_space)), 96)  # cut in the middle of a character
@@ -167,6 +168,29 @@ void f() {
         code = cat.error_code("Failed ")
         self.assertEqual(list(table), [code])
         self.assertEqual(table[code]["sites"][0]["text"], "Failed // still text; retry")
+
+
+class Templates(unittest.TestCase):
+    def test_static_suffix_survives_a_value_first_operand(self):
+        self.assertEqual(cat.message_template('get_error_string(x << 1) << " failed to set HDR"sv'), b"{} failed to set HDR")
+        self.assertEqual(cat.message_template('err << " Setup" "Di failed" << priv'), b"{} SetupDi failed{}")
+        self.assertEqual(cat.message_template('err << some_user_value'), b"")
+
+    def test_generation_skips_comments_strings_and_opaque_calls(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            src = root / "src"
+            src.mkdir()
+            src.joinpath("logger.cpp").write_text(
+                '// BOOST_LOG(error) << retired;\n'
+                'const auto text = R"(BOOST_LOG(error) << "ignored";)";\n'
+                'BOOST_LOG(error) << ([] { return 1; })() << " failed";\n'
+                'BOOST_LOG(fatal) << only_value;\n',
+                encoding="utf-8",
+            )
+            out = root / "templates.inc"
+            cat.write_templates(root, out)
+            self.assertEqual(out.read_text().splitlines()[1:], ['  { "src/logger.cpp", 3, { "{} failed", 9 } },'])
 
 
 if __name__ == "__main__":

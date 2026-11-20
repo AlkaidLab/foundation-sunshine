@@ -8,6 +8,8 @@
  */
 #pragma once
 
+#include <algorithm>
+#include <array>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -45,15 +47,18 @@ namespace telemetry {
   };
 
   /** "usage" | "error" | "experience". */
-  std::string_view kind_name(kind_e kind);
-  std::optional<kind_e> parse_kind(std::string_view text);
+  std::string_view
+  kind_name(kind_e kind);
+  std::optional<kind_e>
+  parse_kind(std::string_view text);
 
   /** The consent that governs a kind: usage and experience follow the usage statistics, error follows the error reports. */
   enum class consent_e {
     usage_statistics,
     error_reports,
   };
-  consent_e consent_of(kind_e kind);
+  consent_e
+  consent_of(kind_e kind);
 
   struct event_t {
     std::int64_t t = 0;  ///< ms since the epoch
@@ -70,16 +75,34 @@ namespace telemetry {
   };
 
   /** True for the high-volume usage and experience families the sender holds and merges before it uploads. */
-  bool high_volume_event(std::string_view name);
+  inline bool
+  high_volume_event(std::string_view name) {
+    static const std::array<std::string_view, 11> names {
+      "app_start",
+      "app_exit",
+      "feature_used",
+      "setting_changed",
+      "stream_start",
+      "stream_end",
+      "stream_quality",
+      "startup",
+      "panel_page",
+      "page_vitals",
+      "api_latency",
+    };
+    return std::find(names.begin(), names.end(), name) != names.end();
+  }
 
   /** True when a stage of a stream start took longer than its bound (3 s; 5 s for the app launch and the first frame): only those are worth an event. */
-  bool stage_is_slow(std::string_view stage, std::int64_t ms);
+  bool
+  stage_is_slow(std::string_view stage, std::int64_t ms);
 
   /**
    * Merges the high-volume events of one batch by name, kind, version and their non-numeric properties. Counters and bucket vectors (page_vitals, api_latency) are summed, the other numbers are
    * averaged, `count` holds the occurrences. Everything else (priority records, reports) passes through unchanged. `origin[i]` lists the positions in `events` that went into the result `i`.
    */
-  std::vector<event_t> aggregate_events(const std::vector<event_t> &events, std::vector<std::vector<std::size_t>> &origin);
+  std::vector<event_t>
+  aggregate_events(const std::vector<event_t> &events, std::vector<std::vector<std::size_t>> &origin);
 
   /**
    * How much an event matters when something has to give: 0 is never sampled away, sent first and the last to be dropped (user reports, fatal errors, the first report of an error, serious stream problems, the
@@ -109,45 +132,59 @@ namespace telemetry {
   sampled_family(const event_t &event);
 
   /** Products the host sender accepts events for. */
-  bool known_product(std::string_view product);
+  bool
+  known_product(std::string_view product);
   /** Event names a page (panel or web) may send through the host API; the host-only names (streams, quality, log summary) are refused so one stream is never counted twice. */
-  bool client_may_send(std::string_view product, kind_e kind, std::string_view name);
+  bool
+  client_may_send(std::string_view product, kind_e kind, std::string_view name);
 
   /** A feedback report the person sent on purpose: pressing 发送 is the consent for that one send, so the error-report switch does not hold it back. */
-  inline bool is_user_report(kind_e kind, std::string_view name) { return kind == kind_e::error && name == "user_report"; }
+  inline bool
+  is_user_report(kind_e kind, std::string_view name) { return kind == kind_e::error && name == "user_report"; }
 
   /**
    * Text with names, addresses, paths and secrets removed, no control characters, cut to `max` characters (counted as UTF-8 code points).
    * The rules follow foundation-ui scrubText (m3e src/telemetry/scrub.js).
    */
-  std::string scrub_text(std::string_view text, std::size_t max = MAX_MESSAGE_CHARS);
+  std::string
+  scrub_text(std::string_view text, std::size_t max = MAX_MESSAGE_CHARS);
 
   /** scrub_text for a line of the host log: whatever stands between quotes, brackets or braces is dropped first (names a person chose: a device, an app, a game). */
-  std::string scrub_log_message(std::string_view text, std::size_t max = MAX_MESSAGE_CHARS);
+  std::string
+  scrub_log_message(std::string_view text, std::size_t max = MAX_MESSAGE_CHARS);
 
   /** A product version as the Worker takes it (letters, digits, . _ + - space, at most 64 characters), else empty. */
-  std::string safe_version(std::string_view version);
+  std::string
+  safe_version(std::string_view version);
   /** An OS version string made only of letters, digits and . _ + - space, at most 48 characters, else empty. */
-  std::string safe_os_version(std::string_view text);
+  std::string
+  safe_os_version(std::string_view text);
   /** A language tag (zh, zh-CN, pt_BR), else empty. */
-  std::string safe_locale(std::string_view text);
+  std::string
+  safe_locale(std::string_view text);
 
   /** A catalogue id: lower case letters, digits, '.', '_' and '-', 1 to `max` characters, starting with a letter or digit. Anything else -> empty. */
-  std::string catalogue_id(std::string_view text, std::size_t max = 48);
+  std::string
+  catalogue_id(std::string_view text, std::size_t max = 48);
 
   /**
    * Check an event against the allow-list of its name and rebuild it with only the allowed properties, each clamped or normalised.
    * @return nullopt when the name is not allowed for the kind, or a required property is missing or invalid.
    */
-  std::optional<event_t> shape_event(kind_e kind, std::string_view name, const nlohmann::json &props, std::int64_t now_ms);
+  std::optional<event_t>
+  shape_event(kind_e kind, std::string_view name, const nlohmann::json &props, std::int64_t now_ms);
 
   /** The configuration keys whose changes are reported (setting_changed), and the value of a change reduced to the allow-listed enum or bucket ("other" when it is not one). Empty key -> not reported. */
-  bool setting_key_allowed(std::string_view key);
-  std::string setting_value_bucket(std::string_view key, std::string_view value);
-  const std::vector<std::string_view> &setting_keys();
+  bool
+  setting_key_allowed(std::string_view key);
+  std::string
+  setting_value_bucket(std::string_view key, std::string_view value);
+  const std::vector<std::string_view> &
+  setting_keys();
 
   /** Bucket of a bitrate in kbps for stream_quality (rounded to a lower bound step) so a value cannot single a person out. */
-  std::int64_t round_to_step(double value, std::int64_t step);
+  std::int64_t
+  round_to_step(double value, std::int64_t step);
 
   /** What every batch carries about this install (contract: envelope). All text is a catalogue-like short string. */
   struct context_t {
@@ -165,35 +202,45 @@ namespace telemetry {
   };
 
   /** The fields every batch carries besides its events, as they are sent (what the person sees in "see what will be sent"). `sample_weight` is only there when it is above 1. */
-  nlohmann::json envelope_fields(const context_t &context, std::string_view product, const std::string &version);
+  nlohmann::json
+  envelope_fields(const context_t &context, std::string_view product, const std::string &version);
 
   /**
    * Batches for one product: events of that product are split in as many envelopes as the 500 events and 256 KB limits need.
    * `events` must all carry `product`; a product version on an event (panel, web) replaces the context's version.
    */
-  std::vector<nlohmann::json> build_envelopes(const context_t &context, std::string_view product, const std::vector<event_t> &events);
+  std::vector<nlohmann::json>
+  build_envelopes(const context_t &context, std::string_view product, const std::vector<event_t> &events);
 
   /** The same, and `members` receives the positions in `events` that every envelope holds (a version starts its own envelope, so they are not a range): a caller that
    *  puts back what a failed write left unwritten re-queues the events of the envelopes that were not pushed, not the whole group. */
-  std::vector<nlohmann::json> build_envelopes(const context_t &context, std::string_view product, const std::vector<event_t> &events,
+  std::vector<nlohmann::json>
+  build_envelopes(const context_t &context, std::string_view product, const std::vector<event_t> &events,
     std::vector<std::vector<std::size_t>> &members);
 
   /** event <-> json (the form kept in the disk queue and sent in a batch). */
-  nlohmann::json event_to_json(const event_t &event);
-  std::optional<event_t> event_from_json(const nlohmann::json &json);
+  nlohmann::json
+  event_to_json(const event_t &event);
+  std::optional<event_t>
+  event_from_json(const nlohmann::json &json);
 
   /** Percentiles over samples (nearest rank on a sorted copy). Empty input -> 0. p in [0, 100]. */
-  double percentile(std::vector<double> samples, double p);
+  double
+  percentile(std::vector<double> samples, double p);
 
   /** A fixed-size histogram for latency-like values, so a stream of any length keeps O(1) memory. Not thread safe. */
   class histogram_t {
   public:
     histogram_t(double max_value = 2000.0, std::size_t buckets = 400);
-    void add(double value);
-    std::uint64_t count() const { return count_; }
+    void
+    add(double value);
+    std::uint64_t
+    count() const { return count_; }
     /** p in [0, 100]; the upper edge of the bucket holding that rank. 0 when empty. */
-    double percentile(double p) const;
-    void clear();
+    double
+    percentile(double p) const;
+    void
+    clear();
 
   private:
     double max_;

@@ -3,7 +3,6 @@
  * @brief The telemetry sender: buffer, queue, retry, consent, identity and stream trackers.
  */
 #include "service.h"
-#include "error_code.h"
 #include "opt_out.h"
 
 #include "src/crash/crash_context.h"
@@ -24,24 +23,6 @@ namespace fs = std::filesystem;
 namespace telemetry {
 
   namespace {
-    /** The build identity as an allow-list token: lower-case ASCII letters and digits with `.`, `_` and `-`, at most 40 characters
-     *  (`v2026.1114.173055.杂鱼` becomes `v2026.1114.173055`). An error event carries it so a report names the build that raised it. */
-    std::string
-    build_token(std::string_view version) {
-      std::string out;
-      for (const unsigned char c : version) {
-        if (out.size() >= 40) break;
-        if (c < 0x80 && std::isalnum(c))
-          out.push_back(static_cast<char>(std::tolower(c)));
-        else if (!out.empty() && (c == '.' || c == '-') && out.back() != '.' && out.back() != '-')
-          out.push_back(static_cast<char>(c));
-        else if (!out.empty() && out.back() != '_' && out.back() != '.' && out.back() != '-')
-          out.push_back('_');
-      }
-      while (!out.empty() && !std::isalnum(static_cast<unsigned char>(out.back()))) out.pop_back();
-      return out;
-    }
-
     bool
     truthy(const std::string &v) {
       return v == "on" || v == "true" || v == "1" || v == "enabled" || v == "yes";
@@ -117,7 +98,8 @@ namespace telemetry {
     c.usage = !(usage_key_present && falsy(usage_value));
     if (errors_key_present && (truthy(errors_value) || falsy(errors_value))) c.errors = truthy(errors_value);
     // a person who answered "off" to the old single question said no to everything that left the computer: that stays no for error reports until they turn it on
-    else c.errors = !(usage_key_present && usage_value == "off");
+    else
+      c.errors = !(usage_key_present && usage_value == "off");
     return c;
   }
 
@@ -290,7 +272,8 @@ namespace telemetry {
         if (c >= 'A' && c <= 'Z') return c - 'A';
         if (c >= 'a' && c <= 'z') return c - 'a' + 26;
         if (c >= '0' && c <= '9') return c - '0' + 52;
-        return c == '+' ? 62 : c == '/' ? 63 : -1;
+        return c == '+' ? 62 : c == '/' ? 63 :
+                                          -1;
       };
       if (text.empty() || text.size() % 4 != 0) return {};
       std::string out;
@@ -304,8 +287,10 @@ namespace telemetry {
             v[k] = 0;
             ++pad;
           }
-          else if (pad == 0 && value(c) >= 0) v[k] = value(c);
-          else return {};
+          else if (pad == 0 && value(c) >= 0)
+            v[k] = value(c);
+          else
+            return {};
         }
         const auto n = (v[0] << 18) | (v[1] << 12) | (v[2] << 6) | v[3];
         out.push_back(static_cast<char>((n >> 16) & 0xff));
@@ -392,7 +377,9 @@ namespace telemetry {
     json
     feedback_submit_props(const json &report_props) {
       const auto category = report_props.is_object() && report_props.contains("category") && report_props["category"].is_string() ? report_props["category"].get<std::string>() : std::string {};
-      return json { { "category", category == "bug" ? "bug" : category == "suggestion" ? "feature" : category == "performance" || category == "compat" ? "improvement" : "other" } };
+      return json { { "category", category == "bug" ? "bug" : category == "suggestion"                        ? "feature" :
+                                                            category == "performance" || category == "compat" ? "improvement" :
+                                                                                                                "other" } };
     }
   }  // namespace
 
@@ -436,6 +423,7 @@ namespace telemetry {
         if (id.rfind(prefix, 0) != 0) continue;
       }
       auto props = e.contains("props") ? e["props"] : json::object();
+      if (name == "error" && props.is_object()) props.erase("site");  // only the native host logger supplies this location
       // both switches off: there is no install id (it is neither recovered nor created for this). The report gets a one-time random id of its own, used for its log and its batch, and the Worker takes it as a report without an install.
       // the identity of the report is fixed here, once: the install id when there is one, else a one-time id. The log is uploaded under it and the batch is written with it, whatever the switches say a moment later.
       std::string report_id, report_install;
@@ -460,8 +448,10 @@ namespace telemetry {
           try {
             const auto safe = safe_version(version);
             if (!safe.empty()) {
-              if (const auto ref = deps_.session_log(endpoint(), report_id.empty() ? report_install : report_id, safe)) props["log_ref"] = *ref;
-              else if (deps_.session_log_state) props["log_state"] = deps_.session_log_state();  // the report goes without its log: the word says why
+              if (const auto ref = deps_.session_log(endpoint(), report_id.empty() ? report_install : report_id, safe))
+                props["log_ref"] = *ref;
+              else if (deps_.session_log_state)
+                props["log_state"] = deps_.session_log_state();  // the report goes without its log: the word says why
             }
           }
           catch (...) {
@@ -1216,78 +1206,6 @@ namespace telemetry {
     }
   }
 
-  // ---- the log ----
-
-  void
-  service_t::note_log(int severity, const char *message, std::size_t length, std::string_view component, std::string_view site) noexcept {
-    if (severity < 3) return;
-    try {
-      const auto hour = deps_.now_ms() / 3'600'000;
-      std::lock_guard lock { log_mutex_ };
-      auto &window = log_windows_[std::string { component }];
-      if (window.hour != hour && window.hour >= 0 && (window.fatal | window.error | window.warning) == 0) window.hour = hour;
-      if (window.hour < 0) window.hour = hour;
-      if (severity >= 5) ++window.fatal;
-      else if (severity == 4) ++window.error;
-      else ++window.warning;
-      if (severity < 4 || !message) return;
-      const auto raw = std::string { message, std::min<std::size_t>(length, 400) };
-      auto key = std::string { component } + '\n' + raw.substr(0, 60);
-      auto found = raw_errors_.find(key);
-      if (found == raw_errors_.end()) {
-        if (raw_errors_.size() >= MAX_RAW_ERRORS) {
-          // the table is full: further distinct messages of an hour are only counted in the tally above
-          return;
-        }
-        found = raw_errors_.emplace(key, raw_error_t { std::string { component }, raw, severity >= 5 ? 5 : 4, 0, std::string { site.substr(0, 200) } }).first;
-      }
-      ++found->second.count;
-      if (severity >= 5) found->second.severity = 5;
-    }
-    catch (...) {
-    }
-  }
-
-  void
-  service_t::collect_logs(std::int64_t now, bool close_hour) {
-    std::map<std::string, log_window_t> windows;
-    std::map<std::string, raw_error_t> raws;
-    const auto hour = now / 3'600'000;
-    {
-      std::lock_guard lock { log_mutex_ };
-      for (auto it = log_windows_.begin(); it != log_windows_.end();) {
-        auto &w = it->second;
-        const bool over = w.hour >= 0 && w.hour != hour;
-        if ((over || close_hour) && (w.fatal | w.error | w.warning)) {
-          windows[it->first] = w;
-          w = log_window_t { hour, 0, 0, 0 };
-        }
-        ++it;
-      }
-      raws.swap(raw_errors_);
-    }
-    for (const auto &[component, w] : windows) {
-      emit(kind_e::error, "log_summary", json { { "component", catalogue_id(component, 32).empty() ? "host" : catalogue_id(component, 32) }, { "fatal", w.fatal }, { "error", w.error }, { "warning", w.warning } });
-    }
-    const auto build = build_token(context().version);
-    for (const auto &[key, raw] : raws) {
-      // The line itself is not sent. Its code is a hash of the fixed words it starts with (src/telemetry/error_code.h): the same error is one code and what a person chose is not in it.
-      const auto code = error_code_of(scrub_log_message(raw.raw, MAX_MESSAGE_CHARS));
-      emit(kind_e::error, "error", json { { "component", catalogue_id(raw.component, 32).empty() ? "host" : catalogue_id(raw.component, 32) }, { "code", code }, { "severity", raw.severity >= 5 ? "fatal" : "error" }, { "count", raw.count }, { "build", build } });
-      // Every error and fatal log line has a site, so every code can be told where it comes from: the first line of a code in the hour becomes an error report with that site (the group of the
-      // Worker then has a place in the source, which the count alone never had). No text of the line goes with it. The reporter keeps its own hourly and per-install limits.
-      if (!raw.site.empty()) {
-        error_input_t input;
-        input.component = catalogue_id(raw.component, 32).empty() ? "host" : catalogue_id(raw.component, 32);
-        input.code = code;
-        input.severity = raw.severity >= 5 ? "fatal" : "error";
-        input.loc = clean_frame(raw.site);
-        if (!input.loc.empty()) input.frames.push_back(input.loc);
-        report_error(input);
-      }
-    }
-  }
-
   // ---- sender ----
 
   bool
@@ -1435,7 +1353,8 @@ namespace telemetry {
                 break;
               }
               for (const auto member : members[at]) {
-                if (origin.empty()) written[member] = true;
+                if (origin.empty())
+                  written[member] = true;
                 else
                   for (const auto from : origin[member]) written[from] = true;
               }
@@ -1552,10 +1471,10 @@ namespace telemetry {
             continue;
           }
           std::string key = name + "|" + p.value("component", std::string {}) + "|" + p.value("code", std::string {}) + "|" + p.value("fingerprint", std::string {}) + "|" + p.value("metric", std::string {});
+          if (name == "error") key += "|" + p.value("site", std::string {});
           // a driver fault is told apart by driver, operation, result and code: a failed virtual display must not hide a failed microphone start
           if (name == "driver_event") key += "|" + p.value("driver", std::string {}) + "|" + p.value("op", std::string {}) + "|" + p.value("result", std::string {}) + "|" + p.value("hresult", std::string {});
-          const auto found = seen.find(key);
-          if (found == seen.end()) {
+          if (const auto found = seen.find(key); found == seen.end()) {
             seen[key] = events.size();
             events.push_back(e);
           }
@@ -1658,7 +1577,10 @@ namespace telemetry {
       }
       // Two lanes. What must arrive (feedback, errors) goes first and does not wait for anything but a failure's backoff. Routine batches follow when the install's share of the day has begun (routine_due) and only
       // once today's share is not yet done; a day is done when the routine lane is empty.
-      enum class lane_result_e { empty, more, failed, paced };
+      enum class lane_result_e { empty,
+        more,
+        failed,
+        paced };
       const auto drain = [&](lane_e lane) {
         for (int i = 0; i < options_.max_batches_per_pump; ++i) {
           std::optional<disk_queue_t::entry_t> entry;
@@ -1749,7 +1671,7 @@ namespace telemetry {
       if (!c.errors) {
         {
           std::lock_guard lock { log_mutex_ };
-          raw_errors_.clear();
+          log_errors_.clear();
           log_windows_.clear();
         }
         // the actions of the person and the errors held back for an aggregate: gone with the choice, so turning it on again does not send them
@@ -1780,7 +1702,6 @@ namespace telemetry {
     catch (...) {
     }
   }
-
 
   // ---- the record that a choice was turned off (opt_out.h) ----
 
@@ -1895,7 +1816,8 @@ namespace telemetry {
           answer = {};
         }
         // delivered, or refused for good (a 4xx other than 408/429): the record is done; anything else is tried again later
-        if ((answer.status >= 200 && answer.status < 300) || (answer.status >= 400 && answer.status < 500 && answer.status != 408 && answer.status != 429)) done_or_dropped.push_back(r);
+        if ((answer.status >= 200 && answer.status < 300) || (answer.status >= 400 && answer.status < 500 && answer.status != 408 && answer.status != 429))
+          done_or_dropped.push_back(r);
         else {
           opt_out::failed(r, deps_.now_ms());
           failed_now.push_back(r);
