@@ -108,7 +108,11 @@ function Remove-UsbipAbsentLegacyNodes([string]$HostRoot) {
     if ($reboot) { $script:NeedsRestart = $true }
     $line = "USB/IP removed absent controller $id; reboot required: $reboot"
     Write-Host $line
-    Add-Content -LiteralPath (Join-Path $HostRoot 'scripts\usbip-replace-nodes.log') -Value $line -Encoding UTF8
+    try {
+      Add-Content -LiteralPath (Join-Path $HostRoot 'scripts\usbip-replace-nodes.log') -Value $line -Encoding UTF8
+    } catch {
+      Write-Warning "USB/IP removal log write failed: $($_.Exception.Message)"
+    }
   }
 }
 
@@ -210,10 +214,14 @@ function Test-UsbipReady([string]$Root, $Manifest, [switch]$External, [switch]$A
     if (-not $External) { $null = Read-UsbipManifest $Root }
     $nodes = @(Get-UsbipNodes)
     if ($nodes.Count -ne 1 -and (-not $AllowPendingNodes -or $nodes.Count -lt 2)) { return $false }
-    if ($nodes.Count -eq 1) {
-      $problem = (Get-PnpDeviceProperty -InstanceId $nodes[0].InstanceId -KeyName DEVPKEY_Device_ProblemCode -ErrorAction Stop).Data
-      if ($problem -notin 0, 14) { return $false }
+    # usbip-replace-ms-prob-removed-20261121: 21 means Windows is removing the device.
+    $usable = 0
+    foreach ($node in $nodes) {
+      $problem = (Get-PnpDeviceProperty -InstanceId $node.InstanceId -KeyName DEVPKEY_Device_ProblemCode -ErrorAction Stop).Data
+      if ($problem -in 0, 14) { $usable++ }
+      elseif (-not $AllowPendingNodes -or $problem -ne 21) { return $false }
     }
+    if ($usable -ne 1) { return $false }
     foreach ($name in 'usbip2_ude', 'usbip2_filter') {
       $service = Get-ItemProperty -LiteralPath ('HKLM:\SYSTEM\CurrentControlSet\Services\' + $name) -ErrorAction Stop
       $image = [string]$service.ImagePath

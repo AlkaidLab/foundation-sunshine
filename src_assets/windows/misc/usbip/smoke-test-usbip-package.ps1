@@ -52,6 +52,39 @@ try {
   Check 'missing driver service is not ready' {
     Require (-not (Test-UsbipReady $payload (Read-UsbipManifest $payload))) 'uninstalled fixture was ready'
   }
+  Check 'pending removal requires exactly one usable controller' {
+    $manifest = [pscustomobject]@{ files = [pscustomobject]@{
+      'driver/usbip2_ude.sys' = [pscustomobject]@{ sha256 = 'fixture' }
+      'driver/usbip2_filter.sys' = [pscustomobject]@{ sha256 = 'fixture' }
+    } }
+    & $module {
+      $script:Problems = @()
+      function script:Get-UsbipNodes {
+        for ($i = 0; $i -lt $script:Problems.Count; $i++) { [pscustomobject]@{ InstanceId = [string]$i } }
+      }
+      function script:Get-PnpDeviceProperty {
+        param($InstanceId, $KeyName, $ErrorAction)
+        [pscustomobject]@{ Data = $script:Problems[[int]$InstanceId] }
+      }
+      function script:Get-ItemProperty { param($LiteralPath, $ErrorAction); [pscustomobject]@{ ImagePath = 'fixture.sys' } }
+      function script:Get-FileHash { param($LiteralPath, $Algorithm); [pscustomobject]@{ Hash = 'fixture' } }
+    }
+    foreach ($case in @(
+      @{ Problems = @(21, 22); Expected = $false },
+      @{ Problems = @(21, 0); Expected = $true },
+      @{ Problems = @(14, 21); Expected = $true },
+      @{ Problems = @(21, 0, 0); Expected = $false },
+      @{ Problems = @(21, 21); Expected = $false },
+      @{ Problems = @(21); Expected = $false }
+    )) {
+      & $module { param($codes); $script:Problems = @($codes) } $case.Problems
+      $result = Test-UsbipReady $payload $manifest -External -AllowPendingNodes
+      Require ($result -eq $case.Expected) "unexpected readiness for problem codes $($case.Problems -join ',')"
+    }
+    & $module { $script:Problems = @(21, 0) }
+    Require (-not (Test-UsbipReady $payload $manifest -External)) 'strict readiness accepted multiple nodes'
+  }
+  $module = Import-Module (Join-Path $PSScriptRoot 'usbip-package-functions.psm1') -Force -PassThru -DisableNameChecking
   if ($env:OS -eq 'Windows_NT') {
     Check 'native removal declaration compiles and rejects an unknown instance' {
       $rejected = $false
@@ -133,6 +166,21 @@ try {
     Require ($removed.Count -eq 1 -and $removed[0] -eq 'ROOT\USB\0001') 'wrong device selected for removal'
     Require ((Get-UsbipRestartCode) -eq 3010) 'node removal reboot request was lost'
     Require ((Get-Content -Raw (Join-Path $hostDir 'scripts\usbip-replace-nodes.log')).Contains('ROOT\USB\0001')) 'removed instance was not logged'
+  }
+  Check 'removal continues when the log cannot be written' {
+    & $module {
+      function script:Add-Content { throw 'simulated log failure' }
+      $script:RemovedNodes.Clear()
+    }
+    $warnings = @(Remove-UsbipAbsentLegacyNodes $hostDir 3>&1)
+    Require (@(& $module { $script:RemovedNodes.ToArray() }).Count -eq 1) 'device removal did not complete'
+    Require (@($warnings | Where-Object { $_ -is [System.Management.Automation.WarningRecord] -and $_.Message -like '*log write failed*' }).Count -eq 1) 'log failure did not emit a warning'
+  }
+  Check 'device removal errors still propagate' {
+    & $module { function script:Remove-UsbipAbsentNode { throw 'simulated device removal failure' } }
+    $rejected = $false
+    try { Remove-UsbipAbsentLegacyNodes $hostDir } catch { $rejected = $_.Exception.Message -like '*device removal failure*' }
+    Require $rejected 'device removal failure was swallowed'
   }
   # Restore module state and the basic PnP fixtures for subsequent checks.
   $module = Import-Module (Join-Path $PSScriptRoot 'usbip-package-functions.psm1') -Force -PassThru -DisableNameChecking
