@@ -238,6 +238,15 @@ target_link_libraries(session_join_stage_unit_tests PRIVATE gtest_main sunshine_
 set_target_properties(session_join_stage_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME session_join_stage_unit_tests COMMAND session_join_stage_unit_tests)
 
+add_executable(broadcast_send_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_broadcast_send.cpp)
+target_include_directories(broadcast_send_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(broadcast_send_unit_tests PRIVATE gtest_main Boost::asio sunshine_project_options sunshine_coverage)
+set_target_properties(broadcast_send_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    target_link_libraries(broadcast_send_unit_tests PRIVATE ws2_32)
+endif ()
+add_test(NAME broadcast_send_unit_tests COMMAND broadcast_send_unit_tests)
+
 add_executable(cover_failure_backoff_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_cover_failure_backoff.cpp)
 target_include_directories(cover_failure_backoff_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(cover_failure_backoff_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)

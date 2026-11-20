@@ -2086,29 +2086,30 @@ namespace platf {
     });
   }
 
+  // MS-SOCKADDR-INET-20261120 (Members): share IPv4/IPv6 destination storage.
+  static void
+  set_send_destination(WSAMSG &msg, SOCKADDR_INET &destination, const boost::asio::ip::address &address, uint16_t port) {
+    msg.name = reinterpret_cast<PSOCKADDR>(&destination);
+    if (address.is_v6()) {
+      destination.Ipv6 = to_sockaddr(address.to_v6(), port);
+      msg.namelen = sizeof(destination.Ipv6);
+    }
+    else {
+      destination.Ipv4 = to_sockaddr(address.to_v4(), port);
+      msg.namelen = sizeof(destination.Ipv4);
+    }
+  }
+
   // Use UDP segmentation offload if it is supported by the OS. If the NIC is capable, this will use
-  // hardware acceleration to reduce CPU usage. Support for USO was introduced in Windows 10 20H1.
+  // hardware acceleration to reduce CPU usage (MS-UDP-USO-20261120, Overview).
   bool
   send_batch(batched_send_info_t &send_info) {
     ensure_address_change_watcher();
 
     WSAMSG msg;
 
-    // Convert the target address into a SOCKADDR
-    SOCKADDR_IN taddr_v4;
-    SOCKADDR_IN6 taddr_v6;
-    if (send_info.target_address.is_v6()) {
-      taddr_v6 = to_sockaddr(send_info.target_address.to_v6(), send_info.target_port);
-
-      msg.name = (PSOCKADDR) &taddr_v6;
-      msg.namelen = sizeof(taddr_v6);
-    }
-    else {
-      taddr_v4 = to_sockaddr(send_info.target_address.to_v4(), send_info.target_port);
-
-      msg.name = (PSOCKADDR) &taddr_v4;
-      msg.namelen = sizeof(taddr_v4);
-    }
+    SOCKADDR_INET destination;
+    set_send_destination(msg, destination, send_info.target_address, send_info.target_port);
 
     auto const max_bufs_per_msg = send_info.payload_buffers.size() + (send_info.headers ? 1 : 0);
 
@@ -2182,7 +2183,10 @@ namespace platf {
     // unsupported-USO error is indistinguishable from an invalid-source error here; the
     // self-heal logic lives in the unbatched send() fallback path instead.
     DWORD bytes_sent;
-    return WSASendMsg((SOCKET) send_info.native_socket, &msg, 0, &bytes_sent, nullptr, nullptr) != SOCKET_ERROR;
+    // MS-WSASENDMSG-20261120 (Return value): a would-block batch was not accepted.
+    const bool sent = WSASendMsg((SOCKET) send_info.native_socket, &msg, 0, &bytes_sent, nullptr, nullptr) != SOCKET_ERROR;
+    send_info.would_block = !sent && WSAGetLastError() == WSAEWOULDBLOCK;
+    return sent;
   }
 
   bool
@@ -2191,21 +2195,8 @@ namespace platf {
 
     WSAMSG msg;
 
-    // Convert the target address into a SOCKADDR
-    SOCKADDR_IN taddr_v4;
-    SOCKADDR_IN6 taddr_v6;
-    if (send_info.target_address.is_v6()) {
-      taddr_v6 = to_sockaddr(send_info.target_address.to_v6(), send_info.target_port);
-
-      msg.name = (PSOCKADDR) &taddr_v6;
-      msg.namelen = sizeof(taddr_v6);
-    }
-    else {
-      taddr_v4 = to_sockaddr(send_info.target_address.to_v4(), send_info.target_port);
-
-      msg.name = (PSOCKADDR) &taddr_v4;
-      msg.namelen = sizeof(taddr_v4);
-    }
+    SOCKADDR_INET destination;
+    set_send_destination(msg, destination, send_info.target_address, send_info.target_port);
 
     WSABUF bufs[2];
     DWORD bufcount = 0;
@@ -2238,12 +2229,11 @@ namespace platf {
     msg.Control.len = cmbuflen;
 
     DWORD bytes_sent;
-    if (WSASendMsg((SOCKET) send_info.native_socket, &msg, 0, &bytes_sent, nullptr, nullptr) == SOCKET_ERROR) {
-      handle_wsasendmsg_failure(WSAGetLastError());
-      return false;
-    }
-
-    return true;
+    const bool sent = WSASendMsg((SOCKET) send_info.native_socket, &msg, 0, &bytes_sent, nullptr, nullptr) != SOCKET_ERROR;
+    const auto error = sent ? 0 : WSAGetLastError();
+    send_info.would_block = error == WSAEWOULDBLOCK;
+    if (!sent && !send_info.would_block) handle_wsasendmsg_failure(error);
+    return sent;
   }
 
   class qos_t: public deinit_t {

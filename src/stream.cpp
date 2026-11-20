@@ -16,7 +16,6 @@
 #include <memory>
 #include <optional>
 #include <queue>
-#include <shared_mutex>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -76,6 +75,7 @@ extern "C" {
 #include "rtsp.h"
 #include "src/log_text.h"
 #include "stream.h"
+#include "streaming/broadcast_send.h"
 #include "streaming/dynamic_param_protocol.h"
 #include "streaming/fec.h"
 #include "streaming/session_join_stage.h"
@@ -490,6 +490,11 @@ namespace stream {
       return !(bool) _host;
     }
 
+    void
+    close() {
+      _host.reset();
+    }
+
     // Get session associated with address.
     // If none are found, try to find a session not yet claimed. (It will be marked by a port of value 0
     // If none of those are found, return nullptr
@@ -618,7 +623,7 @@ namespace stream {
     boost::atomic<bool> mic_playout_reset_pending { false };
   };
 
-  struct session_t {
+  struct session_t: std::enable_shared_from_this<session_t> {
     config_t config;
 
     safe::mail_t mail;
@@ -740,6 +745,7 @@ namespace stream {
     } control;
 
     std::uint32_t launch_session_id;
+    std::uint64_t broadcast_session_id = 0;
     std::shared_ptr<void> nvidia_vsync_lease;
     std::shared_ptr<void> touch_keyboard_lease;
 
@@ -781,25 +787,7 @@ namespace stream {
                     << ", port_changes=" << stats.port_changes;
   }
 
-  /**
-   * The sessions whose threads may still produce packets. The video and audio broadcast threads read the session behind the pointer a queued packet carries; the queues are shared by all
-   * sessions, so a packet of a session that has ended (and been freed) can still be in them: reading it hit a freed session (a null pointer, an invalid mutex of its FEC controller).
-   * The broadcast threads hold the lock for the packet they work on, `unregister_live_session()` waits for it.
-   */
-  std::shared_mutex live_sessions_mutex;
-  std::unordered_set<const session_t *> live_sessions;
-
-  void
-  register_live_session(const session_t *session) {
-    std::unique_lock lock(live_sessions_mutex);
-    live_sessions.insert(session);
-  }
-
-  void
-  unregister_live_session(const session_t *session) {
-    std::unique_lock lock(live_sessions_mutex);
-    live_sessions.erase(session);
-  }
+  streaming::live_broadcast_sessions_t<session_t> live_sessions;
 
   namespace session {
     // 高位表示显示设备正在重配置，低 31 位记录已登记的视频会话数。
@@ -3510,8 +3498,13 @@ namespace stream {
     auto broadcast_shutdown_event = mail::man->event<bool>(mail::broadcast_shutdown);
     auto &io = ctx.io_context;
 
-    std::array<udp::endpoint, 2> peers;
-    std::array<std::array<char, 2048>, 2> buffers;
+    // BOOST-ASIO-ASYNC-RECV-192 (Parameters) and BOOST-ASIO-IO-CONTEXT-DTOR-192 (Remarks):
+    // each queued handler owns the storage that Asio may still use after io.run() stops.
+    struct receive_buffer_t {
+      udp::endpoint peer;
+      std::array<char, 2048> bytes;
+    };
+    auto receive_buffers = std::make_shared<std::array<receive_buffer_t, 2>>();
     std::array<std::function<void(const boost::system::error_code, size_t)>, 2> recv_funcs;
 
     // 统一处理PING包逻辑
@@ -3607,8 +3600,8 @@ namespace stream {
 
     // 初始化接收函数
     auto init_recv_func = [&](auto &sock, size_t buf_idx, auto &session_map, auto &refresh_map, std::string_view type_str) {
-      recv_funcs[buf_idx] = [&, buf_idx, type_str](const boost::system::error_code &ec, size_t bytes) {
-        auto &peer = peers[buf_idx];
+      recv_funcs[buf_idx] = [&, receive_buffers, buf_idx, type_str](const boost::system::error_code &ec, size_t bytes) {
+        auto &[peer, buffer] = (*receive_buffers)[buf_idx];
 
         // 广播关闭时，已关闭的套接字不能再次挂接接收；其他终止错误说明共享接收链已经失效。
         if (is_terminal_udp_receive_error(ec)) {
@@ -3638,7 +3631,7 @@ namespace stream {
           }
 
           try {
-            sock.async_receive_from(asio::buffer(buffers[buf_idx]), peer, 0, recv_funcs[buf_idx]);
+            sock.async_receive_from(asio::buffer(buffer), peer, 0, recv_funcs[buf_idx]);
           }
           catch (const std::exception &e) {
             if (!broadcast_shutdown_event->peek()) {
@@ -3669,7 +3662,7 @@ namespace stream {
           // 即使是空包，也继续接收
         }
         else {
-          handle_ping(session_map, refresh_map, sock, peer, buffers[buf_idx], bytes, type_str);
+          handle_ping(session_map, refresh_map, sock, peer, buffer, bytes, type_str);
         }
       };
     };
@@ -3678,8 +3671,10 @@ namespace stream {
       init_recv_func(video_sock, 0, peer_to_video_session, video_refresh, "VIDEO");
       init_recv_func(audio_sock, 1, peer_to_audio_session, audio_refresh, "AUDIO");
 
-      video_sock.async_receive_from(asio::buffer(buffers[0]), peers[0], 0, recv_funcs[0]);
-      audio_sock.async_receive_from(asio::buffer(buffers[1]), peers[1], 0, recv_funcs[1]);
+      auto &[video_peer, video_buffer] = (*receive_buffers)[0];
+      auto &[audio_peer, audio_buffer] = (*receive_buffers)[1];
+      video_sock.async_receive_from(asio::buffer(video_buffer), video_peer, 0, recv_funcs[0]);
+      audio_sock.async_receive_from(asio::buffer(audio_buffer), audio_peer, 0, recv_funcs[1]);
 
       io.run();
       if (!broadcast_shutdown_event->peek()) {
@@ -3743,10 +3738,8 @@ namespace stream {
 
       frame_network_latency_logger.first_point_now();
 
-      auto session = (session_t *) packet->channel_data;
-      // held until the packet is sent: the session cannot be freed under it
-      std::shared_lock live_lock(live_sessions_mutex);
-      if (!session || !live_sessions.count(session)) {
+      auto session = live_sessions.snapshot(packet->channel_data);
+      if (!session || session->lifecycle.state() != session::state_e::RUNNING) {
         BOOST_LOG(debug) << "Dropping a video packet of a session that has ended"sv;
         continue;
       }
@@ -3786,6 +3779,10 @@ namespace stream {
           BOOST_LOG(info) << "endpoint_auto_refresh: video destination updated for session " << session->launch_session_id;
         }
       }
+
+      auto peer_address = session->video.peer.address();
+      const auto peer_port = session->video.peer.port();
+      const auto source_address = session->localAddress;
 
       std::string_view payload { (char *) packet->data(), packet->data_size() };
       std::vector<uint8_t> payload_with_replacements;
@@ -4010,7 +4007,6 @@ namespace stream {
             session->video.cipher ? sizeof(video_packet_enc_prefix_t) : 0);
           frame_fec_latency_logger.second_point_now_and_log();
 
-          auto peer_address = session->video.peer.address();
           auto batch_info = platf::batched_send_info_t {
             shards.headers.begin(),
             shards.prefixsize,
@@ -4020,8 +4016,8 @@ namespace stream {
             0,
             (uintptr_t) sock.native_handle(),
             peer_address,
-            session->video.peer.port(),
-            session->localAddress,
+            peer_port,
+            source_address,
           };
 
           size_t next_shard_to_send = 0;
@@ -4075,41 +4071,17 @@ namespace stream {
                 if (send_now < due) timer->sleep_for(due - send_now);
               }
 
+              if (session->lifecycle.state() != session::state_e::RUNNING) return;
               size_t current_batch_size = x - next_shard_to_send + 1;
               batch_info.block_offset = next_shard_to_send;
               batch_info.block_count = current_batch_size;
 
               frame_send_batch_latency_logger.first_point_now();
-              // Use a batched send if it's supported on this platform
-              // A false result means this batch was not submitted. Only the
-              // fallback sends below, when they succeed, handed bytes to the socket.
-              std::size_t sent_packets = 0;
-              if (platf::send_batch(batch_info)) {
-                sent_packets = current_batch_size;
-              }
-              else {
-                // Batched send is not available, so send each packet individually
-                BOOST_LOG(verbose) << "Falling back to unbatched send"sv;
-                for (auto y = 0; y < current_batch_size; y++) {
-                  auto send_info = platf::send_info_t {
-                    shards.prefix(next_shard_to_send + y),
-                    shards.prefixsize,
-                    shards.data(next_shard_to_send + y),
-                    shards.blocksize,
-                    (uintptr_t) sock.native_handle(),
-                    peer_address,
-                    session->video.peer.port(),
-                    session->localAddress,
-                  };
-
-                  if (platf::send(send_info)) {
-                    ++sent_packets;
-                  }
-                }
-              }
+              const auto [sent_packets, dropped_packets] = streaming::submit_video_batch(batch_info, [&] { return session->lifecycle.state() == session::state_e::RUNNING; }, platf::send_batch, platf::send);
+              if (dropped_packets) telemetry::hooks::count(session->launch_session_id, telemetry::hooks::counter_e::send_would_block_packets, dropped_packets);
               frame_sent_packets += sent_packets;
               if (sent_packets != 0) {
-                note_measured_send(session, static_cast<std::uint64_t>(shards.prefixsize + shards.blocksize) * sent_packets);
+                note_measured_send(session.get(), static_cast<std::uint64_t>(shards.prefixsize + shards.blocksize) * sent_packets);
                 if (!session->first_video_packet_logged.exchange(true)) {
                   BOOST_LOG(info) << "First video packet sent: frame "sv << packet->frame_index()
                                   << (packet->is_idr() ? " (key frame)"sv : ""sv)
@@ -4199,10 +4171,8 @@ namespace stream {
       }
 
       TUPLE_2D_REF(channel_data, packet_data, *packet);
-      auto session = (session_t *) channel_data;
-      // held until the packet is sent: the session cannot be freed under it
-      std::shared_lock live_lock(live_sessions_mutex);
-      if (!session || !live_sessions.count(session)) {
+      auto session = live_sessions.snapshot(channel_data);
+      if (!session || session->lifecycle.state() != session::state_e::RUNNING) {
         BOOST_LOG(debug) << "Dropping an audio packet of a session that has ended"sv;
         continue;
       }
@@ -4231,6 +4201,10 @@ namespace stream {
           BOOST_LOG(info) << "endpoint_auto_refresh: audio destination updated for session " << session->launch_session_id;
         }
       }
+
+      auto peer_address = session->audio.peer.address();
+      const auto peer_port = session->audio.peer.port();
+      const auto source_address = session->localAddress;
 
       auto sequenceNumber = session->audio.sequenceNumber;
       auto timestamp = session->audio.timestamp;
@@ -4291,7 +4265,17 @@ namespace stream {
       session->audio.sequenceNumber++;
       session->audio.timestamp += session->config.audio.packetDuration;
 
-      auto peer_address = session->audio.peer.address();
+      const bool is_mat = audio::is_mat_codec(session->config.audio.codec);
+      const auto send_audio = [&](platf::send_info_t &info) {
+        // The audio peer's port stays 0 until the client's audio ping arrives.
+        const bool sent = peer_port != 0 && session->lifecycle.state() == session::state_e::RUNNING && platf::send(info);
+        streaming::account_audio_datagram(
+          sent, info.would_block,
+          [&] { note_measured_send(session.get(), info.header_size + static_cast<std::uint64_t>(info.payload_size)); },
+          [&] { telemetry::hooks::count(session->launch_session_id, telemetry::hooks::counter_e::send_would_block_packets); },
+          [&] { if (is_mat) session->audio.mat_send_failed.store(true); });
+      };
+
       try {
         auto send_info = platf::send_info_t {
           (const char *) &audio_packet,
@@ -4300,17 +4284,10 @@ namespace stream {
           (size_t) bytes,
           (uintptr_t) sock.native_handle(),
           peer_address,
-          session->audio.peer.port(),
-          session->localAddress,
+          peer_port,
+          source_address,
         };
-        // The audio peer's port stays 0 until the client's audio ping arrives. Audio that is encoded before that has
-        // no destination: sending it floods the log with WSAEFAULT (10014) and gets no data to the client either way.
-        const bool peer_known = session->audio.peer.port() != 0;
-        const bool audio_sent = peer_known && platf::send(send_info);
-        if (audio_sent) {
-          note_measured_send(session, sizeof(audio_packet) + static_cast<std::uint64_t>(bytes));
-        }
-        if (!audio_sent && audio::is_mat_codec(session->config.audio.codec)) session->audio.mat_send_failed.store(true);
+        send_audio(send_info);
 
         auto &fec_packet = session->audio.fec_packet;
         // initialize the FEC header at the beginning of the FEC block
@@ -4334,24 +4311,21 @@ namespace stream {
               (size_t) bytes,
               (uintptr_t) sock.native_handle(),
               peer_address,
-              session->audio.peer.port(),
-              session->localAddress,
+              peer_port,
+              source_address,
             };
-            const bool parity_sent = peer_known && platf::send(send_info);
-            if (parity_sent) {
-              note_measured_send(session, sizeof(fec_packet) + static_cast<std::uint64_t>(bytes));
-            }
-            if (!parity_sent && audio::is_mat_codec(session->config.audio.codec)) session->audio.mat_send_failed.store(true);
+            send_audio(send_info);
             BOOST_LOG(verbose) << "Audio FEC ["sv << (sequenceNumber & ~(RTPA_DATA_SHARDS - 1)) << ' ' << x << "] ::  send..."sv;
           }
         }
       }
       catch (const std::exception &e) {
         BOOST_LOG(error) << "Broadcast audio failed "sv << e.what();
-        if (audio::is_mat_codec(session->config.audio.codec)) session->audio.mat_send_failed.store(true);
+        if (is_mat) session->audio.mat_send_failed.store(true);
         std::this_thread::sleep_for(100ms);
       }
-      if (audio::is_mat_codec(session->config.audio.codec)) session->audio.mat_sent.fetch_add(1, std::memory_order_release);
+      // A dropped datagram still advances the producer's pacing acknowledgement.
+      if (is_mat) session->audio.mat_sent.fetch_add(1, std::memory_order_release);
     }
 
     shutdown_event->raise(true);
@@ -4415,6 +4389,20 @@ namespace stream {
       return -1;
     }
 
+#ifdef _WIN32
+    // BOOST-ASIO-NATIVE-NONBLOCKING-192 (Parameters): set the mode for direct WSASendMsg
+    // calls without changing asynchronous ping handling. Fail startup if either socket cannot be set.
+    ctx.video_sock.native_non_blocking(true, ec);
+    if (!ec) ctx.audio_sock.native_non_blocking(true, ec);
+    if (ec) {
+      BOOST_LOG(error) << "Could not configure nonblocking media sockets: " << ec.message();
+      ctx.video_sock.close(ec);
+      ctx.audio_sock.close(ec);
+      ctx.control_server.close();
+      return -1;
+    }
+#endif
+
     ctx.message_queue_queue = std::make_shared<message_queue_queue_t::element_type>(30);
 
     ctx.video_thread = std::thread { videoBroadcastThread, std::ref(ctx.video_sock) };
@@ -4444,8 +4432,10 @@ namespace stream {
     ctx.io_context.stop();
     ctx.mic_io_context.stop();
 
+#ifndef _WIN32
     ctx.video_sock.close();
     ctx.audio_sock.close();
+#endif
 
     if (disable_mic_socket(ctx)) {
       BOOST_LOG(debug) << "Microphone socket closed and encryption context securely cleared";
@@ -4460,6 +4450,11 @@ namespace stream {
     ctx.video_thread.join();
     BOOST_LOG(debug) << "Waiting for main audio thread to end..."sv;
     ctx.audio_thread.join();
+#ifdef _WIN32
+    // MS-CLOSESOCKET-20261120 (Remarks): close only after Winsock users exit.
+    ctx.video_sock.close();
+    ctx.audio_sock.close();
+#endif
     BOOST_LOG(debug) << "Waiting for main control thread to end..."sv;
     ctx.control_thread.join();
     BOOST_LOG(debug) << "Waiting for microphone thread to end..."sv;
@@ -4590,7 +4585,7 @@ namespace stream {
     BOOST_LOG(debug) << "stream.cpp: session->config.monitor.display_name = [" << (session->config.monitor.display_name.empty() ? "<empty>" : session->config.monitor.display_name) << "]";
     auto video_config = session->config.monitor;
     video_config.perf_session_id = session->launch_session_id;
-    video::capture(session->mail, video_config, session, session->video.dynamic_param_change_events,
+    video::capture(session->mail, video_config, session->broadcast_session_id, session->video.dynamic_param_change_events,
       session->config.packetsize);
   }
 
@@ -4649,7 +4644,7 @@ namespace stream {
           if (submitted >= 4) acknowledged(submitted - 3);
           audio::buffer_t packet(n);
           std::memcpy(packet.begin(), data, n);
-          spatial_audio::require(packets->try_raise(session, std::move(packet)), "Live MAT send queue full/stopped");
+          spatial_audio::require(packets->try_raise(session->broadcast_session_id, std::move(packet)), "Live MAT send queue full/stopped");
           ++submitted;
         };
         const auto wait = [&](std::chrono::nanoseconds delay) {
@@ -4668,7 +4663,7 @@ namespace stream {
       return;
     }
     BOOST_LOG(debug) << "Start capturing Audio"sv;
-    audio::capture(session->mail, session->config.audio, session);
+    audio::capture(session->mail, session->config.audio, session->broadcast_session_id);
   }
 
   namespace session {
@@ -4869,9 +4864,8 @@ namespace stream {
         BOOST_LOG(debug) << "Waiting for audio to end..."sv;
         enter(streaming::join_stage_e::audio_thread);
         session.audioThread.join();
-        // the packets still queued for this session are dropped from here on, and the broadcast threads let go of it before it is freed
         enter(streaming::join_stage_e::live_session);
-        unregister_live_session(&session);
+        live_sessions.remove(session.broadcast_session_id);
       }
       else {
         BOOST_LOG(debug) << "Control-only session: skipping video/audio thread join"sv;
@@ -5004,6 +4998,10 @@ namespace stream {
       BOOST_LOG(debug) << "Session ended [session_id="sv << session.launch_session_id
                        << ", client_uuid="sv << session.client_cert_uuid
                        << ", reason="sv << stop_reason_name(lifecycle.stop_reason) << ']';
+      // A media snapshot can outlive join(). Release the context here so the
+      // last snapshot can never destroy the broadcaster on its own thread.
+      enter(streaming::join_stage_e::live_session);
+      session.broadcast_ref.release();
     }
 
     int
@@ -5090,7 +5088,7 @@ namespace stream {
 
       // 仅控制流会话不启动视频/音频线程
       if (!session.control_only) {
-        register_live_session(&session);
+        session.broadcast_session_id = live_sessions.add(session.shared_from_this());
         session.audioThread = std::thread { audioThread, &session };
         session.videoThread = std::thread { videoThread, &session };
       }

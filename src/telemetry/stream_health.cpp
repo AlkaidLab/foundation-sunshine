@@ -311,6 +311,8 @@ namespace telemetry::health {
   stream_health_t::add_to_chunk(const window_t &w) {
     if (w.idle) {
       ++chunk_idle_;
+      const auto blocked = idx(counter_e::send_would_block_packets);
+      chunk_counters_[blocked] += w.counters[blocked];
       return;
     }
     ++chunk_windows_;
@@ -356,7 +358,8 @@ namespace telemetry::health {
   bool
   stream_health_t::chunk_due(std::int64_t now_ms) const {
     std::lock_guard window { window_mutex_ };
-    return chunk_windows_ > 0 && now_ms - chunk_start_ms_ >= CHUNK_MAX_MS;
+    const bool has_data = chunk_windows_ > 0 || chunk_counters_[idx(counter_e::send_would_block_packets)] > 0;
+    return has_data && now_ms - chunk_start_ms_ >= CHUNK_MAX_MS;
   }
 
   nlohmann::json
@@ -384,6 +387,7 @@ namespace telemetry::health {
     props["submitted"] = chunk_counters_[idx(counter_e::submitted)];
     props["queue_flushes"] = chunk_counters_[idx(counter_e::queue_flushes)];
     props["queue_frames_dropped"] = chunk_counters_[idx(counter_e::queue_frames_dropped)];
+    props["send_would_block_packets"] = chunk_counters_[idx(counter_e::send_would_block_packets)];
     props["idr_requests"] = chunk_counters_[idx(counter_e::idr_requests)];
     props["rfi_requests"] = chunk_counters_[idx(counter_e::rfi_requests)];
     props["anomalies"] = chunk_anomalies_;

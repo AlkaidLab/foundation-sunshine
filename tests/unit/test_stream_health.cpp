@@ -208,11 +208,14 @@ TEST(StreamHealthAnomaly, FramesCapturedButNeverSubmittedAreSkipped) {
 TEST(StreamHealthChunk, HistogramsAddUpToTheWindowsAndTheChunkResets) {
   std::int64_t now = 0;
   stream_health_t h { now, dims60() };
+  h.count(counter_e::send_would_block_packets, 7);
   for (int i = 0; i < 4; ++i) one_window(h, now, 3000, 10 + 30 * i, 5);
   const auto chunk = h.take_chunk(now);
   EXPECT_EQ(chunk["windows"], 4);
   EXPECT_EQ(chunk["window_s"], 240);
   EXPECT_EQ(chunk["frames"], 12000);
+  EXPECT_EQ(chunk["send_would_block_packets"], 7);
+  EXPECT_EQ(chunk["queue_frames_dropped"], 0);
   const auto &host_p95 = chunk["h"]["host_p95"];
   ASSERT_EQ(host_p95.size(), BUCKET_COUNT);
   int host_total = 0;
@@ -223,6 +226,27 @@ TEST(StreamHealthChunk, HistogramsAddUpToTheWindowsAndTheChunkResets) {
   EXPECT_EQ(chunk["client_kind"], "moonlight-macos-enhanced");
   EXPECT_TRUE(h.chunk_empty());
   EXPECT_EQ(h.take_chunk(now)["windows"], 0);
+}
+
+TEST(StreamHealthChunk, IdleWindowsKeepSendBackpressureDrops) {
+  std::int64_t now = 0;
+  stream_health_t h { now, dims60() };
+  h.count(counter_e::send_would_block_packets, 7);
+  h.count(counter_e::captured, 12);
+  now += WINDOW_MS;
+  const auto idle = h.tick(now, {});
+  ASSERT_TRUE(idle);
+  EXPECT_TRUE(idle->idle);
+  EXPECT_FALSE(h.chunk_due(now));
+  now = CHUNK_MAX_MS;
+  EXPECT_TRUE(h.chunk_due(now));
+
+  const auto chunk = h.take_chunk(now);
+  EXPECT_EQ(chunk["windows"], 0);
+  EXPECT_EQ(chunk["idle_windows"], 1);
+  EXPECT_EQ(chunk["captured"], 0);
+  EXPECT_EQ(chunk["send_would_block_packets"], 7);
+  EXPECT_EQ(h.take_chunk(now)["send_would_block_packets"], 0);
 }
 
 TEST(StreamHealthChunk, EveryKeyOfTheContractIsThere) {

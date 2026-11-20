@@ -124,11 +124,11 @@ namespace audio {
   wait_default_output(audio_ctx_t &ctx, const std::function<bool()> &stop);
 
   using buffer_t = util::buffer_t<std::uint8_t>;
-  using packet_t = std::pair<void *, buffer_t>;
+  using packet_t = std::pair<std::uint64_t, buffer_t>;
   using audio_ctx_ref_t = safe::shared_t<audio_ctx_t>::ptr_t;
 
   void
-  capture(safe::mail_t mail, config_t config, void *channel_data);
+  capture(safe::mail_t mail, config_t config, std::uint64_t channel_data);
 
   /**
    * @brief Get the reference to the audio context.
