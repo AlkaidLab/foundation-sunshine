@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <fstream>
 #include <regex>
+#include <set>
 
 using namespace telemetry;
 using json = nlohmann::json;
@@ -194,6 +195,58 @@ TEST(ErrorService, ACrumbTrailGoesWithTheReportAndTheErrorChoiceGoverns) {
     }
   }
   fs::remove_all(dir);
+}
+
+TEST(ErrorService, AServerWaitMergesFatalErrorsOnlyAtTheSameSite) {
+  struct temp_dir_t {
+    fs::path path = fs::temp_directory_path() / ("fatal-sites-" + new_uuid_v4());
+    ~temp_dir_t() {
+      std::error_code ec;
+      fs::remove_all(path, ec);
+    }
+  } dir;
+  std::vector<json> posted;
+  service_options_t options;
+  options.dir = dir.path;
+  service_deps_t deps;
+  deps.now_ms = [] { return 1'800'000'000'000LL; };
+  deps.consent = [] { return consent_t {}; };
+  deps.post = [&](const std::string &, const std::string &body) {
+    const bool first = posted.empty();
+    posted.push_back(json::parse(body));
+    post_result_t answer { 200 };
+    if (first) answer.body = R"({"cfg":{"backoff_s":600}})";
+    return answer;
+  };
+  service_t svc { options, deps };
+  auto context = svc.context();
+  context.version = "5.2.0.1";
+  svc.set_context(context);
+  ASSERT_TRUE(svc.emit(kind_e::usage, "app_start", json { { "cold", true } }));
+  svc.flush();
+  ASSERT_EQ(svc.pump(), 1);
+  ASSERT_TRUE(svc.backing_off());
+
+  for (const auto site : { "src/video.cpp:42:start", "src/video.cpp:43:stop", "src/video.cpp:42:start" }) {
+    svc.note_log(5, "{} could not open encoder", "host", site);
+    svc.flush();
+  }
+  ASSERT_EQ(svc.pump(), 1);
+  ASSERT_EQ(posted.size(), 2u);
+  json counts = json::object();
+  std::set<std::string> codes;
+  std::size_t errors = 0;
+  for (const auto &event : posted.back().at("events")) {
+    if (event.at("name") != "error") continue;
+    ++errors;
+    const auto &props = event.at("props");
+    EXPECT_EQ(props.at("severity"), "fatal");
+    codes.insert(props.at("code").get<std::string>());
+    counts[props.at("site").get<std::string>()] = props.at("count");
+  }
+  EXPECT_EQ(errors, 2u);
+  EXPECT_EQ(codes.size(), 1u);
+  EXPECT_EQ(counts, (json { { "video.cpp:42", 2 }, { "video.cpp:43", 1 } }));
 }
 
 #if defined(__linux__) || defined(_WIN32)

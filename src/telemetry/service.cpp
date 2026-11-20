@@ -1471,10 +1471,10 @@ namespace telemetry {
             continue;
           }
           std::string key = name + "|" + p.value("component", std::string {}) + "|" + p.value("code", std::string {}) + "|" + p.value("fingerprint", std::string {}) + "|" + p.value("metric", std::string {});
+          if (name == "error") key += "|" + p.value("site", std::string {});
           // a driver fault is told apart by driver, operation, result and code: a failed virtual display must not hide a failed microphone start
           if (name == "driver_event") key += "|" + p.value("driver", std::string {}) + "|" + p.value("op", std::string {}) + "|" + p.value("result", std::string {}) + "|" + p.value("hresult", std::string {});
-          const auto found = seen.find(key);
-          if (found == seen.end()) {
+          if (const auto found = seen.find(key); found == seen.end()) {
             seen[key] = events.size();
             events.push_back(e);
           }
