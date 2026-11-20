@@ -10,27 +10,41 @@ $script:SunshineRemovedCount = 0
 # other Sunshine installation may have overwritten the same per-user verbs.
 function Remove-OwnedSunshineMenus {
     param(
-        [Microsoft.Win32.RegistryKey]$UserRoot,
+        [Microsoft.Win32.RegistryKey]$ClassesRoot,
         [string]$ExpectedExe
     )
     $verbs = @(
-        @{ Key = 'Software\Classes\*\shell\Sunshine.SendToClient'; Argument = '--send-to-client "%1"' },
-        @{ Key = 'Software\Classes\Directory\shell\Sunshine.ShareFolder'; Argument = '--quick-share-folder "%1"' },
-        @{ Key = 'Software\Classes\Directory\Background\shell\Sunshine.ShareFolder'; Argument = '--quick-share-folder "%V"' }
+        @{ Key = '*\shell\Sunshine.SendToClient'; Argument = '--send-to-client "%1"' },
+        @{ Key = 'Directory\shell\Sunshine.ShareFolder'; Argument = '--quick-share-folder "%1"' },
+        @{ Key = 'Directory\Background\shell\Sunshine.ShareFolder'; Argument = '--quick-share-folder "%V"' }
     )
     foreach ($verb in $verbs) {
-        $command = $UserRoot.OpenSubKey($verb.Key + '\command')
+        $command = $ClassesRoot.OpenSubKey($verb.Key + '\command')
         if ($null -eq $command) { continue }
         try { $value = $command.GetValue('', $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames) }
         finally { $command.Dispose() }
         if ($value -isnot [string]) { continue }
         $expected = '"' + $ExpectedExe + '" ' + $verb.Argument
         if ([string]::Equals($value.Trim(), $expected, [StringComparison]::OrdinalIgnoreCase)) {
-            $UserRoot.DeleteSubKeyTree($verb.Key, $false)
+            $ClassesRoot.DeleteSubKeyTree($verb.Key, $false)
             $script:SunshineRemovedCount++
             Write-Output ('Removed owned shell menu: ' + $verb.Key)
         }
     }
+}
+
+function Invoke-RegistryHiveCommand {
+    param([string]$Operation, [string]$Mount, [string]$HiveFile)
+    # Windows PowerShell 5.1 can turn native stderr into a terminating error
+    # under Stop, before the caller can inspect the process exit code.
+    $ErrorActionPreference = 'Continue'
+    $reg = Join-Path $env:SystemRoot 'System32\reg.exe'
+    if ($Operation -eq 'load') {
+        & $reg load "HKU\$Mount" $HiveFile 2>$null | Out-Null
+    } else {
+        & $reg unload "HKU\$Mount" 2>$null | Out-Null
+    }
+    return $LASTEXITCODE
 }
 
 if ($MyInvocation.InvocationName -eq '.') { return }
@@ -42,57 +56,59 @@ $users = [Microsoft.Win32.Registry]::Users
 $errorsFound = $false
 $seen = @{}
 $userSid = '^S-1-(?:5-21-(?:\d+-){3}\d+|12-1-(?:\d+-){3}\d+)$'
+$classesSid = $userSid -replace '\$$', '_Classes$'
 
-# HKU includes all currently loaded user hives, including a different desktop
-# user when the uninstaller was elevated with another administrator account.
-foreach ($sid in $users.GetSubKeyNames() | Where-Object { $_ -match $userSid }) {
+# HKU includes loaded Classes hives for other desktop users too.
+foreach ($classesName in $users.GetSubKeyNames() | Where-Object { $_ -match $classesSid }) {
+    $sid = $classesName.Substring(0, $classesName.Length - '_Classes'.Length)
     $seen[$sid] = $true
     $root = $null
     try {
-        $root = $users.OpenSubKey($sid, $true)
-        if ($null -eq $root) { throw 'Cannot open user registry hive' }
-        Remove-OwnedSunshineMenus -UserRoot $root -ExpectedExe $expectedExe
+        $root = $users.OpenSubKey($classesName, $true)
+        if ($null -eq $root) { throw 'Cannot open user Classes registry hive' }
+        Remove-OwnedSunshineMenus -ClassesRoot $root -ExpectedExe $expectedExe
     } catch {
         $errorsFound = $true
         Write-Warning "Could not clean loaded user hive ${sid}: $_"
     } finally { if ($null -ne $root) { $root.Dispose() } }
 }
 
-# Unloaded profiles also retain Explorer verbs. Mount each NTUSER.DAT under a
-# unique temporary HKU name, close every handle and always unload it afterwards.
+# Explorer verbs live in UsrClass.dat, not in the user's NTUSER.DAT hive.
+# Mount unloaded Classes hives under unique names and always unload them.
 $profileList = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList')
 if ($null -eq $profileList) { Write-Warning 'Could not inspect Windows user profiles'; exit 1 }
 try {
     foreach ($sid in $profileList.GetSubKeyNames() | Where-Object { $_ -match $userSid -and -not $seen.ContainsKey($_) }) {
-        $profile = $profileList.OpenSubKey($sid)
-        if ($null -eq $profile) { continue }
-        try { $profilePath = $profile.GetValue('ProfileImagePath') }
-        finally { $profile.Dispose() }
-        if ($profilePath -isnot [string] -or -not $profilePath) { continue }
-        $hiveFile = Join-Path ([Environment]::ExpandEnvironmentVariables($profilePath)) 'NTUSER.DAT'
-        if (-not (Test-Path -LiteralPath $hiveFile -PathType Leaf)) { continue }
-        $mount = 'SunshineCleanup_' + [guid]::NewGuid().ToString('N')
-        $reg = Join-Path $env:SystemRoot 'System32\reg.exe'
-        & $reg load "HKU\$mount" $hiveFile 2>$null | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            $errorsFound = $true
-            Write-Warning "Could not load user hive ${sid}; its shell menus may remain"
-            continue
-        }
         $root = $null
+        $mounted = $false
         try {
+            $profileKey = $profileList.OpenSubKey($sid)
+            if ($null -eq $profileKey) { throw 'Cannot open user profile' }
+            try { $profilePath = $profileKey.GetValue('ProfileImagePath') }
+            finally { $profileKey.Dispose() }
+            if ($profilePath -isnot [string] -or -not $profilePath) { continue }
+            $hiveFile = Join-Path ([Environment]::ExpandEnvironmentVariables($profilePath)) 'AppData\Local\Microsoft\Windows\UsrClass.dat'
+            if (-not (Test-Path -LiteralPath $hiveFile -PathType Leaf)) { continue }
+            $mount = 'SunshineCleanup_' + [guid]::NewGuid().ToString('N')
+            $exitCode = Invoke-RegistryHiveCommand -Operation load -Mount $mount -HiveFile $hiveFile
+            if ($exitCode -ne 0) { throw "Could not load user Classes hive (exit $exitCode)" }
+            $mounted = $true
             $root = $users.OpenSubKey($mount, $true)
-            if ($null -eq $root) { throw 'Cannot open mounted user registry hive' }
-            Remove-OwnedSunshineMenus -UserRoot $root -ExpectedExe $expectedExe
+            if ($null -eq $root) { throw 'Cannot open mounted user Classes hive' }
+            Remove-OwnedSunshineMenus -ClassesRoot $root -ExpectedExe $expectedExe
         } catch {
             $errorsFound = $true
             Write-Warning "Could not clean user hive ${sid}: $_"
         } finally {
             if ($null -ne $root) { $root.Dispose() }
-            & $reg unload "HKU\$mount" 2>$null | Out-Null
-            if ($LASTEXITCODE -ne 0) {
-                $errorsFound = $true
-                Write-Warning "Could not unload temporary user hive for ${sid}"
+            if ($mounted) {
+                try {
+                    $exitCode = Invoke-RegistryHiveCommand -Operation unload -Mount $mount
+                    if ($exitCode -ne 0) { throw "reg unload exited $exitCode" }
+                } catch {
+                    $errorsFound = $true
+                    Write-Warning "Could not unload temporary user hive for ${sid}: $_"
+                }
             }
         }
     }

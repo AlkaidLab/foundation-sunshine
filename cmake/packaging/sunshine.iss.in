@@ -90,6 +90,7 @@ RestartIfNeededByRun=no
 ; install" / "files disappeared" are unanswerable without the per-file and
 ; per-[Run] results, and users cannot be expected to re-run with /LOG.
 SetupLogging=yes
+UninstallLogging=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
