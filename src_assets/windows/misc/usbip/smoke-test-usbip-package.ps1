@@ -168,6 +168,7 @@ try {
     Require ((Get-Content -Raw (Join-Path $hostDir 'scripts\usbip-replace-nodes.log')).Contains('ROOT\USB\0001')) 'removed instance was not logged'
   }
   Check 'removal continues when the log cannot be written' {
+    $hostDir = Join-Path $scratch 'node-host'
     & $module {
       function script:Add-Content { throw 'simulated log failure' }
       $script:RemovedNodes.Clear()
@@ -177,6 +178,7 @@ try {
     Require (@($warnings | Where-Object { $_ -is [System.Management.Automation.WarningRecord] -and $_.Message -like '*log write failed*' }).Count -eq 1) 'log failure did not emit a warning'
   }
   Check 'device removal errors still propagate' {
+    $hostDir = Join-Path $scratch 'node-host'
     & $module { function script:Remove-UsbipAbsentNode { throw 'simulated device removal failure' } }
     $rejected = $false
     try { Remove-UsbipAbsentLegacyNodes $hostDir } catch { $rejected = $_.Exception.Message -like '*device removal failure*' }
