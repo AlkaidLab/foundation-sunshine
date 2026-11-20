@@ -108,10 +108,11 @@ namespace file_transfer_http {
     }
     if (!result.offer) {
       BOOST_LOG(warning) << "File transfer: registration refused: "sv << result.error;
-      const auto status = result.error == "no_user"   ? web::StatusCode::service_unavailable :
-                          result.error == "not_found" ? web::StatusCode::not_found :
-                          result.error == "internal"  ? web::StatusCode::internal_server_error :
-                                                        web::StatusCode::bad_request;
+      const auto status = result.error == "no_user"    ? web::StatusCode::service_unavailable :
+                          result.error == "not_found"  ? web::StatusCode::not_found :
+                          result.error == "unreadable" ? web::StatusCode::forbidden :
+                          result.error == "internal"   ? web::StatusCode::internal_server_error :
+                                                         web::StatusCode::bad_request;
       return error(status, result.error, result.detail);
     }
     // Names that are not valid UTF-8 (possible outside Windows) are replaced instead of failing the answer.

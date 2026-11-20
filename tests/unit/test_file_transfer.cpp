@@ -18,6 +18,10 @@
 #include <thread>
 #include <vector>
 
+#ifndef _WIN32
+  #include <unistd.h>
+#endif
+
 namespace fs = std::filesystem;
 
 namespace {
@@ -144,6 +148,18 @@ TEST_F(FileTransfer, RefusesWhatItCannotOffer) {
   fs::create_directories(root / "other");
   write(root / "other" / "a.txt", "x");
   EXPECT_EQ(file_transfer::register_paths({ utf8(root / "a.txt"), utf8(root / "other" / "a.txt") }, "clipboard").error, "duplicate_name");
+
+#ifndef _WIN32
+  // A folder below that cannot be read fails the offer instead of going out empty
+  // (root reads everything, so only checked as another user).
+  if (geteuid() != 0) {
+    fs::permissions(root / "dir" / "sub", fs::perms::none);
+    const auto result = file_transfer::register_paths({ utf8(root / "dir") }, "clipboard");
+    fs::permissions(root / "dir" / "sub", fs::perms::owner_all);
+    EXPECT_EQ(result.error, "unreadable");
+    EXPECT_NE(result.detail.find("sub"), std::string::npos) << result.detail;
+  }
+#endif
 }
 
 TEST_F(FileTransfer, RelativePathsStayInsideTheOfferAndFitMaxPath) {

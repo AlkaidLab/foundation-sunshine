@@ -238,10 +238,14 @@ namespace file_transfer {
           }
 
           if (!add_entry(out, *top, in, true, 0)) return;
-          fs::recursive_directory_iterator it(in, fs::directory_options::skip_permission_denied, ec);
+          // A folder or file that cannot be read fails the offer: skipped, the
+          // client would paste the folder without it and never know.
+          fs::recursive_directory_iterator it(in, fs::directory_options::none, ec);
           const fs::recursive_directory_iterator end;
+          fs::path last = in;
           for (; !ec && it != end; it.increment(ec)) {
             const auto &entry = *it;
+            last = entry.path();
             if (is_link_like(entry)) {
               it.disable_recursion_pending();
               continue;
@@ -249,8 +253,13 @@ namespace file_transfer {
             std::error_code entry_ec;
             const bool dir = entry.is_directory(entry_ec);
             const bool file = !dir && entry.is_regular_file(entry_ec);
-            if (entry_ec || (!dir && !file)) {
-              continue;
+            if (entry_ec) {
+              out.error = "unreadable";
+              out.detail = to_utf8(entry.path().u8string());
+              return;
+            }
+            if (!dir && !file) {
+              continue;  // devices, sockets and the like are not files to paste
             }
             auto rel = relative_path(name, entry.path().lexically_relative(in));
             if (!rel) {
@@ -260,14 +269,16 @@ namespace file_transfer {
             }
             const std::uint64_t size = file ? entry.file_size(entry_ec) : 0;
             if (entry_ec) {
-              continue;
+              out.error = "unreadable";
+              out.detail = to_utf8(entry.path().u8string());
+              return;
             }
             if (!add_entry(out, std::move(*rel), entry.path(), dir, size)) return;
           }
           if (ec) {
-            // The folder vanished or could not be opened at all.
-            out.error = "not_found";
-            out.detail = raw;
+            // The folder (or one below it) vanished or could not be opened.
+            out.error = ec == std::errc::no_such_file_or_directory ? "not_found" : "unreadable";
+            out.detail = to_utf8(last.u8string());
             return;
           }
         }
