@@ -25,4 +25,36 @@ namespace streaming {
     return requested > max_client_framerate ? max_client_framerate : requested;
   }
 
+  /// A frame rate as the numerator/denominator pair the encoder and the capture pacing consume.
+  struct frame_rate_rational_t {
+    int num;
+    int den;
+
+    constexpr bool
+    operator==(const frame_rate_rational_t &) const = default;
+  };
+
+  /// The rate to stream at when the client also announces `x-nv-video[0].clientRefreshRateX100`
+  /// (its display refresh rate times 100, e.g. 5994 for 59.94): the fractional rate when it refines
+  /// `effective_framerate` (within 2% below it, never above), otherwise the integer rate.
+  ///
+  /// `effective_framerate` is normalized through usable_client_framerate() first, so the fractional
+  /// path cannot stream faster than the fallback or the cap that replaced an unusable announcement:
+  /// the same bound binds both paths, all the way into frameRateNum/frameRateDen.
+  constexpr frame_rate_rational_t
+  effective_frame_rate(int client_refresh_rate_x100, int effective_framerate) {
+    effective_framerate = usable_client_framerate(effective_framerate);
+    if (client_refresh_rate_x100 > 0) {
+      const double ratio = client_refresh_rate_x100 / 100.0 / effective_framerate;
+      if (ratio > 0.98 && ratio <= 1.0) {
+        const int remainder = client_refresh_rate_x100 % 100;
+        if (remainder == 0) {
+          return { client_refresh_rate_x100 / 100, 1 };
+        }
+        return { client_refresh_rate_x100, 100 };
+      }
+    }
+    return { effective_framerate, 1 };
+  }
+
 }  // namespace streaming
