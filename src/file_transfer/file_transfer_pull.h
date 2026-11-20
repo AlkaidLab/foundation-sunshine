@@ -54,6 +54,8 @@ namespace file_transfer_pull {
     std::function<std::optional<std::string>(std::uint64_t sid)> session_client;
     /// Send a clipboard payload to session `sid`.
     std::function<void(std::uint64_t sid, std::vector<std::uint8_t> payload)> send;
+    /// How long a client has to post a chunk; zero means kChunkTimeout.
+    std::chrono::milliseconds chunk_timeout { 0 };
   };
 
   /// Replace the hooks; an empty hooks_t restores the real ones.

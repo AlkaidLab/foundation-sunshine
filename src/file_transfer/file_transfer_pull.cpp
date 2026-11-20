@@ -258,7 +258,8 @@ namespace file_transfer_pull {
         return;
       }
       ticket = make_ticket();
-      g_pending.emplace(ticket, pending_t { response, *client, length, clock_t::now() + kChunkTimeout });
+      const auto timeout = hooks.chunk_timeout.count() > 0 ? clock_t::duration(hooks.chunk_timeout) : clock_t::duration(kChunkTimeout);
+      g_pending.emplace(ticket, pending_t { response, *client, length, clock_t::now() + timeout });
     }
     ensure_reaper();
     hooks.send(sid, make_pull_frame(ticket, id, index, offset, length));
@@ -283,6 +284,18 @@ namespace file_transfer_pull {
       }
       pending = std::move(it->second);
       g_pending.erase(it);
+    }
+    // The ticket's time ran out before the reaper got to it.
+    if (pending.deadline <= clock_t::now()) {
+      reply_error(*pending.response, web::StatusCode::gateway_timeout, "timeout");
+      reply_error(response, web::StatusCode::gone, "expired");
+      return;
+    }
+    // Clipboard sync was turned off while the chunk was on its way: it is not handed over.
+    if (!config::input.clipboard_sync) {
+      reply_error(*pending.response, web::StatusCode::service_unavailable, "clipboard_sync_disabled");
+      reply_error(response, web::StatusCode::forbidden, "clipboard_sync_disabled");
+      return;
     }
 
     if (const auto error = request.header.find("X-File-Transfer-Error"); error != request.header.end()) {

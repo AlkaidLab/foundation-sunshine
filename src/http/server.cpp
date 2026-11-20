@@ -5,6 +5,7 @@
 #include "server.h"
 #include "headers.h"
 #include "ostream.h"
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <boost/asio.hpp>
@@ -12,6 +13,7 @@
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/beast/ssl.hpp>
+#include <chrono>
 #include <deque>
 #include <mutex>
 #include <optional>
@@ -268,6 +270,7 @@ namespace web::detail {
       }
     };
     std::deque<std::shared_ptr<Write>> queue;
+    std::chrono::steady_clock::time_point last_progress {};  ///< last time a file piece re-armed response_timer
     size_t queued_bytes = 0;
     bool writing = false;
     static Stream
@@ -565,9 +568,43 @@ namespace web::detail {
           self->write_next();
       };
       if (write->file)
-        http::async_write(stream, write->file->message, std::move(complete));
+        write_file(write, std::move(complete));
       else
         net::async_write(stream, net::buffer(write->bytes), std::move(complete));
+    }
+    // A file goes out piece by piece and every piece that leaves restarts both
+    // timeouts: a large download is bounded by its progress, not by how long
+    // the whole file takes (timeout_content would cut it off mid-way).
+    template <class Complete>
+    void
+    write_file(const std::shared_ptr<Write> &write, Complete complete) {
+      auto serializer = std::make_shared<http::response_serializer<http::file_body>>(write->file->message);
+      auto done = std::make_shared<Complete>(std::move(complete));
+      last_progress = std::chrono::steady_clock::time_point {};
+      write_file_piece(write, std::move(serializer), std::move(done));
+    }
+    template <class Complete>
+    void
+    write_file_piece(std::shared_ptr<Write> write, std::shared_ptr<http::response_serializer<http::file_body>> serializer, std::shared_ptr<Complete> done) {
+      const auto timeout = std::chrono::seconds(owner->config.timeout_content);
+      beast::get_lowest_layer(stream).expires_after(timeout);
+      // Re-arming the response timer at most every quarter of the timeout (and
+      // at most once a second) keeps the cost of small pieces (the file body
+      // reads a few KiB at a time) negligible.
+      const auto now = std::chrono::steady_clock::now();
+      const auto rearm = std::min<std::chrono::steady_clock::duration>(std::chrono::seconds(1), timeout / 4);
+      if (now - last_progress >= rearm) {
+        last_progress = now;
+        response_timer.expires_after(timeout);
+        response_timer.async_wait([self = this->shared_from_this()](error_code ec) {
+          if (!ec) self->close(net::error::timed_out);
+        });
+      }
+      auto self = this->shared_from_this();
+      http::async_write_some(stream, *serializer, [self, write, serializer, done](error_code ec, std::size_t) {
+        if (ec || self->closed || serializer->is_done()) return (*done)(ec, std::size_t {});
+        self->write_file_piece(write, serializer, done);
+      });
     }
     void
     finish() {

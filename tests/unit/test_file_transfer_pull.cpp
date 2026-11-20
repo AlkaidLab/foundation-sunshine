@@ -50,6 +50,7 @@ namespace {
     unsigned short port = 0;
     bool previous_sync = false;
     std::string session_client;  ///< the client uuid of session 7 (empty over plain HTTP)
+    std::chrono::milliseconds chunk_timeout { 0 };  ///< set before SetUp() by a test that needs a short one
 
     std::mutex mu;
     std::condition_variable cv;
@@ -69,6 +70,7 @@ namespace {
           sent.emplace_back(sid, std::move(payload));
           cv.notify_all();
         },
+        chunk_timeout,
       });
       server.resource[file_transfer_http::kInboundRoute]["GET"] = [](auto resp, auto req) {
         file_transfer_pull::handle_pull(std::move(resp), *req);
@@ -102,7 +104,10 @@ namespace {
       if (sent.empty()) return {};
       auto [sid, frame] = std::move(sent.front());
       sent.pop_front();
-      EXPECT_GE(frame.size(), 10u);
+      if (frame.size() < 10) {
+        ADD_FAILURE() << "frame of " << frame.size() << " bytes";
+        return {};
+      }
       EXPECT_EQ(frame[0], 1);
       EXPECT_EQ(frame[1], file_transfer_pull::kKindPull);
       const std::uint32_t length = frame[6] | (frame[7] << 8) | (frame[8] << 16) | (frame[9] << 24);
@@ -187,6 +192,35 @@ TEST_F(FileTransferPull, OnlyTheSessionsClientMayAnswer) {
   EXPECT_EQ(file_transfer_pull::pending_count(), 1u);
 
   file_transfer_pull::clear();
+  const auto answer = agent.get();
+  EXPECT_TRUE(answer.starts_with("HTTP/1.1 503")) << answer.substr(0, 200);
+}
+
+TEST_F(FileTransferPull, AChunkAfterItsDeadlineIsRefused) {
+  file_transfer_pull::set_hooks({
+    [](std::uint64_t) -> std::optional<std::string> { return std::string {}; },
+    [this](std::uint64_t sid, std::vector<std::uint8_t> payload) {
+      std::lock_guard lk(mu);
+      sent.emplace_back(sid, std::move(payload));
+      cv.notify_all();
+    },
+    std::chrono::milliseconds(50),
+  });
+  auto agent = pull("offset=0&length=4");
+  const auto ticket = next_frame().second["ticket"].get<std::string>();
+  std::this_thread::sleep_for(std::chrono::milliseconds(150));
+  // Refused either here (past its deadline) or already by the reaper.
+  const auto posted = chunk(ticket, "abcd");
+  EXPECT_TRUE(posted.starts_with("HTTP/1.1 410") || posted.starts_with("HTTP/1.1 404")) << posted.substr(0, 100);
+  const auto answer = agent.get();
+  EXPECT_TRUE(answer.starts_with("HTTP/1.1 504")) << answer.substr(0, 200);
+}
+
+TEST_F(FileTransferPull, TurningClipboardSyncOffStopsAChunkOnItsWay) {
+  auto agent = pull("offset=0&length=4");
+  const auto ticket = next_frame().second["ticket"].get<std::string>();
+  config::input.clipboard_sync = false;
+  EXPECT_TRUE(chunk(ticket, "abcd").starts_with("HTTP/1.1 403"));
   const auto answer = agent.get();
   EXPECT_TRUE(answer.starts_with("HTTP/1.1 503")) << answer.substr(0, 200);
 }

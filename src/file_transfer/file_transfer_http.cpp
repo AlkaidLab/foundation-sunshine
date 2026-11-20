@@ -23,7 +23,7 @@ namespace file_transfer_http {
     error(web::StatusCode status, std::string_view word, const std::string &path = {}) {
       nlohmann::json out { { "error", word } };
       if (!path.empty()) out["path"] = path;
-      return { status, out.dump() };
+      return { status, out.dump(-1, ' ', false, nlohmann::json::error_handler_t::replace) };
     }
 
     web::CaseInsensitiveMultimap
@@ -97,7 +97,15 @@ namespace file_transfer_http {
       return error(web::StatusCode::bad_request, "bad_json");
     }
 
-    const auto result = file_transfer::register_paths(paths, type);
+    file_transfer::register_result_t result;
+    try {
+      result = file_transfer::register_paths(paths, type);
+    }
+    catch (const std::exception &e) {
+      // The random id failed, or the listing hit something unexpected: the agent still gets an answer.
+      BOOST_LOG(warning) << "File transfer: registration failed: "sv << e.what();
+      return error(web::StatusCode::internal_server_error, "internal");
+    }
     if (!result.offer) {
       BOOST_LOG(warning) << "File transfer: registration refused: "sv << result.error;
       const auto status = result.error == "no_user"   ? web::StatusCode::service_unavailable :
@@ -106,7 +114,8 @@ namespace file_transfer_http {
                                                         web::StatusCode::bad_request;
       return error(status, result.error, result.detail);
     }
-    return { web::StatusCode::ok, file_transfer::offer_json(*result.offer).dump() };
+    // Names that are not valid UTF-8 (possible outside Windows) are replaced instead of failing the answer.
+    return { web::StatusCode::ok, file_transfer::offer_json(*result.offer).dump(-1, ' ', false, nlohmann::json::error_handler_t::replace) };
   }
 
   void

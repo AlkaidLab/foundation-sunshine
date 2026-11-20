@@ -16,6 +16,7 @@
 #include <random>
 #include <regex>
 #include <thread>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -272,6 +273,27 @@ namespace {
     return response;
   }
 
+  /// A GET whose reader takes its time: `pause` after every `step` bytes.
+  std::string
+  slow_get(unsigned short port, const std::string &path, std::size_t step, std::chrono::milliseconds pause) {
+    boost::asio::io_context io;
+    boost::asio::ip::tcp::socket socket(io);
+    socket.connect({ boost::asio::ip::make_address("127.0.0.1"), port });
+    // A small receive window, so the server can only send as fast as this reads.
+    socket.set_option(boost::asio::socket_base::receive_buffer_size(64 * 1024));
+    const std::string request = "GET " + path + " HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+    boost::asio::write(socket, boost::asio::buffer(request));
+    std::string response;
+    std::vector<char> buffer(step);
+    boost::system::error_code error;
+    do {
+      const auto size = boost::asio::read(socket, boost::asio::buffer(buffer), error);
+      response.append(buffer.data(), size);
+      std::this_thread::sleep_for(pause);
+    } while (!error);
+    return response;
+  }
+
   std::string
   body_of(const std::string &response) {
     const auto end = response.find("\r\n\r\n");
@@ -292,7 +314,23 @@ TEST_F(FileTransfer, ServesTheBytesOverARealListener) {
   server.config.port = 0;
   std::promise<unsigned short> ready;
   auto bound = ready.get_future();
-  std::thread listener([&] { server.start([&](unsigned short port) { ready.set_value(port); }); });
+  std::thread listener([&] {
+    try {
+      server.start([&](unsigned short port) { ready.set_value(port); });
+    }
+    catch (...) {
+      ready.set_exception(std::current_exception());
+    }
+  });
+  // Stop and join on every way out, a failed assertion included.
+  struct stop_t {
+    web::Server<web::HTTP> &server;
+    std::thread &listener;
+    ~stop_t() {
+      server.stop();
+      if (listener.joinable()) listener.join();
+    }
+  } stop { server, listener };
   ASSERT_EQ(bound.wait_for(std::chrono::seconds(10)), std::future_status::ready);
   const auto port = bound.get();
   const auto path = "/api/v1/file-transfer/" + offer->id + "/0";
@@ -315,7 +353,46 @@ TEST_F(FileTransfer, ServesTheBytesOverARealListener) {
   const auto closed_range = raw_get(port, path, "Range: bytes=0-9\r\n");
   EXPECT_TRUE(closed_range.starts_with("HTTP/1.1 200"));
   EXPECT_EQ(body_of(closed_range), content);
+}
 
-  server.stop();
-  listener.join();
+TEST_F(FileTransfer, ADownloadSlowerThanTheContentTimeoutStillCompletes) {
+  // 8 MiB read 256 KiB every 100 ms: over 3 s, against a 1 s content timeout. Each
+  // piece that leaves restarts the timeout, so only a stalled download is cut off.
+  std::string content(8 * 1024 * 1024, '\0');
+  for (std::size_t i = 0; i < content.size(); ++i) content[i] = static_cast<char>((i * 13) & 0xFF);
+  write(root / "slow.bin", content);
+  const auto offer = file_transfer::register_paths({ utf8(root / "slow.bin") }, "clipboard").offer;
+  ASSERT_TRUE(offer);
+
+  web::Server<web::HTTP> server;
+  file_transfer_http::register_paired_routes(server);
+  server.config.address = "127.0.0.1";
+  server.config.port = 0;
+  server.config.timeout_content = 1;
+  std::promise<unsigned short> ready;
+  auto bound = ready.get_future();
+  std::thread listener([&] {
+    try {
+      server.start([&](unsigned short port) { ready.set_value(port); });
+    }
+    catch (...) {
+      ready.set_exception(std::current_exception());
+    }
+  });
+  struct stop_t {
+    web::Server<web::HTTP> &server;
+    std::thread &listener;
+    ~stop_t() {
+      server.stop();
+      if (listener.joinable()) listener.join();
+    }
+  } stop { server, listener };
+  ASSERT_EQ(bound.wait_for(std::chrono::seconds(10)), std::future_status::ready);
+
+  const auto started = std::chrono::steady_clock::now();
+  const auto response = slow_get(bound.get(), "/api/v1/file-transfer/" + offer->id + "/0", 256 * 1024, std::chrono::milliseconds(100));
+  EXPECT_GT(std::chrono::steady_clock::now() - started, std::chrono::seconds(2));
+  EXPECT_TRUE(response.starts_with("HTTP/1.1 200")) << response.substr(0, 200);
+  EXPECT_EQ(body_of(response).size(), content.size());
+  EXPECT_TRUE(body_of(response) == content);
 }
