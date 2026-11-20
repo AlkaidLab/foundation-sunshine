@@ -70,6 +70,16 @@ cd build && ctest
 - 显式指定 `CMAKE_CUDA_ARCHITECTURES` 只编本机架构；未指定时走兼容阶梯，阶梯会自动剔除
   工具链已删除的架构（CUDA 13 不接受 Turing 以下）。
 - 链接期 `libcuda.so.1`（NVIDIA 驱动）是 `dlopen()`，cudart 静态链接——**运行时不需要 CUDA 工具包**。
+- **源码前置（不在本仓，从零构建必撞）**：①`cmake/targets/web_ui.cmake` 把 `FOUNDATION_UI_DIR`
+  默认指向 `../ds5-ui-m3e`，control-panel 子模块的 `package.json` 又钉死
+  `"foundation-ui": "file:../ds5-ui-m3e"`，需按 `scripts/ci/foundation-ui.sha` 检出
+  `AlkaidLab/foundation-ui` 到同级目录并 `npm ci`（或用 `-DFOUNDATION_UI_DIR=` 指过去），
+  否则 `ninja` 直接报 `'.../ds5-ui-m3e/package.json', needed by 'web-ui.stamp', missing`；
+  ②`third-party/build-deps` 是 ~1.8 GB 的二进制库仓，完整 fetch 会被 TLS 反复重置，用
+  `git fetch --depth=1 --filter=blob:none origin dist` + 只保留 `dist/Linux-x86_64/` 的
+  sparse-checkout，再 `git checkout <sha>`。
+- `third-party/moonlight-common-c` 是单分支克隆（`+refs/heads/master`），gitlink 常指向 `mic`
+  分支里的提交，需要 `git fetch origin '+refs/heads/*:refs/remotes/origin/*'` 才拿得到。
 
 ### 打包
 
@@ -81,6 +91,11 @@ cd build && ctest
 重链，脏工作树打出的戳带 `杂鱼`，包名里转成 `.dirty`。
 `SUNSHINE_BUILD_DIR=<dir> makepkg -f` 可打包别的构建树。**不要**在 ninja 仍在链接时跑 makepkg；
 **不要**提交 `packaging/arch-local/{pkg,src,*.pkg.tar.zst}`。
+
+托盘状态图（2026-11-19 调整）：上游删掉了 256 px 的 `sunshine-{playing,pausing,locked}.png`，
+只剩同名 SVG 与 `-16.png`，因此 `cmake/packaging/linux.cmake` 改为装 3 个 SVG 到
+`icons/hicolor/scalable/status`、3 个 `-16.png` 到 `16x16/status`。安装期若报
+`sunshine-playing.png: No such file or directory`，说明打包脚本还在引用上游已删的素材。
 
 `packaging/aur/sunshine-foundation-git/` 从源码构建，每个构建需要的子模块都是固定提交的
 `source` 条目（makepkg 不检出 gitlink 且 `build()` 无网络），`prepare()` 把源码树还原到 gitlink
@@ -1168,6 +1183,21 @@ Dolby MAT 实况采集 `prepare_live()` 在非 Windows 直接返回空——见 
 验证：`ninja -C build` 通过；`test_sunshine` **680 例 / 672 通过 / 8 跳过 / 0 断言失败**
 （新增 `tests/unit/test_vdd_compositor_verdict.cpp` 5 例）；`ctest` 31 套件 30 通过。
 真实合成器侧的恢复时序无法在无头环境复现，需要用户在 Plasma 会话里重连确认。
+
+**残留（2026-11-19 现场复核）**：三态探测已经解决"拒绝建屏"，但**单次探测超时值仍偏小**。
+同一次成功启动的日志里仍有两次超时，只是现在只记警告、继续等：
+
+```
+13:01:13.869 Warning: vdd: [kscreen-doctor -o] timed out after 1500ms; killing
+13:01:15.777 Warning: vdd: [kscreen-doctor -o] timed out after 1500ms; killing
+13:01:16.468 … 列出 DP-2 …            ← 第三次探测才拿到答案
+13:01:17.487 Launch timing: display and encoder setup 5194 ms
+```
+
+`kscreen_backend.h` 的 `kProbeTimeout` 仍是 **1.5s**（正常查询只要 23ms，但 KWin 在处理 uevent
+引发的重枚举时确实会卡到秒级）。因为 `kCompositorProbeInterval = 400ms` 会一直重试，功能上不再
+出错，代价是每次多等 ~4s 才建屏。若要压缩这段时间，把 `kProbeTimeout` 提到 3–5s 即可
+（探测本身有 15s 总预算兜底，放宽单次超时不会让失败路径变慢）。
 
 ---
 

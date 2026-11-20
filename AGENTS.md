@@ -30,7 +30,7 @@ cd build && ctest          # baseline: 82 suites, 81 pass; the single Encoder Se
                            #  needs /usr/share/sunshine/box.png)
 ```
 
-Two source prerequisites are not in this repo (upstream CI clones them into sibling dirs):
+Three source prerequisites are not in this repo (upstream CI clones them into sibling dirs):
 
 - **web UI**: `cmake/targets/web_ui.cmake` defaults `FOUNDATION_UI_DIR` to
   `${PROJECT_SOURCE_DIR}/../ds5-ui-m3e`, and the control-panel submodule pins
@@ -143,6 +143,27 @@ User installs packages themselves (sudo needs a password).
   `X509_EXTENSION_create_by_NID` produces a cert OpenSSL refuses to parse
   (`ossl_x509v3_cache_extensions:invalid certificate`).
 - Only one sunshine instance at a time (ports 47984/47989/47990/48010).
+- The virtual touchscreen only reaches KWin when its `org.kde.KWin.InputDevice` object gets
+  `outputName` + `mapToWorkspace` (`src/platform/linux/kwin_input_device.cpp`); with no output
+  KWin drops touch events outright. That object path is currently **guessed** from the kernel
+  node (`:178` `"/org/kde/KWin/InputDevice/" + event_node`), but KWin only publishes it after
+  libinput reports `deviceAdded` — applying right after inputtino creates the device fails with
+  `could not configure event31: mapToWorkspace: No such object path`, and the session then has
+  no touch at all with nothing but a debug line. Retry the apply until the object exists, and
+  prefer enumerating KWin's own device list over guessing from `/sys/class/input`.
+- `kscreen-doctor -o` takes ~23 ms when idle but **seconds** while KWin re-enumerates after a
+  uevent — never let one probe timeout decide anything. Use the tri-state compositor probe with
+  `kCompositorSurfaceBudget` (15 s) in `vdd_utils.cpp`; `kscreen_backend.h:kProbeTimeout` is
+  still 1.5 s and now only costs a retry round (~4 s extra before the display comes up).
+- "Client connects but nothing streams" is usually the **UDP data plane**, not our code: RTSP
+  all 200, `CLIENT CONNECTED`, mouse deltas flowing, then two
+  `Initial Ping Timeout [src/stream.cpp:4553:recv_ping]` after ~10 s. Check with
+  `grep "Received ping"` (no hits = not a single datagram arrived, so not a payload/address
+  mismatch — matching is keyed by the session id in the payload, and the socket binds the
+  wildcard address) plus `endpoint_auto_refresh … probes_received=0`. Compare the successful
+  session's `Control peer address` (`sunshine.log.1`) with the failing one: a TCP-only tunnel
+  (EasyTier `private_mode`, local proxy rewriting 47984/47989/48010 to the host's own tunnel
+  address) carries the control plane while dropping 47998/48001 entirely.
 - `test_ds5_tuning.cpp` and `test_ds5_button_map.cpp` are excluded from the aggregate
   `test_sunshine` on non-Windows builds (`tests/CMakeLists.txt`): the tuning suite needs
   `DS5_TUNING_TEST_NATIVE_PATH`, which only its own `ds5_tuning_unit_tests` target defines,

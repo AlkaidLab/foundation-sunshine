@@ -1,7 +1,8 @@
 # Linux 移植遗留差距清单
 
-- **基线**：`linux-migration` 分支（包版本跟随二进制版本戳，如
-  `2026.1119.121500.<commit>-1`；2026-11-19 已并入上游 `origin/master` `d4508310`，
+- **基线**：`linux-migration` 分支（包版本跟随二进制版本戳
+  `<YYYY>.<MMDD>.<HHMMSS>.<commit>-1`，如 `2026.1119.121039.72ad94d4-1`；2026-11-19 已并入上游
+  `origin/master` `d4508310`，
   同步链 `ed415026` → `7a0995e2` → `c211d711` → `0219abe2` → `6d41627e` → `d4508310`）
 - **对照**：fork Windows 版（AlkaidLab master `3d76d35d`）的全部增强功能
 - **用途**：**结论清单**（2026-10-22 起）。可做的都已落地或已评估收束；每项含代码位置、证据与
@@ -605,6 +606,19 @@ registry 里 `zwlr_foreign_toplevel_manager_v1` 与 `ext_foreign_toplevel_list_v
    block 的首选 DTD 退回一个可行模式、由会话显式切到该模式；成败取决于内核 DRM 与 KWin 是否把
    DisplayID timing 纳入模式表，需实机验证。
 6. **合成器未重探测 EDID 改写的可能**（低）：若实机出现"模式可行但始终未生效"，即为此因。
+7. **KWin 触屏 D-Bus 对象竞态**（中）：见 §7.8 的"⚠ 已知缺陷"——对象路径按内核事件节点猜、
+   KWin 还没发布就 apply，静默失败后该会话触控没有输出归属。
+8. **客户端→主机的 UDP 数据面走隧道时可能整段丢失**（环境类，不是代码缺口，2026-11-19 现场）：
+   症状是 RTSP 六步全 200、`CLIENT CONNECTED`、鼠标事件正常，却在 10s 后两条
+   `Error: Initial Ping Timeout [src/stream.cpp:4553:recv_ping]`，全天日志没有任何 `Received ping`。
+   判别三步：①`grep "Received ping"` 有没有（没有 = 一个 UDP 包都没到，不是 payload 不匹配）；
+   ②`endpoint_auto_refresh ... probes_received=0`（#1227 的探针也没到，佐证）；
+   ③对照 `sunshine.log.1` 里成功那次的 `Control peer address` 落在哪个 `tunN`，与本次比对。
+   本次现场：客户端走 EasyTier `misonomika`（`tun0`，`private_mode=true`、只有 `tcp://` peer），
+   ICMP 28–30 ms 通、TCP 控制面通（且 47984/47989/48010 的日志对端被写成主机自己的隧道地址，
+   说明这几条 TCP 是被本机代理接住再本地连进来的），唯独 47998/48001 的 UDP 零到达；
+   同一客户端当天上午走另一张网 `QiE2035`（`tun1`）时 `Received ping` 正常。
+   结论：主机侧（绑 `0.0.0.0`、按 session id 匹配、防火墙全 inactive）无需改动，换传输路径即可验证。
 
 ---
 
@@ -784,8 +798,27 @@ Windows 没有这两层：绝对触控天然覆盖整个虚拟桌面。于是本
 全部 best-effort：没有 KWin、没有会话总线、旧版 KWin 不认这个属性，都只是跳过，不影响会话。
 
 **验证**：`tests/unit/test_kwin_input_device.cpp` 7 例覆盖判定与匹配（含"笔设备不能被误配"），
-外加 1 个 live 冒烟用例——在本机真有 `event30` 时读 /sys、问总线、写属性并断言成功（已通过，
-回读 `outputName="DP-2"`）；真机确认设置前收不到触控、设置后立即可用。
+外加 1 个 live 冒烟用例——在本机真有 `event30` 时读 /sys、问总线、写属性并断言成功（回读
+`outputName="DP-2"`）；真机确认设置前收不到触控、设置后立即可用。但该 live 用例依赖"设备节点
+此刻已被 KWin 发布"，它通过**不能**证明运行时一定成功——见下面的已知缺陷。
+
+**⚠ 已知缺陷（2026-11-19 现场发现，未修）**：对象路径是按**内核事件节点猜**的
+（`src/platform/linux/kwin_input_device.cpp:178` 的 `"/org/kde/KWin/InputDevice/" + event_node`），
+而 KWin 要等 libinput 报 `deviceAdded` 之后才发布这个对象。设备刚被 inputtino 建出来的那一刻对象
+往往还不存在，于是 apply 静默失败：
+
+```
+13:01:17.809 Debug: KWin touch mapping: could not configure event31:
+             mapToWorkspace: No such object path '/org/kde/KWin/InputDevice/event31'
+```
+
+（同一时刻 `busctl --user tree org.kde.KWin` 只列到 `event0`…`event30`——`event30` 还是上一次
+会话留下的旧对象，说明这张表由 KWin 自己维护、与 `/sys/class/input` 无强绑定。）
+后果：该会话的触屏没有输出归属，KWin 按 `device->output()` 为空直接丢弃 `TOUCH_DOWN`，症状与
+本节开头那条一样，而且**只有一行 debug，用户看不到任何报错**。
+修法两条：①对象不存在时按短间隔重试若干次（或订阅 KWin 的设备增删信号），而不是一次失败就放弃；
+②`find_event_nodes()` 不要只按 `/sys/class/input` 的设备名匹配，应改为先问 KWin 自己发布的设备
+列表再拿 `sysName` 对照，彻底去掉"猜路径"。
 
 **边界**：属性不写进 `kwinrc`，KWin 重启后会回到猜测值，直到下一次会话或显示配置变更重新设置；
 非 KDE 合成器没有这个 API（niri / wlroots / X11 走各自的绝对坐标路径，未观察到同类问题）；
