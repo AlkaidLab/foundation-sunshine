@@ -4799,9 +4799,6 @@ namespace stream {
     }
 
     namespace join_hang {
-      /// The step join() is in; read by the watchdog when its limit runs out.
-      std::atomic<streaming::join_stage_e> stage { streaming::join_stage_e::video_thread };
-
       // One function per step, on purpose: the top frames of the crash report name the function, so the step that hung is read from the group of the reports without a
       // dump. noinline and a message of their own keep the linker from folding them into one.
 #define SS_JOIN_TRAP(fn, text, budget)                                                                    \
@@ -4844,21 +4841,24 @@ namespace stream {
       //
       // The limit follows the step: the threads of the stream keep 10 seconds, the steps after them (display restore, platform reset, the record of the end) get 60,
       // and the trap is a function per step, so the stack of the crash report names the step (src/streaming/session_join_stage.h).
-      auto task = []() { join_hang::trap(join_hang::stage.load(std::memory_order_acquire)); };
-      auto force_kill = task_pool.pushDelayed(task, streaming::join_stage_budget(streaming::join_stage_e::video_thread)).task_id;
-      auto fg = util::fail_guard([&force_kill]() {
-        // Cancel the kill task if we manage to return from this function
+      //
+      // This call owns its progress, and the watchdog is armed again at every step with the limit of that step: the video, audio, broadcast and control waits get 10
+      // seconds each, every later step gets its own 60. A callback armed for a step the session already left, or for a session that already returned, does nothing.
+      const auto progress = std::make_shared<streaming::join_progress_t>();
+      task_pool_util::TaskPool::task_id_t force_kill = nullptr;  // cancelling null matches no task
+      auto fg = util::fail_guard([&]() {
+        // Cancel the kill task if we manage to return from this function; a callback that is already queued finds the session finished.
+        progress->finish();
         task_pool.cancel(force_kill);
       });
-      bool long_budget = false;
-      const auto enter = [&force_kill, &long_budget](streaming::join_stage_e next) {
-        join_hang::stage.store(next, std::memory_order_release);
-        if (!long_budget && !streaming::join_stage_waits_for_thread(next)) {
-          // the threads are done: the watchdog is armed again with the limit of the steps that are slow without being stuck
-          task_pool.cancel(force_kill);
-          force_kill = task_pool.pushDelayed([]() { join_hang::trap(join_hang::stage.load(std::memory_order_acquire)); }, streaming::join_stage_budget(next)).task_id;
-          long_budget = true;
-        }
+      const auto enter = [&](streaming::join_stage_e next) {
+        const auto generation = progress->enter(next);
+        task_pool.cancel(force_kill);
+        force_kill = task_pool.pushDelayed([progress, generation]() {
+          if (const auto at = progress->hung_stage(generation)) {
+            join_hang::trap(*at);
+          }
+        }, streaming::join_stage_budget(next)).task_id;
       };
       enter(streaming::join_stage_e::video_thread);
 

@@ -13,8 +13,11 @@
  */
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
+#include <optional>
 #include <string_view>
 
 namespace streaming {
@@ -58,5 +61,44 @@ namespace streaming {
   join_stage_budget(join_stage_e stage) {
     return join_stage_waits_for_thread(stage) ? std::chrono::seconds { 10 } : std::chrono::seconds { 60 };
   }
+
+  /**
+   * @brief The progress of one `join()` call, shared with the callback of its watchdog.
+   *
+   * Every call owns one (a `std::shared_ptr` kept alive by the callbacks, so a callback that runs after `join()` returned still reads valid memory): two sessions
+   * ended at once (the shutdown `clear()` runs while the RTSP thread runs its own) never see each other's step. Every step change gets a new generation, and
+   * a watchdog armed for an older generation, or for a session that already returned, finds nothing to report and does nothing.
+   */
+  class join_progress_t {
+  public:
+    /// Moves to the next step and returns the generation the watchdog of that step is armed for. Called by the thread that runs `join()`.
+    std::uint64_t
+    enter(join_stage_e next) {
+      const auto generation = (state_.load(std::memory_order_relaxed) >> 8) + 1;
+      state_.store((generation << 8) | static_cast<std::uint64_t>(next), std::memory_order_release);
+      return generation;
+    }
+
+    /// The session is done: every watchdog still pending or already queued becomes a no-op.
+    void
+    finish() {
+      const auto generation = (state_.load(std::memory_order_relaxed) >> 8) + 1;
+      state_.store((generation << 8) | finished_marker, std::memory_order_release);
+    }
+
+    /// The step to blame when the watchdog armed for `generation` fires: empty when the session left that step or returned since.
+    std::optional<join_stage_e>
+    hung_stage(std::uint64_t generation) const {
+      const auto state = state_.load(std::memory_order_acquire);
+      if ((state >> 8) != generation || (state & 0xff) == finished_marker) {
+        return std::nullopt;
+      }
+      return static_cast<join_stage_e>(state & 0xff);
+    }
+
+  private:
+    static constexpr std::uint64_t finished_marker = 0xff;
+    std::atomic<std::uint64_t> state_ { static_cast<std::uint64_t>(join_stage_e::video_thread) };
+  };
 
 }  // namespace streaming
