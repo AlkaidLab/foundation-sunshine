@@ -96,15 +96,22 @@ export default async function() {
         en
     };
     try {
-        if (locale === 'zh_TW') messages.zh = await (await fetch('/assets/locale/zh.json')).json();
-        if (locale !== 'en') messages[locale] = await (await fetch('/assets/locale/' + locale + '.json')).json();
+        // 磁盘上只有 zh.json（简体基底）与 zh_TW.json（繁体覆盖）两份文件。zh 全系先归到 zh 基底——旧配置可能写过 zh_CN 之类后端白名单之外的值，缺文件时整页会静默回退英文；
+        // zh_TW 额外保留 zh 基底：繁体缺键时回退简体（下方 fallbackLocale: zh_TW -> zh）。
+        if (/^zh/i.test(locale)) {
+            if (locale === 'zh_TW') messages.zh = await (await fetch('/assets/locale/zh.json')).json();
+            const key = locale === 'zh_TW' ? 'zh_TW' : 'zh';
+            messages[key] = await (await fetch(`/assets/locale/${key}.json`)).json();
+        } else if (locale !== 'en') {
+            messages[locale] = await (await fetch(`/assets/locale/${locale}.json`)).json();
+        }
     } catch (e) {
         console.error("Failed to download translations", e);
     }
     const i18n = createI18n({
         legacy: false, // 使用 Composition API 模式
         locale: locale, // set locale
-        fallbackLocale: { zh_TW: ['zh', 'en'], default: ['en'] },
+        fallbackLocale: { zh_TW: ['zh', 'en'], zh_CN: ['zh', 'en'], zh_SG: ['zh', 'en'], zh_MY: ['zh', 'en'], zh_HANS: ['zh', 'en'], default: ['en'] },
         messages: messages,
         globalInjection: true, // 允许在模板中使用 $t
         warnHtmlMessage: false, // 禁用 HTML 消息警告（因为我们使用 v-html 来渲染受信任的翻译内容）
@@ -122,11 +129,16 @@ export async function applyLocale(locale) {
     activeLocale.value = locale;
     if (!webI18n) return;
     try {
-        if (locale === 'zh_TW' && !webI18n.global.availableLocales.includes('zh')) {
-            webI18n.global.setLocaleMessage('zh', await (await fetch('/assets/locale/zh.json')).json());
-        }
-        if (locale !== 'en' && !webI18n.global.availableLocales.includes(locale)) {
-            webI18n.global.setLocaleMessage(locale, await (await fetch('/assets/locale/' + locale + '.json')).json());
+        // 与初始化同一规则：zh 全系共用 zh 基底（zh_TW 繁体覆盖其上），变体键（zh_CN 等）由 fallbackLocale 回退到 zh
+        if (/^zh/i.test(locale)) {
+            if (!webI18n.global.availableLocales.includes('zh')) {
+                webI18n.global.setLocaleMessage('zh', await (await fetch('/assets/locale/zh.json')).json());
+            }
+            if (locale === 'zh_TW' && !webI18n.global.availableLocales.includes('zh_TW')) {
+                webI18n.global.setLocaleMessage('zh_TW', await (await fetch('/assets/locale/zh_TW.json')).json());
+            }
+        } else if (locale !== 'en' && !webI18n.global.availableLocales.includes(locale)) {
+            webI18n.global.setLocaleMessage(locale, await (await fetch(`/assets/locale/${locale}.json`)).json());
         }
     } catch (e) {
         console.error("Failed to download translations", e);
