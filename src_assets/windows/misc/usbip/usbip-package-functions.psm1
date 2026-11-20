@@ -53,6 +53,69 @@ function Remove-UsbipLegacy([string]$Root, [string]$HostRoot, [switch]$Confirmed
   if (@(Get-UsbipLegacyEntries).Count -ne 0) { throw 'Upstream USB/IP registration remains; replacement was not attempted' }
 }
 
+# usbip-replace-ms-classdevs-20261121: DIGCF_ALLCLASSES without DIGCF_PRESENT
+# includes phantom nodes. usbip-replace-ms-diuninstall-20261121: remove the
+# exact device element and preserve the NeedReboot result.
+# usbip-replace-ms-openinfo-20261121: resolve the exact instance in the set.
+# usbip-replace-ms-addtype-20261121: compile native interop in Windows PowerShell.
+function Remove-UsbipAbsentNode([string]$InstanceId) {
+  if (-not ('UsbipReplace.DeviceRemoval' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+namespace UsbipReplace {
+  public static class DeviceRemoval {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct DeviceInfo { public uint Size; public Guid ClassGuid; public uint DevInst; public IntPtr Reserved; }
+    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    static extern IntPtr SetupDiGetClassDevsW(IntPtr cls, string enumerator, IntPtr hwnd, uint flags);
+    [DllImport("setupapi.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool SetupDiOpenDeviceInfoW(IntPtr set, string id, IntPtr hwnd, uint flags, ref DeviceInfo data);
+    [DllImport("newdev.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool DiUninstallDevice(IntPtr hwnd, IntPtr set, ref DeviceInfo data, uint flags, [MarshalAs(UnmanagedType.Bool)] out bool reboot);
+    [DllImport("setupapi.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    static extern bool SetupDiDestroyDeviceInfoList(IntPtr set);
+    public static bool Remove(string id) {
+      IntPtr set = SetupDiGetClassDevsW(IntPtr.Zero, null, IntPtr.Zero, 4);
+      if (set == new IntPtr(-1)) throw new ExternalException("USB/IP device operation failed", Marshal.GetLastWin32Error());
+      try {
+        DeviceInfo data = new DeviceInfo(); data.Size = (uint)Marshal.SizeOf(typeof(DeviceInfo));
+        if (!SetupDiOpenDeviceInfoW(set, id, IntPtr.Zero, 0, ref data)) throw new ExternalException("USB/IP device operation failed", Marshal.GetLastWin32Error());
+        bool reboot;
+        if (!DiUninstallDevice(IntPtr.Zero, set, ref data, 0, out reboot)) throw new ExternalException("USB/IP device operation failed", Marshal.GetLastWin32Error());
+        return reboot;
+      } finally { SetupDiDestroyDeviceInfoList(set); }
+    }
+  }
+}
+'@
+  }
+  return [UsbipReplace.DeviceRemoval]::Remove($InstanceId)
+}
+
+function Remove-UsbipAbsentLegacyNodes([string]$HostRoot) {
+  $present = @{}
+  foreach ($node in @(Get-UsbipNodes)) { $present[$node.InstanceId] = $true }
+  foreach ($node in @(Get-UsbipNodes -IncludeAbsent)) {
+    $id = [string]$node.InstanceId
+    if ($present.ContainsKey($id)) { continue }
+    # Recheck immediately before removal; never intentionally remove a live controller.
+    if (@(Get-UsbipNodes | Where-Object { $_.InstanceId -eq $id }).Count -ne 0) { continue }
+    $reboot = Remove-UsbipAbsentNode $id
+    if ($reboot) { $script:NeedsRestart = $true }
+    $line = "USB/IP removed absent controller $id; reboot required: $reboot"
+    Write-Host $line
+    try {
+      Add-Content -LiteralPath (Join-Path $HostRoot 'scripts\usbip-replace-nodes.log') -Value $line -Encoding UTF8
+    } catch {
+      Write-Warning "USB/IP removal log write failed: $($_.Exception.Message)"
+    }
+  }
+}
+
 function Get-UsbipOemPackages {
   # usbip-slim-dism-20261117, -Online / -All: structured output, no localized
   # pnputil text parsing and no writes to the DriverDatabase registry.
@@ -146,13 +209,19 @@ function Get-UsbipNodes([switch]$IncludeAbsent) {
 
 # usbip-slim-ms-pnp-property-20261117: typed HardwareIds and ProblemCode;
 # usbip-slim-ms-pnp-device-20261117: PresentOnly, independent of root enumerator name.
-function Test-UsbipReady([string]$Root, $Manifest, [switch]$External) {
+function Test-UsbipReady([string]$Root, $Manifest, [switch]$External, [switch]$AllowPendingNodes) {
   try {
     if (-not $External) { $null = Read-UsbipManifest $Root }
     $nodes = @(Get-UsbipNodes)
-    if ($nodes.Count -ne 1) { return $false }
-    $problem = (Get-PnpDeviceProperty -InstanceId $nodes[0].InstanceId -KeyName DEVPKEY_Device_ProblemCode -ErrorAction Stop).Data
-    if ($problem -notin 0, 14) { return $false }
+    if ($nodes.Count -ne 1 -and (-not $AllowPendingNodes -or $nodes.Count -lt 2)) { return $false }
+    # usbip-replace-ms-prob-removed-20261121: 21 means Windows is removing the device.
+    $usable = 0
+    foreach ($node in $nodes) {
+      $problem = (Get-PnpDeviceProperty -InstanceId $node.InstanceId -KeyName DEVPKEY_Device_ProblemCode -ErrorAction Stop).Data
+      if ($problem -in 0, 14) { $usable++ }
+      elseif (-not $AllowPendingNodes -or $problem -ne 21) { return $false }
+    }
+    if ($usable -ne 1) { return $false }
     foreach ($name in 'usbip2_ude', 'usbip2_filter') {
       $service = Get-ItemProperty -LiteralPath ('HKLM:\SYSTEM\CurrentControlSet\Services\' + $name) -ErrorAction Stop
       $image = [string]$service.ImagePath
@@ -183,6 +252,7 @@ function Install-UsbipPackage([string]$Payload, [string]$Root, [string]$Scripts,
   if ($owner.ownership -eq 'external') { throw 'Externally managed USB/IP must not be replaced' }
   $manifest = Read-UsbipManifest $Payload
   Remove-UsbipLegacy $Root $HostRoot -ConfirmedReplace:$ConfirmedReplace
+  if ($owner.ownership -eq 'legacy-owned') { Remove-UsbipAbsentLegacyNodes $HostRoot }
   # A partial prior slim install must be removed before replacing its tools.
   if ((Test-Path -LiteralPath $script:RecordKey) -or (Test-Path -LiteralPath (Join-Path $Root 'payload.json'))) { Remove-UsbipPackage $Root }
   New-Item -ItemType Directory -Path $Root -Force | Out-Null
@@ -212,7 +282,10 @@ function Install-UsbipPackage([string]$Payload, [string]$Root, [string]$Scripts,
   Invoke-UsbipCommand "$env:SystemRoot\System32\pnputil.exe" @('/add-driver', (Join-Path $Root 'driver\usbip2_filter.inf'), '/install')
   Invoke-UsbipCommand (Join-Path $Root 'devnode.exe') @('install', (Join-Path $Root 'driver\usbip2_ude.inf'), $script:HardwareId)
   Set-UsbipDetachTask $Root
-  if (-not (Test-UsbipReady $Root $manifest)) { throw 'USB/IP controller or registered driver did not verify' }
+  if (-not (Test-UsbipReady $Root $manifest)) {
+    if (-not $script:NeedsRestart -or -not (Test-UsbipReady $Root $manifest -AllowPendingNodes)) { throw 'USB/IP controller or registered driver did not verify' }
+    Write-Warning 'USB/IP readiness could not be verified before the required restart; check again after restart.'
+  }
   # The bundled upstream installer was only the proof that an earlier FS install owned the package.
   # After a verified replacement it is a 26 MB leftover of the old layout.
   if ($owner.ownership -eq 'legacy-owned') {
