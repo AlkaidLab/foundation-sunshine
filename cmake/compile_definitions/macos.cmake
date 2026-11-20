@@ -2,6 +2,8 @@
 
 add_compile_definitions(SUNSHINE_PLATFORM="macos")
 
+set(SUNSHINE_ASSETS_DIR_DEF "/Applications/Sunshine.app/Contents/Resources/assets")
+
 set(MACOS_LINK_DIRECTORIES
         /opt/homebrew/lib
         /opt/local/lib
