@@ -78,6 +78,7 @@ extern "C" {
 #include "stream.h"
 #include "streaming/dynamic_param_protocol.h"
 #include "streaming/fec.h"
+#include "streaming/session_join_stage.h"
 #include "streaming/measured_bitrate.h"
 #include "streaming/perf_recorder.h"
 #include "streaming/video_pacing.h"
@@ -4797,38 +4798,90 @@ namespace stream {
       return streaming::select_current_capture(sessions, client_cert_uuid);
     }
 
+    namespace join_hang {
+      /// The step join() is in; read by the watchdog when its limit runs out.
+      std::atomic<streaming::join_stage_e> stage { streaming::join_stage_e::video_thread };
+
+      // One function per step, on purpose: the top frames of the crash report name the function, so the step that hung is read from the group of the reports without a
+      // dump. noinline and a message of their own keep the linker from folding them into one.
+#define SS_JOIN_TRAP(fn, text, budget)                                                                    \
+  [[gnu::noinline]] void                                                                                  \
+  fn() {                                                                                                  \
+    BOOST_LOG(fatal) << "Hang detected! Session failed to terminate in " budget " seconds, " text ""sv;  \
+    logging::log_flush();                                                                                 \
+    lifetime::debug_trap();                                                                               \
+  }
+      SS_JOIN_TRAP(hung_in_video_thread, "the video thread did not return", "10")
+      SS_JOIN_TRAP(hung_in_audio_thread, "the audio thread did not return", "10")
+      SS_JOIN_TRAP(hung_in_live_session, "the broadcast threads kept the session", "10")
+      SS_JOIN_TRAP(hung_in_control_end, "the control thread did not end", "10")
+      SS_JOIN_TRAP(hung_in_input_reset, "input reset did not finish", "60")
+      SS_JOIN_TRAP(hung_in_display_restore, "the display restore did not finish", "60")
+      SS_JOIN_TRAP(hung_in_platform_stop, "the platform reset did not finish", "60")
+      SS_JOIN_TRAP(hung_in_bookkeeping, "the end of the session was not recorded", "60")
+#undef SS_JOIN_TRAP
+
+      void
+      trap(streaming::join_stage_e at) {
+        switch (at) {
+          case streaming::join_stage_e::video_thread: hung_in_video_thread(); break;
+          case streaming::join_stage_e::audio_thread: hung_in_audio_thread(); break;
+          case streaming::join_stage_e::live_session: hung_in_live_session(); break;
+          case streaming::join_stage_e::control_end: hung_in_control_end(); break;
+          case streaming::join_stage_e::input_reset: hung_in_input_reset(); break;
+          case streaming::join_stage_e::display_restore: hung_in_display_restore(); break;
+          case streaming::join_stage_e::platform_stop: hung_in_platform_stop(); break;
+          case streaming::join_stage_e::bookkeeping: hung_in_bookkeeping(); break;
+        }
+      }
+    }  // namespace join_hang
+
     void
     join(session_t &session) {
       // Current Nvidia drivers have a bug where NVENC can deadlock the encoder thread with hardware-accelerated
       // GPU scheduling enabled. If this happens, we will terminate ourselves and the service can restart.
       // The alternative is that Sunshine can never start another session until it's manually restarted.
-      auto task = []() {
-        BOOST_LOG(fatal) << "Hang detected! Session failed to terminate in 10 seconds."sv;
-        logging::log_flush();
-        lifetime::debug_trap();
-      };
-      auto force_kill = task_pool.pushDelayed(task, 10s).task_id;
+      //
+      // The limit follows the step: the threads of the stream keep 10 seconds, the steps after them (display restore, platform reset, the record of the end) get 60,
+      // and the trap is a function per step, so the stack of the crash report names the step (src/streaming/session_join_stage.h).
+      auto task = []() { join_hang::trap(join_hang::stage.load(std::memory_order_acquire)); };
+      auto force_kill = task_pool.pushDelayed(task, streaming::join_stage_budget(streaming::join_stage_e::video_thread)).task_id;
       auto fg = util::fail_guard([&force_kill]() {
         // Cancel the kill task if we manage to return from this function
         task_pool.cancel(force_kill);
       });
+      bool long_budget = false;
+      const auto enter = [&force_kill, &long_budget](streaming::join_stage_e next) {
+        join_hang::stage.store(next, std::memory_order_release);
+        if (!long_budget && !streaming::join_stage_waits_for_thread(next)) {
+          // the threads are done: the watchdog is armed again with the limit of the steps that are slow without being stuck
+          task_pool.cancel(force_kill);
+          force_kill = task_pool.pushDelayed([]() { join_hang::trap(join_hang::stage.load(std::memory_order_acquire)); }, streaming::join_stage_budget(next)).task_id;
+          long_budget = true;
+        }
+      };
+      enter(streaming::join_stage_e::video_thread);
 
       // 仅控制流会话没有视频/音频线程
       if (!session.control_only) {
         BOOST_LOG(debug) << "Waiting for video to end..."sv;
         session.videoThread.join();
         BOOST_LOG(debug) << "Waiting for audio to end..."sv;
+        enter(streaming::join_stage_e::audio_thread);
         session.audioThread.join();
         // the packets still queued for this session are dropped from here on, and the broadcast threads let go of it before it is freed
+        enter(streaming::join_stage_e::live_session);
         unregister_live_session(&session);
       }
       else {
         BOOST_LOG(debug) << "Control-only session: skipping video/audio thread join"sv;
       }
       BOOST_LOG(debug) << "Waiting for control to end..."sv;
+      enter(streaming::join_stage_e::control_end);
       session.controlEnd.view();
       // Reset input on session stop to avoid stuck repeated keys
       BOOST_LOG(debug) << "Resetting Input..."sv;
+      enter(streaming::join_stage_e::input_reset);
       input::reset(session.input);
       tray_state::remove_session(session.launch_session_id);
 
@@ -4872,9 +4925,11 @@ namespace stream {
           }
 
           if (restore_display_state) {
+            enter(streaming::join_stage_e::display_restore);
             display_device::session_t::get().restore_state();
           }
 
+          enter(streaming::join_stage_e::platform_stop);
           platf::streaming_will_stop();
 
           if (config::stream.stop_on_last_video_session &&
@@ -4885,6 +4940,7 @@ namespace stream {
         }
       }
 
+      enter(streaming::join_stage_e::bookkeeping);
       session.nvidia_vsync_lease.reset();
       session.touch_keyboard_lease.reset();
       perf::end_session(session.launch_session_id);

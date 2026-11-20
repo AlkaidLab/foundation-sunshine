@@ -232,6 +232,12 @@ target_link_libraries(client_framerate_unit_tests PRIVATE gtest_main sunshine_pr
 set_target_properties(client_framerate_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME client_framerate_unit_tests COMMAND client_framerate_unit_tests)
 
+add_executable(session_join_stage_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_session_join_stage.cpp)
+target_include_directories(session_join_stage_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(session_join_stage_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(session_join_stage_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME session_join_stage_unit_tests COMMAND session_join_stage_unit_tests)
+
 add_executable(cover_failure_backoff_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_cover_failure_backoff.cpp)
 target_include_directories(cover_failure_backoff_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(cover_failure_backoff_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
