@@ -215,10 +215,13 @@ namespace file_transfer {
       CloseHandle(h);
       return true;
 #else
-      const int fd = ::open(source.c_str(), O_RDONLY | O_CLOEXEC);
+      // O_NONBLOCK: a FIFO swapped in after the type check must not block registration.
+      const int fd = ::open(source.c_str(), O_RDONLY | O_CLOEXEC | O_NONBLOCK);
       if (fd < 0) return false;
+      struct stat st {};
+      const bool regular = ::fstat(fd, &st) == 0 && S_ISREG(st.st_mode);
       ::close(fd);
-      return true;
+      return regular;
 #endif
     }
 
@@ -550,13 +553,16 @@ namespace file_transfer {
       size = static_cast<std::uint64_t>(li.QuadPart);
       opened = true;
 #else
-      const int fd = ::open(source.c_str(), O_RDONLY | O_CLOEXEC);
+      // Same as readable(): never block on a FIFO; regular files ignore O_NONBLOCK, cleared anyway.
+      const int fd = ::open(source.c_str(), O_RDONLY | O_CLOEXEC | O_NONBLOCK);
       if (fd < 0) return;
       struct stat st {};
       if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
         ::close(fd);
         return;
       }
+      const int flags = ::fcntl(fd, F_GETFL);
+      if (flags >= 0) ::fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
       native = fd;
       size = static_cast<std::uint64_t>(st.st_size);
       opened = true;
