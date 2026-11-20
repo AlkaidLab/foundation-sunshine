@@ -643,6 +643,7 @@ add_test(NAME hdr_calibration_unit_tests COMMAND hdr_calibration_unit_tests)
 # Compiles the real config.cpp update paths. These tests mutate global config
 # state and run config::parse, so they cannot join the aggregate suite.
 set(CONFIG_RUNTIME_SUPPORT_SOURCES
+        ${CMAKE_SOURCE_DIR}/src/display_device/vdd_settings.cpp
         ${CMAKE_SOURCE_DIR}/src/config.cpp
         ${CMAKE_SOURCE_DIR}/src/streaming/bitrate.cpp
         ${CMAKE_SOURCE_DIR}/src/file_handler.cpp

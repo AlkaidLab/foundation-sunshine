@@ -13,7 +13,6 @@
 #include "src/confighttp/common.h"
 #include "src/display_device/session.h"
 #include "src/display_device/to_string.h"
-#include "src/display_device/vdd_settings.h"
 #include "src/doctor/doctor_os.h"
 #include "src/file_handler.h"
 #include "src/logging.h"
@@ -277,6 +276,7 @@ namespace confighttp::configuration {
       }
     }
 
+    /** @brief Save legacy VDD and host settings under one lock, reporting persistence failures. */
     void
     saveConfig(resp_https_t response, req_https_t request) {
       if (!check_content_type(response, request, "application/json")) return;
@@ -309,8 +309,6 @@ namespace confighttp::configuration {
         if (const auto upnp = inputTree.get_optional<std::string>("upnp"); upnp && *upnp != "enabled" && *upnp != "disabled" && *upnp != "true" && *upnp != "false") {
           throw std::invalid_argument("invalid upnp value");
         }
-        std::string resArray = inputTree.get<std::string>("resolutions", "[]");
-        std::string fpsArray = inputTree.get<std::string>("fps", "[]");
         std::string gpu_name = inputTree.get<std::string>("adapter_name", "");
 
         // Validate config field lengths to prevent abuse
@@ -326,8 +324,6 @@ namespace confighttp::configuration {
           return;
         }
 
-        display_device::vdd_settings::save(resArray, fpsArray, gpu_name);
-
         // 将 inputTree 转换为 std::map（保证有序）
         std::map<std::string, std::string> fullConfig;
         for (const auto &kv : inputTree) {
@@ -340,9 +336,9 @@ namespace confighttp::configuration {
         std::string previous_locale;
         // the settings that are reported when they change (an allow-list of keys, values as enums or buckets) are compared with what was saved before
         const auto saved_before = config::get_config_snapshot();
-        if (!config::update_full_config(fullConfig, &previous_locale)) {
+        if (!config::update_full_config(fullConfig, &previous_locale, true)) {
           outputTree.put("status", "false");
-          outputTree.put("error", "failed to persist configuration");
+          outputTree.put("error", "Failed to persist Sunshine or virtual display settings; see host log");
           return;
         }
         // the two telemetry choices take effect at once: what the off kind had waiting is dropped
