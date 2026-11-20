@@ -7,5 +7,5 @@ for %%I in ("%~dp0\..") do set "ROOT_DIR=%%~fI"
 set "PROGRAM_BIN=%ROOT_DIR%\sunshine.exe"
 
 rem Preserve rules with custom conditions and rules for other installations.
-"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%~dp0remove-firewall-rules.ps1" -Program "%PROGRAM_BIN%"
+"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%~dp0firewall-rules.ps1" -Program "%PROGRAM_BIN%" -Action remove
 exit /b %ERRORLEVEL%

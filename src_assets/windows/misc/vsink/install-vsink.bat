@@ -21,7 +21,7 @@ if %errorLevel% equ 0 (
 :: Fall back to the audio endpoints if the driver inventory is unavailable.
 "%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -Command "try { $devices = Get-PnpDevice -Class AudioEndpoint -ErrorAction SilentlyContinue | Where-Object {$_.FriendlyName -like '*VB-Cable*' -or $_.FriendlyName -like '*VB-Audio Virtual Cable*'}; if ($devices) { exit 0 } else { exit 1 } } catch { exit 1 }" >nul 2>&1
 if %errorLevel% equ 0 (
-    echo VB-Cable driver is already installed (detected via audio device)
+    echo VB-Cable driver is already installed - detected via audio device
     pause
     exit /b 0
 )

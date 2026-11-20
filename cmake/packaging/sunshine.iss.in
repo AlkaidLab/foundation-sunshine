@@ -328,8 +328,7 @@ Source: "{#MySourceDir}\scripts\autostart-service.bat"; DestDir: "{app}\scripts"
 ; Always copy so users can run them manually as admin if they unchecked firewall.
 Source: "{#MySourceDir}\scripts\add-firewall-rule.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#MySourceDir}\scripts\delete-firewall-rule.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
-Source: "{#MySourceDir}\scripts\check-firewall-rules.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
-Source: "{#MySourceDir}\scripts\remove-firewall-rules.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "{#MySourceDir}\scripts\firewall-rules.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 
 ; Virtual Display Driver scripts & files
 Source: "{#MySourceDir}\scripts\install-vdd.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
