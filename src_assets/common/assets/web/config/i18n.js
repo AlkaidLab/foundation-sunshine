@@ -120,7 +120,8 @@ export default async function() {
         warnHtmlMessage: false, // 禁用 HTML 消息警告（因为我们使用 v-html 来渲染受信任的翻译内容）
     })
     webI18n = i18n;
-    if (revalidate) revalidate.then((fresh) => { if (fresh && fresh !== hostLocale && !pref) applyLocale(fresh); });
+    // 主机语言的后台刷新只在没有用户偏好的情况下生效：读实时偏好而非启动快照，否则启动后选了语言仍会被主机值覆盖（显式选了"跟随系统"时同样跳过——系统语言优先于主机）
+    if (revalidate) revalidate.then((fresh) => { if (fresh && fresh !== hostLocale && !readLocalePref()) applyLocale(fresh); });
     return i18n;
 }
 
