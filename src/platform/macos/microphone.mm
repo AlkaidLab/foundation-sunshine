@@ -73,7 +73,7 @@ namespace platf {
       }
 
       auto &buffer = ioData->mBuffers[0];
-      const UInt32 requested_bytes = inNumberFrames * self->device_channels * sizeof(std::int16_t);
+      const UInt32 requested_bytes = inNumberFrames * self->device_channels * sizeof(float);
       const UInt32 bytes_to_copy = std::min(requested_bytes, buffer.mDataByteSize);
 
       uint32_t available_bytes = 0;
@@ -205,8 +205,8 @@ namespace platf {
 
       BOOST_LOG(info) << "[mic_redirect] Directing client microphone audio into virtual device: ["sv << device_name << "] (DeviceID="sv << target_dev << ")"sv;
 
-      // 64 KB ring buffer ~ 340ms of 48kHz mono 16-bit PCM
-      if (!TPCircularBufferInit(&ring_buffer, 64 * 1024)) {
+      // 128 KB ring buffer ~ 340ms of 48kHz stereo float32 PCM
+      if (!TPCircularBufferInit(&ring_buffer, 128 * 1024)) {
         BOOST_LOG(error) << "[mic_redirect] Failed to allocate TPCircularBuffer for microphone"sv;
         return -1;
       }
@@ -254,10 +254,10 @@ namespace platf {
       AudioStreamBasicDescription streamFormat {};
       streamFormat.mSampleRate = 48000.0;
       streamFormat.mFormatID = kAudioFormatLinearPCM;
-      streamFormat.mFormatFlags = kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked;
+      streamFormat.mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked;
       streamFormat.mChannelsPerFrame = device_channels;
-      streamFormat.mBitsPerChannel = 16;
-      streamFormat.mBytesPerFrame = device_channels * sizeof(std::int16_t);
+      streamFormat.mBitsPerChannel = 32;
+      streamFormat.mBytesPerFrame = device_channels * sizeof(float);
       streamFormat.mFramesPerPacket = 1;
       streamFormat.mBytesPerPacket = streamFormat.mBytesPerFrame;
 
@@ -295,18 +295,24 @@ namespace platf {
     write_pcm(const std::int16_t *samples, std::size_t frame_count) {
       if (!is_started || !samples || frame_count == 0) return -1;
 
+      constexpr float scale = 1.0f / 32768.0f;
       if (device_channels == 1) {
-        TPCircularBufferProduceBytes(&ring_buffer, samples, frame_count * sizeof(std::int16_t));
+        std::vector<float> mono(frame_count);
+        for (std::size_t i = 0; i < frame_count; ++i) {
+          mono[i] = static_cast<float>(samples[i]) * scale;
+        }
+        TPCircularBufferProduceBytes(&ring_buffer, mono.data(), mono.size() * sizeof(float));
       }
       else {
-        std::vector<std::int16_t> stereo(frame_count * 2);
+        std::vector<float> stereo(frame_count * 2);
         for (std::size_t i = 0; i < frame_count; ++i) {
-          stereo[i * 2] = samples[i];
-          stereo[i * 2 + 1] = samples[i];
+          float val = static_cast<float>(samples[i]) * scale;
+          stereo[i * 2] = val;
+          stereo[i * 2 + 1] = val;
         }
-        TPCircularBufferProduceBytes(&ring_buffer, stereo.data(), stereo.size() * sizeof(std::int16_t));
+        TPCircularBufferProduceBytes(&ring_buffer, stereo.data(), stereo.size() * sizeof(float));
       }
-      return 0;
+      return static_cast<int>(frame_count * sizeof(std::int16_t));
     }
 
     void
@@ -347,9 +353,17 @@ namespace platf {
 
       if (!config::audio.sink.empty()) {
         audio_sink = config::audio.sink.c_str();
+        audio_capture_device = [AVAudio findMicrophone:[NSString stringWithUTF8String:audio_sink]];
+      }
+      else {
+        NSArray<AVCaptureDevice *> *mics = [AVAudio microphones];
+        if (mics && mics.count > 0) {
+          audio_capture_device = mics[0];
+          BOOST_LOG(info) << "Defaulting host audio capture to: ["sv << [audio_capture_device.localizedName UTF8String] << "]"sv;
+        }
       }
 
-      if ((audio_capture_device = [AVAudio findMicrophone:[NSString stringWithUTF8String:audio_sink]]) == nullptr) {
+      if (audio_capture_device == nullptr) {
         BOOST_LOG(error) << "opening microphone '"sv << audio_sink << "' failed. Please set a valid input source in the Sunshine config."sv;
         BOOST_LOG(error) << "Available inputs:"sv;
 
