@@ -25,6 +25,7 @@ namespace logging {
 
   /** The name of the record attribute that carries a source site. */
   inline constexpr const char *SITE_ATTRIBUTE = "Site";
+  inline constexpr const char *MESSAGE_TEMPLATE_ATTRIBUTE = "MessageTemplate";  // owned string for library logging bridges
   /** Severities from this one up carry a site (the numbers of logging_severity.h: 4 = error, 5 = fatal). */
   inline constexpr int SITE_MIN_SEVERITY = 4;
 

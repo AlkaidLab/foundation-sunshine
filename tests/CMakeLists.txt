@@ -601,7 +601,7 @@ add_executable(http_safety_unit_tests
         ${CMAKE_SOURCE_DIR}/src/ai/proxy.cpp)
 target_include_directories(http_safety_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(http_safety_unit_tests PRIVATE ${SUNSHINE_EXTERNAL_LIBRARIES} gtest_main
-        sunshine_project_options sunshine_coverage sunshine_crypto sunshine_ai_provider sunshine_ai_stream)
+        sunshine_project_options sunshine_coverage sunshine_crypto sunshine_ai_provider sunshine_ai_stream sunshine_log_templates)
 target_compile_definitions(http_safety_unit_tests PRIVATE ${SUNSHINE_DEFINITIONS})
 set_target_properties(http_safety_unit_tests PROPERTIES CXX_STANDARD 23)
 if (WIN32)
@@ -938,12 +938,14 @@ add_executable(telemetry_unit_tests
         ${CMAKE_SOURCE_DIR}/src/telemetry/stream_health.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/stream_stats.cpp
         ${CMAKE_SOURCE_DIR}/src/telemetry/service.cpp
+        ${CMAKE_SOURCE_DIR}/src/telemetry/service_log.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_error_report.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_error_code.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_stream_health.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_report_delivery.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_telemetry.cpp)
 target_include_directories(telemetry_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
-target_link_libraries(telemetry_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
+target_link_libraries(telemetry_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json sunshine_log_templates
         sunshine_project_options sunshine_coverage)
 target_compile_options(telemetry_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
 set_target_properties(telemetry_unit_tests PROPERTIES CXX_STANDARD 23)
@@ -1467,6 +1469,8 @@ if (Python3_Interpreter_FOUND AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang"
     set_tests_properties(controller_handoff_probe PROPERTIES TIMEOUT 60)
 endif ()
 if(Python3_Interpreter_FOUND)
+    add_test(NAME error_code_catalogue_tests
+            COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/telemetry/test_error_code_catalogue.py")
     add_test(NAME cmake_configuration_tests
             COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/tests/tools/test_cmake_configuration.py"
                 --source "${CMAKE_SOURCE_DIR}" --cmake "${CMAKE_COMMAND}"
@@ -1580,7 +1584,7 @@ list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_devices.
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_sink_plan.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_default_wait.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_vb_cable.cpp)
-list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_telemetry.cpp)
+list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_telemetry.cpp ${CMAKE_SOURCE_DIR}/tests/unit/test_error_code.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_host_bitrate_cap.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_cover_failure_backoff.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_cover_download_outcome.cpp)

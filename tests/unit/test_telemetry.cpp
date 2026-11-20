@@ -4,15 +4,16 @@
  */
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <filesystem>
 #include <fstream>
-#include <atomic>
 #include <regex>
 #include <set>
 #include <thread>
 
 #include "src/log_text.h"
 #include "src/telemetry/device_facts.h"
+#include "src/telemetry/error_code.h"
 #include "src/telemetry/events.h"
 #include "src/telemetry/install_journal.h"
 #include "src/telemetry/queue.h"
@@ -94,14 +95,16 @@ namespace {
       c.locale = "zh-CN";
       svc->set_context(c);
     }
-    int sent_events() const {
+    int
+    sent_events() const {
       int n = 0;
       for (const auto &b : posted) n += static_cast<int>(b["events"].size());
       return n;
     }
   };
 
-  std::set<std::string> names_of(const std::vector<json> &batches) {
+  std::set<std::string>
+  names_of(const std::vector<json> &batches) {
     std::set<std::string> out;
     for (const auto &b : batches)
       for (const auto &e : b["events"]) out.insert(e["name"].get<std::string>());
@@ -114,8 +117,17 @@ namespace {
 
 TEST(TelemetryEvents, StreamStartKeepsAllowedDimensions) {
   json props {
-    { "client_kind", "moonlight-macos" }, { "client_os", "macos" }, { "codec", "hevc" }, { "width", 3840 }, { "height", 2160 }, { "fps", 120 }, { "hdr", true },
-    { "audio_codec", "opus" }, { "transport", "altp" }, { "app_kind", "sparxie" }, { "sparxie_game", "genshin" },
+    { "client_kind", "moonlight-macos" },
+    { "client_os", "macos" },
+    { "codec", "hevc" },
+    { "width", 3840 },
+    { "height", 2160 },
+    { "fps", 120 },
+    { "hdr", true },
+    { "audio_codec", "opus" },
+    { "transport", "altp" },
+    { "app_kind", "sparxie" },
+    { "sparxie_game", "genshin" },
   };
   const auto e = shape_event(kind_e::usage, "stream_start", props, 1000);
   ASSERT_TRUE(e);
@@ -336,7 +348,7 @@ TEST(TelemetryConsent, ErrorsOffSendsNoErrors) {
   harness_t h;
   h.consent = { true, false };
   EXPECT_FALSE(h.svc->emit(kind_e::error, "error", json { { "component", "x" } }));
-  h.svc->note_log(4, "an error line", 13);
+  h.svc->note_log(4, "an error line");
   EXPECT_TRUE(h.svc->emit(kind_e::usage, "feature_used", json { { "feature", "a" } }));
   h.svc->flush(true);
   h.svc->pump();
@@ -651,12 +663,13 @@ TEST(TelemetryIngest, APageNamesAFeatureWithItsOwnIdOnly) {
 
 TEST(TelemetryLog, HourlySummaryAndScrubbedErrors) {
   harness_t h;
-  h.svc->note_log(3, "a warning", 9);
-  h.svc->note_log(3, "a warning", 9);
+  h.svc->note_log(3, {});
+  h.svc->note_log(3, {});
   const std::string line = "Failed to open C:\\Users\\Zed\\Games\\game.exe for client \"Zed's laptop\" at 10.1.2.3";
-  h.svc->note_log(4, line.c_str(), line.size());
-  h.svc->note_log(4, line.c_str(), line.size());
-  h.svc->note_log(5, "fatal thing", 11);
+  h.svc->note_log_line(4, line);
+  h.svc->note_log(4, "Failed to open {} for client {} at {}");
+  h.svc->note_log(4, "Failed to open {} for client {} at {}");
+  h.svc->note_log(5, "fatal thing");
   h.svc->flush(true);
   h.svc->pump();
   json summary, error;
@@ -682,11 +695,9 @@ TEST(TelemetryLog, HourlySummaryAndScrubbedErrors) {
 
 TEST(TelemetryLog, TheFirstLineOfACodeBecomesAnErrorReportWithItsSiteAndNoText) {
   harness_t h;
-  const std::string line = "Download failed or rejected [https://cdn.example/steam/apps/1/header.jpg, code:23] for client \"Zed's laptop\"";
-  h.svc->note_log(4, line.c_str(), line.size(), "host", "src/httpcommon.cpp:838:download");
-  h.svc->note_log(4, line.c_str(), line.size(), "host", "src/httpcommon.cpp:838:download");
-  const std::string other = "Failed to create display for: <name>";
-  h.svc->note_log(4, other.c_str(), other.size(), "host", "");  // a line without a site: only the count
+  h.svc->note_log(4, "{} download failed or rejected: {}", "host", "src/httpcommon.cpp:838:download");
+  h.svc->note_log(4, "{} download failed or rejected: {}", "host", "src/httpcommon.cpp:838:download");
+  h.svc->note_log(4, {}, "host", {});  // an opaque line carries the fallback site
   h.svc->flush(true);
   h.svc->pump();
   std::vector<json> reports;
@@ -700,38 +711,48 @@ TEST(TelemetryLog, TheFirstLineOfACodeBecomesAnErrorReportWithItsSiteAndNoText) 
   ASSERT_FALSE(code_of_error.is_null());
   EXPECT_EQ(reports[0]["props"]["code"], code_of_error["props"]["code"]);  // the report and the count are one group
   EXPECT_EQ(reports[0]["props"]["loc"], "src/httpcommon.cpp:838:download");
+  EXPECT_EQ(code_of_error["props"]["site"], "httpcommon.cpp:838");
   const auto text = reports[0].dump();
   for (const char *planted : { "cdn.example", "Zed", "laptop", "header.jpg" }) EXPECT_EQ(text.find(planted), std::string::npos) << planted;
 }
 
-TEST(TelemetryLog, ErrorCodeIsStableAcrossNamesAndPaths) {
+TEST(TelemetryLog, TemplateGroupsArgumentValuesAndKeepsDistinctOperations) {
   harness_t h;
-  const std::string a = "Failed to open \"Alice's iPad\" at C:\\Users\\Alice\\x.mp4", b = "Failed to open \"Bob's phone\" at /home/bob/y.mp4";
-  h.svc->note_log(4, a.c_str(), a.size());
-  h.svc->flush(true);
-  h.svc->note_log(4, b.c_str(), b.size());
+  constexpr auto first = "{} failed to query display paths";
+  constexpr auto second = "{} failed to set HDR";
+  h.svc->note_log_line(4, "[code: ERROR_GEN_FAILURE] failed to query display paths");
+  h.svc->note_log(4, first, "host", "src/windows_utils.cpp:20:query");
+  h.svc->note_log_line(4, "[code: ERROR_NOT_SUPPORTED] failed to query display paths");
+  h.svc->note_log(4, first, "host", "src/windows_utils.cpp:20:query");
+  h.svc->note_log(4, second, "host", "src/windows_utils.cpp:21:set_hdr");
   h.svc->flush(true);
   h.svc->pump();
-  std::set<std::string> codes;
-  for (const auto &bt : h.posted)
-    for (const auto &e : bt["events"])
-      if (e["name"] == "error") codes.insert(e["props"]["code"]);
-  EXPECT_EQ(codes.size(), 1u);
+  std::map<std::string, json> errors;
+  for (const auto &batch : h.posted)
+    for (const auto &event : batch["events"])
+      if (event["name"] == "error") errors.emplace(event["props"]["site"].get<std::string>(), event["props"]);
+  ASSERT_EQ(errors.size(), 2u);
+  EXPECT_EQ(errors.at("windows_utils.cpp:20")["count"], 2);
+  EXPECT_EQ(errors.at("windows_utils.cpp:20")["code"], template_error_code(first));
+  EXPECT_EQ(errors.at("windows_utils.cpp:21")["code"], template_error_code(second));
+  EXPECT_NE(errors.at("windows_utils.cpp:20")["code"], errors.at("windows_utils.cpp:21")["code"]);
 }
 
-TEST(TelemetryLog, ErrorCodeIsStableAcrossNumbers) {
+TEST(TelemetryLog, TemplatesAreScrubbedAndOpaqueRecordsUseOnlyTheirSite) {
   harness_t h;
-  const std::string a = "Encoder failed after 12 frames", b = "Encoder failed after 987 frames";
-  h.svc->note_log(4, a.c_str(), a.size());
-  h.svc->flush(true);
-  h.svc->note_log(4, b.c_str(), b.size());
+  h.svc->note_log(4, "Cannot open sample-device.local at 192.0.2.31", "host", "src/logging.cpp:100:callback");
+  h.svc->note_log(4, {}, "host", "src/logging.cpp:101:callback");
+  h.svc->note_log(4, {}, "host", {});
   h.svc->flush(true);
   h.svc->pump();
-  std::set<std::string> codes;
-  for (const auto &bt : h.posted)
-    for (const auto &e : bt["events"])
-      if (e["name"] == "error") codes.insert(e["props"]["code"]);
-  EXPECT_EQ(codes.size(), 1u);
+  std::map<std::string, std::string> codes;
+  for (const auto &batch : h.posted)
+    for (const auto &event : batch["events"])
+      if (event["name"] == "error") codes.emplace(event["props"]["site"].get<std::string>(), event["props"]["code"].get<std::string>());
+  ASSERT_EQ(codes.size(), 3u);
+  EXPECT_EQ(codes.at("logging.cpp:100"), template_error_code("Cannot open <host> at <ip>"));
+  EXPECT_EQ(codes.at("logging.cpp:101"), template_error_code("logging.cpp:101"));
+  EXPECT_EQ(codes.at("host-log"), template_error_code("host-log"));
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -1009,7 +1030,7 @@ TEST(TelemetryThreads, EmittersAndSenderDoNotRace) {
         svc.record_encode_ms(5, 3.0);
         svc.record_capture_ms(5, 1.0);
         svc.emit(kind_e::usage, "feature_used", json { { "feature", "x" } });
-        svc.note_log(4, "an error", 8);
+        svc.note_log(4, "an error");
       }
     });
   }
@@ -1043,7 +1064,8 @@ TEST(TelemetryThreads, EmittersAndSenderDoNotRace) {
 // reports sent by hand, the Sparxie game and the transport
 
 // ordinary text of about n characters (a run of 32 or more letters would be taken for a token and replaced)
-static std::string words(std::size_t n) {
+static std::string
+words(std::size_t n) {
   std::string out;
   while (out.size() < n) out += "word ";
   return out;
@@ -1234,7 +1256,8 @@ TEST(TelemetryScreenshot, WhatIsNotAPictureOrIsTooLargeIsNotUploadedAndTheReport
   int with_state = 0;
   for (const auto &batch : h.posted)
     for (const auto &e : batch["events"]) {
-      EXPECT_FALSE(e["props"].contains("shot")); EXPECT_FALSE(e["props"].contains("shot_ref"));
+      EXPECT_FALSE(e["props"].contains("shot"));
+      EXPECT_FALSE(e["props"].contains("shot_ref"));
       if (e["props"].contains("shot_state")) ++with_state;
     }
   EXPECT_EQ(with_state, 6) << "every report says why it has no picture";
@@ -1260,7 +1283,8 @@ TEST(TelemetryScreenshot, AnUploadThatFailsLeavesTheReportWithTheWordWhy) {
   const auto calls = h.shot_calls;
   ingest_report_t none;
   h.svc->ingest("web", "1", report_with({ { "message", "plain" } }), &none);
-  EXPECT_EQ(h.shot_calls, calls); EXPECT_TRUE(none.shot.empty());
+  EXPECT_EQ(h.shot_calls, calls);
+  EXPECT_TRUE(none.shot.empty());
 }
 
 TEST(TelemetryScreenshot, OnlyTheReferenceTheServerReturnsAndOnlyOnAFeedbackReportSurvivesTheShape) {
@@ -1367,9 +1391,9 @@ TEST(TelemetryUserReport, AReportIsOnDiskWhenTheAnswerIsGivenEvenWhileAnotherThr
   struct flusher_t {
     std::atomic<bool> stop { false };
     std::thread thread;
-    explicit flusher_t(service_t &svc) : thread([this, &svc] {
-      while (!stop.load()) svc.flush(false);  // the sender thread swaps the buffer out all the time
-    }) {}
+    explicit flusher_t(service_t &svc): thread([this, &svc] {
+          while (!stop.load()) svc.flush(false);  // the sender thread swaps the buffer out all the time
+        }) {}
     ~flusher_t() {
       stop = true;
       if (thread.joinable()) thread.join();
@@ -1714,7 +1738,6 @@ TEST(TelemetryScrubVectors, EveryVectorHoldsForTheTextAndTheLogScrubber) {
   }
 }
 
-
 // ---------------------------------------------------------------------------------------------------------------------
 // what the envelope may carry: nothing a person typed
 
@@ -1812,8 +1835,8 @@ TEST(TelemetryPrivacyGate, PlantedNamesPathsAddressesAndTokensNeverReachABatch) 
   h.svc->set_context(c);
 
   const std::string line = "Cannot open \"EvaPhone\" at C:\\Users\\EvaSky\\Honkai Secret Mod\\x.exe from 10.0.31.57 mac 00:1A:2B:3C:4D:5E id 550e8400-e29b-41d4-a716-446655440000 mail eva.sky@example.com token=ghp_0123456789abcdefghijklmnopqrstuvwxyz steam 76561198012345678 host EVA-GAMING-PC.local";
-  h.svc->note_log(4, line.c_str(), line.size());
-  h.svc->note_log(5, line.c_str(), line.size());
+  h.svc->note_log_line(4, line);
+  h.svc->note_log(5, "Cannot open {} at {}");
 
   // a stream whose client and game came from a person's own names
   stream_dims_t dims;
@@ -2800,13 +2823,20 @@ TEST(InstallJournal, ExitCodesBecomeCodesAndClasses) {
 TEST(InstallJournal, AHostileJournalGivesNothingItDoesNotKnow) {
   std::string journal;
   journal += "not json at all\n";
-  journal += R"({"v":2,"kind":"start","run":"r1"})" "\n";  // another version
-  journal += R"({"v":1,"kind":"start","run":"../../etc/passwd","phase":"install"})" "\n";  // a run id that is a path
-  journal += R"({"v":1,"kind":"start","run":"r2","phase":"hack","from":"C:\\Users\\Eve\\9.9.9"})" "\n";
-  journal += R"({"v":1,"kind":"component","run":"r2","component":"C:\\Users\\Eve","step":"x","exit":1})" "\n";  // not a component of ours
-  journal += R"({"v":1,"kind":"component","run":"r2","component":"vdd","step":"A very long step with spaces and a path C:\\x","exit":99999999999999})" "\n";  // out of range
-  journal += R"({"v":1,"kind":"component","run":"r2","component":"vdd","step":"Verify Step!","exit":7})" "\n";
-  journal += R"({"v":1,"kind":"finish","run":"r2","exit":"zero"})" "\n";
+  journal += R"({"v":2,"kind":"start","run":"r1"})"
+             "\n";  // another version
+  journal += R"({"v":1,"kind":"start","run":"../../etc/passwd","phase":"install"})"
+             "\n";  // a run id that is a path
+  journal += R"({"v":1,"kind":"start","run":"r2","phase":"hack","from":"C:\\Users\\Eve\\9.9.9"})"
+             "\n";
+  journal += R"({"v":1,"kind":"component","run":"r2","component":"C:\\Users\\Eve","step":"x","exit":1})"
+             "\n";  // not a component of ours
+  journal += R"({"v":1,"kind":"component","run":"r2","component":"vdd","step":"A very long step with spaces and a path C:\\x","exit":99999999999999})"
+             "\n";  // out of range
+  journal += R"({"v":1,"kind":"component","run":"r2","component":"vdd","step":"Verify Step!","exit":7})"
+             "\n";
+  journal += R"({"v":1,"kind":"finish","run":"r2","exit":"zero"})"
+             "\n";
   const auto r = install_journal::events_from_journal(journal, 1000);
   ASSERT_TRUE(r.consumed);
   const auto *vdd = find(r, "install_result", "vdd");
@@ -2823,7 +2853,8 @@ TEST(InstallJournal, AHostileJournalGivesNothingItDoesNotKnow) {
   }
   // a journal of any size is read from its end and bounded
   std::string big;
-  for (int i = 0; i < 5000; ++i) big += R"({"v":1,"kind":"component","run":"r3","component":"vdd","step":"s","exit":1})" "\n";
+  for (int i = 0; i < 5000; ++i) big += R"({"v":1,"kind":"component","run":"r3","component":"vdd","step":"s","exit":1})"
+                                        "\n";
   EXPECT_LE(install_journal::events_from_journal(big, install_journal::QUIET_MS + 1).items.size(), 40u);
 }
 
@@ -3250,65 +3281,6 @@ TEST(OptOutService, RecordsWithTheSameTAreMatchedToTheirOwnSendResult) {
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
-// The code of an error line (src/telemetry/error_code.h)
-
-#include "src/telemetry/error_code.h"
-
-TEST(ErrorCode, ApostropheInsideAWordIsPartOfTheWord) {
-  EXPECT_EQ(telemetry::error_head("Couldn't read packet: end of file"), "couldn't read packet");
-  EXPECT_EQ(telemetry::error_head("Couldn't accept incoming connections: aborted"), "couldn't accept incoming connections");
-  EXPECT_NE(telemetry::error_code_of("Couldn't read packet: x"), telemetry::error_code_of("Couldn't accept incoming connections: x"));
-  // an apostrophe that opens a value still ends the head
-  EXPECT_EQ(telemetry::error_head("Client 'Alice' refused"), "client");
-}
-
-TEST(ErrorCode, AComponentPrefixIsKeptSoItsMessagesStayApart) {
-  EXPECT_EQ(telemetry::error_head("NvEnc: NvEncOpenEncodeSessionEx() failed: 8"), "nvenc nvencopenencodesessionex");
-  EXPECT_NE(telemetry::error_code_of("NvEnc: NvEncOpenEncodeSessionEx() failed: 8"), telemetry::error_code_of("NvEnc: encoding format is not supported by the gpu, NVENCAPI_VERSION: 13"));
-  EXPECT_EQ(telemetry::error_head("Audio capture: failed to initialize microphone"), "audio capture failed to initialize microphone");
-  // a longer first part is a message, not a prefix: the colon ends the head; what follows (a reason from the system, often translated) is not part of the code
-  EXPECT_EQ(telemetry::error_head("Couldn't accept incoming connections: x: y"), "couldn't accept incoming connections");
-  EXPECT_EQ(telemetry::error_head("Failed to apply the profile: access denied"), "failed to apply the profile");
-}
-
-TEST(ErrorCode, ALeadingTagIsPartOfTheHeadAndNumbersAreNot) {
-  EXPECT_EQ(telemetry::error_head("[Display Init] Configured adapter [0x1] differs"), "display init configured adapter");
-  EXPECT_EQ(telemetry::error_head("[vdd_capture] failed to query IDXGIDevice for adapter LUID: 0x80070005"), "vdd_capture failed to query idxgidevice for adapter luid");
-  EXPECT_NE(telemetry::error_code_of("[A b] one"), telemetry::error_code_of("[A b] two"));
-  // a tag with digits or symbols is data, not a tag
-  EXPECT_EQ(telemetry::error_head("[0x7ff] oops"), "");
-  EXPECT_EQ(telemetry::error_head("[user@example] oops"), "");
-}
-
-TEST(ErrorCode, TheSameMessageWithOtherValuesIsTheSameCode) {
-  EXPECT_EQ(telemetry::error_code_of("Download failed or rejected [https://a/b.jpg, code:23] [src/x.cpp:838:f]"), telemetry::error_code_of("Download failed or rejected [https://c/d.png, code:35] [src/x.cpp:838:f]"));
-  EXPECT_EQ(telemetry::error_code_of("Failed to create display for: <name>"), telemetry::error_code_of("Failed to create display for: "));
-  EXPECT_EQ(telemetry::error_code_of("x").size(), 9u);
-}
-
-TEST(ErrorCode, ALongMessageWithMultiByteCharactersIsCutAtBytesNotCharacters) {
-  // 1 + 40 * 3 bytes, no space: the head is cut at 96 bytes, in the middle of a character
-  std::string no_space = "x";
-  for (int i = 0; i < 40; ++i) no_space += "错";
-  const auto head = telemetry::error_head(no_space);
-  EXPECT_EQ(head.size(), 96u);
-  // spaces: cut at 96 bytes, then back to the last space
-  std::string spaced = "加载失败";
-  for (int i = 0; i < 12; ++i) spaced += " 加载失败";
-  const auto spaced_head = telemetry::error_head(spaced);
-  EXPECT_LE(spaced_head.size(), 96u);
-  EXPECT_EQ(spaced_head.back() & 0x80, 0x80);  // it ends on the last whole word, not on a space
-  // the codes are pinned: scripts/telemetry/test_error_code_catalogue.py holds the same two values (the dictionary tool must agree with this function byte for byte)
-  EXPECT_EQ(telemetry::error_code_of(no_space), "ec2d441a4");
-  EXPECT_EQ(telemetry::error_code_of(spaced), "ed4859417");
-}
-
-TEST(ErrorCode, TheHeadIsBounded) {
-  const auto head = telemetry::error_head(std::string(300, 'a') + " " + std::string(300, 'b'));
-  EXPECT_LE(head.size(), 96u);
-}
-
-// ---------------------------------------------------------------------------------------------------------------------
 // The service and the start-up: XP_SVC_CORE_RESTART and XP_SLOW_READY
 
 #include "src/telemetry/service_lifecycle.h"
@@ -3495,12 +3467,18 @@ TEST(ServiceLifecycle, ACrashShortAfterTheStartIsAProblemAndItBecomesSevereWhenI
 
 TEST(ServiceLifecycle, TheFileOfAHostileServiceGivesNothingItDoesNotKnow) {
   std::string text = "not json\n";
-  text += R"({"v":2,"kind":"svc_start","t":1000})" "\n";
-  text += R"({"v":1,"kind":"core_start","t":1000,"how":"stolen","pid":1})" "\n";
-  text += R"({"v":1,"kind":"core_exit","t":-5,"exit":0})" "\n";
-  text += R"({"v":1,"kind":"formatc","t":1000})" "\n";
-  text += R"({"v":1,"kind":"core_exit","t":1000,"exit":99999999999999,"life_ms":5,"requested":false})" "\n";
-  text += R"({"v":1,"kind":"core_start","t":1000,"how":"adopted","pid":7,"age_ms":5,"cause":"C:\\Users\\Eve"})" "\n";
+  text += R"({"v":2,"kind":"svc_start","t":1000})"
+          "\n";
+  text += R"({"v":1,"kind":"core_start","t":1000,"how":"stolen","pid":1})"
+          "\n";
+  text += R"({"v":1,"kind":"core_exit","t":-5,"exit":0})"
+          "\n";
+  text += R"({"v":1,"kind":"formatc","t":1000})"
+          "\n";
+  text += R"({"v":1,"kind":"core_exit","t":1000,"exit":99999999999999,"life_ms":5,"requested":false})"
+          "\n";
+  text += R"({"v":1,"kind":"core_start","t":1000,"how":"adopted","pid":7,"age_ms":5,"cause":"C:\\Users\\Eve"})"
+          "\n";
   const auto records = parse(text);
   ASSERT_EQ(records.size(), 2u);
   EXPECT_EQ(records[1].cause, "boot");  // a cause that is not one of the words becomes the default

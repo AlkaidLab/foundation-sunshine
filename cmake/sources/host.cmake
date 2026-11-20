@@ -186,7 +186,7 @@ set(SUNSHINE_HOST_SOURCES
     src/telemetry/service_lifecycle.cpp src/telemetry/service_lifecycle.h
     src/telemetry/stream_health.cpp src/telemetry/stream_health.h
     src/telemetry/stream_stats.cpp src/telemetry/stream_stats.h
-    src/telemetry/service.cpp src/telemetry/service.h
+    src/telemetry/service.cpp src/telemetry/service.h src/telemetry/service_log.cpp
     src/telemetry/transport.cpp src/telemetry/transport.h
     src/telemetry/telemetry.cpp src/telemetry/telemetry.h
     src/telemetry/wer_event.cpp src/telemetry/wer_event.h
