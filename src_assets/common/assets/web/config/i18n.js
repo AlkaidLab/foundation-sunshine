@@ -127,10 +127,14 @@ export default async function() {
 /** The code a choice shows: the system's language for `system`, else the code (when the host offers it). */
 export const resolveChoice = (choice) => (choice === LOCALE_SYSTEM || !SUPPORTED_LOCALES.includes(choice) ? detectSystemLocale() : choice);
 
+// 语言热切换的请求序号：下载消息期间用户可能又选了别的语言，只有最新一次调用能提交语言状态（旧调用保留已注册的消息即可）
+let localeRequestId = 0;
+
 /** Shows a language at once: its messages are fetched when they are not loaded, the page's lang follows. */
 export async function applyLocale(locale) {
     // zh 变体归一，与初始化同一规则（见 init 内注释）
     if (/^zh/i.test(locale) && locale !== 'zh' && locale !== 'zh_TW') locale = 'zh';
+    const request = ++localeRequestId;
     activeLocale.value = locale;
     if (!webI18n) return;
     try {
@@ -148,6 +152,8 @@ export async function applyLocale(locale) {
     } catch (e) {
         console.error("Failed to download translations", e);
     }
+    // 等待下载期间有了更新的选择：这次调用只贡献已注册的消息，语言状态交给最新那次
+    if (request !== localeRequestId) return;
     webI18n.global.locale.value = locale;
     document.querySelector('html').setAttribute('lang', locale.replace(/_/g, '-'));
 }
