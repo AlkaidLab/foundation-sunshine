@@ -453,7 +453,6 @@ jobs:
           & .\scripts\packaging\test-usbip-root.ps1
           & .\src_assets\windows\misc\usbip\smoke-test-usbip-package.ps1
           & .\src_assets\windows\misc\usbip\smoke-test-usbip-roothub-guard.ps1
-
   mat_smoke:
     name: MAT software regressions
     needs: changes
