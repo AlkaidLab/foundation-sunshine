@@ -26,6 +26,7 @@
 #include "src/confighttp/systeminfo.h"
 #include "src/confighttp/telemetry.h"
 #include "src/file_mapping/config_http.h"
+#include "src/file_transfer/file_transfer_http.h"
 #include "src/network.h"
 #include "src/text_context/http.h"
 #include "src/tray/tray_http.h"
@@ -61,6 +62,11 @@ namespace confighttp {
     // basic-auth via the lambda below.
     clipboard_http::register_routes(server,
       [](clipboard_http::resp_https_t resp, clipboard_http::req_https_t req) {
+        return authenticate(std::move(resp), std::move(req));
+      });
+    // Files the user copied, offered to clients through the clipboard (kind 4).
+    file_transfer_http::register_routes(server,
+      [](file_transfer_http::resp_https_t resp, file_transfer_http::req_https_t req) {
         return authenticate(std::move(resp), std::move(req));
       });
     text_context::http::register_routes(server,

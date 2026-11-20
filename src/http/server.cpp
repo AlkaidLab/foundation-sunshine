@@ -63,6 +63,34 @@ namespace web::detail {
 #endif
     file->message.body().reset(std::move(handle), ec);
     if (ec) return false;
+    return send_prepared_file(std::move(file), values);
+  }
+
+  bool
+  ResponseBuffer::write_native_file(StatusCode status, native_file_t native, std::uint64_t offset, const CaseInsensitiveMultimap &values) {
+#ifdef _WIN32
+    if (native == nullptr || native == INVALID_HANDLE_VALUE) return false;
+#else
+    if (native < 0) return false;
+#endif
+    // Adopt first so every return below, the throw included, closes the file.
+    beast::file handle;
+    handle.native_handle(native);
+    if (started()) throw std::logic_error("File response must be the first response write");
+    auto file = std::make_shared<FileResponse>(status, version);
+    error_code ec;
+    file->message.body().reset(std::move(handle), ec);
+    if (ec) return false;
+    if (offset != 0) {
+      // The body's length becomes what follows the offset (Beast >= 1.84).
+      file->message.body().seek(offset, ec);
+      if (ec) return false;
+    }
+    return send_prepared_file(std::move(file), values);
+  }
+
+  bool
+  ResponseBuffer::send_prepared_file(std::shared_ptr<FileResponse> file, const CaseInsensitiveMultimap &values) {
     apply_headers(file->message, values);
     file->message.keep_alive(keep_alive && !close_connection_after_response);
     // Capture the open handle's size. Appends are excluded from this response;
