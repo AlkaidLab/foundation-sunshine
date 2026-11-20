@@ -616,5 +616,4 @@ onBeforeUnmount(() => { window.removeEventListener('resize', onSearchResize); na
 .web-caption { position: absolute; top: 0; left: var(--m-rail-w, 0px); right: 0; z-index: 40; height: 48px; display: grid; grid-template-columns: minmax(max-content, 1fr) minmax(0, 560px) minmax(max-content, 1fr); align-items: center; transition: left var(--m-spring-default-spatial-duration, .4s) var(--m-spring-default-spatial, ease); }
 .web-caption__brand { padding-inline-start: 16px; pointer-events: none; }
 .web-caption__search { display: flex; align-items: center; justify-content: center; min-width: 0; padding: 0 12px; }
-@media (max-width: 599.98px) { .web-caption { grid-template-columns: minmax(max-content, 1fr) auto auto; } .web-caption__search { padding: 0 8px; } }
 </style>

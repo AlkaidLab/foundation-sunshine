@@ -15,14 +15,9 @@ html.m-has-wallpaper .m-web .m-scene, html.m-has-wallpaper .m-web .m-page__bar {
 .m-scene--expanded .m-web-utils--rail { flex-direction: row; }
 /* In bottom bar mode there is no rail: the account button (theme and account in one menu) sits in the caption bar. */
 .m-web-utils--bar { display: flex; }
-/* the caption bar of a phone: the sizes of its buttons (four icons of one size, touching, no empty slot for the status bell, the connect button a plain icon) are m3e's layout.css, the same in the control panel;
-   the Web UI keeps its own grid (brand, search, actions) and the width of its account cell */
-@media (max-width: 599.98px) {
-  .m-web .web-caption { grid-template-columns: minmax(0, 1fr) auto auto; }
-  .m-web .web-caption__brand { min-width: 0; overflow: hidden; padding-inline-start: 12px; }
-  .web-caption__search { padding: 0; }
-  .web-caption .m-web-utils__cell { width: 44px; }
-}
+/* the caption bar: the sizes and the gap of its buttons, the grid of a phone and what a phone leaves out are foundation-ui's (css/layout.css, one design for both products; MCaption decides `data-phone`
+   from the shell's own rule, so a phone on its side is a phone too); the Web UI only gives its account cell the size of the other buttons */
+.web-caption .m-web-utils__cell { width: var(--m-cap-btn, 44px); height: var(--m-cap-btn, 44px); }
 
 /* One column for every page, as wide as the pane up to its maximum and centred beyond it (the same column as the page title and content of the pages); wide pages (tables, editors) get a wider one. */
 .home-page > .container, .home-page > .container-fluid, .clients-content, .pin-page .client-page-content, .password-page > .container, .troubleshooting-page > .container,
