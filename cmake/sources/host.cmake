@@ -77,7 +77,6 @@ set(SUNSHINE_HOST_SOURCES
     src/audio_default_wait.h
     src/audio_devices.cpp src/audio_devices.h
     src/audio_sink_plan.cpp src/audio_sink_plan.h
-    src/audio_vb_cable.cpp src/audio_vb_cable.h
     src/mic_mixer.cpp src/mic_mixer.h
     src/process.cpp src/process.h
     src/client_interface.cpp src/client_interface.h
