@@ -353,6 +353,7 @@ namespace {
       previous_config_ = config::sunshine.config_file;
       previous_resolutions_ = config::nvhttp.resolutions;
       previous_fps_ = config::nvhttp.fps;
+      previous_max_bitrate_ = config::host_max_bitrate_kbps();
       config::nvhttp.resolutions = { "1920x1080", "2736x1824", "3840x2160" };
       config::nvhttp.fps = { "60", "120" };
       prepared_ = true;
@@ -375,11 +376,13 @@ namespace {
       config::sunshine.config_file = previous_config_;
       config::nvhttp.resolutions = std::move(previous_resolutions_);
       config::nvhttp.fps = std::move(previous_fps_);
+      config::set_host_max_bitrate_kbps(previous_max_bitrate_);
     }
 
   private:
     std::string previous_config_;
     std::vector<std::string> previous_resolutions_, previous_fps_;
+    int previous_max_bitrate_ = 0;
     bool prepared_ = false;
   };
 }  // namespace
@@ -403,12 +406,14 @@ TEST_F(ConfigHttpVddSave, MissingVddXmlSavesOnlySunshine) {
   ASSERT_TRUE(std::filesystem::remove(vdd_path));
   auto client = connect();
   const auto payload = nlohmann::json { { "adapter_name", "" },
-    { "resolutions", "[1920x1080,3840x2160]" }, { "fps", "[60,120]" } };
+    { "resolutions", "[1920x1080]" }, { "fps", "[60]" } };
   const auto response = client->request("POST", "/api/config", payload.dump(), { { "Content-Type", "application/json" }, { "Authorization", authorization() } });
   ASSERT_EQ(response->status_code, "200 OK");
   EXPECT_EQ(nlohmann::json::parse(response->content.string()).at("status"), "true");
   const auto saved = config::get_config_snapshot();
   ASSERT_TRUE(saved);
+  EXPECT_EQ(saved->at("resolutions"), "[1920x1080]");
+  EXPECT_EQ(saved->at("fps"), "[60]");
   EXPECT_FALSE(std::filesystem::exists(vdd_path));
 }
 
@@ -594,12 +599,10 @@ TEST_F(ConfigHttpVddSave, SuccessfulVddSaveAlsoSynchronizesClientRuntime) {
 /** @brief A transactional VDD save retains previous-locale output and upstream's live bitrate update. */
 TEST_F(ConfigHttpVddSave, TransactionPreservesPreviousLocaleAndLiveBitrate) {
   std::ofstream(file_handler::path_from_utf8(config::sunshine.config_file)) << original_config << "locale = cs\n";
-  const auto original_cap = config::host_max_bitrate_kbps();
   std::string previous_locale;
   EXPECT_TRUE(config::update_full_config({ { "max_bitrate", "25000" }, { "locale", "en" } }, &previous_locale, true));
   EXPECT_EQ(previous_locale, "cs");
   EXPECT_EQ(config::host_max_bitrate_kbps(), 25000);
-  config::set_host_max_bitrate_kbps(original_cap);
   const auto xml = file_handler::read_file(file_handler::path_to_utf8(vdd_path).c_str());
   EXPECT_NE(xml.find("<width>3840</width>"), std::string::npos);
   EXPECT_NE(xml.find("<g_refresh_rate>60</g_refresh_rate>"), std::string::npos);
