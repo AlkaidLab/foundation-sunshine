@@ -672,7 +672,7 @@ namespace audio {
       samples->stop();
       thread.join();
 
-      shutdown_event->view();
+      (void) shutdown_event->view(200ms);
     });
 
     const int frame_size = config.packetDuration * stream.sampleRate / 1000;

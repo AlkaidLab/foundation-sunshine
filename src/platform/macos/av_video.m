@@ -21,10 +21,14 @@
   NSMutableArray *result = [NSMutableArray array];
 
   for (uint32_t i = 0; i < count; i++) {
+    NSString *dispName = [self getDisplayName:displays[i]];
+    if (!dispName) {
+      dispName = [NSString stringWithFormat:@"Display %u", displays[i]];
+    }
     [result addObject:@{
       @"id": [NSNumber numberWithUnsignedInt:displays[i]],
-      @"name": [NSString stringWithFormat:@"%d", displays[i]],
-      @"displayName": [self getDisplayName:displays[i]],
+      @"name": [NSString stringWithFormat:@"%u", displays[i]],
+      @"displayName": dispName,
     }];
   }
 
@@ -32,13 +36,14 @@
 }
 
 + (NSString *)getDisplayName:(CGDirectDisplayID)displayID {
-  NSScreen *screens = [NSScreen screens];
+  NSArray<NSScreen *> *screens = [NSScreen screens];
   for (NSScreen *screen in screens) {
-    if (screen.deviceDescription[@"NSScreenNumber"] == [NSNumber numberWithUnsignedInt:displayID]) {
-      return screen.localizedName;
+    NSNumber *screenNum = screen.deviceDescription[@"NSScreenNumber"];
+    if (screenNum && [screenNum unsignedIntValue] == displayID) {
+      return screen.localizedName ?: [NSString stringWithFormat:@"Display %u", displayID];
     }
   }
-  return nil;
+  return [NSString stringWithFormat:@"Display %u", displayID];
 }
 
 - (id)initWithDisplay:(CGDirectDisplayID)displayID frameRate:(int)frameRate {
@@ -75,10 +80,13 @@
 }
 
 - (void)dealloc {
+  [self.session stopRunning];
+  [self.videoOutputs removeAllObjects];
+  [self.captureCallbacks removeAllObjects];
+  [self.captureSignals removeAllObjects];
   [self.videoOutputs release];
   [self.captureCallbacks release];
   [self.captureSignals release];
-  [self.session stopRunning];
   [super dealloc];
 }
 
@@ -118,7 +126,9 @@
     dispatch_semaphore_t signal = dispatch_semaphore_create(0);
 
     [self.videoOutputs setObject:videoOutput forKey:videoConnection];
-    [self.captureCallbacks setObject:frameCallback forKey:videoConnection];
+    id copiedBlock = [frameCallback copy];
+    [self.captureCallbacks setObject:copiedBlock forKey:videoConnection];
+    [copiedBlock release];
     [self.captureSignals setObject:signal forKey:videoConnection];
 
     [self.session startRunning];

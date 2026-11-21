@@ -2,6 +2,8 @@
 
 add_compile_definitions(SUNSHINE_PLATFORM="macos")
 
+set(SUNSHINE_ASSETS_DIR_DEF "/Applications/Sunshine.app/Contents/Resources/assets")
+
 set(MACOS_LINK_DIRECTORIES
         /opt/homebrew/lib
         /opt/local/lib
@@ -17,6 +19,9 @@ if(NOT BOOST_USE_STATIC AND NOT FETCH_CONTENT_BOOST_USED)
     ADD_DEFINITIONS(-DBOOST_LOG_DYN_LINK)
 endif()
 
+find_library(AUDIO_TOOLBOX_LIBRARY AudioToolbox REQUIRED)
+find_library(CORE_AUDIO_LIBRARY CoreAudio REQUIRED)
+
 list(APPEND SUNSHINE_EXTERNAL_LIBRARIES
         ${APP_KIT_LIBRARY}
         ${APP_SERVICES_LIBRARY}
@@ -24,7 +29,9 @@ list(APPEND SUNSHINE_EXTERNAL_LIBRARIES
         ${CORE_MEDIA_LIBRARY}
         ${CORE_VIDEO_LIBRARY}
         ${FOUNDATION_LIBRARY}
-        ${VIDEO_TOOLBOX_LIBRARY})
+        ${VIDEO_TOOLBOX_LIBRARY}
+        ${AUDIO_TOOLBOX_LIBRARY}
+        ${CORE_AUDIO_LIBRARY})
 
 set(APPLE_PLIST_FILE "${SUNSHINE_SOURCE_ASSETS_DIR}/macos/assets/Info.plist")
 

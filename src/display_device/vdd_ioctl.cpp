@@ -6,6 +6,8 @@
  * `<Windows.h>` blast radius out of `vdd_utils.cpp`.
  */
 
+#ifdef _WIN32
+
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
 
@@ -545,3 +547,19 @@ namespace display_device::vdd_ioctl {
   }
 
 }  // namespace display_device::vdd_ioctl
+
+#else  // !_WIN32
+#include "vdd_ioctl.h"
+
+namespace display_device::vdd_ioctl {
+  std::uint32_t required_sealed_frame_channel_flags() { return 0; }
+  adapter_status_t query_adapter_status() { return {}; }
+  bool adapter_present() { return false; }
+  result send_command(const std::wstring &) { return result::interface_missing; }
+  bool ping() { return false; }
+  frame_channel_status query_frame_channel_caps(frame_channel_caps &) { return frame_channel_status::interface_missing; }
+  frame_channel_open_status open_frame_channel(const frame_channel_open_request &, frame_channel_open_response &, bool) {
+    return frame_channel_open_status::interface_missing;
+  }
+}  // namespace display_device::vdd_ioctl
+#endif  // _WIN32

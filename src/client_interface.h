@@ -169,7 +169,7 @@ namespace client_interface {
     if (error) return {};
     const auto written = std::filesystem::last_write_time(file, error);
     if (error) return {};
-    return std::string { type } + ':' + std::to_string(size) + ':' + std::to_string(written.time_since_epoch().count()) + ';';
+    return std::string { type } + ':' + std::to_string(size) + ':' + std::to_string(static_cast<long long>(written.time_since_epoch().count())) + ';';
   }
 
   /// The application list tag with the art in it: `apps_art` is "<app id>:<live art version>;" for every application. A client re-reads the list only when the tag changes, so a

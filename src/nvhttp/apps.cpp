@@ -83,7 +83,7 @@ namespace nvhttp::apps {
       std::error_code time_error;
       const auto written = std::filesystem::last_write_time(served, time_error);
       // fs-n4950-20261111 [time.point.cast]: a file time becomes the system clock's, for the seconds an HTTP-date carries.
-      const std::int64_t last_modified = time_error ? std::int64_t { -1 } : std::chrono::duration_cast<std::chrono::seconds>(std::chrono::clock_cast<std::chrono::system_clock>(written).time_since_epoch()).count();
+      const std::int64_t last_modified = time_error ? std::int64_t { -1 } : std::chrono::duration_cast<std::chrono::seconds>(std::chrono::file_clock::to_sys(written).time_since_epoch()).count();
 
       web::CaseInsensitiveMultimap validators;
       // fs-rfc9110-http-20261110 section 8.8.3: one tag per art kind.

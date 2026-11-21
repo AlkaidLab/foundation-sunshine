@@ -4800,8 +4800,13 @@ namespace video {
         channel_data,
       });
 
-      // Wait for join signal
-      join_event.view();
+      // Wait for join signal or session shutdown
+      auto shutdown_evt = mail->event<bool>(mail::shutdown);
+      while (!join_event.view(100ms)) {
+        if (shutdown_evt->peek()) {
+          break;
+        }
+      }
     }
   }
 
