@@ -2256,10 +2256,8 @@ namespace video {
             // only support a single display session per device/application.
             disp.reset();
 
-            // Refresh display names since a display removal might have caused the reinitialization
             refresh_displays(encoder.platform_formats->dev_type, display_names, display_p);
 
-            // Process any pending display switch with the new list of displays
             bool user_switched = false;
             if (switch_display_event->peek()) {
               display_p = std::clamp(*switch_display_event->pop(), 0, (int) display_names.size() - 1);
@@ -2288,7 +2286,6 @@ namespace video {
               }
             }
 
-            // reset_display() will sleep between retries
             reset_capture_display(disp, target_display_name, config);
             if (disp) {
               for (auto &capture_ctx : capture_ctxs) {
@@ -4126,6 +4123,13 @@ namespace video {
     }
 
     while (encode_session_ctx_queue.running()) {
+      while (encode_session_ctx_queue.peek()) {
+        auto pending = encode_session_ctx_queue.pop();
+        if (!pending) break;
+        if (!synced_session_ctxs.empty()) pending->config.display_name = synced_session_ctxs.front()->config.display_name;
+        synced_session_ctxs.emplace_back(std::make_unique<sync_session_ctx_t>(std::move(*pending)));
+      }
+      if (!streaming::retain_active_recovery_sessions(synced_session_ctxs, [](auto &ctx) { return ctx.shutdown_event->peek(); }, [](auto &ctx) { ctx.join_event->raise(true); })) return encode_e::ok;
       // Refresh display names since a display removal might have caused the reinitialization
       refresh_displays(encoder.platform_formats->dev_type, display_names, display_p);
 
@@ -4386,7 +4390,6 @@ namespace video {
     auto idr_events = mail->event<bool>(mail::idr);
     auto resolution_change_event = mail->event<std::pair<std::uint32_t, std::uint32_t>>(mail::resolution_change);
 
-    // Encoding takes place on this thread
     platf::adjust_thread_priority(platf::thread_priority_e::high);
 
     // Cache window capture mode check outside the loop
@@ -4399,12 +4402,9 @@ namespace video {
     bool pyrowave_terminal_failure_pending = false;
 #endif
 
-    // Track display dimensions for resolution change detection
     int last_display_width = 0;
     int last_display_height = 0;
 
-    // Track initial scale ratio (encoding resolution / display resolution)
-    // Used to maintain consistent scaling when display resolution changes
     float initial_scale_x = 1.0f;
     float initial_scale_y = 1.0f;
 
@@ -4416,16 +4416,15 @@ namespace video {
         continue;
       }
 
-      // Wait for the display to be ready
       std::shared_ptr<platf::display_t> display;
       {
         auto lg = ref->display_wp.lock();
-        if (ref->display_wp->expired()) {
-          BOOST_LOG(verbose) << "[Display] Display object expired, waiting for reinit...";
-          // std::this_thread::sleep_for(20ms);
-          continue;
-        }
         display = ref->display_wp->lock();
+      }
+      if (!display) {
+        // cpp-condition-variable-20261121, wait_for: wake promptly on shutdown.
+        shutdown_event->view(20ms);
+        continue;
       }
 
       // Detect display resolution changes (e.g., rotation causing width/height swap)

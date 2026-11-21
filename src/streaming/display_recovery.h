@@ -6,6 +6,17 @@
 #include <vector>
 
 namespace streaming {
+  template <class Sessions, class IsStopped, class SignalJoin>
+  bool
+  retain_active_recovery_sessions(Sessions &sessions, IsStopped &&is_stopped, SignalJoin &&signal_join) {
+    std::erase_if(sessions, [&](auto &session) {
+      if (!is_stopped(*session)) return false;
+      signal_join(*session);
+      return true;
+    });
+    return !sessions.empty();
+  }
+
   // ms-query-display-config-20261121, flags: topology can change.
   // ms-dxgi-duplicate-output-20261121, Remarks: duplication belongs to an output.
   inline std::optional<std::string>

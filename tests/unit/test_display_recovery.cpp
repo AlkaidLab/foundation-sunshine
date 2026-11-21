@@ -1,6 +1,7 @@
 #include "src/streaming/display_recovery.h"
 
 #include <gtest/gtest.h>
+#include <memory>
 
 TEST(DisplayRecovery, VirtualTargetWaitsUntilItsNewDisplayAppears) {
   const std::vector<std::string> absent { "physical" };
@@ -23,4 +24,28 @@ TEST(DisplayRecovery, FailedOrSkippedConfigurationDoesNotCommit) {
   EXPECT_EQ(width, 100);
   EXPECT_TRUE(streaming::commit_display_resolution(true, true, [&] { width = 200; }));
   EXPECT_EQ(width, 200);
+}
+
+TEST(DisplayRecovery, StoppedSessionsAreJoinedWhileActiveSessionsKeepWaiting) {
+  struct session_t {
+    bool stopped;
+    int *joins;
+  };
+  int joins_a = 0;
+  int joins_b = 0;
+  std::vector<std::unique_ptr<session_t>> sessions;
+  sessions.push_back(std::make_unique<session_t>(true, &joins_a));
+  sessions.push_back(std::make_unique<session_t>(false, &joins_b));
+  auto prune = [&] {
+    return streaming::retain_active_recovery_sessions(sessions, [](const auto &session) { return session.stopped; }, [](auto &session) { ++*session.joins; });
+  };
+  EXPECT_TRUE(prune());
+  ASSERT_EQ(sessions.size(), 1u);
+  EXPECT_EQ(joins_a, 1);
+  EXPECT_EQ(joins_b, 0);
+  sessions.front()->stopped = true;
+  EXPECT_FALSE(prune());
+  EXPECT_TRUE(sessions.empty());
+  EXPECT_EQ(joins_a, 1);
+  EXPECT_EQ(joins_b, 1);
 }
