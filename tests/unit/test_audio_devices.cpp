@@ -104,6 +104,16 @@ TEST(AudioDevices, VbCableStateReadyWhenBothSidesAreActive) {
   EXPECT_EQ(status.render_name, "CABLE Input (VB-Audio Virtual Cable)");
 }
 
+TEST(AudioDevices, VbCableIsReadyWithEitherTwoOrThreeEndpoints) {
+  auto extra = make(flow_e::render, "{0.0.0.00000000}.{cable-16ch}", "CABLE In 16 Ch (VB-Audio Virtual Cable)", "VB-Audio Virtual Cable");
+  for (const auto &devices : { std::vector<endpoint_t> { cable_input(), cable_output() },
+                               std::vector<endpoint_t> { extra, cable_input(), cable_output() } }) {
+    const auto status = summarize_vb_cable(devices);
+    EXPECT_TRUE(status.installed);
+    EXPECT_EQ(status.state, "ready");
+  }
+}
+
 TEST(AudioDevices, VbCableStatePartialWhenOneSideIsUsable) {
   EXPECT_EQ(summarize_vb_cable({ cable_input() }).state, "partial");
   EXPECT_EQ(summarize_vb_cable({ cable_input(), cable_output("disabled") }).state, "partial");

@@ -24,7 +24,6 @@ const props = defineProps(['platform', 'config', 'resolutions', 'fps'])
 const { t, te } = useI18n()
 const config = ref(props.config)
 const cfgNav = inject('cfgNav')
-const webShell = inject('webShell', null)
 const live = useSettingsLive({ platform: props.platform, want: ['session', 'bitrate'] })
 const audio = useAudioDevices(props.platform)
 const showDownloadConfirm = ref(false)
@@ -41,8 +40,6 @@ let micLevelTimer
 
 // whether the Steam Streaming Speakers driver is there, read from the playback devices: the switch below is the setting "install it
 // when it is missing", this says what the host has now
-// after VB-CABLE was installed or enabled here the list of the shell (sidebar, overview) is read again as well
-const refreshDevices = () => { audio.refresh(); webShell?.refreshAudio?.() }
 const steamDriver = computed(() => steamDriverState(audio.render.value))
 
 const microphoneBackend = computed(() => config.value.microphone_redirect_backend || 'auto')
@@ -217,7 +214,7 @@ onBeforeUnmount(() => {
           <CfgSwitch :config="config" k="install_steam_audio_drivers" def="enabled">
             <MChip v-if="audio.loaded.value && !audio.failed.value" data-steam-driver :data-steam-state="steamDriver" :tone="steamDriver === 'ready' ? 'ok' : 'warn'">{{ $t(`config.steam_driver_${steamDriver}`) }}</MChip>
           </CfgSwitch>
-          <VbCableRow v-if="audio.loaded.value && !vbCableReady(audio.vb.value)" :vb="audio.vb.value" :loaded="audio.loaded.value" @download="handleDownloadVSink" @open-devices="handleOpenDevices" @changed="refreshDevices" />
+          <VbCableRow v-if="audio.loaded.value && !vbCableReady(audio.vb.value)" :vb="audio.vb.value" :loaded="audio.loaded.value" @download="handleDownloadVSink" @open-devices="handleOpenDevices" />
         </template>
       </MGroup>
       <MFooter v-if="platform !== 'windows'">
@@ -233,7 +230,7 @@ onBeforeUnmount(() => {
       <MGroup>
         <CfgSwitch :config="config" k="stream_mic" :on="true" :off="false" def="true" />
         <CfgChoice v-if="platform === 'windows'" :config="config" k="microphone_redirect_backend" :options="micBackends" def="auto" />
-        <VbCableRow v-if="platform === 'windows'" :vb="audio.vb.value" :loaded="audio.loaded.value" @download="handleDownloadVSink" @open-devices="handleOpenDevices" @changed="refreshDevices" />
+        <VbCableRow v-if="platform === 'windows'" :vb="audio.vb.value" :loaded="audio.loaded.value" @download="handleDownloadVSink" @open-devices="handleOpenDevices" />
         <MItem v-else action icon="download" :title="$t('_common.download')" @click="handleDownloadVSink" />
         <MItem v-if="platform === 'windows'" action icon="graphic_eq" :title="micTestRunning ? $t('config.stream_mic_testing') : $t('config.stream_mic_test')" :disabled="micTestRunning || microphoneBackend === 'disabled'" @click="testMicrophoneRoute" />
       </MGroup>

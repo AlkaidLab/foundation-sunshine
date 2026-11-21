@@ -529,14 +529,6 @@
     "method": "GET"
   },
   {
-    "pattern": "^/api/audio/vb-cable/enable$",
-    "method": "POST"
-  },
-  {
-    "pattern": "^/api/audio/vb-cable/install$",
-    "method": "POST"
-  },
-  {
     "pattern": "^/api/runtime/audio$",
     "method": "POST"
   },

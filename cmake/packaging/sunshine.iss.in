@@ -352,8 +352,8 @@ Source: "{#MySourceDir}\scripts\vmouse\uninstall-vmouse.bat"; DestDir: "{app}\sc
 Source: "{#MySourceDir}\scripts\vmouse\driver\*"; DestDir: "{app}\scripts\vmouse\driver"; Flags: ignoreversion recursesubdirs skipifsourcedoesntexist
 
 ; Virtual audio sink (microphone / VB-Cable) scripts
-; Always shipped — there is no install-time component for this; the user can
-; right-click + "Run as administrator" on install-vsink.bat to enable it.
+; Legacy scripts remain available for manual maintenance; the Panel owns the
+; component flow and does not install VB-CABLE during Sunshine setup.
 Source: "{#MySourceDir}\scripts\install-vsink.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#MySourceDir}\scripts\uninstall-vsink.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#MySourceDir}\scripts\uninstall-vsink.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion skipifsourcedoesntexist
