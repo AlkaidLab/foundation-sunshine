@@ -1,5 +1,7 @@
 import fs from 'node:fs'
+import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
+import { normalizePath } from 'vite'
 
 // Every `foundation-ui/...` import of the Web UI is resolved INSIDE the one checkout the build was told about (FOUNDATION_UI_DIR, else the sibling ds5-ui-m3e),
 // from the package's own `exports` map. Imports that were not aliased went through node_modules/foundation-ui: when that is another directory than the
@@ -23,6 +25,9 @@ export function foundationUiAliases(dir) {
   }
   // a file the package does not list (foundation-ui/vue/guide.js): the same tree
   out.push({ find: /^foundation-ui\/(.+)$/, replacement: resolve(dir, 'src/$1') })
+  // Standalone pages register the Material elements they use from the same installation as the shared components.
+  const fromUi = createRequire(resolve(dir, 'package.json'))
+  out.push({ find: /^@material\/web\/(.+)$/, replacement: '@material/web/$1', customResolver: (id) => normalizePath(fromUi.resolve(id)) })
   return out
 }
 

@@ -26,8 +26,13 @@ namespace confighttp::web_install {
   has_pages(const fs::path &web_dir) {
     std::error_code error;
     if (!fs::is_regular_file(web_dir / "index.html", error) || !fs::is_regular_file(web_dir / "login.html", error)) return false;
-    for (fs::directory_iterator it { web_dir / "assets", error }, end; !error && it != end; it.increment(error)) {
-      if (it->path().extension() == ".js") return true;
+    // Older builds put scripts directly in assets; current builds reserve
+    // assets/generated for content-hashed files.
+    for (const auto &directory : { web_dir / "assets", web_dir / "assets" / "generated" }) {
+      error.clear();
+      for (fs::directory_iterator it { directory, error }, end; !error && it != end; it.increment(error)) {
+        if (it->path().extension() == ".js" && it->is_regular_file(error)) return true;
+      }
     }
     return false;
   }

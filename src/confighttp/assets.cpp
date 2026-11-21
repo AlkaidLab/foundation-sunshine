@@ -5,6 +5,8 @@
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 
 #include "assets.h"
+#include "asset_encoding.h"
+#include "asset_etag.h"
 #include "asset_paths.h"
 #include "web_install.h"
 #include "src/confighttp.h"
@@ -14,6 +16,7 @@
 #include "src/logging.h"
 #include "src/platform/common.h"
 #include <boost/filesystem.hpp>
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -27,6 +30,36 @@ namespace confighttp::assets {
   using namespace confighttp;
 
   namespace {
+    // A validator and its 200 body must describe the same opened snapshot.
+    // Large assets continue to use file streaming and do not get a validator.
+    constexpr std::size_t maximum_snapshot_size = 8 * 1024 * 1024;
+
+    std::optional<std::string>
+    read_snapshot(const fs::path &path, std::size_t limit = maximum_snapshot_size) {
+      std::ifstream input(path, std::ios::binary);
+      if (!input) return std::nullopt;
+      std::array<char, 16384> buffer;
+      std::string result;
+      while (input) {
+        input.read(buffer.data(), buffer.size());
+        const auto count = static_cast<std::size_t>(input.gcount());
+        if (count > limit - result.size()) return std::nullopt;
+        result.append(buffer.data(), count);
+      }
+      if (!input.eof()) return std::nullopt;
+      return result;
+    }
+
+    bool
+    respond_if_cached(resp_https_t response, req_https_t request, web::CaseInsensitiveMultimap &headers,
+      const std::string &content) {
+      const std::string etag = "\"" + asset_digest(content) + "\"";
+      headers.emplace("ETag", etag);
+      if (!matches_asset_etag(request->header, etag)) return false;
+      response->write(web::StatusCode::not_modified, headers);
+      return true;
+    }
+
     // mime types map
     const std::map<std::string, std::string> mime_types = {
       { "css", "text/css" },
@@ -65,9 +98,12 @@ namespace confighttp::assets {
       std::string content = file_handler::read_file((std::string(WEB_DIR) + pageName).c_str());
       web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "text/html; charset=utf-8");
+      headers.emplace("X-Content-Type-Options", "nosniff");
+      headers.emplace("Cache-Control", "private, no-cache");
       if (pageName == "apps.html") {
         headers.emplace("Access-Control-Allow-Origin", "https://images.igdb.com/");
       }
+      if (respond_if_cached(response, request, headers, content)) return;
       response->write(content, headers);
     }
 
@@ -136,6 +172,7 @@ namespace confighttp::assets {
 
       web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", contentType);
+      headers.emplace("Cache-Control", "private, no-cache");
       if (!response->write_file(web::StatusCode::ok, file_handler::path_from_utf8(path), headers)) {
         BOOST_LOG(error) << "Failed to open Web UI resource: " << path;
         response->write(web::StatusCode::internal_server_error);
@@ -254,7 +291,9 @@ namespace confighttp::assets {
         response->write(web::StatusCode::bad_request, "Bad Request");
       }
       else if (!fs::exists(filePath) || !fs::is_regular_file(filePath)) {
-        response->write(web::StatusCode::not_found);
+        web::CaseInsensitiveMultimap headers;
+        headers.emplace("Cache-Control", "no-store");
+        response->write(web::StatusCode::not_found, "", headers);
       }
       else {
         auto relPath = fs::relative(filePath, webDirPath);
@@ -266,7 +305,53 @@ namespace confighttp::assets {
           // if it is, set the content type to the mime type
           web::CaseInsensitiveMultimap headers;
           headers.emplace("Content-Type", mimeType->second);
-          if (!response->write_file(web::StatusCode::ok, filePath, headers)) {
+          headers.emplace("X-Content-Type-Options", "nosniff");
+          const auto cachePolicy = asset_cache_control(relPath);
+          headers.emplace("Cache-Control", std::string(cachePolicy));
+          const bool fixedUrl = cachePolicy == "private, no-cache";
+          auto sourceSnapshot = fixedUrl ? read_snapshot(filePath) : std::nullopt;
+          auto bodyPath = filePath;
+          const auto ext = filePath.extension().string();
+          const bool compressible = ext == ".js" || ext == ".css" || ext == ".json";
+          std::error_code compressed_error;
+          auto compressedPath = filePath;
+          compressedPath += ".gz";
+          compressedPath = fs::weakly_canonical(compressedPath, compressed_error);
+          bool gzipAvailable = compressible && !compressed_error &&
+                               is_child_path(compressedPath, nodeModulesPath) && fs::is_regular_file(compressedPath, compressed_error);
+          std::optional<std::string> gzipSnapshot;
+          auto encoding = select_asset_encoding(request->header, gzipAvailable);
+          if (fixedUrl && encoding == asset_encoding::gzip) {
+            auto digestPath = compressedPath;
+            digestPath += ".sha256";
+            digestPath = fs::weakly_canonical(digestPath, compressed_error);
+            const auto marker = !compressed_error && is_child_path(digestPath, nodeModulesPath)
+                                  ? read_snapshot(digestPath, 256) : std::nullopt;
+            gzipSnapshot = read_snapshot(compressedPath);
+            // A sidecar and source may be installed at different times. Never
+            // serve an old encoding for a newer fixed URL, even during upgrades.
+            gzipAvailable = sourceSnapshot && gzipSnapshot && marker &&
+                            *marker == asset_sidecar_marker(*sourceSnapshot, *gzipSnapshot);
+            if (!gzipAvailable) encoding = select_asset_encoding(request->header, false);
+          }
+          headers.emplace("Vary", "Accept-Encoding");
+          if (encoding == asset_encoding::unacceptable) {
+            headers.erase("Cache-Control");
+            headers.emplace("Cache-Control", "no-store");
+            response->write(web::StatusCode::not_acceptable, "", headers);
+            return;
+          }
+          if (encoding == asset_encoding::gzip) {
+            bodyPath = compressedPath;
+            headers.emplace("Content-Encoding", "gzip");
+          }
+          const auto &snapshot = encoding == asset_encoding::gzip ? gzipSnapshot : sourceSnapshot;
+          if (fixedUrl && snapshot) {
+            if (respond_if_cached(response, request, headers, *snapshot)) return;
+            response->write(web::StatusCode::ok, *snapshot, headers);
+            return;
+          }
+          if (!response->write_file(web::StatusCode::ok, bodyPath, headers)) {
             BOOST_LOG(error) << "Failed to open Web UI asset: " << file_handler::path_to_utf8(filePath);
             response->write(web::StatusCode::internal_server_error);
           }

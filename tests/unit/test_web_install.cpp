@@ -50,6 +50,16 @@ namespace {
   };
 }  // namespace
 
+TEST_F(WebInstall, AcceptsScriptsInGeneratedAssets) {
+  const auto web = root / "web";
+  write(web / "index.html");
+  write(web / "login.html");
+  write(web / "assets" / "generated" / "app-AbCd1234.js.gz");
+  EXPECT_FALSE(is_complete(web));
+  write(web / "assets" / "generated" / "app-AbCd1234.js");
+  EXPECT_TRUE(is_complete(web));
+}
+
 TEST_F(WebInstall, AFolderNeedsBothPagesAndAScript) {
   EXPECT_FALSE(is_complete(root / "web"));
   write(root / "web" / "index.html");

@@ -281,6 +281,15 @@ give the old one. The length rules are those of `/api/auth/password`; `409` when
 no account exists yet. A reset revokes every session and clears the login
 backoff. Over the network the old password stays required.
 
+When a request to the host arrives from a loopback proxy with `Forwarded`,
+`X-Forwarded-For`, or `X-Real-IP`, its original address is not trusted.
+The host requires `origin_web_ui_allowed = wan` for that request and denies
+loopback-only operations and local-token authentication. All proxied clients
+share the proxy's address for login throttling. A proxy serving external users
+must set a forwarding header on every request and enforce its own access limits.
+The host cannot identify a proxy that removes all forwarding headers. A proxy
+on a LAN address must also enforce the source policy at the proxy.
+
 ## Browser navigation
 
 When a page navigation has no session, the server answers `303 See Other` with:
