@@ -6,7 +6,8 @@
 #include <vector>
 
 namespace streaming {
-  // Microsoft Learn ms-query-display-config-20261121, flags: topology can change.
+  // ms-query-display-config-20261121, flags: topology can change.
+  // ms-dxgi-duplicate-output-20261121, Remarks: duplication belongs to an output.
   inline std::optional<std::string>
   select_recovery_display(const std::vector<std::string> &displays, const std::string &resolved,
     const std::string &fallback, bool require_target) {

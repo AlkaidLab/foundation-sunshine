@@ -2122,7 +2122,6 @@ namespace stream {
       session->video.idr_events->raise(true);
     });
 
-    // 辅助函数：处理分辨率变更
     auto handle_resolution_change = [](session_t *session, int new_width, int new_height) {
       int old_width = session->config.monitor.width;
       int old_height = session->config.monitor.height;
@@ -4564,6 +4563,7 @@ namespace stream {
     BOOST_LOG(debug) << "stream.cpp: session->config.monitor.display_name = [" << (session->config.monitor.display_name.empty() ? "<empty>" : session->config.monitor.display_name) << "]";
     auto video_config = session->config.monitor;
 #ifdef _WIN32
+    // ms-wts-query-session-20261121, Remarks: retain the console/RDP distinction.
     if ((is_running_as_system_user || !display_device::w_utils::is_current_session_rdp()) &&
         (session->use_vdd || video_config.display_name == VDD_NAME || display_device::get_display_friendly_name(video_config.display_name) == ZAKO_NAME)) video_config.display_name = VDD_NAME;
 #endif
