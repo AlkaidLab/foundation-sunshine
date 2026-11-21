@@ -118,6 +118,12 @@ namespace tray_state {
     return current_state;
   }
 
+  bool
+  has_sessions() {
+    std::lock_guard lock { state_mutex };
+    return !current_state.sessions.empty();
+  }
+
   void
   set_change_sink(change_sink_t sink) {
     std::lock_guard lock { change_sink_mutex };
@@ -199,6 +205,9 @@ namespace tray_state {
     std::uint64_t notification_id;
     {
       std::lock_guard lock { state_mutex };
+      // An informational enhancement toast must not displace a pending user action.
+      if (action == "nr_active" && (current_state.pairing_pending ||
+          (current_state.notification.active && !current_state.notification.action.empty() && current_state.notification.action != action))) return 0;
       current_state.notification.id = ++next_notification_id;
       current_state.notification.active = true;
       current_state.notification.title = title;

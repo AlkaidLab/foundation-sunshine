@@ -252,10 +252,14 @@ namespace video {
   }
 
   std::optional<nr_request_t>
-  requested_nr_settings(std::uint64_t id) {
+  requested_nr_settings(std::uint64_t id, std::optional<bool> global_enabled) {
     std::lock_guard lock { hdr_pipeline_status_mutex };
     const auto it = hdr_pipeline_statuses.find(id);
     if (it == hdr_pipeline_statuses.end() || !it->second.nr_toggle_supported) return std::nullopt;
+    if (global_enabled && it->second.nr_requested_enabled != *global_enabled) {
+      it->second.nr_requested_enabled = *global_enabled;
+      ++it->second.nr_request_revision;
+    }
     return nr_request_t { it->second.nr_requested_enabled, it->second.nr_requested_scale_percent,
       it->second.nr_requested_intensity, it->second.nr_requested_ui_correction,
       it->second.nr_requested_motion_quality, it->second.nr_request_revision,
