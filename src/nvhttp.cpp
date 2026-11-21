@@ -52,6 +52,7 @@
 #include "file_handler.h"
 #include "file_mapping/file_mapping_http.h"
 #include "file_mapping/service.h"
+#include "file_transfer/file_transfer_http.h"
 #include "globals.h"
 #include "hdr/session_target.h"
 #include "http_util.h"
@@ -1313,6 +1314,8 @@ namespace nvhttp {
     // use the confighttp /api/v1/clipboard/* endpoints on loopback.
     https_server.resource["^/api/v1/clipboard/blob$"]["POST"] = clipboard_api::upload_blob;
     https_server.resource["^/api/v1/clipboard/blob/([A-Za-z0-9_\\-]{1,128})$"]["GET"] = clipboard_api::get_blob;
+    // Files copied with clipboard sync: downloads and chunk answers (src/file_transfer).
+    file_transfer_http::register_paired_routes(https_server);
 
     https_server.resource["^/api/v1/file-mapping/capability$"]["GET"] =
       [&](resp_https_t resp, req_https_t req) {

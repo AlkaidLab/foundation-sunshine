@@ -5,6 +5,7 @@
 #pragma once
 #include "types.h"
 #include <boost/asio/streambuf.hpp>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -44,6 +45,10 @@ namespace web {
       bool sent = false;
       std::string
       take();
+      // Shared tail of write_file() and write_native_file(): headers, length
+      // and admission of a response whose body already holds an open file.
+      bool
+      send_prepared_file(std::shared_ptr<FileResponse> file, const CaseInsensitiveMultimap &headers);
 
     public:
       bool close_connection_after_response = false;
@@ -81,6 +86,17 @@ namespace web {
       // false on open/stat failure, before any response has been admitted.
       bool
       write_file(StatusCode status, const std::filesystem::path &path, const CaseInsensitiveMultimap &headers = {});
+#ifdef _WIN32
+      using native_file_t = void *;  ///< HANDLE
+#else
+      using native_file_t = int;  ///< file descriptor
+#endif
+      // Like write_file(), for a file the caller already opened (for example
+      // while impersonating another account). The response owns `file` from
+      // the call on and closes it on every path, failure included. The body
+      // starts at `offset`; the caller describes a partial body in `headers`.
+      bool
+      write_native_file(StatusCode status, native_file_t file, std::uint64_t offset, const CaseInsensitiveMultimap &headers = {});
       void
       write(std::string_view body, const CaseInsensitiveMultimap &headers = {}) { write(StatusCode::ok, body, headers); }
       void
