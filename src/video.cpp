@@ -5,13 +5,13 @@
 // standard includes
 #include <algorithm>
 #include <array>
-#include <iterator>
 #include <atomic>
 #include <bitset>
 #include <deque>
 #include <functional>
-#include <list>
+#include <iterator>
 #include <limits>
+#include <list>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -46,6 +46,7 @@ extern "C" {
 #include "nvenc/nvenc_encoder.h"
 #include "platform/common.h"
 #include "pyrowave/capture_policy.h"
+#include "streaming/display_recovery.h"
 #include "streaming/perf_recorder.h"
 #include "sync.h"
 #include "telemetry/telemetry.h"
@@ -57,10 +58,10 @@ extern "C" {
 
 #ifdef _WIN32
   #include "nvenc/win/nvenc_dynamic_factory.h"
+  #include "platform/windows/display.h"
+  #include "platform/windows/pyrowave/color_metadata.h"
   #include "platform/windows/pyrowave/cpu_encoder.h"
   #include "platform/windows/pyrowave/gpu_encoder.h"
-  #include "platform/windows/pyrowave/color_metadata.h"
-  #include "platform/windows/display.h"
 extern "C" {
   #include <libavutil/hwcontext_d3d11va.h>
 }
@@ -323,8 +324,7 @@ namespace video {
 
     return std::min(
       initial_encoder_bitrate_kbps,
-      encoder_bitrate_from_total_bitrate(max_total_bitrate_kbps, fec_percentage)
-    );
+      encoder_bitrate_from_total_bitrate(max_total_bitrate_kbps, fec_percentage));
   }
 
   std::chrono::duration<double, std::milli>
@@ -911,7 +911,8 @@ namespace video {
     /// enables it in make_nvenc_encode_session().
     dolby_vision::rpu_injector_t dolby_vision_;
 
-    void report_dolby_vision_output(bool injected) {
+    void
+    report_dolby_vision_output(bool injected) {
       if (device) device->report_dolby_vision_output(injected, dolby_vision_.enabled());
     }
 
@@ -1075,7 +1076,8 @@ namespace video {
     /// enables it in make_amf_encode_session().
     dolby_vision::rpu_injector_t dolby_vision_;
 
-    void report_dolby_vision_output(bool injected) {
+    void
+    report_dolby_vision_output(bool injected) {
       if (device) device->report_dolby_vision_output(injected, dolby_vision_.enabled());
     }
 
@@ -1216,7 +1218,7 @@ namespace video {
 
   struct captured_frame_t {
     std::shared_ptr<platf::img_t> image;
-    bool is_replay {false};
+    bool is_replay { false };
   };
 
   using captured_frame_event_t = std::shared_ptr<safe::event_t<captured_frame_t>>;
@@ -1855,6 +1857,17 @@ namespace video {
    * @param display_names The list of display names to repopulate.
    * @param current_display_index The current display index or -1 if not yet known.
    */
+  std::string
+  logical_capture_target(const std::string &name) {
+#ifdef _WIN32
+    const auto devices = display_device::enum_available_devices();
+    for (const auto &[id, device] : devices) {
+      if (device.display_name == name && device.friendly_name == ZAKO_NAME) return VDD_NAME;
+    }
+#endif
+    return name;
+  }
+
   void
   refresh_displays(platf::mem_type_e dev_type, std::vector<std::string> &display_names, int &current_display_index) {
     // It is possible that the output display name may be empty even if it wasn't before (device disconnected)
@@ -1945,7 +1958,7 @@ namespace video {
     capture_ctxs.emplace_back(std::move(*initial_capture_ctx));
 
     auto reset_capture_display = [&](std::shared_ptr<platf::display_t> &display,
-                                     const std::string &name, const config_t &client_config) {
+                                   const std::string &name, const config_t &client_config) {
       bool system_capture;
       {
         auto lock = capture_policy.lock();
@@ -1980,37 +1993,28 @@ namespace video {
     int display_p = -1;
     refresh_displays(encoder.platform_formats->dev_type, display_names, display_p);
 
-    // Use client-specified display_name if provided, otherwise use the selected display
+    // A virtual target is a logical alias, not a transient device identifier.
     std::string target_display_name;
     auto config = capture_ctxs.front().config;
-    if (!config.display_name.empty()) {
-      // config.display_name may be a device ID (e.g., {xxx-xxx-xxx}) rather than display name (e.g., \\.\DISPLAY1)
-      // Try to convert device ID to display name first
-      std::string resolved_display_name = display_device::get_display_name(config.display_name);
-      if (resolved_display_name.empty()) {
-        // If conversion failed, use the original value (might already be a display name)
-        resolved_display_name = config.display_name;
+    std::string logical_display_name = config.display_name;
+    while (capture_ctx_queue->running() && capture_ctxs.front().images->running()) {
+      bool require_target = false;
+#ifdef _WIN32
+      require_target = config.display_name == VDD_NAME;
+#endif
+      auto resolved = display_device::get_display_name(config.display_name);
+      if (resolved.empty() && !require_target) resolved = config.display_name;
+      auto selected = streaming::select_recovery_display(display_names, resolved, display_names[display_p], require_target);
+      if (selected) {
+        target_display_name = *selected;
+        logical_display_name = require_target ? config.display_name : target_display_name;
+        display_p = static_cast<int>(std::find(display_names.begin(), display_names.end(), target_display_name) - display_names.begin());
+        break;
       }
-
-      // Try to find the display in the list
-      bool found = false;
-      for (int x = 0; x < display_names.size(); ++x) {
-        if (display_names[x] == resolved_display_name) {
-          display_p = x;
-          target_display_name = resolved_display_name;
-          found = true;
-          BOOST_LOG(info) << "Using client-specified display: " << target_display_name;
-          break;
-        }
-      }
-      if (!found) {
-        BOOST_LOG(warning) << "Client-specified display [" << config.display_name << "] (resolved: " << resolved_display_name << ") not found, using default display";
-        target_display_name = display_names[display_p];
-      }
+      std::this_thread::sleep_for(100ms);
+      refresh_displays(encoder.platform_formats->dev_type, display_names, display_p);
     }
-    else {
-      target_display_name = display_names[display_p];
-    }
+    if (!capture_ctx_queue->running() || !capture_ctxs.front().images->running()) return;
 
     std::shared_ptr<platf::display_t> disp;
     reset_capture_display(disp, target_display_name, config);
@@ -2034,7 +2038,7 @@ namespace video {
 
         // 同一个捕获线程中的会话共享当前显示器。手动切换显示器后加入的会话
         // 必须继承当前目标，避免后续重新初始化跳回它启动时选择的显示器。
-        capture_ctx->config.display_name = target_display_name;
+        capture_ctx->config.display_name = logical_display_name;
         publish_capture_target(capture_ctx->config, *disp);
         if (initial_img) {
           // 锁屏或静态桌面可能长时间没有新的 Desktop Duplication 帧。
@@ -2246,6 +2250,8 @@ namespace video {
           }
 
           while (capture_ctx_queue->running()) {
+            std::erase_if(capture_ctxs, [](const auto &ctx) { return !ctx.images->running(); });
+            if (capture_ctxs.empty()) return;
             // Release the display before reenumerating displays, since some capture backends
             // only support a single display session per device/application.
             disp.reset();
@@ -2260,34 +2266,25 @@ namespace video {
               user_switched = true;
             }
 
-            // Use client-specified display_name if provided (only for auto-reinit, not manual switch)
             auto &config = capture_ctxs.front().config;
-            target_display_name = display_names[display_p];
-            if (!user_switched && !config.display_name.empty()) {
-              // config.display_name may be a device ID - convert to display name
-              std::string resolved_display_name = display_device::get_display_name(config.display_name);
-              if (resolved_display_name.empty()) {
-                resolved_display_name = config.display_name;
-              }
-
-              // Try to find the display in the list
-              bool found = false;
-              for (int x = 0; x < display_names.size(); ++x) {
-                if (display_names[x] == resolved_display_name) {
-                  display_p = x;
-                  target_display_name = resolved_display_name;
-                  found = true;
-                  break;
-                }
-              }
-              if (!found) {
-                BOOST_LOG(warning) << "Client-specified display [" << config.display_name << "] (resolved: " << resolved_display_name << ") not found, using default display";
-              }
+            bool require_target = false;
+#ifdef _WIN32
+            require_target = !user_switched && config.display_name == VDD_NAME;
+#endif
+            auto resolved = user_switched ? std::string {} : display_device::get_display_name(config.display_name);
+            if (resolved.empty() && !require_target && !user_switched) resolved = config.display_name;
+            const auto selected = streaming::select_recovery_display(display_names, resolved, display_names[display_p], require_target);
+            if (!selected) {
+              std::this_thread::sleep_for(100ms);
+              continue;
             }
+            target_display_name = *selected;
+            display_p = static_cast<int>(std::find(display_names.begin(), display_names.end(), target_display_name) - display_names.begin());
 
             if (user_switched) {
+              logical_display_name = logical_capture_target(target_display_name);
               for (auto &capture_ctx : capture_ctxs) {
-                capture_ctx.config.display_name = target_display_name;
+                capture_ctx.config.display_name = logical_display_name;
               }
             }
 
@@ -3374,7 +3371,7 @@ namespace video {
                               "negotiated profile; streaming without RPU"sv;
       }
       else if (const auto dv_config = dolby_vision_config_for_session(disp, client_config);
-               !dv_config || !session->dolby_vision_.configure(*dv_config)) {
+        !dv_config || !session->dolby_vision_.configure(*dv_config)) {
         BOOST_LOG(warning) << "NVENC: Dolby Vision negotiated but no usable mastering metadata; "
                               "streaming without RPU"sv;
       }
@@ -3451,7 +3448,7 @@ namespace video {
                               "negotiated profile; streaming without RPU"sv;
       }
       else if (const auto dv_config = dolby_vision_config_for_session(disp, client_config);
-               !dv_config || !session->dolby_vision_.configure(*dv_config)) {
+        !dv_config || !session->dolby_vision_.configure(*dv_config)) {
         BOOST_LOG(warning) << "AMF: Dolby Vision negotiated but no usable mastering metadata; "
                               "streaming without RPU"sv;
       }
@@ -3613,7 +3610,7 @@ namespace video {
     std::function<std::unique_ptr<encode_session_t>()> session_factory = {},
     std::function<void()> backend_failure_handler = {}) {
     auto session = session_factory ? session_factory() :
-      make_encode_session(disp.get(), encoder, config, disp->width, disp->height, std::move(encode_device));
+                                     make_encode_session(disp.get(), encoder, config, disp->width, disp->height, std::move(encode_device));
     if (!session) {
       if (backend_failure_handler) {
         BOOST_LOG(warning) << "Encoder session could not be initialized; requesting backend recovery"sv;
@@ -4117,7 +4114,7 @@ namespace video {
 
     auto switch_display_event = mail::man->event<int>(mail::switch_display);
     auto active_display_event = mail::man->event<std::string>(mail::active_display);
-    std::string active_display_name;
+    std::string active_logical_display_name;
 
     if (synced_session_ctxs.empty()) {
       auto ctx = encode_session_ctx_queue.pop();
@@ -4139,41 +4136,31 @@ namespace video {
         user_switched = true;
       }
 
-      // Use client-specified display_name if provided (only for auto-reinit, not manual switch)
       auto &config = synced_session_ctxs.front()->config;
-      std::string target_display_name = display_names[display_p];
-      if (!user_switched && !config.display_name.empty()) {
-        // config.display_name may be a device ID - convert to display name
-        std::string resolved_display_name = display_device::get_display_name(config.display_name);
-        if (resolved_display_name.empty()) {
-          resolved_display_name = config.display_name;
-        }
-
-        // Try to find the display in the list
-        bool found = false;
-        for (int x = 0; x < display_names.size(); ++x) {
-          if (display_names[x] == resolved_display_name) {
-            display_p = x;
-            target_display_name = resolved_display_name;
-            found = true;
-            break;
-          }
-        }
-        if (!found) {
-          BOOST_LOG(warning) << "Client-specified display [" << config.display_name << "] (resolved: " << resolved_display_name << ") not found, using default display";
-        }
+      bool require_target = false;
+#ifdef _WIN32
+      require_target = !user_switched && config.display_name == VDD_NAME;
+#endif
+      auto resolved = user_switched ? std::string {} : display_device::get_display_name(config.display_name);
+      if (resolved.empty() && !require_target && !user_switched) resolved = config.display_name;
+      const auto selected = streaming::select_recovery_display(display_names, resolved, display_names[display_p], require_target);
+      if (!selected) {
+        std::this_thread::sleep_for(100ms);
+        continue;
       }
+      std::string target_display_name = *selected;
+      display_p = static_cast<int>(std::find(display_names.begin(), display_names.end(), target_display_name) - display_names.begin());
 
       if (user_switched) {
         for (auto &ctx : synced_session_ctxs) {
-          ctx->config.display_name = target_display_name;
+          ctx->config.display_name = logical_capture_target(target_display_name);
         }
       }
 
       // reset_display() will sleep between retries
       reset_display(disp, encoder.platform_formats->dev_type, target_display_name, config);
       if (disp) {
-        active_display_name = target_display_name;
+        active_logical_display_name = user_switched ? config.display_name : (require_target ? config.display_name : target_display_name);
         for (auto &ctx : synced_session_ctxs) {
           publish_capture_target(ctx->config, *disp);
         }
@@ -4213,7 +4200,7 @@ namespace video {
           // Synchronous sessions share the display opened above. Keep the
           // active target in newly joined contexts so the next reinit does not
           // restore their stale launch-time display selection.
-          encode_session_ctx->config.display_name = active_display_name;
+          encode_session_ctx->config.display_name = active_logical_display_name;
           publish_capture_target(encode_session_ctx->config, *disp);
           synced_session_ctxs.emplace_back(std::make_unique<sync_session_ctx_t>(std::move(*encode_session_ctx)));
 
@@ -4371,8 +4358,8 @@ namespace video {
     }
 
     const bool accepts_system_capture = ref->encoder_p->platform_formats->dev_type == platf::mem_type_e::system ||
-      (config.videoFormat == static_cast<int>(LI_PYROWAVE_VIDEO_FORMAT) &&
-       config.dynamicRange == 0 && config.pre_encode_filter == platf::pre_encode_filter_e::none);
+                                        (config.videoFormat == static_cast<int>(LI_PYROWAVE_VIDEO_FORMAT) &&
+                                          config.dynamicRange == 0 && config.pre_encode_filter == platf::pre_encode_filter_e::none);
     {
       auto lock = ref->capture_policy.lock();
       if (!ref->capture_policy->attach(accepts_system_capture)) {
@@ -4537,10 +4524,11 @@ namespace video {
       if (is_pyrowave) {
         const auto pyrowave_colorspace = colorspace_from_client_config(config, display->is_hdr());
         const auto pyrowave_colorspace_name =
-          pyrowave_colorspace.colorspace == colorspace_e::bt2020 ? "BT.2020/PQ"sv :
+          pyrowave_colorspace.colorspace == colorspace_e::bt2020    ? "BT.2020/PQ"sv :
           pyrowave_colorspace.colorspace == colorspace_e::bt2020hlg ? "BT.2020/HLG"sv :
           pyrowave_colorspace.colorspace == colorspace_e::bt2020sdr ? "BT.2020/SDR"sv :
-          pyrowave_colorspace.colorspace == colorspace_e::rec709 ? "BT.709"sv : "unknown"sv;
+          pyrowave_colorspace.colorspace == colorspace_e::rec709    ? "BT.709"sv :
+                                                                      "unknown"sv;
         BOOST_LOG(info) << "[PyroWaveSession] encode color contract"
                         << ": colorspace=" << pyrowave_colorspace_name
                         << ", range=" << (pyrowave_colorspace.full_range ? "full"sv : "limited"sv)
@@ -4568,21 +4556,17 @@ namespace video {
         // the client can recover a missing inner block before frame copy.
         constexpr std::size_t pyrowave_outer_header_overhead = 16u;
         const auto outer_packet_size = packet_size > 0 ? static_cast<std::size_t>(packet_size) : 0u;
-        const auto outer_payload_capacity = outer_packet_size > pyrowave_outer_header_overhead
-          ? outer_packet_size - pyrowave_outer_header_overhead
-          : 0u;
-        const auto pyrowave_packet_boundary = outer_payload_capacity > LI_PYROWAVE_WIRE_FEC_HEADER_SIZE
-          ? outer_payload_capacity - LI_PYROWAVE_WIRE_FEC_HEADER_SIZE
-          : 0u;
+        const auto outer_payload_capacity = outer_packet_size > pyrowave_outer_header_overhead ? outer_packet_size - pyrowave_outer_header_overhead : 0u;
+        const auto pyrowave_packet_boundary = outer_payload_capacity > LI_PYROWAVE_WIRE_FEC_HEADER_SIZE ? outer_payload_capacity - LI_PYROWAVE_WIRE_FEC_HEADER_SIZE : 0u;
         BOOST_LOG(debug) << "[PyroWaveSession] transport geometry"
-                            << ", frame_size=" << config.width << 'x' << config.height
-                            << ", frame_rate=" << (config.frameRateNum > 0 ? config.frameRateNum : config.framerate)
-                            << '/' << (config.frameRateNum > 0 && config.frameRateDen > 0 ? config.frameRateDen : 1)
-                            << ", requested_packet_size=" << packet_size
-                            << ", outer_payload_capacity=" << outer_payload_capacity
-                            << ", inner_payload_boundary=" << pyrowave_packet_boundary
-                            << ", wire_packet_boundary="
-                            << (pyrowave_packet_boundary == 0 ? 0u : pyrowave_packet_boundary + LI_PYROWAVE_WIRE_FEC_HEADER_SIZE);
+                         << ", frame_size=" << config.width << 'x' << config.height
+                         << ", frame_rate=" << (config.frameRateNum > 0 ? config.frameRateNum : config.framerate)
+                         << '/' << (config.frameRateNum > 0 && config.frameRateDen > 0 ? config.frameRateDen : 1)
+                         << ", requested_packet_size=" << packet_size
+                         << ", outer_payload_capacity=" << outer_payload_capacity
+                         << ", inner_payload_boundary=" << pyrowave_packet_boundary
+                         << ", wire_packet_boundary="
+                         << (pyrowave_packet_boundary == 0 ? 0u : pyrowave_packet_boundary + LI_PYROWAVE_WIRE_FEC_HEADER_SIZE);
         if (pyrowave_packet_boundary <= LI_PYROWAVE_WIRE_FEC_HEADER_SIZE ||
             pyrowave_packet_boundary > LI_PYROWAVE_MAX_PACKET_SIZE - LI_PYROWAVE_WIRE_FEC_HEADER_SIZE) {
           BOOST_LOG(error) << "PyroWave backend rejected invalid transport packet boundary: "
@@ -4595,11 +4579,11 @@ namespace video {
         // These callbacks run after this branch ends. Copy branch-local
         // invariants; only the enclosing capture state may be referenced.
         session_factory = [&config, &display, &ref,
-                           &pyrowave_gpu_disabled, &pyrowave_session_is_gpu,
-                           &pyrowave_fallback_reinit_pending, &pyrowave_terminal_failure_pending,
-                           pyrowave_packet_boundary,
-                           pyrowave_frame_rate_num, pyrowave_frame_rate_den,
-                           pyrowave_cpu_fallback_allowed]() -> std::unique_ptr<encode_session_t> {
+                            &pyrowave_gpu_disabled, &pyrowave_session_is_gpu,
+                            &pyrowave_fallback_reinit_pending, &pyrowave_terminal_failure_pending,
+                            pyrowave_packet_boundary,
+                            pyrowave_frame_rate_num, pyrowave_frame_rate_den,
+                            pyrowave_cpu_fallback_allowed]() -> std::unique_ptr<encode_session_t> {
           pyrowave_session_is_gpu = false;
           if (!pyrowave_gpu_disabled) {
             if (auto base_display = std::dynamic_pointer_cast<platf::dxgi::display_vram_t>(display)) {
@@ -4665,9 +4649,9 @@ namespace video {
           return cpu_session;
         };
         backend_failure_handler = [&ref, &shutdown_event,
-                                   &pyrowave_gpu_disabled, &pyrowave_session_is_gpu,
-                                   &pyrowave_fallback_reinit_pending, &pyrowave_terminal_failure_pending,
-                                   pyrowave_cpu_fallback_allowed]() {
+                                    &pyrowave_gpu_disabled, &pyrowave_session_is_gpu,
+                                    &pyrowave_fallback_reinit_pending, &pyrowave_terminal_failure_pending,
+                                    pyrowave_cpu_fallback_allowed]() {
           if (pyrowave_terminal_failure_pending) {
             pyrowave_terminal_failure_pending = false;
             BOOST_LOG(error) << "PyroWave backend initialization failed with no supported fallback; ending video session"sv;
@@ -4723,9 +4707,7 @@ namespace video {
 
       // Update client with our current HDR display state
       hdr_info_t hdr_info = std::make_unique<hdr_info_raw_t>(false);
-      const auto hdr_colorspace = is_pyrowave
-        ? colorspace_from_client_config(config, display->is_hdr())
-        : encode_device->colorspace;
+      const auto hdr_colorspace = is_pyrowave ? colorspace_from_client_config(config, display->is_hdr()) : encode_device->colorspace;
       if (colorspace_is_hdr(hdr_colorspace)) {
         if (get_effective_hdr_metadata(display.get(), config, hdr_info->metadata)) {
           hdr_info->enabled = true;
