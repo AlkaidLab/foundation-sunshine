@@ -146,7 +146,14 @@ const bitrateSample = (s) => (s && Number.isFinite(s.measured_bitrate_kbps) ? s.
 const perf = live.perf
 const sys = live.system
 const pushSample = (list, v) => { if (Number.isFinite(v)) list.value = [...list.value.slice(-59), v] }
-const series = Object.fromEntries(['cpu', 'gpu', 'bitrate', 'fps'].map((k) => [k, ref([...(kept.series?.[k] || [])])]))
+// The samples behind the lines of 码率, 帧率, CPU and GPU. A page starts them empty (the host keeps no history of them), so a phone that opens the page, or comes back to its tab, had no line for the first seconds; they
+// are kept for a minute in the tab's own storage and the page starts from them (the control panel is one long-lived window and has them all the time).
+const SERIES_KEY = 'foundation.home.series'
+const SERIES_KEPT_MS = 60000
+const storedSeries = () => { try { const v = JSON.parse(sessionStorage.getItem(SERIES_KEY) || 'null'); return v && Date.now() - v.at < SERIES_KEPT_MS && v.series && typeof v.series === 'object' ? v.series : null } catch { return null } }
+const startSeries = kept.series || storedSeries() || {}
+const series = Object.fromEntries(['cpu', 'gpu', 'bitrate', 'fps'].map((k) => [k, ref([...(Array.isArray(startSeries[k]) ? startSeries[k].filter((v) => Number.isFinite(v)) : [])])]))
+watch(Object.values(series), () => { try { sessionStorage.setItem(SERIES_KEY, JSON.stringify({ at: Date.now(), series: Object.fromEntries(Object.entries(series).map(([k, v]) => [k, v.value])) })) } catch { /* storage unavailable */ } })
 onBeforeUnmount(() => { kept.series = Object.fromEntries(Object.entries(series).map(([k, v]) => [k, v.value])) })
 watch(sys, (s) => { if (s) { pushSample(series.cpu, s.cpu_percent); pushSample(series.gpu, s.gpu_percent) } })
 watch(() => [bitrateSample(session.value), perf.value?.fps], ([b, f]) => { if (session.value) { pushSample(series.bitrate, b); pushSample(series.fps, f) } else { series.bitrate.value = []; series.fps.value = [] } })

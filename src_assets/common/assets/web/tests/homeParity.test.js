@@ -48,3 +48,10 @@ test('the overview keeps its layout on the host', () => {
   assert.match(home, /:layout-store="layoutStore"/)
   assert.match(fs.readFileSync(new URL('../utils/homeData.js', import.meta.url), 'utf8'), /export \{ DEVICE_KINDS, DEVICE_RULES, NEUTRAL_DEVICE_ICON, deviceKindFor, deviceIconFor \} from 'foundation-ui\/device-icons'/)
 })
+
+// the lines of 码率 and 帧率: the samples start from the last minute of this tab (a phone that comes back to the page has its lines at once)
+test('the samples behind the tile lines are kept for a minute in the tab and the page starts from them', () => {
+  assert.match(home, /const SERIES_KEPT_MS = 60000/)
+  assert.match(home, /const startSeries = kept\.series \|\| storedSeries\(\) \|\| \{\}/)
+  assert.match(home, /watch\(Object\.values\(series\), \(\) => \{ try \{ sessionStorage\.setItem\(SERIES_KEY, JSON\.stringify\(\{ at: Date\.now\(\)/)
+})
