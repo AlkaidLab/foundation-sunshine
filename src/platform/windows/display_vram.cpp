@@ -1311,7 +1311,6 @@ namespace platf::dxgi {
       display = nullptr;
 
       follow_global_nr = config.nr_app_allowed.has_value();
-      report_nr_activity = config.report_nr_activity;
       const bool skip_nr = config.pre_encode_filter == pre_encode_filter_e::external_neural_enhancement &&
                            follow_global_nr && !image_enhancement::manager().nr_enabled();
       if (config.pre_encode_filter != pre_encode_filter_e::none && !skip_nr) {
@@ -1833,7 +1832,6 @@ namespace platf::dxgi {
       runtime_status.nr_state = requested->enabled ? "warming_up" : "disabled";
       if (!requested->enabled) {
         if (follow_global_nr) nr_session_backend.reset();
-        if (report_nr_activity) report_nr_activity(false);
         runtime_status.nr_scale_percent = requested->scale_percent;
         runtime_status.nr_intensity = requested->intensity;
         runtime_status.nr_ui_correction = requested->ui_correction;
@@ -1904,7 +1902,6 @@ namespace platf::dxgi {
       reported_backend = backend;
       reported_state = state;
       reported_reason = reason;
-      if (nr_filter_active && state == "active" && runtime_status_id && report_nr_activity) report_nr_activity(true);
       ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
     }
 
@@ -1977,7 +1974,6 @@ namespace platf::dxgi {
 
     boost::shared_ptr<const image_enhancement::backend_use_t> enhancement_backend;
     bool follow_global_nr = false;
-    std::function<void(bool)> report_nr_activity;
     bool nr_filter_active = false;
     bool nr_rollback_pending = false, nr_restoring_settings = false;
     pre_encode_filter_config_t nr_filter_config;

@@ -208,7 +208,6 @@ namespace video {
     // Launch and resume supply the app policy. Standalone encode devices use
     // their caller's explicit filter configuration.
     std::optional<bool> nr_app_allowed;
-    std::function<void(bool)> report_nr_activity;
     // Local diagnostics only; never serialized into the media protocol.
     std::uint32_t perf_session_id = 0;
     bool pyrowave_dynamic_hdr_mapping = false;

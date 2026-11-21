@@ -57,7 +57,6 @@ extern "C" {
 #include "sync.h"
 #include "text_context/bridge.h"
 #include "video.h"
-#include "tray/tray_state.h"
 
 namespace asio = boost::asio;
 
@@ -2055,15 +2054,6 @@ namespace rtsp_stream {
         monitor.enhancement_backend = session.dlssnr_backend;
       }
       monitor.nr_app_allowed = session.dlssnr_params.enabled;
-      // Copies of the encoder configuration share this flag across pipeline rebuilds.
-      monitor.report_nr_activity = [notified = std::make_shared<std::atomic_bool>(false)](bool active) {
-        if (notified->exchange(active) || !active) return;
-        task_pool.push([] {
-          const auto id = tray_state::set_notification("Sunshine", "DLSS NR is enhancing the current stream.", "default", "nr_active");
-          if (!id) return;
-          task_pool.pushDelayed([id] { tray_state::clear_notification_if(id); }, 10s);
-        });
-      };
       auto &nr_config = monitor.pre_encode_filter_config;
       nr_config.nr_scale_percent = session.dlssnr_scale_percent;
       nr_config.nr_intensity = session.dlssnr_params.intensity;

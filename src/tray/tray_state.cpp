@@ -205,9 +205,6 @@ namespace tray_state {
     std::uint64_t notification_id;
     {
       std::lock_guard lock { state_mutex };
-      // An informational enhancement toast must not displace a pending user action.
-      if (action == "nr_active" && (current_state.pairing_pending ||
-          (current_state.notification.active && !current_state.notification.action.empty() && current_state.notification.action != action))) return 0;
       current_state.notification.id = ++next_notification_id;
       current_state.notification.active = true;
       current_state.notification.title = title;
