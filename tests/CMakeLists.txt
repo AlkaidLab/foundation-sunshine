@@ -315,7 +315,7 @@ target_link_libraries(host_bitrate_cap_unit_tests PRIVATE gtest_main sunshine_pr
 set_target_properties(host_bitrate_cap_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME host_bitrate_cap_unit_tests COMMAND host_bitrate_cap_unit_tests)
 
-add_executable(dynamic_param_protocol_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_dynamic_param_protocol.cpp)
+add_executable(dynamic_param_protocol_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_dynamic_param_protocol.cpp ${CMAKE_SOURCE_DIR}/tests/unit/test_display_recovery.cpp)
 target_include_directories(dynamic_param_protocol_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(dynamic_param_protocol_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
 set_target_properties(dynamic_param_protocol_unit_tests PROPERTIES CXX_STANDARD 23)
