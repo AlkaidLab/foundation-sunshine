@@ -18,6 +18,8 @@ namespace platf {
     void *display;
 
   public:
+    ~nv12_zero_device() override;
+
     // this function is used to set the resolution on an av_video object that we cannot
     // call directly because of namespace collisions between AVFoundation and FFMPEG
     using resolution_fn_t = std::function<void(void *display, int width, int height)>;
@@ -31,9 +33,6 @@ namespace platf {
     convert(img_t &img) override;
     int
     set_frame(AVFrame *frame, AVBufferRef *hw_frames_ctx) override;
-
-  private:
-    util::safe_ptr<AVFrame, free_frame> av_frame;
   };
 
 }  // namespace platf

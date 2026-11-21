@@ -80,10 +80,13 @@
 }
 
 - (void)dealloc {
+  [self.session stopRunning];
+  [self.videoOutputs removeAllObjects];
+  [self.captureCallbacks removeAllObjects];
+  [self.captureSignals removeAllObjects];
   [self.videoOutputs release];
   [self.captureCallbacks release];
   [self.captureSignals release];
-  [self.session stopRunning];
   [super dealloc];
 }
 
@@ -123,7 +126,9 @@
     dispatch_semaphore_t signal = dispatch_semaphore_create(0);
 
     [self.videoOutputs setObject:videoOutput forKey:videoConnection];
-    [self.captureCallbacks setObject:frameCallback forKey:videoConnection];
+    id copiedBlock = [frameCallback copy];
+    [self.captureCallbacks setObject:copiedBlock forKey:videoConnection];
+    [copiedBlock release];
     [self.captureSignals setObject:signal forKey:videoConnection];
 
     [self.session startRunning];

@@ -126,7 +126,26 @@ namespace platf {
         return false;
       }];
 
-      dispatch_semaphore_wait(signal, DISPATCH_TIME_FOREVER);
+      if (dispatch_semaphore_wait(signal, dispatch_time(DISPATCH_TIME_NOW, 500 * NSEC_PER_MSEC)) != 0) {
+        // Synthesize blank frame if live capture is not delivering frames (e.g. display asleep or during probe)
+        int w = av_capture.frameWidth > 0 ? av_capture.frameWidth : 1920;
+        int h = av_capture.frameHeight > 0 ? av_capture.frameHeight : 1080;
+        OSType fmt = av_capture.pixelFormat ? av_capture.pixelFormat : kCVPixelFormatType_32BGRA;
+        CVPixelBufferRef pb = nullptr;
+        if (CVPixelBufferCreate(kCFAllocatorDefault, w, h, fmt, nullptr, &pb) == kCVReturnSuccess && pb) {
+          auto new_pixel_buffer = std::make_shared<av_pixel_buf_t>(pb, true);
+          auto av_img = (av_img_t *) img;
+          av_img->sample_buffer = nullptr;
+          av_img->pixel_buffer = new_pixel_buffer;
+          img->data = new_pixel_buffer->data();
+          img->width = w;
+          img->height = h;
+          img->row_pitch = (int) CVPixelBufferGetBytesPerRow(pb);
+          img->pixel_pitch = img->row_pitch / w;
+          return 0;
+        }
+        return -1;
+      }
 
       return 0;
     }
