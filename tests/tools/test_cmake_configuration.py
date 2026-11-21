@@ -76,6 +76,44 @@ class Configuration(unittest.TestCase):
                 self.configure([f'-DCMAKE_CXX_COMPILER={args.compiler}', f'-DCMAKE_BUILD_TYPE={build_type}'], generator)
                 self.build_project(['--config', 'Debug'])
 
+    def test_gcc_release_build_uses_size_optimization(self):
+        # The GCC fallback must stay inside the release installer budget; Clang keeps its release flags.
+        self.write('probe.cpp', 'int main() { return 0; }\n')
+        self.cmake_project(self.include('cmake/targets/project_options.cmake')
+                           + 'sunshine_gcc_release_size_flag(gcc "GNU")\n'
+                             'sunshine_gcc_release_size_flag(clang "Clang")\n'
+                             'sunshine_gcc_release_size_flag(apple "AppleClang")\n'
+                             'if(NOT gcc STREQUAL "-Os")\n'
+                             'message(FATAL_ERROR "GNU Release must optimise for size")\n'
+                             'endif()\n'
+                             'if(NOT clang STREQUAL "" OR NOT apple STREQUAL "")\n'
+                             'message(FATAL_ERROR "Clang must keep its release optimisation")\n'
+                             'endif()\n'
+                             'set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")\n'
+                             'string(APPEND CMAKE_CXX_FLAGS_RELEASE " ${gcc}")\n'
+                             'add_executable(probe probe.cpp)\n', 'CXX')
+        self.configure([f'-DCMAKE_CXX_COMPILER={args.compiler}', '-DCMAKE_BUILD_TYPE=Release'])
+        self.assertRegex((self.build / 'build.ninja').read_text(encoding='utf-8'), r'-O3 -DNDEBUG -Os\b')
+        # The Windows module must use the same decision and append it after the Release flags.
+        windows = (SOURCE / 'cmake/compile_definitions/windows.cmake').read_text(encoding='utf-8')
+        self.assertIn('sunshine_gcc_release_size_flag', windows)
+        self.assertIn('CMAKE_${lang}_FLAGS_RELEASE', windows)
+        self.assertIn('sunshine_gcc_string_constructor_aliases', windows)
+
+    def test_gcc_string_constructor_aliases_are_gnu_only(self):
+        # GCC 16.2 at -Os calls basic_string's C4 constructor, which libstdc++.a does not export.
+        self.cmake_project(self.include('cmake/targets/project_options.cmake')
+                           + 'sunshine_gcc_string_constructor_aliases(gcc "GNU")\n'
+                             'sunshine_gcc_string_constructor_aliases(clang "Clang")\n'
+                             'list(LENGTH gcc aliases)\n'
+                             'if(NOT aliases EQUAL 2)\n'
+                             'message(FATAL_ERROR "GNU needs the two basic_string constructor aliases: ${gcc}")\n'
+                             'endif()\n'
+                             'if(clang)\n'
+                             'message(FATAL_ERROR "Clang must not take the GNU linker aliases")\n'
+                             'endif()\n')
+        self.configure()
+
     def test_presets_keep_parent_test_install_rules_intact(self):
         self.write('CMakePresets.json', (SOURCE / 'CMakePresets.json').read_text(encoding='utf-8'))
         self.cmake_project('add_subdirectory(tests)\n')
