@@ -35,6 +35,10 @@ try {
     npm ci --no-audit --no-fund
     $env:FOUNDATION_UI_DIR = $ui
     npm run build:installer-pages
+    # The pages import the whole foundation-ui stylesheet, which includes the clock components and their four fonts;
+    # the installer page has no clock. The pruner removes those rules and files before cargo embeds the pages. It refuses
+    # to delete anything the remaining CSS, JavaScript or HTML still names.
+    python (Join-Path $repo 'scripts/ci/prune-setup-ui.py') --dist (Join-Path $work 'dist-installer')
     cargo build --release --locked --manifest-path installer-ui/Cargo.toml
     $built = Join-Path $work 'installer-ui/target/release/foundation-setup-ui.exe'
     if (-not (Test-Path -LiteralPath $built) -or (Get-Item -LiteralPath $built).Length -eq 0) { throw 'foundation-setup-ui.exe was not produced' }
