@@ -11,10 +11,27 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     foreach(lang C CXX)
         string(APPEND CMAKE_${lang}_FLAGS_RELEASE " -g1")
     endforeach()
+    # On 2026-11-20 the GCC nightly built a 46,583,321-byte installer against the 46,000,000-byte release
+    # budget; the same commit built with Clang produced 43,172,884 bytes. The GCC build is the fallback, so
+    # it builds for size: appending after the -O3 of CMAKE_<LANG>_FLAGS_RELEASE keeps -Os in effect (CMake
+    # documentation, CMAKE_<LANG>_FLAGS_<CONFIG>, source fs-cmake-flags-config-20261121). Clang keeps -O3.
+    sunshine_gcc_release_size_flag(_sunshine_gcc_release_size_flag "${CMAKE_CXX_COMPILER_ID}")
+    if(_sunshine_gcc_release_size_flag)
+        foreach(lang C CXX)
+            string(APPEND CMAKE_${lang}_FLAGS_RELEASE " ${_sunshine_gcc_release_size_flag}")
+        endforeach()
+    endif()
     foreach(kind EXE SHARED MODULE)
         string(APPEND CMAKE_${kind}_LINKER_FLAGS " -Wl,--build-id")
     endforeach()
 endif()
+
+sunshine_gcc_string_constructor_aliases(_sunshine_gcc_string_constructor_aliases "${CMAKE_CXX_COMPILER_ID}")
+foreach(kind EXE SHARED MODULE)
+    foreach(alias IN LISTS _sunshine_gcc_string_constructor_aliases)
+        string(APPEND CMAKE_${kind}_LINKER_FLAGS " ${alias}")
+    endforeach()
+endforeach()
 
 # gcc complains about misleading indentation in some mingw includes
 list(APPEND SUNSHINE_COMPILE_OPTIONS -Wno-misleading-indentation)
