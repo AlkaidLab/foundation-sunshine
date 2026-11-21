@@ -4126,7 +4126,7 @@ namespace video {
       while (encode_session_ctx_queue.peek()) {
         auto pending = encode_session_ctx_queue.pop();
         if (!pending) break;
-        if (!synced_session_ctxs.empty()) pending->config.display_name = synced_session_ctxs.front()->config.display_name;
+        pending->config.display_name = streaming::recovery_session_target(synced_session_ctxs, pending->config.display_name, [](const auto &ctx) { return ctx.shutdown_event->peek(); }, [](const auto &ctx) { return ctx.config.display_name; });
         synced_session_ctxs.emplace_back(std::make_unique<sync_session_ctx_t>(std::move(*pending)));
       }
       if (!streaming::retain_active_recovery_sessions(synced_session_ctxs, [](auto &ctx) { return ctx.shutdown_event->peek(); }, [](auto &ctx) { ctx.join_event->raise(true); })) return encode_e::ok;

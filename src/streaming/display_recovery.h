@@ -6,6 +6,13 @@
 #include <vector>
 
 namespace streaming {
+  template <class Sessions, class IsStopped, class GetTarget>
+  std::string
+  recovery_session_target(const Sessions &sessions, const std::string &requested, IsStopped &&is_stopped, GetTarget &&get_target) {
+    const auto active = std::find_if(sessions.begin(), sessions.end(), [&](const auto &session) { return !is_stopped(*session); });
+    return active == sessions.end() ? requested : get_target(**active);
+  }
+
   template <class Sessions, class IsStopped, class SignalJoin>
   bool
   retain_active_recovery_sessions(Sessions &sessions, IsStopped &&is_stopped, SignalJoin &&signal_join) {

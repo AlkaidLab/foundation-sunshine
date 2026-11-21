@@ -49,3 +49,20 @@ TEST(DisplayRecovery, StoppedSessionsAreJoinedWhileActiveSessionsKeepWaiting) {
   EXPECT_EQ(joins_a, 1);
   EXPECT_EQ(joins_b, 1);
 }
+
+TEST(DisplayRecovery, NewSessionInheritsOnlyFromActiveSession) {
+  struct session_t {
+    bool stopped;
+    std::string target;
+  };
+  std::vector<std::unique_ptr<session_t>> sessions;
+  sessions.push_back(std::make_unique<session_t>(true, "vdd"));
+  auto choose = [&] {
+    return streaming::recovery_session_target(sessions, "physical", [](const auto &session) { return session.stopped; }, [](const auto &session) { return session.target; });
+  };
+  EXPECT_EQ(choose(), "physical");
+  sessions.push_back(std::make_unique<session_t>(false, "active"));
+  EXPECT_EQ(choose(), "active");
+  sessions.clear();
+  EXPECT_EQ(choose(), "physical");
+}
