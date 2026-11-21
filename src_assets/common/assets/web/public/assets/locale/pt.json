@@ -1137,7 +1137,6 @@
     "stream_mic": "Ativar transmissão de microfone",
     "stream_mic_desc": "Desative esta opção para parar a transmissão do microfone.",
     "stream_mic_download_btn": "Descarregar microfone virtual",
-    "stream_mic_download_confirm": "Está prestes a ser redirecionado para a página de descarga do microfone virtual. Continuar?",
     "stream_mic_note": "Esta funcionalidade requer a instalação de um microfone virtual",
     "stream_mic_test": "Testar o percurso do microfone",
     "stream_mic_test_device_unavailable": "O VB-Cable não está disponível. Instale-o e confirme que CABLE Input e CABLE Output estão ativados.",

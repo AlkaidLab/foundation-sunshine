@@ -141,11 +141,11 @@ test('the expert device row is an expert row with its own control, not a full-wi
   row.unmount()
 })
 
-test('the VB-CABLE row names the state and offers the download unless it is ready or only disabled', async () => {
-  for (const [state, download] of [['ready', false], ['partial', true], ['unavailable', true], ['missing', true], ['disabled', false]]) {
+test('the VB-CABLE row names the state and offers no download; management lives in the Panel', async () => {
+  for (const state of ['ready', 'partial', 'unavailable', 'missing', 'disabled']) {
     const row = await h.mount(VbCableRow, { vb: { state }, loaded: true })
     assert.match(row.text(), new RegExp(`config\\.vb_cable_state_${state}`), state)
-    assert.equal(row.buttons('_common.download').length > 0, download, `${state}: download entry`)
+    assert.equal(row.buttons('_common.download').length, 0, `${state}: no download entry`)
     row.unmount()
   }
   const loading = await h.mount(VbCableRow, { vb: { state: 'missing' }, loaded: false })

@@ -1137,7 +1137,6 @@
     "stream_mic": "Włącz przesyłanie mikrofonu",
     "stream_mic_desc": "Wyłącz tę opcję, aby zatrzymać przesyłanie mikrofonu.",
     "stream_mic_download_btn": "Pobierz wirtualny mikrofon",
-    "stream_mic_download_confirm": "Zostaniesz przekierowany na stronę pobierania wirtualnego mikrofonu. Kontynuować?",
     "stream_mic_note": "Ta funkcja wymaga zainstalowania wirtualnego mikrofonu",
     "stream_mic_test": "Przetestuj ścieżkę mikrofonu",
     "stream_mic_test_device_unavailable": "VB-Cable jest niedostępny. Zainstaluj go i upewnij się, że CABLE Input oraz CABLE Output są włączone.",

@@ -1137,7 +1137,6 @@
     "stream_mic": "Aktivera mikrofonströmning",
     "stream_mic_desc": "Inaktivera detta alternativ för att stoppa mikrofonströmningen.",
     "stream_mic_download_btn": "Ladda ner virtuell mikrofon",
-    "stream_mic_download_confirm": "Du kommer att omdirigeras till nedladdningssidan för virtuell mikrofon. Fortsätta?",
     "stream_mic_note": "Denna funktion kräver installation av en virtuell mikrofon",
     "stream_mic_test": "Testa mikrofonvägen",
     "stream_mic_test_device_unavailable": "VB-Cable är inte tillgängligt. Installera det och kontrollera att både CABLE Input och CABLE Output är aktiverade.",
