@@ -188,6 +188,8 @@ html[data-bs-theme] {
 .app-sheet.m-sheet--end, .cover-sheet.m-sheet--end, .scan-sheet.m-sheet--end { width: min(720px, 100vw); }
 .cover-sheet.m-sheet--end { width: min(640px, 100vw); }
 @media (max-width: 599.98px) { .app-sheet.m-sheet--end, .cover-sheet.m-sheet--end, .scan-sheet.m-sheet--end { width: 100%; } }
+/* the audio device pickers: a device name with its reason reads at the 720 width the other dialogs use */
+.device-sheet.m-sheet--center { --m-dialog-w: 720px; }
 .apps-editor { display: flex; flex-direction: column; gap: 8px; }
 .apps-pathrow { display: flex; align-items: center; gap: 4px; }
 .apps-pathrow .m-field { flex: 1; }
