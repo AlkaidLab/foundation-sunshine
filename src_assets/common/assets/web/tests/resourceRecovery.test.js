@@ -119,7 +119,14 @@ test('a failed preload followed by a successful lazyPane retry shows no error', 
   assert.equal(attempts, 2)
   assert.equal(browser.html.children.length, 0)
 
-  // Vue uses the error component when the retry also rejects.
-  const failed = lazyPane(() => Promise.reject(new Error('unavailable')))
-  await assert.rejects(failed.__asyncLoader(), /unavailable/)
+  // A rejected loader must actually render the error component after both
+  // attempts, including the reload action, rather than leaving an empty pane.
+  t.mock.method(console, 'error', () => {})
+  let failures = 0
+  const failed = lazyPane(() => { failures++; return Promise.reject(new Error('unavailable')) })
+  const rendered = await harness.mount(failed, {})
+  assert.equal(failures, 2)
+  assert.match(rendered.text(), /shell\.pane_failed/)
+  assert.equal(rendered.buttons('shell.pane_reload').length, 1)
+  rendered.unmount()
 })

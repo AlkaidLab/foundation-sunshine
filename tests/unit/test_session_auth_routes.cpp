@@ -17,10 +17,12 @@
 #include <atomic>
 #include <boost/asio/ssl.hpp>
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <fstream>
 #include <future>
 #include <gtest/gtest.h>
+#include <mutex>
 #include <nlohmann/json.hpp>
 #include <stdexcept>
 #include <string>
@@ -291,10 +293,10 @@ namespace {
     }
 
     std::unique_ptr<web::Client<web::HTTPS>>
-    connect() {
+    connect(long timeout_content = 5) {
       server->config.address = "127.0.0.1";
       server->config.port = 0;
-      server->config.timeout_content = 5;
+      server->config.timeout_content = timeout_content;
       auto ready = std::make_shared<std::promise<unsigned short>>();
       auto startup_signaled = std::make_shared<std::atomic_bool>(false);
       auto port = ready->get_future();
@@ -478,7 +480,34 @@ TEST_F(SessionAuthRoutes, BasicAndSessionLoginSharePasswordFailureLimits) {
 }
 
 TEST_F(SessionAuthRoutes, ConcurrentBasicAttemptsRespectTheFailureLimit) {
-  auto client = connect();
+  // Each request waits at the handler before authentication. Reaching this
+  // gate from all clients proves the server dispatches handlers concurrently.
+  struct concurrent_gate_t {
+    std::mutex mutex;
+    std::condition_variable ready;
+    int arrivals = 0;
+    std::chrono::steady_clock::time_point deadline;
+
+    bool arrive() {
+      std::unique_lock lock(mutex);
+      ++arrivals;
+      ready.notify_all();
+      return ready.wait_until(lock, deadline, [this] { return arrivals == 8; });
+    }
+  };
+  auto gate = std::make_shared<concurrent_gate_t>();
+  server->config.thread_pool_size = 8;
+  server->resource["^/api/test-concurrent-auth$"]["GET"] = [gate](auto response, auto request) {
+    request->remote.address(boost::asio::ip::make_address("192.0.2.1"));
+    if (!gate->arrive()) {
+      response->write(web::StatusCode::service_unavailable);
+      return;
+    }
+    if (confighttp::authenticate(response, request)) {
+      response->write("authenticated");
+    }
+  };
+  auto client = connect(15);
   const web::CaseInsensitiveMultimap wrong_basic {
     { "Authorization", "Basic cm91dGUtdXNlcjp3cm9uZy1wYXNzd29yZA==" },
   };
@@ -486,15 +515,23 @@ TEST_F(SessionAuthRoutes, ConcurrentBasicAttemptsRespectTheFailureLimit) {
     ASSERT_EQ(client->request("GET", "/api/test-auth-required", "", wrong_basic)->status_code, "401 Unauthorized");
   }
 
+  {
+    std::lock_guard lock(gate->mutex);
+    gate->deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  }
+  std::promise<void> start;
+  const auto ready = start.get_future().share();
   std::vector<std::future<std::string>> attempts;
   for (int attempt = 0; attempt < 8; ++attempt) {
-    attempts.push_back(std::async(std::launch::async, [this, &wrong_basic] {
+    attempts.push_back(std::async(std::launch::async, [this, &wrong_basic, ready] {
       web::Client<web::HTTPS> concurrent_client("127.0.0.1:" + std::to_string(bound_port), false);
-      concurrent_client.config.timeout = 5;
-      concurrent_client.config.timeout_connect = 5;
-      return concurrent_client.request("GET", "/api/test-auth-required", "", wrong_basic)->status_code;
+      concurrent_client.config.timeout = 20;
+      concurrent_client.config.timeout_connect = 20;
+      ready.wait();
+      return concurrent_client.request("GET", "/api/test-concurrent-auth", "", wrong_basic)->status_code;
     }));
   }
+  start.set_value();
   int rejected = 0;
   int throttled = 0;
   for (auto &attempt : attempts) {
@@ -504,6 +541,10 @@ TEST_F(SessionAuthRoutes, ConcurrentBasicAttemptsRespectTheFailureLimit) {
   }
   EXPECT_EQ(rejected, 1);
   EXPECT_EQ(throttled, 7);
+  {
+    std::lock_guard lock(gate->mutex);
+    EXPECT_EQ(gate->arrivals, 8);
+  }
 }
 
 TEST_F(SessionAuthRoutes, NavigationRedirectsToLoginWhileApiReturnsJson) {
@@ -532,6 +573,39 @@ TEST_F(SessionAuthRoutes, BasicCredentialsStillAuthenticateApiClientsWithoutACha
     { { "Authorization", "Basic cm91dGUtdXNlcjp3cm9uZy1wYXNzd29yZA==" } });
   EXPECT_EQ(bad->status_code, "401 Unauthorized");
   EXPECT_EQ(bad->header.count("WWW-Authenticate"), 0u);
+}
+
+TEST_F(SessionAuthRoutes, LocalTokenRemainsUsableDuringBasicPasswordBackoff) {
+  auto client = connect();
+  const auto token = local_token();
+  ASSERT_EQ(token.size(), 64u);
+  const std::string wrong_basic = "Basic cm91dGUtdXNlcjp3cm9uZy1wYXNzd29yZA==";
+  const std::string correct_basic = "Basic cm91dGUtdXNlcjpyb3V0ZS1wYXNzd29yZA==";
+  const auto login_response = login(*client, "route-user", "route-password");
+  ASSERT_EQ(login_response->status_code, "200 OK");
+  const auto cookies = cookies_from(*login_response);
+
+  for (int attempt = 0; attempt < 5; ++attempt) {
+    EXPECT_EQ(client->request("GET", "/api/test-local-auth-required", "",
+      { { "Authorization", wrong_basic } })->status_code, "401 Unauthorized");
+  }
+  EXPECT_EQ(client->request("GET", "/api/test-local-auth-required", "",
+    { { "Authorization", correct_basic } })->status_code, "429 Too Many Requests");
+  EXPECT_EQ(client->request("GET", "/api/test-local-auth-required", "",
+    { { "Authorization", wrong_basic }, { "X-Sunshine-Local-Token", token } })->status_code, "200 OK");
+  EXPECT_EQ(client->request("GET", "/api/test-local-auth-required", "",
+    { { "Authorization", wrong_basic }, { "X-Sunshine-Local-Token", std::string(64, '0') } })->status_code,
+    "429 Too Many Requests");
+  EXPECT_EQ(client->request("GET", "/api/test-local-auth-required", "",
+    { { "Authorization", wrong_basic }, { "X-Sunshine-Local-Token", token }, { "X-Forwarded-For", "192.0.2.1" } })->status_code,
+    "429 Too Many Requests");
+  EXPECT_EQ(client->request("POST", "/api/auth/logout", "",
+    { { "Cookie", cookie_header(cookies) }, { "Authorization", wrong_basic }, { "X-Sunshine-Local-Token", token } })->status_code,
+    "403 Forbidden");
+  const auto reset = client->request("POST", "/api/auth/password/reset",
+    json { { "new_password", "reset-route-password" } }.dump(),
+    { { "Content-Type", "application/json" }, { "Authorization", wrong_basic }, { "X-Sunshine-Local-Token", token } });
+  EXPECT_EQ(reset->status_code, "200 OK") << reset->content.string();
 }
 
 TEST_F(SessionAuthRoutes, LoopbackRequiresTheLocalTokenAndAcceptsItConstantTime) {

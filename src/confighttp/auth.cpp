@@ -1228,6 +1228,14 @@ load();
       return true;
     }
 
+    // A valid local panel token remains usable even if unrelated Basic
+    // credentials have exhausted the password backoff for this address.
+    const auto local_token = get_single_request_header(request, local_auth_token::header_name);
+    if (is_local(request) && local_token.valid && local_token.value &&
+        local_auth_token::matches(*local_token.value)) {
+      return true;
+    }
+
     const auto auth = get_single_request_header(request, "authorization");
     if (auth.valid && auth.value) {
       constexpr auto basic_prefix = "Basic "sv;
@@ -1266,12 +1274,6 @@ load();
           login_throttle().record_failure(address, throttle_username);
         }
       }
-    }
-
-    const auto local_token = get_single_request_header(request, local_auth_token::header_name);
-    if (is_local(request) && local_token.valid && local_token.value &&
-        local_auth_token::matches(*local_token.value)) {
-      return true;
     }
 
     send_unauthenticated(std::move(response), std::move(request));
