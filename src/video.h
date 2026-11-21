@@ -11,10 +11,15 @@
 
 #include <boost/smart_ptr/shared_ptr.hpp>
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <functional>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "hdr/client_display_capabilities.h"
@@ -141,6 +146,80 @@ namespace video {
   // 动态参数调节事件类型
   using dynamic_param_change_event_t = safe::mail_raw_t::event_t<dynamic_param_t>;
 
+  /**
+   * @brief Display size that a client-requested resolution change (0x5506 RESOLUTION) is switching to.
+   *
+   * The control stream sets it right before reconfiguring the display. Until the capture display reaches
+   * that size, the capture loop does not follow other sizes, so intermediate modes (e.g. a recreated
+   * virtual display coming up at its default mode) never reach the encoder or the client. The target is
+   * dropped when the apply fails or after a timeout, and retargeted when the driver applied a different
+   * mode, so it can never stop the capture loop from following the display for long.
+   */
+  class pending_display_size_t {
+  public:
+    using clock = std::chrono::steady_clock;
+    static constexpr std::chrono::seconds timeout { 10 };
+
+    void
+    set(int width, int height, clock::time_point now = clock::now());
+
+    void
+    clear();
+
+    /**
+     * @brief Wait for the display mode that was actually applied if it differs from the request.
+     */
+    void
+    settle(int applied_width, int applied_height);
+
+    /**
+     * @brief Whether a display that changed to this size is an intermediate mode the capture loop should skip.
+     * @note Reaching the target, with the same orientation, consumes it.
+     */
+    bool
+    defers(int width, int height, clock::time_point now = clock::now());
+
+    /**
+     * @brief Whether an unexpired target is still pending.
+     */
+    bool
+    pending(clock::time_point now = clock::now());
+
+  private:
+    struct target_t {
+      int width;
+      int height;
+      clock::time_point deadline;
+    };
+
+    std::mutex mutex_;
+    std::optional<target_t> target_;
+  };
+
+  /**
+   * @brief Encoder stop condition while the capture loop skips a display change to this size.
+   * @return A predicate that turns true once the skipped size should be followed.
+   */
+  std::function<bool()>
+  make_deferred_display_stop(std::shared_ptr<pending_display_size_t> target, int width, int height);
+
+  /**
+   * @brief Whether capture that starts with this stream and display size encodes the display 1:1.
+   *
+   * The capture loop fixes its stream/display scale when capture starts, swapping width and height when the
+   * orientations differ, and keeps it for the session. Only at 1:1 does a later display size become the stream size.
+   */
+  bool
+  encodes_display_1to1(int stream_width, int stream_height, int display_width, int display_height);
+
+  /**
+   * @brief Display size the capture loop reports to the client (0x5507) when capture starts.
+   * @return nullopt for window capture: it keeps the negotiated size whatever the monitor's size or orientation
+   *         and never follows display changes, so the monitor size does not describe the stream.
+   */
+  std::optional<std::pair<std::uint32_t, std::uint32_t>>
+  capture_start_display_report(bool is_window_capture, int display_width, int display_height);
+
   /* Encoding configuration requested by remote client */
   struct config_t {
     int width;  // Video width in pixels
@@ -208,6 +287,10 @@ namespace video {
     bool pyrowave_dynamic_hdr_mapping = false;
     std::shared_ptr<streaming::bitrate_budget_t> bitrate_budget;
     std::shared_ptr<streaming::capture_target_t> capture_target;
+    // Shared with the control stream for the session; only set by client-requested resolution changes.
+    std::shared_ptr<pending_display_size_t> client_resolution_target;
+    // Shared with the control stream for the session; latched by the capture loop when capture starts.
+    std::shared_ptr<std::atomic<bool>> stream_encodes_display_1to1;
 
     platf::frame_pipeline_policy_t
     effective_frame_pipeline_policy() const {
