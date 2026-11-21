@@ -38,15 +38,15 @@ State of **our** product before this round (feat/audio-devices at `1f7d1fa08` / 
 | 5 stream_audio, stream_mic | switches | same | same | same |
 | 6 microphone mode | select, all four modes | a list row (dialog) whose names were sentences; Panel: a four-button group | **worse** on the Web page (the modes were one click deeper) | four buttons, 麦克风方式, on the microphone page of the Web UI and of the Panel; the line below says what the chosen mode does |
 | 7 VB-Cable download | confirm, then the zip link | confirm, then the zip link (shown for every backend); Panel: the VB-Audio page | same | kept as the manual way |
-| 8 VB-Cable install | script run by hand as administrator, silent, no signature check | **missing**: only the download | **missing** | **install** from the row, asked first: the host downloads from VB-Audio, checks the Authenticode signature (publisher Vincent Burel / VB-Audio) and runs the setup silently; **enable** a disabled device with `pnputil /enable-device`, asked first |
-| 9 host auto-download at mic start | downloads and unpacks, asks for a manual install | the same code | same | the install above replaces the manual step |
+| 8 VB-Cable install | script run by hand as administrator, silent, no signature check | **missing**: only the download | **missing** | Panel component management separates download, install and uninstall; the pinned package is Pack43 |
+| 9 host auto-download at mic start | downloads and unpacks, asks for a manual install | the same code | same | the host does not install VB-CABLE; Panel downloads only on request |
 | 10 mic test and status | yes | yes | same | same |
 | 11 MAT live | on the audio page | on the display advanced page (`DisplayAdvanced.vue`) | different place; not changed | not changed |
 | 12 per-app / per-client speaker | none | none | same | none (not in the original) |
-| 13 Panel microphone page | read-only backend, opens the Web UI | backend picker, state and test | **better** | VB-CABLE row with install, enable and download, device manager |
+| 13 Panel microphone page | read-only backend, opens the Web UI | backend picker, state and test | **better** | VB-CABLE state, a link to component management and Device Manager for a disabled device |
 
 ## 3. Differences kept on purpose
 
 - Our default `microphone_redirect_backend` is `auto` (USB/IP first, VB-Cable as the fallback); the original's is `vb_cable`.
-- The install runs inside the host service (already elevated), not in a script run by hand; the UI asks first and the request must carry `confirm: true`. The signature check is new.
-- Not verified on a Windows test host by installing: nothing was installed or enabled there (see the report); the steps are tested with fakes, and the signature check ran against the setup program of the pack that is already on that machine.
+- Driver management belongs to the Panel's component page. Installing and uninstalling require confirmation and Windows administrator authorization; the host's audio endpoint API is read-only.
+- The component flow is tested without changing real drivers. An earlier Pack45 uninstall test returned Windows 3010; that removal is incomplete until Windows can release the driver.

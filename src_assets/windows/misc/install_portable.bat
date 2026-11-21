@@ -107,7 +107,7 @@ REM Component installation process
 REM ================================================
 
 REM Step 1 - Install virtual display driver (VDD)
-call :LogStep "1/4" "%STEP_VDD%..."
+call :LogStep "1/3" "%STEP_VDD%..."
 REM Check if virtual display is already installed
 reg query "HKLM\SOFTWARE\ZakoTech\ZakoDisplayAdapter" >nul 2>&1
 if !errorLevel! neq 0 (
@@ -130,32 +130,8 @@ if !errorLevel! neq 0 (
 )
 echo.
 
-REM Step 2 - Install virtual microphone (VB-Cable)
-call :LogStep "2/4" "%STEP_VSINK%..."
-REM A leftover vendor registry key alone does not mean the driver is installed.
-"%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -Command "try { $devices = @(Get-CimInstance Win32_PnPSignedDriver -ErrorAction Stop | Where-Object { $_.DeviceName -eq 'VB-Audio Virtual Cable' -and $_.DriverProviderName -eq 'VB-Audio Software' }); if ($devices.Count) { exit 0 } else { exit 1 } } catch { exit 1 }" >nul 2>&1
-if !errorLevel! neq 0 (
-    set "vsink_choice=Y"
-    set /p vsink_choice="%VSINK_PROMPT% "
-    if /i "!vsink_choice!"=="Y" (
-        call :LogInfo "%INFO_VSINK_INSTALL%..."
-        REM Call virtual microphone installation script
-        call "%SCRIPT_DIR%\install-vsink.bat"
-        if !errorLevel! equ 0 (
-            call :LogSuccess "%SUCCESS_VSINK%"
-        ) else (
-            call :LogWarning "%WARNING_VSINK%"
-        )
-    ) else (
-        call :LogInfo "%INFO_VSINK_SKIP%"
-    )
-) else (
-    call :LogInfo "%INFO_VSINK_EXISTS%"
-)
-echo.
-
-REM Step 3 - Configure firewall rules
-call :LogStep "3/4" "%STEP_FIREWALL%..."
+REM Step 2 - Configure firewall rules
+call :LogStep "2/3" "%STEP_FIREWALL%..."
 set "firewall_choice=Y"
 set /p firewall_choice="%FIREWALL_PROMPT% "
 if /i "!firewall_choice!"=="Y" (
@@ -168,8 +144,8 @@ if /i "!firewall_choice!"=="Y" (
 )
 echo.
 
-REM Step 4 - Install gamepad support
-call :LogStep "4/5" "%STEP_GAMEPAD%..."
+REM Step 3 - Install gamepad support
+call :LogStep "3/3" "%STEP_GAMEPAD%..."
 set "gamepad_choice=Y"
 set /p gamepad_choice="%GAMEPAD_PROMPT% "
 if /i "!gamepad_choice!"=="Y" (
@@ -394,10 +370,9 @@ echo.
 echo %SCRIPT_CONFIRM_DESC%:
 echo.
 echo 1. %SCRIPT_CONFIRM_VDD%
-echo 2. %SCRIPT_CONFIRM_VSINK%
-echo 3. %SCRIPT_CONFIRM_FIREWALL%
-echo 4. %SCRIPT_CONFIRM_GAMEPAD%
-echo 5. %SCRIPT_CONFIRM_AUTOSTART%
+echo 2. %SCRIPT_CONFIRM_FIREWALL%
+echo 3. %SCRIPT_CONFIRM_GAMEPAD%
+echo 4. %SCRIPT_CONFIRM_AUTOSTART%
 echo.
 set "confirm_choice=Y"
 set /p confirm_choice="%SCRIPT_CONFIRM_PROCEED% "

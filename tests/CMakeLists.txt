@@ -183,29 +183,15 @@ if (WIN32)
 endif ()
 add_test(NAME audio_default_wait_unit_tests COMMAND audio_default_wait_unit_tests)
 
-# The VB-CABLE install and enable steps against a fake system: nothing is downloaded, installed or enabled.
-add_executable(audio_vb_cable_unit_tests
-        ${CMAKE_SOURCE_DIR}/src/audio_vb_cable.cpp
-        ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_vb_cable.cpp)
-target_include_directories(audio_vb_cable_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
-target_link_libraries(audio_vb_cable_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json sunshine_project_options sunshine_coverage)
-set_target_properties(audio_vb_cable_unit_tests PROPERTIES CXX_STANDARD 23)
-if (WIN32)
-    set_target_properties(audio_vb_cable_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
-endif ()
-add_test(NAME audio_vb_cable_unit_tests COMMAND audio_vb_cable_unit_tests)
-
 if (WIN32)
     # Prints what GET /api/audio/devices answers on this machine; reads endpoints only. Not a unit test.
     add_executable(audio_devices_dump
             ${CMAKE_SOURCE_DIR}/tests/tools/audio_devices_dump.cpp
             ${CMAKE_SOURCE_DIR}/src/audio_devices.cpp
-            ${CMAKE_SOURCE_DIR}/src/audio_vb_cable.cpp
             ${CMAKE_SOURCE_DIR}/src/platform/windows/audio_devices.cpp
-            ${CMAKE_SOURCE_DIR}/src/platform/windows/audio_vb_cable_win.cpp
             ${CMAKE_SOURCE_DIR}/src/platform/windows/text_encoding.cpp)
     target_include_directories(audio_devices_dump PRIVATE "${CMAKE_SOURCE_DIR}")
-    target_link_libraries(audio_devices_dump PRIVATE nlohmann_json::nlohmann_json sunshine_project_options ole32 uuid oleaut32 setupapi cfgmgr32 wintrust crypt32)
+    target_link_libraries(audio_devices_dump PRIVATE nlohmann_json::nlohmann_json sunshine_project_options ole32 uuid oleaut32 setupapi cfgmgr32)
     set_target_properties(audio_devices_dump PROPERTIES CXX_STANDARD 23 LINK_SEARCH_START_STATIC 1)
 endif ()
 
@@ -1583,7 +1569,6 @@ list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_authored_ir_ex
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_devices.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_sink_plan.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_default_wait.cpp)
-list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_vb_cable.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_telemetry.cpp ${CMAKE_SOURCE_DIR}/tests/unit/test_error_code.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_host_bitrate_cap.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_cover_failure_backoff.cpp)

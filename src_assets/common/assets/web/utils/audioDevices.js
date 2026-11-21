@@ -9,7 +9,7 @@ const lower = (value) => text(value).toLowerCase()
 
 /** The answer of the host as lists; a missing or unsupported answer is an empty, unsupported one. */
 export function normalizeAudioDevices(payload) {
-  const empty = { supported: false, render: [], capture: [], defaultOutput: { present: true, reason: '', hostWaiting: false }, vb: { installed: false, state: 'unknown', renderId: '', captureId: '', job: { action: '', step: '', running: false, errorCode: '', detail: '' } } }
+  const empty = { supported: false, render: [], capture: [], defaultOutput: { present: true, reason: '', hostWaiting: false }, vb: { installed: false, state: 'unknown', renderId: '', captureId: '' } }
   if (!payload || payload.success === false) return empty
   if (payload.supported === false) return { ...empty, vb: { ...empty.vb, state: 'unsupported' } }
   const list = (items) => (Array.isArray(items) ? items : []).map((d) => ({
@@ -30,7 +30,6 @@ export function normalizeAudioDevices(payload) {
     },
     vb: {
       installed: vb.installed === true, state: text(vb.state) || 'missing', renderId: text(vb.render_id), captureId: text(vb.capture_id),
-      job: { action: text(vb.job?.action), step: text(vb.job?.step), running: vb.job?.running === true, errorCode: text(vb.job?.error_code), detail: text(vb.job?.detail) },
     },
   }
 }
@@ -125,23 +124,6 @@ export function steamDriverState(list) {
   if (own.some((d) => d.state === 'active')) return 'ready'
   return own.length ? 'disabled' : 'missing'
 }
-
-/**
- * What a failed install or enable job tells the person, as the key of its text: the download or the pack, the signature,
- * the missing administrator rights, or "the device is still not usable" for everything else.
- */
-export function vbCableErrorKind(code) {
-  switch (code) {
-    case 'VB_DOWNLOAD_FAILED': case 'VB_EXTRACT_FAILED': case 'VB_SETUP_MISSING': return 'download'
-    case 'VB_SIGNATURE_INVALID': case 'VB_SIGNER_UNEXPECTED': return 'signature'
-    case 'VB_NEEDS_ADMIN': return 'admin'
-    case '': return ''
-    default: return 'failed'
-  }
-}
-
-/** The step of a running job as a key suffix (downloading, verifying, installing, enabling); '' when none is running. */
-export const vbCableRunningStep = (job) => (job?.running ? (['downloading', 'verifying', 'installing', 'enabling'].includes(job.step) ? job.step : 'downloading') : '')
 
 /**
  * The notice for a computer with no default playback device (a server, a cloud machine, a VM: nothing plugged in or enabled), or null when

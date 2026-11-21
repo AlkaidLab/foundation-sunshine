@@ -171,7 +171,12 @@ namespace audio_devices {
       }
       out.push_back(std::move(driver));
     }
+    const auto enumeration_error = GetLastError();
     SetupDiDestroyDeviceInfoList(set);
+    if (enumeration_error != ERROR_NO_MORE_ITEMS) {
+      out.clear();
+      return false;
+    }
     return true;
   }
 

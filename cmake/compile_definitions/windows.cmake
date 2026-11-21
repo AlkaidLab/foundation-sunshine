@@ -222,7 +222,6 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/windows/vulkan_hdr_bridge_session.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/audio.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/audio_devices.cpp"
-        "${CMAKE_SOURCE_DIR}/src/platform/windows/audio_vb_cable_win.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/mic_write.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/mic_redirect.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_microphone.h"

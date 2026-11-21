@@ -97,29 +97,13 @@ with empty lists and `vb_cable.state` `unsupported`.
 If the enumerator cannot be created the answer is
 `{"success": false, "supported": true, "error_code": "AUDIO_ENUMERATOR_UNAVAILABLE"}`.
 
-## POST /api/audio/vb-cable/install and /api/audio/vb-cable/enable
+## Component management
 
-Body `{"confirm": true}`; without `confirm` nothing starts (`VB_CONFIRM_REQUIRED`). The UI asks the person first.
-Both start one job on a thread of the host and answer at once `{"success": true, "started": true}`, or
-`{"success": false, "error_code": "VB_BUSY"}` while a job runs. The progress is `vb_cable.job` of
-`GET /api/audio/devices`: `{"action": "install"|"enable"|"", "step": "downloading"|"verifying"|"installing"|"enabling"|"done"|"failed"|"",
-"running": bool, "error_code": "", "detail": ""}`.
-
-- **install** (the original's `install-vsink.bat`, with a check): downloads `VBCABLE_Driver_Pack43.zip` from
-  `download.vb-audio.com` only, unpacks it with `tar.exe`, verifies the Authenticode signature of
-  `VBCABLE_Setup_x64.exe` (WinVerifyTrust must accept it and the signer must be VB-Audio's publisher, today
-  "Vincent Burel") **before** anything of the pack is started, then runs `VBCABLE_Setup_x64.exe /S` (180 s limit) in a
-  directory only SYSTEM and the administrators can write. Refused when VB-CABLE is ready (`VB_ALREADY_READY`) or only
-  disabled (`VB_USE_ENABLE`).
-- **enable**: hands the instance id of the disabled VB-Audio Virtual Cable device node (read from the device tree, only a
-  `ROOT\...` id is accepted) to `pnputil /enable-device` (60 s limit). Refused when nothing is disabled
-  (`VB_NOTHING_TO_ENABLE`).
-- Both need an elevated host (`VB_NEEDS_ADMIN`); the Sunshine service is. After the step the endpoints are read again for up to
-  15 s; a device that is still not usable is `VB_STILL_UNAVAILABLE`.
-- Other error codes: `VB_DOWNLOAD_FAILED`, `VB_EXTRACT_FAILED`, `VB_SETUP_MISSING`, `VB_SIGNATURE_INVALID`,
-  `VB_SIGNER_UNEXPECTED`, `VB_INSTALL_FAILED`, `VB_INSTALL_TIMEOUT`, `VB_ENABLE_FAILED`, `VB_UNSUPPORTED`.
-
-The routes use the same authentication as the other configuration APIs.
+On Windows, the Control Panel's component page separates checking, downloading,
+installing and uninstalling VB-CABLE. The audio devices API remains read-only.
+Installation uses the verified Pack43 archive. Device detection is independent
+of the installed pack version. Windows may require a restart to finish a driver
+operation; the panel does not restart it.
 
 ## Sources
 
