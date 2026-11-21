@@ -1,7 +1,8 @@
 <script setup>
 import { computed, inject, onMounted, ref, useId } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MIcon, MIconButton, MSheet, MAppearance, MSponsorButton, aboutTexts, appearanceTexts, useAppearance } from 'foundation-ui/vue'
+import { MIcon, MIconButton, MSheet, MSponsorButton, aboutTexts, appearanceTexts, useAppearance } from 'foundation-ui/vue'
+import { hasOpened, lazyPane } from '../../utils/lazyPane.js'
 import { SPONSORS, sponsorUrl } from '../../config/sponsors.js'
 import '../../config/settingsData/index.js'
 import { labelOf } from 'foundation-ui/settings/index.js'
@@ -17,6 +18,8 @@ const accountAnchor = useId()
 const themeMenu = ref(null)
 const accountMenu = ref(null)
 const personalise = ref(false)
+const showAppearance = hasOpened(personalise)
+const MAppearance = lazyPane(() => import('foundation-ui/vue/MAppearance.vue'))
 const zh = () => locale.value && String(locale.value).startsWith('zh')
 const appearance = useAppearance()
 const supportSections = () => [{ title: zh() ? '赞助' : 'Sponsor', items: SPONSORS.map((x) => ({ id: x.id, icon: 'favorite', title: x.label, url: sponsorUrl(x, zh() ? 'zh' : 'en') })) }, { items: [{ id: 'star', icon: 'star', title: zh() ? '在 GitHub 点 Star' : 'Star on GitHub', url: 'https://github.com/AlkaidLab/foundation-sunshine' }, { id: 'qq', icon: 'groups', title: zh() ? 'QQ 交流群' : 'QQ group', url: 'https://qm.qq.com/q/AfMQoyKrkc' }] }]
@@ -77,6 +80,6 @@ const current = () => THEMES.find((x) => x.id === theme.value) || THEMES[2]
         <md-menu-item class="m-danger" @click="shell?.askLogout()"><MIcon slot="start" name="logout" /><div slot="headline">{{ t('troubleshooting.logout') }}</div></md-menu-item>
       </md-menu>
     </span>
-    <MSheet v-model="personalise" :title="locale && String(locale).startsWith('zh') ? '个性化' : 'Personalise'" side="end" :close-label="t('_common.close')"><MAppearance :locale="String(locale)" /></MSheet>
+    <MSheet v-model="personalise" :title="locale && String(locale).startsWith('zh') ? '个性化' : 'Personalise'" side="end" :close-label="t('_common.close')"><MAppearance v-if="showAppearance" :locale="String(locale)" /></MSheet>
   </div>
 </template>

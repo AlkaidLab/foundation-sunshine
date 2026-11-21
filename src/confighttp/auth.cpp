@@ -449,15 +449,32 @@ namespace confighttp {
       return throttle;
     }
 
+    // Check and record each password attempt as one operation. Without this,
+    // simultaneous requests can all pass the backoff check before any failure
+    // has been recorded.
+    std::mutex password_attempt_mutex;
+
+    bool
+    is_forwarded(const req_https_t &request) {
+      return request->header.find("x-forwarded-for") != request->header.end() ||
+             request->header.find("forwarded") != request->header.end() ||
+             request->header.find("x-real-ip") != request->header.end();
+    }
+
     bool
     is_local(const req_https_t &request) {
       const auto address = net::addr_to_normalized_string(request->remote_endpoint().address());
-      return net::from_address(address) == net::PC;
+      return !is_forwarded(request) && net::from_address(address) == net::PC;
     }
 
     bool
     address_allowed(const req_https_t &request) {
       const auto address = net::addr_to_normalized_string(request->remote_endpoint().address());
+      // Forwarding headers do not authenticate the original address. A
+      // loopback proxy must not turn an unknown origin into a local request.
+      if (is_forwarded(request) && net::from_address(address) == net::PC) {
+        return http::origin_web_ui_allowed >= net::WAN;
+      }
       return net::from_address(address) <= http::origin_web_ui_allowed;
     }
 
@@ -738,6 +755,7 @@ load();
       }
 
       const auto client = client_description(request);
+      std::unique_lock attempt_lock(password_attempt_mutex);
       const auto throttle = login_throttle().check(client.address, username);
       if (!throttle.allowed) {
         web::CaseInsensitiveMultimap headers = json_headers();
@@ -760,6 +778,7 @@ load();
       }
 
       login_throttle().record_success(client.address, username);
+      attempt_lock.unlock();
 
       const auto previous = get_cookie(request, session_cookie_name());
       auto created = session_store().create(
@@ -891,10 +910,7 @@ load();
       // cannot work in the panel. A request that carries a forwarding header is not the panel (a reverse proxy on this computer), as for the password reset.
       {
         const auto local_token = get_single_request_header(request, local_auth_token::header_name);
-        const bool forwarded = request->header.find("x-forwarded-for") != request->header.end() ||
-                               request->header.find("forwarded") != request->header.end() ||
-                               request->header.find("x-real-ip") != request->header.end();
-        if (!forwarded && is_local(request) && local_token.valid && local_token.value &&
+        if (is_local(request) && local_token.valid && local_token.value &&
             local_auth_token::matches(*local_token.value) && credentials_exist()) {
           const auto snapshot = snapshot_credentials();
           body["authenticated"] = true;
@@ -1002,6 +1018,7 @@ load();
 
       // The current password is verified on every change, so the same
       // anti-automation backoff as login protects this route.
+      std::unique_lock attempt_lock(password_attempt_mutex);
       const auto throttle = login_throttle().check(client.address, snapshot.username);
       if (!throttle.allowed) {
         web::CaseInsensitiveMultimap headers = json_headers();
@@ -1072,6 +1089,7 @@ load();
       }
 
       login_throttle().record_success(client.address, snapshot.username);
+      attempt_lock.unlock();
       const auto token = get_cookie(request, session_cookie_name());
       const auto current_session = token ? session_store().lookup(*token, util::hex(crypto::hash(snapshot.password)).to_string()) : std::nullopt;
 
@@ -1117,12 +1135,6 @@ load();
     handlePasswordReset(resp_https_t response, req_https_t request) {
       if (!authenticate(response, request)) return;
       if (!require_localhost(response, request, "resetting the Web UI password")) return;
-      if (request->header.find("x-forwarded-for") != request->header.end() ||
-          request->header.find("forwarded") != request->header.end() ||
-          request->header.find("x-real-ip") != request->header.end()) {
-        write_json_error(std::move(response), web::StatusCode::forbidden, "A forwarded request cannot reset the password");
-        return;
-      }
       if (!check_content_type(response, request, "application/json")) return;
 
       const auto snapshot = snapshot_credentials();
@@ -1180,14 +1192,13 @@ load();
     const auto referer = get_single_request_header(request, "referer");
     const auto fetch_site = get_single_request_header(request, "sec-fetch-site");
     const auto host = get_single_request_header(request, "host");
-    const auto address = net::addr_to_normalized_string(request->remote_endpoint().address());
     if (!origin.valid || !referer.valid || !fetch_site.valid || !host.valid ||
         !http_util::browser_request_source_allowed(
           origin.value,
           referer.value,
           fetch_site.value,
           host.value.value_or(std::string_view {}),
-          net::from_address(address) == net::PC)) {
+          is_local(request))) {
       BOOST_LOG(debug) << "Web UI: rejected cross-site browser request to ["sv << request->path << ']';
       send_cross_site_forbidden(std::move(response));
       return false;
@@ -1217,6 +1228,14 @@ load();
       return true;
     }
 
+    // A valid local panel token remains usable even if unrelated Basic
+    // credentials have exhausted the password backoff for this address.
+    const auto local_token = get_single_request_header(request, local_auth_token::header_name);
+    if (is_local(request) && local_token.valid && local_token.value &&
+        local_auth_token::matches(*local_token.value)) {
+      return true;
+    }
+
     const auto auth = get_single_request_header(request, "authorization");
     if (auth.valid && auth.value) {
       constexpr auto basic_prefix = "Basic "sv;
@@ -1230,17 +1249,31 @@ load();
         }
         const auto separator = decoded.find(':');
         if (separator != std::string::npos && separator + 1 <= decoded.size()) {
-          if (verify_credentials(decoded.substr(0, separator), decoded.substr(separator + 1))) {
+          const auto username = decoded.substr(0, separator);
+          // Use the same address and account buckets as the session login endpoint.
+          // Do not retain arbitrary-length usernames in the throttle's state.
+          const auto throttle_username = username.size() <= maximum_username_length ? username : std::string {};
+          std::lock_guard attempt_lock(password_attempt_mutex);
+          const auto throttle = login_throttle().check(address, throttle_username);
+          if (!throttle.allowed) {
+            web::CaseInsensitiveMultimap headers = json_headers();
+            headers.emplace("Retry-After", std::to_string(throttle.retry_after.count()));
+            nlohmann::json wait {
+              { "status", false },
+              { "error", "Too many attempts" },
+              { "code", "rate_limited" },
+              { "retry_after", throttle.retry_after.count() },
+            };
+            response->write(web::StatusCode::too_many_requests, wait.dump(), headers);
+            return false;
+          }
+          if (username.size() <= maximum_username_length && verify_credentials(username, decoded.substr(separator + 1))) {
+            login_throttle().record_success(address, throttle_username);
             return true;
           }
+          login_throttle().record_failure(address, throttle_username);
         }
       }
-    }
-
-    const auto local_token = get_single_request_header(request, local_auth_token::header_name);
-    if (is_local(request) && local_token.valid && local_token.value &&
-        local_auth_token::matches(*local_token.value)) {
-      return true;
     }
 
     send_unauthenticated(std::move(response), std::move(request));
@@ -1253,7 +1286,7 @@ load();
     auto address = net::addr_to_normalized_string(client_address);
     auto ip_type = net::from_address(address);
 
-    if (ip_type == net::PC) {
+    if (ip_type == net::PC && !is_forwarded(request)) {
       return true;
     }
 

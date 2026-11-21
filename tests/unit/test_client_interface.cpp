@@ -96,6 +96,7 @@ TEST(ClientInterface, AnEntityTagIsFoundInAnyIfNoneMatchValue) {
   EXPECT_TRUE(client_interface::etag_matches("\"784111777-poster\"", etag));
   EXPECT_TRUE(client_interface::etag_matches("*", etag)) << "the origin server has a current representation";
   EXPECT_TRUE(client_interface::etag_matches("W/\"784111777-poster\"", etag)) << "weak comparison";
+  EXPECT_TRUE(client_interface::etag_matches("\"784111777-poster\"", "W/\"784111777-poster\"")) << "weak representation";
   EXPECT_TRUE(client_interface::etag_matches(" \"784111777-hero\" , W/\"784111777-poster\"", etag)) << "a list with optional whitespace";
   EXPECT_TRUE(client_interface::etag_matches("\t\"784111777-poster\"", etag)) << "surrounding whitespace";
   EXPECT_FALSE(client_interface::etag_matches("", etag));

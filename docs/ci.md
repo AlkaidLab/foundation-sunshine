@@ -90,6 +90,9 @@ libcrypto 需要链接 bcrypt、主机名校验不再回退 CN），修复见 PR
   `CI_TOOLCHAIN=gcc` 或手动运行的 `toolchain=gcc` 可切到 GCC。
 - GCC 是回退，由 `.github/workflows/gcc-fallback.yml` 每晚（UTC 21:47，合并到 master 后生效）派发一次 GCC 的完整构建（8 个分片冷编译、全部原生测试、发布门禁、打包）并等它结束；
   失败就打开或更新唯一一个带 `gcc-fallback` 标签的 issue，成功后自动关闭。GCC 构建不保存也不修剪编译缓存（只有主工具链才保存），所以不会挤掉 Clang 的缓存。
+- GCC 回退的 Release 编译使用 `-Os`。2026-11-20 同一提交的 GCC 夜间构建安装器为 46,583,321 字节，超过 46,000,000 字节的发布预算；Clang 为 43,172,884 字节。
+  `-Os` 保留除“经常增大代码”之外的 `-O2` 优化（GCC 16.2 手册，Optimize Options，源 `gcc-optimize-options-16.2.0`），只作用于回退工具链；Clang 发布构建仍用 `-O3`。
+  GCC 16.2 在 `-Os` 下会保留对 `std::basic_string` C4（base object）移动构造函数的调用，而固定的 `libstdc++.a` 只导出 C1（complete object）；`basic_string` 没有虚基类，两者是同一构造函数，所以 GNU 链接统一用 `--defsym` 把 C4 指向 C1（源 `itanium-cxx-abi-20261121`）。
 - Clang 的编译缓存比 GCC 大：同一棵树，热缓存 Clang 约 680 MB，GCC 约 235 MB。多出来的部分是预编译头：每个目标一份，Clang 的 `.pch` 约 25 MB，ccache 把它们当作普通条目保存；
   GCC 的 `.gch` 不进缓存。ccache 只保留一条（见下一节），远低于 GitHub 的 10 GB 配额；热构建在 99% 命中下，Windows 作业约 9 分钟，不比 GCC 慢。
 - Clang、LLD 和与它们版本锁定的 `clang-libs`、`llvm-libs` 固定在 `scripts/ci/msys2-pins-clang.txt`，格式与升级方式同 `msys2-pins.txt`（`msys2-pins.py check/bump` 两个文件一并处理）；只有 Clang 构建才装它们并把它们写进 `IgnorePkg`，GCC 构建不受影响，配置指纹也只在 Clang 构建时计入这个文件。

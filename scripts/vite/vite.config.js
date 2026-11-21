@@ -1,6 +1,8 @@
 import fs from 'fs'
 import { resolve } from 'path'
 import { foundationUiAliases } from './foundationUi.js'
+import { foundationChunkGroups, foundationChunks } from './foundationChunks.js'
+import { compressAssets } from './compressAssets.js'
 import { defineConfig } from 'vite'
 import { ViteEjsPlugin } from './vite-plugin-ejs.js'
 import vue from '@vitejs/plugin-vue'
@@ -31,6 +33,10 @@ if (process.env.SUNSHINE_BUILD_HOMEBREW) {
 }
 
 const header = fs.readFileSync(resolve(assetsSrcPath, 'template_header.html'))
+// Only content-addressed build output may occupy the long-lived cache directory.
+if (fs.existsSync(resolve(assetsSrcPath, 'public/assets/generated'))) {
+  throw new Error('public/assets/generated is reserved for hashed build assets')
+}
 // the first frame of the sign-in page: an inline script (login-boot.js) with the bundled default record (login-boot-defaults.json, made by tools gen-login-boot-defaults from a real first start)
 const bootDefaults = fs.existsSync(resolve(assetsSrcPath, 'login-boot-defaults.json')) ? fs.readFileSync(resolve(assetsSrcPath, 'login-boot-defaults.json'), 'utf8').trim() : 'null'
 const bootScript = fs.readFileSync(resolve(assetsSrcPath, 'login-boot.js'), 'utf8').replace('/*DEFAULTS*/null', () => bootDefaults)
@@ -60,7 +66,7 @@ export default defineConfig({
       ...foundationUiAliases(foundationUi),
     ],
   },
-  plugins: [vue({ template: { compilerOptions: { isCustomElement: (tag) => tag.startsWith('md-') } } }), ViteEjsPlugin({ header, bootScript }), ...(privateSourcemaps ? [privateSourcemaps({ dir: privateMapsDir })] : [])],
+  plugins: [foundationChunks(foundationUi, assetsSrcPath), vue({ template: { compilerOptions: { isCustomElement: (tag) => tag.startsWith('md-') } } }), ViteEjsPlugin({ header, bootScript }), compressAssets(), ...(privateSourcemaps ? [privateSourcemaps({ dir: privateMapsDir })] : [])],
   root: resolve(assetsSrcPath),
   preview: {
     port: 3000,
@@ -88,25 +94,26 @@ export default defineConfig({
         welcome: resolve(assetsSrcPath, 'welcome.html'),
       },
       output: {
+        codeSplitting: { groups: foundationChunkGroups(foundationUi, assetsSrcPath) },
         // 优化chunk命名
-        chunkFileNames: 'assets/[name]-[hash].js',
+        chunkFileNames: 'assets/generated/[name]-[hash].js',
         // 优化入口文件命名（只影响 JS 文件）
-        entryFileNames: 'assets/[name]-[hash].js',
+        entryFileNames: 'assets/generated/[name]-[hash].js',
         // 优化资源文件命名
         assetFileNames: (assetInfo) => {
           const name = assetInfo.name || ''
           const ext = name.split('.').pop()
           
           if (/\.(css)$/.test(name)) {
-            return 'assets/[name]-[hash].[ext]'
+            return 'assets/generated/[name]-[hash].[ext]'
           }
           if (/\.(woff2?|eot|ttf|otf)$/.test(name)) {
-            return 'assets/fonts/[name]-[hash].[ext]'
+            return 'assets/generated/fonts/[name]-[hash].[ext]'
           }
           if (/\.(png|jpe?g|gif|svg|webp|avif)$/.test(name)) {
-            return 'assets/images/[name]-[hash].[ext]'
+            return 'assets/generated/images/[name]-[hash].[ext]'
           }
-          return 'assets/[name]-[hash].[ext]'
+          return 'assets/generated/[name]-[hash].[ext]'
         },
       },
     },

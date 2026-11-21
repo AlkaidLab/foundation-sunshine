@@ -1,4 +1,4 @@
-import { defineAsyncComponent, defineComponent, h } from 'vue'
+import { computed, defineAsyncComponent, defineComponent, h } from 'vue'
 import { MBanner, MButton, MPageLoading } from 'foundation-ui/vue'
 import { useI18n } from 'vue-i18n'
 
@@ -20,3 +20,6 @@ const DefaultLoading = defineComponent({ name: 'PaneLoading', setup: () => () =>
 export function lazyPane(loader, { loading = DefaultLoading, timeout = 20000 } = {}) {
   return defineAsyncComponent({ loader: () => loader().catch(() => loader()), loadingComponent: loading, errorComponent: PaneFailed, delay: 0, timeout, suspensible: false })
 }
+
+// Keep the dialog mounted after its first opening so native close, focus restoration and local state still work.
+export const hasOpened = (open) => computed((previous) => open.value || previous === true)
