@@ -2,6 +2,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <optional>
 #include <string>
@@ -110,8 +111,10 @@ namespace display_device::vdd_edid {
       try {
         std::size_t consumed = 0;
         const auto rate = std::stod(std::string(item), &consumed);
-        if (consumed == item.size() && std::isfinite(rate) && rate >= 1 && rate <= 480 &&
-            timing_encodable(selected, static_cast<unsigned int>(std::lround(rate)))) encodable = true;
+        // Bound the rounded value's destination, not the monitor's refresh rate.
+        // round returns double, avoiding Windows' 32-bit long intermediate.
+        if (consumed == item.size() && std::isfinite(rate) && rate >= 1 && rate <= std::numeric_limits<unsigned int>::max() &&
+            timing_encodable(selected, static_cast<unsigned int>(std::round(rate)))) encodable = true;
       }
       catch (...) { /* Invalid FPS entries do not make a mode available. */
       }

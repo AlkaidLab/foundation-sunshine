@@ -13,7 +13,7 @@ function parseSize(value) {
 function encodableAt(size, value) {
   if ((typeof value !== 'number' && typeof value !== 'string') || !/^\d+(\.\d+)?$/.test(String(value))) return false
   const fps = Number(value)
-  if (!String(value).trim() || !Number.isFinite(fps) || fps < 1 || fps > 480) return false
+  if (!String(value).trim() || !Number.isFinite(fps) || fps < 1 || fps > 0xffffffff) return false
   const rate = Math.round(fps)
   const clock = rate === 60 && size.width === 1920 && size.height === 1080 ? 14850 :
     rate === 60 && size.width === 3840 && size.height === 2160 ? 59400 :

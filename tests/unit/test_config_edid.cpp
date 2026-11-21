@@ -21,6 +21,7 @@ namespace {
     SetUp() override {
       original_overrides_ = config::test_support::exchange_command_line_overrides({});
       original_path_ = config::sunshine.config_file;
+      original_max_bitrate_ = config::host_max_bitrate_kbps();
       path_ = std::filesystem::temp_directory_path() /
               ("sunshine_edid_config_test_" + std::to_string(reinterpret_cast<std::uintptr_t>(this)) + ".conf");
       config::sunshine.config_file = path_.string();
@@ -33,6 +34,7 @@ namespace {
     TearDown() override {
       config::test_support::exchange_command_line_overrides(std::move(original_overrides_));
       config::sunshine.config_file = original_path_;
+      config::set_host_max_bitrate_kbps(original_max_bitrate_);
       std::error_code ignored;
       std::filesystem::remove(path_, ignored);
     }
@@ -40,6 +42,7 @@ namespace {
   private:
     std::unordered_map<std::string, std::string> original_overrides_;
     std::string original_path_;
+    int original_max_bitrate_ = 0;
     std::filesystem::path path_;
   };
 }  // namespace

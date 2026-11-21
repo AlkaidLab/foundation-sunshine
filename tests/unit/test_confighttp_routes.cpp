@@ -348,6 +348,7 @@ namespace {
       previous_config_ = config::sunshine.config_file;
       previous_resolutions_ = config::nvhttp.resolutions;
       previous_fps_ = config::nvhttp.fps;
+      previous_max_bitrate_ = config::host_max_bitrate_kbps();
       config::nvhttp.resolutions = { "1920x1080", "2736x1824", "3840x2160" };
       config::nvhttp.fps = { "60", "120" };
       prepared_ = true;
@@ -368,11 +369,13 @@ namespace {
       config::sunshine.config_file = previous_config_;
       config::nvhttp.resolutions = std::move(previous_resolutions_);
       config::nvhttp.fps = std::move(previous_fps_);
+      config::set_host_max_bitrate_kbps(previous_max_bitrate_);
     }
 
   private:
     std::string previous_config_;
     std::vector<std::string> previous_resolutions_, previous_fps_;
+    int previous_max_bitrate_ = 0;
     bool prepared_ = false;
   };
 }  // namespace

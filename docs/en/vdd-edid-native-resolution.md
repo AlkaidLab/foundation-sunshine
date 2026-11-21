@@ -56,9 +56,12 @@ Startup command-line overrides
 take precedence when creating a monitor, while Save updates the on-disk choice.
 The API validates list membership, dimensions and clock feasibility. If an older
 client changes either advertised mode list, the retained preference must still
-be supported. Otherwise the request is rejected before either configuration file
-is changed; explicitly select Default or another supported native size before
-removing its size or encodable refresh rate. Existing XML persistence of the
+be supported. The early validation rejects an unsupported request before either
+configuration file is changed. If a concurrent save changes the retained EDID
+preference after that check, the locked recheck can reject the request after the
+legacy VDD XML has already been written; that XML is not rolled back. Explicitly
+select Default or another supported native size before removing its size or
+encodable refresh rate. Existing XML persistence of the
 driver's general mode/GPU settings is independent of the EDID preference.
 The existing XML save order and error handling are unchanged. XML rollback,
 cross-file locking and mode-list persistence improvements are a separate change.

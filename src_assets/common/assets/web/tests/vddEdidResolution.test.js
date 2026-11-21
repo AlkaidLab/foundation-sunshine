@@ -37,6 +37,12 @@ test('invalid frame rates cannot make an EDID mode available', () => {
   assert.equal(validEdidResolutionSelection('3440x1440', ['3440x1440'], fps), false)
 })
 
+test('high refresh modes use EDID clock limits instead of a 480 Hz cap', () => {
+  assert.equal(validEdidResolutionSelection('1280x720', ['1280x720'], ['481']), true)
+  assert.equal(validEdidResolutionSelection('1280x720', ['1280x720'], ['500']), true)
+  assert.equal(validEdidResolutionSelection('1920x1080', ['1920x1080'], ['500']), false)
+})
+
 test('frame rates discarded by the existing config serializer cannot enable a choice', () => {
   assert.equal(validEdidResolutionSelection('3440x1440', ['3440x1440'], ['24', '29.97']), false)
   assert.equal(validEdidResolutionSelection('3440x1440', ['3440x1440'], ['24', '30']), true)
