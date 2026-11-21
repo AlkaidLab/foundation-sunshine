@@ -209,8 +209,9 @@ the default folder) has no such parent. A folder directly on the drive or a miss
    `installer-ui/target/release/foundation-setup-ui.exe`, or `%CARGO_TARGET_DIR%`.
 2. Host repo: the CMake target `sunshine-installer-shell` as before.
 3. `append_installer_payload.py <shell> <engine> <output> --ui foundation-setup-ui.exe`. There is no WebView2 bootstrapper in
-   the package (see above). The footer keeps the V1 keys first, so an older shell still finds the engine. Without `--ui`, the
-   package is the native installer.
+   the package (see above). The shell and the setup UI have their COFF symbol tables removed first
+   (`tools/pe_symbols.py`); the CodeView GUID stays, so the published symbol zip still matches a crash dump. The footer
+   keeps the V1 keys first, so an older shell still finds the engine. Without `--ui`, the package is the native installer.
 
 ### CI (`.github/workflows/main.yml`, job Windows)
 
