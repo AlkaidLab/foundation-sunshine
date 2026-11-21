@@ -17,9 +17,50 @@
 
 #include "src/ai/http_stream.h"
 #include "src/confighttp/asset_paths.h"
+#include "src/confighttp/asset_encoding.h"
+#include "src/confighttp/asset_etag.h"
 #include "src/crypto.h"
 #include "src/httpcommon.h"
 #include "src/logging.h"
+
+TEST(AssetEncoding, NegotiatesOnlyAvailableAndAcceptedRepresentations) {
+  using confighttp::assets::asset_encoding;
+  using confighttp::assets::select_asset_encoding;
+  EXPECT_EQ(select_asset_encoding({}, true), asset_encoding::identity);
+  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "br, gzip"}}, true), asset_encoding::gzip);
+  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=0, *;q=1"}}, true), asset_encoding::identity);
+  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=0, identity;q=0"}}, true), asset_encoding::unacceptable);
+  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "*;q=0"}}, true), asset_encoding::unacceptable);
+  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip, identity;q=0"}}, false), asset_encoding::unacceptable);
+  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "GZIP;q=0.5"}}, true), asset_encoding::gzip);
+  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=0.5, identity;q=1"}}, true), asset_encoding::identity);
+  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=invalid"}}, true), asset_encoding::identity);
+}
+
+TEST(AssetEtag, MatchesWeakAndRepeatedIfNoneMatchValues) {
+  using confighttp::assets::matches_asset_etag;
+  constexpr std::string_view tag = "\"012345\"";
+  EXPECT_FALSE(matches_asset_etag({}, tag));
+  EXPECT_TRUE(matches_asset_etag({{"If-None-Match", "*"}}, tag));
+  EXPECT_TRUE(matches_asset_etag({{"If-None-Match", " W/\"012345\" "}}, tag));
+  EXPECT_TRUE(matches_asset_etag({{"If-None-Match", "\"other\", W/\"012345\""}}, tag));
+  EXPECT_TRUE(matches_asset_etag({{"If-None-Match", "\"other\""}, {"If-None-Match", "\"012345\""}}, tag));
+  EXPECT_FALSE(matches_asset_etag({{"If-None-Match", "\"0123456\""}}, tag));
+}
+
+TEST(AssetEtag, SidecarDigestMatchesNodeGzipBuild) {
+  // Produced by Node gzipSync(Buffer.from("abc"), { level: 9 }).
+  const std::string compressed {
+    '\x1f', '\x8b', '\x08', '\x00', '\x00', '\x00', '\x00', '\x00',
+    '\x02', '\x0a', '\x4b', '\x4c', '\x4a', '\x06', '\x00', '\xc2',
+    '\x41', '\x24', '\x35', '\x03', '\x00', '\x00', '\x00',
+  };
+  const std::string marker =
+    "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD "
+    "9D7129E77C69CCE6FFEC71FAF07729314F1E9C929893F7117F6FD8A9476F0E4C\n";
+  EXPECT_EQ(confighttp::assets::asset_sidecar_marker("abc", compressed), marker);
+  EXPECT_NE(confighttp::assets::asset_sidecar_marker("abd", compressed), marker);
+}
 #ifdef _WIN32
   #include <windows.h>
   #include <winioctl.h>
@@ -244,6 +285,20 @@ namespace {
     }
   };
 }  // namespace
+
+TEST(AssetCachePolicy, OnlyGeneratedHashedFilesAreImmutable) {
+  using confighttp::assets::asset_cache_control;
+  constexpr auto immutable = "private, max-age=31536000, immutable";
+  constexpr auto revalidate = "private, no-cache";
+  EXPECT_EQ(asset_cache_control("assets/generated/index-AbC_123-.js"), immutable);
+  EXPECT_EQ(asset_cache_control("assets/generated/fonts/body-12345678.woff2"), immutable);
+  EXPECT_EQ(asset_cache_control("assets/css/sunshine.css"), revalidate);
+  EXPECT_EQ(asset_cache_control("assets/locale/fr.json"), revalidate);
+  EXPECT_EQ(asset_cache_control("assets/index-AbC_123-.js"), revalidate);
+  EXPECT_EQ(asset_cache_control("assets/generated/index.js"), revalidate);
+  EXPECT_EQ(asset_cache_control("assets/generated/index-short.js"), revalidate);
+  EXPECT_EQ(asset_cache_control("assets/generated/index-1234567!.js"), revalidate);
+}
 
 TEST_F(HttpSafety, AllowsFlatAssetsAndNestedCovers) {
   EXPECT_EQ(resolve("logo.png"), fs::weakly_canonical(directory / "assets/logo.png"));

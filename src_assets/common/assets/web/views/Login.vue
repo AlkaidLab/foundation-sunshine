@@ -5,7 +5,9 @@
 <script setup>
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MLoginPage } from 'foundation-ui/vue'
+import MLoginPage from 'foundation-ui/vue/MLoginPage.vue'
+import '@material/web/textfield/outlined-text-field.js'
+import '@material/web/checkbox/checkbox.js'
 import { BILIBILI, PRODUCT, PROJECT_LINKS, brandUrl } from 'foundation-ui/about'
 import { createAuthClient, fetchRequest, safeNext } from 'foundation-ui/auth'
 

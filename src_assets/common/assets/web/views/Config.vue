@@ -30,7 +30,7 @@
 <script setup>
 import { computed, h, inject, nextTick, onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MAppearance, MBanner, MButton, MPage, MSkeleton, pinSpecForSetting, registerContext, showTip, useSettingsList, useSubpage, jumpToRow } from 'foundation-ui/vue'
+import { MBanner, MButton, MPage, MSkeleton, pinSpecForSetting, registerContext, showTip, useSettingsList, useSubpage, jumpToRow } from 'foundation-ui/vue'
 import { SEARCH_INDEX } from '../config/settingsData/index.js'
 import { DEFAULT_CATEGORY, DEFAULT_PLACE, PLACE_TABS, parentPlace, parseSettingsHash, settingsHash } from 'foundation-ui/settings/index.js'
 import { useSharedConfig } from '../composables/configStore.js'
@@ -39,6 +39,7 @@ import { lazyPane } from '../utils/lazyPane.js'
 
 const TabLoading = () => h(MSkeleton, { rows: 6 })
 const tabChunk = (loader) => lazyPane(loader, { loading: TabLoading })
+const MAppearance = tabChunk(() => import('foundation-ui/vue/MAppearance.vue'))
 const General = tabChunk(() => import('../configs/tabs/General.vue'))
 const Inputs = tabChunk(() => import('../configs/tabs/Inputs.vue'))
 const Network = tabChunk(() => import('../configs/tabs/Network.vue'))

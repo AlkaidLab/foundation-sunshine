@@ -1,5 +1,6 @@
 import {createI18n} from "vue-i18n";
 import { ref } from 'vue'
+import * as componentTexts from 'foundation-ui/locale/texts/index.js'
 import { LOCALE_SYSTEM, choiceOf, readLocalePref, watchSystemLanguage, writeLocalePref } from 'foundation-ui/locale/localePref.js'
 import { getBootstrapLocale } from './bootstrapData.js'
 import { hostData } from '../composables/hostData.js'
@@ -24,6 +25,8 @@ export const SUPPORTED = SUPPORTED_LOCALES;
 export const localeChoice = ref(LOCALE_SYSTEM);
 export const activeLocale = ref('en');
 let webI18n = null;
+// Development uses the library's eager registry. The production build loads its locale alongside the WebUI JSON.
+export const prepareComponentTexts = (locale) => componentTexts.loadLocale?.(locale);
 
 // 把浏览器 / 系统语言（navigator.language，例如 "zh-CN" / "en-US"）映射到支持的 locale
 export function detectSystemLocale() {
@@ -92,6 +95,7 @@ export default async function() {
     else if (pref && SUPPORTED_LOCALES.includes(pref)) locale = pref;
     localeChoice.value = choiceOf(pref, hostLocale, detectSystemLocale());
     activeLocale.value = locale;
+    const componentMessages = prepareComponentTexts(locale);
     
     // html[lang] 用 BCP-47 连字符形式，让 辅助技术 / 翻译插件 能正确识别 en_US -> en-US, zh_TW -> zh-TW
     document.querySelector('html').setAttribute('lang', locale.replace(/_/g, '-'));
@@ -111,6 +115,7 @@ export default async function() {
     } catch (e) {
         console.error("Failed to download translations", e);
     }
+    await componentMessages;
     const i18n = createI18n({
         legacy: false, // 使用 Composition API 模式
         locale: locale, // set locale
@@ -136,8 +141,8 @@ export async function applyLocale(locale) {
     // zh 变体归一，与初始化同一规则（见 init 内注释）
     if (/^zh/i.test(locale) && locale !== 'zh' && locale !== 'zh_TW') locale = 'zh';
     const request = ++localeRequestId;
-    activeLocale.value = locale;
     if (!webI18n) return false;
+    const componentMessages = prepareComponentTexts(locale);
     try {
         // zh 基底按需加载一次（变体已在入口归一）；zh_TW 在基底之上覆盖繁体；其余语言按需加载自己的文件（vue-i18n 惯例：先注册消息再切换语言）
         if (/^zh/i.test(locale)) {
@@ -154,7 +159,9 @@ export async function applyLocale(locale) {
         console.error("Failed to download translations", e);
     }
     // 等待下载期间有了更新的选择：这次调用只贡献已注册的消息，语言状态交给最新那次
+    await componentMessages;
     if (request !== localeRequestId) return false;
+    activeLocale.value = locale;
     webI18n.global.locale.value = locale;
     document.querySelector('html').setAttribute('lang', locale.replace(/_/g, '-'));
     return true;
