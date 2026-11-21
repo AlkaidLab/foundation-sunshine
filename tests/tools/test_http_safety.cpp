@@ -37,6 +37,43 @@ TEST(AssetEncoding, NegotiatesOnlyAvailableAndAcceptedRepresentations) {
   EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=invalid"}}, true), asset_encoding::identity);
 }
 
+TEST(AssetEncoding, NegotiatesRepeatedHeadersAndQualityParameters) {
+  using confighttp::assets::asset_encoding;
+  using confighttp::assets::select_asset_encoding;
+
+  // Header names and codings are case-insensitive; multiple field lines are
+  // processed in order and an explicit coding overrides the wildcard.
+  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "br"}, {"accept-encoding", "GZip;q=0.7"},
+                                   {"ACCEPT-ENCODING", "identity;q=0.3"}}, true), asset_encoding::gzip);
+  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=0"}, {"Accept-Encoding", "*;q=1"}}, true), asset_encoding::identity);
+  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "identity;q=0"}, {"Accept-Encoding", "*;q=1"}}, true), asset_encoding::gzip);
+  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "identity;q=0"}, {"Accept-Encoding", "*;q=1"}}, false), asset_encoding::unacceptable);
+
+  // Whitespace around the coding and semicolon is accepted; q= stays contiguous.
+  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", " \tGZip \t; \tQ=0.7, identity ; q=0.2"}}, true), asset_encoding::gzip);
+  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;Q = 0.7, identity;q=0.2"}}, true), asset_encoding::identity);
+  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=0.2, identity;q=0.8"}}, true), asset_encoding::identity);
+  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=1, identity;q=0"}}, true), asset_encoding::gzip);
+  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=1, identity;q=0"}}, false), asset_encoding::unacceptable);
+
+  // An invalid quality is ignored; a bad field does not hide a later field.
+  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=1.1"}}, true), asset_encoding::identity);
+  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=-0.1"}}, true), asset_encoding::identity);
+  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=garbage"}, {"Accept-Encoding", "identity;q=0"}}, true), asset_encoding::unacceptable);
+  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=garbage"}, {"Accept-Encoding", "GZIP;q=0.4"}}, true), asset_encoding::gzip);
+  // Malformed members are ignored individually; later codings in the same
+  // field must still be processed. Quoted qvalues and extra parameters are
+  // not valid Accept-Encoding quality values.
+  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=, identity;q=0"}}, true), asset_encoding::unacceptable);
+  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=\"0.4\", identity;q=0"}}, true), asset_encoding::unacceptable);
+  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=0.5;other=1, identity;q=0"}}, true), asset_encoding::unacceptable);
+  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q==bad, gzip;q=0.6"}}, true), asset_encoding::gzip);
+  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=0, gzip"}}, true), asset_encoding::gzip);
+  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "br;q=0, gzip"}}, true), asset_encoding::gzip);
+  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=0, identity"}}, true), asset_encoding::identity);
+  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;?q=0, identity;q=0"}}, true), asset_encoding::unacceptable);
+}
+
 TEST(AssetEtag, MatchesWeakAndRepeatedIfNoneMatchValues) {
   using confighttp::assets::matches_asset_etag;
   constexpr std::string_view tag = "\"012345\"";

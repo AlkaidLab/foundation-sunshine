@@ -188,6 +188,16 @@ TEST_F(AssetHttpsRoutes, ValidatesAuthenticatedHtmlAndNegotiatedAssets) {
   ASSERT_EQ(gzip->status_code, "200 OK");
   EXPECT_EQ(gzip->content.string(), gzip_abc);
   EXPECT_EQ(header(*gzip, "Content-Encoding"), "gzip");
+  const auto negotiated = get(asset, {
+    { "Accept-Encoding", "br" }, { "Accept-Encoding", "GZip ; Q=0.7, identity;q=0.2" }
+  });
+  ASSERT_EQ(negotiated->status_code, "200 OK");
+  EXPECT_EQ(header(*negotiated, "Content-Encoding"), "gzip");
+  EXPECT_EQ(negotiated->content.string(), gzip_abc);
+  const auto preferred_identity = get(asset, { { "Accept-Encoding", "gzip;q=0.2, identity;q=0.8" } });
+  ASSERT_EQ(preferred_identity->status_code, "200 OK");
+  EXPECT_TRUE(header(*preferred_identity, "Content-Encoding").empty());
+  EXPECT_EQ(preferred_identity->content.string(), "abc");
   const auto gzip_etag = header(*gzip, "ETag");
   ASSERT_FALSE(gzip_etag.empty());
   EXPECT_NE(identity_etag, gzip_etag);
@@ -203,6 +213,10 @@ TEST_F(AssetHttpsRoutes, ValidatesAuthenticatedHtmlAndNegotiatedAssets) {
   EXPECT_EQ(get(asset, { { "Accept-Encoding", "identity" }, { "If-None-Match", gzip_etag } })->status_code, "200 OK");
   EXPECT_EQ(get(asset, { { "If-None-Match", "\"unmatched\"" }, { "If-Modified-Since", "Wed, 31 Dec 2099 23:59:59 GMT" } })->status_code, "200 OK");
   EXPECT_EQ(get(asset, { { "Accept-Encoding", "gzip;q=0, identity;q=0" } })->status_code, "406 Not Acceptable");
+  EXPECT_EQ(get(asset, { { "Accept-Encoding", "gzip;q=, identity;q=0" } })->status_code, "406 Not Acceptable");
+  const auto recovered_coding = get(asset, { { "Accept-Encoding", "gzip;q==bad, gzip;q=0.6" } });
+  ASSERT_EQ(recovered_coding->status_code, "200 OK");
+  EXPECT_EQ(header(*recovered_coding, "Content-Encoding"), "gzip");
 
   write_file(plain, "abd");
   const auto stale = get(asset, { { "Accept-Encoding", "gzip" }, { "If-None-Match", gzip_etag } });
