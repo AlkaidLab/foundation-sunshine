@@ -357,23 +357,8 @@ namespace platf {
       }
       else {
         NSArray<AVCaptureDevice *> *mics = [AVAudio microphones];
-        for (AVCaptureDevice *m in mics) {
-          NSString *n = [m localizedName];
-          NSString *u = [m uniqueID];
-          // Exclude virtual loopback devices so client microphone audio is never captured and echoed back
-          if ([n containsString:@"BlackHole"] || [u containsString:@"BlackHole"] ||
-              [n containsString:@"Loom"] || [u containsString:@"Loom"] ||
-              [n containsString:@"Teams"] || [u containsString:@"Teams"] ||
-              [n containsString:@"MJAudio"] || [u containsString:@"MJAudio"]) {
-            continue;
-          }
-          audio_capture_device = m;
-          break;
-        }
-        if (!audio_capture_device && mics && mics.count > 0) {
+        if (mics && mics.count > 0) {
           audio_capture_device = mics[0];
-        }
-        if (audio_capture_device) {
           BOOST_LOG(info) << "Defaulting host audio capture to: ["sv << [audio_capture_device.localizedName UTF8String] << "]"sv;
         }
       }
