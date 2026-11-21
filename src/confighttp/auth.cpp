@@ -1135,12 +1135,6 @@ load();
     handlePasswordReset(resp_https_t response, req_https_t request) {
       if (!authenticate(response, request)) return;
       if (!require_localhost(response, request, "resetting the Web UI password")) return;
-      if (request->header.find("x-forwarded-for") != request->header.end() ||
-          request->header.find("forwarded") != request->header.end() ||
-          request->header.find("x-real-ip") != request->header.end()) {
-        write_json_error(std::move(response), web::StatusCode::forbidden, "A forwarded request cannot reset the password");
-        return;
-      }
       if (!check_content_type(response, request, "application/json")) return;
 
       const auto snapshot = snapshot_credentials();

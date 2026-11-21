@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { runInNewContext } from 'node:vm'
+import { startHarness } from './helpers/editorHarness.js'
 
 const template = readFileSync(new URL('../template_header.html', import.meta.url), 'utf8')
 const boot = template.match(/<script>\s*([\s\S]*?)<\/script>/)?.[1]
@@ -17,9 +18,15 @@ function page(withModal = false) {
       style: {},
       attributes: {},
       listeners: {},
+      popoverOpen: false,
+      popoverShows: 0,
       setAttribute(name, value) { this.attributes[name] = value },
+      removeAttribute(name) { delete this.attributes[name] },
+      matches(selector) { return selector === ':popover-open' && this.popoverOpen },
+      showPopover() { this.popoverOpen = true; this.popoverShows++ },
       appendChild(child) {
         if (child.parent) child.parent.children = child.parent.children.filter((existing) => existing !== child)
+        if (child.parent) child.popoverOpen = false
         this.children.push(child)
         child.parent = this
         child.isConnected = true
@@ -49,7 +56,9 @@ function page(withModal = false) {
 test('entry and dynamic module failures offer an explicit reload without losing edits automatically', () => {
   const browser = page()
   browser.fire('error', { target: { tagName: 'SCRIPT', type: 'module', src: '/assets/generated/old.js' } })
-  browser.fire('vite:preloadError')
+  const failure = new Error('preload failed')
+  browser.fire('vite:preloadError', { payload: failure })
+  browser.fire('unhandledrejection', { reason: failure })
   assert.equal(browser.html.children.length, 1)
   const notice = browser.html.children[0]
   assert.equal(notice.attributes.role, 'alert')
@@ -58,7 +67,9 @@ test('entry and dynamic module failures offer an explicit reload without losing 
 
   notice.children[2].listeners.click()
   assert.equal(browser.html.children.length, 0)
-  browser.fire('vite:preloadError')
+  const anotherFailure = new Error('another preload failed')
+  browser.fire('vite:preloadError', { payload: anotherFailure })
+  browser.fire('unhandledrejection', { reason: anotherFailure })
   assert.equal(browser.reloadCount(), 0)
   browser.html.children[0].children[1].listeners.click()
   assert.equal(browser.reloadCount(), 1)
@@ -66,20 +77,49 @@ test('entry and dynamic module failures offer an explicit reload without losing 
 
 test('a load failure stays actionable when a modal dialog closes', () => {
   const browser = page(true)
-  browser.fire('vite:preloadError')
+  const failure = new Error('preload failed')
+  browser.fire('vite:preloadError', { payload: failure })
+  browser.fire('unhandledrejection', { reason: failure })
   assert.equal(browser.modal.children.length, 1)
   const notice = browser.modal.children[0]
+  assert.equal(notice.popoverShows, 1)
   browser.modal.listeners.close()
   assert.equal(browser.modal.children.length, 0)
   assert.equal(browser.html.children[1], notice)
+  assert.equal(notice.popoverShows, 2)
   notice.children[2].listeners.click()
   assert.equal(browser.reloadCount(), 0)
 })
 
-test('module preloads are reported while unrelated resource errors do not interrupt the page', () => {
+test('speculative module preloads and unrelated errors do not interrupt the page', () => {
   const browser = page()
   browser.fire('error', { target: { tagName: 'IMG', src: '/image.png' } })
   assert.equal(browser.html.children.length, 0)
   browser.fire('error', { target: { tagName: 'LINK', rel: 'modulepreload' } })
-  assert.equal(browser.html.children.length, 1)
+  assert.equal(browser.html.children.length, 0)
+})
+
+test('a failed preload followed by a successful lazyPane retry shows no error', async (t) => {
+  const browser = page()
+  // The existing Vite harness loads the real Vue async component and its loader.
+  const harness = await startHarness()
+  t.after(() => harness.close())
+  const { lazyPane } = await harness.load('/utils/lazyPane.js')
+  const first = new Error('temporary failure')
+  const component = { name: 'Loaded' }
+  let attempts = 0
+  const pane = lazyPane(() => {
+    if (++attempts === 1) {
+      browser.fire('vite:preloadError', { payload: first })
+      return Promise.reject(first)
+    }
+    return Promise.resolve(component)
+  })
+  assert.equal(await pane.__asyncLoader(), component)
+  assert.equal(attempts, 2)
+  assert.equal(browser.html.children.length, 0)
+
+  // Vue uses the error component when the retry also rejects.
+  const failed = lazyPane(() => Promise.reject(new Error('unavailable')))
+  await assert.rejects(failed.__asyncLoader(), /unavailable/)
 })

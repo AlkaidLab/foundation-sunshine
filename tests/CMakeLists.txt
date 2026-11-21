@@ -825,6 +825,8 @@ add_test(NAME session_store_unit_tests COMMAND session_store_unit_tests)
 # of globals those handlers read.
 add_executable(session_auth_routes_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_session_auth_routes.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_asset_https_routes.cpp
+        ${CMAKE_SOURCE_DIR}/src/confighttp/assets.cpp
         ${CMAKE_SOURCE_DIR}/src/confighttp/auth.cpp
         ${CMAKE_SOURCE_DIR}/src/confighttp/local_auth_token.cpp
         ${CMAKE_SOURCE_DIR}/src/confighttp/common.cpp
@@ -837,44 +839,19 @@ add_executable(session_auth_routes_unit_tests
 target_include_directories(session_auth_routes_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(session_auth_routes_unit_tests PRIVATE ${SUNSHINE_EXTERNAL_LIBRARIES} gtest_main
         sunshine_project_options sunshine_coverage sunshine_crypto ${PLATFORM_LIBRARIES})
-target_compile_definitions(session_auth_routes_unit_tests PRIVATE ${SUNSHINE_DEFINITIONS})
+# Both suites use the same test binary; asset files must stay under the test build tree.
+set(_asset_route_test_definitions ${SUNSHINE_DEFINITIONS})
+list(FILTER _asset_route_test_definitions EXCLUDE REGEX "^SUNSHINE_ASSETS_DIR=")
+target_compile_definitions(session_auth_routes_unit_tests PRIVATE ${_asset_route_test_definitions}
+        SUNSHINE_ASSETS_DIR="${CMAKE_CURRENT_BINARY_DIR}/asset-route-fixture")
 target_compile_options(session_auth_routes_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
 set_target_properties(session_auth_routes_unit_tests PROPERTIES CXX_STANDARD 23)
 if (WIN32)
     set_target_properties(session_auth_routes_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
 endif ()
-add_test(NAME session_auth_routes_unit_tests COMMAND session_auth_routes_unit_tests)
-set_tests_properties(session_auth_routes_unit_tests PROPERTIES TIMEOUT 60)
-
-# Exercise the real asset and authentication routes together with an isolated
-# assets directory owned by this build tree.
-add_executable(asset_https_routes_unit_tests
-        ${CMAKE_SOURCE_DIR}/tests/unit/test_session_auth_routes.cpp
-        ${CMAKE_SOURCE_DIR}/tests/unit/test_asset_https_routes.cpp
-        ${CMAKE_SOURCE_DIR}/src/confighttp/assets.cpp
-        ${CMAKE_SOURCE_DIR}/src/confighttp/auth.cpp
-        ${CMAKE_SOURCE_DIR}/src/confighttp/local_auth_token.cpp
-        ${CMAKE_SOURCE_DIR}/src/confighttp/common.cpp
-        ${CMAKE_SOURCE_DIR}/src/confighttp/session_store.cpp
-        ${CMAKE_SOURCE_DIR}/src/confighttp/login_throttle.cpp
-        ${CMAKE_SOURCE_DIR}/src/http/server.cpp
-        ${CMAKE_SOURCE_DIR}/src/http/client.cpp
-        ${CMAKE_SOURCE_DIR}/src/http/types.cpp
-        ${CMAKE_SOURCE_DIR}/src/http/tls_trust.cpp)
-target_include_directories(asset_https_routes_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
-target_link_libraries(asset_https_routes_unit_tests PRIVATE ${SUNSHINE_EXTERNAL_LIBRARIES} gtest_main
-        sunshine_project_options sunshine_coverage sunshine_crypto ${PLATFORM_LIBRARIES})
-set(_asset_route_test_definitions ${SUNSHINE_DEFINITIONS})
-list(FILTER _asset_route_test_definitions EXCLUDE REGEX "^SUNSHINE_ASSETS_DIR=")
-target_compile_definitions(asset_https_routes_unit_tests PRIVATE ${_asset_route_test_definitions}
-        SUNSHINE_ASSETS_DIR="${CMAKE_CURRENT_BINARY_DIR}/asset-route-fixture")
-target_compile_options(asset_https_routes_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
-set_target_properties(asset_https_routes_unit_tests PROPERTIES CXX_STANDARD 23)
-if (WIN32)
-    set_target_properties(asset_https_routes_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
-endif ()
-add_test(NAME asset_https_routes_unit_tests COMMAND asset_https_routes_unit_tests --gtest_filter=AssetHttpsRoutes.*)
-set_tests_properties(asset_https_routes_unit_tests PROPERTIES TIMEOUT 60)
+add_test(NAME session_auth_routes_unit_tests COMMAND session_auth_routes_unit_tests --gtest_filter=-AssetHttpsRoutes.*)
+add_test(NAME asset_https_routes_unit_tests COMMAND session_auth_routes_unit_tests --gtest_filter=AssetHttpsRoutes.*)
+set_tests_properties(session_auth_routes_unit_tests asset_https_routes_unit_tests PROPERTIES TIMEOUT 60)
 
 add_executable(sunshinesvc_state_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/unit/test_sunshinesvc_state.cpp)
@@ -1664,6 +1641,7 @@ list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/usbip/external_readonly_
         ${CMAKE_SOURCE_DIR}/tests/unit/test_usbip_stale_port_sweep.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_rtsp.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_session_auth_routes.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_asset_https_routes.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_session_store.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_sunshinesvc_state.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_tray_state.cpp

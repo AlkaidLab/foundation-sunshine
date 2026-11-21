@@ -157,6 +157,7 @@ TEST_F(AssetHttpsRoutes, ValidatesAuthenticatedHtmlAndNegotiatedAssets) {
   ASSERT_FALSE(html_etag.empty());
   const auto cached_page = get("/", { { "Authorization", authorization }, { "If-None-Match", "W/" + html_etag } });
   EXPECT_EQ(cached_page->status_code, "304 Not Modified");
+  EXPECT_EQ(cached_page->header.count("Content-Length"), 0u);
   EXPECT_TRUE(cached_page->content.string().empty());
   EXPECT_EQ(header(*cached_page, "ETag"), html_etag);
   EXPECT_NE(get("/", { { "If-None-Match", html_etag } })->status_code, "304 Not Modified");
@@ -179,6 +180,7 @@ TEST_F(AssetHttpsRoutes, ValidatesAuthenticatedHtmlAndNegotiatedAssets) {
     { "If-None-Match", "W/" + identity_etag }
   });
   EXPECT_EQ(identity_cached->status_code, "304 Not Modified");
+  EXPECT_EQ(identity_cached->header.count("Content-Length"), 0u);
   EXPECT_TRUE(identity_cached->content.string().empty());
   EXPECT_EQ(header(*identity_cached, "ETag"), identity_etag);
   EXPECT_EQ(header(*identity_cached, "Cache-Control"), "private, no-cache");
@@ -191,6 +193,7 @@ TEST_F(AssetHttpsRoutes, ValidatesAuthenticatedHtmlAndNegotiatedAssets) {
   EXPECT_NE(identity_etag, gzip_etag);
   const auto gzip_cached = get(asset, { { "Accept-Encoding", "gzip" }, { "If-None-Match", "\"other\", W/" + gzip_etag } });
   EXPECT_EQ(gzip_cached->status_code, "304 Not Modified");
+  EXPECT_EQ(gzip_cached->header.count("Content-Length"), 0u);
   EXPECT_TRUE(gzip_cached->content.string().empty());
   EXPECT_EQ(header(*gzip_cached, "Vary"), "Accept-Encoding");
   EXPECT_EQ(header(*gzip_cached, "ETag"), gzip_etag);

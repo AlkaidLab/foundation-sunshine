@@ -557,12 +557,22 @@ TEST_F(SessionAuthRoutes, ForwardedRequestsCannotClaimLoopbackPrivileges) {
   ASSERT_EQ(token.size(), 64u);
   const web::CaseInsensitiveMultimap local { { "X-Sunshine-Local-Token", token } };
   EXPECT_EQ(client->request("GET", "/api/test-local-only", "", local)->status_code, "200 OK");
+  const auto local_session = client->request("GET", "/api/auth/session", "", local);
+  ASSERT_EQ(local_session->status_code, "200 OK");
+  const auto local_body = json::parse(local_session->content.string());
+  EXPECT_TRUE(local_body["authenticated"]);
+  EXPECT_TRUE(local_body["local"]);
 
   for (const auto *header : { "Forwarded", "X-Forwarded-For", "X-Real-IP" }) {
     const web::CaseInsensitiveMultimap forwarded_token {
       { "X-Sunshine-Local-Token", token }, { header, "192.0.2.1" }
     };
     EXPECT_EQ(client->request("GET", "/api/test-local-auth-required", "", forwarded_token)->status_code, "401 Unauthorized");
+    const auto forwarded_session = client->request("GET", "/api/auth/session", "", forwarded_token);
+    ASSERT_EQ(forwarded_session->status_code, "200 OK");
+    const auto session_body = json::parse(forwarded_session->content.string());
+    EXPECT_FALSE(session_body["authenticated"]);
+    EXPECT_FALSE(session_body.value("local", false));
 
     const web::CaseInsensitiveMultimap forwarded_basic {
       { "Authorization", "Basic cm91dGUtdXNlcjpyb3V0ZS1wYXNzd29yZA==" }, { header, "192.0.2.1" }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "src/http/types.h"
+#include "src/http/etag.h"
 #include "src/crypto.h"
 #include <string>
 #include <string_view>
@@ -22,17 +23,7 @@ namespace confighttp::assets {
   matches_asset_etag(const web::CaseInsensitiveMultimap &headers, std::string_view etag) {
     const auto [first, last] = headers.equal_range("If-None-Match");
     for (auto it = first; it != last; ++it) {
-      std::string_view value = it->second;
-      while (!value.empty()) {
-        const auto comma = value.find(',');
-        auto item = value.substr(0, comma);
-        value = comma == std::string_view::npos ? std::string_view {} : value.substr(comma + 1);
-        while (!item.empty() && (item.front() == ' ' || item.front() == '\t')) item.remove_prefix(1);
-        while (!item.empty() && (item.back() == ' ' || item.back() == '\t')) item.remove_suffix(1);
-        if (item == "*") return true;
-        if (item.substr(0, 2) == "W/") item.remove_prefix(2);
-        if (item == etag) return true;
-      }
+      if (web::etag_matches(it->second, etag)) return true;
     }
     return false;
   }

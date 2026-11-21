@@ -110,7 +110,10 @@ namespace web::detail {
     const bool sse = message[http::field::content_type] == "text/event-stream";
     if (sse) begin_stream();
     message.keep_alive(keep_alive && !close_connection_after_response);
-    if (!message.count(http::field::content_length) && !message.chunked() && !sse) message.prepare_payload();
+    // A 304 has no payload, but its Content-Length, if supplied, describes
+    // the selected 200 representation rather than the empty response body.
+    // Beast's prepare_payload() would otherwise add an incorrect length of 0.
+    if (status != StatusCode::not_modified && !message.count(http::field::content_length) && !message.chunked() && !sse) message.prepare_payload();
     reason(message);
     http::response_serializer<http::empty_body> serializer { message };
     BufferedWriteStream stream { *this };

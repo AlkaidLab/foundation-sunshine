@@ -7,6 +7,7 @@
 <script>
   (function () {
     var notice = null;
+    var preloadErrors = new Set();
 
     function showPopover(element) {
       if (typeof element.showPopover === 'function' && !element.matches(':popover-open')) {
@@ -61,13 +62,24 @@
       }
     }
 
-    window.addEventListener('vite:preloadError', showResourceError);
+    // Vite reports an error before rejecting the import promise. The caller may
+    // retry or use a fallback, so show the warning only if the rejection is
+    // unhandled. lazyPane supplies its own error view when its retry fails.
+    window.addEventListener('vite:preloadError', function (event) {
+      if (preloadErrors.size >= 64) preloadErrors.delete(preloadErrors.values().next().value);
+      preloadErrors.add(event.payload);
+    });
+    window.addEventListener('unhandledrejection', function (event) {
+      if (!preloadErrors.delete(event.reason)) return;
+      showResourceError();
+    });
     window.addEventListener('error', function (event) {
       var element = event.target;
       if (!element || !element.tagName) return;
       var tag = element.tagName.toLowerCase();
-      if ((tag === 'script' && element.type === 'module' && element.src) ||
-          (tag === 'link' && element.rel === 'modulepreload')) showResourceError();
+      // A failed modulepreload can be followed by a successful module fetch;
+      // the entry script's error is the definitive failure for a page load.
+      if (tag === 'script' && element.type === 'module' && element.src) showResourceError();
     }, true);
   })();
 </script>
