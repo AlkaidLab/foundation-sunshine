@@ -1310,7 +1310,10 @@ namespace platf::dxgi {
       }
       display = nullptr;
 
-      if (config.pre_encode_filter != pre_encode_filter_e::none) {
+      follow_global_nr = config.nr_app_allowed.has_value();
+      const bool skip_nr = config.pre_encode_filter == pre_encode_filter_e::external_neural_enhancement &&
+                           follow_global_nr && !image_enhancement::manager().nr_enabled();
+      if (config.pre_encode_filter != pre_encode_filter_e::none && !skip_nr) {
         // Only the SDR-to-HDR kind feeds the synthetic-HDR wire, which is
         // defined for 10-bit HDR encoder surfaces. Neural enhancement preserves
         // the captured SDR or native HDR domain and uses its existing encoder.
@@ -1349,7 +1352,8 @@ namespace platf::dxgi {
         filter_capture_contract = contract;
       }
 
-      runtime_status.nr_toggle_supported = config.pre_encode_filter == pre_encode_filter_e::none || nr_filter_active;
+      runtime_status.nr_app_allowed = config.nr_app_allowed.value_or(true);
+      runtime_status.nr_toggle_supported = runtime_status.nr_app_allowed && config.pre_encode_filter != pre_encode_filter_e::external_sdr_to_hdr;
       runtime_status.nr_requested_enabled = nr_filter_active;
       runtime_status.nr_requested_scale_percent = runtime_status.nr_scale_percent = config.pre_encode_filter_config.nr_scale_percent;
       const auto dv = static_cast<hdr::dynamic_hdr_format_e>(config.dynamic_hdr_format);
@@ -1363,7 +1367,7 @@ namespace platf::dxgi {
       runtime_status.nr_requested_intensity = runtime_status.nr_intensity = nr_filter_config.nr_intensity;
       runtime_status.nr_requested_ui_correction = runtime_status.nr_ui_correction = nr_filter_config.nr_ui_correction;
       runtime_status.nr_requested_motion_quality = runtime_status.nr_motion_quality = nr_filter_config.nr_motion_quality;
-      if (config.enhancement_backend && config.enhancement_backend->id == image_enhancement::NVIDIA_DLSSNR_BACKEND) {
+      if (!follow_global_nr && config.enhancement_backend && config.enhancement_backend->id == image_enhancement::NVIDIA_DLSSNR_BACKEND) {
         nr_session_backend = config.enhancement_backend;
       }
 
@@ -1782,7 +1786,9 @@ namespace platf::dxgi {
 
     void
     apply_nr_request() {
-      const auto requested = ::video::requested_nr_settings(runtime_status_id);
+      if (!runtime_status_id || !runtime_status.nr_toggle_supported) return;
+      const auto requested = ::video::requested_nr_settings(runtime_status_id,
+        follow_global_nr ? std::optional<bool>(image_enhancement::manager().nr_enabled()) : std::nullopt);
       // A component-unavailable degradation can clear without a new request:
       // the selection may be enabled or maintenance may finish. Keep
       // re-evaluating that case on later frames; the retry is a cheap
@@ -1825,6 +1831,7 @@ namespace platf::dxgi {
       runtime_status.nr_failure_reason.clear();
       runtime_status.nr_state = requested->enabled ? "warming_up" : "disabled";
       if (!requested->enabled) {
+        if (follow_global_nr) nr_session_backend.reset();
         runtime_status.nr_scale_percent = requested->scale_percent;
         runtime_status.nr_intensity = requested->intensity;
         runtime_status.nr_ui_correction = requested->ui_correction;
@@ -1966,6 +1973,7 @@ namespace platf::dxgi {
     std::map<uint32_t, encoder_img_ctx_t> img_ctx_map;
 
     boost::shared_ptr<const image_enhancement::backend_use_t> enhancement_backend;
+    bool follow_global_nr = false;
     bool nr_filter_active = false;
     bool nr_rollback_pending = false, nr_restoring_settings = false;
     pre_encode_filter_config_t nr_filter_config;

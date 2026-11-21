@@ -149,6 +149,22 @@ TEST(VideoBitrate, PyrowaveUsesHostCapWithoutLegacyRtpFecConversion) {
   EXPECT_EQ(video::encoder_bitrate_for_total_request(90000, 50000, 0), 50000);
 }
 
+TEST(HdrPipelineStatus, RunningStreamFollowsGlobalSwitchAndKeepsItsParameters) {
+  video::hdr_pipeline_status_t pipeline;
+  pipeline.nr_toggle_supported = true;
+  const auto id = video::register_hdr_pipeline_status(pipeline);
+  ASSERT_EQ(video::request_nr_enabled(id, true, 75), 202);
+  const auto off = video::requested_nr_settings(id, false).value();
+  EXPECT_FALSE(off.enabled);
+  EXPECT_EQ(off.scale_percent, 75);
+  video::update_hdr_pipeline_status(id, pipeline);
+  const auto on = video::requested_nr_settings(id, true).value();
+  EXPECT_TRUE(on.enabled);
+  EXPECT_GT(on.revision, off.revision);
+  EXPECT_EQ(video::requested_nr_settings(id, true)->revision, on.revision);
+  video::unregister_hdr_pipeline_status(id);
+}
+
 TEST(HdrPipelineStatus, LiveNrRequestsAreScopedAndSurviveStaleStatusPublication) {
   video::hdr_pipeline_status_t status;
   status.nr_toggle_supported = true;

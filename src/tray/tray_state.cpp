@@ -118,6 +118,12 @@ namespace tray_state {
     return current_state;
   }
 
+  bool
+  has_sessions() {
+    std::lock_guard lock { state_mutex };
+    return !current_state.sessions.empty();
+  }
+
   void
   set_change_sink(change_sink_t sink) {
     std::lock_guard lock { change_sink_mutex };

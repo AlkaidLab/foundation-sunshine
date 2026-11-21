@@ -12,6 +12,7 @@
 #include <boost/smart_ptr/shared_ptr.hpp>
 
 #include <chrono>
+#include <functional>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -58,6 +59,7 @@ namespace video {
     std::string nr_state { "disabled" };
     std::string nr_failure_reason;
     bool nr_toggle_supported {};
+    bool nr_app_allowed = true;
     bool nr_requested_enabled {};
     int nr_requested_scale_percent = 100;
     int nr_scale_percent = 100;
@@ -101,7 +103,7 @@ namespace video {
     std::optional<int> motion_quality = std::nullopt,
     std::optional<int> style = std::nullopt, std::optional<float> skin_structure_strength = std::nullopt,
     std::optional<bool> auto_mask = std::nullopt);
-  std::optional<nr_request_t> requested_nr_settings(std::uint64_t id);
+  std::optional<nr_request_t> requested_nr_settings(std::uint64_t id, std::optional<bool> global_enabled = std::nullopt);
   bool rollback_nr_settings(std::uint64_t id, const nr_request_t &failed, const nr_request_t &previous);
 
   // 动态参数调节类型
@@ -203,6 +205,9 @@ namespace video {
     platf::pre_encode_filter_e pre_encode_filter = platf::pre_encode_filter_e::none;
     platf::pre_encode_filter_config_t pre_encode_filter_config;
     boost::shared_ptr<const image_enhancement::backend_use_t> enhancement_backend;
+    // Launch and resume supply the app policy. Standalone encode devices use
+    // their caller's explicit filter configuration.
+    std::optional<bool> nr_app_allowed;
     // Local diagnostics only; never serialized into the media protocol.
     std::uint32_t perf_session_id = 0;
     bool pyrowave_dynamic_hdr_mapping = false;
