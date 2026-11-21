@@ -57,8 +57,15 @@
 - (void)dealloc {
   // make sure we don't process any further samples
   self.audioConnection = nil;
+  if (self.audioCaptureSession) {
+    [self.audioCaptureSession stopRunning];
+    [self.audioCaptureSession release];
+    self.audioCaptureSession = nil;
+  }
   // make sure nothing gets stuck on this signal
-  [self.samplesArrivedSignal signal];
+  [self.samplesArrivedSignal lock];
+  [self.samplesArrivedSignal broadcast];
+  [self.samplesArrivedSignal unlock];
   [self.samplesArrivedSignal release];
   TPCircularBufferCleanup(&audioSampleBuffer);
   [super dealloc];
@@ -137,7 +144,9 @@
     AudioBuffer audioBuffer = audioBufferList.mBuffers[0];
 
     TPCircularBufferProduceBytes(&self->audioSampleBuffer, audioBuffer.mData, audioBuffer.mDataByteSize);
+    [self.samplesArrivedSignal lock];
     [self.samplesArrivedSignal signal];
+    [self.samplesArrivedSignal unlock];
   }
 }
 

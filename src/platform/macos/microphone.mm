@@ -33,7 +33,12 @@ namespace platf {
       void *byteSampleBuffer = TPCircularBufferTail(&av_audio_capture->audioSampleBuffer, &length);
 
       while (length < sample_size * sizeof(float)) {
-        [av_audio_capture.samplesArrivedSignal wait];
+        [av_audio_capture.samplesArrivedSignal lock];
+        BOOL arrived = [av_audio_capture.samplesArrivedSignal waitUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+        [av_audio_capture.samplesArrivedSignal unlock];
+        if (!arrived) {
+          return capture_e::timeout;
+        }
         byteSampleBuffer = TPCircularBufferTail(&av_audio_capture->audioSampleBuffer, &length);
       }
 
