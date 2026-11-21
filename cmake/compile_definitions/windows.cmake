@@ -244,6 +244,7 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/general_functions.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/settings_topology.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/settings_topology.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/settings_restore.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/settings.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/windows_utils.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/windows_utils.cpp"

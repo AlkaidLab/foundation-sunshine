@@ -428,6 +428,15 @@ target_link_libraries(display_bounded_call_unit_tests PRIVATE gtest_main sunshin
 set_target_properties(display_bounded_call_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME display_bounded_call_unit_tests COMMAND display_bounded_call_unit_tests)
 
+add_executable(display_settings_restore_unit_tests
+        unit/test_display_settings_restore.cpp
+        ${CMAKE_SOURCE_DIR}/src/display_device/to_string.cpp
+        ${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/settings_restore.cpp)
+target_link_libraries(display_settings_restore_unit_tests PRIVATE gtest_main Boost::boost Boost::log
+        nlohmann_json::nlohmann_json sunshine_project_options sunshine_coverage)
+set_target_properties(display_settings_restore_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME display_settings_restore_unit_tests COMMAND display_settings_restore_unit_tests)
+
 add_executable(vdd_mode_list_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_vdd_mode_list.cpp)
 target_include_directories(vdd_mode_list_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(vdd_mode_list_unit_tests PRIVATE gtest_main nlohmann_json::nlohmann_json
