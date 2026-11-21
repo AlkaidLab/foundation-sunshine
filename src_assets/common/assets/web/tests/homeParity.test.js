@@ -41,3 +41,10 @@ test('host audio commands of one client run one at a time and the last choice wi
   await new Promise((r) => setTimeout(r, 0))
   assert.deepEqual(sent, [true, true, true], 'after the first settles only the newest choice goes out (the one in the middle is dropped)')
 })
+
+// the overview of the Web UI and of the control panel of one host are one overview: the layout is on the host (the phone draws what the panel draws), the client icons are one function
+test('the overview keeps its layout on the host', () => {
+  assert.match(home, /const layoutStore = createHostLayoutStore\(\{ request: \(path, init\) => apiFetch\(path, init\) \}\)/)
+  assert.match(home, /:layout-store="layoutStore"/)
+  assert.match(fs.readFileSync(new URL('../utils/homeData.js', import.meta.url), 'utf8'), /export \{ DEVICE_KINDS, DEVICE_RULES, NEUTRAL_DEVICE_ICON, deviceKindFor, deviceIconFor \} from 'foundation-ui\/device-icons'/)
+})
