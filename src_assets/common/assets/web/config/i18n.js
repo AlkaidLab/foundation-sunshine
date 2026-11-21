@@ -82,6 +82,9 @@ export default async function() {
     if (!locale) {
         locale = detectSystemLocale();
     }
+    // zh 变体归一：消息文件只有 zh.json 与 zh_TW.json 两份，后端白名单也只有 zh/zh_TW——但旧配置可能残留 zh_CN 之类白名单外的值，
+    // 浏览器传入的 zh_Hans 之类还可能大小写不一。统一归到 zh，消息键与活动 locale（vue-i18n 只按 - 拆隐式父语言，下划线变体没有回退链）保持一致
+    if (/^zh/i.test(locale) && locale !== 'zh' && locale !== 'zh_TW') locale = 'zh';
     // the choice of the person (stored by this window): 跟随系统 gives the language of the system, a code is that language; without one the host's language stands
     const hostLocale = locale;
     const pref = readLocalePref();
@@ -96,8 +99,15 @@ export default async function() {
         en
     };
     try {
-        if (locale === 'zh_TW') messages.zh = await (await fetch('/assets/locale/zh.json')).json();
-        if (locale !== 'en') messages[locale] = await (await fetch('/assets/locale/' + locale + '.json')).json();
+        // locale 已在上方归一：中文只会是 zh（基底）或 zh_TW（繁体覆盖，缺键回退到基底）
+        if (locale === 'zh') {
+            messages.zh = await (await fetch('/assets/locale/zh.json')).json();
+        } else if (locale === 'zh_TW') {
+            messages.zh = await (await fetch('/assets/locale/zh.json')).json();
+            messages.zh_TW = await (await fetch('/assets/locale/zh_TW.json')).json();
+        } else if (locale !== 'en') {
+            messages[locale] = await (await fetch(`/assets/locale/${locale}.json`)).json();
+        }
     } catch (e) {
         console.error("Failed to download translations", e);
     }
@@ -110,39 +120,54 @@ export default async function() {
         warnHtmlMessage: false, // 禁用 HTML 消息警告（因为我们使用 v-html 来渲染受信任的翻译内容）
     })
     webI18n = i18n;
-    if (revalidate) revalidate.then((fresh) => { if (fresh && fresh !== hostLocale && !pref) applyLocale(fresh); });
+    // 主机语言的后台刷新只在没有用户偏好的情况下生效：读实时偏好而非启动快照，否则启动后选了语言仍会被主机值覆盖（显式选了"跟随系统"时同样跳过——系统语言优先于主机）
+    if (revalidate) revalidate.then((fresh) => { if (fresh && fresh !== hostLocale && !readLocalePref()) applyLocale(fresh); });
     return i18n;
 }
 
 /** The code a choice shows: the system's language for `system`, else the code (when the host offers it). */
 export const resolveChoice = (choice) => (choice === LOCALE_SYSTEM || !SUPPORTED_LOCALES.includes(choice) ? detectSystemLocale() : choice);
 
-/** Shows a language at once: its messages are fetched when they are not loaded, the page's lang follows. */
+// 语言热切换的请求序号：下载消息期间用户可能又选了别的语言，只有最新一次调用能提交语言状态（旧调用保留已注册的消息即可）
+let localeRequestId = 0;
+
+/** Shows a language at once: its messages are fetched when they are not loaded, the page's lang follows. Returns whether this call committed the language — false when a newer choice superseded it while its messages were loading. */
 export async function applyLocale(locale) {
+    // zh 变体归一，与初始化同一规则（见 init 内注释）
+    if (/^zh/i.test(locale) && locale !== 'zh' && locale !== 'zh_TW') locale = 'zh';
+    const request = ++localeRequestId;
     activeLocale.value = locale;
-    if (!webI18n) return;
+    if (!webI18n) return false;
     try {
-        if (locale === 'zh_TW' && !webI18n.global.availableLocales.includes('zh')) {
-            webI18n.global.setLocaleMessage('zh', await (await fetch('/assets/locale/zh.json')).json());
-        }
-        if (locale !== 'en' && !webI18n.global.availableLocales.includes(locale)) {
-            webI18n.global.setLocaleMessage(locale, await (await fetch('/assets/locale/' + locale + '.json')).json());
+        // zh 基底按需加载一次（变体已在入口归一）；zh_TW 在基底之上覆盖繁体；其余语言按需加载自己的文件（vue-i18n 惯例：先注册消息再切换语言）
+        if (/^zh/i.test(locale)) {
+            if (!webI18n.global.availableLocales.includes('zh')) {
+                webI18n.global.setLocaleMessage('zh', await (await fetch('/assets/locale/zh.json')).json());
+            }
+            if (locale === 'zh_TW' && !webI18n.global.availableLocales.includes('zh_TW')) {
+                webI18n.global.setLocaleMessage('zh_TW', await (await fetch('/assets/locale/zh_TW.json')).json());
+            }
+        } else if (locale !== 'en' && !webI18n.global.availableLocales.includes(locale)) {
+            webI18n.global.setLocaleMessage(locale, await (await fetch(`/assets/locale/${locale}.json`)).json());
         }
     } catch (e) {
         console.error("Failed to download translations", e);
     }
+    // 等待下载期间有了更新的选择：这次调用只贡献已注册的消息，语言状态交给最新那次
+    if (request !== localeRequestId) return false;
     webI18n.global.locale.value = locale;
     document.querySelector('html').setAttribute('lang', locale.replace(/_/g, '-'));
+    return true;
 }
 
-/** The choice of the language, applied at once and stored as made ('system' is stored, not the code it gives). Returns the code that is shown. */
+/** The choice of the language, applied at once and stored as made ('system' is stored, not the code it gives). Returns the code that is shown, or null when a newer choice superseded it while its messages were loading (the caller then skips persisting the stale code). */
 export async function setLocaleChoice(choice) {
     const value = choice === LOCALE_SYSTEM || SUPPORTED_LOCALES.includes(choice) ? choice : LOCALE_SYSTEM;
     writeLocalePref(value);
     localeChoice.value = value;
     const code = resolveChoice(value);
-    await applyLocale(code);
-    return code;
+    const applied = await applyLocale(code);
+    return applied ? code : null;
 }
 
 // the operating system changes its language: a window that follows it changes with it
