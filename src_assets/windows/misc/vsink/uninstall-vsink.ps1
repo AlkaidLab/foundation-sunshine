@@ -142,6 +142,7 @@ function Remove-VbCableOrphanService([object[]]$InstalledPackages, [scriptblock]
 }
 
 function Remove-VbCableDrivers([scriptblock]$ReadBindings, [scriptblock]$ReadPackages, [scriptblock]$RemoveDevice, [scriptblock]$RemovePackage, [scriptblock]$IsDriverStopped, [scriptblock]$WaitForRefresh, [scriptblock]$RemoveOrphanService) {
+  $packagesPendingRestart = @()
   # Refresh both the device tree and the driver store after every change: an
   # older installed package can become bound while a device is being removed.
   for ($pass = 0; $pass -lt 32; $pass++) {
@@ -151,6 +152,8 @@ function Remove-VbCableDrivers([scriptblock]$ReadBindings, [scriptblock]$ReadPac
     $packages = @(Get-VbCablePackages $bindings $installedPackages)
     $devices = @($bindings | Where-Object { $_.IsVbCable -and $_.Present })
     if ($devices.Count) {
+      if ($packagesPendingRestart.Count) { return }
+      $devicePendingRestart = $false
       foreach ($device in $devices) {
         if ([string]$device.InstanceId -notmatch '^ROOT\\[A-Za-z0-9_.&{}-]+\\[A-Za-z0-9_.&{}-]+$') {
           throw 'The VB-Cable device has an unexpected instance ID; refusing to remove it.'
@@ -159,7 +162,10 @@ function Remove-VbCableDrivers([scriptblock]$ReadBindings, [scriptblock]$ReadPac
       foreach ($device in $devices) {
         Write-Host "Removing VB-Cable device $($device.InstanceId)..."
         $code = & $RemoveDevice $device.InstanceId
-        if ($code -eq 3010) { $script:restartSuggested = $true }
+        if ($code -eq 3010) {
+          $script:restartSuggested = $true
+          $devicePendingRestart = $true
+        }
         elseif ($code -in @(32, 170, 2404)) { throw 'VBCABLE-DEVICE-BUSY: Windows reports that the device is in use.' }
         elseif ($code -ne 0) { throw "VB-Cable device $($device.InstanceId) could not be removed (exit $code)." }
       }
@@ -175,6 +181,7 @@ function Remove-VbCableDrivers([scriptblock]$ReadBindings, [scriptblock]$ReadPac
         if ($retry -lt 10) { & $WaitForRefresh }
       }
       if (-not $detached) {
+        if ($devicePendingRestart) { return }
         throw 'VBCABLE-DEVICE-BUSY: VB-Cable is still in use or being released.'
       }
       continue
@@ -189,6 +196,7 @@ function Remove-VbCableDrivers([scriptblock]$ReadBindings, [scriptblock]$ReadPac
         if (& $IsDriverStopped) { $stopped = $true; break }
       }
       if (-not $stopped) {
+        if ($packagesPendingRestart.Count) { return }
         throw 'VBCABLE-DEVICE-BUSY: VB-Cable is still in use or being released.'
       }
       continue
@@ -200,10 +208,17 @@ function Remove-VbCableDrivers([scriptblock]$ReadBindings, [scriptblock]$ReadPac
 
     # This package was validated against the current driver store and every
     # device binding above. pnputil is deliberately invoked without /force.
-    $package = $packages[0]
+    # A 3010 package may stay listed until reboot. Leave it pending while
+    # processing other verified packages, and keep its service while it remains.
+    $package = $packages | Where-Object { $_ -notin $packagesPendingRestart } | Select-Object -First 1
+    if (-not $package) { return }
     Write-Host "Removing VB-Cable driver package $package..."
     $code = & $RemovePackage $package
-    if ($code -eq 3010) { $script:restartSuggested = $true; return }
+    if ($code -eq 3010) {
+      $script:restartSuggested = $true
+      $packagesPendingRestart += $package
+      continue
+    }
     if ($code -in @(32, 170, 2404)) { throw 'VBCABLE-DEVICE-BUSY: Windows reports that the driver package is in use.' }
     if ($code -ne 0) { throw "Driver package $package could not be removed (exit $code)." }
   }

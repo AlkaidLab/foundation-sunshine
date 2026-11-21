@@ -38,7 +38,7 @@ if not "%ADMIN_CHECK_RC%"=="0" (
 "%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%~dp0uninstall-vsink.ps1"
 set "UNINSTALL_RC=%ERRORLEVEL%"
 if "%UNINSTALL_RC%"=="3010" (
-    echo Windows reported that a restart is required to complete removal.
+    echo Windows reported a pending removal. After restarting, run this script again if VB-Cable is still listed.
     call :pause_if_interactive
     exit /b 3010
 )

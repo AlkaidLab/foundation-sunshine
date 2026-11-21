@@ -5,7 +5,7 @@ Checked on 2026-11-12 against the upstream sources (read only; behaviour is desc
 - host and Web UI: <https://github.com/AlkaidLab/foundation-sunshine>, `master` at 6225dcb (2026-11-12), called **host-up** below;
 - control panel: <https://github.com/qiin2333/sunshine-control-panel/tree/502a6719bf4dbc17c42f3e4a2154fb8957890773>, historical `main` at 502a671, called **panel-up**. This comparison refers to the original Panel snapshot, not the current foundation-panel repository.
 
-Our product is a superset of the original (the native-superset principle): nothing the original offers may be missing or harder to reach.
+We aim to keep the original audio controls accessible. One deliberate change is when VB-CABLE is downloaded. The user starts the download in the Panel's component page.
 
 ## 1. What the original offers
 
@@ -39,7 +39,7 @@ State of **our** product before this round (feat/audio-devices at `1f7d1fa08` / 
 | 6 microphone mode | select, all four modes | a list row (dialog) whose names were sentences; Panel: a four-button group | **worse** on the Web page (the modes were one click deeper) | four buttons, 麦克风方式, on the microphone page of the Web UI and of the Panel; the line below says what the chosen mode does |
 | 7 VB-Cable download | confirm, then the zip link | confirm, then the zip link (shown for every backend); Panel: the VB-Audio page | same | kept as the manual way |
 | 8 VB-Cable install | script run by hand as administrator, silent, no signature check | **missing**: only the download | **missing** | Panel component management separates download, install and uninstall; the pinned package is Pack43 |
-| 9 host auto-download at mic start | downloads and unpacks, asks for a manual install | the same code | same | the host does not install VB-CABLE; Panel downloads only on request |
+| 9 host auto-download at mic start | downloads and unpacks, asks for a manual install | the same code | **changed** | the host only checks for an installed device at microphone startup |
 | 10 mic test and status | yes | yes | same | same |
 | 11 MAT live | on the audio page | on the display advanced page (`DisplayAdvanced.vue`) | different place; not changed | not changed |
 | 12 per-app / per-client speaker | none | none | same | none (not in the original) |
@@ -48,5 +48,5 @@ State of **our** product before this round (feat/audio-devices at `1f7d1fa08` / 
 ## 3. Differences kept on purpose
 
 - Our default `microphone_redirect_backend` is `auto` (USB/IP first, VB-Cable as the fallback); the original's is `vb_cable`.
-- Driver management belongs to the Panel's component page. Installing and uninstalling require confirmation and Windows administrator authorization; the host's audio endpoint API is read-only.
-- The component flow is tested without changing real drivers. An earlier Pack45 uninstall test returned Windows 3010; that removal is incomplete until Windows can release the driver.
+- A missing VB-CABLE device used to trigger a download and extraction when the microphone started. Users now choose when to download the package from the Panel's component page. Installing and uninstalling require confirmation and Windows administrator authorization.
+- On Windows 10 22H2, Pack43 was uninstalled, reinstalled and re-enabled after disabling the device. A Pack45 uninstall returned Windows code 3010 with the driver still running. The multi-package 3010 case was verified with simulated driver-store responses.
