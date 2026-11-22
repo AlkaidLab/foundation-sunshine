@@ -24,6 +24,15 @@ class FingerprintTest(unittest.TestCase):
             path = self.root / rel
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(f"# {rel}\n")
+        (self.root / "cmake" / "compile_definitions" / "windows.cmake").write_text(
+            'add_compile_definitions(SUNSHINE_PLATFORM="windows")\n'
+            "file(GLOB NVPREFS_FILES CONFIGURE_DEPENDS\n"
+            '        "${CMAKE_SOURCE_DIR}/src/platform/windows/nvprefs/*.cpp")\n'
+            "set(PLATFORM_TARGET_FILES\n"
+            '        "${CMAKE_SOURCE_DIR}/src/platform/windows/one.cpp"\n'
+            '        "${CMAKE_SOURCE_DIR}/src/platform/windows/two.cpp")\n'
+            "list(APPEND PLATFORM_TARGET_FILES\n"
+            '        "${CMAKE_SOURCE_DIR}/third-party/tray/src/tray_windows.c")\n')
         (self.root / "scripts" / "ci" / "msys2-pins.txt").write_text(
             "# pins\nmingw-w64-ucrt-x86_64-gcc 16.2.0-7 mingw-w64-ucrt-x86_64-gcc-16.2.0-7-any.pkg.tar.zst " + "a" * 64 + "\n"
             "mingw-w64-ucrt-x86_64-openssl 4.1.0-1 mingw-w64-ucrt-x86_64-openssl-4.1.0-1-any.pkg.tar.zst " + "b" * 64 + "\n")
@@ -51,6 +60,40 @@ class FingerprintTest(unittest.TestCase):
         before = self.fingerprint()
         (self.root / "cmake/compile_definitions/windows.cmake").write_text("add_compile_options(-g1)\n")
         self.assertNotEqual(before, self.fingerprint())
+
+    def test_a_source_list_edit_keeps_it(self):
+        # A ccache entry is keyed on the compile command line (ccache manual, "How ccache works"), so a
+        # translation unit added or removed never invalidates another unit's entry; the lists that
+        # enumerate them must not move the fingerprint. Two source-list-only edits forced 8-shard cold
+        # builds on 2026-11-21 while no compile command line had changed.
+        before = self.fingerprint()
+        path = self.root / "cmake/compile_definitions/windows.cmake"
+        old = path.read_text()
+        path.write_text(old.replace("one.cpp", 'one.cpp"\n        "${CMAKE_SOURCE_DIR}/src/platform/windows/added.cpp'))
+        self.assertEqual(before, self.fingerprint(), "a file added to the platform target list")
+        path.write_text(old + 'list(APPEND PLATFORM_TARGET_FILES "${CMAKE_SOURCE_DIR}/src/platform/windows/more.cpp)\n')
+        self.assertEqual(before, self.fingerprint(), "another list(APPEND) of the platform target list")
+        path.write_text(old.replace('        "${CMAKE_SOURCE_DIR}/src/platform/windows/two.cpp"\n', ""))
+        self.assertEqual(before, self.fingerprint(), "a file removed from the platform target list")
+        targets = self.root / "cmake/targets/common.cmake"
+        targets_old = targets.read_text()
+        targets.write_text(targets_old + 'set(TEST_HELPER_SOURCES "${CMAKE_SOURCE_DIR}/tests/helper.cpp)\n')
+        self.assertEqual(before, self.fingerprint(), "a source-list variable in another hashed module")
+        targets.write_text(targets_old)
+        path.write_text(old)
+        self.assertEqual(before, self.fingerprint())
+
+    def test_a_glob_pattern_or_a_compile_option_list_still_moves_it(self):
+        # What selects or flags translation units stays hashed; only the enumerations are cut.
+        before = self.fingerprint()
+        path = self.root / "cmake/compile_definitions/windows.cmake"
+        old = path.read_text()
+        path.write_text(old.replace("nvprefs/*.cpp", "nvprefs/**/*.cpp"))
+        self.assertNotEqual(before, self.fingerprint(), "a file(GLOB) pattern")
+        path.write_text(old + "list(APPEND SUNSHINE_COMPILE_OPTIONS -Wno-probe)\n")
+        self.assertNotEqual(before, self.fingerprint(), "a compile option")
+        path.write_text(old)
+        self.assertEqual(before, self.fingerprint())
 
     def test_the_configure_step_the_toolchain_action_and_the_top_level_file_move_it(self):
         before = self.fingerprint()

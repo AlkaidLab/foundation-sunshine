@@ -111,6 +111,41 @@ class ShardTest(unittest.TestCase):
         self.assertIn("-DSUNSHINE_BUILD_MAT_CAPTURE=OFF", shard["run"])
         self.assertNotIn("MAT_CAPTURE", build["run"])
 
+    def test_the_shards_pin_the_same_build_time_and_path_as_the_build_job(self):
+        # build_info_defs.h is generated at configure time (string(TIMESTAMP) honours SOURCE_DATE_EPOCH), and a
+        # header whose bytes differ between the two invalidates every cache entry that reads it; the dotnet PATH
+        # keeps find_program() in agreement (the found set is part of the configure result).
+        shard = step(self.jobs["shard"], "Configure Windows")
+        build = step(self.jobs["build_win"], "Configure Windows")
+        adapter_configure = next(s for s in self.jobs["adapter_config"]["steps"] if "cmake -B build-adapter-config" in s.get("run", ""))
+        for configure in (shard, build, adapter_configure):
+            self.assertIn('export SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct)"', configure["run"])
+        for configure in (shard, build):
+            self.assertIn('export PATH="$PATH:/c/Program Files/dotnet"', configure["run"])
+            self.assertIn("compile commands: $(ninja -C build -t commands", configure["run"])
+
+    def test_two_cold_runs_of_one_configuration_do_not_compile_everything_twice(self):
+        # One group per shard index (the eight shards of one run still run side by side), keyed by the
+        # fingerprint: the later run's shard waits and then restores what the earlier run saved.
+        shard = self.jobs["shard"]
+        self.assertEqual(
+            shard["concurrency"],
+            {"group": "cold-shards-${{ needs.cold_plan.outputs.fingerprint }}-${{ matrix.index }}", "cancel-in-progress": False},
+        )
+        restore = step(shard, "Restore the compiler cache")
+        self.assertEqual(restore["if"], "github.event_name != 'schedule'")
+        self.assertEqual(restore["uses"], "actions/cache/restore@v6")
+        self.assertIn("ccache-windows-${{ needs.cold_plan.outputs.fingerprint }}-\n", restore["with"]["restore-keys"])
+
+    def test_every_ccache_restore_falls_back_to_the_most_recent_lineage(self):
+        # Entries are keyed on the compile command line, so a restored entry of another fingerprint either hits
+        # or misses on its own; a new fingerprint (or an eviction under the exact key) starts warm, not cold.
+        restores = [s for job in self.jobs.values() for s in job.get("steps", [])
+                    if s.get("uses", "").startswith("actions/cache/restore") and "ccache" in s.get("with", {}).get("key", "")]
+        self.assertGreaterEqual(len(restores), 3)
+        for restore in restores:
+            self.assertIn("ccache-windows-\n", restore["with"]["restore-keys"], restore.get("name"))
+
     def test_the_shard_configure_has_no_token_and_uses_the_pinned_gui_inputs(self):
         shard = self.jobs["shard"]
         configure = step(shard, "Configure Windows")
@@ -139,11 +174,13 @@ class ShardTest(unittest.TestCase):
         build = self.jobs["build_win"]
         restore = step(build, "Cache compiler objects")["with"]
         self.assertEqual(restore["key"], f"ccache-windows-{fingerprint}-${{{{ github.run_id }}}}")
-        self.assertEqual(restore["restore-keys"].strip(), f"ccache-windows-{fingerprint}-")
+        # The second line is the fallback to the most recent lineage of any fingerprint: a new fingerprint
+        # starts warm because entries are keyed on the compile command line, not on the fingerprint.
+        self.assertEqual(restore["restore-keys"].strip(), f"ccache-windows-{fingerprint}-\nccache-windows-")
         save = step(build, "Save compiler cache")["with"]
         self.assertEqual(save["key"], restore["key"])
         adapter = step(self.jobs["adapter_config"], "Cache compiler objects")["with"]
-        self.assertEqual(adapter["restore-keys"].strip(), f"ccache-windows-{fingerprint}-")
+        self.assertEqual(adapter["restore-keys"].strip(), f"ccache-windows-{fingerprint}-\nccache-windows-")
         self.assertIn("cold_plan", self.jobs["adapter_config"]["needs"])
         prune = step(build, "Prune stale compiler cache entries")["run"]
         self.assertIn(f'$current = "ccache-windows-{fingerprint}-${{{{ github.run_id }}}}"', prune)

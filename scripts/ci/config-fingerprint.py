@@ -24,10 +24,58 @@ share an entry. Prints the digits.
 import argparse
 import hashlib
 import os
+import re
 import pathlib
 import sys
 
 import yaml
+
+# A ccache entry is keyed on the compile command line, the compiler and the header contents a translation unit reads
+# (ccache manual, "How ccache works"), so adding or removing a translation unit never invalidates another unit's entry.
+# Statements that only enumerate source files therefore must not move the fingerprint: two source-list-only edits forced
+# 8-shard cold builds on 2026-11-21 although no compile command line had changed. Cut whole set()/list() statements that
+# fill a variable whose name ends in _TARGET_FILES or _SOURCES (PLATFORM_TARGET_FILES and its kin); file(GLOB ...) patterns
+# stay hashed, as do flag, definition and dependency statements.
+SOURCE_LIST_STATEMENT = re.compile(
+    r"(?<![\w.])(?:set|list)\s*\(\s*(?:(?:APPEND|PREPEND|INSERT)\s+)?[A-Za-z0-9_]*(?:_TARGET_FILES|_SOURCES)\b",
+    re.IGNORECASE,
+)
+
+
+def strip_source_lists(text):
+    """Remove whole source-list statements, with the line they sit on.
+
+    Cutting only the statement would leave its indentation and newline behind, so adding or
+    removing a complete set()/list() line would still move the fingerprint.
+    """
+    out = []
+    position = 0
+    while True:
+        match = SOURCE_LIST_STATEMENT.search(text, position)
+        if not match:
+            out.append(text[position:])
+            return "".join(out)
+        line_start = text.rfind("\n", position, match.start()) + 1
+        if text[line_start:match.start()].strip():
+            line_start = match.start()
+        out.append(text[position:line_start])
+        depth, end = 0, match.start()
+        while end < len(text):
+            if text[end] == "(":
+                depth += 1
+            elif text[end] == ")":
+                depth -= 1
+                if depth == 0:
+                    end += 1
+                    break
+            end += 1
+        while end < len(text) and text[end] in " \t":
+            end += 1
+        if end < len(text) and text[end] == "\r":
+            end += 1
+        if end < len(text) and text[end] == "\n":
+            end += 1
+        position = end
 
 
 def files_to_hash(root, toolchain):
@@ -76,7 +124,10 @@ def main():
         details.append(f"{label}: {part}")
 
     for path in files_to_hash(root, toolchain):
-        add(path.relative_to(root).as_posix(), path.read_bytes())
+        data = path.read_bytes()
+        if path.name == "CMakeLists.txt" or path.suffix == ".cmake":
+            data = strip_source_lists(data.decode("utf-8", errors="surrogateescape")).encode("utf-8", errors="surrogateescape")
+        add(path.relative_to(root).as_posix(), data)
     step = configure_step(root / args.workflow)
     add("Configure Windows", (step["run"] + "\n" + "\n".join(f"{k}={v}" for k, v in sorted(step.get("env", {}).items()))).encode())
     add("Windows toolchain", toolchain.encode())

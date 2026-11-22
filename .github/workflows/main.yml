@@ -537,7 +537,9 @@ jobs:
             sharded=true; reason="requested"
           else
             # A compiler-cache entry of this configuration that the run could restore: the default branch's, or this ref's own.
-            # An entry of another fingerprint exists too, but nearly every compile misses it (other flags, compiler or headers).
+            # An entry of another fingerprint is a warm start (the restore fallbacks pick the most recent lineage up;
+            # entries that do not match simply miss), but it does not decide this: the fingerprint only moves when
+            # something that changes compile command lines moved, and that is worth the shards.
             found=0
             for ref in "$DEFAULT_REF" "$THIS_REF"; do
               n="$(gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=ccache-windows-$FINGERPRINT-&ref=$ref&per_page=1" --jq .total_count 2>/dev/null || echo 0)"
@@ -563,14 +565,24 @@ jobs:
   # One shard of a cold compile: configures exactly like build_win, builds chunks of object files until none is left
   # (scripts/ci/shard-compile.sh; scripts/ci/shard-targets.py cuts them into equal weights from an earlier build) and uploads its
   # compiler cache.
-  # build_win then merges the caches and runs the whole build at ~100% hits. The MAT capture package and the dotnet publish
-  # are left out: they only order before the objects and change no object command line, but every shard would run them.
+  # build_win then merges the caches and runs the whole build at ~100% hits. The MAT capture package and the driver-deps
+  # fatality are left out: mat_capture.cmake adds a custom target and FetchDriverDeps only fills packaging variables, so
+  # neither changes an object command line (verified against the 2026-11-21 logs: identical CMake configure output either
+  # way), while every shard would pay for them.
   shard:
     name: Compile shard ${{ matrix.index }}
     needs: [changes, setup_release, cold_plan]
     if: needs.cold_plan.outputs.sharded == 'true'
     permissions:
       contents: write  # refs/claims/<run>/<chunk>: creating a ref is the atomic "this runner builds this chunk" (shard-compile.sh)
+    # Two cold runs of one configuration must not compile everything twice on sixteen runners: the later run's shard
+    # waits for the earlier run's shard of the same index (one group per index, so the eight shards of one run still
+    # run side by side), then restores the cache that run saved below. cancel-in-progress is false: a waiting shard is
+    # work waiting for a cache, not a stale check. Group expressions may use the needs, strategy and matrix contexts
+    # (GitHub Docs, "jobs.<job_id>.concurrency").
+    concurrency:
+      group: cold-shards-${{ needs.cold_plan.outputs.fingerprint }}-${{ matrix.index }}
+      cancel-in-progress: false
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -607,6 +619,21 @@ jobs:
           ./scripts/fetch-installer-inputs.ps1 -Destination $dest
           "GUI_BUNDLE_DIR=$dest/gui" >> $env:GITHUB_ENV
 
+      # What an earlier run of this configuration compiled: a run that queued behind another run's shards (the
+      # concurrency group above) restores what those saved, and a run whose fingerprint is new still starts from the
+      # most recent lineage. Entries are keyed on the compile command line (ccache manual, "How ccache works"), so an
+      # entry that does not match simply misses; restoring is never wrong, only useless. The nightly keeps its pure
+      # cold start: it proves that a build from nothing still works.
+      - name: Restore the compiler cache
+        if: github.event_name != 'schedule'
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ github.workspace }}\.ccache
+          key: ccache-windows-${{ needs.cold_plan.outputs.fingerprint }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-windows-${{ needs.cold_plan.outputs.fingerprint }}-
+            ccache-windows-
+
       # Keep this step and build_win's "Configure Windows" in step: the shards only help while their object command lines are
       # the ones build_win runs (build_win prints the compiler-cache hit rate and warns when it falls under 95%).
       - name: Configure Windows
@@ -631,6 +658,14 @@ jobs:
           # This job's token can write refs (the chunk claims): CMake code, FetchGUI.cmake and FetchDriverDeps.cmake included,
           # must never see it. The token is only given to the compile step.
           if [[ -n "${GITHUB_TOKEN:-}" ]]; then echo "::error::the configure step must not have GITHUB_TOKEN"; exit 1; fi
+          # One build time per commit, not one per configure: the shards and build_win each generate build_info_defs.h
+          # (string(TIMESTAMP) honours SOURCE_DATE_EPOCH; CMake documentation, command/string), and a header whose bytes
+          # differ between the two invalidates every cache entry that reads it. The commit time is also what the
+          # reproducible-builds specification (SOURCE_DATE_EPOCH) fixes the timestamp to.
+          export SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct)"
+          # The same PATH build_win configures with, so find_program() agrees in both (dotnet only gates the sparxie
+          # publish target, which no chunk builds; a found-program difference is still a configure difference).
+          export PATH="$PATH:/c/Program Files/dotnet"
           mkdir -p build
           ccache --zero-stats
           compiler=(-DSUNSHINE_PRECOMPILED_HEADERS=ON)
@@ -657,6 +692,10 @@ jobs:
             -DSUNSHINE_PUBLISHER_NAME='${{ github.repository_owner }}' \
             -DSUNSHINE_PUBLISHER_WEBSITE='https://github.com/AlkaidLab/foundation-sunshine' \
             -DSUNSHINE_PUBLISHER_ISSUE_URL='https://github.com/AlkaidLab/foundation-sunshine/issues'
+          # The object command lines this job compiles with; build_win prints the same line after its configure.
+          # Equal hashes are the precondition for the merged shard caches to hit there (build_win warns as
+          # "Shards drifted" when they do not).
+          echo "compile commands: $(ninja -C build -t commands | sort | sha256sum | cut -d' ' -f1)"
 
       # Chunks of object files are handed out one at a time, so a runner on a slower CPU simply builds fewer of them (the CPU of a
       # hosted runner varies from one job to the next by up to 2x on the same work). The token is only read by this script, which
@@ -765,6 +804,7 @@ jobs:
           key: ccache-windows-adapter-${{ github.run_id }}
           restore-keys: |
             ccache-windows-${{ needs.cold_plan.outputs.fingerprint }}-
+            ccache-windows-
 
       - name: Fetch pinned installer inputs
         shell: pwsh
@@ -784,6 +824,8 @@ jobs:
           CCACHE_DEPEND: '1'
         run: |
           export PATH="$PATH:/c/Program Files/dotnet"
+          # The same build time the other Windows configures pin: build_info_defs.h is generated per configure.
+          export SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct)"
           gui_options=()
           if [[ -n "${GUI_BUNDLE_DIR:-}" ]]; then
             gui_options=(-DFETCH_GUI=OFF "-DGUI_DIR=$GUI_BUNDLE_DIR")
@@ -1019,6 +1061,7 @@ jobs:
           key: ccache-windows-${{ needs.cold_plan.outputs.fingerprint }}-${{ github.run_id }}
           restore-keys: |
             ccache-windows-${{ needs.cold_plan.outputs.fingerprint }}-
+            ccache-windows-
 
       # Cold build on parallel runners: the compiler caches of the shards are merged into one directory (ccache entries are
       # content-addressed, so merging is copying), and the build below finds ~100% of the objects.
@@ -1104,6 +1147,10 @@ jobs:
           # The msys2 shell starts with a minimal PATH, so the runner's .NET SDK (C:\Program Files\dotnet) is invisible to CMake
           # and tools/sparxie-launch would silently not be built or shipped.
           export PATH="$PATH:/c/Program Files/dotnet"
+          # The same build time the shards configured with: build_info_defs.h is generated per configure
+          # (string(TIMESTAMP) honours SOURCE_DATE_EPOCH; CMake documentation, command/string), and a header
+          # whose bytes differ from the shards' invalidates every cache entry that reads it.
+          export SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct)"
           gui_options=()
           if [[ -n "${GUI_BUNDLE_DIR:-}" ]]; then
             gui_options=(-DFETCH_GUI=OFF "-DGUI_DIR=$GUI_BUNDLE_DIR")
@@ -1135,6 +1182,9 @@ jobs:
           else
             echo 'rtx_hdr=false' >> "$GITHUB_OUTPUT"
           fi
+          # The object command lines this build compiles with; each shard prints the same line. Equal hashes are
+          # the precondition for the merged shard caches to hit here (the warning below watches the effect).
+          echo "compile commands: $(ninja -C build -t commands | sort | sha256sum | cut -d' ' -f1)"
 
       - name: Build Windows
         shell: msys2 {0}
