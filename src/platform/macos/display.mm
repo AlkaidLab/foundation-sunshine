@@ -210,7 +210,6 @@ namespace platf {
    */
   bool
   needs_encoder_reenumeration() {
-    // We don't track GPU state, so we will always reenumerate. Fortunately, it is fast on macOS.
-    return true;
+    return false;
   }
 }  // namespace platf

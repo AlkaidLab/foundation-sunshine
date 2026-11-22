@@ -4856,9 +4856,9 @@ namespace video {
       if (encode(1, session, packets, 0, {}, {})) {
         return -1;
       }
-      // Timeout protection: if encoding takes more than 5 seconds, it's likely hung
-      if (std::chrono::steady_clock::now() - encode_start > std::chrono::seconds(5)) {
-        BOOST_LOG(error) << "validate_config: encode timed out (5s), encoder may be incompatible with current settings";
+      // Timeout protection: if encoding takes more than 1 second, it's likely hung
+      if (std::chrono::steady_clock::now() - encode_start > std::chrono::seconds(1)) {
+        BOOST_LOG(warning) << "validate_config: encode timed out (1s), encoder may be incompatible with current settings";
         return -1;
       }
     }
