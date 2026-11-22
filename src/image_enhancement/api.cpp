@@ -92,8 +92,6 @@ namespace image_enhancement::api {
       const auto result = manager().update(settings, one_header(request, "If-Match"), one_header(request, "X-HDR-Operation").value_or(""));
       if (result.status == 200 && result.changed) {
         video::notify_nr_change();
-      }
-      if (result.status == 200 && result.changed) {
         BOOST_LOG(info) << "HDR enhancement settings saved; new streaming pipelines will use the updated selection";
       }
       if (result.status != 200 && result.error != "hdr_save_busy") {
