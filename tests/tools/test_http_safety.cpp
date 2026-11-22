@@ -16,81 +16,122 @@
 #include <thread>
 
 #include "src/ai/http_stream.h"
-#include "src/confighttp/asset_paths.h"
 #include "src/confighttp/asset_encoding.h"
 #include "src/confighttp/asset_etag.h"
+#include "src/confighttp/asset_paths.h"
 #include "src/crypto.h"
 #include "src/httpcommon.h"
 #include "src/logging.h"
 
 TEST(AssetEncoding, NegotiatesOnlyAvailableAndAcceptedRepresentations) {
   using confighttp::assets::asset_encoding;
+  using confighttp::assets::asset_encoding_offers;
   using confighttp::assets::select_asset_encoding;
-  EXPECT_EQ(select_asset_encoding({}, true), asset_encoding::identity);
-  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "br, gzip"}}, true), asset_encoding::gzip);
-  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=0, *;q=1"}}, true), asset_encoding::identity);
-  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=0, identity;q=0"}}, true), asset_encoding::unacceptable);
-  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "*;q=0"}}, true), asset_encoding::unacceptable);
-  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip, identity;q=0"}}, false), asset_encoding::unacceptable);
-  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "GZIP;q=0.5"}}, true), asset_encoding::gzip);
-  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=0.5, identity;q=1"}}, true), asset_encoding::identity);
-  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=invalid"}}, true), asset_encoding::identity);
+  const asset_encoding_offers legacy { .brotli = false, .gzip = true, .identity = true };
+  const asset_encoding_offers plain { .brotli = false, .gzip = false, .identity = true };
+  const asset_encoding_offers shipped { .brotli = true, .gzip = false, .identity = true };
+  const asset_encoding_offers everything { .brotli = true, .gzip = true, .identity = true };
+  EXPECT_EQ(select_asset_encoding({}, legacy), asset_encoding::identity);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "br, gzip" } }, legacy), asset_encoding::gzip);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "br, gzip" } }, shipped), asset_encoding::brotli);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "gzip;q=0, *;q=1" } }, legacy), asset_encoding::identity);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "gzip;q=0, identity;q=0" } }, legacy), asset_encoding::unacceptable);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "*;q=0" } }, everything), asset_encoding::unacceptable);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "gzip, identity;q=0" } }, plain), asset_encoding::unacceptable);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "GZIP;q=0.5" } }, legacy), asset_encoding::gzip);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "gzip;q=0.5, identity;q=1" } }, legacy), asset_encoding::identity);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "gzip;q=invalid" } }, legacy), asset_encoding::identity);
+  // A tie prefers the smaller transfer; quality still decides against it.
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "br, gzip, identity" } }, everything), asset_encoding::brotli);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "gzip, identity" } }, everything), asset_encoding::gzip);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "br;q=0.9, gzip" } }, everything), asset_encoding::gzip);
+  // An explicitly named coding outranks the implicit identity default.
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "br;q=0.1" } }, shipped), asset_encoding::brotli);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "br;q=0.1, identity" } }, shipped), asset_encoding::identity);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "*" } }, everything), asset_encoding::brotli);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "zstd, br" } }, shipped), asset_encoding::brotli);
 }
 
 TEST(AssetEncoding, NegotiatesRepeatedHeadersAndQualityParameters) {
   using confighttp::assets::asset_encoding;
+  using confighttp::assets::asset_encoding_offers;
   using confighttp::assets::select_asset_encoding;
+  const asset_encoding_offers offers { .brotli = true, .gzip = true, .identity = true };
+  const asset_encoding_offers plain { .brotli = false, .gzip = false, .identity = true };
 
   // Header names and codings are case-insensitive; multiple field lines are
   // processed in order and an explicit coding overrides the wildcard.
-  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "br"}, {"accept-encoding", "GZip;q=0.7"},
-                                   {"ACCEPT-ENCODING", "identity;q=0.3"}}, true), asset_encoding::gzip);
-  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=0"}, {"Accept-Encoding", "*;q=1"}}, true), asset_encoding::identity);
-  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "identity;q=0"}, {"Accept-Encoding", "*;q=1"}}, true), asset_encoding::gzip);
-  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "identity;q=0"}, {"Accept-Encoding", "*;q=1"}}, false), asset_encoding::unacceptable);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "br" }, { "accept-encoding", "GZip;q=0.7" },
+                                    { "ACCEPT-ENCODING", "identity;q=0.3" } },
+              offers),
+    asset_encoding::brotli);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "gzip;q=0" }, { "Accept-Encoding", "*;q=1" } }, offers), asset_encoding::brotli);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "identity;q=0" }, { "Accept-Encoding", "*;q=1" } }, offers), asset_encoding::brotli);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "identity;q=0" }, { "Accept-Encoding", "*;q=1" } }, plain), asset_encoding::unacceptable);
 
   // Whitespace around the coding and semicolon is accepted; q= stays contiguous.
-  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", " \tGZip \t; \tQ=0.7, identity ; q=0.2"}}, true), asset_encoding::gzip);
-  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;Q = 0.7, identity;q=0.2"}}, true), asset_encoding::identity);
-  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=0.2, identity;q=0.8"}}, true), asset_encoding::identity);
-  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=1, identity;q=0"}}, true), asset_encoding::gzip);
-  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=1, identity;q=0"}}, false), asset_encoding::unacceptable);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", " \tGZip \t; \tQ=0.7, identity ; q=0.2" } }, offers), asset_encoding::gzip);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "gzip;Q = 0.7, identity;q=0.2" } }, offers), asset_encoding::identity);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "gzip;q=0.2, identity;q=0.8" } }, offers), asset_encoding::identity);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "gzip;q=1, identity;q=0" } }, offers), asset_encoding::gzip);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "gzip;q=1, identity;q=0" } }, plain), asset_encoding::unacceptable);
 
   // An invalid quality is ignored; a bad field does not hide a later field.
-  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=1.1"}}, true), asset_encoding::identity);
-  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=-0.1"}}, true), asset_encoding::identity);
-  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=garbage"}, {"Accept-Encoding", "identity;q=0"}}, true), asset_encoding::unacceptable);
-  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=garbage"}, {"Accept-Encoding", "GZIP;q=0.4"}}, true), asset_encoding::gzip);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "gzip;q=1.1" } }, offers), asset_encoding::identity);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "gzip;q=-0.1" } }, offers), asset_encoding::identity);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "gzip;q=garbage" }, { "Accept-Encoding", "identity;q=0" } }, offers), asset_encoding::unacceptable);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "gzip;q=garbage" }, { "Accept-Encoding", "GZIP;q=0.4" } }, offers), asset_encoding::gzip);
   // Malformed members are ignored individually; later codings in the same
   // field must still be processed. Quoted qvalues and extra parameters are
   // not valid Accept-Encoding quality values.
-  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=, identity;q=0"}}, true), asset_encoding::unacceptable);
-  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=\"0.4\", identity;q=0"}}, true), asset_encoding::unacceptable);
-  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=0.5;other=1, identity;q=0"}}, true), asset_encoding::unacceptable);
-  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q==bad, gzip;q=0.6"}}, true), asset_encoding::gzip);
-  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=0, gzip"}}, true), asset_encoding::gzip);
-  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "br;q=0, gzip"}}, true), asset_encoding::gzip);
-  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;q=0, identity"}}, true), asset_encoding::identity);
-  EXPECT_EQ(select_asset_encoding({{"Accept-Encoding", "gzip;?q=0, identity;q=0"}}, true), asset_encoding::unacceptable);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "gzip;q=, identity;q=0" } }, offers), asset_encoding::unacceptable);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "gzip;q=\"0.4\", identity;q=0" } }, offers), asset_encoding::unacceptable);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "gzip;q=0.5;other=1, identity;q=0" } }, offers), asset_encoding::unacceptable);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "gzip;q==bad, gzip;q=0.6" } }, offers), asset_encoding::gzip);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "gzip;q=0, gzip" } }, offers), asset_encoding::gzip);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "br;q=0, gzip" } }, offers), asset_encoding::gzip);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "BR ; Q=0.6, identity;q=0.3" } }, offers), asset_encoding::brotli);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "gzip;q=0, identity" } }, offers), asset_encoding::identity);
+  EXPECT_EQ(select_asset_encoding({ { "Accept-Encoding", "gzip;?q=0, identity;q=0" } }, offers), asset_encoding::unacceptable);
 }
 
 TEST(AssetEtag, MatchesWeakAndRepeatedIfNoneMatchValues) {
   using confighttp::assets::matches_asset_etag;
   constexpr std::string_view tag = "\"012345\"";
   EXPECT_FALSE(matches_asset_etag({}, tag));
-  EXPECT_TRUE(matches_asset_etag({{"If-None-Match", "*"}}, tag));
-  EXPECT_TRUE(matches_asset_etag({{"If-None-Match", " W/\"012345\" "}}, tag));
-  EXPECT_TRUE(matches_asset_etag({{"If-None-Match", "\"other\", W/\"012345\""}}, tag));
-  EXPECT_TRUE(matches_asset_etag({{"If-None-Match", "\"other\""}, {"If-None-Match", "\"012345\""}}, tag));
-  EXPECT_FALSE(matches_asset_etag({{"If-None-Match", "\"0123456\""}}, tag));
+  EXPECT_TRUE(matches_asset_etag({ { "If-None-Match", "*" } }, tag));
+  EXPECT_TRUE(matches_asset_etag({ { "If-None-Match", " W/\"012345\" " } }, tag));
+  EXPECT_TRUE(matches_asset_etag({ { "If-None-Match", "\"other\", W/\"012345\"" } }, tag));
+  EXPECT_TRUE(matches_asset_etag({ { "If-None-Match", "\"other\"" }, { "If-None-Match", "\"012345\"" } }, tag));
+  EXPECT_FALSE(matches_asset_etag({ { "If-None-Match", "\"0123456\"" } }, tag));
 }
 
 TEST(AssetEtag, SidecarDigestMatchesNodeGzipBuild) {
   // Produced by Node gzipSync(Buffer.from("abc"), { level: 9 }).
   const std::string compressed {
-    '\x1f', '\x8b', '\x08', '\x00', '\x00', '\x00', '\x00', '\x00',
-    '\x02', '\x0a', '\x4b', '\x4c', '\x4a', '\x06', '\x00', '\xc2',
-    '\x41', '\x24', '\x35', '\x03', '\x00', '\x00', '\x00',
+    '\x1f',
+    '\x8b',
+    '\x08',
+    '\x00',
+    '\x00',
+    '\x00',
+    '\x00',
+    '\x00',
+    '\x02',
+    '\x0a',
+    '\x4b',
+    '\x4c',
+    '\x4a',
+    '\x06',
+    '\x00',
+    '\xc2',
+    '\x41',
+    '\x24',
+    '\x35',
+    '\x03',
+    '\x00',
+    '\x00',
+    '\x00',
   };
   const std::string marker =
     "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD "
