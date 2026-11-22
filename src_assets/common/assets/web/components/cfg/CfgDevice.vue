@@ -88,6 +88,6 @@ const defText = computed(() => t('_common.auto'))
   <MItem v-else :data-cfg="k" :pin="pin" action :title="title" :value="valueText" :disabled="disabled" @click="sheetOpen = true">
     <template v-if="info" #trail><MInfo :text="info" /></template>
   </MItem>
-  <MPickSheet v-model="choice" v-model:open="sheetOpen" :title="title" :options="options" :search-label="$t('_common.search')" :empty-text="$t('_common.no_results')" :close-label="$t('_common.close')" />
+  <MPickSheet v-model="choice" v-model:open="sheetOpen" class="device-sheet" :title="title" :options="options" :search-label="$t('_common.search')" :empty-text="$t('_common.no_results')" :close-label="$t('_common.close')" />
   <MValueDialog v-model="manual" v-model:open="manualOpen" :title="title" :placeholder="placeholder" :help="$t('config.audio_device_manual_help')" :ok-label="$t('_common.ok')" :cancel-label="$t('_common.cancel')" />
 </template>

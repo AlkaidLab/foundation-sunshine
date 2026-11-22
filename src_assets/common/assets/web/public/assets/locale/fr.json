@@ -1137,7 +1137,6 @@
     "stream_mic": "Activer la diffusion du microphone",
     "stream_mic_desc": "Désactivez cette option pour arrêter la diffusion du microphone.",
     "stream_mic_download_btn": "Télécharger le microphone virtuel",
-    "stream_mic_download_confirm": "Vous allez être redirigé vers la page de téléchargement du microphone virtuel. Continuer?",
     "stream_mic_note": "Cette fonctionnalité nécessite l'installation d'un microphone virtuel",
     "stream_mic_test": "Tester le trajet du microphone",
     "stream_mic_test_device_unavailable": "VB-Cable n'est pas disponible. Installez-le et vérifiez que CABLE Input et CABLE Output sont activés.",

@@ -37,7 +37,7 @@ State of **our** product before this round (feat/audio-devices at `1f7d1fa08` / 
 | 4 install_steam_audio_drivers | on the page | **behind 高级** / same | **worse** | on the page |
 | 5 stream_audio, stream_mic | switches | same | same | same |
 | 6 microphone mode | select, all four modes | a list row (dialog) whose names were sentences; Panel: a four-button group | **worse** on the Web page (the modes were one click deeper) | four buttons, 麦克风方式, on the microphone page of the Web UI and of the Panel; the line below says what the chosen mode does |
-| 7 VB-Cable download | confirm, then the zip link | confirm, then the zip link (shown for every backend); Panel: the VB-Audio page | same | kept as the manual way |
+| 7 VB-Cable download | confirm, then the zip link | confirm, then the zip link (shown for every backend); Panel: the VB-Audio page | **removed** | downloads happen in the Panel's component page |
 | 8 VB-Cable install | script run by hand as administrator, silent, no signature check | **missing**: only the download | **missing** | Panel component management separates download, install and uninstall; the pinned package is Pack43 |
 | 9 host auto-download at mic start | downloads and unpacks, asks for a manual install | the same code | **changed** | the host only checks for an installed device at microphone startup |
 | 10 mic test and status | yes | yes | same | same |
@@ -48,5 +48,5 @@ State of **our** product before this round (feat/audio-devices at `1f7d1fa08` / 
 ## 3. Differences kept on purpose
 
 - Our default `microphone_redirect_backend` is `auto` (USB/IP first, VB-Cable as the fallback); the original's is `vb_cable`.
-- A missing VB-CABLE device used to trigger a download and extraction when the microphone started. Users now choose when to download the package from the Panel's component page. Installing and uninstalling require confirmation and Windows administrator authorization.
+- A missing VB-CABLE device used to trigger a download and extraction when the microphone started, and the Web UI kept a link to the zip. Users now download the package from the Panel's component page. Installing and uninstalling require confirmation and Windows administrator authorization.
 - On Windows 10 22H2, Pack43 was uninstalled, reinstalled and re-enabled after disabling the device. A Pack45 uninstall returned Windows code 3010 with the driver still running. The multi-package 3010 case was verified with simulated driver-store responses.

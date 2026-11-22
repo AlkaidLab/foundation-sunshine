@@ -1137,7 +1137,6 @@
     "stream_mic": "마이크 스트리밍 활성화",
     "stream_mic_desc": "이 옵션을 비활성화하면 마이크 스트리밍이 중지됩니다.",
     "stream_mic_download_btn": "가상 마이크 다운로드",
-    "stream_mic_download_confirm": "가상 마이크 다운로드 페이지로 이동합니다. 계속하시겠습니까?",
     "stream_mic_note": "이 기능을 사용하려면 가상 마이크를 설치해야 합니다",
     "stream_mic_test": "마이크 경로 테스트",
     "stream_mic_test_device_unavailable": "VB-Cable을 사용할 수 없습니다. 설치한 뒤 CABLE Input과 CABLE Output이 모두 활성화되어 있는지 확인하세요.",

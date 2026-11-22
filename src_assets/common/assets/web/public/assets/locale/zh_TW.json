@@ -1137,7 +1137,6 @@
     "stream_mic": "啟用麥克風串流",
     "stream_mic_desc": "禁用此選項以停止麥克風串流。",
     "stream_mic_download_btn": "下載虛擬麥克風",
-    "stream_mic_download_confirm": "即將跳轉到虛擬麥克風下載頁面，是否繼續？",
     "stream_mic_note": "啟用此功能需要安裝虛擬麥克風",
     "stream_mic_test": "測試麥克風通路",
     "stream_mic_test_device_unavailable": "VB-Cable 無法使用，請安裝並確認 CABLE Input 和 CABLE Output 均已啟用。",

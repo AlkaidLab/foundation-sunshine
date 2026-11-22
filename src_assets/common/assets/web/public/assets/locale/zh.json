@@ -988,7 +988,6 @@
     "stream_mic": "启用串流麦克风",
     "stream_mic_desc": "禁用此选项以停止串流麦克风。",
     "stream_mic_download_btn": "下载虚拟麦克风",
-    "stream_mic_download_confirm": "即将跳转到虚拟麦克风下载页面，是否继续？",
     "stream_mic_note": "启用此功能需要安装虚拟麦克风",
     "stream_mic_test": "测试麦克风通路",
     "stream_mic_test_device_unavailable": "VB-Cable 不可用，请安装并确认 CABLE Input 和 CABLE Output 均已启用。",
