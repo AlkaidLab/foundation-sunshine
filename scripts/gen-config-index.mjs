@@ -32,7 +32,7 @@ const ENCODER_FILES = { 'NvidiaNvencEncoder.vue': 'nv', 'IntelQuickSyncEncoder.v
 const PATH_ROOT = { input: 'shell.input_peripherals' }
 const rootOf = (tab) => PATH_ROOT[tab] || `tabs.${tab}`
 const pathOf = (ctx) => [rootOf(ctx.tab), ...(ctx.pathKeys || []), ...(ctx.subKey ? [ctx.subKey] : [])]
-const PLACE_ICONS = { 'input:gamepad': 'sports_esports', 'input:keyboard': 'keyboard', 'input:mouse': 'mouse', 'input:usb': 'usb' }
+const PLACE_ICONS = { 'input:gamepad': 'sports_esports', 'input:keyboard': 'keyboard', 'input:mouse': 'mouse', 'input:clipboard': 'content_paste', 'input:usb': 'usb' }
 const TAB_ICONS = { general: 'settings', input: 'mouse', av: 'tv', network: 'lan', files: 'folder', advanced: 'tune', encoders: 'memory', display: 'desktop_windows', audio: 'volume_up' }
 const ROW_TAGS = new Set(['CfgSwitch', 'CfgChoice', 'CfgField', 'CfgExpert', 'CfgSlider', 'CfgSteps', 'CfgCards', 'CfgPath', 'CfgDevice'])
 // components that are one setting each and carry no row attributes
@@ -110,7 +110,8 @@ export function buildConfigIndex(tabsDir = TABS_DIR) {
   const icons = {}
 
   const scan = (file, ctx, stack = []) => {
-    const source = readFileSync(file, 'utf8')
+    // a Windows checkout keeps CRLF line endings; normalise so the \n-anchored template split works everywhere
+    const source = readFileSync(file, 'utf8').replace(/\r\n/g, '\n')
     const imports = importsOf(source)
     const tags = tokenize(templateOf(source))
     const local = []
