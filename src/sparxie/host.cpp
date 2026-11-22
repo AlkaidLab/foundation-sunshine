@@ -293,7 +293,7 @@ namespace sparxie {
       const bool jpeg = bytes.size() > 2 && static_cast<unsigned char>(bytes[0]) == 0xFF && static_cast<unsigned char>(bytes[1]) == 0xD8;
       const std::string key = fnv8(norm_path(file));
       const fs::path dir = custom_badge_dir(env);
-      const fs::path target = dir / (key + "-" + std::to_string(size) + "-" + std::to_string(stamp) + "-r" + std::to_string(kBadgeRevision) + "-badge" + (jpeg ? ".jpg" : ".png"));
+      const fs::path target = dir / (key + "-" + std::to_string(size) + "-" + std::to_string(static_cast<long long>(stamp)) + "-r" + std::to_string(kBadgeRevision) + "-badge" + (jpeg ? ".jpg" : ".png"));
       if (fs::is_regular_file(target, ec)) return target.string();
       const Rgba image = decode_image(reinterpret_cast<const std::uint8_t *>(bytes.data()), bytes.size());
       if (image.w <= 0) return {};

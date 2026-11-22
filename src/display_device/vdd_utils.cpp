@@ -2,6 +2,8 @@
 
 #include "vdd_utils.h"
 
+#ifdef _WIN32
+
 #include "vdd_ioctl.h"
 #include "src/telemetry/telemetry.h"
 #include "vdd_mode_list.h"
@@ -33,7 +35,9 @@
 #include "src/file_handler.h"
 #include "src/platform/common.h"
 #include "src/platform/run_command.h"
+#ifdef _WIN32
 #include "src/platform/windows/display_device/windows_utils.h"
+#endif
 #include "src/rtsp.h"
 #include "src/tray/system_tray.h"
 #include "src/tray/system_tray_i18n.h"
@@ -1106,3 +1110,31 @@ namespace display_device {
     }
   }  // namespace vdd_utils
 }  // namespace display_device
+
+#else  // !_WIN32
+
+namespace display_device::vdd_utils {
+  const std::chrono::milliseconds kDefaultDebounceInterval { 2000 };
+
+  vdd_status_t get_vdd_status() { return {}; }
+  bool is_mode_advertised(const std::string &, const display_mode_t &) { return false; }
+  bool wait_for_mode_publication(const std::string &, const display_mode_t &) { return false; }
+  bool hardware_cursor_export_enabled(std::string) { return false; }
+  bool ensure_hardware_cursor_enabled_for_capture(bool *) { return false; }
+  bool is_display_on() { return true; }
+  bool create_vdd_monitor_noninteractive() { return false; }
+  bool toggle_display_power() { return false; }
+  bool destroy_vdd_monitor() { return false; }
+  void destroy_vdd_monitor_nolog() {}
+  bool create_vdd_monitor(const std::string &, const hdr_brightness_t &, const physical_size_t &) { return false; }
+  physical_size_t get_client_physical_size(const std::string &) { return {}; }
+  VddSettings prepare_vdd_settings(const parsed_config_t &) { return {}; }
+  set_vdd_result set_vdd_session_mode(const parsed_config_t &, const VddSettings &) { return set_vdd_result::failed; }
+  std::string generate_client_guid(const std::string &) { return {}; }
+  bool apply_vdd_prep(const std::string &, parsed_config_t::vdd_prep_e, const boost::optional<device_info_map_t> &) { return false; }
+  bool set_hdr_state(bool) { return false; }
+  void disable_enable_vdd() {}
+  bool ensure_vdd_extended_mode(const std::string &, const std::vector<std::string> &) { return false; }
+}  // namespace display_device::vdd_utils
+
+#endif  // _WIN32
