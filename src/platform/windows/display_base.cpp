@@ -707,6 +707,8 @@ namespace platf::dxgi {
 
             output = std::move(output_tmp);
             display_device_name = desc.DeviceName;
+            global_offset_x = desc.DesktopCoordinates.left;
+            global_offset_y = desc.DesktopCoordinates.top;
             offset_x = desc.DesktopCoordinates.left;
             offset_y = desc.DesktopCoordinates.top;
             width = desc.DesktopCoordinates.right - offset_x;

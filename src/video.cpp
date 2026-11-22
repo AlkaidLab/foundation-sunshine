@@ -3920,6 +3920,13 @@ namespace video {
 
   input::touch_port_t
   make_port(platf::display_t *display, const config_t &config) {
+#ifdef _WIN32
+    const auto display_global_offset_x = display->global_offset_x;
+    const auto display_global_offset_y = display->global_offset_y;
+#else
+    const auto display_global_offset_x = display->offset_x;
+    const auto display_global_offset_y = display->offset_y;
+#endif
     float wd = display->width;
     float hd = display->height;
 
@@ -3945,6 +3952,8 @@ namespace video {
       display->env_height,
       display->width,
       display->height,
+      display_global_offset_x,
+      display_global_offset_y,
       offsetX,
       offsetY,
       1.0f / scalar,
