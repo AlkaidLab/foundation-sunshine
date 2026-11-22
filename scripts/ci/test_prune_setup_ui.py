@@ -81,6 +81,31 @@ class Prune(unittest.TestCase):
         self.assertIn("@media (min-width:600px){.ok2{width:2px}}", after)
         self.assertNotIn(".clock-tall", after)
 
+    def test_an_emptied_layer_keeps_its_position_in_the_cascade(self):
+        # The first declaration sets a layer's position in the global order; an
+        # empty block still declares it. Dropping the emptied theme block would
+        # put override first and change .ok from red to blue.
+        css = (
+            "@layer theme{.clock-face{color:black}}"
+            "@layer override{.ok{color:red}}"
+            "@layer theme{.ok{color:blue}}"
+        )
+        dist, assets = self.make_dist(css=css)
+        prune_setup_ui.prune(dist)
+        after = (assets / "app.css").read_text(encoding="utf-8")
+        self.assertIn("@layer theme{}", after)
+        self.assertLess(after.index("@layer theme{}"), after.index("@layer override"))
+        self.assertIn("@layer override{.ok{color:red}}", after)
+        self.assertIn("@layer theme{.ok{color:blue}}", after)
+
+    def test_an_emptied_media_group_is_still_removed(self):
+        css = "@media (min-width:600px){.clock-tall{width:1px}}.ok{color:blue}"
+        dist, assets = self.make_dist(css=css)
+        prune_setup_ui.prune(dist)
+        after = (assets / "app.css").read_text(encoding="utf-8")
+        self.assertNotIn("@media", after)
+        self.assertIn(".ok{color:blue}", after)
+
     def test_comments_and_property_rules_are_kept(self):
         css = '/* banner */@property --m-clock-inset{syntax:"<length>";inherits:false;initial-value:16px}.ok{color:blue}'
         dist, assets = self.make_dist(css=css)

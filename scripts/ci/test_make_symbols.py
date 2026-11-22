@@ -36,6 +36,7 @@ def fake_pe(guid=GUID, age=1, with_debug=True, dwarf=None, signed=False, symbols
     struct.pack_into("<HHIIIHH", headers, 0x84, 0x8664, nsections, 0, 0x700 if dwarf == "long" else 0, 0, 240, 0x22)
     opt = 0x98
     struct.pack_into("<H", headers, opt, 0x20B)
+    struct.pack_into("<I", headers, opt + 108, 16)  # NumberOfRvaAndSizes
     ddir = opt + 112
     if with_debug:
         struct.pack_into("<II", headers, ddir + 6 * 8, 0x2000, 28)
