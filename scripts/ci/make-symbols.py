@@ -13,17 +13,29 @@ package, because that is the module name a crash dump records.
 
 --source-root rewrites the build machine's source directory prefix in FILE records to a repo-relative path, so a tool
 can link a frame to the exact file and line of the commit.
+
+--strip-staged removes, from the staged copies only, both the DWARF sections and the COFF symbol table of every unsigned
+module. The symbol zip is written first and is read from the unstripped twin with the same debug id; neither kind of
+symbol table is needed at run time. An Authenticode-signed module keeps its bytes (changing them would invalidate the
+signature) and is listed in symbols-manifest.json.
+
+Sources: fs-ms-symbols-pdb-20261122 (symbol files and the module key) and
+fs-ms-pe-coff-symbols-20261122 (the COFF symbol table).
 """
 
 import argparse
 import hashlib
 import json
+import os
 import pathlib
 import re
 import struct
 import subprocess
 import sys
 import zipfile
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2] / "tools"))
+import pe_symbols
 
 IMAGE_DEBUG_TYPE_CODEVIEW = 2
 
@@ -194,8 +206,9 @@ def build(args):
         modules.append({"name": name, "debug_id": did, "functions": funcs, "bytes": len(entries[f"{name}/{did}/{name}.sym"]),
                         "sha256": hashlib.sha256(entries[f"{name}/{did}/{name}.sym"]).hexdigest()})
         done.append(p)
-    # What still carries DWARF in the package: stripped if it is not signed (a signed file keeps its signature and its debug sections, and is listed),
-    # with or without symbols; the package must not ship debug information the symbol zip does not have.
+    # What still carries DWARF or a COFF symbol table in the package: stripped if it is not signed (a signed file keeps
+    # its signature and its symbol data, and is listed), with or without symbols; the package must not ship debug
+    # information the symbol zip does not have.
     to_strip, kept_signed, without_symbols = [], [], []
     for p, did, dwarf, signed in staged_all:
         if not dwarf:
@@ -208,7 +221,8 @@ def build(args):
                 without_symbols.append(p.name)
     missing = [r for r in args.require if not any(m["name"].lower() == r.lower() for m in modules)]
     manifest = {"schema": 1, "tag": args.tag, "commit": args.commit, "repository": args.repository, "modules": modules, "skipped": skipped,
-                "stripped_without_symbols": without_symbols, "kept_signed_with_debug_info": kept_signed}
+                "stripped_without_symbols": without_symbols, "kept_signed_with_debug_info": kept_signed,
+                "stripped_coff_symbols": [], "kept_signed_with_coff_symbols": [], "coff_symbol_errors": []}
     out = pathlib.Path(args.output)
     out.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
@@ -216,9 +230,41 @@ def build(args):
             z.writestr(name, blob)
         z.writestr("symbols-manifest.json", json.dumps(manifest, indent=2, ensure_ascii=False))
     if args.strip_staged and not missing:
-        # after the symbols are safe in the zip: what ships carries no DWARF (the build-id stays)
+        # After the symbols are safe in the zip: what ships carries no DWARF and no COFF symbol table (the build-id
+        # stays). The DWARF strip runs first because GNU strip reads the COFF string table to resolve long section
+        # names; truncating that table first makes strip fail on an image with debug sections. A signed file is left
+        # byte for byte as it is.
         for p in to_strip:
             subprocess.run([args.strip_tool, "--strip-debug", str(p)], check=True)
+        for p, did, dwarf, signed in staged_all:
+            try:
+                data = p.read_bytes()
+                span = pe_symbols.symbol_table(data)
+            except (OSError, pe_symbols.PEError) as error:
+                manifest["coff_symbol_errors"].append({"name": p.name, "reason": str(error)})
+                continue
+            if span is None:
+                continue
+            if signed:
+                manifest["kept_signed_with_coff_symbols"].append(p.name)
+                continue
+            try:
+                cleaned, saved, action = pe_symbols.strip_symbols(data)
+            except pe_symbols.PEError as error:
+                manifest["coff_symbol_errors"].append({"name": p.name, "reason": str(error)})
+                continue
+            if saved:
+                p.write_bytes(cleaned)
+                manifest["stripped_coff_symbols"].append({"name": p.name, "bytes": saved})
+        # The first zip was written before stripping so a failure cannot lose the symbols; write it again with the
+        # actual cleanup result in symbols-manifest.json, replacing the first copy only after the new one is complete.
+        if manifest["stripped_coff_symbols"] or manifest["kept_signed_with_coff_symbols"] or manifest["coff_symbol_errors"]:
+            temporary = out.with_name(out.name + ".rewrite")
+            with zipfile.ZipFile(temporary, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+                for name, blob in sorted(entries.items()):
+                    z.writestr(name, blob)
+                z.writestr("symbols-manifest.json", json.dumps(manifest, indent=2, ensure_ascii=False))
+            os.replace(temporary, out)
     return manifest, missing
 
 
@@ -233,7 +279,8 @@ def main(argv=None):
     ap.add_argument("--repository", default="")
     ap.add_argument("--source-root", action="append", default=[])
     ap.add_argument("--require", action="append", default=[])
-    ap.add_argument("--strip-staged", action="store_true", help="run strip --strip-debug on the staged modules that still carry DWARF and are not signed")
+    ap.add_argument("--strip-staged", action="store_true",
+                    help="remove the COFF symbol table of every unsigned staged module and strip the DWARF sections")
     ap.add_argument("--strip-tool", default="strip")
     args = ap.parse_args(argv)
     manifest, missing = build(args)
@@ -245,6 +292,12 @@ def main(argv=None):
         print("stripped, no symbols could be made: " + ", ".join(manifest["stripped_without_symbols"]))
     if manifest["kept_signed_with_debug_info"]:
         print("::warning title=Symbols::signed, so kept with their debug sections: " + ", ".join(manifest["kept_signed_with_debug_info"]))
+    for entry in manifest["stripped_coff_symbols"]:
+        print(f"COFF symbols removed from {entry['name']}: {entry['bytes']:,} bytes")
+    if manifest["kept_signed_with_coff_symbols"]:
+        print("::warning title=COFF symbols::signed, so kept with their COFF symbol table: " + ", ".join(manifest["kept_signed_with_coff_symbols"]))
+    for entry in manifest["coff_symbol_errors"]:
+        print(f"::warning title=COFF symbols::{entry['name']}: {entry['reason']}")
     if missing:
         print(f"::error title=Symbols::no symbols for required module(s): {', '.join(missing)}")
         return 1
