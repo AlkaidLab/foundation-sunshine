@@ -74,6 +74,7 @@ namespace video {
   namespace {
     std::mutex hdr_pipeline_status_mutex;
     std::map<std::uint64_t, hdr_pipeline_status_t> hdr_pipeline_statuses;
+    std::map<std::uint64_t, std::shared_ptr<nr_change_signal_t>> hdr_pipeline_nr_signals;
     std::atomic<std::uint64_t> next_hdr_pipeline_status_id { 1 };
 
     std::optional<std::string>
@@ -201,6 +202,9 @@ namespace video {
 
     std::lock_guard lock { hdr_pipeline_status_mutex };
     hdr_pipeline_statuses[id] = std::move(registered);
+    auto signal = std::make_shared<nr_change_signal_t>();
+    signal->raise(true);
+    hdr_pipeline_nr_signals.emplace(id, std::move(signal));
     return id;
   }
 
@@ -249,6 +253,8 @@ namespace video {
     if (skin_structure_strength) it->second.nr_requested_skin_structure_strength = *skin_structure_strength;
     if (auto_mask) it->second.nr_requested_auto_mask = *auto_mask;
     ++it->second.nr_request_revision;
+    const auto signal = hdr_pipeline_nr_signals.at(id);
+    signal->raise(true);
     return 202;
   }
 
@@ -267,6 +273,28 @@ namespace video {
       it->second.nr_requested_style, it->second.nr_requested_skin_structure_strength, it->second.nr_requested_auto_mask };
   }
 
+  std::shared_ptr<nr_change_signal_t>
+  nr_change_signal(std::uint64_t id) {
+    std::lock_guard lock { hdr_pipeline_status_mutex };
+    const auto it = hdr_pipeline_nr_signals.find(id);
+    return it == hdr_pipeline_nr_signals.end() ? nullptr : it->second;
+  }
+
+  void
+  notify_nr_change() {
+    std::vector<std::shared_ptr<nr_change_signal_t>> signals;
+    {
+      std::lock_guard lock { hdr_pipeline_status_mutex };
+      signals.reserve(hdr_pipeline_nr_signals.size());
+      for (const auto &[id, signal] : hdr_pipeline_nr_signals) {
+        signals.push_back(signal);
+      }
+    }
+    for (const auto &signal : signals) {
+      signal->raise(true);
+    }
+  }
+
   bool
   rollback_nr_settings(std::uint64_t id, const nr_request_t &failed, const nr_request_t &previous) {
     std::lock_guard lock { hdr_pipeline_status_mutex };
@@ -281,6 +309,8 @@ namespace video {
     it->second.nr_requested_skin_structure_strength = previous.skin_structure_strength;
     it->second.nr_requested_auto_mask = previous.auto_mask;
     ++it->second.nr_request_revision;
+    const auto signal = hdr_pipeline_nr_signals.at(id);
+    signal->raise(true);
     return true;
   }
 
@@ -292,6 +322,7 @@ namespace video {
 
     std::lock_guard lock { hdr_pipeline_status_mutex };
     hdr_pipeline_statuses.erase(id);
+    hdr_pipeline_nr_signals.erase(id);
   }
 
   std::vector<hdr_pipeline_status_t>
@@ -725,6 +756,16 @@ namespace video {
       return device->convert(img);
     }
 
+    std::shared_ptr<safe::signal_t>
+    nr_change_event() override {
+      return device ? device->nr_change_event() : nullptr;
+    }
+
+    void
+    apply_nr_change() override {
+      if (device) device->apply_nr_change();
+    }
+
     void
     request_idr_frame() override {
       if (device && device->frame) {
@@ -926,6 +967,16 @@ namespace video {
       return device->convert(img);
     }
 
+    std::shared_ptr<safe::signal_t>
+    nr_change_event() override {
+      return device ? device->nr_change_event() : nullptr;
+    }
+
+    void
+    apply_nr_change() override {
+      if (device) device->apply_nr_change();
+    }
+
     void
     request_idr_frame() override {
       force_idr = true;
@@ -1091,6 +1142,16 @@ namespace video {
       return device->convert(img);
     }
 
+    std::shared_ptr<safe::signal_t>
+    nr_change_event() override {
+      return device ? device->nr_change_event() : nullptr;
+    }
+
+    void
+    apply_nr_change() override {
+      if (device) device->apply_nr_change();
+    }
+
     void
     request_idr_frame() override {
       force_idr = true;
@@ -1215,6 +1276,7 @@ namespace video {
   struct sync_session_t {
     sync_session_ctx_t *ctx;
     std::unique_ptr<encode_session_t> session;
+    std::shared_ptr<safe::signal_t> nr_change_event;
   };
 
   using encode_session_ctx_queue_t = safe::queue_t<sync_session_ctx_t>;
@@ -2715,6 +2777,12 @@ namespace video {
   bool
   rebuild_bitrate_session(std::unique_ptr<encode_session_t> &session, const encoder_rebuild_context_t &context, int bitrate_kbps);
 
+  bool
+  apply_pending_bitrate(
+    std::unique_ptr<encode_session_t> &session_ptr,
+    const encoder_rebuild_context_t *rebuild_context,
+    std::shared_ptr<safe::signal_t> *nr_change_event);
+
   int
   encode(
     int64_t frame_nr,
@@ -2722,30 +2790,7 @@ namespace video {
     safe::mail_raw_t::queue_t<packet_t> &packets,
     std::uint64_t channel_data,
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
-    std::optional<platf::frame_pipeline_trace_t> pipeline_trace,
-    const encoder_rebuild_context_t *rebuild_context = nullptr) {
-    // Keep the budget alive if a backend without runtime updates is replaced.
-    const auto budget = session_ptr->bitrate_budget;
-    if (budget) {
-      const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now().time_since_epoch())
-                         .count();
-      if (const auto next = budget->pending(now)) {
-        auto avcodec_session = dynamic_cast<avcodec_encode_session_t *>(session_ptr.get());
-        const bool needs_rebuild = avcodec_session && !avcodec_session->supports_bitrate_update();
-        const bool applied = next->encoder_kbps == budget->applied().encoder_kbps ||
-                             (needs_rebuild ? rebuild_context && rebuild_bitrate_session(session_ptr, *rebuild_context, next->encoder_kbps) :
-                                              session_ptr->set_bitrate(next->encoder_kbps));
-        if (applied) {
-          budget->commit(*next);
-          BOOST_LOG(info) << "Applied video budget: total=" << next->total_kbps
-                          << " Kbps, encoder=" << next->encoder_kbps << " Kbps, FEC=" << next->fec_percentage << '%';
-        }
-        else {
-          BOOST_LOG(warning) << "Encoder rejected bitrate allocation; retaining previous FEC allowance";
-        }
-      }
-    }
+    std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
     auto &session = *session_ptr;
     if (auto avcodec_session = dynamic_cast<avcodec_encode_session_t *>(&session)) {
       return encode_avcodec(frame_nr, *avcodec_session, packets, channel_data, frame_timestamp, std::move(pipeline_trace));
@@ -3624,6 +3669,14 @@ namespace video {
       return;
     }
 
+    auto nr_change_event = session->nr_change_event();
+    auto apply_pending_nr_change = [&nr_change_event, &session]() {
+      if (nr_change_event && nr_change_event->peek()) {
+        nr_change_event->pop(0ms);
+        session->apply_nr_change();
+      }
+    };
+
     if (session_factory && config.bitrate_budget) {
       // PyroWave factories bypass make_encode_session; initialize their encoder
       // target from the same session budget after a backend reinitialization.
@@ -3631,6 +3684,7 @@ namespace video {
       session->bitrate_budget = config.bitrate_budget;
     }
     session->perf_session_id = config.perf_session_id;
+    apply_pending_nr_change();
 
     // As a workaround for NVENC hangs and to generally speed up encoder reinit,
     // we will complete the encoder teardown in a separate thread if supported.
@@ -3786,6 +3840,8 @@ namespace video {
         idr_events->pop();
       }
 
+      apply_pending_nr_change();
+
       // 处理动态参数调整
       while (dynamic_param_events_ptr->peek()) {
         if (auto param = dynamic_param_events_ptr->pop(0ms)) {
@@ -3815,6 +3871,11 @@ namespace video {
         break;
       }
 
+      std::optional<encoder_rebuild_context_t> rebuild_context;
+      if (current_img) rebuild_context.emplace(*disp, encoder, config, *current_img);
+      const bool session_rebuilt = apply_pending_bitrate(session, rebuild_context ? &*rebuild_context : nullptr, &nr_change_event);
+      const auto preconverted_image = session_rebuilt ? current_img : std::shared_ptr<platf::img_t> {};
+
       if (requested_idr_frame) {
         session->request_idr_frame();
       }
@@ -3836,12 +3897,14 @@ namespace video {
       std::optional<platf::frame_pipeline_trace_t> pipeline_trace;
       bool has_new_frame = false;
       bool replayed_frame = false;
+      bool frame_preconverted = false;
 
       // Encode at a minimum FPS to avoid image quality issues with static content
       // When variable_refresh_rate is enabled, only encode when we have a new frame
       if (!requested_idr_frame || images->peek()) {
         if (auto frame = pop_image_interruptible(effective_frame_time, input_activity_boost_policy.useful && !input_boost_active)) {
           auto &img = frame->image;
+          frame_preconverted = preconverted_image && img == preconverted_image;
           replayed_frame = frame->is_replay;
           if (!frame->is_replay) {
             frame_timestamp = img->frame_timestamp;
@@ -3851,7 +3914,7 @@ namespace video {
             }
             pipeline_trace->convert_begin = std::chrono::steady_clock::now();
           }
-          if (session->convert(*img)) {
+          if (!frame_preconverted && session->convert(*img)) {
             BOOST_LOG(error) << "Could not convert image"sv;
             if (backend_failure_handler) {
               backend_failure_handler();
@@ -3901,9 +3964,7 @@ namespace video {
         continue;
       }
 
-      std::optional<encoder_rebuild_context_t> rebuild_context;
-      if (current_img) rebuild_context.emplace(*disp, encoder, config, *current_img);
-      if (encode(frame_nr++, session, packets, channel_data, frame_timestamp, std::move(pipeline_trace), rebuild_context ? &*rebuild_context : nullptr)) {
+      if (encode(frame_nr++, session, packets, channel_data, frame_timestamp, std::move(pipeline_trace))) {
         BOOST_LOG(error) << "Could not encode video packet"sv;
         if (backend_failure_handler) {
           backend_failure_handler();
@@ -3920,6 +3981,13 @@ namespace video {
 
   input::touch_port_t
   make_port(platf::display_t *display, const config_t &config) {
+#ifdef _WIN32
+    const auto display_global_offset_x = display->global_offset_x;
+    const auto display_global_offset_y = display->global_offset_y;
+#else
+    const auto display_global_offset_x = display->offset_x;
+    const auto display_global_offset_y = display->offset_y;
+#endif
     float wd = display->width;
     float hd = display->height;
 
@@ -3945,6 +4013,8 @@ namespace video {
       display->env_height,
       display->width,
       display->height,
+      display_global_offset_x,
+      display_global_offset_y,
       offsetX,
       offsetY,
       1.0f / scalar,
@@ -4042,10 +4112,46 @@ namespace video {
       context.display.width, context.display.height, std::move(device), false, bitrate_kbps);
     // Prepare the current image before replacing the working encoder. A failed
     // rebuild leaves both the old encoder and its FEC allowance intact.
-    if (!replacement || replacement->convert(context.image)) return false;
+    if (!replacement) return false;
+    replacement->apply_nr_change();
+    if (replacement->convert(context.image)) return false;
     replacement->request_idr_frame();
     session = std::move(replacement);
     return true;
+  }
+
+  bool
+  apply_pending_bitrate(
+    std::unique_ptr<encode_session_t> &session_ptr,
+    const encoder_rebuild_context_t *rebuild_context,
+    std::shared_ptr<safe::signal_t> *nr_change_event) {
+    const auto budget = session_ptr->bitrate_budget;
+    if (!budget) return false;
+
+    const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now().time_since_epoch())
+                       .count();
+    const auto next = budget->pending(now);
+    if (!next) return false;
+
+    auto avcodec_session = dynamic_cast<avcodec_encode_session_t *>(session_ptr.get());
+    const bool needs_rebuild = avcodec_session && !avcodec_session->supports_bitrate_update();
+    bool rebuilt = false;
+    const bool applied = next->encoder_kbps == budget->applied().encoder_kbps ||
+                         (needs_rebuild ? rebuild_context && (rebuilt = rebuild_bitrate_session(session_ptr, *rebuild_context, next->encoder_kbps)) :
+                                          session_ptr->set_bitrate(next->encoder_kbps));
+    if (!applied) {
+      BOOST_LOG(warning) << "Encoder rejected bitrate allocation; retaining previous FEC allowance";
+      return false;
+    }
+
+    if (rebuilt && nr_change_event) {
+      *nr_change_event = session_ptr->nr_change_event();
+    }
+    budget->commit(*next);
+    BOOST_LOG(info) << "Applied video budget: total=" << next->total_kbps
+                    << " Kbps, encoder=" << next->encoder_kbps << " Kbps, FEC=" << next->fec_percentage << '%';
+    return rebuilt;
   }
 
   std::optional<sync_session_t>
@@ -4068,6 +4174,7 @@ namespace video {
     if (!session) {
       return std::nullopt;
     }
+    encode_session.nr_change_event = session->nr_change_event();
 
     // The encode colorspace is fully determined by the client config and the
     // display's HDR state — building a throwaway encode device here used to
@@ -4088,6 +4195,10 @@ namespace video {
     ctx.hdr_events->raise(std::move(hdr_info));
 
     // Load the initial image to prepare for encoding
+    if (encode_session.nr_change_event && encode_session.nr_change_event->peek()) {
+      encode_session.nr_change_event->pop(0ms);
+    }
+    session->apply_nr_change();
     if (session->convert(img)) {
       BOOST_LOG(error) << "Could not convert initial image"sv;
       return std::nullopt;
@@ -4244,6 +4355,18 @@ namespace video {
             ctx->idr_events->pop();
           }
 
+          bool nr_change_pending = false;
+          if (pos->nr_change_event && pos->nr_change_event->peek()) {
+            pos->nr_change_event->pop(0ms);
+            pos->session->apply_nr_change();
+            nr_change_pending = true;
+          }
+
+          std::optional<encoder_rebuild_context_t> rebuild_context;
+          if (img) rebuild_context.emplace(*disp, encoder, ctx->config, *img);
+          const bool session_rebuilt = apply_pending_bitrate(pos->session, rebuild_context ? &*rebuild_context : nullptr, &pos->nr_change_event);
+          const bool frame_preconverted = session_rebuilt && img;
+
           std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
           std::optional<platf::frame_pipeline_trace_t> pipeline_trace;
           if (img) {
@@ -4261,7 +4384,7 @@ namespace video {
             pipeline_trace->convert_begin = std::chrono::steady_clock::now();
           }
 
-          if (frame_captured && pos->session->convert(*img)) {
+          if ((frame_captured || nr_change_pending) && !frame_preconverted && img && pos->session->convert(*img)) {
             BOOST_LOG(error) << "Could not convert image"sv;
             ctx->shutdown_event->raise(true);
 
@@ -4272,9 +4395,7 @@ namespace video {
             pipeline_trace->convert_end = std::chrono::steady_clock::now();
           }
 
-          std::optional<encoder_rebuild_context_t> rebuild_context;
-          if (img) rebuild_context.emplace(*disp, encoder, ctx->config, *img);
-          if (encode(ctx->frame_nr++, pos->session, ctx->packets, ctx->channel_data, frame_timestamp, std::move(pipeline_trace), rebuild_context ? &*rebuild_context : nullptr)) {
+          if (encode(ctx->frame_nr++, pos->session, ctx->packets, ctx->channel_data, frame_timestamp, std::move(pipeline_trace))) {
             BOOST_LOG(error) << "Could not encode video packet"sv;
             ctx->shutdown_event->raise(true);
 

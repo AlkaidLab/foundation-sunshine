@@ -235,7 +235,7 @@ namespace input {
         client_gamepad { std::move(client_gamepad) },
         on_pen_barrel_roll { std::move(on_pen_barrel_roll) },
         mouse_left_button_timeout {},
-        touch_port { { 0, 0, 0, 0 }, 0, 0, 0, 0, 0.0f, 0.0f, 1.0f },
+        touch_port { { 0, 0, 0, 0 }, 0, 0, 0, 0, 0, 0, 0.0f, 0.0f, 1.0f },
         accumulated_vscroll_delta {},
         accumulated_hscroll_delta {} {
     }
@@ -896,10 +896,13 @@ namespace input {
                        << ", x=" << point.x << ", y=" << point.y
                        << ", has_viewport=" << static_cast<bool>(input->touch_port);
       if (input->touch_port) {
-        text_context::bridge_t::instance().record_mouse_button(
-          input->session_id, release, point.x, point.y,
-          input->touch_port.offset_x, input->touch_port.offset_y,
-          input->touch_port.display_width, input->touch_port.display_height);
+        auto &text_bridge = text_context::bridge_t::instance();
+        if (text_bridge.input_tracking_active()) {
+          text_bridge.record_mouse_button(
+            input->session_id, release, point.x, point.y,
+            input->touch_port.display_global_offset_x, input->touch_port.display_global_offset_y,
+            input->touch_port.display_width, input->touch_port.display_height);
+        }
       }
     }
     else if (button == BUTTON_RIGHT && !release) {
@@ -1393,21 +1396,26 @@ namespace input {
       contact_area.second,
     };
 
-    const auto screen_x = abs_port.offset_x + static_cast<std::int32_t>(std::lround(touch.x * abs_port.width));
-    const auto screen_y = abs_port.offset_y + static_cast<std::int32_t>(std::lround(touch.y * abs_port.height));
-    if (touch.eventType != LI_TOUCH_EVENT_MOVE && touch.eventType != LI_TOUCH_EVENT_HOVER &&
-        touch.eventType != LI_TOUCH_EVENT_HOVER_LEAVE) {
-      BOOST_LOG(debug) << "Remote text context touch input: type=" << static_cast<int>(touch.eventType)
-                       << ", x=" << screen_x << ", y=" << screen_y
-                       << ", viewport=" << touch_port.display_width << 'x' << touch_port.display_height;
+    auto &text_bridge = text_context::bridge_t::instance();
+    if (text_bridge.input_tracking_active()) {
+      const auto screen_x = touch_port.display_global_offset_x +
+                            static_cast<std::int32_t>(std::lround(touch.x * abs_port.width));
+      const auto screen_y = touch_port.display_global_offset_y +
+                            static_cast<std::int32_t>(std::lround(touch.y * abs_port.height));
+      if (touch.eventType != LI_TOUCH_EVENT_MOVE && touch.eventType != LI_TOUCH_EVENT_HOVER &&
+          touch.eventType != LI_TOUCH_EVENT_HOVER_LEAVE) {
+        BOOST_LOG(debug) << "Remote text context touch input: type=" << static_cast<int>(touch.eventType)
+                         << ", x=" << screen_x << ", y=" << screen_y
+                         << ", viewport=" << touch_port.display_width << 'x' << touch_port.display_height;
+      }
+      // Capture geometry is the selected display's size, not the whole virtual
+      // desktop: UIA/caret rectangles are reported desktop-global and the bridge
+      // subtracts this port's offset before the client divides by these extents.
+      text_bridge.record_touch(
+        input->session_id, touch.eventType, touch.pointerId, screen_x, screen_y,
+        touch_port.display_global_offset_x, touch_port.display_global_offset_y,
+        static_cast<std::uint32_t>(touch_port.display_width), static_cast<std::uint32_t>(touch_port.display_height));
     }
-    // Capture geometry is the selected display's size, not the whole virtual
-    // desktop: UIA/caret rectangles are reported desktop-global and the bridge
-    // subtracts this port's offset before the client divides by these extents.
-    text_context::bridge_t::instance().record_touch(
-      input->session_id, touch.eventType, touch.pointerId, screen_x, screen_y,
-      abs_port.offset_x, abs_port.offset_y,
-      static_cast<std::uint32_t>(touch_port.display_width), static_cast<std::uint32_t>(touch_port.display_height));
 
 #ifdef SUNSHINE_TESTS
     // Unit-test inputs do not allocate a platform client context. Do not pass a
