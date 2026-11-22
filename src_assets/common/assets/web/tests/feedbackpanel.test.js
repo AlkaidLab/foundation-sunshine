@@ -4,10 +4,10 @@ import fs from 'node:fs'
 
 const read = (p) => fs.readFileSync(new URL(p, import.meta.url), 'utf8')
 
-test('帮助与关于 of the Web UI has the 反馈 card, and the shell has the one feedback panel, its caption button and the context menu entry, without developer mode', () => {
+test('帮助与关于 of the Web UI has the 反馈问题 tile, and the shell has the one feedback panel, its caption button and the context menu entry, without developer mode', () => {
   const about = read('../views/About.vue')
-  assert.match(about, /<MFeedbackCard :locale="String\(locale\)" \/>/)
-  assert.ok(!/MFeedbackCard[^\n]*developer/i.test(about))
+  assert.match(about, /<MHelpTiles/)
+  assert.ok(!/MHelpTiles[^\n]*developer/i.test(about))
   assert.ok(!/MFeedbackAccount/.test(about), 'no GitHub account row: the report goes straight to the developers')
   const shell = read('../views/WebShell.vue')
   assert.match(shell, /<DevReportHost v-if="!embedded"/)
