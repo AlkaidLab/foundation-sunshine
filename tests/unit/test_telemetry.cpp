@@ -1669,6 +1669,32 @@ TEST(TelemetryUserReport, LogRefIsOnlyTheReferenceOfTheUserLogEndpoint) {
     EXPECT_FALSE(base(json { { "log_ref", bad } })->props.contains("log_ref")) << bad;
 }
 
+TEST(TelemetryUserReport, ReplyKeyIsOnlyTheRandomAddressOfThePage) {
+  const auto base = [](const json &extra) {
+    json p { { "category", "bug" }, { "component", "web" }, { "message", "m" } };
+    p.update(extra);
+    return shape_event(kind_e::error, "user_report", p, 0);
+  };
+  const std::string key = "rk_0123456789abcdef0123456789abcdef";
+  EXPECT_EQ(base(json { { "reply_key", key } })->props["reply_key"], key);
+  EXPECT_FALSE(base(json::object())->props.contains("reply_key")) << "a report without one (an older page) is unchanged";
+  for (const char *bad : { "", "rk_", "rk_0123", "RK_0123456789abcdef0123456789abcdef", "rk_0123456789abcdef0123456789abcdeg", "rk_0123456789abcdef0123456789abcdef0", "xx_0123456789abcdef0123456789abcdef", " rk_0123456789abcdef0123456789abcdef" })
+    EXPECT_FALSE(base(json { { "reply_key", bad } })->props.contains("reply_key")) << bad;
+  EXPECT_FALSE(base(json { { "reply_key", 42 } })->props.contains("reply_key"));
+  EXPECT_FALSE(base(json { { "reply_key", json::array({ key }) } })->props.contains("reply_key"));
+}
+
+TEST(TelemetryUserReport, ReplyKeyTravelsInTheEventThePageSent) {
+  harness_t h;
+  h.consent = { false, false };  // pressing 发送 is the consent for this report, with both choices off
+  const std::string key = "rk_fedcba9876543210fedcba9876543210";
+  const json report = json::array({ json { { "kind", "error" }, { "name", "user_report" }, { "props", json { { "category", "bug" }, { "component", "panel" }, { "message", "it broke" }, { "reply_key", key } } } } });
+  EXPECT_EQ(h.svc->ingest("panel", "1", report), 1u);
+  h.svc->flush();
+  ASSERT_EQ(h.svc->pump(), 1);
+  EXPECT_EQ(posted_event(h.posted, "user_report")["props"]["reply_key"], key);
+}
+
 TEST(TelemetryUserReport, OnlyPagesMaySendIt) {
   harness_t h;
   EXPECT_EQ(h.svc->ingest("host", "", json::array({ json { { "kind", "error" }, { "name", "user_report" }, { "props", json { { "component", "x" }, { "message", "m" } } } } })), 0u);

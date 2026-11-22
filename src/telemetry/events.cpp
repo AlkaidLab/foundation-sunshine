@@ -373,6 +373,7 @@ namespace telemetry {
       attachment,
       log_ref,
       shot_ref,
+      reply_key,
       text,
       contact,
       histograms,
@@ -507,6 +508,7 @@ namespace telemetry {
                                                       { "shot_state", type_e::choice, 0, 0, shot_state_choices },
                                                       { "message", type_e::text, 0, static_cast<double>(MAX_USER_REPORT_CHARS), {}, true },
                                                       { "contact", type_e::contact, 0, static_cast<double>(MAX_USER_CONTACT_CHARS) },
+                                                      { "reply_key", type_e::reply_key },
                                                     } });
         // a fault of the virtual display driver that Windows Error Reporting wrote to the Application log: that it happened, which module, the exception code and the offset (wer_event.h); no stack exists
         t.push_back({ kind_e::error, "wer_event", {
@@ -810,6 +812,13 @@ namespace telemetry {
           // only the reference POST /v1/user-screenshot returns: crash-YYYY-MM[-n]/ur-shot-<24 hex>.<png|jpg|webp>
           if (!value.is_string()) return std::nullopt;
           static const std::regex ref(R"(^crash-\d{4}-\d{2}(-\d)?/ur-shot-[0-9a-f]{24}\.(png|jpg|webp)$)");
+          const auto text = value.get<std::string>();
+          return std::regex_match(text, ref) ? std::optional<json> { json(text) } : std::nullopt;
+        }
+        case type_e::reply_key: {
+          // the address of the developers' answer to this report: made at random by the page (rk_ and 128 bits), kept by the page on its own computer and written by the server only into the issue of this report
+          if (!value.is_string()) return std::nullopt;
+          static const std::regex ref(R"(^rk_[0-9a-f]{32}$)");
           const auto text = value.get<std::string>();
           return std::regex_match(text, ref) ? std::optional<json> { json(text) } : std::nullopt;
         }
