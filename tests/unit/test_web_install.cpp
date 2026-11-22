@@ -56,6 +56,10 @@ TEST_F(WebInstall, AcceptsScriptsInGeneratedAssets) {
   write(web / "login.html");
   write(web / "assets" / "generated" / "app-AbCd1234.js.gz");
   EXPECT_FALSE(is_complete(web));
+  // the precompressed single copy of a current install is a script
+  write(web / "assets" / "generated" / "app-AbCd1234.js.br");
+  EXPECT_TRUE(is_complete(web));
+  fs::remove(web / "assets" / "generated" / "app-AbCd1234.js.br");
   write(web / "assets" / "generated" / "app-AbCd1234.js");
   EXPECT_TRUE(is_complete(web));
 }

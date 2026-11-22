@@ -291,14 +291,14 @@ windows_build() {
   return build;
 }
 // Tile order: vdd, gamepad, usbip, vmouse, firewall, autostart, tools, desktopicon. VDD: UMDF 2.25 + IddCx 1.2 (1803);
-// usbip-win2: 1903. The same limits are MinVersion in sunshine.iss.in, so a silent install skips them too.
+// usbip-win2: 1903; the virtual mouse driver: Windows 11 (22000). The same limits are MinVersion in sunshine.iss.in, so a silent install skips them too.
 DWORD
 component_min_build(int tile) {
-  return tile == 0 ? 17134 : tile == 2 ? 18362 : 0;
+  return tile == 0 ? 17134 : tile == 2 ? 18362 : tile == 3 ? 22000 : 0;
 }
 const char *
 component_min_name(int tile) {
-  return tile == 0 ? "1803" : tile == 2 ? "1903" : "";
+  return tile == 0 ? "Windows 10 1803" : tile == 2 ? "Windows 10 1903" : tile == 3 ? "Windows 11" : "";
 }
 // A component this Windows cannot run is unticked and stays so (the page shows it disabled with the version it needs).
 void
@@ -973,6 +973,8 @@ component_list() {
 void
 begin_install() {
   if (g_choosing_dir) return;  // the folder picker is open: the folder is not chosen yet, and an install now would use the one from before
+  // Keep the engine's explicit component list safe even if an old UI or the select-all action re-enabled a component after the page was drawn.
+  apply_os_limits(S.v);
   // A folder the person picked is checked once more here (the drive may have changed since), and again by the elevated worker. A refusal goes back to the first page with its reason.
   g_run.dir.clear();
   g_run.dir_unsafe_ok = false;
@@ -1168,8 +1170,10 @@ click(int id) {
   }
   if (id == kSelectAll) {
     bool all = true;
-    for (int i = 0; i < kTileCount; ++i) all = all && S.v.tiles[i];
-    for (int i = 0; i < kTileCount; ++i) S.v.tiles[i] = !all;
+    for (int i = 0; i < kTileCount; ++i)
+      if (component_min_build(i) <= windows_build()) all = all && S.v.tiles[i];
+    for (int i = 0; i < kTileCount; ++i)
+      S.v.tiles[i] = component_min_build(i) <= windows_build() && !all;
     refresh();
     return;
   }
