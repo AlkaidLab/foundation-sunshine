@@ -32,17 +32,22 @@
 }
 
 + (NSString *)getDisplayName:(CGDirectDisplayID)displayID {
-  NSScreen *screens = [NSScreen screens];
-  for (NSScreen *screen in screens) {
-    if (screen.deviceDescription[@"NSScreenNumber"] == [NSNumber numberWithUnsignedInt:displayID]) {
+  for (NSScreen *screen in [NSScreen screens]) {
+    if ([screen.deviceDescription[@"NSScreenNumber"] unsignedIntValue] == displayID) {
       return screen.localizedName;
     }
   }
-  return nil;
+  // Never nil: the caller puts this in a dictionary literal, and nil there throws.
+  return [NSString stringWithFormat:@"Display %u", displayID];
 }
 
 - (id)initWithDisplay:(CGDirectDisplayID)displayID frameRate:(int)frameRate {
   self = [super init];
+
+  [[NSNotificationCenter defaultCenter] addObserverForName:AVCaptureSessionRuntimeErrorNotification object:nil queue:nil usingBlock:^(NSNotification *note) {
+    NSError *error = note.userInfo[AVCaptureSessionErrorKey];
+    NSLog(@"[AVVideo] AVCaptureSession RUNTIME ERROR: %@", error);
+  }];
 
   CGDisplayModeRef mode = CGDisplayCopyDisplayMode(displayID);
 
@@ -69,16 +74,19 @@
     return nil;
   }
 
-  [self.session startRunning];
-
   return self;
 }
 
 - (void)dealloc {
+  [self.session stopRunning];
+  for (AVCaptureOutput *out in [self.videoOutputs objectEnumerator]) {
+    if ([out isKindOfClass:[AVCaptureVideoDataOutput class]]) {
+      [(AVCaptureVideoDataOutput *)out setSampleBufferDelegate:nil queue:NULL];
+    }
+  }
   [self.videoOutputs release];
   [self.captureCallbacks release];
   [self.captureSignals release];
-  [self.session stopRunning];
   [super dealloc];
 }
 
@@ -104,24 +112,31 @@
     dispatch_queue_t recordingQueue = dispatch_queue_create("videoCaptureQueue", qos);
     [videoOutput setSampleBufferDelegate:self queue:recordingQueue];
 
-    [self.session stopRunning];
+    [self.session beginConfiguration];
 
     if ([self.session canAddOutput:videoOutput]) {
       [self.session addOutput:videoOutput];
     }
     else {
+      [self.session commitConfiguration];
       [videoOutput release];
       return nil;
     }
+
+    [self.session commitConfiguration];
 
     AVCaptureConnection *videoConnection = [videoOutput connectionWithMediaType:AVMediaTypeVideo];
     dispatch_semaphore_t signal = dispatch_semaphore_create(0);
 
     [self.videoOutputs setObject:videoOutput forKey:videoConnection];
-    [self.captureCallbacks setObject:frameCallback forKey:videoConnection];
+    id copiedBlock = [frameCallback copy];
+    [self.captureCallbacks setObject:copiedBlock forKey:videoConnection];
+    [copiedBlock release];
     [self.captureSignals setObject:signal forKey:videoConnection];
 
-    [self.session startRunning];
+    if (!self.session.isRunning) {
+      [self.session startRunning];
+    }
 
     return signal;
   }
@@ -135,13 +150,24 @@
   if (callback != nil) {
     if (!callback(sampleBuffer)) {
       @synchronized(self) {
-        [self.session stopRunning];
+        [self.session beginConfiguration];
+        AVCaptureOutput *outToRemove = [self.videoOutputs objectForKey:connection];
+        if (outToRemove) {
+          if ([outToRemove isKindOfClass:[AVCaptureVideoDataOutput class]]) {
+            [(AVCaptureVideoDataOutput *)outToRemove setSampleBufferDelegate:nil queue:NULL];
+          }
+          [self.session removeOutput:outToRemove];
+        }
+        [self.session commitConfiguration];
+
+        if (self.videoOutputs.count <= 1 && self.session.isRunning) {
+          [self.session stopRunning];
+        }
+
         [self.captureCallbacks removeObjectForKey:connection];
-        [self.session removeOutput:[self.videoOutputs objectForKey:connection]];
         [self.videoOutputs removeObjectForKey:connection];
         dispatch_semaphore_signal([self.captureSignals objectForKey:connection]);
         [self.captureSignals removeObjectForKey:connection];
-        [self.session startRunning];
       }
     }
   }

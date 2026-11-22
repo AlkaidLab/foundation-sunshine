@@ -95,9 +95,11 @@ namespace encoder_snapshot {
     if (always_reprobe) {
       return reuse_e::always_reprobe;
     }
+#ifndef __APPLE__
     if (now.gpus.empty()) {
       return reuse_e::unknown_gpu;
     }
+#endif
     if (!last_success) {
       return reuse_e::no_record;
     }
