@@ -139,9 +139,12 @@ hosted runner 的 CPU 型号不统一，同样的工作在慢机器上要多花�
 （该命令遵守 `SOURCE_DATE_EPOCH`，源 `cmake-string-timestamp-20261122`），分片和 `build_win` 各配置一次，时间戳不同则读它的缓存条目
 全部失效；三个 Windows configure 都把 `SOURCE_DATE_EPOCH` 固定为提交时间（也是 reproducible-builds 规范给这个变量定的值，
 源 `source-date-epoch-spec-20261122`）。分片的 configure 同样把 dotnet 加进 PATH，让 `find_program()` 的结果两侧一致。
-同一配置的两个冷构建不再各占 8 个分片：分片作业按 `cold-shards-<指纹>-<分片号>` 分组串行（`cancel-in-progress: false`），
-后到的分片等前一个跑完，再恢复它保存的缓存（分片自己也恢复了编译缓存，夜间构建除外）；分组表达式允许用
-`needs`/`strategy`/`matrix` 上下文（源 `github-docs-workflow-syntax-20261122`，`jobs.<job_id>.concurrency`）。
+同配置并发不再用并发组：GitHub 的组默认只保留一个等待中的作业，第三个运行会顶掉正在等待的第二个
+（源 `github-docs-concurrency-20261122`），`cancel-in-progress: false` 只保护运行中的那个；被顶掉的分片在
+`build_win` 眼里是 cancelled，检查直接红。分片改为先做有界等待（最多 5 分钟，30 秒一轮，已有同指纹条目或没有别的
+运行在跑就立刻结束），再恢复编译缓存（精确指纹、同指纹分片键、最近血缘三档前缀），编译完还把分片自己的 ccache 存成
+`ccache-windows-shard-<指纹>-<run>-<分片号>`——`build_win` 只在末尾且只在 master 上保存，在那之前别的运行能恢复的
+只有分片键；修剪步骤的匹配模式同时覆盖分片键和旧键，仍只留最新一份（夜间构建例外地保持纯冷启动，验证从零构建）。
 
 与分片并行的两个作业把原来排在 `build_win` 里的步骤挪了出来：`setup_ui`（安装器 setup UI；上游用固定的下载件时不到 10 秒，
 没有匹配的下载件时要从 Panel 子模块构建约 3.5 分钟）和 `adapter_config`（不带 SDK 的适配器配置测试，约 2.5 分钟）。

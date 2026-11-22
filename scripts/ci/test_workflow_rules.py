@@ -124,18 +124,34 @@ class ShardTest(unittest.TestCase):
             self.assertIn('export PATH="$PATH:/c/Program Files/dotnet"', configure["run"])
             self.assertIn('ninja -C build -t commands | grep -E " -o [^ ]+[.]obj( |$)" | sort > object-commands.txt', configure["run"])
 
-    def test_two_cold_runs_of_one_configuration_do_not_compile_everything_twice(self):
-        # One group per shard index (the eight shards of one run still run side by side), keyed by the
-        # fingerprint: the later run's shard waits and then restores what the earlier run saved.
+    def test_a_shard_never_cancels_or_displaces_another_run_and_shares_its_cache(self):
+        # A concurrency group would: GitHub keeps only one pending job per group by default, so a third
+        # run replaces the waiting second (its shards then read as cancelled and the build fails). The
+        # shard instead waits a bounded time for a concurrent run's cache, restores whatever exists
+        # -- including what another run's shards saved -- and saves its own cache for the next run,
+        # because build_win saves only at its end and only on master.
         shard = self.jobs["shard"]
-        self.assertEqual(
-            shard["concurrency"],
-            {"group": "cold-shards-${{ needs.cold_plan.outputs.fingerprint }}-${{ matrix.index }}", "cancel-in-progress": False},
-        )
+        self.assertNotIn("concurrency", shard)
+        self.assertEqual(shard["permissions"], {"contents": "write", "actions": "read"})
+        wait = step(shard, "Wait briefly for a concurrent run's compiler cache")
+        self.assertEqual(wait["if"], "github.event_name != 'schedule'")
+        self.assertIn("while (( waited < 300 )); do", wait["run"])
+        self.assertIn("actions/caches?key=ccache-windows-$FINGERPRINT", wait["run"])
         restore = step(shard, "Restore the compiler cache")
         self.assertEqual(restore["if"], "github.event_name != 'schedule'")
         self.assertEqual(restore["uses"], "actions/cache/restore@v6")
-        self.assertIn("ccache-windows-${{ needs.cold_plan.outputs.fingerprint }}-\n", restore["with"]["restore-keys"])
+        self.assertEqual(
+            restore["with"]["restore-keys"],
+            "ccache-windows-${{ needs.cold_plan.outputs.fingerprint }}-\n"
+            "ccache-windows-shard-${{ needs.cold_plan.outputs.fingerprint }}-\n"
+            "ccache-windows-\n",
+        )
+        save = step(shard, "Save the shard compiler cache")
+        self.assertEqual(save["uses"], "actions/cache/save@v6")
+        self.assertEqual(
+            save["with"]["key"],
+            "ccache-windows-shard-${{ needs.cold_plan.outputs.fingerprint }}-${{ github.run_id }}-${{ matrix.index }}",
+        )
 
     def test_every_ccache_restore_falls_back_to_the_most_recent_lineage(self):
         # Entries are keyed on the compile command line, so a restored entry of another fingerprint either hits
@@ -163,7 +179,9 @@ class ShardTest(unittest.TestCase):
         import json
         for x in self.jobs["shard"]["steps"]:
             text = json.dumps(x)
-            if x.get("name") == "Compile object files, chunk by chunk":
+            # The cache wait also talks to the API (listing entries and runs); like the claim script it
+            # never runs a build command, and CMake and ninja still never see a token.
+            if x.get("name") in ("Compile object files, chunk by chunk", "Wait briefly for a concurrent run's compiler cache"):
                 self.assertIn("github.token", text)
             else:
                 self.assertNotIn("github.token", text, x.get("name"))
@@ -184,7 +202,7 @@ class ShardTest(unittest.TestCase):
         self.assertIn("cold_plan", self.jobs["adapter_config"]["needs"])
         prune = step(build, "Prune stale compiler cache entries")["run"]
         self.assertIn(f'$current = "ccache-windows-{fingerprint}-${{{{ github.run_id }}}}"', prune)
-        self.assertIn("^ccache-windows-([0-9a-f]{12}-(pinned|newest)-)?[0-9]+$", prune)  # fingerprinted (with the toolchain mode) and older keys
+        self.assertIn("^ccache-windows-((shard-)?[0-9a-f]{12}-(pinned|newest)-)?[0-9]+(-[0-9]+)?$", prune)  # fingerprinted and per-shard entries (with the toolchain mode) and older keys
 
     def test_the_cold_plan_shards_on_a_missing_fingerprint_cache_or_a_widely_included_header(self):
         plan = step(self.jobs["cold_plan"], "Decide")

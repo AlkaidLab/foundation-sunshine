@@ -30,7 +30,9 @@ class FingerprintTest(unittest.TestCase):
             '        "${CMAKE_SOURCE_DIR}/src/platform/windows/nvprefs/*.cpp")\n'
             "set(PLATFORM_TARGET_FILES\n"
             '        "${CMAKE_SOURCE_DIR}/src/platform/windows/one.cpp"\n'
-            '        "${CMAKE_SOURCE_DIR}/src/platform/windows/two.cpp")\n'
+            '        "${CMAKE_SOURCE_DIR}/src/platform/windows/two.cpp"\n'
+            '        "${CMAKE_SOURCE_DIR}/src/platform/windows/three.cpp"  # tray (and friends\n'
+            ')\n'
             "list(APPEND PLATFORM_TARGET_FILES\n"
             '        "${CMAKE_SOURCE_DIR}/third-party/tray/src/tray_windows.c")\n')
         (self.root / "scripts" / "ci" / "msys2-pins.txt").write_text(
@@ -69,15 +71,21 @@ class FingerprintTest(unittest.TestCase):
         before = self.fingerprint()
         path = self.root / "cmake/compile_definitions/windows.cmake"
         old = path.read_text()
-        path.write_text(old.replace("one.cpp", 'one.cpp"\n        "${CMAKE_SOURCE_DIR}/src/platform/windows/added.cpp'))
+        added = old.replace("one.cpp", 'one.cpp"\n        "${CMAKE_SOURCE_DIR}/src/platform/windows/added.cpp')
+        self.assertNotEqual(old, added, "the addition case must actually change the file")
+        path.write_text(added)
         self.assertEqual(before, self.fingerprint(), "a file added to the platform target list")
-        path.write_text(old + 'list(APPEND PLATFORM_TARGET_FILES "${CMAKE_SOURCE_DIR}/src/platform/windows/more.cpp)\n')
+        appended = old + 'list(APPEND PLATFORM_TARGET_FILES "${CMAKE_SOURCE_DIR}/src/platform/windows/more.cpp")\n'
+        self.assertNotEqual(old, appended, "the append case must actually change the file")
+        path.write_text(appended)
         self.assertEqual(before, self.fingerprint(), "another list(APPEND) of the platform target list")
-        path.write_text(old.replace('        "${CMAKE_SOURCE_DIR}/src/platform/windows/two.cpp"\n', ""))
+        removed = old.replace('        "${CMAKE_SOURCE_DIR}/src/platform/windows/two.cpp"\n', "")
+        self.assertNotEqual(old, removed, "the deletion case must actually delete the source file line")
+        path.write_text(removed)
         self.assertEqual(before, self.fingerprint(), "a file removed from the platform target list")
         targets = self.root / "cmake/targets/common.cmake"
         targets_old = targets.read_text()
-        targets.write_text(targets_old + 'set(TEST_HELPER_SOURCES "${CMAKE_SOURCE_DIR}/tests/helper.cpp)\n')
+        targets.write_text(targets_old + 'set(TEST_HELPER_SOURCES "${CMAKE_SOURCE_DIR}/tests/helper.cpp")\n')
         self.assertEqual(before, self.fingerprint(), "a source-list variable in another hashed module")
         targets.write_text(targets_old)
         path.write_text(old)
@@ -92,6 +100,30 @@ class FingerprintTest(unittest.TestCase):
         self.assertNotEqual(before, self.fingerprint(), "a file(GLOB) pattern")
         path.write_text(old + "list(APPEND SUNSHINE_COMPILE_OPTIONS -Wno-probe)\n")
         self.assertNotEqual(before, self.fingerprint(), "a compile option")
+        path.write_text(old)
+        self.assertEqual(before, self.fingerprint())
+
+    def test_parens_in_comments_quotes_and_bracket_arguments_stay_inside_the_statement(self):
+        # cmake-language(7), Grammar: a hash runs to the end of the line, a quoted argument may
+        # hold unbalanced parentheses and a bracket argument [=*[ ... ]=*] ends at its own closing
+        # bracket. The fixture closes its set() on the line after such a comment; the cut must end
+        # at that parenthesis, so the flag line below still moves the fingerprint (an over-eager
+        # cut would swallow the rest of the file and hide it). Source-list edits still keep it.
+        before = self.fingerprint()
+        path = self.root / "cmake/compile_definitions/windows.cmake"
+        old = path.read_text()
+        self.assertIn("# tray (and friends" + chr(10) + ")", old)
+        path.write_text(old.replace("one.cpp", "one_renamed.cpp"))
+        self.assertEqual(before, self.fingerprint(), "a source-list edit inside a commented statement")
+        path.write_text(old + "list(APPEND PLATFORM_TARGET_FILES [[src (paren).cpp]])" + chr(10))
+        self.assertEqual(before, self.fingerprint(), "a bracket argument containing a parenthesis")
+        path.write_text(old + 'set(QUOTED_SOURCES "src (weird) name.cpp")\n')
+        self.assertEqual(before, self.fingerprint(), "a quoted argument containing a parenthesis")
+        flagged = old.replace('add_compile_definitions(SUNSHINE_PLATFORM="windows")',
+                               'add_compile_definitions(SUNSHINE_PLATFORM="windows" SUNSHINE_PROBE=1)')
+        self.assertNotEqual(old, flagged, "the flag edit must change the fixture")
+        path.write_text(flagged)
+        self.assertNotEqual(before, self.fingerprint(), "a flag change after a commented parenthesis")
         path.write_text(old)
         self.assertEqual(before, self.fingerprint())
 

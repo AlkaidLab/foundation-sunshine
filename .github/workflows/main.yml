@@ -575,14 +575,7 @@ jobs:
     if: needs.cold_plan.outputs.sharded == 'true'
     permissions:
       contents: write  # refs/claims/<run>/<chunk>: creating a ref is the atomic "this runner builds this chunk" (shard-compile.sh)
-    # Two cold runs of one configuration must not compile everything twice on sixteen runners: the later run's shard
-    # waits for the earlier run's shard of the same index (one group per index, so the eight shards of one run still
-    # run side by side), then restores the cache that run saved below. cancel-in-progress is false: a waiting shard is
-    # work waiting for a cache, not a stale check. Group expressions may use the needs, strategy and matrix contexts
-    # (GitHub Docs, "jobs.<job_id>.concurrency").
-    concurrency:
-      group: cold-shards-${{ needs.cold_plan.outputs.fingerprint }}-${{ matrix.index }}
-      cancel-in-progress: false
+      actions: read  # the cache wait below lists cache entries and workflow runs
     runs-on: windows-latest
     strategy:
       fail-fast: false
@@ -619,11 +612,41 @@ jobs:
           ./scripts/fetch-installer-inputs.ps1 -Destination $dest
           "GUI_BUNDLE_DIR=$dest/gui" >> $env:GITHUB_ENV
 
-      # What an earlier run of this configuration compiled: a run that queued behind another run's shards (the
-      # concurrency group above) restores what those saved, and a run whose fingerprint is new still starts from the
+      # A run that arrives while another run of the same configuration is still compiling waits a little for that
+      # run's cache instead of cold-compiling the same objects beside it. Bounded (five minutes) and it never
+      # cancels or displaces anything: a concurrency group would, because GitHub keeps only one pending job per
+      # group by default and a third run replaces the waiting second (GitHub Docs, "Control workflow concurrency"),
+      # which build_win then sees as a cancelled shard. No other run, or nothing saved in time: this shard just
+      # builds. The nightly keeps its pure cold start: it proves a build from nothing still works.
+      - name: Wait briefly for a concurrent run's compiler cache
+        if: github.event_name != 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FINGERPRINT: ${{ needs.cold_plan.outputs.fingerprint }}
+          THIS_RUN: ${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          entry() { gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=ccache-windows-$FINGERPRINT-&per_page=1" --jq .total_count; }
+          producing() { gh run list --workflow main.yml --limit 30 --json databaseId,status --jq '[.[] | select((.status == "in_progress" or .status == "queued") and .databaseId != $THIS_RUN)] | length'; }
+          waited=0
+          while (( waited < 300 )); do
+            if (( "$(entry)" > 0 )); then
+              echo "an entry for this configuration exists after ${waited}s"
+              exit 0
+            fi
+            if (( "$(producing)" == 0 )); then
+              echo "no other run of this workflow is in progress; building now"
+              exit 0
+            fi
+            sleep 30
+            waited=$((waited + 30))
+          done
+          echo "waited ${waited}s for a concurrent run's cache; building now"
+
+      # What an earlier run of this configuration compiled: a run whose fingerprint is new still starts from the
       # most recent lineage. Entries are keyed on the compile command line (ccache manual, "How ccache works"), so an
-      # entry that does not match simply misses; restoring is never wrong, only useless. The nightly keeps its pure
-      # cold start: it proves that a build from nothing still works.
+      # entry that does not match simply misses; restoring is never wrong, only useless.
       - name: Restore the compiler cache
         if: github.event_name != 'schedule'
         uses: actions/cache/restore@v6
@@ -632,6 +655,7 @@ jobs:
           key: ccache-windows-${{ needs.cold_plan.outputs.fingerprint }}-${{ github.run_id }}
           restore-keys: |
             ccache-windows-${{ needs.cold_plan.outputs.fingerprint }}-
+            ccache-windows-shard-${{ needs.cold_plan.outputs.fingerprint }}-
             ccache-windows-
 
       # Keep this step and build_win's "Configure Windows" in step: the shards only help while their object command lines are
@@ -736,6 +760,19 @@ jobs:
           compression-level: 0
           retention-days: 1
           if-no-files-found: ignore
+
+      # The artifact above only serves this run's build_win. A cache entry also lets the NEXT run of the same
+      # configuration restore what this shard compiled -- another pull request before master has saved anything,
+      # or a cold run that queued behind this one: build_win saves only at its end (and only on master), so until
+      # then the shard entries are all a later run can restore. The prune step in build_win collapses these with
+      # the other compiler-cache entries.
+      - name: Save the shard compiler cache
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ github.workspace }}\.ccache
+          key: ccache-windows-shard-${{ needs.cold_plan.outputs.fingerprint }}-${{ github.run_id }}-${{ matrix.index }}
 
       # The durations of this build are the weights of the next split: scripts/ci/merge-shard-weights.py turns the logs of one run into
       # scripts/ci/shard-weights.ninja_log.
@@ -1095,32 +1132,6 @@ jobs:
             echo "::warning title=A compile shard failed::this job compiles the objects that no shard cache has"
           fi
 
-      - name: Download the shard object command lists
-        if: needs.shard.result == 'success'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
-        with:
-          pattern: object-commands-*
-          path: shard-commands
-
-      # The drift diagnosis the hit rate cannot give: the exact object command lines of both sides, compared.
-      # Identical lists mean any remaining misses come from something outside the command line; different lists
-      # name the commands that drifted (the first 40 diff lines go to the log).
-      - name: Compare the object command lines with a shard
-        if: needs.shard.result == 'success'
-        shell: bash
-        run: |
-          set -euo pipefail
-          first=""
-          for listing in shard-commands/*/object-commands.txt; do first="$listing"; break; done
-          if [[ -n "$first" ]]; then
-            if diff -u "$first" object-commands.txt > command-drift.txt; then
-              echo "object command lines are identical with the shards"
-            else
-              echo "::warning title=Object commands drifted::see command-drift.txt and the log below"
-              head -40 command-drift.txt
-            fi
-          fi
-
       # The Panel bundle, pinned by tag/sha256 in scripts/installer-inputs.json and verified (never
       # "latest"). The pinned Panel commit must be the committed submodule. A manual run with gui_run_id replaces the GUI below.
       - name: Fetch pinned installer inputs
@@ -1222,6 +1233,35 @@ jobs:
           # the precondition for the merged shard caches to hit here (the warning below watches the effect).
           ninja -C build -t commands | grep -E " -o [^ ]+[.]obj( |$)" | sort > object-commands.txt
           echo "object commands: $(sha256sum object-commands.txt | cut -d' ' -f1) ($(wc -l < object-commands.txt) lines)"
+
+      # The drift diagnosis the hit rate cannot give: the exact object command lines of both sides, compared
+      # after Configure Windows has produced this build's list. Identical lists mean any remaining misses come
+      # from something outside the command line; different lists name the commands that drifted (the first 40
+      # diff lines go to the log). A missing list on either side is its own notice, not a drift warning.
+      - name: Download the shard object command lists
+        if: needs.shard.result == 'success'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: object-commands-*
+          path: shard-commands
+
+      - name: Compare the object command lines with a shard
+        if: needs.shard.result == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          first=""
+          for listing in shard-commands/*/object-commands.txt; do first="$listing"; break; done
+          if [[ -z "$first" ]]; then
+            echo "::notice title=Object commands::no shard object-command list was uploaded; nothing to compare"
+          elif [[ ! -f object-commands.txt ]]; then
+            echo "::notice title=Object commands::this build produced no object-command list; nothing to compare"
+          elif diff -u "$first" object-commands.txt > command-drift.txt; then
+            echo "object command lines are identical with the shards"
+          else
+            echo "::warning title=Object commands drifted::see command-drift.txt and the log below"
+            head -40 command-drift.txt
+          fi
 
       - name: Build Windows
         shell: msys2 {0}
@@ -1374,14 +1414,16 @@ jobs:
         shell: pwsh
         run: |
           $current = "ccache-windows-${{ needs.cold_plan.outputs.fingerprint }}-${{ github.run_id }}"
-          # Both the fingerprinted keys (ccache-windows-<fingerprint>-<run>) and the older ones without a fingerprint
-          # (ccache-windows-<run>) are pruned (the fingerprint ends in -pinned or -newest; a pattern without that part matched
-          # none of the current keys and let every run's entry pile up in the quota), so the entries from before the fingerprint do not stay in the quota.
+          # The fingerprinted keys (ccache-windows-<fingerprint>-<run>), the older ones without a fingerprint
+          # (ccache-windows-<run>) and the per-shard entries the shard job saves
+          # (ccache-windows-shard-<fingerprint>-<run>-<index>) are all pruned (the fingerprint ends in -pinned or
+          # -newest; a pattern without that part matched none of the current keys and let every run's entries pile
+          # up in the quota), so the entries from before the fingerprint do not stay in the quota either.
           # Page through the caches API instead of `gh cache list`: the
           # latter caps at --limit 100, and once this repo's other caches
           # (msys2, npm, ...) grow past that, stale ccache entries would
           # fall outside the window and never get pruned.
-          $all = @(gh api --paginate "repos/$env:GITHUB_REPOSITORY/actions/caches?per_page=100" --jq '.actions_caches[] | select(.key | test("^ccache-windows-([0-9a-f]{12}-(pinned|newest)-)?[0-9]+$")) | [(.key | sub("^ccache-windows-([0-9a-f]{12}-(pinned|newest)-)?";"") | tonumber), .id, .key] | @tsv' |
+          $all = @(gh api --paginate "repos/$env:GITHUB_REPOSITORY/actions/caches?per_page=100" --jq '.actions_caches[] | select(.key | test("^ccache-windows-((shard-)?[0-9a-f]{12}-(pinned|newest)-)?[0-9]+(-[0-9]+)?$")) | [(.key | capture("^ccache-windows-((shard-)?[0-9a-f]{12}-(pinned|newest)-)?(?<run>[0-9]+)").run | tonumber), .id, .key] | @tsv' |
             Where-Object { $_ } |
             ForEach-Object {
               $parts = $_ -split "`t"
