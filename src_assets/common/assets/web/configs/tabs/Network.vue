@@ -54,6 +54,7 @@ const defaultMoonlightPort = 47989
 const config = ref(props.config)
 const scope = computed({ get: () => config.value.origin_web_ui_allowed ?? 'lan', set: (value) => { config.value.origin_web_ui_allowed = value } })
 const bind = computed({ get: () => config.value.bind_address ?? '', set: (value) => { config.value.bind_address = value } })
+const fingerprintRules = computed(() => String(config.value.client_fingerprint_remote_rules ?? true) !== 'false')
 const qrMatrix = (text) => QRCode.create(text, { errorCorrectionLevel: 'M' }).modules
 const copyText = (text) => navigator.clipboard.writeText(text)
 const goPassword = () => { window.location.href = '/password' }
@@ -178,6 +179,18 @@ const portRows = computed(() => {
         <CfgExpert :config="config" k="pair_max_attempts" />
         <CfgExpert :config="config" k="ping_timeout" />
         <CfgExpert :config="config" k="close_verify_safe" />
+        <CfgSwitch :config="config" k="client_fingerprint_remote_rules" :on="true" :off="false" def="true" help="config.client_fingerprint_remote_rules_desc" />
+        <CfgExpert v-if="fingerprintRules" :config="config" k="client_fingerprint_rules_url" help="config.client_fingerprint_rules_url_desc" />
+        <CfgExpert v-if="fingerprintRules" :config="config" k="client_fingerprint_rules_refresh_hours" type="number" placeholder="24" min="1" max="168" help="config.client_fingerprint_rules_refresh_hours_desc" />
+        <CfgExpert v-if="fingerprintRules" :config="config" k="client_fingerprint_rules_certificate" help="config.client_fingerprint_rules_certificate_desc" />
+      </MGroup>
+    </MSection>
+    <MSection :title="$t('config.network_external_title')">
+      <MGroup>
+        <CfgSwitch :config="config" k="network_external_check" def="enabled" help="config.network_external_check_desc" />
+        <CfgExpert :config="config" k="network_external_endpoint" help="config.network_external_endpoint_desc" />
+        <CfgSwitch :config="config" k="network_bypass_proxy" def="enabled" help="config.network_bypass_proxy_desc" />
+        <CfgExpert :config="config" k="stun_servers" help="config.stun_servers_desc" />
       </MGroup>
     </MSection>
   </CfgSub>
