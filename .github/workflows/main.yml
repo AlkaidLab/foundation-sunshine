@@ -1456,7 +1456,8 @@ jobs:
           portable_bytes=$(stat -c %s ./cpack_artifacts/Sunshine.zip)
           echo "Portable ZIP: bytes=$portable_bytes seconds=$portable_seconds" | tee -a "$GITHUB_STEP_SUMMARY"
           # cmake/packaging/strip-cpack-symbols.cmake cleans the CPack staging tree; prove the ZIP itself has no
-          # unsigned COFF symbol table left. A signed PE is allowed and reported.
+          # unsigned COFF symbol table left. A signed PE, or an unsigned PE with data after its symbol table
+          # (an overlay), is allowed and reported: both are files strip mode deliberately leaves unchanged.
           rm -rf portable-check
           mkdir -p portable-check
           cmake -E chdir portable-check cmake -E tar xf ../cpack_artifacts/Sunshine.zip

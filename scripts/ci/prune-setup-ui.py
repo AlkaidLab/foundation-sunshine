@@ -148,7 +148,11 @@ def _parse_rules(css, start=0):
                     out.append(css[index:end + 1])
             elif name in ("@media", "@supports", "@layer", "@container", "@scope"):
                 inner, _ = _parse_rules(body)
-                if inner.strip():
+                # An emptied @layer keeps its first-declaration position: the
+                # cascade layer order is global, so dropping the block would
+                # reorder every later layer (CSS Cascade 5, Layer Ordering,
+                # fs-w3-css-cascade-5-20261122). The other groups can go.
+                if inner.strip() or name == "@layer":
                     out.append(prelude + "{" + inner + "}")
             elif name in ("@keyframes", "@-webkit-keyframes"):
                 if "clock" not in prelude.lower():

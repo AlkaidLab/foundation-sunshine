@@ -73,10 +73,21 @@ def _layout(data):
 
 def is_signed(data):
     """An Authenticode certificate table is present."""
-    _, _, _, optional, _, magic = _layout(data)
-    directories = optional + (112 if magic == 0x20B else 96)
-    _, size = struct.unpack_from("<II", data, directories + DIRECTORY_CERTIFICATE_TABLE * 8)
-    return size > 0
+    _, _, _, optional, optional_size, magic = _layout(data)
+    count_offset, directories_offset = (108, 112) if magic == 0x20B else (92, 96)
+    if optional_size < directories_offset:
+        return False
+    # NumberOfRvaAndSizes bounds the data directories (PE Format, "Optional
+    # Header Data Directories", fs-ms-pe-coff-symbols-20261122). A header that
+    # declares four directories ends before the certificate entry: the bytes
+    # at that position belong to the first section header, not to a signature.
+    if _u32(data, optional + count_offset) <= DIRECTORY_CERTIFICATE_TABLE:
+        return False
+    entry = optional + directories_offset + DIRECTORY_CERTIFICATE_TABLE * 8
+    if entry + 8 > optional + optional_size:
+        raise PEError("certificate table directory is outside the optional header")
+    _u32(data, entry)  # VirtualAddress; only the size means "present" here
+    return _u32(data, entry + 4) > 0
 
 
 def symbol_table(data):
@@ -177,20 +188,20 @@ def main(argv=None):
         if args.check:
             try:
                 data = path.read_bytes()
-                span = symbol_table(data)
-                signed = is_signed(data)
+                # The check accepts exactly the files strip mode leaves
+                # unchanged: no symbol table, a signature, or an overlay.
+                _, _, action = strip_symbols(data, args.force_signed)
             except (PEError, OSError) as error:
                 print(f"pe_symbols: {path}: {error}", file=sys.stderr)
                 report.append({"file": str(path), "error": str(error)})
                 failed = True
                 continue
-            if span is None:
-                report.append({"file": str(path), "action": "no-symbols"})
-            elif signed:
-                report.append({"file": str(path), "action": "signed"})
+            report.append({"file": str(path), "action": "has-symbols" if action == "stripped" else action})
+            if action == "signed":
                 print(f"::warning title=COFF symbols::{path} is signed; its symbol table is kept")
-            else:
-                report.append({"file": str(path), "action": "has-symbols"})
+            elif action == "overlay":
+                print(f"::warning title=COFF symbols::{path} has data after its symbol table; left unchanged")
+            elif action == "stripped":
                 print(f"::error title=COFF symbols::{path} still has a COFF symbol table")
                 failed = True
             continue
