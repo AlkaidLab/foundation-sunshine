@@ -9,6 +9,8 @@
 #endif
 
 #include <Foundation/Foundation.h>
+#import <ApplicationServices/ApplicationServices.h>
+#import <AVFoundation/AVFoundation.h>
 #include <arpa/inet.h>
 #include <dlfcn.h>
 #include <fcntl.h>
@@ -46,6 +48,12 @@ namespace platf {
 
   std::unique_ptr<deinit_t>
   init() {
+    NSDictionary *options = @{(__bridge id) kAXTrustedCheckOptionPrompt: @YES};
+    AXIsProcessTrustedWithOptions((__bridge CFDictionaryRef) options);
+
+    [AVCaptureDevice requestAccessForMediaType:AVMediaTypeAudio completionHandler:^(BOOL granted) {
+      BOOST_LOG(info) << "Microphone permission response: " << (granted ? "granted" : "denied");
+    }];
     // This will generate a warning about CGPreflightScreenCaptureAccess and
     // CGRequestScreenCaptureAccess being unavailable before macOS 10.15, but
     // we have a guard to prevent it from being called on those earlier systems.
@@ -651,3 +659,10 @@ namespace dyn {
     return err;
   }
 }  // namespace dyn
+
+namespace platf {
+  std::vector<std::string>
+  adapter_names() {
+    return { "Apple Silicon" };
+  }
+}  // namespace platf
