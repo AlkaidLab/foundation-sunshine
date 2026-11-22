@@ -66,6 +66,7 @@
 #include "src/ds5/tuning_trigger.h"
 #include "src/logging_severity.h"
 #include "src/platform/windows/audio_default_guard.h"
+#include "src/platform/windows/ds5/ds5_attach_policy.h"
 #include "src/platform/windows/ds5/ds5_native_client.h"
 #include "src/platform/windows/ds5/ds5_paced_reply.h"
 #include "src/platform/windows/ds5/ds5_pad_audio.h"
@@ -350,6 +351,7 @@ namespace platf::ds5 {
       AlkUsbIpUacFeatureUnit microphone { sizeof(microphone), ALK_USBIP_CORE_ABI_VERSION, 5, 0, 0, 3809, 0, 12288, 122 };
       bool attached { false };
       bool attach_completed { false };
+      remote_usb::usbip_host_result attach_result;
       bool imported { false };
       bool stopping { false };
       bool audio_haptics { false };
@@ -879,7 +881,7 @@ namespace platf::ds5 {
         std::copy_n(report.begin(), seen_report.size(), seen_report.begin());
         sweep_stale_ports();
       }
-      void
+      remote_usb::usbip_sweep_result
       sweep_stale_ports() {
         const auto result = host.sweep_stale_ds5_ports();
         if (!result.detached_ports.empty()) {
@@ -891,6 +893,7 @@ namespace platf::ds5 {
         if (!result.ok() && result.status != remote_usb::usbip_host_status::unsupported) {
           BOOST_LOG(debug) << "Native DS5 stale USB/IP sweep: " << result.detail;
         }
+        return result;
       }
 
       AlkDs5Error
@@ -1094,7 +1097,7 @@ namespace platf::ds5 {
       start(const gamepad_id_t &id, feedback_queue_t queue, bool use_audio) {
         std::unique_lock lock(mutex);
         if (attached || core != nullptr) return false;
-        sweep_stale_ports();
+        auto sweep = sweep_stale_ports();
         feedback = std::move(queue);
         global_index = id.globalIndex;
         client_index = id.clientRelativeIndex;
@@ -1195,31 +1198,43 @@ namespace platf::ds5 {
           stop();
           return false;
         }
-        for (int attempt = 0; attempt != 4 && !attached && !stopping; ++attempt) {
-          if (attempt != 0) {
-            lock.unlock();
-            bridge.stop();
-            if (live_endpoint) {
-              remote_usb::forget_protected_endpoint(*live_endpoint);
-              live_endpoint.reset();
-            }
-            sweep_stale_ports();  // the stalled import may still hold a hub port
-            std::this_thread::sleep_for(1500ms * attempt);
-            lock.lock();
-            if (stopping) break;
-            endpoint = open_bridge();
-            if (!endpoint) break;
-          }
+        for (unsigned attempt = 0; attempt != attach_policy::kMaxAttempts && !attached && !stopping; ++attempt) {
           attach_completed = false;
+          attach_result = {};
           remote_usb::usbip_host_request attempt_request { *endpoint };
           host.attach(std::move(attempt_request), [this](remote_usb::usbip_host_result result) {
             std::lock_guard attach_lock(mutex);
             attached = result.ok();
             attach_completed = true;
-            if (!result.ok()) trace.attach_failure(result.detail);
+            attach_result = std::move(result);
+            if (!attach_result.ok()) trace.attach_failure(attach_result.detail);
             condition.notify_all();
           });
-          condition.wait_for(lock, 15s, [this] { return attach_completed || stopping; });
+          if (!condition.wait_for(lock, 15s, [this] { return attach_completed || stopping; })) {
+            attach_result.status = remote_usb::usbip_host_status::timed_out;
+            attach_result.detail = "timed out waiting for the usbip attach helper";
+          }
+          if (attached || stopping) break;
+          const auto decision = attach_policy::next(attach_result.status, sweep.status, attempt + 1);
+          if (!decision.retry) {
+            BOOST_LOG(warning) << "Native DS5 attach failed ("sv << attach_policy::name(attach_result.status)
+                               << ") without a retry: "sv << attach_result.detail;
+            break;
+          }
+          BOOST_LOG(info) << "Native DS5 attach failed ("sv << attach_policy::name(attach_result.status)
+                          << "); retrying once after a stale-port sweep"sv;
+          lock.unlock();
+          bridge.stop();
+          if (live_endpoint) {
+            remote_usb::forget_protected_endpoint(*live_endpoint);
+            live_endpoint.reset();
+          }
+          sweep = sweep_stale_ports();  // the stalled import may still hold a hub port
+          if (decision.delay > 0ms) std::this_thread::sleep_for(decision.delay);
+          lock.lock();
+          if (stopping) break;
+          endpoint = open_bridge();
+          if (!endpoint) break;
         }
         if (!attached) {
           lock.unlock();
