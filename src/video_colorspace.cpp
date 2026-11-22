@@ -98,6 +98,13 @@ namespace video {
     }
 
     colorspace.full_range = (config.encoderCscMode & 0x1);
+#ifdef __APPLE__
+    // macOS AVCaptureScreenInput produces Rec.601 VideoRange frames natively
+    if (config.dynamicRange == 0) {
+      colorspace.colorspace = colorspace_e::rec601;
+      colorspace.full_range = false;
+    }
+#endif
 
     switch (config.dynamicRange) {
       case 0:

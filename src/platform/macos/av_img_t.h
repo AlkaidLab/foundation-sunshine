@@ -25,11 +25,17 @@ namespace platf {
 
   struct av_pixel_buf_t {
     CVPixelBufferRef buf;
+    bool release_on_destroy { false };
 
     // Constructor
     explicit av_pixel_buf_t(CMSampleBufferRef sb):
         buf(
-          CMSampleBufferGetImageBuffer(sb)) {
+          CMSampleBufferGetImageBuffer(sb)), release_on_destroy(false) {
+      CVPixelBufferLockBaseAddress(buf, kCVPixelBufferLock_ReadOnly);
+    }
+
+    explicit av_pixel_buf_t(CVPixelBufferRef pb, bool release = false):
+        buf(pb), release_on_destroy(release) {
       CVPixelBufferLockBaseAddress(buf, kCVPixelBufferLock_ReadOnly);
     }
 
@@ -42,6 +48,9 @@ namespace platf {
     ~av_pixel_buf_t() {
       if (buf != nullptr) {
         CVPixelBufferUnlockBaseAddress(buf, kCVPixelBufferLock_ReadOnly);
+        if (release_on_destroy) {
+          CFRelease(buf);
+        }
       }
     }
   };

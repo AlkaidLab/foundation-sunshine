@@ -1194,7 +1194,7 @@ namespace video {
   };
 
   struct sync_session_ctx_t {
-    safe::signal_t *join_event;
+    std::shared_ptr<safe::signal_t> join_event;
     safe::mail_raw_t::event_t<bool> shutdown_event;
     safe::mail_raw_t::queue_t<packet_t> packets;
     safe::mail_raw_t::event_t<bool> idr_events;
@@ -4230,7 +4230,9 @@ namespace video {
           auto ctx = pos->ctx;
           if (ctx->shutdown_event->peek()) {
             // Let waiting thread know it can delete shutdown_event
-            ctx->join_event->raise(true);
+            if (ctx->join_event) {
+              ctx->join_event->raise(true);
+            }
 
             pos = synced_sessions.erase(pos);
             synced_session_ctxs.erase(std::find_if(std::begin(synced_session_ctxs), std::end(synced_session_ctxs), [&ctx_p = ctx](auto &ctx) {
@@ -4333,12 +4335,16 @@ namespace video {
 
       for (auto &ctx : synced_session_ctxs) {
         ctx->shutdown_event->raise(true);
-        ctx->join_event->raise(true);
+        if (ctx->join_event) {
+          ctx->join_event->raise(true);
+        }
       }
 
       for (auto &ctx : ctx.unsafe()) {
         ctx.shutdown_event->raise(true);
-        ctx.join_event->raise(true);
+        if (ctx.join_event) {
+          ctx.join_event->raise(true);
+        }
       }
     });
 
@@ -4360,9 +4366,12 @@ namespace video {
     auto shutdown_event = mail->event<bool>(mail::shutdown);
 
     auto images = std::make_shared<captured_frame_event_t::element_type>();
-    auto lg = util::fail_guard([&]() {
-      images->stop();
-      shutdown_event->raise(true);
+    auto lg = util::fail_guard([&]() noexcept {
+      try {
+        images->stop();
+        shutdown_event->raise(true);
+      }
+      catch (...) {}
     });
 
     auto ref = capture_thread_async.ref();
@@ -4380,10 +4389,15 @@ namespace video {
         return;
       }
     }
-    auto admission_guard = util::fail_guard([&]() {
-      images->stop();
-      auto lock = ref->capture_policy.lock();
-      ref->capture_policy->detach();
+    auto admission_guard = util::fail_guard([&]() noexcept {
+      try {
+        images->stop();
+        if (ref) {
+          auto lock = ref->capture_policy.lock();
+          ref->capture_policy->detach();
+        }
+      }
+      catch (...) {}
     });
 
     ref->capture_ctx_queue->raise(capture_ctx_t { images, config });
@@ -4786,10 +4800,10 @@ namespace video {
       capture_async(std::move(mail), config, channel_data, dynamic_param_events, packet_size);
     }
     else {
-      safe::signal_t join_event;
+      auto join_event = std::make_shared<safe::signal_t>();
       auto ref = capture_thread_sync.ref();
       ref->encode_session_ctx_queue.raise(sync_session_ctx_t {
-        &join_event,
+        join_event,
         mail->event<bool>(mail::shutdown),
         mail::man->queue<packet_t>(mail::video_packets),
         std::move(idr_events),
@@ -4800,8 +4814,13 @@ namespace video {
         channel_data,
       });
 
-      // Wait for join signal
-      join_event.view();
+      // Wait for join signal or session shutdown
+      auto shutdown_evt = mail->event<bool>(mail::shutdown);
+      while (!join_event->view(100ms)) {
+        if (shutdown_evt->peek()) {
+          break;
+        }
+      }
     }
   }
 
