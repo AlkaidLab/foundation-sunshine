@@ -695,7 +695,8 @@ jobs:
           # The object command lines this job compiles with; build_win prints the same line after its configure.
           # Equal hashes are the precondition for the merged shard caches to hit there (build_win warns as
           # "Shards drifted" when they do not).
-          echo "compile commands: $(ninja -C build -t commands | sort | sha256sum | cut -d' ' -f1)"
+          ninja -C build -t commands | grep -E " -o [^ ]+[.]obj( |$)" | sort > object-commands.txt
+          echo "object commands: $(sha256sum object-commands.txt | cut -d' ' -f1) ($(wc -l < object-commands.txt) lines)"
 
       # Chunks of object files are handed out one at a time, so a runner on a slower CPU simply builds fewer of them (the CPU of a
       # hosted runner varies from one job to the next by up to 2x on the same work). The token is only read by this script, which
@@ -746,6 +747,15 @@ jobs:
           path: ninja_log.shard
           compression-level: 1
           retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Upload the object command list
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: object-commands-${{ matrix.index }}
+          path: object-commands.txt
+          retention-days: 1
           if-no-files-found: ignore
 
   # The claim refs only matter while the shards run.
@@ -1085,6 +1095,32 @@ jobs:
             echo "::warning title=A compile shard failed::this job compiles the objects that no shard cache has"
           fi
 
+      - name: Download the shard object command lists
+        if: needs.shard.result == 'success'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: object-commands-*
+          path: shard-commands
+
+      # The drift diagnosis the hit rate cannot give: the exact object command lines of both sides, compared.
+      # Identical lists mean any remaining misses come from something outside the command line; different lists
+      # name the commands that drifted (the first 40 diff lines go to the log).
+      - name: Compare the object command lines with a shard
+        if: needs.shard.result == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          first=""
+          for listing in shard-commands/*/object-commands.txt; do first="$listing"; break; done
+          if [[ -n "$first" ]]; then
+            if diff -u "$first" object-commands.txt > command-drift.txt; then
+              echo "object command lines are identical with the shards"
+            else
+              echo "::warning title=Object commands drifted::see command-drift.txt and the log below"
+              head -40 command-drift.txt
+            fi
+          fi
+
       # The Panel bundle, pinned by tag/sha256 in scripts/installer-inputs.json and verified (never
       # "latest"). The pinned Panel commit must be the committed submodule. A manual run with gui_run_id replaces the GUI below.
       - name: Fetch pinned installer inputs
@@ -1184,7 +1220,8 @@ jobs:
           fi
           # The object command lines this build compiles with; each shard prints the same line. Equal hashes are
           # the precondition for the merged shard caches to hit here (the warning below watches the effect).
-          echo "compile commands: $(ninja -C build -t commands | sort | sha256sum | cut -d' ' -f1)"
+          ninja -C build -t commands | grep -E " -o [^ ]+[.]obj( |$)" | sort > object-commands.txt
+          echo "object commands: $(sha256sum object-commands.txt | cut -d' ' -f1) ($(wc -l < object-commands.txt) lines)"
 
       - name: Build Windows
         shell: msys2 {0}

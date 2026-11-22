@@ -122,7 +122,7 @@ class ShardTest(unittest.TestCase):
             self.assertIn('export SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct)"', configure["run"])
         for configure in (shard, build):
             self.assertIn('export PATH="$PATH:/c/Program Files/dotnet"', configure["run"])
-            self.assertIn("compile commands: $(ninja -C build -t commands", configure["run"])
+            self.assertIn('ninja -C build -t commands | grep -E " -o [^ ]+[.]obj( |$)" | sort > object-commands.txt', configure["run"])
 
     def test_two_cold_runs_of_one_configuration_do_not_compile_everything_twice(self):
         # One group per shard index (the eight shards of one run still run side by side), keyed by the
