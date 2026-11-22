@@ -627,8 +627,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          entry() { gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=ccache-windows-$FINGERPRINT-&per_page=1" --jq .total_count; }
-          producing() { gh run list --workflow main.yml --limit 30 --json databaseId,status --jq '[.[] | select((.status == "in_progress" or .status == "queued") and .databaseId != $THIS_RUN)] | length'; }
+          entry() {
+            local merged shard
+            merged=$(gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=ccache-windows-$FINGERPRINT-&per_page=1" --jq .total_count)
+            shard=$(gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=ccache-windows-shard-$FINGERPRINT-&per_page=1" --jq .total_count)
+            echo $(( merged + shard ))
+          }
+          producing() { gh run list --workflow main.yml --limit 30 --json databaseId,status --jq '[.[] | select((.status == "in_progress" or .status == "queued") and .databaseId != (env.THIS_RUN | tonumber))] | length'; }
           waited=0
           while (( waited < 300 )); do
             if (( "$(entry)" > 0 )); then
