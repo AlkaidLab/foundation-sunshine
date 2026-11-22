@@ -125,6 +125,17 @@ TEST_F(BeastHttp, PlainHttpRoutesAndQueryValuesUseTheSameApplicationInterface) {
   EXPECT_EQ(response.result(), http::status::ok);
 }
 
+TEST_F(BeastHttp, StopBeforeStartReturnsInsteadOfThrowing) {
+  // A shutdown that begins while the listener threads are still starting calls stop() first; start() then has nothing to serve and must return,
+  // not throw out of its thread (that ended the host as an uncaught exception 1 s after the launch).
+  plain = std::make_unique<web::Server<web::HTTP>>();
+  plain->config.address = "127.0.0.1";
+  plain->config.port = 0;
+  plain->stop();
+  EXPECT_NO_THROW(plain->start());
+  plain->stop();
+}
+
 TEST_F(BeastHttp, TlsKeepAliveRetainsPipelinedRequestsAndBinaryBodies) {
   encrypted = secure_server();
   encrypted->resource["^/echo$"]["POST"] = [](auto response, auto request) { response->write(request->content.string()); };
@@ -367,6 +378,24 @@ TEST_F(BeastHttp, ClientReusesItsConfigurationAndPreservesHttpBodyBytes) {
   web::Client<web::HTTP> client("127.0.0.1:" + std::to_string(start(*plain)));
   const std::string bytes("data\0tail", 9);
   EXPECT_EQ(client.request("POST", "/echo", bytes)->content.string(), bytes);
+  EXPECT_EQ(client.request("POST", "/echo", "again")->content.string(), "again");
+}
+
+TEST_F(BeastHttp, ClientCallsTheSocketHookBeforeConnectingAndSurvivesAHookThatThrows) {
+  plain = std::make_unique<web::Server<web::HTTP>>();
+  plain->resource["^/echo$"]["POST"] = [](auto response, auto request) { response->write(request->content.string()); };
+  web::Client<web::HTTP> client("127.0.0.1:" + std::to_string(start(*plain)));
+  std::atomic_int opened { 0 };
+  int family = 0;
+  client.config.on_socket_open = [&](int family_of_socket, std::uintptr_t handle) {
+    ++opened;
+    family = family_of_socket;
+    EXPECT_NE(handle, std::uintptr_t { 0 });
+  };
+  EXPECT_EQ(client.request("POST", "/echo", "hello")->content.string(), "hello");
+  EXPECT_EQ(opened, 1);
+  EXPECT_EQ(family, 4);
+  client.config.on_socket_open = [](int, std::uintptr_t) { throw std::runtime_error("hook"); };
   EXPECT_EQ(client.request("POST", "/echo", "again")->content.string(), "again");
 }
 

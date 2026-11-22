@@ -229,12 +229,13 @@ namespace image_enhancement {
   bool
   parse_settings(const nlohmann::json &input, settings_t &output) {
     try {
-      if (!input.is_object() || input.size() != 3 || !input.at("schema_version").is_number_integer() ||
+      if (!input.is_object() || !input.at("schema_version").is_number_integer() ||
           !input.at("backends").is_object()) return false;
       const auto schema = input.at("schema_version").get<int>();
       if (schema != 1 && schema != 2) return false;
       settings_t parsed;
       if (schema == 1) {
+        if (input.size() != 3) return false;
         const auto &selected = input.at("selected_backend");
         if (!selected.is_null()) {
           if (!selected.is_string() || selected.get<std::string>() != std::string { NVIDIA_RTX_VIDEO_BACKEND }) return false;
@@ -242,6 +243,9 @@ namespace image_enhancement {
         }
       }
       else {
+        const bool has_nr_switch = input.contains("nr_enabled");
+        if (input.size() != (has_nr_switch ? 4u : 3u)) return false;
+        parsed.nr_enabled = input.value("nr_enabled", false);
         const auto &selected = input.at("selected");
         if (!selected.is_object() || selected.size() != 2 ||
             !selected.contains("hdr") || !selected.contains("nr")) return false;
@@ -272,6 +276,7 @@ namespace image_enhancement {
       }
       if (!parsed.selected_backend.empty() && !parsed.versions.contains(parsed.selected_backend)) return false;
       if (!parsed.selected_nr_backend.empty() && !parsed.versions.contains(parsed.selected_nr_backend)) return false;
+      if (parsed.nr_enabled && parsed.selected_nr_backend.empty()) return false;
       output = std::move(parsed);
       return true;
     }
@@ -299,6 +304,7 @@ namespace image_enhancement {
     }
     return {
       { "schema_version", 2 },
+      { "nr_enabled", settings.nr_enabled },
       { "selected", {
         { "hdr", settings.selected_backend.empty() ? json(nullptr) : json(settings.selected_backend) },
         { "nr", settings.selected_nr_backend.empty() ? json(nullptr) : json(settings.selected_nr_backend) },
@@ -387,6 +393,10 @@ namespace image_enhancement {
         value.selected_nr_backend.clear();
         changed = true;
       }
+      if (id == NVIDIA_DLSSNR_BACKEND && value.nr_enabled) {
+        value.nr_enabled = false;
+        changed = true;
+      }
       changed |= value.versions.erase(std::string { id }) != 0;
       changed |= value.runtime_pins.erase(std::string { id }) != 0;
       if (changed && !write_document(file, settings_json(value))) throw std::runtime_error("deferred_removal_config_save_failed");
@@ -464,7 +474,7 @@ namespace image_enhancement {
       if (!value.selected_backend.empty()) {
         result.hdr = validate_backend(value, value.selected_backend);
       }
-      if (!value.selected_nr_backend.empty()) {
+      if (value.nr_enabled) {
         result.nr = validate_backend(value, value.selected_nr_backend);
       }
       return result;
@@ -583,7 +593,7 @@ namespace image_enhancement {
       const bool selections_unchanged_and_valid =
         previous == requested && *impl_->active.load() == requested &&
         (requested.selected_backend.empty() || impl_->validated_hdr.load()) &&
-        (requested.selected_nr_backend.empty() || impl_->validated_nr.load());
+        (!requested.nr_enabled || impl_->validated_nr.load());
       if (operation_id.empty() && selections_unchanged_and_valid) {
         return { 200, {}, requested, tag, false };
       }
@@ -591,7 +601,7 @@ namespace image_enhancement {
       if (!operation_id.empty() && previous.versions != requested.versions) {
         // 安装即使不启用增强，也必须验证待发布的版本；不能记录没有落地的 DLL。
         for (const auto &[id, version] : requested.versions) {
-          if (id == requested.selected_backend || id == requested.selected_nr_backend) continue;
+          if (id == requested.selected_backend || (requested.nr_enabled && id == requested.selected_nr_backend)) continue;
           impl_->validate_backend(requested, id);
         }
       }
@@ -603,8 +613,8 @@ namespace image_enhancement {
         boost::lock_guard gate(impl_->ownership);
         impl_->validated_hdr.store(validated.hdr);
         impl_->validated_nr.store(validated.nr);
+        impl_->active.store(snapshot);
       }
-      impl_->active.store(snapshot);
       return { 200, {}, requested, next_tag, changed };
     }
     catch (const config_invalid_t &) {
@@ -628,6 +638,7 @@ namespace image_enhancement {
         backend = impl_->validated_hdr.load();
         break;
       case backend_capability_e::nr:
+        if (!impl_->active.load()->nr_enabled) return {};
         backend = impl_->validated_nr.load();
         break;
     }
@@ -637,6 +648,23 @@ namespace image_enhancement {
     std::erase_if(impl_->users, [](const auto &user) { return user.expired(); });
     impl_->users.emplace_back(use);
     return use;
+  }
+
+  bool
+  manager_t::nr_enabled() {
+    return impl_->active.load()->nr_enabled;
+  }
+
+  nlohmann::json
+  manager_t::nr_component_status() {
+    boost::lock_guard gate(impl_->ownership);
+    const auto settings = impl_->active.load();
+    return {
+      { "nr_enabled", settings->nr_enabled },
+      { "nr_installed", settings->versions.contains(std::string { NVIDIA_DLSSNR_BACKEND }) },
+      { "component_in_use", impl_->used_locked() },
+      { "component_maintenance", !impl_->maintenance.empty() || impl_->maintenance_unknown },
+    };
   }
 
   nlohmann::json

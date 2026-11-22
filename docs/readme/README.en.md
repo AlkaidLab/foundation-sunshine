@@ -11,7 +11,7 @@
 
 [简体中文](../../README.md) · English · [Deutsch](README.de.md) · [Français](README.fr.md) · [日本語](README.ja.md)
 
-[Website](https://www.alkaidlab.com/) · [Website (China)](https://www.alkaidlab.cn/) · [QQ community (Chinese)](https://qm.qq.com/cgi-bin/qm/qr?k=5qnkzSaLIrIaU4FvumftZH_6Hg7fUuLD&jump_from=webapi) · [Report an issue](https://github.com/AlkaidLab/foundation-sunshine/issues)
+[Website](https://www.alkaidlab.com/) · [Website (China)](https://www.alkaidlab.cn/) · [QQ community (Chinese)](https://qm.qq.com/q/vIVhpjDMic) · [Report an issue](https://github.com/AlkaidLab/foundation-sunshine/issues)
 
 </div>
 
@@ -140,10 +140,13 @@ On macOS you can also use [Moonlight V+ for PC](https://github.com/qiin2333/moon
 
 #### Partner clients
 
-- **VoidLink · iOS / iPadOS:** [About](https://github.com/The-Fried-Fish/VoidLink-previously-moonlight-zwm#readme) · [App Store for Mainland China, South Korea, and Vietnam](https://apps.apple.com/app/voidlink/id6747717070) · [App Store for other regions](https://apps.apple.com/app/voidlink-extreme/id6755103808) (paid store distribution)
-- **VoidLink TestFlight Beta · Apple TV support:** [Join the TestFlight beta](https://testflight.apple.com/join/k7gs61mZ)
+- **VoidLink · iOS / iPadOS / Apple TV (recommended):** [About](https://github.com/The-Fried-Fish/VoidLink-previously-moonlight-zwm#readme) · [China App Store](https://apps.apple.com/cn/app/voidlink/id6747717070) · [US App Store](https://apps.apple.com/us/app/voidlink-extreme/id6755103808) (paid store distribution)
 - **Crown Edition · Android:** [Download](https://github.com/WACrown/moonlight-android/releases) · [About](https://github.com/WACrown/moonlight-android#readme)
 - **Baozi Edition · HarmonyOS:** [Project and downloads](https://gitee.com/smdsbz/moonlight-ohos)
+
+#### Partner tools
+
+- **Natpierce (Jiaoyuelian):** [Network tunneling tool](https://docs.qq.com/aio/DRFVhWERDaFhKd1ZE)
 
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/h-start-dark.webp"><img src="../../assets/readme/h-start.webp" height="50" alt=""></picture>&nbsp;Quick start
 
@@ -255,7 +258,7 @@ Each topic brings capabilities, requirements, and setup instructions together:
 - [FAQ and troubleshooting](../en/faq.md): stutter, frame drops, connections, audio, and DualSense auto-scrolling.
 - [Upgrading](../en/upgrading.md): regular and test releases, preserving configuration, and checking an update.
 - [Documentation](../en/README.md): user and developer guides organized by task.
-- [Website](https://www.alkaidlab.com/) · [Website (China)](https://www.alkaidlab.cn/) · [QQ community (Chinese)](https://qm.qq.com/cgi-bin/qm/qr?k=5qnkzSaLIrIaU4FvumftZH_6Hg7fUuLD&jump_from=webapi).
+- [Website](https://www.alkaidlab.com/) · [Website (China)](https://www.alkaidlab.cn/) · [QQ community (Chinese)](https://qm.qq.com/q/vIVhpjDMic).
 - [Report a problem](https://github.com/AlkaidLab/foundation-sunshine/issues) · [Discussions](https://github.com/AlkaidLab/foundation-sunshine/discussions) · [Contributing](../contributing.en.md).
 
 Thanks to [LizardByte/Sunshine](https://github.com/LizardByte/Sunshine), [Moonlight](https://moonlight-stream.org/), [ZakoDisplay](https://github.com/qiin2333/zako-vdd), and all code, testing, and translation contributors. Licensed under [GPL-3.0](https://github.com/AlkaidLab/foundation-sunshine/blob/master/LICENSE).

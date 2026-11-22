@@ -21,13 +21,14 @@ test('the floating theme and account pair is gone from the pages: the account bu
   assert.match(utils, /v-if="placement === 'rail'" class="m-web-utils__cell">\s*<MIconButton :id="themeAnchor"/, 'the separate theme button is the rail\'s only')
   assert.match(utils, /v-for="item in THEMES"[^>]*@click="pick\(item\.id\)"/)
 })
-test('the caption bar of a phone: the sizes of its four icons are m3e\'s (shared with the control panel), the grid and the account cell are the Web UI\'s', () => {
+test('the caption bar of a phone: sizes, gap, grid and what a phone leaves out are foundation-ui\'s (shared with the control panel), the Web UI keeps only its account cell', () => {
   const m3e = fs.readFileSync(new URL('../../../../../node_modules/foundation-ui/src/css/layout.css', import.meta.url), 'utf8')
   assert.match(m3e, /\.m-caption \.m-statusbell--rest \{ display: none; \}/)
-  assert.match(m3e, /\.m-caption \.m-icon-btn, \.m-caption \.m-caption-connect \{ width: 44px; height: 44px;/)
+  assert.match(m3e, /\.m-caption \{ --m-cap-btn: 44px; --m-cap-gap: 4px; \}/)
   assert.ok(!/web-caption \.m-statusbell--rest|web-caption \.m-icon-btn/.test(less), 'not repeated in the Web UI')
-  assert.match(less, /\.m-web \.web-caption \{ grid-template-columns: minmax\(0, 1fr\) auto auto; \}/)
-  assert.match(less, /\.web-caption \.m-web-utils__cell \{ width: 44px; \}/)
+  assert.ok(!/\.m-web \.web-caption \{ grid-template-columns/.test(less), 'the phone grid is not the Web UI\'s own')
+  assert.ok(!/@media\s*\(max-width:\s*599\.98px\)\s*\{[^{}]*web-caption/.test(shell), 'no width media query of the Web UI decides the bar of a phone')
+  assert.match(less, /\.web-caption \.m-web-utils__cell \{ width: var\(--m-cap-btn, 44px\); height: var\(--m-cap-btn, 44px\); \}/)
 })
 test('a page that opens its place by itself adds no history entry: one Back leaves it', () => {
   assert.match(config, /subNav\.open\(DEFAULT_PLACE\[id\], true\)/)

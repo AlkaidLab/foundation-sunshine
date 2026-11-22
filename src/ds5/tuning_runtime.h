@@ -124,6 +124,10 @@ namespace ds5::tuning::runtime {
     std::atomic<float> gyro_yaw_offset_deg { 0.0f };
     std::atomic<float> gyro_pitch_offset_deg { 0.0f };
     std::atomic<float> gyro_roll_offset_deg { 0.0f };
+    // Key 101: the rate, in Hz, at which the host asks the client to report motion (accelerometer and gyro).
+    std::atomic<std::uint32_t> motion_report_rate_hz { 250 };
+    // Key 107: the most replies per second the host answers one controller's changes with; 0 answers a change at once (no cap).
+    std::atomic<std::uint32_t> input_report_rate_hz { 0 };
     // Keys 74-80.  The resolved output is 0 controller, 1 host pointer,
     // 2 precision touchpad, 3 off.
     std::atomic<std::uint32_t> touchpad_output { 0 };
@@ -319,11 +323,26 @@ namespace ds5::tuning::runtime {
       case 71:  // ds5.gyro.yawOffsetDeg
       case 72:  // ds5.gyro.pitchOffsetDeg
       case 73:  // ds5.gyro.rollOffsetDeg
+      case 101:  // ds5.compat.reportRateCapHz
+      case 96:  // ds5.audio.micRoute
+      case 107:  // ds5.compat.inputReportRate
       case 106:  // ds5.identity.profile
         return true;
       default:
         return false;
     }
+  }
+
+  /**
+   * @brief The motion report rate the host asks a client for (key 101), in Hz.
+   *
+   * The host's request is the cap: a client reports its motion sensors at most this often (a client that
+   * cannot sample as fast reports at its own rate; a DualSense gives at most about 250 Hz over USB).
+   */
+  inline std::uint16_t
+  motion_report_rate() {
+    const auto rate = state().motion_report_rate_hz.load(std::memory_order_acquire);
+    return static_cast<std::uint16_t>(std::clamp<std::uint32_t>(rate, 30u, 1000u));
   }
 
   // 0 none, 1 legacyRumble, 2 legacyTrigger, 3 legacyAll.

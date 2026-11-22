@@ -2,10 +2,11 @@
 
 using namespace ui;
 
-constexpr int kBtnPrimary = 101, kBtnSecond = 102, kBtnThird = 103, kTileBase = 120, kSelectAll = 130;
+constexpr int kBtnPrimary = 101, kBtnSecond = 102, kBtnThird = 103, kTileBase = 120, kSelectAll = 130, kChangeDir = 131, kUseSelected = 132, kSafeDir = 133;
 constexpr int kTitleMinimise = 140, kTitleClose = 141;
 constexpr int kTileCount = 8;
-constexpr int kSlots = 3 + kTileCount + 1;  // buttons, rows and the select-all text button; the two caption buttons follow
+constexpr int kSlots = 3 + kTileCount + 4;  // buttons, rows, the select-all text button and the three folder buttons (change, use the selected folder, safe place); the two caption buttons follow
+constexpr UINT_PTR kConfirmTimer = 41;  // repaints the countdown of the question about a folder warning
 constexpr int kStateSlots = kSlots + 2;
 constexpr double kTransitionSeconds = 0.300;  // Material 3 shared axis, see motion below
 constexpr float kBtnInflate = 4;  // logical px around a button for the focus ring
@@ -13,8 +14,14 @@ constexpr float kBtnInflate = 4;  // logical px around a button for the focus ri
 struct shell_state {
   view v;
   HWND window = nullptr;
-  HWND controls[3 + kTileCount + 1] {};
+  HWND controls[kSlots] {};
   HWND title_buttons[2] {};
+  HWND dir_edit = nullptr;  // the path of the install folder, typed (native window only)
+  ULONGLONG confirm_since = 0;  // GetTickCount64 when the question about a folder warning opened
+  bool dir_allow = false;  // the person confirmed the warning of `dir_allow_path`
+  std::wstring dir_allow_path;
+  bool edit_on = false;  // the page has the field for the path, at edit_x.. (logical px, from the last frame)
+  float edit_x = 0, edit_y = 0, edit_w = 0, edit_h = 0;
   float max_scroll = 0, view_h = 0, row_h = 0, row_y[8] = {};
   ID2D1Factory *d2d = nullptr;
   IDWriteFactory *write = nullptr;
@@ -66,11 +73,19 @@ int selftest_window(HWND window);  // installer_preview.inc
 // process keeps the install logic and drives the same view. go() and transitions then draw nothing here.
 bool g_web = false;
 HWND g_uac_owner = nullptr;  // owner of the UAC prompt: the window the person looks at (the setup UI window in web mode)
+void sync_dir_edit();  // the edit window of the install folder's path, below
+void apply_page_focus();
 
 int
 slot_id(const int slot) {
-  return slot < 3 ? kBtnPrimary + slot : slot < 3 + kTileCount ? kTileBase + slot - 3 :
-                                                                 kSelectAll;
+  if (slot < 3) return kBtnPrimary + slot;
+  if (slot < 3 + kTileCount) return kTileBase + slot - 3;
+  switch (slot - 3 - kTileCount) {
+    case 0: return kSelectAll;
+    case 1: return kChangeDir;
+    case 2: return kUseSelected;
+    default: return kSafeDir;
+  }
 }
 
 // Windows 10+ DPI and DWM entry points are looked up at run time so the exe still starts on
@@ -92,6 +107,9 @@ slot_of_id(const int id) {
   if (id >= kBtnPrimary && id <= kBtnThird) return id - kBtnPrimary;
   if (id >= kTileBase && id < kTileBase + kTileCount) return 3 + id - kTileBase;
   if (id == kSelectAll) return 3 + kTileCount;
+  if (id == kChangeDir) return 4 + kTileCount;
+  if (id == kUseSelected) return 5 + kTileCount;
+  if (id == kSafeDir) return 6 + kTileCount;
   if (id == kTitleMinimise) return kSlots;
   if (id == kTitleClose) return kSlots + 1;
   return -1;
@@ -273,14 +291,14 @@ windows_build() {
   return build;
 }
 // Tile order: vdd, gamepad, usbip, vmouse, firewall, autostart, tools, desktopicon. VDD: UMDF 2.25 + IddCx 1.2 (1803);
-// usbip-win2: 1903. The same limits are MinVersion in sunshine.iss.in, so a silent install skips them too.
+// usbip-win2: 1903; the virtual mouse driver: Windows 11 (22000). The same limits are MinVersion in sunshine.iss.in, so a silent install skips them too.
 DWORD
 component_min_build(int tile) {
-  return tile == 0 ? 17134 : tile == 2 ? 18362 : 0;
+  return tile == 0 ? 17134 : tile == 2 ? 18362 : tile == 3 ? 22000 : 0;
 }
 const char *
 component_min_name(int tile) {
-  return tile == 0 ? "1803" : tile == 2 ? "1903" : "";
+  return tile == 0 ? "Windows 10 1803" : tile == 2 ? "Windows 10 1903" : tile == 3 ? "Windows 11" : "";
 }
 // A component this Windows cannot run is unticked and stays so (the page shows it disabled with the version it needs).
 void
@@ -298,6 +316,155 @@ install_dir() {
     return {};
   }
   return buffer;
+}
+
+// ---------------------------------------------------------------- where the program goes (installer_dir.h)
+
+// The verdict of the page for the folder in S.v.dir: the room on its drive, and (for a folder the person picked or typed) every rule of installer_dir.h: a problem (the folder is refused,
+// the install buttons stay off) or a warning (the folder works after the person confirmed it, with a safe place to offer instead). The default folder, Program Files\\Sunshine, is the
+// engine's own choice and keeps the behaviour it always had (its folder may hold an older copy); only its room is looked at. An installed copy's folder is shown and not checked:
+// it is not being chosen.
+void
+refresh_install_dir() {
+  const auto free = installer_dir_win::free_bytes_of(S.v.dir);
+  S.v.dir_free = free ? static_cast<long long>(*free) : -1;
+  S.v.dir_error.clear();
+  S.v.dir_warning.clear();
+  S.v.dir_safe.clear();
+  if (!S.v.dir_editable) return;
+  const installer_dir::verdict verdict = installer_dir_win::verdict_for_window(S.v.dir);
+  S.v.dir_error = std::string(installer_dir::code(verdict.problem));
+  S.v.dir_warning = std::string(installer_dir::code(verdict.warning));
+  if (!S.v.dir_warning.empty()) {
+    // the safe place is offered only when it has no warning of its own (a drive root where others can delete folders would make it a risk again); otherwise there is none to offer
+    const std::wstring safe = installer_dir::safe_alternative(verdict.path, installer_dir_win::default_dir());
+    if (installer_dir::same_text(safe, installer_dir_win::default_dir())) S.v.dir_safe = safe;
+    else {
+      const installer_dir::verdict there = installer_dir_win::verdict_for(safe);
+      if (there.problem == installer_dir::error::none && there.warning == installer_dir::error::none) S.v.dir_safe = safe;
+    }
+  }
+}
+
+// Another folder: whatever the person confirmed about the one before is void, and so is a question that is open.
+void
+dir_changed() {
+  S.dir_allow = false;
+  S.dir_allow_path.clear();
+  S.v.dir_confirm = false;
+  KillTimer(S.window, kConfirmTimer);
+  refresh_install_dir();
+}
+
+// The first state of the view: an installed copy keeps its place (shown, not editable), a fresh install starts on the default folder.
+void
+init_install_dir() {
+  const std::wstring installed = install_dir();
+  if (S.v.maintenance || S.v.upgrade) {
+    if (!installed.empty()) S.v.dir = installed;
+    S.v.dir_editable = false;
+  }
+  else {
+    S.v.dir = installer_dir_win::default_dir();
+    S.v.dir_editable = true;
+  }
+  refresh_install_dir();
+}
+
+bool g_choosing_dir = false;
+
+// "Change": the system folder picker over the setup window. The picker is modal and the window's message loop keeps running underneath it (the web page's actions
+// arrive as posted messages), so a second request while it is open is dropped. The folder that comes back gets the product's folder name added (Inno Setup after Browse,
+// NSIS with the last part of InstallDir), unless it already is the default folder, is named like the product or is an install of ours; the folder picked itself is kept for
+// the "use the selected folder" choice.
+void
+choose_install_dir() {
+  if (g_choosing_dir || !S.v.dir_editable || S.v.page != pg::welcome) return;
+  g_choosing_dir = true;
+  const std::wstring picked =
+    installer_dir_win::pick_folder(g_uac_owner ? g_uac_owner : S.window, S.v.dir, S.v.zh ? L"选择安装位置" : L"Choose the install location");
+  g_choosing_dir = false;
+  if (picked.empty()) return;
+  const installer_dir::pick chosen = installer_dir_win::resolve_pick(picked);
+  S.v.dir = chosen.path;
+  S.v.dir_picked = chosen.appended ? installer_dir::normalise(picked) : std::wstring();
+  S.v.dir_note = chosen.redirected ? "redirected" : "";
+  dir_changed();
+}
+
+// The path as typed (the web page's text box, the native edit control): the folder as it stands, nothing added. Typing a folder is choosing exactly that folder.
+void
+set_install_dir(const std::wstring &text) {
+  if (g_choosing_dir || !S.v.dir_editable || S.v.page == pg::installing || S.v.page == pg::uac) return;
+  const std::wstring typed = installer_dir::normalise(installer_dir::tidy(text));
+  if (typed == S.v.dir) return;  // the same folder: the pick it came from, and the note, stay
+  S.v.dir = typed;
+  S.v.dir_picked.clear();
+  S.v.dir_note.clear();
+  dir_changed();
+}
+
+// "Use the selected folder": the folder that was picked, as it is, without the product's folder name. It goes through the same rules (a folder with somebody's files in it is refused).
+void
+use_picked_dir() {
+  if (g_choosing_dir || !S.v.dir_editable || S.v.dir_picked.empty()) return;
+  S.v.dir = S.v.dir_picked;
+  S.v.dir_picked.clear();
+  S.v.dir_note.clear();
+  dir_changed();
+}
+
+// "Safe place": the folder that has no warning (installer_dir::safe_alternative).
+void
+use_safe_dir() {
+  if (g_choosing_dir || !S.v.dir_editable || S.v.dir_safe.empty()) return;
+  S.v.dir = S.v.dir_safe;
+  S.v.dir_picked.clear();
+  S.v.dir_note.clear();
+  dir_changed();
+}
+
+bool
+dir_warning_confirmed() {
+  return S.dir_allow && installer_dir::same_text(S.dir_allow_path, installer_dir::normalise(S.v.dir));
+}
+
+// May the install start with this folder? false: a refused folder (the caller shows the first page with its reason), or a warning the person has not confirmed yet (this
+// opens the question; the install waits for confirm_dir_risk()).
+bool
+dir_gate() {
+  if (!S.v.dir_editable) return true;
+  refresh_install_dir();
+  if (!S.v.dir_error.empty()) {
+    S.v.dir_confirm = false;
+    return false;
+  }
+  if (S.v.dir_warning.empty() || dir_warning_confirmed()) return true;
+  if (!S.v.dir_confirm) {
+    S.v.dir_confirm = true;
+    S.confirm_since = GetTickCount64();
+    S.v.dir_confirm_left = installer_dir::kConfirmSeconds;
+    if (!g_web) SetTimer(S.window, kConfirmTimer, 250, nullptr);
+  }
+  return false;
+}
+
+// The person pressed "Install anyway" after the countdown. The delay is kept here too, not only on the button: an answer that comes early (a page that counts wrong) is not taken.
+bool
+confirm_dir_risk() {
+  if (!S.v.dir_confirm) return false;
+  if (GetTickCount64() - S.confirm_since < static_cast<ULONGLONG>(installer_dir::kConfirmSeconds) * 1000ull) return false;
+  S.dir_allow = true;
+  S.dir_allow_path = installer_dir::normalise(S.v.dir);
+  S.v.dir_confirm = false;
+  KillTimer(S.window, kConfirmTimer);
+  return true;
+}
+
+void
+cancel_dir_risk() {
+  S.v.dir_confirm = false;
+  KillTimer(S.window, kConfirmTimer);
 }
 
 std::wstring
@@ -428,6 +595,7 @@ page_rank(const pg page) {
 // One page: every pixel of it, buttons included, drawn into `rt` (the window or an offscreen copy of it).
 frame_result
 draw_scene(ID2D1RenderTarget &rt, canvas &c, view &v, const bool live) {
+  v.dir_live_edit = live && S.dir_edit != nullptr && IsWindowVisible(S.dir_edit) && g_selftest_out.empty();  // the edit window shows the path: the page does not draw it as well
   frame_result result = draw_page(c, v, S.brand);
   if (live && (v.scroll > result.max_scroll || v.scroll < 0)) {  // the window or the list changed: clamp and draw again
     v.scroll = std::clamp(v.scroll, 0.f, result.max_scroll);
@@ -445,9 +613,9 @@ draw_scene(ID2D1RenderTarget &rt, canvas &c, view &v, const bool live) {
     if (live && slot >= 0) {
       state.hover = S.hover_amt[slot];
       state.press = S.press_amt[slot];
-      state.focus = S.focus_visible && GetFocus() == S.controls[slot < 3 ? slot : 3 + kTileCount];
+      state.focus = S.focus_visible && GetFocus() == S.controls[slot];
     }
-    draw_button(c, button, state, S.pal.card);
+    draw_button(c, button, state, under_color(S.pal, v, button.id));
     c.restore();
   }
   return result;
@@ -566,6 +734,16 @@ render_frame() {
   canvas c(*S.target, S.write, S.d2d, S.scale, S.pal, S.v.zh, &S.tcache);
   frame_result result = in_transition ? compose_transition(*S.target, c, elapsed) : draw_scene(*S.target, c, S.v, true);
   if (!in_transition) S.drawn_v = S.v;
+  S.edit_on = result.edit;
+  S.edit_x = result.edit_x;
+  S.edit_y = result.edit_y;
+  S.edit_w = result.edit_w;
+  S.edit_h = result.edit_h;
+  if (S.v.dir_confirm) {
+    const ULONGLONG waited = GetTickCount64() - S.confirm_since;
+    const ULONGLONG total = static_cast<ULONGLONG>(installer_dir::kConfirmSeconds) * 1000ull;
+    S.v.dir_confirm_left = waited >= total ? 0 : static_cast<int>((total - waited + 999) / 1000);
+  }
   S.max_scroll = result.max_scroll;
   S.view_h = result.view_h;
   S.row_h = result.row_h;
@@ -635,6 +813,7 @@ sync_controls() {
     EnableWindow(control, spec->enabled);
     if (!IsWindowVisible(control)) ShowWindow(control, SW_SHOWNA);
   }
+  sync_dir_edit();
   const int title_width = static_cast<int>(40 * S.scale);
   for (int i = 0; i < 2; ++i) {
     SetWindowPos(S.title_buttons[i], nullptr, S.frame_w - title_width * (2 - i), 0, title_width, static_cast<int>(40 * S.scale),
@@ -793,6 +972,28 @@ component_list() {
 
 void
 begin_install() {
+  if (g_choosing_dir) return;  // the folder picker is open: the folder is not chosen yet, and an install now would use the one from before
+  // Keep the engine's explicit component list safe even if an old UI or the select-all action re-enabled a component after the page was drawn.
+  apply_os_limits(S.v);
+  // A folder the person picked is checked once more here (the drive may have changed since), and again by the elevated worker. A refusal goes back to the first page with its reason.
+  g_run.dir.clear();
+  g_run.dir_unsafe_ok = false;
+  if (S.v.dir_editable) {
+    if (!dir_gate()) {
+      if (!S.v.dir_error.empty()) {
+        S.v.uac_cancelled = false;
+        go(pg::welcome);
+      }
+      else {
+        // a warning: the question is open. It is asked on the first page or the components page; from any other (Try again after a failed run) the first page is where the folder is
+        if (S.v.page != pg::welcome && S.v.page != pg::components) go(pg::welcome);
+        refresh();
+      }
+      return;
+    }
+    if (!installer_dir::same_text(installer_dir::normalise(S.v.dir), installer_dir_win::default_dir())) g_run.dir = installer_dir::normalise(S.v.dir);
+    g_run.dir_unsafe_ok = !S.v.dir_warning.empty() && dir_warning_confirmed();
+  }
   g_run.id = make_run_id();
   g_run.directory = program_data() + L"\\" + kRunRoot + L"\\" + g_run.id;
   g_run.events = g_run.directory + L"\\events.jsonl";
@@ -813,6 +1014,8 @@ begin_install() {
   std::wstring parameters = L"--worker --run-id " + g_run.id + L" --shell-pid " + std::to_wstring(GetCurrentProcessId());
   if (!g_run.components.empty()) parameters += L" --components " + g_run.components;
   if (!g_run.tasks.empty()) parameters += L" --tasks " + g_run.tasks;
+  if (!g_run.dir.empty()) parameters += L" --dir \"" + g_run.dir + L"\"";
+  if (g_run.dir_unsafe_ok) parameters += L" --dir-unsafe-ok";
   SHELLEXECUTEINFOW execute {};
   execute.cbSize = sizeof(execute);
   execute.fMask = SEE_MASK_NOCLOSEPROCESS;
@@ -858,6 +1061,18 @@ finish_run(const std::string &result_json, DWORD fallback_code) {
   if (S.worker) {
     CloseHandle(S.worker);
     S.worker = nullptr;
+  }
+  if (const std::string refused = json_str(result_json, "dir_error"); !refused.empty() && S.v.dir_editable) {
+    // the worker refused the folder (it was changed on the way, or the room went): back to the first page with the reason, nothing installed
+    S.v.finished = false;
+    S.dir_allow = false;  // what was confirmed no longer holds: the worker found it different
+    S.v.dir_error = refused;
+    refresh_install_dir();
+    // a warning that the worker only wanted confirmed is asked about again; any other refusal (the folder could not be taken over, ...) keeps the worker's reason on the page
+    const bool only_unconfirmed = json_str(result_json, "detail") == "needs_allowunsafeparent" && S.v.dir_error.empty() && !S.v.dir_warning.empty();
+    if (!only_unconfirmed) S.v.dir_error = refused;
+    go(pg::welcome);
+    return;
   }
   if (state == "success" || state == "needs-reboot") S.v.webview2_missing = !webview2_runtime_present();
   if (state == "success") {
@@ -929,10 +1144,36 @@ click(int id) {
     refresh();
     return;
   }
+  if (S.v.dir_confirm) {
+    // the question about a folder warning has the three buttons of the page: the safe place (the primary one), install anyway (after the countdown), cancel
+    if (id == kBtnPrimary) {
+      use_safe_dir();
+      if (S.v.page != pg::welcome) go(pg::welcome);
+    }
+    else if (id == kBtnSecond) {
+      if (confirm_dir_risk()) begin_install();
+    }
+    else if (id == kBtnThird)
+      cancel_dir_risk();
+    refresh();
+    return;
+  }
+  if (id == kChangeDir || id == kUseSelected || id == kSafeDir) {
+    if (id == kChangeDir)
+      choose_install_dir();
+    else if (id == kUseSelected)
+      use_picked_dir();
+    else
+      use_safe_dir();
+    refresh();
+    return;
+  }
   if (id == kSelectAll) {
     bool all = true;
-    for (int i = 0; i < kTileCount; ++i) all = all && S.v.tiles[i];
-    for (int i = 0; i < kTileCount; ++i) S.v.tiles[i] = !all;
+    for (int i = 0; i < kTileCount; ++i)
+      if (component_min_build(i) <= windows_build()) all = all && S.v.tiles[i];
+    for (int i = 0; i < kTileCount; ++i)
+      S.v.tiles[i] = component_min_build(i) <= windows_build() && !all;
     refresh();
     return;
   }
@@ -1085,6 +1326,115 @@ fit_window(HWND window, bool center) {
   SetWindowPos(window, nullptr, x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE);
 }
 
+// ---------------------------------------------------------------- the field for the install folder's path (native window)
+// A person can type any folder. The field is a real edit window (IME and the clipboard work as everywhere) that sits on the page's field as an owned pop-up: a child window
+// would be painted over by the page's Direct2D surface. What was typed is checked a moment after the last key, on Enter and when the field loses the focus.
+constexpr UINT_PTR kDirTimer = 42;
+HFONT g_edit_font = nullptr;
+HBRUSH g_edit_brush = nullptr;
+COLORREF g_edit_brush_color = 0;
+WNDPROC g_edit_proc = nullptr;
+
+std::wstring
+dir_edit_text() {
+  wchar_t buffer[2048] {};
+  GetWindowTextW(S.dir_edit, buffer, static_cast<int>(std::size(buffer)));
+  return buffer;
+}
+
+void
+commit_dir_edit() {
+  KillTimer(S.window, kDirTimer);
+  if (!S.dir_edit || !S.v.dir_editable) return;
+  set_install_dir(dir_edit_text());
+  refresh();
+}
+
+LRESULT CALLBACK
+dir_edit_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+  switch (message) {
+    case WM_KEYDOWN:
+      if (wparam == VK_RETURN || wparam == VK_TAB) {
+        commit_dir_edit();
+        S.focus_visible = true;
+        // Tab goes on to the Change button next to the field, Enter to the page's main button
+        HWND next = wparam == VK_TAB && !(GetKeyState(VK_SHIFT) & 0x8000) ? S.controls[slot_of_id(kChangeDir)] : nullptr;
+        if (next && IsWindowVisible(next) && IsWindowEnabled(next)) SetFocus(next);
+        else apply_page_focus();
+        return 0;
+      }
+      if (wparam == VK_ESCAPE) {
+        SetWindowTextW(window, S.v.dir.c_str());  // back to the folder the page has
+        return 0;
+      }
+      break;
+    case WM_CHAR:
+      if (wparam == VK_RETURN || wparam == VK_TAB || wparam == VK_ESCAPE) return 0;  // handled on the key down: no beep
+      break;
+    case WM_KILLFOCUS: {
+      const LRESULT result = CallWindowProcW(g_edit_proc, window, message, wparam, lparam);
+      commit_dir_edit();
+      return result;
+    }
+    case WM_GETDLGCODE:
+      return DLGC_WANTALLKEYS | DLGC_HASSETSEL;
+  }
+  return CallWindowProcW(g_edit_proc, window, message, wparam, lparam);
+}
+
+void
+create_dir_edit(HWND owner) {
+  S.dir_edit = CreateWindowExW(WS_EX_TOOLWINDOW, L"EDIT", L"", WS_POPUP | ES_AUTOHSCROLL | ES_LEFT, 0, 0, 10, 10, owner, nullptr, nullptr, nullptr);
+  if (S.dir_edit) g_edit_proc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(S.dir_edit, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(dir_edit_proc)));
+}
+
+// The font of the field: 13.5 logical px, the family the page's text uses.
+void
+update_edit_font() {
+  if (!S.dir_edit) return;
+  HFONT font = CreateFontW(-static_cast<int>(13.5f * S.scale + 0.5f), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+    DEFAULT_PITCH | FF_DONTCARE, S.v.zh ? L"Microsoft YaHei UI" : L"Segoe UI");
+  SendMessageW(S.dir_edit, WM_SETFONT, reinterpret_cast<WPARAM>(font), TRUE);
+  if (g_edit_font) DeleteObject(g_edit_font);
+  g_edit_font = font;
+}
+
+void
+sync_dir_edit() {
+  if (!S.dir_edit) return;
+  const bool want = S.edit_on && !g_web && S.v.page == pg::welcome && S.v.dir_editable && !S.v.dir_confirm && !S.tr_on && IsWindowVisible(S.window) && !IsIconic(S.window) && g_selftest_out.empty();
+  if (!want) {
+    if (IsWindowVisible(S.dir_edit)) {
+      ShowWindow(S.dir_edit, SW_HIDE);
+      S.dirty = true;  // the page draws the path again
+    }
+    return;
+  }
+  const bool was_shown = IsWindowVisible(S.dir_edit) != FALSE;
+  POINT at { static_cast<LONG>(S.edit_x * S.scale), static_cast<LONG>(S.edit_y * S.scale) };
+  ClientToScreen(S.window, &at);
+  const int w = static_cast<int>(S.edit_w * S.scale), h = static_cast<int>(S.edit_h * S.scale);
+  if (!g_edit_font) update_edit_font();
+  if (GetFocus() != S.dir_edit && dir_edit_text() != S.v.dir) SetWindowTextW(S.dir_edit, S.v.dir.c_str());
+  SetWindowPos(S.dir_edit, nullptr, at.x, at.y, w, h, SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW);
+  if (!was_shown) S.dirty = true;  // the field now shows the path: the page stops drawing it
+}
+
+// The colours of the field: the page's text on the page's card (WM_CTLCOLOREDIT of the owner).
+HBRUSH
+edit_colors(HDC dc) {
+  const Color text = S.pal.on_surface, back = S.pal.card;
+  SetTextColor(dc, RGB(text.r, text.g, text.b));
+  const COLORREF fill = RGB(back.r, back.g, back.b);
+  SetBkColor(dc, fill);
+  if (!g_edit_brush || g_edit_brush_color != fill) {
+    if (g_edit_brush) DeleteObject(g_edit_brush);
+    g_edit_brush = CreateSolidBrush(fill);
+    g_edit_brush_color = fill;
+  }
+  return g_edit_brush;
+}
+
 WNDPROC g_button_proc = nullptr;
 
 // Owner-drawn rows: draw_control paints every pixel, so the BUTTON class erase (its light
@@ -1217,9 +1567,23 @@ window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
         const auto previous = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(title_button, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(row_button_proc)));
         if (!g_button_proc) g_button_proc = previous;
       }
+      create_dir_edit(window);
       return 0;
     }
+    case WM_CTLCOLOREDIT:
+      if (reinterpret_cast<HWND>(lparam) == S.dir_edit) return reinterpret_cast<LRESULT>(edit_colors(reinterpret_cast<HDC>(wparam)));
+      return DefWindowProcW(window, message, wparam, lparam);
+    case WM_MOVE: {
+      const LRESULT moved = DefWindowProcW(window, message, wparam, lparam);
+      S.dirty = true;
+      sync_dir_edit();  // the field is a pop-up window of its own: it does not move with the main window, so it is placed again
+      return moved;
+    }
     case WM_COMMAND:
+      if (HIWORD(wparam) == EN_CHANGE && reinterpret_cast<HWND>(lparam) == S.dir_edit) {
+        SetTimer(window, kDirTimer, 450, nullptr);  // checked a moment after the last key
+        return 0;
+      }
       if (HIWORD(wparam) == BN_CLICKED) {
         if (LOWORD(wparam) == kTitleMinimise)
           ShowWindow(window, SW_MINIMIZE);
@@ -1242,6 +1606,11 @@ window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
         poll_run();
         if (S.v.page != pg::uac && S.v.page != pg::installing) KillTimer(window, kTimer);
       }
+      if (wparam == kDirTimer) commit_dir_edit();
+      if (wparam == kConfirmTimer) {
+        S.dirty = true;  // the countdown of the question about a folder warning
+        if (!S.v.dir_confirm || S.v.dir_confirm_left <= 0) KillTimer(window, kConfirmTimer);
+      }
       return 0;
     case WM_DPICHANGED: {
       S.scale = fitting_scale(static_cast<float>(HIWORD(wparam)) / 96.f);
@@ -1250,6 +1619,7 @@ window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
         suggested->bottom - suggested->top, SWP_NOZORDER | SWP_NOACTIVATE);
       release_target();
       S.tcache.clear();
+      update_edit_font();
       refresh();
       return 0;
     }
@@ -1281,7 +1651,9 @@ window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
     case WM_SIZE:
     case WM_SHOWWINDOW: {
       S.dirty = true;
-      return DefWindowProcW(window, message, wparam, lparam);
+      const LRESULT shown = DefWindowProcW(window, message, wparam, lparam);
+      sync_dir_edit();  // the field shows and hides with the window
+      return shown;
     }
     case WM_CLOSE:
       // Once the elevated worker runs, the window can be hidden but not abandoned mid-install.
@@ -1294,6 +1666,16 @@ window_proc(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
     case WM_DESTROY:
       KillTimer(window, kTimer);
       KillTimer(window, kCloseTimer);
+      KillTimer(window, kDirTimer);
+      KillTimer(window, kConfirmTimer);
+      if (S.dir_edit) {
+        DestroyWindow(S.dir_edit);
+        S.dir_edit = nullptr;
+      }
+      if (g_edit_font) DeleteObject(g_edit_font);
+      if (g_edit_brush) DeleteObject(g_edit_brush);
+      g_edit_font = nullptr;
+      g_edit_brush = nullptr;
       release_target();
       S.tcache.clear();
       if (S.brand_source) {
@@ -1326,6 +1708,19 @@ WPARAM g_exit_code = 0;
 // One message: the list keys and the Return/Escape shortcuts first, then the normal dispatch.
 void
 handle_message(MSG &message) {
+  // Shift+Tab on the Change button goes back to the field of the path (a pop-up window is not in the tab order of the page)
+  if (message.message == WM_KEYDOWN && message.wParam == VK_TAB && (GetKeyState(VK_SHIFT) & 0x8000) && S.dir_edit && IsWindowVisible(S.dir_edit) &&
+      message.hwnd == S.controls[slot_of_id(kChangeDir)]) {
+    SetFocus(S.dir_edit);
+    SendMessageW(S.dir_edit, EM_SETSEL, 0, -1);
+    return;
+  }
+  if (S.dir_edit && message.hwnd == S.dir_edit) {
+    // the field of the path: its keys are its own (Enter, Tab and Escape are handled in its procedure), no dialog navigation
+    TranslateMessage(&message);
+    DispatchMessageW(&message);
+    return;
+  }
   if (message.message == WM_KEYDOWN &&
       (message.wParam == VK_TAB || message.wParam == VK_UP || message.wParam == VK_DOWN || message.wParam == VK_LEFT || message.wParam == VK_RIGHT ||
         message.wParam == VK_HOME || message.wParam == VK_END || message.wParam == VK_PRIOR || message.wParam == VK_NEXT || message.wParam == VK_SPACE ||
@@ -1394,6 +1789,7 @@ shell_main() {
     const std::wstring dir = install_dir();
     S.v.upgrade = !dir.empty() && GetFileAttributesW((dir + L"\\sunshine.exe").c_str()) != INVALID_FILE_ATTRIBUTES;
   }
+  init_install_dir();
   apply_os_limits(S.v);
   refresh_environment();
   WNDCLASSW window_class {};

@@ -50,6 +50,7 @@ namespace ds5::tuning {
     const char *const compat_bt_output_names[] = { "auto", "legacy", "ir", "off" };
     const char *const feedback_target_names[] = { "auto", "controller1", "controller2", "controller3", "controller4" };
     const char *const identity_names[] = { "auto", "xbox360", "ds4", "ds5" };
+    const char *const input_report_rate_names[] = { "auto", "hz500", "hz250" };
 
     const descriptor_t k_descriptor_table[] = {
 #include "tuning_descriptors.inc"
@@ -351,6 +352,10 @@ namespace ds5::tuning {
                                                                  0u,
         std::memory_order_release);
 
+      {
+        const auto rate = enum_value(107, "auto");
+        state.input_report_rate_hz.store(rate == "hz250" ? 250u : rate == "hz500" ? 500u : 0u, std::memory_order_release);
+      }
       const auto identity = enum_value(106, "auto");
       state.identity_mode.store(
         identity == "xbox360" ? 2u : identity == "ds4" ? 3u :
@@ -443,6 +448,7 @@ namespace ds5::tuning {
       state.gyro_yaw_offset_deg.store(number(71, 0.0f), std::memory_order_release);
       state.gyro_pitch_offset_deg.store(number(72, 0.0f), std::memory_order_release);
       state.gyro_roll_offset_deg.store(number(73, 0.0f), std::memory_order_release);
+      state.motion_report_rate_hz.store(std::clamp<std::uint32_t>(unsigned_value(101, 250), 30u, 1000u), std::memory_order_release);
       runtime::notify_published();
     }
 
@@ -546,7 +552,11 @@ namespace ds5::tuning {
       out["status"] = !implemented ? "unavailable" : (active ? "applied" : "ready");
       out["reason"] = !implemented ? wire_reason(descriptor.id) :
                                      (active ? std::string {} : std::string { "Native DualSense path is idle; the saved value applies on the next native feedback." });
+      out["reason_code"] = !implemented ? wire_reason_code(descriptor.id) : std::string {};
       out["note"] = wire_note(descriptor.id);
+      /* A key the host applies but only a client can finish: which clients honour it, so the page can say who needs to be new enough. */
+      out["client_support"] = nlohmann::json::array();
+      if (descriptor.id == 101) out["client_support"].push_back({ { "client", "Moonlight Enhanced" }, { "platform", "macOS" }, { "since", "1.3.9-rc.8" } });
       out["unit"] = descriptor.unit ? nlohmann::json(descriptor.unit) : nlohmann::json(nullptr);
       out["legacy_key"] = descriptor.legacy_key ? nlohmann::json(descriptor.legacy_key) : nlohmann::json(nullptr);
       out["title_i18n_key"] = descriptor.title_i18n_key;
@@ -702,17 +712,11 @@ namespace ds5::tuning {
       return "Stick and trigger-axis shaping runs in the client input path, not in this host feedback bridge.";
     }
     if (id >= 64 && id <= 73) return "Motion filtering and orientation run in the client input path.";
-    if (id == 96) {
-      return "The DualSense microphone endpoint has no capture source on this host yet (it answers silence); the virtual microphone is a separate task, so there is no route to choose.";
-    }
     if (id == 97) {
       return "The 0x5515 output extension carries no audio_control2 field, so the speaker preamp cannot reach the client.";
     }
     if (id == 98 || id == 100) {
       return "Bluetooth audio and output path are client radio decisions; this host bridge is USB only. The macOS client implements this key.";
-    }
-    if (id == 101) {
-      return "The cap limits client sampling of the physical pad. The host accepts pushed reports and has no polling loop to cap.";
     }
     if (id >= 102 && id <= 104) {
       return "Needs an ALK-DS5T/1 peer with HELLO/PATCH/SNAPSHOT/ACK and the section 16.3 layer merge; this build has no tuning control channel for the override gates or rate cap.";
@@ -725,6 +729,38 @@ namespace ds5::tuning {
       default:
         return "No native consumer is wired for this key in this build.";
     }
+  }
+
+  /**
+   * @brief The reason a key is unavailable as a code the Web UI and the panel turn into a sentence in the
+   * person's language (foundation-ui settings/availability.js REASONS).  Empty for a key the host applies.
+   * The codes are the same as the sentences of wire_reason() above, one per cause.
+   */
+  std::string
+  wire_reason_code(std::uint32_t id) {
+    if (runtime::key_implemented(id)) return {};
+    switch (id) {
+      case 10:
+      case 98:
+      case 100:
+        return "transport";
+      case 31:
+        return "slope";
+      case 105:
+        return "client";
+      default:
+        break;
+    }
+    if (!runtime::native_path_compiled()) return "platform";
+    if (id >= 4 && id <= 12) return "haptics-shaping";
+    if (id >= 19 && id <= 23) return "feedback-merge";
+    if (id >= 24 && id <= 34) return "trigger-scale";
+    if (id >= 74 && id <= 80) return "pointer";
+    if (id >= 35 && id <= 73) return "client";
+    if (id == 97) return "preamp";
+    if (id >= 102 && id <= 104) return "control-channel";
+    if (id == 2) return "haptics-switch";
+    return "unwired";
   }
 
   std::string
@@ -770,6 +806,12 @@ namespace ds5::tuning {
       case 52:
       case 55:
         return "The analog axis becomes 0 or 255 by the threshold decision; the digital bit is set in either mode.";
+      case 96:
+        return "controller: the DualSense microphone endpoint carries the client's microphone (client microphone redirection must be on, with the USB/IP virtual microphone or VB-Cable available); none: it answers silence; host: capturing the host's own microphone is not implemented, the endpoint stays silent. Applies at once.";
+      case 107:
+        return "How often a game can read a changed stick, trigger or button of one controller: auto answers a change at once (up to 1000 per second, shared when more than two controllers are active), 500 Hz and 250 Hz keep every reply that far apart. 250 Hz is the rhythm before the host answered at once: a game reads fewer reports, one stick sample later on average, and a computer that stalls for 160 ms loses fewer of the reports in between. Button taps are kept for the game to read, but a game that stops reading for longer than the controller queue holds (about 128 ms at 250 Hz, less when faster) can miss a short tap; in the measurements one tap in 344 was missed at 250 Hz and none at 500 Hz or faster. This is how fast the host answers the game; the motion rate (key 101) is how fast the client samples its sensors. Applies at once.";
+      case 101:
+        return "The rate the host asks every client for motion reports (accelerometer and gyro); it applies at once to a running stream. A client reports at the lower of this value and its own limit (Moonlight Enhanced: Settings > Input > Gamepad > Motion Report Rate Limit, 250 Hz by default), and no faster than its pad samples: a DualSense gives about 250 Hz over USB. Buttons and sticks are not capped. A client that does not honour the request keeps its own rate.";
       case 106:
         return "Applies to the next virtual controller allocation; active devices keep their current identity.";
       default:

@@ -1,7 +1,7 @@
 <script setup>
 import { computed, inject, watch, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { DS5_SUB } from 'foundation-ui/settings/index.js'
+import { DS5_SUB, ds5Availability } from 'foundation-ui/settings/index.js'
 import { localizedKeyLabel, localizedOptionLabel } from '../../config/dualsenseI18n.js'
 import { MButton, MChip, MFooter, MGroup, MItem, MSection, MSnackbar } from 'foundation-ui/vue'
 import CfgSub from '../cfg/CfgSub.vue'
@@ -10,6 +10,7 @@ import RangeField from './RangeField.vue'
 import ColorWell from './ColorWell.vue'
 import DualSenseLive from './DualSenseLive.vue'
 import AdvancedWarningDialog from './AdvancedWarningDialog.vue'
+import InputRateDialog from './InputRateDialog.vue'
 import { blocksOf, rowsOf } from './tuningIcons.js'
 import { useDualsenseShared, useDualsenseTuning } from '../../composables/dualsenseShared.js'
 
@@ -20,7 +21,7 @@ const { t, locale } = useI18n()
 const nav = inject('cfgNav')
 const store = useDualsenseShared()
 const tuning = useDualsenseTuning(t, locale.value)
-const { edited, cards, advancedGroups, unavailable, advancedOpen, valueOf, setValue, onValue, resetKey, setColor, saveMessage } = store
+const { edited, cards, advancedGroups, unavailable, advancedOpen, valueOf, setValue, onValue, resetKey, setColor, saveMessage, rateAsk, confirmRate, cancelRate } = store
 const embedded = window.isTauri === true && window.parent !== window
 
 const snack = ref(false)
@@ -28,13 +29,18 @@ watch(saveMessage, (text) => { snack.value = text !== '' })
 tuning.load()
 
 const warningOpen = ref(false)
+// the page of the unavailable keys only lists them: a link or a search hit lands on it without the warning
+const behindWarning = (sub) => DS5_SUB.isGroup(sub) && sub !== DS5_SUB.pending
 watch(() => [nav.sub.value, advancedOpen.value], ([sub, open]) => {
-  if (!DS5_SUB.isGroup(sub) || open) return
+  if (!behindWarning(sub) || open) return
   if (store.warningHidden()) advancedOpen.value = true
   else warningOpen.value = true
 }, { immediate: true })
 const confirmWarning = (dontShowAgain) => { store.rememberWarning(dontShowAgain); warningOpen.value = false; advancedOpen.value = true }
 const cancelWarning = () => { warningOpen.value = false; nav.sub.value = '' }
+
+// why the host does not apply a key (the host's reason code, else read from the key)
+const reasonOf = (key) => ds5Availability(key, { locale: locale.value })?.reason ?? ''
 
 // the default of a key the client executes, as the client would show it
 const valueText = (key) => {
@@ -47,13 +53,35 @@ const pair = (key) => Number(edited[key.id] ?? key.default)
 const colorWired = computed(() => [81, 82, 83, 84].every(store.isWired))
 // the light bar colour is edited by the colour row (swatches, hex, picker), not by three channel sliders
 const cardRows = (card) => (card.lighting && colorWired.value ? card.rows.filter((key) => ![82, 83, 84].includes(key.id)) : card.rows)
+// the tests go to the controllers of the running stream: a short rumble (POST /api/dualsense/rumble-test), the light bar flashing, a trigger resisting
+// (POST /api/dualsense/pad-test); the host cannot know whether the client's pad did it and says so
+const TESTS = ['haptics', 'identify', 'trigger_left', 'trigger_right']
 const testNote = ref('')
+const testBusy = ref(false)
 let testTimer = null
-const TESTS = ['identify', 'haptics', 'trigger_left', 'trigger_right', 'stop']
-const runTest = (action) => {
-  testNote.value = t('ds5.test_panel.preview_only', { action: t(`ds5.test_panel.${action}`) })
+// the answer of the newest request is the one shown: a test that was stopped answers late and must not overwrite the stop
+let testSeq = 0
+const post = (path, body) => fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(body) })
+const runTest = async (action) => {
+  const stopping = action === 'stop'
+  if (testBusy.value && !stopping) return
+  if (!stopping) testBusy.value = true
+  const mine = ++testSeq
+  let result = 'failed'
+  let pads = 0
+  try {
+    const response = action === 'haptics' ? await post('/api/dualsense/rumble-test', { duration_ms: 400 }) : await post('/api/dualsense/pad-test', { action })
+    const body = await response.json().catch(() => ({}))
+    if (response.ok && typeof body.result === 'string') { result = body.result; pads = Number(body.pads) || 0 }
+  } catch {
+    result = 'failed'
+  } finally {
+    if (!stopping) testBusy.value = false
+  }
+  if (mine !== testSeq) return
+  testNote.value = result === 'sent' && action !== 'haptics' ? t(`ds5.test_panel.sent.${action}`, { pads }) : t(`ds5.test_panel.result.${result}`, { pads })
   clearTimeout(testTimer)
-  testTimer = setTimeout(() => { testNote.value = '' }, 1600)
+  testTimer = setTimeout(() => { testNote.value = '' }, 6000)
 }
 const openTool = () => window.parent.postMessage({ type: 'foundation-open', page: 'controller-test' }, '*')
 </script>
@@ -74,6 +102,23 @@ const openTool = () => window.parent.postMessage({ type: 'foundation-open', page
     </MSection>
   </CfgSub>
 
+  <!-- The keys this host build does not apply: the client's own, shown as the client's; and the ones not available yet -->
+  <CfgSub :id="DS5_SUB.pending" :title="t('ds5.pending.title')">
+    <MSection v-if="unavailable.client.length" :title="t('ds5.client.title')">
+      <MGroup>
+        <MItem v-for="key in unavailable.client" :key="key.id" :title="localizedKeyLabel(key, locale)" :text="valueText(key)" icon="devices" :data-ds5-key="key.id" :data-cfg="`ds5:${key.key}`" :data-tip="reasonOf(key) || undefined">
+          <template #trail><MChip tone="info">{{ t('ds5.client.chip') }}</MChip></template>
+        </MItem>
+      </MGroup>
+      <MFooter>{{ t('ds5.client.hint') }}</MFooter>
+    </MSection>
+    <MSection v-if="unavailable.pending.length" :title="t('ds5.pending.not_yet')">
+      <MGroup>
+        <ControlField v-for="key in unavailable.pending" :key="key.id" :descriptor="key" :model-value="edited[key.id]" disabled />
+      </MGroup>
+    </MSection>
+  </CfgSub>
+
   <template v-if="advancedOpen">
     <CfgSub v-for="group in advancedGroups" :id="DS5_SUB.group(group.id)" :key="group.id" :title="t(group.titleKey)">
       <DualSenseLive :id="'g' + group.id" />
@@ -86,23 +131,6 @@ const openTool = () => window.parent.postMessage({ type: 'foundation-open', page
         </MGroup>
       </MSection>
     </CfgSub>
-
-    <!-- The keys this host build does not apply: the client's own, shown as the client's; and the ones not available yet -->
-    <CfgSub :id="DS5_SUB.pending" :title="t('ds5.pending.title')">
-      <MSection v-if="unavailable.client.length" :title="t('ds5.client.title')">
-        <MGroup>
-          <MItem v-for="key in unavailable.client" :key="key.id" :title="localizedKeyLabel(key, locale)" :text="valueText(key)" icon="devices" :data-ds5-key="key.id" :data-cfg="`ds5:${key.key}`" :data-tip="key.reason">
-            <template #trail><MChip tone="info">{{ t('ds5.client.chip') }}</MChip></template>
-          </MItem>
-        </MGroup>
-        <MFooter>{{ t('ds5.client.hint') }}</MFooter>
-      </MSection>
-      <MSection v-if="unavailable.pending.length" :title="t('ds5.pending.not_yet')">
-        <MGroup>
-          <ControlField v-for="key in unavailable.pending" :key="key.id" :descriptor="key" :model-value="edited[key.id]" disabled />
-        </MGroup>
-        </MSection>
-    </CfgSub>
   </template>
 
   <CfgSub id="ds5-test" :title="t('ds5.test_panel.title')">
@@ -111,7 +139,8 @@ const openTool = () => window.parent.postMessage({ type: 'foundation-open', page
         <MItem icon="gamepad" :title="t('ds5.test_panel.title')" :text="testNote || t('ds5.test_panel.note')" stack>
           <template #control>
             <div class="ds5-test">
-              <MButton v-for="action in TESTS" :key="action" variant="tonal" size="sm" @click="runTest(action)">{{ t('ds5.test_panel.' + action) }}</MButton>
+              <MButton v-for="action in TESTS" :key="action" variant="tonal" size="sm" :disabled="testBusy" @click="runTest(action)">{{ t('ds5.test_panel.' + action) }}</MButton>
+              <MButton variant="text" size="sm" @click="runTest('stop')">{{ t('ds5.test_panel.stop') }}</MButton>
             </div>
           </template>
         </MItem>
@@ -121,6 +150,7 @@ const openTool = () => window.parent.postMessage({ type: 'foundation-open', page
   </CfgSub>
 
   <AdvancedWarningDialog :show="warningOpen" @cancel="cancelWarning" @confirm="confirmWarning" />
+  <InputRateDialog :show="rateAsk !== null" :option="String(rateAsk?.value ?? 'auto')" @cancel="cancelRate" @confirm="confirmRate" />
   <MSnackbar v-model="snack" :message="saveMessage" />
 </template>
 

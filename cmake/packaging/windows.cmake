@@ -51,9 +51,9 @@ install(FILES "${CMAKE_SOURCE_DIR}/NOTICE"
 
 install(TARGETS sunshine RUNTIME DESTINATION "." COMPONENT application)
 install(FILES "${sunshine_webp_SOURCE_DIR}/COPYING"
-        DESTINATION "tools/library/libwebp" RENAME "LICENSE.txt" COMPONENT application)
+        DESTINATION "licenses/libwebp" RENAME "LICENSE.txt" COMPONENT application)
 install(FILES "${sunshine_webp_SOURCE_DIR}/PATENTS"
-        DESTINATION "tools/library/libwebp" RENAME "PATENTS.txt" COMPONENT application)
+        DESTINATION "licenses/libwebp" RENAME "PATENTS.txt" COMPONENT application)
 set(SUNSHINE_MAT_CAPTURE_AVAILABLE 0)
 if (TARGET sunshine_mat_capture)
   set(SUNSHINE_MAT_CAPTURE_AVAILABLE 1)
@@ -131,6 +131,9 @@ install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/install_portable.bat"
         COMPONENT application)
 install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/uninstall_portable.bat"
         DESTINATION "."
+        COMPONENT application)
+install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/shell/remove-shell-menus.ps1"
+        DESTINATION "scripts"
         COMPONENT application)
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/languages/"
         DESTINATION "scripts/languages"

@@ -9,12 +9,18 @@
 
 #include <src/tray/tray_state.h>
 
+#ifdef _WIN32
+  #include <Windows.h>
+  #include <src/touch_keyboard_session.h>
+#endif
+
 class TrayStateTest: public ::testing::Test {
 protected:
   void
   SetUp() override {
     tray_state::set_change_sink({});
     tray_state::clear_sessions();
+    tray_state::set_touch_keyboard(std::nullopt);
     tray_state::clear_pairing_required();
     tray_state::clear_notification();
     tray_state::set_vdd_state(false, false, false, false);
@@ -29,6 +35,54 @@ protected:
     tray_state::set_change_sink({});
   }
 };
+
+TEST_F(TrayStateTest, PublishesAndClearsTouchKeyboardPreference) {
+  const auto before = tray_state::get().revision;
+  tray_state::set_touch_keyboard(tray_state::touch_keyboard_t { false, 42 });
+  const auto disabled = tray_state::to_json();
+  EXPECT_FALSE(disabled.at("touch_keyboard").at("enabled").get<bool>());
+  EXPECT_EQ(disabled.at("touch_keyboard").at("session_id"), 42);
+  const auto revision = tray_state::get().revision;
+  EXPECT_GT(revision, before);
+
+  tray_state::set_touch_keyboard(tray_state::touch_keyboard_t { false, 42 });
+  EXPECT_EQ(tray_state::get().revision, revision);
+  tray_state::set_touch_keyboard(std::nullopt);
+  EXPECT_TRUE(tray_state::to_json().at("touch_keyboard").is_null());
+}
+
+#ifdef _WIN32
+TEST_F(TrayStateTest, TouchKeyboardPreferenceFollowsOwningSessions) {
+  DWORD capture_session = 0;
+  ASSERT_TRUE(ProcessIdToSessionId(GetCurrentProcessId(), &capture_session));
+  EXPECT_FALSE(touch_kb::acquire(-1));
+  EXPECT_TRUE(tray_state::to_json().at("touch_keyboard").is_null());
+
+  auto first = touch_kb::acquire(0);
+  ASSERT_TRUE(first);
+  EXPECT_FALSE(tray_state::to_json().at("touch_keyboard").at("enabled").get<bool>());
+  EXPECT_EQ(tray_state::to_json().at("touch_keyboard").at("session_id"), capture_session);
+
+  auto second = touch_kb::acquire(1);
+  ASSERT_TRUE(second);
+  EXPECT_FALSE(tray_state::to_json().at("touch_keyboard").at("enabled").get<bool>());
+  first.reset();
+  EXPECT_TRUE(tray_state::to_json().at("touch_keyboard").at("enabled").get<bool>());
+  second.reset();
+  EXPECT_TRUE(tray_state::to_json().at("touch_keyboard").is_null());
+
+  first = touch_kb::acquire(0);
+  second = touch_kb::acquire(1);
+  ASSERT_TRUE(first);
+  ASSERT_TRUE(second);
+  const auto revision = tray_state::get().revision;
+  second.reset();
+  EXPECT_FALSE(tray_state::to_json().at("touch_keyboard").at("enabled").get<bool>());
+  EXPECT_EQ(tray_state::get().revision, revision);
+  first.reset();
+  EXPECT_TRUE(tray_state::to_json().at("touch_keyboard").is_null());
+}
+#endif
 
 TEST_F(TrayStateTest, PublishesStreamingLifecycle) {
   const auto initial_revision = tray_state::get().revision;

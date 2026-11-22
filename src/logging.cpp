@@ -3,16 +3,16 @@
  * @brief Definitions for logging related functions.
  */
 // standard includes
+#include <ctime>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
-#include <filesystem>
-#include <ctime>
 
 // lib includes
 #include <boost/core/null_deleter.hpp>
-#include <boost/format.hpp>
 #include <boost/filesystem/path.hpp>
+#include <boost/format.hpp>
 #include <boost/log/attributes/clock.hpp>
 #include <boost/log/common.hpp>
 #include <boost/log/expressions.hpp>
@@ -23,9 +23,9 @@
 #include <boost/log/utility/setup/file.hpp>
 
 // local includes
-#include "logging.h"
 #include "file_handler.h"
 #include "log_retention.h"
+#include "logging.h"
 
 #ifdef _WIN32
   #include "src/platform/windows/misc.h"
@@ -52,7 +52,7 @@ namespace {
     return boost::filesystem::path { path.string() };
 #endif
   }
-}
+}  // namespace
 
 boost::shared_ptr<boost::log::sinks::asynchronous_sink<boost::log::sinks::text_ostream_backend>> console_sink;
 boost::shared_ptr<boost::log::sinks::synchronous_sink<boost::log::sinks::text_file_backend>> file_sink_ptr;
@@ -126,29 +126,29 @@ namespace logging {
       auto now = std::chrono::system_clock::now();
       auto time_t = std::chrono::system_clock::to_time_t(now);
       auto tm = *std::localtime(&time_t);
-      
+
       // 生成带日期的备份文件名（只精确到日期）
       std::ostringstream backup_name;
-      backup_name << "sunshine_" 
-                  << std::put_time(&tm, "%Y%m%d") 
+      backup_name << "sunshine_"
+                  << std::put_time(&tm, "%Y%m%d")
                   << ".log";
-      
+
       // 构建备份文件路径
       fs::path backup_path = log_path.parent_path() / backup_name.str();
-      
+
       // 如果备份文件已存在，则追加到文件尾部
       if (fs::exists(backup_path)) {
         std::ifstream source(log_path, std::ios::binary);
         std::ofstream dest(backup_path, std::ios::binary | std::ios::app);
-        
+
         if (source && dest) {
           dest << source.rdbuf();
           dest.close();
           source.close();
-          
+
           // 删除原日志文件
           fs::remove(log_path);
-          
+
           BOOST_LOG(info) << "Appended log file to: " << file_handler::path_to_utf8(backup_path);
         }
         else {
@@ -302,15 +302,13 @@ namespace logging {
       auto file_backend = boost::make_shared<bl::sinks::text_file_backend>(
         bl::keywords::file_name = boost_log_path,
         bl::keywords::rotation_size = static_cast<uintmax_t>(max_log_size_mb) * 1024 * 1024,
-        bl::keywords::open_mode = open_mode
-      );
+        bl::keywords::open_mode = open_mode);
 
       // Set up file collector to manage rotated log files
       file_backend->set_file_collector(bl::sinks::file::make_collector(
         bl::keywords::target = boost_archive_path,
         bl::keywords::max_size = static_cast<uintmax_t>(max_log_size_mb) * 1024 * 1024 * 5,  // Keep up to 5x max_size total
-        bl::keywords::max_files = 10
-      ));
+        bl::keywords::max_files = 10));
 
       file_backend->auto_flush(true);
       // Scan for any previously rotated files to properly manage the archive
@@ -345,14 +343,16 @@ namespace logging {
       av_log_set_level(AV_LOG_DEBUG);
     }
     av_log_set_callback([](void *ptr, int level, const char *fmt, va_list vl) {
-      static int print_prefix = 1;
+      // ffmpeg-log-20261120, av_log_set_callback: codecs may call this on several threads.
+      thread_local int print_prefix = 1;
       char buffer[1024];
 
       av_log_format_line(ptr, level, fmt, vl, buffer, sizeof(buffer), &print_prefix);
       if (level <= AV_LOG_ERROR) {
         // We print AV_LOG_FATAL at the error level. FFmpeg prints things as fatal that
         // are expected in some cases, such as lack of codec support or similar things.
-        BOOST_LOG(error) << buffer;
+        // boost-log-add-value-1.92-20261120, operator<<: own the format string in the record.
+        BOOST_LOG(error) << bl::add_value(MESSAGE_TEMPLATE_ATTRIBUTE, std::string { fmt }) << buffer;
       }
       else if (level <= AV_LOG_WARNING) {
         BOOST_LOG(warning) << buffer;

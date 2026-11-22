@@ -28,6 +28,7 @@
 #include "src/logging.h"
 #include "src/platform/common.h"
 #include "src/platform/gamepad_selection.h"
+#include "src/telemetry/telemetry.h"
 #include "virtual_mouse.h"
 
 // Note: HSYNTHETICPOINTERDEVICE and related functions are now included in
@@ -290,6 +291,7 @@ namespace platf {
         auto status = vigem_connect(client.get());
         if (!VIGEM_SUCCESS(status)) {
           BOOST_LOG(warning) << "Couldn't setup connection to ViGEm for gamepad support ["sv << util::hex(status).to_string_view() << ']';
+          telemetry::driver_failed("gamepad", "probe", std::string { util::hex(status).to_string_view() });
           client.reset();
           return -1;
         }
@@ -320,6 +322,7 @@ namespace platf {
       auto status = vigem_target_add(client.get(), gamepad.gp.get());
       if (!VIGEM_SUCCESS(status)) {
         BOOST_LOG(error) << "Couldn't add Gamepad to ViGEm connection ["sv << util::hex(status).to_string_view() << ']';
+        telemetry::driver_failed("gamepad", "create", std::string { util::hex(status).to_string_view() });
 
         return -1;
       }
@@ -2038,10 +2041,7 @@ namespace platf {
         feedback_queue,
         true);
       if (result == 0) {
-        /* 250 Hz is above the legacy 100 Hz request while keeping client and
-         * host scheduling overhead below the 1000 Hz USB report ceiling. */
-        feedback_queue->raise(gamepad_feedback_msg_t::make_motion_event_state(id.clientRelativeIndex, LI_MOTION_TYPE_ACCEL, 250));
-        feedback_queue->raise(gamepad_feedback_msg_t::make_motion_event_state(id.clientRelativeIndex, LI_MOTION_TYPE_GYRO, 250));
+        /* The request for motion reports (default 250 Hz, key 101) went out with the allocation. */
         return 0;
       }
       BOOST_LOG(warning) << "DualSense allocation failed for "sv << selection_source

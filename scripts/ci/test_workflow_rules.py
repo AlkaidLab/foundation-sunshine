@@ -111,6 +111,57 @@ class ShardTest(unittest.TestCase):
         self.assertIn("-DSUNSHINE_BUILD_MAT_CAPTURE=OFF", shard["run"])
         self.assertNotIn("MAT_CAPTURE", build["run"])
 
+    def test_the_shards_pin_the_same_build_time_and_path_as_the_build_job(self):
+        # build_info_defs.h is generated at configure time (string(TIMESTAMP) honours SOURCE_DATE_EPOCH), and a
+        # header whose bytes differ between the two invalidates every cache entry that reads it; the dotnet PATH
+        # keeps find_program() in agreement (the found set is part of the configure result).
+        shard = step(self.jobs["shard"], "Configure Windows")
+        build = step(self.jobs["build_win"], "Configure Windows")
+        adapter_configure = next(s for s in self.jobs["adapter_config"]["steps"] if "cmake -B build-adapter-config" in s.get("run", ""))
+        for configure in (shard, build, adapter_configure):
+            self.assertIn('export SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct)"', configure["run"])
+        for configure in (shard, build):
+            self.assertIn('export PATH="$PATH:/c/Program Files/dotnet"', configure["run"])
+            self.assertIn('ninja -C build -t commands | grep -E " -o [^ ]+[.]obj( |$)" | sort > object-commands.txt', configure["run"])
+
+    def test_a_shard_never_cancels_or_displaces_another_run_and_shares_its_cache(self):
+        # A concurrency group would: GitHub keeps only one pending job per group by default, so a third
+        # run replaces the waiting second (its shards then read as cancelled and the build fails). The
+        # shard instead waits a bounded time for a concurrent run's cache, restores whatever exists
+        # -- including what another run's shards saved -- and saves its own cache for the next run,
+        # because build_win saves only at its end and only on master.
+        shard = self.jobs["shard"]
+        self.assertNotIn("concurrency", shard)
+        self.assertEqual(shard["permissions"], {"contents": "write", "actions": "read"})
+        wait = step(shard, "Wait briefly for a concurrent run's compiler cache")
+        self.assertEqual(wait["if"], "github.event_name != 'schedule'")
+        self.assertIn("while (( waited < 300 )); do", wait["run"])
+        self.assertIn("actions/caches?key=ccache-windows-$FINGERPRINT", wait["run"])
+        restore = step(shard, "Restore the compiler cache")
+        self.assertEqual(restore["if"], "github.event_name != 'schedule'")
+        self.assertEqual(restore["uses"], "actions/cache/restore@v6")
+        self.assertEqual(
+            restore["with"]["restore-keys"],
+            "ccache-windows-${{ needs.cold_plan.outputs.fingerprint }}-\n"
+            "ccache-windows-shard-${{ needs.cold_plan.outputs.fingerprint }}-\n"
+            "ccache-windows-\n",
+        )
+        save = step(shard, "Save the shard compiler cache")
+        self.assertEqual(save["uses"], "actions/cache/save@v6")
+        self.assertEqual(
+            save["with"]["key"],
+            "ccache-windows-shard-${{ needs.cold_plan.outputs.fingerprint }}-${{ github.run_id }}-${{ matrix.index }}",
+        )
+
+    def test_every_ccache_restore_falls_back_to_the_most_recent_lineage(self):
+        # Entries are keyed on the compile command line, so a restored entry of another fingerprint either hits
+        # or misses on its own; a new fingerprint (or an eviction under the exact key) starts warm, not cold.
+        restores = [s for job in self.jobs.values() for s in job.get("steps", [])
+                    if s.get("uses", "").startswith("actions/cache/restore") and "ccache" in s.get("with", {}).get("key", "")]
+        self.assertGreaterEqual(len(restores), 3)
+        for restore in restores:
+            self.assertIn("ccache-windows-\n", restore["with"]["restore-keys"], restore.get("name"))
+
     def test_the_shard_configure_has_no_token_and_uses_the_pinned_gui_inputs(self):
         shard = self.jobs["shard"]
         configure = step(shard, "Configure Windows")
@@ -128,7 +179,9 @@ class ShardTest(unittest.TestCase):
         import json
         for x in self.jobs["shard"]["steps"]:
             text = json.dumps(x)
-            if x.get("name") == "Compile object files, chunk by chunk":
+            # The cache wait also talks to the API (listing entries and runs); like the claim script it
+            # never runs a build command, and CMake and ninja still never see a token.
+            if x.get("name") in ("Compile object files, chunk by chunk", "Wait briefly for a concurrent run's compiler cache"):
                 self.assertIn("github.token", text)
             else:
                 self.assertNotIn("github.token", text, x.get("name"))
@@ -139,15 +192,17 @@ class ShardTest(unittest.TestCase):
         build = self.jobs["build_win"]
         restore = step(build, "Cache compiler objects")["with"]
         self.assertEqual(restore["key"], f"ccache-windows-{fingerprint}-${{{{ github.run_id }}}}")
-        self.assertEqual(restore["restore-keys"].strip(), f"ccache-windows-{fingerprint}-")
+        # The second line is the fallback to the most recent lineage of any fingerprint: a new fingerprint
+        # starts warm because entries are keyed on the compile command line, not on the fingerprint.
+        self.assertEqual(restore["restore-keys"].strip(), f"ccache-windows-{fingerprint}-\nccache-windows-")
         save = step(build, "Save compiler cache")["with"]
         self.assertEqual(save["key"], restore["key"])
         adapter = step(self.jobs["adapter_config"], "Cache compiler objects")["with"]
-        self.assertEqual(adapter["restore-keys"].strip(), f"ccache-windows-{fingerprint}-")
+        self.assertEqual(adapter["restore-keys"].strip(), f"ccache-windows-{fingerprint}-\nccache-windows-")
         self.assertIn("cold_plan", self.jobs["adapter_config"]["needs"])
         prune = step(build, "Prune stale compiler cache entries")["run"]
         self.assertIn(f'$current = "ccache-windows-{fingerprint}-${{{{ github.run_id }}}}"', prune)
-        self.assertIn("^ccache-windows-([0-9a-f]{12}-(pinned|newest)-)?[0-9]+$", prune)  # fingerprinted (with the toolchain mode) and older keys
+        self.assertIn("^ccache-windows-((shard-)?[0-9a-f]{12}-(pinned|newest)-)?[0-9]+(-[0-9]+)?$", prune)  # fingerprinted and per-shard entries (with the toolchain mode) and older keys
 
     def test_the_cold_plan_shards_on_a_missing_fingerprint_cache_or_a_widely_included_header(self):
         plan = step(self.jobs["cold_plan"], "Decide")
@@ -210,6 +265,36 @@ class ShardTest(unittest.TestCase):
         self.assertEqual(self.gate(shard="cancelled"), 1)
         self.assertEqual(self.gate(build_win="failure"), 1)
         self.assertEqual(self.gate(adapter_config="failure"), 1)
+
+
+class SizeBudgetTest(unittest.TestCase):
+    def setUp(self):
+        self.build = load()["jobs"]["build_win"]
+
+    def test_the_size_budget_runs_on_the_finished_installer_before_the_assets_are_renamed(self):
+        names = [s.get("name") for s in self.build["steps"]]
+        gate = step(self.build, "Installer size budget")
+        self.assertEqual(gate["if"], "needs.changes.outputs.package == 'true'")
+        self.assertGreater(names.index("Installer size budget"), names.index("Run the installer worker (smoke test)"))
+        self.assertLess(names.index("Installer size budget"), names.index("Rename release assets"))
+        self.assertIn("scripts/ci/check-size-budget.py", gate["run"])
+        self.assertIn("artifacts/sunshine-windows-installer.exe", gate["run"])
+        for measured in ("sunshine-windows-portable.zip", "::Sunshine/sunshine.exe", "::Sunshine/assets/gui/sunshine-gui.exe"):
+            self.assertIn(measured, gate["run"])
+        # a failing script must fail the step: pwsh does not stop on a native exit code by itself
+        self.assertIn("exit $LASTEXITCODE", gate["run"])
+
+
+    def test_the_symbols_of_every_build_are_kept_as_an_artifact_of_their_own(self):
+        # a pre-release (and its Symbols-x64.zip) is deleted once two newer ones exist: the artifact outlives it by name
+        keep = step(self.build, "Keep the symbols of this build")
+        self.assertEqual(keep["if"], "needs.changes.outputs.package == 'true'")
+        self.assertEqual(keep["with"]["name"], "sunshine-symbols-${{ needs.setup_release.outputs.release_tag }}")
+        self.assertEqual(keep["with"]["path"], "artifacts/Sunshine.*.Symbols-x64.zip")
+        self.assertEqual(keep["with"]["retention-days"], 90)
+        self.assertEqual(keep["with"]["if-no-files-found"], "error")
+        names = [s.get("name") for s in self.build["steps"]]
+        self.assertGreater(names.index("Keep the symbols of this build"), names.index("Rename release assets"))
 
 
 if __name__ == "__main__":

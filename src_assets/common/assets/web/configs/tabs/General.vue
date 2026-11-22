@@ -1,7 +1,7 @@
 <script setup>
-import { reactive, ref } from 'vue'
+import { inject, reactive, ref } from 'vue'
 import { computed } from 'vue'
-import { MFooter, MGroup, MInfo, MSection, guideTexts } from 'foundation-ui/vue'
+import { MFooter, MGroup, MInfo, MResetEntry, MSection, guideTexts } from 'foundation-ui/vue'
 import { useI18n } from 'vue-i18n'
 import { detectSystemLocale, localeChoice, resolveChoice, setLocaleChoice } from '../../config/i18n.js'
 import CommandTable from '../../components/CommandTable.vue'
@@ -24,6 +24,9 @@ const { t, locale } = useI18n()
 const config = ref(props.config)
 const globalPrepCmd = ref(props.globalPrepCmd)
 const isEmbeddedGui = window.isTauri === true && window.parent !== window
+// 恢复默认设置 is a page of its own: from here it opens in this shell, or, in the control panel's frame, in the panel (which adds its own preferences to it)
+const shell = inject('webShell', null)
+const openReset = () => { if (isEmbeddedGui) window.parent.postMessage({ type: 'foundation-open', page: 'reset' }, '*'); else shell?.nav?.go('reset') }
 
 function addCmd() {
   let template = {
@@ -83,12 +86,17 @@ const sleepModes = computed(() => [['0', 'suspend'], ['1', 'hibernate'], ['2', '
         <CfgSwitch :config="config" k="launch_splash" :on="true" :off="false" def="true" />
       </MGroup>
     </MSection>
+
+    <MResetEntry :locale="String(locale)" @open="openReset" />
   </CfgTop>
 
   <CfgSub id="expert" :title="$t('tabs.advanced')" inline>
     <MSection :title="$t('tabs.advanced')">
       <MGroup>
         <CfgExpert :config="config" k="min_log_level" control="sheet" :options="logLevels" label="config.log_level" help="config.log_level_desc" def="2" />
+        <CfgExpert :config="config" k="max_log_size_mb" type="number" placeholder="50" help="config.max_log_size_mb_desc" />
+        <CfgSwitch :config="config" k="restore_log" :on="true" :off="false" def="false" help="config.restore_log_desc" />
+        <CfgExpert :config="config" k="fs_host_icon" help="config.fs_host_icon_desc" />
       </MGroup>
     </MSection>
   </CfgSub>

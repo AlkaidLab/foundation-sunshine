@@ -835,7 +835,7 @@ TEST(PyrowaveDynamicHdrTest, CachedSceneMetadataStillTravelsInEveryProtectedFram
       ASSERT_NE(metadata, nullptr);
       const auto source = std::make_shared<const std::vector<std::uint8_t>>(2000, 0x63);
       const auto published = platf::pyrowave_windows::publish_transport_frame(
-        frame, source, 1312, 10, packets, nullptr, std::nullopt, std::nullopt, metadata);
+        frame, source, 1312, 10, packets, 0, std::nullopt, std::nullopt, metadata);
       ASSERT_TRUE(published.success);
       auto output = packets->pop();
       ASSERT_NE(output, nullptr);
@@ -891,7 +891,7 @@ TEST(PyrowaveTransportTest, PublishesSelectedHdrAndHlgReferenceWithTheSameProtec
       .payload = from_hex(fixture.payloadHex),
     };
     const auto published = platf::pyrowave_windows::publish_transport_frame(
-      fixture.format, source, 128, 10, packets, nullptr, std::chrono::steady_clock::now(), std::nullopt, &metadata);
+      fixture.format, source, 128, 10, packets, 0, std::chrono::steady_clock::now(), std::nullopt, &metadata);
     ASSERT_TRUE(published.success);
     auto output = packets->pop();
     ASSERT_NE(output, nullptr);
@@ -941,7 +941,7 @@ TEST(PyrowaveTransportTest, RejectsHdrAreaOverflowBeforeQueueing) {
   };
   const auto result = platf::pyrowave_windows::publish_transport_frame(
     1, std::make_shared<const std::vector<std::uint8_t>>(100, 1), 1312, 10, packets,
-    nullptr, std::nullopt, std::nullopt, &metadata);
+    0, std::nullopt, std::nullopt, &metadata);
   EXPECT_FALSE(result.success);
   EXPECT_FALSE(packets->peek());
 }
@@ -952,7 +952,7 @@ TEST(PyrowaveTransportTest, PublishesFrameWithProtectedRuntimeMetadata) {
   auto source = std::make_shared<const std::vector<std::uint8_t>>(323933, 0x5a);
   const auto timestamp = std::chrono::steady_clock::now() - std::chrono::milliseconds(12);
   const auto result = platf::pyrowave_windows::publish_transport_frame(
-    1, source, 1312, 0, packets, nullptr, timestamp, std::nullopt);
+    1, source, 1312, 0, packets, 0, timestamp, std::nullopt);
 
   ASSERT_TRUE(result.success);
   ASSERT_TRUE(packets->peek());
@@ -1001,7 +1001,7 @@ TEST(PyrowaveTransportTest, PublishesReplayWithoutMetadataFlags) {
   auto packets = mail->queue<video::packet_t>("pyrowave-test-video");
   auto source = std::make_shared<const std::vector<std::uint8_t>>(9000, 0x3c);
   const auto result = platf::pyrowave_windows::publish_transport_frame(
-    2, source, 1312, 1500, packets, nullptr, std::nullopt, std::nullopt);
+    2, source, 1312, 1500, packets, 0, std::nullopt, std::nullopt);
 
   ASSERT_TRUE(result.success);
   auto packet = packets->pop(std::chrono::milliseconds(0));
@@ -1022,7 +1022,7 @@ TEST(PyrowaveTransportTest, DoesNotQueueFailedPacketization) {
   // makes the real packetizer return a valid, payload-free failure result.
   const auto frame_id = static_cast<std::int64_t>(std::numeric_limits<std::uint32_t>::max()) + 1;
   const auto result = platf::pyrowave_windows::publish_transport_frame(
-    frame_id, source, 1312, 0, packets, nullptr, std::nullopt, std::nullopt);
+    frame_id, source, 1312, 0, packets, 0, std::nullopt, std::nullopt);
 
   EXPECT_FALSE(result.success);
   EXPECT_NE(result.result_code, 0);

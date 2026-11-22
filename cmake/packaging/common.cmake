@@ -13,6 +13,20 @@ set(CPACK_PACKAGE_ICON ${PROJECT_SOURCE_DIR}/assets/brand/sunshine.png)
 set(CPACK_PACKAGE_FILE_NAME "${CMAKE_PROJECT_NAME}")
 set(CPACK_STRIP_FILES YES)
 
+# The installer payload is cleaned in inno_staging by make-symbols.py. The portable ZIP is installed by CPack into its
+# own staging tree, so clean that tree too, after CPack has copied the files and before the archive is written.
+if(WIN32)
+    if(Python3_EXECUTABLE)
+        configure_file(
+            "${CMAKE_MODULE_PATH}/packaging/strip-cpack-symbols.cmake.in"
+            "${CMAKE_CURRENT_BINARY_DIR}/strip-cpack-symbols.cmake"
+            @ONLY)
+        set(CPACK_PRE_BUILD_SCRIPTS "${CMAKE_CURRENT_BINARY_DIR}/strip-cpack-symbols.cmake")
+    else()
+        message(WARNING "Python3_EXECUTABLE is not set: the portable ZIP may carry COFF symbols")
+    endif()
+endif()
+
 # install common assets
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/common/assets/"
         DESTINATION "${SUNSHINE_ASSETS_DIR}"

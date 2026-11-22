@@ -37,19 +37,21 @@ OutputDir=@CPACK_PACKAGE_DIRECTORY@
 ; The Inno engine is embedded in the native shell after compilation.
 OutputBaseFilename=Sunshine-engine
 ; 压缩
-; Same method and dictionary as before (lzma2/ultra64, solid). Solid compression makes the whole payload one stream, and a
-; stream shorter than the default block (4 x the 64 MB dictionary) is compressed by a single thread. A 64 MB block with four
-; block threads compresses the ~165 MB payload in parallel: the installer grows by 0.4 %, the ISCC run takes about half the time
-; (4-core hosted runner, interleaved runs of three: 41.0 s -> 21.8 s, and 33.7 s -> 18.7 s for this template against the old one;
-; 71.15 MB -> 71.44 MB). Four ultra64 block threads need more
-; memory than the 32-bit compiler process has (measured: "Out of memory"), so the compressor runs in its own 64-bit process.
+; Same method and dictionary as before (lzma2/ultra64, solid). The payload is about 120 MB; with 64 MB blocks the compressor
+; started a new stream at every block, so a file in the second block could not match the first. One block (the largest the
+; directive allows, 256 MB) and the maximum fast-byte count remove that split: measured on the same build, installer
+; 44,918,301 -> 44,381,565 bytes (-1.2 %). Only the compressor changes: the installer unpacks the same 64 MB dictionary
+; sequentially either way, so installation time and memory do not change. The price is build time (the Package step 33 s -> 45 s
+; on a hosted runner), because one block is compressed by one thread. The compressor runs in its own 64-bit process (the
+; 32-bit compiler process ran out of memory with several ultra64 block threads).
 ; https://jrsoftware.org/ishelp/index.php?topic=setup_lzmanumblockthreads
 ; https://jrsoftware.org/ishelp/index.php?topic=setup_lzmablocksize
 ; https://jrsoftware.org/ishelp/index.php?topic=setup_lzmauseseparateprocess
 Compression=lzma2/ultra64
 SolidCompression=yes
-LZMANumBlockThreads=4
-LZMABlockSize=65536
+LZMANumBlockThreads=1
+LZMABlockSize=262144
+LZMANumFastBytes=273
 LZMAUseSeparateProcess=yes
 ; UI 设置
 SetupIconFile={#MyIconFile}
@@ -88,6 +90,7 @@ RestartIfNeededByRun=no
 ; install" / "files disappeared" are unanswerable without the per-file and
 ; per-[Run] results, and users cannot be expected to re-run with /LOG.
 SetupLogging=yes
+UninstallLogging=yes
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -134,7 +137,11 @@ english.MsgOldNSISDetected=Detected a previous NSIS installation of Sunshine.%nI
 english.MsgOldNSISFailed=The previous installation could not be fully removed.%nPlease uninstall it manually and try again.
 english.MsgOldNSISStaleRegistry=The previous installation files appear to be gone, but registry entries remain.%nClean up the leftover registry and continue installing?
 english.MsgOldNSISCleanupFailed=Failed to clean up the previous installation registry entries.%nPlease remove HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine manually and try again.
+english.MsgUpdateBlocked=Sunshine cannot be updated while something is still using its files. The existing installation has not been changed.%n%n%1%n%nClose what is using them and run the installer again.
 english.MsgServiceInstallFailed=Sunshine service could not be installed or verified.%n%nThe files were installed and are kept. Reboot and run "{app}\scripts\install-service.bat" as administrator, or use the repair action in the Sunshine GUI. The installer log in your TEMP folder has the details.
+english.MsgServiceAutostartFailed=Sunshine was installed, but its automatic startup could not be configured or verified. Check the installer log or configure the service in the Sunshine panel.
+english.MsgServiceStartFailed=The Sunshine service was registered, but could not start now. Setup will still apply your automatic startup choice. Check the installer log and try starting the service again from the Sunshine panel.
+english.MsgDirProtectFailed=The install folder could not be protected from changes by other users, so nothing was installed.%n%nThe service runs the programs in this folder as SYSTEM. Pick a folder on a local NTFS or ReFS drive and run setup again. The installer log in your TEMP folder has the details.
 english.MsgVDDInstallFailed=The virtual display driver could not be installed or verified.%n%nSunshine was installed but has not been started. Review the installer log in your TEMP folder, then use the repair action in the Sunshine GUI.
 english.MsgUninstallGamepad=Do you want to remove Virtual Gamepad?
 english.MsgUninstallData=Do you want to remove all data in %1?%n(This includes configuration, cover images, and settings)
@@ -181,7 +188,11 @@ chinesesimplified.MsgOldNSISDetected=检测到旧版 NSIS 安装的 Sunshine。%
 chinesesimplified.MsgOldNSISFailed=无法完全移除旧版安装。%n请手动卸载后重试。
 chinesesimplified.MsgOldNSISStaleRegistry=旧版本的文件已经不存在，但注册表中仍残留旧版的卸载信息。%n是否清理残留的注册表项并继续安装？
 chinesesimplified.MsgOldNSISCleanupFailed=清理旧版注册表项失败。%n请手动删除 HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine 后重试。
+chinesesimplified.MsgUpdateBlocked=Sunshine 的文件仍被占用，无法更新。现有安装没有被改动。%n%n%1%n%n请关闭占用它们的程序后重新运行安装程序。
 chinesesimplified.MsgServiceInstallFailed=无法安装或验证 Sunshine 服务。%n%n程序文件已经装好并会保留。请重启后以管理员身份运行 "{app}\scripts\install-service.bat"，或在 Sunshine 管理界面里使用修复功能。详细信息见 TEMP 目录下的安装日志。
+chinesesimplified.MsgServiceAutostartFailed=Sunshine 已安装，但无法配置或验证开机自动启动。请查看安装日志，或在 Sunshine 管理界面中配置服务。
+chinesesimplified.MsgServiceStartFailed=Sunshine 服务已注册，但本次启动失败。安装程序仍会应用您选择的开机启动设置。请查看安装日志，并在 Sunshine 管理界面中重试启动服务。
+chinesesimplified.MsgDirProtectFailed=无法保护安装目录不被其他用户修改，所以没有安装任何文件。%n%n后台服务以 SYSTEM 身份运行这个目录里的程序。请选择本机 NTFS 或 ReFS 磁盘上的文件夹，再运行一次安装程序。详细信息见 TEMP 目录下的安装日志。
 chinesesimplified.MsgVDDInstallFailed=无法安装或验证基地虚拟显示器。%n%nSunshine 已安装但尚未启动。请检查 TEMP 目录中的安装日志，然后在 Sunshine 管理界面中使用修复功能。
 chinesesimplified.MsgUninstallGamepad=是否移除虚拟手柄（ViGEmBus）？
 chinesesimplified.MsgUninstallData=是否删除 %1 中的所有数据？%n（包括配置文件、封面图片和设置）
@@ -205,15 +216,17 @@ Name: "firewall"; Description: "{cm:ComponentFirewall} — {cm:ComponentFirewall
 Name: "autostart"; Description: "{cm:ComponentAutostart} — {cm:ComponentAutostartDesc}"; Types: recommended full
 Name: "gamepad"; Description: "{cm:ComponentGamepad} — {cm:ComponentGamepadDesc}"; Types: recommended full
 Name: "usbip"; Description: "{cm:ComponentUsbip} — {cm:ComponentUsbipDesc}"; Types: full; MinVersion: 10.0.18362
-Name: "vmouse"; Description: "{cm:ComponentVmouse} — {cm:ComponentVmouseDesc}"; Types: full
+Name: "vmouse"; Description: "{cm:ComponentVmouse} — {cm:ComponentVmouseDesc}"; Types: full; MinVersion: 10.0.22000
 Name: "tools"; Description: "{cm:ComponentTools} — {cm:ComponentToolsDesc}"; Types: recommended full
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [InstallDelete]
-; Remove old hashed Web UI bundles before installing the freshly built frontend.
-Type: filesandordirs; Name: "{app}\assets\web"
+; The old hashed Web UI bundles are not deleted here: [InstallDelete] runs as the first step of
+; the installation and is not undone when Setup is rolled back, so a failed update would leave
+; the folder missing. BackUpWebUi() moves it aside instead, and removes it once the update has
+; finished. Authority: installer-inno-installdelete-20261119.
 ; The native GUI plugin replaces the legacy standalone diagnostic executable.
 Type: files; Name: "{app}\tools\stylus-input-probe.exe"
 ; Earlier RTX adapter builds placed the complete VC runtime beside Sunshine.
@@ -225,10 +238,16 @@ Type: files; Name: "{app}\concrt140.dll"
 Type: filesandordirs; Name: "{app}\tools\sunshine-ds5-component"
 Type: files; Name: "{app}\tools\ds5-sidecar-package.json"
 Type: files; Name: "{app}\Sunshine.Ds5Sidecar.manifest.json"
+; These files now live in licenses\libwebp. Preserve any unrelated files.
+Type: files; Name: "{app}\tools\library\libwebp\LICENSE.txt"
+Type: files; Name: "{app}\tools\library\libwebp\PATENTS.txt"
+Type: dirifempty; Name: "{app}\tools\library\libwebp"
+Type: dirifempty; Name: "{app}\tools\library"
 
 [Files]
 ; Embedded only for PrepareToInstall; it is not part of the installed layout.
 Source: "{#MySourceDir}\scripts\cleanup-legacy-ds5.ps1"; DestDir: "{tmp}"; Flags: dontcopy
+Source: "{#MySourceDir}\scripts\update-quiesce.ps1"; DestDir: "{tmp}"; Flags: dontcopy
 ; Main application
 Source: "{#MySourceDir}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion; Components: application
 Source: "{#MySourceDir}\zlib1.dll"; DestDir: "{app}"; Flags: ignoreversion; Components: application
@@ -246,9 +265,6 @@ Source: "{#MySourceDir}\tools\mat-capture\*.dll"; DestDir: "{app}\tools\mat-capt
 Source: "{#MySourceDir}\tools\mat-capture\LICENSE.MinHook.txt"; DestDir: "{app}\tools\mat-capture"; Flags: ignoreversion; Components: application
 #endif
 Source: "{#MySourceDir}\tools\nefconw.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
-; The bundled WebP decoder's license and patent grant.
-Source: "{#MySourceDir}\tools\library\libwebp\LICENSE.txt"; DestDir: "{app}\tools\library\libwebp"; Flags: ignoreversion; Components: application
-Source: "{#MySourceDir}\tools\library\libwebp\PATENTS.txt"; DestDir: "{app}\tools\library\libwebp"; Flags: ignoreversion; Components: application
 ; the protocol launcher of the Sparxie touch applications (published from tools/sparxie-launch when the build has dotnet)
 Source: "{#MySourceDir}\tools\sparxie-launch.exe"; DestDir: "{app}\tools"; Flags: ignoreversion skipifsourcedoesntexist; Components: application
 
@@ -272,6 +288,7 @@ Source: "{#MySourceDir}\scripts\languages\*"; DestDir: "{app}\scripts\languages"
 ; Service scripts
 Source: "{#MySourceDir}\scripts\install-service.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: application
 Source: "{#MySourceDir}\scripts\uninstall-service.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: application
+Source: "{#MySourceDir}\scripts\remove-shell-menus.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: application
 Source: "{#MySourceDir}\scripts\sleep.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: application
 
 ; Migration scripts
@@ -311,6 +328,7 @@ Source: "{#MySourceDir}\scripts\autostart-service.bat"; DestDir: "{app}\scripts"
 ; Always copy so users can run them manually as admin if they unchecked firewall.
 Source: "{#MySourceDir}\scripts\add-firewall-rule.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#MySourceDir}\scripts\delete-firewall-rule.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
+Source: "{#MySourceDir}\scripts\firewall-rules.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion
 
 ; Virtual Display Driver scripts & files
 Source: "{#MySourceDir}\scripts\install-vdd.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
@@ -334,10 +352,11 @@ Source: "{#MySourceDir}\scripts\vmouse\uninstall-vmouse.bat"; DestDir: "{app}\sc
 Source: "{#MySourceDir}\scripts\vmouse\driver\*"; DestDir: "{app}\scripts\vmouse\driver"; Flags: ignoreversion recursesubdirs skipifsourcedoesntexist
 
 ; Virtual audio sink (microphone / VB-Cable) scripts
-; Always shipped — there is no install-time component for this; the user can
-; right-click + "Run as administrator" on install-vsink.bat to enable it.
+; Legacy scripts remain available for manual maintenance; the Panel owns the
+; component flow and does not install VB-CABLE during Sunshine setup.
 Source: "{#MySourceDir}\scripts\install-vsink.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#MySourceDir}\scripts\uninstall-vsink.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "{#MySourceDir}\scripts\uninstall-vsink.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion skipifsourcedoesntexist
 
 ; Optional diagnostic tools
 Source: "{#MySourceDir}\tools\dxgi-info.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: tools
@@ -364,7 +383,8 @@ Root: HKLM64; Subkey: "SOFTWARE\AlkaidLab\Sunshine"; ValueType: string; ValueNam
 [Run]
 ; Post-install: drop explicit ACEs (inherit from parent) + clear READONLY
 ; attribute on files & dirs. The latter is what fixes the rare "Sunshine
-Filename: "{cmd}"; Parameters: "/c icacls ""{app}"" /reset /T /C > ""{tmp}\sunshine-icacls-reset.log"" 2>&1 & attrib -R ""{app}\*.*"" /S /D > ""{tmp}\sunshine-attrib-clear.log"" 2>&1"; StatusMsg: "{cm:StatusResetPermissions}"; Flags: runhidden waituntilterminated; Check: ShouldRepairInstallPermissions; BeforeInstall: EvtPermissions
+Filename: "{sys}\icacls.exe"; Parameters: """{app}"" /reset /T /C"; StatusMsg: "{cm:StatusResetPermissions}"; Flags: runhidden waituntilterminated logoutput; Check: ShouldRepairInstallPermissions; BeforeInstall: EvtPermissions
+Filename: "{sys}\attrib.exe"; Parameters: "-R ""{app}\*.*"" /S /D"; Flags: runhidden waituntilterminated logoutput; Check: PermissionsRepairStarted
 Filename: "{app}\scripts\update-path.bat"; Parameters: "add"; StatusMsg: "{cm:StatusUpdatePath}"; Flags: runhidden waituntilterminated; BeforeInstall: EvtPath
 Filename: "{app}\scripts\migrate-config.bat"; StatusMsg: "{cm:StatusMigrateConfig}"; Flags: runhidden waituntilterminated; BeforeInstall: EvtConfig
 ; Maintenance installs remove components that were selected before but are
@@ -374,13 +394,13 @@ Filename: "{app}\scripts\uninstall-vdd.bat"; StatusMsg: "{cm:StatusInstallVDD}";
 Filename: "{app}\scripts\uninstall-gamepad.bat"; StatusMsg: "{cm:StatusInstallGamepad}"; Flags: runhidden waituntilterminated; Check: ShouldRemoveComponent('gamepad')
 Filename: "{app}\scripts\vmouse\uninstall-vmouse.bat"; StatusMsg: "{cm:StatusInstallVmouse}"; Flags: runhidden waituntilterminated; Check: ShouldRemoveComponent('vmouse')
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\tools\usbip-win2-root.ps1"" -Action uninstall"; StatusMsg: "{cm:StatusInstallUsbipRoot}"; Flags: runhidden waituntilterminated; Check: ShouldRemoveComponent('usbip')
-Filename: "{app}\scripts\add-firewall-rule.bat"; StatusMsg: "{cm:StatusFirewall}"; Flags: runhidden waituntilterminated; Components: firewall; BeforeInstall: EvtFirewall; AfterInstall: EvtFirewallDone
+Filename: "{app}\scripts\add-firewall-rule.bat"; StatusMsg: "{cm:StatusFirewall}"; Flags: runhidden waituntilterminated logoutput; Components: firewall; BeforeInstall: EvtFirewall; AfterInstall: EvtFirewallDone
 Filename: "{app}\scripts\install-gamepad.bat"; StatusMsg: "{cm:StatusInstallGamepad}"; Flags: runhidden waituntilterminated; Components: gamepad; BeforeInstall: EvtGamepad; AfterInstall: EvtGamepadDone
 Filename: "{app}\scripts\install-usbip.bat"; StatusMsg: "{cm:StatusInstallUsbip}"; Flags: runhidden waituntilterminated; Components: usbip; BeforeInstall: EvtUsbip; AfterInstall: EvtUsbipDone
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\tools\usbip-win2-root.ps1"" -Action install"; StatusMsg: "{cm:StatusInstallUsbipRoot}"; Flags: runhidden waituntilterminated; Check: ShouldRunUsbipRootInstall
 Filename: "{app}\scripts\vmouse\install-vmouse.bat"; StatusMsg: "{cm:StatusInstallVmouse}"; Flags: runhidden waituntilterminated; Components: vmouse; BeforeInstall: EvtVmouse; AfterInstall: EvtVmouseDone
-Filename: "{app}\scripts\install-service.bat"; Parameters: "{code:GetServiceInstallParameters}"; StatusMsg: "{cm:StatusInstallService}"; Flags: runhidden waituntilterminated; AfterInstall: VerifyServiceInstalled; BeforeInstall: EvtServiceStart
-Filename: "{app}\scripts\autostart-service.bat"; StatusMsg: "{cm:StatusAutostart}"; Flags: runhidden waituntilterminated; Components: autostart; Check: ShouldConfigureServiceAutostart; BeforeInstall: EvtAutostart; AfterInstall: EvtAutostartDone
+Filename: "{app}\scripts\install-service.bat"; Parameters: "{code:GetServiceInstallParameters}"; StatusMsg: "{cm:StatusInstallService}"; Flags: runhidden waituntilterminated logoutput; AfterInstall: VerifyServiceInstalled; BeforeInstall: EvtServiceStart
+Filename: "{app}\scripts\autostart-service.bat"; StatusMsg: "{cm:StatusAutostart}"; Flags: runhidden waituntilterminated logoutput; Components: autostart; Check: ShouldConfigureServiceAutostart; BeforeInstall: EvtAutostart; AfterInstall: VerifyServiceAutostart
 
 ; Finish page actions - user selectable
 Filename: "{cm:DocumentationURL}"; Description: "{cm:FinishOpenDocs}"; Flags: postinstall shellexec runasoriginaluser unchecked nowait skipifsilent
@@ -405,9 +425,11 @@ Filename: "{app}\assets\gui\{#MyAppGUIExeName}"; Parameters: "--remove-autostart
 ; Stop running processes first. We force-kill the service binary
 ; (sunshinesvc.exe) here as well, otherwise `sc stop` later may block waiting
 ; on its stop handler — which is the typical "uninstaller appears frozen" symptom.
-Filename: "taskkill"; Parameters: "/f /im sunshine-gui.exe"; Flags: runhidden; RunOnceId: "KillGUI"
-Filename: "taskkill"; Parameters: "/f /im sunshine.exe"; Flags: runhidden; RunOnceId: "KillSunshine"
-Filename: "taskkill"; Parameters: "/f /im sunshinesvc.exe"; Flags: runhidden; RunOnceId: "KillSunshineSvc"
+Filename: "{sys}\taskkill.exe"; Parameters: "/f /im sunshine-gui.exe"; Flags: runhidden; RunOnceId: "KillGUI"
+Filename: "{sys}\taskkill.exe"; Parameters: "/f /im sunshine.exe"; Flags: runhidden; RunOnceId: "KillSunshine"
+Filename: "{sys}\taskkill.exe"; Parameters: "/f /im sunshinesvc.exe"; Flags: runhidden; RunOnceId: "KillSunshineSvc"
+; Stop the GUI first so it cannot recreate the verbs while they are removed.
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\remove-shell-menus.ps1"" -InstallRoot ""{app}"""; Flags: runhidden waituntilterminated logoutput; RunOnceId: "RemoveOwnedShellMenus"; Check: FileExists(ExpandConstant('{app}\scripts\remove-shell-menus.ps1'))
 Filename: "{app}\tools\mat-capture\sunshine-plugin-mat-capture.exe"; Parameters: "--wait-for-stop"; Flags: runhidden waituntilterminated; RunOnceId: "WaitMatCapture"; Check: FileExists(ExpandConstant('{app}\tools\mat-capture\sunshine-plugin-mat-capture.exe'))
 ; Remove system components
 Filename: "{app}\scripts\delete-firewall-rule.bat"; Flags: runhidden waituntilterminated; RunOnceId: "DelFirewall"
@@ -425,6 +447,13 @@ Type: files; Name: "{app}\uninstall_portable.bat"
 ; Clean up temporary files
 Type: files; Name: "{app}\*.tmp"
 Type: files; Name: "{app}\*.old"
+; A program moved aside by an update that was stopped half way (update-quiesce.ps1 -Park).
+Type: files; Name: "{app}\sunshine.exe.parked"
+Type: files; Name: "{app}\tools\sunshinesvc.exe.parked"
+Type: files; Name: "{app}\assets\gui\sunshine-gui.exe.parked"
+; The marker an update writes after the last Web UI file, and the folder an unfinished update left aside.
+Type: files; Name: "{app}\assets\web\.install-complete"
+Type: filesandordirs; Name: "{app}\assets\web.previous"
 
 [Code]
 // =============================================================================
@@ -456,6 +485,9 @@ var
   // callers still see a failure — the GUI updater runs us with /VERYSILENT
   // and treats exit code 0 as "update installed successfully".
   ServiceVerifyFailed: Boolean;
+  // Starting now is independent of registration and the user's boot setting.
+  ServiceStartFailed: Boolean;
+  PermissionsRepairInProgress: Boolean;
   // 0 = ready/not selected, 101 = failed, 3010 = reboot required.
   VDDResultCode: Integer;
   InstallRunDir: String;
@@ -467,6 +499,35 @@ var
   RebootReasons: String;
   // the journal the host reports at its next start (JournalWrite below)
   JournalRun, PreviousVersion: String;
+  // The Web UI folder moved aside before the files are copied (BackUpWebUi), and whether the
+  // installation got as far as its post-install step: only then is the new folder the one to keep.
+  WebUiMovedAside, PostInstallReached, UpdateScriptExtracted, ServiceStoppedForUpdate: Boolean;
+  // The folder this run prepared for the update (programs moved aside, Web UI folder moved aside).
+  // Empty until PrepareToInstall prepared one, so a run that is cancelled before that touches nothing;
+  // kept as text because the wizard lets the person go back and choose another folder.
+  UpdateAppDir: String;
+  // The marker could not be written (a scanner refused the file) although every file was copied.
+  WebUiMarkerFailed: Boolean;
+
+function InstallerMessageBox(const Text: String; const Typ: TMsgBoxType;
+  const Buttons, DefaultAnswer: Integer): Integer;
+var
+  Silent: Boolean;
+begin
+  // Authority: installer-inno-suppressible-msgbox-20261118 (Description),
+  // installer-inno-silent-state-20261118, installer-inno-uninstall-state-20261118
+  // and installer-inno-is-uninstaller-20261118 (Description).
+  // /SILENT alone does not suppress script dialogs. Never require a desktop
+  // response in either silent mode; otherwise keep the original interactive UI.
+  if IsUninstaller then
+    Silent := UninstallSilent
+  else
+    Silent := WizardSilent;
+  if Silent then
+    Result := DefaultAnswer
+  else
+    Result := SuppressibleMsgBox(Text, Typ, Buttons, DefaultAnswer);
+end;
 
 function InstallerParameterValue(Name: String): String;
 // Authority: installer-inno-script-functions-20261107 (GetCmdTail,
@@ -620,11 +681,11 @@ end;
 
 // Phase events for the installer shell (one JSON line each; see EmitInstallerEvent). They only
 // report progress; they do not change what the [Run] entries do or in which order.
-procedure EvtPermissions(); begin EmitInstallerEvent('permissions', 'running', 'StatusResetPermissions', 0); end;
+procedure EvtPermissions(); begin PermissionsRepairInProgress := True; EmitInstallerEvent('permissions', 'running', 'StatusResetPermissions', 0); end;
+function PermissionsRepairStarted(): Boolean; begin Result := PermissionsRepairInProgress; end;
 procedure EvtPath(); begin EmitInstallerEvent('path', 'running', 'StatusUpdatePath', 0); end;
 procedure EvtConfig(); begin EmitInstallerEvent('config', 'running', 'StatusMigrateConfig', 0); end;
-procedure EvtFirewall(); begin EmitInstallerEvent('firewall', 'running', 'StatusFirewall', 0); end;
-procedure EvtFirewallDone(); begin EmitInstallerEvent('firewall', 'done', 'StatusFirewall', 0); end;
+procedure EvtFirewall(); begin DeleteFile(ExpandConstant('{app}\scripts\result-firewall.txt')); EmitInstallerEvent('firewall', 'running', 'StatusFirewall', 0); end;
 procedure EvtGamepad(); begin EmitInstallerEvent('gamepad', 'running', 'StatusInstallGamepad', 0); end;
 procedure EvtUsbip(); begin EmitInstallerEvent('usbip', 'running', 'StatusInstallUsbip', 0); end;
 
@@ -654,6 +715,15 @@ begin
     EmitInstallerEvent(Phase, 'failed', Key, Code);
 end;
 
+procedure EvtFirewallDone();
+var
+  ResultCode: Integer;
+begin
+  ResultCode := TakeStepResult('firewall');
+  EmitStepResult('firewall', 'StatusFirewall', ResultCode);
+  JournalComponent('firewall', 'install', ResultCode);
+end;
+
 procedure EvtGamepadDone();
 begin
   GamepadResult := TakeStepResult('gamepad');
@@ -672,9 +742,8 @@ end;
 
 procedure EvtVmouse(); begin EmitInstallerEvent('vmouse', 'running', 'StatusInstallVmouse', 0); end;
 procedure EvtVmouseDone(); begin EmitInstallerEvent('vmouse', 'done', 'StatusInstallVmouse', 0); end;
-procedure EvtServiceStart(); begin EmitInstallerEvent('service', 'running', 'StatusInstallService', 0); end;
-procedure EvtAutostart(); begin EmitInstallerEvent('autostart', 'running', 'StatusAutostart', 0); end;
-procedure EvtAutostartDone(); begin EmitInstallerEvent('autostart', 'done', 'StatusAutostart', 0); end;
+procedure EvtServiceStart(); begin DeleteFile(ExpandConstant('{app}\scripts\result-service.txt')); EmitInstallerEvent('service', 'running', 'StatusInstallService', 0); end;
+procedure EvtAutostart(); begin DeleteFile(ExpandConstant('{app}\scripts\result-autostart.txt')); EmitInstallerEvent('autostart', 'running', 'StatusAutostart', 0); end;
 
 function VDDComponentSelected(): Boolean;
 begin
@@ -715,6 +784,14 @@ end;
 
 function ShouldRemoveComponent(Name: String): Boolean;
 begin
+  // Windows 10 cannot install the virtual mouse, but an existing legacy
+  // installation is intentionally left alone during an upgrade. The user can
+  // remove it explicitly from a supported host if needed.
+  if (Lowercase(Name) = 'vmouse') and ((GetWindowsVersion and $FFFF) < 22000) then
+  begin
+    Result := False;
+    Exit;
+  end;
   Result := ExistingInnoInstall and PreviousComponentSelected(Name) and
             (not WizardIsComponentSelected(Name));
 end;
@@ -729,7 +806,7 @@ end;
 
 function ShouldConfigureServiceAutostart(): Boolean;
 begin
-  Result := VDDResultCode <> 101;
+  Result := (VDDResultCode <> 101) and (not ServiceVerifyFailed);
 end;
 
 procedure InstallAndVerifyVDD();
@@ -779,7 +856,7 @@ begin
   begin
     Detail := CustomMessage('MsgVDDInstallFailed') + #13#10 + #13#10 +
               'Exit code: ' + IntToStr(ResultCode);
-    MsgBox(Detail, mbError, MB_OK);
+    InstallerMessageBox(Detail, mbError, MB_OK, IDOK);
   end;
 end;
 
@@ -1058,6 +1135,172 @@ begin
   Result := Result and (InstallDir <> '') and DirExists(InstallDir);
 end;
 
+// The install folder is below Program Files: it inherits that folder's protection (Users read and execute only) and needs none of its own.
+function IsUnderProgramFiles(Dir: String): Boolean;
+var
+  Lower: String;
+begin
+  Lower := Lowercase(AddBackslash(RemoveBackslash(Dir)));
+  Result := (Pos(Lowercase(AddBackslash(ExpandConstant('{commonpf64}'))), Lower) = 1) or
+            (Pos(Lowercase(AddBackslash(ExpandConstant('{commonpf32}'))), Lower) = 1);
+end;
+
+function RunIcacls(Params: String): Boolean;
+var
+  ResultCode: Integer;
+begin
+  ResultCode := -1;
+  Result := Exec(ExpandConstant('{sys}\icacls.exe'), Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0);
+  Log('icacls ' + Params + ' -> ' + IntToStr(ResultCode));
+end;
+
+// Setup is a 32-bit process, so a pointer is a Cardinal here. SetNamedSecurityInfoW replaces the whole DACL of a folder at once (and propagates it to what is in it).
+function ConvertStringSecurityDescriptorToSecurityDescriptorW(StringSD: String; Revision: Cardinal; var SD: Cardinal; var SDSize: Cardinal): Integer;
+  external 'ConvertStringSecurityDescriptorToSecurityDescriptorW@advapi32.dll stdcall';
+function GetSecurityDescriptorDacl(SD: Cardinal; var Present: Integer; var Dacl: Cardinal; var Defaulted: Integer): Integer;
+  external 'GetSecurityDescriptorDacl@advapi32.dll stdcall';
+function SetNamedSecurityInfoW(ObjectName: String; ObjectType, SecurityInfo: Cardinal; Owner, Group, Dacl, Sacl: Cardinal): Cardinal;
+  external 'SetNamedSecurityInfoW@advapi32.dll stdcall';
+function LocalFree(Mem: Cardinal): Cardinal;
+  external 'LocalFree@kernel32.dll stdcall';
+
+// The DACL of the install folder, in SDDL (the same text as kProtectedSddl in tools/installer_dir_win.h):
+//   D:P  protected (nothing inherited);  SYSTEM, Administrators, NT SERVICE\TrustedInstaller: full control;  Users and ALL APPLICATION PACKAGES: read and execute;
+//   every entry for the folder and everything in it (OICI).
+function ProtectedDaclSddl(): String;
+begin
+  Result := 'D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;OICI;FA;;;S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464)(A;OICI;0x1200a9;;;BU)(A;OICI;0x1200a9;;;AC)';
+end;
+
+// Replace the whole DACL: whatever was on the folder before (an entry for the person who made it, which a CREATOR OWNER entry of the parent leaves behind and which
+// "remove inheritance" does not touch; Everyone; Authenticated Users; older grants) is gone, not merely outnumbered.
+// Authority: installer-ms-setnamedsecurityinfow-20261119, installer-ms-convertstringsecuritydescriptor-20261119.
+function SetProtectedDacl(Dir: String): Boolean;
+var
+  Descriptor, Size, Dacl: Cardinal;
+  Present, Defaulted: Integer;
+  Status: Cardinal;
+begin
+  Result := False;
+  Descriptor := 0;
+  Size := 0;
+  Dacl := 0;
+  Present := 0;
+  Defaulted := 0;
+  if ConvertStringSecurityDescriptorToSecurityDescriptorW(ProtectedDaclSddl(), 1, Descriptor, Size) = 0 then
+  begin
+    Log('SDDL for the install folder could not be converted.');
+    Exit;
+  end;
+  if (GetSecurityDescriptorDacl(Descriptor, Present, Dacl, Defaulted) <> 0) and (Present <> 0) then
+  begin
+    // SE_FILE_OBJECT = 1; DACL_SECURITY_INFORMATION = 4 or PROTECTED_DACL_SECURITY_INFORMATION = $80000000
+    Status := SetNamedSecurityInfoW(Dir, 1, $80000004, 0, 0, Dacl, 0);
+    Log('SetNamedSecurityInfo ' + Dir + ' -> ' + IntToStr(Status));
+    Result := Status = 0;
+  end;
+  LocalFree(Descriptor);
+end;
+
+// The permissions of a folder into the installer log: what a support report needs to see when the protection is in doubt.
+procedure LogFolderPermissions(Tag, Dir: String);
+var
+  ResultCode, I: Integer;
+  OutFile: String;
+  Lines: TArrayOfString;
+begin
+  OutFile := ExpandConstant('{tmp}\sunshine-folder-acl.txt');
+  DeleteFile(OutFile);
+  if Exec(ExpandConstant('{cmd}'), '/c ""' + ExpandConstant('{sys}\icacls.exe') + '" "' + Dir + '" > "' + OutFile + '" 2>&1"', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and
+     LoadStringsFromFile(OutFile, Lines) then
+    for I := 0 to GetArrayLength(Lines) - 1 do
+      if Trim(Lines[I]) <> '' then
+        Log(Tag + ': ' + Lines[I]);
+  DeleteFile(OutFile);
+end;
+
+// Whether the folder already holds anything: files of someone else, or what an uninstall that kept the person's settings left (the config folder).
+function DirHasContent(Dir: String): Boolean;
+var
+  Find: TFindRec;
+begin
+  Result := False;
+  if FindFirst(AddBackslash(Dir) + '*', Find) then
+  begin
+    try
+      repeat
+        if (Find.Name <> '.') and (Find.Name <> '..') then
+        begin
+          Result := True;
+          Break;
+        end;
+      until not FindNext(Find);
+    finally
+      FindClose(Find);
+    end;
+  end;
+end;
+
+// The service runs the programs of the install folder as SYSTEM, so no ordinary user may be able to replace one. Program Files is protected by inheritance; any other folder
+// inherits whatever its parent gives, and below the root of a data drive that is "Authenticated Users: Modify". The folder is therefore given the same protection as Program
+// Files: the owner is Administrators and the DACL is replaced by ProtectedDaclSddl (Microsoft's well-known SIDs; the SIDs are used because the group names are localized).
+// The setup shell's worker creates the folder with this DACL in the first place (installer_dir_win.h); this makes the same true when the engine runs on its own, for an
+// existing install in a folder that older setups left open, and again after every update. An existing folder that is not the registered install (files of someone else) gets
+// the owner and the permissions of everything in it reset first, because the owner of a file can always change its permissions (the config folder of the previous install
+// is reset like that and gets its own permissions back from migrate-config.bat).
+// Authority: installer-ms-icacls-20261119 (/setowner, /reset, *SID), installer-ms-takeown-20261119, installer-ms-well-known-sids-20261119.
+function HardenInstallDir(): String;
+var
+  Dir, Registered, Quoted: String;
+  Foreign, HasContent: Boolean;
+  ResultCode: Integer;
+begin
+  Result := '';
+  Dir := RemoveBackslash(ExpandConstant('{app}'));
+  if IsUnderProgramFiles(Dir) then
+    Exit;
+  Quoted := '"' + Dir + '"';
+  if not DirExists(Dir) then
+    if not ForceDirectories(Dir) then
+    begin
+      Log('Install folder could not be created: ' + Dir);
+      Result := CustomMessage('MsgDirProtectFailed');
+      Exit;
+    end;
+  Registered := '';
+  if not RegQueryStringValue(HKLM64, 'SOFTWARE\AlkaidLab\Sunshine', 'InstallDir', Registered) then
+    Registered := '';
+  HasContent := DirHasContent(Dir);
+  Foreign := (CompareText(RemoveBackslash(Registered), Dir) <> 0) and HasContent;
+  // The folder itself is protected before anything inside it is touched, and stays so: the content is handled below it, never by a reset that would hand the folder
+  // back to what its parent grants.
+  if not (RunIcacls(Quoted + ' /setowner *S-1-5-32-544 /C /Q') and SetProtectedDacl(Dir)) then
+  begin
+    Result := CustomMessage('MsgDirProtectFailed');
+    Exit;
+  end;
+  if Foreign then
+  begin
+    // not an install of ours that is being updated: take what is in it over (owner Administrators, for the whole tree)
+    ResultCode := -1;
+    if not Exec(ExpandConstant('{sys}\takeown.exe'), '/F ' + Quoted + ' /R /A /D Y', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) or (ResultCode <> 0) then
+    begin
+      Log('takeown of the install folder failed: ' + IntToStr(ResultCode));
+      Result := CustomMessage('MsgDirProtectFailed');
+      Exit;
+    end;
+  end;
+  // everything inside takes its permissions from the folder again: an entry that somebody gave to a program or a folder of the install (an older setup, a person) is gone.
+  // "Dir\*" is what is in the folder: the folder itself is not reset.
+  if HasContent and not RunIcacls('"' + AddBackslash(Dir) + '*" /reset /T /C /Q') then
+  begin
+    Result := CustomMessage('MsgDirProtectFailed');
+    Exit;
+  end;
+  Log('Install folder protected like Program Files: ' + Dir);
+  LogFolderPermissions('after protecting', Dir);
+end;
+
 function ShouldRepairInstallPermissions(): Boolean;
 var
   ResultCode: Integer;
@@ -1066,13 +1309,16 @@ begin
   Result := False;
   if not ExistingInnoInstall then
     Exit;
+  // Outside Program Files "reset to inherited" would hand the folder to whatever its parent grants: HardenInstallDir keeps it protected instead.
+  if not IsUnderProgramFiles(ExpandConstant('{app}')) then
+    Exit;
 
   // Verification is read-only and substantially cheaper than rewriting every
   // ACL. Only legacy installs with malformed/non-canonical ACLs take the slow
   // recursive reset path.
   VerifyLog := ExpandConstant('{tmp}\sunshine-icacls-verify.log');
-  Params := '/c icacls "' + ExpandConstant('{app}') +
-            '" /verify /T /C > "' + VerifyLog + '" 2>&1';
+  Params := '/c ""' + ExpandConstant('{sys}\icacls.exe') + '" "' + ExpandConstant('{app}') +
+            '" /verify /T /C > "' + VerifyLog + '" 2>&1"';
   ResultCode := -1;
   if not Exec(ExpandConstant('{cmd}'), Params, '', SW_HIDE,
               ewWaitUntilTerminated, ResultCode) then
@@ -1084,6 +1330,28 @@ begin
     DeleteFile(VerifyLog);
 end;
 
+// The UTF-16 code of every character, for the log when two paths that look the same do not match.
+function StringCodes(Value: String): String;
+var
+  I: Integer;
+begin
+  Result := '';
+  for I := 1 to Length(Value) do
+    Result := Result + IntToStr(Ord(Value[I])) + ' ';
+end;
+
+procedure ReportVerifiedService();
+begin
+  if ServiceStartFailed then
+  begin
+    EmitInstallerEvent('service', 'failed', 'StatusInstallService', 100);
+    if not WizardSilent then
+      InstallerMessageBox(CustomMessage('MsgServiceStartFailed'), mbError, MB_OK, IDOK);
+  end
+  else
+    EmitInstallerEvent('service', 'done', 'StatusInstallService', 0);
+end;
+
 procedure VerifyServiceInstalled();
 var
   ExpectedPath, ImagePath, Lower, Detail, TmpFile, Line: String;
@@ -1092,6 +1360,26 @@ var
   Lines: TArrayOfString;
 begin
   EmitInstallerEvent('service', 'running', 'StatusInstallService', 0);
+  ResultCode := TakeStepResult('service');
+  // The batch reserves 2 for a start failure after successful configuration.
+  // Still verify the service path before applying the autostart choice.
+  ServiceStartFailed := ResultCode = 2;
+  if ServiceStartFailed then
+  begin
+    Log('Service configuration succeeded, but starting it failed (script exit 2).');
+    JournalComponent('service', 'start', ResultCode);
+  end;
+  if (ResultCode <> 0) and (not ServiceStartFailed) then
+  begin
+    Detail := 'Service script exit: ' + IntToStr(ResultCode);
+    Log('Service installation failed. ' + Detail);
+    ServiceVerifyFailed := True;
+    EmitInstallerEvent('service', 'failed', 'StatusInstallService', 100);
+    JournalComponent('service', 'install', ResultCode);
+    if not WizardSilent then
+      InstallerMessageBox(ExpandConstant(CustomMessage('MsgServiceInstallFailed')) + #13#10 + #13#10 + Detail, mbError, MB_OK, IDOK);
+    Exit;
+  end;
   ExpectedPath := ExpandConstant('{app}\tools\sunshinesvc.exe');
   Lower := Lowercase(ExpectedPath);
 
@@ -1122,30 +1410,33 @@ begin
     if not Found then
       Found := RegQueryStringValue(HKLM64, 'SYSTEM\CurrentControlSet\Services\SunshineService',
                                    'ImagePath', ImagePath);
-    if Found and (Pos(Lower, Lowercase(ImagePath)) > 0) then
+    // exact first: the value was written from this very path, and a path with Chinese or other non-ASCII characters has to match as it is
+    if Found and ((Pos(ExpectedPath, ImagePath) > 0) or (Pos(Lower, Lowercase(ImagePath)) > 0)) then
     begin
-      EmitInstallerEvent('service', 'done', 'StatusInstallService', 0);
+      ReportVerifiedService();
       Exit;  // happy path
     end;
     Sleep(500);
   end;
+  if Found then
+    Log('Service ImagePath does not contain the expected path. Expected codes: ' + StringCodes(ExpectedPath) + ' ImagePath codes: ' + StringCodes(ImagePath));
 
   // Last-resort verification: query SCM and look for the expected absolute
   // path anywhere in the output. This remains locale-safe because we do not
   // parse localized labels such as BINARY_PATH_NAME/NOMBRE_RUTA_BINARIO.
   TmpFile := ExpandConstant('{tmp}\sc_qc_sunshineservice_verify.txt');
   ResultCode := -1;
-  Exec(ExpandConstant('{cmd}'), '/c sc qc SunshineService > "' + TmpFile + '" 2>&1',
+  Exec(ExpandConstant('{cmd}'), '/c ""' + ExpandConstant('{sys}\sc.exe') + '" qc SunshineService > "' + TmpFile + '" 2>&1"',
        '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   if (ResultCode = 0) and LoadStringsFromFile(TmpFile, Lines) then
   begin
     for i := 0 to GetArrayLength(Lines) - 1 do
     begin
       Line := Lines[i];
-      if Pos(Lower, Lowercase(Line)) > 0 then
+      if (Pos(ExpectedPath, Line) > 0) or (Pos(Lower, Lowercase(Line)) > 0) then
       begin
         DeleteFile(TmpFile);
-        EmitInstallerEvent('service', 'done', 'StatusInstallService', 0);
+        ReportVerifiedService();
         Exit;
       end;
     end;
@@ -1177,12 +1468,40 @@ begin
   EmitInstallerEvent('service', 'failed', 'StatusInstallService', 100);
   JournalComponent('service', 'verify', 100);
   Log('Service verification failed. ' + Detail);
-  // MsgBox() ignores /SILENT (only /SUPPRESSMSGBOXES auto-answers it), so an
-  // unattended install without that switch would sit here forever now that we
-  // no longer abort. The log line above carries the same information.
+  // Silent callers receive the failure through the exit code and log above.
   // CustomMessage() returns the string verbatim, so {app} needs ExpandConstant.
   if not WizardSilent then
-    MsgBox(ExpandConstant(CustomMessage('MsgServiceInstallFailed')) + #13#10 + #13#10 + Detail, mbError, MB_OK);
+    InstallerMessageBox(ExpandConstant(CustomMessage('MsgServiceInstallFailed')) + #13#10 + #13#10 + Detail, mbError, MB_OK, IDOK);
+end;
+
+procedure VerifyServiceAutostart();
+var
+  StartType: Cardinal;
+  Found: Boolean;
+  Detail: String;
+  ResultCode: Integer;
+begin
+  StartType := 0;
+  ResultCode := TakeStepResult('autostart');
+  Found := RegQueryDWordValue(HKLM, 'SYSTEM\CurrentControlSet\Services\SunshineService', 'Start', StartType);
+  if not Found then
+    Found := RegQueryDWordValue(HKLM64, 'SYSTEM\CurrentControlSet\Services\SunshineService', 'Start', StartType);
+  if (ResultCode = 0) and Found and (StartType = 2) then
+  begin
+    EmitInstallerEvent('autostart', 'done', 'StatusAutostart', 0);
+    Exit;
+  end;
+  if Found then
+    Detail := 'Start: ' + IntToStr(StartType)
+  else
+    Detail := 'Start: <missing>';
+  Detail := 'Autostart script exit: ' + IntToStr(ResultCode) + #13#10 + Detail;
+  Log('Service autostart verification failed. ' + Detail);
+  ServiceVerifyFailed := True;
+  EmitInstallerEvent('autostart', 'failed', 'StatusAutostart', 100);
+  JournalComponent('autostart', 'verify', 100);
+  if not WizardSilent then
+    InstallerMessageBox(CustomMessage('MsgServiceAutostartFailed') + #13#10 + #13#10 + Detail, mbError, MB_OK, IDOK);
 end;
 
 // Report a nonzero exit code when the service could not be verified. Inno
@@ -1255,7 +1574,7 @@ begin
   DecideRestart();
   if VDDResultCode = 101 then
     Result := 101
-  else if ServiceVerifyFailed then
+  else if ServiceVerifyFailed or ServiceStartFailed then
     Result := 100
   else if RebootReasons <> '' then
     Result := 3010
@@ -1263,8 +1582,227 @@ begin
     Result := 0;
 end;
 
+// ---- Programs that were moved aside so nothing could start them ----------------------------------
+// update-quiesce.ps1 -Park renames the host, the service and the tray to <name>.parked once they
+// have been ended: a supervisor that starts the tray again a moment later finds nothing to start.
+// Setup then installs the new files and the old ones are deleted; when it does not finish (the
+// rollback removes the new files it created) they are put back, so a failed update leaves the
+// programs that were there. Authority: installer-inno-renamefile-20261119.
+function PreparedDir(): String;
+begin
+  if UpdateAppDir <> '' then
+    Result := UpdateAppDir
+  else
+    Result := ExpandConstant('{app}');
+end;
+
+function ParkedImage(const Relative: String): String;
+begin
+  Result := PreparedDir() + '\' + Relative + '.parked';
+end;
+
+function LiveImage(const Relative: String): String;
+begin
+  Result := PreparedDir() + '\' + Relative;
+end;
+
+// At the start of a run: a run that was killed after parking left the old program under the other
+// name. Put it back when the real name is empty, drop it when a program is there again.
+procedure RecoverParkedImage(const Relative: String);
+begin
+  if not FileExists(ParkedImage(Relative)) then
+    Exit;
+  if FileExists(LiveImage(Relative)) then
+    DeleteFile(ParkedImage(Relative))
+  else if RenameFile(ParkedImage(Relative), LiveImage(Relative)) then
+    Log('Restored ' + Relative + ' left aside by an earlier update.')
+  else
+    Log('Could not restore ' + Relative + ' left aside by an earlier update.');
+end;
+
+procedure RecoverParkedImages();
+begin
+  RecoverParkedImage('sunshine.exe');
+  RecoverParkedImage('tools\sunshinesvc.exe');
+  RecoverParkedImage('assets\gui\sunshine-gui.exe');
+end;
+
+// At the end of a run (and when an update is refused): keep the new program and delete the old
+// one, or put the old one back in place of whatever the failed run left.
+procedure SettleParkedImage(const Relative: String; const Installed: Boolean);
+begin
+  if not FileExists(ParkedImage(Relative)) then
+    Exit;
+  if Installed and FileExists(LiveImage(Relative)) then
+    DeleteFile(ParkedImage(Relative))
+  else
+  begin
+    if FileExists(LiveImage(Relative)) then
+      DeleteFile(LiveImage(Relative));
+    if RenameFile(ParkedImage(Relative), LiveImage(Relative)) then
+      Log('The update did not finish; ' + Relative + ' was put back.')
+    else
+      Log('The update did not finish and ' + Relative + ' could not be put back.');
+  end;
+end;
+
+procedure SettleParkedImages(const Installed: Boolean);
+begin
+  SettleParkedImage('sunshine.exe', Installed);
+  SettleParkedImage('tools\sunshinesvc.exe', Installed);
+  SettleParkedImage('assets\gui\sunshine-gui.exe', Installed);
+end;
+
+// ---- The Web UI folder is replaced as one unit that can be put back ----------------------------
+// Setup rolls a failed installation back by removing what it created. It does not bring back a
+// file it overwrote or a folder an [InstallDelete] entry removed, so deleting assets\web up front
+// left an update that failed later with no Web UI at all. The old folder is moved aside instead
+// (a rename on the same volume), the new one is copied in, and the old one is deleted only once the
+// installation has finished. Authority: installer-inno-installdelete-20261119 ([InstallDelete]
+// runs as the first step of the installation), installer-inno-script-events-20261107
+// (PrepareToInstall, CurStepChanged, DeinitializeSetup), installer-inno-renamefile-20261119
+// (also renames a directory), installer-inno-deltree-20261119, installer-inno-exit-codes-20261119
+// (a text returned by PrepareToInstall ends Setup in the Preparing to Install stage, exit code 7),
+// installer-inno-closeapplications-20261119 (the Restart Manager check that follows it).
+function WebUiDir(): String;
+begin
+  Result := PreparedDir() + '\assets\web';
+end;
+
+function WebUiBackupDir(): String;
+begin
+  Result := PreparedDir() + '\assets\web.previous';
+end;
+
+// A Web UI folder is complete when the installer that copied it got to its end: the marker is
+// written after the last file. Two pages are not enough, they are copied first.
+function WebUiIsComplete(const Dir: String): Boolean;
+begin
+  Result := FileExists(Dir + '\.install-complete');
+end;
+
+// Put the old folder back when the live one was not finished: an earlier run was stopped (killed,
+// powered off) between moving it aside and finishing. False when it cannot be put back; then the
+// update must not go on, because the next step would delete the only complete copy.
+function RecoverWebUi(): Boolean;
+begin
+  Result := True;
+  if not DirExists(WebUiBackupDir()) then
+    Exit;
+  if WebUiIsComplete(WebUiDir()) then
+  begin
+    DelTree(WebUiBackupDir(), True, True, True);
+    WebUiMovedAside := False;
+    Exit;
+  end;
+  if DirExists(WebUiDir()) then
+    if not DelTree(WebUiDir(), True, True, True) then
+    begin
+      Log('Could not remove the unfinished Web UI folder of an earlier update.');
+      Result := False;
+      Exit;
+    end;
+  if RenameFile(WebUiBackupDir(), WebUiDir()) then
+  begin
+    // nothing is aside any more: a later refusal must not delete what was put back
+    WebUiMovedAside := False;
+    Log('Restored the Web UI folder left aside by an earlier update.');
+  end
+  else
+  begin
+    Log('Could not restore the Web UI folder left aside by an earlier update.');
+    Result := False;
+  end;
+end;
+
+// False when the old folder cannot be moved aside (something holds a handle of it): the update must
+// stop, or a failed copy would have nothing to put back.
+function BackUpWebUi(): Boolean;
+begin
+  Result := True;
+  if not DirExists(WebUiDir()) then
+    Exit;
+  if DirExists(WebUiBackupDir()) then
+    DelTree(WebUiBackupDir(), True, True, True);
+  if RenameFile(WebUiDir(), WebUiBackupDir()) then
+    WebUiMovedAside := True
+  else
+  begin
+    Log('The Web UI folder could not be moved aside.');
+    Result := False;
+  end;
+end;
+
+// The installer got to its end: the marker says the folder holds every file of this version.
+procedure MarkWebUiComplete();
+begin
+  if DirExists(WebUiDir()) then
+    if not SaveStringToFile(WebUiDir() + '\.install-complete', 'complete', False) then
+    begin
+      // every file was copied; a refused marker must not make Setup put the old folder back over them
+      WebUiMarkerFailed := True;
+      Log('The Web UI completion marker could not be written.');
+    end;
+end;
+
+// Called from DeinitializeSetup, which runs after a rollback ("Deinitializing Setup." follows
+// "Uninstallation process succeeded." in the Setup log).
+procedure FinishWebUiBackup();
+begin
+  if not WebUiMovedAside then
+    Exit;
+  if PostInstallReached and (WebUiIsComplete(WebUiDir()) or WebUiMarkerFailed) then
+  begin
+    DelTree(WebUiBackupDir(), True, True, True);
+    Log('The new Web UI folder is in place; the old one was deleted.');
+  end
+  else
+  begin
+    if DirExists(WebUiDir()) then
+      DelTree(WebUiDir(), True, True, True);
+    if RenameFile(WebUiBackupDir(), WebUiDir()) then
+      Log('The installation did not finish; the previous Web UI folder was put back.')
+    else
+      Log('The installation did not finish and the previous Web UI folder could not be put back.');
+  end;
+  WebUiMovedAside := False;
+end;
+
+// Restart SunshineService if this Setup run stopped it (or ended the Control Panel's updater,
+// which had stopped it). Parked images and assets\web must already be back in place.
+// Authority: installer-inno-script-events-20261107 (PrepareToInstall, CurStepChanged,
+// DeinitializeSetup), installer-inno-exit-codes-20261119 (exit codes 5 and 7).
+procedure RestartStoppedService();
+var
+  ResultCode: Integer;
+begin
+  if not ServiceStoppedForUpdate then
+    Exit;
+  ServiceStoppedForUpdate := False;
+  if Exec(ExpandConstant('{sys}\net.exe'), 'start SunshineService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
+    Log('The update did not finish; SunshineService was started again.')
+  else
+    Log('The update did not finish and SunshineService could not be started again (code ' + IntToStr(ResultCode) + ').');
+end;
+
+// Restore everything PrepareToInstall moved or stopped when an update is refused or aborted.
+procedure RestoreAfterAbortedUpdate();
+begin
+  FinishWebUiBackup();
+  SettleParkedImages(False);
+  RestartStoppedService();
+end;
+
 procedure DeinitializeSetup();
 begin
+  // A run that was cancelled before PrepareToInstall prepared a folder owns nothing to settle.
+  if UpdateAppDir <> '' then
+  begin
+    FinishWebUiBackup();
+    SettleParkedImages(PostInstallReached);
+    if not PostInstallReached then
+      RestartStoppedService();
+  end;
   EmitInstallerEvent('installer', 'done', 'InstallerFinished', GetCustomSetupExitCode());
 end;
 
@@ -1295,11 +1833,12 @@ begin
   // metadata. Offer to clean it up rather than blocking the install entirely.
   if (UninstallExe = '') or (not FileExists(UninstallExe)) then
   begin
-    if MsgBox(CustomMessage('MsgOldNSISStaleRegistry'), mbConfirmation, MB_YESNO) = IDYES then
+    // Without interactive consent, preserve old installation metadata and stop.
+    if InstallerMessageBox(CustomMessage('MsgOldNSISStaleRegistry'), mbConfirmation, MB_YESNO, IDNO) = IDYES then
     begin
       if not CleanupOldNSISRegistry() then
       begin
-        MsgBox(CustomMessage('MsgOldNSISCleanupFailed'), mbError, MB_OK);
+        InstallerMessageBox(CustomMessage('MsgOldNSISCleanupFailed'), mbError, MB_OK, IDOK);
         Result := False;
       end;
     end
@@ -1310,7 +1849,8 @@ begin
     Exit;
   end;
 
-  if MsgBox(CustomMessage('MsgOldNSISDetected'), mbConfirmation, MB_YESNO) <> IDYES then
+  // Do not silently run an older uninstaller that could remove user data.
+  if InstallerMessageBox(CustomMessage('MsgOldNSISDetected'), mbConfirmation, MB_YESNO, IDNO) <> IDYES then
   begin
     Result := False;
     Exit;
@@ -1345,18 +1885,18 @@ begin
   if (InstallDir = '') or (not DirExists(InstallDir)) or
      (not FileExists(UninstallExe)) then
   begin
-    if MsgBox(CustomMessage('MsgOldNSISStaleRegistry'), mbConfirmation, MB_YESNO) = IDYES then
+    if InstallerMessageBox(CustomMessage('MsgOldNSISStaleRegistry'), mbConfirmation, MB_YESNO, IDNO) = IDYES then
     begin
       if not CleanupOldNSISRegistry() then
       begin
-        MsgBox(CustomMessage('MsgOldNSISCleanupFailed'), mbError, MB_OK);
+        InstallerMessageBox(CustomMessage('MsgOldNSISCleanupFailed'), mbError, MB_OK, IDOK);
         Result := False;
       end;
       Exit;
     end;
   end;
 
-  MsgBox(CustomMessage('MsgOldNSISFailed'), mbError, MB_OK);
+  InstallerMessageBox(CustomMessage('MsgOldNSISFailed'), mbError, MB_OK, IDOK);
   Result := False;
 end;
 
@@ -1379,13 +1919,72 @@ begin
     Result := Result + ' /fi "PID ne ' + ShellPid + '"';
 end;
 
+// ---- Make the folder safe to update ------------------------------------------------------------
+// update-quiesce.ps1 stops the service, ends what still runs from the folder (repeatedly, since a
+// tray can be started again a moment after it was ended) and checks that no file of the folder is
+// held. It returns 0 when ready; the report says what is in the way otherwise.
+function RunUpdateQuiesce(const VerifyOnly: Boolean; var Report: String): Integer;
+var
+  Script, ReportFile, Params: String;
+  ResultCode: Integer;
+  Lines: TArrayOfString;
+  I: Integer;
+begin
+  Result := -1;
+  Report := '';
+  if not UpdateScriptExtracted then
+  begin
+    ExtractTemporaryFile('update-quiesce.ps1');
+    UpdateScriptExtracted := True;
+  end;
+  Script := ExpandConstant('{tmp}\update-quiesce.ps1');
+  ReportFile := ExpandConstant('{tmp}\update-quiesce-report.txt');
+  DeleteFile(ReportFile);
+  Params := '-NoProfile -ExecutionPolicy Bypass -File "' + Script + '" -Root "' + PreparedDir() +
+    '" -Report "' + ReportFile + '" -Park';
+  if VerifyOnly then
+    Params := Params + ' -VerifyOnly';
+  if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Params, '', SW_HIDE,
+    ewWaitUntilTerminated, ResultCode) then
+  begin
+    Log('The update preparation script could not be started: ' + SysErrorMessage(ResultCode));
+    Exit;
+  end;
+  Result := ResultCode;
+  if LoadStringsFromFile(ReportFile, Lines) then
+    for I := 0 to GetArrayLength(Lines) - 1 do
+    begin
+      Log('update-quiesce: ' + Lines[I]);
+      if Report <> '' then
+        Report := Report + #13#10;
+      Report := Report + Lines[I];
+      // the service was running when this script came, or the Control Panel's updater had stopped it
+      if (Pos('service: stopping', Lines[I]) = 1) or (Pos('updater: ended', Lines[I]) = 1) then
+        ServiceStoppedForUpdate := True;
+    end;
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
-  CleanupScript, CleanupRoot, CleanupParameters: String;
-  ResultCode: Integer;
+  CleanupScript, CleanupRoot, CleanupParameters, Report: String;
+  ResultCode, QuiesceCode: Integer;
 begin
   Result := '';
   EmitInstallerEvent('prepare', 'running', 'PrepareToInstall', 0);
+  // before anything is copied or started in the install folder
+  Result := HardenInstallDir();
+  if Result <> '' then
+    Exit;
+  // The person went back and chose another folder: what was prepared in the first one goes back.
+  if (UpdateAppDir <> '') and (CompareText(UpdateAppDir, ExpandConstant('{app}')) <> 0) then
+    RestoreAfterAbortedUpdate();
+  UpdateAppDir := ExpandConstant('{app}');
+  if not RecoverWebUi() then
+  begin
+    Result := FmtMessage(CustomMessage('MsgUpdateBlocked'), ['assets\web.previous (the Web UI folder of an earlier update could not be put back)']);
+    Exit;
+  end;
+  RecoverParkedImages();
 
   ExtractTemporaryFile('cleanup-legacy-ds5.ps1');
   CleanupScript := ExpandConstant('{tmp}\cleanup-legacy-ds5.ps1');
@@ -1399,17 +1998,45 @@ begin
     Log('Legacy DualSense cleanup script could not be started.')
   else if ResultCode <> 0 then
     Log('Legacy DualSense cleanup script returned ' + IntToStr(ResultCode) + '.');
-  // Stop the Sunshine service
-  Exec('net', 'stop SunshineService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  // Kill any running processes
-  Exec('taskkill', SunshineKillParameters(), '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec('taskkill', '/f /im sunshine-gui.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  Exec('taskkill', '/f /im sunshinesvc.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  // Stop everything that runs from the install folder and make sure nothing holds a file of it.
+  // A tray the Control Panel's own updater left running, or one started again a moment after it
+  // was ended, used to hold sunshine-gui.exe; the copy then failed in the middle of the update.
+  // Refusing here changes nothing: the installation is exactly what it was.
+  QuiesceCode := RunUpdateQuiesce(False, Report);
+  if QuiesceCode > 0 then
+  begin
+    Log('The install folder cannot be updated now (code ' + IntToStr(QuiesceCode) + ').');
+    EmitInstallerEvent('prepare', 'failed', 'UpdateBlocked', QuiesceCode);
+    // the programs moved aside go back first: the service is started from them
+    RestoreAfterAbortedUpdate();
+    Result := FmtMessage(CustomMessage('MsgUpdateBlocked'), [Report]);
+    Exit;
+  end;
+  if QuiesceCode < 0 then
+  begin
+    // Without the script, stop the service and end the programs by name as earlier versions did.
+    if Exec(ExpandConstant('{sys}\net.exe'), 'stop SunshineService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
+      ServiceStoppedForUpdate := True;
+    Exec(ExpandConstant('{sys}\taskkill.exe'), SunshineKillParameters(), '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec(ExpandConstant('{sys}\taskkill.exe'), '/f /im sunshine-gui.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    Exec(ExpandConstant('{sys}\taskkill.exe'), '/f /im sunshinesvc.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  end;
+  // The old Web UI folder is moved aside now, while a refusal still costs nothing; if it cannot be
+  // moved, nothing could be put back after a failed copy, so the update stops here.
+  if not BackUpWebUi() then
+  begin
+    EmitInstallerEvent('prepare', 'failed', 'UpdateBlocked', 20);
+    Result := FmtMessage(CustomMessage('MsgUpdateBlocked'), ['held: assets\web (the folder could not be moved aside)']);
+    RestoreAfterAbortedUpdate();
+    Exit;
+  end;
   if FileExists(ExpandConstant('{app}\tools\mat-capture\sunshine-plugin-mat-capture.exe')) then
   begin
     if not Exec(ExpandConstant('{app}\tools\mat-capture\sunshine-plugin-mat-capture.exe'),
       '--wait-for-stop', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) or (ResultCode <> 0) then
     begin
+      EmitInstallerEvent('prepare', 'failed', 'UpdateBlocked', ResultCode);
+      RestoreAfterAbortedUpdate();
       Result := 'MAT capture is still stopping. Retry installation after it exits.';
       Exit;
     end;
@@ -1420,9 +2047,20 @@ end;
 
 // Clean up portable scripts during install
 procedure CurStepChanged(CurStep: TSetupStep);
+var
+  Report: String;
 begin
   if CurStep = ssInstall then
   begin
+    // The files are about to be copied. What ran between the preparation and now (the Restart
+    // Manager check, a supervisor starting a tray again) is ended once more, and if the folder
+    // still cannot be updated Setup stops before it has changed anything.
+    if RunUpdateQuiesce(True, Report) > 0 then
+      if RunUpdateQuiesce(False, Report) > 0 then
+      begin
+        RestoreAfterAbortedUpdate();
+        RaiseException(FmtMessage(CustomMessage('MsgUpdateBlocked'), [Report]));
+      end;
     JournalStart();
     EmitInstallerEvent('plan', 'running', PlannedInstallerSteps(), 0);
     InstallProgressPermille := -20;
@@ -1430,10 +2068,14 @@ begin
   end;
   if CurStep = ssPostInstall then
   begin
+    PostInstallReached := True;
+    MarkWebUiComplete();
     // Upgrade older VDDs and make driver readiness a hard gate before the
     // Sunshine service is allowed to start. A bound-but-not-ready device is
     // kept for Windows to finish during the requested reboot.
     InstallAndVerifyVDD();
+    if not IsUnderProgramFiles(ExpandConstant('{app}')) then
+      LogFolderPermissions('after install', RemoveBackslash(ExpandConstant('{app}')));
     // Delete portable scripts in installed version
     DeleteFile(ExpandConstant('{app}\install_portable.bat'));
     DeleteFile(ExpandConstant('{app}\uninstall_portable.bat'));
@@ -1458,8 +2100,8 @@ var
 begin
   if CurUninstallStep = usUninstall then
   begin
-    // Ask about virtual gamepad
-    if MsgBox(CustomMessage('MsgUninstallGamepad'), mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+    // The driver may be shared with other applications; silence must keep it.
+    if InstallerMessageBox(CustomMessage('MsgUninstallGamepad'), mbConfirmation, MB_YESNO or MB_DEFBUTTON2, IDNO) = IDYES then
     begin
       Exec(ExpandConstant('{app}\scripts\uninstall-gamepad.bat'), '', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     end;
@@ -1471,15 +2113,11 @@ begin
     // installation cannot lock future installs to a stale drive/path.
     DeleteInstallDirRegistry();
 
-    // Ask about data removal
-    if MsgBox(FmtMessage(CustomMessage('MsgUninstallData'), [ExpandConstant('{app}')]),
-      mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDNO then
+    // Only explicit consent may delete configuration, paired clients and covers.
+    // An unattended uninstall keeps user data, even without /SUPPRESSMSGBOXES.
+    if InstallerMessageBox(FmtMessage(CustomMessage('MsgUninstallData'), [ExpandConstant('{app}')]),
+      mbConfirmation, MB_YESNO or MB_DEFBUTTON2, IDNO) = IDYES then
     begin
-      // User chose to keep data, do nothing
-    end
-    else
-    begin
-      // Remove the installation directory
       DelTree(ExpandConstant('{app}'), True, True, True);
     end;
   end;

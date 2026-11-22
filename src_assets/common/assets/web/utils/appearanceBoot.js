@@ -1,4 +1,5 @@
-import { endBoot, registerModeHandler, useAppearance } from 'foundation-ui/vue'
+import { endBoot } from 'foundation-ui/appearance/boot.js'
+import { registerModeHandler, useAppearance } from 'foundation-ui/vue/useAppearance.js'
 import { setStoredTheme, setTheme } from './theme.js'
 import { startEmbeddedRoot } from './embeddedRoot.js'
 

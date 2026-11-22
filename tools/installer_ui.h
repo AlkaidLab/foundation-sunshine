@@ -1,5 +1,6 @@
 #pragma once
 #include "installer_d2d.h"
+#include "installer_dir.h"
 
 namespace ui {
 
@@ -211,6 +212,76 @@ namespace ui {
   }
   inline bool
   isascii_end(const std::wstring &s) { return !s.empty() && s.back() < 128; }
+
+  // ---------------------------------------------------------------- the install location (installer_dir.h)
+  inline size_t dir_max_length() { return installer_dir::kMaxLength; }
+  inline long long dir_needed_bytes() { return static_cast<long long>(installer_dir::kNeededBytes); }
+  // "1.5 GB": binary units as Explorer shows them, one decimal under 10, none above (the setup UI's formatBytes).
+  inline std::wstring
+  format_bytes(long long bytes) {
+    static const wchar_t *units[] = { L"B", L"KB", L"MB", L"GB", L"TB" };
+    double value = bytes < 0 ? 0 : static_cast<double>(bytes);
+    int unit = 0;
+    while (value >= 1024 && unit < 4) {
+      value /= 1024;
+      ++unit;
+    }
+    wchar_t text[48];
+    if (unit < 3 || value >= 10)
+      swprintf_s(text, L"%.0f %s", value, units[unit]);
+    else
+      swprintf_s(text, L"%.1f %s", value, units[unit]);
+    return text;
+  }
+
+  // The reason a folder is refused, in the words of the setup UI (foundation-ui installerTexts.js `dir.err.*`).
+  inline std::wstring
+  dir_error_text(const view &v) {
+    const std::string &e = v.dir_error;
+    if (e == "invalid") return Z(v, L"这不是可用的文件夹路径。", L"This is not a usable folder path.");
+    if (e == "chars") return Z(v, L"路径里不能有 ! % ^ & ; , = ' ` { } $ 这些字符。", L"The path cannot contain any of ! % ^ & ; , = ' ` { } $");
+    if (e == "not-fixed") return Z(v, L"只能装在本机固定磁盘上，网络盘、U 盘和映射盘都不行。", L"Install on a fixed disk of this PC. Network, USB and mapped drives are not accepted.");
+    if (e == "fs") return Z(v, L"这个磁盘不是 NTFS 或 ReFS 格式，无法保护程序文件不被普通用户修改。", L"This drive is not NTFS or ReFS, so the program files cannot be protected from other users.");
+    if (e == "root") return Z(v, L"不能装在磁盘根目录，请在路径后加一个文件夹名。", L"The root of a disk cannot be used. Add a folder name to the path.");
+    if (e == "system") return Z(v, L"不能装在 Windows 目录里。", L"The Windows folder cannot be used.");
+    if (e == "synced") return Z(v, L"不能装在 OneDrive 等同步文件夹里。", L"A synced folder such as OneDrive cannot be used.");
+    if (e == "not-empty") return Z(v, L"这个文件夹里已有文件，不能直接作为安装位置。请在路径后加一个新文件夹名。", L"This folder already has files and cannot be the install location itself. Add a new folder name to the path.");
+    if (e == "too-long") return v.zh ? (L"路径太长，最多 " + std::to_wstring(dir_max_length()) + L" 个字符。") : (L"The path is too long: at most " + std::to_wstring(dir_max_length()) + L" characters.");
+    if (e == "no-space") return v.zh ? (L"这个磁盘可用空间不足，至少需要 " + format_bytes(dir_needed_bytes()) + L"。") : (L"This drive does not have enough free space: at least " + format_bytes(dir_needed_bytes()) + L" are needed.");
+    if (e == "no-access") return Z(v, L"无法访问这个文件夹。", L"This folder cannot be opened.");
+    return Z(v, L"这个文件夹不能用。", L"This folder cannot be used.");
+  }
+
+  // The warning about a folder that works but sits where others can replace it from above (installer_dir.h: parent, user): the risk in two clauses, the same words as foundation-ui `dir.warn.*`.
+  inline std::wstring
+  dir_warning_text(const view &v) {
+    if (v.dir_warning == "user")
+      return Z(v, L"这是用户文件夹，该用户和以他身份运行的程序可以替换整个文件夹，而服务以系统权限运行。", L"This is a user folder. That user and the programs they run can swap the whole folder, and the service runs it as SYSTEM.");
+    return Z(v, L"上级文件夹可被其他账户或程序改动，程序文件可能被替换，而服务以系统权限运行。", L"Other accounts or programs can change a folder above this one and swap the program files, which the service runs as SYSTEM.");
+  }
+
+  inline std::wstring
+  dir_note_text(const view &v) {
+    if (v.dir_note == "redirected")
+      return Z(v, L"所选文件夹里已有文件，所以装到其中的 Foundation Sunshine 文件夹。", L"The selected folder already has files, so Foundation Sunshine goes in a folder inside it.");
+    return {};
+  }
+
+  // A path that fits `width`: the head is cut short with an ellipsis, the last folder (about 24 characters at most) always shows.
+  inline std::wstring
+  fit_path(canvas &c, const std::wstring &path, float width, float px, int weight) {
+    if (c.measure_w(path, px, weight) <= width) return path;
+    const size_t keep_tail = std::min<size_t>(path.size(), 24);
+    const std::wstring tail = path.substr(path.size() - keep_tail);
+    size_t head = path.size() - keep_tail;
+    while (head > 3) {
+      --head;
+      const std::wstring candidate = path.substr(0, head) + L"…" + tail;
+      if (c.measure_w(candidate, px, weight) <= width) return candidate;
+    }
+    return L"…" + tail;
+  }
+
   // ---------------------------------------------------------------- the page
   struct frame_result {
     std::vector<button_spec> buttons;
@@ -218,6 +289,9 @@ namespace ui {
     std::wstring status;
     float content_bottom = 0, buttons_top = 0;
     float max_scroll = 0, view_h = 0, row_h = 0, row_y[8] = {};
+    // the field of the install folder's path (a fresh install's first page): where the shell puts its edit window; `edit` = the page has the field
+    bool edit = false;
+    float edit_x = 0, edit_y = 0, edit_w = 0, edit_h = 0;
   };  // the components list
 
   inline float
@@ -231,6 +305,116 @@ namespace ui {
     c.text(x + 48, y + (h - th) / 2, tw, text, 13.5f, 0, fg);
     return h;
   }
+
+  // The colour of the location row, which is also the colour behind its Change button.
+  inline Color
+  row_color(const palette &p, const view &v) {
+    return p.hc ? p.card : v.dir_error.empty() ? p.tile : p.error_c;
+  }
+
+  // The colour behind a button: the card, except for the Change button, which sits on the location row.
+  inline Color
+  under_color(const palette &p, const view &v, int button_id) {
+    return button_id == 131 ? row_color(p, v) : p.card;
+  }
+
+  // The buttons that sit inside the page's content and are placed by it (the select-all button and the three of the install location), not in the footer.
+  inline bool
+  inline_button(int id) { return id >= 130 && id <= 133; }
+
+  // A text button inside the content: `x` is the left edge of its text area, `right` puts it against the right edge instead.
+  inline void
+  add_inline_button(canvas &c, std::vector<button_spec> &buttons, int id, const std::wstring &text, float at, float y, bool right_aligned) {
+    button_spec b;
+    b.id = id;
+    b.text = text;
+    b.kind = bkind::text;
+    b.h = 32;
+    b.w = max(80.f, c.measure_w(text, 15, 1) + 32);
+    b.x = right_aligned ? at - b.w + 8 : at - 8;
+    b.y = y;
+    buttons.push_back(b);
+  }
+
+  // The install-location row of the first and the maintenance page: the folder, the room on its drive and (a fresh install) a Change button and a field to type the path in;
+  // under it the reason when the folder is refused, the warning when it is only a risk (with the safe place one press away), the note about a picked folder with files in it,
+  // and "use the selected folder" when the product's folder name was added to a picked folder. Returns the height it took.
+  inline float
+  draw_location(canvas &c, const view &v, float x, float y, float w, std::vector<button_spec> &buttons, frame_result &out) {
+    const palette &p = c.p;
+    const bool bad = !v.dir_error.empty();
+    const bool warn = !bad && !v.dir_warning.empty();
+    const float h = v.dir_editable ? 70.f : 60.f;
+    c.container(x, y, w, h, 20, row_color(p, v));
+    if (p.hc) c.stroke_r(x, y, w, h, 20, bad ? p.error : p.outline_var, 1.5f);
+    c.container(x + 10, y + (h - 40) / 2, 40, 40, 20, p.primary_c);
+    icon(c, ic::folder, x + 30, y + h / 2, 22, p.on_primary_c);
+    float right = x + w - 12;
+    if (v.dir_editable) {
+      button_spec b;
+      b.id = 131;
+      b.text = Z(v, L"更改", L"Change");
+      b.kind = bkind::tonal;
+      b.h = 40;
+      b.w = max(80.f, c.measure_w(b.text, 15, 1) + 40);
+      b.x = right - b.w;
+      b.y = y + (h - 40) / 2;
+      buttons.push_back(b);
+      right = b.x - 12;
+    }
+    const float tx = x + 62, tw = right - tx;
+    c.text(tx, y + 8, tw, Z(v, L"安装位置", L"Install location"), 13.5f, 1, p.on_surface);
+    if (v.dir_editable) {
+      // the field: a person can type any folder; the shell's edit window sits on it (the text is drawn here only where there is no edit window: the previews)
+      const float fy = y + 30, fh = 30;
+      c.container(tx, fy, tw, fh, 10, p.card);
+      c.stroke_r(tx, fy, tw, fh, 10, bad ? p.error : p.outline_var, bad || p.hc ? 1.5f : 1.f);
+      out.edit = true;
+      out.edit_x = tx + 10;
+      out.edit_y = fy + 5;
+      out.edit_w = tw - 20;
+      out.edit_h = fh - 10;
+      if (!v.dir_live_edit) c.text(tx + 10, fy + 6, tw - 20, fit_path(c, v.dir, tw - 20, 13.5f, 0), 13.5f, 0, p.on_surface);
+    }
+    else
+      c.text(tx, y + 26, tw, fit_path(c, v.dir, tw, 13.5f, 0), 13.5f, 0, p.on_surface);
+    if (!bad && v.dir_free >= 0) {
+      // the room goes on the same line as the title, at its right end
+      const std::wstring room = v.zh ? (L"可用 " + format_bytes(v.dir_free)) : (format_bytes(v.dir_free) + L" free");
+      const float rw = c.measure_w(room, 12.5f, 0);
+      c.text(right - rw, y + 9, rw + 2, room, 12.5f, 0, p.on_variant);
+    }
+    float used = h;
+    if (bad) {
+      used += 8 + c.text(x + 4, y + used + 8, w - 8, dir_error_text(v), 13.5f, 0, p.error);
+    }
+    else if (warn) {
+      used += 8;
+      used += banner(c, v, x, y + used, w, ic::exclam, p.warning_c, p.on_warning_c, dir_warning_text(v));
+    }
+    else if (!v.dir_note.empty()) {
+      used += 8 + c.text(x + 4, y + used + 8, w - 8, dir_note_text(v), 13.5f, 0, p.on_variant);
+    }
+    if (v.dir_editable && (!v.dir_picked.empty() || (warn && !v.dir_safe.empty()))) {
+      used += 6;
+      if (!v.dir_picked.empty()) add_inline_button(c, buttons, 132, Z(v, L"使用所选文件夹本身", L"Use the selected folder itself"), x, y + used, false);
+      if (warn && !v.dir_safe.empty()) add_inline_button(c, buttons, 133, Z(v, L"改到安全位置", L"Use a safe place"), x + w, y + used, true);
+      used += 32;
+    }
+    return used;
+  }
+
+  // Facts that fit in `room` (the page has one more row than it used to: the folder's messages take what the facts had).
+  inline void
+  fit_facts(canvas &c, std::vector<fact> &facts, float w, float room) {
+    const auto height = [&](const std::vector<fact> &list) {
+      float total = 0;
+      for (const auto &f : list) total += max(40.f, c.measure_h(w - 56, f.title, 15, 1) + c.measure_h(w - 56, f.body, 13.5f, 0) + 4) + 14;
+      return total;
+    };
+    while (!facts.empty() && height(facts) > room) facts.pop_back();
+  }
+
 
   inline float
   draw_facts(canvas &c, float x, float y, float w, const std::vector<fact> &facts) {
@@ -393,6 +577,23 @@ namespace ui {
     std::wstring ban;
     ic ban_glyph = ic::info;
     Color ban_bg = p.secondary_c, ban_fg = p.on_secondary_c;
+    if (v.dir_confirm) {
+      // the question about a folder that only has a warning: asked once, and "Install anyway" waits kConfirmSeconds. The safe place is the primary button, the risk the tonal one.
+      glyph = ic::exclam;
+      gbg = p.warning_c;
+      gfg = p.on_warning_c;
+      title = Z(v, L"这个位置不够安全", L"This location is not safe enough");
+      lead = dir_warning_text(v);
+      facts = {
+        { ic::folder, p.primary_c, p.on_primary_c, Z(v, L"安装位置", L"Install location"), v.dir },
+        { ic::shield, p.tertiary_c, p.on_tertiary_c, Z(v, L"安全位置", L"A safe place"), v.dir_safe },
+      };
+      add_button(101, Z(v, L"改到安全位置", L"Use a safe place"), bkind::filled);
+      const std::wstring seconds = std::to_wstring(v.dir_confirm_left);
+      add_button(102, v.dir_confirm_left > 0 ? (v.zh ? L"仍然安装（" + seconds + L" 秒）" : L"Install anyway (" + seconds + L" s)") : Z(v, L"仍然安装", L"Install anyway"), bkind::tonal, v.dir_confirm_left <= 0);
+      add_button(103, Z(v, L"取消", L"Cancel"), bkind::text);
+    }
+    else
     switch (v.page) {
       case pg::welcome:
         title = Z(v, L"安装 Foundation Sunshine", L"Install Foundation Sunshine");
@@ -411,8 +612,9 @@ namespace ui {
           { ic::shield, p.tertiary_c, p.on_tertiary_c, Z(v, L"管理员权限", L"Administrator permission"), Z(v, L"安装时 Windows 会请求一次。", L"Windows asks once during setup.") },
           { ic::monitor, p.primary_c, p.on_primary_c, Z(v, L"组件", L"Components"), Z(v, L"默认安装常用组件，USB/IP 需在“自定义功能”中勾选。", L"Common components are installed by default. USB/IP is opt-in in Customize.") },
         };
-        add_button(101, Z(v, L"安装", L"Install"), bkind::filled);
-        add_button(102, Z(v, L"自定义功能", L"Customize"), bkind::tonal);
+        // a refused folder keeps both off until another one is picked; the reason is under the location row
+        add_button(101, Z(v, L"安装", L"Install"), bkind::filled, v.dir_error.empty());
+        add_button(102, Z(v, L"自定义功能", L"Customize"), bkind::tonal, v.dir_error.empty());
         add_button(103, Z(v, L"退出", L"Exit"), bkind::text);
         break;
       case pg::maintenance:
@@ -458,7 +660,7 @@ namespace ui {
         lead = v.maintenance ? Z(v, L"已勾选当前组件。取消勾选会卸载对应驱动，程序、设置和已配对客户端保留。",
                                   L"Current components are ticked. Clearing one uninstalls its driver. The program, settings and paired clients are kept.")
                              : Z(v, L"默认勾选推荐项。", L"Recommended components are ticked by default.");
-        add_button(101, Z(v, L"开始安装", L"Install"), bkind::filled);
+        add_button(101, Z(v, L"开始安装", L"Install"), bkind::filled, v.dir_error.empty());
         add_button(102, Z(v, L"返回", L"Back"), bkind::tonal);
         break;
       }
@@ -597,6 +799,13 @@ namespace ui {
     if (!ban.empty() && v.page != pg::components) y += banner(c, v, x, y, w, ban_glyph, ban_bg, ban_fg, ban) + 16;
 
     // content
+    if ((v.page == pg::welcome || v.page == pg::maintenance) && !v.dir_confirm) {
+      // the location row takes the room of a fact: one more fact when there is no banner above it, and none that does not fit under the folder's messages
+      const size_t keep = ban.empty() ? 2 : 1;
+      while (facts.size() > keep) facts.pop_back();
+      y += draw_location(c, v, x, y, w, out.buttons, out) + 14;
+      fit_facts(c, facts, w, (bottom - 44 - 14) - y);
+    }
     if (v.page == pg::installing) {
       const int g = current_group(v);
       c.text(x, y, w, percent_step(v, g), 13, 1, p.on_variant);
@@ -692,25 +901,25 @@ namespace ui {
     float rx = x + w;
     const float by = bottom - 44;
     for (auto &b : out.buttons) {
-      if (b.kind == bkind::tile || b.kind == bkind::row || b.id == 130) continue;
+      if (b.kind == bkind::tile || b.kind == bkind::row || inline_button(b.id)) continue;
       b.y = by;
     }
     for (auto &b : out.buttons) {
-      if (b.kind == bkind::tile || b.kind == bkind::row || b.kind == bkind::text) continue;
+      if (b.kind == bkind::tile || b.kind == bkind::row || b.kind == bkind::text || inline_button(b.id)) continue;
       rx -= b.w;
       b.x = rx;
       rx -= 12;
     }
     for (auto &b : out.buttons)
-      if (b.kind == bkind::text && b.id != 130) b.x = x - 8;
+      if (b.kind == bkind::text && !inline_button(b.id)) b.x = x - 8;
     // A text button on the left (卸载) and the buttons on the right never touch: the right ones give up padding, down to the text and 12 px each side, until the gap is 12 px.
     {
       float left_end = -1;
       for (const auto &b : out.buttons)
-        if (b.kind == bkind::text && b.id != 130) left_end = max(left_end, b.x + b.w);
+        if (b.kind == bkind::text && !inline_button(b.id)) left_end = max(left_end, b.x + b.w);
       std::vector<button_spec *> right;
       for (auto &b : out.buttons)
-        if (b.kind != bkind::tile && b.kind != bkind::row && b.kind != bkind::text) right.push_back(&b);
+        if (b.kind != bkind::tile && b.kind != bkind::row && b.kind != bkind::text && !inline_button(b.id)) right.push_back(&b);
       if (left_end >= 0 && !right.empty()) {
         float over = left_end + 12 - rx - 12;  // rx is 12 px past the leftmost right button
         for (auto *b : right) {

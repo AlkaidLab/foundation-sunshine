@@ -13,9 +13,12 @@
 #include <filesystem>
 #include <fstream>
 #include <initializer_list>
+#include <map>
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace {
   using ds5::tuning::find_descriptor;
@@ -44,6 +47,8 @@ namespace {
       state.rumble_curve.store(1.0f);
       state.rumble_noise_gate.store(0.020f);
       state.hd_gain.store(1.0f);
+      state.motion_report_rate_hz.store(250);
+      state.input_report_rate_hz.store(0);
       state.haptics_mode.store(0);
       state.hd_low_band_db.store(0.0f);
       state.hd_high_band_db.store(0.0f);
@@ -153,9 +158,9 @@ namespace {
   }
 }  // namespace
 
-TEST(Ds5TuningDescriptors, CoversTheStableOneHundredSixKeys) {
+TEST(Ds5TuningDescriptors, CoversTheOneHundredSevenKeys) {
   const auto &table = ds5::tuning::descriptors();
-  ASSERT_EQ(table.size(), 106u);
+  ASSERT_EQ(table.size(), 107u);
   std::set<std::uint32_t> ids;
   std::set<std::string> keys;
   std::set<std::uint32_t> common_groups;
@@ -164,7 +169,7 @@ TEST(Ds5TuningDescriptors, CoversTheStableOneHundredSixKeys) {
     EXPECT_TRUE(ids.insert(descriptor.id).second) << descriptor.id;
     EXPECT_TRUE(keys.insert(descriptor.key).second) << descriptor.key;
     ASSERT_GE(descriptor.id, 1u);
-    ASSERT_LE(descriptor.id, 106u);
+    ASSERT_LE(descriptor.id, 107u);
     if (descriptor.tier == ds5::tuning::Tier::common) {
       ++common_count;
       common_groups.insert(static_cast<std::uint32_t>(descriptor.group));
@@ -182,10 +187,10 @@ TEST(Ds5TuningDescriptors, CoversTheStableOneHundredSixKeys) {
       EXPECT_GT(descriptor.step, 0.0) << descriptor.key;
     }
   }
-  EXPECT_EQ(ids.size(), 106u);
+  EXPECT_EQ(ids.size(), 107u);
   EXPECT_EQ(ids, ([] {
     std::set<std::uint32_t> value;
-    for (std::uint32_t id = 1; id <= 106; ++id) value.insert(id);
+    for (std::uint32_t id = 1; id <= 107; ++id) value.insert(id);
     return value;
   }()));
   EXPECT_EQ(common_count, 14u);
@@ -195,18 +200,35 @@ TEST(Ds5TuningDescriptors, CoversTheStableOneHundredSixKeys) {
 TEST(Ds5TuningDescriptors, ReportsEveryKeyWithAHostConsumerAsImplemented) {
   const auto snapshot = ds5::tuning::store_t("/tmp/ds5-tuning-unused.json").snapshot_json();
   // Keys with no consumer on this host: Bluetooth output and fallback (10, 98, 100), the vendor slope
-  // block (31), the microphone route and preamp (96, 97: no capture source and no wire field), the client
-  // polling cap (101), cross-end sync (102 to 104) and the feedback target (105).
-  const std::set<std::uint32_t> unavailable { 10, 31, 96, 97, 98, 100, 101, 102, 103, 104, 105 };
-  EXPECT_EQ(snapshot.at("implemented_count").get<std::uint32_t>(), 106u - unavailable.size());
-  for (std::uint32_t id = 1; id <= 106; ++id) {
+  // block (31), the speaker preamp (97: no wire field), cross-end sync (102 to 104) and the feedback
+  // target (105).  The microphone route (96) puts the client microphone on the capture endpoint.  The motion report rate (101) is the rate
+  // the host asks clients for, so it has a host consumer.
+  const std::set<std::uint32_t> unavailable { 10, 31, 97, 98, 100, 102, 103, 104, 105 };
+  EXPECT_EQ(snapshot.at("implemented_count").get<std::uint32_t>(), 107u - unavailable.size());
+  for (std::uint32_t id = 1; id <= 107; ++id) {
     const bool implemented = key_entry(snapshot, id).at("implemented").get<bool>();
     EXPECT_EQ(implemented, unavailable.count(id) == 0) << id;
     if (!implemented) {
       EXPECT_EQ(key_entry(snapshot, id).at("status").get<std::string>(), "unavailable") << id;
       EXPECT_FALSE(key_entry(snapshot, id).at("reason").get<std::string>().empty()) << id;
+      EXPECT_FALSE(key_entry(snapshot, id).at("reason_code").get<std::string>().empty()) << id;
+    }
+    else {
+      EXPECT_TRUE(key_entry(snapshot, id).at("reason_code").get<std::string>().empty()) << id;
     }
   }
+}
+
+/* The code is what the UI turns into a sentence: one per real cause, never "not open yet". */
+TEST(Ds5TuningDescriptors, EveryUnavailableKeyNamesItsRealCause) {
+  const auto snapshot = ds5::tuning::store_t("/tmp/ds5-tuning-unused.json").snapshot_json();
+  const std::map<std::uint32_t, std::string> expected {
+    { 10, "transport" }, { 98, "transport" }, { 100, "transport" },
+    { 31, "slope" }, { 97, "preamp" },
+    { 102, "control-channel" }, { 103, "control-channel" }, { 104, "control-channel" },
+    { 105, "client" },
+  };
+  for (const auto &[id, code] : expected) EXPECT_EQ(key_entry(snapshot, id).at("reason_code").get<std::string>(), code) << id;
 }
 
 TEST_F(Ds5TuningStore, PublishesInputTuningValuesToTheReportRuntime) {
@@ -916,6 +938,54 @@ TEST_F(Ds5TuningStore, PublishesReleaseAndCompatIntoTheRuntime) {
   EXPECT_EQ(key_entry(result.body, 99).at("value").get<std::string>(), "legacyAll");
 }
 
+TEST_F(Ds5TuningStore, PublishesTheMotionReportRateTheHostAsksClientsFor) {
+  ds5::tuning::store_t store(profile_path);
+  ASSERT_TRUE(store.load());
+  EXPECT_EQ(ds5::tuning::runtime::motion_report_rate(), 250u);
+  const auto result = store.apply_json({
+    { "schema", "ALK-DS5T/1" },
+    { "values", { { "ds5.compat.reportRateCapHz", 500 } } },
+  });
+  ASSERT_TRUE(result.ok) << result.error;
+  EXPECT_EQ(ds5::tuning::runtime::state().motion_report_rate_hz.load(), 500u);
+  EXPECT_EQ(ds5::tuning::runtime::motion_report_rate(), 500u);
+  EXPECT_TRUE(key_entry(result.body, 101).at("implemented").get<bool>());
+  EXPECT_NE(key_entry(result.body, 101).at("status").get<std::string>(), "unavailable");
+  EXPECT_FALSE(key_entry(result.body, 101).at("note").get<std::string>().empty());
+  /* the clients that honour the request, with the first version that does */
+  const auto &support = key_entry(result.body, 101).at("client_support");
+  ASSERT_EQ(support.size(), 1u);
+  EXPECT_EQ(support.at(0).at("client").get<std::string>(), "Moonlight Enhanced");
+  EXPECT_EQ(support.at(0).at("since").get<std::string>(), "1.3.9-rc.8");
+  EXPECT_TRUE(key_entry(result.body, 14).at("client_support").empty());
+}
+
+TEST_F(Ds5TuningStore, PublishesTheInputReportRateTheHostAnswersAGameWith) {
+  ds5::tuning::store_t store(profile_path);
+  ASSERT_TRUE(store.load());
+  EXPECT_EQ(ds5::tuning::runtime::state().input_report_rate_hz.load(), 0u) << "auto: a change is answered at once";
+  for (const auto &[name, hz] : std::vector<std::pair<std::string, std::uint32_t>> { { "hz250", 250u }, { "hz500", 500u }, { "auto", 0u } }) {
+    const auto result = store.apply_json({ { "schema", "ALK-DS5T/1" }, { "values", { { "ds5.compat.inputReportRate", name } } } });
+    ASSERT_TRUE(result.ok) << result.error;
+    EXPECT_EQ(ds5::tuning::runtime::state().input_report_rate_hz.load(), hz) << name;
+    EXPECT_TRUE(key_entry(result.body, 107).at("implemented").get<bool>());
+    EXPECT_EQ(key_entry(result.body, 107).at("value").get<std::string>(), name);
+  }
+  EXPECT_FALSE(key_entry(store.snapshot_json(), 107).at("note").get<std::string>().empty());
+  const auto invalid = store.apply_json({ { "schema", "ALK-DS5T/1" }, { "values", { { "ds5.compat.inputReportRate", "hz1000" } } } });
+  EXPECT_FALSE(invalid.ok) << "only auto, 500 Hz and 250 Hz exist";
+}
+
+TEST(Ds5TuningRuntime, TheMotionReportRateStaysWithinTheRangeOfTheKey) {
+  auto &state = ds5::tuning::runtime::state();
+  state.motion_report_rate_hz.store(5);
+  EXPECT_EQ(ds5::tuning::runtime::motion_report_rate(), 30u);
+  state.motion_report_rate_hz.store(5000);
+  EXPECT_EQ(ds5::tuning::runtime::motion_report_rate(), 1000u);
+  state.motion_report_rate_hz.store(250);
+  EXPECT_EQ(ds5::tuning::runtime::motion_report_rate(), 250u);
+}
+
 TEST(Ds5TuningRuntime, TriggerThresholdDecidesTheDigitalBitAndAsButtonBinarisesTheAxis) {
   auto &state = ds5::tuning::runtime::state();
   state.left_trigger_threshold.store(0.5f);
@@ -1344,10 +1414,13 @@ TEST(Ds5TuningRuntime, PlayerMuteAndAudioOutputMappingsMatchTheReportFields) {
 
 TEST(Ds5TuningDescriptors, WireExtensionKeysReportExactReasons) {
   const auto snapshot = ds5::tuning::store_t("/tmp/ds5-tuning-unused.json").snapshot_json();
-  EXPECT_NE(key_entry(snapshot, 96).at("reason").get<std::string>().find("capture source"), std::string::npos);
+  EXPECT_NE(key_entry(snapshot, 96).at("status").get<std::string>(), "unavailable");
+  EXPECT_NE(key_entry(snapshot, 96).at("note").get<std::string>().find("client's microphone"), std::string::npos);
   EXPECT_NE(key_entry(snapshot, 97).at("reason").get<std::string>().find("audio_control2"), std::string::npos);
   EXPECT_NE(key_entry(snapshot, 98).at("reason").get<std::string>().find("client"), std::string::npos);
-  EXPECT_NE(key_entry(snapshot, 101).at("reason").get<std::string>().find("sampling"), std::string::npos);
+  // 101 is applied by the host now: not unavailable, and a note that names the client's own limit
+  EXPECT_NE(key_entry(snapshot, 101).at("status").get<std::string>(), "unavailable");
+  EXPECT_NE(key_entry(snapshot, 101).at("note").get<std::string>().find("its own limit"), std::string::npos);
   EXPECT_NE(key_entry(snapshot, 102).at("reason").get<std::string>().find("ALK-DS5T/1"), std::string::npos);
 }
 
@@ -1432,7 +1505,8 @@ TEST_F(Ds5TuningStore, PublishesTheLedAndAudioKeysIntoTheRuntime) {
   EXPECT_TRUE(state.mic_mute.load());
   EXPECT_EQ(state.audio_route.load(), 2u);
   for (const auto id : { 86u, 87u, 88u, 90u, 94u, 95u }) EXPECT_TRUE(key_entry(result.body, id).at("implemented").get<bool>()) << id;
-  for (const auto id : { 96u, 97u }) EXPECT_FALSE(key_entry(result.body, id).at("implemented").get<bool>()) << id;
+  EXPECT_TRUE(key_entry(result.body, 96).at("implemented").get<bool>());
+  EXPECT_FALSE(key_entry(result.body, 97).at("implemented").get<bool>());
 }
 
 namespace {

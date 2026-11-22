@@ -19,7 +19,7 @@
 #include "display_device/vdd_capability.h"
 #include "hdr/session_target.h"
 #include "logging.h"
-#include "touch_keyboard_session.h"
+#include "telemetry/telemetry.h"
 #include "video.h"
 
 #include <algorithm>
@@ -676,6 +676,17 @@ namespace nvhttp::stream_start {
     tree.put("root.sunshine_error_source", source);
     tree.put("root.sunshine_error_stage", stage);
     tree.put("root.sunshine_recoverable", recoverable ? 1 : 0);
+
+    // Every launch that is refused passes here with a stable code: the one place that says where a stream start failed (statistics: fixed words and the code, no text)
+    try {
+      const char *failed_stage = error_code.rfind("VDD_", 0) == 0 ? "vdd_create" :
+                                 source == "display"             ? "display_prepare" :
+                                 source == "video"               ? "encoder_init" :
+                                                                   "launch_accept";
+      telemetry::stream_failed(failed_stage, error_code);
+    }
+    catch (...) {
+    }
   }
 
   bool
@@ -699,29 +710,11 @@ namespace nvhttp::stream_start {
 
     // Display configuration can change the active capture target, so probe
     // encoders only after the display stack has settled.
+    const auto display_started = std::chrono::steady_clock::now();
     auto display_result = display_device::session_t::get().configure_display(config::video, launch_session, is_reconfigure);
+    telemetry::stream_stage(use_vdd ? "vdd_create" : "display_prepare", std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - display_started).count());
     auto outcome = classify_configure_result(display_result.result);
 
-#ifdef _WIN32
-    // Touch-keyboard experience: when the client (or its server profile)
-    // opts in, enable the AutoInvoke registry key group for the session.
-    // The touch digitizer itself is expected to be present already (VDD /
-    // remote-software virtual digitizer); failures degrade to a log line.
-    {
-      bool touch_effective = false;
-      if (launch_session.touch_keyboard < 0) {
-        touch_effective = config::get_client_touch_keyboard_enabled(launch_session.client_cert_uuid);
-      }
-      else {
-        touch_effective = launch_session.touch_keyboard == 1;
-      }
-      touch_kb::start_session(touch_effective);
-      // The same intent tells an application what the launching client is: Sparxie's Endfield session follows it for its automatic input
-      // (a touch-family client that did not declare an intent counts as a touch device here, without the keyboard group)
-      const bool touch_client = touch_effective || (launch_session.touch_keyboard < 0 && launch_session.touch_family);
-      launch_session.env["SUNSHINE_CLIENT_TOUCH"] = touch_client ? "true" : "false";
-    }
-#endif
     auto_recovery_result_t recovery_result;
     const auto probe_target = make_probe_target(intent);
     bool probe_matches_display_state = false;
@@ -737,7 +730,9 @@ namespace nvhttp::stream_start {
       outcome == configure_outcome_e::ok || outcome == configure_outcome_e::retry_later;
     if (initial_state_can_be_probed) {
       const auto configured_probe_target = make_configured_probe_target(intent, probe_target);
+      const auto probe_started = std::chrono::steady_clock::now();
       const auto probe_result = video::probe_encoders(configured_probe_target);
+      telemetry::stream_stage("encoder_init", std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - probe_started).count());
       probe_matches_display_state = true;
       if (!probe_result) {
         return true;

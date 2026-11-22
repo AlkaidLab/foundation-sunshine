@@ -51,7 +51,7 @@
         </template>
       </MSection>
 
-      <MGroup>
+      <MGroup class="pin-net">
         <MItem href="/config#bind_address" icon="router" :title="$t('connections.network_question')" :text="$t('connections.network_hint')" />
       </MGroup>
 

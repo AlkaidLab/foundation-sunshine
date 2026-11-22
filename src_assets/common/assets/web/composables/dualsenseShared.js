@@ -1,5 +1,5 @@
 import { computed, reactive, ref } from 'vue'
-import { DS5_CARDS, isClientKey } from 'foundation-ui/settings/index.js'
+import { DS5_CARDS, isClientKey, inputRateNeedsConfirm } from 'foundation-ui/settings/index.js'
 import { isAdvancedWarningHidden, setAdvancedWarningHidden } from '../utils/advancedWarning.js'
 import { localizedKeyLabel } from '../config/dualsenseI18n.js'
 import { askConfirm } from './askDialog.js'
@@ -69,11 +69,22 @@ const setValue = (id, value) => {
   saveMessage.value = ''
 }
 const setColor = ({ r, g, b }) => { setValue(82, r); setValue(83, g); setValue(84, b) }
+// a speed above 250 Hz waits here until the rate dialog is confirmed; cancelling leaves the value as it was
+const rateAsk = ref(null)
+const confirmRate = () => { const ask = rateAsk.value; rateAsk.value = null; if (ask) setValue(ask.id, ask.value) }
+const cancelRate = () => { rateAsk.value = null }
 const onValue = (id, value) => {
+  if (inputRateNeedsConfirm(descriptor(id)?.key, edited[id], value)) { rateAsk.value = { id, value }; return }
   if (id === 81 && value === 'fixed' && !Number(edited[82]) && !Number(edited[83]) && !Number(edited[84])) setColor(FIRST_FIXED_COLOR)
   setValue(id, value)
 }
-const resetKey = (id) => { const key = descriptor(id); if (key?.implemented) setValue(id, key.default) }
+// the reset of the rate key from 250 Hz goes above 250 Hz too: it asks like a choice does
+const resetKey = (id) => {
+  const key = descriptor(id)
+  if (!key?.implemented) return
+  if (inputRateNeedsConfirm(key.key, edited[id], key.default)) { rateAsk.value = { id, value: key.default }; return }
+  setValue(id, key.default)
+}
 
 const detectPreset = () => {
   for (const [name, values] of Object.entries(presetValues)) {
@@ -129,11 +140,15 @@ export function useDualsenseTuning(t = (key) => key, locale = 'en') {
     saveMessage.value = t('ds5.presets.applied', { name: t(`ds5.presets.${name}`) })
   }
   const restoreDefaults = () => {
+    let rateKey = null
     for (const key of snapshot.value?.keys || []) {
       if (!key.implemented || String(edited[key.id]) === String(key.default)) continue
+      // the rate key from 250 Hz back to its default asks first; the others are restored at once
+      if (inputRateNeedsConfirm(key.key, edited[key.id], key.default)) { rateKey = key; continue }
       edited[key.id] = key.default
       dirty[key.id] = true
     }
+    if (rateKey) rateAsk.value = { id: rateKey.id, value: rateKey.default }
     detectPreset()
     saveMessage.value = t('ds5.defaults_restored')
   }
@@ -180,5 +195,5 @@ export function useDualsenseTuning(t = (key) => key, locale = 'en') {
 export const useDualsenseShared = () => ({
   snapshot, edited, dirty, loading, loaded, loadError, loadWarning, saving, saveMessage, selectedPreset, advancedOpen,
   dirtyCount, cards, advancedGroups, unavailable, descriptor, isWired, valueOf, keysByName, setValue, setColor, onValue, resetKey,
-  warningHidden, rememberWarning,
+  rateAsk, confirmRate, cancelRate, warningHidden, rememberWarning,
 })

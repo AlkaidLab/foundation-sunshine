@@ -20,6 +20,11 @@ Measured on a Windows test host, the log of 2026-11-04 12:53 (build 2026.1104.12
 4. **nvhttp and rtsp open before the probe.** The handlers that read what the probe found wait on `startup::probe_gate()` (serverinfo, applist) or on both gates (launch, resume), at most 10 s: a stuck driver call answers `503 Sunshine is still starting` instead of hanging the client. rtsp answers only a session that /launch made, so it needs no gate of its own. The web UI already opened before the probe.
 5. **`encoder_probe_cache.h`** (module and tests only, not wired): the record of the last successful probe under a key of version, GPU set with driver versions, the options that reach the probe and the capture backend.
 
+## The probe runs on its own thread
+
+The encoder probe no longer holds the main thread: the tray and the ready state come first, `GET /api/gpu-driver-guard` reports `probe: running` until it is over, and a request that needs the result
+waits on `startup::probe_gate()` for at most 10 s. After repeated failed starts the start is in the safe mode and skips the probe and the display recovery (`docs/gpu-driver-guard.md`).
+
 ## Why the cache is not wired yet
 
 A hit would answer the probe in about 0 ms, but the record has to be checked afterwards, and the check is the probe itself: it writes the flags of the encoders that the servers read. It has to run on a private copy of `encoders` (`validate_encoder` writes `encoder_t::h264/hevc/av1`), and swap the result in only while no session runs. Until that is built and measured, the probe runs every start.

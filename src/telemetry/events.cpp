@@ -4,16 +4,17 @@
  */
 #include "events.h"
 #include "error_report.h"
+#include "log_template.h"
 #include "stream_health.h"
 
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <cctype>
+#include <cmath>
 #include <functional>
 #include <map>
-#include <set>
 #include <regex>
+#include <set>
 
 using json = nlohmann::json;
 using namespace std::literals;
@@ -25,11 +26,8 @@ namespace telemetry {
 
   std::string_view
   kind_name(kind_e kind) {
-    switch (kind) {
-      case kind_e::usage: return "usage"sv;
-      case kind_e::error: return "error"sv;
-      case kind_e::experience: return "experience"sv;
-    }
+    if (kind == kind_e::error) return "error"sv;
+    if (kind == kind_e::experience) return "experience"sv;
     return "usage"sv;
   }
 
@@ -61,11 +59,34 @@ namespace telemetry {
       return result == "failed" || result == "incomplete" ? 0 : 1;
     }
     if (e.name == "device_facts") return 1;
+    // a start that failed, a driver that failed and a run that ended badly are what the developers look for: never sampled away. A slow stage and the clipboard record are comparisons: priority 1
+    if (e.name == "stream_failed" || e.name == "driver_event" || e.name == "session_abnormal") return 0;
+    if (e.name == "stream_stage" || e.name == "clipboard_health") return 1;
     // the service and start-up facts: an anomaly that repeats (or follows an adoption) is never sampled away, the counts and the timings are priority 1
     if (e.name == "host_anomaly") return severe() ? 0 : 1;
     if (e.name == "svc_lifecycle" || e.name == "startup_timing") return 1;
     if (e.name == "error") return e.props.is_object() && e.props.value("severity", "") == "fatal" ? 0 : 1;
     return 2;
+  }
+
+  delivery_e
+  delivery_of(const event_t &e) {
+    if (is_user_report(e.kind, e.name)) return delivery_e::feedback;
+    if (e.kind == kind_e::error && event_priority(e) == 0) return delivery_e::error;
+    return delivery_e::routine;
+  }
+
+  bool
+  sampled_family(const event_t &e) {
+    if (e.kind == kind_e::error || is_user_report(e.kind, e.name)) return false;
+    if (e.name == "stream_health") return true;  // priority 0 by name for the Worker, but a summary of every stream: a sample of the installs is enough
+    return event_priority(e) >= 1;
+  }
+
+  bool
+  stage_is_slow(std::string_view stage, std::int64_t ms) {
+    const std::int64_t bound = stage == "app_launch"sv || stage == "first_frame"sv ? 5000 : 3000;
+    return ms > bound;
   }
 
   bool
@@ -82,7 +103,7 @@ namespace telemetry {
     if (kind == kind_e::error) return name == "error"sv || name == "user_report"sv || name == "error_report"sv || name == "update_result"sv;
     // the sketches of a page (page_vitals) and the latency of its calls to the host (api_latency)
     // page_ready: the page says when it was ready; the host judges it (service_lifecycle.h) and does not pass the raw event on
-    return name == "panel_page"sv || name == "startup"sv || name == "page_vitals"sv || name == "api_latency"sv || name == "page_ready"sv;
+    return name == "panel_page"sv || name == "startup"sv || name == "page_vitals"sv || name == "api_latency"sv || name == "page_ready"sv || (product == "panel"sv && name == "clipboard_health"sv);
   }
 
   // ---------------------------------------------------------------------------------------------------------------------
@@ -95,7 +116,10 @@ namespace telemetry {
       std::size_t chars = 0, i = 0;
       while (i < text.size()) {
         const auto lead = static_cast<unsigned char>(text[i]);
-        const std::size_t len = lead < 0x80 ? 1 : (lead >> 5) == 0x6 ? 2 : (lead >> 4) == 0xe ? 3 : (lead >> 3) == 0x1e ? 4 : 1;
+        const std::size_t len = lead < 0x80 ? 1 : (lead >> 5) == 0x6 ? 2 :
+                                                (lead >> 4) == 0xe   ? 3 :
+                                                (lead >> 3) == 0x1e  ? 4 :
+                                                                       1;
         if (chars == max_chars) return text.substr(0, i);
         i += std::min(len, text.size() - i);
         ++chars;
@@ -349,6 +373,7 @@ namespace telemetry {
       attachment,
       log_ref,
       shot_ref,
+      reply_key,
       text,
       contact,
       histograms,
@@ -357,6 +382,7 @@ namespace telemetry {
       crumbs,
       log_lines,
       frame,
+      site,
       vector8 };  // exactly 8 non-negative integers: the fixed buckets of a page sketch
 
     struct prop_spec_t {
@@ -399,6 +425,16 @@ namespace telemetry {
     const std::vector<std::string_view> ready_which_choices { "svc_core", "page", "core" };
     const std::vector<std::string_view> host_anomaly_codes { "XP_SVC_CORE_RESTART", "XP_SLOW_READY" };
     const std::vector<std::string_view> host_anomaly_causes { "soon_after_adopt", "repeat", "unexpected_exit", "above_limit", "above_baseline", "other" };
+    // stream_end: what the clipboard did in the session. `clip_offer` is the decision made when the session was set up (clipboard_bridge::offer_name), `clip_flow` what the host saw afterwards
+    const std::vector<std::string_view> clip_offer_choices { "offered", "off_config", "no_agent", "agent_stale", "unknown" };
+    const std::vector<std::string_view> clip_flow_choices { "none", "ok", "dropped" };
+    // the fixed stage words of a stream's start (the Worker's STREAM_STAGES)
+    const std::vector<std::string_view> stream_stage_choices { "launch_accept", "display_prepare", "vdd_create", "app_launch", "capture_init", "encoder_init", "rtsp_setup", "first_frame" };
+    const std::vector<std::string_view> driver_choices { "vdd", "gamepad", "microphone", "usbip", "other" };
+    const std::vector<std::string_view> driver_op_choices { "create", "remove", "start", "stop", "probe", "other" };
+    const std::vector<std::string_view> feedback_category_choices { "bug", "feature", "improvement", "other" };
+    const std::vector<std::string_view> clip_error_choices { "none", "connect_refused", "timeout", "tls", "http_401", "http_403", "http_5xx", "stream_ended", "credential_missing", "heartbeat", "other" };
+    const std::vector<std::string_view> clip_conn_choices { "lt50", "50_90", "gt90" };
     const std::vector<std::string_view> nic_link_choices { "wired", "wireless", "other", "unknown" };
     const std::vector<std::string_view> nic_speed_choices { "lt_1g", "1g", "2_5g", "5g", "10g", "gt_10g", "unknown" };
 
@@ -446,6 +482,8 @@ namespace telemetry {
         auto end = stream_dims();
         end.push_back({ "duration_s", type_e::integer, 0, 604800 });
         end.push_back({ "result", type_e::choice, 0, 0, result_choices, true });
+        end.push_back({ "clip_offer", type_e::choice, 0, 0, clip_offer_choices });
+        end.push_back({ "clip_flow", type_e::choice, 0, 0, clip_flow_choices });
         t.push_back({ kind_e::usage, "stream_end", end });
         t.push_back({ kind_e::usage, "feature_used", { { "feature", type_e::catalogue, 0, 48, {}, true } } });
         t.push_back({ kind_e::usage, "setting_changed", { { "key", type_e::catalogue, 0, 48, {}, true }, { "value", type_e::catalogue, 0, 32, {}, true } } });
@@ -455,7 +493,7 @@ namespace telemetry {
                                                 { "severity", type_e::choice, 0, 0, severity_choices },
                                                 { "count", type_e::integer, 1, 1000000 },
                                                 { "build", type_e::catalogue, 0, 40 },
-                                                // no message: a line of the log or a text a page caught can carry what a person chose (a device, a game, a path). The code names the error; the one place for typed text is user_report.
+                                                { "site", type_e::site },  // basename and line only
                                               } });
         // what the person wrote in the error dialog (spec "Worker additions"): a category, the component and page as tokens, an error code, the reference of an uploaded attachment and one scrubbed message of at most 2000 characters, the screenshot's reference and the word for why it is missing; the contact when the person left one
         t.push_back({ kind_e::error, "user_report", {
@@ -470,6 +508,7 @@ namespace telemetry {
                                                       { "shot_state", type_e::choice, 0, 0, shot_state_choices },
                                                       { "message", type_e::text, 0, static_cast<double>(MAX_USER_REPORT_CHARS), {}, true },
                                                       { "contact", type_e::contact, 0, static_cast<double>(MAX_USER_CONTACT_CHARS) },
+                                                      { "reply_key", type_e::reply_key },
                                                     } });
         // a fault of the virtual display driver that Windows Error Reporting wrote to the Application log: that it happened, which module, the exception code and the offset (wer_event.h); no stack exists
         t.push_back({ kind_e::error, "wer_event", {
@@ -503,6 +542,8 @@ namespace telemetry {
                                                               { "codec", type_e::choice, 0, 0, codec_choices },
                                                               { "transport", type_e::choice, 0, 0, transport_choices },
                                                               { "duration_s", type_e::integer, 0, 604800 },
+                                                              { "encoder", type_e::catalogue, 0, 48 },
+                                                              { "capture_backend", type_e::catalogue, 0, 48 },
                                                             } });
         // One chunk of stream-health windows (stream_health.h): fixed-bucket histograms of the per-window statistics, counters, and the stream's dimensions as fixed words.
         {
@@ -517,6 +558,7 @@ namespace telemetry {
             { "submitted", type_e::integer, 0, 100000000 },
             { "queue_flushes", type_e::integer, 0, 1000000 },
             { "queue_frames_dropped", type_e::integer, 0, 100000000 },
+            { "send_would_block_packets", type_e::integer, 0, 1000000000 },
             { "idr_requests", type_e::integer, 0, 1000000 },
             { "rfi_requests", type_e::integer, 0, 1000000 },
             { "anomalies", type_e::integer, 0, 1000000 },
@@ -681,11 +723,32 @@ namespace telemetry {
                                                             { "nic_link", type_e::choice, 0, 0, nic_link_choices },
                                                             { "nic_speed", type_e::choice, 0, 0, nic_speed_choices },
                                                           } });
+        // where a stream start was slow (only a start over the stage's bound is reported) and where it failed: fixed stage words, no free text (docs: the stream start stages of the Worker contract)
+        t.push_back({ kind_e::experience, "stream_stage", { { "stage", type_e::choice, 0, 0, stream_stage_choices, true }, { "ms", type_e::integer, 0, 3600000 } } });
+        t.push_back({ kind_e::experience, "stream_failed", { { "stage", type_e::choice, 0, 0, stream_stage_choices, true }, { "code", type_e::code, 0, 64, {}, true } } });
+        // a driver operation that failed (the successes are counted by the feature words): which driver, what was tried, the result code as digits and letters
+        t.push_back({ kind_e::error, "driver_event", { { "driver", type_e::choice, 0, 0, driver_choices, true }, { "op", type_e::choice, 0, 0, driver_op_choices, true }, { "result", type_e::choice, 0, 0, ok_failed_choices, true }, { "hresult", type_e::code, 0, 64 } } });
+        // the previous run of the host did not end by itself (sent with that run's session id): how it was told apart from a shutdown
+        t.push_back({ kind_e::error, "session_abnormal", { { "abnormal_mechanism", type_e::choice, 0, 0, { "hang", "wer_log", "shutdown", "unknown" }, true } } });
+        // a feedback report was sent (the counterpart of user_report that survives the daily limit of issues): the category in the Worker's words
+        t.push_back({ kind_e::error, "feedback_submit", { { "category", type_e::choice, 0, 0, feedback_category_choices, true } } });
+        // the Panel's clipboard agent, one record per run (and one per 24 hours of a long run): how the connection to the host behaved. Counts only, no content.
+        t.push_back({ kind_e::experience, "clipboard_health", {
+                                                                { "first_connect_ms", type_e::integer, 0, 3600000 },
+                                                                { "connected_pct", type_e::choice, 0, 0, clip_conn_choices },
+                                                                { "reconnects", type_e::integer, 0, 1000000 },
+                                                                { "heartbeat_fail", type_e::integer, 0, 1000000 },
+                                                                { "last_error", type_e::choice, 0, 0, clip_error_choices },
+                                                                { "apply_ok", type_e::integer, 0, 1000000 },
+                                                                { "apply_fail", type_e::integer, 0, 1000000 },
+                                                                { "post_ok", type_e::integer, 0, 1000000 },
+                                                                { "post_fail", type_e::integer, 0, 1000000 },
+                                                                { "runtime_s", type_e::integer, 0, 31536000 },
+                                                              } });
         return t;
       }();
       return table;
     }
-
     // -> the cleaned value, or nullopt when the value does not fit the spec
     std::optional<json>
     clean(const prop_spec_t &spec, const json &value) {
@@ -752,6 +815,13 @@ namespace telemetry {
           const auto text = value.get<std::string>();
           return std::regex_match(text, ref) ? std::optional<json> { json(text) } : std::nullopt;
         }
+        case type_e::reply_key: {
+          // the address of the developers' answer to this report: made at random by the page (rk_ and 128 bits), kept by the page on its own computer and written by the server only into the issue of this report
+          if (!value.is_string()) return std::nullopt;
+          static const std::regex ref(R"(^rk_[0-9a-f]{32}$)");
+          const auto text = value.get<std::string>();
+          return std::regex_match(text, ref) ? std::optional<json> { json(text) } : std::nullopt;
+        }
         case type_e::text: {
           if (!value.is_string()) return std::nullopt;
           return json(scrub_text(value.get<std::string>(), static_cast<std::size_t>(spec.max)));
@@ -773,6 +843,8 @@ namespace telemetry {
           line = cut_utf8(line, static_cast<std::size_t>(spec.max));
           return line.empty() ? std::nullopt : std::optional<json> { json(line) };
         }
+        case type_e::site:
+          return value.is_string() && valid_log_site(value.get_ref<const std::string &>()) ? std::optional<json> { value } : std::nullopt;
         case type_e::frame: {
           if (!value.is_string()) return std::nullopt;
           auto frame = clean_frame(value.get<std::string>());
@@ -1060,7 +1132,7 @@ namespace telemetry {
 
   json
   envelope_fields(const context_t &c, std::string_view product, const std::string &version) {
-    return json {
+    auto fields = json {
       { "v", WIRE_VERSION },
       { "install_id", c.install_id },
       { "session_id", c.session_id },
@@ -1073,6 +1145,12 @@ namespace telemetry {
       { "gpu_vendor", c.gpu_vendor },
       { "locale", safe_locale(c.locale) },
     };
+    // a whole number when it is one (10, not 10.0), at most the weight of the lowest sample rate
+    if (c.sample_weight > 1.0) {
+      const auto weight = std::min(c.sample_weight, 100.0);
+      fields["sample_weight"] = weight == std::floor(weight) ? json(static_cast<std::int64_t>(weight)) : json(std::round(weight * 100.0) / 100.0);
+    }
+    return fields;
   }
 
   namespace {
@@ -1125,14 +1203,6 @@ namespace telemetry {
       flush();
     }
     return out;
-  }
-
-  bool
-  high_volume_event(std::string_view name) {
-    static const std::array<std::string_view, 11> names {
-      "app_start", "app_exit", "feature_used", "setting_changed", "stream_start", "stream_end", "stream_quality", "startup", "panel_page", "page_vitals", "api_latency",
-    };
-    return std::find(names.begin(), names.end(), name) != names.end();
   }
 
   std::vector<event_t>

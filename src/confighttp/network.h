@@ -10,7 +10,7 @@
 namespace confighttp::network {
   /** The reachability probe for this host's configured ports, certificate and addresses. */
   reachability::probe_options_t
-  configured_probe();
+  configured_probe(bool ask_outside = false);
 
   void
   register_routes(confighttp::https_server_t &server);

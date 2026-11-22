@@ -19,8 +19,8 @@ namespace config_session_binding {
     gui,
   };
 
-  // Preserve the original capture behaviour when the option is absent.
-  inline constexpr mode_e default_mode = mode_e::automatic;
+  // Keep capture on the console unless interactive-session capture is explicitly requested.
+  inline constexpr mode_e default_mode = mode_e::console;
   inline constexpr std::uint32_t invalid_session_id = 0xFFFFFFFFu;
   inline constexpr std::string_view key { "session_binding" };
   inline constexpr std::string_view automatic_value { "0" };

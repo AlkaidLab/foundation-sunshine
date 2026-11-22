@@ -9,6 +9,7 @@
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -17,6 +18,10 @@
 
 #ifndef _WIN32
   #include <unistd.h>
+#endif
+#ifdef __APPLE__
+  #include <sys/sysctl.h>
+  #include <sys/time.h>
 #endif
 #ifdef _WIN32
   #ifndef NOMINMAX
@@ -28,19 +33,20 @@
   #include <windows.h>
 #endif
 
+#include <boost/log/attributes/value_extraction.hpp>
 #include <boost/log/core.hpp>
 #include <boost/log/sinks/basic_sink_backend.hpp>
 #include <boost/log/sinks/sync_frontend.hpp>
-#include <boost/log/attributes/value_extraction.hpp>
 
-#include "error_report.h"
 #include "device_facts.h"
+#include "error_report.h"
 #include "install_journal.h"
-#include "service_lifecycle.h"
+#include "log_template.h"
 #include "service.h"
+#include "service_lifecycle.h"
 #include "src/build_info.h"
-#include "src/crash/crash.h"
 #include "src/config.h"
+#include "src/crash/crash.h"
 #include "src/logging.h"
 #include "src/logging_site.h"
 #include "src/platform/common.h"
@@ -154,23 +160,6 @@ namespace telemetry {
       if (v.find("intel") != std::string::npos) return "intel";
       if (v.find("apple") != std::string::npos) return "apple";
       return v.empty() ? "" : "other";
-    }
-
-    // which part of the host a log line comes from: only a known word at the start of the line names a component
-    std::string
-    component_of(const char *message, std::size_t length) {
-      static const std::vector<std::string_view> known {
-        "config", "nvhttp", "rtsp", "stream", "video", "audio", "input", "capture", "display", "encoder", "nvenc", "webhook", "vdd", "sparxie", "upnp", "network", "clipboard", "gamepad", "tray", "process", "doctor", "pair", "nat", "mic",
-      };
-      std::string head;
-      for (std::size_t i = 0; i < length && i < 24; ++i) {
-        const auto c = static_cast<unsigned char>(message[i]);
-        if (!std::isalnum(c)) break;
-        head.push_back(static_cast<char>(std::tolower(c)));
-      }
-      for (const auto &k : known)
-        if (head == k) return head;
-      return "host";
     }
 
     // ---- device facts and the installer's journal (stage c) ------------------------------------------------------------------------------------------------
@@ -365,18 +354,23 @@ namespace telemetry {
     public:
       void
       consume(const bl::record_view &record) {
-        // runs on the thread that logged: a counter and a copy of the line, nothing else (the line is scrubbed later, on the sender thread)
         try {
           const auto severity = record.attribute_values()["Severity"].extract<int>();
-          if (!severity) return;
           const auto service = current();
-          if (!service) return;
+          if (!severity || !service) return;
           const auto message = record.attribute_values()["Message"].extract<std::string>();
-          const std::string text = message ? message.get() : std::string {};
-          // every severity goes to the short ring an anomaly excerpt is cut from; only warnings and above are tallied
-          service->note_log_line(severity.get(), text.c_str(), text.size());
+          const std::string_view text = message ? std::string_view { message.get() } : std::string_view {};
+          service->note_log_line(severity.get(), text);
           if (severity.get() < 3 || severity.get() > 5) return;
-          service->note_log(severity.get(), text.c_str(), text.size(), component_of(text.c_str(), text.size()), severity.get() >= logging::SITE_MIN_SEVERITY ? logging::site_text(record) : std::string {});
+          if (severity.get() < logging::SITE_MIN_SEVERITY) return service->note_log(severity.get(), {}, log_component_of(text));
+          const auto site = record.attribute_values()[logging::SITE_ATTRIBUTE].extract<logging::source_site_t>();
+          const auto explicit_template = record.attribute_values()[logging::MESSAGE_TEMPLATE_ATTRIBUTE].extract<std::string>();
+          std::string_view message_template;
+          if (explicit_template)
+            message_template = explicit_template.get();
+          else if (site)
+            message_template = log_template_at(site.get().file, site.get().line);
+          service->note_log(severity.get(), message_template, log_component_of(message_template), logging::site_text(record));
         }
         catch (...) {
         }
@@ -416,8 +410,10 @@ namespace telemetry {
         const bool finished = cv_.wait_for(lock, grace, [&] { return done_; });
         lock.unlock();
         if (!thread_.joinable()) return true;
-        if (finished) thread_.join();
-        else thread_.detach();
+        if (finished)
+          thread_.join();
+        else
+          thread_.detach();
         return finished;
       }
 
@@ -523,6 +519,47 @@ namespace telemetry {
 
     std::unique_ptr<runner_t> runner;
     std::mutex lifecycle_mutex;
+
+    // A word that every process of one boot of the computer sees alike and the next boot does not: the kernel's own boot id where there is one. Empty when it cannot be read (the run is then reported as "unknown", never as a restart).
+    std::string
+    boot_identity() {
+#ifdef _WIN32
+      // no boot id in the API: a volatile key of the registry is deleted by the system at every boot, so the word stored in it lives exactly as long as one boot (the first reader after the boot makes it)
+      try {
+        HKEY key = nullptr;
+        DWORD disposition = 0;
+        if (RegCreateKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\FoundationSunshine\\BootId", 0, nullptr, REG_OPTION_VOLATILE, KEY_QUERY_VALUE | KEY_SET_VALUE, nullptr, &key, &disposition) != ERROR_SUCCESS) return {};
+        wchar_t word[80] = {};
+        DWORD size = sizeof(word) - sizeof(wchar_t);
+        DWORD type = 0;
+        std::string result;
+        if (RegQueryValueExW(key, L"Word", nullptr, &type, reinterpret_cast<LPBYTE>(word), &size) == ERROR_SUCCESS && type == REG_SZ && size >= sizeof(wchar_t)) {
+          for (const wchar_t c : std::wstring { word })
+            if (c < 128) result.push_back(static_cast<char>(c));
+        }
+        else {
+          const auto fresh = new_uuid_v4();
+          std::wstring wide(fresh.begin(), fresh.end());
+          if (RegSetValueExW(key, L"Word", 0, REG_SZ, reinterpret_cast<const BYTE *>(wide.c_str()), static_cast<DWORD>((wide.size() + 1) * sizeof(wchar_t))) == ERROR_SUCCESS) result = fresh;
+        }
+        RegCloseKey(key);
+        return result;
+      }
+      catch (...) {
+        return {};
+      }
+#elif defined(__APPLE__)
+      char word[64] = {};
+      std::size_t size = sizeof(word) - 1;
+      if (sysctlbyname("kern.bootsessionuuid", word, &size, nullptr, 0) != 0) return {};
+      return std::string { word };
+#else
+      std::ifstream in { "/proc/sys/kernel/random/boot_id" };
+      std::string word;
+      if (in) std::getline(in, word);
+      return word;
+#endif
+    }
   }  // namespace
 
   void
@@ -541,6 +578,10 @@ namespace telemetry {
       options.dir = platf::appdata() / "telemetry";
       options.endpoint = endpoint;
       options.aggregate_interval_ms = 6 * 60 * 60 * 1000;  // high-volume usage and experience records leave merged, at most every six hours and at exit
+      // Routine records leave once a day, from the install's own moment of the day, and only for a sample of the installs (default one in ten; the service's answer replaces it); crash reports, error reports and
+      // feedback do not wait for either (report_slot.h, service.h)
+      options.routine_slot = true;
+      options.sample_rate = 0.1;
       for (const char *variable : { "COMPUTERNAME", "HOSTNAME", "USERNAME", "USER", "LOGNAME" })
         if (const char *value = std::getenv(variable)) options.redact_words.emplace_back(value);
       service_deps_t deps;
@@ -550,6 +591,28 @@ namespace telemetry {
       deps.session_log_state = [] { return std::string { crash::session_log_state() }; };
       deps.session_shot = [](const std::string &endpoint, const std::string &install_id, const std::string &version, const std::string &image) { return crash::upload_session_shot(endpoint, install_id, version, image); };
       deps.session_shot_state = [] { return std::string { crash::session_shot_state() }; };
+      deps.boot_ms = [] {
+        const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+#ifdef _WIN32
+        return static_cast<std::int64_t>(now - static_cast<std::int64_t>(GetTickCount64()));
+#elif defined(__APPLE__)
+        // macOS has no CLOCK_BOOTTIME: the kernel keeps the time of the boot itself
+        (void) now;
+        timeval boot {};
+        std::size_t size = sizeof(boot);
+        int name[2] = { CTL_KERN, KERN_BOOTTIME };
+        if (sysctl(name, 2, &boot, &size, nullptr, 0) != 0 || boot.tv_sec <= 0) return std::int64_t { 0 };
+        return static_cast<std::int64_t>(boot.tv_sec) * 1000 + boot.tv_usec / 1000;
+#elif defined(CLOCK_BOOTTIME)
+        timespec ts {};
+        if (clock_gettime(CLOCK_BOOTTIME, &ts) != 0) return std::int64_t { 0 };
+        return static_cast<std::int64_t>(now - (static_cast<std::int64_t>(ts.tv_sec) * 1000 + ts.tv_nsec / 1'000'000));
+#else
+        (void) now;
+        return std::int64_t { 0 };
+#endif
+      };
+      deps.boot_id = [] { return boot_identity(); };
       start_steady_ms.store(steady_ms());
       auto service = std::make_shared<service_t>(std::move(options), std::move(deps));
       context_t ctx;
@@ -560,6 +623,7 @@ namespace telemetry {
       ctx.locale = config::sunshine.locale;
       service->set_context(std::move(ctx));
       service->reconcile_consent();  // a choice that was turned off while the host was not running (the config file edited) gets its record now; the first run only remembers the choices
+      service->begin_run_marker();  // the previous run did not end by itself? reported once, for that run
       {
         std::lock_guard lock { slot_mutex };
         service_slot() = service;
@@ -616,6 +680,7 @@ namespace telemetry {
     try {
       if (const auto service = current()) {
         service->emit(kind_e::usage, "app_exit", json { { "uptime_s", std::chrono::duration_cast<std::chrono::seconds>(clock_t::now() - process_start).count() } });
+        service->end_run_marker();
         // events go to the disk queue (no network wait while the host is shutting down); the next start sends them
         finished = runner->stop();
         service->flush(true);
@@ -631,8 +696,10 @@ namespace telemetry {
     catch (...) {
     }
     // a thread still inside a POST keeps running to its own end and still uses the runner: the runner is then left alone
-    if (finished) runner.reset();
-    else (void) runner.release();
+    if (finished)
+      runner.reset();
+    else
+      (void) runner.release();
     std::lock_guard lock { slot_mutex };
     service_slot().reset();
   }
@@ -748,6 +815,15 @@ namespace telemetry {
         { "sent_events", counts.sent_events },
         { "rejected_batches", counts.rejected_batches },
         { "failed_posts", counts.failed_posts },
+        { "sampled_out", counts.sampled_out },
+      };
+      const auto plan = service->plan();
+      out["plan"] = json {
+        { "sample_rate", plan.sample_rate },
+        { "sampled_in", plan.sampled_in },
+        { "sample_weight", plan.weight },
+        { "slot_minute_utc", plan.slot_offset_ms / 60'000 },
+        { "routine_day_done", plan.routine_day_done },
       };
     }
     return out;
@@ -759,7 +835,8 @@ namespace telemetry {
     // the events and the fields every batch carries with them: what leaves this computer, exactly (no event of the web or the panel is added here that the host would refuse)
     json out { { "events", service ? service->preview() : json::array() }, { "endpoint", endpoint() + "/v1/events" } };
     if (service) {
-      const auto context = service->context();
+      auto context = service->context();
+      context.sample_weight = service->plan().weight;  // what a sampled batch carries
       out["envelope"] = envelope_fields(context, "host", context.version);
     }
     return out;
@@ -818,11 +895,31 @@ namespace telemetry {
   }
 
   void
-  stream_ended(std::uint32_t session_id, std::string_view stop_reason) {
+  stream_ended(std::uint32_t session_id, std::string_view stop_reason, std::string_view clip_offer, std::string_view clip_flow) {
     if (const auto service = current()) {
       service->crumb(crumb_e::stream, "stop");
-      service->stream_end(session_id, stop_reason);
+      service->stream_end(session_id, stop_reason, clip_offer, clip_flow);
     }
+  }
+
+  void
+  set_encoder_resolver(std::function<std::string()> resolver) {
+    if (const auto service = current()) service->set_encoder_resolver(std::move(resolver));
+  }
+
+  void
+  stream_stage(std::string_view stage, std::int64_t ms) {
+    if (const auto service = current()) service->stream_stage(stage, ms);
+  }
+
+  void
+  stream_failed(std::string_view stage, std::string_view code) {
+    if (const auto service = current()) service->stream_failed(stage, code);
+  }
+
+  void
+  driver_failed(std::string_view driver, std::string_view op, std::string_view code) {
+    if (const auto service = current()) service->driver_failed(driver, op, code);
   }
 
   void

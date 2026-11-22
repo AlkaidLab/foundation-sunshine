@@ -204,6 +204,7 @@ const perGameOptions = computed(() => gamepadOptions.value.filter((o) => o.value
     <MSection v-if="on(config.controller, 'enabled')" :title="$t('tabs.advanced')">
       <MGroup>
         <CfgExpert :config="config" k="back_button_timeout" off-text="disabled" />
+        <CfgSwitch :config="config" k="client_gamepad_override" :on="true" :off="false" def="true" help="config.client_gamepad_override_desc" />
         <template v-if="(config.gamepad ?? 'auto') === 'auto' && platform === 'windows'">
           <CfgSwitch :config="config" k="motion_as_ds4" />
           <CfgSwitch :config="config" k="touchpad_as_ds4" />
@@ -279,6 +280,15 @@ const perGameOptions = computed(() => gamepadOptions.value.filter((o) => o.value
         </template>
       </MGroup>
       <MFooter v-if="!vmouse.available">{{ $t('config.vmouse_note') }}</MFooter>
+    </MSection>
+  </CfgSub>
+
+  <!-- Clipboard sync: on by default in the host; the switch only force-disables it for every client -->
+  <CfgSub id="clipboard" :title="$t('config.clipboard_sync')">
+    <MSection>
+      <MGroup>
+        <CfgSwitch :config="config" k="clipboard_sync" help="config.clipboard_sync_desc" />
+      </MGroup>
     </MSection>
   </CfgSub>
 

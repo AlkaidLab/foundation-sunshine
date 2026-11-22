@@ -24,6 +24,30 @@ namespace telemetry {
     for (const auto &entry : fs::directory_iterator(dir_, ec)) {
       if (entry.path().extension() == ".tmp") fs::remove(entry.path(), ec);
     }
+    // files that an earlier version wrote carry no class letter: a priority 0 batch with a feedback report or an error in it is given its class now, so it leaves at once like the new ones and is kept as long as they are
+    std::vector<fs::path> legacy;
+    for (const auto &entry : fs::directory_iterator(dir_, ec))
+      if (entry.is_regular_file(ec) && entry.path().extension() == ".json" && priority_of_name(entry.path()) == 0 && delivery_of_name(entry.path()) == delivery_e::routine) legacy.push_back(entry.path());
+    for (const auto &file : legacy) {
+      const auto size = fs::file_size(file, ec);
+      if (ec || size == 0 || size > limits_.max_file_bytes) continue;
+      std::ifstream in(file, std::ios::binary);
+      std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+      in.close();
+      const auto batch = json::parse(text, nullptr, false);
+      if (batch.is_discarded() || !batch.is_object() || !batch.contains("events") || !batch["events"].is_array()) continue;
+      bool report = false, error = false;
+      for (const auto &e : batch["events"]) {
+        if (!e.is_object()) continue;
+        const auto name = e.contains("name") && e["name"].is_string() ? e["name"].get<std::string>() : std::string {};
+        if (name == "user_report") report = true;
+        else if (e.contains("kind") && e["kind"].is_string() && e["kind"].get<std::string>() == "error") error = true;
+      }
+      if (!report && !error) continue;
+      auto renamed = file;
+      renamed.replace_filename(file.stem().string() + (report ? "f" : "e") + ".json");
+      fs::rename(file, renamed, ec);
+    }
   }
 
   std::vector<fs::path>
@@ -33,11 +57,27 @@ namespace telemetry {
     for (const auto &entry : fs::directory_iterator(dir_, ec)) {
       if (entry.is_regular_file(ec) && entry.path().extension() == ".json") files.push_back(entry.path());
     }
-    std::sort(files.begin(), files.end(), [](const fs::path &a, const fs::path &b) {
+    // errors and feedback first (feedback ahead of errors), then by priority; the oldest first within each
+    const auto rank = [](const fs::path &f) {
+      const auto d = delivery_of_name(f);
+      return d == delivery_e::feedback ? 0 : d == delivery_e::error ? 1 : 2;
+    };
+    std::sort(files.begin(), files.end(), [&](const fs::path &a, const fs::path &b) {
+      const auto ra = rank(a), rb = rank(b);
+      if (ra != rb) return ra < rb;
       const auto pa = priority_of_name(a), pb = priority_of_name(b);
       return pa != pb ? pa < pb : a.filename() < b.filename();
     });
     return files;
+  }
+
+  delivery_e
+  disk_queue_t::delivery_of_name(const fs::path &path) {
+    const auto stem = path.stem().string();
+    const auto at = stem.rfind("-p");
+    // "<time>-<counter>-p0e": the class letter follows the priority digit (f: feedback, e: error)
+    if (at == std::string::npos || stem.size() != at + 4) return delivery_e::routine;
+    return stem[at + 3] == 'f' ? delivery_e::feedback : stem[at + 3] == 'e' ? delivery_e::error : delivery_e::routine;
   }
 
   int
@@ -54,6 +94,14 @@ namespace telemetry {
     std::size_t n = 0;
     for (const auto &f : list())
       if (priority_of_name(f) == priority) ++n;
+    return n;
+  }
+
+  std::size_t
+  disk_queue_t::files_of(delivery_e delivery) const {
+    std::size_t n = 0;
+    for (const auto &f : list())
+      if (delivery_of_name(f) == delivery) ++n;
     return n;
   }
 
@@ -76,7 +124,7 @@ namespace telemetry {
   std::size_t
   disk_queue_t::enforce_limits() {
     std::error_code ec;
-    auto files = list();  // priority 0 first, so the ones to give up are at the end
+    auto files = list();  // feedback, errors, then priority 0 to 2: the ones to give up are found by the order below
     std::vector<std::size_t> sizes;
     std::size_t total = 0;
     for (const auto &f : files) {
@@ -94,33 +142,46 @@ namespace telemetry {
       --alive;
       ++removed;
     };
-    // priority 0 has a bound of its own and is cut by it alone (the oldest first); then the lowest priority goes first, the oldest first within it,
-    // until both global caps hold; priority 0 is only cut again when it alone is past the global caps
-    std::size_t p0 = 0;
-    for (std::size_t i = 0; i < files.size(); ++i)
-      if (priority_of_name(files[i]) == 0) ++p0;
-    for (std::size_t i = 0; i < files.size() && p0 > limits_.max_p0_files; ++i) {
-      if (!gone[i] && priority_of_name(files[i]) == 0) {
+    // the classes of a file: 0 feedback, 1 error, 2 routine priority 0, 3 priority 1, 4 priority 2
+    const auto tier = [&](std::size_t i) {
+      const auto d = delivery_of_name(files[i]);
+      if (d == delivery_e::feedback) return 0;
+      if (d == delivery_e::error) return 1;
+      return 2 + priority_of_name(files[i]);
+    };
+    const auto oldest_first = [&](int wanted_tier) {
+      std::vector<std::size_t> order;
+      for (std::size_t i = 0; i < files.size(); ++i)
+        if (!gone[i] && tier(i) == wanted_tier) order.push_back(i);
+      std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) { return files[a].filename() < files[b].filename(); });
+      return order;
+    };
+    // each of the three that must arrive has a bound of its own and is cut by it alone (the oldest first)
+    const std::size_t own_bounds[3] = { limits_.max_feedback_files, limits_.max_error_files, limits_.max_p0_files };
+    for (int t = 0; t < 3; ++t) {
+      auto order = oldest_first(t);
+      for (std::size_t k = 0; order.size() - k > own_bounds[t]; ++k) drop(order[k]);
+    }
+    // then until both global caps hold: priority 2 goes first, then 1, then routine priority 0, then errors, and feedback last; the oldest first within each
+    for (int t : { 4, 3, 2, 1, 0 }) {
+      if (alive <= limits_.max_files && total <= limits_.max_bytes) break;
+      for (const auto i : oldest_first(t)) {
+        if (alive <= limits_.max_files && total <= limits_.max_bytes) break;
         drop(i);
-        --p0;
       }
     }
-    for (int priority = 2; priority >= 1 && (alive > limits_.max_files || total > limits_.max_bytes); --priority) {
-      for (std::size_t i = 0; i < files.size() && (alive > limits_.max_files || total > limits_.max_bytes); ++i)
-        if (!gone[i] && priority_of_name(files[i]) == priority) drop(i);
-    }
-    for (std::size_t i = 0; i < files.size() && (alive > limits_.max_files || total > limits_.max_bytes); ++i)
-      if (!gone[i] && priority_of_name(files[i]) == 0) drop(i);
     dropped_ += removed;
     return removed;
   }
 
   bool
-  disk_queue_t::push(const json &batch, int priority) {
+  disk_queue_t::push(const json &batch, int priority, delivery_e delivery) {
     const auto text = batch.dump();
     const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
     char name[64];
-    std::snprintf(name, sizeof(name), "%013lld-%06llu-p%d.json", static_cast<long long>(now), static_cast<unsigned long long>(counter_++ % 1000000), std::clamp(priority, 0, 2));
+    // the class letter of an error or a feedback report follows the priority digit; a routine batch has none (the form of every file written before)
+    const char *letter = delivery == delivery_e::feedback ? "f" : delivery == delivery_e::error ? "e" : "";
+    std::snprintf(name, sizeof(name), "%013lld-%06llu-p%d%s.json", static_cast<long long>(now), static_cast<unsigned long long>(counter_++ % 1000000), std::clamp(priority, 0, 2), letter);
     const auto target = dir_ / name;
     auto temp = target;
     temp += ".tmp";
@@ -143,14 +204,18 @@ namespace telemetry {
       return false;
     }
     enforce_limits();
+    // an error or a feedback report that the caps took out at once (a queue smaller than one batch) was not kept: the caller still has it
+    if (delivery != delivery_e::routine && !fs::exists(target, ec)) return false;
     return true;
   }
 
   std::optional<disk_queue_t::entry_t>
-  disk_queue_t::front(int max_priority) {
+  disk_queue_t::front(int max_priority, lane_e lane) {
     std::error_code ec;
     for (const auto &file : list()) {
-      if (priority_of_name(file) > max_priority) break;  // the list is in priority order
+      const bool urgent = delivery_of_name(file) != delivery_e::routine;
+      if ((lane == lane_e::urgent && !urgent) || (lane == lane_e::routine && urgent)) continue;
+      if (priority_of_name(file) > max_priority) continue;
       const auto size = fs::file_size(file, ec);
       if (ec || size == 0 || size > limits_.max_file_bytes) {
         fs::remove(file, ec);
@@ -174,7 +239,8 @@ namespace telemetry {
     std::vector<entry_t> out;
     std::error_code ec;
     for (const auto &file : list()) {
-      if (out.size() >= limit || priority_of_name(file) > max_priority) break;
+      if (out.size() >= limit) break;
+      if (priority_of_name(file) > max_priority) continue;
       const auto size = fs::file_size(file, ec);
       if (ec || size == 0 || size > limits_.max_file_bytes) {
         fs::remove(file, ec);
@@ -261,16 +327,25 @@ namespace telemetry {
   }
 
   std::int64_t
-  backoff_seconds(int failures, double jitter) {
+  backoff_seconds(int failures, double jitter, int base_s, int cap_s) {
     if (failures < 1) return 0;
-    const double base = 30.0 * std::pow(2.0, std::min(failures - 1, 7));
-    const double capped = std::min(base, 3600.0);
+    const double base = static_cast<double>(base_s) * std::pow(2.0, std::min(failures - 1, 7));
+    const double capped = std::min(base, static_cast<double>(cap_s));
     return static_cast<std::int64_t>(std::llround(capped * (1.0 + 0.2 * std::clamp(jitter, 0.0, 0.999))));
+  }
+
+  std::int64_t
+  retry_after_ms(long asked_s, double jitter, std::int64_t cap_s) {
+    if (asked_s <= 0) return 0;
+    const auto seconds = std::min<std::int64_t>(asked_s, cap_s);
+    return static_cast<std::int64_t>(std::llround(static_cast<double>(seconds) * 1000.0 * (1.0 + 0.2 * std::clamp(jitter, 0.0, 0.999))));
   }
 
   bool
   status_retryable(int status) {
-    return status == 0 || status == 408 || status == 425 || status == 429 || status >= 500;
+    if (status == 0 || status == 408 || status == 425 || status == 429 || status >= 500) return true;
+    // an answer that a proxy, a firewall or a service without the route yet can give for a reason that is not about the batch: it is kept, not dropped
+    return status == 401 || status == 403 || status == 404 || status == 405 || status == 410 || status == 421;
   }
 
 }  // namespace telemetry

@@ -5,7 +5,7 @@ Checked on 2026-11-12 against the upstream sources (read only; behaviour is desc
 - host and Web UI: <https://github.com/AlkaidLab/foundation-sunshine>, `master` at 6225dcb (2026-11-12), called **host-up** below;
 - control panel: <https://github.com/qiin2333/sunshine-control-panel/tree/502a6719bf4dbc17c42f3e4a2154fb8957890773>, historical `main` at 502a671, called **panel-up**. This comparison refers to the original Panel snapshot, not the current foundation-panel repository.
 
-Our product is a superset of the original (the native-superset principle): nothing the original offers may be missing or harder to reach.
+We aim to keep the original audio controls accessible. One deliberate change is when VB-CABLE is downloaded. The user starts the download in the Panel's component page.
 
 ## 1. What the original offers
 
@@ -37,16 +37,16 @@ State of **our** product before this round (feat/audio-devices at `1f7d1fa08` / 
 | 4 install_steam_audio_drivers | on the page | **behind 高级** / same | **worse** | on the page |
 | 5 stream_audio, stream_mic | switches | same | same | same |
 | 6 microphone mode | select, all four modes | a list row (dialog) whose names were sentences; Panel: a four-button group | **worse** on the Web page (the modes were one click deeper) | four buttons, 麦克风方式, on the microphone page of the Web UI and of the Panel; the line below says what the chosen mode does |
-| 7 VB-Cable download | confirm, then the zip link | confirm, then the zip link (shown for every backend); Panel: the VB-Audio page | same | kept as the manual way |
-| 8 VB-Cable install | script run by hand as administrator, silent, no signature check | **missing**: only the download | **missing** | **install** from the row, asked first: the host downloads from VB-Audio, checks the Authenticode signature (publisher Vincent Burel / VB-Audio) and runs the setup silently; **enable** a disabled device with `pnputil /enable-device`, asked first |
-| 9 host auto-download at mic start | downloads and unpacks, asks for a manual install | the same code | same | the install above replaces the manual step |
+| 7 VB-Cable download | confirm, then the zip link | confirm, then the zip link (shown for every backend); Panel: the VB-Audio page | **removed** | downloads happen in the Panel's component page |
+| 8 VB-Cable install | script run by hand as administrator, silent, no signature check | **missing**: only the download | **missing** | Panel component management separates download, install and uninstall; the pinned package is Pack43 |
+| 9 host auto-download at mic start | downloads and unpacks, asks for a manual install | the same code | **changed** | the host only checks for an installed device at microphone startup |
 | 10 mic test and status | yes | yes | same | same |
 | 11 MAT live | on the audio page | on the display advanced page (`DisplayAdvanced.vue`) | different place; not changed | not changed |
 | 12 per-app / per-client speaker | none | none | same | none (not in the original) |
-| 13 Panel microphone page | read-only backend, opens the Web UI | backend picker, state and test | **better** | VB-CABLE row with install, enable and download, device manager |
+| 13 Panel microphone page | read-only backend, opens the Web UI | backend picker, state and test | **better** | VB-CABLE state, a link to component management and Device Manager for a disabled device |
 
 ## 3. Differences kept on purpose
 
 - Our default `microphone_redirect_backend` is `auto` (USB/IP first, VB-Cable as the fallback); the original's is `vb_cable`.
-- The install runs inside the host service (already elevated), not in a script run by hand; the UI asks first and the request must carry `confirm: true`. The signature check is new.
-- Not verified on a Windows test host by installing: nothing was installed or enabled there (see the report); the steps are tested with fakes, and the signature check ran against the setup program of the pack that is already on that machine.
+- A missing VB-CABLE device used to trigger a download and extraction when the microphone started, and the Web UI kept a link to the zip. Users now download the package from the Panel's component page. Installing and uninstalling require confirmation and Windows administrator authorization.
+- On Windows 10 22H2, Pack43 was uninstalled, reinstalled and re-enabled after disabling the device. A Pack45 uninstall returned Windows code 3010 with the driver still running. The multi-package 3010 case was verified with simulated driver-store responses.

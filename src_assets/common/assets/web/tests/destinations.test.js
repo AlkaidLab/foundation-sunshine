@@ -57,10 +57,10 @@ test('the gamepad page holds the DualSense block under the type cards, and the c
   assert.ok(!/MPage|backFromPage/.test(block), 'the block has no page frame and no back target of its own: the sub-page bubble returns to the gamepad page')
 })
 
-test('every one of the 106 keys is reachable from the gamepad page', async () => {
+test('every one of the 107 keys is reachable from the gamepad page', async () => {
   const keys = JSON.parse(await readFile(new URL('./fixtures/dualsense-keys.json', import.meta.url), 'utf8'))
   if (!keys.length) return
-  assert.equal(keys.length, 106)
+  assert.equal(keys.length, 107)
   for (const key of keys) {
     const place = ds5PlaceOf(key)
     assert.ok(place.sub || key.id === 1, `${key.key} has a place`)

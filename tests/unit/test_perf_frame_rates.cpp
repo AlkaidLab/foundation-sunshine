@@ -238,13 +238,19 @@ TEST(PerfFrameRateCollection, ReenableResetsWindowAndExcludesVddPublicationsWhil
   EXPECT_EQ(disabled["submitted"]["frames_total"], 0);
   EXPECT_EQ(disabled["encoded"]["frames_total"], 0);
 
+  const auto before_restart = std::chrono::steady_clock::now();
   perf::set_frame_rate_subscription("restart-test", true);
   start = std::chrono::steady_clock::now();
   EXPECT_FALSE(rates_for(id, start)["ready"]);
   source->observe_sequence(20100);  // Re-prime: never count the disabled gap.
   source->observe_sequence(20220);
   auto resumed = rates_for(id, start + 1s);
-  EXPECT_NEAR(resumed["source"]["fps"].get<double>(), 120.0, 0.02);
+  // The window starts inside set_frame_rate_subscription(), before we read start.
+  const double window_ms = resumed["window_ms"].get<double>();
+  ASSERT_GE(window_ms, 1000.0);
+  const auto max_window = std::chrono::duration<double, std::milli>(start + 1s - before_restart);
+  EXPECT_LE(window_ms, max_window.count() + 0.005);  // Snapshot rounds to 0.01 ms.
+  EXPECT_NEAR(resumed["source"]["fps"].get<double>(), 120.0 * 1000.0 / window_ms, 0.01);
   EXPECT_EQ(resumed["source"]["frames_total"], 120);
   EXPECT_EQ(resumed["capture"]["frames_total"], 0);
   perf::set_frame_rate_subscription("restart-test", false);

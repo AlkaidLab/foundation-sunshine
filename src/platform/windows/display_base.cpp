@@ -37,6 +37,7 @@ typedef enum _D3DKMT_GPU_PREFERENCE_QUERY_STATE: DWORD {
 #include "src/globals.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
+#include "src/streaming/client_framerate.h"
 #include "src/video.h"
 
 namespace platf {
@@ -320,6 +321,12 @@ namespace platf::dxgi {
     };
 
     DXGI_RATIONAL client_frame_rate_adjusted = adjust_client_frame_rate();
+    if (client_frame_rate_adjusted.Numerator == 0 || client_frame_rate_adjusted.Denominator == 0) {
+      // the pacing below divides by the numerator; never run it with a rate that is not a number
+      BOOST_LOG(warning) << "Capture rate " << client_frame_rate_adjusted.Numerator << '/' << client_frame_rate_adjusted.Denominator
+                         << " is not usable, pacing at " << client_frame_rate << " fps";
+      client_frame_rate_adjusted = { static_cast<UINT>(client_frame_rate), 1 };
+    }
     std::optional<std::chrono::steady_clock::time_point> frame_pacing_group_start;
     uint32_t frame_pacing_group_frames = 0;
 
@@ -700,6 +707,8 @@ namespace platf::dxgi {
 
             output = std::move(output_tmp);
             display_device_name = desc.DeviceName;
+            global_offset_x = desc.DesktopCoordinates.left;
+            global_offset_y = desc.DesktopCoordinates.top;
             offset_x = desc.DesktopCoordinates.left;
             offset_y = desc.DesktopCoordinates.top;
             width = desc.DesktopCoordinates.right - offset_x;
@@ -867,7 +876,8 @@ namespace platf::dxgi {
       }
     }
 
-    client_frame_rate = config.framerate;
+    // The capture pacing divides by this rate: 0 here was an EXCEPTION_INT_DIVIDE_BY_ZERO at the first pacing group.
+    client_frame_rate = streaming::usable_client_framerate(config.framerate);
 
     if (config.frameRateNum > 0 && config.frameRateDen > 0) {
       client_frame_rate_rational = { static_cast<UINT>(config.frameRateNum), static_cast<UINT>(config.frameRateDen) };
@@ -875,7 +885,7 @@ namespace platf::dxgi {
                       << " (" << static_cast<double>(config.frameRateNum) / config.frameRateDen << " fps)";
     }
     else {
-      client_frame_rate_rational = { static_cast<UINT>(config.framerate), 1 };
+      client_frame_rate_rational = { static_cast<UINT>(client_frame_rate), 1 };
     }
 
     dxgi::output6_t output6 {};
@@ -930,8 +940,6 @@ namespace platf::dxgi {
     // Initialize HDR metadata cache for change detection
     cached_hdr_metadata.reset();
     last_hdr_check_time = std::chrono::steady_clock::now();
-    cached_sdr_white_nits.reset();
-    last_sdr_white_check_time = {};
 
     return 0;
   }
@@ -969,22 +977,15 @@ namespace platf::dxgi {
 
   std::optional<float>
   display_base_t::sdr_white_nits() const {
-    const auto now = std::chrono::steady_clock::now();
-    if (last_sdr_white_check_time.time_since_epoch().count() != 0 &&
-        now - last_sdr_white_check_time < sdr_white_check_interval) {
-      return cached_sdr_white_nits;
-    }
-    last_sdr_white_check_time = now;
-
     if (display_device_name.empty()) {
-      return cached_sdr_white_nits;
+      return std::nullopt;
     }
 
     UINT32 path_count = 0;
     UINT32 mode_count = 0;
     LONG status = GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &path_count, &mode_count);
     if (status != ERROR_SUCCESS) {
-      return cached_sdr_white_nits;
+      return std::nullopt;
     }
 
     // Display topology can change between sizing and querying. Retry once with
@@ -1008,7 +1009,7 @@ namespace platf::dxgi {
         }
       }
       if (status != ERROR_SUCCESS) {
-        return cached_sdr_white_nits;
+        return std::nullopt;
       }
 
       paths.resize(queried_path_count);
@@ -1029,22 +1030,22 @@ namespace platf::dxgi {
         white_level.header.adapterId = path.targetInfo.adapterId;
         white_level.header.id = path.targetInfo.id;
         if (DisplayConfigGetDeviceInfo(&white_level.header) != ERROR_SUCCESS) {
-          return cached_sdr_white_nits;
+          return std::nullopt;
         }
 
         // DISPLAYCONFIG_SDR_WHITE_LEVEL is an x1000 multiplier of the nominal
         // 80-nit scRGB reference white.
         const float nits = static_cast<float>(white_level.SDRWhiteLevel) * 80.0f / 1000.0f;
         if (std::isfinite(nits) && nits >= 1.0f && nits <= 10000.0f) {
-          cached_sdr_white_nits = nits;
+          return nits;
         }
-        return cached_sdr_white_nits;
+        return std::nullopt;
       }
 
-      return cached_sdr_white_nits;
+      return std::nullopt;
     }
 
-    return cached_sdr_white_nits;
+    return std::nullopt;
   }
 
   bool

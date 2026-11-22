@@ -577,6 +577,9 @@ namespace config {
     {},  // external_ip
     {},  // external_endpoints
     {},  // stun_servers
+    "enabled",  // network_external_check
+    {},  // network_external_endpoint
+    "enabled",  // network_bypass_proxy
     {
       "1280x720"s,
       "1920x1080"s,
@@ -1555,6 +1558,9 @@ namespace config {
       nvhttp.external_endpoints = public_address::join_endpoints(list.endpoints);
     }
     string_f(vars, "stun_servers", nvhttp.stun_servers);
+    string_f(vars, "network_external_check", nvhttp.network_external_check);
+    string_f(vars, "network_external_endpoint", nvhttp.network_external_endpoint);
+    string_f(vars, "network_bypass_proxy", nvhttp.network_bypass_proxy);
     {
       const auto list = nat_discovery::parse_server_list(nvhttp.stun_servers);
       if (!list.rejected.empty()) {
@@ -2058,6 +2064,12 @@ namespace config {
       BOOST_LOG(warning) << "Failed to update config: " << e.what();
       return false;
     }
+  }
+
+  void
+  with_config_file_locked(const std::function<void()> &work) {
+    std::lock_guard lock { config_file_mutex };
+    work();
   }
 
   std::optional<std::map<std::string, std::string>>

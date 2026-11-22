@@ -1,7 +1,8 @@
 @echo off
-set "PATH=%SystemRoot%\System32;%SystemRoot%;%SystemRoot%\System32\Wbem;%SystemRoot%\System32\WindowsPowerShell\v1.0"
-chcp 65001 >nul
 setlocal enabledelayedexpansion
+set "PATH=%SystemRoot%\System32;%SystemRoot%;%SystemRoot%\System32\Wbem;%SystemRoot%\System32\WindowsPowerShell\v1.0"
+set "PATHEXT=.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC"
+chcp 65001 >nul
 color 0F
 
 REM ================================================
@@ -77,6 +78,12 @@ if "%CONFIRM_RESULT%" neq "1" (
 echo %UNINSTALL_PROCEEDING%
 echo.
 
+REM Remove Explorer verbs only when their command belongs to this copy.
+if exist "%SCRIPT_DIR%\remove-shell-menus.ps1" (
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%\remove-shell-menus.ps1" -InstallRoot "%SUNSHINE_ROOT%."
+    if errorlevel 1 echo WARNING: Some user shell menus could not be cleaned. See the warnings above.
+)
+
 REM ================================================
 REM Uninstall process
 REM ================================================
@@ -107,6 +114,11 @@ if /i "!vsink_choice!"=="Y" (
     call :LogInfo "%INFO_VSINK_UNINSTALL%..."
     REM Call virtual microphone uninstall script
     call "%SCRIPT_DIR%\uninstall-vsink.bat"
+    if !errorLevel! equ 0 (
+        call :LogSuccess "%SUCCESS_VSINK_UNINSTALL%"
+    ) else (
+        call :LogWarning "%WARNING_VSINK_UNINSTALL%"
+    )
 ) else (
     call :LogInfo "%INFO_VSINK_SKIP%"
 )
@@ -119,6 +131,7 @@ set /p firewall_choice="%FIREWALL_UNINSTALL_PROMPT% "
 if /i "!firewall_choice!"=="Y" (
     call :LogInfo "%INFO_FIREWALL_UNINSTALL%..."
     call "%SCRIPT_DIR%\delete-firewall-rule.bat"
+    if errorlevel 1 call :LogWarning "%WARNING_FIREWALL_UNINSTALL%"
 ) else (
     call :LogInfo "%INFO_FIREWALL_SKIP%"
 )

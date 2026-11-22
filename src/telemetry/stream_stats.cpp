@@ -256,6 +256,9 @@ namespace telemetry {
     p["stalls"] = stalls_;
     p["codec"] = dims_.codec.empty() ? "other" : dims_.codec;
     p["transport"] = dims_.transport;
+    // which encoder and which capture path produced the stream: the dimensions a regression is split by. (The host left them out of this event until 2026-11-18, so every stream_quality row had an empty encoder.)
+    if (const auto enc = encoder(); !enc.empty()) p["encoder"] = enc;
+    if (!dims_.capture_backend.empty()) p["capture_backend"] = dims_.capture_backend;
     p["duration_s"] = std::max<std::int64_t>(0, (now_ms - start_ms_) / 1000);
     return p;
   }

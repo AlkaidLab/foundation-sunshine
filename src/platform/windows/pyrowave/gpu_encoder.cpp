@@ -311,6 +311,16 @@ namespace platf::pyrowave_windows {
         return 0;
       }
 
+      std::shared_ptr<safe::signal_t>
+      nr_change_event() override {
+        return conversion_ ? conversion_->nr_change_event() : nullptr;
+      }
+
+      void
+      apply_nr_change() override {
+        if (conversion_) conversion_->apply_nr_change();
+      }
+
       void request_idr_frame() override {}
       void request_normal_frame() override {}
       void invalidate_ref_frames(int64_t, int64_t) override {}
@@ -341,7 +351,7 @@ namespace platf::pyrowave_windows {
       encode(
         int64_t frame_number,
         safe::mail_raw_t::queue_t<video::packet_t> &packets,
-        void *channel_data,
+        std::uint64_t channel_data,
         std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
         std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
         if (!ready() || !has_frame_) {
@@ -651,7 +661,7 @@ namespace platf::pyrowave_windows {
     int64_t frame_number,
     video::encode_session_t &base_session,
     safe::mail_raw_t::queue_t<video::packet_t> &packets,
-    void *channel_data,
+    std::uint64_t channel_data,
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
     std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
     auto *session = dynamic_cast<gpu_encoder_session_t *>(&base_session);

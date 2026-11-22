@@ -180,7 +180,7 @@ onMounted(() => {
 
 <style>
 .ds5-block { display: contents; }
-.ds5-device { display: flex; align-items: center; gap: 20px; padding: 16px 20px; border-radius: 28px; background: var(--m-card, var(--md-sys-color-surface-container-low)); }
+.ds5-device { display: flex; align-items: center; gap: 16px; padding: 16px; border-radius: 28px; background: var(--m-card, var(--md-sys-color-surface-container-low)); }
 .ds5-device__body { display: flex; flex-direction: column; gap: 8px; min-width: 0; flex: 1; }
 .ds5-device__title { margin: 0; display: flex; align-items: center; gap: 6px; font: var(--m-title-large); color: var(--md-sys-color-on-surface); }
 .ds5-card--idle .m-item__title { color: var(--md-sys-color-on-surface-variant); }

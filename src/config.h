@@ -8,6 +8,7 @@
 #include <bitset>
 #include <cctype>
 #include <chrono>
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -201,6 +202,9 @@ namespace config {
     std::string external_ip;  ///< legacy single public address; external_endpoints wins when both are set
     std::string external_endpoints;  ///< public endpoints, `host[:port]` separated by commas
     std::string stun_servers;  ///< STUN servers of the network overview; empty: built-in list, "none": off
+    std::string network_external_check;  ///< "enabled" (default): the network check asks a service on the internet to connect to the public addresses (network_external.h); anything else: off
+    std::string network_external_endpoint;  ///< base URL of that service; empty: the built-in one
+    std::string network_bypass_proxy;  ///< "enabled" (default): the probes of the network check leave through the physical adapter, not through a tunnel adapter of a proxy (network_pin.h); anything else: the system route
     std::vector<std::string> resolutions;
     std::vector<std::string> fps;  // 支持小数刷新率，如 "119.88"
 
@@ -332,6 +336,13 @@ namespace config {
 
   bool
   update_config(const std::map<std::string, std::string> &updates);
+
+  /**
+   * Run `work` while no other save of the settings file runs (the lock of update_config and update_full_config), so that a reset of the settings file does not
+   * interleave with a save. `work` must not call back into the functions of this header that save.
+   */
+  void
+  with_config_file_locked(const std::function<void()> &work);
 
   std::optional<std::map<std::string, std::string>>
   get_config_snapshot();

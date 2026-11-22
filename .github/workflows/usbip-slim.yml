@@ -2,11 +2,12 @@ name: USB-IP payload
 on:
   workflow_dispatch:
   push:
-    branches: [fix/usbip-slim, fix/usbip-ownership]
+    branches: [fix/usbip-slim, fix/usbip-ownership, fix/usbip-legacy-cleanup]
   pull_request:
     branches: [master]
     paths:
       - 'scripts/packaging/**'
+      - 'tools/usbip-win2-root.ps1'
       - 'src_assets/windows/misc/usbip/**'
       - '.github/workflows/usbip-slim.yml'
 permissions:
@@ -25,6 +26,7 @@ jobs:
         run: |
           python scripts/packaging/test_usbip_payload.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\scripts\packaging\test-usbip-root.ps1
           & .\src_assets\windows\misc\usbip\smoke-test-usbip-ownership.ps1
           & .\src_assets\windows\misc\usbip\smoke-test-usbip-package.ps1
           & .\src_assets\windows\misc\usbip\smoke-test-usbip-roothub-guard.ps1

@@ -5,7 +5,9 @@
 #include "clipboard_bridge.h"
 
 #include <chrono>
+#include <cstdint>
 #include <mutex>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace clipboard_bridge {
@@ -19,7 +21,25 @@ namespace clipboard_bridge {
     std::deque<outbound_msg_t> outbox;
     std::unordered_set<session_id> active_sessions;
     std::chrono::steady_clock::time_point last_gui_alive {};
+    std::unordered_map<session_id, session_note_t> notes;
   };
+
+  const char *
+  offer_name(offer_e offer) {
+    switch (offer) {
+      case offer_e::offered:
+        return "offered";
+      case offer_e::off_config:
+        return "off_config";
+      case offer_e::no_agent:
+        return "no_agent";
+      case offer_e::agent_stale:
+        return "agent_stale";
+      case offer_e::unknown:
+      default:
+        return "unknown";
+    }
+  }
 
   bridge_t &
   bridge_t::instance() {
@@ -32,16 +52,18 @@ namespace clipboard_bridge {
 
   bridge_t::~bridge_t() = default;
 
-  void
+  bool
   bridge_t::on_inbound(session_id sid, payload_t bytes) {
     inbound_sink_fn cb;
     {
       std::lock_guard<std::mutex> lk(_impl->mu);
       cb = _impl->inbound_sink;
     }
-    if (cb) {
-      cb(sid, bytes);
+    if (!cb) {
+      return false;
     }
+    cb(sid, bytes);
+    return true;
   }
 
   void
@@ -94,11 +116,74 @@ namespace clipboard_bridge {
 
   bool
   bridge_t::gui_alive() const {
+    return agent_state() == offer_e::offered;
+  }
+
+  offer_e
+  bridge_t::agent_state(std::int64_t *age_ms) const {
     std::lock_guard<std::mutex> lk(_impl->mu);
-    if (!_impl->inbound_sink) {
-      return false;
+    const bool ever_alive = _impl->last_gui_alive != std::chrono::steady_clock::time_point {};
+    const auto age = ever_alive ?
+                       std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - _impl->last_gui_alive).count() :
+                       static_cast<std::int64_t>(-1);
+    if (age_ms) {
+      *age_ms = age;
     }
-    const auto now = std::chrono::steady_clock::now();
-    return (now - _impl->last_gui_alive) < kGuiAliveWindow;
+    if (!_impl->inbound_sink) {
+      return offer_e::no_agent;
+    }
+    return ever_alive && age < std::chrono::duration_cast<std::chrono::milliseconds>(kGuiAliveWindow).count() ? offer_e::offered : offer_e::agent_stale;
+  }
+
+  void
+  bridge_t::note_offer(session_id sid, offer_e offer) {
+    std::lock_guard<std::mutex> lk(_impl->mu);
+    // a client that sets up the same launch twice keeps the latest decision; the table is bounded so a session that never ends cannot grow it
+    if (_impl->notes.size() > 64 && _impl->notes.find(sid) == _impl->notes.end()) {
+      // drop a record whose session is not streaming (a launch that never started); only when every record belongs to a live stream is the oldest one given up
+      auto victim = _impl->notes.begin();
+      for (auto it = _impl->notes.begin(); it != _impl->notes.end(); ++it) {
+        if (_impl->active_sessions.find(it->first) == _impl->active_sessions.end()) {
+          victim = it;
+          break;
+        }
+      }
+      _impl->notes.erase(victim);
+    }
+    _impl->notes[sid].offer = offer;
+  }
+
+  void
+  bridge_t::note_inbound(session_id sid, bool forwarded) {
+    std::lock_guard<std::mutex> lk(_impl->mu);
+    const auto found = _impl->notes.find(sid);
+    if (found == _impl->notes.end()) {
+      return;
+    }
+    auto &count = forwarded ? found->second.inbound_forwarded : found->second.inbound_dropped;
+    if (count < UINT32_MAX) {
+      ++count;
+    }
+  }
+
+  void
+  bridge_t::note_outbound(session_id sid) {
+    std::lock_guard<std::mutex> lk(_impl->mu);
+    const auto found = _impl->notes.find(sid);
+    if (found != _impl->notes.end() && found->second.outbound_sent < UINT32_MAX) {
+      ++found->second.outbound_sent;
+    }
+  }
+
+  session_note_t
+  bridge_t::take_note(session_id sid) {
+    std::lock_guard<std::mutex> lk(_impl->mu);
+    const auto found = _impl->notes.find(sid);
+    if (found == _impl->notes.end()) {
+      return {};
+    }
+    const auto note = found->second;
+    _impl->notes.erase(found);
+    return note;
   }
 }  // namespace clipboard_bridge

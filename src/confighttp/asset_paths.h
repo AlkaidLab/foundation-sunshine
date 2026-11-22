@@ -6,6 +6,7 @@
 
 #include <filesystem>
 #include <optional>
+#include <string_view>
 #ifdef _WIN32
   #include <boost/winapi/error_codes.hpp>
   #include <boost/winapi/file_management.hpp>
@@ -13,6 +14,24 @@
 #endif
 
 namespace confighttp::assets {
+  // Vite writes only hashed build output into this reserved directory. Public
+  // files retain stable URLs and must be checked again on every navigation.
+  inline std::string_view
+  asset_cache_control(const std::filesystem::path &relative) {
+    auto part = relative.begin();
+    if (part == relative.end() || *part++ != "assets" ||
+        part == relative.end() || *part++ != "generated") return "private, no-cache";
+    const auto filename = relative.filename().string();
+    const auto dot = filename.rfind('.');
+    if (dot == std::string::npos || dot < 9 || filename[dot - 9] != '-') return "private, no-cache";
+    for (std::size_t index = dot - 8; index < dot; ++index) {
+      const auto c = filename[index];
+      if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+            (c >= '0' && c <= '9') || c == '_' || c == '-')) return "private, no-cache";
+    }
+    return "private, max-age=31536000, immutable";
+  }
+
   // Compare components, never string prefixes or fs::relative (which can be
   // empty for different Windows roots). Callers must reject lexical traversal.
   inline bool

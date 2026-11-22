@@ -32,6 +32,7 @@ namespace crash::detail {
     char version[96] = {};
     char os_version[64] = {};
     char pending_utf8[path_cap] = {};
+    char mark_utf8[path_cap] = {};  ///< <config>/crashes/gpu_driver_mark.json: the driver mark (gpu_driver.h), written whether or not reports are on
     std::atomic<bool> installed { false };
     std::atomic<bool> enabled { true };
     std::int64_t start_unix = 0;
@@ -57,7 +58,7 @@ namespace crash::detail {
   platform_tick();  ///< every watchdog tick (about 1 s): refreshes the module snapshot now and then, re-asserts the exception filter
   /// A thread stayed busy past its timeout: write a "hang" report for it. Runs on the watchdog thread.
   void
-  platform_report_hang(int slot);
+  platform_report_hang(int slot);  ///< the report itself only while reports are on; the driver mark always
   /// Remember the calling thread for a slot so a hang report can read its stack.
   void
   platform_bind_thread(slot_t &slot);
@@ -65,6 +66,9 @@ namespace crash::detail {
   platform_release_thread(slot_t &slot);
   void
   platform_test_crash(const char *what);
+  /// Monotonic milliseconds without the time the system slept (crash::awake_ms).
+  std::uint64_t
+  platform_awake_ms();
 }  // namespace crash::detail
 
 namespace crash {

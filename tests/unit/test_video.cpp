@@ -149,6 +149,42 @@ TEST(VideoBitrate, PyrowaveUsesHostCapWithoutLegacyRtpFecConversion) {
   EXPECT_EQ(video::encoder_bitrate_for_total_request(90000, 50000, 0), 50000);
 }
 
+TEST(HdrPipelineStatus, RunningStreamFollowsGlobalSwitchAndKeepsItsParameters) {
+  video::hdr_pipeline_status_t pipeline;
+  pipeline.nr_toggle_supported = true;
+  const auto id = video::register_hdr_pipeline_status(pipeline);
+  ASSERT_EQ(video::request_nr_enabled(id, true, 75), 202);
+  const auto off = video::requested_nr_settings(id, false).value();
+  EXPECT_FALSE(off.enabled);
+  EXPECT_EQ(off.scale_percent, 75);
+  video::update_hdr_pipeline_status(id, pipeline);
+  const auto on = video::requested_nr_settings(id, true).value();
+  EXPECT_TRUE(on.enabled);
+  EXPECT_GT(on.revision, off.revision);
+  EXPECT_EQ(video::requested_nr_settings(id, true)->revision, on.revision);
+  video::unregister_hdr_pipeline_status(id);
+}
+
+TEST(HdrPipelineStatus, RequestChangesRaiseADeferredSignal) {
+  video::hdr_pipeline_status_t pipeline;
+  pipeline.nr_toggle_supported = true;
+  const auto id = video::register_hdr_pipeline_status(pipeline);
+  const auto signal = video::nr_change_signal(id);
+  ASSERT_TRUE(signal);
+  EXPECT_TRUE(signal->pop(std::chrono::milliseconds { 0 }));
+  EXPECT_FALSE(signal->pop(std::chrono::milliseconds { 0 }));
+  signal->raise(false);
+  EXPECT_FALSE(signal->peek());
+  EXPECT_FALSE(signal->pop(std::chrono::milliseconds { 0 }));
+  EXPECT_EQ(video::request_nr_enabled(id, true), 202);
+  EXPECT_TRUE(signal->pop(std::chrono::milliseconds { 0 }));
+  EXPECT_FALSE(signal->pop(std::chrono::milliseconds { 0 }));
+  video::notify_nr_change();
+  EXPECT_TRUE(signal->pop(std::chrono::milliseconds { 0 }));
+  video::unregister_hdr_pipeline_status(id);
+  EXPECT_FALSE(video::nr_change_signal(id));
+}
+
 TEST(HdrPipelineStatus, LiveNrRequestsAreScopedAndSurviveStaleStatusPublication) {
   video::hdr_pipeline_status_t status;
   status.nr_toggle_supported = true;

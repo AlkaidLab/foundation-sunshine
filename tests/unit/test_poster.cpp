@@ -108,6 +108,28 @@ TEST(Poster, BackgroundPreviewIsBoundedAndScaled) {
   test_support::remove_tree_quiet(root);
 }
 
+TEST(Poster, RepeatedScheduleDoesNotRebuildVariants) {
+  // schedule() is called for every application on every app-list and poster request: a source whose variants exist must not be decoded and encoded again
+  const auto root = test_root();
+  const auto source = write_png(root / "source.png", 1600, 900, true);
+  nvhttp::apps::poster::schedule(source);
+  std::optional<nvhttp::apps::poster::representation_t> preview;
+  for (int attempt = 0; attempt < 100 && !preview; ++attempt) {
+    preview = nvhttp::apps::poster::preview(source);
+    if (!preview) std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  ASSERT_TRUE(preview);
+  EXPECT_TRUE(nvhttp::apps::poster::wait_idle());
+  const auto built = std::filesystem::last_write_time(preview->path);
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  for (int round = 0; round < 3; ++round) {
+    nvhttp::apps::poster::schedule(source);
+    EXPECT_TRUE(nvhttp::apps::poster::wait_idle());
+  }
+  EXPECT_EQ(std::filesystem::last_write_time(preview->path), built);
+  test_support::remove_tree_quiet(root);
+}
+
 TEST(Poster, SmallSourcePreviewUsesFullRepresentation) {
   const auto root = test_root();
   const auto source = write_png(root / "small.png", 8, 8, false);

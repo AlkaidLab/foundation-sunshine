@@ -12,7 +12,7 @@ test('the Web UI gives foundation-ui the backend of the developer-mode GitHub fl
   applyDevBackend((patch) => { got = patch })
   assert.deepEqual(got, { workerUrl: DEV_BACKEND.workerUrl, clientId: DEV_BACKEND.clientId })
   const entry = fs.readFileSync(new URL('../init.js', import.meta.url), 'utf8')
-  assert.match(entry, /import \{ configureDevBackend \} from 'foundation-ui\/vue'/)
+  assert.match(entry, /import \{ configureDevBackend \} from 'foundation-ui\/devmode\/config\.js'/)
   assert.match(entry, /import \{ applyDevBackend \} from '\.\/devBackendConfig\.js'/)
   assert.equal(entry.match(/applyDevBackend\(configureDevBackend\)/g)?.length, 1)
   assert.ok(entry.indexOf('applyDevBackend(configureDevBackend)') < entry.indexOf('export async function initApp'), 'before any page is started')

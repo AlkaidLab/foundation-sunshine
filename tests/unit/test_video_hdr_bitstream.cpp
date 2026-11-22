@@ -11,7 +11,7 @@ namespace {
   using video::hdr_bitstream::append_t35_unit;
   using video::hdr_bitstream::codec_e;
   using video::hdr_bitstream::codec_for;
-  using video::hdr_bitstream::insert;
+  using video::hdr_bitstream::copy_with_metadata;
   using video::hdr_bitstream::insert_offset;
 
   using bytes_t = std::vector<uint8_t>;
@@ -145,9 +145,9 @@ TEST(HdrBitstream, SplicesHevcUnitBeforeTheFirstVclNal) {
   ASSERT_TRUE(offset.has_value());
   EXPECT_EQ(*offset, 29U);
 
-  bytes_t frame = au;
+  bytes_t frame;
   const bytes_t unit { 0xDE, 0xAD };
-  ASSERT_TRUE(insert(codec_e::hevc, unit, frame));
+  ASSERT_TRUE(copy_with_metadata(codec_e::hevc, au, unit, frame));
   ASSERT_EQ(frame.size(), au.size() + unit.size());
   EXPECT_EQ(frame[29], 0xDE);
   EXPECT_EQ(frame[30], 0xAD);
@@ -185,8 +185,8 @@ TEST(HdrBitstream, LeavesHevcBufferUntouchedWhenThereIsNoInsertionPoint) {
   };
   EXPECT_FALSE(insert_offset(codec_e::hevc, headers_only).has_value());
 
-  bytes_t frame = headers_only;
-  EXPECT_FALSE(insert(codec_e::hevc, bytes_t({ 0xDE, 0xAD }), frame));
+  bytes_t frame;
+  EXPECT_FALSE(copy_with_metadata(codec_e::hevc, headers_only, bytes_t({ 0xDE, 0xAD }), frame));
   EXPECT_EQ(frame, headers_only) << "a failed splice must leave the frame sendable";
 
   EXPECT_FALSE(insert_offset(codec_e::hevc, {}).has_value());
@@ -204,9 +204,9 @@ TEST(HdrBitstream, SplicesAv1UnitBeforeTheFirstPictureDataObu) {
   ASSERT_TRUE(offset.has_value());
   EXPECT_EQ(*offset, 7U);
 
-  bytes_t frame = tu;
+  bytes_t frame;
   const bytes_t unit { 0xDE, 0xAD };
-  ASSERT_TRUE(insert(codec_e::av1, unit, frame));
+  ASSERT_TRUE(copy_with_metadata(codec_e::av1, tu, unit, frame));
   ASSERT_EQ(frame.size(), tu.size() + unit.size());
   EXPECT_EQ(frame[7], 0xDE);
   EXPECT_EQ(frame[8], 0xAD);
@@ -245,11 +245,29 @@ TEST(HdrBitstream, SplicesSeveralUnitsAsOneContiguousInsert) {
   ASSERT_TRUE(append_t35_unit(codec_e::hevc, bytes_t({ 0xB5, 0x01 }), units));
   ASSERT_TRUE(append_t35_unit(codec_e::hevc, bytes_t({ 0x26, 0x02 }), units));
 
-  bytes_t frame { 0x00, 0x00, 0x00, 0x01, 0x26, 0x01, 0xAF };
-  ASSERT_TRUE(insert(codec_e::hevc, units, frame));
+  const bytes_t au { 0x00, 0x00, 0x00, 0x01, 0x26, 0x01, 0xAF };
+  bytes_t frame;
+  ASSERT_TRUE(copy_with_metadata(codec_e::hevc, au, units, frame));
   ASSERT_EQ(frame.size(), 7 + units.size());
   EXPECT_TRUE(std::equal(units.begin(), units.end(), frame.begin() + 1));
   EXPECT_EQ(frame.back(), 0xAF);
+}
+
+TEST(HdrBitstream, CopiesPictureAtOffsetZeroAndReplacesOutputOnPassthrough) {
+  const bytes_t units { 0xDE, 0xAD };
+  for (const auto codec : { codec_e::hevc, codec_e::av1 }) {
+    const bytes_t picture = codec == codec_e::hevc ? bytes_t { 0, 0, 1, 0x26, 1, 0xAF } :
+                                                     bytes_t { 0x32, 1, 0xAF };
+    bytes_t expected = units;
+    expected.insert(expected.end(), picture.begin(), picture.end());
+    bytes_t out { 0xFF };
+    ASSERT_TRUE(copy_with_metadata(codec, picture, units, out));
+    EXPECT_EQ(out, expected);
+    EXPECT_FALSE(copy_with_metadata(codec, picture, {}, out));
+    EXPECT_EQ(out, picture);
+    EXPECT_FALSE(copy_with_metadata(codec, {}, units, out));
+    EXPECT_TRUE(out.empty());
+  }
 }
 
 namespace {

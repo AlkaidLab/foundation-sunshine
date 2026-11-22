@@ -41,6 +41,11 @@ namespace crash {
   enabled();
 
   // --- hang watchdog -------------------------------------------------------------------------------------------------------------------
+  /// Monotonic milliseconds that stand still while the system sleeps or hibernates. The watchdog counts a thread's busy time on this clock: on the one
+  /// that does not stop (std::chrono::steady_clock on Windows) a start that was running when the machine went to sleep is a "hang" the moment it wakes.
+  std::uint64_t
+  awake_ms();
+
   /// Registers the calling thread under `name`; the slot is "hung" when it stays busy for `timeout_ms`. Returns the slot, -1 when full.
   int
   watch_register(const char *name, std::uint32_t timeout_ms);
@@ -135,6 +140,10 @@ namespace crash {
   /// Seconds the uploader waits before the next pass after a 429/503 (Retry-After) or a failure; 0 after a success. For the tests.
   long
   upload_wait_hint_s();
+
+  /// The random share that spreads the waits and the start delay of the uploader (a number in [0, 1)); an empty function restores the random generator. For the tests.
+  void
+  set_upload_jitter_source(std::function<double()> source);
 
   // --- writing, used by the handlers and by other tools that share the folder -------------------------------------------------------------
   /// Writes a report from outside a crash (tests, tools): meta text and an optional dump file already on disk.

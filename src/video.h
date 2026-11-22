@@ -13,6 +13,8 @@
 
 #include <chrono>
 #include <cstdint>
+#include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -58,6 +60,7 @@ namespace video {
     std::string nr_state { "disabled" };
     std::string nr_failure_reason;
     bool nr_toggle_supported {};
+    bool nr_app_allowed = true;
     bool nr_requested_enabled {};
     int nr_requested_scale_percent = 100;
     int nr_scale_percent = 100;
@@ -84,7 +87,7 @@ namespace video {
   std::vector<hdr_pipeline_status_t>
   get_hdr_pipeline_statuses();
 
-  // Requests are consumed only by the owning conversion thread at a frame boundary.
+  // Requests are consumed only by the owning encode thread at a frame boundary.
   struct nr_request_t {
     bool enabled;
     int scale_percent;
@@ -96,12 +99,15 @@ namespace video {
     float skin_structure_strength = 0.0f;
     bool auto_mask = false;
   };
+  using nr_change_signal_t = safe::signal_t;
   int request_nr_enabled(std::uint64_t id, bool enabled, std::optional<int> scale_percent = std::nullopt,
     std::optional<float> intensity = std::nullopt, std::optional<bool> ui_correction = std::nullopt,
     std::optional<int> motion_quality = std::nullopt,
     std::optional<int> style = std::nullopt, std::optional<float> skin_structure_strength = std::nullopt,
     std::optional<bool> auto_mask = std::nullopt);
-  std::optional<nr_request_t> requested_nr_settings(std::uint64_t id);
+  std::optional<nr_request_t> requested_nr_settings(std::uint64_t id, std::optional<bool> global_enabled = std::nullopt);
+  std::shared_ptr<nr_change_signal_t> nr_change_signal(std::uint64_t id);
+  void notify_nr_change();
   bool rollback_nr_settings(std::uint64_t id, const nr_request_t &failed, const nr_request_t &previous);
 
   // 动态参数调节类型
@@ -203,6 +209,9 @@ namespace video {
     platf::pre_encode_filter_e pre_encode_filter = platf::pre_encode_filter_e::none;
     platf::pre_encode_filter_config_t pre_encode_filter_config;
     boost::shared_ptr<const image_enhancement::backend_use_t> enhancement_backend;
+    // Launch and resume supply the app policy. Standalone encode devices use
+    // their caller's explicit filter configuration.
+    std::optional<bool> nr_app_allowed;
     // Local diagnostics only; never serialized into the media protocol.
     std::uint32_t perf_session_id = 0;
     bool pyrowave_dynamic_hdr_mapping = false;
@@ -449,6 +458,14 @@ namespace video {
     virtual int
     convert(platf::img_t &img) = 0;
 
+    virtual std::shared_ptr<safe::signal_t>
+    nr_change_event() {
+      return {};
+    }
+
+    virtual void
+    apply_nr_change() {}
+
     virtual void
     request_idr_frame() = 0;
 
@@ -509,17 +526,17 @@ namespace video {
     data_size() = 0;
 
     struct replace_t {
-      std::string_view old;
-      std::string_view _new;
+      std::string old;
+      std::string _new;
 
       KITTY_DEFAULT_CONSTR_MOVE(replace_t)
 
-      replace_t(std::string_view old, std::string_view _new) noexcept:
-          old { std::move(old) }, _new { std::move(_new) } {}
+      replace_t(std::string_view old, std::string_view _new):
+          old { old }, _new { _new } {}
     };
 
-    std::vector<replace_t> *replacements = nullptr;
-    void *channel_data = nullptr;
+    std::shared_ptr<const std::vector<replace_t>> replacements;
+    std::uint64_t channel_data = 0;
     bool after_ref_frame_invalidation = false;
     unsigned fec_percentage = 0;  // Protection budget when this frame was submitted.
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
@@ -645,11 +662,18 @@ namespace video {
   std::string
   active_encoder_name();
 
+  /**
+   * @brief The encoder family of the snapshot the running sessions use, even while a later probe failed or is running (active_encoder_name answers empty then).
+   * @return Encoder identifier, or an empty string when no probe ever succeeded.
+   */
+  std::string
+  session_encoder_name();
+
   void
   capture(
     safe::mail_t mail,
     config_t config,
-    void *channel_data,
+    std::uint64_t channel_data,
     std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events = std::nullopt,
     int packet_size = 0);
 

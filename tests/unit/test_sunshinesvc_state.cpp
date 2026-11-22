@@ -9,18 +9,18 @@
 #include <gtest/gtest.h>
 #include <vector>
 
-TEST(SessionBinding, MissingOrInvalidSettingPreservesAutomaticCapture) {
+TEST(SessionBinding, MissingOrInvalidSettingUsesConsoleCapture) {
   using namespace config_session_binding;
-  EXPECT_EQ(default_mode, mode_e::automatic);
-  EXPECT_EQ(parse_or_default(""), mode_e::automatic);
-  EXPECT_EQ(parse_or_default("invalid"), mode_e::automatic);
+  EXPECT_EQ(default_mode, mode_e::console);
+  EXPECT_EQ(parse_or_default(""), mode_e::console);
+  EXPECT_EQ(parse_or_default("invalid"), mode_e::console);
   EXPECT_EQ(parse_or_default("0"), mode_e::automatic);
   EXPECT_EQ(parse_or_default("1"), mode_e::console);
   EXPECT_EQ(parse_or_default("\"0\""), mode_e::automatic);
   EXPECT_EQ(parse_or_default("00"), mode_e::automatic);
   EXPECT_EQ(parse_or_default("0x0"), mode_e::automatic);
   EXPECT_EQ(parse_or_default("0x1"), mode_e::console);
-  EXPECT_EQ(parse_or_default("2"), mode_e::automatic);
+  EXPECT_EQ(parse_or_default("2"), mode_e::console);
 }
 
 TEST(SessionBinding, RdpGuiDoesNotMoveConsoleCaptureOrItsUserToken) {
@@ -28,6 +28,9 @@ TEST(SessionBinding, RdpGuiDoesNotMoveConsoleCaptureOrItsUserToken) {
   constexpr std::uint32_t console = 3;
   constexpr std::uint32_t rdp = 1;
   const auto targets = select_sessions(mode_e::console, console, rdp);
+  const auto default_targets = select_sessions(default_mode, console, rdp);
+  EXPECT_EQ(default_targets.capture, console);
+  EXPECT_EQ(default_targets.gui, rdp);
   EXPECT_EQ(targets.capture, console);
   EXPECT_EQ(targets.gui, rdp);
   EXPECT_EQ(user_token_session(user_token_purpose_e::capture, mode_e::console, console, rdp), console);

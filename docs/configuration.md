@@ -25,12 +25,11 @@ editing the `conf` file in a text editor. Use the examples as reference.
 
 ### Windows capture session
 
-The Windows service selects the active interactive session by default, preferring the physical
-console and falling back to an active RDP user. The GUI selects the interactive user independently
-and receives permission to read that user's local authentication token.
+The GUI independently selects the active interactive user, preferring the console and falling back
+to an active RDP user, and receives permission to read that user's local authentication token.
 
-To keep capture on the physical console, set `session_binding = 1` in `sunshine.conf`. Set it to
-`0` or omit it to use automatic selection. Restart the Sunshine service after changing this
+Capture uses the console by default. Set `session_binding = 0` in `sunshine.conf` to use automatic
+selection, or `1` to explicitly select the console. Restart the Sunshine service after changing this
 setting. A console without a signed-in user may show the Windows sign-in screen and does not
 provide the desktop of a separate RDP session.
 
@@ -1615,6 +1614,79 @@ provide the desktop of a separate RDP session.
         <td>Example</td>
         <td colspan="2">@code{}
             stun_servers = stun.miwifi.com, stun.chat.bilibili.com:3478, stun.cloudflare.com
+            @endcode</td>
+    </tr>
+</table>
+
+### network_external_check
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            `enabled`: when you press "check" on the network page, a service on the internet connects from outside to each public address you entered and to the TCP ports of this host, and reads this
+            host's GameStream `serverinfo` to compare its unique id with the one this host sends. That is the only way to show that the internet reaches this host: a computer cannot prove it by
+            connecting to its own public address. Nothing is sent while you do not run the check, and an answer is kept for 10 minutes, so pressing the button again does not ask again. The exceptions are the answers that may be out of date in a minute: a port that was found closed or silent, and a refusal (the service saw another address than the one you entered) are kept 1 minute, and a service that asks to wait is not asked before the time it names (1 to 10 minutes).
+            What leaves the computer is the address you entered, the ports of this host, its unique id and an install identifier that the service uses to limit how often one installation may ask:
+            the install identifier of the statistics when statistics are on, otherwise a random value made once per run of the program (it is not kept and is new after a restart). The service only
+            connects to the address the request came from, stores nothing, and answers per port. UDP cannot be tried this way and is always reported as not verified. The service has a daily budget:
+            when it is used up, when it does not answer, or when it sees another address than your router's (a proxy on the router), the check says so and keeps the result of this computer alone;
+            none of these is a failure of your host. Any value other than `enabled` turns it off.
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">enabled</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            network_external_check = disabled
+            @endcode</td>
+    </tr>
+</table>
+
+### network_external_endpoint
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            The base URL of the service of the outside check (see [network_external_check](#network_external_check)); the request goes to `<endpoint>/v1/reach-probe`. Empty uses the built-in service.
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">empty (the built-in service)</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            network_external_endpoint = https://reach.example.net
+            @endcode</td>
+    </tr>
+</table>
+
+### network_bypass_proxy
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            `enabled`: the probes of the network check (the address discovery, the handshake with this host's own public address and the outside check) leave through the physical network adapter, not
+            through the tunnel adapter of a proxy that has taken the default route. The check never reads the system proxy settings: it opens plain TCP and UDP sockets. If the physical adapter has no
+            way out (a computer that reaches the internet only through the tunnel), the check says so and repeats the probe on the system route. A proxy that runs on the router cannot be bypassed from
+            here; the check tells it apart. Any value other than `enabled` uses the system route.
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">enabled</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            network_bypass_proxy = disabled
             @endcode</td>
     </tr>
 </table>

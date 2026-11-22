@@ -1,6 +1,8 @@
 # Building
 Sunshine binaries are built using [CMake](https://cmake.org) and requires `cmake` > 3.25.
 
+The host build uses Python 3.8 or later to generate the error template catalogue.
+
 ## Building Locally
 
 ### Dependencies

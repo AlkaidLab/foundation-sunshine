@@ -158,21 +158,64 @@ namespace web::detail {
       resolver.async_resolve(owner->host, owner->port, [self](error_code ec, auto endpoints) {
         if (self->completed) return;
         if (ec) return self->finish(ec);
+        if (self->config.on_socket_open) {
+          // The caller wants each socket before it connects (to pin it to an adapter): open it here, one endpoint at a time.
+          auto list = std::make_shared<std::vector<tcp::endpoint>>();
+          for (const auto &entry : endpoints) list->push_back(entry.endpoint());
+          if (list->empty()) return self->finish(net::error::host_not_found);
+          return self->connect_endpoint(std::move(list), 0);
+        }
         beast::get_lowest_layer(self->stream).async_connect(endpoints, [self](error_code ec, auto) {
           if (self->completed) return;
           if (ec) return self->finish(ec);
-          if constexpr (Tls)
-            self->stream.async_handshake(ssl::stream_base::client, [self](error_code ec) {
-              if (self->completed) return;
-              if (ec)
-                self->finish(ec);
-              else
-                self->write();
-            });
+          self->connected();
+        });
+      });
+    }
+    void
+    connect_endpoint(std::shared_ptr<std::vector<tcp::endpoint>> endpoints, std::size_t index) {
+      if (completed) return;
+      auto self = this->shared_from_this();
+      auto &lowest = beast::get_lowest_layer(stream);
+      const auto &endpoint = (*endpoints)[index];
+      error_code ec;
+      lowest.socket().close(ec);
+      lowest.socket().open(endpoint.protocol(), ec);
+      if (!ec) {
+        try {
+          config.on_socket_open(endpoint.protocol() == tcp::v6() ? 6 : 4, static_cast<std::uintptr_t>(lowest.socket().native_handle()));
+        }
+        catch (...) {
+          // a hook that fails leaves the socket as it is
+        }
+        // the hook may have stopped the client: nothing is connected for a request that has ended or was cancelled
+        if (completed) return;
+        if (cancellation_requested) return finish(net::error::operation_aborted);
+        lowest.async_connect(endpoint, [self, endpoints, index](error_code ec) {
+          if (self->completed) return;
+          if (!ec) return self->connected();
+          if (index + 1 < endpoints->size()) return self->connect_endpoint(endpoints, index + 1);
+          self->finish(ec);
+        });
+        return;
+      }
+      if (index + 1 < endpoints->size()) return connect_endpoint(std::move(endpoints), index + 1);
+      finish(ec);
+    }
+    void
+    connected() {
+      if (completed) return;
+      auto self = this->shared_from_this();
+      if constexpr (Tls)
+        stream.async_handshake(ssl::stream_base::client, [self](error_code ec) {
+          if (self->completed) return;
+          if (ec)
+            self->finish(ec);
           else
             self->write();
         });
-      });
+      else
+        write();
     }
     void
     write() {

@@ -7,6 +7,7 @@ const VOIDLINK_APP_STORE_ZH_URL = 'https://apps.apple.com/cn/app/voidlink/id6747
 const STREAMING_GROUP_URLS = [
   'https://qm.qq.com/q/AfMQoyKrkc',
   'https://qm.qq.com/q/vIVhpjDMic',
+  'https://qm.qq.com/q/p0quekk7QI',
 ]
 
 export const OFFICIAL_RESOURCES = [
@@ -199,5 +200,7 @@ export function resolveResourceHref(resource, locale) {
 export function resolveRandomResourceHref(resource, randomValue = Math.random()) {
   const hrefs = resource.randomHrefs
   if (!Array.isArray(hrefs) || hrefs.length === 0) return resolveResourceHref(resource)
-  return hrefs[randomValue < 0.1 ? 0 : 1] || hrefs[0]
+  if (randomValue < 0.1) return hrefs[0]
+  if (randomValue < 0.55) return hrefs[1] || hrefs[0]
+  return hrefs[2] || hrefs[0]
 }
