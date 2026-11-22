@@ -1800,7 +1800,10 @@ namespace platf::dxgi {
       const auto requested = ::video::requested_nr_settings(runtime_status_id,
         follow_global_nr ? std::optional<bool>(image_enhancement::manager().nr_enabled()) : std::nullopt);
       if (!requested) return;
-      if (requested->enabled == runtime_status.nr_requested_enabled &&
+      const bool retry_unavailable_component = requested->enabled &&
+        runtime_status.nr_state == "degraded" &&
+        runtime_status.nr_failure_reason == "component_unavailable";
+      if (!retry_unavailable_component && requested->enabled == runtime_status.nr_requested_enabled &&
           requested->scale_percent == nr_filter_config.nr_scale_percent &&
           requested->intensity == nr_filter_config.nr_intensity &&
           requested->ui_correction == nr_filter_config.nr_ui_correction &&
