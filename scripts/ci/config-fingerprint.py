@@ -24,10 +24,101 @@ share an entry. Prints the digits.
 import argparse
 import hashlib
 import os
+import re
 import pathlib
 import sys
 
 import yaml
+
+# A ccache entry is keyed on the compile command line, the compiler and the header contents a translation unit reads
+# (ccache manual, "How ccache works"), so adding or removing a translation unit never invalidates another unit's entry.
+# Statements that only enumerate source files therefore must not move the fingerprint: two source-list-only edits forced
+# 8-shard cold builds on 2026-11-21 although no compile command line had changed. Cut whole set()/list() statements that
+# fill a variable whose name ends in _TARGET_FILES or _SOURCES (PLATFORM_TARGET_FILES and its kin); file(GLOB ...) patterns
+# stay hashed, as do flag, definition and dependency statements.
+SOURCE_LIST_STATEMENT = re.compile(
+    r"(?<![\w.])(?:set|list)\s*\(\s*(?:(?:APPEND|PREPEND|INSERT)\s+)?[A-Za-z0-9_]*(?:_TARGET_FILES|_SOURCES)\b",
+    re.IGNORECASE,
+)
+def statement_end(text, start):
+    """Index just past the parenthesis that closes the command at start, or None.
+
+    Follows the CMake language grammar (cmake-language(7), Grammar): a hash runs to the end of
+    the line, a quoted argument may contain unbalanced parentheses and escapes, and a bracket
+    argument [=*[ ... ]=*] ends only at its own closing bracket, so none of their parentheses
+    count towards the nesting depth. None means the statement never closes; the caller then
+    keeps it hashed as it is rather than guessing where it ends.
+    """
+    index, depth = start, 0
+    while index < len(text):
+        char = text[index]
+        if char == "#":
+            newline = text.find("\n", index)
+            index = len(text) if newline < 0 else newline + 1
+            continue
+        if char == '"':
+            index += 1
+            while index < len(text):
+                if text[index] == "\\":
+                    index += 2
+                elif text[index] == '"':
+                    index += 1
+                    break
+                else:
+                    index += 1
+            continue
+        if char == "[" and (index == 0 or text[index - 1] in " \t("):
+            opening = index + 1
+            while opening < len(text) and text[opening] == "=":
+                opening += 1
+            if opening < len(text) and text[opening] == "[":
+                closing = "]" + "=" * (opening - index - 1) + "]"
+                end = text.find(closing, opening + 1)
+                if end < 0:
+                    return None
+                index = end + len(closing)
+                continue
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+        index += 1
+    return None
+
+
+def strip_source_lists(text):
+    """Remove whole source-list statements, with the line they sit on.
+
+    Cutting only the statement would leave its indentation and newline behind, so adding or
+    removing a complete set()/list() line would still move the fingerprint.
+    """
+    out = []
+    position = 0
+    while True:
+        match = SOURCE_LIST_STATEMENT.search(text, position)
+        if not match:
+            out.append(text[position:])
+            return "".join(out)
+        line_start = text.rfind("\n", position, match.start()) + 1
+        if text[line_start:match.start()].strip():
+            line_start = match.start()
+        end = statement_end(text, match.start())
+        if end is None:
+            # An unclosed statement is kept hashed as it is: guessing its extent could swallow
+            # the rest of the file and hide real compile-command changes from the fingerprint.
+            out.append(text[position:match.end()])
+            position = match.end()
+            continue
+        out.append(text[position:line_start])
+        while end < len(text) and text[end] in " \t":
+            end += 1
+        if end < len(text) and text[end] == "\r":
+            end += 1
+        if end < len(text) and text[end] == "\n":
+            end += 1
+        position = end
 
 
 def files_to_hash(root, toolchain):
@@ -76,7 +167,10 @@ def main():
         details.append(f"{label}: {part}")
 
     for path in files_to_hash(root, toolchain):
-        add(path.relative_to(root).as_posix(), path.read_bytes())
+        data = path.read_bytes()
+        if path.name == "CMakeLists.txt" or path.suffix == ".cmake":
+            data = strip_source_lists(data.decode("utf-8", errors="surrogateescape")).encode("utf-8", errors="surrogateescape")
+        add(path.relative_to(root).as_posix(), data)
     step = configure_step(root / args.workflow)
     add("Configure Windows", (step["run"] + "\n" + "\n".join(f"{k}={v}" for k, v in sorted(step.get("env", {}).items()))).encode())
     add("Windows toolchain", toolchain.encode())

@@ -1,6 +1,7 @@
 """Unit tests for tools/pe_symbols.py (run: python3 -m unittest discover -s scripts/ci -p 'test_*.py')."""
 
 import importlib.util
+import json
 import pathlib
 import struct
 import unittest
@@ -49,6 +50,20 @@ class Strip(unittest.TestCase):
         self.assertEqual(action, "stripped")
         self.assertEqual(saved, 18 * 2 + 4)
 
+    def test_four_directories_do_not_make_a_certificate_table(self):
+        # The bytes at the certificate-directory position can be the first
+        # section header; NumberOfRvaAndSizes keeps them from reading as one.
+        data = bytearray(fake_pe(signed=True))
+        struct.pack_into("<I", data, 0x98 + 108, 4)
+        self.assertFalse(pe_symbols.is_signed(bytes(data)))
+
+    def test_the_declared_certificate_directory_is_checked_against_the_header(self):
+        data = bytearray(fake_pe(signed=True))
+        struct.pack_into("<H", data, 0x94, 144)  # optional header ends after four directories
+        struct.pack_into("<I", data, 0x98 + 108, 5)  # but the count claims a fifth
+        with self.assertRaises(pe_symbols.PEError):
+            pe_symbols.is_signed(bytes(data))
+
     def test_an_overlay_is_kept(self):
         before = fake_pe(symbols=2) + b"payload"
         self.assertEqual(pe_symbols.strip_symbols(before), (before, 0, "overlay"))
@@ -75,6 +90,15 @@ class Strip(unittest.TestCase):
             self.assertEqual(pe_symbols.main(["--check", str(with_symbols)]), 1)
             self.assertEqual(pe_symbols.main(["--check", str(stripped)]), 0)
             self.assertEqual(pe_symbols.main(["--check", str(signed)]), 0)
+
+    def test_check_mode_allows_an_unsigned_overlay_and_reports_it(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            overlay = pathlib.Path(directory) / "overlay.exe"
+            overlay.write_bytes(fake_pe(symbols=1) + b"payload")
+            report = pathlib.Path(directory) / "report.json"
+            self.assertEqual(pe_symbols.main(["--check", "--json", str(report), str(overlay)]), 0)
+            self.assertEqual(json.loads(report.read_text())[0]["action"], "overlay")
 
 
 if __name__ == "__main__":
