@@ -393,9 +393,18 @@ namespace platf::dxgi {
       return hdr_analysis_enabled;
     }
 
+    std::shared_ptr<safe::signal_t>
+    nr_change_event() const {
+      return nr_signal;
+    }
+
+    void
+    apply_nr_change() {
+      apply_nr_request();
+    }
+
     int
     convert(platf::img_t &img_base) {
-      apply_nr_request();
       if (vram_timing_enabled) {
         poll_gpu_timing_samples();
       }
@@ -851,6 +860,7 @@ namespace platf::dxgi {
       hdr_analysis_input_retry_at = {};
       ::video::unregister_hdr_pipeline_status(runtime_status_id);
       runtime_status_id = 0;
+      nr_signal.reset();
       hdr_luminance_stats_out = {};
       hdr_analysis_pending = false;
       hdr_analysis_frame_index = 0;
@@ -1789,22 +1799,15 @@ namespace platf::dxgi {
       if (!runtime_status_id || !runtime_status.nr_toggle_supported) return;
       const auto requested = ::video::requested_nr_settings(runtime_status_id,
         follow_global_nr ? std::optional<bool>(image_enhancement::manager().nr_enabled()) : std::nullopt);
-      // A component-unavailable degradation can clear without a new request:
-      // the selection may be enabled or maintenance may finish. Keep
-      // re-evaluating that case on later frames; the retry is a cheap
-      // validated-pointer acquire and skips DLL work while it still fails.
-      const bool retry_unavailable_component = requested && requested->enabled &&
-        runtime_status.nr_state == "degraded" &&
-        runtime_status.nr_failure_reason == "component_unavailable";
-      if (!requested || (!retry_unavailable_component &&
-          (requested->enabled == runtime_status.nr_requested_enabled &&
+      if (!requested) return;
+      if (requested->enabled == runtime_status.nr_requested_enabled &&
           requested->scale_percent == nr_filter_config.nr_scale_percent &&
           requested->intensity == nr_filter_config.nr_intensity &&
           requested->ui_correction == nr_filter_config.nr_ui_correction &&
           requested->motion_quality == nr_filter_config.nr_motion_quality &&
           requested->style == nr_filter_config.nr_style &&
           requested->skin_structure_strength == nr_filter_config.nr_skin_structure_strength &&
-          requested->auto_mask == nr_filter_config.nr_auto_mask))) return;
+          requested->auto_mask == nr_filter_config.nr_auto_mask) return;
       nr_rollback_pending = requested->enabled && runtime_status.nr_state == "active";
       nr_attempt_request = *requested;
       nr_previous_request = { true, runtime_status.nr_scale_percent, runtime_status.nr_intensity,
@@ -1842,9 +1845,7 @@ namespace platf::dxgi {
         ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
         return;
       }
-      if (!retry_unavailable_component) {
-        ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
-      }
+      ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
 
       if (!nr_session_backend) nr_session_backend = image_enhancement::manager().acquire_selected(image_enhancement::backend_capability_e::nr);
       enhancement_backend = nr_session_backend;
@@ -1852,11 +1853,7 @@ namespace platf::dxgi {
         runtime_status.nr_state = "degraded";
         runtime_status.nr_failure_reason = "component_unavailable";
         rollback_failed_nr_request();
-        // The retry path entered with this exact degraded status; do not
-        // republish identical content on every frame.
-        if (!retry_unavailable_component) {
-          ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
-        }
+        ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
         return;
       }
       pre_encode_filter = make_pre_encode_filter(pre_encode_filter_e::external_neural_enhancement,
@@ -1912,6 +1909,7 @@ namespace platf::dxgi {
       if (is_probe) {
         ::video::unregister_hdr_pipeline_status(runtime_status_id);
         runtime_status_id = 0;
+        nr_signal.reset();
         return;
       }
 
@@ -1945,6 +1943,7 @@ namespace platf::dxgi {
 
       if (runtime_status_id == 0) {
         runtime_status_id = ::video::register_hdr_pipeline_status(runtime_status);
+        nr_signal = ::video::nr_change_signal(runtime_status_id);
       }
       else {
         ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
@@ -1977,6 +1976,7 @@ namespace platf::dxgi {
     bool nr_filter_active = false;
     bool nr_rollback_pending = false, nr_restoring_settings = false;
     pre_encode_filter_config_t nr_filter_config;
+    std::shared_ptr<::video::nr_change_signal_t> nr_signal;
     ::video::nr_request_t nr_attempt_request {}, nr_previous_request {};
     boost::shared_ptr<const image_enhancement::backend_use_t> nr_session_backend;
     capture_contract_t filter_capture_contract;
@@ -3330,6 +3330,16 @@ namespace platf::dxgi {
       return 0;
     }
 
+    std::shared_ptr<safe::signal_t>
+    nr_change_event() override {
+      return base_.nr_change_event();
+    }
+
+    void
+    apply_nr_change() override {
+      base_.apply_nr_change();
+    }
+
     ID3D11Device *d3d_device() noexcept override { return base_.device.get(); }
     ID3D11DeviceContext *d3d_context() noexcept override { return base_.device_ctx.get(); }
     const std::array<shared_yuv_plane_t, 3> &yuv_planes() const noexcept override { return planes_; }
@@ -3382,6 +3392,16 @@ namespace platf::dxgi {
       // Propagate per-frame luminance stats from GPU analyzer to encode device
       hdr_luminance_stats = base.hdr_luminance_stats_out;
       return result;
+    }
+
+    std::shared_ptr<safe::signal_t>
+    nr_change_event() override {
+      return base.nr_change_event();
+    }
+
+    void
+    apply_nr_change() override {
+      base.apply_nr_change();
     }
 
     void
@@ -3524,6 +3544,16 @@ namespace platf::dxgi {
       return result;
     }
 
+    std::shared_ptr<safe::signal_t>
+    nr_change_event() override {
+      return base.nr_change_event();
+    }
+
+    void
+    apply_nr_change() override {
+      base.apply_nr_change();
+    }
+
     void
     report_dolby_vision_output(bool injected, bool enabled) override {
       base.report_dolby_vision_output(injected, enabled);
@@ -3643,6 +3673,16 @@ namespace platf::dxgi {
       int result = base.convert(img_base);
       hdr_luminance_stats = base.hdr_luminance_stats_out;
       return result;
+    }
+
+    std::shared_ptr<safe::signal_t>
+    nr_change_event() override {
+      return base.nr_change_event();
+    }
+
+    void
+    apply_nr_change() override {
+      base.apply_nr_change();
     }
 
     void
