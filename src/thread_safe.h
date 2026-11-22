@@ -35,7 +35,7 @@ namespace safe {
         _status = status_t { std::forward<Args>(args)... };
       }
 
-      _has_status.store(true, std::memory_order_release);
+      _has_status.store(static_cast<bool>(_status), std::memory_order_release);
       _cv.notify_all();
     }
 

@@ -332,7 +332,7 @@ namespace image_enhancement::api {
         result = manager().finish_maintenance(backend, operation_id);
       }
       else { result = { 400, "hdr_maintenance_invalid" }; }
-      if (result.status == 200 && backend == NVIDIA_DLSSNR_BACKEND) video::notify_nr_change();
+      if (result.status == 200) video::notify_nr_change();
       if (result.status == 200)
         write(response, 200, { { "status", true }, { "operation_id", operation_id }, { "journal_path", file_handler::path_to_utf8(manager().maintenance_path()) } });
       else

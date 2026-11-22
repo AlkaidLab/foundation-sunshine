@@ -173,6 +173,9 @@ TEST(HdrPipelineStatus, RequestChangesRaiseADeferredSignal) {
   ASSERT_TRUE(signal);
   EXPECT_TRUE(signal->pop(std::chrono::milliseconds { 0 }));
   EXPECT_FALSE(signal->pop(std::chrono::milliseconds { 0 }));
+  signal->raise(false);
+  EXPECT_FALSE(signal->peek());
+  EXPECT_FALSE(signal->pop(std::chrono::milliseconds { 0 }));
   EXPECT_EQ(video::request_nr_enabled(id, true), 202);
   EXPECT_TRUE(signal->pop(std::chrono::milliseconds { 0 }));
   EXPECT_FALSE(signal->pop(std::chrono::milliseconds { 0 }));
