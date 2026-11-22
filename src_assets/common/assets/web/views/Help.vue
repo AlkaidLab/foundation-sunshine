@@ -7,7 +7,7 @@
           :locale="String(locale)"
           :update="{ state: update.state.value, installed, next: update.nextVersion.value || '', checkedAt: update.checkedAt.value }"
           @check="update.check()"
-          @open-update="shell?.nav.go('about')"
+          @open-update="shell?.nav.go('about', { openUpdate: true })"
           @doctor="shell?.nav.go('doctor', { autostart: true })"
           @downloads="shell?.nav.go('downloads')"
         />
@@ -31,7 +31,7 @@ import { hostData } from '../composables/hostData.js'
 import { useUpdateStatus } from '../composables/useUpdateStatus.js'
 
 // 帮助与关于: the four tiles first, then the way to 关于 (version, update section, privacy, licences). The update state is the one quiet check of the shell (useUpdateStatus): the tile and
-// the second line of 关于 read it, a press on 检查更新 asks the same checker, and 更新 opens 关于, where the update sheet is (opening it puts the update dot out).
+// the second line of 关于 read it, a press on 检查更新 asks the same checker, and 更新 opens 关于 with the update sheet already open (the page reads `openUpdate`; opening it puts the update dot out).
 const { t, locale } = useI18n()
 const shell = inject('webShell', null)
 const update = useUpdateStatus()

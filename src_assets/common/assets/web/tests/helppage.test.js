@@ -17,7 +17,8 @@ test('the help rail opens 帮助与关于 (the tiles and the way to 关于); 关
 test('the tiles are on 帮助与关于 and nowhere else: not on the About page', () => {
   const help = read('../views/Help.vue')
   assert.match(help, /<MHelpTiles/)
-  assert.match(help, /@open-update="shell\?\.nav\.go\('about'\)"/, 'an update waits on 关于, where the update sheet is: opening it puts the dot out')
+  assert.match(help, /@open-update="shell\?\.nav\.go\('about', \{ openUpdate: true \}\)"/, 'an update waits on 关于, where the update sheet is: pressing 更新 opens it there already open')
+  assert.match(read('../views/About.vue'), /const sheet = ref\(!!props\.params\?\.openUpdate\)/, 'the About page opens the sheet only when asked: the ordinary way in leaves it closed')
   assert.match(help, /@doctor="shell\?\.nav\.go\('doctor', \{ autostart: true \}\)"/)
   assert.match(help, /@downloads="shell\?\.nav\.go\('downloads'\)"/)
   assert.match(help, /aboutLine\(installed\.value, \{ state: update\.state\.value \}/, 'the second line of 关于 says the update state')
