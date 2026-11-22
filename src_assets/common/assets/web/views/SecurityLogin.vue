@@ -10,8 +10,7 @@ import { createAuthClient, fetchRequest, loginUrl } from 'foundation-ui/auth'
 // 安全与登录: this sign-in, the other devices that are signed in, the password. The same page as in the control panel.
 const { locale } = useI18n()
 const client = createAuthClient({ request: fetchRequest() })
-// In the control panel's frame the page is a trusted local surface (the host says `local`): there is no sign-in to go to, so there is no handler and the page draws no sign-in button.
-// A browser keeps its normal sign-in and sign-out.
-const inPanel = window.isTauri === true && window.parent !== window
-const toLogin = inPanel ? null : () => window.location.assign(loginUrl('/'))
+// A stale or revoked session cookie is still a session verdict, even in the control panel. The button sends the person
+// through the normal sign-in form and back here; the new session replaces the cookie that said signed out.
+const toLogin = () => window.location.assign(loginUrl('/password'))
 </script>
