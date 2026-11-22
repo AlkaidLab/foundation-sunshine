@@ -19,17 +19,7 @@
       @open-update="sheet = true"
       @open="open"
     >
-      <!-- 软件更新, 主机体检, 反馈问题 and 客户端下载 come first (the same tiles as the control panel's 帮助与关于); the update action is on its tile -->
-      <template #tiles>
-        <MHelpTiles
-          :locale="String(locale)"
-          :update="{ state: update.state.value, installed, next: update.nextVersion.value || '', checkedAt: update.checkedAt.value }"
-          @check="onCheck"
-          @open-update="sheet = true"
-          @doctor="shell?.nav.go('doctor', { autostart: true })"
-          @downloads="shell?.nav.go('downloads')"
-        />
-      </template>
+      <template #help><MSection><MGroup><MItem action icon="health_and_safety" :title="doctorTexts(String(locale)).start" @click="shell?.nav.go('doctor', { autostart: true })" /></MGroup></MSection><MFeedbackCard :locale="String(locale)" /></template>
     </MAbout>
     <VersionCard
       v-model="sheet"
@@ -52,7 +42,7 @@
 import { markChannelChosen } from '../utils/updateChannel.js'
 import { computed, inject, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MAbout, MHelpTiles, aboutTexts, useNotify } from 'foundation-ui/vue'
+import { MAbout, MGroup, MItem, MSection, aboutTexts, useNotify, doctorTexts, MFeedbackCard } from 'foundation-ui/vue'
 import VersionCard from '../components/common/VersionCard.vue'
 import { SPONSORS } from '../config/sponsors.js'
 import { hostData } from '../composables/hostData.js'

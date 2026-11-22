@@ -2,13 +2,12 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 
-// 反馈: a tile at the top of 帮助与关于 (the About page) and an action of the search; the form is MErrorHost of the shell
+// 反馈: a row in 帮助与关于 (the About page) and an action of the search; the form is MErrorHost of the shell
 const read = (p) => fs.readFileSync(new URL(p, import.meta.url), 'utf8')
 
-test('the About page has the 反馈问题 tile with the others (体检 starts from its tile, the form from the tile of 反馈) and the search runs 反馈', () => {
+test('the About page has the 反馈 card after 开始体检 and the search runs 反馈', () => {
   const about = read('../views/About.vue')
-  assert.match(about, /<MHelpTiles[^]*@doctor="shell\?\.nav\.go\('doctor', \{ autostart: true \}\)"[^]*\/>/)
-  assert.ok(!/<MFeedbackCard/.test(about), 'the tile opens the form: no second entry in the page')
+  assert.match(about, /doctorTexts\(String\(locale\)\)\.start[^]*<MFeedbackCard :locale="String\(locale\)" \/>/)
   const shell = read('../views/WebShell.vue')
   assert.match(shell, /feedback: \(\) => \{ useErrors\(\)\.reportFeedback\(\) \}/)
   assert.match(shell, /<MErrorHost v-if="!embedded"/, 'an embedded frame has no form host; the row hides itself there')
