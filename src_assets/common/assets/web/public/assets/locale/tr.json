@@ -532,6 +532,8 @@
     "client_fingerprint_rules_certificate_desc": "Certificate that verifies the rules source; empty uses the built-in pinned certificate.",
     "client_fingerprint_rules_url": "Kural adresi",
     "client_fingerprint_rules_url_desc": "Where the client fingerprint rules are fetched from.",
+    "client_fingerprint_rules_refresh_hours": "Fingerprint rules refresh interval (hours)",
+    "client_fingerprint_rules_refresh_hours_desc": "How often to refresh the remote client fingerprint rules, from 1 to 168 hours.",
     "client_gamepad_override": "İstemci oyun kolu tercihi",
     "client_gamepad_override_desc": "Let a client that declares its own gamepad type override the host setting.",
     "clipboard_sync": "Pano eşitleme",
