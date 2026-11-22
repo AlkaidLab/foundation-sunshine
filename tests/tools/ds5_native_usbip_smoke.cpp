@@ -42,6 +42,7 @@
 
 boost::log::sources::severity_logger<int> info;
 boost::log::sources::severity_logger<int> debug;
+boost::log::sources::severity_logger<int> warning;
 
 namespace {
   bool
