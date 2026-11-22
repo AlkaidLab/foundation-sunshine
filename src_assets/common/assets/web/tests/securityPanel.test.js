@@ -2,14 +2,14 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 
-// 主机设置 › 安全与登录 in the control panel: no 「已退出登录」, no 登录 button; the account and a form that asks for the current password. A browser keeps its sign-in.
+// 主机设置 › 安全与登录: a stale browser session can say signed out in the control panel too. The way back is the normal sign-in form, then this page again.
 const read = (p) => fs.readFileSync(new URL(`../${p}`, import.meta.url), 'utf8')
 const host = fs.readFileSync(new URL('../../../../../src/confighttp/auth.cpp', import.meta.url), 'utf8')
 
-test('in the panel the page has no sign-in handler; a browser has one', () => {
+test('a signed-out panel re-enters the account and returns to the security page', () => {
   const view = read('views/SecurityLogin.vue')
-  assert.match(view, /const inPanel = window\.isTauri === true && window\.parent !== window/)
-  assert.match(view, /const toLogin = inPanel \? null : \(\) => window\.location\.assign\(loginUrl\('\/'\)\)/)
+  assert.match(view, /const toLogin = \(\) => window\.location\.assign\(loginUrl\('\/password'\)\)/)
+  assert.doesNotMatch(view, /inPanel|password\/reset|apiPostJson\('\/api\/password'/)
 })
 
 test('the host says the panel is signed in and local: its session answer honours the local credential, and the password route renames the account', () => {

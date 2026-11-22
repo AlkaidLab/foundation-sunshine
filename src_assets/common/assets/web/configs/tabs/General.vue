@@ -94,6 +94,9 @@ const sleepModes = computed(() => [['0', 'suspend'], ['1', 'hibernate'], ['2', '
     <MSection :title="$t('tabs.advanced')">
       <MGroup>
         <CfgExpert :config="config" k="min_log_level" control="sheet" :options="logLevels" label="config.log_level" help="config.log_level_desc" def="2" />
+        <CfgExpert :config="config" k="max_log_size_mb" type="number" placeholder="50" help="config.max_log_size_mb_desc" />
+        <CfgSwitch :config="config" k="restore_log" :on="true" :off="false" def="false" help="config.restore_log_desc" />
+        <CfgExpert :config="config" k="fs_host_icon" help="config.fs_host_icon_desc" />
       </MGroup>
     </MSection>
   </CfgSub>

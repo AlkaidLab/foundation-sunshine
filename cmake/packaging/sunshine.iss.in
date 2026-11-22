@@ -216,7 +216,7 @@ Name: "firewall"; Description: "{cm:ComponentFirewall} — {cm:ComponentFirewall
 Name: "autostart"; Description: "{cm:ComponentAutostart} — {cm:ComponentAutostartDesc}"; Types: recommended full
 Name: "gamepad"; Description: "{cm:ComponentGamepad} — {cm:ComponentGamepadDesc}"; Types: recommended full
 Name: "usbip"; Description: "{cm:ComponentUsbip} — {cm:ComponentUsbipDesc}"; Types: full; MinVersion: 10.0.18362
-Name: "vmouse"; Description: "{cm:ComponentVmouse} — {cm:ComponentVmouseDesc}"; Types: full
+Name: "vmouse"; Description: "{cm:ComponentVmouse} — {cm:ComponentVmouseDesc}"; Types: full; MinVersion: 10.0.22000
 Name: "tools"; Description: "{cm:ComponentTools} — {cm:ComponentToolsDesc}"; Types: recommended full
 
 [Tasks]
@@ -784,6 +784,14 @@ end;
 
 function ShouldRemoveComponent(Name: String): Boolean;
 begin
+  // Windows 10 cannot install the virtual mouse, but an existing legacy
+  // installation is intentionally left alone during an upgrade. The user can
+  // remove it explicitly from a supported host if needed.
+  if (Lowercase(Name) = 'vmouse') and ((GetWindowsVersion and $FFFF) < 22000) then
+  begin
+    Result := False;
+    Exit;
+  end;
   Result := ExistingInnoInstall and PreviousComponentSelected(Name) and
             (not WizardIsComponentSelected(Name));
 end;

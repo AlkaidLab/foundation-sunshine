@@ -74,6 +74,10 @@ namespace input {
     // resolution) or env_* (whole virtual desktop).
     int display_width, display_height;
 
+    // Origin of the selected display in global screen coordinates. The base
+    // offset_x/offset_y remain the virtual-desktop origin used for injection.
+    int display_global_offset_x, display_global_offset_y;
+
     // Offset x and y coordinates of the client
     float client_offsetX, client_offsetY;
 

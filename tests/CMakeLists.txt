@@ -596,7 +596,7 @@ add_executable(http_safety_unit_tests
         ${CMAKE_SOURCE_DIR}/src/ai/proxy.cpp)
 target_include_directories(http_safety_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(http_safety_unit_tests PRIVATE ${SUNSHINE_EXTERNAL_LIBRARIES} gtest_main
-        sunshine_project_options sunshine_coverage sunshine_crypto sunshine_ai_provider sunshine_ai_stream)
+        sunshine_project_options sunshine_coverage sunshine_crypto brotli_dec sunshine_ai_provider sunshine_ai_stream)
 target_compile_definitions(http_safety_unit_tests PRIVATE ${SUNSHINE_DEFINITIONS})
 set_target_properties(http_safety_unit_tests PROPERTIES CXX_STANDARD 23)
 if (WIN32)
@@ -824,7 +824,7 @@ add_executable(session_auth_routes_unit_tests
         ${CMAKE_SOURCE_DIR}/src/http/tls_trust.cpp)
 target_include_directories(session_auth_routes_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(session_auth_routes_unit_tests PRIVATE ${SUNSHINE_EXTERNAL_LIBRARIES} gtest_main
-        sunshine_project_options sunshine_coverage sunshine_crypto ${PLATFORM_LIBRARIES})
+        sunshine_project_options sunshine_coverage sunshine_crypto brotli_dec ${PLATFORM_LIBRARIES})
 # Both suites use the same test binary; asset files must stay under the test build tree.
 set(_asset_route_test_definitions ${SUNSHINE_DEFINITIONS})
 list(FILTER _asset_route_test_definitions EXCLUDE REGEX "^SUNSHINE_ASSETS_DIR=")
@@ -1676,7 +1676,8 @@ if (WIN32)
     target_link_libraries(${PROJECT_NAME} PRIVATE alkaidlab_ds5_core alkaidlab_usbip_core)
 endif ()
 # The network overview in the host sources uses the STUN codec on every platform.
-target_link_libraries(${PROJECT_NAME} PRIVATE alkaidlab_stun_codec sunshine_log_templates)
+# Asset routes decode the shipped Brotli copy for clients without Accept-Encoding: br.
+target_link_libraries(${PROJECT_NAME} PRIVATE alkaidlab_stun_codec brotli_dec sunshine_log_templates)
 # The adapter definitions are set per source file in cmake/targets/common.cmake.
 if (TARGET sunshine_rtx_video_adapter)
     add_dependencies(${PROJECT_NAME} sunshine_rtx_video_adapter)

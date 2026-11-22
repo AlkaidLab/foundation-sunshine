@@ -974,6 +974,12 @@ jobs:
           "SETUP_UI_EXE=$out" >> $env:GITHUB_ENV
           "- installer setup UI: $source in $seconds s" >> $env:GITHUB_STEP_SUMMARY
           Write-Output "installer setup UI $source in $seconds s"
+      # The setup UI is one more shipped PE. Its COFF symbol table is not loaded and is not in the crash-symbol flow;
+      # the CodeView GUID stays, and a signed download is left byte for byte as it is.
+      - name: Strip the setup UI's COFF symbol table
+        if: needs.changes.outputs.package == 'true'
+        shell: pwsh
+        run: python tools/pe_symbols.py $env:SETUP_UI_EXE
       - name: Upload the setup UI
         uses: actions/upload-artifact@v7
         with:
@@ -1586,6 +1592,12 @@ jobs:
           portable_seconds=$(python3 -c "print(f'{float(\"$portable_end\") - float(\"$portable_start\"):.3f}')")
           portable_bytes=$(stat -c %s ./cpack_artifacts/Sunshine.zip)
           echo "Portable ZIP: bytes=$portable_bytes seconds=$portable_seconds" | tee -a "$GITHUB_STEP_SUMMARY"
+          # cmake/packaging/strip-cpack-symbols.cmake cleans the CPack staging tree; prove the ZIP itself has no
+          # unsigned COFF symbol table left. A signed PE is allowed and reported.
+          rm -rf portable-check
+          mkdir -p portable-check
+          cmake -E chdir portable-check cmake -E tar xf ../cpack_artifacts/Sunshine.zip
+          python3 ../tools/pe_symbols.py --check --recursive portable-check
           cmake -E tar tf ./cpack_artifacts/Sunshine.zip | tr '\\' '/' > portable-files.txt
           if [[ "$RTX_VIDEO_ADAPTER_BUILT" == "true" ]]; then
             grep -F "Sunshine/tools/hdr_enhanced/nvidia_rtx_video/foundation_rtx_video_adapter.dll" portable-files.txt
@@ -1618,6 +1630,10 @@ jobs:
           $shell = 'build/tools/sunshine-installer-shell.exe'
           $engine = 'build/cpack_artifacts/Sunshine-engine.exe'
           $output = 'artifacts/sunshine-windows-installer.exe'
+          # Neither the shell nor the setup UI needs its COFF symbol table, and both sit outside the Inno payload the
+          # symbol step already cleans. Stripping before the footer is written keeps the section hashes truthful.
+          python tools/pe_symbols.py $shell
+          python tools/pe_symbols.py $env:SETUP_UI_EXE
           python tools/append_installer_payload.py $shell $engine $output --ui $env:SETUP_UI_EXE
           # Read the footer back: every section is present and carries the hash of the file it was made from.
           $bytes = [IO.File]::ReadAllBytes($output)
