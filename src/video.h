@@ -12,8 +12,9 @@
 #include <boost/smart_ptr/shared_ptr.hpp>
 
 #include <chrono>
-#include <functional>
 #include <cstdint>
+#include <functional>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -86,7 +87,7 @@ namespace video {
   std::vector<hdr_pipeline_status_t>
   get_hdr_pipeline_statuses();
 
-  // Requests are consumed only by the owning conversion thread at a frame boundary.
+  // Requests are consumed only by the owning encode thread at a frame boundary.
   struct nr_request_t {
     bool enabled;
     int scale_percent;
@@ -98,12 +99,15 @@ namespace video {
     float skin_structure_strength = 0.0f;
     bool auto_mask = false;
   };
+  using nr_change_signal_t = safe::signal_t;
   int request_nr_enabled(std::uint64_t id, bool enabled, std::optional<int> scale_percent = std::nullopt,
     std::optional<float> intensity = std::nullopt, std::optional<bool> ui_correction = std::nullopt,
     std::optional<int> motion_quality = std::nullopt,
     std::optional<int> style = std::nullopt, std::optional<float> skin_structure_strength = std::nullopt,
     std::optional<bool> auto_mask = std::nullopt);
   std::optional<nr_request_t> requested_nr_settings(std::uint64_t id, std::optional<bool> global_enabled = std::nullopt);
+  std::shared_ptr<nr_change_signal_t> nr_change_signal(std::uint64_t id);
+  void notify_nr_change();
   bool rollback_nr_settings(std::uint64_t id, const nr_request_t &failed, const nr_request_t &previous);
 
   // 动态参数调节类型
@@ -453,6 +457,14 @@ namespace video {
 
     virtual int
     convert(platf::img_t &img) = 0;
+
+    virtual std::shared_ptr<safe::signal_t>
+    nr_change_event() {
+      return {};
+    }
+
+    virtual void
+    apply_nr_change() {}
 
     virtual void
     request_idr_frame() = 0;

@@ -108,6 +108,83 @@ TEST(TextContextBridge, UiaRequiresEditableHitAndEncodesCaptureCoordinates) {
   bridge.session_stopped(sid);
 }
 
+TEST(TextContextBridge, ExtendedDesktopUsesGlobalScreenCoordinatesForTouch) {
+  constexpr text_context::session_id sid = 0x544558544c454654ULL;
+  auto &bridge = text_context::bridge_t::instance();
+  bridge.notify_gui_alive(false, false, false, false, 1, "extended-desktop-test");
+  bridge.session_started(sid);
+
+  // The selected display starts at x=-2560 in the global desktop. The
+  // bridge receives global coordinates and encodes display-local positions.
+  bridge.record_touch(sid, 1, 3, -2400, 200, -2560, 0, 2560, 1440);
+  bridge.record_touch(sid, 2, 3, -2400, 200, -2560, 0, 2560, 1440);
+
+  text_context::observation_t observation;
+  observation.source = text_context::source_e::uia;
+  observation.active = true;
+  observation.editable = true;
+  observation.element_rect = text_context::screen_rect_t {-2500, 100, -2300, 300};
+  observation.caret_rect = text_context::screen_rect_t {-2401, 180, -2400, 210};
+  ASSERT_TRUE(bridge.observe(observation));
+
+  std::deque<text_context::outbound_msg_t> messages;
+  bridge.drain_outbound(messages);
+  ASSERT_EQ(messages.size(), 1);
+  EXPECT_EQ(read_u32(messages.front().bytes, 28), 160u);
+  EXPECT_EQ(read_u32(messages.front().bytes, 32), 200u);
+  EXPECT_EQ(read_u32(messages.front().bytes, 36), 60u);
+  EXPECT_EQ(read_u32(messages.front().bytes, 40), 100u);
+  EXPECT_EQ(read_u32(messages.front().bytes, 44), 260u);
+  EXPECT_EQ(read_u32(messages.front().bytes, 48), 300u);
+
+  bridge.session_stopped(sid);
+}
+
+TEST(TextContextBridge, MouseAndTouchUseTheSameGlobalCoordinateFrameAboveDesktop) {
+  constexpr text_context::session_id touch_sid = 0x5445585447555054ULL;
+  constexpr text_context::session_id mouse_sid = 0x544558544755504dULL;
+  auto &bridge = text_context::bridge_t::instance();
+  constexpr std::int32_t global_x = 200;
+  constexpr std::int32_t global_y = -1300;
+  constexpr std::int32_t display_left = 0;
+  constexpr std::int32_t display_top = -1440;
+  bridge.notify_gui_alive(false, false, false, false, 1, "global-coordinate-test");
+
+  text_context::observation_t observation;
+  observation.source = text_context::source_e::uia;
+  observation.active = true;
+  observation.editable = true;
+  observation.element_rect = text_context::screen_rect_t {100, -1350, 400, -1100};
+
+  bridge.session_started(touch_sid);
+  bridge.record_touch(touch_sid, 1, 4, global_x, global_y, display_left, display_top, 1920, 1440);
+  bridge.record_touch(touch_sid, 2, 4, global_x, global_y, display_left, display_top, 1920, 1440);
+  ASSERT_TRUE(bridge.observe(observation));
+
+  std::deque<text_context::outbound_msg_t> touch_messages;
+  bridge.drain_outbound(touch_messages);
+  ASSERT_EQ(touch_messages.size(), 1);
+
+  bridge.session_started(mouse_sid);
+  bridge.record_mouse_button(mouse_sid, false, global_x, global_y, display_left, display_top, 1920, 1440);
+  bridge.record_mouse_button(mouse_sid, true, global_x, global_y, display_left, display_top, 1920, 1440);
+  ASSERT_TRUE(bridge.observe(observation));
+
+  std::deque<text_context::outbound_msg_t> mouse_messages;
+  bridge.drain_outbound(mouse_messages);
+  ASSERT_EQ(mouse_messages.size(), 2);
+  ASSERT_EQ(mouse_messages.back().target, mouse_sid);
+  EXPECT_EQ(read_u32(touch_messages.front().bytes, 28), 200u);
+  EXPECT_EQ(read_u32(touch_messages.front().bytes, 32), 140u);
+  EXPECT_EQ(read_u32(mouse_messages.back().bytes, 28), 200u);
+  EXPECT_EQ(read_u32(mouse_messages.back().bytes, 32), 140u);
+  EXPECT_EQ(read_u32(touch_messages.front().bytes, 28), read_u32(mouse_messages.back().bytes, 28));
+  EXPECT_EQ(read_u32(touch_messages.front().bytes, 32), read_u32(mouse_messages.back().bytes, 32));
+
+  bridge.session_stopped(touch_sid);
+  bridge.session_stopped(mouse_sid);
+}
+
 TEST(TextContextBridge, InputPaneRequiresRemoteTouchAutoShowTransition) {
   constexpr text_context::session_id sid = 0x5445585450414e45ULL;
   auto &bridge = text_context::bridge_t::instance();
