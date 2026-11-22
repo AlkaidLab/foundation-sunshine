@@ -362,3 +362,22 @@ TEST_F(AssetHttpsRoutes, ServesLegacySidecarLayoutUntilItIsUpgraded) {
   EXPECT_EQ(upgraded_gzip->content.string(), "xyz");
   fs::remove(fs::path { legacy.string() + ".br" });
 }
+
+TEST_F(AssetHttpsRoutes, UnknownAndMissingExtensionsRespond404Immediately) {
+  // Unmapped extensions (including existing internal .br sidecars) and paths
+  // without an extension must receive 404 immediately rather than hanging until
+  // server->config.timeout_content closes the connection.
+  const auto start = std::chrono::steady_clock::now();
+  for (const auto *path : {
+         "/assets/locale/asset-route-test.json.br",
+         "/assets/locale/not-present.map",
+         "/assets/locale/no-extension",
+       }) {
+    const auto resp = get(path);
+    ASSERT_NE(resp, nullptr) << path;
+    EXPECT_EQ(resp->status_code, "404 Not Found") << path;
+    EXPECT_EQ(header(*resp, "Cache-Control"), "no-store") << path;
+    EXPECT_TRUE(resp->content.string().empty()) << path;
+  }
+  EXPECT_LT(std::chrono::steady_clock::now() - start, std::chrono::seconds(3));
+}
