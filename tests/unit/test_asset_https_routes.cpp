@@ -71,6 +71,7 @@ namespace {
   };
   // brotliCompressSync(Buffer.from(text), { params: { [BROTLI_PARAM_QUALITY]: 11 } })
   const std::string brotli_abc { '\x0b', '\x01', '\x80', 'a', 'b', 'c', '\x03' };
+  const std::string brotli_xyz { '\x0b', '\x01', '\x80', 'x', 'y', 'z', '\x03' };
   const std::string brotli_console {
     '\x8b',
     '\x06',
@@ -334,19 +335,30 @@ TEST_F(AssetHttpsRoutes, ServesLegacySidecarLayoutUntilItIsUpgraded) {
   EXPECT_EQ(damaged->content.string(), "abc");
   EXPECT_TRUE(header(*damaged, "Content-Encoding").empty());
 
+  // Restore the matching sidecar and marker first: the upgrade below must be
+  // tested against a sidecar that is still valid and servable.
+  write_file(legacyGzip, gzip_abc);
+  write_file(legacyMarker, confighttp::assets::asset_sidecar_marker("abc", gzip_abc));
+  const auto restored = get(asset, { { "Accept-Encoding", "gzip" } });
+  ASSERT_EQ(restored->status_code, "200 OK");
+  EXPECT_EQ(header(*restored, "Content-Encoding"), "gzip");
+  EXPECT_EQ(restored->content.string(), gzip_abc);
+
   // When the single-copy file of a newer install appears, it is the asset:
   // the stale legacy sidecar is never served again, not even to a client
-  // that only offers gzip.
-  write_file(fs::path { legacy.string() + ".br" }, brotli_abc);
+  // that only offers gzip. The new content differs from the sidecar's so
+  // serving the old bytes cannot pass.
+  write_file(fs::path { legacy.string() + ".br" }, brotli_xyz);
   const auto upgraded = get(asset, { { "Accept-Encoding", "br" } });
   EXPECT_EQ(upgraded->status_code, "200 OK");
   EXPECT_EQ(header(*upgraded, "Content-Encoding"), "br");
-  EXPECT_EQ(upgraded->content.string(), brotli_abc);
+  EXPECT_EQ(upgraded->content.string(), brotli_xyz);
   const auto upgraded_identity = get(asset, { { "Accept-Encoding", "identity" } });
-  EXPECT_EQ(upgraded_identity->content.string(), "abc");
+  ASSERT_EQ(upgraded_identity->status_code, "200 OK");
+  EXPECT_EQ(upgraded_identity->content.string(), "xyz");
   const auto upgraded_gzip = get(asset, { { "Accept-Encoding", "gzip" } });
   EXPECT_EQ(upgraded_gzip->status_code, "200 OK");
   EXPECT_TRUE(header(*upgraded_gzip, "Content-Encoding").empty());
-  EXPECT_EQ(upgraded_gzip->content.string(), "abc");
+  EXPECT_EQ(upgraded_gzip->content.string(), "xyz");
   fs::remove(fs::path { legacy.string() + ".br" });
 }
