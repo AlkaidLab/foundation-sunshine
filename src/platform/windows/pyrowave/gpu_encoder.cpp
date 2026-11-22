@@ -311,6 +311,16 @@ namespace platf::pyrowave_windows {
         return 0;
       }
 
+      std::shared_ptr<safe::signal_t>
+      nr_change_event() override {
+        return conversion_ ? conversion_->nr_change_event() : nullptr;
+      }
+
+      void
+      apply_nr_change() override {
+        if (conversion_) conversion_->apply_nr_change();
+      }
+
       void request_idr_frame() override {}
       void request_normal_frame() override {}
       void invalidate_ref_frames(int64_t, int64_t) override {}

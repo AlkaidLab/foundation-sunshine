@@ -67,15 +67,19 @@ namespace text_context {
 
     void record_touch(session_id sid, std::uint8_t event_type, std::uint32_t pointer_id,
                       std::int32_t screen_x, std::int32_t screen_y,
-                      std::int32_t capture_left, std::int32_t capture_top,
+                      std::int32_t capture_global_left, std::int32_t capture_global_top,
                       std::uint32_t capture_width, std::uint32_t capture_height);
     void record_mouse_button(session_id sid, bool release,
                              std::int32_t screen_x, std::int32_t screen_y,
-                             std::int32_t capture_left, std::int32_t capture_top,
+                             std::int32_t capture_global_left, std::int32_t capture_global_top,
                              std::uint32_t capture_width, std::uint32_t capture_height);
 
     /// Drops any in-flight mouse candidate for the session (right-click/scroll).
     void cancel_mouse(session_id sid);
+
+    /// Returns true while at least one streaming input session can use text
+    /// context correlation. Input paths use this as a lock-free fast path.
+    bool input_tracking_active() const noexcept;
 
     /// Returns true when the observation consumed a matching remote input.
     bool observe(const observation_t &observation);
