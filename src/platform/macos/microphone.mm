@@ -6,7 +6,9 @@
 #import <CoreAudio/CoreAudio.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
+#include <thread>
 #include <vector>
 
 #include "src/platform/common.h"
@@ -61,14 +63,23 @@ namespace platf {
     Float64 sample_rate { 48000.0 };
     TPCircularBuffer ring {};
     UInt32 channels { 2 };
+    std::atomic<bool> stopping { false };
+    std::atomic<int> active_renders { 0 };
 
     ~mic_redirect_t() {
+      stopping.store(true, std::memory_order_release);
       if (unit) {
+        AURenderCallbackStruct empty_cb { nullptr, nullptr };
+        AudioUnitSetProperty(unit, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input, 0, &empty_cb, sizeof(empty_cb));
         AudioOutputUnitStop(unit);
         AudioUnitUninitialize(unit);
         AudioComponentInstanceDispose(unit);
-        TPCircularBufferCleanup(&ring);
+        unit = nullptr;
       }
+      while (active_renders.load(std::memory_order_acquire) > 0) {
+        std::this_thread::yield();
+      }
+      TPCircularBufferCleanup(&ring);
     }
 
     bool
@@ -170,6 +181,25 @@ namespace platf {
     static OSStatus
     render(void *self_ptr, AudioUnitRenderActionFlags *, const AudioTimeStamp *, UInt32, UInt32, AudioBufferList *data) {
       auto *self = static_cast<mic_redirect_t *>(self_ptr);
+      if (!self || self->stopping.load(std::memory_order_acquire)) {
+        if (data && data->mNumberBuffers > 0) {
+          std::memset(data->mBuffers[0].mData, 0, data->mBuffers[0].mDataByteSize);
+        }
+        return noErr;
+      }
+
+      self->active_renders.fetch_add(1, std::memory_order_acquire);
+      auto guard = util::fail_guard([&]() {
+        self->active_renders.fetch_sub(1, std::memory_order_release);
+      });
+
+      if (self->stopping.load(std::memory_order_acquire)) {
+        if (data && data->mNumberBuffers > 0) {
+          std::memset(data->mBuffers[0].mData, 0, data->mBuffers[0].mDataByteSize);
+        }
+        return noErr;
+      }
+
       auto &out = data->mBuffers[0];
 
       uint32_t available = 0;
