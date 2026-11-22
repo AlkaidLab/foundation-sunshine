@@ -210,7 +210,11 @@ namespace tray_http {
 
     bool
     tray_vdd_active() {
+#ifdef _WIN32
       return !display_device::find_device_by_friendlyname(ZAKO_NAME).empty();
+#else
+      return false;
+#endif
     }
 
     void

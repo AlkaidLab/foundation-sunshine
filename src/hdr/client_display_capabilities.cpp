@@ -17,10 +17,14 @@ namespace hdr {
         return false;
       }
 
-      const char *begin = text.data();
-      const char *end = begin + text.size();
-      const auto [position, error] = std::from_chars(begin, end, value, std::chars_format::general);
-      return error == std::errc {} && position == end && std::isfinite(value);
+      char *endptr = nullptr;
+      std::string str(text);
+      float parsed = std::strtof(str.c_str(), &endptr);
+      if (endptr == str.c_str() + str.size() && std::isfinite(parsed)) {
+        value = parsed;
+        return true;
+      }
+      return false;
     }
 
     effective_target_t

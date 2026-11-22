@@ -2090,12 +2090,21 @@ namespace config {
 
   int
   host_max_bitrate_kbps() {
+#if defined(__cpp_lib_atomic_ref)
     return std::atomic_ref<int>(video.max_bitrate).load(std::memory_order_relaxed);
+#else
+    return __atomic_load_n(&video.max_bitrate, __ATOMIC_RELAXED);
+#endif
   }
 
   void
   set_host_max_bitrate_kbps(int kbps) {
-    std::atomic_ref<int>(video.max_bitrate).store(std::max(0, kbps), std::memory_order_relaxed);
+    const int val = std::max(0, kbps);
+#if defined(__cpp_lib_atomic_ref)
+    std::atomic_ref<int>(video.max_bitrate).store(val, std::memory_order_relaxed);
+#else
+    __atomic_store_n(&video.max_bitrate, val, __ATOMIC_RELAXED);
+#endif
   }
 
   bool
