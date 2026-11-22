@@ -183,6 +183,17 @@ if (WIN32)
 endif ()
 add_test(NAME audio_default_wait_unit_tests COMMAND audio_default_wait_unit_tests)
 
+# Default sink switching at stream start, runtime host_audio toggle, and stream end: no audio API.
+add_executable(audio_sink_switch_unit_tests
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_sink_switch.cpp)
+target_include_directories(audio_sink_switch_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(audio_sink_switch_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(audio_sink_switch_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(audio_sink_switch_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME audio_sink_switch_unit_tests COMMAND audio_sink_switch_unit_tests)
+
 if (WIN32)
     # Prints what GET /api/audio/devices answers on this machine; reads endpoints only. Not a unit test.
     add_executable(audio_devices_dump
@@ -1586,6 +1597,7 @@ list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_devices.
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_display_settings_restore.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_sink_plan.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_default_wait.cpp)
+list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_audio_sink_switch.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_telemetry.cpp ${CMAKE_SOURCE_DIR}/tests/unit/test_error_code.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_host_bitrate_cap.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/unit/test_cover_failure_backoff.cpp)
