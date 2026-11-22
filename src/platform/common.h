@@ -774,7 +774,9 @@ namespace platf {
 
     display_t() noexcept:
         offset_x { 0 },
-        offset_y { 0 } {
+        offset_y { 0 },
+        global_offset_x { 0 },
+        global_offset_y { 0 } {
     }
 
     /**
@@ -866,6 +868,10 @@ namespace platf {
 
     // Offsets for when streaming a specific monitor. By default, they are 0.
     int offset_x, offset_y;
+    // The selected display's origin in Windows/global screen coordinates. This
+    // is separate from offset_x/offset_y, which may be virtual-desktop-relative
+    // for absolute pointer injection.
+    int global_offset_x, global_offset_y;
     int env_width, env_height;
 
     int width, height;
