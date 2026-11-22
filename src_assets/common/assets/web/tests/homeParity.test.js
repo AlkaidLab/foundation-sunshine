@@ -41,3 +41,17 @@ test('host audio commands of one client run one at a time and the last choice wi
   await new Promise((r) => setTimeout(r, 0))
   assert.deepEqual(sent, [true, true, true], 'after the first settles only the newest choice goes out (the one in the middle is dropped)')
 })
+
+// the overview of the Web UI and of the control panel of one host are one overview: the layout is on the host (the phone draws what the panel draws), the client icons are one function
+test('the overview keeps its layout on the host', () => {
+  assert.match(home, /const layoutStore = createHostLayoutStore\(\{ request: \(path, init\) => apiFetch\(path, init\) \}\)/)
+  assert.match(home, /:layout-store="layoutStore"/)
+  assert.match(fs.readFileSync(new URL('../utils/homeData.js', import.meta.url), 'utf8'), /export \{ DEVICE_KINDS, DEVICE_RULES, NEUTRAL_DEVICE_ICON, deviceKindFor, deviceIconFor \} from 'foundation-ui\/device-icons'/)
+})
+
+// the lines of 码率 and 帧率: the samples start from the last minute of this tab (a phone that comes back to the page has its lines at once)
+test('the samples behind the tile lines are kept for a minute in the tab and the page starts from them', () => {
+  assert.match(home, /const SERIES_KEPT_MS = 60000/)
+  assert.match(home, /const startSeries = kept\.series \|\| storedSeries\(\) \|\| \{\}/)
+  assert.match(home, /watch\(Object\.values\(series\), \(\) => \{ try \{ sessionStorage\.setItem\(SERIES_KEY, JSON\.stringify\(\{ at: Date\.now\(\)/)
+})
