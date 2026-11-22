@@ -210,15 +210,20 @@ namespace platf {
    */
   bool
   needs_encoder_reenumeration() {
-    static uint32_t last_display_count = 0;
-    uint32_t current_count = 0;
-    CGGetActiveDisplayList(0, nullptr, &current_count);
-    if (last_display_count == 0) {
-      last_display_count = current_count;
-      return false;
+    static std::vector<CGDirectDisplayID> last_displays;
+    uint32_t count = 0;
+    if (CGGetActiveDisplayList(0, nullptr, &count) != kCGErrorSuccess || count == 0) {
+      last_displays.clear();
+      return true;
     }
-    if (current_count != last_display_count) {
-      last_display_count = current_count;
+    std::vector<CGDirectDisplayID> current_displays(count);
+    if (CGGetActiveDisplayList(count, current_displays.data(), &count) != kCGErrorSuccess) {
+      last_displays.clear();
+      return true;
+    }
+    std::sort(current_displays.begin(), current_displays.end());
+    if (last_displays.empty() || current_displays != last_displays) {
+      last_displays = current_displays;
       return true;
     }
     return false;

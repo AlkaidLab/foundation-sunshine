@@ -140,10 +140,3 @@ namespace display_device {
   }
 
 }  // namespace display_device
-
-namespace platf {
-  std::vector<std::string>
-  adapter_names() {
-    return {};
-  }
-}  // namespace platf

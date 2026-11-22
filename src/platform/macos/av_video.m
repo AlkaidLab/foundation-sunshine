@@ -75,6 +75,7 @@
   }
   else {
     [screenInput release];
+    [self release];
     return nil;
   }
 
@@ -82,7 +83,12 @@
 }
 
 - (void)dealloc {
+  if (self.runtimeErrorObserver) {
+    [[NSNotificationCenter defaultCenter] removeObserver:self.runtimeErrorObserver];
+    self.runtimeErrorObserver = nil;
+  }
   [self.session stopRunning];
+  [self.session release];
   for (AVCaptureOutput *out in [self.videoOutputs objectEnumerator]) {
     if ([out isKindOfClass:[AVCaptureVideoDataOutput class]]) {
       [(AVCaptureVideoDataOutput *)out setSampleBufferDelegate:nil queue:NULL];
@@ -175,22 +181,6 @@
       }
     }
   }
-}
-
-- (void)dealloc {
-  if (self.runtimeErrorObserver) {
-    [[NSNotificationCenter defaultCenter] removeObserver:self.runtimeErrorObserver];
-    [self.runtimeErrorObserver release];
-    self.runtimeErrorObserver = nil;
-  }
-  if (self.session.isRunning) {
-    [self.session stopRunning];
-  }
-  [self.session release];
-  [self.videoOutputs release];
-  [self.captureCallbacks release];
-  [self.captureSignals release];
-  [super dealloc];
 }
 
 @end
