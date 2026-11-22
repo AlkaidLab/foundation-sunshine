@@ -23,6 +23,7 @@ extern "C" {
 #include "audio.h"
 #include "audio_default_wait.h"
 #include "audio_sink_plan.h"
+#include "audio_sink_switch.h"
 #include "config.h"
 #include "globals.h"
 #include "logging.h"
@@ -581,9 +582,8 @@ namespace audio {
       return muted_route;
     };
 
-    // Select and open the capture endpoint each time the host-playback switch changes.
-    // The platform audio control owns the sink names; rebuilding the microphone is the
-    // supported live operation and avoids changing a different session's default sink.
+    // Select and open the capture endpoint when capture starts or the host-playback switch changes,
+    // updating the default playback sink whenever the target sink changes.
     auto open_microphone = [&](bool play_on_host, int &capture_channels, const std::uint8_t *&capture_mapping) {
       std::string *sink = &ref->sink.host;
       if (!config::audio.sink.empty()) sink = &config::audio.sink;
@@ -602,22 +602,34 @@ namespace audio {
       return control->microphone(capture_mapping, capture_channels, stream.sampleRate, frame_size, continuous_audio, capture_sink);
     };
 
-    if (!ref->sink_flag->exchange(true, std::memory_order_acquire)) {
-      const bool play_on_host = host_audio();
-      std::string *sink = &ref->sink.host;
+    auto target_sink_for = [&](bool play_on_host) -> const std::string & {
       if ((!play_on_host || ref->sink.null_is_selected_device) && ref->sink.null) {
-        if (const auto &route = muted_route_for_stream()) sink = route->sink;
+        if (const auto &route = muted_route_for_stream()) {
+          return *route->sink;
+        }
       }
-      ref->restore_sink = ref->sink.host != *sink;
-      if (ref->restore_sink || (config::audio.keep_sink_default && !sink->empty())) {
-        const auto sink_status = control->set_sink(*sink);
-        if (sink_status && ref->restore_sink) return;
+      return ref->sink.host;
+    };
+
+    auto apply_host_audio_sink = [&](bool play_on_host) -> bool {
+      std::lock_guard lock { ref->sink_mutex };
+      return audio_sink_switch::apply_target_sink(
+        *control,
+        ref->sink.host,
+        target_sink_for(play_on_host),
+        config::audio.keep_sink_default,
+        ref->restore_sink);
+    };
+
+    bool applied_host_audio = host_audio();
+    if (!ref->sink_flag->exchange(true, std::memory_order_acquire)) {
+      if (!apply_host_audio_sink(applied_host_audio)) {
+        return;
       }
     }
 
     int capture_channels = stream.channelCount;
     const std::uint8_t *capture_mapping = stream.mapping;
-    bool applied_host_audio = host_audio();
     auto mic = open_microphone(applied_host_audio, capture_channels, capture_mapping);
 
     // Opens the capture endpoint again until it works or the stream ends. The system losing its default playback device while
@@ -636,7 +648,14 @@ namespace audio {
           control->wait_for_default_output(1s);
           continue;
         }
-        applied = host_audio();
+        const bool desired = host_audio();
+        if (desired != applied) {
+          if (target_sink_for(desired) != target_sink_for(applied) && !apply_host_audio_sink(desired)) {
+            BOOST_LOG(error) << "Audio capture: failed to switch audio sink for host_audio change"sv;
+            return nullptr;
+          }
+          applied = desired;
+        }
         auto reopened = open_microphone(applied, capture_channels, capture_mapping);
         if (reopened) {
           return reopened;
@@ -680,11 +699,20 @@ namespace audio {
     while (!shutdown_event->peek()) {
       const bool desired_host_audio = host_audio();
       if (desired_host_audio != applied_host_audio) {
-        mic.reset();
-        applied_host_audio = desired_host_audio;
-        mic = reopen_microphone(applied_host_audio);
-        if (!mic) {
-          return;  // only the end of the stream leaves it empty
+        if (target_sink_for(desired_host_audio) != target_sink_for(applied_host_audio)) {
+          mic.reset();
+          if (!apply_host_audio_sink(desired_host_audio)) {
+            BOOST_LOG(error) << "Audio capture: failed to switch audio sink for host_audio change"sv;
+            return;
+          }
+          applied_host_audio = desired_host_audio;
+          mic = reopen_microphone(applied_host_audio);
+          if (!mic) {
+            return;  // only the end of the stream leaves it empty
+          }
+        }
+        else {
+          applied_host_audio = desired_host_audio;
         }
       }
       std::vector<float> sample_buffer;
@@ -859,23 +887,13 @@ namespace audio {
       return;
     }
 
-    const bool restore_assigned_sink = config::audio.keep_sink_default && ctx.control->has_assigned_sink();
-    if (!ctx.restore_sink && !restore_assigned_sink) {
-      return;
-    }
-
-    // Change back to the host sink, unless there was none
-    const std::string &sink = ctx.sink.host.empty() ? config::audio.sink : ctx.sink.host;
-    if (!sink.empty()) {
-      // Windows can skip restoration when the user changed the default sink.
-      if (!ctx.control->restore_sink_if_assigned(sink)) {
-        // Platforms without ownership-aware restoration retain the previous behavior
-        // when Sunshine actually changed the default sink.
-        if (ctx.restore_sink) {
-          ctx.control->set_sink(sink);
-        }
-      }
-    }
+    std::lock_guard lock { ctx.sink_mutex };
+    audio_sink_switch::restore_on_stop(
+      *ctx.control,
+      ctx.sink.host,
+      config::audio.sink,
+      config::audio.keep_sink_default,
+      ctx.restore_sink);
   }
 
   void
