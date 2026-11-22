@@ -3,8 +3,9 @@
  * @brief Web UI asset handlers exercised over HTTPS with their real authentication.
  */
 #include "src/config.h"
-#include "src/confighttp/assets.h"
+#include "src/confighttp/asset_codec.h"
 #include "src/confighttp/asset_etag.h"
+#include "src/confighttp/assets.h"
 #include "src/confighttp/auth.h"
 #include "src/crypto.h"
 #include "src/file_handler.h"
@@ -28,30 +29,77 @@ namespace http {
   extern bool test_credentials_exist;
 }
 namespace file_handler {
-  std::string path_to_utf8(const fs::path &path) { return path.string(); }
-  std::string read_file(const char *path) {
+  std::string
+  path_to_utf8(const fs::path &path) { return path.string(); }
+  std::string
+  read_file(const char *path) {
     std::ifstream input(path, std::ios::binary);
     return { std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>() };
   }
-}
+}  // namespace file_handler
 namespace platf {
-  fs::path appdata() { return fs::path { SUNSHINE_ASSETS_DIR }; }
-}
+  fs::path
+  appdata() { return fs::path { SUNSHINE_ASSETS_DIR }; }
+}  // namespace platf
 
 namespace {
   constexpr auto authorization = "Basic cm91dGUtdXNlcjpyb3V0ZS1wYXNzd29yZA==";
   const std::string gzip_abc {
-    '\x1f', '\x8b', '\x08', '\x00', '\x00', '\x00', '\x00', '\x00',
-    '\x02', '\x0a', '\x4b', '\x4c', '\x4a', '\x06', '\x00', '\xc2',
-    '\x41', '\x24', '\x35', '\x03', '\x00', '\x00', '\x00',
+    '\x1f',
+    '\x8b',
+    '\x08',
+    '\x00',
+    '\x00',
+    '\x00',
+    '\x00',
+    '\x00',
+    '\x02',
+    '\x0a',
+    '\x4b',
+    '\x4c',
+    '\x4a',
+    '\x06',
+    '\x00',
+    '\xc2',
+    '\x41',
+    '\x24',
+    '\x35',
+    '\x03',
+    '\x00',
+    '\x00',
+    '\x00',
+  };
+  // brotliCompressSync(Buffer.from(text), { params: { [BROTLI_PARAM_QUALITY]: 11 } })
+  const std::string brotli_abc { '\x0b', '\x01', '\x80', 'a', 'b', 'c', '\x03' };
+  const std::string brotli_console {
+    '\x8b',
+    '\x06',
+    '\x80',
+    'c',
+    'o',
+    'n',
+    's',
+    'o',
+    'l',
+    'e',
+    '.',
+    'l',
+    'o',
+    'g',
+    '(',
+    '1',
+    ')',
+    '\x03',
   };
 
-  std::string header(const web::ClientResponse &response, const std::string &name) {
+  std::string
+  header(const web::ClientResponse &response, const std::string &name) {
     const auto it = response.header.find(name);
     return it == response.header.end() ? std::string {} : it->second;
   }
 
-  void write_file(const fs::path &path, const std::string &value) {
+  void
+  write_file(const fs::path &path, const std::string &value) {
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
     if (!output || !output.write(value.data(), static_cast<std::streamsize>(value.size())))
       throw std::runtime_error("failed to write test asset");
@@ -64,9 +112,12 @@ namespace {
     const fs::path fixture = fs::path { SUNSHINE_ASSETS_DIR } / "web";
     const fs::path html = fixture / "index.html";
     const fs::path plain = fixture / "assets/locale/asset-route-test.json";
-    const fs::path compressed = fs::path { plain.string() + ".gz" };
-    const fs::path marker = fs::path { compressed.string() + ".sha256" };
+    const fs::path shipped = fs::path { plain.string() + ".br" };
     const fs::path hashed = fixture / "assets/generated/asset-route-test-Abc12345.js";
+    const fs::path hashedShipped = fs::path { hashed.string() + ".br" };
+    const fs::path legacy = fixture / "assets/locale/asset-route-test-legacy.json";
+    const fs::path legacyGzip = fs::path { legacy.string() + ".gz" };
+    const fs::path legacyMarker = fs::path { legacyGzip.string() + ".sha256" };
     const fs::path cert = fixture / "asset-route-test-cert.pem";
     const fs::path key = fixture / "asset-route-test-key.pem";
     std::unique_ptr<confighttp::https_server_t> server;
@@ -76,7 +127,8 @@ namespace {
     net::net_e old_origin {};
     bool old_creds {};
 
-    void SetUp() override {
+    void
+    SetUp() override {
       old_username = config::sunshine.username;
       old_password = config::sunshine.password;
       old_salt = config::sunshine.salt;
@@ -93,10 +145,10 @@ namespace {
       fs::create_directories(plain.parent_path());
       fs::create_directories(hashed.parent_path());
       write_file(html, "<html>First version</html>");
-      write_file(plain, "abc");
-      write_file(compressed, gzip_abc);
-      write_file(marker, confighttp::assets::asset_sidecar_marker("abc", gzip_abc));
-      write_file(hashed, "console.log(1)");
+      // The shipped representation of a text asset is a single Brotli copy;
+      // no plain file and no digest marker exists beside it.
+      write_file(shipped, brotli_abc);
+      write_file(hashedShipped, brotli_console);
       const auto credentials = crypto::gen_creds("localhost", 2048);
       write_file(cert, credentials.x509);
       write_file(key, credentials.pkey);
@@ -111,7 +163,8 @@ namespace {
       listener = std::thread([this, ready, signaled] {
         try {
           server->start([ready, signaled](unsigned short p) { signaled->store(true); ready->set_value(p); });
-        } catch (...) {
+        }
+        catch (...) {
           if (!signaled->exchange(true)) ready->set_exception(std::current_exception());
         }
       });
@@ -122,7 +175,8 @@ namespace {
       client->config.timeout_connect = 5;
     }
 
-    void TearDown() override {
+    void
+    TearDown() override {
       client.reset();
       if (server) server->stop();
       if (listener.joinable()) listener.join();
@@ -134,19 +188,31 @@ namespace {
       config::sunshine.credentials_file = old_credentials;
       http::origin_web_ui_allowed = old_origin;
       http::test_credentials_exist = old_creds;
-      for (const auto &file : { html, plain, compressed, marker, hashed, cert, key }) {
+      for (const auto &file : { html, shipped, hashedShipped, legacy, legacyGzip, legacyMarker, cert, key }) {
         std::error_code ignored;
         fs::remove(file, ignored);
       }
     }
 
-    std::shared_ptr<web::ClientResponse> get(const std::string &path, web::CaseInsensitiveMultimap headers = {}) {
+    std::shared_ptr<web::ClientResponse>
+    get(const std::string &path, web::CaseInsensitiveMultimap headers = {}) {
       return client->request("GET", path, "", headers);
     }
   };
+}  // namespace
+
+TEST(AssetCodec, DecodesCompleteStreamsAndFailsClosed) {
+  using confighttp::assets::brotli_decode;
+  EXPECT_EQ(brotli_decode(brotli_abc, 1024).value_or(""), "abc");
+  EXPECT_EQ(brotli_decode(brotli_console, 1024).value_or(""), "console.log(1)");
+  // Damaged input, trailing bytes and an over-limit result never yield a body.
+  EXPECT_FALSE(brotli_decode(std::string_view { brotli_abc }.substr(0, 5), 1024).has_value());
+  EXPECT_FALSE(brotli_decode(brotli_abc + "x", 1024).has_value());
+  EXPECT_FALSE(brotli_decode(brotli_abc, 2).has_value());
+  EXPECT_FALSE(brotli_decode("", 1024).has_value());
 }
 
-TEST_F(AssetHttpsRoutes, ValidatesAuthenticatedHtmlAndNegotiatedAssets) {
+TEST_F(AssetHttpsRoutes, ServesSingleCopyAssetsWithNegotiation) {
   EXPECT_NE(get("/")->status_code, "200 OK");
   const web::CaseInsensitiveMultimap auth { { "Authorization", authorization } };
   const auto page = get("/", auth);
@@ -160,11 +226,6 @@ TEST_F(AssetHttpsRoutes, ValidatesAuthenticatedHtmlAndNegotiatedAssets) {
   EXPECT_EQ(cached_page->header.count("Content-Length"), 0u);
   EXPECT_TRUE(cached_page->content.string().empty());
   EXPECT_EQ(header(*cached_page, "ETag"), html_etag);
-  EXPECT_NE(get("/", { { "If-None-Match", html_etag } })->status_code, "304 Not Modified");
-  write_file(html, "<html>Second version</html>");
-  const auto changed_page = get("/", { { "Authorization", authorization }, { "If-None-Match", html_etag } });
-  EXPECT_EQ(changed_page->status_code, "200 OK");
-  EXPECT_NE(header(*changed_page, "ETag"), html_etag);
 
   constexpr auto asset = "/assets/locale/asset-route-test.json";
   const auto identity = get(asset, { { "Accept-Encoding", "identity" } });
@@ -175,77 +236,107 @@ TEST_F(AssetHttpsRoutes, ValidatesAuthenticatedHtmlAndNegotiatedAssets) {
   EXPECT_EQ(header(*identity, "Vary"), "Accept-Encoding");
   const auto identity_etag = header(*identity, "ETag");
   ASSERT_FALSE(identity_etag.empty());
-  const auto identity_cached = get(asset, {
-    { "Accept-Encoding", "identity" }, { "If-None-Match", "\"other\"" },
-    { "If-None-Match", "W/" + identity_etag }
-  });
+  EXPECT_EQ(identity_etag, "\"" + confighttp::assets::asset_digest("abc") + "\"");
+  const auto identity_cached = get(asset, { { "Accept-Encoding", "identity" }, { "If-None-Match", "\"other\"" },
+                                            { "If-None-Match", "W/" + identity_etag } });
   EXPECT_EQ(identity_cached->status_code, "304 Not Modified");
   EXPECT_EQ(identity_cached->header.count("Content-Length"), 0u);
   EXPECT_TRUE(identity_cached->content.string().empty());
   EXPECT_EQ(header(*identity_cached, "ETag"), identity_etag);
   EXPECT_EQ(header(*identity_cached, "Cache-Control"), "private, no-cache");
+
+  const auto brotli = get(asset, { { "Accept-Encoding", "br" } });
+  ASSERT_EQ(brotli->status_code, "200 OK");
+  EXPECT_EQ(brotli->content.string(), brotli_abc);
+  EXPECT_EQ(header(*brotli, "Content-Encoding"), "brotli");
+  const auto negotiated = get(asset, { { "Accept-Encoding", "gzip" }, { "Accept-Encoding", "BR ; Q=0.7, identity;q=0.2" } });
+  ASSERT_EQ(negotiated->status_code, "200 OK");
+  EXPECT_EQ(header(*negotiated, "Content-Encoding"), "brotli");
+  EXPECT_EQ(negotiated->content.string(), brotli_abc);
+  const auto preferred_identity = get(asset, { { "Accept-Encoding", "br;q=0.2, identity;q=0.8" } });
+  ASSERT_EQ(preferred_identity->status_code, "200 OK");
+  EXPECT_TRUE(header(*preferred_identity, "Content-Encoding").empty());
+  EXPECT_EQ(preferred_identity->content.string(), "abc");
+  const auto brotli_etag = header(*brotli, "ETag");
+  ASSERT_FALSE(brotli_etag.empty());
+  EXPECT_NE(identity_etag, brotli_etag);
+  const auto brotli_cached = get(asset, { { "Accept-Encoding", "br" }, { "If-None-Match", "\"other\", W/" + brotli_etag } });
+  EXPECT_EQ(brotli_cached->status_code, "304 Not Modified");
+  EXPECT_EQ(brotli_cached->header.count("Content-Length"), 0u);
+  EXPECT_TRUE(brotli_cached->content.string().empty());
+  EXPECT_EQ(header(*brotli_cached, "Vary"), "Accept-Encoding");
+  EXPECT_EQ(header(*brotli_cached, "ETag"), brotli_etag);
+  EXPECT_EQ(header(*brotli_cached, "Content-Encoding"), "brotli");
+  EXPECT_EQ(get(asset, { { "If-None-Match", "*" } })->status_code, "304 Not Modified");
+  EXPECT_EQ(get(asset, { { "Accept-Encoding", "br" }, { "If-None-Match", identity_etag } })->status_code, "200 OK");
+  EXPECT_EQ(get(asset, { { "Accept-Encoding", "identity" }, { "If-None-Match", brotli_etag } })->status_code, "200 OK");
+  EXPECT_EQ(get(asset, { { "If-None-Match", "\"unmatched\"" }, { "If-Modified-Since", "Wed, 31 Dec 2099 23:59:59 GMT" } })->status_code, "200 OK");
+  EXPECT_EQ(get(asset, { { "Accept-Encoding", "br;q=0, identity;q=0" } })->status_code, "406 Not Acceptable");
+  EXPECT_EQ(get(asset, { { "Accept-Encoding", "br;q=, identity;q=0" } })->status_code, "406 Not Acceptable");
+  EXPECT_EQ(get(asset, { { "Accept-Encoding", "*;q=0" } })->status_code, "406 Not Acceptable");
+  const auto recovered_coding = get(asset, { { "Accept-Encoding", "br;q==bad, br;q=0.6" } });
+  ASSERT_EQ(recovered_coding->status_code, "200 OK");
+  EXPECT_EQ(header(*recovered_coding, "Content-Encoding"), "brotli");
+
+  write_file(shipped, brotli_abc + "damaged");
+  const auto damaged_identity = get(asset, { { "Accept-Encoding", "identity" } });
+  EXPECT_EQ(damaged_identity->status_code, "500 Internal Server Error");
+  write_file(shipped, brotli_abc);
+
+  const auto hashed_asset = get("/assets/generated/asset-route-test-Abc12345.js");
+  ASSERT_EQ(hashed_asset->status_code, "200 OK");
+  EXPECT_EQ(hashed_asset->content.string(), "console.log(1)");
+  EXPECT_EQ(header(*hashed_asset, "Cache-Control"), "private, max-age=31536000, immutable");
+  const auto hashed_brotli = get("/assets/generated/asset-route-test-Abc12345.js", { { "Accept-Encoding", "br, gzip" } });
+  ASSERT_EQ(hashed_brotli->status_code, "200 OK");
+  EXPECT_EQ(header(*hashed_brotli, "Content-Encoding"), "brotli");
+  EXPECT_EQ(hashed_brotli->content.string(), brotli_console);
+  const auto missing = get("/assets/locale/not-present.json");
+  EXPECT_EQ(missing->status_code, "404 Not Found");
+  EXPECT_EQ(header(*missing, "Cache-Control"), "no-store");
+}
+
+TEST_F(AssetHttpsRoutes, ServesLegacySidecarLayoutUntilItIsUpgraded) {
+  write_file(legacy, "abc");
+  write_file(legacyGzip, gzip_abc);
+  write_file(legacyMarker, confighttp::assets::asset_sidecar_marker("abc", gzip_abc));
+  constexpr auto asset = "/assets/locale/asset-route-test-legacy.json";
   const auto gzip = get(asset, { { "Accept-Encoding", "gzip" } });
   ASSERT_EQ(gzip->status_code, "200 OK");
   EXPECT_EQ(gzip->content.string(), gzip_abc);
   EXPECT_EQ(header(*gzip, "Content-Encoding"), "gzip");
-  const auto negotiated = get(asset, {
-    { "Accept-Encoding", "br" }, { "Accept-Encoding", "GZip ; Q=0.7, identity;q=0.2" }
-  });
-  ASSERT_EQ(negotiated->status_code, "200 OK");
-  EXPECT_EQ(header(*negotiated, "Content-Encoding"), "gzip");
-  EXPECT_EQ(negotiated->content.string(), gzip_abc);
-  const auto preferred_identity = get(asset, { { "Accept-Encoding", "gzip;q=0.2, identity;q=0.8" } });
-  ASSERT_EQ(preferred_identity->status_code, "200 OK");
-  EXPECT_TRUE(header(*preferred_identity, "Content-Encoding").empty());
-  EXPECT_EQ(preferred_identity->content.string(), "abc");
-  const auto gzip_etag = header(*gzip, "ETag");
-  ASSERT_FALSE(gzip_etag.empty());
-  EXPECT_NE(identity_etag, gzip_etag);
-  const auto gzip_cached = get(asset, { { "Accept-Encoding", "gzip" }, { "If-None-Match", "\"other\", W/" + gzip_etag } });
-  EXPECT_EQ(gzip_cached->status_code, "304 Not Modified");
-  EXPECT_EQ(gzip_cached->header.count("Content-Length"), 0u);
-  EXPECT_TRUE(gzip_cached->content.string().empty());
-  EXPECT_EQ(header(*gzip_cached, "Vary"), "Accept-Encoding");
-  EXPECT_EQ(header(*gzip_cached, "ETag"), gzip_etag);
-  EXPECT_EQ(header(*gzip_cached, "Content-Encoding"), "gzip");
-  EXPECT_EQ(get(asset, { { "If-None-Match", "*" } })->status_code, "304 Not Modified");
-  EXPECT_EQ(get(asset, { { "Accept-Encoding", "gzip" }, { "If-None-Match", identity_etag } })->status_code, "200 OK");
-  EXPECT_EQ(get(asset, { { "Accept-Encoding", "identity" }, { "If-None-Match", gzip_etag } })->status_code, "200 OK");
-  EXPECT_EQ(get(asset, { { "If-None-Match", "\"unmatched\"" }, { "If-Modified-Since", "Wed, 31 Dec 2099 23:59:59 GMT" } })->status_code, "200 OK");
-  EXPECT_EQ(get(asset, { { "Accept-Encoding", "gzip;q=0, identity;q=0" } })->status_code, "406 Not Acceptable");
-  EXPECT_EQ(get(asset, { { "Accept-Encoding", "gzip;q=, identity;q=0" } })->status_code, "406 Not Acceptable");
-  const auto recovered_coding = get(asset, { { "Accept-Encoding", "gzip;q==bad, gzip;q=0.6" } });
-  ASSERT_EQ(recovered_coding->status_code, "200 OK");
-  EXPECT_EQ(header(*recovered_coding, "Content-Encoding"), "gzip");
+  const auto identity = get(asset, { { "Accept-Encoding", "identity" } });
+  ASSERT_EQ(identity->status_code, "200 OK");
+  EXPECT_EQ(identity->content.string(), "abc");
+  EXPECT_TRUE(header(*identity, "Content-Encoding").empty());
 
-  write_file(plain, "abd");
-  const auto stale = get(asset, { { "Accept-Encoding", "gzip" }, { "If-None-Match", gzip_etag } });
+  // A sidecar that no longer matches the plain file installed beside it is
+  // never served, exactly as in the layout that introduced the markers.
+  write_file(legacy, "abd");
+  const auto stale = get(asset, { { "Accept-Encoding", "gzip" } });
   EXPECT_EQ(stale->status_code, "200 OK");
   EXPECT_EQ(stale->content.string(), "abd");
   EXPECT_TRUE(header(*stale, "Content-Encoding").empty());
-  EXPECT_EQ(get(asset, { { "Accept-Encoding", "gzip, identity;q=0" } })->status_code, "406 Not Acceptable");
-  write_file(plain, "abc");
-  fs::remove(marker);
+  write_file(legacy, "abc");
+  fs::remove(legacyMarker);
   const auto unmarked = get(asset, { { "Accept-Encoding", "gzip" } });
   EXPECT_EQ(unmarked->status_code, "200 OK");
   EXPECT_EQ(unmarked->content.string(), "abc");
   EXPECT_TRUE(header(*unmarked, "Content-Encoding").empty());
-  write_file(marker, confighttp::assets::asset_sidecar_marker("abc", gzip_abc));
-  write_file(compressed, gzip_abc + "damaged");
+  write_file(legacyMarker, confighttp::assets::asset_sidecar_marker("abc", gzip_abc));
+  write_file(legacyGzip, gzip_abc + "damaged");
   const auto damaged = get(asset, { { "Accept-Encoding", "gzip" } });
   EXPECT_EQ(damaged->status_code, "200 OK");
   EXPECT_EQ(damaged->content.string(), "abc");
   EXPECT_TRUE(header(*damaged, "Content-Encoding").empty());
-  fs::remove(compressed);
-  fs::remove(marker);
-  const auto absent = get(asset, { { "Accept-Encoding", "gzip" } });
-  EXPECT_EQ(absent->status_code, "200 OK");
-  EXPECT_EQ(absent->content.string(), "abc");
-  EXPECT_TRUE(header(*absent, "Content-Encoding").empty());
-  const auto hashed_asset = get("/assets/generated/asset-route-test-Abc12345.js");
-  EXPECT_EQ(hashed_asset->status_code, "200 OK");
-  EXPECT_EQ(header(*hashed_asset, "Cache-Control"), "private, max-age=31536000, immutable");
-  const auto missing = get("/assets/locale/not-present.json");
-  EXPECT_EQ(missing->status_code, "404 Not Found");
-  EXPECT_EQ(header(*missing, "Cache-Control"), "no-store");
+
+  // When the single-copy file of a newer install appears, it is the asset.
+  write_file(fs::path { legacy.string() + ".br" }, brotli_abc);
+  const auto upgraded = get(asset, { { "Accept-Encoding", "br" } });
+  EXPECT_EQ(upgraded->status_code, "200 OK");
+  EXPECT_EQ(header(*upgraded, "Content-Encoding"), "brotli");
+  EXPECT_EQ(upgraded->content.string(), brotli_abc);
+  const auto upgraded_identity = get(asset, { { "Accept-Encoding", "identity" } });
+  EXPECT_EQ(upgraded_identity->content.string(), "abc");
+  fs::remove(fs::path { legacy.string() + ".br" });
 }

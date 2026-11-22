@@ -5,18 +5,19 @@
 #define BOOST_BIND_GLOBAL_PLACEHOLDERS
 
 #include "assets.h"
+#include "asset_codec.h"
 #include "asset_encoding.h"
 #include "asset_etag.h"
 #include "asset_paths.h"
-#include "web_install.h"
 #include "src/confighttp.h"
 #include "src/confighttp/auth.h"
 #include "src/confighttp/common.h"
 #include "src/file_handler.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
-#include <boost/filesystem.hpp>
+#include "web_install.h"
 #include <array>
+#include <boost/filesystem.hpp>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -33,6 +34,10 @@ namespace confighttp::assets {
     // A validator and its 200 body must describe the same opened snapshot.
     // Large assets continue to use file streaming and do not get a validator.
     constexpr std::size_t maximum_snapshot_size = 8 * 1024 * 1024;
+
+    // A decoded identity representation is produced in memory; the same bound
+    // keeps that path from unbounded output on a damaged file.
+    constexpr std::size_t maximum_decoded_size = 8 * 1024 * 1024;
 
     std::optional<std::string>
     read_snapshot(const fs::path &path, std::size_t limit = maximum_snapshot_size) {
@@ -269,6 +274,9 @@ namespace confighttp::assets {
       }
     }
 
+    /**
+     * 处理静态资源文件
+     */
     void
     getNodeModules(resp_https_t response, req_https_t request) {
       // print_req(request);
@@ -289,75 +297,145 @@ namespace confighttp::assets {
       if (path_error || !is_child_path(filePath, nodeModulesPath)) {
         BOOST_LOG(warning) << "Someone requested a path " << filePath << " that is outside the assets folder";
         response->write(web::StatusCode::bad_request, "Bad Request");
+        return;
       }
-      else if (!fs::exists(filePath) || !fs::is_regular_file(filePath)) {
-        web::CaseInsensitiveMultimap headers;
+
+      // The URL always names the plain file. What is installed beside that
+      // name may be the plain file itself (oldest layout), the plain file
+      // with gzip sidecars (the layout that shipped every text twice), or a
+      // single precompressed Brotli copy (current: one file per asset).
+      std::error_code representation_error;
+      const auto representation = [&](const std::string &suffix) -> std::optional<fs::path> {
+        auto candidate = filePath;
+        candidate += suffix;
+        candidate = fs::weakly_canonical(candidate, representation_error);
+        if (representation_error || !is_child_path(candidate, nodeModulesPath)) return std::nullopt;
+        return candidate;
+      };
+      std::error_code file_error;
+      const bool originalPresent = fs::is_regular_file(filePath, file_error);
+
+      auto relPath = fs::relative(filePath, webDirPath);
+      auto extension = relPath.extension().string();
+      auto mimeType = mime_types.find(extension.empty() ? "" : extension.substr(1));
+      if (mimeType == mime_types.end()) {
+        // do not return any file if the type is not in the map
+        return;
+      }
+
+      const bool compressible = extension == ".js" || extension == ".css" || extension == ".json";
+      const auto brotliPath = compressible ? representation(".br") : std::optional<fs::path> {};
+      const auto gzipPath = compressible ? representation(".gz") : std::optional<fs::path> {};
+      const bool brotliPresent = brotliPath && fs::is_regular_file(*brotliPath, file_error);
+      const bool gzipPresent = gzipPath && fs::is_regular_file(*gzipPath, file_error);
+      if (!originalPresent && !brotliPresent && !gzipPresent) {
+        web::CaseInsensitiveMultimap missing_headers;
+        missing_headers.emplace("Cache-Control", "no-store");
+        response->write(web::StatusCode::not_found, "", missing_headers);
+        return;
+      }
+
+      web::CaseInsensitiveMultimap headers;
+      headers.emplace("Content-Type", mimeType->second);
+      headers.emplace("X-Content-Type-Options", "nosniff");
+      const auto cachePolicy = asset_cache_control(relPath);
+      headers.emplace("Cache-Control", std::string(cachePolicy));
+      const bool fixedUrl = cachePolicy == "private, no-cache";
+
+      // Legacy layout only: the gzip sidecar may be used while it still
+      // matches the plain file installed next to it. A sidecar and source may
+      // be installed at different times, so never serve an old encoding for a
+      // newer fixed URL, even during upgrades.
+      bool gzipUsable = gzipPresent && originalPresent;
+      std::optional<std::string> gzipSnapshot;
+      if (gzipUsable && fixedUrl) {
+        auto digestPath = *gzipPath;
+        digestPath += ".sha256";
+        std::error_code digest_error;
+        digestPath = fs::weakly_canonical(digestPath, digest_error);
+        const auto marker = !digest_error && is_child_path(digestPath, nodeModulesPath) ? read_snapshot(digestPath, 256) : std::nullopt;
+        auto sourceSnapshot = read_snapshot(filePath);
+        gzipSnapshot = read_snapshot(*gzipPath);
+        gzipUsable = sourceSnapshot && gzipSnapshot && marker &&
+                     *marker == asset_sidecar_marker(*sourceSnapshot, *gzipSnapshot);
+      }
+      // Current layout: the Brotli file is the only copy of this asset, so
+      // there is no second snapshot to cross-check.
+      const bool brotliUsable = brotliPresent;
+
+      headers.emplace("Vary", "Accept-Encoding");
+      asset_encoding_offers offers;
+      offers.brotli = brotliUsable;
+      offers.gzip = gzipUsable;
+      offers.identity = brotliUsable || originalPresent;
+      const auto encoding = select_asset_encoding(request->header, offers);
+      if (encoding == asset_encoding::unacceptable) {
+        headers.erase("Cache-Control");
         headers.emplace("Cache-Control", "no-store");
-        response->write(web::StatusCode::not_found, "", headers);
+        response->write(web::StatusCode::not_acceptable, "", headers);
+        return;
       }
-      else {
-        auto relPath = fs::relative(filePath, webDirPath);
-        // get the mime type from the file extension mime_types map
-        // remove the leading period from the extension
-        auto mimeType = mime_types.find(relPath.extension().string().empty() ? "" : relPath.extension().string().substr(1));
-        // check if the extension is in the map at the x position
-        if (mimeType != mime_types.end()) {
-          // if it is, set the content type to the mime type
-          web::CaseInsensitiveMultimap headers;
-          headers.emplace("Content-Type", mimeType->second);
-          headers.emplace("X-Content-Type-Options", "nosniff");
-          const auto cachePolicy = asset_cache_control(relPath);
-          headers.emplace("Cache-Control", std::string(cachePolicy));
-          const bool fixedUrl = cachePolicy == "private, no-cache";
-          auto sourceSnapshot = fixedUrl ? read_snapshot(filePath) : std::nullopt;
-          auto bodyPath = filePath;
-          const auto ext = filePath.extension().string();
-          const bool compressible = ext == ".js" || ext == ".css" || ext == ".json";
-          std::error_code compressed_error;
-          auto compressedPath = filePath;
-          compressedPath += ".gz";
-          compressedPath = fs::weakly_canonical(compressedPath, compressed_error);
-          bool gzipAvailable = compressible && !compressed_error &&
-                               is_child_path(compressedPath, nodeModulesPath) && fs::is_regular_file(compressedPath, compressed_error);
-          std::optional<std::string> gzipSnapshot;
-          auto encoding = select_asset_encoding(request->header, gzipAvailable);
-          if (fixedUrl && encoding == asset_encoding::gzip) {
-            auto digestPath = compressedPath;
-            digestPath += ".sha256";
-            digestPath = fs::weakly_canonical(digestPath, compressed_error);
-            const auto marker = !compressed_error && is_child_path(digestPath, nodeModulesPath)
-                                  ? read_snapshot(digestPath, 256) : std::nullopt;
-            gzipSnapshot = read_snapshot(compressedPath);
-            // A sidecar and source may be installed at different times. Never
-            // serve an old encoding for a newer fixed URL, even during upgrades.
-            gzipAvailable = sourceSnapshot && gzipSnapshot && marker &&
-                            *marker == asset_sidecar_marker(*sourceSnapshot, *gzipSnapshot);
-            if (!gzipAvailable) encoding = select_asset_encoding(request->header, false);
-          }
-          headers.emplace("Vary", "Accept-Encoding");
-          if (encoding == asset_encoding::unacceptable) {
-            headers.erase("Cache-Control");
-            headers.emplace("Cache-Control", "no-store");
-            response->write(web::StatusCode::not_acceptable, "", headers);
-            return;
-          }
-          if (encoding == asset_encoding::gzip) {
-            bodyPath = compressedPath;
-            headers.emplace("Content-Encoding", "gzip");
-          }
-          const auto &snapshot = encoding == asset_encoding::gzip ? gzipSnapshot : sourceSnapshot;
-          if (fixedUrl && snapshot) {
+
+      if (encoding == asset_encoding::brotli) {
+        headers.emplace("Content-Encoding", "brotli");
+        if (fixedUrl) {
+          auto snapshot = read_snapshot(*brotliPath);
+          if (snapshot) {
             if (respond_if_cached(response, request, headers, *snapshot)) return;
             response->write(web::StatusCode::ok, *snapshot, headers);
             return;
           }
-          if (!response->write_file(web::StatusCode::ok, bodyPath, headers)) {
-            BOOST_LOG(error) << "Failed to open Web UI asset: " << file_handler::path_to_utf8(filePath);
-            response->write(web::StatusCode::internal_server_error);
-          }
         }
-        // do not return any file if the type is not in the map
+        if (!response->write_file(web::StatusCode::ok, *brotliPath, headers)) {
+          BOOST_LOG(error) << "Failed to open Web UI asset: " << file_handler::path_to_utf8(*brotliPath);
+          response->write(web::StatusCode::internal_server_error);
+        }
+        return;
       }
+
+      if (encoding == asset_encoding::gzip) {
+        headers.emplace("Content-Encoding", "gzip");
+        if (fixedUrl && gzipSnapshot) {
+          if (respond_if_cached(response, request, headers, *gzipSnapshot)) return;
+          response->write(web::StatusCode::ok, *gzipSnapshot, headers);
+          return;
+        }
+        if (!response->write_file(web::StatusCode::ok, *gzipPath, headers)) {
+          BOOST_LOG(error) << "Failed to open Web UI asset: " << file_handler::path_to_utf8(*gzipPath);
+          response->write(web::StatusCode::internal_server_error);
+        }
+        return;
+      }
+
+      if (!brotliUsable) {
+        // The plain file: oldest layout, legacy sidecar layout, or an asset
+        // type that is never precompressed.
+        auto snapshot = fixedUrl ? read_snapshot(filePath) : std::nullopt;
+        if (fixedUrl && snapshot) {
+          if (respond_if_cached(response, request, headers, *snapshot)) return;
+          response->write(web::StatusCode::ok, *snapshot, headers);
+          return;
+        }
+        if (!response->write_file(web::StatusCode::ok, filePath, headers)) {
+          BOOST_LOG(error) << "Failed to open Web UI asset: " << file_handler::path_to_utf8(filePath);
+          response->write(web::StatusCode::internal_server_error);
+        }
+        return;
+      }
+
+      // Identity for a client that did not accept the shipped encoding: the
+      // host decodes the one copy it has instead of shipping a second one.
+      const auto compressed = read_snapshot(*brotliPath);
+      const auto decoded = compressed ? brotli_decode(*compressed, maximum_decoded_size) : std::nullopt;
+      if (!decoded) {
+        BOOST_LOG(error) << "Failed to decode precompressed Web UI asset: " << file_handler::path_to_utf8(*brotliPath);
+        response->write(web::StatusCode::internal_server_error);
+        return;
+      }
+      if (fixedUrl) {
+        if (respond_if_cached(response, request, headers, *decoded)) return;
+      }
+      response->write(web::StatusCode::ok, *decoded, headers);
     }
 
   }  // namespace

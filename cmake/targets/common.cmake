@@ -93,7 +93,7 @@ endif()
 target_link_libraries(sunshine PRIVATE
         ${SUNSHINE_EXTERNAL_LIBRARIES} ${EXTRA_LIBS}
         sunshine_project_options sunshine_crypto sunshine_ai_provider sunshine_ai_stream
-        alkaidlab_ds5_core alkaidlab_usbip_core alkaidlab_stun_codec)
+        alkaidlab_ds5_core alkaidlab_usbip_core alkaidlab_stun_codec brotli_dec)
 # The adapter definitions and trust-header directories are per source file (see the end of this file), not per target:
 # only three files read them, and a target-wide definition would give every translation unit a different command line
 # whenever the adapters are on or off, so a compiler cache filled by one kind of build could not serve the other.
@@ -125,7 +125,7 @@ if(SUNSHINE_SHARED_HOST_OBJECTS_ENABLED)
             Pyrowave::Runtime sunshine_windows_resources winhttp windowscodecs ole32 shell32
             ${SUNSHINE_EXTERNAL_LIBRARIES} ${EXTRA_LIBS}
             sunshine_project_options sunshine_crypto sunshine_ai_provider sunshine_ai_stream
-            alkaidlab_ds5_core alkaidlab_usbip_core alkaidlab_stun_codec)
+            alkaidlab_ds5_core alkaidlab_usbip_core alkaidlab_stun_codec brotli_dec)
     foreach(dep ${SUNSHINE_TARGET_DEPENDENCIES})
         add_dependencies(sunshine_host_objects ${dep})
     endforeach()

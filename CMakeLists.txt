@@ -71,6 +71,8 @@ include(${CMAKE_MODULE_PATH}/dependencies/boost_separate.cmake)
 add_subdirectory("${CMAKE_SOURCE_DIR}/third-party/alkaidlab-ds5-core")
 # STUN wire codec of the Platform (core/network/stun), used by the network overview.
 add_subdirectory("${CMAKE_SOURCE_DIR}/third-party/alkaidlab-stun-codec")
+# Brotli decoder for the single-copy precompressed Web UI assets.
+add_subdirectory("${CMAKE_SOURCE_DIR}/third-party/brotli")
 
 # Explicit inventories are shared by the host and its test variant.
 include(${CMAKE_MODULE_PATH}/sources/host.cmake)

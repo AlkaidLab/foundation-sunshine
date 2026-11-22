@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { gunzipSync } from 'node:zlib'
-import { compressAssets } from '../../../../../scripts/vite/compressAssets.js'
+import { brotliDecompressSync } from 'node:zlib'
+import { assetEncoding, compressAssets } from '../../../../../scripts/vite/compressAssets.js'
 
-// Exercise the actual build plugin: its gzip and marker are consumed by the
-// C++ sidecar verifier. C++ also checks the same SHA-256 format in HTTP tests.
-test('build compression emits matching gzip sidecars for fixed and hashed assets', async (t) => {
+// Exercise the actual build plugin: packages ship each text asset exactly
+// once, as the Brotli copy the host negotiates or decodes. The plain file and
+// the digest markers of the earlier sidecar layout must not come back.
+test('build compression replaces text assets with a single brotli copy', async (t) => {
   const out = await mkdtemp(join(tmpdir(), 'sunshine-asset-compression-'))
   t.after(() => rm(out, { recursive: true, force: true }))
   const assets = join(out, 'assets')
@@ -21,10 +21,21 @@ test('build compression emits matching gzip sidecars for fixed and hashed assets
   await writeFile(hashed, 'abc')
   await compressAssets().writeBundle({ dir: out })
 
-  const compressed = await readFile(stable + '.gz')
-  assert.equal(gunzipSync(compressed).toString(), 'abc')
-  const digest = (data) => createHash('sha256').update(data).digest('hex').toUpperCase()
-  assert.equal(await readFile(stable + '.gz.sha256', 'utf8'), `${digest('abc')} ${digest(compressed)}\n`)
-  assert.equal(gunzipSync(await readFile(hashed + '.gz')).toString(), 'abc')
-  await assert.rejects(readFile(hashed + '.gz.sha256'), { code: 'ENOENT' })
+  assert.equal(assetEncoding, 'br')
+  const compressed = await readFile(stable + '.br')
+  assert.equal(brotliDecompressSync(compressed).toString(), 'abc')
+  assert.equal(brotliDecompressSync(await readFile(hashed + '.br')).toString(), 'abc')
+  await assert.rejects(access(stable), { code: 'ENOENT' })
+  await assert.rejects(access(hashed), { code: 'ENOENT' })
+  await assert.rejects(access(stable + '.gz'), { code: 'ENOENT' })
+  await assert.rejects(access(stable + '.gz.sha256'), { code: 'ENOENT' })
+  await assert.rejects(access(stable + '.br.sha256'), { code: 'ENOENT' })
+  const names = (await readdir(assets, { recursive: true })).sort()
+  assert.deepEqual(names, [
+    'generated',
+    join('generated', 'sample-abcdefgh.js.br'),
+    'locale',
+    join('locale', 'sample.json.br'),
+  ])
 })
+
