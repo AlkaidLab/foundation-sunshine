@@ -180,6 +180,27 @@ function Assert-SameManifest($Expected, $Actual, [string]$Phase, [string]$What) 
     }
 }
 
+function Assert-TestServiceRunning([string]$Phase) {
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    while ($true) {
+        $service = Get-Service -Name SunshineService -ErrorAction SilentlyContinue
+        if ($service -and $service.Status -eq 'Running') { return }
+        if ([DateTime]::UtcNow -ge $deadline) {
+            $state = if ($service) { $service.Status } else { 'Missing' }
+            throw "$Phase`: SunshineService is $state, expected Running."
+        }
+        Start-Sleep -Milliseconds 200
+    }
+}
+
+function Start-TestService([string]$Phase) {
+    $service = Get-Service -Name SunshineService -ErrorAction Stop
+    if ($service.Status -ne 'Running') {
+        Start-Service -Name SunshineService
+    }
+    Assert-TestServiceRunning $Phase
+}
+
 function Stop-TestService([string]$Phase) {
     # Only the service this install created. Authority: installer-ms-stop-service-20261118 (-NoWait).
     $service = Get-Service -Name SunshineService -ErrorAction SilentlyContinue
@@ -217,6 +238,9 @@ function Test-UpdateSafety {
     $lock = $null
     $blocker = Join-Path $app 'scripts\update-path.bat'
     $blockerBackup = Join-Path $testRoot 'update-path.bat.kept'
+    $matCapture = Join-Path $app 'tools\mat-capture\sunshine-plugin-mat-capture.exe'
+    $matCaptureBackup = Join-Path $testRoot 'sunshine-plugin-mat-capture.exe.kept'
+    $matCaptureHadOriginal = $false
     try {
         Invoke-BoundedProcess -File $Installer -Arguments "$common /LOG=`"$(Join-Path $EvidenceDirectory 'update-fresh.log')`"" -Phase 'update-fresh'
         Stop-TestService 'update-fresh'
@@ -240,6 +264,7 @@ function Test-UpdateSafety {
         $lock = [IO.File]::Open($blocker, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::None)
         Invoke-InstallerExpecting -Arguments "$common /LOG=`"$(Join-Path $EvidenceDirectory 'update-held.log')`"" -Phase 'update-held-file' -ExitCodeOk { param($code) $code -eq 7 }
         $lock.Dispose(); $lock = $null
+        if ((Get-Service -Name SunshineService).Status -ne 'Stopped') { throw 'update-held-file: started SunshineService even though it was stopped before the update.' }
         Assert-SameManifest $before (Get-Manifest $app $kept) 'update-held-file' 'the installed files after a refused update'
         if (Test-Path -LiteralPath $previous) { throw 'update-held-file: a refused update moved the Web UI folder aside.' }
         Assert-NothingParked $app 'update-held-file'
@@ -262,17 +287,23 @@ function Test-UpdateSafety {
         if (Test-Path -LiteralPath $previous) { throw 'update-respawning-program: the old Web UI folder was left behind.' }
         Assert-NothingParked $app 'update-respawning-program'
 
-        # D. The copy fails after the Web UI folder was moved aside (a directory stands where a file
-        #    has to go). Setup rolls back; the old folder must be back.
+        # D. The copy fails after quiesce and Web UI backup (a directory stands where a file
+        #    has to go). Setup rolls back; the old folder, parked binaries, and the running
+        #    SunshineService that Setup stopped must all be restored.
         Move-Item -LiteralPath $blocker -Destination $blockerBackup -Force
         New-Item -ItemType Directory -Path $blocker -Force | Out-Null
         Set-Content -LiteralPath (Join-Path $blocker 'occupied.txt') -Value 'a folder where the installer needs a file'
+        Start-TestService 'update-failing-copy-pre'
         $failingLog = Join-Path $EvidenceDirectory 'update-failing-copy.log'
         Invoke-InstallerExpecting -Arguments "$common /LOG=`"$failingLog`"" -Phase 'update-failing-copy' -ExitCodeOk { param($code) $code -ne 0 -and $code -ne 7 }
-        Stop-TestService 'update-failing-copy'
-        # the failure has to be the one meant: Setup rolled back after it had moved the folder aside, and put it back
+        Assert-TestServiceRunning 'update-failing-copy'
+        # the failure has to be the one meant: Setup rolled back after it had moved the folder aside, put it back, and restarted the service
         if (-not (Select-String -LiteralPath $failingLog -SimpleMatch 'Rolling back changes' -Quiet)) { throw 'update-failing-copy: Setup did not roll back, so the copy did not fail where it was meant to.' }
         if (-not (Select-String -LiteralPath $failingLog -SimpleMatch 'the previous Web UI folder was put back' -Quiet)) { throw 'update-failing-copy: the log does not show the Web UI folder being put back.' }
+        if (-not (Select-String -LiteralPath $failingLog -SimpleMatch 'SunshineService was started again' -Quiet)) { throw 'update-failing-copy: the log does not show SunshineService being started again.' }
+        Stop-TestService 'update-failing-copy'
+        Stop-PathProcesses $gui
+        Start-Sleep -Seconds 1
         Remove-Item -LiteralPath $blocker -Recurse -Force
         Move-Item -LiteralPath $blockerBackup -Destination $blocker -Force
         Assert-SameManifest $before (Get-Manifest $app $kept) 'update-failing-copy' 'the installed files after a failed update'
@@ -280,6 +311,34 @@ function Test-UpdateSafety {
         foreach ($key in @($before.Keys)) { if (([string]$key).StartsWith('assets\web\', [StringComparison]::OrdinalIgnoreCase)) { $webBefore[$key] = $before[$key] } }
         if (Test-Path -LiteralPath $previous) { throw 'update-failing-copy: the old Web UI folder was left beside the restored one.' }
         Assert-NothingParked $app 'update-failing-copy'
+
+        # D2. PrepareToInstall aborts after quiesce and Web UI backup (mat-capture --wait-for-stop
+        #     exits non-zero). Parked binaries, assets\web, and SunshineService must be restored.
+        if (Test-Path -LiteralPath $matCapture -PathType Leaf) {
+            $matCaptureHadOriginal = $true
+            Move-Item -LiteralPath $matCapture -Destination $matCaptureBackup -Force
+        } else {
+            New-Item -ItemType Directory -Path (Split-Path -Parent $matCapture) -Force | Out-Null
+        }
+        Copy-Item -LiteralPath (Join-Path $env:SystemRoot 'System32\reg.exe') -Destination $matCapture -Force
+        Start-TestService 'update-mat-capture-abort-pre'
+        $matLog = Join-Path $EvidenceDirectory 'update-mat-capture-abort.log'
+        Invoke-InstallerExpecting -Arguments "$common /LOG=`"$matLog`"" -Phase 'update-mat-capture-abort' -ExitCodeOk { param($code) $code -eq 7 }
+        Assert-TestServiceRunning 'update-mat-capture-abort'
+        if (-not (Select-String -LiteralPath $matLog -SimpleMatch 'the previous Web UI folder was put back' -Quiet)) { throw 'update-mat-capture-abort: the log does not show the Web UI folder being put back.' }
+        if (-not (Select-String -LiteralPath $matLog -SimpleMatch 'SunshineService was started again' -Quiet)) { throw 'update-mat-capture-abort: the log does not show SunshineService being started again.' }
+        Stop-TestService 'update-mat-capture-abort'
+        Stop-PathProcesses $gui
+        Start-Sleep -Seconds 1
+        if ($matCaptureHadOriginal) {
+            Move-Item -LiteralPath $matCaptureBackup -Destination $matCapture -Force
+            $matCaptureHadOriginal = $false
+        } elseif (Test-Path -LiteralPath $matCapture) {
+            Remove-Item -LiteralPath $matCapture -Force
+        }
+        Assert-SameManifest $before (Get-Manifest $app $kept) 'update-mat-capture-abort' 'the installed files after a mat-capture abort'
+        if (Test-Path -LiteralPath $previous) { throw 'update-mat-capture-abort: the old Web UI folder was left behind.' }
+        Assert-NothingParked $app 'update-mat-capture-abort'
 
         # E. A Setup that was killed after it moved the folder aside: the next update puts it back
         #    and finishes the job.
@@ -309,6 +368,9 @@ function Test-UpdateSafety {
     } finally {
         if ($lock) { $lock.Dispose() }
         if ($supervisor) { $supervisor | Stop-Process -Force -ErrorAction SilentlyContinue }
+        if ($matCaptureHadOriginal -and (Test-Path -LiteralPath $matCaptureBackup)) {
+            Move-Item -LiteralPath $matCaptureBackup -Destination $matCapture -Force -ErrorAction SilentlyContinue
+        }
         Stop-PathProcesses $gui
     }
 }

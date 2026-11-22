@@ -84,7 +84,9 @@ engine works in this order:
 3. **Just before the copy** (`ssInstall`) the same check runs once more; the Web UI folder `assets\web` is then moved to
    `assets\web.previous` (a rename) instead of being deleted.
 4. When the installation reaches its post-install step with a complete new folder, the old one is deleted. Otherwise
-   (`DeinitializeSetup` runs after a rollback) the half-copied folder is removed and the old one is put back.
+   (`DeinitializeSetup` runs after a rollback, or an abort after quiesce such as `mat-capture` wait or `ssInstall`
+   re-check) the half-copied folder is removed, the old `assets\web` and `.parked` executables are put back, and
+   `SunshineService` is started again whenever Setup stopped it (or ended the Control Panel's updater that had stopped it).
 5. A run that was killed between 3 and 4 leaves `assets\web.previous`; the next run puts it back first, and the host does
    the same when it starts and finds the live folder missing.
 

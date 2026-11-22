@@ -319,7 +319,12 @@ namespace confighttp::assets {
       auto extension = relPath.extension().string();
       auto mimeType = mime_types.find(extension.empty() ? "" : extension.substr(1));
       if (mimeType == mime_types.end()) {
-        // do not return any file if the type is not in the map
+        // Do not serve unmapped extensions (including internal .br/.gz sidecars);
+        // respond 404 immediately instead of leaving the connection open until timeout_content
+        // (RFC 9110 sections 15.5.4 and 15.5.5; authority: fs-rfc9110-http-20261110).
+        web::CaseInsensitiveMultimap missing_headers;
+        missing_headers.emplace("Cache-Control", "no-store");
+        response->write(web::StatusCode::not_found, "", missing_headers);
         return;
       }
 
