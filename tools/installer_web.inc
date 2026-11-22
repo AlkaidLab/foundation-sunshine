@@ -141,7 +141,7 @@ view_json() {
   bool all = true;
   j += ",\"components\":{";
   for (int i = 0; i < kTileCount; ++i) {
-    all = all && v.tiles[i];
+    if (component_min_build(i) <= windows_build()) all = all && v.tiles[i];
     j += std::string(i ? "," : "") + "\"" + kComponentIds[i] + "\":" + b(v.tiles[i]);
   }
   j += std::string("},\"allSelected\":") + b(all);
