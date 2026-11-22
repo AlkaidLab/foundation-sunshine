@@ -15,7 +15,7 @@ namespace hdr {
   namespace {
     bool
     parse_finite_float(std::string_view text, float &value) noexcept {
-      if (text.empty()) {
+      if (text.empty() || text.front() == '+') {
         return false;
       }
 
