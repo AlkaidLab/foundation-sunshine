@@ -210,6 +210,17 @@ namespace platf {
    */
   bool
   needs_encoder_reenumeration() {
+    static uint32_t last_display_count = 0;
+    uint32_t current_count = 0;
+    CGGetActiveDisplayList(0, nullptr, &current_count);
+    if (last_display_count == 0) {
+      last_display_count = current_count;
+      return false;
+    }
+    if (current_count != last_display_count) {
+      last_display_count = current_count;
+      return true;
+    }
     return false;
   }
 }  // namespace platf

@@ -44,11 +44,6 @@
 - (id)initWithDisplay:(CGDirectDisplayID)displayID frameRate:(int)frameRate {
   self = [super init];
 
-  [[NSNotificationCenter defaultCenter] addObserverForName:AVCaptureSessionRuntimeErrorNotification object:nil queue:nil usingBlock:^(NSNotification *note) {
-    NSError *error = note.userInfo[AVCaptureSessionErrorKey];
-    NSLog(@"[AVVideo] AVCaptureSession RUNTIME ERROR: %@", error);
-  }];
-
   CGDisplayModeRef mode = CGDisplayCopyDisplayMode(displayID);
 
   self.displayID = displayID;
@@ -60,6 +55,15 @@
   self.videoOutputs = [[NSMapTable alloc] init];
   self.captureCallbacks = [[NSMapTable alloc] init];
   self.captureSignals = [[NSMapTable alloc] init];
+
+  self.runtimeErrorObserver = [[NSNotificationCenter defaultCenter]
+    addObserverForName:AVCaptureSessionRuntimeErrorNotification
+    object:self.session
+    queue:nil
+    usingBlock:^(NSNotification *note) {
+      NSError *error = note.userInfo[AVCaptureSessionErrorKey];
+      NSLog(@"[AVVideo] AVCaptureSession RUNTIME ERROR: %@", error);
+    }];
 
   CFRelease(mode);
 
@@ -171,6 +175,22 @@
       }
     }
   }
+}
+
+- (void)dealloc {
+  if (self.runtimeErrorObserver) {
+    [[NSNotificationCenter defaultCenter] removeObserver:self.runtimeErrorObserver];
+    [self.runtimeErrorObserver release];
+    self.runtimeErrorObserver = nil;
+  }
+  if (self.session.isRunning) {
+    [self.session stopRunning];
+  }
+  [self.session release];
+  [self.videoOutputs release];
+  [self.captureCallbacks release];
+  [self.captureSignals release];
+  [super dealloc];
 }
 
 @end
