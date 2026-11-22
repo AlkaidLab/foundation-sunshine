@@ -248,10 +248,14 @@ TEST_F(AssetHttpsRoutes, ServesSingleCopyAssetsWithNegotiation) {
   const auto brotli = get(asset, { { "Accept-Encoding", "br" } });
   ASSERT_EQ(brotli->status_code, "200 OK");
   EXPECT_EQ(brotli->content.string(), brotli_abc);
-  EXPECT_EQ(header(*brotli, "Content-Encoding"), "brotli");
+  EXPECT_EQ(header(*brotli, "Content-Encoding"), "br");
+  // The registered content-coding name is "br" (RFC 7932 section 9); a longer
+  // synonym makes Chromium and Safari refuse the representation.
+  ASSERT_EQ(brotli->header.count("Content-Encoding"), 1u);
+  EXPECT_EQ(brotli->header.equal_range("Content-Encoding").first->second, std::string { "br" });
   const auto negotiated = get(asset, { { "Accept-Encoding", "gzip" }, { "Accept-Encoding", "BR ; Q=0.7, identity;q=0.2" } });
   ASSERT_EQ(negotiated->status_code, "200 OK");
-  EXPECT_EQ(header(*negotiated, "Content-Encoding"), "brotli");
+  EXPECT_EQ(header(*negotiated, "Content-Encoding"), "br");
   EXPECT_EQ(negotiated->content.string(), brotli_abc);
   const auto preferred_identity = get(asset, { { "Accept-Encoding", "br;q=0.2, identity;q=0.8" } });
   ASSERT_EQ(preferred_identity->status_code, "200 OK");
@@ -266,7 +270,7 @@ TEST_F(AssetHttpsRoutes, ServesSingleCopyAssetsWithNegotiation) {
   EXPECT_TRUE(brotli_cached->content.string().empty());
   EXPECT_EQ(header(*brotli_cached, "Vary"), "Accept-Encoding");
   EXPECT_EQ(header(*brotli_cached, "ETag"), brotli_etag);
-  EXPECT_EQ(header(*brotli_cached, "Content-Encoding"), "brotli");
+  EXPECT_EQ(header(*brotli_cached, "Content-Encoding"), "br");
   EXPECT_EQ(get(asset, { { "If-None-Match", "*" } })->status_code, "304 Not Modified");
   EXPECT_EQ(get(asset, { { "Accept-Encoding", "br" }, { "If-None-Match", identity_etag } })->status_code, "200 OK");
   EXPECT_EQ(get(asset, { { "Accept-Encoding", "identity" }, { "If-None-Match", brotli_etag } })->status_code, "200 OK");
@@ -276,7 +280,7 @@ TEST_F(AssetHttpsRoutes, ServesSingleCopyAssetsWithNegotiation) {
   EXPECT_EQ(get(asset, { { "Accept-Encoding", "*;q=0" } })->status_code, "406 Not Acceptable");
   const auto recovered_coding = get(asset, { { "Accept-Encoding", "br;q==bad, br;q=0.6" } });
   ASSERT_EQ(recovered_coding->status_code, "200 OK");
-  EXPECT_EQ(header(*recovered_coding, "Content-Encoding"), "brotli");
+  EXPECT_EQ(header(*recovered_coding, "Content-Encoding"), "br");
 
   write_file(shipped, brotli_abc + "damaged");
   const auto damaged_identity = get(asset, { { "Accept-Encoding", "identity" } });
@@ -289,7 +293,7 @@ TEST_F(AssetHttpsRoutes, ServesSingleCopyAssetsWithNegotiation) {
   EXPECT_EQ(header(*hashed_asset, "Cache-Control"), "private, max-age=31536000, immutable");
   const auto hashed_brotli = get("/assets/generated/asset-route-test-Abc12345.js", { { "Accept-Encoding", "br, gzip" } });
   ASSERT_EQ(hashed_brotli->status_code, "200 OK");
-  EXPECT_EQ(header(*hashed_brotli, "Content-Encoding"), "brotli");
+  EXPECT_EQ(header(*hashed_brotli, "Content-Encoding"), "br");
   EXPECT_EQ(hashed_brotli->content.string(), brotli_console);
   const auto missing = get("/assets/locale/not-present.json");
   EXPECT_EQ(missing->status_code, "404 Not Found");
@@ -330,13 +334,19 @@ TEST_F(AssetHttpsRoutes, ServesLegacySidecarLayoutUntilItIsUpgraded) {
   EXPECT_EQ(damaged->content.string(), "abc");
   EXPECT_TRUE(header(*damaged, "Content-Encoding").empty());
 
-  // When the single-copy file of a newer install appears, it is the asset.
+  // When the single-copy file of a newer install appears, it is the asset:
+  // the stale legacy sidecar is never served again, not even to a client
+  // that only offers gzip.
   write_file(fs::path { legacy.string() + ".br" }, brotli_abc);
   const auto upgraded = get(asset, { { "Accept-Encoding", "br" } });
   EXPECT_EQ(upgraded->status_code, "200 OK");
-  EXPECT_EQ(header(*upgraded, "Content-Encoding"), "brotli");
+  EXPECT_EQ(header(*upgraded, "Content-Encoding"), "br");
   EXPECT_EQ(upgraded->content.string(), brotli_abc);
   const auto upgraded_identity = get(asset, { { "Accept-Encoding", "identity" } });
   EXPECT_EQ(upgraded_identity->content.string(), "abc");
+  const auto upgraded_gzip = get(asset, { { "Accept-Encoding", "gzip" } });
+  EXPECT_EQ(upgraded_gzip->status_code, "200 OK");
+  EXPECT_TRUE(header(*upgraded_gzip, "Content-Encoding").empty());
+  EXPECT_EQ(upgraded_gzip->content.string(), "abc");
   fs::remove(fs::path { legacy.string() + ".br" });
 }

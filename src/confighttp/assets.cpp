@@ -342,11 +342,13 @@ namespace confighttp::assets {
       headers.emplace("Cache-Control", std::string(cachePolicy));
       const bool fixedUrl = cachePolicy == "private, no-cache";
 
-      // Legacy layout only: the gzip sidecar may be used while it still
-      // matches the plain file installed next to it. A sidecar and source may
-      // be installed at different times, so never serve an old encoding for a
-      // newer fixed URL, even during upgrades.
-      bool gzipUsable = gzipPresent && originalPresent;
+      // Legacy layout only, and only until the single Brotli copy of a newer
+      // install appears: the gzip sidecar may be used while it still matches
+      // the plain file installed next to it, and never beside a newer .br,
+      // which would serve stale bytes for a current asset. A sidecar and
+      // source may be installed at different times, so never serve an old
+      // encoding for a newer fixed URL, even during upgrades.
+      bool gzipUsable = gzipPresent && originalPresent && !brotliPresent;
       std::optional<std::string> gzipSnapshot;
       if (gzipUsable && fixedUrl) {
         auto digestPath = *gzipPath;
@@ -377,7 +379,8 @@ namespace confighttp::assets {
       }
 
       if (encoding == asset_encoding::brotli) {
-        headers.emplace("Content-Encoding", "brotli");
+        // RFC 7932 section 9 registers the HTTP content coding name "br".
+        headers.emplace("Content-Encoding", "br");
         if (fixedUrl) {
           auto snapshot = read_snapshot(*brotliPath);
           if (snapshot) {
