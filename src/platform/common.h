@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -630,6 +631,16 @@ namespace platf {
 
     virtual int
     convert(platf::img_t &img) = 0;
+
+    // Runtime image-enhancement changes are delivered to the owning encode
+    // thread. The default implementation keeps non-D3D devices unchanged.
+    virtual std::shared_ptr<safe::signal_t>
+    nr_change_event() {
+      return {};
+    }
+
+    virtual void
+    apply_nr_change() {}
 
     // Packet-level confirmation, independent of the PQ/HLG transfer function.
     virtual void
