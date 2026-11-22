@@ -63,6 +63,7 @@ test('no installer sentence claims the virtual gamepad needs a restart', () => {
 
 test('the virtual mouse installer is never offered or run on Windows 10', () => {
   assert.match(installerScript, /Name: "vmouse";[^\n]*MinVersion: 10\.0\.22000/)
+  assert.match(installerScript, /Lowercase\(Name\) = 'vmouse'[\s\S]*?Result := False;/)
   assert.match(installerShell, /tile == 3 \? 22000/)
   assert.match(installerShell, /component_min_build\(i\) <= windows_build\(\) && !all/)
   assert.match(installerShell, /begin_install\(\) \{[\s\S]*?apply_os_limits\(S\.v\);[\s\S]*?g_run\.components = component_list\(\)/)
