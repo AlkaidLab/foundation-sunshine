@@ -332,11 +332,13 @@ namespace image_enhancement::api {
         result = manager().finish_maintenance(backend, operation_id);
       }
       else { result = { 400, "hdr_maintenance_invalid" }; }
-      if (result.status == 200) video::notify_nr_change();
-      if (result.status == 200)
+      if (result.status == 200) {
+        video::notify_nr_change();
         write(response, 200, { { "status", true }, { "operation_id", operation_id }, { "journal_path", file_handler::path_to_utf8(manager().maintenance_path()) } });
-      else
+      }
+      else {
         write_result(response, result);
+      }
     }
     catch (const std::length_error &) {
       write(response, 413, { { "status", false }, { "error_code", "hdr_request_too_large" } });
