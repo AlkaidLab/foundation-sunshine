@@ -1,0 +1,14 @@
+# CPack runs this after installing the package tree into CPACK_TEMPORARY_DIRECTORY and before writing the archive.
+# Remove the COFF symbol table from every unsigned PE in that tree; the CodeView GUID stays, so a crash dump still
+# matches the symbol zip. A signed PE is left byte for byte as it is. This covers the portable ZIP, whose staging tree
+# is separate from the Inno staging directory that make-symbols.py cleans.
+if(NOT CPACK_TEMPORARY_DIRECTORY)
+    message(FATAL_ERROR "CPACK_TEMPORARY_DIRECTORY is not set; refusing to package PEs with COFF symbols")
+endif()
+
+execute_process(
+    COMMAND "@Python3_EXECUTABLE@" "@CMAKE_SOURCE_DIR@/tools/pe_symbols.py" --recursive "${CPACK_TEMPORARY_DIRECTORY}"
+    RESULT_VARIABLE _strip_result)
+if(_strip_result)
+    message(FATAL_ERROR "pe_symbols.py failed on the CPack staging tree (${_strip_result})")
+endif()

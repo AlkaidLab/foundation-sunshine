@@ -22,6 +22,7 @@ import QRCode from 'qrcode'
 import { MGuideFlow, buildGuideSteps, LOCALE_SYSTEM, choiceOf, readLocalePref, resolveSystemLocale, watchSystemLanguage, writeLocalePref } from 'foundation-ui/vue'
 import { GUIDE_STORAGE_KEY, createAccountCallback, useGuide } from '../composables/useGuide.js'
 import { getBootstrapLocale } from '../config/bootstrapData.js'
+import { prepareComponentTexts } from '../config/i18n.js'
 import { loadAutoTheme } from '../utils/theme.js'
 
 // The first run starts here, with the host's own credential form as the first step of the guide. The host serves this page while it has
@@ -44,8 +45,7 @@ const flowState = computed(() => ({
 function setLocale(choice) {
   localeChoice.value = choice
   writeLocalePref(choice)
-  selectedLocale.value = choice === LOCALE_SYSTEM ? systemLocale() : choice
-  changeLanguage()
+  void loadLanguage(choice === LOCALE_SYSTEM ? systemLocale() : choice)
 }
 const callbacks = { ...hostCallbacks, createAccount: createAccountCallback(t), setLocale }
 const qrMatrix = (text) => QRCode.create(text, { errorCorrectionLevel: 'M' }).modules
@@ -78,7 +78,12 @@ const LOCALES = Object.freeze([
 loadAutoTheme()
 
 // 加载语言（使用静态嵌入的翻译数据）
-const loadLanguage = (lang) => {
+let languageRequest = 0
+const loadLanguage = async (lang) => {
+  const request = ++languageRequest
+  await prepareComponentTexts(lang)
+  if (request !== languageRequest) return
+  selectedLocale.value = lang
   const welcomeLocales = window.__WELCOME_LOCALES__
 
   if (welcomeLocales && welcomeLocales[lang]) {
@@ -103,20 +108,15 @@ onMounted(async () => {
     const pref = readLocalePref()
     localeChoice.value = choiceOf(pref, config.locale, systemLocale())
     const code = pref === LOCALE_SYSTEM || (!pref && !config.locale) ? systemLocale() : (pref || config.locale)
-    selectedLocale.value = code
-    loadLanguage(code)
+    await loadLanguage(code)
   } catch (e) {
     console.error('Failed to load locale config', e)
     loadLanguage('en')
   }
 })
 
-// 切换语言
-const changeLanguage = () => {
-  loadLanguage(selectedLocale.value)
-}
 // the operating system changes its language: a window that follows it changes with it
-watchSystemLanguage(() => { if (localeChoice.value === LOCALE_SYSTEM) { resolved.value = systemLocale(); selectedLocale.value = resolved.value; changeLanguage() } })
+watchSystemLanguage(() => { if (localeChoice.value === LOCALE_SYSTEM) { resolved.value = systemLocale(); void loadLanguage(resolved.value) } })
 </script>
 
 <style>

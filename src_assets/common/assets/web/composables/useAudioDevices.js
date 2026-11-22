@@ -25,7 +25,6 @@ export function useAudioDevices(platform) {
       state.value = normalizeAudioDevices(payload)
       failed.value = payload?.success === false
       if (!failed.value) lastMissing = state.value.supported && state.value.defaultOutput.present === false
-      watchJob()
     } catch {
       if (active) failed.value = true
     } finally {
@@ -35,13 +34,6 @@ export function useAudioDevices(platform) {
     }
   }
   const onVisible = () => { if (!document.hidden) void refresh() }
-  // while the host installs or enables VB-CABLE the page asks for its progress every second and a half
-  let jobTimer
-  const watchJob = () => {
-    window.clearTimeout(jobTimer)
-    if (active && state.value.vb.job.running) jobTimer = window.setTimeout(() => { void refresh() }, 1500)
-  }
-
   // with no default playback device the page looks again every few seconds: a device plugged in or enabled elsewhere shows up here and the notice goes away
   const watchDefault = () => {
     window.clearTimeout(waitTimer)
@@ -58,7 +50,6 @@ export function useAudioDevices(platform) {
   })
   onBeforeUnmount(() => {
     active = false
-    window.clearTimeout(jobTimer)
     window.clearTimeout(waitTimer)
     window.removeEventListener('focus', onVisible)
     document.removeEventListener('visibilitychange', onVisible)

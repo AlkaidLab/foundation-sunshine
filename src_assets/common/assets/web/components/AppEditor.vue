@@ -646,6 +646,7 @@ onBeforeUnmount(cleanup)
   bottom: 12px;
   z-index: 6;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   margin-top: 16px;
@@ -655,6 +656,9 @@ onBeforeUnmount(cleanup)
   box-shadow: 0 2px 10px rgb(0 0 0 / 0.18);
 }
 .apps-savebar__fill { flex: 1; }
+/* a narrow pane with long labels (German Abbrechen/Speichern beside a status line): the buttons are nowrap, so the status takes its own row above them instead of the bar pushing out of the pane */
+.apps-savebar .apps-savebar__fill { flex: 0 1 0%; }
+@media (max-width: 599.98px) { .apps-savebar .apps-status { flex: 1 1 100%; } }
 
 // motion: the page rises with the default spatial spring when it opens, the groups one after another (capped, so a long page does not make the last one wait); the groups of the advanced part,
 // which come into the DOM when the person confirms, pop in the same way. The reduced-motion setting shortens all of it (foundation-ui motion.css).

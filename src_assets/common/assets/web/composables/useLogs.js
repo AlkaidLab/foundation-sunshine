@@ -3,6 +3,20 @@ import { readLogResponse } from 'foundation-ui/diagnostics'
 import { apiFetch } from '../utils/apiFetch.js'
 
 const LOG_REGEX = /(\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}]):\s/g
+let pendingTail = null
+
+// The shell and overview can ask for the same snapshot while the page opens.
+export function fetchLogTail() {
+  if (!pendingTail) {
+    pendingTail = apiFetch('/api/logs', { headers: { 'X-Log-Offset': '0' } })
+      .then((response) => {
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        return readLogResponse(response)
+      })
+      .finally(() => { pendingTail = null })
+  }
+  return pendingTail
+}
 
 /**
  * 日志管理组合式函数
@@ -29,14 +43,8 @@ export function useLogs() {
 
   const fetchLogs = async () => {
     try {
-      // Use X-Log-Offset: 0 to get cached tail (not full file download)
-      const response = await apiFetch('/api/logs', { headers: { 'X-Log-Offset': '0' } })
-      if (response.ok) {
-        logs.value = await readLogResponse(response)
-        return true
-      }
-      console.error('Failed to fetch logs: HTTP', response.status)
-      return false
+      logs.value = await fetchLogTail()
+      return true
     } catch (e) {
       console.error('Failed to fetch logs:', e)
       return false

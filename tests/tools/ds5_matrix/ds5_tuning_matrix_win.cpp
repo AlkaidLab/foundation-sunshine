@@ -14,6 +14,7 @@
 
 boost::log::sources::severity_logger<int> info;
 boost::log::sources::severity_logger<int> debug;
+boost::log::sources::severity_logger<int> warning;
 
 int
 main(int argc, char **argv) {

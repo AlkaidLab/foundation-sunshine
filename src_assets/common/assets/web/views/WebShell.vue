@@ -59,7 +59,7 @@
         <MButton variant="danger" icon="logout" @click="confirmLogout">{{ $t('troubleshooting.logout') }}</MButton>
       </template>
     </ConfirmDialog>
-    <MConnectDialog v-model="connect.open.value" v-model:tab="connect.tab.value" v-model:os="connect.os.value" :assets-of="connect.assetsOf" :version-of="connect.versionOf" :locale="String(uiLocale)" :qr="connect.matrix" :pair-qr="connect.pairQr" :count="hostClients.length" :latest="hostClients.length ? hostClients[hostClients.length - 1].name : ''" :close-label="$t('_common.close')"
+    <MConnectDialog v-if="showConnectDialog" v-model="connect.open.value" v-model:tab="connect.tab.value" v-model:os="connect.os.value" :assets-of="connect.assetsOf" :version-of="connect.versionOf" :locale="String(uiLocale)" :qr="connect.matrix" :pair-qr="connect.pairQr" :count="hostClients.length" :latest="hostClients.length ? hostClients[hostClients.length - 1].name : ''" :close-label="$t('_common.close')"
       @pair-pin="(e) => connect.pairPin(e.pin)" @pair-qr-begin="connect.qrBegin()" @pair-qr-stop="connect.qrStop()" @open-url="(u) => openExternalUrl(u).catch(() => {})" @open-downloads="() => { connect.open.value = false; jumpNav.go('downloads') }" />
     <MPairPrompt :requests="pairing.requests.value" :locale="String(uiLocale)" @submit="onPairSubmit" @reject="(id) => pairing.reject(id)" @install="connect.show('install')" />
     <PendingHosts />
@@ -73,7 +73,7 @@ import { computed, defineAsyncComponent, defineComponent, getCurrentInstance, h,
 import { useI18n } from 'vue-i18n'
 import QRCode from 'qrcode'
 import { trackEvents, setTelemetryContext } from '../config/telemetry.js'
-import { answerRedactRequests, announcementTexts, feedbackTexts, isCompactNav, MSheet, MFeedbackButton, openFeedbackHere, homeTexts, MContextProvider, useTelemetryConsent, MErrorHost, installErrorHandlers, setErrorContext, startAutoReport, MPageLoading, useNotify, useSystemNotices, useFeedbackReplies, MStatusBell, MPage, MGroup, MItem, MSection, MIcon, MBrand, MCaption, MCaptionVersion, MCaptionBack, MBackChip, useCaptionRoom, createJumpHistory, useBackVariant, showsButton, showsChip, captionTexts, MCoachMarks, MConnectDialog, MPairPrompt, MPinHost, pinSpecForPage, pinTexts, pinToHome, isPinnedOnHome, createPairingPending, MSnackbar, connectTexts, useConnectDialog, MUnifiedSearch, useUnifiedSearch, requestPageFilter, searchTexts, actionDocs, settingDocs, clientDocs, appDocs, tileDocs, addTileToHome, MHostOffline, useHostConnection, MButton, MContextMenu, MNavList, MScene, resetTexts, aboutTexts, latencyClockTexts, statusTexts, networkOverviewTexts, doctorTexts, testToolTexts, createNav, useAnnouncements, MAnnouncementButton, MAnnouncementPage, MAnnouncementPopup, ackedAt, useAppearance, useSettingsList, useErrors, useDeveloperMode, DevReportHost, registerDevReport } from 'foundation-ui/vue'
+import { answerRedactRequests, announcementTexts, feedbackTexts, isCompactNav, MSheet, MFeedbackButton, openFeedbackHere, homeTexts, MContextProvider, useTelemetryConsent, MErrorHost, installErrorHandlers, setErrorContext, startAutoReport, MPageLoading, useNotify, useSystemNotices, useFeedbackReplies, MStatusBell, MPage, MGroup, MItem, MSection, MIcon, MBrand, MCaption, MCaptionVersion, MCaptionBack, MBackChip, useCaptionRoom, createJumpHistory, useBackVariant, showsButton, showsChip, captionTexts, MCoachMarks, MPairPrompt, MPinHost, pinSpecForPage, pinTexts, pinToHome, isPinnedOnHome, createPairingPending, MSnackbar, connectTexts, useConnectDialog, MUnifiedSearch, useUnifiedSearch, requestPageFilter, searchTexts, actionDocs, settingDocs, clientDocs, appDocs, tileDocs, addTileToHome, MHostOffline, useHostConnection, MButton, MContextMenu, MNavList, MScene, resetTexts, aboutTexts, latencyClockTexts, statusTexts, networkOverviewTexts, doctorTexts, testToolTexts, createNav, useAnnouncements, MAnnouncementButton, MAnnouncementPopup, ackedAt, useAppearance, useSettingsList, useErrors, useDeveloperMode, DevReportHost, registerDevReport } from 'foundation-ui/vue'
 import { afterCheck, afterOpened, noticeView, readNotice, writeNotice } from 'foundation-ui/update'
 import { SEARCH_INDEX } from '../config/settingsData/index.js'
 import { categoryOfRow, labelOf, parseSettingsHash, rowIdOf, settingsHash } from 'foundation-ui/settings/index.js'
@@ -85,6 +85,7 @@ import WebDialogHost from '../components/layout/WebDialogHost.vue'
 import { registerPending } from '../composables/pendingSources.js'
 import ConfirmDialog from '../components/common/ConfirmDialog.vue'
 import { useLogout } from '../composables/useLogout.js'
+import { fetchLogTail } from '../composables/useLogs.js'
 import { useAudioDevices } from '../composables/useAudioDevices.js'
 import { useShellLive } from '../composables/useShellLive.js'
 import { useUpdateStatus } from '../composables/useUpdateStatus.js'
@@ -94,7 +95,7 @@ import { openExternalUrl } from '../utils/helpers.js'
 import { rowKeywords } from 'foundation-ui/settings/index.js'
 import { hostData } from '../composables/hostData.js'
 import { apiFetch, apiJson } from '../utils/apiFetch.js'
-import { lazyPane } from '../utils/lazyPane.js'
+import { hasOpened, lazyPane } from '../utils/lazyPane.js'
 import { createFramedBack } from '../utils/framedBack.js'
 
 const { t, te, locale: uiLocale } = useI18n()
@@ -117,6 +118,8 @@ watch(hostUnusable, (off) => { frozenId.value = off ? String(nav.current.value |
 // A page that is not loaded yet shows the one loading state in the content area (after a short delay), never a blank.
 const LoadingView = defineComponent({ name: 'PageLoadingView', setup: () => () => h('div', { class: 'm-page' }, [h('div', { class: 'm-page__column', style: 'padding-top: 80px' }, [h(MPageLoading)])]) })
 const lazy = (loader) => lazyPane(loader, { loading: LoadingView })
+const MConnectDialog = lazyPane(() => import('foundation-ui/vue/MConnectDialog.vue'), { loading: () => null })
+const MAnnouncementPage = lazy(() => import('foundation-ui/vue/MAnnouncementPage.vue'))
 const VIEWS = {
   home: lazy(() => import('./Home.vue')),
   pin: lazy(() => import('./Pin.vue')),
@@ -344,7 +347,16 @@ registerDevReport({
 })
 let removeErrorHandlers = null
 const recentLogText = ref('')
-const refreshLogs = async () => { try { const r = await apiFetch('/api/logs'); if (r.ok) recentLogText.value = (await r.text()).split('\n').slice(-60).join('\n') } catch { /* a report without log lines */ } }
+const refreshLogs = async () => {
+  try {
+    const tail = await fetchLogTail()
+    let start = tail.length
+    for (let i = 0; i < 60 && start >= 0; i++) {
+      start = start === 0 ? -1 : tail.lastIndexOf('\n', start - 1)
+    }
+    recentLogText.value = tail.slice(start + 1)
+  } catch { /* a report without log lines */ }
+}
 const shellApp = getCurrentInstance()?.appContext.app
 // in the Panel's frame: the page around it asks for the marked boxes before it takes a screenshot (rectangles only)
 onMounted(async () => { if (embedded) { answerRedactRequests(); return }; removeErrorHandlers = installErrorHandlers({ app: shellApp }); startAutoReport({ context: errorContext }); void refreshLogs(); await telemetry.refresh() })
@@ -522,6 +534,7 @@ const connect = useConnectDialog({
   },
   defaultName: String(uiLocale.value).startsWith('zh') ? '新客户端' : 'New client',
 })
+const showConnectDialog = hasOpened(connect.open)
 // a device waits for its PIN: the prompt comes forward on any page (the host's long poll, docs/api/pairing-pending.md); a host without the API leaves it off
 const failing = (r) => Object.assign(new Error(`HTTP ${r.status}`), { status: r.status })
 const pairingApi = {

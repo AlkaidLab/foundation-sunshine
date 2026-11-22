@@ -100,14 +100,47 @@ class TheFolderIsMadeSafeBeforeAnythingIsCopied(unittest.TestCase):
         self.assertIn("-Park", procedure("RunUpdateQuiesce"))
         self.assertIn("$Park", QUIESCE)
         self.assertIn(".parked", QUIESCE)
-        self.assertIn("SettleParkedImages(PostInstallReached);", procedure("DeinitializeSetup"))
+        deinit = procedure("DeinitializeSetup")
+        self.assertIn("SettleParkedImages(PostInstallReached);", deinit)
         self.assertIn("RecoverParkedImages();", procedure("PrepareToInstall"))
-        # a refused update puts them back before the service is started from them
-        prepare = procedure("PrepareToInstall")
-        self.assertLess(prepare.index("SettleParkedImages(False);"), prepare.index("net.exe'), 'start SunshineService'"))
+        # a refused or aborted update puts assets\web and parked binaries back before the service is started from them
+        restore = procedure("RestoreAfterAbortedUpdate")
+        self.assertLess(restore.index("FinishWebUiBackup();"), restore.index("RestartStoppedService();"))
+        self.assertLess(restore.index("SettleParkedImages(False);"), restore.index("RestartStoppedService();"))
+        restart = procedure("RestartStoppedService")
+        self.assertIn("if not ServiceStoppedForUpdate then", restart)
+        self.assertIn("ServiceStoppedForUpdate := False;", restart)
+        self.assertIn("net.exe'), 'start SunshineService'", restart)
         for relative in ("sunshine.exe", "tools\\sunshinesvc.exe", "assets\\gui\\sunshine-gui.exe"):
             self.assertIn(relative, QUIESCE)
             self.assertIn(relative, procedure("SettleParkedImages"))
+
+    def test_every_abort_and_rollback_path_restarts_the_stopped_service(self):
+        # DeinitializeSetup runs after Inno rollback or mid-wizard cancellation; when the install
+        # never reached ssPostInstall, it must restore parked images before restarting the service.
+        deinit = procedure("DeinitializeSetup")
+        self.assertIn("if not PostInstallReached then", deinit)
+        self.assertIn("RestartStoppedService();", deinit)
+        self.assertLess(deinit.index("SettleParkedImages(PostInstallReached);"), deinit.index("RestartStoppedService();"))
+
+        # Every abort/refusal branch in PrepareToInstall after quiesce restores web, parked images and service.
+        prepare = procedure("PrepareToInstall")
+        self.assertGreaterEqual(prepare.count("RestoreAfterAbortedUpdate();"), 4)
+        mat_idx = prepare.index("--wait-for-stop")
+        mat_exit = prepare.index("MAT capture is still stopping", mat_idx)
+        self.assertIn("RestoreAfterAbortedUpdate();", prepare[mat_idx:mat_exit])
+
+        # The fallback path (when update-quiesce.ps1 could not be started) also records stopping the service.
+        fallback_idx = prepare.index("if QuiesceCode < 0 then")
+        backup_idx = prepare.index("if not BackUpWebUi() then")
+        fallback_block = prepare[fallback_idx:backup_idx]
+        self.assertIn("'stop SunshineService'", fallback_block)
+        self.assertIn("ServiceStoppedForUpdate := True;", fallback_block)
+
+        # ssInstall second quiesce failure restores and restarts before raising.
+        step = procedure("CurStepChanged")
+        self.assertIn("RestoreAfterAbortedUpdate();", step)
+        self.assertLess(step.index("RestoreAfterAbortedUpdate();"), step.index("RaiseException("))
 
     def test_a_service_the_updater_stopped_is_started_again_after_a_refusal(self):
         # the Control Panel's updater stops the service before the installer starts; the installer ends that
@@ -149,11 +182,13 @@ class TheBehaviourIsExercisedOnARealRunner(unittest.TestCase):
             "update-held-file",
             "update-respawning-program",
             "update-failing-copy",
+            "update-mat-capture-abort",
             "update-after-interrupted-run",
             "update-after-half-copy",
         ):
             self.assertIn(phase, SMOKE)
         self.assertIn("Test-UpdateSafety", SMOKE)
+        self.assertIn("Assert-TestServiceRunning", SMOKE)
 
 
 if __name__ == "__main__":

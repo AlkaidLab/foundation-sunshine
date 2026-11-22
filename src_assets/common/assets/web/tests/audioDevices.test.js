@@ -6,7 +6,7 @@ import test, { after, before } from 'node:test'
 import { startHarness } from './helpers/editorHarness.js'
 import { FakeNode, findAll, textOf } from './helpers/fakeDom.js'
 import {
-  MANUAL_DEVICE, deviceName, findDevice, looksLikeEndpointId, noDefaultOutputNotice, normalizeAudioDevices, pickerOptions, pickerText, pickerValue, steamDriverState, usableDevices, vbCableErrorKind, vbCableReady, vbCableRunningStep,
+  MANUAL_DEVICE, deviceName, findDevice, looksLikeEndpointId, noDefaultOutputNotice, normalizeAudioDevices, pickerOptions, pickerText, pickerValue, steamDriverState, usableDevices, vbCableReady,
 } from '../utils/audioDevices.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -43,28 +43,6 @@ test('the answer of the host becomes lists with the fields the pickers read', ()
   assert.equal(state.render[2].virtual, '')
   assert.equal(state.vb.state, 'ready')
   assert.equal(vbCableReady(state.vb), true)
-})
-
-test('the job of the host that installs or enables VB-CABLE is read as it is reported', () => {
-  const running = normalizeAudioDevices({ ...ANSWER, vb_cable: { state: 'missing', job: { action: 'install', step: 'verifying', running: true, error_code: '', detail: '' } } })
-  assert.equal(running.vb.job.running, true)
-  assert.equal(vbCableRunningStep(running.vb.job), 'verifying')
-  const failed = normalizeAudioDevices({ ...ANSWER, vb_cable: { state: 'missing', job: { action: 'enable', step: 'failed', running: false, error_code: 'VB_ENABLE_FAILED', detail: 'exit code 5' } } })
-  assert.equal(failed.vb.job.errorCode, 'VB_ENABLE_FAILED')
-  assert.equal(vbCableRunningStep(failed.vb.job), '')
-  assert.equal(normalizeAudioDevices(null).vb.job.running, false)
-  // an answer of an older host has no job: nothing is running
-  assert.equal(normalizeAudioDevices({ success: true, supported: true, render: [], capture: [], vb_cable: { state: 'missing' } }).vb.job.running, false)
-})
-
-test('a failed job is told by what a person can do about it', () => {
-  assert.equal(vbCableErrorKind('VB_DOWNLOAD_FAILED'), 'download')
-  assert.equal(vbCableErrorKind('VB_EXTRACT_FAILED'), 'download')
-  assert.equal(vbCableErrorKind('VB_SIGNATURE_INVALID'), 'signature')
-  assert.equal(vbCableErrorKind('VB_SIGNER_UNEXPECTED'), 'signature')
-  assert.equal(vbCableErrorKind('VB_NEEDS_ADMIN'), 'admin')
-  for (const code of ['VB_INSTALL_FAILED', 'VB_INSTALL_TIMEOUT', 'VB_ENABLE_FAILED', 'VB_STILL_UNAVAILABLE']) assert.equal(vbCableErrorKind(code), 'failed', code)
-  assert.equal(vbCableErrorKind(''), '')
 })
 
 test('an unsupported, failed or missing answer is an empty list, never a throw', () => {
@@ -163,11 +141,11 @@ test('the expert device row is an expert row with its own control, not a full-wi
   row.unmount()
 })
 
-test('the VB-CABLE row names the state and offers the download unless it is ready or only disabled', async () => {
-  for (const [state, download] of [['ready', false], ['partial', true], ['unavailable', true], ['missing', true], ['disabled', false]]) {
+test('the VB-CABLE row names the state and offers no download; management lives in the Panel', async () => {
+  for (const state of ['ready', 'partial', 'unavailable', 'missing', 'disabled']) {
     const row = await h.mount(VbCableRow, { vb: { state }, loaded: true })
     assert.match(row.text(), new RegExp(`config\\.vb_cable_state_${state}`), state)
-    assert.equal(row.buttons('_common.download').length > 0, download, `${state}: download entry`)
+    assert.equal(row.buttons('_common.download').length, 0, `${state}: no download entry`)
     row.unmount()
   }
   const loading = await h.mount(VbCableRow, { vb: { state: 'missing' }, loaded: false })
@@ -175,58 +153,12 @@ test('the VB-CABLE row names the state and offers the download unless it is read
   loading.unmount()
 })
 
-test('the VB-CABLE row offers to install what is missing and to enable what is disabled, and says what the job is doing', async () => {
-  for (const [state, action] of [['missing', 'install'], ['unavailable', 'install'], ['partial', 'install'], ['disabled', 'enable']]) {
+test('VB-CABLE management does not post driver operations from the web UI', async () => {
+  for (const state of ['ready', 'partial', 'disabled', 'unavailable', 'missing']) {
     const row = await h.mount(VbCableRow, { vb: { state }, loaded: true })
-    assert.equal(row.buttons(`config.vb_cable_${action}`).length, 1, `${state}: ${action}`)
-    assert.equal(row.buttons(`config.vb_cable_${action === 'install' ? 'enable' : 'install'}`).length, 0, `${state}: not the other one`)
+    assert.equal(row.buttons('config.vb_cable_install').length, 0, state)
+    assert.equal(row.buttons('config.vb_cable_enable').length, 0, state)
     row.unmount()
-  }
-  const ready = await h.mount(VbCableRow, { vb: { state: 'ready' }, loaded: true })
-  assert.equal(ready.buttons('config.vb_cable_install').length + ready.buttons('config.vb_cable_enable').length, 0)
-  ready.unmount()
-  const running = await h.mount(VbCableRow, { vb: { state: 'missing', job: { running: true, step: 'installing' } }, loaded: true })
-  assert.match(running.text(), /config\.vb_cable_job_installing/)
-  running.unmount()
-  const failed = await h.mount(VbCableRow, { vb: { state: 'disabled', job: { running: false, step: 'failed', errorCode: 'VB_NEEDS_ADMIN' } }, loaded: true })
-  assert.match(failed.text(), /config\.vb_cable_err_admin/)
-  failed.unmount()
-  const stale = await h.mount(VbCableRow, { vb: { state: 'ready', job: { running: false, step: 'failed', errorCode: 'VB_NEEDS_ADMIN' } }, loaded: true })
-  assert.doesNotMatch(stale.text(), /vb_cable_err/, 'a verdict of an old job is not shown once the device works')
-  stale.unmount()
-})
-
-test('nothing is sent to the host until the person confirms, and the confirmation says what will happen', async () => {
-  const sent = []
-  const realFetch = globalThis.fetch
-  globalThis.fetch = async (url, options) => { sent.push({ url, method: options?.method, body: options?.body }); return { ok: true, json: async () => ({ success: true, started: true }) } }
-  try {
-    const row = await h.mount(VbCableRow, { vb: { state: 'missing' }, loaded: true }, { changed: () => sent.push('changed') })
-    await row.press(row.buttons('config.vb_cable_install')[0])
-    assert.match(row.text(), /config\.vb_cable_install_confirm/, 'the dialog says what the host will do')
-    assert.deepEqual(sent, [], 'asking is not doing')
-    await row.press(row.button('_common.cancel'))
-    assert.deepEqual(sent, [], 'cancel sends nothing')
-    await row.press(row.buttons('config.vb_cable_install')[0])
-    await row.press(row.buttons('config.vb_cable_install').at(-1))
-    await row.settle()
-    const post = sent.find((s) => typeof s === 'object')
-    assert.ok(post, 'confirming sends the request')
-    assert.match(String(post.url), /\/api\/audio\/vb-cable\/install$/)
-    assert.equal(post.method, 'POST')
-    assert.deepEqual(JSON.parse(post.body), { confirm: true })
-    assert.ok(sent.includes('changed'), 'the page is told to read the progress')
-    row.unmount()
-    sent.length = 0
-    const disabled = await h.mount(VbCableRow, { vb: { state: 'disabled' }, loaded: true })
-    await disabled.press(disabled.buttons('config.vb_cable_enable')[0])
-    assert.match(disabled.text(), /config\.vb_cable_enable_confirm/)
-    await disabled.press(disabled.buttons('config.vb_cable_enable').at(-1))
-    await disabled.settle()
-    assert.match(String(sent.find((s) => typeof s === 'object')?.url), /\/api\/audio\/vb-cable\/enable$/)
-    disabled.unmount()
-  } finally {
-    globalThis.fetch = realFetch
   }
 })
 
@@ -239,6 +171,10 @@ test('a disabled VB-CABLE offers the Device Manager inside the control panel, an
     assert.equal(inPanel.buttons('config.vb_cable_open_devmgmt').length, 1)
     assert.equal(inPanel.buttons('_common.download').length, 0, 'not a download')
     inPanel.unmount()
+    const unavailable = await h.mount(VbCableRow, { vb: { state: 'unavailable' }, loaded: true })
+    assert.equal(unavailable.buttons('config.vb_cable_open_devmgmt').length, 1)
+    assert.equal(unavailable.buttons('config.vb_cable_install').length, 0)
+    unavailable.unmount()
     globalThis.window = {}
     const inBrowser = await h.mount(VbCableRow, { vb: { state: 'disabled' }, loaded: true })
     assert.equal(inBrowser.buttons('config.vb_cable_open_devmgmt').length, 0)

@@ -178,11 +178,11 @@ namespace platf::audio {
     };
 
     /**
-     * @brief Create or use virtual audio device
+     * @brief Find an installed virtual audio device without changing the system
      * @return 0 on success, -1 on failure
      */
     int
-    create_virtual_audio_device();
+    detect_virtual_audio_device();
 
     /**
      * @brief Setup virtual microphone loopback

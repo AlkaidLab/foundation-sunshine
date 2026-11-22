@@ -2,8 +2,8 @@
  * @file src/stream.cpp
  * @brief Definitions for the streaming protocols.
  */
-#include "process.h"
 #include "endpoint_refresh.h"
+#include "process.h"
 #include "spatial_transport/mat_live_session.h"
 
 #include <algorithm>
@@ -76,11 +76,12 @@ extern "C" {
 #include "src/log_text.h"
 #include "stream.h"
 #include "streaming/broadcast_send.h"
+#include "streaming/display_recovery.h"
 #include "streaming/dynamic_param_protocol.h"
 #include "streaming/fec.h"
-#include "streaming/session_join_stage.h"
 #include "streaming/measured_bitrate.h"
 #include "streaming/perf_recorder.h"
+#include "streaming/session_join_stage.h"
 #include "streaming/video_pacing.h"
 #include "sync.h"
 #include "thread_safe.h"
@@ -95,6 +96,9 @@ extern "C" {
 #include "telemetry/hooks.h"
 #include "telemetry/telemetry.h"
 #include "text_context/bridge.h"
+#ifdef _WIN32
+  #include "platform/windows/display_device/windows_utils.h"
+#endif
 
 /* Older client headers predate the optional absolute-actuator feedback flag.
  * The native Windows path still forwards the extension when advertised,
@@ -778,7 +782,7 @@ namespace stream {
 
   static void
   log_endpoint_refresh_summary(const session_t &session, std::string_view type,
-                               const endpoint_refresh_stats_t &stats) {
+    const endpoint_refresh_stats_t &stats) {
     BOOST_LOG(info) << "endpoint_auto_refresh: " << type << " summary"
                     << ", client=" << logging::quoted_name(session.client_name)
                     << ", session=" << session.launch_session_id
@@ -2118,7 +2122,6 @@ namespace stream {
       session->video.idr_events->raise(true);
     });
 
-    // 辅助函数：处理分辨率变更
     auto handle_resolution_change = [](session_t *session, int new_width, int new_height) {
       int old_width = session->config.monitor.width;
       int old_height = session->config.monitor.height;
@@ -2126,36 +2129,22 @@ namespace stream {
       BOOST_LOG(info) << "Dynamic resolution change requested: " << old_width << "x" << old_height
                       << " -> " << new_width << "x" << new_height;
 
-      // 验证分辨率范围
       constexpr int MAX_RESOLUTION = 16384;
       if (new_width <= 0 || new_width > MAX_RESOLUTION || new_height <= 0 || new_height > MAX_RESOLUTION) {
         BOOST_LOG(warning) << "Invalid resolution value: " << new_width << "x" << new_height;
         return;
       }
 
-      // 检查分辨率是否真的改变了
       if (old_width == new_width && old_height == new_height) {
         BOOST_LOG(debug) << "Resolution unchanged, ignoring request";
         return;
       }
 
-      // 检测是否是旋转导致的宽高互换（例如：1920x1080 -> 1080x1920）
       bool is_rotation = (old_width == new_height && old_height == new_width);
       if (is_rotation) {
         BOOST_LOG(info) << "Detected display rotation: width and height swapped";
       }
 
-      // 更新会话配置
-      session->config.monitor.width = new_width;
-      session->config.monitor.height = new_height;
-      perf::update_session_display(
-        session->launch_session_id,
-        session->config.monitor.width,
-        session->config.monitor.height,
-        session->config.monitor.framerate);
-
-      // 创建临时的 launch_session_t 来更新显示设备配置
-      // 注意：必须按照结构体声明顺序初始化字段
       rtsp_stream::launch_session_t temp_launch_session {};
       temp_launch_session.id = session->launch_session_id;
       temp_launch_session.client_cert_uuid = session->client_cert_uuid;
@@ -2164,9 +2153,6 @@ namespace stream {
       temp_launch_session.height = new_height;
       temp_launch_session.fps = session->config.monitor.framerate;
       temp_launch_session.enable_hdr = session->enable_hdr;
-      // Keep the synthetic-HDR state and the resolved frame pipeline policy in
-      // sync with the active session; dropping them would re-parse the display
-      // prep decision and flip the source display to HDR mid-stream.
       temp_launch_session.synthetic_hdr = session->synthetic_hdr;
       temp_launch_session.frame_pipeline_policy = session->frame_pipeline_policy;
       temp_launch_session.frame_pipeline_policy_resolved = session->frame_pipeline_policy_resolved;
@@ -2205,8 +2191,6 @@ namespace stream {
         }
       }
 
-      // 更新显示设备配置（重新配置模式）
-      // 注意：这也会触发捕获端和编码器的重新初始化，以适配新的分辨率
       if (is_rotation) {
         BOOST_LOG(info) << "Reconfiguring display device for rotation: " << old_width << "x" << old_height
                         << " -> " << new_width << "x" << new_height;
@@ -2216,29 +2200,24 @@ namespace stream {
                         << " -> " << new_width << "x" << new_height;
       }
 
-      if (active_display_resolved) {
-        const bool display_reconfigured = stream::session::run_display_reconfiguration_if_single_video_session([&]() {
-          const auto result = display_device::session_t::get().configure_display(config::video, temp_launch_session, true);
-          if (!result) {
-            BOOST_LOG(warning) << "Dynamic display reconfiguration failed: " << result.message;
-          }
-        });
-        if (!display_reconfigured) {
-          BOOST_LOG(info) << "Skipping display device reconfiguration for the dynamic resolution request because other streaming sessions are active";
-        }
-      }
-      else {
-        BOOST_LOG(info) << "Dynamic stream resolution updated without changing the unavailable capture display";
+      bool applied = false;
+      const bool allowed = active_display_resolved && stream::session::run_display_reconfiguration_if_single_video_session([&]() {
+        const auto result = display_device::session_t::get().configure_display(config::video, temp_launch_session, true);
+        applied = result.result == display_device::session_t::configure_result_t::result_e::success;
+        if (!applied) BOOST_LOG(warning) << "Dynamic display reconfiguration not applied: " << result.message;
+      });
+      if (!streaming::commit_display_resolution(allowed, applied, [&]() {
+            session->config.monitor.width = new_width;
+            session->config.monitor.height = new_height;
+            perf::update_session_display(session->launch_session_id, new_width, new_height, session->config.monitor.framerate);
+          })) {
+        BOOST_LOG(warning) << "Dynamic resolution request was not applied";
+        return;
       }
 
-      // 请求 IDR 帧以确保客户端能正确显示新分辨率
-      // 这对于旋转场景特别重要，因为宽高互换需要新的关键帧
       session->video.idr_events->raise(true);
 
-      // 注意：编码器和触摸端口的更新会在捕获端重新初始化时自动处理
-      // - 编码器会在重新初始化时使用新的宽高（通过 config.monitor.width/height）
-      // - 触摸端口会在视频捕获循环中通过 make_port() 自动更新
-      BOOST_LOG(info) << "Dynamic stream resolution updated: " << new_width << "x" << new_height
+      BOOST_LOG(info) << "Dynamic display configuration applied: " << new_width << "x" << new_height
                       << (is_rotation ? " (rotation detected)" : "");
     };
 
@@ -3512,11 +3491,11 @@ namespace stream {
       try {
         if (bytes >= 4 && std::memcmp(buf.data(), "EAPR", 4) == 0) {
           BOOST_LOG(verbose) << "Received endpoint auth packet: " << type_str
-                          << ", bytes=" << bytes
-                          << ", from=" << peer.address().to_string() << ':' << peer.port();
+                             << ", bytes=" << bytes
+                             << ", from=" << peer.address().to_string() << ':' << peer.port();
           if (bytes != LI_ER_PACKET_SIZE) {
             BOOST_LOG(debug) << "Endpoint auth packet ignored: invalid length, expected="
-                               << LI_ER_PACKET_SIZE << ", actual=" << bytes;
+                             << LI_ER_PACKET_SIZE << ", actual=" << bytes;
             return;
           }
           auto key = std::string { buf.data() + 8, LI_ER_SESSION_SIZE };
@@ -4581,9 +4560,13 @@ namespace stream {
       session->video.peer.port(), platf::qos_data_type_e::video, session->config.videoQosType != 0);
 
     BOOST_LOG(debug) << "Start capturing Video"sv;
-    // Debug: Log the display_name before calling video::capture
     BOOST_LOG(debug) << "stream.cpp: session->config.monitor.display_name = [" << (session->config.monitor.display_name.empty() ? "<empty>" : session->config.monitor.display_name) << "]";
     auto video_config = session->config.monitor;
+#ifdef _WIN32
+    // ms-wts-query-session-20261121, Remarks: retain the console/RDP distinction.
+    if ((is_running_as_system_user || !display_device::w_utils::is_current_session_rdp()) &&
+        (session->use_vdd || video_config.display_name == VDD_NAME || display_device::get_display_friendly_name(video_config.display_name) == ZAKO_NAME)) video_config.display_name = VDD_NAME;
+#endif
     video_config.perf_session_id = session->launch_session_id;
     video::capture(session->mail, video_config, session->broadcast_session_id, session->video.dynamic_param_change_events,
       session->config.packetsize);
@@ -4796,12 +4779,12 @@ namespace stream {
     namespace join_hang {
       // One function per step, on purpose: the top frames of the crash report name the function, so the step that hung is read from the group of the reports without a
       // dump. noinline and a message of their own keep the linker from folding them into one.
-#define SS_JOIN_TRAP(fn, text, budget)                                                                    \
-  [[gnu::noinline]] void                                                                                  \
-  fn() {                                                                                                  \
-    BOOST_LOG(fatal) << "Hang detected! Session failed to terminate in " budget " seconds, " text ""sv;  \
-    logging::log_flush();                                                                                 \
-    lifetime::debug_trap();                                                                               \
+#define SS_JOIN_TRAP(fn, text, budget)                                                                  \
+  [[gnu::noinline]] void                                                                                \
+  fn() {                                                                                                \
+    BOOST_LOG(fatal) << "Hang detected! Session failed to terminate in " budget " seconds, " text ""sv; \
+    logging::log_flush();                                                                               \
+    lifetime::debug_trap();                                                                             \
   }
       SS_JOIN_TRAP(hung_in_video_thread, "the video thread did not return", "10")
       SS_JOIN_TRAP(hung_in_audio_thread, "the audio thread did not return", "10")
@@ -4816,14 +4799,30 @@ namespace stream {
       void
       trap(streaming::join_stage_e at) {
         switch (at) {
-          case streaming::join_stage_e::video_thread: hung_in_video_thread(); break;
-          case streaming::join_stage_e::audio_thread: hung_in_audio_thread(); break;
-          case streaming::join_stage_e::live_session: hung_in_live_session(); break;
-          case streaming::join_stage_e::control_end: hung_in_control_end(); break;
-          case streaming::join_stage_e::input_reset: hung_in_input_reset(); break;
-          case streaming::join_stage_e::display_restore: hung_in_display_restore(); break;
-          case streaming::join_stage_e::platform_stop: hung_in_platform_stop(); break;
-          case streaming::join_stage_e::bookkeeping: hung_in_bookkeeping(); break;
+          case streaming::join_stage_e::video_thread:
+            hung_in_video_thread();
+            break;
+          case streaming::join_stage_e::audio_thread:
+            hung_in_audio_thread();
+            break;
+          case streaming::join_stage_e::live_session:
+            hung_in_live_session();
+            break;
+          case streaming::join_stage_e::control_end:
+            hung_in_control_end();
+            break;
+          case streaming::join_stage_e::input_reset:
+            hung_in_input_reset();
+            break;
+          case streaming::join_stage_e::display_restore:
+            hung_in_display_restore();
+            break;
+          case streaming::join_stage_e::platform_stop:
+            hung_in_platform_stop();
+            break;
+          case streaming::join_stage_e::bookkeeping:
+            hung_in_bookkeeping();
+            break;
         }
       }
     }  // namespace join_hang
@@ -4850,10 +4849,12 @@ namespace stream {
         const auto generation = progress->enter(next);
         task_pool.cancel(force_kill);
         force_kill = task_pool.pushDelayed([progress, generation]() {
-          if (const auto at = progress->hung_stage(generation)) {
-            join_hang::trap(*at);
-          }
-        }, streaming::join_stage_budget(next)).task_id;
+                                if (const auto at = progress->hung_stage(generation)) {
+                                  join_hang::trap(*at);
+                                }
+                              },
+                                streaming::join_stage_budget(next))
+                       .task_id;
       };
       enter(streaming::join_stage_e::video_thread);
 
@@ -4941,7 +4942,8 @@ namespace stream {
       {
         // what the clipboard did in this session, as fixed words (counts and the offer decision only; never content)
         const auto clipboard = clipboard_bridge::bridge_t::instance().take_note(session.launch_session_id);
-        const char *flow = clipboard.inbound_dropped > 0 ? "dropped" : (clipboard.inbound_forwarded > 0 || clipboard.outbound_sent > 0) ? "ok" : "none";
+        const char *flow = clipboard.inbound_dropped > 0 ? "dropped" : (clipboard.inbound_forwarded > 0 || clipboard.outbound_sent > 0) ? "ok" :
+                                                                                                                                          "none";
         telemetry::stream_ended(session.launch_session_id, stop_reason_name(session.lifecycle.snapshot().stop_reason),
           clipboard.offer == clipboard_bridge::offer_e::unknown ? std::string_view {} : std::string_view { clipboard_bridge::offer_name(clipboard.offer) }, flow);
       }
@@ -5218,7 +5220,6 @@ namespace stream {
       session->touch_keyboard_lease = launch_session.touch_keyboard_lease;
       session->created_at_ms = steady_now_ms();
 
-      // 设置客户端名称
       session->client_name = launch_session.client_name;
       session->client_gamepad = launch_session.client_gamepad;
       session->client_cert_uuid = launch_session.client_cert_uuid;
@@ -5228,7 +5229,6 @@ namespace stream {
       session->app_id = launch_session.appid;
       session->app_name = proc::proc.get_app_name(launch_session.appid);
 
-      // 保存 launch_session 的关键字段，用于后续动态参数更新
       session->enable_sops = launch_session.enable_sops;
       session->enable_hdr = launch_session.enable_hdr;
       session->synthetic_hdr = launch_session.synthetic_hdr;

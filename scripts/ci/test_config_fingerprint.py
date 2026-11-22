@@ -24,6 +24,17 @@ class FingerprintTest(unittest.TestCase):
             path = self.root / rel
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(f"# {rel}\n")
+        (self.root / "cmake" / "compile_definitions" / "windows.cmake").write_text(
+            'add_compile_definitions(SUNSHINE_PLATFORM="windows")\n'
+            "file(GLOB NVPREFS_FILES CONFIGURE_DEPENDS\n"
+            '        "${CMAKE_SOURCE_DIR}/src/platform/windows/nvprefs/*.cpp")\n'
+            "set(PLATFORM_TARGET_FILES\n"
+            '        "${CMAKE_SOURCE_DIR}/src/platform/windows/one.cpp"\n'
+            '        "${CMAKE_SOURCE_DIR}/src/platform/windows/two.cpp"\n'
+            '        "${CMAKE_SOURCE_DIR}/src/platform/windows/three.cpp"  # tray (and friends\n'
+            ')\n'
+            "list(APPEND PLATFORM_TARGET_FILES\n"
+            '        "${CMAKE_SOURCE_DIR}/third-party/tray/src/tray_windows.c")\n')
         (self.root / "scripts" / "ci" / "msys2-pins.txt").write_text(
             "# pins\nmingw-w64-ucrt-x86_64-gcc 16.2.0-7 mingw-w64-ucrt-x86_64-gcc-16.2.0-7-any.pkg.tar.zst " + "a" * 64 + "\n"
             "mingw-w64-ucrt-x86_64-openssl 4.1.0-1 mingw-w64-ucrt-x86_64-openssl-4.1.0-1-any.pkg.tar.zst " + "b" * 64 + "\n")
@@ -51,6 +62,70 @@ class FingerprintTest(unittest.TestCase):
         before = self.fingerprint()
         (self.root / "cmake/compile_definitions/windows.cmake").write_text("add_compile_options(-g1)\n")
         self.assertNotEqual(before, self.fingerprint())
+
+    def test_a_source_list_edit_keeps_it(self):
+        # A ccache entry is keyed on the compile command line (ccache manual, "How ccache works"), so a
+        # translation unit added or removed never invalidates another unit's entry; the lists that
+        # enumerate them must not move the fingerprint. Two source-list-only edits forced 8-shard cold
+        # builds on 2026-11-21 while no compile command line had changed.
+        before = self.fingerprint()
+        path = self.root / "cmake/compile_definitions/windows.cmake"
+        old = path.read_text()
+        added = old.replace("one.cpp", 'one.cpp"\n        "${CMAKE_SOURCE_DIR}/src/platform/windows/added.cpp')
+        self.assertNotEqual(old, added, "the addition case must actually change the file")
+        path.write_text(added)
+        self.assertEqual(before, self.fingerprint(), "a file added to the platform target list")
+        appended = old + 'list(APPEND PLATFORM_TARGET_FILES "${CMAKE_SOURCE_DIR}/src/platform/windows/more.cpp")\n'
+        self.assertNotEqual(old, appended, "the append case must actually change the file")
+        path.write_text(appended)
+        self.assertEqual(before, self.fingerprint(), "another list(APPEND) of the platform target list")
+        removed = old.replace('        "${CMAKE_SOURCE_DIR}/src/platform/windows/two.cpp"\n', "")
+        self.assertNotEqual(old, removed, "the deletion case must actually delete the source file line")
+        path.write_text(removed)
+        self.assertEqual(before, self.fingerprint(), "a file removed from the platform target list")
+        targets = self.root / "cmake/targets/common.cmake"
+        targets_old = targets.read_text()
+        targets.write_text(targets_old + 'set(TEST_HELPER_SOURCES "${CMAKE_SOURCE_DIR}/tests/helper.cpp")\n')
+        self.assertEqual(before, self.fingerprint(), "a source-list variable in another hashed module")
+        targets.write_text(targets_old)
+        path.write_text(old)
+        self.assertEqual(before, self.fingerprint())
+
+    def test_a_glob_pattern_or_a_compile_option_list_still_moves_it(self):
+        # What selects or flags translation units stays hashed; only the enumerations are cut.
+        before = self.fingerprint()
+        path = self.root / "cmake/compile_definitions/windows.cmake"
+        old = path.read_text()
+        path.write_text(old.replace("nvprefs/*.cpp", "nvprefs/**/*.cpp"))
+        self.assertNotEqual(before, self.fingerprint(), "a file(GLOB) pattern")
+        path.write_text(old + "list(APPEND SUNSHINE_COMPILE_OPTIONS -Wno-probe)\n")
+        self.assertNotEqual(before, self.fingerprint(), "a compile option")
+        path.write_text(old)
+        self.assertEqual(before, self.fingerprint())
+
+    def test_parens_in_comments_quotes_and_bracket_arguments_stay_inside_the_statement(self):
+        # cmake-language(7), Grammar: a hash runs to the end of the line, a quoted argument may
+        # hold unbalanced parentheses and a bracket argument [=*[ ... ]=*] ends at its own closing
+        # bracket. The fixture closes its set() on the line after such a comment; the cut must end
+        # at that parenthesis, so the flag line below still moves the fingerprint (an over-eager
+        # cut would swallow the rest of the file and hide it). Source-list edits still keep it.
+        before = self.fingerprint()
+        path = self.root / "cmake/compile_definitions/windows.cmake"
+        old = path.read_text()
+        self.assertIn("# tray (and friends" + chr(10) + ")", old)
+        path.write_text(old.replace("one.cpp", "one_renamed.cpp"))
+        self.assertEqual(before, self.fingerprint(), "a source-list edit inside a commented statement")
+        path.write_text(old + "list(APPEND PLATFORM_TARGET_FILES [[src (paren).cpp]])" + chr(10))
+        self.assertEqual(before, self.fingerprint(), "a bracket argument containing a parenthesis")
+        path.write_text(old + 'set(QUOTED_SOURCES "src (weird) name.cpp")\n')
+        self.assertEqual(before, self.fingerprint(), "a quoted argument containing a parenthesis")
+        flagged = old.replace('add_compile_definitions(SUNSHINE_PLATFORM="windows")',
+                               'add_compile_definitions(SUNSHINE_PLATFORM="windows" SUNSHINE_PROBE=1)')
+        self.assertNotEqual(old, flagged, "the flag edit must change the fixture")
+        path.write_text(flagged)
+        self.assertNotEqual(before, self.fingerprint(), "a flag change after a commented parenthesis")
+        path.write_text(old)
+        self.assertEqual(before, self.fingerprint())
 
     def test_the_configure_step_the_toolchain_action_and_the_top_level_file_move_it(self):
         before = self.fingerprint()

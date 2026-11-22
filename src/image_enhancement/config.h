@@ -45,6 +45,8 @@ namespace image_enhancement {
     // Per-backend pinned runtime digest; an absent entry accepts the runtime
     // unpinned (its digest is computed and logged at load time).
     std::unordered_map<std::string, std::string> runtime_pins;
+    // Explicit host-wide switch. Older installations start with NR disabled.
+    bool nr_enabled { false };
     bool
     operator==(const settings_t &) const = default;
   };
@@ -99,6 +101,10 @@ namespace image_enhancement {
       std::string_view operation_id = {});
     boost::shared_ptr<const backend_use_t>
     acquire_selected(backend_capability_e capability);
+    bool
+    nr_enabled();
+    nlohmann::json
+    nr_component_status();
     nlohmann::json
     status();
     std::filesystem::path

@@ -8,6 +8,7 @@
 #include "src/file_handler.h"
 #include "src/logging.h"
 #include "src/video.h"
+#include "src/tray/tray_state.h"
 #include <algorithm>
 #include <boost/asio/post.hpp>
 #include <boost/asio/thread_pool.hpp>
@@ -89,8 +90,13 @@ namespace image_enhancement::api {
         return;
       }
       const auto result = manager().update(settings, one_header(request, "If-Match"), one_header(request, "X-HDR-Operation").value_or(""));
-      if (result.status == 200 && result.changed) BOOST_LOG(info) << "HDR enhancement settings saved; new streaming pipelines will use the updated selection";
-      if (result.status != 200 && result.error != "hdr_save_busy") BOOST_LOG(warning) << "HDR enhancement settings rejected: " << result.error;
+      if (result.status == 200 && result.changed) {
+        video::notify_nr_change();
+        BOOST_LOG(info) << "HDR enhancement settings saved; new streaming pipelines will use the updated selection";
+      }
+      if (result.status != 200 && result.error != "hdr_save_busy") {
+        BOOST_LOG(warning) << "HDR enhancement settings rejected: " << result.error;
+      }
       write_result(response, result);
     }
     catch (const std::length_error &) {
@@ -159,7 +165,7 @@ namespace image_enhancement::api {
       pipelines.push_back({ { "id", pipeline.id }, { "backend", pipeline.synthetic_hdr_backend },
         { "state", pipeline.synthetic_hdr_state }, { "reason", pipeline.synthetic_hdr_failure_reason },
         { "hdr_mode", pipeline.hdr_mode }, { "dv_profile", pipeline.dv_profile }, { "dv_state", pipeline.dv_state }, { "nr_toggle_supported", pipeline.nr_toggle_supported },
-        { "nr_live_controls_version", 3 },
+        { "nr_live_controls_version", 3 }, { "nr_app_allowed", pipeline.nr_app_allowed },
         { "nr_requested_style", pipeline.nr_requested_style }, { "nr_style", pipeline.nr_style },
         { "nr_requested_skin_structure_strength", pipeline.nr_requested_skin_structure_strength }, { "nr_skin_structure_strength", pipeline.nr_skin_structure_strength },
         { "nr_requested_auto_mask", pipeline.nr_requested_auto_mask }, { "nr_auto_mask", pipeline.nr_auto_mask },
@@ -176,7 +182,13 @@ namespace image_enhancement::api {
 
   void
   get_sessions(response_t response) noexcept {
-    try { write(response, 200, { { "status", true }, { "pipelines", session_pipelines() } }); }
+    try {
+      auto result = manager().nr_component_status();
+      result["status"] = true;
+      result["has_streams"] = tray_state::has_sessions();
+      result["pipelines"] = session_pipelines();
+      write(response, 200, result);
+    }
     catch (...) { write(response, 500, { { "status", false }, { "error_code", "nr_status_unavailable" } }); }
   }
 
@@ -206,6 +218,10 @@ namespace image_enhancement::api {
           (input.contains("auto_mask") && !input["auto_mask"].is_boolean()) ||
           (input.contains("motion_quality") && (!input["motion_quality"].is_number_integer() || input["motion_quality"] < 0 || input["motion_quality"] > 3))) {
         write(response, 400, { { "status", false }, { "error_code", "nr_request_invalid" } });
+        return;
+      }
+      if (input.at("enabled").get<bool>() != manager().nr_enabled()) {
+        write(response, 409, { { "status", false }, { "error_code", "nr_settings_pending" } });
         return;
       }
       const auto result = video::request_nr_enabled(input.at("id").get<std::uint64_t>(), input.at("enabled").get<bool>(),
@@ -258,8 +274,7 @@ namespace image_enhancement::api {
         return;
       }
       nr_defaults_t defaults;
-      // The live switch is session-scoped: remember parameters only and keep
-      // the persisted on/off default untouched (自动 apps follow the selection).
+      // Preserve the legacy parameter file. Only nr_enabled controls activation.
       const auto persisted = load_nr_defaults();
       defaults.enabled = persisted ? persisted->enabled : false;
       auto &f = defaults.filter;
@@ -315,10 +330,13 @@ namespace image_enhancement::api {
         result = manager().finish_maintenance(backend, operation_id);
       }
       else { result = { 400, "hdr_maintenance_invalid" }; }
-      if (result.status == 200)
+      if (result.status == 200) {
+        video::notify_nr_change();
         write(response, 200, { { "status", true }, { "operation_id", operation_id }, { "journal_path", file_handler::path_to_utf8(manager().maintenance_path()) } });
-      else
+      }
+      else {
         write_result(response, result);
+      }
     }
     catch (const std::length_error &) {
       write(response, 413, { { "status", false }, { "error_code", "hdr_request_too_large" } });

@@ -2,7 +2,7 @@
 import { computed, inject, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { $tp } from '../../platform-i18n'
-import { openDeviceManager, openExternalUrl } from '../../utils/helpers.js'
+import { openDeviceManager } from '../../utils/helpers.js'
 import { apiJson, apiPostJson } from '../../utils/apiFetch.js'
 import { MBanner, MButton, MChip, MFooter, MGroup, MItem, MSection, MStatusPills } from 'foundation-ui/vue'
 import AvRoutes from './audiovideo/AvRoutes.vue'
@@ -11,12 +11,11 @@ import VbCableRow from '../../components/cfg/VbCableRow.vue'
 import NoDefaultOutputNotice from '../../components/cfg/NoDefaultOutputNotice.vue'
 import { useSettingsLive } from '../../composables/useSettingsLive.js'
 import { useAudioDevices } from '../../composables/useAudioDevices.js'
-import { steamDriverState, vbCableReady } from '../../utils/audioDevices.js'
+import { steamDriverState } from '../../utils/audioDevices.js'
 import CfgChoice from '../../components/cfg/CfgChoice.vue'
 import CfgField from '../../components/cfg/CfgField.vue'
 import CfgSub from '../../components/cfg/CfgSub.vue'
 import CfgSwitch from '../../components/cfg/CfgSwitch.vue'
-import ConfirmDialog from '../../components/common/ConfirmDialog.vue'
 import VddPrerequisiteNotice from '../../components/common/VddPrerequisiteNotice.vue'
 
 const props = defineProps(['platform', 'config', 'resolutions', 'fps'])
@@ -24,10 +23,8 @@ const props = defineProps(['platform', 'config', 'resolutions', 'fps'])
 const { t, te } = useI18n()
 const config = ref(props.config)
 const cfgNav = inject('cfgNav')
-const webShell = inject('webShell', null)
 const live = useSettingsLive({ platform: props.platform, want: ['session', 'bitrate'] })
 const audio = useAudioDevices(props.platform)
-const showDownloadConfirm = ref(false)
 const micTestRunning = ref(false)
 const micTestResult = ref(null)
 const micStatusLoading = ref(false)
@@ -41,8 +38,6 @@ let micLevelTimer
 
 // whether the Steam Streaming Speakers driver is there, read from the playback devices: the switch below is the setting "install it
 // when it is missing", this says what the host has now
-// after VB-CABLE was installed or enabled here the list of the shell (sidebar, overview) is read again as well
-const refreshDevices = () => { audio.refresh(); webShell?.refreshAudio?.() }
 const steamDriver = computed(() => steamDriverState(audio.render.value))
 
 const microphoneBackend = computed(() => config.value.microphone_redirect_backend || 'auto')
@@ -110,25 +105,6 @@ const handleOpenDevices = async () => {
   } catch (error) {
     console.error('Failed to open the Device Manager:', error)
   }
-}
-
-const handleDownloadVSink = () => {
-  showDownloadConfirm.value = true
-}
-
-const confirmDownload = async () => {
-  showDownloadConfirm.value = false
-  const url = 'https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack43.zip'
-
-  try {
-    await openExternalUrl(url)
-  } catch (error) {
-    console.error('Failed to open URL:', error)
-  }
-}
-
-const cancelDownload = () => {
-  showDownloadConfirm.value = false
 }
 
 const testMicrophoneRoute = async () => {
@@ -217,7 +193,6 @@ onBeforeUnmount(() => {
           <CfgSwitch :config="config" k="install_steam_audio_drivers" def="enabled">
             <MChip v-if="audio.loaded.value && !audio.failed.value" data-steam-driver :data-steam-state="steamDriver" :tone="steamDriver === 'ready' ? 'ok' : 'warn'">{{ $t(`config.steam_driver_${steamDriver}`) }}</MChip>
           </CfgSwitch>
-          <VbCableRow v-if="audio.loaded.value && !vbCableReady(audio.vb.value)" :vb="audio.vb.value" :loaded="audio.loaded.value" @download="handleDownloadVSink" @open-devices="handleOpenDevices" @changed="refreshDevices" />
         </template>
       </MGroup>
       <MFooter v-if="platform !== 'windows'">
@@ -233,8 +208,7 @@ onBeforeUnmount(() => {
       <MGroup>
         <CfgSwitch :config="config" k="stream_mic" :on="true" :off="false" def="true" />
         <CfgChoice v-if="platform === 'windows'" :config="config" k="microphone_redirect_backend" :options="micBackends" def="auto" />
-        <VbCableRow v-if="platform === 'windows'" :vb="audio.vb.value" :loaded="audio.loaded.value" @download="handleDownloadVSink" @open-devices="handleOpenDevices" @changed="refreshDevices" />
-        <MItem v-else action icon="download" :title="$t('_common.download')" @click="handleDownloadVSink" />
+        <VbCableRow v-if="platform === 'windows'" :vb="audio.vb.value" :loaded="audio.loaded.value" @open-devices="handleOpenDevices" />
         <MItem v-if="platform === 'windows'" action icon="graphic_eq" :title="micTestRunning ? $t('config.stream_mic_testing') : $t('config.stream_mic_test')" :disabled="micTestRunning || microphoneBackend === 'disabled'" @click="testMicrophoneRoute" />
       </MGroup>
       <MFooter>{{ $t('config.stream_mic_test_how') }}</MFooter>
@@ -265,18 +239,4 @@ onBeforeUnmount(() => {
   </CfgSub>
 
 
-  <ConfirmDialog
-    :show="showDownloadConfirm"
-    dialog-id="stream-mic-download-confirm"
-    :title="$t('_common.download')"
-    title-icon="open_in_new"
-    :close-label="$t('_common.close')"
-    @close="cancelDownload"
-  >
-    <p>{{ $t('config.stream_mic_download_confirm') }}</p>
-    <template #actions>
-      <MButton variant="text" @click="cancelDownload">{{ $t('_common.cancel') }}</MButton>
-      <MButton icon="download" @click="confirmDownload">{{ $t('_common.download') }}</MButton>
-    </template>
-  </ConfirmDialog>
 </template>

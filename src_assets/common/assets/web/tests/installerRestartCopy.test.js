@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..', '..')
 const installerUi = readFileSync(join(root, 'tools/installer_ui.h'), 'utf8')
 const installerShell = readFileSync(join(root, 'tools/installer_shell_ui.inc'), 'utf8')
+const installerWeb = readFileSync(join(root, 'tools/installer_web.inc'), 'utf8')
 const installerState = readFileSync(join(root, 'tools/installer_d2d.h'), 'utf8')
 const installerScript = readFileSync(join(root, 'cmake/packaging/sunshine.iss.in'), 'utf8')
 
@@ -59,6 +60,15 @@ test('no installer sentence claims the virtual gamepad needs a restart', () => {
       assert.equal(hit, null, `${name}: ${hit && hit[0]}`)
     }
   }
+})
+
+test('the virtual mouse installer is never offered or run on Windows 10', () => {
+  assert.match(installerScript, /Name: "vmouse";[^\n]*MinVersion: 10\.0\.22000/)
+  assert.match(installerScript, /Lowercase\(Name\) = 'vmouse'[\s\S]*?Result := False;/)
+  assert.match(installerShell, /tile == 3 \? 22000/)
+  assert.match(installerWeb, /component_min_build\(i\) <= windows_build\(\)\) all = all && v\.tiles\[i\]/)
+  assert.match(installerShell, /component_min_build\(i\) <= windows_build\(\) && !all/)
+  assert.match(installerShell, /begin_install\(\) \{[\s\S]*?apply_os_limits\(S\.v\);[\s\S]*?g_run\.components = component_list\(\)/)
 })
 
 test('the installer closes itself a moment after the Panel was started, and keeps the window when the Panel did not start', () => {

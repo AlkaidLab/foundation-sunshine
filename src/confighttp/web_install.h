@@ -26,8 +26,15 @@ namespace confighttp::web_install {
   has_pages(const fs::path &web_dir) {
     std::error_code error;
     if (!fs::is_regular_file(web_dir / "index.html", error) || !fs::is_regular_file(web_dir / "login.html", error)) return false;
-    for (fs::directory_iterator it { web_dir / "assets", error }, end; !error && it != end; it.increment(error)) {
-      if (it->path().extension() == ".js") return true;
+    // Older builds put plain scripts directly in assets; assets now ship
+    // precompressed, so a script is either a plain .js of an old layout or
+    // the single .js.br copy of a current one.
+    for (const auto &directory : { web_dir / "assets", web_dir / "assets" / "generated" }) {
+      error.clear();
+      for (fs::directory_iterator it { directory, error }, end; !error && it != end; it.increment(error)) {
+        const auto name = it->path().filename().string();
+        if ((name.ends_with(".js") || name.ends_with(".js.br")) && it->is_regular_file(error)) return true;
+      }
     }
     return false;
   }

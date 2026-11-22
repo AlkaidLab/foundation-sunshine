@@ -216,7 +216,7 @@ Name: "firewall"; Description: "{cm:ComponentFirewall} — {cm:ComponentFirewall
 Name: "autostart"; Description: "{cm:ComponentAutostart} — {cm:ComponentAutostartDesc}"; Types: recommended full
 Name: "gamepad"; Description: "{cm:ComponentGamepad} — {cm:ComponentGamepadDesc}"; Types: recommended full
 Name: "usbip"; Description: "{cm:ComponentUsbip} — {cm:ComponentUsbipDesc}"; Types: full; MinVersion: 10.0.18362
-Name: "vmouse"; Description: "{cm:ComponentVmouse} — {cm:ComponentVmouseDesc}"; Types: full
+Name: "vmouse"; Description: "{cm:ComponentVmouse} — {cm:ComponentVmouseDesc}"; Types: full; MinVersion: 10.0.22000
 Name: "tools"; Description: "{cm:ComponentTools} — {cm:ComponentToolsDesc}"; Types: recommended full
 
 [Tasks]
@@ -352,8 +352,8 @@ Source: "{#MySourceDir}\scripts\vmouse\uninstall-vmouse.bat"; DestDir: "{app}\sc
 Source: "{#MySourceDir}\scripts\vmouse\driver\*"; DestDir: "{app}\scripts\vmouse\driver"; Flags: ignoreversion recursesubdirs skipifsourcedoesntexist
 
 ; Virtual audio sink (microphone / VB-Cable) scripts
-; Always shipped — there is no install-time component for this; the user can
-; right-click + "Run as administrator" on install-vsink.bat to enable it.
+; Legacy scripts remain available for manual maintenance; the Panel owns the
+; component flow and does not install VB-CABLE during Sunshine setup.
 Source: "{#MySourceDir}\scripts\install-vsink.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#MySourceDir}\scripts\uninstall-vsink.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "{#MySourceDir}\scripts\uninstall-vsink.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion skipifsourcedoesntexist
@@ -784,6 +784,14 @@ end;
 
 function ShouldRemoveComponent(Name: String): Boolean;
 begin
+  // Windows 10 cannot install the virtual mouse, but an existing legacy
+  // installation is intentionally left alone during an upgrade. The user can
+  // remove it explicitly from a supported host if needed.
+  if (Lowercase(Name) = 'vmouse') and ((GetWindowsVersion and $FFFF) < 22000) then
+  begin
+    Result := False;
+    Exit;
+  end;
   Result := ExistingInnoInstall and PreviousComponentSelected(Name) and
             (not WizardIsComponentSelected(Name));
 end;
@@ -1760,6 +1768,31 @@ begin
   WebUiMovedAside := False;
 end;
 
+// Restart SunshineService if this Setup run stopped it (or ended the Control Panel's updater,
+// which had stopped it). Parked images and assets\web must already be back in place.
+// Authority: installer-inno-script-events-20261107 (PrepareToInstall, CurStepChanged,
+// DeinitializeSetup), installer-inno-exit-codes-20261119 (exit codes 5 and 7).
+procedure RestartStoppedService();
+var
+  ResultCode: Integer;
+begin
+  if not ServiceStoppedForUpdate then
+    Exit;
+  ServiceStoppedForUpdate := False;
+  if Exec(ExpandConstant('{sys}\net.exe'), 'start SunshineService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
+    Log('The update did not finish; SunshineService was started again.')
+  else
+    Log('The update did not finish and SunshineService could not be started again (code ' + IntToStr(ResultCode) + ').');
+end;
+
+// Restore everything PrepareToInstall moved or stopped when an update is refused or aborted.
+procedure RestoreAfterAbortedUpdate();
+begin
+  FinishWebUiBackup();
+  SettleParkedImages(False);
+  RestartStoppedService();
+end;
+
 procedure DeinitializeSetup();
 begin
   // A run that was cancelled before PrepareToInstall prepared a folder owns nothing to settle.
@@ -1767,6 +1800,8 @@ begin
   begin
     FinishWebUiBackup();
     SettleParkedImages(PostInstallReached);
+    if not PostInstallReached then
+      RestartStoppedService();
   end;
   EmitInstallerEvent('installer', 'done', 'InstallerFinished', GetCustomSetupExitCode());
 end;
@@ -1942,10 +1977,7 @@ begin
     Exit;
   // The person went back and chose another folder: what was prepared in the first one goes back.
   if (UpdateAppDir <> '') and (CompareText(UpdateAppDir, ExpandConstant('{app}')) <> 0) then
-  begin
-    FinishWebUiBackup();
-    SettleParkedImages(False);
-  end;
+    RestoreAfterAbortedUpdate();
   UpdateAppDir := ExpandConstant('{app}');
   if not RecoverWebUi() then
   begin
@@ -1976,16 +2008,15 @@ begin
     Log('The install folder cannot be updated now (code ' + IntToStr(QuiesceCode) + ').');
     EmitInstallerEvent('prepare', 'failed', 'UpdateBlocked', QuiesceCode);
     // the programs moved aside go back first: the service is started from them
-    SettleParkedImages(False);
-    if ServiceStoppedForUpdate then
-      Exec(ExpandConstant('{sys}\net.exe'), 'start SunshineService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    RestoreAfterAbortedUpdate();
     Result := FmtMessage(CustomMessage('MsgUpdateBlocked'), [Report]);
     Exit;
   end;
   if QuiesceCode < 0 then
   begin
     // Without the script, stop the service and end the programs by name as earlier versions did.
-    Exec(ExpandConstant('{sys}\net.exe'), 'stop SunshineService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    if Exec(ExpandConstant('{sys}\net.exe'), 'stop SunshineService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
+      ServiceStoppedForUpdate := True;
     Exec(ExpandConstant('{sys}\taskkill.exe'), SunshineKillParameters(), '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     Exec(ExpandConstant('{sys}\taskkill.exe'), '/f /im sunshine-gui.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     Exec(ExpandConstant('{sys}\taskkill.exe'), '/f /im sunshinesvc.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
@@ -1996,9 +2027,7 @@ begin
   begin
     EmitInstallerEvent('prepare', 'failed', 'UpdateBlocked', 20);
     Result := FmtMessage(CustomMessage('MsgUpdateBlocked'), ['held: assets\web (the folder could not be moved aside)']);
-    SettleParkedImages(False);
-    if ServiceStoppedForUpdate then
-      Exec(ExpandConstant('{sys}\net.exe'), 'start SunshineService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    RestoreAfterAbortedUpdate();
     Exit;
   end;
   if FileExists(ExpandConstant('{app}\tools\mat-capture\sunshine-plugin-mat-capture.exe')) then
@@ -2006,6 +2035,8 @@ begin
     if not Exec(ExpandConstant('{app}\tools\mat-capture\sunshine-plugin-mat-capture.exe'),
       '--wait-for-stop', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) or (ResultCode <> 0) then
     begin
+      EmitInstallerEvent('prepare', 'failed', 'UpdateBlocked', ResultCode);
+      RestoreAfterAbortedUpdate();
       Result := 'MAT capture is still stopping. Retry installation after it exits.';
       Exit;
     end;
@@ -2026,7 +2057,10 @@ begin
     // still cannot be updated Setup stops before it has changed anything.
     if RunUpdateQuiesce(True, Report) > 0 then
       if RunUpdateQuiesce(False, Report) > 0 then
+      begin
+        RestoreAfterAbortedUpdate();
         RaiseException(FmtMessage(CustomMessage('MsgUpdateBlocked'), [Report]));
+      end;
     JournalStart();
     EmitInstallerEvent('plan', 'running', PlannedInstallerSteps(), 0);
     InstallProgressPermille := -20;

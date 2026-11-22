@@ -98,6 +98,8 @@ html[data-bs-theme] {
 .home-cookie { position: absolute; right: 24px; top: 64px; width: 120px; height: 120px; display: grid; place-items: center; clip-path: var(--m-shape-cookie); background: color-mix(in srgb, currentColor 13%, transparent); } .home-cookie .m-icon { font-size: 56px; }
 .home-cookie--on { background: var(--md-sys-color-success); color: var(--md-sys-color-on-success); }
 .home-empty--big { flex: 1; flex-direction: column; justify-content: center; text-align: center; gap: 10px; } .home-empty--big .m-icon { font-size: 56px; }
+/* the star prompt's confirm button may carry a whole sentence (long German labels): foundation-ui's nowrap would push it out of a narrow pane, so let it wrap and grow instead */
+.m-sprompt__btn--fill { white-space: normal; height: auto; min-height: 40px; text-align: start; }
 
 /* ---- Clients ---- */
 .pin-pairing { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 8px; }
@@ -105,11 +107,13 @@ html[data-bs-theme] {
 .pin-filter { display: flex; flex-direction: column; gap: 12px; margin-bottom: 12px; }
 .pin-filter__kind { overflow-x: auto; scrollbar-width: none; }
 .pin-group + .pin-group { margin-top: 16px; }
-.pin-group__title { display: flex; align-items: baseline; gap: 8px; margin: 0 0 8px; padding: 0 4px; font: var(--m-title-small); color: var(--md-sys-color-primary-text); }
+/* a bare group right after a section reads as its own block: keep the rhythm of a section (20 + the column's 4) instead of the column's 4 alone */
+.pin-page .m-page__column > .m-group.pin-net { margin-top: 20px; }
+.pin-group__title { display: flex; align-items: baseline; gap: 8px; margin: 0 0 8px; padding: 0 16px; font: var(--m-title-small); color: var(--md-sys-color-primary-text); }
 .pin-count { font: var(--m-label-medium); color: color-mix(in srgb, var(--md-sys-color-on-surface-variant) 55%, var(--md-sys-color-on-surface)); }
 .pin-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(320px, 100%), 1fr)); gap: 6px 12px; }
 .pin-row { border-radius: 20px; background: var(--m-card); min-height: 0; }
-.pin-row .m-split-item__main { padding: 8px 12px; gap: 12px; }
+.pin-row .m-split-item__main { padding: 8px 16px; gap: 12px; }
 .pin-row .m-split-item__gear { width: 48px; }
 .pin-row__main { cursor: default; } .pin-row__main:hover { background: transparent; }
 .pin-row__live { color: var(--md-sys-color-success); }
@@ -128,7 +132,6 @@ html[data-bs-theme] {
 /* ---- Downloads ---- */
 .dl-page .m-page { --m-column: min(100%, 1040px); }
 .dl-links { display: flex; flex-wrap: wrap; gap: 8px; }
-.dl-links--project { padding: 0 4px; }
 .dl-grid--partners { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
 .dl-partner { cursor: default; } .dl-partner:hover { background: var(--m-card); transform: none; }
 .dl-partner .dl-links { margin-top: 10px; }
@@ -185,6 +188,8 @@ html[data-bs-theme] {
 .app-sheet.m-sheet--end, .cover-sheet.m-sheet--end, .scan-sheet.m-sheet--end { width: min(720px, 100vw); }
 .cover-sheet.m-sheet--end { width: min(640px, 100vw); }
 @media (max-width: 599.98px) { .app-sheet.m-sheet--end, .cover-sheet.m-sheet--end, .scan-sheet.m-sheet--end { width: 100%; } }
+/* the audio device pickers: a device name with its reason reads at the 720 width the other dialogs use */
+.device-sheet.m-sheet--center { --m-dialog-w: 720px; }
 .apps-editor { display: flex; flex-direction: column; gap: 8px; }
 .apps-pathrow { display: flex; align-items: center; gap: 4px; }
 .apps-pathrow .m-field { flex: 1; }
@@ -313,5 +318,5 @@ html[data-bs-theme] {
 .pin-confirm__how { display: flex; gap: 10px; align-items: flex-start; margin: 12px 0 0; font: var(--m-body-medium); color: var(--md-sys-color-on-surface-variant); } .pin-confirm__how .m-icon { flex: none; font-size: 20px; }
 /* the danger zone of the device sheet: a labelled list, red icon and title */
 .pin-danger { display: flex; flex-direction: column; gap: 8px; }
-.pin-danger__label { margin: 0; padding: 0 4px; font: var(--m-title-small); color: var(--md-sys-color-error); }
+.pin-danger__label { margin: 0; padding: 0 16px; font: var(--m-title-small); color: var(--md-sys-color-error); }
 .pin-danger__item .m-item__title, .pin-danger__item .m-item__lead, .pin-danger__item .m-item__lead .m-icon { color: var(--md-sys-color-error); }

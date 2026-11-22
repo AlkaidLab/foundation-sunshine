@@ -219,8 +219,6 @@ namespace nvhttp {
     }
     if (const auto defaults = image_enhancement::load_nr_defaults()) {
       const auto &f = defaults->filter;
-      // Defaults carry remembered parameters only; the on/off default for
-      // 自动 apps is the stable global component selection below.
       launch_session->dlssnr_params.intensity = f.nr_intensity;
       launch_session->dlssnr_params.style = f.nr_style;
       launch_session->dlssnr_params.skin_structure_strength = f.nr_skin_structure_strength;
@@ -229,26 +227,12 @@ namespace nvhttp {
       launch_session->dlssnr_params.motion_quality = f.nr_motion_quality;
       launch_session->dlssnr_scale_percent = f.nr_scale_percent;
     }
-    // Explicit per-app on/off settings take precedence; 自动 apps follow the
-    // global component selection. The overlay processing scale is global.
-    const auto app_dlssnr = proc::proc.get_app_dlssnr_config(launch_session->appid);
-    if (app_dlssnr) {
-      launch_session->dlssnr_params = *app_dlssnr;
-    }
+    const auto app_nr = proc::proc.get_app_dlssnr_config(launch_session->appid);
+    if (app_nr) launch_session->dlssnr_params = *app_nr;
+    // App Off opts out. Both Auto and On require the global switch, including on resume.
+    launch_session->dlssnr_params.enabled = !app_nr || app_nr->enabled;
     if (launch_session->dlssnr_params.enabled) {
-      // Reserve both enabled backends until RTSP knows the final wire format.
-      // It selects RTX HDR only for PQ and releases the unused backend;
-      // HLG/SDR must retain NR even when launch initially requested RTX HDR.
       launch_session->dlssnr_backend = image_enhancement::manager().acquire_selected(image_enhancement::backend_capability_e::nr);
-      if (!launch_session->dlssnr_backend) {
-        BOOST_LOG(warning) << "App ["sv << launch_session->appid << "] enables DLSS NR, but its component is not selected"sv;
-      }
-    }
-    else if (!app_dlssnr) {
-      // 自动: the global switch is the persistent default. Without a selected
-      // backend the stream simply starts with NR off.
-      launch_session->dlssnr_backend = image_enhancement::manager().acquire_selected(image_enhancement::backend_capability_e::nr);
-      launch_session->dlssnr_params.enabled = static_cast<bool>(launch_session->dlssnr_backend);
     }
     launch_session->use_vdd = util::from_view(get_arg(args, "useVdd", "0"));
     launch_session->custom_screen_mode = util::from_view(get_arg(args, "customScreenMode", "-1"));

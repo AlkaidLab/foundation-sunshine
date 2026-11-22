@@ -4,6 +4,31 @@ include_guard(GLOBAL)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 option(SUNSHINE_TESTS_ENABLE_COVERAGE "Enable gcov coverage instrumentation for tests" OFF)
 
+# The GCC build is the fallback toolchain, not the release toolchain. Its -O3 code on this tree is larger
+# than Clang's; -Os keeps the -O2 optimizations except the ones that often increase code size (GCC 16.2
+# manual, Optimize Options, source gcc-optimize-options-16.2.0).
+function(sunshine_gcc_release_size_flag out_var compiler_id)
+    if(compiler_id STREQUAL "GNU")
+        set(${out_var} "-Os" PARENT_SCOPE)
+    else()
+        set(${out_var} "" PARENT_SCOPE)
+    endif()
+endfunction()
+
+# GCC 16.2 at -Os keeps a call to basic_string's C4 (base-object) move constructor; the pinned
+# libstdc++.a exports only the C1 (complete-object) form. basic_string has no virtual bases, so
+# both forms are the same constructor; alias C4 to C1 for every GNU link.
+function(sunshine_gcc_string_constructor_aliases out_var compiler_id)
+    if(compiler_id STREQUAL "GNU")
+        set(${out_var}
+                "-Wl,--defsym,_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEC4EOS4_=_ZNSt7__cxx1112basic_stringIcSt11char_traitsIcESaIcEEC1EOS4_"
+                "-Wl,--defsym,_ZNSt7__cxx1112basic_stringIwSt11char_traitsIwESaIwEEC4EOS4_=_ZNSt7__cxx1112basic_stringIwSt11char_traitsIwESaIwEEC1EOS4_"
+                PARENT_SCOPE)
+    else()
+        set(${out_var} "" PARENT_SCOPE)
+    endif()
+endfunction()
+
 add_library(sunshine_project_options INTERFACE)
 target_compile_features(sunshine_project_options INTERFACE cxx_std_23)
 if(MINGW)

@@ -18,6 +18,8 @@
 
 #include <boost/property_tree/ptree_fwd.hpp>
 
+#include "src/http/etag.h"
+
 namespace client_interface {
   inline constexpr int capability_version = 1;
 
@@ -338,27 +340,10 @@ namespace client_interface {
     return text;
   }
 
-  /// Whether one If-None-Match field value selects the representation an entity tag stands for (fs-rfc9110-cond-20261111,
-  /// sections 13.1.2 and 8.8.3.2): the value may be a list of entity tags; '*' is true whenever the origin server has a
-  /// current representation; tags are compared weakly, so a 'W/' prefix on either side does not hide a match. A value that
-  /// is not '*' and lists nothing that matches leaves the representation to be sent.
+  // Keep the client interface entry point while sharing HTTP ETag parsing with Web UI assets.
   inline bool
   etag_matches(std::string_view if_none_match, std::string_view etag) {
-    if_none_match = detail::trim_ows(if_none_match);
-    if (if_none_match == "*") return true;
-    if (etag.substr(0, 2) == "W/") etag.remove_prefix(2);
-    // A comma cannot split our own tag (decimal digits, a dash and a type name), so walking the comma-separated entries
-    // is enough to find it; an entry that is not our tag, in any state of quoting or weakness, simply does not match.
-    for (std::size_t entry_begin = 0; entry_begin <= if_none_match.size();) {
-      auto entry = if_none_match.substr(entry_begin, if_none_match.find(',', entry_begin) - entry_begin);
-      entry = detail::trim_ows(entry);
-      if (entry.substr(0, 2) == "W/") entry.remove_prefix(2);
-      if (entry == etag) return true;
-      const auto next_comma = if_none_match.find(',', entry_begin);
-      if (next_comma == std::string_view::npos) break;
-      entry_begin = next_comma + 1;
-    }
-    return false;
+    return web::etag_matches(if_none_match, etag);
   }
 
   /// The conditional request result for a served file (fs-rfc9110-cond-20261111, sections 13.2.2, 13.1.2 and 13.1.3):

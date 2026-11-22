@@ -2053,6 +2053,7 @@ namespace rtsp_stream {
         monitor.pre_encode_filter = platf::pre_encode_filter_e::external_neural_enhancement;
         monitor.enhancement_backend = session.dlssnr_backend;
       }
+      monitor.nr_app_allowed = session.dlssnr_params.enabled;
       auto &nr_config = monitor.pre_encode_filter_config;
       nr_config.nr_scale_percent = session.dlssnr_scale_percent;
       nr_config.nr_intensity = session.dlssnr_params.intensity;

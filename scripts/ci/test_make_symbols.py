@@ -25,9 +25,9 @@ STACK CFI INIT 1000 10 .cfa: $rsp 8 + .ra: .cfa 8 - ^
 """
 
 
-def fake_pe(guid=GUID, age=1, with_debug=True, dwarf=None, signed=False):
+def fake_pe(guid=GUID, age=1, with_debug=True, dwarf=None, signed=False, symbols=0):
     """The smallest PE32+ image that carries one CodeView debug directory entry in a section.
-    dwarf: None, "short" (a section named .debug_a, 8 characters at most) or "long" (/4, resolved through the COFF string table); signed: an Authenticode entry in the data directory."""
+    dwarf: None, "short" (a section named .debug_a, 8 characters at most) or "long" (/4, resolved through the COFF string table); signed: an Authenticode entry in the data directory; symbols: COFF symbol records appended at the end."""
     nsections = 2 if dwarf else 1
     headers = bytearray(0x400)
     headers[:2] = b"MZ"
@@ -36,6 +36,7 @@ def fake_pe(guid=GUID, age=1, with_debug=True, dwarf=None, signed=False):
     struct.pack_into("<HHIIIHH", headers, 0x84, 0x8664, nsections, 0, 0x700 if dwarf == "long" else 0, 0, 240, 0x22)
     opt = 0x98
     struct.pack_into("<H", headers, opt, 0x20B)
+    struct.pack_into("<I", headers, opt + 108, 16)  # NumberOfRvaAndSizes
     ddir = opt + 112
     if with_debug:
         struct.pack_into("<II", headers, ddir + 6 * 8, 0x2000, 28)
@@ -61,6 +62,13 @@ def fake_pe(guid=GUID, age=1, with_debug=True, dwarf=None, signed=False):
         if dwarf == "long":
             names = b".debug_line\0"
             out += struct.pack("<I", 4 + len(names)) + names  # COFF string table at 0x700 (no symbols: it follows the section data)
+    if symbols:
+        pointer = len(out)
+        out += b"\0" * (18 * symbols)  # symbol records: the content is irrelevant, only the table range is read
+        out += struct.pack("<I", 4)  # empty COFF string table
+        out = bytearray(out)
+        struct.pack_into("<II", out, 0x84 + 8, pointer, symbols)
+        out = bytes(out)
     return out
 
 
@@ -123,18 +131,50 @@ class StripPolicy(unittest.TestCase):
         stripped = sorted(log.read_text().split()) if log.exists() else []
         with zipfile.ZipFile(out) as z:
             manifest = json.loads(z.read("symbols-manifest.json"))
-        return code, stripped, manifest
+        return code, stripped, manifest, staging
 
     def test_a_module_with_symbols_is_stripped_a_signed_one_is_not(self):
-        code, stripped, m = self.run_policy({"Sunshine.exe": fake_pe(dwarf="short"), "Driver.dll": fake_pe(guid=bytes(range(16)), dwarf="short", signed=True)})
+        code, stripped, m, _ = self.run_policy({"Sunshine.exe": fake_pe(dwarf="short"), "Driver.dll": fake_pe(guid=bytes(range(16)), dwarf="short", signed=True)})
         self.assertEqual((code, stripped), (0, ["Sunshine.exe"]))
         self.assertEqual(m["kept_signed_with_debug_info"], ["Driver.dll"])
         self.assertEqual(m["stripped_without_symbols"], [])
 
     def test_unsymbolised_modules_with_dwarf_are_stripped_too_and_listed(self):
-        code, stripped, m = self.run_policy({"Sunshine.exe": fake_pe(dwarf="short"), "noguid.dll": fake_pe(with_debug=False, dwarf="long"), "clean.dll": fake_pe(with_debug=False)})
+        code, stripped, m, _ = self.run_policy({"Sunshine.exe": fake_pe(dwarf="short"), "noguid.dll": fake_pe(with_debug=False, dwarf="long"), "clean.dll": fake_pe(with_debug=False)})
         self.assertEqual(stripped, ["Sunshine.exe", "noguid.dll"])
         self.assertEqual(m["stripped_without_symbols"], ["noguid.dll"])
+
+    def test_a_coff_symbol_table_without_dwarf_is_removed(self):
+        code, stripped, m, staging = self.run_policy({"Sunshine.exe": fake_pe(symbols=3), "clean.dll": fake_pe()})
+        self.assertEqual(code, 0)
+        self.assertEqual(stripped, [])  # no DWARF, so the strip tool is not needed
+        self.assertEqual(m["stripped_coff_symbols"], [{"name": "Sunshine.exe", "bytes": 18 * 3 + 4}])
+        self.assertEqual((staging / "Sunshine.exe").stat().st_size, len(fake_pe()))
+
+    def test_a_signed_coff_symbol_table_is_kept_and_listed(self):
+        code, stripped, m, staging = self.run_policy({"Driver.dll": fake_pe(signed=True, symbols=2)})
+        self.assertEqual(code, 0)
+        self.assertEqual(stripped, [])
+        self.assertEqual(m["stripped_coff_symbols"], [])
+        self.assertEqual(m["kept_signed_with_coff_symbols"], ["Driver.dll"])
+        self.assertEqual((staging / "Driver.dll").stat().st_size, len(fake_pe(signed=True, symbols=2)))
+
+    def test_the_dwarf_strip_runs_before_the_coff_table_is_removed(self):
+        # GNU strip resolves long section names through the COFF string table; the table must still be there when it
+        # runs. The fake strip records the size it was handed.
+        tmp = pathlib.Path(tempfile.mkdtemp())
+        staging = tmp / "staging"
+        staging.mkdir()
+        image = fake_pe(dwarf="short", symbols=2)
+        (staging / "Sunshine.exe").write_bytes(image)
+        tool, strip, seen = tmp / "dump_syms", tmp / "strip", tmp / "seen"
+        write_fake_dump_syms(tool)
+        strip.write_text(f"#!{sys.executable}\nimport os, sys\nopen({str(seen)!r}, 'w').write(str(os.path.getsize(sys.argv[-1])))\n")
+        strip.chmod(strip.stat().st_mode | stat.S_IEXEC)
+        code = make_symbols.main(["--staging", str(staging), "--build", str(tmp), "--dump-syms", str(tool), "--output", str(tmp / "o.zip"),
+                                  "--strip-staged", "--strip-tool", str(strip)])
+        self.assertEqual(code, 0)
+        self.assertEqual(int(seen.read_text()), len(image))
 
     def test_nothing_is_stripped_when_a_required_module_is_missing(self):
         tmp = pathlib.Path(tempfile.mkdtemp())

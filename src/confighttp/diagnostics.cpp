@@ -7,7 +7,6 @@
 #include "diagnostics.h"
 #include "src/audio.h"
 #include "src/audio_devices.h"
-#include "src/audio_vb_cable.h"
 #include "src/config.h"
 #include "src/confighttp/auth.h"
 #include "src/confighttp/common.h"
@@ -365,7 +364,6 @@ namespace confighttp::diagnostics {
       std::vector<audio_devices::driver_t> drivers;
       const bool drivers_read = audio_devices::enumerate_vb_cable_drivers(drivers);
       auto json = audio_devices::to_json(endpoints, drivers_read ? &drivers : nullptr);
-      json["vb_cable"]["job"] = audio_devices::vb_cable::status_json(audio_devices::vb_cable::runner().status());
       // a stream is running and its audio capture waits for a playback device to appear
       if (auto ref = audio::try_get_audio_ctx_ref()) {
         json["default_output"]["host_waiting"] = ref->awaiting_default_output.load() || ref->capture_waiting_for_device.load();
@@ -374,44 +372,6 @@ namespace confighttp::diagnostics {
 #else
       send_response(response, audio_devices::unsupported_json());
 #endif
-    }
-
-    /**
-     * POST /api/audio/vb-cable/install and /enable, body {"confirm": true}: download and install VB-CABLE, or enable its
-     * disabled device. The job runs on a thread of its own; its progress is `vb_cable.job` of GET /api/audio/devices.
-     * Nothing starts without the confirmation of the person (the UI asks first); the answer says whether a job started.
-     */
-    void
-    startVbCableJob(resp_https_t response, req_https_t request, bool install) {
-      if (!authenticate(response, request)) return;
-      nlohmann::json body;
-      if (!read_json_body(response, request, body)) return;
-#ifdef _WIN32
-      if (!body.is_object() || body.value("confirm", false) != true) {
-        send_response(response, nlohmann::json { { "success", false }, { "error_code", "VB_CONFIRM_REQUIRED" } });
-        return;
-      }
-      using namespace audio_devices::vb_cable;
-      const bool started = runner().start(install ? "install" : "enable", [install](const progress_t &progress) {
-        auto environment = make_system_environment();
-        const auto result = install ? audio_devices::vb_cable::install(*environment, progress) : audio_devices::vb_cable::enable(*environment, progress);
-        BOOST_LOG(info) << "VB-CABLE "sv << (install ? "install"sv : "enable"sv) << (result.ok ? " finished"sv : " failed: "sv) << result.error_code << ' ' << result.detail;
-        return result;
-      });
-      send_response(response, nlohmann::json { { "success", started }, { "started", started }, { "error_code", started ? "" : std::string(error::busy) } });
-#else
-      send_response(response, nlohmann::json { { "success", false }, { "error_code", "VB_UNSUPPORTED" } });
-#endif
-    }
-
-    void
-    installVbCable(resp_https_t response, req_https_t request) {
-      startVbCableJob(response, request, true);
-    }
-
-    void
-    enableVbCable(resp_https_t response, req_https_t request) {
-      startVbCableJob(response, request, false);
     }
 
     void
@@ -759,8 +719,6 @@ namespace confighttp::diagnostics {
     server.resource["^/api/microphone/test$"]["POST"] = testMicrophone;
     server.resource["^/api/microphone/status$"]["GET"] = getMicrophoneStatus;
     server.resource["^/api/audio/devices$"]["GET"] = getAudioDevices;
-    server.resource["^/api/audio/vb-cable/install$"]["POST"] = installVbCable;
-    server.resource["^/api/audio/vb-cable/enable$"]["POST"] = enableVbCable;
     server.resource["^/api/mat/status$"]["GET"] = getMatLiveStatus;
 #ifdef _WIN32
     server.resource["^/api/vdd/status$"]["GET"] = getVddStatus;
