@@ -24,6 +24,8 @@ const tunes = computed(() => localeOptions(t, 'config.sw_tune', ['film', 'animat
     <MGroup>
       <CfgExpert control="seg" :config="config" k="sw_tune" :options="tunes" />
       <CfgExpert control="slider" :config="config" k="min_threads" />
+      <!-- the Linux VAAPI encoder runs on this path: its rate-control buffer strictness belongs with the software encoder -->
+      <CfgExpert v-if="platform === 'linux'" control="switch" :config="config" k="vaapi_strict_rc_buffer" :on="true" :off="false" help="config.vaapi_strict_rc_buffer_desc" />
     </MGroup>
   </MSection>
 </template>

@@ -74,7 +74,6 @@ const openApps = () => { window.location.href = '/apps' }
       <CfgExpert v-if="boostOn" :config="config" k="input_activity_boost_fps" type="number" placeholder="60" min="0" max="1000" help="config.input_activity_boost_fps_desc" />
       <CfgExpert v-if="boostOn" :config="config" k="input_activity_boost_window_ms" type="number" placeholder="150" min="0" max="5000" help="config.input_activity_boost_window_ms_desc" />
       <CfgExpert control="seg" :config="config" k="downscaling_quality" :options="downscaleOptions" def="balanced" help="config.downscaling_quality_desc" />
-      <CfgExpert v-if="platform === 'linux'" control="switch" :config="config" k="vaapi_strict_rc_buffer" :on="true" :off="false" def="false" help="config.vaapi_strict_rc_buffer_desc" />
     </MGroup>
     <MFooter v-if="isVDD">{{ $t('config.capture_vdd_direct_desc') }}</MFooter>
     <VddPrerequisiteNotice :active="isVDD" />

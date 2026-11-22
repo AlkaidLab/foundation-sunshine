@@ -283,15 +283,6 @@ const perGameOptions = computed(() => gamepadOptions.value.filter((o) => o.value
     </MSection>
   </CfgSub>
 
-  <!-- Clipboard sync: on by default in the host; the switch only force-disables it for every client -->
-  <CfgSub id="clipboard" :title="$t('config.clipboard_sync')">
-    <MSection>
-      <MGroup>
-        <CfgSwitch :config="config" k="clipboard_sync" help="config.clipboard_sync_desc" />
-      </MGroup>
-    </MSection>
-  </CfgSub>
-
   <!-- USB 转发: what the host configuration offers (the list of the devices on this computer is the control panel's own page) -->
   <CfgSub v-if="platform === 'windows'" id="usb" :title="$t('shell.usb_forwarding')">
     <MSection>

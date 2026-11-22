@@ -63,21 +63,24 @@ const STATIC_DEFAULT_KEYS = new Set([
 // Values are the host's effective value when the key is absent. Optional AMF values use null: the driver
 // receives no property. The visible Web UI uses an empty option for that state.
 const HOST_DEFAULTS = Object.freeze({
-  locale: 'en', sunshine_name: null, min_log_level: 2, sleep_mode: '0', notify_pre_releases: false, system_tray: true,
+  locale: 'en', sunshine_name: null, min_log_level: 2, max_log_size_mb: 50, restore_log: false, fs_host_icon: null, clipboard_sync: true, sleep_mode: '0', notify_pre_releases: false, system_tray: true,
   stop_on_last_video_session: false, launch_splash: true, controller: true, gamepad: 'auto', usb_forwarding_enabled: false,
   usb_forwarding_port: 0, ds4_back_as_touchpad_click: true, motion_as_ds4: true, touchpad_as_ds4: true,
-  enable_dsu_server: false, dsu_server_port: 26760, back_button_timeout: -1, keyboard: true, key_repeat_delay: 500,
+  enable_dsu_server: false, dsu_server_port: 26760, back_button_timeout: -1, client_gamepad_override: true, keyboard: true, key_repeat_delay: 500,
   key_repeat_frequency: 24.9, always_send_scancodes: true, key_rightalt_to_key_win: false, mouse: true,
   high_resolution_scrolling: true, native_pen_touch: true, native_touchpad_optimization: true, capture_cursor: true,
   amf_draw_mouse_cursor: false, virtual_mouse: true, audio_sink: null, virtual_sink: null, keep_sink_default: false,
   install_steam_audio_drivers: true, stream_audio: true, mat_live: false, stream_mic: true, max_bitrate: 0,
   output_name: null, vdd_keep_enabled: false, vdd_headless_create: false, vdd_reuse: false, variable_refresh_rate: false,
-  minimum_fps_target: 0, microphone_redirect_backend: 'auto', display_device_prep: 'no_operation', resolution_change: 'automatic',
+  minimum_fps_target: 0, input_activity_boost: true, input_activity_boost_fps: 60, input_activity_boost_window_ms: 150, downscaling_quality: 'balanced',
+  microphone_redirect_backend: 'auto', display_device_prep: 'no_operation', resolution_change: 'automatic',
   manual_resolution: null, refresh_rate_change: 'automatic', manual_refresh_rate: null, hdr_prep: 'automatic',
   dynamic_resolution_follow_display: true, hdr_luminance_analysis: 'auto', nvenc_vdd_force_vsync: false,
   vdd_vulkan_hdr_bridge: true, mdns_broadcast: true, upnp: false, address_family: 'ipv4', bind_address: null,
   external_endpoints: null, port: 47989, fec_auto: false, fec_percentage: 20, fec_auto_max_percentage: 50,
   origin_web_ui_allowed: 'lan', lan_encryption_mode: '0', wan_encryption_mode: '1', pair_max_attempts: 10,
+  client_fingerprint_remote_rules: true, client_fingerprint_rules_url: null, client_fingerprint_rules_refresh_hours: 24, client_fingerprint_rules_certificate: null,
+  network_external_check: 'enabled', network_external_endpoint: null, network_bypass_proxy: 'enabled', stun_servers: null,
   ping_timeout: 10000, close_verify_safe: false, file_apps: 'apps.json', credentials_file: 'sunshine_state.json',
   file_state: 'sunshine_state.json', log_path: 'sunshine.log', pkey: null, cert: null, adapter_name: null, capture: null,
   encoder: null, hevc_mode: 0, av1_mode: 0, capture_target: 'display', window_title: null, wgc_disable_secure_desktop: false,
@@ -90,6 +93,7 @@ const HOST_DEFAULTS = Object.freeze({
   amd_preanalysis: null, amd_vbaq: null, amd_coder: 'auto', amd_hevc_gop_size: -1, amd_high_motion_qb: null,
   amd_lowlatency_mode: null, amd_multi_hw_instance: null, amd_input_queue_size: null, amd_av1_latency_mode: null,
   vt_coder: 'auto', vt_software: 'auto', vt_realtime: true, sw_preset: 'superfast', sw_tune: 'zerolatency', min_threads: 2,
+  vaapi_strict_rc_buffer: false,
 })
 
 const normalize = (value) => {
@@ -133,6 +137,10 @@ test('host-default table is anchored to the current C++ defaults', () => {
   assert.match(CONFIG_CPP, /"superfast"s,\s*\/\/ preset/)
   assert.match(CONFIG_CPP, /std::nullopt,\s*\/\/ enforce_hrd/)
   assert.match(AMF_HEADER, /std::optional<bool> high_motion_quality_boost_enable;/)
+  assert.match(CONFIG_CPP, /50,\s*\/\/ max_log_size_mb/)
+  assert.match(CONFIG_CPP, /24,\s*\/\/ client_fingerprint_rules_refresh_hours/)
+  assert.match(CONFIG_CPP, /"balanced"s,\s*\/\/ downscaling_quality/)
+  assert.match(CONFIG_CPP, /false,\s*\/\/ strict_rc_buffer/)
 })
 
 test('every visible setting default matches the host default table', () => {

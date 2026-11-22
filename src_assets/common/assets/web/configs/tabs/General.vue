@@ -97,6 +97,8 @@ const sleepModes = computed(() => [['0', 'suspend'], ['1', 'hibernate'], ['2', '
         <CfgExpert :config="config" k="max_log_size_mb" type="number" placeholder="50" help="config.max_log_size_mb_desc" />
         <CfgSwitch :config="config" k="restore_log" :on="true" :off="false" def="false" help="config.restore_log_desc" />
         <CfgExpert :config="config" k="fs_host_icon" help="config.fs_host_icon_desc" />
+        <!-- a host-service switch of the stream (not a device page of 输入与外设): it stays with the host behaviour rows -->
+        <CfgSwitch :config="config" k="clipboard_sync" :on="true" :off="false" help="config.clipboard_sync_desc" />
       </MGroup>
     </MSection>
   </CfgSub>
