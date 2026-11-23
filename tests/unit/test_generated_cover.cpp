@@ -63,6 +63,12 @@ TEST(GeneratedCover, TheKatakanaMiddleDotIsPunctuationAndNeverTheLetterOfACover)
   EXPECT_EQ(generated_cover::monogram("\xE3\x82\xA0\xE3\x82\xB2"), "\xE3\x82\xB2") << "the double hyphen too";
 }
 
+TEST(GeneratedCover, TheCyrillicYoIsUppercasedLikeTheOtherLettersOfAName) {
+  EXPECT_EQ(generated_cover::monogram("\xD1\x91\xD0\xBB\xD0\xBA\xD0\xB8"), "\xD0\x81") << "ёлки";
+  EXPECT_EQ(generated_cover::monogram("\xD0\x81\xD0\xBB\xD0\xBA\xD0\xB8"), "\xD0\x81") << "Ёлки";
+  EXPECT_EQ(generated_cover::monogram("\xD0\xBC\xD0\xB8\xD1\x80 \xD1\x91\xD0\xB6"), "\xD0\x9C\xD0\x81") << "мир ёж";
+}
+
 TEST(GeneratedCover, CacheKeyIncludesEveryDeterministicInput) {
   const auto portrait = generated_cover::cache_hash("tonal", generated_cover::orientation_e::portrait, "桌面", "C:/game.exe", 42);
   EXPECT_EQ(portrait, generated_cover::cache_hash("tonal", generated_cover::orientation_e::portrait, "桌面", "C:/game.exe", 42));
