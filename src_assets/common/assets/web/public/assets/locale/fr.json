@@ -992,7 +992,7 @@
     "pair_max_attempts": "Limite de tentatives d'appairage PIN",
     "pair_max_attempts_desc": "Nombre maximum de tentatives d'appairage PIN par IP client en 60 secondes. Plage 0-50, 0 désactive la limite.",
     "pin_prompt": "Demande de couplage",
-    "pin_prompt_desc": "Où saisir le code PIN lorsqu’un client demande un couplage",
+    "pin_prompt_desc": "Où saisir le code PIN lorsqu’un client demande un couplage. S’applique lorsque le Foundation Panel traite les demandes ; la zone de notification de l’hôte ouvre toujours la page /pin de l’interface Web.",
     "pin_prompt_fullscreen": "Saisie du PIN en plein écran (par défaut)",
     "pin_prompt_panel": "Saisie dans le panneau de configuration",
     "path_copy": "Copy the path",

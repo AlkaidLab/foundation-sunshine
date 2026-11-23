@@ -992,7 +992,7 @@
     "pair_max_attempts": "PINペアリング再試行制限",
     "pair_max_attempts_desc": "60秒間に同一クライアントIPから許可するPINペアリング試行回数の上限。範囲 0-50、0 で制限を無効化。",
     "pin_prompt": "ペアリング要求",
-    "pin_prompt_desc": "クライアントがペアリングを求めたとき、PIN を入力する場所",
+    "pin_prompt_desc": "クライアントがペアリングを求めたとき、PIN を入力する場所。Foundation Panel が要求を処理するときに有効です。ホスト自身のトレイが処理する場合は、これまでどおり Web UI の /pin ページが開きます。",
     "pin_prompt_fullscreen": "全画面で PIN を入力（既定）",
     "pin_prompt_panel": "コントロールパネルで入力",
     "path_copy": "Copy the path",

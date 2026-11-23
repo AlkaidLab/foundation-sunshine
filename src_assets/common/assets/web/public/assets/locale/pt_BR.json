@@ -992,7 +992,7 @@
     "pair_max_attempts": "Limite de tentativas de pareamento PIN",
     "pair_max_attempts_desc": "Número máximo de tentativas de pareamento PIN por IP de cliente em 60 segundos. Faixa 0-50, 0 desativa o limite.",
     "pin_prompt": "Solicitação de emparelhamento",
-    "pin_prompt_desc": "Onde digitar o PIN quando um cliente solicita emparelhamento",
+    "pin_prompt_desc": "Onde digitar o PIN quando um cliente solicita emparelhamento. Vale quando o Foundation Panel trata as solicitações; a bandeja do próprio host continua abrindo a página /pin da interface web.",
     "pin_prompt_fullscreen": "Digitar o PIN em tela cheia (padrão)",
     "pin_prompt_panel": "Digitar no painel de controle",
     "path_copy": "Copy the path",

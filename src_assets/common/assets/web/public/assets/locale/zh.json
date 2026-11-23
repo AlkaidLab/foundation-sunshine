@@ -877,7 +877,7 @@
     "pair_max_attempts": "PIN 配对重试次数",
     "pair_max_attempts_desc": "同一 IP 在 60 秒内允许的配对次数。",
     "pin_prompt": "配对请求",
-    "pin_prompt_desc": "客户端请求配对时，在哪里输入 PIN",
+    "pin_prompt_desc": "客户端请求配对时，在哪里输入 PIN。由 Foundation Panel 处理配对请求时生效；没有面板、由主机自带托盘处理时，仍打开 Web UI 的 /pin 页。",
     "pin_prompt_fullscreen": "全屏输入 PIN（默认）",
     "pin_prompt_panel": "在控制面板中输入",
     "ping_timeout": "Ping 超时",

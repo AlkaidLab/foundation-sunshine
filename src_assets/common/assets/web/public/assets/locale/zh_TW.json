@@ -992,7 +992,7 @@
     "pair_max_attempts": "PIN 配對重試次數",
     "pair_max_attempts_desc": "同一 IP 在 60 秒內允許的配對次數。",
     "pin_prompt": "配對請求",
-    "pin_prompt_desc": "用戶端請求配對時，在哪裡輸入 PIN",
+    "pin_prompt_desc": "用戶端請求配對時，在哪裡輸入 PIN。由 Foundation Panel 處理配對請求時生效；沒有面板、由主機自帶系統匣處理時，仍開啟 Web UI 的 /pin 頁。",
     "pin_prompt_fullscreen": "全螢幕輸入 PIN（預設）",
     "pin_prompt_panel": "在控制面板中輸入",
     "path_copy": "複製路徑",

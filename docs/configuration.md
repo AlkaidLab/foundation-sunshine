@@ -254,7 +254,8 @@ provide the desktop of a separate RDP session.
             Where a pairing request asks for its PIN. <code>fullscreen</code> opens the control panel's full-screen
             PIN entry; <code>panel</code> opens the control panel on its own pairing page instead. The control panel
             reads the saved value each time a client asks to pair, so a change applies to the next request without
-            restarting Sunshine.
+            restarting Sunshine. It applies to pairing requests handled by the Foundation Panel; when the host's own
+            tray handles them because no Panel is running, the Web UI <code>/pin</code> page still opens.
         </td>
     </tr>
     <tr>

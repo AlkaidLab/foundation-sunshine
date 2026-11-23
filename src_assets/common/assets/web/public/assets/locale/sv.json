@@ -992,7 +992,7 @@
     "pair_max_attempts": "Gräns för PIN-parkopplingsförsök",
     "pair_max_attempts_desc": "Maximalt antal PIN-parkopplingsförsök per klient-IP under 60 sekunder. Intervall 0-50, 0 inaktiverar gränsen.",
     "pin_prompt": "Parkopplingsförfrågan",
-    "pin_prompt_desc": "Var PIN-koden anges när en klient vill parkopplas",
+    "pin_prompt_desc": "Var PIN-koden anges när en klient vill parkopplas. Gäller när Foundation Panel hanterar förfrågningarna; värdens egen aktivitetsfältsikon öppnar fortfarande sidan /pin i webbgränssnittet.",
     "pin_prompt_fullscreen": "PIN på helskärm (standard)",
     "pin_prompt_panel": "Ange i kontrollpanelen",
     "path_copy": "Kopiera sökvägen",
