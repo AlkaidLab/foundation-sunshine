@@ -1369,6 +1369,7 @@ namespace generated_cover {
       if (c >= 0xe0 && c <= 0xfe && c != 0xf7) return c - 32;
       if (c >= 0x3b1 && c <= 0x3c9 && c != 0x3c2) return c - 32;
       if (c >= 0x430 && c <= 0x44f) return c - 32;
+      if (c == 0x451) return 0x401;  // ё -> Ё: outside the а-я run
       return c;
     }
 
