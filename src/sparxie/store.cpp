@@ -139,7 +139,7 @@ namespace sparxie {
       };
       json settings = json::object();
       for (auto it = all.begin(); it != all.end(); ++it)
-        if (plugin.keys.empty() || std::find(plugin.keys.begin(), plugin.keys.end(), it.key()) != plugin.keys.end()) settings[it.key()] = it.value();
+        if (!plugin.keys_known || std::find(plugin.keys.begin(), plugin.keys.end(), it.key()) != plugin.keys.end()) settings[it.key()] = it.value();
       return settings;
     }
     json
@@ -321,7 +321,11 @@ namespace sparxie {
           const json options = options_from_hoyo(hoyo);
           const json size_of = { { "settings", { { "width", hoyo.value("endfieldWidth", 0) }, { "height", hoyo.value("endfieldHeight", 0) } } } };
           profile["game"] = kEndfieldPluginId;
-          profile["settings"] = endfield_plugin_settings(options, hoyo.value("endfieldRefreshRate", 0), build.endfield, &size_of);
+          // what the profile already holds as plugin settings (a key of the plugin's own, such as the interface scale) stays; the host's keys are set over it
+          json settings = profile.contains("settings") && profile["settings"].is_object() ? profile["settings"] : json::object();
+          const json managed = endfield_plugin_settings(options, hoyo.value("endfieldRefreshRate", 0), build.endfield, &size_of);
+          for (auto field = managed.begin(); field != managed.end(); ++field) settings[field.key()] = field.value();
+          profile["settings"] = settings;
           profile.erase("hoyo");
           changed = true;
           continue;

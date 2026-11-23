@@ -466,3 +466,85 @@ TEST(SparxieGenerations, WithoutThePluginANewEndfieldTouchAppIsRefusedWithAClear
   EXPECT_FALSE(fs::exists(env.data_dir / "config.json")) << "no profile was written";
   EXPECT_FALSE(fs::exists(env.apps_file)) << "and no application was made";
 }
+
+TEST(SparxieGenerations, AManifestWithTheWrongTypesIsNotInstalledAndNeverStopsTheHost) {
+  const fs::path dir = fresh("sparxie-gen-bad-manifest");
+  plugin_era_install(dir);
+  for (const char *manifest : { R"({"id":123,"exeNames":["Endfield.exe"]})", R"({"id":null})", R"({"id":["ext.skyhua0224.endfield"]})", "[]", "42", "\"text\"" }) {
+    endfield_plugin(dir, false, manifest);
+    EXPECT_NO_THROW({
+      const auto build = sparxie::detect_build(dir);
+      EXPECT_FALSE(build.endfield.installed) << manifest;
+    }) << manifest;
+  }
+  // wrong types in the members that are only read along the way: the plugin is still the plugin
+  endfield_plugin(dir, true, R"({"id":"ext.skyhua0224.endfield","exeNames":["Endfield.exe"],"version":null,"settingsSchema":{"fields":[{"key":7},{"key":"inputMode"},"x"]}})");
+  auto build = sparxie::detect_build(dir);
+  EXPECT_TRUE(build.endfield.installed);
+  EXPECT_EQ(build.endfield.version, "");
+  EXPECT_EQ(build.endfield.keys, std::vector<std::string>({ "inputMode" }));
+  EXPECT_TRUE(build.endfield.trusted);
+  // a trust file whose records are of the wrong types: nothing is trusted, nothing throws
+  write(dir / "plugin-trust.json", R"({"records":[{"id":1,"manifestSha256":2,"dllSha256":[]},"x",null]})");
+  EXPECT_NO_THROW(build = sparxie::detect_build(dir));
+  EXPECT_TRUE(build.endfield.installed);
+  EXPECT_FALSE(build.endfield.trusted);
+  // and the config of every game still reads and writes
+  write(dir / kPluginDir / "plugin.json", R"({"id":123})");
+  sparxie::ProfileDraft genshin;
+  genshin.game = "genshin";
+  genshin.display_name = "原神";
+  genshin.executable = "C:/G/YuanShen.exe";
+  EXPECT_TRUE(sparxie::add_profile(dir, genshin, {}).status.ok);
+  EXPECT_EQ(sparxie::read_store(dir).state, "data");
+  EXPECT_EQ(sparxie::add_profile(dir, endfield_draft(), {}).status.error_code, "endfield_plugin_missing");
+}
+
+TEST(SparxieGenerations, ASchemaThatDeclaresNoKeysGetsNoSettings) {
+  const fs::path dir = fresh("sparxie-gen-empty-schema");
+  plugin_era_install(dir);
+  for (const char *manifest : { R"({"id":"ext.skyhua0224.endfield","exeNames":["Endfield.exe"],"settingsSchema":{"fields":[]}})", R"({"id":"ext.skyhua0224.endfield","exeNames":["Endfield.exe"]})" }) {
+    endfield_plugin(dir, true, manifest);
+    EXPECT_TRUE(sparxie::detect_build(dir).endfield.keys_known);
+    fs::remove(dir / "config.json");
+    ASSERT_TRUE(sparxie::add_profile(dir, endfield_draft(), {}).status.ok);
+    const json doc = stored(dir);
+    EXPECT_EQ(doc["profiles"][0]["game"], "ext.skyhua0224.endfield");
+    EXPECT_TRUE(doc["profiles"][0]["settings"].is_object());
+    EXPECT_TRUE(doc["profiles"][0]["settings"].empty()) << manifest << " " << doc["profiles"][0]["settings"].dump();
+  }
+  // a build described by hand that never read a schema takes every key the host manages
+  sparxie::StoreHooks hooks;
+  sparxie::SparxieBuild build;
+  build.generation = sparxie::Generation::plugin;
+  build.endfield.installed = true;
+  hooks.build = build;
+  const fs::path other = fresh("sparxie-gen-unread-schema");
+  ASSERT_TRUE(sparxie::add_profile(other, endfield_draft(), hooks).status.ok);
+  EXPECT_EQ(stored(other)["profiles"][0]["settings"].size(), 7u);
+}
+
+TEST(SparxieGenerations, RepairingAnOldEndfieldProfileKeepsTheSettingsTheHostDoesNotManage) {
+  const fs::path dir = fresh("sparxie-gen-repair-keeps");
+  plugin_era_install(dir);
+  endfield_plugin(dir, true);
+  const json doc = { { "schemaVersion", 1 }, { "selectedProfileId", "e" }, { "profiles", json::array({
+    { { "id", "e" }, { "displayName", "终末地" }, { "game", "endfield" }, { "executablePath", "C:/G/Endfield.exe" },
+      { "hoyo", { { "fpsUnlockEnabled", true }, { "targetFps", 120 }, { "endfieldInputMode", "pc" }, { "endfieldAutoResolution", true }, { "endfieldWidth", 1920 }, { "endfieldHeight", 1080 }, { "endfieldRefreshRate", 90 } } },
+      { "settings", { { "uiScalePercent", 165 }, { "safeAreaMode", "manual" }, { "inputMode", "touch" } } } } }) } };
+  write(dir / "config.json", doc.dump());
+  sparxie::ProfileDraft genshin;
+  genshin.game = "genshin";
+  genshin.display_name = "原神";
+  genshin.executable = "C:/G/YuanShen.exe";
+  ASSERT_TRUE(sparxie::add_profile(dir, genshin, {}).status.ok);
+  const json after = stored(dir);
+  const json &settings = after["profiles"][0]["settings"];
+  EXPECT_EQ(after["profiles"][0]["game"], "ext.skyhua0224.endfield");
+  EXPECT_FALSE(after["profiles"][0].contains("hoyo"));
+  EXPECT_EQ(settings["uiScalePercent"], 165) << "the person's own";
+  EXPECT_EQ(settings["safeAreaMode"], "manual");
+  EXPECT_EQ(settings["inputMode"], "pc") << "the host's keys come from the old profile's options";
+  EXPECT_EQ(settings["refreshRate"], 90);
+  EXPECT_EQ(settings["targetFps"], 120);
+}

@@ -22,7 +22,9 @@ namespace sparxie {
     // plugin-trust.json holds a record of that id whose hashes match plugin.json and module.dll: Sparxie will load it
     bool trusted = false;
     std::string version;
-    // the keys of its settingsSchema; the host writes no other key
+    // the keys of its settingsSchema; the host writes no other key. A schema that declares none (or no schema at all) is `keys_known` with an empty list: nothing is written.
+    // A build described by hand (tests) that never read a schema leaves keys_known false and takes every key the host manages.
+    bool keys_known = false;
     std::vector<std::string> keys;
   };
   struct SparxieBuild {

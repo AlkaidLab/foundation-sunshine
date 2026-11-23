@@ -54,10 +54,15 @@ namespace sparxie {
       }
       return false;
     }
+    // a string member, "" when it is missing or of another type (the files are another party's input)
+    std::string
+    text_of(const json &object, const char *key) {
+      return object.is_object() && object.contains(key) && object[key].is_string() ? object[key].get<std::string>() : std::string();
+    }
     bool
     same_hex(const std::string &a, const std::string &b) { return !a.empty() && ascii_lower(a) == ascii_lower(b); }
     EndfieldPlugin
-    detect_endfield_plugin(const fs::path &dir) {
+    detect_endfield_plugin_unchecked(const fs::path &dir) {
       EndfieldPlugin found;
       const fs::path folder = dir / "plugins" / kEndfieldPluginId;
       const std::string manifest_bytes = read_file(folder / "plugin.json", kMaxManifestBytes);
@@ -69,14 +74,17 @@ namespace sparxie {
       catch (const std::exception &) {
         return found;
       }
-      if (!manifest.is_object() || manifest.value("id", std::string()) != kEndfieldPluginId) return found;
+      // a field of another type than the manifest promises (an id that is a number, a null version) is a manifest this host cannot use: not installed
+      if (!manifest.is_object() || !manifest.contains("id") || !manifest["id"].is_string() || manifest["id"].get<std::string>() != kEndfieldPluginId) return found;
       bool endfield_exe = false;
       if (manifest.contains("exeNames") && manifest["exeNames"].is_array())
         for (const auto &name : manifest["exeNames"])
           if (name.is_string() && ascii_lower(name.get<std::string>()) == "endfield.exe") endfield_exe = true;
       if (!endfield_exe || !is_file(folder / "module.dll")) return found;
       found.installed = true;
-      found.version = manifest.value("version", std::string());
+      found.version = manifest.contains("version") && manifest["version"].is_string() ? manifest["version"].get<std::string>() : std::string();
+      // whatever the schema holds, the keys it declares are known: none declared means the host writes none
+      found.keys_known = true;
       if (manifest.contains("settingsSchema") && manifest["settingsSchema"].is_object() && manifest["settingsSchema"].contains("fields") && manifest["settingsSchema"]["fields"].is_array())
         for (const auto &field : manifest["settingsSchema"]["fields"])
           if (field.is_object() && field.contains("key") && field["key"].is_string()) found.keys.push_back(field["key"].get<std::string>());
@@ -87,16 +95,26 @@ namespace sparxie {
           const std::string manifest_hash = sha256::hash(manifest_bytes);
           std::string module_hash;
           for (const auto &record : trust["records"]) {
-            if (!record.is_object() || record.value("id", std::string()) != kEndfieldPluginId) continue;
-            if (!same_hex(record.value("manifestSha256", std::string()), manifest_hash)) continue;
+            if (!record.is_object() || text_of(record, "id") != kEndfieldPluginId) continue;
+            if (!same_hex(text_of(record, "manifestSha256"), manifest_hash)) continue;
             if (module_hash.empty()) module_hash = sha256::hash(read_file(folder / "module.dll"));
-            if (same_hex(record.value("dllSha256", std::string()), module_hash)) found.trusted = true;
+            if (same_hex(text_of(record, "dllSha256"), module_hash)) found.trusted = true;
           }
         }
       }
       catch (const std::exception &) {
       }
       return found;
+    }
+    // The files of a plugin are another party's input: nothing in them may make the host fail for every game.
+    EndfieldPlugin
+    detect_endfield_plugin(const fs::path &dir) {
+      try {
+        return detect_endfield_plugin_unchecked(dir);
+      }
+      catch (const std::exception &) {
+        return {};
+      }
     }
   }  // namespace
 
