@@ -267,8 +267,34 @@ namespace safe {
   public:
     using status_t = util::optional_t<T>;
 
+    enum class replace_result_e { inserted, replaced, full, stopped };
+
     queue_t(std::uint32_t max_elements = 32):
         _max_elements { max_elements } {}
+
+    // Replace a matching waiting item in place, preserving other producers'
+    // order. When no item matches, never clear the queue on overflow.
+    // The caller's predicate is evaluated while the queue lock is held.
+    template <class Predicate>
+    replace_result_e
+    raise_or_replace(T value, Predicate &&matches) {
+      std::unique_lock ul { _lock };
+      if (!_continue) return replace_result_e::stopped;
+      for (auto &item : _queue) {
+        if (matches(item)) {
+          [[maybe_unused]] auto old = std::move(item);
+          item = std::move(value);
+          ul.unlock();
+          _cv.notify_all();
+          return replace_result_e::replaced;
+        }
+      }
+      if (_queue.size() >= _max_elements) return replace_result_e::full;
+      _queue.emplace_back(std::move(value));
+      ul.unlock();
+      _cv.notify_all();
+      return replace_result_e::inserted;
+    }
 
     // Loss-intolerant producers must not invoke raise()'s legacy clear-on-full.
     // Failure is explicit; existing producers retain their original behavior.

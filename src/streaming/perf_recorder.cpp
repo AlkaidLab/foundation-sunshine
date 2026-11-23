@@ -70,6 +70,8 @@ namespace perf {
         std::uint64_t encode_failures = 0;
         std::uint64_t packetization_failures = 0;
         std::uint64_t recovery_failures = 0;
+        std::uint64_t pending_frames_replaced = 0;
+        std::uint64_t frames_dropped_queue_full = 0;
       } pyrowave;
     };
 
@@ -355,6 +357,8 @@ namespace perf {
         { "encode_failures", session.pyrowave.encode_failures },
         { "packetization_failures", session.pyrowave.packetization_failures },
         { "recovery_failures", session.pyrowave.recovery_failures },
+        { "pending_frames_replaced", session.pyrowave.pending_frames_replaced },
+        { "frames_dropped_queue_full", session.pyrowave.frames_dropped_queue_full },
       };
       return item;
     }
@@ -508,6 +512,15 @@ namespace perf {
         ++it->second.pyrowave.recovery_failures;
         break;
     }
+  }
+
+  void record_pyrowave_queue_event(std::uint32_t session_id, pyrowave_queue_event_e event) {
+    std::lock_guard lock { recorder_mutex };
+    auto it = sessions.find(session_id);
+    if (it == sessions.end() || !it->second.active) return;
+    it->second.pyrowave.enabled = true;
+    if (event == pyrowave_queue_event_e::replaced_pending) ++it->second.pyrowave.pending_frames_replaced;
+    else if (event == pyrowave_queue_event_e::dropped_full) ++it->second.pyrowave.frames_dropped_queue_full;
   }
 
   void record_capture_frame(std::uint32_t session_id, const std::shared_ptr<capture_source_counter_t> &source, clock_t::time_point now) {

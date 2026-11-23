@@ -8,8 +8,6 @@ namespace video_fec {
   namespace {
     constexpr unsigned max_wire_percentage = 255;
     constexpr std::size_t max_rs_shards = 255;
-    constexpr std::size_t max_data_shards_per_block = 1023;  // Ten-bit packet index.
-    constexpr std::size_t max_data_shards_per_frame = max_blocks * max_data_shards_per_block;
     constexpr std::uint32_t max_feedback_data_packets = 1000000;
     constexpr std::uint32_t sequence_half_range = 0x80000000U;
     constexpr std::int64_t feedback_timeout_ms = 3000;
