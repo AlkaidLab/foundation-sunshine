@@ -29,6 +29,7 @@
 #include "src/platform/common.h"
 #include "src/platform/gamepad_selection.h"
 #include "src/telemetry/telemetry.h"
+#include "unicode_input.h"
 #include "virtual_mouse.h"
 
 // Note: HSYNTHETICPOINTERDEVICE and related functions are now included in
@@ -674,6 +675,26 @@ namespace platf {
         goto retry;
       }
       BOOST_LOG(error) << "Couldn't send input"sv;
+    }
+  }
+
+  /**
+   * @brief Calls SendInput() for a batch and switches input desktops if required.
+   * @details One call keeps the events in order and uninterrupted by other input.
+   * @param inputs The `INPUT` structs to send.
+   * @param count The number of elements in `inputs`.
+   */
+  void
+  send_inputs(INPUT *inputs, UINT count) {
+  retry:
+    auto send = SendInput(count, inputs, sizeof(INPUT));
+    if (send != count) {
+      auto hDesk = syncThreadDesktop();
+      if (_lastKnownInputDesktop != hDesk) {
+        _lastKnownInputDesktop = hDesk;
+        goto retry;
+      }
+      BOOST_LOG(error) << "Couldn't send input batch ("sv << send << "/"sv << count << ")"sv;
     }
   }
 
@@ -1983,23 +2004,18 @@ namespace platf {
       return;
     }
 
-    // Send all key down events
-    for (int i = 0; i < chars; i++) {
-      INPUT input {};
-      input.type = INPUT_KEYBOARD;
-      input.ki.wScan = wide[i];
-      input.ki.dwFlags = KEYEVENTF_UNICODE;
-      send_input(input);
+    // Down and up per UTF-16 unit, all in one SendInput call: a VK_PACKET key must be
+    // released before the next character, otherwise VK_PACKET-aware apps take the
+    // later characters for auto-repeat of the held key (see unicode_input.h).
+    static_assert(sizeof(WCHAR) == sizeof(std::uint16_t));
+    auto events = win_unicode::interleaved_key_events(reinterpret_cast<const std::uint16_t *>(wide.data()), chars);
+    std::vector<INPUT> batch(events.size());
+    for (std::size_t i = 0; i < events.size(); i++) {
+      batch[i].type = INPUT_KEYBOARD;
+      batch[i].ki.wScan = events[i].unit;
+      batch[i].ki.dwFlags = KEYEVENTF_UNICODE | (events[i].up ? KEYEVENTF_KEYUP : 0);
     }
-
-    // Send all key up events
-    for (int i = 0; i < chars; i++) {
-      INPUT input {};
-      input.type = INPUT_KEYBOARD;
-      input.ki.wScan = wide[i];
-      input.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
-      send_input(input);
-    }
+    send_inputs(batch.data(), static_cast<UINT>(batch.size()));
   }
 
   int
