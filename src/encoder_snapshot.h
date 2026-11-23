@@ -95,7 +95,7 @@ namespace encoder_snapshot {
     if (always_reprobe) {
       return reuse_e::always_reprobe;
     }
-    if (now.gpus.empty() && now.desktop.empty()) {
+    if (now.gpus.empty()) {
       return reuse_e::unknown_gpu;
     }
     if (!last_success) {
