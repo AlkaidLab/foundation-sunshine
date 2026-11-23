@@ -544,6 +544,12 @@ if (WIN32)
     add_test(NAME paced_reply_queue_unit_tests COMMAND paced_reply_queue_unit_tests)
 endif ()
 
+add_executable(unicode_input_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_unicode_input.cpp)
+target_include_directories(unicode_input_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(unicode_input_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(unicode_input_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME unicode_input_unit_tests COMMAND unicode_input_unit_tests)
+
 add_executable(ds5_haptics_wire_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_ds5_haptics_wire.cpp)
 target_include_directories(ds5_haptics_wire_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(ds5_haptics_wire_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
