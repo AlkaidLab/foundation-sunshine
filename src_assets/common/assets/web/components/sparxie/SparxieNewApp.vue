@@ -69,7 +69,7 @@
            the input (touch, or keyboard, mouse and gamepad) is one of these settings and hides only what is for touch alone -->
       <template v-if="reach(4) && touch">
         <SparxieOptions :block="optBlock" :fields="sparxieFields" />
-        <MBanner v-if="!viaSparxie && !status.touchUiSwitch && KBM_SPARXIE_GAMES.includes(game)" tone="info" icon="info">{{ C.kbmNeedsTouch }}</MBanner>
+        <MBanner v-if="!viaSparxie && !kbmThroughSparxie && KBM_SPARXIE_GAMES.includes(game)" tone="info" icon="info">{{ C.kbmNeedsTouch }}</MBanner>
         <MFooter>{{ C.noticeFoot }}</MFooter>
       </template>
 
@@ -197,7 +197,9 @@ const copyForNames = computed(() => ({ games: names.value, regions: C.value.regi
 const touchAllowed = computed(() => !!status.installed && !!catalog.value?.[game.value]?.touch)
 const touch = computed(() => touchAllowed.value)
 // keyboard, mouse and gamepad runs a Sparxie session without the touch interface: a Sparxie build without that switch cannot serve it, and the host then starts the game directly
-const viaSparxie = computed(() => touch.value && (optBlock.options.input !== 'kbm' || (!!status.touchUiSwitch && KBM_SPARXIE_GAMES.includes(game.value))))
+// Endfield of a plugin-based Sparxie has its own keyboard, mouse and gamepad input (the plugin's inputMode), so it needs no touch-interface switch
+const kbmThroughSparxie = computed(() => KBM_SPARXIE_GAMES.includes(game.value) && (!!status.touchUiSwitch || (game.value === 'endfield' && !!status.endfieldPlugin)))
+const viaSparxie = computed(() => touch.value && (optBlock.options.input !== 'kbm' || kbmThroughSparxie.value))
 // how the app starts: an app that is saved as a direct launch (mode pc) stays one when it is edited, whatever the Sparxie items on this page show; creating follows the component
 const launchMode = computed(() => (viaSparxie.value ? 'touch' : 'pc'))
 // the poster carries the Sparxie mark only for an application that runs Sparxie's touch interface; keyboard, mouse and gamepad (through Sparxie's PC session too) have the plain poster

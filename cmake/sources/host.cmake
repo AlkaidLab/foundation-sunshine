@@ -274,6 +274,7 @@ set(SUNSHINE_HOST_SOURCES
     src/sparxie/vendors.cpp src/sparxie/vendors.h
     src/sparxie/scan.cpp src/sparxie/scan.h
     src/sparxie/store.cpp src/sparxie/store.h
+    src/sparxie/sparxie_build.cpp src/sparxie/sparxie_build.h
     src/sparxie/settings.cpp src/sparxie/settings.h src/sparxie/hoyo_settings.cpp src/sparxie/hoyo_settings.h src/sparxie/ini_settings.cpp src/sparxie/ini_settings.h
     src/sparxie/zzz_file.cpp src/sparxie/zzz_file.h src/sparxie/zzz_extra.cpp
     src/sparxie/art.cpp src/sparxie/art.h

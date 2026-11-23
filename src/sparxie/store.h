@@ -1,5 +1,6 @@
 #pragma once
 #include "src/sparxie/model.h"
+#include "src/sparxie/sparxie_build.h"
 #include <functional>
 namespace sparxie {
   struct StoreHooks {
@@ -7,6 +8,8 @@ namespace sparxie {
     int fail_replace_times = 0;
     std::function<std::string()> utc_stamp;
     std::function<void(const fs::path &)> after_replace;
+    // The Sparxie build the write is checked against (tests; unset: the host looks at the install around the data folder, see detect_build)
+    std::optional<SparxieBuild> build;
   };
   struct ProfileDraft {
     std::string id;
@@ -31,8 +34,11 @@ namespace sparxie {
     std::string profile;
     std::string backup;
   };
+  // The config as the installed Sparxie build would read it: a profile that build would reject makes the state "unreadable".
   ConfigView
   read_store(const fs::path &dir);
+  ConfigView
+  read_store(const fs::path &dir, const SparxieBuild &build);
   WriteResult
   add_profile(const fs::path &dir, ProfileDraft draft, StoreHooks hooks);
   WriteResult
@@ -65,11 +71,19 @@ namespace sparxie {
   settings_without_game_fps(const std::string &mode, const json &options, const json &settings);
   json
   options_from_hoyo(const json &hoyo);
+  // The same for the second generation's Endfield profile, whose options are the plugin's "settings".
+  json
+  options_from_settings(const json &settings);
+  // The options of a stored profile, whichever generation wrote it.
+  json
+  options_from_profile(const json &profile);
   // The sparxie block of a Sunshine application and the application around it.
   json
   app_block(const Install &install, const std::string &profile, const std::string &mode, const json &options, const std::string &templ, const json &settings = json::object(), const std::string &restore = "restore", const std::string &cover = "official");
   json
   make_app(const std::string &name, const std::string &cmd, bool elevated, const Install &install, const json &block);
+  // The rules of the installed build's AppConfigValidator that would make Sparxie put the whole file aside. Without `build` the document is judged as an
+  // unknown build: both generations' spellings of Endfield pass.
   Status
-  validate_document(const json &document);
+  validate_document(const json &document, const SparxieBuild *build = nullptr);
 }  // namespace sparxie

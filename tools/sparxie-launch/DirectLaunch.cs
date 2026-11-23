@@ -24,7 +24,7 @@ internal static class DirectLaunch
     };
 
     /// <summary>True for the titles whose client checks its parent process and is started under a decoy parent.</summary>
-    public static bool UsesDecoyParent(Profile profile) => string.Equals(profile.Game, "endfield", StringComparison.OrdinalIgnoreCase);
+    public static bool UsesDecoyParent(Profile profile) => GameIds.IsEndfield(profile.Game);
 
     /// <summary>Starts the game and waits for it; the result is the game's exit code (or a launcher code when it never started).</summary>
     /// <param name="parentSource">Endfield only: the image copied to Games.exe (default PlatformProcess.exe in the game's folder).</param>
