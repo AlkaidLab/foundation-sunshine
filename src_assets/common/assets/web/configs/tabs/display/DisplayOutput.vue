@@ -1,7 +1,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MDisplayCards, MExpander, MFooter, MGroup, MItem, MModeCard, MPrepSeg, MSection, MSeg, MSwitchItem, displayTreeTexts } from 'foundation-ui/vue'
+import { MDisplayCards, MExpander, MFooter, MGroup, MItem, MModeCard, MPrepSeg, MSection, MSeg, MSwitchItem, displayTreeTexts, vddOn } from 'foundation-ui/vue'
 import { vddPhysicalDisplays } from 'foundation-ui/settings/index.js'
 import { $tp } from '../../../platform-i18n'
 import CfgExpert from '../../../components/cfg/CfgExpert.vue'
@@ -51,7 +51,7 @@ const prepOptions = computed(() => prepChoices({ windows: windows.value, virtual
 const prepModel = computed({ get: () => props.config.display_device_prep || 'no_operation', set: (value) => { props.config.display_device_prep = value } })
 const prepEffect = computed(() => x.value.prep.effect?.[prepModel.value] || '')
 
-const headless = computed({ get: () => store.summary.value.headless || (String(props.config.vdd_headless_create) === 'enabled' || props.config.vdd_headless_create === true), set: (value) => store.set({ vdd_headless_create: value }) })
+const headless = computed({ get: () => vddOn(props.config?.vdd_headless_create), set: (value) => store.set({ vdd_headless_create: value }) })
 const open = ref(props.focus === 'display_devices')
 </script>
 
