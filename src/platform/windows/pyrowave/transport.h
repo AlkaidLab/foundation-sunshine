@@ -16,6 +16,14 @@ namespace pyrowave {
 
 namespace platf::pyrowave_windows {
 
+  namespace detail {
+    // Count frame header, DATA, and XOR parity packets; empty means invalid
+    // payload geometry or a size_t overflow in the protected length/count.
+    [[nodiscard]] std::optional<std::size_t>
+    transport_packet_count(std::size_t image_bytes, std::size_t metadata_bytes,
+                           std::size_t payload_boundary) noexcept;
+  }
+
   struct transport_publish_result_t {
     bool success = false;
     // This frame is too large for the outer transport; keep the session alive.

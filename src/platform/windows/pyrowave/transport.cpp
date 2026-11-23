@@ -54,6 +54,20 @@ namespace platf::pyrowave_windows {
     }
   }
 
+  std::optional<std::size_t>
+  detail::transport_packet_count(std::size_t image_bytes, std::size_t metadata_bytes,
+                                 std::size_t payload_boundary) noexcept {
+    constexpr auto group_size = static_cast<std::size_t>(LI_PYROWAVE_FEC_DATA_PER_GROUP);
+    constexpr auto size_max = std::numeric_limits<std::size_t>::max();
+    static_assert(group_size > 1);
+    if (payload_boundary == 0 || image_bytes > size_max - metadata_bytes) return std::nullopt;
+    const auto protected_bytes = image_bytes + metadata_bytes;
+    const auto data_count = protected_bytes / payload_boundary + (protected_bytes % payload_boundary != 0);
+    const auto parity_count = data_count / group_size + (data_count % group_size != 0);
+    if (data_count > size_max - parity_count - 1) return std::nullopt;
+    return 1 + data_count + parity_count;
+  }
+
   transport_publish_result_t
   publish_transport_frame(
     std::int64_t frame_number,
@@ -124,6 +138,24 @@ namespace platf::pyrowave_windows {
         metadata_flags = LI_PYROWAVE_METADATA_FLAG_PROTECTED |
           (frame_timestamp ? LI_PYROWAVE_METADATA_FLAG_RUNTIME : 0);
       }
+
+      // One frame-header packet precedes N data packets and ceil(N/16)
+      // parity packets. Check this before the inner packetizer: its 16-bit
+      // block limit can otherwise report a failure before the outer RTP limit
+      // is checked, incorrectly treating one oversize frame as an encoder fault.
+      static_assert(LI_PYROWAVE_WIRE_FEC_HEADER_SIZE == LI_PYROWAVE_WIRE_HEADER_SIZE);
+      const auto packet_count = detail::transport_packet_count(input_bytes, metadata.size(), packet_boundary);
+      if (!packet_count || *packet_count > video_fec::max_data_shards_per_frame) {
+        const auto reported_count = packet_count.value_or(std::numeric_limits<std::size_t>::max());
+        BOOST_LOG(warning) << "[PyroWaveTransport] frame exceeds RTP packet limit"
+                           << ", frame=" << frame_number
+                           << ", blocks=" << reported_count
+                           << ", limit=" << video_fec::max_data_shards_per_frame;
+        result.blocks = reported_count;
+        result.dropped_oversize = true;
+        return result;
+      }
+
       auto packetized = pyrowave::make_transport_packetizer()->packetize_borrowed(frame, bitstream, {
         .packet_boundary = packet_boundary + LI_PYROWAVE_WIRE_FEC_HEADER_SIZE,
         .rtp_timestamp = rtp_timestamp,

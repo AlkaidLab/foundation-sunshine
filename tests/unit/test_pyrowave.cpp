@@ -1288,6 +1288,81 @@ TEST(PyrowaveTransportTest, DoesNotQueueFrameExceedingOuterPacketLimit) {
   EXPECT_FALSE(packets->peek());
 }
 
+TEST(PyrowaveTransportTest, DropsExtremeOversizeBeforeInnerPacketCountOverflow) {
+  auto mail = std::make_shared<safe::mail_raw_t>();
+  auto packets = mail->queue<video::packet_t>("pyrowave-extreme-oversize");
+  // 65,536 DATA shards plus parity exceed both the 4092 outer limit and
+  // the 65,535-shard inner wire limit. This is a dropped frame, not a
+  // packetizer failure requiring encoder recovery.
+  auto source = std::make_shared<const std::vector<std::uint8_t>>(65u * 65536u, 0x4d);
+  const auto result = platf::pyrowave_windows::publish_transport_frame(
+    1, source, 65, 0, packets, 0, std::nullopt, std::nullopt);
+  EXPECT_FALSE(result.success);
+  EXPECT_TRUE(result.dropped_oversize);
+  EXPECT_GT(result.blocks, LI_PYROWAVE_MAX_FRAME_BLOCKS);
+  EXPECT_FALSE(packets->peek());
+}
+
+TEST(PyrowaveTransportTest, PacketCountRejectsArithmeticOverflow) {
+  using platf::pyrowave_windows::detail::transport_packet_count;
+  constexpr auto max_size = std::numeric_limits<std::size_t>::max();
+  EXPECT_FALSE(transport_packet_count(max_size, 1, 65));
+  EXPECT_FALSE(transport_packet_count(max_size, 0, 1));
+  EXPECT_FALSE(transport_packet_count(100, 0, 0));
+  const auto count = transport_packet_count(3850u * 65u - 10u, 10, 65);
+  ASSERT_TRUE(count);
+  EXPECT_EQ(*count, video_fec::max_data_shards_per_frame);
+}
+
+TEST(PyrowaveTransportTest, OuterPacketLimitIncludesActualMetadata) {
+  auto mail = std::make_shared<safe::mail_raw_t>();
+  auto packets = mail->queue<video::packet_t>("pyrowave-metadata-outer-limit");
+  // 3850 DATA + 241 parity + one frame header = 4092. The runtime metadata
+  // adds exactly 10 protected bytes, including its TLV header.
+  constexpr std::size_t max_image = 3850u * 65u - 10u;
+  auto at_limit = std::make_shared<const std::vector<std::uint8_t>>(max_image, 0x4d);
+  const auto timestamp = std::chrono::steady_clock::now();
+  const auto fits = platf::pyrowave_windows::publish_transport_frame(
+    1, at_limit, 65, 0, packets, 0, timestamp, std::nullopt);
+  EXPECT_TRUE(fits.success);
+  EXPECT_EQ(fits.blocks, video_fec::max_data_shards_per_frame);
+  EXPECT_TRUE(packets->pop(std::chrono::milliseconds(0)));
+  auto one_over = std::make_shared<const std::vector<std::uint8_t>>(max_image + 1, 0x4d);
+  const auto dropped = platf::pyrowave_windows::publish_transport_frame(
+    2, one_over, 65, 0, packets, 0, timestamp, std::nullopt);
+  EXPECT_FALSE(dropped.success);
+  EXPECT_TRUE(dropped.dropped_oversize);
+  EXPECT_EQ(dropped.blocks, video_fec::max_data_shards_per_frame + 1u);
+  EXPECT_FALSE(packets->peek());
+}
+
+TEST(PyrowaveTransportTest, OuterPacketLimitIncludesDynamicHdrAndRuntimeMetadata) {
+  auto mail = std::make_shared<safe::mail_raw_t>();
+  auto packets = mail->queue<video::packet_t>("pyrowave-dynamic-hdr-outer-limit");
+  pyrowave::hdr_metadata_producer_t producer;
+  ASSERT_TRUE(producer.configure(3, hdr_source_metadata(), 500));
+  const auto *metadata = producer.build(hdr_scene_stats());
+  ASSERT_NE(metadata, nullptr);
+  ASSERT_NE(metadata->hlg_nominal_peak_nits, 0);
+  // Runtime TLV + HDR TLV header and payload + nominal-peak TLV.
+  const auto metadata_bytes = 10u + 8u + metadata->payload.size() + 10u;
+  const auto max_image = 3850u * 65u - metadata_bytes;
+  auto at_limit = std::make_shared<const std::vector<std::uint8_t>>(max_image, 0x4d);
+  const auto timestamp = std::chrono::steady_clock::now();
+  const auto fits = platf::pyrowave_windows::publish_transport_frame(
+    1, at_limit, 65, 0, packets, 0, timestamp, std::nullopt, metadata);
+  EXPECT_TRUE(fits.success);
+  EXPECT_EQ(fits.blocks, video_fec::max_data_shards_per_frame);
+  EXPECT_TRUE(packets->pop(std::chrono::milliseconds(0)));
+  auto one_over = std::make_shared<const std::vector<std::uint8_t>>(max_image + 1, 0x4d);
+  const auto dropped = platf::pyrowave_windows::publish_transport_frame(
+    2, one_over, 65, 0, packets, 0, timestamp, std::nullopt, metadata);
+  EXPECT_FALSE(dropped.success);
+  EXPECT_TRUE(dropped.dropped_oversize);
+  EXPECT_EQ(dropped.blocks, video_fec::max_data_shards_per_frame + 1u);
+  EXPECT_FALSE(packets->peek());
+}
+
 TEST(PyrowaveRateControlTest, KeepsLowBitrateBudgetBelowLegacyFloor) {
   using platf::pyrowave_windows::pyrowave_frame_budget;
 
