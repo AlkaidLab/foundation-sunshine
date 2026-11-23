@@ -260,9 +260,9 @@ session_binding_mode() {
       continue;
     }
     const auto trim = [](std::string &text) {
-      const auto not_space = [](unsigned char ch) { return std::isspace(ch) == 0; };
-      text.erase(text.begin(), std::find_if_not(text.begin(), text.end(), not_space));
-      text.erase(std::find_if_not(text.rbegin(), text.rend(), not_space).base(), text.end());
+      const auto is_space = [](unsigned char ch) { return std::isspace(ch) != 0; };
+      text.erase(text.begin(), std::find_if_not(text.begin(), text.end(), is_space));
+      text.erase(std::find_if_not(text.rbegin(), text.rend(), is_space).base(), text.end());
     };
     std::string key = line.substr(0, separator);
     std::string value = line.substr(separator + 1);
