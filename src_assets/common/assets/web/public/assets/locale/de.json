@@ -402,7 +402,21 @@
     "wait_all": "Streaming fortsetzen bis alle App-Prozesse beendet sind",
     "wait_all_desc": "Dies wird fortgesetzt, bis alle Prozesse, die von der App gestartet werden, beendet sind. Wenn diese Option deaktiviert ist, wird das Streaming gestoppt, wenn der erste App-Prozess beendet wird, auch wenn andere App-Prozesse noch laufen.",
     "working_dir": "Arbeitsverzeichnis",
-    "working_dir_desc": "Das Arbeitsverzeichnis, das an den Prozess übergeben werden soll. Zum Beispiel verwenden einige Anwendungen das Arbeitsverzeichnis, um nach Konfigurationsdateien zu suchen. Falls nicht gesetzt, wird Sunshine standardmäßig das übergeordnete Verzeichnis des Befehls verwenden"
+    "working_dir_desc": "Das Arbeitsverzeichnis, das an den Prozess übergeben werden soll. Zum Beispiel verwenden einige Anwendungen das Arbeitsverzeichnis, um nach Konfigurationsdateien zu suchen. Falls nicht gesetzt, wird Sunshine standardmäßig das übergeordnete Verzeichnis des Befehls verwenden",
+    "cover_style_title": "Cover-Stil",
+    "cover_style_auto": "Global übernehmen",
+    "cover_style_tonal": "Verlauf",
+    "cover_style_monogram": "Monogramm",
+    "cover_style_icon": "Symbol",
+    "cover_style_editorial": "Magazin",
+    "cover_style_glass": "Milchglas",
+    "cover_style_geometric": "Geometrisch",
+    "cover_use_generated": "Generiertes Cover verwenden",
+    "cover_status_generated": "Generiert · {style}",
+    "cover_status_following": "Generiert · {style} (global)",
+    "cover_global_title": "Stil generierter Cover",
+    "cover_global_save_failed": "Der Cover-Stil konnte nicht gespeichert werden",
+    "cover_status_poster": "Wie Hochformat"
   },
   "config": {
     "adapter_name": "Adaptername",

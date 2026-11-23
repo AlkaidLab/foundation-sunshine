@@ -402,7 +402,21 @@
     "wait_all": "すべてのアプリプロセスが終了するまでストリーミングを続ける",
     "wait_all_desc": "これは、アプリによって開始されたすべてのプロセスが終了するまで、ストリーミングを続けます。 チェックを外すと、他のアプリプロセスがまだ実行中であっても、最初のアプリプロセスが終了するとストリーミングは停止します。",
     "working_dir": "作業ディレクトリ",
-    "working_dir_desc": "プロセスに渡される作業ディレクトリ。たとえば、アプリケーションによっては、作業ディレクトリを使用して設定ファイルを検索します。 設定されていない場合、Sunshineはデフォルトでコマンドの親ディレクトリを使用します。"
+    "working_dir_desc": "プロセスに渡される作業ディレクトリ。たとえば、アプリケーションによっては、作業ディレクトリを使用して設定ファイルを検索します。 設定されていない場合、Sunshineはデフォルトでコマンドの親ディレクトリを使用します。",
+    "cover_style_title": "カバーのスタイル",
+    "cover_style_auto": "全体設定に従う",
+    "cover_style_tonal": "グラデーション",
+    "cover_style_monogram": "モノグラム",
+    "cover_style_icon": "アイコン",
+    "cover_style_editorial": "マガジン",
+    "cover_style_glass": "すりガラス",
+    "cover_style_geometric": "幾何学",
+    "cover_use_generated": "生成カバーを使う",
+    "cover_status_generated": "生成 · {style}",
+    "cover_status_following": "生成 · {style}（全体設定に従う）",
+    "cover_global_title": "生成カバーのスタイル",
+    "cover_global_save_failed": "カバーのスタイルを保存できませんでした",
+    "cover_status_poster": "縦向きと同じ"
   },
   "config": {
     "adapter_name": "アダプター名",

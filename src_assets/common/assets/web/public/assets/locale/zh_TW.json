@@ -402,7 +402,21 @@
     "wait_all": "繼續串流，直到所有應用程式處理程序結束",
     "wait_all_desc": "這會繼續串流，直到應用程式啟動的所有處理程序都結束。如果未勾選，當最初的應用程式處理程序結束時，串流就會停止，即使還有其他處理程序在運行。",
     "working_dir": "工作目錄",
-    "working_dir_desc": "這是要傳遞給處理程序的工作目錄。例如，有些應用程式會使用這個目錄來搜尋設定檔。如果沒有設定，Sunshine 會自動使用指令所在的目錄"
+    "working_dir_desc": "這是要傳遞給處理程序的工作目錄。例如，有些應用程式會使用這個目錄來搜尋設定檔。如果沒有設定，Sunshine 會自動使用指令所在的目錄",
+    "cover_style_title": "封面風格",
+    "cover_style_auto": "跟隨全域",
+    "cover_style_tonal": "漸層",
+    "cover_style_monogram": "字母",
+    "cover_style_icon": "圖示",
+    "cover_style_editorial": "雜誌",
+    "cover_style_glass": "毛玻璃",
+    "cover_style_geometric": "幾何",
+    "cover_use_generated": "改用產生的封面",
+    "cover_status_generated": "產生 · {style}",
+    "cover_status_following": "產生 · {style}（跟隨全域）",
+    "cover_global_title": "產生的封面風格",
+    "cover_global_save_failed": "無法儲存封面風格",
+    "cover_status_poster": "同直向封面"
   },
   "config": {
     "adapter_name": "顯示卡名稱",

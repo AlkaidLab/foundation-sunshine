@@ -402,7 +402,21 @@
     "wait_all": "Continue transmitindo até que todos os processos de app saiam",
     "wait_all_desc": "Isso continuará transmitindo até que todos os processos iniciados pelo aplicativo tenham sido encerrados. Quando desmarcado, a transmissão será interrompida quando o processo inicial do aplicativo terminar, mesmo que outros processos de aplicativo ainda estejam em execução.",
     "working_dir": "Diretório de trabalho",
-    "working_dir_desc": "O diretório de trabalho que deve ser passado para o processo. Por exemplo, alguns aplicativos usam o diretório de trabalho para procurar arquivos de configuração. Se não estiver definido, o Sunshine será o padrão para o diretório pai do comando"
+    "working_dir_desc": "O diretório de trabalho que deve ser passado para o processo. Por exemplo, alguns aplicativos usam o diretório de trabalho para procurar arquivos de configuração. Se não estiver definido, o Sunshine será o padrão para o diretório pai do comando",
+    "cover_style_title": "Estilo da capa",
+    "cover_style_auto": "Seguir o global",
+    "cover_style_tonal": "Gradiente",
+    "cover_style_monogram": "Monograma",
+    "cover_style_icon": "Ícone",
+    "cover_style_editorial": "Revista",
+    "cover_style_glass": "Vidro fosco",
+    "cover_style_geometric": "Geométrico",
+    "cover_use_generated": "Usar uma capa gerada",
+    "cover_status_generated": "Gerada · {style}",
+    "cover_status_following": "Gerada · {style} (global)",
+    "cover_global_title": "Estilo das capas geradas",
+    "cover_global_save_failed": "Não foi possível guardar o estilo da capa",
+    "cover_status_poster": "Igual à vertical"
   },
   "config": {
     "adapter_name": "Nome do adaptador",

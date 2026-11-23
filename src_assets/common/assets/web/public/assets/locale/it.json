@@ -402,7 +402,21 @@
     "wait_all": "Continua lo streaming fino all'uscita di tutti i processi dell'app",
     "wait_all_desc": "Questo continuerà lo streaming fino a quando tutti i processi avviati dall'app non saranno terminati. Quando non è selezionato, lo streaming si fermerà all'uscita del processo iniziale dell'app, anche se altri processi sono ancora in esecuzione.",
     "working_dir": "Directory di Lavoro",
-    "working_dir_desc": "La directory di lavoro che dovrebbe essere passata al processo. Per esempio, alcune applicazioni usano la directory di lavoro per cercare i file di configurazione. Se non impostato, Sunshine userà come predefinita la directory padre del comando"
+    "working_dir_desc": "La directory di lavoro che dovrebbe essere passata al processo. Per esempio, alcune applicazioni usano la directory di lavoro per cercare i file di configurazione. Se non impostato, Sunshine userà come predefinita la directory padre del comando",
+    "cover_style_title": "Stile della copertina",
+    "cover_style_auto": "Segui l’impostazione globale",
+    "cover_style_tonal": "Sfumatura",
+    "cover_style_monogram": "Monogramma",
+    "cover_style_icon": "Icona",
+    "cover_style_editorial": "Rivista",
+    "cover_style_glass": "Vetro smerigliato",
+    "cover_style_geometric": "Geometrico",
+    "cover_use_generated": "Usa una copertina generata",
+    "cover_status_generated": "Generata · {style}",
+    "cover_status_following": "Generata · {style} (globale)",
+    "cover_global_title": "Stile delle copertine generate",
+    "cover_global_save_failed": "Impossibile salvare lo stile della copertina",
+    "cover_status_poster": "Come la verticale"
   },
   "config": {
     "adapter_name": "Nome Adattatore",
