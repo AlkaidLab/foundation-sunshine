@@ -49,6 +49,7 @@ const DEFAULT_TABS = [
       touchpad_as_ds4: 'enabled',
       back_button_timeout: -1,
       keyboard: 'enabled',
+      clipboard_sync: 'enabled',
       key_repeat_delay: 500,
       key_repeat_frequency: 24.9,
       always_send_scancodes: 'enabled',
