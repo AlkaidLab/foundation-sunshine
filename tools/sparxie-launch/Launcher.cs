@@ -84,7 +84,7 @@ internal static class Launcher
             profile = profile with { Screen = requested };
             log.Info($"screen arguments: {requested.Arguments()}");
         }
-        log.Info("settings: " + (profile.Hoyo?.Describe() ?? "none (the profile carries no hoyo block)"));
+        log.Info("settings: " + (profile.Hoyo?.Describe() ?? (profile.PluginSettings is { } plugin ? $"plugin {profile.Game}: {plugin}" : "none (the profile carries no hoyo block)")));
         if (!File.Exists(profile.ExecutablePath)) log.Warn($"the game executable does not exist: {profile.ExecutablePath}");
 
         var noticeDirs = LaunchNotice.CandidateDirectories(exeDirectory, env).ToList();
@@ -268,7 +268,9 @@ internal static class Launcher
             profile = profile with { Screen = null };
         }
 
-        // an Endfield session needs a Broker that knows the title; an older one would refuse it or start something else
+        // an Endfield session of the first generation needs a Broker that knows the title; an older one would refuse it or start something else.
+        // The second generation has no such list: the Broker answers the session itself (a plugin that is missing or not enabled is refused there, and the launch
+        // goes on with the direct start), so a plugin profile is not held back here.
         if (profile.Game == "endfield" && !capabilities.Has(PingInfo.Endfield))
             return "this profile is an Endfield session, but the installed Sparxie does not support that (no endfield capability)";
 
@@ -353,7 +355,7 @@ internal static class Launcher
         });
 
         StartResponse answer;
-        log.Info($"StartSession: profile={profile.Id} game={profile.Game} exe={profile.ExecutablePath} {(profile.Hoyo is { } h ? h.Describe() : "")}");
+        log.Info($"StartSession: profile={profile.Id} game={profile.Game} exe={profile.ExecutablePath} {(profile.Hoyo is { } h ? h.Describe() : profile.PluginSettings is { } plugin ? "settings_json=" + plugin : "")}");
         try { answer = await rpc.StartSessionAsync(profile, StartSessionLimit).ConfigureAwait(false); }
         catch (Exception ex) when (ex is HttpRequestException or IOException or OperationCanceledException or GrpcStatusException or InvalidDataException)
         { return Not(ExitCodes.Rpc, $"StartSession failed: {Short(ex)}"); }
