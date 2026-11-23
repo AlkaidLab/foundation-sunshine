@@ -17,6 +17,7 @@
 
 #include "client_interface.h"
 #include "config.h"
+#include "generated_cover.h"
 #include "platform/common.h"
 #include "rtsp.h"
 #include "utility.h"
@@ -68,6 +69,8 @@ namespace proc {
     std::string working_dir;
     std::string output;
     std::string image_path;
+    std::string cover_style;
+    bool xbox_app = false;
     client_interface::app_facts_t fs_facts;
     std::string id;
     bool elevated;
@@ -184,11 +187,25 @@ namespace proc {
   std::string
   app_art_asset_path(const ctx_t &app, std::string_view type);
 
-  /// The version tag of the art of an application as it is now: the configured paths' own tag plus the size and the time of every present art file, so a file replaced under
-  /// the same name is a new version. A URL poster is not statted here: resolving it can download a picture.
-  /// `quiet` (the application list tag) finds the poster without logging a missing one.
+  /// A copy of the application list, made while no save is replacing it: for the readers that must not meet a list that is being replaced.
+  std::vector<ctx_t>
+  apps_snapshot();
+
+  /// The host's own placeholder picture (assets/box.png): what the poster lookup falls back to.
   std::string
-  app_art_version(const ctx_t &app, bool quiet = false);
+  default_app_image_path();
+
+  /// The application as the cover generator sees it. `quiet` (the application list tag) finds the poster without logging a missing one or downloading a picture.
+  generated_cover::app_t
+  cover_app(const ctx_t &app, bool quiet = false);
+
+  /// The version tag of the art of an application as it is now: the configured paths' own tag plus the size and the time of every present art file, so a file replaced under
+  /// the same name is a new version, plus the generated cover when the application has no picture of its own (so the switch from the placeholder to a generated cover is a
+  /// new version too). A URL poster is not statted here: resolving it can download a picture.
+  /// `quiet` (the application list tag) finds the poster without logging a missing one.
+  /// `cover_style` is the global style the caller chose the cover with (empty: the style in force now): an answer whose file was picked with one style carries the tag of that style.
+  std::string
+  app_art_version(const ctx_t &app, bool quiet = false, std::string_view cover_style = {});
   void
   refresh(const std::string &file_name);
   std::optional<proc::proc_t>

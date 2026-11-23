@@ -1,6 +1,7 @@
 #include "apps.h"
 #include "../startup_gate.h"
 #include "poster.h"
+#include "src/generated_cover.h"
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -17,8 +18,10 @@
 #include <nlohmann/json.hpp>
 
 #include "src/client_interface.h"
+#include "src/config.h"
 #include "src/file_handler.h"
 #include "src/logging.h"
+#include "src/platform/common.h"
 #include "src/process.h"
 #include "src/utility.h"
 #include "src/video.h"
@@ -79,7 +82,7 @@ namespace nvhttp::apps {
 
     // Hero, logo and icon keep the art-version validator. Only posters are tiered.
     void
-    serve_other_art(resp_https_t response, req_https_t request, const args_t &args, const proc::ctx_t &app, const std::filesystem::path &served, const std::string &type) {
+    serve_other_art(resp_https_t response, req_https_t request, const args_t &args, const proc::ctx_t &app, const std::filesystem::path &served, const std::string &type, const std::string &cover_style) {
       std::error_code time_error;
       const auto written = std::filesystem::last_write_time(served, time_error);
       // fs-n4950-20261111 [time.point.cast]: a file time becomes the system clock's, for the seconds an HTTP-date carries.
@@ -87,7 +90,8 @@ namespace nvhttp::apps {
 
       web::CaseInsensitiveMultimap validators;
       // fs-rfc9110-http-20261110 section 8.8.3: one tag per art kind.
-      const auto etag = "\"" + proc::app_art_version(app) + "-" + type + "\"";
+      // the tag of the style the file was chosen with: a style saved in between must not give the old picture the new tag
+      const auto etag = "\"" + proc::app_art_version(app, false, cover_style) + "-" + type + "\"";
       validators.emplace("ETag", etag);
       // fs-rfc9110-cond-20261111 section 8.8.2: the file's own time.
       if (last_modified >= 0) validators.emplace("Last-Modified", client_interface::format_http_date(last_modified));
@@ -200,7 +204,18 @@ namespace nvhttp::apps {
         response->write(web::StatusCode::not_found, "App asset not found");
         return;
       }
-      const auto app_image = proc::app_art_asset_path(*app, type);
+      const auto cover_style = config::generated_cover_style();
+      const auto cover = generated_cover::describe(proc::cover_app(*app), cover_style, platf::appdata());
+      std::string app_image;
+      if (type == "poster" && cover.source == generated_cover::source_e::generated && !cover.portrait.path.empty()) {
+        app_image = file_handler::path_to_utf8(cover.portrait.path);
+      }
+      else if (type == "hero" && cover.source == generated_cover::source_e::generated && !cover.landscape.path.empty()) {
+        app_image = file_handler::path_to_utf8(cover.landscape.path);
+      }
+      else {
+        app_image = proc::app_art_asset_path(*app, type);
+      }
       if (app_image.empty()) {
         response->write(web::StatusCode::not_found, "App asset not found");
         return;
@@ -208,7 +223,7 @@ namespace nvhttp::apps {
 
       const auto source = file_handler::path_from_utf8(app_image);
       if (type != "poster") {
-        serve_other_art(response, request, args, *app, source, type);
+        serve_other_art(response, request, args, *app, source, type, cover_style);
         return;
       }
       poster::schedule(source);

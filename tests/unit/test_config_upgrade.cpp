@@ -499,3 +499,28 @@ TEST_F(ConfigUpgrade, AnUnknownKeySurvivesAFullSettingsSaveWhenTheUiSendsItBack)
   EXPECT_EQ(after_partial.at("sunshine_name"), "newer");
   EXPECT_EQ(after_partial.at("future_key"), "kept");
 }
+
+TEST_F(ConfigUpgrade, GeneratedCoverStyleRoundTripsThroughTheHostConfiguration) {
+  const auto path = platf::appdata() / "config-upgrade-generated-cover-style.conf";
+  std::ofstream(path, std::ios::binary | std::ios::trunc) << "generated_cover_style = geometric\n";
+  const auto saved_path = config::sunshine.config_file;
+  const auto saved_style = config::nvhttp.generated_cover_style;
+  config::sunshine.config_file = path.string();
+  struct restore_t {
+    std::string path;
+    std::string style;
+    ~restore_t() {
+      config::sunshine.config_file = path;
+      config::nvhttp.generated_cover_style = style;
+    }
+  } restore { saved_path, saved_style };
+
+  std::vector<std::string> arguments { "sunshine-generated-cover-style-test", path.string() };
+  std::vector<char *> argv;
+  for (auto &argument : arguments) argv.push_back(argument.data());
+  argv.push_back(nullptr);
+  ASSERT_EQ(config::parse(static_cast<int>(argv.size()) - 1, argv.data()), 0);
+  EXPECT_EQ(config::nvhttp.generated_cover_style, "geometric");
+  ASSERT_TRUE(config::update_config({ { "generated_cover_style", "glass" } }));
+  EXPECT_EQ(config::parse_config(read_text(path)).at("generated_cover_style"), "glass");
+}
