@@ -89,8 +89,6 @@ namespace platf::pyrowave_windows {
 
     class gpu_encoder_session_t final: public video::encode_session_t {
     public:
-      static constexpr std::size_t maximum_bitstream_size = 16u * 1024u * 1024u;
-
       gpu_encoder_session_t(
         std::shared_ptr<dxgi::display_vram_t> display,
         const video::config_t &config,
@@ -277,7 +275,7 @@ namespace platf::pyrowave_windows {
                           << config.dynamic_hdr_format << ", target_peak_nits=" << target_peak;
         }
 
-        bitstream_.resize(maximum_bitstream_size);
+        bitstream_.resize(pyrowave_max_bitstream_size);
         const auto initial_frame_budget = frame_budget();
         BOOST_LOG(info) << "[PyroWaveEncoder][GPU] rate-control budget="
                         << initial_frame_budget << " bytes/frame"
@@ -464,7 +462,7 @@ namespace platf::pyrowave_windows {
         std::span<const std::uint8_t> encoded;
         if (!collect_encoded_packets(std::span<const std::uint8_t>(bitstream_),
               std::span<const pyrowave_packet>(source_packets_.data(), written_packets),
-              maximum_bitstream_size, scratch, encoded)) {
+              scratch, encoded)) {
           return encode_failure(frame_number, "packet-bounds", 0, 0, written_packets, true);
         }
         BOOST_LOG(verbose) << "[PyroWaveEncoder][GPU] encoded frame=" << frame_number

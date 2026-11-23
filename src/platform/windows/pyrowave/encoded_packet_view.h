@@ -12,7 +12,6 @@ namespace platf::pyrowave_windows {
   [[nodiscard]] bool
   collect_encoded_packets(std::span<const std::uint8_t> input,
                           std::span<const Packet> packets,
-                          std::size_t maximum_bytes,
                           std::vector<std::uint8_t> &scratch,
                           std::span<const std::uint8_t> &output) {
     output = {};
@@ -20,7 +19,7 @@ namespace platf::pyrowave_windows {
     bool contiguous = true;
     for (const auto &packet : packets) {
       if (packet.offset > input.size() || packet.size > input.size() - packet.offset ||
-          total > maximum_bytes || packet.size > maximum_bytes - total) {
+          packet.size > input.size() - total) {
         return false;
       }
       contiguous &= packet.offset == total;

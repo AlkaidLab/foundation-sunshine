@@ -1042,18 +1042,19 @@ TEST(PyrowaveTransportTest, PacketCollectionBorrowsContiguousOrCopiesNoncontiguo
   std::span<const std::uint8_t> result;
   const std::array contiguous { part_t { 0, 2 }, part_t { 2, 4 } };
   ASSERT_TRUE(platf::pyrowave_windows::collect_encoded_packets(
-    std::span<const std::uint8_t>(source), std::span<const part_t>(contiguous), 6, scratch, result));
+    std::span<const std::uint8_t>(source), std::span<const part_t>(contiguous), scratch, result));
   EXPECT_EQ(result.data(), source.data());
   EXPECT_TRUE(std::ranges::equal(result, source));
   const std::array separated { part_t { 4, 2 }, part_t { 1, 2 } };
   ASSERT_TRUE(platf::pyrowave_windows::collect_encoded_packets(
-    std::span<const std::uint8_t>(source), std::span<const part_t>(separated), 6, scratch, result));
+    std::span<const std::uint8_t>(source), std::span<const part_t>(separated), scratch, result));
   EXPECT_EQ(std::vector<std::uint8_t>(result.begin(), result.end()), (std::vector<std::uint8_t> { 5, 6, 2, 3 }));
   const std::array invalid { part_t { 5, 2 } };
   EXPECT_FALSE(platf::pyrowave_windows::collect_encoded_packets(
-    std::span<const std::uint8_t>(source), std::span<const part_t>(invalid), 6, scratch, result));
+    std::span<const std::uint8_t>(source), std::span<const part_t>(invalid), scratch, result));
+  const std::array overlapping { part_t { 0, 4 }, part_t { 2, 4 } };
   EXPECT_FALSE(platf::pyrowave_windows::collect_encoded_packets(
-    std::span<const std::uint8_t>(source), std::span<const part_t>(contiguous), 5, scratch, result));
+    std::span<const std::uint8_t>(source), std::span<const part_t>(overlapping), scratch, result));
 }
 
 TEST(PyrowaveTransportTest, BorrowedInputSurvivesMutationAfterPublish) {
