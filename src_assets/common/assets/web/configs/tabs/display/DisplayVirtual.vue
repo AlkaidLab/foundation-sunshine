@@ -1,7 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MGroup, MItem, MSection, MSwitchItem, MVddDevice, displayTreeTexts } from 'foundation-ui/vue'
+import { MGroup, MItem, MSection, MSwitchItem, MVddDevice, displayTreeTexts, vddOn } from 'foundation-ui/vue'
 import { settingsHash } from 'foundation-ui/settings/index.js'
 import CfgSwitch from '../../../components/cfg/CfgSwitch.vue'
 import { useVddSettings } from '../../../composables/useVddSettings.js'
@@ -23,8 +23,8 @@ const state = computed(() => {
   if (status.vddReady.value) return 'ready'
   return s === 'unknown' ? 'unknown' : 'missing'
 })
-const keep = computed({ get: () => store.summary.value.mode === 'persistent', set: (value) => store.set({ vdd_keep_enabled: value }) })
-const headless = computed({ get: () => store.summary.value.headless, set: (value) => store.set({ vdd_headless_create: value }) })
+const keep = computed({ get: () => vddOn(store.config.value?.vdd_keep_enabled), set: (value) => store.set({ vdd_keep_enabled: value }) })
+const headless = computed({ get: () => vddOn(store.config.value?.vdd_headless_create), set: (value) => store.set({ vdd_headless_create: value }) })
 async function act(action) {
   busy.value = true
   try { await writeTrayVddAction(action); await store.refresh() } catch { /* the store keeps the host's refusal */ } finally { busy.value = false }
