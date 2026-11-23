@@ -3763,7 +3763,7 @@ namespace stream {
       const auto peer_port = session->video.peer.port();
       const auto source_address = session->localAddress;
 
-      std::string_view payload { (char *) packet->data(), packet->data_size() };
+      std::string_view payload { reinterpret_cast<const char *>(packet->data()), packet->data_size() };
       std::vector<uint8_t> payload_with_replacements;
 
       // Apply replacements on the packet payload before performing any other operations.

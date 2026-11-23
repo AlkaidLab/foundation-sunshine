@@ -16,6 +16,8 @@ namespace video_fec {
   constexpr int automatic_preference = -1;
   constexpr unsigned max_client_percentage = 100;
   constexpr std::size_t max_blocks = 4;  // Two-bit FEC block count on the wire.
+  constexpr std::size_t max_data_shards_per_block = 1023;  // Ten-bit packet index.
+  constexpr std::size_t max_data_shards_per_frame = max_blocks * max_data_shards_per_block;
 
   std::optional<int>
   parse_preference(std::string_view text) noexcept;

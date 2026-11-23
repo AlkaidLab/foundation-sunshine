@@ -28,6 +28,33 @@ protected:
   void TearDown() override { perf::set_frame_rate_subscription("unit-test", false); }
 };
 
+TEST_F(PerfFrameRates, PyrowaveQueueEventsAreCountedPerSession) {
+  constexpr auto first = 91901u, second = 91902u;
+  begin(first);
+  begin(second);
+  perf::record_pyrowave_queue_event(first, perf::pyrowave_queue_event_e::replaced_pending);
+  perf::record_pyrowave_queue_event(first, perf::pyrowave_queue_event_e::replaced_pending);
+  perf::record_pyrowave_queue_event(first, perf::pyrowave_queue_event_e::dropped_full);
+  auto snapshot = perf::current_snapshot_json();
+  bool found_first = false, found_second = false;
+  for (const auto &session : snapshot["sessions"]) {
+    if (session["session_id"] == first) {
+      found_first = true;
+      EXPECT_EQ(session["pyrowave"]["pending_frames_replaced"], 2);
+      EXPECT_EQ(session["pyrowave"]["frames_dropped_queue_full"], 1);
+    }
+    if (session["session_id"] == second) {
+      found_second = true;
+      EXPECT_EQ(session["pyrowave"]["pending_frames_replaced"], 0);
+      EXPECT_EQ(session["pyrowave"]["frames_dropped_queue_full"], 0);
+    }
+  }
+  EXPECT_TRUE(found_first);
+  EXPECT_TRUE(found_second);
+  perf::end_session(first);
+  perf::end_session(second);
+}
+
 TEST_F(PerfFrameRates, SeparatesSourceCaptureSubmissionOutputAndRepeats) {
   constexpr auto id = 91001u;
   begin(id);
