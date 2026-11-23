@@ -235,6 +235,8 @@ const perGameOptions = computed(() => gamepadOptions.value.filter((o) => o.value
     <MSection>
       <MGroup>
         <CfgSwitch :config="config" k="keyboard" />
+        <!-- Clipboard sync: on by default in the host; the switch only force-disables it for every client -->
+        <CfgSwitch :config="config" k="clipboard_sync" help="config.clipboard_sync_desc" />
         <template v-if="on(config.keyboard, 'enabled')">
           <CfgExpert v-if="platform === 'windows'" :config="config" k="always_send_scancodes" />
           <CfgExpert :config="config" k="key_rightalt_to_key_win" />
@@ -280,15 +282,6 @@ const perGameOptions = computed(() => gamepadOptions.value.filter((o) => o.value
         </template>
       </MGroup>
       <MFooter v-if="!vmouse.available">{{ $t('config.vmouse_note') }}</MFooter>
-    </MSection>
-  </CfgSub>
-
-  <!-- Clipboard sync: on by default in the host; the switch only force-disables it for every client -->
-  <CfgSub id="clipboard" :title="$t('config.clipboard_sync')">
-    <MSection>
-      <MGroup>
-        <CfgSwitch :config="config" k="clipboard_sync" help="config.clipboard_sync_desc" />
-      </MGroup>
     </MSection>
   </CfgSub>
 
