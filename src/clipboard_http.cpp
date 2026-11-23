@@ -251,6 +251,11 @@ namespace clipboard_http {
       if (!auth(resp, req)) {
         return;
       }
+      if (!config::input.clipboard_sync) {
+        resp->write(web::StatusCode::forbidden,
+          R"({"error":"clipboard_sync_disabled"})");
+        return;
+      }
 
       clipboard_bridge::bridge_t::instance().notify_gui_alive();
 
