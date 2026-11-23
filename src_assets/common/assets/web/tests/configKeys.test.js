@@ -12,6 +12,7 @@ const { labelOf } = await import('foundation-ui/settings/provider.js')
 // control in the original Web UI either (checked against the commit before the redesign), they are set in the config file.
 const NO_CONTROL = Object.freeze({
   amd_ltr_frames: 'no control in the original UI',
+  generated_cover_style: 'chosen on the 应用程序 page (the style strip above the list), not on a settings page; the host takes the saved value at once',
   clients: 'the paired clients are managed on the clients page, not a setting',
   external_ip: 'replaced by external_endpoints, which the remote access card edits; the old key is still read',
   file_mapping_port: 'no control in the original UI',

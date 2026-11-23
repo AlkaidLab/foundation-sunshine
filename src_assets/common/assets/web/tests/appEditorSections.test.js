@@ -82,7 +82,7 @@ test('the cover section has a portrait slot and a landscape slot; either, both o
 
 test('each slot has choose-file, drop, clear and a preview frame at the true aspect of its cover, with an empty, a broken and an uploading state', () => {
   assert.match(selector, /<MButton variant="tonal" icon="upload" :loading="uploading" @click="pickFile">\{\{ \$t\('apps\.choose_image'\) \}\}<\/MButton>/)
-  assert.match(selector, /<MButton v-if="imagePath" variant="text" icon="close" data-image="clear" @click="\$emit\('update-image', ''\)">\{\{ \$t\('apps\.image_clear'\) \}\}<\/MButton>/)
+  assert.match(selector, /<MButton v-if="imagePath && !generate" variant="text" icon="close" data-image="clear" @click="\$emit\('update-image', ''\)">\{\{ \$t\('apps\.image_clear'\) \}\}<\/MButton>/)
   assert.match(selector, /@drop\.prevent\.stop="handleDrop"/)
   assert.match(selector, /\.cover-card--poster \.cover-frame \{[^}]*aspect-ratio: 2 \/ 3;/)
   assert.match(selector, /\.cover-card--hero \.cover-frame \{[^}]*aspect-ratio: 16 \/ 9;/)

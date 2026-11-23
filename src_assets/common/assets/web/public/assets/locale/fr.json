@@ -402,7 +402,21 @@
     "wait_all": "Continuer le streaming jusqu'à ce que tous les processus de l'application quittent",
     "wait_all_desc": "Cela continuera le streaming jusqu'à ce que tous les processus démarrés par l'application soient terminés. Si non coché, le streaming s'arrêtera lorsque le processus initial de l'application se terminera, même si d'autres processus sont toujours en cours d'exécution.",
     "working_dir": "Démarrer dans",
-    "working_dir_desc": "Le répertoire de démarrage qui doit être passé au processus. Par exemple, certaines applications utilisent le répertoire de démarrage pour rechercher des fichiers de configuration. Si non défini, Sunshine utilisera par défaut le répertoire parent de la commande"
+    "working_dir_desc": "Le répertoire de démarrage qui doit être passé au processus. Par exemple, certaines applications utilisent le répertoire de démarrage pour rechercher des fichiers de configuration. Si non défini, Sunshine utilisera par défaut le répertoire parent de la commande",
+    "cover_style_title": "Style de couverture",
+    "cover_style_auto": "Suivre le réglage global",
+    "cover_style_tonal": "Dégradé",
+    "cover_style_monogram": "Monogramme",
+    "cover_style_icon": "Icône",
+    "cover_style_editorial": "Magazine",
+    "cover_style_glass": "Verre dépoli",
+    "cover_style_geometric": "Géométrique",
+    "cover_use_generated": "Utiliser une couverture générée",
+    "cover_status_generated": "Générée · {style}",
+    "cover_status_following": "Générée · {style} (réglage global)",
+    "cover_global_title": "Style des couvertures générées",
+    "cover_global_save_failed": "Impossible d’enregistrer le style de couverture",
+    "cover_status_poster": "Comme le portrait"
   },
   "config": {
     "adapter_name": "Nom de l'adaptateur",

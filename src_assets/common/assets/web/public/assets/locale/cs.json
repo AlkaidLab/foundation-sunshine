@@ -402,7 +402,21 @@
     "wait_all": "Pokračujte ve streamování, dokud se neukončí všechny procesy aplikace",
     "wait_all_desc": "Streamování bude pokračovat, dokud nebudou ukončeny všechny procesy spuštěné aplikací. Pokud není zaškrtnuto, streamování se zastaví, jakmile se ukončí počáteční proces aplikace, i když ostatní procesy aplikace stále běží.",
     "working_dir": "Pracovní adresář",
-    "working_dir_desc": "Pracovní adresář, který má být předán procesu. Některé aplikace například používají pracovní adresář k vyhledávání konfiguračních souborů. Pokud není nastaven, bude Sunshine implicitně nastaven na nadřazený adresář příkazu"
+    "working_dir_desc": "Pracovní adresář, který má být předán procesu. Některé aplikace například používají pracovní adresář k vyhledávání konfiguračních souborů. Pokud není nastaven, bude Sunshine implicitně nastaven na nadřazený adresář příkazu",
+    "cover_style_title": "Styl obalu",
+    "cover_style_auto": "Podle globálního",
+    "cover_style_tonal": "Přechod",
+    "cover_style_monogram": "Monogram",
+    "cover_style_icon": "Ikona",
+    "cover_style_editorial": "Časopis",
+    "cover_style_glass": "Matné sklo",
+    "cover_style_geometric": "Geometrický",
+    "cover_use_generated": "Použít vytvořený obal",
+    "cover_status_generated": "Vytvořený · {style}",
+    "cover_status_following": "Vytvořený · {style} (podle globálního)",
+    "cover_global_title": "Styl vytvářených obalů",
+    "cover_global_save_failed": "Styl obalu se nepodařilo uložit",
+    "cover_status_poster": "Jako na výšku"
   },
   "config": {
     "adapter_name": "Název adaptéru",

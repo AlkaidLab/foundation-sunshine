@@ -402,7 +402,21 @@
     "wait_all": "Continuar la transmisión hasta que todos los procesos de la aplicación salgan",
     "wait_all_desc": "Esto continuará transmitiendo hasta que todos los procesos iniciados por la aplicación hayan terminado. Cuando no está marcado, la transmisión se detendrá cuando el proceso inicial de la aplicación se cierre, incluso si otros procesos de aplicación siguen ejecutándose.",
     "working_dir": "Directorio de trabajo",
-    "working_dir_desc": "El directorio de trabajo que debe pasarse al proceso. Por ejemplo, algunas aplicaciones usan el directorio de trabajo para buscar archivos de configuración. Si no se establece, Sunshine se establecerá por defecto en el directorio padre del comando"
+    "working_dir_desc": "El directorio de trabajo que debe pasarse al proceso. Por ejemplo, algunas aplicaciones usan el directorio de trabajo para buscar archivos de configuración. Si no se establece, Sunshine se establecerá por defecto en el directorio padre del comando",
+    "cover_style_title": "Estilo de portada",
+    "cover_style_auto": "Seguir el global",
+    "cover_style_tonal": "Degradado",
+    "cover_style_monogram": "Monograma",
+    "cover_style_icon": "Icono",
+    "cover_style_editorial": "Revista",
+    "cover_style_glass": "Cristal esmerilado",
+    "cover_style_geometric": "Geométrico",
+    "cover_use_generated": "Usar una portada generada",
+    "cover_status_generated": "Generada · {style}",
+    "cover_status_following": "Generada · {style} (global)",
+    "cover_global_title": "Estilo de las portadas generadas",
+    "cover_global_save_failed": "No se pudo guardar el estilo de portada",
+    "cover_status_poster": "Igual que la vertical"
   },
   "config": {
     "adapter_name": "Nombre del adaptador",

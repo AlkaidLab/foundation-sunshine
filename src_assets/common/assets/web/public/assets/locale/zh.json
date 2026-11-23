@@ -402,7 +402,21 @@
     "wait_all": "等待所有应用进程终止",
     "wait_all_desc": "串流将持续到应用启动的所有进程终止。未选中时，串流将在初始应用进程终止时停止，即使其他进程仍在运行。",
     "working_dir": "工作目录",
-    "working_dir_desc": "某些应用靠它查找配置文件。未设置时使用命令所在的目录。"
+    "working_dir_desc": "某些应用靠它查找配置文件。未设置时使用命令所在的目录。",
+    "cover_style_title": "封面风格",
+    "cover_style_auto": "跟随全局",
+    "cover_style_tonal": "渐变",
+    "cover_style_monogram": "字母",
+    "cover_style_icon": "图标",
+    "cover_style_editorial": "杂志",
+    "cover_style_glass": "毛玻璃",
+    "cover_style_geometric": "几何",
+    "cover_use_generated": "改用生成封面",
+    "cover_status_generated": "生成 · {style}",
+    "cover_status_following": "生成 · {style}（跟随全局）",
+    "cover_global_title": "生成封面风格",
+    "cover_global_save_failed": "无法保存封面风格",
+    "cover_status_poster": "同竖版封面"
   },
   "config": {
     "adapter_name": "适配器名称",

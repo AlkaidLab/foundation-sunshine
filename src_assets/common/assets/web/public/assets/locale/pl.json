@@ -402,7 +402,21 @@
     "wait_all": "Kontynuuj przesyłanie strumieniowe, aż wszystkie procesy aplikacji zakończą działanie",
     "wait_all_desc": "Spowoduje to kontynuowanie przesyłania strumieniowego do momentu zakończenia wszystkich procesów uruchomionych przez aplikację. Jeśli opcja nie jest zaznaczona, strumień zostanie zatrzymany po zakończeniu początkowego procesu aplikacji, nawet jeśli inne procesy aplikacji są nadal uruchomione.",
     "working_dir": "Katalog roboczy",
-    "working_dir_desc": "Katalog roboczy, który powinien zostać przekazany do procesu. Na przykład, niektóre aplikacje używają katalogu roboczego do wyszukiwania plików konfiguracyjnych. Jeśli nie zostanie ustawiony, Sunshine domyślnie wybierze katalog nadrzędny polecenia"
+    "working_dir_desc": "Katalog roboczy, który powinien zostać przekazany do procesu. Na przykład, niektóre aplikacje używają katalogu roboczego do wyszukiwania plików konfiguracyjnych. Jeśli nie zostanie ustawiony, Sunshine domyślnie wybierze katalog nadrzędny polecenia",
+    "cover_style_title": "Styl okładki",
+    "cover_style_auto": "Zgodnie z globalnym",
+    "cover_style_tonal": "Gradient",
+    "cover_style_monogram": "Monogram",
+    "cover_style_icon": "Ikona",
+    "cover_style_editorial": "Magazyn",
+    "cover_style_glass": "Matowe szkło",
+    "cover_style_geometric": "Geometryczny",
+    "cover_use_generated": "Użyj wygenerowanej okładki",
+    "cover_status_generated": "Wygenerowana · {style}",
+    "cover_status_following": "Wygenerowana · {style} (zgodnie z globalnym)",
+    "cover_global_title": "Styl generowanych okładek",
+    "cover_global_save_failed": "Nie udało się zapisać stylu okładki",
+    "cover_status_poster": "Jak pionowa"
   },
   "config": {
     "adapter_name": "Nazwa adaptera",

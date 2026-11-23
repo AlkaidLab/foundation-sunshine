@@ -402,7 +402,21 @@
     "wait_all": "Continue streaming until all app processes exit",
     "wait_all_desc": "This will continue streaming until all processes started by the app have terminated. When unchecked, streaming will stop when the initial app process exits, even if other app processes are still running.",
     "working_dir": "Working Directory",
-    "working_dir_desc": "Some applications use it to find configuration files. If not set, the parent directory of the command is used."
+    "working_dir_desc": "Some applications use it to find configuration files. If not set, the parent directory of the command is used.",
+    "cover_style_title": "Cover style",
+    "cover_style_auto": "Follow global",
+    "cover_style_tonal": "Gradient",
+    "cover_style_monogram": "Monogram",
+    "cover_style_icon": "Icon",
+    "cover_style_editorial": "Magazine",
+    "cover_style_glass": "Frosted glass",
+    "cover_style_geometric": "Geometric",
+    "cover_use_generated": "Use a generated cover",
+    "cover_status_generated": "Generated · {style}",
+    "cover_status_following": "Generated · {style} (follows global)",
+    "cover_global_title": "Generated cover style",
+    "cover_global_save_failed": "The cover style could not be saved",
+    "cover_status_poster": "Same as portrait"
   },
   "config": {
     "adapter_name": "Adapter Name",
