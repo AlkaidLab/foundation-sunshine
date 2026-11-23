@@ -152,7 +152,7 @@ namespace platf::pyrowave_windows {
                            << ", blocks=" << reported_count
                            << ", limit=" << video_fec::max_data_shards_per_frame;
         result.blocks = reported_count;
-        result.dropped_oversize = true;
+        result.status = transport_publish_status_e::dropped_oversize;
         return result;
       }
 
@@ -192,7 +192,7 @@ namespace platf::pyrowave_windows {
                            << ", frame=" << frame_number
                            << ", blocks=" << packetized.packets.size()
                            << ", limit=" << video_fec::max_data_shards_per_frame;
-        result.dropped_oversize = true;
+        result.status = transport_publish_status_e::dropped_oversize;
         return result;
       }
 
@@ -212,12 +212,12 @@ namespace platf::pyrowave_windows {
         return pending && pending->pyrowave_pending_replace && pending->channel_data == channel_data;
       });
       if (queue_status == queue_result::full || queue_status == queue_result::stopped) {
-        result.dropped_queue = true;
-        result.queue_stopped = queue_status == queue_result::stopped;
+        result.status = queue_status == queue_result::stopped
+          ? transport_publish_status_e::stopped : transport_publish_status_e::dropped_full;
         return result;
       }
-      result.replaced_pending = queue_status == queue_result::replaced;
-      result.success = true;
+      result.status = queue_status == queue_result::replaced
+        ? transport_publish_status_e::replaced : transport_publish_status_e::queued;
       return result;
     }
     catch (const std::exception &) {
@@ -228,21 +228,5 @@ namespace platf::pyrowave_windows {
       result.result_code = -1;
       return result;
     }
-  }
-
-  transport_publish_result_t
-  publish_transport_frame(
-    std::int64_t frame_number,
-    std::shared_ptr<const std::vector<std::uint8_t>> bitstream,
-    std::size_t packet_boundary,
-    std::uint32_t rtp_timestamp,
-    safe::mail_raw_t::queue_t<video::packet_t> &packets,
-    std::uint64_t channel_data,
-    std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
-    std::optional<platf::frame_pipeline_trace_t> pipeline_trace,
-    const pyrowave::hdr_frame_metadata_t *dynamic_metadata) noexcept {
-    const auto view = bitstream ? std::span<const std::uint8_t>(*bitstream) : std::span<const std::uint8_t> {};
-    return publish_transport_frame(frame_number, view, packet_boundary, rtp_timestamp, packets,
-      channel_data, frame_timestamp, std::move(pipeline_trace), dynamic_metadata);
   }
 }  // namespace platf::pyrowave_windows

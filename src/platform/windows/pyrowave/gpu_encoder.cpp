@@ -480,20 +480,21 @@ namespace platf::pyrowave_windows {
           frame_timestamp,
           std::move(pipeline_trace),
           dynamic_metadata);
-        if (publish_result.dropped_oversize) {
+        if (publish_result.status == transport_publish_status_e::dropped_oversize) {
           perf::record_pyrowave_failure(perf_session_id_, perf::pyrowave_failure_stage_e::packetize);
           return 0;
         }
-        if (publish_result.dropped_queue) {
-          if (!publish_result.queue_stopped) {
-            perf::record_pyrowave_queue_event(perf_session_id_, perf::pyrowave_queue_event_e::dropped_full);
-          }
+        if (publish_result.status == transport_publish_status_e::dropped_full) {
+          perf::record_pyrowave_queue_event(perf_session_id_, perf::pyrowave_queue_event_e::dropped_full);
           return 0;
         }
-        if (publish_result.replaced_pending) {
+        if (publish_result.status == transport_publish_status_e::stopped) {
+          return 0;
+        }
+        if (publish_result.status == transport_publish_status_e::replaced) {
           perf::record_pyrowave_queue_event(perf_session_id_, perf::pyrowave_queue_event_e::replaced_pending);
         }
-        if (!publish_result.success) {
+        if (publish_result.status == transport_publish_status_e::failure) {
           return encode_failure(
             frame_number,
             "transport-packetize",
