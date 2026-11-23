@@ -66,6 +66,8 @@ extern "C" {
   #include <libavutil/hwcontext_d3d11va.h>
 }
   #include "platform/windows/display_device/windows_utils.h"
+#elif defined(__APPLE__)
+  #include <CoreGraphics/CoreGraphics.h>
 #endif
 
 using namespace std::literals;
@@ -106,6 +108,30 @@ namespace video {
     /** Every active display with its mode and HDR state, so a launch that changes either one is not mistaken for the last one. */
     std::string
     desktop_facts() {
+#ifdef __APPLE__
+      uint32_t count = 0;
+      if (CGGetActiveDisplayList(0, nullptr, &count) != kCGErrorSuccess || count == 0) {
+        return "";
+      }
+      std::vector<CGDirectDisplayID> displays(count);
+      if (CGGetActiveDisplayList(count, displays.data(), &count) != kCGErrorSuccess) {
+        return "";
+      }
+      std::sort(displays.begin(), displays.end());
+      std::ostringstream out;
+      for (auto id : displays) {
+        CGDisplayModeRef mode = CGDisplayCopyDisplayMode(id);
+        if (mode) {
+          out << id << ' ' << CGDisplayModeGetPixelWidth(mode) << 'x' << CGDisplayModeGetPixelHeight(mode)
+              << '@' << static_cast<int>(CGDisplayModeGetRefreshRate(mode)) << ';';
+          CGDisplayModeRelease(mode);
+        }
+        else {
+          out << id << " mode?;";
+        }
+      }
+      return out.str();
+#else
       const auto devices { display_device::enum_available_devices() };
       std::unordered_set<std::string> active_ids;
       for (const auto &[id, device] : devices) {
@@ -131,6 +157,7 @@ namespace video {
         out << ' ' << display_device::to_string(device.hdr_state) << ';';
       }
       return out.str();
+#endif
     }
 
     /** The options whose change can change what the probe finds. config::video is only rewritten by parse and by the temporary swap, which forgets the memo. */
@@ -5569,6 +5596,9 @@ namespace video {
     encoder_snapshot::probe_fingerprint_t fingerprint;
 #ifdef _WIN32
     fingerprint.gpus = platf::gpu_signature();
+#elif defined(__APPLE__)
+    const auto adapters = platf::adapter_names();
+    fingerprint.gpus = adapters.empty() ? "Apple Display Engine" : adapters.front();
 #endif
     fingerprint.options = probe_options_digest();
     fingerprint.capture_backend = config::video.capture;
