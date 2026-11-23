@@ -63,7 +63,7 @@ const STATIC_DEFAULT_KEYS = new Set([
 // Values are the host's effective value when the key is absent. Optional AMF values use null: the driver
 // receives no property. The visible Web UI uses an empty option for that state.
 const HOST_DEFAULTS = Object.freeze({
-  locale: 'en', sunshine_name: null, min_log_level: 2, sleep_mode: '0', notify_pre_releases: false, system_tray: true,
+  locale: 'en', sunshine_name: null, min_log_level: 2, sleep_mode: '0', notify_pre_releases: false, pin_prompt: 'fullscreen', system_tray: true,
   stop_on_last_video_session: false, launch_splash: true, controller: true, gamepad: 'auto', usb_forwarding_enabled: false,
   usb_forwarding_port: 0, ds4_back_as_touchpad_click: true, motion_as_ds4: true, touchpad_as_ds4: true,
   enable_dsu_server: false, dsu_server_port: 26760, back_button_timeout: -1, keyboard: true, key_repeat_delay: 500,
@@ -134,6 +134,7 @@ test('host-default table is anchored to the current C++ defaults', () => {
   assert.match(NVENC_HEADER, /int quality_preset = 4;/)
   assert.match(NVENC_HEADER, /bool adaptive_quantization = true;/)
   assert.match(CONFIG_CPP, /true,\s*\/\/ dynamic_resolution_follow_display/)
+  assert.match(CONFIG_CPP, /"fullscreen",\s*\/\/ pin_prompt/)
   assert.match(CONFIG_CPP, /qsv::medium,\s*\/\/ preset/)
   assert.match(CONFIG_CPP, /"superfast"s,\s*\/\/ preset/)
   assert.match(CONFIG_CPP, /std::nullopt,\s*\/\/ enforce_hrd/)

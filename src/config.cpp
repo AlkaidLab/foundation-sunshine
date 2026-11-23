@@ -654,6 +654,7 @@ namespace config {
     50,  // max_log_size_mb - 默认50MB，超过自动轮转
     false,  // notify_pre_releases
     true,  // system_tray
+    "fullscreen",  // pin_prompt
     30,  // session_idle_minutes
     12,  // session_absolute_hours
     7 * 24 * 60,  // session_remember_idle_minutes
@@ -1683,6 +1684,9 @@ namespace config {
     bool_f(vars, "notify_pre_releases", sunshine.notify_pre_releases);
 
     bool_f(vars, "system_tray", sunshine.system_tray);
+
+    // Read by the control panel from the saved file when a pairing request comes (no restart); a value that is not one of the two keeps the default.
+    string_restricted_f(vars, "pin_prompt", sunshine.pin_prompt, { "fullscreen"sv, "panel"sv });
 
     int port = sunshine.port;
     int_between_f(vars, "port"s, port, { 1024 + nvhttp::PORT_HTTPS, 65535 - rtsp_stream::RTSP_SETUP_PORT });

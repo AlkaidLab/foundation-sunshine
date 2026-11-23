@@ -11,6 +11,8 @@ const HOT = {
   nvenc_vdd_force_vsync: 'read from the file at every launch on Windows (nvprefs_common.cpp)',
   // parsed at start (config.cpp) but nothing in the running process reads it afterwards: the About page reads the saved file, so the save is the whole effect
   notify_pre_releases: 'no reader in the running process; the page reads the saved file',
+  // not read by the host at all: the control panel reads the saved file when a pairing request comes (src/config.cpp parses it only to keep the value valid)
+  pin_prompt: 'read from the saved file by the control panel at every pairing request',
   // config::update_config / update_full_config call apply_live_launch_splash: the saved value is in force at the next launch, no restart
   launch_splash: 'applied by config::update_config and update_full_config (apply_live_launch_splash)',
   // (external_endpoints, the public address of the reachability card, is read by apply_config into config::nvhttp since the network overview: clients.cpp and

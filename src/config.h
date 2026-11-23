@@ -303,6 +303,8 @@ namespace config {
     int max_log_size_mb;  // 日志文件最大大小（MB），超过后自动轮转，0=不限制
     bool notify_pre_releases;
     bool system_tray;
+    // Where a pairing request asks for its PIN: "fullscreen" (the control panel's full-screen entry, the default) or "panel" (the control panel's own pairing page).
+    std::string pin_prompt;
     // Web UI session lifetimes. Defaults follow OWASP ASVS 4.0.3 V3.3.2.
     int session_idle_minutes;
     int session_absolute_hours;

@@ -29,7 +29,7 @@ test('every other key waits for the restart, except the ones the host applies at
   setRestartPlatform('')
   const readByHost = keys.filter((key) => read.has(key))
   const hotAndRead = readByHost.filter((id) => !needsRestart(id)).sort()
-  assert.deepEqual(hotAndRead, ['launch_splash', 'notify_pre_releases', 'nvenc_manage_driver_settings', 'nvenc_vdd_force_vsync'].filter((k) => readByHost.includes(k)))
+  assert.deepEqual(hotAndRead, ['launch_splash', 'notify_pre_releases', 'nvenc_manage_driver_settings', 'nvenc_vdd_force_vsync', 'pin_prompt'].filter((k) => readByHost.includes(k)))
   assert.ok(needsRestart('port') && needsRestart('sunshine_name') && needsRestart('upnp') && needsRestart('resolutions'))
   // config::nvhttp.external_endpoints / stun_servers are the startup copy that clients.cpp and confighttp/network.cpp read; a save does not refresh them
   assert.ok(needsRestart('external_endpoints') && needsRestart('stun_servers'))
@@ -49,6 +49,11 @@ test('gamepad applies at once only where the host implements the setter: the nex
 
 test('notify_pre_releases is parsed at start but nothing in the running process reads it: the page reads the saved file', () => {
   assert.equal(needsRestart('notify_pre_releases'), false)
+})
+
+test('pin_prompt is read from the saved file by the control panel at every pairing request: no restart, and the host only keeps its two values valid', () => {
+  assert.equal(needsRestart('pin_prompt'), false)
+  assert.match(host, /string_restricted_f\(vars, "pin_prompt", sunshine\.pin_prompt, \{ "fullscreen"sv, "panel"sv \}\)/)
 })
 
 test('the keys the client decides at launch still wait for the restart: the host copy is the cap, the list or the advertisement', () => {

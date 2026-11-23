@@ -34,6 +34,7 @@ const DEFAULT_TABS = [
       sleep_mode: 0,
       global_prep_cmd: '[]',
       notify_pre_releases: 'disabled',
+      pin_prompt: 'fullscreen',
       stop_on_last_video_session: 'disabled',
       launch_splash: 'enabled',
     },

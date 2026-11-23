@@ -184,6 +184,34 @@ RDP session.
 
       notify_pre_releases = disabled
 
+`pin_prompt <https://localhost:47990/config/#pin_prompt>`__
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+**Description**
+   Where a pairing request asks for its PIN. ``fullscreen`` opens the control panel's full-screen PIN entry;
+   ``panel`` opens the control panel on its own pairing page instead. The control panel reads the saved value
+   each time a client asks to pair, so a change applies to the next request without restarting Sunshine.
+
+**Choices**
+
+.. table::
+   :widths: auto
+
+   ==========     ===========
+   Value          Description
+   ==========     ===========
+   fullscreen     Full-screen PIN entry
+   panel          Enter the PIN on the control panel's pairing page
+   ==========     ===========
+
+**Default**
+   ``fullscreen``
+
+**Example**
+   .. code-block:: text
+
+      pin_prompt = panel
+
 `Input <https://localhost:47990/config/#input>`__
 -------------------------------------------------
 
