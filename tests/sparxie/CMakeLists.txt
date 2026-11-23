@@ -17,6 +17,7 @@ add_executable(sparxie_unit_tests
   ${SPX_ROOT}/src/sparxie/storefront.cpp
   ${SPX_ROOT}/src/sparxie/scan.cpp
   ${SPX_ROOT}/src/sparxie/store.cpp
+  ${SPX_ROOT}/src/sparxie/sparxie_build.cpp
   ${SPX_ROOT}/src/sparxie/settings.cpp
   ${SPX_ROOT}/src/sparxie/hoyo_settings.cpp
   ${SPX_ROOT}/src/sparxie/zzz_extra.cpp
@@ -39,6 +40,7 @@ add_executable(sparxie_unit_tests
   ${CMAKE_CURRENT_LIST_DIR}/test_vendors.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_scan.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_store.cpp
+  ${CMAKE_CURRENT_LIST_DIR}/test_sparxie_generations.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_sparxie_contract.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_settings.cpp
   ${CMAKE_CURRENT_LIST_DIR}/test_hoyo_settings.cpp
@@ -74,6 +76,7 @@ add_executable(sparxie_real_install
   ${SPX_ROOT}/src/sparxie/storefront.cpp
   ${SPX_ROOT}/src/sparxie/scan.cpp
   ${SPX_ROOT}/src/sparxie/store.cpp
+  ${SPX_ROOT}/src/sparxie/sparxie_build.cpp
   ${SPX_ROOT}/src/sparxie/settings.cpp
   ${SPX_ROOT}/src/sparxie/hoyo_settings.cpp
   ${SPX_ROOT}/src/sparxie/zzz_extra.cpp
@@ -106,6 +109,7 @@ add_executable(sparxie_ui_fixtures
   ${SPX_ROOT}/src/sparxie/storefront.cpp
   ${SPX_ROOT}/src/sparxie/scan.cpp
   ${SPX_ROOT}/src/sparxie/store.cpp
+  ${SPX_ROOT}/src/sparxie/sparxie_build.cpp
   ${SPX_ROOT}/src/sparxie/settings.cpp
   ${SPX_ROOT}/src/sparxie/hoyo_settings.cpp
   ${SPX_ROOT}/src/sparxie/zzz_extra.cpp

@@ -248,7 +248,7 @@ test('an edit says what failed and why: 保存失败：<reason>, 创建失败：
   }
   assert.equal(failureText(COPYZH, COPYZH.saveFailed, { code: 'apps_write_failed' }), '保存失败：无法保存应用列表')
   // the codes the host can answer with: its sources are the list
-  const sources = ['src/sparxie/host.cpp', 'src/sparxie/store.cpp', 'src/sparxie/region.cpp', 'src/sparxie/scan.cpp', 'src/sparxie/settings.cpp', 'src/sparxie/user_session.cpp', 'src/confighttp/sparxie.cpp']
+  const sources = ['src/sparxie/host.cpp', 'src/sparxie/store.cpp', 'src/sparxie/sparxie_build.cpp', 'src/sparxie/region.cpp', 'src/sparxie/scan.cpp', 'src/sparxie/settings.cpp', 'src/sparxie/user_session.cpp', 'src/confighttp/sparxie.cpp']
   const codes = new Set()
   for (const f of sources) {
     const path = new URL(`../../../../../${f}`, import.meta.url)
