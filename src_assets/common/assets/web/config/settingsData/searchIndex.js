@@ -8,6 +8,7 @@ export const SEARCH_INDEX = [
   {"id":"sunshine_name","title":"config.sunshine_name","path":["tabs.general"],"icon":"settings","keywords":"sunshine_name sunshine name","route":"config","params":{"tab":"general","focus":"sunshine_name"}},
   {"id":"sleep_mode","title":"config.sleep_mode","path":["tabs.general"],"icon":"settings","keywords":"sleep_mode sleep mode","route":"config","params":{"tab":"general","focus":"sleep_mode"}},
   {"id":"notify_pre_releases","title":"config.notify_pre_releases","path":["tabs.general"],"icon":"settings","keywords":"notify_pre_releases notify pre releases","route":"config","params":{"tab":"general","focus":"notify_pre_releases"}},
+  {"id":"pin_prompt","title":"config.pin_prompt","path":["tabs.general"],"icon":"settings","keywords":"pin_prompt pin prompt","route":"config","params":{"tab":"general","focus":"pin_prompt"}},
   {"id":"system_tray","title":"config.system_tray","path":["tabs.general"],"icon":"settings","keywords":"system_tray system tray","route":"config","params":{"tab":"general","focus":"system_tray"}},
   {"id":"stop_on_last_video_session","title":"config.stop_on_last_video_session","path":["tabs.general"],"icon":"settings","keywords":"stop_on_last_video_session stop on last video session","route":"config","params":{"tab":"general","focus":"stop_on_last_video_session"}},
   {"id":"launch_splash","title":"config.launch_splash","path":["tabs.general"],"icon":"settings","keywords":"launch_splash launch splash","route":"config","params":{"tab":"general","focus":"launch_splash"}},

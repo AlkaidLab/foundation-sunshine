@@ -8,6 +8,7 @@ export const ALIASES = Object.freeze({
   locale: ['语言', '界面语言', '中文', '英文', 'language', 'interface language'],
   sunshine_name: ['主机名', '电脑名称', '计算机名', '设备名称', 'host name', 'computer name', 'pc name'],
   sleep_mode: ['睡眠', '休眠', '待机', '唤醒', '电源', 'sleep', 'hibernate', 'standby', 'wake', 'power'],
+  pin_prompt: ['配对', '全屏', '输入 pin', 'pairing', 'pin', 'fullscreen', 'full screen', 'control panel'],
   notify_pre_releases: ['测试版', '预览版', '更新通知', 'beta', 'preview', 'update notification'],
   system_tray: ['托盘图标', '任务栏图标', '系统托盘', 'tray icon', 'taskbar icon'],
   stop_on_last_video_session: ['自动结束', '断开后关闭', '结束串流', '退出游戏', 'auto stop', 'end stream', 'quit after disconnect'],
