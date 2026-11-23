@@ -83,6 +83,10 @@ namespace nvhttp::display_control {
     try {
       json displays_array = json::array();
 
+#ifndef _WIN32
+      std::vector<std::string> display_names;
+#endif
+
 #ifdef _WIN32
       {
         std::lock_guard lock { display_cache.mutex };
@@ -98,7 +102,6 @@ namespace nvhttp::display_control {
         }
       }
 #elif defined(__linux__)
-      std::vector<std::string> display_names;
       for (auto mem_type : { platf::mem_type_e::vaapi, platf::mem_type_e::cuda, platf::mem_type_e::system }) {
         display_names = platf::display_names(mem_type);
         if (!display_names.empty()) break;
