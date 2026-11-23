@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -20,7 +21,7 @@ namespace {
 
   std::vector<key_event_t>
   events_for(const std::u16string &text) {
-    return interleaved_key_events(reinterpret_cast<const std::uint16_t *>(text.data()), text.size());
+    return interleaved_key_events(std::span<const char16_t>(text));
   }
 
   /// The highest number of units held down at once.
@@ -72,8 +73,7 @@ TEST(UnicodeInput, SurrogatePairStaysTogetherInOrder) {
 }
 
 TEST(UnicodeInput, NoUnitsMeansNoEvents) {
-  EXPECT_TRUE(interleaved_key_events(nullptr, 0).empty());
-  EXPECT_TRUE(interleaved_key_events(nullptr, 5).empty());
+  EXPECT_TRUE(interleaved_key_events(std::span<const char16_t>()).empty());
   EXPECT_TRUE(events_for(u"").empty());
 }
 
@@ -155,4 +155,63 @@ TEST(UnicodeInput, ReceiverSeesNoOverlapForMixedCjkAndSurrogateText) {
   EXPECT_EQ(events.size(), text.size() * 2);
   EXPECT_EQ(max_held(events), 1);
   EXPECT_GT(max_held(legacy_order(text)), 1);
+}
+
+TEST(UnicodeInput, GeneratorAcceptsPlainUint16Units) {
+  const std::vector<std::uint16_t> raw = { 0x4F60, 0xD83D, 0xDE00 };
+  EXPECT_EQ(interleaved_key_events(std::span<const std::uint16_t>(raw)), events_for(u"\u4F60\U0001F600"));
+}
+
+#ifdef _WIN32
+// WCHAR is wchar_t, 16 bits wide on Windows: the production path hands it over as it is.
+TEST(UnicodeInput, GeneratorAcceptsNativeWideCharacters) {
+  const std::vector<wchar_t> wide = { L'\x4F60', L'\xD83D', L'\xDE00' };
+  EXPECT_EQ(interleaved_key_events(std::span<const wchar_t>(wide.data(), wide.size())), events_for(u"\u4F60\U0001F600"));
+}
+#endif
+
+namespace {
+  using platf::win_unicode::pending_key_ups;
+}
+
+TEST(UnicodeInput, NothingIsOwedWhenTheWholeRunWasInjected) {
+  auto events = events_for(u"hello");
+  EXPECT_TRUE(pending_key_ups(events, events.size()).empty());
+  EXPECT_TRUE(pending_key_ups(events, events.size() + 7).empty());
+}
+
+TEST(UnicodeInput, NothingIsOwedWhenNothingOrWholeCharactersWereInjected) {
+  auto events = events_for(u"abc");
+  EXPECT_TRUE(pending_key_ups(events, 0).empty());
+  EXPECT_TRUE(pending_key_ups(events, 2).empty());  // a down and its up
+  EXPECT_TRUE(pending_key_ups(events, 4).empty());
+}
+
+TEST(UnicodeInput, KeyDownInjectedWithoutItsUpIsReleased) {
+  auto events = events_for(u"abc");
+  // Partial injection ended right after the down of 'b'.
+  std::vector<key_event_t> expected = { { 'b', true } };
+  EXPECT_EQ(pending_key_ups(events, 3), expected);
+  // ... and after the down of the first unit of a surrogate pair.
+  auto pair = events_for(u"\U0001F600");
+  std::vector<key_event_t> expected_pair = { { 0xD83D, true } };
+  EXPECT_EQ(pending_key_ups(pair, 1), expected_pair);
+}
+
+TEST(UnicodeInput, RetryOfTheRemainderPlusReleaseNeverLeavesAKeyDown) {
+  const std::u16string text = u"你好\U0001F600a";
+  auto events = events_for(text);
+  for (std::size_t cut = 0; cut <= events.size(); cut++) {
+    // Prefix that went out, then the owed key-ups: the final state has no key held.
+    std::vector<key_event_t> sent(events.begin(), events.begin() + cut);
+    for (const auto &up : pending_key_ups(events, cut)) {
+      sent.push_back(up);
+    }
+    int held = 0;
+    for (const auto &event : sent) {
+      held += event.up ? -1 : 1;
+    }
+    EXPECT_EQ(held, 0) << "cut at " << cut;
+    EXPECT_LE(max_held(sent), 1) << "cut at " << cut;
+  }
 }
