@@ -129,7 +129,7 @@ namespace streaming {
       // re-evaluated per frame against that frame's packet count, so its equilibrium jitters by
       // several points on streams with varying frame sizes. Genuine escalation jumps far more
       // than this, so hold raises to a clear step while drops stay immediate.
-      const auto minimum_raise = std::max(5, applied / 5);
+      const auto minimum_raise = std::max(5, (applied + 4) / 5);
       if (delta > 0 ? delta < minimum_raise : delta > -2) return {};
     }
     if (attempted_ == next && (now < attempt_ms_ || now - attempt_ms_ < update_interval_ms)) return {};

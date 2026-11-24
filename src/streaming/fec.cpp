@@ -171,6 +171,11 @@ namespace video_fec {
     if (last_report_ms_ >= 0 && (delta != 1 || now - last_report_ms_ > feedback_timeout_ms)) {
       resume_since_ms_ = now;
       loss_window_ = {};  // Do not combine observations across an unknown gap.
+      // The clean and decay clocks of the discarded history must not count the unknown
+      // interval: resume as protected by the held epoch and demand the whole wait again
+      // before the next release.
+      clean_since_ms_ = -1;
+      released_ms_ = -1;
     }
     loss_window_.record(data, missing, now);
     last_sequence_ = sequence;
@@ -233,10 +238,15 @@ namespace video_fec {
         return 0;
       }
       else {
+        if (epoch_loss_ == 0) {
+          // Started clean and stayed clean: staying at zero protects nothing and is not a
+          // release, so a first loss must not pay the premature-release penalty.
+          return 0;
+        }
         // The loss history has expired. Keep the protection that silenced the loss until the
         // stream has stayed clean for the extra time earlier premature releases earned.
         if (clean_since_ms_ < 0) clean_since_ms_ = now;
-        if (epoch_loss_ > 0 && now - clean_since_ms_ < release_delay_ms_) {
+        if (now - clean_since_ms_ < release_delay_ms_) {
           loss = epoch_loss_;
         }
         else {

@@ -338,6 +338,15 @@ TEST(VideoFecBudget, RaisesNeedAClearStepWhileDropsStayImmediate) {
   budget.commit(*dropped);
   budget.observe_fec(24, 6000);
   EXPECT_FALSE(budget.pending(6000));  // a one-point drop is still held
+  // The relative floor rounds up: at 29% a raise needs six points, so 29→34 is jitter.
+  streaming::bitrate_budget_t mid(10000, 0, 0, 0, 29, true);
+  mid.observe_fec(34, 0);
+  mid.observe_fec(34, 1000);
+  EXPECT_FALSE(mid.pending(1000));
+  mid.observe_fec(35, 2000);
+  EXPECT_FALSE(mid.pending(2000));  // still the held 34
+  mid.observe_fec(35, 3000);
+  ASSERT_TRUE(mid.pending(3000));  // 29→35 clears the rounded-up bar
   // The floor grows with the ratio: at 50% a raise needs ten points.
   streaming::bitrate_budget_t high(10000, 0, 0, 0, 50, true);
   high.observe_fec(55, 0);
@@ -393,6 +402,7 @@ TEST(VideoFec, LossDuringTheWaitRestartsTheCleanClock) {
   control.initialize(20, true, 50);
   unsigned seq = 1;
   ASSERT_TRUE(control.report(seq++, 10000, 3000, 0));
+  EXPECT_GT(control.percentage(100, 2, 1000), 0);  // arms the epoch the frame thread would query
   for (std::int64_t t = 1000; t <= 10000; t += 1000)
     ASSERT_TRUE(control.report(seq++, 10000, 0, t));
   EXPECT_EQ(control.percentage(100, 2, 10000), 0);
@@ -425,6 +435,7 @@ TEST(VideoFec, SafeReleasesHalveTheExtraWait) {
   control.initialize(20, true, 50);
   unsigned seq = 1;
   ASSERT_TRUE(control.report(seq++, 10000, 3000, 0));
+  EXPECT_GT(control.percentage(100, 2, 1000), 0);  // arms the epoch the frame thread would query
   for (std::int64_t t = 1000; t <= 10000; t += 1000)
     ASSERT_TRUE(control.report(seq++, 10000, 0, t));
   EXPECT_EQ(control.percentage(100, 2, 10000), 0);
@@ -453,6 +464,50 @@ TEST(VideoFec, SafeReleasesHalveTheExtraWait) {
     ASSERT_TRUE(control.report(seq++, 10000, 0, t));
   ASSERT_TRUE(control.report(seq++, 10000, 0, 71500));
   EXPECT_EQ(control.percentage(100, 2, 71500), 0);  // released after only 5 clean seconds
+}
+
+// A feedback gap must not count the unknown interval toward the clean wait: the release
+// clocks restart when the history is discarded.
+TEST(VideoFec, FeedbackGapRestartsTheCleanWait) {
+  video_fec::controller_t control;
+  control.initialize(20, true, 50);
+  unsigned seq = 1;
+  ASSERT_TRUE(control.report(seq++, 10000, 3000, 0));
+  EXPECT_GT(control.percentage(100, 2, 1000), 0);  // arms the epoch the frame thread would query
+  for (std::int64_t t = 1000; t <= 10000; t += 1000)
+    ASSERT_TRUE(control.report(seq++, 10000, 0, t));
+  EXPECT_EQ(control.percentage(100, 2, 10000), 0);
+  ASSERT_TRUE(control.report(seq++, 10000, 2000, 12000));  // premature: wait 20 s next time
+  EXPECT_GT(control.percentage(100, 2, 12000), 0);
+  for (std::int64_t t = 13000; t <= 21000; t += 1000)
+    ASSERT_TRUE(control.report(seq++, 10000, 0, t));
+  ASSERT_TRUE(control.report(seq++, 10000, 0, 22000));
+  EXPECT_GT(control.percentage(100, 2, 22000), 0);  // clean read: the wait starts
+  ASSERT_TRUE(control.report(seq++, 10000, 0, 30500));  // feedback dies for 8.5 s: unknown, not clean
+  EXPECT_EQ(control.percentage(100, 2, 30500), 20);  // the resume window holds the fallback
+  for (std::int64_t t = 31500; t <= 40500; t += 1000)
+    ASSERT_TRUE(control.report(seq++, 10000, 0, t));
+  EXPECT_GT(control.percentage(100, 2, 40500), 0);  // the wait restarts, not credited from 22 s
+  for (std::int64_t t = 41500; t <= 49500; t += 1000)
+    ASSERT_TRUE(control.report(seq++, 10000, 0, t));
+  EXPECT_GT(control.percentage(100, 2, 49500), 0);  // nine clean seconds since the restart
+  ASSERT_TRUE(control.report(seq++, 10000, 0, 50500));
+  EXPECT_EQ(control.percentage(100, 2, 50500), 0);  // released ten seconds after the restart
+}
+
+// A host whose default ratio is zero never holds protection, so its first loss must not pay
+// the premature-release penalty for a "release" of nothing.
+TEST(VideoFec, StartupZeroIsNotARelease) {
+  video_fec::controller_t control;
+  control.initialize(0, true, 50);
+  ASSERT_TRUE(control.report(1, 10000, 0, 0));
+  EXPECT_EQ(control.percentage(100, 2, 0), 0);
+  ASSERT_TRUE(control.report(2, 10000, 2000, 1000));  // the first loss
+  EXPECT_GT(control.percentage(100, 2, 1000), 0);  // arms without any penalty
+  for (std::int64_t t = 2000; t <= 10000; t += 1000)
+    ASSERT_TRUE(control.report(static_cast<unsigned>(t / 1000 + 2), 10000, 0, t));
+  ASSERT_TRUE(control.report(13, 10000, 0, 11000));
+  EXPECT_EQ(control.percentage(100, 2, 11000), 0);  // released after the plain window, not 20 s
 }
 
 // ---- the host's bitrate ceiling is live (tray 码率上限): a running session's budget follows it ----
