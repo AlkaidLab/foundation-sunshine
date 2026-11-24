@@ -36,6 +36,12 @@ namespace remote_connect {
     std::optional<bytes_t>
     issue(std::chrono::seconds ttl);
 
+    // Non-consuming, constant-time comparison for a future challenge. This
+    // is not authorization and must be coordinated with claim/cancel by the
+    // owning state machine under its own lock.
+    bool
+    matches(const bytes_t &token);
+
     // Atomic single-use claim, bound to the provided public-key bytes.
     // The caller is responsible for authenticating these bytes before calling.
     // A failed token/key check does not consume an unexpired valid token.

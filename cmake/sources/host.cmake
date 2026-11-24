@@ -89,6 +89,7 @@ set(SUNSHINE_HOST_SOURCES
     src/remote_connect/easytier.cpp src/remote_connect/easytier.h
     src/remote_connect/enrollment_token.cpp src/remote_connect/enrollment_token.h
     src/remote_connect/enrollment_proof.cpp src/remote_connect/enrollment_proof.h src/remote_connect/enrollment_proof_internal.h
+    src/remote_connect/enrollment_session.cpp src/remote_connect/enrollment_session.h
     src/remote_connect/invite.cpp src/remote_connect/invite.h
     src/remote_connect/pairing.cpp src/remote_connect/pairing.h
     src/remote_connect/service.cpp src/remote_connect/service.h

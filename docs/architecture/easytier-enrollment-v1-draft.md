@@ -171,6 +171,22 @@ consumption nor legacy cancellation is tied to an invitation generation. The
 protocol above cannot be activated until generation-aware coordination and
 the actual bootstrap-source classification have been implemented and tested.
 
+An isolated in-memory `enrollment_session_t` experiment consumes the token
+earlier than step 5: immediately after a valid proof, before owner approval.
+It holds the token store privately under the session lock and exposes only a
+confirmed-but-not-authorized state, with no credential or commit API. This
+fails closed but lets a copied QR and valid proof consume the invitation and
+cause denial of service before approval. A future transactional protocol must
+review and reconcile this behavior with steps 3–6 before any endpoint uses it.
+The experiment checks deadlines on operations; future integration must also
+schedule teardown so an idle expired challenge's ephemeral private key is
+erased promptly. The experiment does not authenticate the caller-provided local
+connection ID or provide the required TLS, administrator identity, durable
+storage, revocation, or EasyTier activation.
+Its numeric invitation generation is unique only within the current object;
+any future network API needs a separate unpredictable server/session epoch so
+a stale administrative request cannot match a new invitation after restart.
+
 ## Android key storage and scope
 
 VPlus currently has `minSdk 22`. The Android Keystore `KeyGenParameterSpec`

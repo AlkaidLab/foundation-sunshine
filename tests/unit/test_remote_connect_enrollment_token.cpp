@@ -40,6 +40,19 @@ namespace {
     EXPECT_TRUE(store.claim(*token, device_key()));
   }
 
+  TEST(RemoteEnrollmentToken, NonConsumingMatchDoesNotAuthorizeOrConsume) {
+    store_t store;
+    auto token = store.issue(120s);
+    ASSERT_TRUE(token);
+    auto other_token = *token;
+    other_token[0] ^= 0x80;
+    EXPECT_FALSE(store.matches(other_token));
+    EXPECT_TRUE(store.matches(*token));
+    EXPECT_TRUE(store.matches(*token));
+    EXPECT_TRUE(store.claim(*token, device_key()));
+    EXPECT_FALSE(store.matches(*token));
+  }
+
   TEST(RemoteEnrollmentToken, ExpiresAtTheDeadlineUsingMonotonicTime) {
     auto now = store_t::clock_t::time_point {};
     store_t store([&now] { return now; });

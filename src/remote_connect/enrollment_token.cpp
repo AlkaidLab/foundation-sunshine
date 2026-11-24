@@ -84,6 +84,24 @@ namespace remote_connect {
     return claim_t {device_public_key};
   }
 
+  bool
+  enrollment_token_store_t::matches(const bytes_t &token) {
+    std::lock_guard lock(mutex_);
+    if (!active_) return false;
+    if (clock_source_() >= expires_at_) {
+      clear_locked();
+      return false;
+    }
+    bytes_t digest {};
+    if (!digest_token(token, digest)) {
+      clear_locked();
+      return false;
+    }
+    const bool result = CRYPTO_memcmp(token_digest_.data(), digest.data(), digest.size()) == 0;
+    OPENSSL_cleanse(digest.data(), digest.size());
+    return result;
+  }
+
   void
   enrollment_token_store_t::cancel() {
     std::lock_guard lock(mutex_);
