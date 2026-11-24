@@ -1,4 +1,5 @@
 import { ref } from 'vue'
+import { NVENC_DEFAULTS } from '../config/configTabs.js'
 import { trackEvents } from '../config/telemetry.js'
 import { hostData, keepKey } from './hostData.js'
 import { apiFetch, apiJson } from '../utils/apiFetch.js'
@@ -155,10 +156,10 @@ const DEFAULT_TABS = [
         id: 'nv',
         name: 'NVIDIA NVENC Encoder',
         options: {
-          nvenc_preset: 4,
+          nvenc_preset: NVENC_DEFAULTS.nvenc_preset,
           nvenc_frame_budget_guard: 'enabled',
           nvenc_twopass: 'quarter_res',
-          nvenc_spatial_aq: 'enabled',
+          nvenc_spatial_aq: NVENC_DEFAULTS.nvenc_spatial_aq,
           nvenc_vbv_increase: 0,
           nvenc_lookahead_depth: 0,
           nvenc_lookahead_level: 'disabled',
@@ -458,6 +459,7 @@ export function useConfig() {
     configData.fec_auto = normalizeEnabledDisabledValue(configData.fec_auto)
     configData.mat_live = normalizeEnabledDisabledValue(configData.mat_live)
     configData.nvenc_manage_driver_settings = normalizeEnabledDisabledValue(configData.nvenc_manage_driver_settings)
+    configData.nvenc_spatial_aq = normalizeEnabledDisabledValue(configData.nvenc_spatial_aq)
     configData.nvenc_vdd_force_vsync = normalizeEnabledDisabledValue(configData.nvenc_vdd_force_vsync)
     config.value = configData
 

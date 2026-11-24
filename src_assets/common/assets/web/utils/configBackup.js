@@ -1,3 +1,4 @@
+import { NVENC_DEFAULTS } from '../config/configTabs.js'
 import { SEARCH_INDEX } from '../config/settingsData/index.js'
 import { SETTING_META, isChanged, normalizeValue } from 'foundation-ui/settings/index.js'
 
@@ -77,15 +78,17 @@ export function importPlan(lines, config = {}) {
   return plan
 }
 
+const differenceDefault = (key) => NVENC_DEFAULTS[key] ?? SETTING_META[key].def
+
 /** The settings whose value is not the default, in the order of the search index (the order of the pages): [{ key, value, def, place: { tab, sub?, focus } | null, title }]. */
 export function differences(config = {}) {
   const order = new Map(SEARCH_INDEX.map((e, i) => [e.id, i]))
   return Object.keys(SETTING_META)
-    .filter((key) => isChanged(key, config[key]))
+    .filter((key) => isChanged(key, config[key], differenceDefault(key)))
     .sort((a, b) => (order.get(a) ?? 1e6) - (order.get(b) ?? 1e6) || a.localeCompare(b))
     .map((key) => {
       const hit = SEARCH_INDEX.find((e) => e.id === key)
-      const def = SETTING_META[key].def
+      const def = differenceDefault(key)
       return { key, value: String(config[key]), def: def === null || def === undefined ? '' : String(def), place: hit ? { tab: hit.params.tab, ...(hit.params.sub ? { sub: hit.params.sub } : {}), focus: key } : null, title: hit ? hit.title : `config.${key}` }
     })
 }
