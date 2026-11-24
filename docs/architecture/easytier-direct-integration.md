@@ -21,6 +21,8 @@ An unanswered CLI request does not prove local-user isolation or working streami
 
 `tools/easytier-offline-credential-probe.py --core <path> --cli <path>` exercises the public-only file approach with two disposable Windows instances. It uses a temporary network secret and an ephemeral TCP listener on the host's selected local interface, and briefly exposes a test-only RPC during initial credential generation. It stops both processes and removes their temporary credential file on exit. Run it only on a test machine; successful output does not validate a secure enrollment protocol.
 
+`tools/easytier-direct-check/three_node.py --core <path> --cli <path>` uses the verified 2.6.4 Windows binaries to test bidirectional TCP and UDP through a relay-only topology, with an A-B peer connection, and after that connection is cut. It checks relay counters under both permissive and P2P-only policies. The local TCP splice is a fault injector; the test does not prove a physical direct path or rule out transient relay during route changes.
+
 ## Implementation order
 
 1. Reproduce credential creation, connection, expiry, revocation and reconnection with a pinned upstream core and Android JNI. Verify private key storage, transport and deletion, plus a defensible Windows RPC boundary. Evaluate the public-key-only file path and its restart and compatibility costs; do not assume it is a supported public API. Do not ship a shared-secret fallback as per-device access.
