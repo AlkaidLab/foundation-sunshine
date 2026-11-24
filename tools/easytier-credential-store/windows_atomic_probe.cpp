@@ -28,6 +28,9 @@
 namespace {
   namespace fs = std::filesystem;
   constexpr DWORD symlink_allow_unprivileged = 0x2;
+  constexpr DWORD crash_before_code = 0xc0d10001;
+  constexpr DWORD crash_after_code = 0xc0d10002;
+  constexpr std::string_view crash_child_value = "crash-child-public-data";
 
   struct handle_t {
     HANDLE value = INVALID_HANDLE_VALUE;
@@ -328,30 +331,34 @@ namespace {
       return {data.data(), read_bytes};
     }
 
-    enum class fault_t { none, short_write, flush_failure, replacement_failure, swap_target };
+    enum class fault_t { none, short_write, flush_failure, replacement_failure, post_rename_verify_failure, swap_target };
+    enum class replace_result_t { not_committed, committed_verified, indeterminate };
 
-    bool replace(const std::wstring &leaf, std::string_view content, fault_t fault) {
+    replace_result_t replace(const std::wstring &leaf, std::string_view content, fault_t fault) {
+      bool rename_attempted = false;
       try {
         auto old = open(leaf, FILE_READ_ATTRIBUTES | READ_CONTROL, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, OPEN_EXISTING);
         const auto original_id = check_file(old.value, leaf);
         const std::wstring temp_leaf = L"candidate-" + random_hex() + L".tmp";
         auto candidate = open(temp_leaf, GENERIC_WRITE | FILE_READ_ATTRIBUTES | READ_CONTROL | DELETE, 0, CREATE_NEW, &security.attributes);
         owned.emplace(temp_leaf, id_of(candidate.value));
-        bool renamed = false;
         struct discard_t {
           HANDLE handle;
-          bool &renamed;
+          bool &rename_attempted;
           ~discard_t() {
-            if (!renamed) { FILE_DISPOSITION_INFO info {TRUE}; SetFileInformationByHandle(handle, FileDispositionInfo, &info, sizeof(info)); }
+            // Once the OS rename has been attempted, the final namespace may
+            // be uncertain. Never blindly mark this handle for deletion: it
+            // could now be the published target. Later cleanup checks exact IDs.
+            if (!rename_attempted) { FILE_DISPOSITION_INFO info {TRUE}; SetFileInformationByHandle(handle, FileDispositionInfo, &info, sizeof(info)); }
           }
-        } discard {candidate.value, renamed};
+        } discard {candidate.value, rename_attempted};
         check_file(candidate.value, temp_leaf);
         const DWORD wanted = static_cast<DWORD>(content.size());
         const DWORD submitted = fault == fault_t::short_write ? wanted / 2 : wanted;
         DWORD written = 0;
-        if (!WriteFile(candidate.value, content.data(), submitted, &written, nullptr) || written != wanted) return false;
-        if (fault == fault_t::flush_failure || !FlushFileBuffers(candidate.value)) return false;
-        if (fault == fault_t::replacement_failure) return false;
+        if (!WriteFile(candidate.value, content.data(), submitted, &written, nullptr) || written != wanted) return replace_result_t::not_committed;
+        if (fault == fault_t::flush_failure || !FlushFileBuffers(candidate.value)) return replace_result_t::not_committed;
+        if (fault == fault_t::replacement_failure) return replace_result_t::not_committed;
         if (fault == fault_t::swap_target) {
           const std::wstring saved = L"prior-owned.json";
           if (!MoveFileExW(path(leaf).c_str(), path(saved).c_str(), MOVEFILE_WRITE_THROUGH)) fail("Move own original for swap test");
@@ -360,7 +367,7 @@ namespace {
           create(leaf, "attacker-sentinel");
         }
         auto current = open(leaf, FILE_READ_ATTRIBUTES | READ_CONTROL, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, OPEN_EXISTING);
-        if (!(check_file(current.value, leaf) == original_id)) return false;
+        if (!(check_file(current.value, leaf) == original_id)) return replace_result_t::not_committed;
         // Close our destination observation handles before attempting rename.
         // The destination can still be swapped in the ensuing gap; this
         // experiment makes no same-identity adversary guarantee.
@@ -381,20 +388,24 @@ namespace {
         rename->RootDirectory = nullptr;
         rename->FileNameLength = static_cast<DWORD>(bytes);
         std::memcpy(rename->FileName, destination.data(), bytes);
+        const auto candidate_id = id_of(candidate.value);
+        rename_attempted = true;
         if (!SetFileInformationByHandle(candidate.value, FileRenameInfo, rename, static_cast<DWORD>(storage.size()))) {
           const auto error = GetLastError();
           std::cerr << "Handle rename failed (Windows error " << error << ")\n";
-          return false;
+          return replace_result_t::indeterminate;
         }
-        renamed = true;
-        const auto new_id = id_of(candidate.value);
+        // Record the new target identity without allocating a map node: if a
+        // subsequent check fails the operation is already committed/unknown.
+        owned.at(leaf) = candidate_id;
         owned.erase(temp_leaf);
-        owned.insert_or_assign(leaf, new_id);
-        return true;
+        if (fault == fault_t::post_rename_verify_failure) return replace_result_t::indeterminate;
+        if (!(check_file(candidate.value, leaf) == candidate_id)) return replace_result_t::indeterminate;
+        return replace_result_t::committed_verified;
       }
       catch (const std::exception &error) {
         std::cerr << "Replacement rejected: " << error.what() << "\n";
-        return false;
+        return rename_attempted ? replace_result_t::indeterminate : replace_result_t::not_committed;
       }
     }
 
@@ -495,9 +506,159 @@ namespace {
     std::cout << "PASS: owned reparse directory is rejected by ancestor validation\n";
     return true;
   }
+
+  bool generated_leaf(const std::wstring &value, std::wstring_view prefix, std::wstring_view suffix) {
+    if (!value.starts_with(prefix) || !value.ends_with(suffix) || value.size() != prefix.size() + 32 + suffix.size()) return false;
+    return std::all_of(value.begin() + static_cast<std::ptrdiff_t>(prefix.size()),
+                       value.end() - static_cast<std::ptrdiff_t>(suffix.size()),
+                       [](wchar_t c) { return (c >= L'0' && c <= L'9') || (c >= L'a' && c <= L'f'); });
+  }
+
+  int crash_child(int argc, char **argv) {
+    if (argc != 8) return 20;
+    try {
+      const std::string_view mode(argv[1]);
+      if (mode != "--crash-before" && mode != "--crash-after") return 21;
+      const auto root_raw = static_cast<std::uintptr_t>(std::stoull(argv[2]));
+      const auto file_raw = static_cast<std::uintptr_t>(std::stoull(argv[3]));
+      const file_id_t expected {static_cast<DWORD>(std::stoul(argv[4])), static_cast<DWORD>(std::stoul(argv[5])), static_cast<DWORD>(std::stoul(argv[6]))};
+      if (std::string_view(argv[7]) != "owned-test-only") return 22;
+      const HANDLE root_handle = reinterpret_cast<HANDLE>(root_raw);
+      const HANDLE candidate_handle = reinterpret_cast<HANDLE>(file_raw);
+      if (!normal_directory(root_handle)) return 23;
+      security_t security;
+      security.verify(root_handle);
+      const auto root_final = final_name(root_handle);
+      if (!root_final.starts_with(L"\\\\?\\")) return 24;
+      const fs::path root = fs::path(root_final.substr(4)).lexically_normal();
+      std::wstring temp(32768, L'\0');
+      const DWORD temp_size = GetTempPathW(static_cast<DWORD>(temp.size()), temp.data());
+      if (temp_size == 0 || temp_size >= temp.size()) return 25;
+      temp.resize(temp_size);
+      const fs::path base(trim_trailing_slashes(fs::absolute(fs::path(temp)).lexically_normal().wstring()));
+      if (CompareStringOrdinal(root.parent_path().c_str(), -1, base.c_str(), -1, TRUE) != CSTR_EQUAL ||
+          !generated_leaf(root.filename().wstring(), L"sunshine-et-atomic-probe-", L"")) return 26;
+      const auto candidate_final = final_name(candidate_handle);
+      if (!candidate_final.starts_with(L"\\\\?\\")) return 27;
+      const fs::path candidate(candidate_final.substr(4));
+      if (candidate.parent_path() != root || !generated_leaf(candidate.filename().wstring(), L"candidate-", L".tmp")) return 28;
+      const auto candidate_info = information(candidate_handle);
+      if ((candidate_info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) ||
+          candidate_info.nNumberOfLinks != 1 || candidate_info.dwVolumeSerialNumber != information(root_handle).dwVolumeSerialNumber) return 29;
+      security.verify(candidate_handle);
+      const auto target = root / L"credentials.json";
+      handle_t observed(CreateFileW(target.c_str(), FILE_READ_ATTRIBUTES | READ_CONTROL,
+                                   FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING,
+                                   FILE_FLAG_OPEN_REPARSE_POINT, nullptr));
+      if (!observed.valid() || !(id_of(observed.value) == expected)) return 30;
+      const auto target_info = information(observed.value);
+      if ((target_info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) ||
+          target_info.nNumberOfLinks != 1 || target_info.dwVolumeSerialNumber != candidate_info.dwVolumeSerialNumber) return 31;
+      require_path(observed.value, target);
+      security.verify(observed.value);
+      DWORD written = 0;
+      if (!WriteFile(candidate_handle, crash_child_value.data(), static_cast<DWORD>(crash_child_value.size()), &written, nullptr) ||
+          written != crash_child_value.size() || !FlushFileBuffers(candidate_handle)) return 32;
+      if (mode == "--crash-before") {
+        TerminateProcess(GetCurrentProcess(), crash_before_code);
+        return 33;
+      }
+      observed = handle_t {};
+      const auto destination = target.wstring();
+      const auto bytes = destination.size() * sizeof(wchar_t);
+      std::vector<unsigned char> storage(offsetof(FILE_RENAME_INFO, FileName) + bytes + sizeof(wchar_t));
+      auto *rename = reinterpret_cast<FILE_RENAME_INFO *>(storage.data());
+      rename->ReplaceIfExists = TRUE;
+      rename->RootDirectory = nullptr;
+      rename->FileNameLength = static_cast<DWORD>(bytes);
+      std::memcpy(rename->FileName, destination.data(), bytes);
+      if (!SetFileInformationByHandle(candidate_handle, FileRenameInfo, rename, static_cast<DWORD>(storage.size()))) return 34;
+      TerminateProcess(GetCurrentProcess(), crash_after_code);
+      return 35;
+    }
+    catch (...) { return 36; }
+  }
+
+  void run_crash_child(probe_t &probe, bool after_rename, std::string_view old_value) {
+    const std::wstring target = L"credentials.json";
+    const std::wstring temp_leaf = L"candidate-" + random_hex() + L".tmp";
+    auto candidate = probe.open(temp_leaf, GENERIC_WRITE | FILE_READ_ATTRIBUTES | READ_CONTROL | DELETE,
+                                0, CREATE_NEW, &probe.security.attributes);
+    const auto candidate_id = id_of(candidate.value);
+    probe.owned.emplace(temp_leaf, candidate_id);
+    probe.check_file(candidate.value, temp_leaf);
+    const auto original_id = probe.owned.at(target);
+
+    HANDLE root_dup_raw = nullptr, file_dup_raw = nullptr;
+    if (!DuplicateHandle(GetCurrentProcess(), probe.root_handle.value, GetCurrentProcess(), &root_dup_raw, 0, TRUE, DUPLICATE_SAME_ACCESS)) fail("Duplicate owned root handle");
+    handle_t root_dup(root_dup_raw);
+    if (!DuplicateHandle(GetCurrentProcess(), candidate.value, GetCurrentProcess(), &file_dup_raw, 0, TRUE, DUPLICATE_SAME_ACCESS)) fail("Duplicate owned candidate handle");
+    handle_t file_dup(file_dup_raw);
+    std::array<HANDLE, 2> inherited {root_dup.value, file_dup.value};
+
+    SIZE_T attr_size = 0;
+    InitializeProcThreadAttributeList(nullptr, 1, 0, &attr_size);
+    if (attr_size == 0) fail("Get child attribute size");
+    std::vector<unsigned char> attr_data(attr_size);
+    auto *attributes = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attr_data.data());
+    if (!InitializeProcThreadAttributeList(attributes, 1, 0, &attr_size)) fail("Initialize child attributes");
+    struct attr_guard_t {
+      LPPROC_THREAD_ATTRIBUTE_LIST value;
+      ~attr_guard_t() { DeleteProcThreadAttributeList(value); }
+    } attr_guard {attributes};
+    if (!UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+                                   inherited.data(), inherited.size() * sizeof(HANDLE), nullptr, nullptr)) fail("Set owned child handles");
+    std::wstring exe(32768, L'\0');
+    const auto length = GetModuleFileNameW(nullptr, exe.data(), static_cast<DWORD>(exe.size()));
+    if (length == 0 || length >= exe.size()) fail("Get probe executable path");
+    exe.resize(length);
+    std::wstring command = L"\"" + exe + L"\" " + (after_rename ? L"--crash-after " : L"--crash-before ") +
+                           std::to_wstring(reinterpret_cast<std::uintptr_t>(root_dup.value)) + L" " +
+                           std::to_wstring(reinterpret_cast<std::uintptr_t>(file_dup.value)) + L" " +
+                           std::to_wstring(original_id.volume) + L" " + std::to_wstring(original_id.high) + L" " +
+                           std::to_wstring(original_id.low) + L" owned-test-only";
+    STARTUPINFOEXW startup {};
+    startup.StartupInfo.cb = sizeof(startup);
+    startup.lpAttributeList = attributes;
+    PROCESS_INFORMATION process {};
+    if (!CreateProcessW(exe.c_str(), command.data(), nullptr, nullptr, TRUE, EXTENDED_STARTUPINFO_PRESENT | CREATE_NO_WINDOW,
+                        nullptr, nullptr, &startup.StartupInfo, &process)) fail("Start owned crash-test child");
+    handle_t process_handle(process.hProcess), thread_handle(process.hThread);
+    root_dup = handle_t {};
+    file_dup = handle_t {};
+    const auto wait = WaitForSingleObject(process_handle.value, 15000);
+    if (wait != WAIT_OBJECT_0) {
+      TerminateProcess(process_handle.value, 0xc0d1ffff);
+      WaitForSingleObject(process_handle.value, 5000);
+    }
+    DWORD exit_code = 0;
+    if (!GetExitCodeProcess(process_handle.value, &exit_code)) fail("Get owned child exit code");
+    candidate = handle_t {};
+
+    // Even on an unexpected child result, only recognize our known file IDs
+    // before cleanup; do not delete a changed or foreign destination by name.
+    auto target_handle = probe.open(target, FILE_READ_ATTRIBUTES | READ_CONTROL,
+                                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, OPEN_EXISTING);
+    const auto observed_id = probe.check_file(target_handle.value, target);
+    target_handle = handle_t {};
+    if (observed_id == candidate_id) {
+      probe.owned.at(target) = candidate_id;
+      probe.owned.erase(temp_leaf);
+    }
+    else if (!(observed_id == original_id)) throw std::runtime_error("Crash test destination identity is unknown");
+    const auto expected_exit = after_rename ? crash_after_code : crash_before_code;
+    require(wait == WAIT_OBJECT_0 && exit_code == expected_exit, "Owned child did not terminate at the requested point");
+    if (after_rename) {
+      require(observed_id == candidate_id && probe.read(target) == crash_child_value, "Post-rename crash did not leave the new file");
+    }
+    else {
+      require(observed_id == original_id && probe.read(target) == old_value, "Pre-rename crash changed the old file");
+    }
+  }
 }  // namespace
 
-int main() {
+int main(int argc, char **argv) {
+  if (argc > 1) return crash_child(argc, argv);
   try {
     probe_t probe;
     bool ok = false;
@@ -507,23 +668,27 @@ int main() {
       const std::wstring target = L"credentials.json";
       probe.create(target, old_value);
       for (const auto fault : {probe_t::fault_t::short_write, probe_t::fault_t::flush_failure, probe_t::fault_t::replacement_failure}) {
-        require(!probe.replace(target, new_value, fault), "Injected failure was accepted");
+        require(probe.replace(target, new_value, fault) == probe_t::replace_result_t::not_committed, "Injected failure was accepted");
         require(probe.read(target) == old_value, "Injected failure changed committed content");
       }
       std::cout << "PASS: simulated short-write, flush, and replacement failures preserve the old file\n";
       {
         auto locked = probe.open(target, FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE, OPEN_EXISTING);
-        require(!probe.replace(target, new_value, probe_t::fault_t::none), "Replacement ignored a real sharing violation");
+        require(probe.replace(target, new_value, probe_t::fault_t::none) == probe_t::replace_result_t::indeterminate, "Real rename failure did not report indeterminate");
       }
       require(probe.read(target) == old_value, "Real replacement failure changed committed content");
-      std::cout << "PASS: real destination sharing violation preserves the old file\n";
-      require(probe.replace(target, new_value, probe_t::fault_t::none), "Same-volume replacement failed");
+      std::cout << "PASS: real rename failure reports indeterminate; old file observed unchanged\n";
+      require(probe.replace(target, new_value, probe_t::fault_t::none) == probe_t::replace_result_t::committed_verified, "Same-volume replacement failed");
       require(probe.read(target) == new_value, "Replacement content mismatch");
       std::cout << "PASS: flushed same-volume replacement with held source and directory handles\n";
+      require(probe.replace(target, old_value, probe_t::fault_t::post_rename_verify_failure) == probe_t::replace_result_t::indeterminate,
+              "Post-rename verification failure was not reported as indeterminate");
+      require(probe.read(target) == old_value, "Post-rename test did not actually commit the new content");
+      std::cout << "PASS: post-rename verification failure reports indeterminate after content changed\n";
       const std::wstring alias = L"hardlink-owned.json";
       if (!CreateHardLinkW(probe.path(alias).c_str(), probe.path(target).c_str(), nullptr)) fail("Create owned hard link");
       probe.owned.emplace(alias, probe.owned.at(target));
-      require(!probe.replace(target, old_value, probe_t::fault_t::none), "Hard-linked target was accepted");
+      require(probe.replace(target, new_value, probe_t::fault_t::none) == probe_t::replace_result_t::not_committed, "Hard-linked target was accepted");
       {
         auto hardlink = probe.open(alias, FILE_READ_ATTRIBUTES | DELETE,
                                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, OPEN_EXISTING);
@@ -534,15 +699,15 @@ int main() {
                 "Removing owned test hard link failed");
       }
       probe.owned.erase(alias);
-      require(probe.read(target) == new_value, "Hard-link rejection changed target");
+      require(probe.read(target) == old_value, "Hard-link rejection changed target");
       std::cout << "PASS: preexisting hard-linked target is rejected\n";
       const std::wstring link = L"symlink-owned.json";
       bool tested_reparse = false;
       if (CreateSymbolicLinkW(probe.path(link).c_str(), probe.path(target).c_str(), symlink_allow_unprivileged)) {
         auto h = probe.open(link, FILE_READ_ATTRIBUTES | DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, OPEN_EXISTING);
         probe.owned.emplace(link, id_of(h.value));
-        require(!probe.replace(link, old_value, probe_t::fault_t::none), "Reparse-point target was accepted");
-        require(probe.read(target) == new_value, "Reparse rejection changed target");
+        require(probe.replace(link, new_value, probe_t::fault_t::none) == probe_t::replace_result_t::not_committed, "Reparse-point target was accepted");
+        require(probe.read(target) == old_value, "Reparse rejection changed target");
         std::cout << "PASS: preexisting reparse-point target is rejected\n";
         tested_reparse = true;
       }
@@ -551,9 +716,12 @@ int main() {
       }
       tested_reparse = test_owned_junction(probe) || tested_reparse;
       require(tested_reparse, "No real reparse point could be created for testing");
-      require(!probe.replace(target, old_value, probe_t::fault_t::swap_target), "Changed target identity was overwritten");
-      require(probe.read(target) == "attacker-sentinel" && probe.read(L"prior-owned.json") == new_value, "Swap detection altered owned files");
+      require(probe.replace(target, new_value, probe_t::fault_t::swap_target) == probe_t::replace_result_t::not_committed, "Changed target identity was overwritten");
+      require(probe.read(target) == "attacker-sentinel" && probe.read(L"prior-owned.json") == old_value, "Swap detection altered owned files");
       std::cout << "PASS: changed destination file identity is rejected before replacement\n";
+      run_crash_child(probe, false, "attacker-sentinel");
+      run_crash_child(probe, true, "attacker-sentinel");
+      std::cout << "PASS: owned child abnormal exit before/after rename leaves expected old/new file\n";
       ok = true;
     }
     catch (const std::exception &error) {
