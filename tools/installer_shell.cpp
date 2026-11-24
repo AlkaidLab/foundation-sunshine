@@ -29,6 +29,7 @@
 #include <wincrypt.h>
 #include <winhttp.h>
 #include <softpub.h>
+#include <tlhelp32.h>
 #include <wintrust.h>
 
 #include <algorithm>
@@ -48,6 +49,7 @@
 #include "installer_guide.h"
 #include "installer_json.h"
 #include "installer_maintenance.h"
+#include "installer_remote_capture.h"
 #include "installer_state.h"
 #include "installer_ui.h"
 #include "installer_webview2.h"
@@ -287,6 +289,22 @@ namespace {
     for (const REGSAM view : { KEY_WOW64_64KEY, KEY_WOW64_32KEY })
       if (has(HKEY_LOCAL_MACHINE, machine, view) || has(HKEY_CURRENT_USER, user, view)) return true;
     return false;
+  }
+
+  // A VNC server is running on this machine, in any session (Toolhelp lists every process; see installer_remote_capture.h).
+  // FOUNDATION_SETUP_IGNORE_VNC keeps the web front end whatever is running; --native selects the native window by hand.
+  bool
+  vnc_server_running() {
+    if (GetEnvironmentVariableW(L"FOUNDATION_SETUP_IGNORE_VNC", nullptr, 0) != 0) return false;
+    const HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return false;
+    PROCESSENTRY32W entry {};
+    entry.dwSize = sizeof(entry);
+    bool found = false;
+    for (BOOL more = Process32FirstW(snapshot, &entry); more && !found; more = Process32NextW(snapshot, &entry))
+      found = installer_remote_capture::is_vnc_server(entry.szExeFile);
+    CloseHandle(snapshot);
+    return found;
   }
 
   struct winhttp_handle {

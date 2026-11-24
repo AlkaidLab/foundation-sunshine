@@ -138,6 +138,7 @@ if(WIN32)
         installer_guide.h
         installer_state.h
         installer_maintenance.h
+        installer_remote_capture.h
         installer_ui.h
         installer_webview2.h
         installer_icon.inc)
