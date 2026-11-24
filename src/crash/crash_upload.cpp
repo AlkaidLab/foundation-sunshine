@@ -110,7 +110,7 @@ namespace crash {
 
     /// One multipart POST. `dump`, `log` and `image` (the screenshot of a feedback report) are optional.
     answer_t
-    post(const std::string &url, const std::string &meta, const std::string &dump, const logfile::packed_t *log = nullptr, const std::string *image = nullptr) {
+    post(const std::string &url, const std::string &meta, const std::string &dump, const logfile::packed_t *log = nullptr, const std::string *image = nullptr, long timeout_s = 120) {
       answer_t answer;
       CURL *curl = curl_easy_init();
       if (!curl) return answer;
@@ -141,7 +141,7 @@ namespace crash {
       curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_line);
       curl_easy_setopt(curl, CURLOPT_HEADERDATA, &answer.retry_after);
       curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
-      curl_easy_setopt(curl, CURLOPT_TIMEOUT, 120L);
+      curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout_s);
       curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
       curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
       curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
@@ -381,6 +381,9 @@ namespace crash {
 
   namespace {
     std::atomic<const char *> g_session_log_state { "no_log" };
+    /// The Panel and the Web UI wait for the host's answer to a feedback report while the log and the screenshot are uploaded, one after the other (the page gives up at 45 s):
+    /// each upload gets 20 s, then the report goes without it and says why (unreachable), instead of leaving the person with a request that ends as a timeout.
+    constexpr long kFeedbackUploadTimeoutSeconds = 20;
   }
 
   const char *
@@ -412,7 +415,7 @@ namespace crash {
       std::string base = endpoint;
       while (!base.empty() && base.back() == '/') base.pop_back();
       const nlohmann::json meta { { "v", 1 }, { "install_id", install_id }, { "version", version } };
-      const auto answer = post(base + "/v1/user-screenshot", meta.dump(), {}, nullptr, &image);
+      const auto answer = post(base + "/v1/user-screenshot", meta.dump(), {}, nullptr, &image, kFeedbackUploadTimeoutSeconds);
       if (answer.status == 0) {
         g_session_shot_state.store("unreachable");
         return std::nullopt;
@@ -453,7 +456,7 @@ namespace crash {
       while (!base.empty() && base.back() == '/') base.pop_back();
       const nlohmann::json meta { { "v", 1 }, { "install_id", install_id }, { "version", version } };
       // a service without the endpoint (404), a limit (429), a refusal: the report goes without the log
-      const auto answer = post(base + "/v1/user-log", meta.dump(), {}, &*packed);
+      const auto answer = post(base + "/v1/user-log", meta.dump(), {}, &*packed, nullptr, kFeedbackUploadTimeoutSeconds);
       if (answer.status == 0) {
         g_session_log_state.store("unreachable");
         return std::nullopt;
