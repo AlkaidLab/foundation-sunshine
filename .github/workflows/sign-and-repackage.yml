@@ -42,6 +42,42 @@ jobs:
         shell: bash
         run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      # What kind of release this run signs for: a published release of a stable build is a full release, and the last step must not turn
+      # it back into a pre-release; the binaries recompiled below must record the channel of that release (stable, or beta for a
+      # pre-release). A `release` event only runs for a full release (see the job condition). A manual run reads the release of the tag: one
+      # that exists keeps its state, a tag without a release (or with a draft only) gets a new draft pre-release as before.
+      - name: Read the release state
+        id: release_state
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT: ${{ github.event_name }}
+          EVENT_PRERELEASE: ${{ github.event.release.prerelease }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = release ]; then
+            state="$EVENT_PRERELEASE"
+          else
+            err="$(mktemp)"
+            if ! state="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease 2>"$err")"; then
+              if grep -qi "not found" "$err"; then
+                state=true
+              else
+                cat "$err" >&2
+                echo "::error title=Release state::could not read the release $RELEASE_TAG"
+                exit 1
+              fi
+            fi
+          fi
+          case "$state" in
+            true) channel=beta ;;
+            false) channel=stable ;;
+            *) echo "::error title=Release state::unexpected prerelease state '$state'"; exit 1 ;;
+          esac
+          echo "prerelease=$state" >> "$GITHUB_OUTPUT"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
       - name: Setup Dependencies Windows
         uses: msys2/setup-msys2@v2
         with:
@@ -172,6 +208,7 @@ jobs:
           BRANCH: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.ref }}
           BUILD_VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}.杂鱼
           COMMIT: ${{ steps.source.outputs.commit }}
+          SUNSHINE_BUILD_CHANNEL: ${{ steps.release_state.outputs.channel }}
         run: |
           # add Rust to PATH for Tauri GUI build
           WINDOWS_USER=$(cmd //c "echo %USERNAME%" | tr -d '\r')
@@ -469,7 +506,8 @@ jobs:
             Sunshine-*-Portable-x64-Signed.zip
             final-signed/*.exe
           draft: true
-          prerelease: true
+          # an existing release keeps its state (a full release stays a full release); a new one is a draft pre-release
+          prerelease: ${{ steps.release_state.outputs.prerelease == 'true' }}
           allowUpdates: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
