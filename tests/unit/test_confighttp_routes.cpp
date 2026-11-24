@@ -157,6 +157,10 @@ TEST_F(ConfigHttpRoutes, PreservesThePreSplitRouteInventory) {
 #endif
     expected.emplace(entry.at("pattern").get<std::string>(), entry.at("method").get<std::string>());
   }
+  // The fixture records the pre-split inventory; remote connection adds these routes.
+  expected.emplace("^/api/remote-connect$", "GET");
+  expected.emplace("^/api/remote-connect$", "POST");
+  expected.emplace("^/api/remote-connect/reset$", "POST");
   EXPECT_EQ(inventory(*server), expected);
   ASSERT_EQ(server->default_resource.size(), 1);
   EXPECT_TRUE(server->default_resource.at("GET"));
