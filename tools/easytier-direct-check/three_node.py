@@ -176,10 +176,10 @@ class Lab:
     def start(self, name, ip, rpc_port, listen_port, peer_port=None, forwards=()):
         args = [
             self.core, "--instance-name", name, "--network-name", self.network,
-            "--network-secret", self.secret, "--ipv4", f"{ip}/24", "--no-tun",
+            "--ipv4", f"{ip}/24", "--no-tun",
             "--disable-ipv6", "--disable-p2p", "--disable-udp-hole-punching",
             "--disable-tcp-hole-punching", "--disable-upnp", "--bind-device", "false",
-            "--stun-servers", "--stun-servers-v6", "--file-log-level", "off",
+            "--stun-servers", "--stun-servers-v6", "--file-log-level", "off", "--console-log-level", "off",
             "--rpc-portal", f"127.0.0.1:{rpc_port}",
             "--listeners", f"tcp://127.0.0.1:{listen_port}",
         ]
@@ -192,7 +192,7 @@ class Lab:
         logfile = open(Path(self.temp.name) / f"{name}.log", "w", encoding="utf-8")
         try:
             proc = subprocess.Popen(
-                args, stdout=logfile, stderr=subprocess.STDOUT, env=self.env,
+                args, stdout=logfile, stderr=subprocess.STDOUT, env={**self.env, "ET_NETWORK_SECRET": self.secret},
                 creationflags=self.creationflags,
             )
         except BaseException:
