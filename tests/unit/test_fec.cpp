@@ -504,9 +504,11 @@ TEST(VideoFec, StartupZeroIsNotARelease) {
   EXPECT_EQ(control.percentage(100, 2, 0), 0);
   ASSERT_TRUE(control.report(2, 10000, 2000, 1000));  // the first loss
   EXPECT_GT(control.percentage(100, 2, 1000), 0);  // arms without any penalty
-  for (std::int64_t t = 2000; t <= 10000; t += 1000)
-    ASSERT_TRUE(control.report(static_cast<unsigned>(t / 1000 + 2), 10000, 0, t));
-  ASSERT_TRUE(control.report(13, 10000, 0, 11000));
+  for (std::int64_t t = 2000; t <= 10000; t += 1000) {
+    ASSERT_TRUE(control.report(static_cast<unsigned>(t / 1000 + 1), 10000, 0, t));
+    if (t == 5000) EXPECT_GT(control.percentage(100, 2, t), 0);  // still protected mid-window
+  }
+  ASSERT_TRUE(control.report(12, 10000, 0, 11000));
   EXPECT_EQ(control.percentage(100, 2, 11000), 0);  // released after the plain window, not 20 s
 }
 
