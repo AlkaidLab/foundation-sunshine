@@ -118,8 +118,8 @@ namespace confighttp::configuration {
 
       auto vars = config::parse_config(file_handler::read_file(config::sunshine.config_file.c_str()));
       for (auto &[name, value] : vars) {
-        // widget_token 是本地端点凭证,不回显明文;只暴露是否已配置
-        if (name == "widget_token" || name == "mat_live_pipe" || name == "mat_live_producer") {
+        // Credentials are never returned to the generic settings UI.
+        if (name == "widget_token" || name == "remote_connect_network_secret" || name == "mat_live_pipe" || name == "mat_live_producer") {
           continue;
         }
         outputTree.put(std::move(name), std::move(value));

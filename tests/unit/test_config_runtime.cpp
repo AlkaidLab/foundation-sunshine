@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iterator>
+#include <map>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -93,6 +94,34 @@ TEST(ConfigRuntime, VpeSwitchPersistsAndCanBeDisabledWithoutChangingOtherAmdSett
   ASSERT_EQ(temporary_config.parse({ config::sunshine.config_file }), 0);
   EXPECT_FALSE(config::video.amd.amd_vpe);
   EXPECT_EQ(config::parse_config(temporary_config.read()).at("amd_vpe"), "disabled");
+}
+
+TEST(ConfigRuntime, GenericSettingsCannotReplaceOrDeleteRemoteConnectionState) {
+  temporary_clients_config_t temporary_config;
+  const std::map<std::string, std::string> remote {
+    { "remote_connect_enabled", "true" },
+    { "remote_connect_profile", "profile" },
+    { "remote_connect_virtual_ip", "100.64.2.1" },
+    { "remote_connect_network_name", "test-network" },
+    { "remote_connect_network_secret", "test-secret" },
+    { "remote_connect_peer", "tcp://127.0.0.1:1234" },
+  };
+  ASSERT_TRUE(config::update_config(remote));
+  // Missing values and forged values from the generic settings endpoint both
+  // leave service-managed state untouched. The unrelated setting still saves.
+  auto forged = remote;
+  for (auto &[key, value] : forged) value = "replacement";
+  forged["sunshine_name"] = "second";
+  forged["gamepad"] = config::input.gamepad;
+  for (const auto &submitted : {
+         std::map<std::string, std::string> { { "sunshine_name", "first" }, { "gamepad", config::input.gamepad } },
+         forged,
+       }) {
+    ASSERT_TRUE(config::update_full_config(submitted));
+    const auto saved = config::parse_config(temporary_config.read());
+    for (const auto &[key, value] : remote) EXPECT_EQ(saved.at(key), value);
+    EXPECT_EQ(saved.at("sunshine_name"), submitted.at("sunshine_name"));
+  }
 }
 
 TEST(ConfigRuntime, CalibrationSaveKeepsClientsFromFullAndPartialSettingsUpdates) {

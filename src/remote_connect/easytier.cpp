@@ -7,6 +7,7 @@
 #include <utility>
 #include <vector>
 
+#include <boost/algorithm/string/predicate.hpp>
 #include <boost/asio/ip/address_v4.hpp>
 #include <boost/filesystem/path.hpp>
 #include <boost/process/v1.hpp>
@@ -107,7 +108,7 @@ namespace remote_connect::easytier {
            << "ipv4 = \"" << enrollment.virtual_ip << "/24\"\n"
            << "dhcp = false\n"
            << "listeners = [\"tcp://0.0.0.0:0\", \"udp://0.0.0.0:0\"]\n"
-           << "rpc_portal = \"127.0.0.1:0\"\n\n"
+           << "\n"
            << "exit_nodes = []\n"
            << "routes = []\n"
            << "proxy_network = []\n"
@@ -250,9 +251,19 @@ namespace remote_connect::easytier {
 
     const auto executable_utf8 = file_handler::path_to_utf8(executable);
     const auto config_utf8 = file_handler::path_to_utf8(config_path());
-    const std::string command = "\"" + executable_utf8 + "\" --config-file \"" + config_utf8 + "\"";
+    // EasyTier 2.6.4 and 2.7.1 ignore rpc_portal in TOML. This instance does
+    // not use management RPC: bind it to loopback and deny loopback clients.
+    const std::string command = "\"" + executable_utf8 + "\" --config-file \"" + config_utf8 +
+                                "\" --rpc-portal 127.0.0.1:0 --rpc-portal-whitelist 192.0.2.0/24";
     boost::filesystem::path working_dir(executable.parent_path().string());
     auto environment = boost::this_process::environment();
+    // Inherited ET_* overrides could change the peer, RPC or security settings.
+    std::vector<std::string> easytier_variables;
+    for (const auto &entry : environment) {
+      const auto name = entry.get_name();
+      if (boost::istarts_with(name, "ET_")) easytier_variables.push_back(name);
+    }
+    for (const auto &name : easytier_variables) environment.erase(name);
     std::error_code error_code;
     state_->process_group.emplace();
     auto child = platf::run_command(

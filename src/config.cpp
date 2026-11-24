@@ -2186,6 +2186,13 @@ namespace config {
         "vdd_headless_create",  // 由系统托盘控制，不通过Web UI修改
         "tray_locale",  // 由系统托盘控制，不通过Web UI修改
         "widget_token",  // Game Bar 小部件令牌：手动/配对流程写入，不经Web UI修改
+        // Managed only by the remote connection service, not by generic settings saves.
+        "remote_connect_enabled",
+        "remote_connect_profile",
+        "remote_connect_virtual_ip",
+        "remote_connect_network_name",
+        "remote_connect_network_secret",
+        "remote_connect_peer",
       };
 
       const auto original_file_content = read_config_file_contents();
