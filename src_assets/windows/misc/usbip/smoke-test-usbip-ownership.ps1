@@ -100,6 +100,16 @@ try {
     $passed++
     Write-Host "PASS ownership/$($fixture.name): $($result.ownership) ($($result.reason)) compatible=$($result.compatible) replaceable=$($result.replaceable) confirmed=$($confirmed.ownership)"
   }
+  # Leftovers with no registration at all (another tool's usbip-win2, removed by its own uninstaller) are external and cannot be
+  # installed over; the reason must say that nothing is registered, not that the version is wrong.
+  $inventory = [pscustomobject]@{ Present = $true; Entries = @(); Receipt = $null; Extras = $false; LegacyPayload = $false; Root = 'C:\fixture\USBip'; Proof = $null }
+  $orphan = Resolve-UsbipOwnership $inventory
+  if ($orphan.ownership -ne 'external' -or $orphan.compatible -or $orphan.reason -ne 'no-registration' -or $orphan.replaceable) { throw "Leftovers without a registration: $($orphan | ConvertTo-Json -Compress)" }
+  $stale = [pscustomobject]@{ Present = $true; Entries = @([pscustomobject]@{ DisplayVersion = '0.9.7.7'; InstallLocation = 'C:\fixture\USBip\'; UninstallString = '"C:\fixture\USBip\unins000.exe" /LOG' }); Receipt = $null; Extras = $false; LegacyPayload = $false; Root = 'C:\fixture\USBip'; Proof = $null }
+  if ((Resolve-UsbipOwnership $stale).reason -ne 'unsupported-version') { throw 'A registered other version keeps its reason' }
+  $passed++
+  Write-Host 'PASS ownership/no-registration-leftovers'
+
   & $module { function script:Get-UsbipInventory { throw 'simulated registry access denied' } }
   $result = Get-UsbipOwnership $usbRoot $hostRoot
   if ($result.ownership -ne 'external' -or $result.compatible) { throw 'Inspection failure must preserve external install' }
