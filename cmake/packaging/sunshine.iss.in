@@ -1010,23 +1010,6 @@ begin
   end;
 end;
 
-function GetOldNSISUninstallString(): String;
-var
-  UninstallString: String;
-begin
-  Result := '';
-  if RegQueryStringValue(HKLM, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine',
-    'UninstallString', UninstallString) then
-  begin
-    Result := UninstallString;
-  end
-  else if RegQueryStringValue(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine',
-    'UninstallString', UninstallString) then
-  begin
-    Result := UninstallString;
-  end;
-end;
-
 // Strip the executable path out of an UninstallString that may include
 // surrounding quotes and/or trailing arguments (e.g. '"...\Uninstall.exe" /S').
 function GetOldNSISUninstallExe(UninstallString: String): String;
@@ -1072,6 +1055,31 @@ begin
     SlashPos := SlashPos - 1;
   if SlashPos > 1 then
     Result := Copy(Path, 1, SlashPos - 1);
+end;
+
+// The UninstallString of one old NSIS entry (native or WOW6432Node) while its uninstaller is
+// still there, empty otherwise.
+function LiveOldNSISUninstallStringOf(const Key: String): String;
+var
+  UninstallString, Exe: String;
+begin
+  Result := '';
+  if RegQueryStringValue(HKLM, Key, 'UninstallString', UninstallString) then
+  begin
+    Exe := GetOldNSISUninstallExe(UninstallString);
+    if (Exe <> '') and FileExists(Exe) then
+      Result := UninstallString;
+  end;
+end;
+
+// The old NSIS entry that can still uninstall, the native one before the WOW6432Node one. Empty
+// when neither can: what remains is stale metadata, and cleaning that up must not touch an entry
+// that can still uninstall (#1463).
+function GetLiveOldNSISUninstallString(): String;
+begin
+  Result := LiveOldNSISUninstallStringOf('SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine');
+  if Result = '' then
+    Result := LiveOldNSISUninstallStringOf('SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine');
 end;
 
 // Force-delete the NSIS uninstall registry entries left behind by an old
@@ -1524,12 +1532,25 @@ begin
   end;
 end;
 
+// The directory Setup chose, empty while it has chosen none. {app} exists only once the wizard has
+// been built: a run that stops in InitializeSetup, or is cancelled on its first page, has none, and
+// expanding it raises the internal error that then hides the real reason for stopping (#1463).
+function ChosenAppDir(): String;
+begin
+  Result := '';
+  try
+    Result := ExpandConstant('{app}');
+  except
+    Result := '';
+  end;
+end;
+
 // A restart is requested only when a driver step returned 3010, or Windows itself reports a pending
 // restart on one of our drivers. The decision and its reasons go to the event log ('reboot').
 procedure DecideRestart();
 var
   ResultCode: Integer;
-  OutFile, Names: String;
+  AppDir, OutFile, Names: String;
   Lines: TArrayOfString;
   I: Integer;
 begin
@@ -1545,10 +1566,12 @@ begin
     AddRebootReason('usbip');
   OutFile := ExpandConstant('{tmp}\sunshine-reboot-check.txt');
   DeleteFile(OutFile);
-  if FileExists(ExpandConstant('{app}\tools\driver-reboot-check.ps1')) then
+  // A run that stopped before Setup chose a directory has nothing installed to ask (#1463).
+  AppDir := ChosenAppDir();
+  if (AppDir <> '') and FileExists(AppDir + '\tools\driver-reboot-check.ps1') then
   begin
     if Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-            '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{app}\tools\driver-reboot-check.ps1') + '" -Out "' + OutFile + '"',
+            '-NoProfile -ExecutionPolicy Bypass -File "' + AppDir + '\tools\driver-reboot-check.ps1' + '" -Out "' + OutFile + '"',
             '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and LoadStringsFromFile(OutFile, Lines) then
     begin
       for I := 0 to GetArrayLength(Lines) - 1 do
@@ -1826,25 +1849,23 @@ begin
   if not DetectOldNSISInstall() then
     Exit;
 
-  UninstallString := GetOldNSISUninstallString();
+  // An entry that still has its uninstaller names the installation to remove first. Only when
+  // neither entry has one is what remains stale metadata, to clean up rather than block the install.
+  UninstallString := GetLiveOldNSISUninstallString();
   if UninstallString = '' then
-    Exit;
-
-  UninstallExe := GetOldNSISUninstallExe(UninstallString);
-  InstallDir := GetOldNSISInstallDir(UninstallString);
-
-  // If the uninstaller binary itself is gone, the registry entry is just stale
-  // metadata. Offer to clean it up rather than blocking the install entirely.
-  if (UninstallExe = '') or (not FileExists(UninstallExe)) then
   begin
-    // Without interactive consent, preserve old installation metadata and stop.
-    if InstallerMessageBox(CustomMessage('MsgOldNSISStaleRegistry'), mbConfirmation, MB_YESNO, IDNO) = IDYES then
+    // An interactive run asks first and keeps the entries without consent. A silent run has nobody
+    // to ask, and the panel's updater is one: stopping here left a machine with these dead entries
+    // unable to install at all (#1463), so a silent run cleans them up and goes on.
+    if WizardSilent or (InstallerMessageBox(CustomMessage('MsgOldNSISStaleRegistry'), mbConfirmation, MB_YESNO, IDNO) = IDYES) then
     begin
       if not CleanupOldNSISRegistry() then
       begin
         InstallerMessageBox(CustomMessage('MsgOldNSISCleanupFailed'), mbError, MB_OK, IDOK);
         Result := False;
-      end;
+      end
+      else if WizardSilent then
+        Log('Stale NSIS uninstall entries without their uninstaller: cleaned up in a silent run.');
     end
     else
     begin
@@ -1852,6 +1873,9 @@ begin
     end;
     Exit;
   end;
+
+  UninstallExe := GetOldNSISUninstallExe(UninstallString);
+  InstallDir := GetOldNSISInstallDir(UninstallString);
 
   // Do not silently run an older uninstaller that could remove user data.
   if InstallerMessageBox(CustomMessage('MsgOldNSISDetected'), mbConfirmation, MB_YESNO, IDNO) <> IDYES then
