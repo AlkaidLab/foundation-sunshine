@@ -2242,8 +2242,10 @@ namespace stream {
 
     server->map(0x5510, [](session_t *session, const std::string_view &payload) {
       if (!session->config.fec_feedback || session->config.monitor.videoFormat == LI_PYROWAVE_VIDEO_FORMAT) return;
-      // Version 1 summaries carry data shards only; version 2 adds parity shards, so the
-      // estimate covers what was lost before FEC recovery instead of what the parity absorbed.
+      // Version 1 summaries carry data shards only; version 2 adds the parity shards of
+      // abandoned blocks, whose arrival is settled, so a link whose losses the parity is
+      // absorbing no longer reads as clean. Wholly lost blocks are not reported by any
+      // version and stay covered by the hold-and-backoff mechanisms.
       if (payload.size() == 12) {
         uint32_t values[3];
         std::memcpy(values, payload.data(), sizeof(values));
