@@ -1010,23 +1010,6 @@ begin
   end;
 end;
 
-function GetOldNSISUninstallString(): String;
-var
-  UninstallString: String;
-begin
-  Result := '';
-  if RegQueryStringValue(HKLM, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine',
-    'UninstallString', UninstallString) then
-  begin
-    Result := UninstallString;
-  end
-  else if RegQueryStringValue(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine',
-    'UninstallString', UninstallString) then
-  begin
-    Result := UninstallString;
-  end;
-end;
-
 // Strip the executable path out of an UninstallString that may include
 // surrounding quotes and/or trailing arguments (e.g. '"...\Uninstall.exe" /S').
 function GetOldNSISUninstallExe(UninstallString: String): String;
@@ -1072,6 +1055,31 @@ begin
     SlashPos := SlashPos - 1;
   if SlashPos > 1 then
     Result := Copy(Path, 1, SlashPos - 1);
+end;
+
+// The UninstallString of one old NSIS entry (native or WOW6432Node) while its uninstaller is
+// still there, empty otherwise.
+function LiveOldNSISUninstallStringOf(const Key: String): String;
+var
+  UninstallString, Exe: String;
+begin
+  Result := '';
+  if RegQueryStringValue(HKLM, Key, 'UninstallString', UninstallString) then
+  begin
+    Exe := GetOldNSISUninstallExe(UninstallString);
+    if (Exe <> '') and FileExists(Exe) then
+      Result := UninstallString;
+  end;
+end;
+
+// The old NSIS entry that can still uninstall, the native one before the WOW6432Node one. Empty
+// when neither can: what remains is stale metadata, and cleaning that up must not touch an entry
+// that can still uninstall (#1463).
+function GetLiveOldNSISUninstallString(): String;
+begin
+  Result := LiveOldNSISUninstallStringOf('SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine');
+  if Result = '' then
+    Result := LiveOldNSISUninstallStringOf('SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine');
 end;
 
 // Force-delete the NSIS uninstall registry entries left behind by an old
@@ -1841,20 +1849,14 @@ begin
   if not DetectOldNSISInstall() then
     Exit;
 
-  UninstallString := GetOldNSISUninstallString();
+  // An entry that still has its uninstaller names the installation to remove first. Only when
+  // neither entry has one is what remains stale metadata, to clean up rather than block the install.
+  UninstallString := GetLiveOldNSISUninstallString();
   if UninstallString = '' then
-    Exit;
-
-  UninstallExe := GetOldNSISUninstallExe(UninstallString);
-  InstallDir := GetOldNSISInstallDir(UninstallString);
-
-  // If the uninstaller binary itself is gone, the registry entry is just stale
-  // metadata. Offer to clean it up rather than blocking the install entirely.
-  if (UninstallExe = '') or (not FileExists(UninstallExe)) then
   begin
-    // An interactive run asks first and keeps the entry without consent. A silent run has nobody
-    // to ask, and the panel's updater is one: stopping here left a machine with this dead entry
-    // unable to install at all (#1463), so a silent run cleans it up and goes on.
+    // An interactive run asks first and keeps the entries without consent. A silent run has nobody
+    // to ask, and the panel's updater is one: stopping here left a machine with these dead entries
+    // unable to install at all (#1463), so a silent run cleans them up and goes on.
     if WizardSilent or (InstallerMessageBox(CustomMessage('MsgOldNSISStaleRegistry'), mbConfirmation, MB_YESNO, IDNO) = IDYES) then
     begin
       if not CleanupOldNSISRegistry() then
@@ -1863,7 +1865,7 @@ begin
         Result := False;
       end
       else if WizardSilent then
-        Log('Stale NSIS uninstall entry without its uninstaller: cleaned up in a silent run.');
+        Log('Stale NSIS uninstall entries without their uninstaller: cleaned up in a silent run.');
     end
     else
     begin
@@ -1871,6 +1873,9 @@ begin
     end;
     Exit;
   end;
+
+  UninstallExe := GetOldNSISUninstallExe(UninstallString);
+  InstallDir := GetOldNSISInstallDir(UninstallString);
 
   // Do not silently run an older uninstaller that could remove user data.
   if InstallerMessageBox(CustomMessage('MsgOldNSISDetected'), mbConfirmation, MB_YESNO, IDNO) <> IDYES then
