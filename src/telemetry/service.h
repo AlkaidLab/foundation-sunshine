@@ -122,6 +122,9 @@ namespace telemetry {
     std::function<std::optional<std::string>(const std::string &endpoint, const std::string &install_id, const std::string &version, const std::string &image)> session_shot;
     /** The fixed word that says why the latest session_shot call gave no reference (crash::session_shot_state()); null in tests that do not need it. */
     std::function<std::string()> session_shot_state;
+    /** Starts / ends the shared deadline of one feedback report's uploads (crash::begin_feedback_budget / end_feedback_budget); null in tests that do not need it. */
+    std::function<void()> feedback_budget_begin;
+    std::function<void()> feedback_budget_end;
     /** When the computer started, ms since the epoch (0 = not known): tells a restart of the computer from a run that ended by itself. */
     std::function<std::int64_t()> boot_ms;
     /**

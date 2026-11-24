@@ -983,3 +983,19 @@ TEST(CrashMeta, ANameForTheStartUpPhaseIsAFixedWordAndOnlyWhileTheHostIsStarting
   EXPECT_EQ(crash::context::phase_word(0), nullptr);
   EXPECT_EQ(crash::context::phase_word(static_cast<int>(crash::context::phase_e::tray) + 1), nullptr);
 }
+
+// A feedback reports uploads share one deadline inside the pages 45 s wait: each gets at most 20 s of what is left, none starts with less than 2 s, and without a budget the fixed 20 s holds.
+TEST(CrashFeedbackBudget, UploadsShareOneDeadline) {
+  crash::end_feedback_budget();
+  EXPECT_EQ(crash::feedback_upload_timeout_for_tests(), 20);
+  crash::begin_feedback_budget(std::chrono::seconds { 35 });
+  EXPECT_EQ(crash::feedback_upload_timeout_for_tests(), 20);
+  crash::begin_feedback_budget(std::chrono::seconds { 10 });
+  const auto left = crash::feedback_upload_timeout_for_tests();
+  EXPECT_GE(left, 8);
+  EXPECT_LE(left, 10);
+  crash::begin_feedback_budget(std::chrono::seconds { 1 });
+  EXPECT_EQ(crash::feedback_upload_timeout_for_tests(), 0);
+  crash::end_feedback_budget();
+  EXPECT_EQ(crash::feedback_upload_timeout_for_tests(), 20);
+}

@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <chrono>
 #include <optional>
 #include <string>
 
@@ -128,6 +129,18 @@ namespace crash {
    */
   std::optional<std::string>
   upload_session_shot(const std::string &endpoint, const std::string &install_id, const std::string &version, const std::string &image);
+
+  /**
+   * One deadline for the uploads of one feedback report on this thread (the screenshot, then the log with its collection and packing): each upload gets at most 20 s of what is left and none starts with
+   * less than 2 s left, so the host answers the page within its wait. end_feedback_budget() lifts it; without a budget an upload keeps the fixed 20 s.
+   */
+  void
+  begin_feedback_budget(std::chrono::seconds total);
+  void
+  end_feedback_budget();
+  /// The timeout the next feedback upload would get (0: it would not start). For the tests.
+  long
+  feedback_upload_timeout_for_tests();
 
   /// Why the latest upload_session_shot() gave no reference (a fixed word: uploaded | none | too_large | rejected | unreachable | refused | bad_answer | unavailable).
   const char *
