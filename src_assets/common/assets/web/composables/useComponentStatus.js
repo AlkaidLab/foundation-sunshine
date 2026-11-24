@@ -1,7 +1,9 @@
+import { unref } from 'vue'
 import { createComponentStatus, microphoneState, registerComponentStatus } from 'foundation-ui/vue'
 import { apiFetch, apiJson, parseJsonResponse } from '../utils/apiFetch.js'
 import { askConfirm } from './askDialog.js'
 import { installFromFile, uninstallChoice } from '../utils/sparxie/componentInstall.js'
+import { copyFor } from '../utils/sparxie/copy.js'
 import { useShellLive } from './useShellLive.js'
 import { useUpdateStatus } from './useUpdateStatus.js'
 
@@ -35,7 +37,10 @@ export function useComponentStatus({ locale, openPage, openAbout } = {}) {
     if (!response.ok) return { ...payload, ok: false }
     return payload
   }
-  const sparxieTexts = () => controller.text().sparxie
+  const sparxieTexts = () => ({
+    ...controller.text().sparxie,
+    ...copyFor(unref(locale) || 'en').packageVerification,
+  })
   controller = registerComponentStatus(createComponentStatus({
     locale,
     openPage,
@@ -69,7 +74,11 @@ export function useComponentStatus({ locale, openPage, openAbout } = {}) {
               texts,
             })
             if (result && result.ok) notify.snack(texts.done)
-            else if (result && result.error_code && result.error_code !== 'cancelled') notify.snack(texts.failed + ' ' + (result.error || result.error_code))
+            else if (result?.error_code && result.error_code !== 'cancelled') {
+              const detail = result.error || result.error_code
+              const reason = result.error_code === 'bad_zip' ? texts.badZip + ' ' + detail : detail
+              notify.snack(texts.failed + ' ' + reason)
+            }
             await controller.check('sparxie')
           },
         },

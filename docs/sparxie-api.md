@@ -349,9 +349,21 @@ Not installed:
 
 ## Install from a file
 
-There is no download. The person obtains the Sparxie package and chooses the
-ZIP here. `GET /api/sparxie/manifest` returns the pinned known versions
-(version, file name, byte size, SHA-256) and no download address.
+Choose a local Sparxie Windows x64 ZIP. The package comes from the publisher or
+the maintainer of the build. A verified install requires the original ZIP
+whose byte size and SHA-256 match an entry in `GET /api/sparxie/manifest`.
+
+- The author's public Windows x64 ZIP is `0.1.0`. It is unlisted in the
+  current Foundation Sunshine manifest. [Author's release](https://github.com/ShadowLemoon/Sparxie/releases/tag/v0.1.0)
+- The `0.1.0-preview.9-sky.11` Windows x64 ZIP is a fork release with its own
+  SHA-256. It is also unlisted. [Fork release](https://github.com/skyhua0224/Sparxie/releases/tag/v0.1.0-preview.9-sky.11)
+- The `0.1.0-preview.9` pin is for the original collaborator ZIP. The
+  author's public releases currently list only `0.1.0`. [Author's releases](https://github.com/ShadowLemoon/Sparxie/releases)
+- The `ci-4438b663e` pin is for the original build-test ZIP. The originating
+  run currently lists zero artifacts. [Build-test run](https://github.com/ShadowLemoon/Sparxie/actions/runs/42796922646)
+
+Use a listed ZIP as supplied. The manifest records its version, file name,
+size in bytes and SHA-256. A rebuilt or repacked ZIP has a different digest.
 
 `POST /api/sparxie/install` with `{ "path", "confirm_unverified", "acknowledged" }`
 starts the install and returns `{ job, done: false, stage }`. Poll
@@ -359,16 +371,24 @@ starts the install and returns `{ job, done: false, stage }`. Poll
 to run the install in the request and receive the final body directly.
 Stages are `dependencies`, `verify`, `extract`, `probe` and `done`.
 
-The ZIP is hashed and compared with the pinned SHA-256 values. A match is
-`verified: true` and the version is the pinned label. Any other hash returns
-`error_code` `unverified` and does not write files until the same call is
-repeated with `confirm_unverified: true`. A file whose size matches a pinned
-package but whose hash does not returns `hash_mismatch` and the same
-`confirm` value, `未经验证的版本`. Repeating that call with
-`confirm_unverified: true` installs it with `verified: false`, `version` and
-`mark` set to `未经验证的版本`. Entry names may use backslashes; they are normalised to
-`/`. A name that is absolute, has a drive letter, or contains a `.` or `..`
-segment is `zip_slip` and nothing outside the install directory is written.
+The host checks the ZIP structure and compares the archive's SHA-256 with
+the manifest. A match returns `verified: true` and the pinned version label.
+
+| Error code | Meaning |
+| --- | --- |
+| `unverified` | The ZIP has an unlisted SHA-256 and byte size. |
+| `hash_mismatch` | The ZIP has the byte size of a listed package and a different SHA-256. |
+| `bad_zip` | The archive is malformed, an entry failed its checksum, or the package lacks a Sparxie executable. |
+| `zip_slip` | An entry has an unsafe path. |
+
+`unverified` and `hash_mismatch` return the actual byte size and SHA-256 plus
+`confirm: "未经验证的版本"`. The caller can repeat the request with
+`confirm_unverified: true`. A successful install then reports
+`verified: false` with `version` and `mark` set to `未经验证的版本`.
+The ZIP structure and entry checks apply on that request as well.
+
+Entry names may use backslashes and are normalised to `/`. The installer
+rejects absolute names, drive letters and `.` or `..` segments.
 Versions are extracted side by side as `app-<version>`. `config.json` already
 in the directory is left in place.
 
@@ -380,7 +400,7 @@ which case the acknowledgement is stored. Other `error_code` values:
 process cannot elevate; elevation is not required when the directory is
 writable), `disk_full`, `quarantined` (a file written by the install is
 missing afterwards; this host does not add an exclusion), `sparxie_running`,
-`bad_zip`, `not_found`, `busy`.
+`not_found`, `busy`.
 
 `POST /api/sparxie/uninstall` removes the component directory. If
 `config.json` is in that directory and `delete_config` is omitted, the call

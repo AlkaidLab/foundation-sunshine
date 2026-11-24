@@ -270,6 +270,31 @@ TEST(InstallFlow, VerifiesPinsAsksForUnknownVersionsAndKeepsAppsSideBySide) {
   EXPECT_FALSE(fs::exists(req.dest));
 }
 
+TEST(InstallFlow, ArchiveErrorsAreDifferentFromManifestMismatches) {
+  const fs::path root = fs::temp_directory_path() / "sparxie-invalid-archive";
+  fs::remove_all(root);
+  auto env = env_at(root);
+  sparxie::InstallRequest req;
+  req.zip = write_zip(root / "broken.zip", { 'n', 'o', 't', ' ', 'z', 'i', 'p' });
+  req.dest = root / "sparxie";
+  req.probes = passing();
+  req.acknowledged = true;
+  const auto malformed = sparxie::install_from_file(env, req);
+  EXPECT_EQ(malformed.status.error_code, "bad_zip");
+  EXPECT_FALSE(malformed.body.contains("confirm"));
+  EXPECT_FALSE(fs::exists(req.dest));
+
+  Built invalid_entry;
+  add_entry(invalid_entry, "Sparxie.exe", "exe", 0, { 'b', 'a', 'd' });
+  req.zip = write_zip(root / "bad-crc.zip", finish(invalid_entry));
+  req.confirm_unverified = true;
+  const auto bad_crc = sparxie::install_from_file(env, req);
+  EXPECT_EQ(bad_crc.status.error_code, "bad_zip");
+  EXPECT_FALSE(bad_crc.body.contains("confirm"));
+  EXPECT_FALSE(fs::exists(req.dest / "component.json"));
+  EXPECT_FALSE(fs::exists(req.dest / "Sparxie.exe"));
+}
+
 TEST(InstallFlow, StopsForTheDependencyFailures) {
   const fs::path root = fs::temp_directory_path() / "sparxie-install-deps";
   fs::remove_all(root);

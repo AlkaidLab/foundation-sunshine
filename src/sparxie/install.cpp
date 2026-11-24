@@ -262,8 +262,8 @@ namespace sparxie {
       { "minOsBuild", kMinBuild },
       { "arch", "x64" },
       { "requiresAdmin", false },
-      { "hint", "请自行取得 Sparxie 的安装包，然后在这里选择它。" },
-      { "hintEn", "Get the Sparxie package yourself, then choose it here." },
+      { "hint", "请从 Sparxie 的发布渠道取得 Windows x64 ZIP，然后在这里选择它。可信校验需要与清单大小和 SHA-256 一致的原始 ZIP。" },
+      { "hintEn", "Choose a Windows x64 ZIP from a Sparxie release. Verified installation requires an original ZIP matching the manifest's size and SHA-256." },
       { "licence", "The package stays the author's. This host does not download it and does not redistribute it. A known checksum marks that ZIP as verified. Any other ZIP installs only after an explicit confirmation." },
       { "assets", std::move(assets) },
     };
@@ -323,6 +323,8 @@ namespace sparxie {
     std::error_code ec;
     if (!fs::is_regular_file(req.zip, ec)) return stop(404, "not_found", "The package file is not there");
     note(out, progress, "verify", 15);
+    const zip::Outcome inspected = zip::inspect(req.zip);
+    if (!inspected.ok) return stop(400, inspected.error_code.empty() ? "bad_zip" : inspected.error_code, inspected.error);
     const std::string hash = hash_file(req.zip);
     if (hash.empty()) return stop(404, "not_found", "The package file could not be read");
     const auto bytes = fs::file_size(req.zip, ec);
@@ -330,11 +332,9 @@ namespace sparxie {
     if (!pin && !req.confirm_unverified) {
       json extra = { { "sha256", hash }, { "bytes", bytes }, { "confirm", "未经验证的版本" } };
       if (size_without_hash(req.pins, bytes, hash))
-        return stop(400, "hash_mismatch", "The package size matches a known version but the checksum does not", std::move(extra));
-      return stop(409, "unverified", "This package is not a known version", std::move(extra));
+        return stop(400, "hash_mismatch", "This ZIP has the size of a listed package but a different SHA-256. Use the original ZIP for a verified install.", std::move(extra));
+      return stop(409, "unverified", "This ZIP is unlisted. Use an original ZIP matching the manifest's size and SHA-256 for a verified install.", std::move(extra));
     }
-    const zip::Outcome inspected = zip::inspect(req.zip);
-    if (!inspected.ok) return stop(400, inspected.error_code.empty() ? "bad_zip" : inspected.error_code, inspected.error);
     const std::uint64_t need = inspected.uncompressed + kSlack;
     if (req.probes.free_known && req.probes.free_bytes < need) {
       json extra = { { "need", need }, { "free", req.probes.free_bytes } };
@@ -355,7 +355,11 @@ namespace sparxie {
     const zip::Outcome extracted = zip::extract(req.zip, staging, [&](int percent) {
       note(out, progress, "extract", 40 + percent / 2);
     });
-    if (!extracted.ok) return stop(extracted.error_code == "hash_mismatch" ? 400 : 400, extracted.error_code.empty() ? "bad_zip" : extracted.error_code, extracted.error);
+    if (!extracted.ok) {
+      // An entry CRC failure is a damaged archive. Reserve hash_mismatch for the manifest comparison.
+      const auto &code = extracted.error_code;
+      return stop(400, code.empty() || code == "hash_mismatch" ? "bad_zip" : code, extracted.error);
+    }
     const fs::path content = content_root(staging);
     if (!launcher_present(content)) return stop(400, "bad_zip", "The package has no Sparxie executable");
     note(out, progress, "probe", 90);

@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { installFromFile, installPayload, uninstallChoice } from '../utils/sparxie/componentInstall.js'
 
-const texts = { bring: 'bring', noticeTitle: 'before', noticeYes: 'go', unverified: 'unknown', unverifiedTitle: 'title', unverifiedYes: 'install', removeText: 'cfg', removeTitle: 'rm', removeDelete: 'del', removeKeep: 'keep' }
+const texts = { bring: 'bring', noticeTitle: 'before', noticeYes: 'go', unverified: 'unknown', unverifiedTitle: 'title', unverifiedYes: 'install', hashMismatch: 'SHA-256 differs', hashMismatchTitle: 'mismatch', removeText: 'cfg', removeTitle: 'rm', removeDelete: 'del', removeKeep: 'keep' }
 
 test('a known package is sent once, an unknown one only after confirmation', async () => {
   const posts = []
@@ -42,12 +42,25 @@ test('a same-size checksum mismatch asks, then installs after confirmation', asy
   const result = await installFromFile({
     status: { noticeAck: true },
     pick: async () => 'C:/changed.zip',
-    ask: async (message) => { asks.push(message); return true },
+    ask: async (message, title) => { asks.push([message, title]); return true },
     post: async (body) => { posts.push(body); return posts.length === 1 ? { ok: false, error_code: 'hash_mismatch', confirm: '未经验证的版本' } : { ok: true, verified: false, mark: '未经验证的版本' } },
     texts,
   })
   assert.equal(result.verified, false)
-  assert.deepEqual(asks, ['unknown'])
+  assert.deepEqual(asks, [['SHA-256 differs', 'mismatch']])
   assert.equal(posts[0].confirm_unverified, false)
   assert.equal(posts[1].confirm_unverified, true)
+})
+
+test('a ZIP structure error is returned without asking to install anyway', async () => {
+  const posts = []
+  const result = await installFromFile({
+    status: { noticeAck: true },
+    pick: async () => 'C:/broken.zip',
+    ask: async () => { throw new Error('unexpected confirmation') },
+    post: async (body) => { posts.push(body); return { ok: false, error_code: 'bad_zip' } },
+    texts,
+  })
+  assert.equal(result.error_code, 'bad_zip')
+  assert.deepEqual(posts, [installPayload('C:/broken.zip')])
 })
