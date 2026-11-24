@@ -93,12 +93,17 @@ namespace streaming {
     std::lock_guard lock(mutex_);
     if (!automatic_ || now < 0) return;
     percentage = std::min(percentage, 255U);
-    if (window_ms_ < 0) {
+    if (window_ms_ >= 0 && now < window_ms_) return;
+    // Arming protection is urgent: while unprotected, the first request is adopted at once
+    // instead of waiting for a completed window. The encoder target still has to be lowered
+    // and accepted before any frame carries the new allowance (pending()/commit()).
+    const bool arming = requested_fec_ == 0 && percentage > 0;
+    if (window_ms_ < 0 || arming) {
       window_ms_ = now;
       window_fec_ = percentage;
+      if (arming) requested_fec_ = percentage;
       return;
     }
-    if (now < window_ms_) return;
     // Use the highest requested ratio in a completed window, so a small or
     // unusually large frame does not repeatedly reconfigure the encoder.
     if (now - window_ms_ >= update_interval_ms) {

@@ -292,7 +292,7 @@ TEST(VideoFecBudget, ConcurrentBitrateRequestSurvivesEncoderCommitAndReinit) {
   ASSERT_TRUE(budget.pending(5000));
 }
 
-TEST(VideoFecBudget, HysteresisCannotPreventEnablingMinimumProtection) {
+TEST(VideoFec, HysteresisCannotPreventEnablingMinimumProtection) {
   streaming::bitrate_budget_t budget(10000, 0, 0, 0, 0, true);
   budget.observe_fec(1, 0);
   budget.observe_fec(1, 1000);
@@ -302,6 +302,125 @@ TEST(VideoFecBudget, HysteresisCannotPreventEnablingMinimumProtection) {
   EXPECT_EQ(next->encoder_kbps, 9900);
 }
 
+TEST(VideoFecBudget, ArmingProtectionSkipsTheWindow) {
+  streaming::bitrate_budget_t budget(10000, 0, 0, 0, 0, true);
+  budget.observe_fec(50, 0);
+  const auto next = budget.pending(0);
+  ASSERT_TRUE(next);
+  EXPECT_EQ(next->fec_percentage, 50);
+  EXPECT_EQ(next->encoder_kbps, 6666);
+  budget.commit(*next);
+  // From an armed allowance the completed window still gates further raises.
+  budget.observe_fec(50, 100);
+  EXPECT_FALSE(budget.pending(999));
+}
+
+// While unprotected the controller must not follow the reported loss estimate down: a falling
+// estimate only says the parity in place is absorbing the loss, not that the link recovered.
+TEST(VideoFec, ProtectionHoldsTheStrongestLossOfItsEpochWhileLossContinues) {
+  video_fec::controller_t control;
+  control.initialize(20, true, 50);
+  ASSERT_TRUE(control.report(1, 10000, 3000, 0));
+  const auto strong = control.percentage(100, 2, 1000);
+  EXPECT_GT(strong, 0);
+  for (unsigned second = 2; second <= 10; ++second)
+    ASSERT_TRUE(control.report(second, 10000, 30, second * 1000 - 1000));  // 0.3% after the parity landed
+  ASSERT_TRUE(control.report(11, 10000, 30, 10000));
+  EXPECT_EQ(control.percentage(100, 2, 10000), strong);
+}
+
+// A release that is followed by loss within seconds removed protection the link still needed:
+// the next release waits twice as long without loss, and re-arms no weaker than before.
+TEST(VideoFec, PrematureReleaseDemandsMoreCleanTimeBeforeTheNextRelease) {
+  video_fec::controller_t control;
+  control.initialize(20, true, 50);
+  unsigned seq = 1;
+  ASSERT_TRUE(control.report(seq++, 10000, 3000, 0));
+  EXPECT_GT(control.percentage(100, 2, 1000), 0);
+  for (std::int64_t t = 1000; t <= 10000; t += 1000)
+    ASSERT_TRUE(control.report(seq++, 10000, 0, t));
+  EXPECT_EQ(control.percentage(100, 2, 10000), 0);  // released
+  ASSERT_TRUE(control.report(seq++, 10000, 2000, 12000));  // loss two seconds later
+  EXPECT_GT(control.percentage(100, 2, 12000), 0);
+  for (std::int64_t t = 13000; t <= 21000; t += 1000)
+    ASSERT_TRUE(control.report(seq++, 10000, 0, t));
+  EXPECT_GT(control.percentage(100, 2, 21000), 0);  // the fresh loss is still inside the window
+  ASSERT_TRUE(control.report(seq++, 10000, 0, 22000));
+  EXPECT_GT(control.percentage(100, 2, 22000), 0);  // clean read: the doubled wait starts
+  for (std::int64_t t = 23000; t <= 31000; t += 1000)
+    ASSERT_TRUE(control.report(seq++, 10000, 0, t));
+  EXPECT_GT(control.percentage(100, 2, 31000), 0);  // nine clean seconds do not release
+  ASSERT_TRUE(control.report(seq++, 10000, 0, 32000));
+  EXPECT_EQ(control.percentage(100, 2, 32000), 0);  // ten do
+}
+
+// Loss that interrupts a clean stretch restarts the clean clock instead of adding to it.
+TEST(VideoFec, LossDuringTheWaitRestartsTheCleanClock) {
+  video_fec::controller_t control;
+  control.initialize(20, true, 50);
+  unsigned seq = 1;
+  ASSERT_TRUE(control.report(seq++, 10000, 3000, 0));
+  for (std::int64_t t = 1000; t <= 10000; t += 1000)
+    ASSERT_TRUE(control.report(seq++, 10000, 0, t));
+  EXPECT_EQ(control.percentage(100, 2, 10000), 0);
+  ASSERT_TRUE(control.report(seq++, 10000, 2000, 12000));  // premature: the next release waits 20 s
+  EXPECT_GT(control.percentage(100, 2, 12000), 0);
+  for (std::int64_t t = 13000; t <= 21000; t += 1000)
+    ASSERT_TRUE(control.report(seq++, 10000, 0, t));
+  ASSERT_TRUE(control.report(seq++, 10000, 0, 22000));
+  EXPECT_GT(control.percentage(100, 2, 22000), 0);  // clean read: the wait starts
+  for (std::int64_t t = 23000; t <= 29000; t += 1000)
+    ASSERT_TRUE(control.report(seq++, 10000, 0, t));
+  EXPECT_GT(control.percentage(100, 2, 29000), 0);  // seven clean seconds so far
+  ASSERT_TRUE(control.report(seq++, 10000, 100, 29500));  // a fresh loss resets the clock
+  EXPECT_GT(control.percentage(100, 2, 29500), 0);
+  for (std::int64_t t = 30500; t <= 49500; t += 1000)
+    ASSERT_TRUE(control.report(seq++, 10000, 0, t));
+  EXPECT_GT(control.percentage(100, 2, 49500), 0);  // the fresh clean clock just started
+  ASSERT_TRUE(control.report(seq++, 10000, 0, 50500));
+  EXPECT_GT(control.percentage(100, 2, 50500), 0);  // one second of clean is not enough
+  for (std::int64_t t = 51500; t <= 59000; t += 1000)
+    ASSERT_TRUE(control.report(seq++, 10000, 0, t));
+  EXPECT_GT(control.percentage(100, 2, 59000), 0);  // 9.5 s clean since the reset
+  ASSERT_TRUE(control.report(seq++, 10000, 0, 59500));
+  EXPECT_EQ(control.percentage(100, 2, 59500), 0);  // 10 s clean since the reset, not since 22 s
+}
+
+// A release that stays safe halves the demanded wait again.
+TEST(VideoFec, SafeReleasesHalveTheExtraWait) {
+  video_fec::controller_t control;
+  control.initialize(20, true, 50);
+  unsigned seq = 1;
+  ASSERT_TRUE(control.report(seq++, 10000, 3000, 0));
+  for (std::int64_t t = 1000; t <= 10000; t += 1000)
+    ASSERT_TRUE(control.report(seq++, 10000, 0, t));
+  EXPECT_EQ(control.percentage(100, 2, 10000), 0);
+  ASSERT_TRUE(control.report(seq++, 10000, 2000, 12000));  // premature: wait 20 s next time
+  EXPECT_GT(control.percentage(100, 2, 12000), 0);  // the loss re-arms protection inside the premature window
+  for (std::int64_t t = 13000; t <= 21000; t += 1000)
+    ASSERT_TRUE(control.report(seq++, 10000, 0, t));
+  ASSERT_TRUE(control.report(seq++, 10000, 0, 22000));
+  EXPECT_GT(control.percentage(100, 2, 22000), 0);  // clean read: the doubled wait starts
+  for (std::int64_t t = 23000; t <= 31000; t += 1000)
+    ASSERT_TRUE(control.report(seq++, 10000, 0, t));
+  EXPECT_GT(control.percentage(100, 2, 31000), 0);  // nine clean seconds do not release
+  ASSERT_TRUE(control.report(seq++, 10000, 0, 32000));
+  EXPECT_EQ(control.percentage(100, 2, 32000), 0);  // released after 20 clean seconds
+  for (std::int64_t t = 33000; t <= 52000; t += 1000)
+    ASSERT_TRUE(control.report(seq++, 10000, 0, t));
+  EXPECT_EQ(control.percentage(100, 2, 52000), 0);  // still clean past the decay point: the wait halves to 5 s
+  ASSERT_TRUE(control.report(seq++, 10000, 3000, 54500));  // loss much later is a fresh episode, not premature
+  EXPECT_GT(control.percentage(100, 2, 54500), 0);
+  for (std::int64_t t = 55500; t <= 66000; t += 1000)
+    ASSERT_TRUE(control.report(seq++, 10000, 0, t));
+  EXPECT_GT(control.percentage(100, 2, 66500), 0);  // the halved wait is running
+  ASSERT_TRUE(control.report(seq++, 10000, 0, 67500));
+  EXPECT_GT(control.percentage(100, 2, 67500), 0);  // four clean seconds
+  for (std::int64_t t = 68500; t <= 70500; t += 1000)
+    ASSERT_TRUE(control.report(seq++, 10000, 0, t));
+  ASSERT_TRUE(control.report(seq++, 10000, 0, 71500));
+  EXPECT_EQ(control.percentage(100, 2, 71500), 0);  // released after only 5 clean seconds
+}
 
 // ---- the host's bitrate ceiling is live (tray 码率上限): a running session's budget follows it ----
 
