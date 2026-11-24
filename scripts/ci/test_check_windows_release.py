@@ -75,11 +75,11 @@ class WindowsReleaseGateTests(unittest.TestCase):
 
     def test_stack_only_checks_the_reserve_alone(self):
         # the installer shell: imports are not judged, a 1 MiB reserve (LLD default) fails, 4 MiB passes
-        small = pe_with_imports(["d2d1.dll"], stack_reserve=1024 * 1024)
-        large = pe_with_imports(["d2d1.dll"], stack_reserve=4 * 1024 * 1024)
+        small = pe_with_imports(["libwinpthread-1.dll"], stack_reserve=1024 * 1024)
+        large = pe_with_imports(["libwinpthread-1.dll"], stack_reserve=4 * 1024 * 1024)
         self.assertTrue(any("SizeOfStackReserve" in error for error in CHECK.check_data(small, None, True)[2]))
         self.assertEqual(CHECK.check_data(large, None, True)[2], [])
-        self.assertTrue(any("d2d1.dll" in error for error in CHECK.check_data(large)[2]))
+        self.assertTrue(any("libwinpthread-1.dll" in error for error in CHECK.check_data(large)[2]))
 
     def test_code_size_limit(self):
         small = pe_with_imports(["KERNEL32.dll"], size_of_code=900_000)

@@ -121,6 +121,10 @@ internal sealed class BrokerRpc : IDisposable
             var settings = Proto.Message(fields.ToArray());
             nested = Proto.Append(nested, 5, settings);
         }
+        // A plugin game's own options travel as ProfileSnapshot.settings_json = 7 (JSON object text); the plugin gets them normalised by its schema, and none at all
+        // means its defaults. The built-in games carry none, and the Broker refuses them when they do.
+        if (profile.PluginSettings is { Length: > 0 } pluginSettings && GameIds.IsPlugin(profile.Game))
+            nested = Proto.Append(nested, 7, System.Text.Encoding.UTF8.GetBytes(pluginSettings));
         // ScreenArgs screen = 6 { width 1, height 2, window_mode 3 }; only when there is something to say (a Broker without the capability must not be sent it)
         if (profile.Screen is { IsEmpty: false } screen)
             nested = Proto.Append(nested, 6, Proto.Message((1, Proto.Int(screen.Width)), (2, Proto.Int(screen.Height)), (3, Proto.String(screen.WindowMode))));

@@ -312,6 +312,27 @@ target_link_libraries(poster_unit_tests PRIVATE gtest_main OpenSSL::Crypto sunsh
 set_target_properties(poster_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME poster_unit_tests COMMAND poster_unit_tests)
 
+add_executable(generated_cover_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/generated_cover.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_generated_cover.cpp)
+target_include_directories(generated_cover_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(generated_cover_unit_tests PRIVATE gtest_main OpenSSL::Crypto sunshine_project_options sunshine_coverage)
+if (WIN32)
+    target_link_libraries(generated_cover_unit_tests PRIVATE windowscodecs ole32 shell32 d2d1 dwrite)
+endif ()
+set_target_properties(generated_cover_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME generated_cover_unit_tests COMMAND generated_cover_unit_tests)
+
+add_executable(generated_cover_render_tool
+        ${CMAKE_SOURCE_DIR}/src/generated_cover.cpp
+        ${CMAKE_SOURCE_DIR}/tests/tools/generate_cover_renders.cpp)
+target_include_directories(generated_cover_render_tool PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(generated_cover_render_tool PRIVATE OpenSSL::Crypto sunshine_project_options)
+if (WIN32)
+    target_link_libraries(generated_cover_render_tool PRIVATE windowscodecs ole32 shell32 d2d1 dwrite)
+endif ()
+set_target_properties(generated_cover_render_tool PROPERTIES CXX_STANDARD 23)
+
 add_executable(measured_bitrate_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_measured_bitrate.cpp)
 target_include_directories(measured_bitrate_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(measured_bitrate_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
@@ -1724,8 +1745,9 @@ target_link_libraries(${PROJECT_NAME}
         ${PLATFORM_LIBRARIES}
         sunshine_project_options sunshine_coverage sunshine_crypto sunshine_ai_provider sunshine_ai_stream)
 if (WIN32)
-    # src/sparxie/platform.cpp downloads through WinHTTP, as the sunshine target links it.
-    target_link_libraries(${PROJECT_NAME} PRIVATE winhttp)
+    # src/sparxie/platform.cpp downloads through WinHTTP, as the sunshine target links it;
+    # src/generated_cover.cpp draws with Direct2D and DirectWrite and reads icons through the shell.
+    target_link_libraries(${PROJECT_NAME} PRIVATE winhttp windowscodecs ole32 shell32 d2d1 dwrite)
 endif ()
 target_compile_definitions(${PROJECT_NAME} PUBLIC
         SUNSHINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"

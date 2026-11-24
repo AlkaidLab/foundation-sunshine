@@ -11,6 +11,7 @@
 #include <chrono>
 #include <filesystem>
 #include <mutex>
+#include <shared_mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -492,8 +493,24 @@ namespace proc {
   proc_t::get_apps() {
     return _apps;
   }
+  namespace {
+    // the list is replaced by a save on a request thread while others read it: the readers that take a snapshot and the replacement meet here
+    std::shared_mutex &
+    apps_guard() {
+      static std::shared_mutex guard;
+      return guard;
+    }
+  }  // namespace
+
+  std::vector<ctx_t>
+  apps_snapshot() {
+    std::shared_lock lock { apps_guard() };
+    return proc.get_apps();
+  }
+
   void
   proc_t::set_apps(std::vector<ctx_t> apps) {
+    std::unique_lock lock { apps_guard() };
     // Calculate uniqueEtag for the app list before moving apps
     std::string combined_info;
     for (const auto &app : apps) {
@@ -514,6 +531,7 @@ namespace proc {
       std::mutex mutex;
       const void *owner = nullptr;
       std::string list_etag;
+      std::string cover_style;  // the style the generated covers follow: a change of it is a new tag at once, not after the two seconds
       std::chrono::steady_clock::time_point at;
       std::string tag;
     };
@@ -533,13 +551,15 @@ namespace proc {
     auto &cache = art_tag_cache();
     std::lock_guard lock { cache.mutex };
     const auto now = std::chrono::steady_clock::now();
-    if (cache.owner != this || cache.list_etag != _apps_etag || cache.at.time_since_epoch().count() == 0 || now - cache.at >= std::chrono::seconds(2)) {
+    const auto cover_style = config::generated_cover_style();
+    if (cache.owner != this || cache.list_etag != _apps_etag || cache.cover_style != cover_style || cache.at.time_since_epoch().count() == 0 || now - cache.at >= std::chrono::seconds(2)) {
       std::string apps_art;
       for (const auto &app : _apps) {
         apps_art += app.id + ':' + app_art_version(app, true) + ';';
       }
       cache.owner = this;
       cache.list_etag = _apps_etag;
+      cache.cover_style = cover_style;
       cache.at = now;
       cache.tag = std::move(apps_art);
     }
@@ -764,28 +784,87 @@ namespace proc {
   }
 
   namespace {
+    // The local file a URL poster is saved as (covers/url_<hash><ext>); empty when the address does not end in an image extension.
+    std::filesystem::path
+    url_cover_file(const std::string &url) {
+      auto stripped = url;
+      if (const auto query_start = stripped.find('?'); query_start != std::string::npos) stripped = stripped.substr(0, query_start);
+      const auto hash = std::hash<std::string> {}(url);
+      const auto ext = std::filesystem::path(stripped).extension().string();
+      std::string ext_lower = ext;
+      std::transform(ext_lower.begin(), ext_lower.end(), ext_lower.begin(), ::tolower);
+      if (ext_lower != ".png" && ext_lower != ".jpg" && ext_lower != ".jpeg" && ext_lower != ".bmp" && ext_lower != ".webp" && ext_lower != ".ico") return {};
+      return platf::appdata() / "covers" / ("url_" + std::to_string(hash) + (ext.empty() ? ".png" : ext));
+    }
+
     // The poster file of a plain path as validate_app_image_path would find it (assets, covers, as given), without logging and without downloading or the desktop picture; empty when none exists.
     std::string
     existing_poster_quietly(const std::string &image_path) {
       if (image_path.empty()) return DEFAULT_APP_IMAGE_PATH;
       if (image_path == "desktop") return {};
+      // the same rules as validate_app_image_path: a file that is not a png or jpeg is the placeholder, and the old name of the Steam picture finds the one of the assets
+      auto image_extension = file_handler::path_from_utf8(image_path).extension().string();
+      boost::to_lower(image_extension);
+      if (image_extension != ".png" && image_extension != ".jpg" && image_extension != ".jpeg") return DEFAULT_APP_IMAGE_PATH;
       const auto relative = file_handler::path_from_utf8(image_path);
       const std::array candidates {
         file_handler::path_from_utf8(SUNSHINE_ASSETS_DIR) / relative,
         platf::appdata() / "covers" / relative,
+        image_path == "./assets/steam.png" ? file_handler::path_from_utf8(SUNSHINE_ASSETS_DIR "/steam.png") : std::filesystem::path {},
         relative,
       };
       std::error_code error;
       for (const auto &path : candidates)
-        if (std::filesystem::exists(path, error)) return file_handler::path_to_utf8(path);
+        if (!path.empty() && std::filesystem::exists(path, error)) return file_handler::path_to_utf8(path);
       return {};
     }
   }  // namespace
 
+  std::string
+  default_app_image_path() {
+    return DEFAULT_APP_IMAGE_PATH;
+  }
+
+  generated_cover::app_t
+  cover_app(const ctx_t &app, bool quiet) {
+    std::string poster;
+    bool pending = false;
+    if (!quiet) {
+      poster = app_art_asset_path(app, "poster");
+    }
+    else if (app.image_path.rfind("http://", 0) == 0 || app.image_path.rfind("https://", 0) == 0) {
+      // a downloaded picture is looked up, never fetched, by the application list tag
+      const auto file = url_cover_file(app.image_path);
+      std::error_code error;
+      if (!file.empty() && std::filesystem::exists(file, error)) poster = file_handler::path_to_utf8(file);
+      else if (!file.empty()) pending = true;  // a picture of its own that is not here yet: it is fetched when a client asks for it, not by the list
+      else poster = DEFAULT_APP_IMAGE_PATH;
+    }
+    else {
+      poster = existing_poster_quietly(app.image_path);
+    }
+    return generated_cover::app_t {
+      .id = app.id,
+      .name = app.name,
+      .image_path = app.image_path,
+      .poster_path = std::move(poster),
+      .hero_path = app_art_asset_path(app, "hero"),
+      .command = app.cmd,
+      .working_dir = app.working_dir,
+      .detached = app.detached,
+      .cover_style = app.cover_style,
+      .placeholder_path = DEFAULT_APP_IMAGE_PATH,
+      .xbox_app = app.xbox_app,
+      .poster_pending = pending,
+    };
+  }
+
   /// The version tag of the art of an application as it is now: the configured paths' own tag plus the size and the time of every present art file, so a file replaced under
   /// the same name is a new version (a client that was told `immutable` for a version asks again). A URL poster is not statted here: resolving it can download a picture.
+  /// An application with no picture of its own shows a generated cover: its key is part of the version, so the switch from the placeholder to the cover (and a change of the
+  /// style or of the cover design) makes a new version and the clients that keep art by version fetch the cover.
   std::string
-  app_art_version(const ctx_t &app, bool quiet) {
+  app_art_version(const ctx_t &app, bool quiet, std::string_view cover_style) {
     std::string files;
     const auto append = [&files](const char *type, const std::string &path) {
       if (path.empty()) return;
@@ -796,6 +875,8 @@ namespace proc {
       append("poster", quiet ? existing_poster_quietly(app.image_path) : validate_app_image_path(app.image_path));
     }
     for (const auto *type : { "hero", "logo", "icon" }) append(type, app_art_asset_path(app, type));
+    // the cover is looked up in the quiet way in both tags: the version never downloads a picture or logs. The Desktop entry streams the wallpaper, which changes with the person, not with the host: it adds nothing.
+    if (app.image_path != "desktop") files += generated_cover::art_fact(cover_app(app, true), cover_style.empty() ? std::string_view { config::generated_cover_style() } : cover_style);
     return client_interface::live_art_version(app.fs_facts.art_version, files);
   }
 
@@ -810,29 +891,13 @@ namespace proc {
       try {
         std::string original_url = app_image_path;
 
-        // 移除查询参数
-        size_t query_start = app_image_path.find('?');
-        if (query_start != std::string::npos) {
-          app_image_path = app_image_path.substr(0, query_start);
-        }
-
-        // 从URL提取文件名
-        auto hash = std::hash<std::string> {}(original_url);
-        auto ext = std::filesystem::path(app_image_path).extension().string();
-
-        // 安全检查：验证文件扩展名
-        std::string ext_lower = ext;
-        std::transform(ext_lower.begin(), ext_lower.end(), ext_lower.begin(), ::tolower);
-        if (ext_lower != ".png" && ext_lower != ".jpg" && ext_lower != ".jpeg" &&
-            ext_lower != ".bmp" && ext_lower != ".webp" && ext_lower != ".ico") {
-          BOOST_LOG(warning) << "Blocked download of non-image extension: " << ext;
+        // 保存到本地 covers 目录 (User requested to save to covers instead of assets)
+        const auto local_path = url_cover_file(original_url);
+        if (local_path.empty()) {
+          // 安全检查：验证文件扩展名
+          BOOST_LOG(warning) << "Blocked download of non-image extension: " << std::filesystem::path(app_image_path.substr(0, app_image_path.find('?'))).extension().string();
           return DEFAULT_APP_IMAGE_PATH;
         }
-
-        std::string filename = "url_" + std::to_string(hash) + (ext.empty() ? ".png" : ext);
-
-        // 保存到本地 covers 目录 (User requested to save to covers instead of assets)
-        auto local_path = platf::appdata() / "covers" / filename;
 
         // 如果文件不存在则下载
         if (!std::filesystem::exists(local_path)) {
@@ -1013,6 +1078,7 @@ namespace proc {
         auto name = parse_env_val(this_env, app_node.get<std::string>("name"s));
         auto cmd = app_node.get_optional<std::string>("cmd"s);
         auto image_path = app_node.get_optional<std::string>("image-path"s);
+        auto cover_style = app_node.get_optional<std::string>("cover-style"s);
         auto working_dir = app_node.get_optional<std::string>("working-dir"s);
         auto elevated = app_node.get_optional<bool>("elevated"s);
         auto auto_detach = app_node.get_optional<bool>("auto-detach"s);
@@ -1097,6 +1163,13 @@ namespace proc {
         if (image_path) {
           ctx.image_path = parse_env_val(this_env, *image_path);
         }
+        ctx.cover_style = cover_style.value_or("auto");
+        if (ctx.cover_style != "auto" && ctx.cover_style != "tonal" && ctx.cover_style != "monogram" &&
+            ctx.cover_style != "icon" && ctx.cover_style != "editorial" && ctx.cover_style != "glass" &&
+            ctx.cover_style != "geometric") {
+          BOOST_LOG(warning) << "Ignoring invalid cover-style ["sv << ctx.cover_style << "] for app ["sv << name << ']';
+          ctx.cover_style = "auto";
+        }
 
         // a game application of the Sparxie component: the HoYoverse games and Sparxie itself ask for administrator rights in their manifest,
         // so started without them CreateProcess fails with ERROR_ELEVATION_REQUIRED (740) whatever the entry says
@@ -1176,6 +1249,7 @@ namespace proc {
 #ifdef _WIN32
         opens_big_screen = default_apps::opens_big_screen(app_node);
 #endif
+        ctx.xbox_app = default_apps::signature_of(app_node) == default_apps::xbox_id;
         ctx.fs_facts = client_interface::make_app_facts(ctx.id, ctx.cmd, opens_big_screen, ctx.image_path, app_node);
 
         apps.emplace_back(std::move(ctx));

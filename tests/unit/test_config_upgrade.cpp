@@ -272,6 +272,7 @@ namespace {
       default_session_absolute = config::sunshine.session_absolute_hours;
       default_session_remember_idle = config::sunshine.session_remember_idle_minutes;
       default_session_remember_days = config::sunshine.session_remember_days;
+      default_pin_prompt = config::sunshine.pin_prompt;
     }
 
     int
@@ -301,6 +302,27 @@ namespace {
     static int default_session_absolute;
     static int default_session_remember_idle;
     static int default_session_remember_days;
+    static std::string default_pin_prompt;
+
+    int
+    parse_text(const std::string &name, const std::string &content) {
+      config::sunshine.flags.reset();
+      config::sunshine.prep_cmds.clear();
+      config::input.keybindings.clear();
+      const auto config_path = platf::appdata() / ("config-" + name + ".conf");
+      {
+        std::ofstream out(config_path, std::ios::binary | std::ios::trunc);
+        out << content;
+      }
+      std::vector<std::string> arguments { "sunshine-config-test", config_path.string() };
+      std::vector<char *> argv;
+      for (auto &argument : arguments) argv.push_back(argument.data());
+      argv.push_back(nullptr);
+      const auto result = config::parse(static_cast<int>(argv.size()) - 1, argv.data());
+      std::error_code ignored;
+      fs::remove(config_path, ignored);
+      return result;
+    }
   };
 
   std::string ConfigUpgrade::default_mic_backend;
@@ -311,6 +333,7 @@ namespace {
   int ConfigUpgrade::default_session_absolute = 0;
   int ConfigUpgrade::default_session_remember_idle = 0;
   int ConfigUpgrade::default_session_remember_days = 0;
+  std::string ConfigUpgrade::default_pin_prompt;
 }  // namespace
 
 TEST_F(ConfigUpgrade, EveryOldKeyLandsInItsField) {
@@ -439,6 +462,7 @@ TEST_F(ConfigUpgrade, KeysAddedSinceTheOldReleasesTakeTheirDefaults) {
   EXPECT_EQ(config::sunshine.session_absolute_hours, default_session_absolute);
   EXPECT_EQ(config::sunshine.session_remember_idle_minutes, default_session_remember_idle);
   EXPECT_EQ(config::sunshine.session_remember_days, default_session_remember_days);
+  EXPECT_EQ(config::sunshine.pin_prompt, default_pin_prompt);
   EXPECT_TRUE(config::nvhttp.external_endpoints.empty());
   EXPECT_TRUE(config::nvhttp.stun_servers.empty());
   EXPECT_TRUE(config::nvhttp.fs_host_icon.empty());
@@ -450,6 +474,24 @@ TEST_F(ConfigUpgrade, KeysAddedSinceTheOldReleasesTakeTheirDefaults) {
   EXPECT_EQ(default_session_absolute, 12);
   EXPECT_EQ(default_session_remember_idle, 7 * 24 * 60);
   EXPECT_EQ(default_session_remember_days, 30);
+  // a pairing request asks for its PIN in the control panel's full-screen entry unless the setting says otherwise
+  EXPECT_EQ(default_pin_prompt, "fullscreen");
+}
+
+TEST_F(ConfigUpgrade, PinPromptTakesOnlyItsTwoValues) {
+  // the control panel reads the saved file at every pairing request; the host keeps the value valid
+  ASSERT_EQ(parse_text("pin-prompt-panel", "pin_prompt = panel\n"), 0);
+  EXPECT_EQ(config::sunshine.pin_prompt, "panel");
+  ASSERT_EQ(parse_text("pin-prompt-fullscreen", "pin_prompt = fullscreen\n"), 0);
+  EXPECT_EQ(config::sunshine.pin_prompt, "fullscreen");
+  ASSERT_EQ(parse_text("pin-prompt-space", "pin_prompt =   panel  \n"), 0);
+  EXPECT_EQ(config::sunshine.pin_prompt, "panel");
+  // anything else leaves the value that was there, and a fresh start has the default
+  ASSERT_EQ(parse_text("pin-prompt-bad", "pin_prompt = window\n"), 0);
+  EXPECT_EQ(config::sunshine.pin_prompt, "panel");
+  config::sunshine.pin_prompt = default_pin_prompt;
+  ASSERT_EQ(parse_text("pin-prompt-unset", "sunshine_name = x\n"), 0);
+  EXPECT_EQ(config::sunshine.pin_prompt, "fullscreen");
 }
 
 TEST_F(ConfigUpgrade, MicrophoneBackendDefaultChangedButEveryOldValueIsStillAccepted) {
@@ -498,4 +540,29 @@ TEST_F(ConfigUpgrade, AnUnknownKeySurvivesAFullSettingsSaveWhenTheUiSendsItBack)
   const auto after_partial = config::parse_config(read_text(path));
   EXPECT_EQ(after_partial.at("sunshine_name"), "newer");
   EXPECT_EQ(after_partial.at("future_key"), "kept");
+}
+
+TEST_F(ConfigUpgrade, GeneratedCoverStyleRoundTripsThroughTheHostConfiguration) {
+  const auto path = platf::appdata() / "config-upgrade-generated-cover-style.conf";
+  std::ofstream(path, std::ios::binary | std::ios::trunc) << "generated_cover_style = geometric\n";
+  const auto saved_path = config::sunshine.config_file;
+  const auto saved_style = config::nvhttp.generated_cover_style;
+  config::sunshine.config_file = path.string();
+  struct restore_t {
+    std::string path;
+    std::string style;
+    ~restore_t() {
+      config::sunshine.config_file = path;
+      config::nvhttp.generated_cover_style = style;
+    }
+  } restore { saved_path, saved_style };
+
+  std::vector<std::string> arguments { "sunshine-generated-cover-style-test", path.string() };
+  std::vector<char *> argv;
+  for (auto &argument : arguments) argv.push_back(argument.data());
+  argv.push_back(nullptr);
+  ASSERT_EQ(config::parse(static_cast<int>(argv.size()) - 1, argv.data()), 0);
+  EXPECT_EQ(config::nvhttp.generated_cover_style, "geometric");
+  ASSERT_TRUE(config::update_config({ { "generated_cover_style", "glass" } }));
+  EXPECT_EQ(config::parse_config(read_text(path)).at("generated_cover_style"), "glass");
 }

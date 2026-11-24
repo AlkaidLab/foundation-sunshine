@@ -40,7 +40,7 @@ if ($Action -ne 'verify' -and $ownership.ownership -eq 'external') {
     [pscustomobject]@{ ownership = 'external'; compatible = $ownership.compatible; reason = $ownership.reason; ready = $ready; replaceable = $ownership.replaceable; version = $ownership.version } | ConvertTo-Json -Compress
     exit 0
   }
-  Write-Output 'USB/IP is externally managed; no changes were made.'
+  Write-Output "USB/IP is externally managed; no changes were made. reason=$($ownership.reason)"
   if ($Action -eq 'install' -and -not $ownership.compatible) { exit 106 }
   exit 0
 }
@@ -88,7 +88,7 @@ try {
   $ownership = Get-UsbipOwnership $InstallRoot $HostRoot -ConfirmedReplace:$confirmed
   if ($confirmed -and $ownership.ownership -ne 'legacy-owned') { Write-Output 'USB/IP cannot be replaced from here; no changes were made.'; $rc = 107; exit 107 }
   if ($ownership.ownership -eq 'external') {
-    Write-Output 'USB/IP is externally managed; no changes were made.'
+    Write-Output "USB/IP is externally managed; no changes were made. reason=$($ownership.reason)"
     if ($Action -eq 'install' -and -not $ownership.compatible) { $rc = 106; exit 106 }
     $rc = 0; exit 0
   }

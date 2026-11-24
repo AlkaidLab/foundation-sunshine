@@ -339,9 +339,13 @@ Source: "{#MySourceDir}\scripts\driver\*"; DestDir: "{app}\scripts\driver"; Flag
 Source: "{#MySourceDir}\scripts\usbip-package*"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: assets
 Source: "{#MySourceDir}\scripts\usbip-roothub-guard.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion skipifsourcedoesntexist; Components: assets
 
-Source: "{#MySourceDir}\licenses\usbip-win2\*"; DestDir: "{app}\licenses\usbip-win2"; Flags: ignoreversion; Components: usbip
+; The signed payload (about 3.4 MB) and its license go onto disk with every installation, whether or not the USB/IP component is
+; chosen. Choosing the component only runs install-usbip.bat; the panel's one-click repair installs from this very payload later,
+; and without it that repair stopped at "cannot verify the shared transport" (feedback #1461). Nothing is installed or registered
+; with the files alone: the filter driver still needs the component or the person's confirmation in the panel.
+Source: "{#MySourceDir}\licenses\usbip-win2\*"; DestDir: "{app}\licenses\usbip-win2"; Flags: ignoreversion; Components: assets
 Source: "{#MySourceDir}\scripts\install-usbip.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion skipifsourcedoesntexist; Components: usbip
-Source: "{#MySourceDir}\scripts\usbip\*"; DestDir: "{app}\scripts\usbip"; Flags: ignoreversion recursesubdirs skipifsourcedoesntexist; Components: usbip
+Source: "{#MySourceDir}\scripts\usbip\*"; DestDir: "{app}\scripts\usbip"; Flags: ignoreversion recursesubdirs skipifsourcedoesntexist; Components: assets
 Source: "{#MySourceDir}\scripts\install-gamepad.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#MySourceDir}\scripts\uninstall-gamepad.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#MySourceDir}\scripts\gamepad\*"; DestDir: "{app}\scripts\gamepad"; Flags: ignoreversion recursesubdirs skipifsourcedoesntexist; Components: gamepad

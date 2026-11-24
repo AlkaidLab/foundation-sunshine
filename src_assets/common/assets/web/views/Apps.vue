@@ -28,6 +28,12 @@
         <MSeg v-model="viewMode" icon-only :label="$t('apps.applications_title')" :options="[{ value: 'grid', label: $t('apps.grid_view'), icon: 'grid_view' }, { value: 'list', label: $t('apps.list_view'), icon: 'list' }]" />
       </div>
 
+      <!-- the style of the generated covers of every application that does not choose its own: the strip is drawn by the host with a real application of the list -->
+      <div v-if="ready && coverSample.id" class="apps-covers" data-cover="global">
+        <span class="apps-covers__title"><MIcon name="palette" />{{ $t('apps.cover_global_title') }}</span>
+        <CoverStyleStrip :model-value="globalCoverStyle" :app-id="coverSample.id" :name="coverSample.name" orientation="portrait" :aria-label="$t('apps.cover_global_title')" @update:model-value="saveGlobalCoverStyle" />
+      </div>
+
       <div v-if="selectionMode" class="apps-batch" role="toolbar" :aria-label="$t('apps.batch_select_toggle')">
         <span class="apps-batch__count"><MIcon name="checklist" />{{ $t('apps.batch_selected', { count: selectedIndices.size }) }}</span>
         <MButton variant="text" size="sm" icon="select_all" @click="selectAllFiltered">{{ $t('apps.batch_select_all') }}</MButton>
@@ -239,8 +245,10 @@ import { lazyPane } from '../utils/lazyPane.js'
 import { useApps } from '../composables/useApps.js'
 import { useAppsPending } from '../composables/pendingApps.js'
 import { getImagePreviewUrl } from '../utils/imageUtils.js'
+import { coverAppId, coverPreviewUrl, coverSourceOf, isCoverStyle, normalizeCoverStyle } from '../utils/generatedCover.js'
+import CoverStyleStrip from '../components/CoverStyleStrip.vue'
 import { appTags, envExampleFor, moveApp, sortCards } from '../utils/appsPage.js'
-import { apiJson, apiPostJson } from '../utils/apiFetch.js'
+import { apiFetch, apiJson, apiPostJson } from '../utils/apiFetch.js'
 import SparxieNewApp from '../components/sparxie/SparxieNewApp.vue'
 import { AppService } from '../services/appService.js'
 import { sparxieClient, useSparxie } from '../composables/useSparxie.js'
@@ -352,10 +360,53 @@ const broken = reactive(new Set())
 const dragFrom = ref(null)
 const dragOver = ref(null)
 
+// the global style of the generated covers (the host's configuration: generated_cover_style): the strip above the list sets it, and the cards follow it at once
+const globalCoverStyle = ref(normalizeCoverStyle(hostData.peek('config')?.generated_cover_style))
+// the style the host has (the last one it answered with or saved): what a failed save goes back to
+let hostCoverStyle = globalCoverStyle.value
+const stopCoverConfig = hostData.subscribe('config', (config) => { hostCoverStyle = globalCoverStyle.value = normalizeCoverStyle(config?.generated_cover_style) })
+onBeforeUnmount(stopCoverConfig)
+// the thumbnails are the host's drawing of an application of the list (the first one that has a generated cover, else the first that the host can draw)
+const coverSample = computed(() => {
+  const list = apps.value.filter((app) => coverAppId(app))
+  const app = list.find((item) => coverSourceOf(item) === 'generated') || list[0]
+  return app ? { id: coverAppId(app), name: app.name || '' } : { id: '', name: '' }
+})
+// read-modify-write of the host's configuration, as the other one-off settings do: the host takes the saved style at once, no restart
+// The saves are queued: a later choice is sent after an earlier one, never before it, and an earlier one that is still waiting when a later one is chosen is not sent at all (the
+// later one carries the whole configuration). A failed save gives the style back only when no later choice is on screen.
+let coverSaveQueue = Promise.resolve()
+let coverChoice = 0
+async function saveGlobalCoverStyle(style) {
+  const choice = ++coverChoice
+  globalCoverStyle.value = style
+  coverSaveQueue = coverSaveQueue.then(async () => {
+    if (choice !== coverChoice) return
+    try {
+      const config = await apiJson('/api/config')
+      const saved = await apiFetch('/api/config', { method: 'POST', body: { ...config, generated_cover_style: style } })
+      if (!saved.ok) throw new Error(`HTTP ${saved.status}`)
+      hostCoverStyle = style
+      hostData.refresh('config').catch(() => {})
+    } catch {
+      if (choice === coverChoice) {
+        globalCoverStyle.value = hostCoverStyle
+        message.value = t('apps.cover_global_save_failed')
+      }
+    }
+  })
+  await coverSaveQueue
+}
+
 // the cover of a card: a Sparxie application that follows the official poster shows the 2:3 cover of the host's art cache (its version is in the URL); any other application shows its own image
 const coverOf = (app) => {
   const block = spxAvailable.value ? sparxieOf(app) : null
   if (block && block.cover !== 'custom' && block.install) return artUrl('card', { id: block.install }, block.artVersion)
+  // an application without a picture of its own: the host generates the cover; the card shows the portrait of the style it has now
+  if (coverSourceOf(app) === 'generated' && !broken.has(getAppRenderKey(app))) {
+    const url = coverPreviewUrl(coverAppId(app), isCoverStyle(app['cover-style']) ? app['cover-style'] : globalCoverStyle.value, 'portrait', app.name)
+    if (url) return url
+  }
   return app['image-path'] && !broken.has(getAppRenderKey(app)) ? getImagePreviewUrl(app['image-path']) : ''
 }
 

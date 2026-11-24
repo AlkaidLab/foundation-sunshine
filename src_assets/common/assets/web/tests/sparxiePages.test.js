@@ -210,10 +210,11 @@ test('there is no launch choice: a Sparxie title starts through Sparxie while th
 })
 
 test('keyboard, mouse and gamepad run through Sparxie when the installed build has the touch-interface switch; otherwise the application starts directly and the page says so once', () => {
-  assert.ok(create.includes("const viaSparxie = computed(() => touch.value && (optBlock.options.input !== 'kbm' || (!!status.touchUiSwitch && KBM_SPARXIE_GAMES.includes(game.value))))"), 'the input decides only when the build or the title cannot do kbm')
+  assert.ok(create.includes("const viaSparxie = computed(() => touch.value && (optBlock.options.input !== 'kbm' || kbmThroughSparxie.value))"), 'the input decides only when the build or the title cannot do kbm')
+  assert.ok(create.includes("const kbmThroughSparxie = computed(() => KBM_SPARXIE_GAMES.includes(game.value) && (!!status.touchUiSwitch || (game.value === 'endfield' && !!status.endfieldPlugin)))"), 'the switch of the build, or Endfield of a plugin-based Sparxie, whose input is the plugin\'s own')
   assert.ok(create.includes("mode: viaSparxie.value ? 'touch' : 'pc'"), 'the mode follows what the host will do (it applies the same rule)')
   assert.ok(!create.includes("mode: touch.value ? 'touch' : 'pc'"), 'no mode is sent from the bare component presence any more')
-  assert.ok(create.includes('<MBanner v-if="!viaSparxie && !status.touchUiSwitch && KBM_SPARXIE_GAMES.includes(game)" tone="info" icon="info">{{ C.kbmNeedsTouch }}</MBanner>'), 'one line under the Sparxie items, only when the build lacks the switch')
+  assert.ok(create.includes('<MBanner v-if="!viaSparxie && !kbmThroughSparxie && KBM_SPARXIE_GAMES.includes(game)" tone="info" icon="info">{{ C.kbmNeedsTouch }}</MBanner>'), 'one line under the Sparxie items, only when the build lacks the switch and the title has no input of its own')
   assert.equal(COPYZH.kbmNeedsTouch, '已安装的 Sparxie 无法在键鼠与手柄下保留 PC 界面，所以这些 Sparxie 选项对键鼠与手柄不生效，游戏会由我们直接启动。更新 Sparxie 后即可生效')
   assert.ok(!/直接启动/.test(COPYZH.inputKbm + COPYZH.inputTouch), 'the input names say no launch path')
   assert.ok(create.includes('v-if="reach(4) && touch"'), 'the Sparxie items stay visible under both inputs')
@@ -248,7 +249,7 @@ test('an edit says what failed and why: 保存失败：<reason>, 创建失败：
   }
   assert.equal(failureText(COPYZH, COPYZH.saveFailed, { code: 'apps_write_failed' }), '保存失败：无法保存应用列表')
   // the codes the host can answer with: its sources are the list
-  const sources = ['src/sparxie/host.cpp', 'src/sparxie/store.cpp', 'src/sparxie/region.cpp', 'src/sparxie/scan.cpp', 'src/sparxie/settings.cpp', 'src/sparxie/user_session.cpp', 'src/confighttp/sparxie.cpp']
+  const sources = ['src/sparxie/host.cpp', 'src/sparxie/store.cpp', 'src/sparxie/sparxie_build.cpp', 'src/sparxie/region.cpp', 'src/sparxie/scan.cpp', 'src/sparxie/settings.cpp', 'src/sparxie/user_session.cpp', 'src/confighttp/sparxie.cpp']
   const codes = new Set()
   for (const f of sources) {
     const path = new URL(`../../../../../${f}`, import.meta.url)

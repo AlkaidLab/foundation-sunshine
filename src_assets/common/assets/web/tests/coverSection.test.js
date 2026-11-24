@@ -98,3 +98,18 @@ test('a cover of the person\'s own shows the Sparxie mark on its preview only wh
   assert.equal(artUrl('hero', { id: 'x' }, '', true), '/api/sparxie/art/hero/x?badge=1')
   assert.equal(artUrl('card', { id: 'x' }, 'v'), '/api/sparxie/art/card/x?v=v')
 })
+
+test('an application whose saved picture is the placeholder shows the generated cover with its strip, and has no picture to give up', async () => {
+  const generatedSrc = '/api/apps/cover-preview?appid=7&style=tonal&orientation=portrait'
+  const props = { kind: 'poster', imagePath: 'box.png', appName: 'App', generate: true, generatedSrc, showStrip: true, appId: '7', coverStyle: 'auto', globalStyle: 'tonal' }
+  const generated = await mountSelector(props)
+  const srcs = findAll(generated.page.root, (n) => n.tagName === 'img').map((n) => n.attrs.src)
+  assert.equal(srcs[0], generatedSrc, 'the cover in force is the first picture')
+  assert.ok(!srcs.some((src) => /box\.png/.test(String(src))), 'the placeholder is not shown')
+  assert.equal(generated.page.buttons('apps.cover_use_generated').length, 0, 'nothing to give up: the cover is already the generated one')
+  generated.page.unmount()
+  // the same path where the host draws no cover (an application it cannot draw for) is shown as before
+  const plain = await mountSelector({ ...props, generate: false, showStrip: false })
+  assert.ok(findAll(plain.page.root, (n) => n.tagName === 'img').some((n) => /box\.png/.test(String(n.attrs.src))))
+  plain.page.unmount()
+})
