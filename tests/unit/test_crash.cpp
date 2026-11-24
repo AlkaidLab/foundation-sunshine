@@ -1086,6 +1086,27 @@ TEST(CrashFeedbackBudget, ASlowPackingStopsWhereItsShareEndsAndTheReportGoesWith
   fs::remove_all(config);
 }
 
+TEST(CrashFeedbackBudget, APackingThatSucceedsAfterItsShareIsNotUploaded) {
+  mock_server_t server;
+  const auto config = scratch("logbudget-late-pack");
+  put(config / "sunshine.log", "[2026-11-24 10:00:00.000]: Info: started\n");
+  stage_probe_t probe;
+  auto stages = stages_of(probe, std::chrono::milliseconds(0), false);
+  // a packing that ignores the deadline and still returns a result after its share ended
+  stages.pack = [&probe](std::string_view text, const std::function<bool()> &expired) -> std::optional<crash::logfile::packed_t> {
+    ++probe.packs;
+    while (!expired || !expired()) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    return crash::logfile::pack(text, crash::logfile::max_gz_bytes, {});
+  };
+  crash::begin_feedback_budget(std::chrono::seconds { 7 });
+  EXPECT_FALSE(crash::upload_session_log_from(config, server.url(), "x", "v", &stages).has_value());
+  crash::end_feedback_budget();
+  EXPECT_EQ(probe.packs.load(), 1);
+  EXPECT_STREQ(crash::session_log_state(), "unreachable");
+  EXPECT_TRUE(server.targets.empty());
+  fs::remove_all(config);
+}
+
 TEST(CrashFeedbackBudget, InTimeTheLogGoesUpWithABoundedReadAndWithoutABudgetTheReadIsNotBounded) {
   mock_server_t server;
   {

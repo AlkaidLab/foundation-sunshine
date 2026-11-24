@@ -511,6 +511,11 @@ namespace crash {
         if (prepare_spent()) g_session_log_state.store("unreachable");  // stopped by the deadline, not by the log
         return std::nullopt;
       }
+      // a packing that finished after its share ended is not used either: the upload keeps the time it was promised
+      if (prepare_spent()) {
+        g_session_log_state.store("unreachable");
+        return std::nullopt;
+      }
       std::string base = endpoint;
       while (!base.empty() && base.back() == '/') base.pop_back();
       const nlohmann::json meta { { "v", 1 }, { "install_id", install_id }, { "version", version } };
