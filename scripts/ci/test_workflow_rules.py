@@ -1,6 +1,9 @@
 """Rules of .github/workflows/main.yml that a typo would break silently (run: python3 -m unittest discover -s scripts/ci -p 'test_*.py')."""
 
+import os
 import pathlib
+import subprocess
+import tempfile
 import unittest
 
 import yaml
@@ -68,10 +71,76 @@ class PublishTest(unittest.TestCase):
         self.assertEqual(manual["env"]["PUBLISH"], "${{ inputs.publish }}")
         self.assertIn("publish_release=true", manual["run"])
 
-    def test_a_build_that_does_not_publish_is_a_dev_build(self):
+    def run_step(self, name, **env):
+        """Runs the shell of a setup_release step the way the runner does, in the repository root; returns its step outputs."""
+        root = WORKFLOW.parents[2]
+        with tempfile.TemporaryDirectory() as tmp:
+            output = pathlib.Path(tmp) / "output"
+            output.touch()
+            result = subprocess.run(["bash", "-c", step(self.setup, name)["run"]], cwd=root, capture_output=True, text=True,
+                                    env=dict(os.environ, GITHUB_OUTPUT=str(output), COMMIT="a" * 40, **env))
+            values = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines() if "=" in line)
+        return result, values
+
+    def test_both_configure_steps_take_the_channel_from_one_decision(self):
+        # a header whose bytes differ between the compile shards and the build job invalidates every cache entry that reads it
+        shard = step(self.workflow["jobs"]["shard"], "Configure Windows")
         configure = step(self.build, "Configure Windows")
-        channel = configure["env"]["SUNSHINE_BUILD_CHANNEL"]
-        self.assertEqual(channel, "${{ needs.setup_release.outputs.publish_release == 'true' && 'beta' || 'dev' }}")
+        for env in (shard["env"], configure["env"]):
+            self.assertEqual(env["SUNSHINE_BUILD_CHANNEL"], "${{ needs.setup_release.outputs.build_channel }}")
+        outputs = self.setup["outputs"]
+        self.assertEqual(outputs["build_channel"], "${{ steps.auto_gate.outputs.channel || steps.setup_release_manual.outputs.channel }}")
+
+    def test_a_build_that_does_not_publish_is_a_dev_build(self):
+        _, manual = self.run_step("Setup Release (Manual)", PUBLISH="false", PUBLISH_STABLE="false", REF_NAME="master")
+        self.assertEqual((manual["publish_release"], manual["channel"], manual["stable"]), ("false", "dev", "false"))
+        for enabled, expected in (("true", ("true", "beta")), ("", ("false", "dev"))):
+            _, auto = self.run_step("Automatic pre-releases", AUTO="true", ENABLED=enabled)
+            self.assertEqual((auto["publish"], auto["channel"]), expected)
+        _, auto = self.run_step("Automatic pre-releases", AUTO="false", ENABLED="true")
+        self.assertEqual((auto["publish"], auto["channel"]), ("false", "dev"))
+
+    def test_a_published_pre_release_is_beta_and_the_stable_publish_is_the_only_stable_build(self):
+        _, beta = self.run_step("Setup Release (Manual)", PUBLISH="true", PUBLISH_STABLE="false", REF_NAME="master")
+        self.assertEqual((beta["publish_release"], beta["channel"], beta["stable"]), ("true", "beta", "false"))
+        _, stable = self.run_step("Setup Release (Manual)", PUBLISH="false", PUBLISH_STABLE="true", REF_NAME="master")
+        self.assertEqual((stable["publish_release"], stable["channel"], stable["stable"]), ("true", "stable", "true"))
+        # the version and tag are the ones a push of the commit would get
+        self.assertEqual(beta["release_tag"], stable["release_tag"])
+        self.assertRegex(stable["release_tag"], r"^v\d{4}\.\d+\.\d+$")
+
+    def test_a_stable_publish_is_master_only_and_a_rehearsal_elsewhere(self):
+        result, values = self.run_step("Setup Release (Manual)", PUBLISH="false", PUBLISH_STABLE="true", REF_NAME="fix/x")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((values["publish_release"], values["channel"], values["stable"]), ("false", "stable", "false"))
+        self.assertTrue(values["release_tag"].startswith("manual-") and values["release_tag"].endswith("-dev"))
+        result, _ = self.run_step("Setup Release (Manual)", PUBLISH="true", PUBLISH_STABLE="false", REF_NAME="fix/x")
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_the_two_publishes_cannot_be_asked_for_together(self):
+        result, _ = self.run_step("Setup Release (Manual)", PUBLISH="true", PUBLISH_STABLE="true", REF_NAME="master")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("choose one", result.stdout)
+
+    def test_the_stable_publish_input_defaults_to_off(self):
+        dispatch = self.workflow[True]["workflow_dispatch"]["inputs"]["publish_stable"]
+        self.assertEqual(dispatch["type"], "boolean")
+        self.assertIs(dispatch["default"], False)
+        self.assertEqual(step(self.setup, "Setup Release (Manual)")["env"]["PUBLISH_STABLE"], "${{ inputs.publish_stable }}")
+
+    def test_the_stable_release_is_created_directly_and_the_pre_release_step_leaves_it_alone(self):
+        publish = self.workflow["jobs"]["publish"]
+        pre = step(publish, "Create the pre-release")
+        stable = step(publish, "Create the stable release")
+        self.assertEqual(self.setup["outputs"]["release_stable"], "${{ steps.setup_release_manual.outputs.stable }}")
+        self.assertEqual(pre["if"], "needs.setup_release.outputs.release_stable != 'true'")
+        self.assertEqual(stable["if"], "needs.setup_release.outputs.release_stable == 'true'")
+        self.assertIn("scripts/ci/publish-stable.sh", stable["run"])
+        script = (WORKFLOW.parents[2] / "scripts" / "ci" / "publish-stable.sh").read_text(encoding="utf-8")
+        self.assertIn("gh release create", script)
+        self.assertIn("--latest", script)
+        self.assertNotIn("--prerelease", script)
+        self.assertNotIn("release edit", script)
 
     def test_the_nightly_build_is_cold_and_never_publishes(self):
         schedule = self.workflow[True]["schedule"]
