@@ -7,6 +7,7 @@
  * (crashing with 0xC0000005 on CI). Running them in their own process keeps
  * the coverage without a subprocess or cross-suite state leakage.
  */
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -21,6 +22,7 @@
 
 #include "src/config.h"
 #include "src/display_device/display_device.h"
+#include "src/doctor/doctor.h"
 #include "src/globals.h"
 #include "src/platform/common.h"
 
@@ -254,4 +256,29 @@ TEST(ConfigRuntime, CalibrationSaveUnderOverrideKeepsThePersistedList) {
   // Reload without the override.
   ASSERT_EQ(temporary_config.parse({}), 0);
   EXPECT_EQ(nlohmann::json::parse(config::get_clients_config()), persisted);
+}
+
+TEST(ConfigRuntime, SavedTelemetryAndGuideStateAreRecognizedAtStartup) {
+  temporary_clients_config_t temporary_config;
+  const std::map<std::string, std::string> settings {
+    { "telemetry_consent", "off" },
+    { "telemetry_errors", "off" },
+    { "guide_closed", "2026.1124" },
+    { "guide_done", "intro,account" },
+    { "guide_finished", "false" },
+    { "guide_active", "phone@1795478400" },
+    { "setup_wizard_completed", "true" },
+    { "telemetry_error", "off" },  // misspelled key
+  };
+  ASSERT_TRUE(config::update_full_config(settings));
+  ASSERT_EQ(temporary_config.parse({ config::sunshine.config_file }), 0);
+  const auto snapshot = config::get_config_snapshot();
+  ASSERT_TRUE(snapshot);
+  EXPECT_EQ(*snapshot, settings);
+
+  const auto problems = doctor::config_problems();
+  for (const auto &[key, _] : settings) {
+    const auto message = "Unrecognized configurable option [" + key + "]";
+    EXPECT_EQ(std::ranges::find(problems, message) != problems.end(), key == "telemetry_error") << key;
+  }
 }

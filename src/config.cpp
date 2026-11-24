@@ -32,6 +32,7 @@
 #include "public_address.h"
 #include "rtsp.h"
 #include "streaming/bitrate.h"
+#include "telemetry/telemetry.h"
 #include "utility.h"
 
 #include "display_device/parsed_config.h"
@@ -1834,6 +1835,20 @@ namespace config {
       apply_flags(it->second.c_str());
 
       vars.erase(it);
+    }
+
+    // Telemetry and the first-run guide read these values from the saved configuration.
+    static constexpr std::string_view saved_state_options[] {
+      telemetry::CONFIG_KEY_USAGE,
+      telemetry::CONFIG_KEY_ERRORS,
+      "guide_closed",
+      "guide_done",
+      "guide_finished",
+      "guide_active",
+      "setup_wizard_completed",
+    };
+    for (const auto key : saved_state_options) {
+      vars.erase(std::string { key });
     }
 
     for (auto &[var, _] : vars) {
