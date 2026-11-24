@@ -87,6 +87,7 @@ set(SUNSHINE_HOST_SOURCES
     src/nvhttp/url_utils.cpp src/nvhttp/url_utils.h
     src/remote_connect/api.cpp src/remote_connect/api.h
     src/remote_connect/easytier.cpp src/remote_connect/easytier.h
+    src/remote_connect/enrollment_token.cpp src/remote_connect/enrollment_token.h
     src/remote_connect/invite.cpp src/remote_connect/invite.h
     src/remote_connect/pairing.cpp src/remote_connect/pairing.h
     src/remote_connect/service.cpp src/remote_connect/service.h

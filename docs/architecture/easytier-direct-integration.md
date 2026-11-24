@@ -23,18 +23,25 @@ An unanswered CLI request does not prove local-user isolation or working streami
 
 `tools/easytier-offline-credential-probe.py --core <path> --cli <path>` exercises the public-only file approach with two disposable Windows instances. It uses a temporary network secret and an ephemeral TCP listener on the host's selected local interface, and briefly exposes a test-only RPC during initial credential generation. It stops both processes and removes their temporary credential file on exit. Run it only on a test machine; successful output does not validate a secure enrollment protocol.
 
-`tools/easytier-direct-check/three_node.py --core <path> --cli <path>` uses the verified 2.6.4 Windows binaries to test bidirectional TCP and UDP through a relay-only topology, with an A-B peer connection, and after that connection is cut. It checks relay counters under both permissive and P2P-only policies. The local TCP splice is a fault injector; the test does not prove a physical direct path or rule out transient relay during route changes.
+`tools/easytier-direct-check/three_node.py --core <path> --cli <path>` uses the verified 2.6.4 Windows binaries to test bidirectional TCP and UDP through a relay-only topology, with an A-B peer connection, and after that connection is cut. It checks relay counters under permissive and P2P-only endpoint policies and with the center's `disable_relay_data` flag. The center flag prevented TCP/UDP transit in this local test while a direct peer link still carried traffic. Sunshine sets the same flag to avoid acting as a relay for other nodes. It does not prevent Sunshine's own packets from being relayed by another node, and control traffic is not covered by the transit restriction. The local TCP splice is a fault injector; the test does not prove a physical direct path or rule out transient relay during route changes.
 
 ## Candidate accountless enrollment
 
 This is a design to validate, not an implemented or reviewed protocol. A phone-generated public key needs to reach the host before the phone can join the permanent Secure Mode network. A short-lived, isolated bootstrap network is one candidate for resolving that ordering:
 
 1. The host starts a separate bootstrap instance with a random network identity, an expiring one-use token and an enrollment endpoint. The QR code carries the bootstrap connection parameters, token, expiry and a pinned host identity; it must not contain the permanent network secret or another device's credential. The bootstrap instance must deny all application access except the enrollment endpoint and must not proxy host subnets.
-2. The phone creates its own X25519 credential and protects its private bytes at rest with an Android Keystore-backed key. It connects without a TUN device, verifies the host identity and proves possession of the credential private key over the authenticated channel. The host atomically consumes the token, binding it to that public key. A copied, expired or replayed token must fail server-side.
+2. The phone creates its own X25519 credential and protects its private bytes at rest with an Android Keystore-backed key. It connects without a TUN device, verifies the host identity and proves possession of the credential private key over the authenticated channel. The host atomically consumes the token, binding it to that public key. Expired or already-consumed tokens must fail server-side. A copied token can be redeemed first by an attacker; prevent or detect that race with explicit device confirmation or another authenticated binding.
 3. The host atomically updates a protected public-key credential file, applies the change to the permanent instance, and tells the phone the result over the authenticated channel. With the currently investigated core this may require a restart and interrupt existing sessions; do not report success until the replacement is running. The bootstrap instance and token are then destroyed. Roll back safely on write or restart failure.
 4. The phone connects to the permanent network with its own credential. Removing a paired device must revoke only that credential and terminate its access. Neither route status nor `p2p_only` alone establishes a per-packet no-relay guarantee, so enforcement and a failure-closed path still need independent verification.
 
 Before implementation, verify that the bootstrap endpoint can be isolated on Windows, that both sides can reach it directly without carrying payload through a relay, and that the temporary and permanent EasyTier instances do not collide. Specify the authenticated transcript, proof of possession, token replay state, file ACLs, crash recovery and concurrent enrollment behavior. Discovery services may see source addresses and metadata. If no direct route can be formed, enrollment must fail rather than fall back to a relay.
+
+The current in-memory enrollment token store is a tested primitive only; it is
+not exposed by the QR or network API. It cannot verify a host identity, prove
+possession of a client key, or revoke an already claimed transaction. Current
+QR invitations still include the permanent shared secret. PIN generation now
+protects a newer PIN from cleanup by a failed older request, but the existing
+cancel and PIN-consumption APIs are not bound to an invitation generation.
 
 ## Implementation order
 

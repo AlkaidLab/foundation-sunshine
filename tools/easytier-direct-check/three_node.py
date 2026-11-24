@@ -137,8 +137,9 @@ class FaultInjector:
 
 
 class Lab:
-    def __init__(self, core, cli, p2p_only):
+    def __init__(self, core, cli, p2p_only, disable_center_relay=False):
         self.core, self.cli, self.p2p_only = str(core), str(cli), p2p_only
+        self.disable_center_relay = disable_center_relay
         self.env = {k: v for k, v in os.environ.items() if not k.upper().startswith("ET_")}
         self.creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         self.temp = tempfile.TemporaryDirectory(prefix="easytier-three-node-")
@@ -185,6 +186,10 @@ class Lab:
         ]
         if peer_port:
             args.extend(("--peers", f"tcp://127.0.0.1:{peer_port}"))
+        if name == "center" and self.disable_center_relay:
+            policy = Path(self.temp.name) / "center-policy.toml"
+            policy.write_text("[flags]\ndisable_relay_data = true\n", encoding="utf-8")
+            args.extend(("--config-file", str(policy)))
         if self.p2p_only and name != "center":
             args.append("--p2p-only")
         for protocol, port, target, destination_port in forwards:
@@ -275,17 +280,18 @@ class Lab:
                   and self.route_is(rpcs["b"], "10.199.88.2", "10.199.88.1/24"),
                   "Two-hop A-C-B topology did not become ready")
         before = self.counters(rpcs["center"])
-        if self.p2p_only:
+        blocked = self.p2p_only or self.disable_center_relay
+        if blocked:
             result = self.probes(forwards)
-            require(not any(result.values()), f"P2P-only relayed data on baseline: {result}")
+            require(not any(result.values()), f"Policy unexpectedly relayed data on baseline: {result}")
         else:
             self.wait(lambda: all(self.probes(forwards).values()),
                       "Relay-only positive control did not carry TCP/UDP in both directions")
         after = self.counters(rpcs["center"])
         require((after["traffic_packets_forwarded"] == before["traffic_packets_forwarded"])
-                if self.p2p_only else (after["traffic_packets_forwarded"] > before["traffic_packets_forwarded"]),
+                if blocked else (after["traffic_packets_forwarded"] > before["traffic_packets_forwarded"]),
                 "Center forwarding counter disagreed with relay-only control")
-        print(f"  A-C-B only: {'blocked' if self.p2p_only else 'TCP/UDP relayed'}; center data packets "
+        print(f"  A-C-B only: {'blocked' if blocked else 'TCP/UDP relayed'}; center data packets "
               f"{before['traffic_packets_forwarded']:.0f} -> {after['traffic_packets_forwarded']:.0f}", flush=True)
 
         self.injector = FaultInjector(listeners["b"])
@@ -310,17 +316,17 @@ class Lab:
                   and self.route_is(rpcs["b"], "10.199.88.2", "10.199.88.1/24"),
                   "A-C-B route was not restored after the injected disconnect")
         before = self.counters(rpcs["center"])
-        if self.p2p_only:
+        if blocked:
             result = self.probes(forwards)
-            require(not any(result.values()), f"P2P-only relayed data after disconnect: {result}")
+            require(not any(result.values()), f"Policy unexpectedly relayed data after disconnect: {result}")
         else:
             self.wait(lambda: all(self.probes(forwards).values()),
                       "Relay-only positive control did not recover TCP/UDP after disconnect")
         after = self.counters(rpcs["center"])
         require((after["traffic_packets_forwarded"] == before["traffic_packets_forwarded"])
-                if self.p2p_only else (after["traffic_packets_forwarded"] > before["traffic_packets_forwarded"]),
+                if blocked else (after["traffic_packets_forwarded"] > before["traffic_packets_forwarded"]),
                 "Center forwarding counter disagreed after disconnect")
-        print(f"  A-B cut: {'blocked' if self.p2p_only else 'TCP/UDP relayed again'}; center data packets "
+        print(f"  A-B cut: {'blocked' if blocked else 'TCP/UDP relayed again'}; center data packets "
               f"{before['traffic_packets_forwarded']:.0f} -> {after['traffic_packets_forwarded']:.0f}", flush=True)
 
     def close(self):
@@ -354,14 +360,14 @@ def main():
                 f"Expected a verified 2.6.4 binary: {binary}")
     print("Isolated localhost topology; no TUN, STUN, UPnP, firewall or route changes.")
     print("A-B uses a local fault-injection splice; it is not proof of physical direct connectivity.")
-    for only in (False, True):
-        print(f"Policy: p2p_only={str(only).lower()}", flush=True)
-        lab = Lab(args.core, args.cli, only)
+    for only, disable_center_relay in ((False, False), (True, False), (False, True)):
+        print(f"Policy: p2p_only={str(only).lower()}, center_disable_relay_data={str(disable_center_relay).lower()}", flush=True)
+        lab = Lab(args.core, args.cli, only, disable_center_relay)
         try:
             lab.check()
         finally:
             lab.close()
-    print("PASS: both policies met the three-stage assertions.", flush=True)
+    print("PASS: all policies met the three-stage assertions.", flush=True)
 
 
 if __name__ == "__main__":

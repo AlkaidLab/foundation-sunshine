@@ -126,6 +126,7 @@ namespace remote_connect::easytier {
            << "uri = \"" << toml_escape(enrollment.peer) << "\"\n\n"
            << "[flags]\n"
            << "p2p_only = true\n"
+           << "disable_relay_data = true\n"
            << "latency_first = false\n"
            << "enable_ipv6 = false\n"
            << "enable_exit_node = false\n"

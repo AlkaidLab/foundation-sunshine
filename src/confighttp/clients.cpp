@@ -295,7 +295,8 @@ namespace confighttp::clients {
 
       // Set the preset PIN in nvhttp (valid for 120 seconds)
       std::string server_name = config::nvhttp.sunshine_name;
-      if (!nvhttp::set_preset_pin(pin, server_name, 120)) {
+      const auto pin_generation = nvhttp::set_preset_pin_with_generation(pin, server_name, 120);
+      if (!pin_generation) {
         outputTree.put("status", false);
         outputTree.put("error", "Failed to set preset PIN");
         return;
@@ -329,7 +330,7 @@ namespace confighttp::clients {
         static_cast<std::uint16_t>(link.http_port),
       });
       if (!pairing.success) {
-        nvhttp::clear_preset_pin();
+        nvhttp::clear_preset_pin_if_generation(*pin_generation);
         outputTree.put("status", false);
         outputTree.put("error", pairing.error);
         BOOST_LOG(warning) << "QR pair: no reachable address (socket "sv << link.socket_address << ")"sv;
