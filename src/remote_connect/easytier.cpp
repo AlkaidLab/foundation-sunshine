@@ -255,7 +255,8 @@ namespace remote_connect::easytier {
     // EasyTier 2.6.4 and 2.7.1 ignore rpc_portal in TOML. This instance does
     // not use management RPC: bind it to loopback and deny loopback clients.
     const std::string command = "\"" + executable_utf8 + "\" --config-file \"" + config_utf8 +
-                                "\" --rpc-portal 127.0.0.1:0 --rpc-portal-whitelist 192.0.2.0/24";
+                                "\" --rpc-portal 127.0.0.1:0 --rpc-portal-whitelist 192.0.2.0/24"
+                                " --console-log-level off --file-log-level off";
     boost::filesystem::path working_dir(executable.parent_path().string());
     auto environment = boost::this_process::environment();
     // Inherited ET_* overrides could change the peer, RPC or security settings.
