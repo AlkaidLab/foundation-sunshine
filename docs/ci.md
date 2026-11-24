@@ -185,7 +185,12 @@ hosted runner 的 CPU 型号不统一，同样的工作在慢机器上要多花�
   再合并最后一个 PR，push 只构建、不发布。在 master 以外的分支上勾选 `publish_stable` 是演练：编译出渠道为 `stable` 的二进制并上传工件，
   不创建任何发布。
 - 渠道由构建时的 `SUNSHINE_BUILD_CHANNEL` 记录：预发布 `beta`，稳定版 `stable`，其余运行 `dev`。把预发布改成正式版（`gh release edit`）
-  不会改变二进制里的渠道，所以不要用这个办法发布稳定版。`sign-and-repackage.yml` 在 `release: published` 时签名，规则不变。
+  不会改变二进制里的渠道，所以不要用这个办法发布稳定版。
+- 稳定版用机器人令牌（`GH_BOT_TOKEN`，和自动预发布同一个凭据）创建：用工作流自带的令牌创建的发布不会触发别的工作流，
+  `sign-and-repackage.yml` 的 `release: published` 就不会启动。令牌为空时 `publish-stable.sh` 直接失败，不会悄悄改用工作流令牌。
+- `sign-and-repackage.yml` 在正式发布时签名，规则不变，另有两点跟稳定版有关：最后一步读取发布当前的状态，已有的正式发布保持正式发布，
+  不会被改回预发布（没有发布的标签仍建一个草稿预发布）；重新编译时 `SUNSHINE_BUILD_CHANNEL` 按发布的类型设置（正式发布 `stable`，预发布 `beta`），
+  签名后的二进制不会记成 `local`。
 
 ## 崩溃符号
 

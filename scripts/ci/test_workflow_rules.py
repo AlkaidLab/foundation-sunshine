@@ -136,6 +136,8 @@ class PublishTest(unittest.TestCase):
         self.assertEqual(pre["if"], "needs.setup_release.outputs.release_stable != 'true'")
         self.assertEqual(stable["if"], "needs.setup_release.outputs.release_stable == 'true'")
         self.assertIn("scripts/ci/publish-stable.sh", stable["run"])
+        # created with the bot token, as the pre-release publisher is: the release event of a full release starts sign-and-repackage.yml
+        self.assertEqual(stable["env"]["GH_TOKEN"], "${{ secrets.GH_BOT_TOKEN }}")
         script = (WORKFLOW.parents[2] / "scripts" / "ci" / "publish-stable.sh").read_text(encoding="utf-8")
         self.assertIn("gh release create", script)
         self.assertIn("--latest", script)

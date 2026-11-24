@@ -30,7 +30,7 @@ esac
 
 @unittest.skipUnless(shutil.which("bash"), "bash is required")
 class PublishStableTest(unittest.TestCase):
-    def run_script(self, state, created="false"):
+    def run_script(self, state, created="false", token="bot-token"):
         with tempfile.TemporaryDirectory() as tmp:
             tmp = pathlib.Path(tmp)
             (tmp / "bin").mkdir()
@@ -39,11 +39,18 @@ class PublishStableTest(unittest.TestCase):
             gh.chmod(0o755)
             (tmp / "dist").mkdir()
             (tmp / "dist" / "a.zip").write_text("x")
-            env = dict(os.environ, PATH=f"{tmp / 'bin'}:{os.environ['PATH']}", FAKE_LOG=str(tmp / "log"), FAKE_STATE=state, FAKE_CREATED=created,
+            env = dict(os.environ, PATH=f"{tmp / 'bin'}:{os.environ['PATH']}", FAKE_LOG=str(tmp / "log"), FAKE_STATE=state, FAKE_CREATED=created, GH_TOKEN=token,
                        TAG="v1.杂鱼", COMMIT="a" * 40, GITHUB_REPOSITORY="o/r", BODY="body")
             result = subprocess.run(["bash", str(SCRIPT), str(tmp / "dist")], env=env, capture_output=True, text=True)
             log = (tmp / "log").read_text(encoding="utf-8") if (tmp / "log").exists() else ""
             return result, log
+
+    def test_the_release_is_created_with_the_bot_token_and_never_without_one(self):
+        # the workflow token starts no other workflow, so the signing workflow would not run for the stable release
+        result, log = self.run_script("missing", token="")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("GH_TOKEN is empty", result.stdout)
+        self.assertEqual(log, "")
 
     def test_a_missing_release_is_created_as_the_latest_full_release(self):
         result, log = self.run_script("missing")

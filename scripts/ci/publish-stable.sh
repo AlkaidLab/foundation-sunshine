@@ -11,6 +11,12 @@ set -euo pipefail
 
 dist="${1:?dist directory required}"
 : "${TAG:?}" "${COMMIT:?}" "${GITHUB_REPOSITORY:?}"
+# The bot token (secrets.GH_BOT_TOKEN), never the workflow token: a release created with the workflow token starts no other workflow,
+# so the signing workflow (`release: published`) would not run for a stable release published this way.
+if [[ -z "${GH_TOKEN:-}" ]]; then
+  echo "::error title=Publish::GH_TOKEN is empty: the stable release is created with the bot token (GH_BOT_TOKEN) so that its release event starts the signing workflow"
+  exit 1
+fi
 body="${BODY:-}"
 
 ls -l "$dist"

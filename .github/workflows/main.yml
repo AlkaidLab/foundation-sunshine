@@ -1899,12 +1899,15 @@ jobs:
         shell: bash
         run: bash scripts/ci/publish-prerelease.sh dist | tee -a "$GITHUB_STEP_SUMMARY"
 
-      # The stable release: a full release marked Latest, created directly. A tag that already has a release of any kind is an error
-      # (scripts/ci/publish-stable.sh): a stable build is a new commit, never a promoted pre-release.
+      # The stable release: a full release marked Latest, created directly with the bot token so that its `release: published` event starts the
+      # signing workflow. A tag that already has a release of any kind is an error (scripts/ci/publish-stable.sh): a stable build is a new
+      # commit, never a promoted pre-release.
       - name: Create the stable release
         if: needs.setup_release.outputs.release_stable == 'true'
         env:
-          GH_TOKEN: ${{ github.token }}
+          # The bot token, like the pre-release publisher: a release created with the workflow token starts no other workflow, and the
+          # signing workflow (sign-and-repackage.yml, `release: published`) must start for a full release.
+          GH_TOKEN: ${{ secrets.GH_BOT_TOKEN }}
           TAG: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
           BODY: ${{ needs.setup_release.outputs.release_body }}
           COMMIT: ${{ needs.setup_release.outputs.release_commit }}
