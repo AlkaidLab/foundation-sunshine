@@ -24,6 +24,11 @@ requires the strict-direct data path, authenticated enrollment and provisional
 pairing isolation described in `easytier-enrollment-v1-draft.md`; none is
 established merely by writing a credential JSON file.
 
+`tools/easytier-credential-store/` contains a disposable NTFS probe for parts
+of the file boundary. Its local checks do not establish same-identity race
+resistance, cross-user isolation or durability after power loss. It is not a
+credential store and does not activate or revoke devices.
+
 ## Current implementation and constraints
 
 - Windows `platf::appdata()` currently resolves to `config` beside the
