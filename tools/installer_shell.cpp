@@ -291,8 +291,8 @@ namespace {
     return false;
   }
 
-  // A VNC server is running in this session of the machine (see installer_remote_capture.h). The test switch keeps the web
-  // front end whatever is running.
+  // A VNC server is running on this machine, in any session (Toolhelp lists every process; see installer_remote_capture.h).
+  // FOUNDATION_SETUP_IGNORE_VNC keeps the web front end whatever is running; --native selects the native window by hand.
   bool
   vnc_server_running() {
     if (GetEnvironmentVariableW(L"FOUNDATION_SETUP_IGNORE_VNC", nullptr, 0) != 0) return false;
