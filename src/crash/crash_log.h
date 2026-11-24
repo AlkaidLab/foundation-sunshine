@@ -10,6 +10,7 @@
 #pragma once
 #include <cstddef>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -19,6 +20,8 @@ namespace crash::logfile {
 
   constexpr std::size_t edge_bytes = 64 * 1024;  ///< size of log_head and log_tail
   constexpr std::size_t max_gz_bytes = 2 * 1024 * 1024;  ///< what the service accepts
+  constexpr std::size_t max_read_bytes = 64u * 1024 * 1024;  ///< the most of one file that is read
+  constexpr std::size_t bounded_read_bytes = 3u * 1024 * 1024;  ///< what a report with a deadline reads: the scrubber keeps 2 M characters of the end, the rest is margin for a key block that straddles its cut
 
   struct packed_t {
     std::string gz;  ///< the anonymised log, gzip
@@ -33,8 +36,9 @@ namespace crash::logfile {
   gzip(std::string_view data);
 
   /// Anonymises `raw`, compresses it and cuts the head and the tail. When the result is over `max_gz` the oldest lines are dropped until it fits. nullopt for an empty log.
+  /// `expired` (optional) is asked while the text is anonymised and between the rounds of dropping lines: once it says yes the work stops and the answer is nullopt.
   std::optional<packed_t>
-  pack(std::string_view raw, std::size_t max_gz = max_gz_bytes);
+  pack(std::string_view raw, std::size_t max_gz = max_gz_bytes, const std::function<bool()> &expired = {});
 
   /// sunshine.log and its rotated copies sunshine.log.1 ... .5 that exist, newest name first.
   std::vector<std::filesystem::path>
@@ -51,8 +55,8 @@ namespace crash::logfile {
   std::string
   collect(const std::filesystem::path &log_file, std::filesystem::file_time_type when);
 
-  /// collect() for "the log of the run that is going on": the current file, no older run.
+  /// collect() for "the log of the run that is going on": the current file, no older run. Of a file over `max_bytes` only the end is read.
   std::string
-  collect_current(const std::filesystem::path &log_file);
+  collect_current(const std::filesystem::path &log_file, std::size_t max_bytes = max_read_bytes);
 
 }  // namespace crash::logfile

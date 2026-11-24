@@ -9,6 +9,8 @@
  */
 #pragma once
 
+#include "crash_log.h"
+
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -132,7 +134,8 @@ namespace crash {
 
   /**
    * One deadline for the uploads of one feedback report on this thread (the screenshot, then the log with its collection and packing): each upload gets at most 20 s of what is left and none starts with
-   * less than 2 s left, so the host answers the page within its wait. end_feedback_budget() lifts it; without a budget an upload keeps the fixed 20 s.
+   * less than 2 s left, so the host answers the page within its wait. The log's collection and packing get at most 10 s of what is left and leave 5 s for its upload: with less than that left the log
+   * is not collected at all, and a log that is not packed in time is left out (unreachable). end_feedback_budget() lifts it; without a budget an upload keeps the fixed 20 s and the log's steps are not timed.
    */
   void
   begin_feedback_budget(std::chrono::seconds total);
@@ -146,9 +149,16 @@ namespace crash {
   const char *
   session_shot_state();
 
-  /// upload_session_log() for a given config directory, without the consent check (the caller has made it): the tests and tools.
+  /// The two slow steps in front of the log's upload, replaceable so that the tests can make them slow. `expired` says when the report's deadline for them has passed; a step that
+  /// notices it stops early (the packing answers nullopt).
+  struct log_stages_t {
+    std::function<std::string(const std::filesystem::path &log_file, std::size_t max_bytes)> collect;
+    std::function<std::optional<logfile::packed_t>(std::string_view text, const std::function<bool()> &expired)> pack;
+  };
+
+  /// upload_session_log() for a given config directory, without the consent check (the caller has made it): the tests and tools. `stages` replaces the collecting and the packing (null: the real ones).
   std::optional<std::string>
-  upload_session_log_from(const std::filesystem::path &config_dir, const std::string &endpoint, const std::string &install_id, const std::string &version);
+  upload_session_log_from(const std::filesystem::path &config_dir, const std::string &endpoint, const std::string &install_id, const std::string &version, const log_stages_t *stages = nullptr);
 
   /// Seconds the uploader waits before the next pass after a 429/503 (Retry-After) or a failure; 0 after a success. For the tests.
   long
