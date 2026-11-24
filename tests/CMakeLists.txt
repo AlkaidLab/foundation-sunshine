@@ -463,8 +463,8 @@ target_link_libraries(vdd_mode_list_unit_tests PRIVATE gtest_main nlohmann_json:
 set_target_properties(vdd_mode_list_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME vdd_mode_list_unit_tests COMMAND vdd_mode_list_unit_tests)
 
-add_executable(vdd_unreachable_unit_tests /tests/unit/test_vdd_unreachable.cpp)
-target_include_directories(vdd_unreachable_unit_tests PRIVATE "")
+add_executable(vdd_unreachable_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_vdd_unreachable.cpp)
+target_include_directories(vdd_unreachable_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(vdd_unreachable_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
 set_target_properties(vdd_unreachable_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME vdd_unreachable_unit_tests COMMAND vdd_unreachable_unit_tests)
