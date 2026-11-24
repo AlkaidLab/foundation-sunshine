@@ -525,21 +525,23 @@ namespace video::dolby_vision {
     }
   }
 
-  void
+  bool
   rpu_injector_t::inject(uint64_t frame_index, std::vector<uint8_t> &bitstream) {
     if (!enabled_) {
-      return;
+      return false;
     }
 
     const auto rpu_nalu = queue_.take(frame_index);
     if (rpu_nalu.empty()) {
-      return;  // frame was submitted before the analyzer warmed up, or dropped
+      return false;  // frame was submitted before the analyzer warmed up, or dropped
     }
 
     if (!hdr_bitstream::inject_hevc_dolby_vision_rpu(rpu_nalu, bitstream)) {
       BOOST_LOG(debug) << "Dolby Vision: no insertion point for frame " << frame_index
                        << "; access unit sent without RPU";
+      return false;
     }
+    return true;
   }
 
   void

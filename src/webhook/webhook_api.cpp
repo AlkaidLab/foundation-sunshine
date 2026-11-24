@@ -27,7 +27,7 @@ namespace webhook::api {
     constexpr std::size_t MAX_REQUEST_SIZE = 64 * 1024;
     std::mutex configuration_transaction_mutex;
 
-    SimpleWeb::CaseInsensitiveMultimap
+    web::CaseInsensitiveMultimap
     json_headers() {
       return {
         {"Content-Type", "application/json"},
@@ -39,14 +39,14 @@ namespace webhook::api {
     }
 
     void
-    write_json(resp_https_t response, SimpleWeb::StatusCode status, const json &body) {
+    write_json(resp_https_t response, web::StatusCode status, const json &body) {
       response->write(status, body.dump(), json_headers());
     }
 
     void
     write_error(
       resp_https_t response,
-      SimpleWeb::StatusCode status,
+      web::StatusCode status,
       const char *message,
       const char *error_code = nullptr
     ) {
@@ -68,7 +68,7 @@ namespace webhook::api {
       try {
         write_error(
           std::move(response),
-          SimpleWeb::StatusCode::server_error_internal_server_error,
+          web::StatusCode::internal_server_error,
           "Webhook request failed"
         );
       }
@@ -112,14 +112,14 @@ namespace webhook::api {
     bool
     read_json_body(const resp_https_t &response, const req_https_t &request, json &body) {
       if (request->content.size() > MAX_REQUEST_SIZE) {
-        write_error(response, SimpleWeb::StatusCode::client_error_payload_too_large, "Request body is too large");
+        write_error(response, web::StatusCode::payload_too_large, "Request body is too large");
         return false;
       }
       const auto content = request->content.string();
 
       body = json::parse(content, nullptr, false);
       if (body.is_discarded()) {
-        write_error(response, SimpleWeb::StatusCode::client_error_bad_request, "Invalid JSON");
+        write_error(response, web::StatusCode::bad_request, "Invalid JSON");
         return false;
       }
       return true;
@@ -141,7 +141,7 @@ namespace webhook::api {
       if (result.status == auth::load_status_t::INVALID) {
         write_error(
           std::move(response),
-          SimpleWeb::StatusCode::server_error_internal_server_error,
+          web::StatusCode::internal_server_error,
           "Failed to read Webhook configuration",
           "webhook_config_invalid"
         );
@@ -150,7 +150,7 @@ namespace webhook::api {
 
       write_json(
         std::move(response),
-        SimpleWeb::StatusCode::success_ok,
+        web::StatusCode::ok,
         {
           {"status", true},
           {"webhook_enabled", result.settings.enabled},
@@ -176,12 +176,12 @@ namespace webhook::api {
       auth::settings_t settings;
       try {
         if (!parse_configuration(input, settings)) {
-          write_error(response, SimpleWeb::StatusCode::client_error_bad_request, "Invalid Webhook configuration");
+          write_error(response, web::StatusCode::bad_request, "Invalid Webhook configuration");
           return;
         }
       }
       catch (...) {
-        write_error(response, SimpleWeb::StatusCode::client_error_bad_request, "Invalid Webhook configuration");
+        write_error(response, web::StatusCode::bad_request, "Invalid Webhook configuration");
         return;
       }
 
@@ -208,16 +208,16 @@ namespace webhook::api {
         // Return a stable error without exposing the selected local path.
       }
       if (!prepared_ok) {
-        write_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, "Failed to apply Webhook configuration");
+        write_error(response, web::StatusCode::internal_server_error, "Failed to apply Webhook configuration");
         return;
       }
       if (!saved) {
-        write_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, "Failed to write Webhook configuration");
+        write_error(response, web::StatusCode::internal_server_error, "Failed to write Webhook configuration");
         return;
       }
       if (!applied) {
         BOOST_LOG(error) << "Webhook configuration was persisted but could not be published to the runtime";
-        write_error(response, SimpleWeb::StatusCode::server_error_internal_server_error, "Failed to apply Webhook configuration");
+        write_error(response, web::StatusCode::internal_server_error, "Failed to apply Webhook configuration");
         return;
       }
 
@@ -229,7 +229,7 @@ namespace webhook::api {
                       << (runtime_available ? "available" : "unavailable");
       write_json(
         std::move(response),
-        SimpleWeb::StatusCode::success_ok,
+        web::StatusCode::ok,
         {
           {"status", true},
           {"runtime_active", runtime_available},
@@ -248,7 +248,7 @@ namespace webhook::api {
           !input.contains("webhook_skip_ssl_verify") || !input["webhook_skip_ssl_verify"].is_boolean() ||
           !input.contains("webhook_timeout") || !input["webhook_timeout"].is_number_integer() ||
           (input.contains("webhook_retries") && !input["webhook_retries"].is_number_integer())) {
-        write_error(response, SimpleWeb::StatusCode::client_error_bad_request, "Invalid Webhook test request");
+        write_error(response, web::StatusCode::bad_request, "Invalid Webhook test request");
         return;
       }
 
@@ -264,7 +264,7 @@ namespace webhook::api {
             timeout > MAX_TIMEOUT.count() ||
             retry_count < 0 ||
             retry_count > MAX_TEST_RETRIES) {
-          write_error(response, SimpleWeb::StatusCode::client_error_bad_request, "Webhook URL, timeout, or retry count is out of range");
+          write_error(response, web::StatusCode::bad_request, "Webhook URL, timeout, or retry count is out of range");
           return;
         }
         settings.timeout = std::chrono::milliseconds {timeout};
@@ -275,19 +275,19 @@ namespace webhook::api {
               settings.timeout,
               {},
             })) {
-          write_error(response, SimpleWeb::StatusCode::client_error_bad_request, "Invalid Webhook URL");
+          write_error(response, web::StatusCode::bad_request, "Invalid Webhook URL");
           return;
         }
       }
       catch (...) {
-        write_error(response, SimpleWeb::StatusCode::client_error_bad_request, "Invalid Webhook test request");
+        write_error(response, web::StatusCode::bad_request, "Invalid Webhook test request");
         return;
       }
 
       send_test_async(settings, retry_count, [response](delivery_result_t result) {
         write_json(
           response,
-          SimpleWeb::StatusCode::success_ok,
+          web::StatusCode::ok,
           {
             {"status", result.success},
             {"http_status", result.http_status},

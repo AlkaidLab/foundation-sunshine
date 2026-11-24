@@ -6,8 +6,10 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -15,10 +17,15 @@
 
 #include "audio.h"
 #include "crypto.h"
+#include "session_info.h"
 #include "video.h"
 
 namespace rtsp_stream {
   struct launch_session_t;
+}
+
+namespace video_fec {
+  class controller_t;
 }
 
 namespace stream {
@@ -45,7 +52,12 @@ namespace stream {
 
     int packetsize;
     int minRequiredFecPackets;
+    std::shared_ptr<video_fec::controller_t> fec_control;
+    bool fec_feedback = false;
+    bool endpoint_auto_refresh = false;
     int mlFeatureFlags;
+    /// ds5::control_extension::mask_* directions the client offered in x-ml-general.ds5Extensions.
+    std::uint32_t ds5ExtensionMask = 0;
     int controlProtocolType;
     int audioQosType;
     int videoQosType;
@@ -126,36 +138,6 @@ namespace stream {
     };
   }  // namespace session
 
-  // Session information structure for API responses
-  struct session_info_t {
-    std::string client_name;
-    std::string client_uuid;
-    std::string client_address;
-    std::string state;
-    std::string stop_reason;
-    uint32_t session_id;
-    std::int64_t uptime_ms;
-    std::int64_t control_idle_ms;
-    std::int64_t video_idle_ms;
-    std::int64_t audio_idle_ms;
-    bool control_connected;
-    int width;
-    int height;
-    int fps;
-    int bitrate;  // Current bitrate in Kbps
-    bool host_audio;
-    bool enable_hdr;
-    bool enable_mic;
-    bool use_vdd;
-    bool hdr_brightness_reported;
-    std::string hdr_brightness_source;
-    float hdr_max_nits;
-    float hdr_min_nits;
-    float hdr_max_full_frame_nits;
-    std::string app_name;
-    int app_id;
-  };
-
   namespace session {
     std::shared_ptr<session_t>
     alloc(config_t &config, rtsp_stream::launch_session_t &launch_session);
@@ -169,9 +151,27 @@ namespace stream {
     state(session_t &session);
 
     bool
-    has_active_video_sessions();
-    
+    belongs_to_client(const session_t &session, const std::string &uuid);
 
+    // Resolve only RUNNING video sessions authenticated by this certificate.
+    streaming::capture_target_result_t
+    current_capture_for_client(const std::string &client_cert_uuid);
+
+    bool
+    has_active_video_sessions();
+
+    /**
+     * @brief 请求统一的异步应用取消流程。
+     *
+     * 手动 /cancel 和“所有客户端断开后结束串流”都通过此函数进入同一条清理链路。
+     * 函数只负责提交异步任务，不在调用线程中直接终止应用或恢复显示；任务会在 RTSP
+     * 执行上下文中重新检查条件，并由完成回调释放去重标记、终止应用和恢复显示状态。
+     *
+     * @param source 用于本地日志的触发原因，不会作为外部协议数据发送。
+     * @param require_no_video_session 是否要求任务执行时仍没有视频会话和待处理的 RTSP 票据。
+     */
+    void
+    request_global_cancel(std::string_view source, bool require_no_video_session = false);
 
     /**
      * @brief Send dynamic parameter change event to a specific client session.
@@ -181,6 +181,27 @@ namespace stream {
      */
     bool
     change_dynamic_param_for_client(const std::string &client_name, const video::dynamic_param_t &param);
+
+    bool
+    set_host_audio_for_client(const std::string &client_name, bool enabled);
+
+    /** One running session after the host's bitrate ceiling changed. */
+    struct bitrate_cap_result_t {
+      std::string client_name;
+      int total_kbps;  ///< the session's total bitrate now (including FEC), before and after in `was_kbps`
+      int was_kbps;
+    };
+
+    /**
+     * @brief The host's bitrate ceiling (config::host_max_bitrate_kbps) changed: every running session takes it now.
+     *
+     * Each session's bitrate budget holds the cap it was made with; this gives it the current one (streaming::bitrate_budget_t::set_maximum). A session that is above the new ceiling comes down to it, a session
+     * that was held down comes back up to what its client or its ABR last asked for (or stays there when that is still above the ceiling); 0 means no ceiling. The encoding thread applies the new total through the
+     * budget's pending() like any other change (no new channel), and the client is told through the host bitrate update (0x5506) when it negotiated it.
+     * @return The sessions whose total changed.
+     */
+    std::vector<bitrate_cap_result_t>
+    apply_host_bitrate_cap();
 
     /**
      * @brief Get information about all active sessions.

@@ -15,24 +15,37 @@ namespace nvprefs {
   class undo_data_t {
   public:
     struct data_t {
-      struct opengl_swapchain_t {
+      struct setting_t {
         uint32_t our_value;
         std::optional<uint32_t> undo_value;
       };
 
-      std::optional<opengl_swapchain_t> opengl_swapchain;
+      std::optional<setting_t> opengl_swapchain;
+      std::optional<setting_t> vsync;
     };
 
     void
     set_opengl_swapchain(uint32_t our_value, std::optional<uint32_t> undo_value);
 
-    std::optional<data_t::opengl_swapchain_t>
+    std::optional<data_t::setting_t>
     get_opengl_swapchain() const;
+
+    void
+    set_vsync(uint32_t our_value, std::optional<uint32_t> undo_value);
+
+    std::optional<data_t::setting_t>
+    get_vsync() const;
+
+    void
+    clear_vsync();
+
+    bool
+    empty() const;
 
     std::string
     write() const;
 
-    void
+    bool
     read(const std::vector<char> &buffer);
 
     void

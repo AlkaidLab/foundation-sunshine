@@ -21,6 +21,6 @@
 
 | Previous                      |                                            Next |
 |:------------------------------|------------------------------------------------:|
-| [Docker](../DOCKER_README.md) | [Gamestream Migration](gamestream_migration.md) |
+| [Getting Started](getting_started.md) | [Gamestream Migration](gamestream_migration.md) |
 
 </div>

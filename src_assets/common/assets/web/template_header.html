@@ -1,14 +1,103 @@
 <!-- TEMPLATE_HEADER - Used by Every UI Page -->
 <meta charset="UTF-8" />
 <meta http-equiv="X-UA-Compatible" content="IE=edge" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<style>
-  @view-transition {
-    navigation: auto;
-  }
-</style>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content" />
+<meta name="color-scheme" content="light dark" />
+<!-- This listener must run before the entry module, so it also covers an entry or its preloads that are no longer available after an upgrade. -->
+<script>
+  (function () {
+    var notice = null;
+    var preloadErrors = new Set();
+
+    function showPopover(element) {
+      if (typeof element.showPopover === 'function' && !element.matches(':popover-open')) {
+        try { element.showPopover(); } catch (e) { element.removeAttribute('popover'); }
+      }
+    }
+
+    function showResourceError() {
+      if (notice && notice.isConnected) return;
+      var chinese = /^zh/i.test(document.documentElement.lang || '') || /^zh/i.test(navigator.language || '');
+      notice = document.createElement('section');
+      notice.setAttribute('role', 'alert');
+      notice.setAttribute('aria-live', 'assertive');
+      notice.setAttribute('popover', 'manual');
+      notice.id = 'resource-load-error';
+      notice.style.cssText = 'position:fixed;z-index:2147483647;top:auto;left:16px;right:16px;bottom:16px;max-width:560px;margin:auto;padding:16px;border:1px solid #b3261e;border-radius:12px;background:#fff8f6;color:#410e0b;box-shadow:0 4px 16px #0004;font:14px/1.5 system-ui,sans-serif';
+
+      var message = document.createElement('p');
+      message.style.cssText = 'margin:0 0 12px';
+      message.textContent = chinese
+        ? '页面资源加载失败，请检查网络或重新加载。重新加载会丢失未保存的更改。'
+        : 'A page resource could not be loaded. Check your connection or reload. Reloading will discard unsaved changes.';
+      notice.appendChild(message);
+
+      var reload = document.createElement('button');
+      reload.type = 'button';
+      reload.textContent = chinese ? '重新加载' : 'Reload';
+      reload.style.cssText = 'padding:8px 14px;margin-right:8px;border:0;border-radius:20px;background:#b3261e;color:white;font:inherit;cursor:pointer';
+      reload.addEventListener('click', function () { window.location.reload(); });
+      notice.appendChild(reload);
+
+      var dismiss = document.createElement('button');
+      dismiss.type = 'button';
+      dismiss.textContent = chinese ? '关闭' : 'Dismiss';
+      dismiss.style.cssText = 'padding:8px 14px;border:1px solid currentColor;border-radius:20px;background:transparent;color:inherit;font:inherit;cursor:pointer';
+      dismiss.addEventListener('click', function () { notice.remove(); notice = null; });
+      notice.appendChild(dismiss);
+
+      // An open modal makes everything outside it inert, even a popover.
+      // Otherwise keep the warning outside body#app, which Vue replaces on mount.
+      var modal = null;
+      try { modal = document.querySelector('dialog:modal'); } catch (e) { /* older browsers */ }
+      (modal || document.documentElement).appendChild(notice);
+      showPopover(notice);
+      if (modal) {
+        var displayed = notice;
+        modal.addEventListener('close', function () {
+          if (notice !== displayed || !displayed.isConnected) return;
+          document.documentElement.appendChild(displayed);
+          showPopover(displayed);
+        }, { once: true });
+      }
+    }
+
+    // Vite reports an error before rejecting the import promise. The caller may
+    // retry or use a fallback, so show the warning only if the rejection is
+    // unhandled. lazyPane supplies its own error view when its retry fails.
+    window.addEventListener('vite:preloadError', function (event) {
+      if (preloadErrors.size >= 64) preloadErrors.delete(preloadErrors.values().next().value);
+      preloadErrors.add(event.payload);
+    });
+    window.addEventListener('unhandledrejection', function (event) {
+      if (!preloadErrors.delete(event.reason)) return;
+      showResourceError();
+    });
+    window.addEventListener('error', function (event) {
+      var element = event.target;
+      if (!element || !element.tagName) return;
+      var tag = element.tagName.toLowerCase();
+      // A failed modulepreload can be followed by a successful module fetch;
+      // the entry script's error is the definitive failure for a page load.
+      if (tag === 'script' && element.type === 'module' && element.src) showResourceError();
+    }, true);
+  })();
+</script>
+<!-- the first frame of every page is the colour of the person's theme, not the browser's white canvas: the surface colour of the last appearance this browser kept (foundation-ui.boot), else the colour of the stored light or dark choice -->
+<script>
+  (function () {
+    try {
+      var root = document.documentElement, color = '', dark = false;
+      try { var r = JSON.parse(localStorage.getItem('foundation-ui.boot') || 'null'); var m = r && r.v === 1 && typeof r.css === 'string' && /--md-sys-color-surface:\s*(#[0-9a-fA-F]{3,8}|rgba?\([^)]*\))/.exec(r.css); if (m) color = m[1]; if (r && r.mode === 'dark') dark = true; } catch (e) { /* no record */ }
+      var t = null; try { t = localStorage.getItem('theme'); } catch (e) { /* no storage */ }
+      if (t === 'dark') dark = true; else if (t === 'light') dark = false; else if (!(r && (r.mode === 'light' || r.mode === 'dark'))) dark = !!(window.matchMedia && matchMedia('(prefers-color-scheme: dark)').matches);
+      if (!color) color = dark ? '#141218' : '#fef7ff';
+      root.style.backgroundColor = color;
+      root.style.colorScheme = dark ? 'dark' : 'light';
+    } catch (e) { /* the page starts as it did */ }
+  })();
+</script>
 <title>Sunshine</title>
 <link rel="icon" type="image/x-icon" href="/images/sunshine.ico">
-<link href="@fortawesome/fontawesome-free/css/all.min.css" rel="stylesheet">
-<link href="bootstrap/dist/css/bootstrap.min.css" rel="stylesheet" />
+<link rel="apple-touch-icon" href="/images/logo-sunshine-256.png">
 <link href="/assets/css/sunshine.css" rel="stylesheet" />

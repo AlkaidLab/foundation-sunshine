@@ -10,6 +10,7 @@
 #include "config.h"
 #include "cursor_channel.h"
 #include "input_activity.h"
+#include "pen_barrel_roll.h"
 #include "utility.h"
 
 namespace input::activity {
@@ -21,6 +22,11 @@ namespace input::activity {
     }
 
     switch (util::endian::little(payload->magic)) {
+      case pen_wire::magic:
+        if (!pen_wire::valid_size(payload_size, payload->size)) {
+          return std::nullopt;
+        }
+        return false;
       case MOUSE_MOVE_REL_MAGIC_GEN5: {
         if (payload_size < sizeof(NV_REL_MOUSE_MOVE_PACKET)) {
           return std::nullopt;

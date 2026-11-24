@@ -102,7 +102,6 @@ namespace crypto {
 
   private:
     std::vector<std::pair<x509_t, x509_store_t>> _certs;
-    x509_store_ctx_t _cert_ctx;
   };
 
   namespace cipher {

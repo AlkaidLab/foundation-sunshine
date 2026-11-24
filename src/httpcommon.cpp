@@ -9,7 +9,9 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cstdio>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <initializer_list>
 #include <utility>
@@ -22,16 +24,15 @@
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
 
-#include <cstring>
-
 #include <boost/asio/ssl/context.hpp>
 
-#include <Simple-Web-Server/server_http.hpp>
-#include <Simple-Web-Server/server_https.hpp>
+#include "src/http/server.h"
 #include <boost/asio/ssl/context_base.hpp>
 #include <curl/curl.h>
 
 #include "config.h"
+#include "cover_download_outcome.h"
+#include "cover_failure_backoff.h"
 #include "crypto.h"
 #include "file_handler.h"
 #include "httpcommon.h"
@@ -42,6 +43,16 @@
 #include "rtsp.h"
 #include "utility.h"
 #include "uuid.h"
+
+#ifdef _WIN32
+  #ifndef WIN32_LEAN_AND_MEAN
+    #define WIN32_LEAN_AND_MEAN
+  #endif
+  #ifndef NOMINMAX
+    #define NOMINMAX
+  #endif
+  #include <windows.h>
+#endif
 
 namespace http {
   using namespace std::literals;
@@ -64,11 +75,12 @@ namespace http {
     if (clean_slate) {
       unique_id = uuid_util::uuid_t::generate().string();
       auto dir = std::filesystem::temp_directory_path() / "Sunshine"sv;
-      config::nvhttp.cert = (dir / ("cert-"s + unique_id)).string();
-      config::nvhttp.pkey = (dir / ("pkey-"s + unique_id)).string();
+      config::nvhttp.cert = file_handler::path_to_utf8(dir / ("cert-"s + unique_id));
+      config::nvhttp.pkey = file_handler::path_to_utf8(dir / ("pkey-"s + unique_id));
     }
 
-    if ((!fs::exists(config::nvhttp.pkey) || !fs::exists(config::nvhttp.cert)) &&
+    if ((!fs::exists(file_handler::path_from_utf8(config::nvhttp.pkey)) ||
+         !fs::exists(file_handler::path_from_utf8(config::nvhttp.cert))) &&
         create_creds(config::nvhttp.pkey, config::nvhttp.cert)) {
       return -1;
     }
@@ -84,9 +96,9 @@ namespace http {
   save_user_creds(const std::string &file, const std::string &username, const std::string &password, bool run_our_mouth) {
     pt::ptree outputTree;
 
-    if (fs::exists(file)) {
+    if (fs::exists(file_handler::path_from_utf8(file))) {
       try {
-        pt::read_json(file, outputTree);
+        file_handler::read_json(file, outputTree);
       }
       catch (std::exception &e) {
         BOOST_LOG(error) << "Couldn't read user credentials: "sv << e.what();
@@ -95,11 +107,15 @@ namespace http {
     }
 
     auto salt = crypto::rand_alphabet(16);
+    if (salt.size() != 16) {
+      BOOST_LOG(error) << "Couldn't generate a random salt for the credentials file"sv;
+      return -1;
+    }
     outputTree.put("username", username);
     outputTree.put("salt", salt);
     outputTree.put("password", util::hex(crypto::hash(password + salt)).to_string());
     try {
-      pt::write_json(file, outputTree);
+      file_handler::write_json(file, outputTree);
     }
     catch (std::exception &e) {
       BOOST_LOG(error) << "error writing to the credentials file, perhaps try this again as an administrator? Details: "sv << e.what();
@@ -112,13 +128,13 @@ namespace http {
 
   bool
   user_creds_exist(const std::string &file) {
-    if (!fs::exists(file)) {
+    if (!fs::exists(file_handler::path_from_utf8(file))) {
       return false;
     }
 
     pt::ptree inputTree;
     try {
-      pt::read_json(file, inputTree);
+      file_handler::read_json(file, inputTree);
       return inputTree.find("username") != inputTree.not_found() &&
              inputTree.find("password") != inputTree.not_found() &&
              inputTree.find("salt") != inputTree.not_found();
@@ -134,7 +150,7 @@ namespace http {
   reload_user_creds(const std::string &file) {
     pt::ptree inputTree;
     try {
-      pt::read_json(file, inputTree);
+      file_handler::read_json(file, inputTree);
       config::sunshine.username = inputTree.get<std::string>("username");
       config::sunshine.password = inputTree.get<std::string>("password");
       config::sunshine.salt = inputTree.get<std::string>("salt");
@@ -148,8 +164,8 @@ namespace http {
 
   int
   create_creds(const std::string &pkey, const std::string &cert) {
-    fs::path pkey_path = pkey;
-    fs::path cert_path = cert;
+    fs::path pkey_path = file_handler::path_from_utf8(pkey);
+    fs::path cert_path = file_handler::path_from_utf8(cert);
 
     auto creds = crypto::gen_creds("Sunshine Gamestream Host"sv, 2048);
 
@@ -217,7 +233,12 @@ namespace http {
       return false;
     }
 
-    FILE *fp = fopen(file.c_str(), "wb");
+    FILE *fp = nullptr;
+#ifdef _WIN32
+    fp = _wfopen(file_handler::path_from_utf8(file).c_str(), L"wb");
+#else
+    fp = fopen(file.c_str(), "wb");
+#endif
     if (!fp) {
       BOOST_LOG(error) << "Couldn't open ["sv << file << "] for ["sv << url << ']';
       curl_easy_cleanup(curl);
@@ -253,9 +274,10 @@ namespace http {
     fclose(fp);
     if (result != CURLE_OK) {
         // Cleanup partial file
-        if (fs::exists(file)) {
-            boost::system::error_code ec;
-            fs::remove(file, ec); // Don't crash if delete fails
+        const auto native_file = file_handler::path_from_utf8(file);
+        if (fs::exists(native_file)) {
+            std::error_code ec;
+            fs::remove(native_file, ec); // Don't crash if delete fails
         }
     }
     return result == CURLE_OK;
@@ -353,54 +375,6 @@ namespace http {
     return result == CURLE_OK;
   }
 
-  bool post_json(const std::string &url, const std::string &body, const std::map<std::string, std::string> &headers, std::string &response_body, long &http_code, long timeout_seconds) {
-    BOOST_LOG(info) << "POST JSON to: " << url;
-    CURL *curl = curl_easy_init();
-    if (!curl) {
-      BOOST_LOG(error) << "Couldn't create CURL instance for POST ["sv << url << ']';
-      return false;
-    }
-
-    response_body.clear();
-    response_body.reserve(4096);
-
-    // Build custom headers
-    struct curl_slist *header_list = nullptr;
-    header_list = curl_slist_append(header_list, "Content-Type: application/json");
-    for (const auto &[key, value] : headers) {
-      std::string header_line = key + ": " + value;
-      header_list = curl_slist_append(header_list, header_line.c_str());
-    }
-
-    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-    curl_easy_setopt(curl, CURLOPT_POST, 1L);
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body.c_str());
-    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(body.size()));
-    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, header_list);
-    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, string_write_callback);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response_body);
-
-    // Security & timeout
-    curl_easy_setopt(curl, CURLOPT_MAXFILESIZE_LARGE, (curl_off_t)10 * 1024 * 1024);
-    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout_seconds);
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
-    curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
-
-    CURLcode result = curl_easy_perform(curl);
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http_code);
-
-    curl_slist_free_all(header_list);
-    curl_easy_cleanup(curl);
-
-    if (result != CURLE_OK) {
-      BOOST_LOG(error) << "POST failed ["sv << url << ", curl code:" << result << ']';
-      return false;
-    }
-
-    return true;
-  }
-
   std::string url_escape(const std::string &url) {
     char *string = curl_easy_escape(nullptr, url.c_str(), static_cast<int>(url.length()));
     std::string result(string);
@@ -427,6 +401,25 @@ namespace http {
 namespace {
   constexpr auto COVER_DOWNLOAD_MAX_BYTES = static_cast<std::size_t>(10 * 1024 * 1024);
   constexpr auto COVER_DNS_TIMEOUT = std::chrono::seconds(10);
+
+  void remove_file_noexcept(const std::filesystem::path &path) noexcept {
+    std::error_code ignored;
+    std::filesystem::remove(path, ignored);
+  }
+
+  bool replace_file(const std::filesystem::path &temporary_path, const std::filesystem::path &destination_path) noexcept {
+#ifdef _WIN32
+    return MoveFileExW(
+             temporary_path.c_str(),
+             destination_path.c_str(),
+             MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH
+           ) != FALSE;
+#else
+    std::error_code ec;
+    std::filesystem::rename(temporary_path, destination_path, ec);
+    return !ec;
+#endif
+  }
 
   struct ParsedDownloadUrl {
     std::string scheme;
@@ -650,6 +643,9 @@ namespace {
     size_t bytes_received = 0;
     bool checked = false;
     bool valid = false;
+    /// Why the callback stopped the transfer (curl then reports error 23, CURLE_WRITE_ERROR, whatever the reason): a content problem or a local one.
+    const char *stopped_by = nullptr;
+    bool stopped_by_local = false;
 
     // Ensure buffer is large enough for our checks to avoid overflow
     static_assert(sizeof(buffer) >= 12, "Image check buffer too small");
@@ -670,6 +666,8 @@ namespace {
 
     if (fwrite(data, 1, length, ctx.fp) != length) {
       BOOST_LOG(error) << "Couldn't write image data to ["sv << ctx.filename << ']';
+      ctx.stopped_by = "write_failed";
+      ctx.stopped_by_local = true;
       return false;
     }
     return true;
@@ -695,6 +693,7 @@ namespace {
       }
       if (ctx->bytes_received > COVER_DOWNLOAD_MAX_BYTES || total_size > COVER_DOWNLOAD_MAX_BYTES - ctx->bytes_received) {
         BOOST_LOG(warning) << "Image download exceeded "sv << COVER_DOWNLOAD_MAX_BYTES << " bytes [" << ctx->url << ']';
+        ctx->stopped_by = "too_large";
         return 0;
       }
       ctx->bytes_received += total_size;
@@ -716,13 +715,20 @@ namespace {
 
           if (!ctx->valid) {
             BOOST_LOG(warning) << "Streaming validation failed: Invalid magic bytes ["sv << ctx->url << ']';
-            return 0; // Stop download
+            ctx->stopped_by = "invalid_magic";
+            return 0;  // Stop download
           }
 
           // Check passed, open file
+#ifdef _WIN32
+          ctx->fp = _wfopen(file_handler::path_from_utf8(ctx->filename).c_str(), L"wb");
+#else
           ctx->fp = fopen(ctx->filename.c_str(), "wb");
+#endif
           if (!ctx->fp) {
             BOOST_LOG(error) << "Couldn't open ["sv << ctx->filename << "] for ["sv << ctx->url << ']';
+            ctx->stopped_by = "open_failed";
+            ctx->stopped_by_local = true;
             return 0;
           }
 
@@ -776,12 +782,16 @@ namespace {
     return curl_slist_append(nullptr, entry.c_str());
   }
 
-  bool perform_image_download_with_magic_check(const std::string &url, const std::string &file, long ssl_version, const ParsedDownloadUrl *resolved_parts = nullptr, const std::string *resolved_address = nullptr) {
+  // the outcome and its classification live in cover_download_outcome.h (the tests cover them); this anonymous namespace sits outside namespace http, so the names come in here
+  using http::classify_download_failure;
+  using http::download_outcome_e;
+
+  download_outcome_e download_image_attempt(const std::string &url, const std::string &file, long ssl_version, const ParsedDownloadUrl *resolved_parts = nullptr, const std::string *resolved_address = nullptr) {
     BOOST_LOG(info) << "Downloading external image with magic check: " << url;
     CURL *curl = curl_easy_init();
     if (!curl) {
       BOOST_LOG(error) << "Couldn't create CURL instance ["sv << url << ']';
-      return false;
+      return download_outcome_e::local_failure;
     }
 
     curl_slist *resolve_list = nullptr;
@@ -790,7 +800,7 @@ namespace {
       if (!resolve_list) {
         BOOST_LOG(error) << "Couldn't pin resolved cover host addresses ["sv << url << ']';
         curl_easy_cleanup(curl);
-        return false;
+        return download_outcome_e::local_failure;
       }
       curl_easy_setopt(curl, CURLOPT_RESOLVE, resolve_list);
     }
@@ -799,11 +809,17 @@ namespace {
       BOOST_LOG(error) << "Couldn't create directory ["sv << file_dir << "] for ["sv << url << ']';
       curl_slist_free_all(resolve_list);
       curl_easy_cleanup(curl);
-      return false;
+      return download_outcome_e::local_failure;
     }
 
+    const auto destination_path = file_handler::path_from_utf8(file);
+    auto temporary_path = destination_path;
+    const auto temporary_suffix = file_handler::path_from_utf8(std::string { ".download-" } + uuid_util::uuid_t::generate().string());
+    temporary_path += temporary_suffix.native();
+    remove_file_noexcept(temporary_path);
+
     ImageCheckContext ctx;
-    ctx.filename = file;
+    ctx.filename = file_handler::path_to_utf8(temporary_path);
     ctx.url = url;
 
     curl_easy_setopt(curl, CURLOPT_SSLVERSION, ssl_version);
@@ -824,9 +840,8 @@ namespace {
     CURLcode result = curl_easy_perform(curl);
     curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &response_code);
 
-    if (ctx.fp) {
-      fclose(ctx.fp);
-    }
+    const bool close_ok = !ctx.fp || fclose(ctx.fp) == 0;
+    ctx.fp = nullptr;
 
     curl_slist_free_all(resolve_list);
     curl_easy_cleanup(curl);
@@ -834,33 +849,61 @@ namespace {
     bool http_ok = (response_code == 200);
 
     if (result != CURLE_OK || !http_ok) {
-      if (result != CURLE_OK) {
+      if (result == CURLE_WRITE_ERROR && ctx.stopped_by) {
+        // curl reports error 23 whenever the write callback stops the transfer, so the reason goes with it: a file that is not an image or is too large is the
+        // server's doing (a warning, and the cover stays the default), only a failure to open or write the local file is ours.
+        if (ctx.stopped_by_local) {
+          BOOST_LOG(error) << "Download failed ["sv << url << ", code:" << result << ", " << ctx.stopped_by << ']';
+        }
+        else {
+          BOOST_LOG(warning) << "Download rejected ["sv << url << ", " << ctx.stopped_by << ']';
+        }
+      }
+      else if (result != CURLE_OK) {
         BOOST_LOG(error) << "Download failed or rejected ["sv << url << ", code:" << result << ']';
-      } else {
+      }
+      else {
         BOOST_LOG(error) << "Download failed: HTTP " << response_code << " [" << url << "]";
       }
 
-      // Cleanup partial file if it exists (though usually it shouldn't be much)
-      if (boost::filesystem::exists(file)) {
-        boost::system::error_code remove_ec;
-        boost::filesystem::remove(file, remove_ec);
-      }
-      return false;
+      remove_file_noexcept(temporary_path);
+      // our own file: not the URL's fault (see classify_download_failure): a close that failed is ours also when the transfer broke off, so no address switch and no URL backoff
+      return classify_download_failure(result == CURLE_OK, response_code, ctx.stopped_by_local, ctx.stopped_by != nullptr, result == CURLE_FILESIZE_EXCEEDED, close_ok);
     }
 
     // Double check: if download finished but we never got enough bytes to check?
     // Treat as failure (empty or too small file)
     if (!ctx.checked) {
       BOOST_LOG(warning) << "Download too small to validate magic bytes ["sv << url << ']';
-      // Cleanup if file was created
-      if (boost::filesystem::exists(file)) {
-        boost::system::error_code remove_ec;
-        boost::filesystem::remove(file, remove_ec);
-      }
-      return false;
+      remove_file_noexcept(temporary_path);
+      return download_outcome_e::rejected;
     }
 
-    return true;
+    if (!ctx.valid || !close_ok) {
+      BOOST_LOG(error) << "Downloaded image could not be finalized ["sv << url << ']';
+      remove_file_noexcept(temporary_path);
+      // a failed close is ours; a body that is not an image was stopped by the callback above
+      return !close_ok ? download_outcome_e::local_failure : download_outcome_e::rejected;
+    }
+
+    if (!replace_file(temporary_path, destination_path)) {
+      BOOST_LOG(error) << "Couldn't replace downloaded image ["sv << file << ']';
+      remove_file_noexcept(temporary_path);
+      return download_outcome_e::local_failure;
+    }
+
+    return download_outcome_e::done;
+  }
+
+  bool perform_image_download_with_magic_check(const std::string &url, const std::string &file, long ssl_version) {
+    return download_image_attempt(url, file, ssl_version) == download_outcome_e::done;
+  }
+
+  /// Failed cover URLs, remembered for the life of the process (see cover_failure_backoff.h).
+  http::cover_failure_backoff_t &
+  cover_failures() {
+    static http::cover_failure_backoff_t failures;
+    return failures;
   }
 }
 
@@ -869,25 +912,46 @@ namespace http {
     return perform_image_download_with_magic_check(url, file, ssl_version);
   }
 
+  bool cover_download_recently_failed(const std::string &url) {
+    return cover_failures().blocked(url);
+  }
+
   bool download_public_cover_image(const std::string &url, const std::string &file, long ssl_version) {
+    // validate_app_image_path asks for every cover that has no file yet on every refresh and every client request: a URL that just failed is left alone for a while.
+    if (cover_failures().blocked(url)) {
+      BOOST_LOG(debug) << "Skipping a cover download that failed recently ["sv << url << ']';
+      return false;
+    }
+
+    // A failure of the URL starts its wait; a failure of our own file or directory does not (the URL itself was never refused).
+    const auto done = [&](download_outcome_e outcome) {
+      if (outcome == download_outcome_e::done) cover_failures().note_success(url);
+      else if (outcome != download_outcome_e::local_failure) cover_failures().note_failure(url);
+      return outcome == download_outcome_e::done;
+    };
+
     ParsedDownloadUrl parts;
     PublicHostResolution resolution;
     if (!resolve_public_https_cover_url(url, parts, resolution)) {
       BOOST_LOG(warning) << "Blocked cover download from non-public HTTPS URL ["sv << url << ']';
-      return false;
+      return done(download_outcome_e::rejected);
     }
 
     if (resolution.is_address_literal) {
-      return perform_image_download_with_magic_check(url, file, ssl_version);
+      return done(download_image_attempt(url, file, ssl_version));
     }
 
+    // The next address of the host is tried only when the transfer itself broke off (a connection that did not open, a timeout, a body that did not arrive).
+    // An answer that was refused, such as a page that is not an image, is the same from every address, and trying them all multiplied one failure into
+    // several; a failure of our own file is the same from every address too.
+    auto outcome = download_outcome_e::transfer_failed;
     for (const auto &address : resolution.addresses) {
-      if (perform_image_download_with_magic_check(url, file, ssl_version, &parts, &address)) {
-        return true;
+      outcome = download_image_attempt(url, file, ssl_version, &parts, &address);
+      if (outcome != download_outcome_e::transfer_failed) {
+        break;
       }
     }
 
-    return false;
+    return done(outcome);
   }
 }
-

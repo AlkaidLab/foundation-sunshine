@@ -3,6 +3,12 @@ name: Build and Release
 # Published releases are owned by sign-and-repackage.yml. Keeping that event
 # out of this workflow prevents a release created below from starting another
 # build-and-release cycle.
+#
+# Pull requests and pushes are routed by what they change (job `changes`): documentation-only, workflow-only and Web UI-only
+# changes skip the Windows build, and `ci-gate` is the single check to require. A skipped *job* reports success, while a
+# workflow skipped by `on.paths` leaves its checks pending and blocks the merge (GitHub Docs, "Troubleshooting required
+# status checks"), so this workflow has no `on.paths`. A push to master that changes only documentation builds and publishes
+# nothing; a code push builds, packages and publishes as before. Manual runs always run everything.
 on:
   pull_request:
     branches:
@@ -14,55 +20,455 @@ on:
   push:
     branches:
       - master
+  schedule:
+    # Nightly: a cold build with the pinned toolchain packages (the weekly toolchain watch probes the newest ones when a
+    # major moves), the full native tests, and a fresh compiler cache for master.
+    - cron: '17 20 * * *'
   workflow_dispatch:
+    inputs:
+      gui_run_id:
+        description: 'Optional successful Panel artifact run; its commit must match the Panel submodule'
+        type: string
+        default: ''
+      publish:
+        description: 'Publish a pre-release of this master build (the release step is skipped otherwise)'
+        type: boolean
+        default: false
+      publish_stable:
+        description: 'Publish this master build as the stable release: compiled as channel stable and created as a full release marked Latest, never as a pre-release (master only; on another branch it is a rehearsal that builds the stable binaries and publishes nothing)'
+        type: boolean
+        default: false
+      build_setup_ui_from_submodule:
+        description: 'Build the installer setup UI from the Panel submodule instead of downloading the Panel repository build'
+        type: boolean
+        default: false
+      sharded_cold:
+        description: 'Compile the objects on parallel runners first (what the nightly build and a build without any compiler cache do)'
+        type: boolean
+        default: false
+      toolchain_probe:
+        description: 'Build with the newest MSYS2 packages instead of the pinned ones (what the weekly toolchain watch dispatches to test a new major)'
+        type: boolean
+        default: false
+      toolchain:
+        description: 'Windows release compiler (Clang is used for releases; GCC remains the fallback)'
+        type: choice
+        default: clang
+        options:
+          - 'clang'
+          - 'gcc'
+      rtx_hdr:
+        description: 'RTX HDR support for development branches (official master always requires ON)'
+        type: choice
+        default: AUTO
+        options:
+          - 'AUTO'
+          - 'ON'
+          - 'OFF'
 
+# Read-only by default; the jobs that write ask for it themselves (setup_release, the cache prune in build_win, publish).
+permissions:
+  contents: read
+
+# Only a newer push to the same pull request supersedes a running check. Every push to master has its own group and always
+# finishes: a later documentation-only push builds nothing, so it must not cancel the build that publishes the commit before.
 concurrency:
-  group: '${{ github.workflow }}-${{ github.ref }}'
-  cancel-in-progress: true
+  group: '${{ github.workflow }}-${{ github.event_name == ''push'' && github.sha || github.ref }}'
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # The pinned LizardByte release action still composes a Node.js 20 action.
 # Run it on Node.js 24 ahead of GitHub's fall 2026 Node.js 20 removal.
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+  # What is tested is what is shipped: pull requests, pushes, the nightly build and releases all build with Clang (the release
+  # compiler), so the compile, the native tests and the PE release gate run on the Clang binaries. GCC is the fallback: the
+  # CI_TOOLCHAIN repository variable or the manual input switch to it, and .github/workflows/gcc-fallback.yml builds and
+  # tests it in full every night and opens an issue when that fails.
+  TOOLCHAIN: ${{ inputs.toolchain || vars.CI_TOOLCHAIN || 'clang' }}
 
 jobs:
+  changes:
+    name: Changes
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      cpp: ${{ steps.classify.outputs.cpp }}
+      webui: ${{ steps.classify.outputs.webui }}
+      webui_inputs: ${{ steps.classify.outputs.webui_inputs }}
+      installer: ${{ steps.classify.outputs.installer }}
+      workflow: ${{ steps.classify.outputs.workflow }}
+      docs: ${{ steps.classify.outputs.docs }}
+      docs_touched: ${{ steps.classify.outputs.docs_touched }}
+      # Packaging (Web UI build, installer UI, Inno Setup, release assets) is checked on pull requests only when they touch
+      # what it reads; master and manual runs always package.
+      package: ${{ steps.classify.outputs.package }}
+      # The Windows build and release path (scripts/ci/classify-changes.py, "build"): a pull request needs it for C++ and build
+      # inputs only, a push to master or a manual run for any code, the Web UI sources included. README.md and the other files
+      # only the Web UI tests read never build.
+      build: ${{ steps.classify.outputs.build }}
+    steps:
+      - name: Checkout the CI scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          sparse-checkout: scripts/ci
+          persist-credentials: false
+
+      # The file list comes from the REST API (a pull request's files, or the compare of a push): no history to fetch and
+      # no third-party action in the path. Manual runs, a push that creates a branch, a call that fails and a change too
+      # large to list are treated as "everything changed" (scripts/ci/changed-files.py). A push to master that changes only
+      # documentation therefore builds nothing and publishes no release.
+      - name: Classify the change
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          python3 scripts/ci/changed-files.py --event "$EVENT" --repo "$REPO" --pr "$PR_NUMBER" --before "$BEFORE" --after "$AFTER" > files.txt
+          python3 scripts/ci/classify-changes.py --event "$EVENT" --output "$GITHUB_OUTPUT" < files.txt
+
+  docs-check:
+    name: Documentation links
+    needs: changes
+    if: needs.changes.outputs.docs_touched == 'true'
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Check relative links and images
+        run: python3 scripts/ci/check-doc-links.py --root .
+
+  third-party-licenses:
+    name: Third-party licenses
+    # Source: github-actions-workflow-syntax-20261117.
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      # A driver download without a reviewed license text, a version pin that
+      # moved away from the reviewed tag, or a package path that stops copying
+      # licenses/ fails here and at Windows configure time.
+      - name: Every fetched driver has a reviewed license
+        run: python3 scripts/ci/check-third-party-licenses.py --root .
+
+  workflow-lint:
+    name: Workflow lint
+    needs: changes
+    if: needs.changes.outputs.workflow == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: actionlint (pinned release)
+        env:
+          VERSION: 1.7.12
+          SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+          # style and info findings (quoting habits) are not failures; warnings and errors are
+          SHELLCHECK_OPTS: --severity=warning
+        run: |
+          set -euo pipefail
+          curl -fsSL -o actionlint.tgz "https://github.com/rhysd/actionlint/releases/download/v${VERSION}/actionlint_${VERSION}_linux_amd64.tar.gz"
+          echo "${SHA256}  actionlint.tgz" | sha256sum -c -
+          tar -xzf actionlint.tgz actionlint
+          ./actionlint -color
+      - name: Shell syntax of every run block (also msys2 steps, which actionlint skips)
+        run: python3 scripts/ci/check-workflow-shell.py
+      - name: CI script tests
+        run: python3 -m unittest discover -s scripts/ci -p 'test_*.py'
+
+  # README.md, docs/authority and the files under assets/ are read by three Web UI tests only (defaultAppsArt,
+  # diagnosticsPage, mascotSweep). A change to nothing else runs those three, not the four full shards.
+  webui-docs:
+    name: Web UI document tests
+    needs: changes
+    if: needs.changes.outputs.webui_inputs == 'true' && needs.changes.outputs.webui != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # These tests import foundation-ui (the network guard, the about page data) from the sibling checkout, but run none
+      # of its components, so its own dependencies are not installed.
+      - name: foundation-ui (pinned)
+        run: |
+          set -euo pipefail
+          sha="$(tr -d '[:space:]' < scripts/ci/foundation-ui.sha)"
+          dir="$GITHUB_WORKSPACE/../ds5-ui-m3e"
+          git init -q "$dir"
+          git -C "$dir" fetch -q --depth 1 https://github.com/AlkaidLab/foundation-ui "$sha"
+          git -C "$dir" -c advice.detachedHead=false checkout -q FETCH_HEAD
+          test "$(git -C "$dir" rev-parse HEAD)" = "$sha"
+
+      - name: Install
+        run: npm ci --no-audit --no-fund --ignore-scripts
+
+      - name: Tests
+        run: |
+          dir=src_assets/common/assets/web/tests
+          node --import foundation-ui/testing/no-network --test --test-reporter=spec --test-reporter-destination=stdout \
+            --test-reporter=junit --test-reporter-destination=webui-docs-junit.xml \
+            "$dir/defaultAppsArt.test.js" "$dir/diagnosticsPage.test.js" "$dir/mascotSweep.test.js"
+
+      - name: Report
+        if: always()
+        run: python3 scripts/ci/report-junit.py --title "Web UI document tests" --min-tests 5 webui-docs-junit.xml
+
+  webui:
+    name: Web UI (shard ${{ matrix.shard }}/4)
+    needs: changes
+    if: needs.changes.outputs.webui == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # The Web UI imports foundation-ui from a sibling directory (package.json: "file:../ds5-ui-m3e"). Pinned to a
+      # commit (scripts/ci/foundation-ui.sha) and installed with its dev and peer dependencies: vue is both, and without
+      # it three test files fail to load.
+      - name: foundation-ui (pinned)
+        run: |
+          set -euo pipefail
+          sha="$(tr -d '[:space:]' < scripts/ci/foundation-ui.sha)"
+          dir="$GITHUB_WORKSPACE/../ds5-ui-m3e"
+          git init -q "$dir"
+          git -C "$dir" fetch -q --depth 1 https://github.com/AlkaidLab/foundation-ui "$sha"
+          git -C "$dir" -c advice.detachedHead=false checkout -q FETCH_HEAD
+          test "$(git -C "$dir" rev-parse HEAD)" = "$sha"
+          npm ci --prefix "$dir" --no-audit --no-fund
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      # Lint, locale check and build are a few seconds; they run once, in shard 1.
+      - name: Lint
+        if: matrix.shard == 1
+        run: npm run lint:webui
+
+      # One test file (sparxieCapturedGate) takes as long as all the others together, so it is sharded by test
+      # (SPARXIE_GATE_SHARD) and the other files by file (node --test-shard); both processes run side by side.
+      - name: Tests
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -uo pipefail
+          dir=src_assets/common/assets/web/tests
+          gate=sparxieCapturedGate.test.js
+          files=()
+          for f in "$dir"/*.test.js; do [ "${f##*/}" = "$gate" ] || files+=("$f"); done
+          common=(--import foundation-ui/testing/no-network --test --test-reporter=spec --test-reporter-destination=stdout)
+          node "${common[@]}" --test-reporter=junit --test-reporter-destination=webui-junit-files.xml --test-shard="$SHARD/4" "${files[@]}" &
+          others=$!
+          SPARXIE_GATE_SHARD="$SHARD/4" node "${common[@]}" --test-reporter=junit --test-reporter-destination=webui-junit-gate.xml "$dir/$gate" &
+          gate_pid=$!
+          status=0
+          wait "$others" || status=1
+          wait "$gate_pid" || status=1
+          exit $status
+
+      - name: Report
+        if: always()
+        run: python3 scripts/ci/report-junit.py --title "Web UI tests (shard ${{ matrix.shard }}/4)" --min-tests 40 webui-junit-files.xml webui-junit-gate.xml
+
+      - name: Build
+        if: matrix.shard == 1
+        run: |
+          mkdir -p build
+          SUNSHINE_SOURCE_ASSETS_DIR="$GITHUB_WORKSPACE/src_assets" SUNSHINE_ASSETS_DIR="$GITHUB_WORKSPACE/build" npm run build
+
   setup_release:
     name: Setup Release
+    needs: changes
+    # Only the Windows build reads the release tag and version.
+    if: needs.changes.outputs.build == 'true'
     outputs:
-      publish_release: ${{ steps.setup_release_auto.outputs.publish_release || steps.setup_release_manual.outputs.publish_release }}
-      release_body: ${{ steps.setup_release_auto.outputs.release_body || steps.setup_release_manual.outputs.release_body }}
+      # Whether this run publishes a pre-release: see "Automatic pre-releases" and the manual step below.
+      publish_release: ${{ steps.auto_gate.outputs.publish || steps.setup_release_manual.outputs.publish_release }}
+      release_body: ${{ steps.filter_release_contributors.outputs.release_body || steps.setup_release_auto.outputs.release_body || steps.setup_release_manual.outputs.release_body }}
       release_commit: ${{ steps.setup_release_auto.outputs.release_commit || steps.setup_release_manual.outputs.release_commit }}
       release_generate_release_notes: ${{ steps.setup_release_auto.outputs.release_generate_release_notes || steps.setup_release_manual.outputs.release_generate_release_notes }}
       release_tag: ${{ steps.setup_release_auto.outputs.release_tag || steps.setup_release_manual.outputs.release_tag }}
       release_version: ${{ steps.setup_release_auto.outputs.release_version || steps.setup_release_manual.outputs.release_version }}
+      # The channel compiled into the binaries (build identity, SUNSHINE_BUILD_CHANNEL): stable only for a manual stable publish, beta for
+      # every other published build, dev for the rest. Both Windows configure steps read it, so the compile shards and the build agree.
+      build_channel: ${{ steps.auto_gate.outputs.channel || steps.setup_release_manual.outputs.channel }}
+      # Whether the published release is the stable one (a full release marked Latest) instead of a pre-release.
+      release_stable: ${{ steps.setup_release_manual.outputs.stable }}
     permissions:
       contents: write  # read does not work to check squash and merge details
-    runs-on: ubuntu-latest
+    # Pinned: the ubuntu-latest label migrates to Ubuntu 26 (actions/runner-images#14748); move this on purpose, not by label.
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
       - name: Setup Release (Auto)
         id: setup_release_auto
-        if: github.event_name != 'workflow_dispatch'
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
         uses: LizardByte/setup-release-action@v2025.426.225
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
+      # A push to master builds, tests, packages and uploads the artifacts, but publishes a pre-release only when the repository
+      # variable AUTO_PRERELEASE is "true" (unset by default). The version and tag are computed either way: the build identity
+      # carries them.
+      - name: Automatic pre-releases
+        id: auto_gate
+        if: github.event_name == 'push' || github.event_name == 'pull_request'
+        env:
+          AUTO: ${{ steps.setup_release_auto.outputs.publish_release }}
+          ENABLED: ${{ vars.AUTO_PRERELEASE }}
+        run: |
+          if [ "$AUTO" = true ] && [ "$ENABLED" = true ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "channel=beta" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "channel=dev" >> "$GITHUB_OUTPUT"
+            if [ "$AUTO" = true ]; then
+              echo "::notice title=Pre-release::not published: set the repository variable AUTO_PRERELEASE to true, or run this workflow manually with publish enabled"
+            fi
+          fi
+
+      # Manual runs: publish=true (master only) publishes a pre-release with the version and tag a push of this commit would get, from the
+      # committer date (scripts/ci/release-info.py); otherwise the run is a dev build with a manual-<date> tag.
+      # publish_stable=true is the stable release: the same version and tag, compiled as channel stable and published as a full release
+      # (a stable build never passes through a pre-release, so the release relay and the mirrors see it as stable from the start). On a branch
+      # other than master it is a rehearsal: the stable binaries are built and nothing is published.
       - name: Setup Release (Manual)
         id: setup_release_manual
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+        env:
+          PUBLISH: ${{ inputs.publish }}
+          PUBLISH_STABLE: ${{ inputs.publish_stable }}
+          REF_NAME: ${{ github.ref_name }}
+          COMMIT: ${{ github.sha }}
         run: |
-          SUFFIX=$([ "${{ github.ref_name }}" = "master" ] && echo "" || echo "-dev")
-          echo "publish_release=false" >> $GITHUB_OUTPUT
-          echo "release_body=Manual build (${{ github.ref_name }})" >> $GITHUB_OUTPUT
-          echo "release_commit=${{ github.sha }}" >> $GITHUB_OUTPUT
-          echo "release_generate_release_notes=false" >> $GITHUB_OUTPUT
-          echo "release_tag=manual-$(date +%Y%m%d-%H%M%S)${SUFFIX}" >> $GITHUB_OUTPUT
-          echo "release_version=manual-$(date +%Y%m%d-%H%M%S)${SUFFIX}" >> $GITHUB_OUTPUT
+          set -euo pipefail
+          if [ "$PUBLISH" = true ] && [ "$PUBLISH_STABLE" = true ]; then
+            echo "::error title=Publish::publish and publish_stable are different releases: choose one"
+            exit 1
+          fi
+          if [ "$PUBLISH" = true ] || { [ "$PUBLISH_STABLE" = true ] && [ "$REF_NAME" = master ]; }; then
+            if [ "$REF_NAME" != master ]; then
+              echo "::error title=Publish::publish is only allowed on master"
+              exit 1
+            fi
+            python3 scripts/ci/release-info.py --output "$GITHUB_OUTPUT"
+            {
+              echo "publish_release=true"
+              echo "release_body=Manual publish (master)"
+              echo "release_commit=$COMMIT"
+              echo "release_generate_release_notes=true"
+              if [ "$PUBLISH_STABLE" = true ]; then
+                echo "channel=stable"
+                echo "stable=true"
+              else
+                echo "channel=beta"
+                echo "stable=false"
+              fi
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          SUFFIX=$([ "$REF_NAME" = "master" ] && echo "" || echo "-dev")
+          STAMP="manual-$(date +%Y%m%d-%H%M%S)${SUFFIX}"
+          CHANNEL=dev
+          if [ "$PUBLISH_STABLE" = true ]; then
+            CHANNEL=stable
+            echo "::notice title=Stable rehearsal::$REF_NAME is not master: the stable binaries are built and nothing is published"
+          fi
+          {
+            echo "publish_release=false"
+            echo "release_body=Manual build ($REF_NAME)"
+            echo "release_commit=$COMMIT"
+            echo "release_generate_release_notes=false"
+            echo "release_tag=$STAMP"
+            echo "release_version=$STAMP"
+            echo "channel=$CHANNEL"
+            echo "stable=false"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Filter bot contributors
+        id: filter_release_contributors
+        if: steps.setup_release_auto.outputs.release_body != ''
+        uses: actions/github-script@v9
+        env:
+          RELEASE_BODY: ${{ steps.setup_release_auto.outputs.release_body }}
+        with:
+          script: |
+            const body = process.env.RELEASE_BODY ?? '';
+            const sectionMarker = '## Contributors';
+            const sectionStart = body.lastIndexOf(sectionMarker);
+            if (sectionStart < 0) {
+              core.setOutput('release_body', body);
+              return;
+            }
+
+            // setup-release-action leaves GitHub's [bot] suffix after each
+            // linked author mention. Collect those logins before filtering
+            // only the generated contributor-avatar section.
+            const botLogins = new Set(
+              [...body.matchAll(/\]\(https:\/\/github\.com\/([A-Za-z0-9-]+)\)\[bot\]/gi)]
+                .map(([, login]) => login.toLowerCase()),
+            );
+            const contributors = body.slice(sectionStart);
+            const filteredContributors = contributors.replace(
+              /<a\b[^>]*\bhref="https:\/\/github\.com\/([A-Za-z0-9-]+)"[^>]*>[\s\S]*?<\/a>/gi,
+              (anchor, login) => {
+                if (!botLogins.has(login.toLowerCase())) return anchor;
+                core.info(`Omitting bot from contributor avatars: ${login}`);
+                return '';
+              },
+            );
+
+            core.setOutput('release_body', body.slice(0, sectionStart) + filteredContributors);
 
   vdd_smoke:
     name: VDD helper smoke tests
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
     runs-on: windows-latest
     steps:
       - name: Checkout
@@ -79,83 +485,480 @@ jobs:
         run: |
           & .\src_assets\windows\misc\service\smoke-test-stop-process-tree.ps1
 
-  build_win:
-    name: Windows
-    needs: setup_release
+      - name: Run USB/IP package and root-hub guard regressions
+        shell: pwsh
+        run: |
+          & .\scripts\packaging\test-usbip-root.ps1
+          & .\src_assets\windows\misc\usbip\smoke-test-usbip-package.ps1
+          & .\src_assets\windows\misc\usbip\smoke-test-usbip-roothub-guard.ps1
+  mat_smoke:
+    name: MAT software regressions
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
     runs-on: windows-latest
+    timeout-minutes: 10
     steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Run own-process MAT regressions
+        shell: pwsh
+        run: |
+          git submodule update --init --depth 1 third-party/moonlight-common-c
+          if ($LASTEXITCODE) { throw 'MAT dependency checkout failed' }
+          ./tools/sonic-mat-live/build.ps1 -Output build/mat-smoke
+          ./tools/sonic-mat-live/test-manage-live.ps1 -Output build/mat-operator
+
+  # Cold builds only (nightly, a manual run that asks for it, a repository without any compiler cache): a single 4-vCPU runner
+  # needs 27 to 37 minutes to compile from nothing. This decides whether the compile is split over SHARDS runners first; the
+  # warm path (a restorable compiler cache) never starts them. Splitting buys about 2x at 8 runners (docs/ci.md, "Cold builds
+  # on parallel runners"); the public-repository limit is 20 concurrent jobs, so one sharded run uses 8 of them.
+  cold_plan:
+    name: Cold build plan
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      sharded: ${{ steps.plan.outputs.sharded }}
+      shards: ${{ steps.plan.outputs.shards }}
+      fingerprint: ${{ steps.fingerprint.outputs.fingerprint }}
+    env:
+      SHARDS: 8
+    steps:
+      - name: Checkout the CI scripts and the build configuration
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: |
+            scripts/ci
+            cmake
+            .github
+          persist-credentials: false
+
+      # What decides whether an earlier compiler cache still hits: the CMake modules that set flags, build_win's configure step, the
+      # toolchain action and the MSYS2 package pins (scripts/ci/config-fingerprint.py). It is part of the cache key; the
+      # suffix keeps the pinned toolchain and a probe build with the newest packages in separate cache lineages.
+      - name: Configuration fingerprint
+        id: fingerprint
+        env:
+          # TOOLCHAIN (the compiler: gcc or clang) comes from the workflow env and is read by config-fingerprint.py itself.
+          TOOLCHAIN_MODE: ${{ inputs.toolchain_probe == true && 'newest' || 'pinned' }}
+        run: |
+          set -euo pipefail
+          fingerprint="$(python3 scripts/ci/config-fingerprint.py --details 2> details.txt)-$TOOLCHAIN_MODE"
+          cat details.txt
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+          { echo "### Compiler cache configuration"; echo "- fingerprint: \`$fingerprint\`"; grep -E '^    ' details.txt | sed 's/^    /- /' || true; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Decide
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          FORCED: ${{ inputs.sharded_cold }}
+          DEFAULT_REF: refs/heads/${{ github.event.repository.default_branch }}
+          THIS_REF: ${{ github.ref }}
+          FINGERPRINT: ${{ steps.fingerprint.outputs.fingerprint }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          sharded=false
+          reason=""
+          if [[ "$EVENT" == schedule ]]; then
+            sharded=true; reason="nightly build"
+          elif [[ "$FORCED" == true ]]; then
+            sharded=true; reason="requested"
+          else
+            # A compiler-cache entry of this configuration that the run could restore: the default branch's, or this ref's own.
+            # An entry of another fingerprint is a warm start (the restore fallbacks pick the most recent lineage up;
+            # entries that do not match simply miss), but it does not decide this: the fingerprint only moves when
+            # something that changes compile command lines moved, and that is worth the shards.
+            found=0
+            for ref in "$DEFAULT_REF" "$THIS_REF"; do
+              n="$(gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=ccache-windows-$FINGERPRINT-&ref=$ref&per_page=1" --jq .total_count 2>/dev/null || echo 0)"
+              found=$((found + n))
+            done
+            if [[ "$found" == 0 ]]; then
+              sharded=true; reason="no compiler cache entry for configuration $FINGERPRINT"
+            else
+              # A header that the object files behind about 30% of the compile time include misses the cache for all of them
+              # (scripts/ci/hot-headers.txt, measured from the ninja deps of a build): a third of a cold build on one runner, more
+              # than the shards cost. An unknown change list (a manual run, a new branch) never decides this.
+              python3 scripts/ci/changed-files.py --event "$EVENT" --repo "$GITHUB_REPOSITORY" --pr "$PR_NUMBER" --before "$BEFORE" --after "$AFTER" > files.txt || true
+              if hot="$(python3 scripts/ci/hot-headers.py check scripts/ci/hot-headers.txt < files.txt)"; then
+                sharded=true; reason="touches a widely included header: $(echo "$hot" | paste -sd, -)"
+              fi
+            fi
+          fi
+          indices="$(python3 -c "import json,os;print(json.dumps(list(range(int(os.environ['SHARDS'])))))")"
+          echo "sharded=$sharded" >> "$GITHUB_OUTPUT"
+          echo "shards=$indices" >> "$GITHUB_OUTPUT"
+          echo "sharded cold build: $sharded ${reason:+($reason)}" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # One shard of a cold compile: configures exactly like build_win, builds chunks of object files until none is left
+  # (scripts/ci/shard-compile.sh; scripts/ci/shard-targets.py cuts them into equal weights from an earlier build) and uploads its
+  # compiler cache.
+  # build_win then merges the caches and runs the whole build at ~100% hits. The MAT capture package and the driver-deps
+  # fatality are left out: mat_capture.cmake adds a custom target and FetchDriverDeps only fills packaging variables, so
+  # neither changes an object command line (verified against the 2026-11-21 logs: identical CMake configure output either
+  # way), while every shard would pay for them.
+  shard:
+    name: Compile shard ${{ matrix.index }}
+    needs: [changes, setup_release, cold_plan]
+    if: needs.cold_plan.outputs.sharded == 'true'
+    permissions:
+      contents: write  # refs/claims/<run>/<chunk>: creating a ref is the atomic "this runner builds this chunk" (shard-compile.sh)
+      actions: read  # the cache wait below lists cache entries and workflow runs
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        index: ${{ fromJSON(needs.cold_plan.outputs.shards) }}
+    steps:
+      - name: Keep LF line endings
+        shell: bash
+        run: git config --global core.autocrlf false
+
       - name: Checkout
         uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
-          submodules: recursive
+          persist-credentials: false
 
-      - name: Setup Dependencies Windows
-        uses: msys2/setup-msys2@v2
+      - name: Submodules
+        shell: bash
+        run: scripts/ci/init-submodules.sh windows
+
+      - name: Toolchain
+        uses: ./.github/actions/windows-toolchain
         with:
-          msystem: ucrt64
-          # Required, not redundant with the `pacman -Syu` below. When
-          # msys2-runtime itself needs upgrading, pacman closes every MSYS2
-          # process to finish the job, which kills the workflow shell and fails
-          # the step with exit 1. setup-msys2 performs that upgrade with the
-          # restart it needs; by the time our own step runs, the runtime is
-          # already current and only the dependency list is left to install.
-          update: true
-          install: >-
-            wget
-            curl
+          unpinned: ${{ inputs.toolchain_probe == true }}
+          toolchain: ${{ env.TOOLCHAIN }}
 
-      - name: Update Windows dependencies
+      # The same pinned Panel bundle build_win uses (scripts/installer-inputs.json), so the configure
+      # downloads nothing ("latest") and needs no token. Nothing here reads a token: the configure step below must not see one.
+      - name: Fetch pinned installer inputs
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $dest = "$env:RUNNER_TEMP/installer-inputs/pinned"
+          ./scripts/fetch-installer-inputs.ps1 -Destination $dest
+          "GUI_BUNDLE_DIR=$dest/gui" >> $env:GITHUB_ENV
+
+      # A run that arrives while another run of the same configuration is still compiling waits a little for that
+      # run's cache instead of cold-compiling the same objects beside it. Bounded (five minutes) and it never
+      # cancels or displaces anything: a concurrency group would, because GitHub keeps only one pending job per
+      # group by default and a third run replaces the waiting second (GitHub Docs, "Control workflow concurrency"),
+      # which build_win then sees as a cancelled shard. No other run, or nothing saved in time: this shard just
+      # builds. The nightly keeps its pure cold start: it proves a build from nothing still works.
+      - name: Wait briefly for a concurrent run's compiler cache
+        if: github.event_name != 'schedule'
         env:
-          opus_version: '1.6.1-1'
-        shell: msys2 {0}
+          GH_TOKEN: ${{ github.token }}
+          FINGERPRINT: ${{ needs.cold_plan.outputs.fingerprint }}
+          THIS_RUN: ${{ github.run_id }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
         run: |
-          # download pinned opus version
-          opus_tarball="mingw-w64-ucrt-x86_64-opus-${opus_version}-any.pkg.tar.zst"
-          wget https://repo.msys2.org/mingw/ucrt64/${opus_tarball}
+          set -euo pipefail
+          entry() {
+            local merged shard
+            # only entries this run can restore: its own ref or the default branch (GitHub Docs, "Restrictions for accessing a cache")
+            merged=$(gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=ccache-windows-$FINGERPRINT-&per_page=100" --jq "[.actions_caches[] | select(.ref == \"$GITHUB_REF\" or .ref == \"refs/heads/$DEFAULT_BRANCH\")] | length")
+            shard=$(gh api "repos/$GITHUB_REPOSITORY/actions/caches?key=ccache-windows-shard-$FINGERPRINT-&per_page=100" --jq "[.actions_caches[] | select(.ref == \"$GITHUB_REF\" or .ref == \"refs/heads/$DEFAULT_BRANCH\")] | length")
+            echo $(( merged + shard ))
+          }
+          # only a default-branch run produces a cache every run can restore; other PRs' runs are not worth waiting for
+          producing() { gh run list --workflow main.yml --branch "$DEFAULT_BRANCH" --event push --limit 30 --json databaseId,status --jq '[.[] | select((.status == "in_progress" or .status == "queued") and .databaseId != (env.THIS_RUN | tonumber))] | length'; }
+          waited=0
+          while (( waited < 300 )); do
+            if (( "$(entry)" > 0 )); then
+              echo "an entry for this configuration exists after ${waited}s"
+              exit 0
+            fi
+            if (( "$(producing)" == 0 )); then
+              echo "no other run of this workflow is in progress; building now"
+              exit 0
+            fi
+            sleep 30
+            waited=$((waited + 30))
+          done
+          echo "waited ${waited}s for a concurrent run's cache; building now"
 
-          # install dependencies
-          # NOTE: gcc/gcc-libs were previously pinned to 15.1.0-5 to work around
-          # a broken upstream gcc 15.x. Since msys2 has moved on to gcc 16.x and
-          # other packages (cmake, etc.) now require gcc-libs 16.x ABI, pinning
-          # an old gcc-libs causes cmake.exe to silently fail to load (exit 127).
-          # Let pacman install the full toolchain at the current upstream version.
-          dependencies=(
-            "git"
-            "mingw-w64-ucrt-x86_64-ccache"
-            "mingw-w64-ucrt-x86_64-cmake"
-            "mingw-w64-ucrt-x86_64-ninja"
-            "mingw-w64-ucrt-x86_64-cppwinrt"
-            "mingw-w64-ucrt-x86_64-curl-winssl"
-            "mingw-w64-ucrt-x86_64-graphviz"
-            "mingw-w64-ucrt-x86_64-MinHook"
-            "mingw-w64-ucrt-x86_64-miniupnpc"
-            "mingw-w64-ucrt-x86_64-nlohmann-json"
-            # "mingw-w64-ucrt-x86_64-nodejs"  # Replaced by actions/setup-node (vite 8 requires MSVC Node.js)
-            # "mingw-w64-ucrt-x86_64-nsis"  # Replaced by Inno Setup
-            "mingw-w64-ucrt-x86_64-onevpl"
-            "mingw-w64-ucrt-x86_64-openssl"
-            "mingw-w64-ucrt-x86_64-toolchain"
-            "mingw-w64-ucrt-x86_64-autotools"
-          )
+      # What an earlier run of this configuration compiled: a run whose fingerprint is new still starts from the
+      # most recent lineage. Entries are keyed on the compile command line (ccache manual, "How ccache works"), so an
+      # entry that does not match simply misses; restoring is never wrong, only useless.
+      - name: Restore the compiler cache
+        if: github.event_name != 'schedule'
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ github.workspace }}\.ccache
+          key: ccache-windows-${{ needs.cold_plan.outputs.fingerprint }}-${{ github.run_id }}
+          restore-keys: |
+            ccache-windows-${{ needs.cold_plan.outputs.fingerprint }}-
+            ccache-windows-shard-${{ needs.cold_plan.outputs.fingerprint }}-
+            ccache-windows-
 
-          pacman -Syu --noconfirm "${dependencies[@]}"
-
-          # install pinned opus after Syu to prevent upgrade
-          pacman --noconfirm -U ${opus_tarball}
-
-      - name: Verify Build Tools
+      # Keep this step and build_win's "Configure Windows" in step: the shards only help while their object command lines are
+      # the ones build_win runs (build_win prints the compiler-cache hit rate and warns when it falls under 95%).
+      - name: Configure Windows
         shell: msys2 {0}
+        env:
+          RTX_VIDEO_SDK_URL: ${{ (github.repository == 'AlkaidLab/foundation-sunshine' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'AlkaidLab/foundation-sunshine')) && secrets.RTX_VIDEO_SDK_URL || '' }}
+          RTX_VIDEO_SDK_TOKEN: ${{ (github.repository == 'AlkaidLab/foundation-sunshine' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'AlkaidLab/foundation-sunshine')) && secrets.DRIVER_DOWNLOAD_TOKEN || '' }}
+          RTX_VIDEO_NGX_APPLICATION_ID: ${{ (github.repository == 'AlkaidLab/foundation-sunshine' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'AlkaidLab/foundation-sunshine')) && secrets.RTX_VIDEO_NGX_APPLICATION_ID || '' }}
+          SUNSHINE_RTX_HDR: ${{ !(github.repository == 'AlkaidLab/foundation-sunshine' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'AlkaidLab/foundation-sunshine')) && 'OFF' || (github.event_name != 'pull_request' && github.ref == 'refs/heads/master') && 'ON' || inputs.rtx_hdr || 'AUTO' }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+          BUILD_VERSION: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
+          COMMIT: ${{ needs.setup_release.outputs.release_commit }}
+          SUNSHINE_BUILD_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          SUNSHINE_BUILD_BRANCH: ${{ github.head_ref || github.ref_name }}
+          SUNSHINE_BUILD_CHANNEL: ${{ needs.setup_release.outputs.build_channel }}
+          SUNSHINE_BUILD_BUILDER: ci
+          SUNSHINE_BUILD_CI_RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          CCACHE_DIR: ${{ github.workspace }}\.ccache
+          CCACHE_MAXSIZE: 2G
+          CCACHE_COMPILERCHECK: content
         run: |
-          echo "Verifying build tools are installed..."
-          which cmake || (echo "cmake not found" && exit 1)
-          which ninja || (echo "ninja not found" && exit 1)
-          which gcc || (echo "gcc not found" && exit 1)
-          
-          echo "All build tools verified successfully"
-          echo "  CMake: $(cmake --version | head -1)"
-          echo "  Ninja: $(ninja --version)"
-          echo "  GCC: $(gcc --version | head -1)"
+          # This job's token can write refs (the chunk claims): CMake code, FetchGUI.cmake and FetchDriverDeps.cmake included,
+          # must never see it. The token is only given to the compile step.
+          if [[ -n "${GITHUB_TOKEN:-}" ]]; then echo "::error::the configure step must not have GITHUB_TOKEN"; exit 1; fi
+          # One build time per commit, not one per configure: the shards and build_win each generate build_info_defs.h
+          # (string(TIMESTAMP) honours SOURCE_DATE_EPOCH; CMake documentation, command/string), and a header whose bytes
+          # differ between the two invalidates every cache entry that reads it. The commit time is also what the
+          # reproducible-builds specification (SOURCE_DATE_EPOCH) fixes the timestamp to.
+          export SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct)"
+          # The same PATH build_win configures with, so find_program() agrees in both (dotnet only gates the sparxie
+          # publish target, which no chunk builds; a found-program difference is still a configure difference).
+          export PATH="$PATH:/c/Program Files/dotnet"
+          mkdir -p build
+          ccache --zero-stats
+          compiler=(-DSUNSHINE_PRECOMPILED_HEADERS=ON)
+          if [[ "$TOOLCHAIN" == clang ]]; then
+            compiler=(-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld -DSUNSHINE_PRECOMPILED_HEADERS=ON)
+          fi
+          gui_options=(-DFETCH_GUI=OFF "-DGUI_DIR=$GUI_BUNDLE_DIR")
+          cmake \
+            -B build \
+            -G Ninja \
+            -S . \
+            "${compiler[@]}" \
+            "${gui_options[@]}" \
+            -DBUILD_DOCS=OFF \
+            -DSUNSHINE_RTX_HDR="$SUNSHINE_RTX_HDR" \
+            -DSUNSHINE_BUILD_MAT_CAPTURE=OFF \
+            -DBUILD_TESTS=ON \
+            -DBUILD_TRAY_TESTS=ON \
+            -DBUILD_WEB_UI=OFF \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DSUNSHINE_ASSETS_DIR=assets \
+            -DDRIVER_DEPS_REQUIRED=OFF \
+            -DSUNSHINE_PUBLISHER_NAME='${{ github.repository_owner }}' \
+            -DSUNSHINE_PUBLISHER_WEBSITE='https://github.com/AlkaidLab/foundation-sunshine' \
+            -DSUNSHINE_PUBLISHER_ISSUE_URL='https://github.com/AlkaidLab/foundation-sunshine/issues'
+          # The object command lines this job compiles with; build_win prints the same line after its configure.
+          # Equal hashes are the precondition for the merged shard caches to hit there (build_win warns as
+          # "Shards drifted" when they do not).
+          ninja -C build -t commands | grep -E " -o [^ ]+[.]obj( |$)" | sort > object-commands.txt
+          echo "object commands: $(sha256sum object-commands.txt | cut -d' ' -f1) ($(wc -l < object-commands.txt) lines)"
+
+      # Chunks of object files are handed out one at a time, so a runner on a slower CPU simply builds fewer of them (the CPU of a
+      # hosted runner varies from one job to the next by up to 2x on the same work). The token is only read by this script, which
+      # removes it from the environment of ninja.
+      - name: Compile object files, chunk by chunk
+        shell: msys2 {0}
+        env:
+          CCACHE_DIR: ${{ github.workspace }}\.ccache
+          CCACHE_MAXSIZE: 2G
+          CCACHE_COMPILERCHECK: content
+          CCACHE_SLOPPINESS: pch_defines,time_macros
+          # Depend mode takes the include list from the compiler's own -MD file instead of running the preprocessor a second
+          # time on a miss; hits cost the same. https://ccache.dev/manual/latest.html#_the_depend_mode
+          CCACHE_DEPEND: '1'
+          CLAIM_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: scripts/ci/shard-compile.sh ${{ matrix.index }} ${{ strategy.job-total }}
+
+      # The cache is a few MB per shard: ccache already compresses its entries, so the artifact is stored as one tar without further compression.
+      # Also after a failed compile: the objects compiled so far are valid, and build_win merges whatever caches exist.
+      - name: Pack the compiler cache
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          mkdir -p .ccache
+          tar -C .ccache -cf ccache-shard.tar .
+
+      - name: Upload the compiler cache
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ccache-shard-${{ matrix.index }}
+          path: ccache-shard.tar
+          compression-level: 0
+          retention-days: 1
+          if-no-files-found: ignore
+
+      # The artifact above only serves this run's build_win. A cache entry also lets the NEXT run of the same
+      # configuration restore what this shard compiled -- another pull request before master has saved anything,
+      # or a cold run that queued behind this one: build_win saves only at its end (and only on master), so until
+      # then the shard entries are all a later run can restore. The prune step in build_win collapses these with
+      # the other compiler-cache entries.
+      - name: Save the shard compiler cache
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ github.workspace }}\.ccache
+          key: ccache-windows-shard-${{ needs.cold_plan.outputs.fingerprint }}-${{ github.run_id }}-${{ matrix.index }}
+
+      # The durations of this build are the weights of the next split: scripts/ci/merge-shard-weights.py turns the logs of one run into
+      # scripts/ci/shard-weights.ninja_log.
+      - name: Upload the ninja log
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ninja-log-shard-${{ matrix.index }}
+          path: ninja_log.shard
+          compression-level: 1
+          retention-days: 14
+          if-no-files-found: ignore
+
+      - name: Upload the object command list
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: object-commands-${{ matrix.index }}
+          path: object-commands.txt
+          retention-days: 1
+          if-no-files-found: ignore
+
+  # The claim refs only matter while the shards run.
+  shard_cleanup:
+    name: Remove the shard claims
+    needs: shard
+    if: ${{ always() && needs.shard.result != 'skipped' }}
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Delete refs/claims/${{ github.run_id }}-*
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/claims/${GITHUB_RUN_ID}-" --jq '.[].ref' \
+            | while read -r ref; do gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/${ref}" || true; done
+
+  # Pull requests without the NVIDIA SDK secrets never compile the adapter branches that master builds. This configures the
+  # same definitions with placeholder digests and runs the tests that load fake adapters, so a build-graph change that
+  # leaks the definitions into them fails here instead of on master. It is a build of its own: running beside the main build
+  # instead of after it takes about 2.5 minutes off the Windows job.
+  adapter_config:
+    name: Adapter build configuration (no SDK)
+    needs: [changes, cold_plan]
+    if: needs.changes.outputs.build == 'true'
+    permissions:
+      contents: read
+    runs-on: windows-latest
+    steps:
+      - name: Keep LF line endings
+        shell: bash
+        run: git config --global core.autocrlf false
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Submodules
+        shell: bash
+        run: scripts/ci/init-submodules.sh windows
+
+      - name: Toolchain
+        uses: ./.github/actions/windows-toolchain
+        with:
+          unpinned: ${{ inputs.toolchain_probe == true }}
+          toolchain: ${{ env.TOOLCHAIN }}
+
+      - name: Cache compiler objects
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ github.workspace }}\.ccache
+          key: ccache-windows-adapter-${{ github.run_id }}
+          restore-keys: |
+            ccache-windows-${{ needs.cold_plan.outputs.fingerprint }}-
+            ccache-windows-
+
+      - name: Fetch pinned installer inputs
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $dest = "$env:RUNNER_TEMP/installer-inputs/pinned"
+          ./scripts/fetch-installer-inputs.ps1 -Destination $dest
+          "GUI_BUNDLE_DIR=$dest/gui" >> $env:GITHUB_ENV
+
+      - name: Test the adapter build configuration without the SDK
+        shell: msys2 {0}
+        env:
+          CCACHE_DIR: ${{ github.workspace }}\.ccache
+          CCACHE_MAXSIZE: 2G
+          CCACHE_COMPILERCHECK: content
+          CCACHE_SLOPPINESS: pch_defines,time_macros
+          CCACHE_DEPEND: '1'
+        run: |
+          export PATH="$PATH:/c/Program Files/dotnet"
+          # The same build time the other Windows configures pin: build_info_defs.h is generated per configure.
+          export SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct)"
+          gui_options=()
+          if [[ -n "${GUI_BUNDLE_DIR:-}" ]]; then
+            gui_options=(-DFETCH_GUI=OFF "-DGUI_DIR=$GUI_BUNDLE_DIR")
+          fi
+          compiler=(-DSUNSHINE_PRECOMPILED_HEADERS=ON)
+          if [[ "$TOOLCHAIN" == clang ]]; then
+            compiler=(-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld -DSUNSHINE_PRECOMPILED_HEADERS=ON)
+          fi
+          cmake -B build-adapter-config -G Ninja -S . "${gui_options[@]}" \
+            "${compiler[@]}" \
+            -DBUILD_DOCS=OFF -DBUILD_TESTS=ON -DBUILD_TRAY_TESTS=ON -DBUILD_WEB_UI=OFF \
+            -DSUNSHINE_RTX_HDR=OFF -DSUNSHINE_SIMULATE_ADAPTER_DEFINES=ON \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DSUNSHINE_ASSETS_DIR=assets -DDRIVER_DEPS_REQUIRED=OFF
+          cmake --build build-adapter-config --target pre_encode_filter_unit_tests truehdr_adapter_loader_unit_tests
+          ctest --test-dir build-adapter-config --no-tests=error --output-on-failure \
+            -R '^(pre_encode_filter_unit_tests|truehdr_adapter_loader_unit_tests)$'
+
+  # The installer's setup UI (foundation-setup-ui.exe), built beside the compile instead of in front of the packaging.
+  setup_ui:
+    name: Installer setup UI
+    needs: changes
+    if: needs.changes.outputs.package == 'true'
+    permissions:
+      contents: read
+    runs-on: windows-latest
+    steps:
+      - name: Keep LF line endings
+        shell: bash
+        run: git config --global core.autocrlf false
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Submodules
+        shell: bash
+        run: scripts/ci/init-submodules.sh windows-package
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
@@ -164,46 +967,266 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
-      - name: Setup .NET for DualSense sidecar
-        uses: actions/setup-dotnet@v6
-        with:
-          dotnet-version: '10.0.x'
-
-      - name: Build self-contained DualSense sidecar
-        shell: pwsh
-        env:
-          RELEASE_TAG: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
-        run: .\scripts\build-ds5-sidecar.ps1 -ReleaseTag $env:RELEASE_TAG
-
-      - name: Build Web UI
+      - name: Fetch foundation-ui
         shell: pwsh
         run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $sha = (Get-Content scripts/ci/foundation-ui.sha -Raw).Trim()
+          $dir = "$env:GITHUB_WORKSPACE/../ds5-ui-m3e"
+          git init -q $dir
+          git -C $dir fetch -q --depth 1 https://github.com/AlkaidLab/foundation-ui $sha
+          git -C $dir -c advice.detachedHead=false checkout -q FETCH_HEAD
+          npm ci --prefix $dir
+
+      # The installer's setup UI (foundation-setup-ui.exe). The Panel repository builds and attests one per commit; the pin in
+      # scripts/installer-inputs.json (setupUi) is downloaded and checked (sha256 and `gh attestation verify`), under 10 s.
+      # Without a matching asset (no pin, a pin older than the committed Panel submodule or scripts/ci/foundation-ui.sha, a failed
+      # download) or when a manual run asks for it, it is built from the committed Panel submodule instead (pages from
+      # foundation-ui and the Tauri window, about 3.5 min; scripts/build-setup-ui.ps1, docs/installer-webui.md). A file that fails
+      # verification is an error, never a reason to build.
+      - name: Installer setup UI
+        if: needs.changes.outputs.package == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_FROM_SUBMODULE: ${{ inputs.build_setup_ui_from_submodule }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $out = "$env:RUNNER_TEMP/installer-inputs/foundation-setup-ui.exe"
+          $clock = [Diagnostics.Stopwatch]::StartNew()
+          $source = 'built from the Panel submodule'
+          $fetched = $false
+          if ($env:BUILD_FROM_SUBMODULE -eq 'true') {
+            Write-Output 'A manual run asked for the source build.'
+          } else {
+            ./scripts/fetch-setup-ui.ps1 -Output $out
+            if ($LASTEXITCODE -eq 0) { $fetched = $true; $source = 'downloaded and verified' }
+            elseif ($LASTEXITCODE -ne 10) { throw "fetch-setup-ui.ps1 failed with exit code $LASTEXITCODE" }
+          }
+          if (-not $fetched) {
+            ./scripts/build-setup-ui.ps1 `
+              -FoundationUi "$env:GITHUB_WORKSPACE/../ds5-ui-m3e" `
+              -Output $out
+          }
+          $seconds = [math]::Round($clock.Elapsed.TotalSeconds, 1)
+          "SETUP_UI_EXE=$out" >> $env:GITHUB_ENV
+          "- installer setup UI: $source in $seconds s" >> $env:GITHUB_STEP_SUMMARY
+          Write-Output "installer setup UI $source in $seconds s"
+      # The setup UI is one more shipped PE. Its COFF symbol table is not loaded and is not in the crash-symbol flow;
+      # the CodeView GUID stays, and a signed download is left byte for byte as it is.
+      - name: Strip the setup UI's COFF symbol table
+        if: needs.changes.outputs.package == 'true'
+        shell: pwsh
+        run: python tools/pe_symbols.py $env:SETUP_UI_EXE
+      - name: Upload the setup UI
+        uses: actions/upload-artifact@v7
+        with:
+          name: foundation-setup-ui
+          path: ${{ runner.temp }}/installer-inputs/foundation-setup-ui.exe
+          retention-days: 1
+
+  build_win:
+    name: Windows
+    needs: [changes, setup_release, cold_plan, shard, setup_ui]
+    # `shard` is skipped on the warm path, and a skipped dependency would skip this job too without the explicit status checks.
+    # It also runs after a failed shard (a dead runner, a lost chunk): the caches that were uploaded are merged and this job compiles
+    # what is missing, so a shard failure costs time instead of the run. A real compile error fails here as well; ci-gate decides.
+    if: ${{ !cancelled() && needs.changes.outputs.build == 'true' && needs.setup_release.result == 'success' && needs.cold_plan.result == 'success' && contains(fromJSON('["success","skipped","failure"]'), needs.shard.result) && contains(fromJSON('["success","skipped"]'), needs.setup_ui.result) }}
+    permissions:
+      contents: read
+      actions: write  # prune stale ccache entries after saving this run's
+    runs-on: windows-latest
+    steps:
+      # Several Web UI tests match source text with \n in their patterns: check the sources out with LF on Windows too.
+      - name: Keep LF line endings
+        shell: bash
+        run: git config --global core.autocrlf false
+
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      # `submodules: recursive` fetches about fifty submodules one after the other at full depth, including the Linux, macOS and
+      # Android ones and the prebuilt FFmpeg of every platform (3.9 GB). This fetches what the Windows build reads, shallow
+      # and several at a time (scripts/ci/init-submodules.sh).
+      - name: Submodules
+        shell: bash
+        run: scripts/ci/init-submodules.sh ${{ needs.changes.outputs.package == 'true' && 'windows-package' || 'windows' }}
+
+      # MSYS2 UCRT64 with the build tools, Defender exclusions for the build directories, and a record of the runner CPU.
+      - name: Toolchain
+        uses: ./.github/actions/windows-toolchain
+        with:
+          unpinned: ${{ inputs.toolchain_probe == true }}
+          toolchain: ${{ env.TOOLCHAIN }}
+
+      # Dependency drift canary (nightly only, informational): the installed package versions are kept as an artifact and
+      # compared with the last successful nightly, so a red nightly can be tied to the packages that changed overnight.
+      - name: Record the package versions
+        if: github.event_name == 'schedule'
+        shell: msys2 {0}
+        run: pacman -Q | sort > "$GITHUB_WORKSPACE/packages.txt"
+
+      - name: Package drift since the last nightly
+        if: github.event_name == 'schedule'
+        continue-on-error: true
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $previous = gh run list --workflow main.yml --event schedule --status success --limit 1 --json databaseId --jq '.[0].databaseId'
+          "### Package drift since the last nightly" >> $env:GITHUB_STEP_SUMMARY
+          if (-not $previous) { "No earlier successful nightly." >> $env:GITHUB_STEP_SUMMARY; exit 0 }
+          gh run download $previous --name nightly-packages --dir previous
+          $changes = Compare-Object (Get-Content previous/packages.txt) (Get-Content packages.txt) | ForEach-Object { "$($_.SideIndicator) $($_.InputObject)" }
+          if ($changes) { '```' >> $env:GITHUB_STEP_SUMMARY; $changes >> $env:GITHUB_STEP_SUMMARY; '```' >> $env:GITHUB_STEP_SUMMARY } else { "No package changed." >> $env:GITHUB_STEP_SUMMARY }
+
+      - name: Keep the package versions
+        if: github.event_name == 'schedule'
+        uses: actions/upload-artifact@v7
+        with:
+          name: nightly-packages
+          path: packages.txt
+          retention-days: 14
+
+      # Packaging needs the Web UI build, the installer's setup UI and the Inno Setup package; pull requests that touch none
+      # of what packaging reads skip them (job `changes`, output `package`). Web UI lint and tests run in the `webui` jobs.
+      - name: Setup Node.js
+        if: needs.changes.outputs.package == 'true'
+        uses: actions/setup-node@v7
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # The Web UI imports foundation-ui from a sibling checkout named ds5-ui-m3e (package.json: "file:../ds5-ui-m3e"),
+      # pinned to the commit in scripts/ci/foundation-ui.sha. A full install: the checkout resolves vue and the SFC compiler
+      # from its own node_modules, and both are dev/peer dependencies there. pwsh does not stop on a failing native command
+      # by itself; the preference below does.
+      - name: Fetch foundation-ui
+        if: needs.changes.outputs.package == 'true'
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $sha = (Get-Content scripts/ci/foundation-ui.sha -Raw).Trim()
+          $dir = "$env:GITHUB_WORKSPACE/../ds5-ui-m3e"
+          git init -q $dir
+          git -C $dir fetch -q --depth 1 https://github.com/AlkaidLab/foundation-ui $sha
+          git -C $dir -c advice.detachedHead=false checkout -q FETCH_HEAD
+          npm ci --prefix $dir
+
+      - name: Build Web UI
+        if: needs.changes.outputs.package == 'true'
+        shell: pwsh
+        run: |
+          # A failing native command fails the step (PowerShell 7.4+; the runner already sets ErrorActionPreference=Stop).
+          $PSNativeCommandUseErrorActionPreference = $true
           npm ci
-          npm run lint:webui
-          npm run test:webui
           New-Item -ItemType Directory -Force -Path build | Out-Null
           $env:SUNSHINE_SOURCE_ASSETS_DIR = "${{ github.workspace }}\src_assets"
           $env:SUNSHINE_ASSETS_DIR = "${{ github.workspace }}\build"
           npm run build
 
+      # The installer's setup UI is built by the setup_ui job (beside the compile) and downloaded here.
+      - name: Installer setup UI
+        if: needs.changes.outputs.package == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: foundation-setup-ui
+          path: ${{ runner.temp }}/installer-inputs
+
+      - name: Point the packaging at the setup UI
+        if: needs.changes.outputs.package == 'true'
+        shell: pwsh
+        run: '"SETUP_UI_EXE=$env:RUNNER_TEMP/installer-inputs/foundation-setup-ui.exe" >> $env:GITHUB_ENV'
+
       - name: Cache compiler objects
-        uses: actions/cache@v6
+        # The nightly build starts cold on purpose: it proves that a build from nothing still works with today's packages,
+        # and the cache it saves replaces master's, which would otherwise only ever be topped up. A sharded cold build restores
+        # what its shards compiled (next step) instead.
+        if: github.event_name != 'schedule' && needs.shard.result != 'success'
+        uses: actions/cache/restore@v6
         with:
           path: ${{ github.workspace }}\.ccache
-          # The key must be unique per run for the cache to be written at all,
-          # so the prefix restore-key is what actually produces the hits: every
-          # run seeds itself from the most recent previous one.
-          key: ccache-windows-${{ github.run_id }}
+          # The key is unique per run; the prefix restore-key is what actually
+          # produces the hits: every run seeds itself from the most recent
+          # previous one. Saving is split out below so that only master
+          # writes: PR-branch entries are invisible to other branches yet
+          # still consume the shared cache quota, and when that quota fills
+          # (10 GB, LRU), eviction wiped the whole lineage once and forced a
+          # full 47-minute cold rebuild.
+          key: ccache-windows-${{ needs.cold_plan.outputs.fingerprint }}-${{ github.run_id }}
           restore-keys: |
+            ccache-windows-${{ needs.cold_plan.outputs.fingerprint }}-
             ccache-windows-
 
-      - name: Build Windows
+      # Cold build on parallel runners: the compiler caches of the shards are merged into one directory (ccache entries are
+      # content-addressed, so merging is copying), and the build below finds ~100% of the objects.
+      - name: Merge the shard compiler caches
+        if: needs.shard.result == 'success' || needs.shard.result == 'failure'
+        continue-on-error: true  # after a failed shard there may be fewer caches, or none
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: ccache-shard-*
+          path: shard-caches
+
+      - name: Unpack the shard compiler caches
+        if: needs.shard.result == 'success' || needs.shard.result == 'failure'
+        shell: bash
+        run: |
+          mkdir -p .ccache
+          shopt -s nullglob
+          for tarball in shard-caches/*/ccache-shard.tar; do tar -C .ccache -xf "$tarball"; done
+          du -sh .ccache | tee -a "$GITHUB_STEP_SUMMARY"
+          if [[ '${{ needs.shard.result }}' == failure ]]; then
+            echo "::warning title=A compile shard failed::this job compiles the objects that no shard cache has"
+          fi
+
+      # The Panel bundle, pinned by tag/sha256 in scripts/installer-inputs.json and verified (never
+      # "latest"). The pinned Panel commit must be the committed submodule. A manual run with gui_run_id replaces the GUI below.
+      - name: Fetch pinned installer inputs
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $dest = "$env:RUNNER_TEMP/installer-inputs/pinned"
+          ./scripts/fetch-installer-inputs.ps1 -Destination $dest
+          "GUI_BUNDLE_DIR=$dest/gui" >> $env:GITHUB_ENV
+
+      - name: Fetch paired GUI artifact
+        if: github.event_name == 'workflow_dispatch' && inputs.gui_run_id != ''
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GUI_RUN_ID: ${{ inputs.gui_run_id }}
+        run: |
+          $arguments = @{ Destination = "$env:RUNNER_TEMP/paired-gui" }
+          if ($env:GUI_RUN_ID) { $arguments.RunId = $env:GUI_RUN_ID }
+          ./scripts/fetch-paired-gui.ps1 @arguments
+          "GUI_BUNDLE_DIR=$env:RUNNER_TEMP/paired-gui" >> $env:GITHUB_ENV
+
+      - name: Configure Windows
+        id: configure_windows
         shell: msys2 {0}
         env:
+          # Only trusted events may expose the read-only token to PR-controlled CMake code.
+          GITHUB_TOKEN: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && github.token || '' }}
+          # Same-repository PRs are trusted; fork PRs never receive the private credential.
+          RTX_VIDEO_SDK_URL: ${{ (github.repository == 'AlkaidLab/foundation-sunshine' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'AlkaidLab/foundation-sunshine')) && secrets.RTX_VIDEO_SDK_URL || '' }}
+          RTX_VIDEO_SDK_TOKEN: ${{ (github.repository == 'AlkaidLab/foundation-sunshine' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'AlkaidLab/foundation-sunshine')) && secrets.DRIVER_DOWNLOAD_TOKEN || '' }}
+          RTX_VIDEO_NGX_APPLICATION_ID: ${{ (github.repository == 'AlkaidLab/foundation-sunshine' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'AlkaidLab/foundation-sunshine')) && secrets.RTX_VIDEO_NGX_APPLICATION_ID || '' }}
+          SUNSHINE_RTX_HDR: ${{ !(github.repository == 'AlkaidLab/foundation-sunshine' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'AlkaidLab/foundation-sunshine')) && 'OFF' || (github.event_name != 'pull_request' && github.ref == 'refs/heads/master') && 'ON' || inputs.rtx_hdr || 'AUTO' }}
           BRANCH: ${{ github.head_ref || github.ref_name }}
           BUILD_VERSION: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
           COMMIT: ${{ needs.setup_release.outputs.release_commit }}
-          GITHUB_TOKEN: ${{ secrets.DRIVER_DOWNLOAD_TOKEN }}
+          # Build identity (cmake/prep/build_info.cmake): master builds carry the full commit too. A published build is a
+          # pre-release (beta); PRs and manual runs are dev builds. One build makes both packages, so the package stays auto.
+          SUNSHINE_BUILD_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+          SUNSHINE_BUILD_BRANCH: ${{ github.head_ref || github.ref_name }}
+          SUNSHINE_BUILD_CHANNEL: ${{ needs.setup_release.outputs.build_channel }}
+          SUNSHINE_BUILD_BUILDER: ci
+          SUNSHINE_BUILD_CI_RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           # ccache.exe is a native binary, so it reads the Windows-style path
           # straight out of the environment even under the msys2 shell.
           CCACHE_DIR: ${{ github.workspace }}\.ccache
@@ -212,19 +1235,37 @@ jobs:
           # Hashing the compiler binary instead of its mtime keeps the cache
           # valid across runs that did not actually change gcc.
           CCACHE_COMPILERCHECK: content
-          # Fork PRs cannot access org-scoped secrets, so private-repo driver
-          # downloads (vmouse) may fail. Downgrade missing drivers from
-          # FATAL_ERROR to WARNING so the build/configure still succeeds; the
-          # affected drivers are simply excluded from the installer.
+          CCACHE_SLOPPINESS: pch_defines,time_macros
+          # Fork PRs still try every public dependency. Keep the build usable
+          # when a release asset is temporarily unavailable; official builds
+          # continue to require the complete driver set.
           DRIVER_DEPS_REQUIRED: ${{ (github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork) && 'OFF' || 'ON' }}
         run: |
           mkdir -p build
           ccache --zero-stats
+          # The msys2 shell starts with a minimal PATH, so the runner's .NET SDK (C:\Program Files\dotnet) is invisible to CMake
+          # and tools/sparxie-launch would silently not be built or shipped.
+          export PATH="$PATH:/c/Program Files/dotnet"
+          # The same build time the shards configured with: build_info_defs.h is generated per configure
+          # (string(TIMESTAMP) honours SOURCE_DATE_EPOCH; CMake documentation, command/string), and a header
+          # whose bytes differ from the shards' invalidates every cache entry that reads it.
+          export SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct)"
+          gui_options=()
+          if [[ -n "${GUI_BUNDLE_DIR:-}" ]]; then
+            gui_options=(-DFETCH_GUI=OFF "-DGUI_DIR=$GUI_BUNDLE_DIR")
+          fi
+          compiler=(-DSUNSHINE_PRECOMPILED_HEADERS=ON)
+          if [[ "$TOOLCHAIN" == clang ]]; then
+            compiler=(-DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld -DSUNSHINE_PRECOMPILED_HEADERS=ON)
+          fi
           cmake \
             -B build \
             -G Ninja \
             -S . \
+            "${compiler[@]}" \
+            "${gui_options[@]}" \
             -DBUILD_DOCS=OFF \
+            -DSUNSHINE_RTX_HDR="$SUNSHINE_RTX_HDR" \
             -DBUILD_TESTS=ON \
             -DBUILD_TRAY_TESTS=ON \
             -DBUILD_WEB_UI=OFF \
@@ -235,72 +1276,519 @@ jobs:
             -DSUNSHINE_PUBLISHER_NAME='${{ github.repository_owner }}' \
             -DSUNSHINE_PUBLISHER_WEBSITE='https://github.com/AlkaidLab/foundation-sunshine' \
             -DSUNSHINE_PUBLISHER_ISSUE_URL='https://github.com/AlkaidLab/foundation-sunshine/issues'
-          ninja -C build
+          if grep -q '^SUNSHINE_RTX_HDR_AVAILABLE:INTERNAL=TRUE' build/CMakeCache.txt; then
+            echo 'rtx_hdr=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'rtx_hdr=false' >> "$GITHUB_OUTPUT"
+          fi
+          # The object command lines this build compiles with; each shard prints the same line. Equal hashes are
+          # the precondition for the merged shard caches to hit here (the warning below watches the effect).
+          ninja -C build -t commands | grep -E " -o [^ ]+[.]obj( |$)" | sort > object-commands.txt
+          echo "object commands: $(sha256sum object-commands.txt | cut -d' ' -f1) ($(wc -l < object-commands.txt) lines)"
 
-          # Printed so a run that suddenly gets slow can be diagnosed as a cache
-          # miss rather than guessed at.
-          ccache --show-stats
+      # The drift diagnosis the hit rate cannot give: the exact object command lines of both sides, compared
+      # after Configure Windows has produced this build's list. Identical lists mean any remaining misses come
+      # from something outside the command line; different lists name the commands that drifted (the first 40
+      # diff lines go to the log). A missing list on either side is its own notice, not a drift warning.
+      - name: Download the shard object command lists
+        if: needs.shard.result == 'success'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: object-commands-*
+          path: shard-commands
+
+      - name: Compare the object command lines with a shard
+        if: needs.shard.result == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          first=""
+          for listing in shard-commands/*/object-commands.txt; do first="$listing"; break; done
+          if [[ -z "$first" ]]; then
+            echo "::notice title=Object commands::no shard object-command list was uploaded; nothing to compare"
+          elif [[ ! -f object-commands.txt ]]; then
+            echo "::notice title=Object commands::this build produced no object-command list; nothing to compare"
+          elif diff -u "$first" object-commands.txt > command-drift.txt; then
+            echo "object command lines are identical with the shards"
+          else
+            echo "::warning title=Object commands drifted::see command-drift.txt and the log below"
+            head -40 command-drift.txt
+          fi
+
+      - name: Build Windows
+        shell: msys2 {0}
+        env:
+          CCACHE_DIR: ${{ github.workspace }}\.ccache
+          CCACHE_MAXSIZE: 2G
+          CCACHE_COMPILERCHECK: content
+          CCACHE_SLOPPINESS: pch_defines,time_macros
+          # Depend mode takes the include list from the compiler's own -MD file instead of running the preprocessor a second
+          # time on a miss; hits cost the same. https://ccache.dev/manual/latest.html#_the_depend_mode
+          CCACHE_DEPEND: '1'
+        run: |
+          # After a sharded cold build every object is in the merged cache: count only this step's lookups (the configure
+          # step's CMake checks are never cached) and say so when the shards and this configure have drifted apart.
+          if [[ '${{ needs.shard.result }}' == success ]]; then ccache --zero-stats; fi
+          ninja -C build
+          ccache --show-stats --verbose
+          if [[ '${{ needs.shard.result }}' == success ]]; then
+            read -r hits misses < <(ccache --print-stats | awk -F'\t' '/^(direct_cache_hit|preprocessed_cache_hit)\t/{h+=$2} /^cache_miss\t/{m=$2} END{print h+0, m+0}')
+            echo "compiler cache after the shards: $hits hits, $misses misses" | tee -a "$GITHUB_STEP_SUMMARY"
+            if (( misses * 100 > (hits + misses) * 5 )); then
+              echo "::warning title=Shards drifted::$misses of $((hits + misses)) compiles were not in the shard caches; keep the shard job's configure in step with Configure Windows"
+            fi
+          fi
+
+      - name: Compiler cache size
+        if: always()
+        shell: msys2 {0}
+        env:
+          CCACHE_DIR: ${{ github.workspace }}\.ccache
+        run: |
+          # Where the cache bytes are: the precompiled headers (one per target) or the object files, and how many entries of each.
+          {
+            echo "### Compiler cache ($TOOLCHAIN)"
+            echo "- total: $(du -sm .ccache | cut -f1) MB, $(find .ccache -type f | wc -l) files"
+            find .ccache -type f -size +5M -printf '%s\n' | awk '{n++; s+=$1} END {printf "- entries over 5 MB (precompiled headers): %d, %d MB\n", n, s/1048576}'
+            find .ccache -type f -size -5M -printf '%s\n' | awk '{n++; s+=$1} END {printf "- other entries: %d, %d MB\n", n, s/1048576}'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Check Windows release executable
+        shell: msys2 {0}
+        run: python scripts/ci/check-windows-release.py build/sunshine.exe
+
+      # The display and audio helpers are about 1 MB of code with either compiler. A build that links the wrong library into
+      # them (Clang/LLD once loaded the Asio/Beast/OpenSSL object: 5 MB of code) is caught here, not by a reader of the package size.
+      - name: Check helper executable sizes
+        shell: msys2 {0}
+        run: |
+          for tool in dxgi-info audio-info sunshinesvc; do
+            python scripts/ci/check-windows-release.py "build/tools/$tool.exe" --max-code-bytes 1600000
+          done
+
+      # The installer shell is also the elevated worker and the updater. LLD gives an executable a 1 MiB stack by default, and the
+      # worker's inlined 1 MiB buffer overflowed it before the first event (issue #1326): the reserve is a release property.
+      - name: Check installer shell stack reserve
+        shell: msys2 {0}
+        run: python scripts/ci/check-windows-release.py build/tools/sunshine-installer-shell.exe --stack-only
+
+      - name: Run version without MSYS2 on PATH
+        shell: pwsh
+        run: |
+          $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\Wbem"
+          & "$env:GITHUB_WORKSPACE\build\sunshine.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw "sunshine.exe --version failed with exit code $LASTEXITCODE" }
+
+      # The nightly build measures what the next split and the next header rule are built from: the compile time of every object file (the
+      # shards' ninja logs) and the share of it behind each header. Download the two files and commit them when they have moved
+      # (scripts/ci/shard-weights.ninja_log, scripts/ci/hot-headers.txt).
+      - name: Download the shard ninja logs
+        if: github.event_name == 'schedule' && needs.shard.result == 'success'
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: ninja-log-shard-*
+          path: shard-ninja-logs
+
+      - name: Measure the widely included headers
+        if: github.event_name == 'schedule' && needs.shard.result == 'success'
+        continue-on-error: true
+        shell: msys2 {0}
+        run: |
+          mkdir -p measurements
+          python scripts/ci/merge-shard-weights.py measurements/shard-weights.ninja_log shard-ninja-logs/*/ninja_log.shard
+          ninja -C build -t deps | python scripts/ci/hot-headers.py generate "$(cygpath -m "$GITHUB_WORKSPACE")" measurements/shard-weights.ninja_log 30 > measurements/hot-headers.txt
+          cat measurements/hot-headers.txt | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the measurements
+        if: github.event_name == 'schedule' && needs.shard.result == 'success'
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-measurements
+          path: measurements
+          retention-days: 14
+          if-no-files-found: ignore
 
       - name: Run native tests
         shell: msys2 {0}
-        run: ctest --test-dir build --output-on-failure
+        run: ctest --test-dir build -j4 --no-tests=error --output-on-failure --timeout 600 --output-junit "$GITHUB_WORKSPACE/ctest.xml"
+
+      # Annotations and a job summary from the JUnit file; fails when no test ran, when fewer than --min-tests ran (a
+      # registered suite that disappeared) and when a test not listed in scripts/ci/allowed-skips.txt was skipped.
+      - name: Report native tests
+        if: always()
+        shell: pwsh
+        run: python scripts/ci/report-junit.py --title "Native tests" --min-tests 80 --allowed-skips scripts/ci/allowed-skips.txt ctest.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: test-results
+          path: ctest.xml
+          retention-days: 7
+          if-no-files-found: ignore
+
+      - name: Save compiler cache
+        # Only master writes (always(): a failed or cancelled build still
+        # produced valid objects). PR runs restore master's entry, so they
+        # don't need to save, and skipping their saves keeps the shared
+        # cache quota flat. A fork that runs this workflow on its own has no
+        # master lineage of the upstream repository to restore from, so there
+        # the pull request runs save too (the next push of the same pull
+        # request restores it).
+        if: always() && env.TOOLCHAIN == (vars.CI_TOOLCHAIN || 'clang') && (github.ref == 'refs/heads/master' || github.repository != 'AlkaidLab/foundation-sunshine')
+        id: ccache_save
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ github.workspace }}\.ccache
+          key: ccache-windows-${{ needs.cold_plan.outputs.fingerprint }}-${{ github.run_id }}
+
+      - name: Prune stale compiler cache entries
+        # Collapse the cache to exactly one entry (the newest one saved).
+        # Entries pile up one-per-run otherwise; on a 10 GB repo quota that
+        # once got the entire lineage LRU-evicted. A single entry is also
+        # restored by every later run, which keeps resetting its 7-day
+        # inactivity clock, so neither eviction path can take it out.
+        # Only entries from runs OLDER than this one are deleted (run ids
+        # increase monotonically): a cancelled run still executes its
+        # always() save and prune alongside the next run, and age-filtered
+        # prunes converge to the newest entry under any interleaving —
+        # pruning by "not my key" instead could race down to zero entries.
+        # Skipped unless the save step actually succeeded (outcome keeps the
+        # real result under continue-on-error; the save subaction sets no
+        # outputs, so conclusion can't tell success from failure).
+        if: always() && github.ref == 'refs/heads/master' && steps.ccache_save.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $current = "ccache-windows-${{ needs.cold_plan.outputs.fingerprint }}-${{ github.run_id }}"
+          # The fingerprinted keys (ccache-windows-<fingerprint>-<run>), the older ones without a fingerprint
+          # (ccache-windows-<run>) and the per-shard entries the shard job saves
+          # (ccache-windows-shard-<fingerprint>-<run>-<index>) are all pruned (the fingerprint ends in -pinned or
+          # -newest; a pattern without that part matched none of the current keys and let every run's entries pile
+          # up in the quota), so the entries from before the fingerprint do not stay in the quota either.
+          # Page through the caches API instead of `gh cache list`: the
+          # latter caps at --limit 100, and once this repo's other caches
+          # (msys2, npm, ...) grow past that, stale ccache entries would
+          # fall outside the window and never get pruned.
+          $all = @(gh api --paginate "repos/$env:GITHUB_REPOSITORY/actions/caches?per_page=100" --jq '.actions_caches[] | select(.key | test("^ccache-windows-((shard-)?[0-9a-f]{12}-(pinned|newest)-)?[0-9]+(-[0-9]+)?$")) | [(.key | capture("^ccache-windows-((shard-)?[0-9a-f]{12}-(pinned|newest)-)?(?<run>[0-9]+)").run | tonumber), .id, .key] | @tsv' |
+            Where-Object { $_ } |
+            ForEach-Object {
+              $parts = $_ -split "`t"
+              [pscustomobject]@{ Run = [long]$parts[0]; Id = $parts[1]; Key = $parts[2] }
+            })
+          # actions/cache/save reports a failed save as a warning and still exits 0, so "the step succeeded" does not prove
+          # the new entry exists. The nightly build does not restore a cache first: pruning without a replacement would
+          # leave master with none.
+          if ($all.Key -notcontains $current) {
+            Write-Output "::notice title=Compiler cache::$current was not saved; the older entries are kept"
+            exit 0
+          }
+          $stale = @($all | Where-Object { $_.Run -lt [long]"${{ github.run_id }}" })
+          foreach ($entry in $stale) {
+            gh cache delete $entry.Id --repo $env:GITHUB_REPOSITORY
+            Write-Output "Pruned $($entry.Key)"
+          }
+          Write-Output "Pruned $(@($stale).Count) stale ccache entries; kept $current"
 
       - name: Cache Inno Setup
+        if: needs.changes.outputs.package == 'true'
         id: inno-cache
         uses: actions/cache@v6
         with:
           path: C:\Program Files (x86)\Inno Setup 6
-          key: inno-setup-6
+          key: inno-setup-6.7.3
 
       - name: Install Inno Setup
-        if: steps.inno-cache.outputs.cache-hit != 'true'
+        if: needs.changes.outputs.package == 'true' && steps.inno-cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          # Download and install Inno Setup 6 (silent install)
-          $url = "https://jrsoftware.org/download.php/is.exe"
+          # The unversioned jrsoftware.org/download.php/is.exe link now serves an
+          # HTML page. Pin the signed release asset (6.x keeps the "Inno Setup 6"
+          # install path used below) and check its publisher before running it.
+          $url = "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe"
           $installer = "$env:TEMP\innosetup.exe"
           Invoke-WebRequest -Uri $url -OutFile $installer
+          $signature = Get-AuthenticodeSignature -FilePath $installer
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) -cne 'Pyrsys B.V.') {
+            throw "Unexpected Inno Setup installer signature: $($signature.Status) $($signature.SignerCertificate.Subject)"
+          }
           Start-Process -FilePath $installer -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-' -Wait
 
       - name: Add Inno Setup to PATH
+        if: needs.changes.outputs.package == 'true'
         shell: pwsh
         run: |
           echo "C:\Program Files (x86)\Inno Setup 6" >> $env:GITHUB_PATH
 
+      # Breakpad symbols for crash dumps (scripts/ci/make-symbols.py). dump_syms is Mozilla's release asset, pinned by SHA-256.
+      - name: Fetch dump_syms
+        if: needs.changes.outputs.package == 'true'
+        shell: pwsh
+        env:
+          DUMP_SYMS_VERSION: 2.3.9
+          DUMP_SYMS_SHA256: bdf48486220708808a3e00aec78856ee1cce096189d47a1e2cb1c635f93bacc7
+        run: |
+          $zip = Join-Path $env:RUNNER_TEMP 'dump_syms.zip'
+          Invoke-WebRequest -Uri "https://github.com/mozilla/dump_syms/releases/download/v$env:DUMP_SYMS_VERSION/dump_syms-x86_64-pc-windows-msvc.zip" -OutFile $zip
+          if ((Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:DUMP_SYMS_SHA256) { throw 'dump_syms: unexpected SHA-256' }
+          Expand-Archive -LiteralPath $zip -DestinationPath (Join-Path $env:RUNNER_TEMP 'dump_syms')
+          $exe = Get-ChildItem -Path (Join-Path $env:RUNNER_TEMP 'dump_syms') -Filter dump_syms.exe -Recurse | Select-Object -First 1
+          "DUMP_SYMS=$($exe.FullName)" >> $env:GITHUB_ENV
+
       - name: Package Windows
+        if: needs.changes.outputs.package == 'true'
         shell: msys2 {0}
+        env:
+          RTX_VIDEO_ADAPTER_BUILT: ${{ steps.configure_windows.outputs.rtx_hdr }}
+          RTX_VIDEO_ADAPTER_REQUIRED: ${{ github.repository == 'AlkaidLab/foundation-sunshine' && github.event_name != 'pull_request' && github.ref == 'refs/heads/master' }}
+          SYMBOLS_TAG: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
+          SYMBOLS_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -o pipefail
           mkdir -p artifacts
           cd build
 
-          # Package the Inno Setup installer and portable ZIP.
-          # Install into the staging directory first.
-          cmake --install . --prefix ./inno_staging
-          test -f ./inno_staging/tools/ds5-sidecar-package.json
-          test ! -e ./inno_staging/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe
-          
-          # Run the Inno Setup compiler and prove that it consumed only the
-          # lightweight package manifest, not the self-contained runtime.
-          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" sunshine_installer.iss | tee inno-build.log
-          grep -F "ds5-sidecar-package.json" inno-build.log
-          
-          # Generate the portable ZIP.
-          cpack -G ZIP --config ./CPackConfig.cmake --verbose
-          cmake -E tar tf ./cpack_artifacts/Sunshine.zip | tr '\\' '/' > portable-files.txt
-          grep -F "Sunshine/tools/ds5-sidecar-package.json" portable-files.txt
-          if grep -F "Sunshine/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe" portable-files.txt; then
-            echo "The optional DualSense runtime leaked into the main portable package"
+          if [[ "$RTX_VIDEO_ADAPTER_REQUIRED" == "true" && "$RTX_VIDEO_ADAPTER_BUILT" != "true" ]]; then
+            echo "Protected master build did not produce the required NVIDIA RTX Video adapter"
             exit 1
           fi
 
-          # move
-          mv ./cpack_artifacts/Sunshine.exe ../artifacts/sunshine-windows-installer.exe
+          # Package the Inno Setup installer and portable ZIP.
+          # Install into the staging directory first.
+          cmake --install . --prefix ./inno_staging
+
+          # The driver licenses and the repository notices are part of the
+          # install tree that both packages read.
+          test -f ./inno_staging/NOTICE
+          test -f ./inno_staging/LICENSE
+          test -f ./inno_staging/licenses/vigembus/LICENSE
+          test -f ./inno_staging/licenses/usbip-win2/LICENSE
+          test -f ./inno_staging/licenses/zako-virtual-mouse/LICENSE
+
+          # Symbols from the unstripped modules, then strip what ships: the packages carry no DWARF, the symbol zip does.
+          # The key is the build-id GUID of each module, which stripping and signing keep.
+          python3 ../scripts/ci/make-symbols.py --staging ./inno_staging --build . --dump-syms "$(cygpath -u "$DUMP_SYMS")" \
+            --output ../artifacts/sunshine-symbols.zip --tag "$SYMBOLS_TAG" --commit "$SYMBOLS_COMMIT" --repository "$GITHUB_REPOSITORY" \
+            --source-root "$(cygpath -m "$GITHUB_WORKSPACE")" --source-root "$GITHUB_WORKSPACE" \
+            --require sunshine.exe --require sunshinesvc.exe --strip-staged
+          if [[ "$RTX_VIDEO_ADAPTER_BUILT" == "true" ]]; then
+            test -f ./inno_staging/tools/hdr_enhanced/nvidia_rtx_video/foundation_rtx_video_adapter.dll
+            test ! -e ./inno_staging/msvcp140.dll
+            test ! -e ./inno_staging/vcruntime140.dll
+          fi
+          test ! -e ./inno_staging/tools/hdr_enhanced/nvidia_rtx_video/nvngx_truehdr.dll
+          test ! -e ./inno_staging/tools/hdr_enhanced/nvidia_dlssnr/nvngx_dlssnr.dll
+          DLSSNR_ADAPTER_BUILT=false
+          if [[ -f ./image_enhancement/nvidia_dlssnr_adapter/Release/foundation_dlssnr_adapter.dll ]]; then
+            DLSSNR_ADAPTER_BUILT=true
+            test -f ./inno_staging/tools/hdr_enhanced/nvidia_dlssnr/foundation_dlssnr_adapter.dll
+            test -f ./inno_staging/tools/hdr_enhanced/nvidia_dlssnr/NVIDIA-DLSS-LICENSE.txt
+            test -f ./inno_staging/tools/hdr_enhanced/nvidia_dlssnr/NVIDIA-OPTICAL-FLOW-NOTICES.txt
+          fi
+          test ! -e ./inno_staging/assets/hdr-components.json
+          
+          # The setup lets a person choose the install folder: the longest path of the package has to fit under MAX_PATH below the longest folder it accepts.
+          python3 ../scripts/ci/check-install-path-budget.py ./inno_staging
+
+          # Run the Inno Setup compiler and prove that it consumed only the
+          # lightweight package manifest, not the self-contained runtime.
+          inno_start=$(date +%s.%N)
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" sunshine_installer.iss | tee inno-build.log
+          inno_end=$(date +%s.%N)
+          inno_seconds=$(python3 -c "print(f'{float(\"$inno_end\") - float(\"$inno_start\"):.3f}')")
+          inno_bytes=$(stat -c %s ./cpack_artifacts/Sunshine-engine.exe)
+          echo "Inno Setup: bytes=$inno_bytes seconds=$inno_seconds" | tee -a "$GITHUB_STEP_SUMMARY"
+          if grep -Ei 'nvngx_(truehdr|dlssnr)\.dll' inno-build.log; then
+            echo "NVIDIA enhancement runtimes must not be compiled into the installer"
+            exit 1
+          fi
+          if [[ "$DLSSNR_ADAPTER_BUILT" == "true" ]]; then
+            grep -F "foundation_dlssnr_adapter.dll" inno-build.log
+            grep -F "NVIDIA-DLSS-LICENSE.txt" inno-build.log
+            grep -F "NVIDIA-OPTICAL-FLOW-NOTICES.txt" inno-build.log
+          fi
+          if [[ "$RTX_VIDEO_ADAPTER_BUILT" == "true" ]]; then
+            grep -F "foundation_rtx_video_adapter.dll" inno-build.log
+          fi
+          grep -E 'licenses[/\\]vigembus[/\\]LICENSE' inno-build.log
+          grep -E 'licenses[/\\]usbip-win2[/\\]LICENSE' inno-build.log
+          grep -E 'licenses[/\\]zako-virtual-mouse[/\\]LICENSE' inno-build.log
+          
+          # Generate the portable ZIP. CPack's ZIP generator is the measured
+          # winner for this payload: it is smaller and faster than the
+          # per-entry alternative on the same Windows runner class
+          # (CMake Archive docs, read 2026-11-16:
+          # cmake-cpack-archive-20261116).
+          portable_start=$(date +%s.%N)
+          cpack -G ZIP --config ./CPackConfig.cmake -D CPACK_STRIP_FILES=ON --verbose
+          portable_end=$(date +%s.%N)
+          portable_seconds=$(python3 -c "print(f'{float(\"$portable_end\") - float(\"$portable_start\"):.3f}')")
+          portable_bytes=$(stat -c %s ./cpack_artifacts/Sunshine.zip)
+          echo "Portable ZIP: bytes=$portable_bytes seconds=$portable_seconds" | tee -a "$GITHUB_STEP_SUMMARY"
+          # cmake/packaging/strip-cpack-symbols.cmake cleans the CPack staging tree; prove the ZIP itself has no
+          # unsigned COFF symbol table left. A signed PE, or an unsigned PE with data after its symbol table
+          # (an overlay), is allowed and reported: both are files strip mode deliberately leaves unchanged.
+          rm -rf portable-check
+          mkdir -p portable-check
+          cmake -E chdir portable-check cmake -E tar xf ../cpack_artifacts/Sunshine.zip
+          python3 ../tools/pe_symbols.py --check --recursive portable-check
+          cmake -E tar tf ./cpack_artifacts/Sunshine.zip | tr '\\' '/' > portable-files.txt
+          if [[ "$RTX_VIDEO_ADAPTER_BUILT" == "true" ]]; then
+            grep -F "Sunshine/tools/hdr_enhanced/nvidia_rtx_video/foundation_rtx_video_adapter.dll" portable-files.txt
+          fi
+          if [[ "$DLSSNR_ADAPTER_BUILT" == "true" ]]; then
+            grep -F "Sunshine/tools/hdr_enhanced/nvidia_dlssnr/foundation_dlssnr_adapter.dll" portable-files.txt
+            grep -F "Sunshine/tools/hdr_enhanced/nvidia_dlssnr/NVIDIA-DLSS-LICENSE.txt" portable-files.txt
+            grep -F "Sunshine/tools/hdr_enhanced/nvidia_dlssnr/NVIDIA-OPTICAL-FLOW-NOTICES.txt" portable-files.txt
+          fi
+          if grep -Ei 'nvngx_(truehdr|dlssnr)\.dll|hdr-components\.json' portable-files.txt; then
+            echo "Side-loaded HDR files and mutable trust metadata must not be included in the main portable package"
+            exit 1
+          fi
+
+          # The engine is not the download: "Assemble installer" wraps it in the shell.
+          grep -F "Sunshine/NOTICE" portable-files.txt
+          grep -F "Sunshine/licenses/vigembus/LICENSE" portable-files.txt
+          grep -F "Sunshine/licenses/usbip-win2/LICENSE" portable-files.txt
+          grep -F "Sunshine/licenses/zako-virtual-mouse/LICENSE" portable-files.txt
+          test -f ./cpack_artifacts/Sunshine-engine.exe
           mv ./cpack_artifacts/Sunshine.zip ../artifacts/sunshine-windows-portable.zip
-          cp ./ds5-sidecar-package/Sunshine.Ds5Sidecar.x64.zip ../artifacts/
-          cp ./ds5-sidecar-package.json ../artifacts/Sunshine.Ds5Sidecar.manifest.json
+
+      # The user-facing installer, the same package tools/append_installer_payload.py makes for a local build
+      # (cmake/packaging/windows_innosetup.cmake): [shell][setup UI][Inno engine][footer]; no WebView2 bootstrapper, the worker downloads it when needed.
+      - name: Assemble installer
+        if: needs.changes.outputs.package == 'true'
+        shell: pwsh
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $shell = 'build/tools/sunshine-installer-shell.exe'
+          $engine = 'build/cpack_artifacts/Sunshine-engine.exe'
+          $output = 'artifacts/sunshine-windows-installer.exe'
+          # Neither the shell nor the setup UI needs its COFF symbol table, and both sit outside the Inno payload the
+          # symbol step already cleans. Stripping before the footer is written keeps the section hashes truthful.
+          python tools/pe_symbols.py $shell
+          python tools/pe_symbols.py $env:SETUP_UI_EXE
+          python tools/append_installer_payload.py $shell $engine $output --ui $env:SETUP_UI_EXE
+          # Read the footer back: every section is present and carries the hash of the file it was made from.
+          $bytes = [IO.File]::ReadAllBytes($output)
+          $tail = [Text.Encoding]::ASCII.GetString($bytes, [Math]::Max(0, $bytes.Length - 2048), [Math]::Min(2048, $bytes.Length))
+          $footer = $tail.Substring($tail.LastIndexOf("ALKAID-SHELL-PAYLOAD-V1"))
+          foreach ($section in @(@('', $engine), @('ui-', $env:SETUP_UI_EXE))) {
+            $hash = (Get-FileHash -LiteralPath $section[1] -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($footer -notmatch "(?m)^$($section[0])sha256=$hash\r?$") { throw "Installer footer lacks $($section[0])sha256=$hash" }
+          }
+          if ($footer -match '(?m)^wv2-') { throw 'The installer must not carry the WebView2 bootstrapper' }
+          Write-Output $footer
+
+      # The CI never ran the installer, which is how a stack overflow in its first step shipped. The package is run here as the
+      # worker would be: the entry, the run directory, the events file and the extraction of the engine from the payload
+      # (--selftest-worker, no install, no engine), under a time limit.
+      - name: Run the installer worker (smoke test)
+        if: needs.changes.outputs.package == 'true'
+        shell: pwsh
+        run: |
+          $installer = (Resolve-Path 'artifacts/sunshine-windows-installer.exe').Path
+          $dir = Join-Path $env:RUNNER_TEMP 'installer-worker-smoke'
+          if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
+          $process = Start-Process -FilePath $installer -ArgumentList '--selftest-worker', $dir -PassThru
+          if (-not $process.WaitForExit(120000)) { $process.Kill(); throw 'installer worker did not finish in 120 s' }
+          $process.Refresh()
+          Get-ChildItem $dir -ErrorAction SilentlyContinue | Format-Table Name, Length
+          if ($process.ExitCode -ne 0) { throw ('installer worker exited with 0x{0:X8}' -f $process.ExitCode) }
+          $engine = Join-Path $dir 'sunshine-engine.exe'
+          $expected = (Get-FileHash -LiteralPath 'build/cpack_artifacts/Sunshine-engine.exe' -Algorithm SHA256).Hash
+          if (-not (Test-Path $engine) -or (Get-FileHash -LiteralPath $engine -Algorithm SHA256).Hash -ne $expected) { throw 'the extracted engine differs from the packaged one' }
+          if (-not (Select-String -Path (Join-Path $dir 'events.jsonl') -Pattern 'WorkerStarted' -Quiet)) { throw 'the worker wrote no first event' }
+
+      # The rules for the install folder (tools/installer_dir.h) are unit-tested with a fake machine; here the same code answers with this runner's real
+      # drives, file systems, known folders and permissions (--selftest-dir, nothing is created or changed): a picked folder gets the product's folder name,
+      # typed text is taken as it is, the Windows folder and a network place are refused, a user folder is only a warning with the default folder as the safe place.
+      - name: Installer location rules on this machine (smoke test)
+        if: needs.changes.outputs.package == 'true'
+        shell: pwsh
+        run: |
+          $installer = (Resolve-Path 'artifacts/sunshine-windows-installer.exe').Path
+          $dir = Join-Path $env:RUNNER_TEMP 'installer-dir-smoke'
+          New-Item -ItemType Directory -Force -Path $dir | Out-Null
+          $drive = Split-Path -Qualifier $env:RUNNER_TEMP
+          $default = Join-Path $env:ProgramFiles 'Sunshine'
+          $n = 0
+          function Probe([string]$Path, [switch]$Pick) {
+            $script:n++
+            $out = Join-Path $dir "case-$script:n.json"
+            $argText = "--selftest-dir `"$Path`" --out `"$out`"" + $(if ($Pick) { ' --pick' } else { '' })
+            $process = Start-Process -FilePath $installer -ArgumentList $argText -PassThru
+            if (-not $process.WaitForExit(60000)) { $process.Kill(); throw "location probe $script:n did not finish in 60 s" }
+            $process.Refresh()
+            if ($process.ExitCode -ne 0 -or -not (Test-Path $out)) { throw ('location probe {0} exited with 0x{1:X8}' -f $script:n, $process.ExitCode) }
+            $answer = Get-Content -Raw -LiteralPath $out | ConvertFrom-Json
+            Write-Host ("{0} {1} -> path '{2}' appended={3} redirected={4} error='{5}' warning='{6}' safe='{7}'" -f $(if ($Pick) { 'pick ' } else { 'typed' }), $Path, $answer.path, $answer.appended, $answer.redirected, $answer.error, $answer.warning, $answer.safe)
+            $answer
+          }
+          function Expect($Case, [string]$What, $Actual, $Wanted) { if ($Actual -ne $Wanted) { throw "$What of '$($Case.input)': '$Actual', wanted '$Wanted'" } }
+          # a disk root picked: the product's folder name is added, the root is never the install folder
+          $r = Probe "$drive\" -Pick
+          Expect $r 'path' $r.path "$drive\Foundation Sunshine"; Expect $r 'appended' $r.appended $true; Expect $r 'error' $r.error ''
+          # the default folder picked again is the default folder; nothing is added
+          $r = Probe $default -Pick
+          Expect $r 'path' $r.path $default; Expect $r 'appended' $r.appended $false; Expect $r 'error' $r.error ''
+          # a folder that has things in it: not refused, the product's folder name goes inside it and the page says so
+          $r = Probe $env:RUNNER_TEMP -Pick
+          Expect $r 'path' $r.path (Join-Path $env:RUNNER_TEMP 'Foundation Sunshine'); Expect $r 'appended' $r.appended $true; Expect $r 'redirected' $r.redirected $true; Expect $r 'error' $r.error ''
+          # typed text is the folder as typed (spaces at the ends are dropped; the quotes of "Copy as path" are in the unit tests: the page sends the text as JSON, not as a command line)
+          $r = Probe "  $drive\Typed Folder  "
+          Expect $r 'path' $r.path "$drive\Typed Folder"; Expect $r 'appended' $r.appended $false
+          # problems: never usable
+          $r = Probe "$drive\"; Expect $r 'error' $r.error 'root'
+          $r = Probe "$drive\a!b"; Expect $r 'error' $r.error 'chars'
+          $r = Probe (Join-Path $env:SystemRoot 'Foundation Sunshine'); Expect $r 'error' $r.error 'system'
+          $r = Probe '\\nas\apps\Foundation Sunshine'; Expect $r 'error' $r.error 'not-fixed'
+          # a user folder works but is a risk: a warning, and the default folder is the safe place (the profile is on the system drive)
+          $r = Probe (Join-Path $env:USERPROFILE 'Foundation Sunshine')
+          Expect $r 'error' $r.error ''; Expect $r 'warning' $r.warning 'user'; Expect $r 'safe' $r.safe $default
+
+      # 体积门禁：安装器超过 scripts/ci/size-budget.json 的上限就失败，超过上限的 90% 打印警告。便携包、sunshine.exe、
+      # sunshine-gui.exe 只记录大小，写进 job summary，方便看趋势。上限由车主批准后才能改。
+      - name: Installer size budget
+        if: needs.changes.outputs.package == 'true'
+        shell: pwsh
+        run: |
+          $env:PYTHONUTF8 = '1'
+          python scripts/ci/check-size-budget.py --installer artifacts/sunshine-windows-installer.exe `
+            --measure "便携包 sunshine-windows-portable.zip=artifacts/sunshine-windows-portable.zip" `
+            --measure-zip "sunshine.exe（便携包内，解压后）=artifacts/sunshine-windows-portable.zip::Sunshine/sunshine.exe" `
+            --measure-zip "sunshine-gui.exe（便携包内，解压后）=artifacts/sunshine-windows-portable.zip::Sunshine/assets/gui/sunshine-gui.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Check unattended install and uninstall
+        if: needs.changes.outputs.package == 'true'
+        timeout-minutes: 20
+        uses: ./.github/actions/test-installer-silent
+
+      # The WebView2 step of the worker against Microsoft's real link: the bootstrapper downloads, its signature is Microsoft
+      # Corporation's, and an unsigned file (this very installer) is refused. Nothing is installed or run. The decision itself
+      # (installed / missing and downloaded / download fails) is tests/unit/test_installer_webview2.cpp.
+      - name: Installer WebView2 download and signature check
+        if: needs.changes.outputs.package == 'true'
+        shell: pwsh
+        run: |
+          $installer = (Resolve-Path 'artifacts/sunshine-windows-installer.exe').Path
+          $dir = Join-Path $env:RUNNER_TEMP 'installer-webview2-smoke'
+          if (Test-Path $dir) { Remove-Item -Recurse -Force $dir }
+          $process = Start-Process -FilePath $installer -ArgumentList '--selftest-webview2', $dir -PassThru
+          if (-not $process.WaitForExit(180000)) { $process.Kill(); throw 'the WebView2 check did not finish in 180 s' }
+          $process.Refresh()
+          if (Test-Path (Join-Path $dir 'selftest-webview2.json')) { Get-Content (Join-Path $dir 'selftest-webview2.json') }
+          if ($process.ExitCode -ne 0) { throw ('the WebView2 check exited with {0} (20: download failed, 21: not signed by Microsoft, 22: an unsigned file passed)' -f $process.ExitCode) }
+          if (Get-ChildItem $dir -Filter '*.exe') { throw 'the downloaded bootstrapper was not removed' }
 
       - name: Rename release assets
+        if: needs.changes.outputs.package == 'true'
         shell: msys2 {0}
         run: |
           # Format tag to vYEAR.DATE where DATE is zero-padded to 4 digits
@@ -318,6 +1806,7 @@ jobs:
           INSTALLER_NAME="Sunshine.${NEWTAG}.WindowsInstaller.exe"
           mv artifacts/sunshine-windows-installer.exe "artifacts/${INSTALLER_NAME}"
           mv artifacts/sunshine-windows-portable.zip "artifacts/Sunshine.${NEWTAG}.Portable-x64.zip"
+          mv artifacts/sunshine-symbols.zip "artifacts/Sunshine.${NEWTAG}.Symbols-x64.zip"
 
           # Legacy Control Panel builds treat any release asset containing
           # "Windows" as a full installer. Keep that marker exclusive to the
@@ -332,26 +1821,44 @@ jobs:
           done
 
       - name: Generate Checksums
+        if: needs.changes.outputs.package == 'true'
         shell: pwsh
         run: |
           # Generate SHA256 checksums from the final release asset names.
           .\scripts\generate-checksums.ps1 -Path .\artifacts -Output "SHA256SUMS.txt"
 
       - name: Upload Artifacts
+        if: needs.changes.outputs.package == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: sunshine-windows-r${{ github.run_number }}
           path: |
             artifacts/Sunshine.*.WindowsInstaller.exe
             artifacts/Sunshine.*.Portable-x64.zip
-            artifacts/Sunshine.Ds5Sidecar.x64.zip
-            artifacts/Sunshine.Ds5Sidecar.manifest.json
+            artifacts/Sunshine.*.Symbols-x64.zip
             artifacts/SHA256SUMS.txt
             artifacts/checksums.json
           if-no-files-found: error
 
+      # A pre-release is deleted, with its assets, once two newer ones exist (LizardByte/create-release-action keeps the latest two), and builds come
+      # several times a day: the Symbols-x64.zip of most builds is gone within hours, and a crash dump of such a build can only be read as module+offset.
+      # The same package therefore goes up once more on its own, named by the build: 4-5 MB, found by name without downloading the 100+ MB package
+      # above, and kept for the longest time an artifact can be kept. Until the symbol store of the feedback repository copies from here (a change of that repository),
+      # the artifact is downloaded by hand.
+      - name: Keep the symbols of this build
+        if: needs.changes.outputs.package == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: sunshine-symbols-${{ needs.setup_release.outputs.release_tag }}
+          path: artifacts/Sunshine.*.Symbols-x64.zip
+          retention-days: 90
+          compression-level: 0
+          if-no-files-found: error
+
+      # Automatic pre-releases (a push to master with AUTO_PRERELEASE=true). A manual publish is the `publish` job below:
+      # this action only creates a release for a push to master.
       - name: Create/Update GitHub Release
-        if: needs.setup_release.outputs.publish_release == 'true'
+        if: needs.setup_release.outputs.publish_release == 'true' && github.event_name == 'push'
         uses: LizardByte/create-release-action@v2025.426.1549
         with:
           allowUpdates: true
@@ -361,3 +1868,85 @@ jobs:
           prerelease: true
           tag: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
           token: ${{ secrets.GH_BOT_TOKEN }}
+
+  # Manual publication (Run workflow with publish=true or publish_stable=true, master only): the release is created by the GitHub CLI from the
+  # artifacts of this run, in a job of its own so that the Windows job, which runs the build scripts of the commit, never
+  # holds a token that can write to the repository.
+  publish:
+    name: Publish release
+    needs: [setup_release, build_win]
+    if: needs.setup_release.outputs.publish_release == 'true' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout the CI scripts
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          sparse-checkout: scripts/ci
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: sunshine-windows-r${{ github.run_number }}
+          path: dist
+
+      # Creates the pre-release, or replaces the assets of a pre-release that is already there; a tag that belongs to a
+      # published release is an error (scripts/ci/publish-prerelease.sh).
+      - name: Create the pre-release
+        if: needs.setup_release.outputs.release_stable != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
+          BODY: ${{ needs.setup_release.outputs.release_body }}
+          COMMIT: ${{ needs.setup_release.outputs.release_commit }}
+        shell: bash
+        run: bash scripts/ci/publish-prerelease.sh dist | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # The stable release: a full release marked Latest, created directly with the bot token so that its `release: published` event starts the
+      # signing workflow. A tag that already has a release of any kind is an error (scripts/ci/publish-stable.sh): a stable build is a new
+      # commit, never a promoted pre-release.
+      - name: Create the stable release
+        if: needs.setup_release.outputs.release_stable == 'true'
+        env:
+          # The bot token, like the pre-release publisher: a release created with the workflow token starts no other workflow, and the
+          # signing workflow (sign-and-repackage.yml, `release: published`) must start for a full release.
+          GH_TOKEN: ${{ secrets.GH_BOT_TOKEN }}
+          TAG: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
+          BODY: ${{ needs.setup_release.outputs.release_body }}
+          COMMIT: ${{ needs.setup_release.outputs.release_commit }}
+        shell: bash
+        run: bash scripts/ci/publish-stable.sh dist | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # The single status check to require. `always()` is what keeps a failed or cancelled job from being skipped past: a job
+  # whose dependency failed is skipped, and a skipped required check counts as passing.
+  ci-gate:
+    name: CI gate
+    if: always()
+    needs: [changes, docs-check, third-party-licenses, workflow-lint, webui, webui-docs, setup_release, vdd_smoke, mat_smoke, cold_plan, shard, adapter_config, setup_ui, build_win, publish]
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Every needed job succeeded or was deliberately skipped
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json, os, sys
+          needs = json.loads(os.environ["NEEDS"])
+          bad = {name: job["result"] for name, job in needs.items() if job["result"] not in ("success", "skipped")}
+          for name, job in needs.items():
+              print(f"{name}: {job['result']}")
+          # A compile shard may die (a runner lost, a chunk nobody built): build_win then compiled what was missing and still built,
+          # tested and packaged the commit, so the run is green with a warning. If build_win did not succeed, the shard failure stands.
+          if bad.get("shard") == "failure" and needs["build_win"]["result"] == "success":
+              del bad["shard"]
+              print("::warning title=CI gate::a compile shard failed; the Windows job recovered the missing objects")
+          if needs["changes"]["result"] != "success":
+              bad["changes"] = needs["changes"]["result"]
+          if bad:
+              print(f"::error title=CI gate::{bad}")
+              sys.exit(1)
+          PY

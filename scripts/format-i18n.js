@@ -9,6 +9,7 @@
  * Usage:
  *   node scripts/format-i18n.js                # Format all locale files
  *   node scripts/format-i18n.js --check        # Check if files are properly formatted (for CI)
+ *   node scripts/format-i18n.js --downloads-only # Format only the download page catalogs
  */
 
 import fs from 'fs'
@@ -19,6 +20,7 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
 const localeDir = path.join(__dirname, '../src_assets/common/assets/web/public/assets/locale')
+const downloadsLocaleDir = path.join(__dirname, '../src_assets/common/assets/web/i18n/downloads')
 
 // Parse command line arguments
 const args = process.argv.slice(2)
@@ -68,7 +70,7 @@ function formatJsonFile(filePath) {
 /**
  * Main formatting function
  */
-function formatLocales() {
+function formatLocales(localeDir) {
   if (checkMode) {
     console.log('🔍 Checking i18n file formatting...\n')
   } else {
@@ -146,4 +148,5 @@ function formatLocales() {
 }
 
 // Run formatting
-formatLocales()
+if (!args.includes('--downloads-only')) formatLocales(localeDir)
+formatLocales(downloadsLocaleDir)

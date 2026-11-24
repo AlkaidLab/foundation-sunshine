@@ -1,0 +1,643 @@
+[
+  {
+    "pattern": "^/$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/pin/?$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/apps/?$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/downloads/?$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/config/?$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/dualsense/?$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/password/?$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/welcome/?$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/troubleshooting/?$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/pin$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/qr-pair$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/qr-pair/cancel$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/qr-pair$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/apps$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/logs$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/mat/status$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/apps$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/apps/scan$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/config$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/config$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/gamepad/config$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/gamepad/config$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/hdr-enhanced/config$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/hdr-enhanced/config$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/hdr-enhanced/status$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/hdr-enhanced/sessions$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/hdr-enhanced/session-nr$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/hdr-enhanced/session-nr/remember$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/hdr-enhanced/components/([a-z0-9_.-]+)/maintenance$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/webhook/config$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/webhook/config$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/webhook/test$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/dualsense/tuning$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/dualsense/tuning$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/dualsense/rumble-test$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/dualsense/pad-test$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/configLocale$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/logout$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/logout$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/restart$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/restart$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/boom$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/config/reset$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/config/reset$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/config/reset/restore$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/reset-display-device-persistence$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/microphone/test$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/microphone/status$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/vdd/status$",
+    "method": "GET",
+    "windows": true
+  },
+  {
+    "pattern": "^/api/usbip-root/status$",
+    "method": "GET",
+    "windows": true
+  },
+  {
+    "pattern": "^/api/usbip-root/repair$",
+    "method": "POST",
+    "windows": true
+  },
+  {
+    "pattern": "^/api/vulkan-hdr-bridge$",
+    "method": "GET",
+    "windows": true
+  },
+  {
+    "pattern": "^/api/vulkan-hdr-bridge/validate$",
+    "method": "POST",
+    "windows": true
+  },
+  {
+    "pattern": "^/api/password$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/apps/([0-9]+)$",
+    "method": "DELETE"
+  },
+  {
+    "pattern": "^/api/apps/batch-delete$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/apps/cover-preview$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/clients/unpair-all$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/clients/list$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/clients/list$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/color-profiles$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/clients/unpair$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/clients/rename$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/apps/close$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/covers/upload$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/apps/test-menu-cmd$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/runtime/sessions$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/runtime/sessions/stop$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/runtime/system$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/runtime/hdr$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/runtime/hdr-calibration$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/runtime/hdr-calibration$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/runtime/bitrate$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/perf/current$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/perf/frame-rates$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/steam-api/.+$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/steam-store/.+$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/ai/config$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/ai/config$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/ai/models$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/ai/chat/completions$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/ai/chat/completions$",
+    "method": "OPTIONS"
+  },
+  {
+    "pattern": "^/api/v1/file-mapping/mappings$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/v1/file-mapping/mappings$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/v1/file-mapping/mappings/([A-Za-z0-9_\\-]{1,64})$",
+    "method": "PATCH"
+  },
+  {
+    "pattern": "^/api/v1/file-mapping/mappings/([A-Za-z0-9_\\-]{1,64})$",
+    "method": "DELETE"
+  },
+  {
+    "pattern": "^/images/sunshine.ico$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/images/logo-sunshine-256.png$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/images/logo-alkaidlab.png$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/images/logo-natpierce.png$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/boxart/.+$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/assets\\/.+$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/v1/clipboard/capability$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/v1/clipboard/item$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/v1/clipboard/events$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/v1/clipboard/blob$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/v1/clipboard/blob/([A-Za-z0-9_\\-]{1,128})$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/v1/text-context/capability$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/v1/text-context/observation$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/tray/state$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/tray/events$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/tray/action$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/tray/client-fingerprint-rules$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/tray/client-fingerprint-rules$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/widget/state$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/widget/action$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/clients/update$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/network/listeners$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/network/reachability$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/network/overview$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/network/check$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/network/check$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/doctor$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/gpu-driver-guard$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/gpu-driver-guard$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/system/info$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/version$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/pairing/pending$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/pairing/pending/([A-Za-z0-9_-]{1,64})$",
+    "method": "DELETE"
+  },
+  {
+    "pattern": "^/api/pairing/pin$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/login/?$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/auth/login$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/auth/logout$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/auth/session$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/auth/sessions$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/auth/sessions$",
+    "method": "DELETE"
+  },
+  {
+    "pattern": "^/api/auth/sessions/([A-Za-z0-9_-]+)$",
+    "method": "DELETE"
+  },
+  {
+    "pattern": "^/api/auth/setup$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/auth/password$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/auth/password/reset$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/apps/launch$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/audio/devices$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/runtime/audio$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/sparxie/apps$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/sparxie/apps/([0-9]+)$",
+    "method": "PUT"
+  },
+  {
+    "pattern": "^/api/sparxie/apps/([0-9]+)/cover$",
+    "method": "PUT"
+  },
+  {
+    "pattern": "^/api/sparxie/art/(icon|card|banner|hero)/([^/]+)$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/sparxie/art/refresh$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/sparxie/browse$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/sparxie/game-settings$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/sparxie/game-settings$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/sparxie/games$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/sparxie/identify$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/sparxie/import$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/sparxie/install$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/sparxie/install/([0-9a-f]+)$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/sparxie/manifest$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/sparxie/open$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/sparxie/pick$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/sparxie/profiles$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/sparxie/profiles/([^/]+)$",
+    "method": "PUT"
+  },
+  {
+    "pattern": "^/api/sparxie/scan$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/sparxie/status$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/sparxie/uninstall$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/sparxie/warning$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/telemetry/events$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/telemetry/identity$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/telemetry/preview$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/telemetry/status$",
+    "method": "GET"
+  }
+]

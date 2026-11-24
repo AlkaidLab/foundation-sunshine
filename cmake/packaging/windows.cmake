@@ -3,7 +3,95 @@
 # Fetch driver dependencies (downloads at configure time)
 include(${CMAKE_MODULE_PATH}/packaging/FetchDriverDeps.cmake)
 
+# Every driver the fetcher can download must have a reviewed license text. The
+# manifest pins the version variables selected above, so a pin bump without a
+# matching license review stops the configure step before packaging.
+# Source: cmake-install-20261117; cmake-cpack-archive-20261117.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(NOT Python3_Interpreter_FOUND)
+  message(FATAL_ERROR
+    "Python 3 is required to verify third-party license texts before packaging")
+endif()
+set(_third_party_license_pins
+    VIGEMBUS_VERSION VIGEMBUS_ASSET_NAME
+    USBIP_VERSION USBIP_ASSET_NAME
+    NEFCON_VERSION
+    VDD_DRIVER_VERSION VDD_WIN10_DRIVER_VERSION
+    VDD_DRIVER_ASSET_NAME VDD_WIN10_DRIVER_ASSET_NAME
+    VMOUSE_DRIVER_VERSION VMOUSE_PUBLIC_REPO)
+set(_third_party_license_pin_args)
+foreach(_third_party_license_pin IN LISTS _third_party_license_pins)
+  list(APPEND _third_party_license_pin_args
+       --pin "${_third_party_license_pin}=${${_third_party_license_pin}}")
+endforeach()
+execute_process(
+  COMMAND "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/ci/check-third-party-licenses.py"
+          --root "${CMAKE_SOURCE_DIR}"
+          ${_third_party_license_pin_args}
+  RESULT_VARIABLE _third_party_license_status
+  OUTPUT_VARIABLE _third_party_license_output
+  ERROR_VARIABLE _third_party_license_error)
+if(NOT _third_party_license_status EQUAL 0)
+  string(STRIP "${_third_party_license_output}${_third_party_license_error}"
+         _third_party_license_message)
+  message(FATAL_ERROR
+    "Third-party license verification failed:\n${_third_party_license_message}")
+endif()
+
+# License texts for the third-party binaries in this package. The Inno installer
+# copies the staging tree and the CPack ZIP is built from it, so both packages
+# carry the same files.
+install(DIRECTORY "${CMAKE_SOURCE_DIR}/third_party/licenses/"
+        DESTINATION "licenses"
+        COMPONENT application)
+install(FILES "${CMAKE_SOURCE_DIR}/NOTICE"
+              "${CMAKE_SOURCE_DIR}/LICENSE"
+        DESTINATION "."
+        COMPONENT application)
+
 install(TARGETS sunshine RUNTIME DESTINATION "." COMPONENT application)
+install(FILES "${sunshine_webp_SOURCE_DIR}/COPYING"
+        DESTINATION "licenses/libwebp" RENAME "LICENSE.txt" COMPONENT application)
+install(FILES "${sunshine_webp_SOURCE_DIR}/PATENTS"
+        DESTINATION "licenses/libwebp" RENAME "PATENTS.txt" COMPONENT application)
+set(SUNSHINE_MAT_CAPTURE_AVAILABLE 0)
+if (TARGET sunshine_mat_capture)
+  set(SUNSHINE_MAT_CAPTURE_AVAILABLE 1)
+  install(FILES "${MAT_CAPTURE_BUILD}/sunshine-plugin-mat-capture.exe"
+          DESTINATION "tools/mat-capture" COMPONENT application)
+  configure_file("${CMAKE_SOURCE_DIR}/cmake/packaging/install_mat_capture.cmake.in"
+      "${CMAKE_BINARY_DIR}/install_mat_capture.cmake" @ONLY)
+  install(SCRIPT "${CMAKE_BINARY_DIR}/install_mat_capture.cmake" COMPONENT application)
+  install(FILES "${MAT_CAPTURE_BUILD}/_deps/minhook-src/LICENSE.txt"
+      DESTINATION "tools/mat-capture" RENAME LICENSE.MinHook.txt COMPONENT application)
+endif ()
+
+# The first-party adapter is optional at process startup. Its MSVC runtime is
+# deliberately not bundled; the Control Panel reports when the system runtime
+# must be installed by the user.
+if (TARGET sunshine_rtx_video_adapter)
+  install(FILES "${RTX_VIDEO_ADAPTER_DLL}"
+          DESTINATION "tools/hdr_enhanced/nvidia_rtx_video"
+          COMPONENT application)
+endif ()
+install(FILES "${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/rtx_hdr/adapter/THIRD_PARTY_NOTICES.md"
+        DESTINATION "tools/hdr_enhanced/nvidia_rtx_video"
+        RENAME "RTX_VIDEO_THIRD_PARTY_NOTICES.md"
+        COMPONENT application)
+install(FILES "${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/rtx_hdr/README.md"
+        DESTINATION "tools/hdr_enhanced/nvidia_rtx_video"
+        COMPONENT application)
+
+# The DLSS NR adapter ships first-party; the NVIDIA runtime DLL must be
+# imported by the user and is never part of the package.
+if (TARGET sunshine_dlssnr_adapter)
+  install(FILES "${DLSSNR_ADAPTER_DLL}"
+          "${_dlssnr_build}/NVIDIA-DLSS-LICENSE.txt"
+          "${_dlssnr_source}/NVIDIA-OPTICAL-FLOW-NOTICES.txt"
+          DESTINATION "tools/hdr_enhanced/nvidia_dlssnr"
+          COMPONENT application)
+endif ()
+
 
 # Hardening: include zlib1.dll (loaded via LoadLibrary() in openssl's libcrypto.a)
 install(FILES "${ZLIB}" DESTINATION "." COMPONENT application)
@@ -15,22 +103,14 @@ install(TARGETS audio-info RUNTIME DESTINATION "tools" COMPONENT audio)
 # Mandatory tools
 install(TARGETS sunshinesvc RUNTIME DESTINATION "tools" COMPONENT application)
 install(TARGETS qiin-tabtip RUNTIME DESTINATION "tools" COMPONENT application)
-install(TARGETS stylus-input-probe RUNTIME DESTINATION "tools" COMPONENT application)
 
-# The optional self-contained runtime is a separate release asset. The main
-# package carries only its pinned download manifest, keeping the feature
-# installable without adding the complete .NET runtime to every Sunshine copy.
-set(DS5_SIDECAR_PACKAGE_MANIFEST "${CMAKE_BINARY_DIR}/ds5-sidecar-package.json" CACHE FILEPATH
-    "Path to the pinned Sunshine DualSense sidecar package manifest")
-if(EXISTS "${DS5_SIDECAR_PACKAGE_MANIFEST}")
-  install(FILES "${DS5_SIDECAR_PACKAGE_MANIFEST}"
+# The touch application command uses this host-owned protocol launcher. It is
+# published from tools/sparxie-launch when the Windows SDK build has dotnet.
+if(TARGET sparxie-launch-publish)
+  add_dependencies(sunshine sparxie-launch-publish)
+  install(DIRECTORY "${SPARXIE_LAUNCH_PUBLISH_DIR}/"
           DESTINATION "tools"
-          RENAME "ds5-sidecar-package.json"
           COMPONENT application)
-  set(SUNSHINE_DS5_SIDECAR_PACKAGE_AVAILABLE ON)
-else()
-  message(STATUS "DualSense sidecar package manifest was not generated; optional component install will be unavailable")
-  set(SUNSHINE_DS5_SIDECAR_PACKAGE_AVAILABLE OFF)
 endif()
 
 # Shared tool: nefconw.exe (used by VDD and vmouse install scripts)
@@ -51,6 +131,9 @@ install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/install_portable.bat"
         COMPONENT application)
 install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/uninstall_portable.bat"
         DESTINATION "."
+        COMPONENT application)
+install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/shell/remove-shell-menus.ps1"
+        DESTINATION "scripts"
         COMPONENT application)
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/languages/"
         DESTINATION "scripts/languages"
@@ -81,6 +164,29 @@ if(VIGEMBUS_AVAILABLE)
   install(FILES "${VIGEMBUS_INSTALLER}"
           DESTINATION "scripts/gamepad"
           COMPONENT gamepad)
+endif()
+set(GENERATED_USBIP_INSTALL_SCRIPT "${CMAKE_BINARY_DIR}/generated/install-usbip.bat")
+configure_file(
+        "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/usbip/install-usbip.bat.in"
+        "${GENERATED_USBIP_INSTALL_SCRIPT}"
+        @ONLY)
+install(FILES "${GENERATED_USBIP_INSTALL_SCRIPT}"
+              "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/usbip/usbip-package.ps1"
+              "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/usbip/usbip-package-functions.psm1"
+        DESTINATION "scripts"
+        COMPONENT usbip)
+# The root-hub guard is always installed (the assets component), not with the USB/IP component: the Panel runs it around its
+# own runtime install of usbip-win2 too (issue #1272), and the recovery steps name it.
+install(FILES "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/usbip/usbip-package-ownership.psm1"
+              "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/usbip/usbip-roothub-guard.ps1"
+        DESTINATION "scripts"
+        COMPONENT assets)
+install(FILES "${CMAKE_SOURCE_DIR}/third_party/licenses/usbip-win2/LICENSE"
+        DESTINATION "licenses/usbip-win2" COMPONENT usbip)
+if(USBIP_AVAILABLE)
+  install(DIRECTORY "${USBIP_PAYLOAD_DIR}/"
+          DESTINATION "scripts/usbip"
+          COMPONENT usbip)
 endif()
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/vsink/"
         DESTINATION "scripts"
@@ -152,22 +258,21 @@ endif()
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/misc/helper/"
         DESTINATION "tools"
         COMPONENT assets)
+install(FILES "${CMAKE_SOURCE_DIR}/tools/driver-reboot-check.ps1"
+        DESTINATION "tools"
+        COMPONENT assets)
+install(FILES "${CMAKE_SOURCE_DIR}/tools/usbip-win2-root.ps1"
+        DESTINATION "tools"
+        COMPONENT assets)
 
 # Sunshine assets
 install(DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/"
         DESTINATION "${SUNSHINE_ASSETS_DIR}"
         COMPONENT assets)
 
-# copy assets (excluding shaders) to build directory, for running without install
-file(COPY "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/"
-        DESTINATION "${CMAKE_BINARY_DIR}/assets"
-        PATTERN "shaders" EXCLUDE)
-# use junction for shaders directory
-cmake_path(CONVERT "${SUNSHINE_SOURCE_ASSETS_DIR}/windows/assets/shaders"
-        TO_NATIVE_PATH_LIST shaders_in_build_src_native)
-cmake_path(CONVERT "${CMAKE_BINARY_DIR}/assets/shaders" TO_NATIVE_PATH_LIST shaders_in_build_dest_native)
+# Uninstalled assets are tracked by the shared assets build target.
 
-set(CPACK_PACKAGE_ICON "${CMAKE_SOURCE_DIR}\\\\sunshine.ico")
+set(CPACK_PACKAGE_ICON "${CMAKE_SOURCE_DIR}\\\\assets\\\\brand\\\\sunshine.ico")
 
 # The name of the directory that will be created in C:/Program files/
 set(CPACK_PACKAGE_INSTALL_DIRECTORY "${CPACK_PACKAGE_NAME}")
@@ -233,11 +338,7 @@ set(CPACK_COMPONENT_GAMEPAD_DESCRIPTION "Scripts to install and uninstall Virtua
 set(CPACK_COMPONENT_GAMEPAD_GROUP "Scripts")
 
 # include specific packaging
-if(SUNSHINE_DS5_SIDECAR_PACKAGE_AVAILABLE)
-  include(${CMAKE_MODULE_PATH}/packaging/windows_innosetup.cmake)
-else()
-  message(STATUS "Inno Setup targets are disabled because the DualSense sidecar package manifest is missing")
-endif()
+include(${CMAKE_MODULE_PATH}/packaging/windows_innosetup.cmake)
 # Legacy NSIS/WiX (kept for reference, no longer used)
 # include(${CMAKE_MODULE_PATH}/packaging/windows_nsis.cmake)
 # include(${CMAKE_MODULE_PATH}/packaging/windows_wix.cmake)

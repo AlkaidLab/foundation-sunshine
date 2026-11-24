@@ -1,974 +1,436 @@
 <template>
   <div class="pin-page">
-    <Navbar />
-    <div id="content" class="container">
-      <h1 class="mt-2 mb-4 text-center page-title">{{ $t('pin.pin_pairing') }}</h1>
+    <MPage :title="$t('connections.title')" :updated="clientsAt" :refreshing="loading" refreshable :locale="String(locale)" @refresh="refreshClients()">
+      <MBanner v-if="listError" tone="error" icon="error">{{ listError }}</MBanner>
+      <MBanner v-else-if="clientError && !showPairing && !selectedClient && !confirmAction" tone="error" icon="error">{{ clientError }}</MBanner>
 
-      <!-- QR Code Pairing -->
-      <div class="card mb-4 qr-pair-card">
-        <div class="card-body text-center">
-          <h5 class="card-title mb-3">
-            <i class="fas fa-qrcode me-2"></i>{{ $t('pin.qr_pairing') }}
-          </h5>
-          <p class="text-muted mb-3">{{ $t('pin.qr_pairing_desc') }}</p>
-          <div class="remote-connect-control d-flex align-items-center justify-content-between gap-3 p-3 mb-3 rounded border text-start">
-            <div>
-              <label class="fw-semibold" for="remote-connect-switch">{{ $t('pin.remote_connect') }}</label>
-              <div id="remote-connect-description" class="small text-muted">{{ $t('pin.remote_connect_desc') }}</div>
-              <span v-if="remoteConnectEnabled" class="badge mt-2" :class="remoteConnectRunning ? 'bg-success' : 'bg-warning text-dark'">
-                {{ remoteConnectRunning ? $t('pin.remote_connect_ready') : $t('pin.remote_connect_starting') }}
-              </span>
-            </div>
-            <div class="form-check form-switch m-0">
-              <input
-                class="form-check-input"
-                type="checkbox"
-                role="switch"
-                id="remote-connect-switch"
-                :aria-label="$t('pin.remote_connect')"
-                :aria-describedby="remoteConnectError ? 'remote-connect-error' : 'remote-connect-description'"
-                :checked="remoteConnectEnabled"
-                :disabled="remoteConnectBusy || !remoteConnectAvailable"
-                @change="handleRemoteConnectToggle"
-              />
-            </div>
-          </div>
-          <div v-if="remoteConnectEnabled || remoteConnectError" class="d-flex align-items-center justify-content-between gap-3 mb-3 text-start">
-            <span v-if="remoteConnectEnabled" class="small text-muted">{{ $t('pin.remote_connect_persistent_warning') }}</span>
-            <button class="btn btn-outline-danger btn-sm flex-shrink-0" :class="{ 'ms-auto': !remoteConnectEnabled }" :disabled="remoteConnectBusy" @click="handleRemoteConnectReset">
-              {{ $t('pin.remote_connect_reset') }}
-            </button>
-          </div>
-          <div v-if="remoteConnectError" id="remote-connect-error" class="alert alert-warning py-2 mb-3">
-            <div>{{ remoteConnectError }}</div>
-            <a
-              v-if="!remoteConnectAvailable"
-              class="alert-link d-inline-block mt-1"
-              href="https://github.com/EasyTier/EasyTier#installation"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <i class="fas fa-external-link-alt me-1"></i>{{ $t('pin.remote_connect_install') }}
-            </a>
-          </div>
-          <div class="alert alert-danger d-flex align-items-start mb-3" style="font-size: 0.85rem;">
-            <i class="fas fa-exclamation-triangle me-2 mt-1"></i>
-            <span>{{ $t('pin.qr_pairing_warning') }}</span>
-          </div>
-
-          <!-- QR Code Display -->
-          <div v-if="qrActive" class="qr-display">
-            <div class="qr-image-wrapper mb-3">
-              <img :src="qrDataUrl" alt="QR Code" class="qr-image" />
-            </div>
-            <div class="qr-info">
-              <div class="mb-2">
-                <span class="text-muted">PIN:</span>
-                <span class="fw-bold fs-4 ms-2 font-monospace">{{ qrPin }}</span>
-              </div>
-              <div class="mb-3">
-                <span class="badge" :class="qrRemaining <= 30 ? 'bg-warning text-dark' : 'bg-info'">
-                  <i class="fas fa-clock me-1"></i>
-                  {{ $t('pin.qr_expires_in', { seconds: qrRemaining }) }}
-                </span>
-              </div>
-            </div>
-            <div class="d-flex gap-2 justify-content-center">
-              <button class="btn btn-outline-primary btn-sm" @click="generateQrCode" :disabled="remoteConnectBusy">
-                <i class="fas fa-sync-alt me-1"></i>{{ $t('pin.qr_refresh') }}
-              </button>
-              <button class="btn btn-outline-secondary btn-sm" @click="cancelQrCode" :disabled="remoteConnectBusy">
-                <i class="fas fa-times me-1"></i>{{ $t('_common.cancel') }}
-              </button>
-            </div>
-          </div>
-
-          <!-- Pairing Success -->
-          <div v-else-if="qrPaired" class="qr-success">
-            <div class="mb-3">
-              <i class="fas fa-check-circle text-success" style="font-size: 3rem;"></i>
-            </div>
-            <h5 class="text-success mb-3">{{ $t('pin.qr_paired_success') }}</h5>
-            <button class="btn btn-outline-primary btn-sm" @click="qrPaired = false">
-              {{ $t('_common.ok') }}
-            </button>
-          </div>
-
-          <!-- Generate Button -->
-          <div v-else>
-            <div v-if="qrError" class="alert alert-danger mb-3">{{ qrError }}</div>
-            <button class="btn btn-primary" @click="generateQrCode" :disabled="remoteConnectBusy">
-              <span v-if="qrLoading" class="spinner-border spinner-border-sm me-2"></span>
-              <i v-else class="fas fa-qrcode me-2"></i>
-              {{ $t('pin.qr_generate') }}
-            </button>
-          </div>
-        </div>
+      <!-- pairing is the first thing on the page: a PIN or a QR code -->
+      <div class="pin-pairing">
+        <MPromo tone="secondary" icon="dialpad" :title="tx.pinPair" :text="tx.pinPairText" @click="openPairing('pin')" />
+        <MPromo tone="secondary" icon="qr_code_2" :title="tx.qrPair" :text="tx.qrPairText" @click="openPairing('qr')" />
       </div>
 
-      <div class="divider-text mb-4">
-        <span>{{ $t('pin.or_manual_pin') }}</span>
-      </div>
-
-      <form action="" class="form d-flex flex-column align-items-center" id="form">
-        <div class="card flex-column d-flex p-4 mb-4">
-          <input
-            type="text"
-            pattern="\d*"
-            :placeholder="`${$t('navbar.pin')}`"
-            autofocus
-            id="pin-input"
-            class="form-control mt-2"
-            required
-          />
-          <input
-            type="text"
-            v-model="pairingDeviceName"
-            :placeholder="`${$t('pin.device_name')}`"
-            id="name-input"
-            class="form-control my-4"
-            required
-          />
-          <button class="btn btn-primary">{{ $t('pin.send') }}</button>
-        </div>
-        <div class="alert alert-warning">
-          <b>{{ $t('_common.warning') }}</b> {{ $t('pin.warning_msg') }}
-        </div>
-        <div id="status"></div>
-      </form>
-
-      <!-- Unpair all Clients -->
-      <div class="card my-4">
-        <div class="card-body">
-          <div class="p-2">
-            <div class="d-flex justify-content-end align-items-center mb-3">
-              <h2 id="unpair" class="text-center me-auto mb-0">{{ $t('troubleshooting.unpair_title') }}</h2>
-              <button class="btn btn-danger" :disabled="unpairAllPressed || loading" @click="handleUnpairAll">
-                <span v-if="unpairAllPressed" class="spinner-border spinner-border-sm me-2" role="status"></span>
-                {{ $t('troubleshooting.unpair_all') }}
-              </button>
-            </div>
-            <div
-              id="apply-alert"
-              class="alert alert-success d-flex align-items-center mt-3"
-              :style="{ display: showApplyMessage ? 'flex !important' : 'none !important' }"
-            >
-              <div class="me-2">
-                <b>{{ $t('_common.success') }}</b> {{ $t('troubleshooting.unpair_single_success') }}
+      <MSection :title="$t('connections.paired')">
+        <template #action><span class="pin-count">{{ clients.length }}</span></template>
+        <MSkeleton v-if="(loading || !listed) && !clients.length" :rows="3" />
+        <MEmpty v-else-if="!clients.length" icon="devices" :title="$t('connections.empty')" />
+        <template v-else>
+          <div class="pin-filter">
+            <MField v-model="query" class="pin-filter__search" :label="tx.search" type="search" />
+            <MSeg v-model="kind" class="pin-filter__kind" :label="tx.filter" :options="kindChoices" />
+          </div>
+          <MEmpty v-if="!shown.length" icon="search_off" :title="tx.noMatch" />
+          <section v-for="group in listGroups" :key="group.kind" class="pin-group" :class="{ 'pin-group--stopped': group.kind === '__stopped' }">
+            <h3 v-if="listGroups.length > 1" class="pin-group__title">{{ group.kind === '__stopped' ? $t('connections.stopped') : (tx[group.kind] || tx.other) }}<span class="pin-count">{{ group.items.length }}</span></h3>
+            <div class="pin-list" role="list" @keydown="rowKeys">
+              <div
+                v-for="client in group.items"
+                :key="client.uuid"
+                class="m-item m-split-item pin-row"
+                :data-row="client.name"
+                :class="{ 'pin-row--stopped': client.enabled === false }"
+                role="listitem"
+                @contextmenu="onRowMenu($event, client)"
+              >
+                <div class="m-split-item__main pin-row__main">
+                  <span class="m-item__lead"><span class="m-lead-circle m-shaped" :class="[leadTone(client), `m-shaped--${shapeFor(client)}`]"><MIcon :name="deviceIconFor(client.name, client.os)" /></span></span>
+                  <span class="m-item__body">
+                    <span class="m-item__title" data-redact="client">{{ client.name || $t('pin.unknown_client') }}</span>
+                    <span v-if="rowText(client)" class="m-item__text" :class="{ 'pin-row__live': stateOf(client) === 'streaming' }">{{ rowText(client) }}</span>
+                  </span>
+                </div>
+                <!-- a stopped device says so on its row and is restored from it, with no question -->
+                <span v-if="client.enabled === false" class="pin-row__stopped"><span class="pin-badge"><MIcon name="block" />{{ $t('connections.stopped') }}</span><MButton variant="tonal" size="sm" icon="undo" :disabled="updating.has(client.uuid) || loading || saving" @click="restoreClient(client)">{{ $t('connections.restore') }}</MButton></span>
+                <!-- cancel pairing: a red icon button, always in view, two steps before anything happens -->
+                <button type="button" class="pin-row__unpair" :disabled="updating.has(client.uuid) || loading || saving" :aria-label="$t('connections.unpair_named', { name: client.name })" :data-tip="$t('connections.unpair_named', { name: client.name })" @click="requestUnpair(client)"><MIcon name="link_off" /></button>
+                <i class="m-split-item__divider" aria-hidden="true" />
+                <button type="button" class="m-split-item__gear" :disabled="updating.has(client.uuid)" :aria-label="$t('connections.settings_for', { name: client.name })" :data-tip="$t('connections.device_settings')" @click="editClient(client)"><MIcon name="settings" /></button>
               </div>
-              <button class="btn btn-secondary ms-auto apply" @click="clickedApplyBanner">
-                {{ $t('_common.dismiss') }}
-              </button>
             </div>
-            <div class="alert alert-success" v-if="unpairAllStatus === true">
-              {{ $t('troubleshooting.unpair_all_success') }}
-            </div>
-            <div class="alert alert-danger" v-if="unpairAllStatus === false">
-              {{ $t('troubleshooting.unpair_all_error') }}
-            </div>
-            <p class="mb-3 text-muted">{{ $t('pin.remove_paired_devices_desc') }}</p>
-          </div>
+          </section>
+        </template>
+      </MSection>
 
-          <!-- 加载状态 -->
-          <div v-if="loading && clients.length === 0" class="text-center py-5">
-            <div class="spinner-border text-primary" role="status">
-              <span class="visually-hidden">{{ $t('pin.loading') }}</span>
-            </div>
-            <p class="mt-3 text-muted">{{ $t('pin.loading_clients') }}</p>
-          </div>
+      <MGroup class="pin-net">
+        <MItem href="/config#bind_address" icon="router" :title="$t('connections.network_question')" :text="$t('connections.network_hint')" />
+      </MGroup>
 
-          <!-- 客户端列表 -->
-          <div id="client-list" v-else-if="clients && clients.length > 0" class="client-list-container">
-            <div class="brightness-guidance mx-3 mt-3 mb-2" role="note">
-              <i class="fas fa-wand-magic-sparkles" aria-hidden="true"></i>
-              <span>{{ $t('pin.hdr_brightness_auto_info') }}</span>
-            </div>
-            <div class="table-responsive">
-              <table class="table table-hover table-bordered align-middle mb-0">
-                <thead class="table-dark">
-                  <tr>
-                    <th scope="col" width="20%" class="ps-3">{{ $t('pin.client_name') }}</th>
-                    <th scope="col" width="29%" class="ps-3">{{ $t('pin.hdr_brightness') }}</th>
-                    <th scope="col" class="ps-3">
-                      <span class="d-inline-flex align-items-center gap-1">
-                        {{ $t('pin.color_profile_override') }}
-                        <i
-                          class="fas fa-info-circle text-info"
-                          data-tooltip="hdr-profile"
-                          style="cursor: help; font-size: 0.875rem;"
-                        ></i>
-                      </span>
-                    </th>
-                    <th scope="col" class="ps-3">
-                      <span class="d-inline-flex align-items-center gap-1">
-                        {{ $t('pin.device_size') }}
-                        <i
-                          class="fas fa-info-circle text-info"
-                          data-tooltip="device-size"
-                          style="cursor: help; font-size: 0.875rem;"
-                        ></i>
-                      </span>
-                    </th>
-                    <th scope="col" width="16%" class="text-center">{{ $t('pin.actions') }}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr
-                    v-for="client in clients"
-                    :key="client.uuid"
-                    :class="{ 'table-warning': editingStates[client.uuid] }"
-                  >
-                    <td class="fw-medium ps-3" :data-label="$t('pin.client_name')">{{ client.name || $t('pin.unknown_client') }}</td>
-                    <td class="ps-3 hdr-brightness-cell" :data-label="$t('pin.hdr_brightness')">
-                      <div class="cell-control">
-                        <select
-                          v-if="editingStates[client.uuid]"
-                          class="form-select form-select-sm"
-                          v-model="client.hdrBrightnessMode"
-                          :aria-label="$t('pin.hdr_brightness')"
-                        >
-                          <option value="auto">{{ $t('pin.hdr_brightness_auto') }}</option>
-                          <option value="manual">{{ $t('pin.hdr_brightness_manual') }}</option>
-                        </select>
-                        <span v-else class="setting-pill">
-                          <i
-                            :class="client.hdrBrightnessMode === 'manual' ? 'fas fa-sliders' : 'fas fa-wand-magic-sparkles'"
-                            aria-hidden="true"
-                          ></i>
-                          {{ $t(client.hdrBrightnessMode === 'manual' ? 'pin.hdr_brightness_manual' : 'pin.hdr_brightness_auto') }}
-                        </span>
+      <MSection :title="$t('connections.danger_zone')">
+        <MGroup>
+          <MItem icon="delete" :title="$t('troubleshooting.unpair_all')">
+            <template #trail>
+              <MButton variant="danger" size="sm" :disabled="actionBusy || !clients.length" @click="confirmAction = { type: 'unpair-all' }">{{ $t('troubleshooting.unpair_all') }}</MButton>
+            </template>
+          </MItem>
+        </MGroup>
+      </MSection>
+    </MPage>
 
-                        <div
-                          v-if="editingStates[client.uuid] && client.hdrBrightnessMode === 'manual'"
-                          class="manual-brightness-grid"
-                        >
-                          <label class="brightness-field">
-                            <span>{{ $t('pin.hdr_brightness_peak') }}</span>
-                            <input class="form-control form-control-sm" type="number" min="1" max="10000" step="1"
-                              v-model.number="client.hdrBrightnessMaxNits" />
-                          </label>
-                          <label class="brightness-field">
-                            <span>{{ $t('pin.hdr_brightness_min') }}</span>
-                            <input class="form-control form-control-sm" type="number" min="0" max="100" step="0.001"
-                              v-model.number="client.hdrBrightnessMinNits" />
-                          </label>
-                          <label class="brightness-field">
-                            <span>{{ $t('pin.hdr_brightness_full_frame') }}</span>
-                            <input class="form-control form-control-sm" type="number" min="1" max="10000" step="1"
-                              v-model.number="client.hdrBrightnessMaxFullFrameNits" />
-                          </label>
-                        </div>
+    <!-- Pairing: PIN pad or QR code -->
+    <MSheet :model-value="showPairing" :title="$t('connections.add')" side="end" :close-label="$t('_common.close')" @update:model-value="(open) => !open && closePairing()">
+      <div class="pin-pair">
+        <MSeg block :model-value="pairMode" :label="$t('connections.pair_method')" :options="[{ value: 'pin', label: $t('pin.or_manual_pin'), icon: 'dialpad' }, { value: 'qr', label: $t('pin.qr_pairing'), icon: 'qr_code_2' }]" @update:model-value="setPairMode" />
 
-                        <div v-if="client.hdrBrightnessRuntime?.active" class="brightness-runtime">
-                          <span class="runtime-source">
-                            <i class="fas fa-circle-check" aria-hidden="true"></i>
-                            {{ $t(`pin.hdr_brightness_source_${client.hdrBrightnessRuntime.source}`) }}
-                          </span>
-                          <span class="runtime-values">
-                            {{ $t('pin.hdr_brightness_peak') }} {{ formatHdrNits(client.hdrBrightnessRuntime.maxNits) }} ·
-                            {{ $t('pin.hdr_brightness_min') }} {{ formatHdrNits(client.hdrBrightnessRuntime.minNits, 4, true) }} ·
-                            {{ $t('pin.hdr_brightness_full_frame') }} {{ formatHdrNits(client.hdrBrightnessRuntime.maxFullFrameNits) }}
-                          </span>
-                        </div>
-                      </div>
-                    </td>
-                    <td class="ps-3" :data-label="$t('pin.color_profile_override')">
-                      <select
-                        v-if="editingStates[client.uuid]"
-                        class="form-select form-select-sm"
-                        v-model="client.hdrProfile"
-                      >
-                        <option v-if="!hasIccFileList" value="" disabled>{{ $t('pin.modify_in_gui') }}</option>
-                        <option v-else value="">{{ $t('pin.system_color_profile') }}</option>
-                        <option v-for="item in hdrProfileList" :value="item" :key="item">{{ item }}</option>
-                      </select>
-                      <span v-else class="setting-value-text">
-                        {{ client.hdrProfile || $t('pin.system_color_profile') }}
-                      </span>
-                    </td>
-                    <td class="ps-3" :data-label="$t('pin.device_size')">
-                      <select
-                        v-if="editingStates[client.uuid]"
-                        class="form-select form-select-sm"
-                        v-model="client.deviceSize"
-                      >
-                        <option value="small">{{ $t('pin.device_size_small') }}</option>
-                        <option value="medium">{{ $t('pin.device_size_medium') }}</option>
-                        <option value="large">{{ $t('pin.device_size_large') }}</option>
-                      </select>
-                      <span v-else class="setting-value-text">
-                        {{ $t(`pin.device_size_${client.deviceSize}`) }}
-                      </span>
-                    </td>
-                    <td class="text-center client-actions-cell" :data-label="$t('pin.actions')">
-                      <div class="btn-toolbar justify-content-center" role="toolbar">
-                        <!-- 编辑模式按钮 -->
-                        <template v-if="!editingStates[client.uuid]">
-                          <button
-                            class="btn btn-sm btn-outline-primary me-1"
-                            @click="startEdit(client.uuid)"
-                            :disabled="saving || deleting.has(client.uuid)"
-                            :title="$t('pin.edit_client_settings')"
-                          >
-                            <i class="fas fa-edit me-1"></i> {{ $t('_common.edit') }}
-                          </button>
-                        </template>
-                        <!-- 保存/取消按钮 -->
-                        <template v-else>
-                          <button
-                            class="btn btn-sm btn-primary me-1"
-                            @click="handleSave(client.uuid)"
-                            :disabled="saving || deleting.has(client.uuid)"
-                            :title="$t('pin.save_changes')"
-                          >
-                            <span v-if="saving" class="spinner-border spinner-border-sm me-1"></span>
-                            <i v-else class="fas fa-check me-1"></i> {{ $t('_common.save') }}
-                          </button>
-                          <button
-                            class="btn btn-sm btn-secondary me-1"
-                            @click="handleCancelEdit(client.uuid)"
-                            :disabled="saving || deleting.has(client.uuid)"
-                            :title="$t('pin.cancel_editing')"
-                          >
-                            <i class="fas fa-times me-1"></i> {{ $t('_common.cancel') }}
-                          </button>
-                        </template>
-                        <!-- 删除按钮 -->
-                        <button
-                          class="btn btn-sm btn-outline-danger"
-                          @click="handleDelete(client)"
-                          :disabled="saving || deleting.has(client.uuid) || editingStates[client.uuid]"
-                          :title="editingStates[client.uuid] ? $t('pin.save_or_cancel_first') : $t('pin.delete_client')"
-                        >
-                          <span v-if="deleting.has(client.uuid)" class="spinner-border spinner-border-sm me-1"></span>
-                          <i v-else class="fas fa-trash me-1"></i> {{ $t('_common.delete') }}
-                        </button>
-                      </div>
-                      <!-- 未保存更改提示 -->
-                      <div
-                        v-if="editingStates[client.uuid] && hasUnsavedChanges(client.uuid)"
-                        class="text-warning small mt-2"
-                      >
-                        <i class="fas fa-exclamation-triangle me-1"></i> {{ $t('pin.unsaved_changes') }}
-                      </div>
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
+        <div v-show="pairMode === 'pin'" id="pair-pin-panel" role="tabpanel" class="pin-pair__pin">
+          <div class="pin-pair__wait"><MScallop :busy="pairingBusy" :label="$t('connections.waiting_client')"><MIcon name="dialpad" /></MScallop><span>{{ pairingBusy ? $t('connections.pairing') : $t('connections.waiting_client') }}</span></div>
+          <p class="pin-pair__hint">{{ $t('connections.pin_help') }}</p>
+          <div class="pin-pair__name" data-redact="client">
+            <MField v-model="pairingDeviceName" :label="$t('pin.device_name')" :disabled="pairingBusy" @keydown.enter="submitPairing" />
           </div>
-          <!-- 空状态 -->
-          <div v-else-if="!loading" class="list-group list-group-flush list-group-item-light">
-            <div class="list-group-item p-5 text-center">
-              <i class="fas fa-inbox fa-3x text-muted mb-3"></i>
-              <p class="mb-0">
-                <em>{{ $t('troubleshooting.unpair_single_no_devices') }}</em>
-              </p>
-            </div>
-          </div>
+          <MPinPad data-redact="pin" v-model="pinValue" :length="PIN_LENGTH" label="PIN" :backspace-label="$t('pin.delete_digit')" :disabled="pairingBusy" />
+          <p v-if="clientError" class="pin-pair__error" role="alert">{{ clientError }}</p>
+        </div>
+
+        <div v-show="pairMode === 'qr'" id="pair-qr-panel" role="tabpanel" class="pin-pair__qr">
+          <MGroup class="pin-remote" style="width: 100%; text-align: left">
+            <MSwitchItem
+              :model-value="remoteConnectEnabled"
+              :title="$t('pin.remote_connect')"
+              :text="$t('pin.remote_connect_desc')"
+              :disabled="remoteConnectBusy || !remoteConnectAvailable"
+              @update:model-value="handleRemoteConnectToggle"
+            />
+            <MItem v-if="remoteConnectEnabled" icon="lan" :title="remoteConnectRunning ? $t('pin.remote_connect_ready') : $t('pin.remote_connect_starting')" :text="$t('pin.remote_connect_persistent_warning')" />
+            <MItem v-if="remoteConnectEnabled || remoteConnectError" icon="restart_alt" :title="$t('pin.remote_connect_reset')">
+              <template #trail><MButton variant="danger" size="sm" :disabled="remoteConnectBusy" @click="handleRemoteConnectReset">{{ $t('pin.remote_connect_reset') }}</MButton></template>
+            </MItem>
+          </MGroup>
+          <MBanner v-if="remoteConnectError" tone="warn" role="alert">
+            {{ remoteConnectError }}
+            <a v-if="!remoteConnectAvailable" href="https://github.com/EasyTier/EasyTier#installation" target="_blank" rel="noopener noreferrer">{{ $t('pin.remote_connect_install') }}</a>
+          </MBanner>
+          <template v-if="qrActive">
+            <img :src="qrDataUrl" class="pair-qr-image" alt="QR Code" data-redact="pin" />
+            <p class="pin-pair__qrpin" data-redact="pin">PIN <b>{{ qrPin }}</b></p>
+            <p class="pin-pair__hint">{{ $t('pin.qr_expires_in', { seconds: qrRemaining }) }}</p>
+          </template>
+          <p v-if="qrError" class="pin-pair__error" role="alert">{{ qrError }}</p>
+          <MButton variant="tonal" icon="qr_code_2" :disabled="remoteConnectBusy" @click="generateQrCode">{{ $t(qrActive ? 'pin.qr_refresh' : 'pin.qr_generate') }}</MButton>
+          <MBanner tone="warn">{{ $t('pin.qr_pairing_warning') }}</MBanner>
         </div>
       </div>
+      <template v-if="pairMode === 'pin'" #actions>
+        <MButton class="pin-pill" icon="check" :loading="pairingBusy" :disabled="!pairReady" @click="submitPairing">{{ $t('pin.send') }}</MButton>
+      </template>
+    </MSheet>
 
-      <!-- 删除确认对话框 -->
-      <Transition name="fade">
-        <div v-if="clientToDelete" class="delete-client-overlay" @click.self="clientToDelete = null">
-          <div class="delete-client-modal">
-            <div class="delete-client-header">
-              <h5>
-                <i class="fas fa-exclamation-triangle me-2"></i>{{ $t('pin.confirm_delete') }}
-              </h5>
-              <button class="btn-close" @click="clientToDelete = null"></button>
-            </div>
-            <div class="delete-client-body">
-              <i18n-t keypath="pin.delete_confirm_message" tag="p">
-                <template #name>
-                  <strong>{{ clientToDelete.name || $t('pin.unknown_client') }}</strong>
-                </template>
-              </i18n-t>
-              <p class="text-muted small mb-0">{{ $t('pin.delete_warning') }}</p>
-            </div>
-            <div class="delete-client-footer">
-              <button type="button" class="btn btn-secondary" @click="clientToDelete = null">{{ $t('_common.cancel') }}</button>
-              <button type="button" class="btn btn-danger" @click="confirmDelete">
-                <span v-if="deleting.has(clientToDelete.uuid)" class="spinner-border spinner-border-sm me-2"></span>
-                {{ $t('_common.delete') }}
-              </button>
-            </div>
-          </div>
+    <!-- Device settings: side sheet on wide windows, bottom sheet on narrow ones -->
+    <MSheet :model-value="!!selectedClient" :title="$t('connections.device_settings')" side="end" :close-label="$t('_common.close')" @update:model-value="(open) => !open && !saving && closeDevice()">
+      <div v-if="selectedClient" class="pin-device">
+        <div class="pin-device__head">
+          <span class="m-lead-circle" :class="leadTone(selectedClient)"><MIcon :name="deviceIconFor(selectedClient.name, selectedClient.os)" /></span>
+          <MField data-redact="client" v-model="selectedClient.name" :label="$t('pin.device_name')" />
         </div>
-      </Transition>
-    </div>
+
+        <MBanner v-if="selectedClient.enabled === false" tone="warn" icon="block" class="pin-device__stopped">
+          {{ $t('connections.sheet_stopped') }}
+          <template #actions><MButton variant="tonal" size="sm" icon="undo" :disabled="updating.has(selectedClient.uuid)" @click="restoreClient(selectedClient)">{{ $t('connections.restore') }}</MButton></template>
+        </MBanner>
+
+        <MSection :title="$t('connections.display_settings')">
+          <MGroup>
+            <MChoiceItem v-model="selectedClient.hdrBrightnessMode" :title="$t('pin.hdr_brightness')" :cancel-label="$t('_common.cancel')" :options="[{ value: 'auto', label: $t('pin.hdr_brightness_auto') }, { value: 'manual', label: $t('pin.hdr_brightness_manual') }]" />
+            <MFieldItem
+              v-for="field in (selectedClient.hdrBrightnessMode === 'manual' ? brightnessFields : [])"
+              :key="field.key"
+              v-model="selectedClient[field.key]"
+              type="number"
+              :label="$t(field.label)"
+              :min="field.min"
+              :max="field.max"
+              :step="field.step"
+              :error="brightnessErrors(selectedClient, brightnessFields).includes(field.key) ? `${field.min} – ${field.max}` : ''"
+            />
+            <MChoiceItem v-model="selectedClient.hdrProfile" :title="$t('pin.color_profile_override')" :cancel-label="$t('_common.cancel')" :disabled="!hasIccFileList" :options="profileOptions" />
+            <MChoiceItem v-model="selectedClient.deviceSize" :title="$t('pin.device_size')" :cancel-label="$t('_common.cancel')" :options="sizeOptions" />
+          </MGroup>
+          <MFooter v-if="selectedClient.hdrBrightnessRuntime?.active">{{ $t('connections.current_brightness') }} {{ formatHdrNits(selectedClient.hdrBrightnessRuntime.maxNits) }} nits</MFooter>
+          <MFooter>{{ $t('connections.display_hint') }}</MFooter>
+        </MSection>
+
+        <!-- the danger zone at the foot of the sheet: a labelled list, red icon and red title, the whole row is the button; each action asks again -->
+        <section class="pin-danger" :aria-label="$t('connections.danger_zone')">
+          <h3 class="pin-danger__label">{{ $t('connections.danger_zone') }}</h3>
+          <MGroup>
+            <MItem v-if="selectedClient.enabled !== false" action class="pin-danger__item" icon="block" :title="$t('connections.disable_row')" :text="$t('connections.disable_row_text')" @click="requestDisable(selectedClient)"><template #trail><MIcon name="chevron_right" /></template></MItem>
+            <MItem action class="pin-danger__item" icon="link_off" :title="$t('connections.unpair')" :text="$t('connections.unpair_row_text')" @click="requestUnpair(selectedClient)"><template #trail><MIcon name="chevron_right" /></template></MItem>
+          </MGroup>
+        </section>
+        <MFooter>ID · {{ selectedClient.uuid }}</MFooter>
+        <p v-if="clientError" class="pin-pair__error" role="alert">{{ clientError }}</p>
+      </div>
+      <template #actions>
+        <MButton variant="text" :disabled="saving" @click="closeDevice">{{ $t('_common.cancel') }}</MButton>
+        <MButton class="pin-pill" :loading="saving" :disabled="!canSaveDevice(selectedClient, brightnessFields)" @click="saveDevice">{{ $t('_common.save') }}</MButton>
+      </template>
+    </MSheet>
+
+    <ConfirmDialog
+      :show="!!confirmAction"
+      dialog-id="client-action"
+      :title="confirmationTitle"
+      title-icon="warning"
+      tone="danger"
+      :dismissible="!actionBusy"
+      :close-label="$t('_common.close')"
+      @close="confirmAction = null"
+    >
+      <p>{{ confirmationBody }}</p>
+      <p v-if="confirmAction?.type === 'disable'" class="pin-confirm__how"><MIcon name="undo" />{{ $t('connections.disable_how') }}</p>
+      <p v-if="clientError" class="pin-pair__error" role="alert">{{ clientError }}</p>
+      <template #actions>
+        <MButton variant="text" :disabled="actionBusy" @click="confirmAction = null">{{ $t('_common.cancel') }}</MButton>
+        <MButton variant="danger" :disabled="actionBusy" @click="performAction">{{ confirmAction?.type === 'disable' ? $t('connections.disable_action') : confirmAction?.type === 'unpair-all' ? $t('troubleshooting.unpair_all') : $t('connections.unpair') }}</MButton>
+      </template>
+    </ConfirmDialog>
+    <MSnackbar v-model="noticeOpen" :message="notice" />
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref, nextTick, watch } from 'vue'
+import { computed, inject, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { Tooltip } from 'bootstrap'
-import Navbar from '../components/layout/Navbar.vue'
+import { MBanner, MButton, MChoiceItem, MEmpty, MField, MFieldItem, MFooter, MGroup, MIcon, MItem, MPage, MPinPad, MPromo, MScallop, MSection, MSeg, MSheet, MSkeleton, MSnackbar, MSwitchItem, usePageFilter, contextTexts } from 'foundation-ui/vue'
+import ConfirmDialog from '../components/common/ConfirmDialog.vue'
 import { formatHdrNits, usePin } from '../composables/usePin.js'
 import { useQrPair } from '../composables/useQrPair.js'
 import { useRemoteConnect } from '../composables/useRemoteConnect.js'
+import { deviceIconFor } from '../utils/homeData.js'
+import { clientTexts, filterClients, groupClients, kindOptions } from '../utils/clientList.js'
+import { PIN_LENGTH, brightnessErrors, canSaveDevice, canSubmitPairing, clientState } from '../utils/pairing.js'
 
-const { t } = useI18n()
-
+const { t, locale } = useI18n()
+const webShell = inject('webShell', null)
 const {
-  pairingDeviceName,
-  unpairAllPressed,
-  unpairAllStatus,
-  showApplyMessage,
-  clients,
-  hdrProfileList,
-  hasIccFileList,
-  loading,
-  saving,
-  deleting,
-  editingStates,
-  refreshClients,
-  unpairAll,
-  unpairSingle,
-  saveClient,
-  startEdit,
-  cancelEdit,
-  hasUnsavedChanges,
-  initPinForm,
-  clickedApplyBanner,
-  loadConfig,
-  loadColorProfiles,
-} = usePin()
-
+  pairingDeviceName, clients, clientsAt, hdrProfileList, hasIccFileList, loading, saving, updating, clientError, listError,
+  refreshClients, unpairAll, unpairSingle, saveClient, startEdit, cancelEdit, setClientEnabled, pairClient, loadConfig, loadColorProfiles,
+} = usePin(t)
+// the page opens on the list skeleton and stays on it until the first list has come back (before that `loading` is still false and the empty state would show for a moment)
+const listed = ref(false)
+const { qrDataUrl, qrPin, qrRemaining, qrLoading, qrError, qrPaired, qrActive, generateQrCode, cancelQrCode } = useQrPair()
 const {
-  qrDataUrl,
-  qrPin,
-  qrRemaining,
-  qrLoading,
-  qrError,
-  qrPaired,
-  qrActive,
-  generateQrCode,
-  cancelQrCode,
-} = useQrPair()
-
-const {
-  enabled: remoteConnectEnabled,
-  running: remoteConnectRunning,
-  available: remoteConnectAvailable,
-  busy: remoteConnectRequestBusy,
-  error: remoteConnectError,
-  loadStatus: loadRemoteConnectStatus,
-  setEnabled: setRemoteConnectEnabled,
-  reset: resetRemoteConnect,
+  enabled: remoteConnectEnabled, running: remoteConnectRunning, available: remoteConnectAvailable,
+  busy: remoteConnectRequestBusy, error: remoteConnectError, loadStatus: loadRemoteConnectStatus,
+  setEnabled: setRemoteConnectEnabled, reset: resetRemoteConnect,
 } = useRemoteConnect()
-
 const remoteConnectTransitioning = ref(false)
-const remoteConnectBusy = computed(
-  () => remoteConnectRequestBusy.value || remoteConnectTransitioning.value || qrLoading.value,
-)
+const remoteConnectBusy = computed(() => remoteConnectRequestBusy.value || remoteConnectTransitioning.value || qrLoading.value)
 
-const clientToDelete = ref(null)
+const tx = computed(() => clientTexts(locale.value))
+// 30 clients are not one column: grouped by the kind of device, filtered by kind and by name
+const kind = ref('all')
+const query = ref('')
+// a client chosen in the search: the filter takes its name, the row pulses
+usePageFilter({ page: 'pin', apply: (q) => { kind.value = 'all'; query.value = q }, rowSelector: (q) => `[data-row="${CSS.escape(q)}"]` })
+const kindChoices = computed(() => kindOptions(clients.value, tx.value))
+const shown = computed(() => filterClients(clients.value, kind.value, query.value))
+const groups = computed(() => groupClients(shown.value))
+// the devices that cannot connect are one group under their own heading, below the others
+const listGroups = computed(() => {
+  const on = groupClients(shown.value.filter((c) => c.enabled !== false))
+  const off = shown.value.filter((c) => c.enabled === false)
+  return off.length ? [...on, { kind: '__stopped', items: off }] : on
+})
+watch(kindChoices, (options) => { if (!options.some((o) => o.value === kind.value)) kind.value = 'all' })
 
-const handleDelete = (client) => {
-  if (editingStates[client.uuid]) return
-  clientToDelete.value = client
+const showPairing = ref(false)
+const pairMode = ref('pin')
+const pinValue = ref('')
+const pairingBusy = ref(false)
+const pairReady = computed(() => canSubmitPairing(pinValue.value, pairingDeviceName.value))
+const selectedUuid = ref(null)
+const selectedClient = computed(() => clients.value.find((client) => client.uuid === selectedUuid.value))
+const confirmAction = ref(null)
+const actionBusy = ref(false)
+const notice = ref('')
+const noticeOpen = ref(false)
+const say = (text) => { notice.value = text; noticeOpen.value = true }
+let refreshTimer
+
+const stateOf = clientState
+// The second line says something the switch does not: that the client is streaming now, or the device size when one was chosen (a medium, tablet size too); a client without a chosen size is treated as medium by the host, so every row would read the same.
+const DEFAULT_DEVICE_SIZE = 'medium'
+const rowText = (client) => (stateOf(client) === 'streaming' ? t('connections.streaming') : client.deviceSize && (client.deviceSizeSet || client.deviceSize !== DEFAULT_DEVICE_SIZE) ? `${t('pin.device_size')} · ${t(`pin.device_size_${client.deviceSize}`)}` : '')
+const leadTone = (client) => ({ 'm-lead-circle--success': stateOf(client) === 'streaming', 'm-lead-circle--off': stateOf(client) === 'disabled' })
+
+const brightnessFields = [
+  { key: 'hdrBrightnessMaxNits', label: 'pin.hdr_brightness_peak', min: 1, max: 10000, step: 1 },
+  { key: 'hdrBrightnessMinNits', label: 'pin.hdr_brightness_min', min: 0, max: 100, step: 0.001 },
+  { key: 'hdrBrightnessMaxFullFrameNits', label: 'pin.hdr_brightness_full_frame', min: 1, max: 10000, step: 1 },
+]
+const sizeOptions = computed(() => ['small', 'medium', 'large', 'huge'].map((size) => ({ value: size, label: t(`pin.device_size_${size}`) })))
+const profileOptions = computed(() => {
+  const current = selectedClient.value?.hdrProfile
+  const list = [{ value: '', label: t('pin.system_color_profile') }]
+  if (current && !hdrProfileList.value.includes(current)) list.push({ value: current, label: current })
+  return list.concat(hdrProfileList.value.map((profile) => ({ value: profile, label: profile })))
+})
+const confirmationTitle = computed(() => (confirmAction.value?.type === 'disable' ? t('connections.disable_title', { name: confirmAction.value.client?.name }) : confirmAction.value?.type === 'unpair-all' ? t('connections.unpair_all_title') : t('connections.unpair_title', { name: confirmAction.value?.client?.name })))
+const confirmationBody = computed(() => t(confirmAction.value?.type === 'disable' ? 'connections.disable_body' : confirmAction.value?.type === 'unpair-all' ? 'connections.unpair_all_body' : 'connections.unpair_body', { n: clients.value.length }))
+
+// ---- Pairing ----
+const openPairing = (mode = 'pin') => {
+  clientError.value = ''
+  pinValue.value = ''
+  pairMode.value = mode === 'qr' ? 'qr' : 'pin'
+  showPairing.value = true
+  if (pairMode.value === 'qr' && !qrActive.value) void generateQrCode()
+}
+const closePairing = async () => {
+  if (remoteConnectTransitioning.value || qrLoading.value) return
+  showPairing.value = false
+  pinValue.value = ''
+  if (qrActive.value) await cancelQrCode()
+}
+const setPairMode = async (mode) => {
+  if (remoteConnectBusy.value) return
+  if (mode === 'pin' && qrActive.value) await cancelQrCode()
+  pairMode.value = mode
 }
 
-const confirmDelete = async () => {
-  if (!clientToDelete.value) return
-  const success = await unpairSingle(clientToDelete.value.uuid)
-  if (success) clientToDelete.value = null
-}
-
-const handleSave = async (uuid) => {
-  const success = await saveClient(uuid)
-  if (!success) alert(t('pin.save_failed'))
-}
-
-const handleCancelEdit = (uuid) => cancelEdit(uuid)
-
-const handleUnpairAll = async () => {
-  if (confirm(t('pin.unpair_all_confirm'))) await unpairAll()
-}
-
-const handleRemoteConnectToggle = async (event) => {
-  const target = event.target
-  if (remoteConnectBusy.value) {
-    target.checked = remoteConnectEnabled.value
-    return
-  }
-
-  const enabled = target.checked
-  if (enabled && !confirm(t('pin.remote_connect_enable_confirm'))) {
-    target.checked = false
-    return
-  }
-
+const handleRemoteConnectToggle = async (enabled) => {
+  if (remoteConnectBusy.value || (enabled && !confirm(t('pin.remote_connect_enable_confirm')))) return
   remoteConnectTransitioning.value = true
   try {
     const regenerateQr = qrActive.value
     if (regenerateQr) await cancelQrCode()
     const success = await setRemoteConnectEnabled(enabled)
-    if (success && regenerateQr) await generateQrCode()
+    if (success && regenerateQr && showPairing.value && pairMode.value === 'qr') await generateQrCode()
   } finally {
-    target.checked = remoteConnectEnabled.value
     remoteConnectTransitioning.value = false
   }
 }
 
 const handleRemoteConnectReset = async () => {
   if (remoteConnectBusy.value || !confirm(t('pin.remote_connect_reset_confirm'))) return
-
   remoteConnectTransitioning.value = true
   try {
-    await cancelQrCode()
+    if (qrActive.value) await cancelQrCode()
     await resetRemoteConnect()
   } finally {
     remoteConnectTransitioning.value = false
   }
 }
+const submitPairing = async () => {
+  if (!pairReady.value || pairingBusy.value) return
+  pairingBusy.value = true
+  try {
+    if (await pairClient(pinValue.value, pairingDeviceName.value.trim())) {
+      await closePairing()
+      say(t('connections.pair_sent'))
+      await refreshClients()
+    } else pinValue.value = ''
+  } finally {
+    pairingBusy.value = false
+  }
+}
 
-const initTooltips = () => {
-  nextTick(() => {
-    const tooltipConfigs = [
-      { selector: '[data-tooltip="hdr-profile"]', title: t('pin.hdr_profile_info') },
-      { selector: '[data-tooltip="device-size"]', title: t('pin.device_size_info') }
-    ]
-    
-    tooltipConfigs.forEach(({ selector, title }) => {
-      const el = document.querySelector(selector)
-      if (!el) return
-      
-      Tooltip.getInstance(el)?.dispose()
-      new Tooltip(el, { html: true, placement: 'top', title })
-    })
+// ---- Device settings ----
+const editClient = (client) => {
+  clientError.value = ''
+  startEdit(client.uuid)
+  selectedUuid.value = client.uuid
+}
+const closeDevice = () => {
+  if (selectedUuid.value) cancelEdit(selectedUuid.value)
+  selectedUuid.value = null
+}
+const saveDevice = async () => {
+  if (!canSaveDevice(selectedClient.value, brightnessFields)) return
+  selectedClient.value.name = selectedClient.value.name.trim()
+  if (await saveClient(selectedUuid.value)) {
+    selectedUuid.value = null
+    say(t('connections.device_saved'))
+  } else clientError.value ||= t('pin.save_failed')
+}
+// stopping a device is a ban: it always asks, and says what happens and how to undo it; restoring it is harmless and does not ask
+const requestDisable = (client) => {
+  closeDevice()
+  clientError.value = ''
+  confirmAction.value = { type: 'disable', client }
+}
+const restoreClient = async (client) => {
+  clientError.value = ''
+  if (await setClientEnabled(client.uuid, true)) say(t('connections.restored', { name: client.name }))
+}
+const requestUnpair = (client) => {
+  closeDevice()
+  clientError.value = ''
+  confirmAction.value = { type: 'unpair', client }
+}
+const performAction = async () => {
+  if (!confirmAction.value) return
+  actionBusy.value = true
+  try {
+    const action = confirmAction.value
+    let success = false
+    if (action.type === 'disable') success = await setClientEnabled(action.client.uuid, false)
+    else if (action.type === 'unpair') success = await unpairSingle(action.client.uuid)
+    else success = await unpairAll()
+    if (success) {
+      confirmAction.value = null
+      say(action.type === 'disable' ? t('connections.stopped_note', { name: action.client?.name }) : t('connections.action_done'))
+      if (!clients.value.length) openPairing()
+    } else clientError.value ||= t('connections.action_failed')
+  } finally {
+    actionBusy.value = false
+  }
+}
+
+// Right click on a client: settings, rename, allow or block, unpair
+function onRowMenu(event, client) {
+  if (!webShell?.showMenu) return
+  const enabled = client.enabled !== false
+  webShell.showMenu(event, [
+    { id: 'settings', icon: 'settings', label: t('connections.device_settings') },
+    { id: 'rename', icon: 'edit', label: t('pin.device_name') },
+    { id: 'toggle', icon: enabled ? 'block' : 'undo', label: enabled ? t('connections.disable_row') : t('connections.restore') },
+    ...(client.uuid ? [{ id: 'copy-id', icon: 'content_copy', label: contextTexts(String(locale.value)).copyDeviceId }] : []),
+    { id: 'sep', divider: true },
+    { id: 'unpair', icon: 'link_off', label: t('connections.unpair'), danger: true },
+  ], client, (entry) => {
+    if (entry.id === 'settings' || entry.id === 'rename') editClient(client)
+    else if (entry.id === 'toggle') (enabled ? requestDisable(client) : restoreClient(client))
+    else if (entry.id === 'copy-id') navigator.clipboard?.writeText(client.uuid).then(() => say(contextTexts(String(locale.value)).copied)).catch(() => {})
+    else if (entry.id === 'unpair') requestUnpair(client)
   })
 }
+// Arrow keys move between rows on the same kind of control (switch to switch, gear to gear)
+function rowKeys(event) {
+  if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+  const kind = event.target.closest?.('.pin-row__unpair') ? '.pin-row__unpair' : event.target.closest?.('.m-split-item__gear') ? '.m-split-item__gear' : ''
+  if (!kind) return
+  const all = [...event.currentTarget.querySelectorAll(kind)]
+  const next = all[all.indexOf(event.target.closest(kind)) + (event.key === 'ArrowDown' ? 1 : -1)]
+  if (next) { next.focus(); event.preventDefault() }
+}
 
-onMounted(async () => {
-  loadRemoteConnectStatus()
-  await loadConfig()
-  await refreshClients()
-  await loadColorProfiles()
-
-  initPinForm(() => setTimeout(refreshClients, 0))
-
-  initTooltips()
+// "Pair a client" of the list pane's action button
+watch(() => webShell?.pending.value, (request) => {
+  if (request !== 'pair' && request !== 'pair-qr') return
+  webShell.pending.value = ''
+  openPairing(request === 'pair-qr' ? 'qr' : 'pin')
+}, { immediate: true })
+watch(qrPaired, async (paired) => {
+  if (paired) {
+    await closePairing()
+    await refreshClients()
+    say(t('pin.qr_paired_success'))
+  }
 })
-
-watch(clients, initTooltips, { deep: true })
+onMounted(async () => {
+  void loadRemoteConnectStatus()
+  await loadConfig()
+  const clientsLoaded = await refreshClients()
+  listed.value = true
+  await loadColorProfiles()
+  if ((clientsLoaded && !clients.value.length) || window.location.hash === '#pairing') openPairing()
+  else if (window.location.hash === '#pairing-qr') openPairing('qr')
+  refreshTimer = setInterval(() => {
+    if (!selectedUuid.value && !showPairing.value && !confirmAction.value && !loading.value && !document.hidden && !updating.value.size) void refreshClients()
+  }, 5000)
+})
+onUnmounted(() => clearInterval(refreshTimer))
+const SHAPES = { mobile: 'cookie', tablet: 'clover', tv: 'sunny', laptop_mac: 'squircle', desktop_mac: 'squircle', desktop_windows: 'squircle', sports_esports: 'gem', view_in_ar: 'burst' }
+const shapeFor = (client) => SHAPES[deviceIconFor(client.name, client.os)] || 'circle'
 </script>
-
-<style>
-@import '../styles/global.less';
-</style>
-
-<style scoped lang="less">
-.pin-page {
-  min-height: 100vh;
-  padding-bottom: var(--spacing-xl);
-  color: var(--ui-text-primary);
-  background: linear-gradient(180deg, rgba(var(--ui-accent-rgb), 0.06), transparent 28rem);
-
-  .page-title {
-    color: var(--ui-text-primary) !important;
-    font-weight: 600;
-  }
-
-  #form > .card {
-    width: min(100%, 480px);
-  }
-
-  .table {
-    --bs-table-bg: transparent;
-    --bs-table-color: var(--ui-text-primary);
-    --bs-table-border-color: var(--ui-border);
-    --bs-table-hover-bg: var(--ui-accent-soft);
-    --bs-table-hover-color: var(--ui-text-primary);
-  }
-
-  .table-dark {
-    --bs-table-bg: var(--ui-surface-strong);
-    --bs-table-color: var(--ui-text-secondary);
-    --bs-table-border-color: var(--ui-border);
-  }
-}
-
-.client-list-container {
-  margin-top: 1rem;
-
-  .brightness-guidance {
-    display: flex;
-    align-items: flex-start;
-    gap: 0.65rem;
-    padding: 0.7rem 0.85rem;
-    color: var(--ui-text-secondary);
-    background: color-mix(in srgb, var(--ui-accent) 8%, transparent);
-    border-left: 3px solid var(--ui-accent);
-    border-radius: var(--ui-radius-sm, 6px);
-    font-size: 0.875rem;
-    line-height: 1.45;
-
-    i {
-      margin-top: 0.2rem;
-      color: var(--ui-accent);
-    }
-  }
-
-  .table-responsive {
-    border-radius: var(--border-radius-md, 8px);
-    overflow-x: auto;
-    overflow-y: hidden;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  .table {
-    border-radius: var(--border-radius-md, 12px);
-    overflow: hidden;
-    margin-bottom: 0;
-  }
-
-  .cell-control {
-    display: grid;
-    gap: 0.55rem;
-    min-width: 0;
-  }
-
-  .setting-pill {
-    display: inline-flex;
-    align-items: center;
-    justify-self: start;
-    gap: 0.45rem;
-    padding: 0.3rem 0.55rem;
-    color: var(--ui-text-primary);
-    background: var(--ui-accent-soft);
-    border: 1px solid color-mix(in srgb, var(--ui-accent) 22%, var(--ui-border));
-    border-radius: 999px;
-    font-size: 0.82rem;
-    font-weight: 600;
-
-    i {
-      color: var(--ui-accent);
-      font-size: 0.75rem;
-    }
-  }
-
-  .setting-value-text {
-    color: var(--ui-text-secondary);
-    font-size: 0.875rem;
-    line-height: 1.35;
-  }
-
-  .manual-brightness-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(7rem, 1fr));
-    gap: 0.5rem;
-    padding: 0.65rem;
-    background: color-mix(in srgb, var(--ui-surface) 84%, transparent);
-    border: 1px solid var(--ui-border);
-    border-radius: var(--ui-radius-sm, 6px);
-  }
-
-  .brightness-field {
-    display: grid;
-    gap: 0.25rem;
-    min-width: 0;
-    margin: 0;
-
-    span {
-      overflow: hidden;
-      color: var(--ui-text-secondary);
-      font-size: 0.72rem;
-      font-weight: 600;
-      line-height: 1.25;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-  }
-
-  .brightness-runtime {
-    display: grid;
-    gap: 0.2rem;
-    padding-left: 0.1rem;
-    line-height: 1.35;
-  }
-
-  .runtime-source {
-    color: var(--ui-success, #198754);
-    font-size: 0.78rem;
-    font-weight: 600;
-
-    i {
-      margin-right: 0.25rem;
-    }
-  }
-
-  .runtime-values {
-    color: var(--ui-text-muted);
-    font-size: 0.72rem;
-  }
-}
-
-.table-warning {
-  background-color: var(--ui-warning-soft) !important;
-}
-
-/* Delete Client Modal - 使用 ScanResultModal 样式 */
-.delete-client-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  width: 100vw;
-  height: 100vh;
-  margin: 0;
-  background: var(--modal-backdrop-bg, rgba(45, 38, 40, 0.72));
-  backdrop-filter: blur(8px);
-  z-index: 9999;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--spacing-lg, 20px);
-  overflow: hidden;
-
-}
-
-.delete-client-modal {
-  background: var(--ui-surface-strong);
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-lg);
-  width: 100%;
-  max-width: 500px;
-  max-height: 80vh;
-  display: flex;
-  flex-direction: column;
-  backdrop-filter: blur(20px);
-  box-shadow: var(--ui-shadow-md);
-  animation: modalSlideUp 0.3s ease;
-
-}
-
-@keyframes modalSlideUp {
-  from {
-    transform: translateY(20px);
-    opacity: 0;
-  }
-  to {
-    transform: translateY(0);
-    opacity: 1;
-  }
-}
-
-.delete-client-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: var(--spacing-md, 20px) var(--spacing-lg, 24px);
-  border-bottom: 1px solid var(--ui-border);
-
-  h5 {
-    margin: 0;
-    color: var(--ui-text-primary);
-    font-size: var(--font-size-lg, 1.1rem);
-    font-weight: 600;
-    display: flex;
-    align-items: center;
-    gap: var(--spacing-sm, 8px);
-  }
-
-}
-
-.delete-client-body {
-  padding: var(--spacing-lg, 24px);
-  font-size: var(--font-size-md, 0.95rem);
-  line-height: 1.5;
-  overflow-y: auto;
-  flex: 1;
-  color: var(--ui-text-primary);
-}
-
-.delete-client-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  padding: var(--spacing-md, 20px) var(--spacing-lg, 24px);
-  border-top: 1px solid var(--ui-border);
-  background: var(--ui-surface);
-
-  button {
-    padding: 8px 16px;
-    font-size: 0.9rem;
-  }
-}
-
-/* Vue 过渡动画 */
-.fade-enter-active,
-.fade-leave-active {
-  transition: opacity 0.3s ease;
-}
-
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
-
-/* 响应式优化 */
-@media (max-width: 768px) {
-  .client-list-container {
-    .brightness-guidance {
-      margin-left: 0 !important;
-      margin-right: 0 !important;
-    }
-
-    .table-responsive {
-      overflow: visible;
-      border-radius: 0;
-    }
-
-    .table {
-      display: block;
-      border: 0;
-      background: transparent;
-
-      thead {
-        display: none;
-      }
-
-      tbody {
-        display: grid;
-        gap: 0.75rem;
-      }
-
-      tr {
-        display: block;
-        border: 1px solid var(--ui-border);
-        border-radius: var(--border-radius-md, 8px);
-        background: var(--ui-surface);
-        overflow: hidden;
-      }
-
-      td {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 1rem;
-        width: 100%;
-        padding: 0.75rem 1rem !important;
-        border: 0;
-        border-bottom: 1px solid var(--ui-border);
-        text-align: right;
-
-        &::before {
-          content: attr(data-label);
-          min-width: 6.5rem;
-          color: var(--ui-text-secondary);
-          font-weight: 600;
-          text-align: left;
-        }
-
-        &:last-child {
-          border-bottom: 0;
-        }
-      }
-
-      .hdr-brightness-cell {
-        display: block;
-        text-align: left;
-
-        &::before {
-          display: block;
-          margin-bottom: 0.65rem;
-        }
-
-        .cell-control {
-          width: 100%;
-        }
-      }
-
-      .manual-brightness-grid {
-        grid-template-columns: 1fr;
-      }
-
-      .brightness-field span {
-        white-space: normal;
-      }
-
-      .runtime-values {
-        display: block;
-        line-height: 1.5;
-      }
-
-      .form-select {
-        width: min(100%, 13rem);
-        min-height: 44px;
-      }
-
-      .client-actions-cell {
-        display: block;
-        text-align: left;
-
-        &::before {
-          display: block;
-          margin-bottom: 0.5rem;
-        }
-      }
-    }
-  }
-
-  .btn-toolbar {
-    flex-direction: column;
-    gap: 0.5rem;
-
-    .btn {
-      width: 100%;
-      min-height: 44px;
-      margin: 0;
-    }
-  }
-
-  .table-responsive {
-    font-size: 0.875rem;
-  }
-}
-
-/* QR Code Pairing Styles */
-.qr-pair-card {
-  max-width: 480px;
-  margin-left: auto;
-  margin-right: auto;
-}
-
-.qr-image-wrapper {
-  display: inline-block;
-  padding: 12px;
-  background: #fff;
-  border-radius: 12px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
-}
-
-.qr-image {
-  display: block;
-  width: 280px;
-  height: 280px;
-  border-radius: 4px;
-}
-
-.divider-text {
-  display: flex;
-  align-items: center;
-  text-align: center;
-  color: var(--ui-text-muted);
-  font-size: 0.875rem;
-
-  &::before,
-  &::after {
-    content: '';
-    flex: 1;
-    border-bottom: 1px solid var(--ui-border);
-  }
-
-  span {
-    padding: 0 1rem;
-  }
-
-}
-</style>

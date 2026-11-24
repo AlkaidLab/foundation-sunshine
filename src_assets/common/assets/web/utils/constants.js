@@ -10,10 +10,10 @@ export const APP_CONSTANTS = {
   
   // 消息图标映射
   MESSAGE_ICONS: {
-    success: 'fa-check-circle',
-    error: 'fa-exclamation-circle',
-    warning: 'fa-exclamation-triangle',
-    info: 'fa-info-circle'
+    success: 'check_circle',
+    error: 'error',
+    warning: 'warning',
+    info: 'info'
   },
   
   // 默认应用配置
@@ -64,84 +64,8 @@ export const APP_CONSTANTS = {
   TEXT_TRUNCATE_LENGTH: 50
 };
 
-// 默认内置应用配置
-export const DEFAULT_BUILT_IN_APPS = {
-  windows: [
-    {
-      name: 'Desktop',
-      'image-path': 'desktop',
-      'exclude-global-prep-cmd': 'false',
-      elevated: '',
-      'auto-detach': 'true',
-      'wait-all': 'true',
-      'exit-timeout': '5',
-      'menu-cmd': [
-        {
-          id: 'kcENAT5r9P',
-          name: '触摸键盘',
-          cmd: '.\\tools\\qiin-tabtip.exe',
-          elevated: 'false'
-        },
-        {
-          id: 'rjeOKHmcdL',
-          name: '桌宠',
-          cmd: '.\\assets\\gui\\sunshine-gui.exe --toolbar',
-          elevated: 'false'
-        }
-      ]
-    },
-    {
-      name: 'Steam Big Picture',
-      cmd: 'steam://open/bigpicture',
-      'auto-detach': 'true',
-      'wait-all': 'true',
-      'image-path': 'steam.png'
-    },
-    {
-      name: 'Xbox Game',
-      cmd: 'cmd /c "start xbox:"',
-      'auto-detach': 'true',
-      'wait-all': 'true',
-      'image-path': 'box.png'
-    }
-  ],
-  linux: [
-    {
-      name: 'Desktop',
-      'image-path': 'desktop.png'
-    },
-    {
-      name: 'Low Res Desktop',
-      'image-path': 'desktop.png',
-      'prep-cmd': [
-        {
-          do: 'xrandr --output HDMI-1 --mode 1920x1080',
-          undo: 'xrandr --output HDMI-1 --mode 1920x1200'
-        }
-      ]
-    },
-    {
-      name: 'Steam Big Picture',
-      detached: [
-        'setsid steam steam://open/bigpicture'
-      ],
-      'image-path': 'steam.png'
-    }
-  ],
-  macos: [
-    {
-      name: 'Desktop',
-      'image-path': 'desktop.png'
-    },
-    {
-      name: 'Steam Big Picture',
-      detached: [
-        'open steam://open/bigpicture'
-      ],
-      'image-path': 'steam.png'
-    }
-  ]
-};
+// 默认内置应用与默认菜单命令名称：与控制面板共用同一份（foundation-ui/apps）
+export { DEFAULT_BUILT_IN_APPS, DEFAULT_MENU_CMD_NAME_KEYS } from 'foundation-ui/apps';
 
 // 环境变量配置
 export const ENV_VARS_CONFIG = {

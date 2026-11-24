@@ -1,7 +1,7 @@
 # load common dependencies
 # this file will also load platform specific dependencies
 
-# boost, this should be before Simple-Web-Server as it also depends on boost
+# Shared networking and application dependencies
 include(dependencies/Boost_Sunshine)
 
 # submodules
@@ -9,24 +9,46 @@ include(dependencies/Boost_Sunshine)
 set(ENET_NO_INSTALL ON CACHE BOOL "Don't install any libraries built for enet")
 add_subdirectory("${CMAKE_SOURCE_DIR}/third-party/moonlight-common-c/enet")
 
-# Authored haptics analysis belongs to the unprivileged Sunshine process. The
-# elevated DualSense sidecar and driver remain independent of this SDK.
+# Authored haptics analysis belongs to the unprivileged Sunshine process.
 set(MOONLIGHT_HAPTICS_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 add_subdirectory("${CMAKE_SOURCE_DIR}/third-party/moonlight-audio-haptics" EXCLUDE_FROM_ALL)
 
-# web server
-add_subdirectory("${CMAKE_SOURCE_DIR}/third-party/Simple-Web-Server")
 
 # common dependencies
 include("${CMAKE_MODULE_PATH}/dependencies/nlohmann_json.cmake")
+if(WIN32)
+    include("${CMAKE_MODULE_PATH}/dependencies/webp_decoder.cmake")
+    set(OPENSSL_USE_STATIC_LIBS TRUE)
+    # An older configure may have cached DLL import libraries. Preserve explicit
+    # static paths; re-discover only incompatible cached dynamic selections.
+    foreach(_library IN ITEMS OPENSSL_SSL_LIBRARY OPENSSL_CRYPTO_LIBRARY
+            SSL_EAY LIB_EAY SSL_EAY_RELEASE SSL_EAY_DEBUG LIB_EAY_RELEASE LIB_EAY_DEBUG)
+        if(DEFINED ${_library} AND "${${_library}}" MATCHES "\\.dll\\.a$")
+            unset(${_library} CACHE)
+            unset(${_library})
+        endif()
+    endforeach()
+endif()
 find_package(OpenSSL REQUIRED)
+if(MINGW AND (OPENSSL_SSL_LIBRARY MATCHES "\\.dll\\.a$" OR OPENSSL_CRYPTO_LIBRARY MATCHES "\\.dll\\.a$"))
+    message(FATAL_ERROR "Sunshine requires static OpenSSL libraries on MinGW")
+endif()
+if(WIN32 AND TARGET OpenSSL::Crypto)
+    # OpenSSL 4 (MSYS2 mingw-w64-ucrt-x86_64-openssl 4.1.0) seeds from BCryptGenRandom in its static libcrypto (rand_win; OpenSSL 3 used advapi32),
+    # which needs bcrypt, and reads certificates with crypt32; the find module lists neither. Added once here, to the imported target (so they sit behind
+    # the library on every link line, tests that link OpenSSL::Crypto directly included) and to the variable some targets link through; linking them
+    # with OpenSSL 3 is harmless.
+    set_property(TARGET OpenSSL::Crypto APPEND PROPERTY INTERFACE_LINK_LIBRARIES bcrypt crypt32)
+    list(APPEND OPENSSL_LIBRARIES bcrypt crypt32)
+endif()
 find_package(PkgConfig REQUIRED)
 find_package(Threads REQUIRED)
-pkg_check_modules(CURL REQUIRED libcurl)
+pkg_check_modules(CURL REQUIRED IMPORTED_TARGET libcurl)
+include("${CMAKE_MODULE_PATH}/dependencies/network.cmake")
 
 # miniupnp
 pkg_check_modules(MINIUPNP miniupnpc REQUIRED)
-include_directories(SYSTEM ${MINIUPNP_INCLUDE_DIRS})
+
 
 # ffmpeg pre-compiled binaries
 if(WIN32)

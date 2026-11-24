@@ -45,6 +45,25 @@ namespace clipboard_bridge {
 
   using inbound_sink_fn = std::function<void(session_id, const payload_t &)>;
 
+  /// Why the clipboard capability is, or is not, advertised to a client when its session is set up. The words are the ones that leave
+  /// the computer as statistics (stream_end `clip_offer`), so a name must stay a fixed lower-case word.
+  enum class offer_e {
+    offered,  ///< advertised: the setting is on and the Panel agent is subscribed and alive
+    off_config,  ///< `clipboard_sync` is off in the configuration
+    no_agent,  ///< nobody is subscribed to the clipboard stream (the Panel agent is not running or has not connected yet)
+    agent_stale,  ///< subscribed, but the last sign of life is older than the alive window (the agent's heartbeat stopped)
+    unknown,  ///< no capability decision was made for the session
+  };
+  const char *offer_name(offer_e offer);
+
+  /// What the bridge saw of the clipboard during one streaming session (no content, only counts).
+  struct session_note_t {
+    offer_e offer = offer_e::unknown;
+    std::uint32_t inbound_forwarded = 0;  ///< client packets handed to the Panel agent
+    std::uint32_t inbound_dropped = 0;  ///< client packets dropped because the setting is off or the agent is not alive
+    std::uint32_t outbound_sent = 0;  ///< Panel agent items sent to the client
+  };
+
   struct outbound_msg_t {
     session_id target;  ///< kBroadcast or a specific session id
     payload_t bytes;
@@ -55,7 +74,8 @@ namespace clipboard_bridge {
     static bridge_t &instance();
 
     // ---- Inbound: stream.cpp -> GUI ----
-    void on_inbound(session_id sid, payload_t bytes);
+    /// Returns true when a sink took the payload, false when none was registered at that moment.
+    bool on_inbound(session_id sid, payload_t bytes);
     void set_inbound_sink(inbound_sink_fn cb);
 
     // ---- Outbound: GUI -> stream sessions ----
@@ -80,6 +100,15 @@ namespace clipboard_bridge {
     /// inbound sink registered. Used by rtsp.cpp to decide whether to
     /// advertise `platform_caps::clipboard_*` in the SDP feature flags.
     bool gui_alive() const;
+    /// The same decision as gui_alive() with the reason when it is false; `age_ms` gets the time since the last sign of life (-1: never).
+    offer_e agent_state(std::int64_t *age_ms = nullptr) const;
+
+    // ---- Per-session counters for statistics and logs (no content) ----
+    void note_offer(session_id sid, offer_e offer);
+    void note_inbound(session_id sid, bool forwarded);
+    void note_outbound(session_id sid);
+    /// Returns what was recorded for the session and forgets it.
+    session_note_t take_note(session_id sid);
 
     bridge_t(const bridge_t &) = delete;
     bridge_t &operator=(const bridge_t &) = delete;

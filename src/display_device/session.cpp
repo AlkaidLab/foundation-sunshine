@@ -6,9 +6,11 @@
 #include <utility>
 
 // local includes
+#include "bounded_call.h"
 #include "parsed_config.h"
 #include "session.h"
 #include "src/globals.h"
+#include "src/hdr/session_target.h"
 #include "src/platform/common.h"
 #include "src/platform/windows/display_device/session_listener.h"
 #include "src/platform/windows/display_device/windows_utils.h"
@@ -125,12 +127,13 @@ namespace display_device {
     std::chrono::seconds timeout_duration { 5 }; /**< A retry time for the timer. */
     std::function<bool()> retry_function; /**< Function to be executed until it succeeds. */
 
-    std::thread timer_thread; /**< A timer thread. */
     std::condition_variable sleep_cv; /**< Condition variable for waking up thread. */
 
     bool can_wake_up { false }; /**< Safeguard for the condition variable to prevent sporadic thread wake ups. */
     bool keep_alive { true }; /**< A kill switch for the thread when it has been woken up. */
     boost::optional<std::chrono::steady_clock::time_point> next_wake_up_time; /**< Next time point for thread to wake up. */
+    /**< A timer thread. Declared last: it starts in the constructor and reads every member above, which are only constructed before it when it comes after them. */
+    std::thread timer_thread;
   };
 
   session_t::deinit_t::~deinit_t() {
@@ -139,7 +142,7 @@ namespace display_device {
 #endif
     // 清理事件监听器
     SessionEventListener::deinit();
-    
+
     // 兜底：退出时如果 VDD 仍存在且 vdd_keep_enabled=false，直接销毁
     // 使用 nolog 版本，因为析构时 boost::log 可能已被销毁
     if (!config::video.vdd_keep_enabled) {
@@ -154,18 +157,29 @@ namespace display_device {
   }
 
   std::unique_ptr<session_t::deinit_t>
-  session_t::init() {
+  session_t::init(bool skip_recovery) {
 #ifdef _WIN32
     // Remove a registration left behind by a terminated Sunshine process
     // before recovering display state or accepting a new stream.
     platf::vulkan_hdr_bridge::startup_cleanup();
 #endif
     session_t::get().settings.set_filepath(platf::appdata() / "original_display_settings.json");
-    
+
     // 初始化会话事件监听器（用于检测解锁事件）
     SessionEventListener::init();
-    
-    session_t::get().restore_state();
+
+    // The recovery reads the display stack (CCD), and DisplayConfigGetDeviceInfo can block for minutes in the graphics driver: most "host hangs at start"
+    // reports (hang:main-startup) stand in get_monitor_device_path_wstr, with the web UI not yet bound and no way to read the log. Start-up waits for the
+    // recovery a bounded time; a call that does not return runs on by itself and holds the session lock, so a stream that starts later waits behind it
+    // instead of changing the display under a recovery that has not finished.
+    constexpr std::chrono::seconds recovery_wait { 20 };
+    if (skip_recovery) {
+      BOOST_LOG(warning) << "Safe mode: the display recovery of the start is skipped";
+    }
+    else if (!run_bounded([] { session_t::get().restore_state(); }, recovery_wait)) {
+      BOOST_LOG(error) << "The display recovery did not finish within " << recovery_wait.count()
+                       << " s (the display driver does not answer); the host starts without waiting for it";
+    }
     return std::make_unique<deinit_t>();
   }
 
@@ -283,9 +297,7 @@ namespace display_device {
       const vdd_utils::physical_size_t physical_size = vdd_utils::get_client_physical_size(client_name);
 
       // 复用模式使用固定标识符，否则使用客户端ID
-      const std::string vdd_identifier = config::video.vdd_reuse
-        ? "shared_vdd"
-        : client_id;
+      const std::string vdd_identifier = config::video.vdd_reuse ? "shared_vdd" : client_id;
 
       for (int retry = 1; retry <= max_retries; ++retry) {
         BOOST_LOG(info) << "正在执行第" << retry << "次VDD恢复尝试...";
@@ -371,7 +383,7 @@ namespace display_device {
     // 仅在 VDD 预期已经激活后检查 Windows 是否已发布目标模式。
     // 锁屏场景会在解锁后执行本阶段；SYSTEM+RDP 不进入本阶段。
     if (config.resolution && config.refresh_rate) {
-      const display_mode_t requested_mode {*config.resolution, *config.refresh_rate};
+      const display_mode_t requested_mode { *config.resolution, *config.refresh_rate };
       if (!vdd_utils::wait_for_mode_publication(config.device_id, requested_mode)) {
         BOOST_LOG(error) << "VDD monitor did not publish "
                          << to_string(*config.resolution) << "@" << to_string(*config.refresh_rate);
@@ -407,7 +419,7 @@ namespace display_device {
       }
     }
 
-    auto parsed_config = make_parsed_config(config, session);
+    auto parsed_config = make_parsed_config(config, session, is_reconfigure);
     if (!parsed_config) {
       BOOST_LOG(error) << "Failed to parse configuration for the display device settings!";
       restore_state_impl(revert_reason_e::config_cleanup);
@@ -420,7 +432,7 @@ namespace display_device {
 
     // Parsing is side-effect free. From this point on, parsed_config is the
     // single source of truth for whether this session needs VDD preparation.
-    const bool rdp_session_active = display_device::w_utils::is_any_rdp_session_active();
+    const bool rdp_session_active = display_device::w_utils::is_current_session_rdp();
     const bool is_rdp_blocking_vdd = !is_running_as_system_user && rdp_session_active;
     const bool use_vdd = parsed_config->use_vdd.value_or(false);
     const bool should_prepare_vdd = use_vdd && !is_rdp_blocking_vdd;
@@ -445,7 +457,8 @@ namespace display_device {
     }
 
     const bool vulkan_hdr_bridge_requested =
-      should_prepare_vdd && !is_system_rdp_vdd_session && session.enable_hdr && config.vdd_vulkan_hdr_bridge;
+      should_prepare_vdd && !is_system_rdp_vdd_session &&
+      display_prepared_for_hdr(config, session) && config.vdd_vulkan_hdr_bridge;
     const bool will_disable_physical_displays =
       should_prepare_vdd && !is_system_rdp_vdd_session &&
       parsed_config->vdd_prep == parsed_config_t::vdd_prep_e::display_off;
@@ -486,8 +499,8 @@ namespace display_device {
 
         const bool modes_failed = prepare_result == vdd_stage_result_e::modes_failed;
         BOOST_LOG(error) << (modes_failed ?
-                              "Failed to update the VDD mode list" :
-                              "Failed to prepare the VDD device");
+                               "Failed to update the VDD mode list" :
+                               "Failed to prepare the VDD device");
         restore_state_impl(revert_reason_e::config_cleanup);
         return {
           modes_failed ? configure_result_t::result_e::modes_fail : configure_result_t::result_e::vdd_create_failed,
@@ -534,33 +547,50 @@ namespace display_device {
                            should_prepare_vdd,
                            vulkan_hdr_bridge_requested]() {
         if (settings.is_changing_settings_going_to_fail()) {
-          BOOST_LOG(warning) << "Applying display settings will fail - retrying later...";
+          BOOST_LOG(warning) << "[Display Deferred Retry] CCD access is still unavailable; retrying later";
           return false;
-        }
-
-        if (should_prepare_vdd) {
-          const auto vdd_stage_result = apply_vdd_display_stage(config_copy, pre_vdd_devices);
-          if (vdd_stage_result == vdd_stage_result_e::modes_failed) {
-            BOOST_LOG(warning) << "The rebuilt VDD has not published the requested mode yet; retrying the deferred display configuration";
-            return false;
-          }
-          if (vdd_stage_result == vdd_stage_result_e::topology_failed) {
-            BOOST_LOG(warning) << "The deferred VDD topology change is still unavailable; retrying without tearing down the active monitor";
-            return false;
-          }
         }
 
         auto retry_session = rtsp_stream::launch_session_t {};
         retry_session.client_name = client_name;
         retry_session.client_cert_uuid = client_cert_uuid;
         retry_session.enable_hdr = enable_hdr;
+        retry_session.use_vdd = should_prepare_vdd;
         retry_session.hdr_target_source = hdr_target_source;
         if (!client_cert_uuid.empty()) {
           retry_session.env["SUNSHINE_CLIENT_CERT_UUID"] = client_cert_uuid;
         }
         retry_session.hdr_capabilities = hdr_capabilities;
+
+        // 延迟任务不能在会话准备或采集期间重建显示路径。NVHTTP 准备计数覆盖
+        // configure_display 返回到 RTSP ticket 发布之间的窗口；ticket 和活跃
+        // 会话计数覆盖后续握手及串流生命周期。之后才进入的请求会阻塞在本锁上。
+        if (rtsp_stream::session_starting_or_active()) {
+          // Unlocking must not rebuild an active capture path. Restore only the
+          // ICC on the same prepared VDD, if this callback still owns it.
+          if (should_prepare_vdd && client_cert_uuid == current_vdd_identifier && config_copy.device_id == current_vdd_device_id) {
+            if (!hdr::apply_vdd_calibration(retry_session, config_copy.device_id)) {
+              BOOST_LOG(warning) << "[Display Deferred Retry] Could not restore the client HDR calibration; reconnect to retry";
+            }
+          }
+          BOOST_LOG(debug) << "[Display Deferred Retry] Skipping topology changes for an active session";
+          return true;
+        }
+
+        if (should_prepare_vdd) {
+          const auto vdd_stage_result = apply_vdd_display_stage(config_copy, pre_vdd_devices);
+          if (vdd_stage_result == vdd_stage_result_e::modes_failed) {
+            BOOST_LOG(warning) << "[Display Deferred Retry] The rebuilt VDD has not published the requested mode yet; retrying later";
+            return false;
+          }
+          if (vdd_stage_result == vdd_stage_result_e::topology_failed) {
+            BOOST_LOG(warning) << "[Display Deferred Retry] The VDD topology change is still unavailable; retrying without tearing down the active monitor";
+            return false;
+          }
+        }
+
         if (!settings.apply_config(config_copy, retry_session, pre_saved_initial_topology)) {
-          BOOST_LOG(warning) << "Failed to apply display settings - will stop trying, but will allow stream to continue.";
+          BOOST_LOG(warning) << "[Display Deferred Retry] Applying display settings failed; stopping retries while allowing the stream to continue";
           // WARNING! After call to the method below, this lambda function is no longer valid!
           // DO NOT access anything from the capture list!
           restore_state_impl(revert_reason_e::config_cleanup);
@@ -576,11 +606,12 @@ namespace display_device {
           platf::vulkan_hdr_bridge::disable();
         }
 #endif
+        BOOST_LOG(info) << "[Display Deferred Retry] Display settings applied successfully";
         pending_vdd_.reset();
         return true;
       });
 
-      BOOST_LOG(warning) << "It is already known that display settings cannot be changed. Allowing stream to start without changing the settings, but will retry changing settings later...";
+      BOOST_LOG(warning) << "[Display Deferred Retry] CCD access is unavailable; allowing the stream to start and scheduling a display-settings retry";
       return {
         configure_result_t::result_e::deferred_retry,
         "Display settings cannot be changed yet; Sunshine will retry while the stream starts.",
@@ -646,9 +677,7 @@ namespace display_device {
   session_t::create_vdd_monitor(const std::string &client_name) {
     const vdd_utils::physical_size_t physical_size = vdd_utils::get_client_physical_size(client_name);
     // 复用模式使用固定标识符，否则使用客户端名称
-    const std::string vdd_identifier = config::video.vdd_reuse
-      ? "shared_vdd"
-      : client_name;
+    const std::string vdd_identifier = config::video.vdd_reuse ? "shared_vdd" : client_name;
     return vdd_utils::create_vdd_monitor(vdd_identifier, vdd_utils::hdr_brightness_t { 1000.0f, 0.001f, 1000.0f }, physical_size);
   }
 
@@ -660,6 +689,8 @@ namespace display_device {
   bool
   session_t::destroy_vdd_monitor() {
     current_vdd_client_id.clear();
+    current_vdd_identifier.clear();
+    current_vdd_device_id.clear();
     current_vdd_hdr_brightness.reset();
     return vdd_utils::destroy_vdd_monitor();
   }
@@ -689,7 +720,7 @@ namespace display_device {
     switch (setmodes_result) {
       case vdd_utils::set_vdd_result::ok: {
         BOOST_LOG(info) << "VDD会话模式列表更新完成（未写入XML）: " << new_setting;
-        const display_mode_t requested_mode {*config.resolution, *config.refresh_rate};
+        const display_mode_t requested_mode { *config.resolution, *config.refresh_rate };
         const bool mode_advertised =
           !vdd_device_id.empty() && vdd_utils::is_mode_advertised(vdd_device_id, requested_mode);
         if (vdd_device_id.empty() || mode_advertised) {
@@ -756,38 +787,31 @@ namespace display_device {
     auto device_zako = display_device::find_device_by_friendlyname(ZAKO_NAME);
 
     std::string rebuild_old_vdd_id;
-    const bool client_changed = !current_vdd_client_id.empty() &&
-                                !current_client_id.empty() &&
-                                current_vdd_client_id != current_client_id;
+    const std::string vdd_identifier = config::video.vdd_reuse ? "shared_vdd" : current_client_id;
+    const bool identity_changed = current_vdd_identifier != vdd_identifier;
     const bool hdr_capabilities_changed = !current_vdd_hdr_brightness ||
-                                          !current_vdd_hdr_brightness->nearly_equal(hdr_brightness);
+                                          (session.hdr_target_source == hdr::target_source_e::client_report ?
+                                              !current_vdd_hdr_brightness->nearly_equal(hdr_brightness) :
+                                              *current_vdd_hdr_brightness != hdr_brightness);
 
-    // An existing VDD must be rebuilt when its advertised HDR capabilities no
-    // longer match this session. A shared VDD may otherwise be reused across
-    // clients when the effective capabilities are identical.
-    if (!device_zako.empty() && (client_changed || hdr_capabilities_changed)) {
-      const bool reuse_vdd = config::video.vdd_reuse;
+    // Reuse requires the same driver identity and HDR capabilities. The shared
+    // identity stays constant across clients; changing shared/dedicated mode
+    // must rebuild even when the client and brightness remain the same.
+    if (!device_zako.empty() && (identity_changed || hdr_capabilities_changed)) {
+      BOOST_LOG(info) << "Rebuilding VDD to refresh session identity or HDR luminance capabilities"
+                      << " (identity: " << current_vdd_identifier << " -> " << vdd_identifier
+                      << ", HDR capabilities changed: " << hdr_capabilities_changed << ")";
+      const auto old_vdd_id = device_zako;
+      destroy_vdd_monitor();
+      device_zako.clear();
+      rebuild_old_vdd_id = old_vdd_id;
 
-      if (reuse_vdd && !hdr_capabilities_changed) {
-        BOOST_LOG(info) << "共享VDD模式，复用现有VDD（客户端: " << current_vdd_client_id << " -> " << current_client_id << "）";
-        current_vdd_client_id = current_client_id;
+      if (!config::video.vdd_keep_enabled) {
+        BOOST_LOG(debug) << "从initial拓扑中移除VDD: " << old_vdd_id;
+        settings.remove_vdd_from_initial_topology(old_vdd_id);
       }
-      else {
-        BOOST_LOG(info) << "Rebuilding VDD to refresh session identity or HDR luminance capabilities"
-                        << " (client: " << current_vdd_client_id << " -> " << current_client_id
-                        << ", HDR capabilities changed: " << hdr_capabilities_changed << ")";
-        const auto old_vdd_id = device_zako;
-        destroy_vdd_monitor();
-        device_zako.clear();
-        rebuild_old_vdd_id = old_vdd_id;
 
-        if (!config::video.vdd_keep_enabled) {
-          BOOST_LOG(debug) << "从initial拓扑中移除VDD: " << old_vdd_id;
-          settings.remove_vdd_from_initial_topology(old_vdd_id);
-        }
-
-        std::this_thread::sleep_for(500ms);
-      }
+      std::this_thread::sleep_for(500ms);
     }
 
     std::string mode_rebuild_old_vdd_id;
@@ -824,7 +848,6 @@ namespace display_device {
 
       BOOST_LOG(info) << "创建虚拟显示器...";
       // 共享模式使用固定标识符；独立模式则使用当前客户端标识符创建显示器。
-      const std::string vdd_identifier = config::video.vdd_reuse ? "shared_vdd" : current_client_id;
       if (!vdd_utils::create_vdd_monitor(vdd_identifier, hdr_brightness, physical_size)) {
         BOOST_LOG(error) << "VDD monitor creation command failed";
         return vdd_stage_result_e::create_failed;
@@ -885,6 +908,8 @@ namespace display_device {
     config.device_id = device_zako;
     config::video.output_name = device_zako;
     current_vdd_client_id = current_client_id;
+    current_vdd_identifier = vdd_identifier;
+    current_vdd_device_id = device_zako;
     current_vdd_hdr_brightness = hdr_brightness;
     BOOST_LOG(info) << "成功配置VDD设备: " << device_zako;
 
@@ -895,6 +920,13 @@ namespace display_device {
   session_t::restore_state() {
     std::lock_guard lock { mutex };
     restore_state_impl();
+  }
+
+  session_t::vdd_context_t
+  session_t::vdd_context() {
+    std::lock_guard lock { mutex };
+    if (current_vdd_identifier != current_vdd_client_id) return {};
+    return { current_vdd_client_id, current_vdd_device_id };
   }
 
   void
@@ -925,7 +957,7 @@ namespace display_device {
     // 此时不需要恢复拓扑（没有拓扑被修改过），只需要清理可能残留的 VDD
     if (!current_use_vdd.has_value()) {
       BOOST_LOG(debug) << " 无会话配置（current_use_vdd=nullopt），仅执行 VDD 清理";
-      
+
       if (!vdd_id.empty() && !is_keep_enabled) {
         if (settings.has_persistent_data()) {
           BOOST_LOG(info) << "非常驻模式，销毁残留 VDD";
@@ -962,20 +994,14 @@ namespace display_device {
     // VDD模式：从统一值映射到 vdd_prep
     // 普通模式：从统一值映射到 device_prep
     const auto display_prep = current_device_prep.value_or(
-      static_cast<parsed_config_t::device_prep_e>(config::video.display_device_prep)
-    );
+      static_cast<parsed_config_t::device_prep_e>(config::video.display_device_prep));
     const auto vdd_prep = current_vdd_prep.value_or(
-      parsed_config_t::to_vdd_prep(display_prep)
-    );
-    const auto device_prep = is_vdd_mode
-      ? display_prep
-      : parsed_config_t::to_physical_device_prep(display_prep);
-    
+      parsed_config_t::to_vdd_prep(display_prep));
+    const auto device_prep = is_vdd_mode ? display_prep : parsed_config_t::to_physical_device_prep(display_prep);
+
     // 判断是否是无操作模式（会话配置了 no_operation，意味着拓扑从未被修改过）
     // VDD模式看 vdd_prep，普通模式看 device_prep
-    const bool is_no_operation = is_vdd_mode 
-      ? (vdd_prep == parsed_config_t::vdd_prep_e::no_operation)
-      : (device_prep == parsed_config_t::device_prep_e::no_operation);
+    const bool is_no_operation = is_vdd_mode ? (vdd_prep == parsed_config_t::vdd_prep_e::no_operation) : (device_prep == parsed_config_t::device_prep_e::no_operation);
 
     BOOST_LOG(debug) << "restore_state_impl 决策参数:"
                      << " is_vdd_mode=" << is_vdd_mode
@@ -990,7 +1016,7 @@ namespace display_device {
     // VDD 销毁逻辑
     if (!vdd_id.empty()) {
       bool should_destroy = false;
-      
+
       // 判断1：常驻模式 - 保留VDD
       if (is_keep_enabled) {
         BOOST_LOG(debug) << "常驻模式，保留VDD";
@@ -1034,20 +1060,20 @@ namespace display_device {
     // 添加诊断日志
     const bool settings_will_fail = settings.is_changing_settings_going_to_fail();
     BOOST_LOG(debug) << "Checking if reverting settings will fail: " << settings_will_fail;
-    
+
     // VDD生命周期已在上面的逻辑中决定（销毁或保留），通知revert_settings不要再处理VDD销毁
     const bool vdd_already_handled = true;
-    
+
     if (!settings_will_fail && settings.revert_settings(reason, vdd_already_handled)) {
       stop_timer_and_clear_vdd_state();
     }
     else {
       // 无法立即恢复，添加任务到解锁队列
       BOOST_LOG(warning) << "无法立即恢复显示设置";
-      
+
       // 设置待恢复标志
       pending_restore_ = true;
-      
+
       // 添加恢复任务（自动处理锁屏检查和立即执行）
       SessionEventListener::add_unlock_task([this, reason]() {
         // 快速检查是否还需要恢复（最小化锁持有时间）
@@ -1058,7 +1084,7 @@ namespace display_device {
             return;
           }
         }
-        
+
         // 在锁外执行CCD检查和恢复操作（避免阻塞托盘等其他操作）
         if (settings.is_changing_settings_going_to_fail()) {
           BOOST_LOG(warning) << "CCD API仍不可用，启动轮询机制";
@@ -1066,11 +1092,11 @@ namespace display_device {
           this->start_polling_restore(reason);
           return;
         }
-        
+
         // 执行恢复
         auto result = settings.revert_settings(reason, true);
         BOOST_LOG(info) << "恢复显示设置" << (result ? "成功" : "失败");
-        
+
         // 恢复完成后清除标志和状态
         {
           std::lock_guard lock { mutex };
@@ -1086,13 +1112,13 @@ namespace display_device {
     polling_retry_count_.store(0, boost::memory_order_relaxed);  // 重置计数器
     const int max_retries = 20;
 
-    timer->setup_timer([this, reason, max_retries]() {
+    timer->setup_timer([this, reason]() {
       // 检查是否还需要恢复
       if (!pending_restore_) {
         BOOST_LOG(debug) << "恢复操作已取消，跳过";
         return true;
       }
-      
+
       if (settings.is_changing_settings_going_to_fail()) {
         const int current_count = polling_retry_count_.fetch_add(1, boost::memory_order_relaxed) + 1;
         if (current_count >= max_retries) {

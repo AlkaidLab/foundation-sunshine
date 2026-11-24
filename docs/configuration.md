@@ -16,13 +16,22 @@ location by modifying the configuration file.
 
 | OS      | Location                                        |
 |---------|-------------------------------------------------|
-| Docker  | @code{}/config@endcode                          |
 | Linux   | @code{}~/.config/sunshine@endcode               |
 | macOS   | @code{}~/.config/sunshine@endcode               |
 | Windows | @code{}%ProgramFiles%\\Sunshine\\config@endcode |
 
 Although it is recommended to use the configuration UI, it is possible manually configure Sunshine by
 editing the `conf` file in a text editor. Use the examples as reference.
+
+### Windows capture session
+
+The GUI independently selects the active interactive user, preferring the console and falling back
+to an active RDP user, and receives permission to read that user's local authentication token.
+
+Capture uses the console by default. Set `session_binding = 0` in `sunshine.conf` to use automatic
+selection, or `1` to explicitly select the console. Restart the Sunshine service after changing this
+setting. A console without a signed-in user may show the Windows sign-in screen and does not
+provide the desktop of a separate RDP session.
 
 ## [General](https://localhost:47990/config/#general)
 
@@ -236,6 +245,121 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
 </table>
 
+### [pin_prompt](https://localhost:47990/config/#pin_prompt)
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            Where a pairing request asks for its PIN. <code>fullscreen</code> opens the control panel's full-screen
+            PIN entry; <code>panel</code> opens the control panel on its own pairing page instead. The control panel
+            reads the saved value each time a client asks to pair, so a change applies to the next request without
+            restarting Sunshine. It applies to pairing requests handled by the Foundation Panel; when the host's own
+            tray handles them because no Panel is running, the Web UI <code>/pin</code> page still opens.
+        </td>
+    </tr>
+    <tr>
+        <td>Choices</td>
+        <td colspan="2">
+            <table>
+                <tr><td>fullscreen</td><td>Full-screen PIN entry</td></tr>
+                <tr><td>panel</td><td>Enter the PIN on the control panel's pairing page</td></tr>
+            </table>
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            fullscreen
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            pin_prompt = panel
+            @endcode</td>
+    </tr>
+</table>
+
+### [stop_on_last_video_session](https://localhost:47990/config/#stop_on_last_video_session)
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            When enabled, Sunshine ends the application and restores the display when all clients disconnect.
+            Internally, the action is triggered when the last video session ends; any remaining control-only
+            sessions are closed as part of the same cleanup. Save and apply the setting for it to take effect.
+            When disabled, the existing Resume behavior is kept.
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            disabled
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            stop_on_last_video_session = disabled
+            @endcode</td>
+    </tr>
+</table>
+
+### widget_token
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            Access token for the local Game Bar widget endpoints (<code>/api/widget/state</code> and
+            <code>/api/widget/action</code>). These endpoints are loopback-only and require the
+            <code>X-Sunshine-Token</code> request header to match this value. When left empty the
+            widget endpoints stay disabled (404). This field is not editable from the Web UI;
+            set it manually in <code>sunshine.conf</code> and restart Sunshine. Generate a random
+            value (for example a UUID) when enabling it. See <code>gamebar-widget/README.md</code>
+            for the widget-side setup.
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            disabled
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            widget_token = 5f1e9a3c-2b7d-4e6a-9c1f-8a2b3d4e5f60
+            @endcode</td>
+    </tr>
+</table>
+
+### telemetry_consent
+
+<table>
+    <tr><td>Description</td><td>Usage statistics: counts of what is used and numbers about how streams perform, sent to the developers' own server (api.alkaidlab.com). What is sent and what is never sent: <a href="privacy_telemetry.md">privacy_telemetry.md</a>. Changed in the control panel or the Web UI under About › Privacy; the change takes effect at once.</td></tr>
+    <tr><td>Default</td><td><code>on</code></td></tr>
+    <tr><td>Example</td><td><code>telemetry_consent = off</code></td></tr>
+</table>
+
+### telemetry_errors
+
+<table>
+    <tr><td>Description</td><td>Error reports: error records with personal details removed, and crash reports. A stored <code>telemetry_consent = off</code> from the earlier single choice also reads as off here until this key is set to <code>on</code>.</td></tr>
+    <tr><td>Default</td><td><code>on</code></td></tr>
+    <tr><td>Example</td><td><code>telemetry_errors = off</code></td></tr>
+</table>
+
+### telemetry_endpoint
+
+<table>
+    <tr><td>Description</td><td>The server the statistics and error reports go to (for a test server). Batches are posted to <code>&lt;endpoint&gt;/v1/events</code>.</td></tr>
+    <tr><td>Default</td><td><code>https://api.alkaidlab.com</code></td></tr>
+    <tr><td>Example</td><td><code>telemetry_endpoint = http://127.0.0.1:8787</code></td></tr>
+</table>
+
 ## [Input](https://localhost:47990/config/#input)
 
 ### [controller](https://localhost:47990/config/#controller)
@@ -290,8 +414,8 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
     <tr>
         <td>ds5</td>
-        <td>DualShock 5 controller (PS5)
-            @note{This option applies to Linux only.}</td>
+        <td>DualSense controller (PS5)
+            @note{On Windows, this option requires the optional DualSense component. If the component is unavailable, Sunshine falls back to automatic gamepad selection. Saved changes apply to newly allocated controllers without restarting Sunshine.}</td>
     </tr>
     <tr>
         <td>switch</td>
@@ -694,6 +818,9 @@ editing the `conf` file in a text editor. Use the examples as reference.
             %ProgramFiles%\Sunshine\tools\audio-info.exe
             @endcode
             If you have multiple audio devices with identical names, use the Device ID instead.
+            On Windows, an empty value captures the current default device and follows default-device
+            changes during a stream. A selected device remains the capture endpoint even when the
+            Windows default device changes.
             }
             @attention{If you want to mute the host speakers, use
             [virtual_sink](#virtual_sinkhttpslocalhost47990configvirtual_sink) instead.}
@@ -753,6 +880,24 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
 </table>
 
+### [keep_sink_default](https://localhost:47990/config/#keep_sink_default)
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            On Windows, keep the selected audio output device as the system default during streaming.
+            If another application changes the default playback device, Sunshine will try to select the
+            configured or automatically selected sink again. When this setting is disabled, Sunshine
+            leaves the default playback device selected by Windows during the stream.
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">Disabled</td>
+    </tr>
+</table>
+
 ### stream_audio
 
 <table>
@@ -784,17 +929,19 @@ editing the `conf` file in a text editor. Use the examples as reference.
         <td colspan="2">
             Selects how Moonlight microphone PCM is exposed to Windows applications.
             `vb_cable` writes to the VB-CABLE render endpoint and applications capture its paired endpoint.
-            `usbip_experimental` injects PCM directly into the signed Virtual Device Host microphone IN endpoint;
-            it does not use a render-to-capture loopback. `auto` tries USB/IP first and falls back to VB-CABLE.
+            `usbip_experimental` creates the host's own USB microphone ("Sunshine Virtual Microphone", USB Audio Class 1.0,
+            48 kHz mono) on the in-box usbip-win2 path and feeds it the decoded client microphone stream; applications
+            record it as a normal capture device and no VB-CABLE is needed. It does not use a render-to-capture loopback
+            and never changes the Windows default audio devices. `auto` tries the USB microphone first and falls back to VB-CABLE.
             `disabled` rejects microphone redirection while leaving the Moonlight microphone feature setting intact.
-            @warning{The USB/IP backend is experimental and currently uses the DualSense composite prototype profile.}
+            @note{The USB microphone needs the usbip-win2 host component (`usbip.exe` and its driver). See docs/virtual_microphone.md.}
             @note{This option is only supported on Windows.}
         </td>
     </tr>
     <tr>
         <td>Default</td>
         <td colspan="2">@code{}
-            vb_cable
+            auto
             @endcode</td>
     </tr>
     <tr>
@@ -1244,92 +1391,6 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
 </table>
 
-### dd_mode_remapping
-
-<table>
-    <tr>
-        <td>Description</td>
-        <td colspan="2">
-            Remap the requested resolution and FPS to another display mode.<br>
-            Depending on the [dd_resolution_option](#dd_resolution_option) and
-            [dd_refresh_rate_option](#dd_refresh_rate_option) values, the following mapping 
-            groups are available:
-            <ul>
-                <li>`mixed` - both options are set to `auto`.</li>
-                <li>
-                  `resolution_only` - only [dd_resolution_option](#dd_resolution_option) is set to `auto`.
-                </li>
-                <li>
-                  `refresh_rate_only` - only [dd_refresh_rate_option](#dd_refresh_rate_option) is set to `auto`.
-                </li>
-            </ul>
-            For each of those groups, a list of fields can be configured to perform remapping:  
-            <ul>
-                <li>
-                  `requested_resolution` - resolution that needs to be matched in order to use this remapping entry.
-                </li>
-                <li>`requested_fps` - FPS that needs to be matched in order to use this remapping entry.</li>
-                <li>`final_resolution` - resolution value to be used if the entry was matched.</li>
-                <li>`final_refresh_rate` - refresh rate value to be used if the entry was matched.</li>
-            </ul>
-            If `requested_*` field is left empty, it will match <b>everything</b>.<br>
-            If `final_*` field is left empty, the original value will not be remapped and either a requested, manual 
-            or current value is used. However, at least one `final_*` must be set, otherwise the entry is considered 
-            invalid.<br>
-            @note{"Optimize game settings" must be enabled on client side for ANY entry with `resolution` 
-            field to be considered.}
-            @note{First entry to be matched in the list is the one that will be used.}
-            @tip{`requested_resolution` and `final_resolution` can be omitted for `refresh_rate_only` group.}
-            @tip{`requested_fps` and `final_refresh_rate` can be omitted for `resolution_only` group.}
-            @note{Applies to Windows only.}
-        </td>
-    </tr>
-    <tr>
-        <td>Default</td>
-        <td colspan="2">@code{}
-            dd_mode_remapping = {
-              "mixed": [],
-              "resolution_only": [],
-              "refresh_rate_only": []
-            }
-            @endcode
-        </td>
-    </tr>
-    <tr>
-        <td>Example</td>
-        <td colspan="2">@code{}
-            dd_mode_remapping = {
-              "mixed": [
-                {
-                  "requested_fps": "60",
-                  "final_refresh_rate": "119.95",
-                  "requested_resolution": "1920x1080",
-                  "final_resolution": "2560x1440"
-                },
-                {
-                  "requested_fps": "60",
-                  "final_refresh_rate": "120",
-                  "requested_resolution": "",
-                  "final_resolution": ""
-                }
-              ],
-              "resolution_only": [
-                {
-                  "requested_resolution": "1920x1080",
-                  "final_resolution": "2560x1440"
-                }
-              ],
-              "refresh_rate_only": [
-                {
-                  "requested_fps": "60",
-                  "final_refresh_rate": "119.95"
-                }
-              ]
-            }@endcode
-        </td>
-    </tr>
-</table>
-
 ### max_bitrate
 
 <table>
@@ -1514,13 +1575,18 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
 </table>
 
-### [external_ip](https://localhost:47990/config/#external_ip)
+### [external_endpoints](https://localhost:47990/config/#external_endpoints)
 
 <table>
     <tr>
         <td>Description</td>
         <td colspan="2">
-            If no external IP address is given, Sunshine will attempt to automatically detect external ip-address.
+            The public addresses clients use from outside the network, written the way a host is added in Moonlight:
+            a DNS name, an IPv4 address or an IPv6 address, each with an optional port. The port is the HTTP port the
+            router exposes (the base port by default); the HTTPS pairing port is five below it. The external port need
+            not equal the internal one. Separate several entries with commas. An IPv6 address with a port is written
+            in brackets. At most 8 entries are used. The first entry goes into the pairing QR code, and the network
+            check tests every entry. If empty, the legacy @ref external_ip "external_ip" value is used.
         </td>
     </tr>
     <tr>
@@ -1530,11 +1596,136 @@ editing the `conf` file in a text editor. Use the examples as reference.
     <tr>
         <td>Example</td>
         <td colspan="2">@code{}
-            external_ip = 123.456.789.12
+            external_endpoints = home.example.net:60000, 203.0.113.9, [2001:db8::1]:57989
             @endcode</td>
     </tr>
 </table>
 
+### [external_ip](https://localhost:47990/config/#external_ip)
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            The public address clients use outside the network: an IP address or a DNS host name (for example a dynamic DNS name).
+            The value is validated; a malformed value is ignored with a warning. If it is not set, Sunshine uses the
+            automatically discovered address and clients fall back to discovery.
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">Automatic</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            external_ip = 203.0.113.9
+            external_ip = home.example.ddns.net
+            @endcode</td>
+    </tr>
+</table>
+
+
+### [stun_servers](https://localhost:47990/config/#stun_servers)
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            The STUN servers the network overview asks for the public IPv4 and IPv6 addresses and the NAT mapping
+            behaviour (RFC 8489, RFC 5780). Up to 8 entries of a host name or an IP address with an optional port
+            (3478 by default), separated by commas; an IPv6 address with a port is written in brackets. Leave it empty
+            for the built-in list: with a zh-CN locale or a China time zone it asks Xiaomi, Bilibili, Douyu and Mango TV
+            first, then Cloudflare; elsewhere Cloudflare, Google, then the mainland servers. `none` turns STUN off; the
+            overview then shows only the interface addresses and the router check. These are third-party servers: they
+            are contacted only when the network overview is opened, rechecked, or run by the doctor, never in the
+            background, and the result is kept 10 minutes. The page lists the servers it asked.
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">Built-in list (see docs/api/network-overview.md)</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            stun_servers = stun.miwifi.com, stun.chat.bilibili.com:3478, stun.cloudflare.com
+            @endcode</td>
+    </tr>
+</table>
+
+### network_external_check
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            `enabled`: when you press "check" on the network page, a service on the internet connects from outside to each public address you entered and to the TCP ports of this host, and reads this
+            host's GameStream `serverinfo` to compare its unique id with the one this host sends. That is the only way to show that the internet reaches this host: a computer cannot prove it by
+            connecting to its own public address. Nothing is sent while you do not run the check, and an answer is kept for 10 minutes, so pressing the button again does not ask again. The exceptions are the answers that may be out of date in a minute: a port that was found closed or silent, and a refusal (the service saw another address than the one you entered) are kept 1 minute, and a service that asks to wait is not asked before the time it names (1 to 10 minutes).
+            What leaves the computer is the address you entered, the ports of this host, its unique id and an install identifier that the service uses to limit how often one installation may ask:
+            the install identifier of the statistics when statistics are on, otherwise a random value made once per run of the program (it is not kept and is new after a restart). The service only
+            connects to the address the request came from, stores nothing, and answers per port. UDP cannot be tried this way and is always reported as not verified. The service has a daily budget:
+            when it is used up, when it does not answer, or when it sees another address than your router's (a proxy on the router), the check says so and keeps the result of this computer alone;
+            none of these is a failure of your host. Any value other than `enabled` turns it off.
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">enabled</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            network_external_check = disabled
+            @endcode</td>
+    </tr>
+</table>
+
+### network_external_endpoint
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            The base URL of the service of the outside check (see [network_external_check](#network_external_check)); the request goes to `<endpoint>/v1/reach-probe`. Empty uses the built-in service.
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">empty (the built-in service)</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            network_external_endpoint = https://reach.example.net
+            @endcode</td>
+    </tr>
+</table>
+
+### network_bypass_proxy
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            `enabled`: the probes of the network check (the address discovery, the handshake with this host's own public address and the outside check) leave through the physical network adapter, not
+            through the tunnel adapter of a proxy that has taken the default route. The check never reads the system proxy settings: it opens plain TCP and UDP sockets. If the physical adapter has no
+            way out (a computer that reaches the internet only through the tunnel), the check says so and repeats the probe on the system route. A proxy that runs on the router cannot be bypassed from
+            here; the check tells it apart. Any value other than `enabled` uses the system route.
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">enabled</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            network_bypass_proxy = disabled
+            @endcode</td>
+    </tr>
+</table>
 ### [lan_encryption_mode](https://localhost:47990/config/#lan_encryption_mode)
 
 <table>
@@ -2057,13 +2248,13 @@ editing the `conf` file in a text editor. Use the examples as reference.
     <tr>
         <td>Default</td>
         <td colspan="2">@code{}
-            1
+            4
             @endcode</td>
     </tr>
     <tr>
         <td>Example</td>
         <td colspan="2">@code{}
-            nvenc_preset = 1
+            nvenc_preset = 4
             @endcode</td>
     </tr>
     <tr>
@@ -2081,7 +2272,7 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
     <tr>
         <td>4</td>
-        <td>P4</td>
+        <td>P4 (default)</td>
     </tr>
     <tr>
         <td>5</td>
@@ -2137,28 +2328,56 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
 </table>
 
+### [nvenc_frame_budget_guard](https://localhost:47990/config/#nvenc_frame_budget_guard)
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            Automatically lowers the performance preset when its estimated encode time would not fit within a fixed
+            fraction of the frame interval (for example, 4K 120fps clamps the default P4 down to P1 on a single-NVENC
+            GPU). This keeps encoding from falling behind the stream regardless of the configured preset.
+            Estimates are calibrated on recent high-end GPUs with a conservative margin.
+            @note{This option only applies when using NVENC [encoder](#encoderhttpslocalhost47990configencoder).}
+            @note{The effective preset of the latest session is reported in the @code{active_nvenc_frame_budget}@endcode
+            field of the config API, and clamping is logged at warning level.}
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            enabled
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            nvenc_frame_budget_guard = disabled
+            @endcode</td>
+    </tr>
+</table>
+
 ### [nvenc_spatial_aq](https://localhost:47990/config/#nvenc_spatial_aq)
 
 <table>
     <tr>
         <td>Description</td>
         <td colspan="2">
-            Assign higher QP values to flat regions of the video.
-            Recommended to enable when streaming at lower bitrates.
+            Enabled by default. Assigns higher QP values to flat regions of the video, improving perceived quality at
+            constrained bitrates.
             @note{This option only applies when using NVENC [encoder](#encoderhttpslocalhost47990configencoder).}
-            @warning{Enabling this option may reduce performance.}
         </td>
     </tr>
     <tr>
         <td>Default</td>
         <td colspan="2">@code{}
-            disabled
+            enabled
             @endcode</td>
     </tr>
     <tr>
         <td>Example</td>
         <td colspan="2">@code{}
-            nvenc_spatial_aq = disabled
+            nvenc_spatial_aq = enabled
             @endcode</td>
     </tr>
 </table>
@@ -2460,33 +2679,51 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
 </table>
 
-### [nvenc_temporal_aq](https://localhost:47990/config/#nvenc_temporal_aq)
+### nvenc_manage_driver_settings
 
-<table>
-    <tr>
-        <td>Description</td>
-        <td colspan="2">
-            Enable temporal adaptive quantization.
-            Temporal AQ optimizes quantization across time, providing better bitrate distribution
-            and improved quality in motion scenes. This feature works in conjunction with spatial AQ
-            and requires lookahead to be enabled (lookahead_depth > 0).
-            @note{This option only applies when using NVENC [encoder](#encoderhttpslocalhost47990configencoder).}
-            @note{Requires NVENC SDK 13.0 (1202) or newer.}
-        </td>
-    </tr>
-    <tr>
-        <td>Default</td>
-        <td colspan="2">@code{}
-            disabled
-            @endcode</td>
-    </tr>
-    <tr>
-        <td>Example</td>
-        <td colspan="2">@code{}
-            nvenc_temporal_aq = enabled
-            @endcode</td>
-    </tr>
-</table>
+Windows / NVIDIA only. Allow Sunshine to manage its NVIDIA application power profile
+and temporary global driver compatibility settings. Defaults to `enabled`.
+Set to `disabled` to prevent new driver changes; Sunshine still restores changes it
+already owns. The management switch and VSync policy are read again at the next
+launch, so saving these options does not require restarting Sunshine. Explicit command-line overrides
+retain priority over saved settings during these reloads.
+
+### nvenc_vdd_force_vsync
+
+Windows / NVIDIA only. Defaults to `disabled`. Temporarily force NVIDIA **global
+vertical sync ON** for virtual-display streams to address reduced capture frame rates
+observed in some DLSS Frame Generation games. Independent of the encoder, capture
+backend, RTSS and frame-rate telemetry. Physical-display launches do not acquire this
+setting.
+
+Sunshine applies and verifies the setting before launching the game. If a game is
+already running (including a resumed game), restart it after the virtual-display
+session starts. The policy does not detect whether DLSS Frame Generation is enabled.
+Games with explicit per-application driver overrides can ignore the global setting.
+
+The global change may affect other games launched during the stream. The last
+participating pending handshake or active session releases the setting, even when
+the game or persistent VDD remains running. Original user overrides are restored;
+inherited/predefined settings are restored by removing Sunshine's override. Changes
+made by the user while streaming are preserved. Recovery data is flushed to a separate file and atomically replaces the prior
+snapshot before committing driver settings. Failed writes leave the committed
+snapshot intact. Restoration failures retain recovery data for a later retry.
+Abandoned changes are recovered on the next managed startup. A failure is reported
+in the log and the configuration status; it does not block streaming.
+
+Web UI: **Audio / Video → Virtual display**. Desktop control panel: **Streaming →
+Virtual display**. Hosts without NVIDIA hide the option unless an enabled preference
+was saved; that preference remains visible but disabled after changing hardware. Detection failures are shown separately from confirmed
+unsupported hardware. Status refreshes when the page regains focus, without
+replacing unsaved settings.
+
+```ini
+nvenc_manage_driver_settings = enabled
+nvenc_vdd_force_vsync = enabled
+```
+
+Compare capture/output FPS and end-to-end latency when testing. Full capture FPS
+alone does not establish that the presentation latency is acceptable.
 
 ### [nvenc_latency_over_power](https://localhost:47990/config/#nvenc_latency_over_power)
 
@@ -2719,6 +2956,34 @@ editing the `conf` file in a text editor. Use the examples as reference.
 
 ## [AMD AMF Encoder](https://localhost:47990/config/#amd-amf-encoder)
 
+### [amd_vpe](https://localhost:47990/config/#amd_vpe)
+
+Windows-only experimental preference for AMD VPE frame conversion, shared by SDR and HDR streams.
+Defaults to `disabled`; enable with `amd_vpe = enabled` or the AMD AMF settings page, save and apply,
+then start a new stream.
+Requires AMF runtime 1.5.3 or newer and a device reporting VPE availability. Supports Rec.601/709
+BGRA/RGBA SDR to NV12, and linear scRGB to PQ/HLG P010, including scaling and aspect-ratio padding.
+HLG uses the capture display's nominal peak (1000-nit fallback) and BT.2100 system gamma in an extra
+GPU prepass producing scene-linear Rec.2020; AMF performs the HLG OETF, scaling and YUV conversion.
+HLG submits scene-linear input; the driver controls the subsequent processing/resampling order.
+AMF's resampling and chroma filtering can differ from the shader backend; this is not a promise of identical pixels.
+Rotation, non-shareable inputs and unsupported formats, layouts, HLG parameters or driver features
+retain the existing shader path under the same switch.
+
+Dynamic HDR statistics remain enabled at the existing cadence. For VPE HDR, they are decoded from a
+private P010 copy of the actual converted output, including PQ/HLG, full/limited range and the active
+picture rectangle. They reflect quantized 4:2:0 output rather than unscaled capture pixels. Padding is
+excluded; analysis remains nonblocking and skips samples while a previous readback is pending.
+If these analysis resources cannot be created, HDR sessions requiring dynamic metadata use the shader
+backend instead. The default shader backend retains its existing scRGB/snapshot statistics.
+
+The backend requests `VPE_PREFERRED`: the driver may still use compute for unsupported configurations.
+Logs and the runtime conversion label report this preference, not proof of VPE execution. The experiment
+waits for GPU completion and copies the converted GPU output into the encoder's existing texture; it
+may increase latency. Its periodic timing includes synchronization and that copy. Ordinary D3D11 shader
+timings are not reported as VPE execution time. Conversion failures disable the experiment for the stream
+and restore the shader path; the configuration switch remains enabled for the next stream.
+
 ### [amd_usage](https://localhost:47990/config/#amd_usage)
 
 <table>
@@ -2765,6 +3030,20 @@ editing the `conf` file in a text editor. Use the examples as reference.
         <td>ultra low latency (fastest)</td>
     </tr>
 </table>
+
+### [amd_hevc_gop_size](https://localhost:47990/config/#amd_hevc_gop_size)
+
+Windows AMF HEVC keyframe interval, available under AMD AMF advanced settings.
+The default `-1` leaves `HEVC_GOP_SIZE` unset so the driver selects its interval.
+`0` disables periodic refresh while preserving client-requested IDRs; `1`–`1000`
+sets a fixed interval in frames. Setting `60` restores the previous periodic
+refresh policy. The same option applies to the standalone and AVCodec-compatible
+AMF paths. Apply settings and start a new stream for changes to take effect.
+
+An interval is a frame count, so its elapsed time depends on the actual encoded
+frame rate. The encoder logs the driver's effective GOP after initialization.
+Driver defaults and long-running picture recovery still require validation on
+the affected hardware.
 
 ### [amd_rc](https://localhost:47990/config/#amd_rc)
 

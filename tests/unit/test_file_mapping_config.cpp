@@ -106,3 +106,19 @@ TEST(FileMappingConfig, ParsesBase64PersistedConfigValue) {
   EXPECT_EQ(result.mappings[0].name, mapping.name);
   EXPECT_EQ(result.mappings[0].local_root, mapping.local_root);
 }
+
+TEST(FileMappingConfig, RejectsNonTerminalBase64Padding) {
+  const auto result = file_mapping_config::parse_mappings_json("base64:YQ==AAAA");
+
+  EXPECT_TRUE(result.mappings.empty());
+  ASSERT_EQ(result.warnings.size(), 1);
+  EXPECT_EQ(result.warnings.front(), "file_mappings: invalid base64 encoded JSON");
+}
+
+TEST(FileMappingConfig, RejectsNonCanonicalBase64PaddingBits) {
+  const auto result = file_mapping_config::parse_mappings_json("base64:Zh==");
+
+  EXPECT_TRUE(result.mappings.empty());
+  ASSERT_EQ(result.warnings.size(), 1);
+  EXPECT_EQ(result.warnings.front(), "file_mappings: invalid base64 encoded JSON");
+}

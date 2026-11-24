@@ -42,6 +42,42 @@ jobs:
         shell: bash
         run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      # What kind of release this run signs for: a published release of a stable build is a full release, and the last step must not turn
+      # it back into a pre-release; the binaries recompiled below must record the channel of that release (stable, or beta for a
+      # pre-release). A `release` event only runs for a full release (see the job condition). A manual run reads the release of the tag: one
+      # that exists keeps its state, a tag without a release (or with a draft only) gets a new draft pre-release as before.
+      - name: Read the release state
+        id: release_state
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT: ${{ github.event_name }}
+          EVENT_PRERELEASE: ${{ github.event.release.prerelease }}
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = release ]; then
+            state="$EVENT_PRERELEASE"
+          else
+            err="$(mktemp)"
+            if ! state="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isPrerelease --jq .isPrerelease 2>"$err")"; then
+              if grep -qi "not found" "$err"; then
+                state=true
+              else
+                cat "$err" >&2
+                echo "::error title=Release state::could not read the release $RELEASE_TAG"
+                exit 1
+              fi
+            fi
+          fi
+          case "$state" in
+            true) channel=beta ;;
+            false) channel=stable ;;
+            *) echo "::error title=Release state::unexpected prerelease state '$state'"; exit 1 ;;
+          esac
+          echo "prerelease=$state" >> "$GITHUB_OUTPUT"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
       - name: Setup Dependencies Windows
         uses: msys2/setup-msys2@v2
         with:
@@ -79,6 +115,7 @@ jobs:
           dependencies=(
             "git"
             "mingw-w64-ucrt-x86_64-cmake"
+            "mingw-w64-ucrt-x86_64-lld"
             "mingw-w64-ucrt-x86_64-ninja"
             "mingw-w64-ucrt-x86_64-cppwinrt"
             "mingw-w64-ucrt-x86_64-curl-winssl"
@@ -151,23 +188,27 @@ jobs:
           echo "  GCC: $(gcc --version | head -1)"
           echo "  Cargo: $(cargo --version)"
 
-      - name: Setup .NET for DualSense sidecar
-        uses: actions/setup-dotnet@v6
-        with:
-          dotnet-version: '10.0.x'
+      - name: Verify HDR build source
+        id: hdr_source
+        if: github.repository == 'AlkaidLab/foundation-sunshine'
+        shell: bash
+        run: |
+          git fetch --no-tags origin master
+          if git merge-base --is-ancestor HEAD FETCH_HEAD; then
+            echo 'trusted=true' >> "$GITHUB_OUTPUT"
+          fi
 
-      - name: Build self-contained DualSense sidecar
-        shell: pwsh
-        env:
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}
-        run: .\scripts\build-ds5-sidecar.ps1 -ReleaseTag $env:RELEASE_TAG
-
-      - name: Build Windows
+      - name: Configure Windows
         shell: msys2 {0}
         env:
+          RTX_VIDEO_SDK_URL: ${{ steps.hdr_source.outputs.trusted == 'true' && secrets.RTX_VIDEO_SDK_URL || '' }}
+          RTX_VIDEO_SDK_TOKEN: ${{ steps.hdr_source.outputs.trusted == 'true' && secrets.DRIVER_DOWNLOAD_TOKEN || '' }}
+          RTX_VIDEO_NGX_APPLICATION_ID: ${{ steps.hdr_source.outputs.trusted == 'true' && secrets.RTX_VIDEO_NGX_APPLICATION_ID || '' }}
+          SUNSHINE_RTX_HDR: ${{ github.repository == 'AlkaidLab/foundation-sunshine' && 'ON' || 'OFF' }}
           BRANCH: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.ref }}
           BUILD_VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}.杂鱼
           COMMIT: ${{ steps.source.outputs.commit }}
+          SUNSHINE_BUILD_CHANNEL: ${{ steps.release_state.outputs.channel }}
         run: |
           # add Rust to PATH for Tauri GUI build
           WINDOWS_USER=$(cmd //c "echo %USERNAME%" | tr -d '\r')
@@ -180,20 +221,33 @@ jobs:
             -G Ninja \
             -S . \
             -DBUILD_DOCS=OFF \
+            -DSUNSHINE_RTX_HDR="$SUNSHINE_RTX_HDR" \
             -DSUNSHINE_ASSETS_DIR=assets \
             -DSUNSHINE_PUBLISHER_NAME='${{ github.repository_owner }}' \
             -DSUNSHINE_PUBLISHER_WEBSITE='https://github.com/qiin2333/Sunshine-Foundation' \
             -DSUNSHINE_PUBLISHER_ISSUE_URL='https://github.com/qiin2333/Sunshine-Foundation/issues'
+
+      - name: Build Windows
+        shell: msys2 {0}
+        run: |
+          WINDOWS_USER=$(cmd //c "echo %USERNAME%" | tr -d '\r')
+          export PATH="/c/Users/${WINDOWS_USER}/.cargo/bin:$PATH"
           ninja -C build
-          ninja -C build sunshine-control-panel
 
       # Install Inno Setup
       - name: Install Inno Setup
         shell: pwsh
         run: |
-          $url = "https://jrsoftware.org/download.php/is.exe"
+          # The unversioned jrsoftware.org/download.php/is.exe link now serves an
+          # HTML page. Pin the signed release asset (6.x keeps the "Inno Setup 6"
+          # install path used below) and check its publisher before running it.
+          $url = "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe"
           $installer = "$env:TEMP\innosetup.exe"
           Invoke-WebRequest -Uri $url -OutFile $installer
+          $signature = Get-AuthenticodeSignature -FilePath $installer
+          if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false) -cne 'Pyrsys B.V.') {
+            throw "Unexpected Inno Setup installer signature: $($signature.Status) $($signature.SignerCertificate.Subject)"
+          }
           Start-Process -FilePath $installer -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-' -Wait
           echo "C:\Program Files (x86)\Inno Setup 6" >> $env:GITHUB_PATH
 
@@ -225,8 +279,14 @@ jobs:
             echo "Extracting: $PORTABLE"
             mkdir -p unsigned-files
             7z x "$PORTABLE" -o"unsigned-files" -y -aoa
-            mkdir -p unsigned-files/Sunshine/tools/sunshine-ds5-signing-staging
-            cp -a build/ds5-sidecar-runtime/. unsigned-files/Sunshine/tools/sunshine-ds5-signing-staging/
+            ADAPTER="unsigned-files/Sunshine/tools/hdr_enhanced/nvidia_rtx_video/foundation_rtx_video_adapter.dll"
+            test -f "$ADAPTER"
+            mkdir -p hash-bound-files
+            mv "$ADAPTER" hash-bound-files/foundation_rtx_video_adapter.dll
+            # The capture EXE embeds these two DLL hashes; signing the DLLs
+            # after compilation would invalidate both names and trust checks.
+            mkdir -p hash-bound-files/mat-capture
+            mv unsigned-files/Sunshine/tools/mat-capture/*.dll hash-bound-files/mat-capture/
             echo "Extracted files for signing:"
             ls -laR unsigned-files/
           else
@@ -276,24 +336,17 @@ jobs:
           }
           Write-Host "`n✓ All signatures are VALID!" -ForegroundColor Green
 
-      - name: Package signed DualSense component
+      # The adapter's raw SHA-256 is compiled into Sunshine. Keep that exact
+      # build artifact instead of changing it after the trust header is made.
+      - name: Restore hash-bound RTX adapter
         shell: pwsh
-        env:
-          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}
         run: |
-          .\scripts\package-ds5-sidecar.ps1 `
-            -RuntimeDirectory 'signed-files/Sunshine/tools/sunshine-ds5-signing-staging' `
-            -PackageDirectory 'signed-component' `
-            -ManifestPath 'build/ds5-sidecar-package.json' `
-            -ReleaseTag $env:RELEASE_TAG
-          Copy-Item -LiteralPath 'build/ds5-sidecar-package.json' `
-            -Destination 'signed-files/Sunshine/tools/ds5-sidecar-package.json' -Force
-          Copy-Item -LiteralPath 'build/ds5-sidecar-package.json' `
-            -Destination 'build/inno_staging/tools/ds5-sidecar-package.json' -Force
-          Copy-Item -LiteralPath 'build/ds5-sidecar-package.json' `
-            -Destination 'signed-component/Sunshine.Ds5Sidecar.manifest.json' -Force
-          Remove-Item -LiteralPath 'signed-files/Sunshine/tools/sunshine-ds5-signing-staging' `
-            -Recurse -Force
+          $destination = 'signed-files/Sunshine/tools/hdr_enhanced/nvidia_rtx_video/foundation_rtx_video_adapter.dll'
+          New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
+          Copy-Item -LiteralPath 'hash-bound-files/foundation_rtx_video_adapter.dll' `
+            -Destination $destination -Force
+          Copy-Item -Path 'hash-bound-files/mat-capture/*.dll' `
+            -Destination 'signed-files/Sunshine/tools/mat-capture/' -Force
 
       # 使用签名后的文件重新打包 ZIP 便携版
       - name: Repackage signed Portable ZIP
@@ -333,6 +386,10 @@ jobs:
           SIGNED_SRC="signed-files/Sunshine"
           
           echo "Replacing with signed files..."
+          if [ ! -f "$SIGNED_SRC/assets/gui/alkaidlab-plugin-stylus.dll" ]; then
+            echo "Error: signed alkaidlab-plugin-stylus.dll is missing"
+            exit 1
+          fi
           cp -fv "$SIGNED_SRC/sunshine.exe"                 "$STAGING_DIR/sunshine.exe"
           cp -fv "$SIGNED_SRC/zlib1.dll"                    "$STAGING_DIR/zlib1.dll"
           cp -fv "$SIGNED_SRC/tools/sunshinesvc.exe"        "$STAGING_DIR/tools/sunshinesvc.exe"
@@ -344,14 +401,17 @@ jobs:
           cp -fv "$SIGNED_SRC/tools/setreg.exe"             "$STAGING_DIR/tools/setreg.exe"
           cp -fv "$SIGNED_SRC/tools/audio-info.exe"         "$STAGING_DIR/tools/audio-info.exe"
           cp -fv "$SIGNED_SRC/tools/dxgi-info.exe"          "$STAGING_DIR/tools/dxgi-info.exe"
+          cp -fv "$SIGNED_SRC/tools/mat-capture/sunshine-plugin-mat-capture.exe" \
+            "$STAGING_DIR/tools/mat-capture/sunshine-plugin-mat-capture.exe"
           cp -fv "$SIGNED_SRC/assets/gui/sunshine-gui.exe"  "$STAGING_DIR/assets/gui/sunshine-gui.exe"
+          cp -fv "$SIGNED_SRC/assets/gui/alkaidlab-plugin-stylus.dll" "$STAGING_DIR/assets/gui/alkaidlab-plugin-stylus.dll"
+          cp -fv "$SIGNED_SRC/tools/hdr_enhanced/nvidia_rtx_video/foundation_rtx_video_adapter.dll" \
+            "$STAGING_DIR/tools/hdr_enhanced/nvidia_rtx_video/foundation_rtx_video_adapter.dll"
 
           # 运行 Inno Setup 编译器重新打包
           echo "Running ISCC to repackage installer..."
-          test -f "$STAGING_DIR/tools/ds5-sidecar-package.json"
-          test ! -e "$STAGING_DIR/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe"
           "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "build/sunshine_installer.iss" | tee build/inno-signed-build.log
-          grep -F "ds5-sidecar-package.json" build/inno-signed-build.log
+          grep -F "foundation_rtx_video_adapter.dll" build/inno-signed-build.log
 
           # 使用与 Portable ZIP 一致的版本号
           if [ -n "${{ github.event.inputs.release-tag }}" ]; then
@@ -410,8 +470,6 @@ jobs:
           path: |
             Sunshine-*-Portable-x64-Signed.zip
             final-signed/*.exe
-            signed-component/Sunshine.Ds5Sidecar.x64.zip
-            signed-component/Sunshine.Ds5Sidecar.manifest.json
           if-no-files-found: error
 
       - name: Validate release tag target
@@ -447,10 +505,9 @@ jobs:
           files: |
             Sunshine-*-Portable-x64-Signed.zip
             final-signed/*.exe
-            signed-component/Sunshine.Ds5Sidecar.x64.zip
-            signed-component/Sunshine.Ds5Sidecar.manifest.json
           draft: true
-          prerelease: true
+          # an existing release keeps its state (a full release stays a full release); a new one is a draft pre-release
+          prerelease: ${{ steps.release_state.outputs.prerelease == 'true' }}
           allowUpdates: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

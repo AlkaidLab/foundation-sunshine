@@ -92,20 +92,34 @@ _FN(_DnsServiceRegister, DWORD, (_In_ PDNS_SERVICE_REGISTER_REQUEST pRequest, _I
 } /* extern "C" */
 
 namespace platf::publish {
+  /// What the completion callback of dnsapi gets as its context. dnsapi calls the callback from its own thread, and may call it again later (a name conflict, a network change)
+  /// after `service()` returned: the context must outlive the call that made it, so it is a heap object that is never freed (one small object per registration).
+  using alarm_context_t = safe::alarm_t<PDNS_SERVICE_INSTANCE>;
+
   VOID WINAPI
   register_cb(DWORD status, PVOID pQueryContext, PDNS_SERVICE_INSTANCE pInstance) {
-    auto alarm = (safe::alarm_t<PDNS_SERVICE_INSTANCE>::element_type *) pQueryContext;
+    // no exception may leave a callback of dnsapi: its frames cannot be unwound, and the host ended in std::terminate
+    try {
+      auto context = static_cast<alarm_context_t *>(pQueryContext);
+      if (!context || !*context) {
+        return;
+      }
 
-    if (status) {
-      print_status("register_cb()"sv, status);
+      if (status) {
+        print_status("register_cb()"sv, status);
+      }
+
+      (*context)->ring(pInstance);
     }
-
-    alarm->ring(pInstance);
+    catch (...) {
+    }
   }
 
   static int
   service(bool enable, PDNS_SERVICE_INSTANCE &existing_instance) {
     auto alarm = safe::make_alarm<PDNS_SERVICE_INSTANCE>();
+    // handed to dnsapi; see register_cb()
+    auto *context = new alarm_context_t(alarm);
 
     std::wstring domain { SERVICE_TYPE_DOMAIN.data(), SERVICE_TYPE_DOMAIN.size() };
 
@@ -135,7 +149,7 @@ namespace platf::publish {
 
     DNS_SERVICE_REGISTER_REQUEST req {};
     req.Version = DNS_QUERY_REQUEST_VERSION1;
-    req.pQueryContext = alarm.get();
+    req.pQueryContext = context;
     req.pServiceInstance = enable ? &instance : existing_instance;
     req.pRegisterCompletionCallback = register_cb;
 

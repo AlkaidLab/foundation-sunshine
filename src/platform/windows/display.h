@@ -25,6 +25,8 @@
 #include <AMF/core/CurrentTime.h>
 
 #include "src/platform/common.h"
+#include "src/streaming/frame_rate_tracker.h"
+#include "src/platform/windows/frame_contract.h"
 #include "src/utility.h"
 #include "src/video.h"
 #include "vdd_frame_channel.h"
@@ -185,6 +187,18 @@ namespace platf::dxgi {
 
   class display_base_t: public display_t {
   public:
+    std::shared_ptr<perf::capture_source_counter_t> capture_frame_counter = std::make_shared<perf::capture_source_counter_t>();
+
+    std::shared_ptr<perf::capture_source_counter_t>
+    frame_rate_source() const override {
+      return capture_frame_counter;
+    }
+
+    std::string
+    captured_display_name() const override;
+
+    bool captures_monitor = true;
+
     int
     init(const ::video::config_t &config, const std::string &display_name);
 
@@ -209,6 +223,10 @@ namespace platf::dxgi {
     int output_index;
 
     DXGI_FORMAT capture_format;
+    capture_contract_t capture_contract;
+
+    captured_frame_desc_t
+    describe_captured_frame(DXGI_FORMAT format, bool borrowed) const;
 
     /**
      * @brief Indicates whether the display's output colorspace uses linear gamma.
@@ -286,7 +304,6 @@ namespace platf::dxgi {
 
     /**
      * @brief Current Windows SDR reference white for this DXGI output.
-     *        The DisplayConfig query is cached for one second.
      */
     std::optional<float>
     sdr_white_nits() const;
@@ -306,11 +323,10 @@ namespace platf::dxgi {
     std::chrono::steady_clock::time_point last_hdr_check_time;
     static constexpr std::chrono::milliseconds hdr_check_interval { 1000 };  // Check every 1 second
 
-    mutable std::optional<float> cached_sdr_white_nits;
-    mutable std::chrono::steady_clock::time_point last_sdr_white_check_time;
-    static constexpr std::chrono::milliseconds sdr_white_check_interval { 1000 };
-
   protected:
+    std::uint64_t capture_adapter_luid = 0;
+    std::uint64_t capture_source_generation = 0;
+
     int
     get_pixel_pitch() {
       return (capture_format == DXGI_FORMAT_R16G16B16A16_FLOAT) ? 8 : 4;
@@ -362,6 +378,12 @@ namespace platf::dxgi {
     bool
     is_codec_supported(std::string_view name, const ::video::config_t &config) override;
 
+    // Only the D3D11 VRAM capture path constructs the pre-encode filter.
+    bool
+    supports_pre_encode_filter() override {
+      return true;
+    }
+
     std::unique_ptr<avcodec_encode_device_t>
     make_avcodec_encode_device(pix_fmt_e pix_fmt) override;
 
@@ -371,13 +393,14 @@ namespace platf::dxgi {
     std::unique_ptr<amf_encode_device_t>
     make_amf_encode_device(pix_fmt_e pix_fmt) override;
 
-    /**
-     * @brief Current captured SDR white level in nits. Prefer producer metadata
-     *        when VDD supplies it, otherwise query the selected Windows output.
-     *        The legacy 300-nit value is used only if neither source is available.
-     */
-    std::optional<float>
-    capture_sdr_white_nits() const;
+    std::unique_ptr<avcodec_encode_device_t>
+    make_avcodec_encode_device(pix_fmt_e pix_fmt, const ::video::config_t &config) override;
+
+    std::unique_ptr<nvenc_encode_device_t>
+    make_nvenc_encode_device(pix_fmt_e pix_fmt, const ::video::config_t &config) override;
+
+    std::unique_ptr<amf_encode_device_t>
+    make_amf_encode_device(pix_fmt_e pix_fmt, const ::video::config_t &config) override;
 
     std::atomic<uint32_t> next_image_id;
 
@@ -401,9 +424,6 @@ namespace platf::dxgi {
     gpu_cursor_t cursor_xor;
     // Written from the capture/cursor thread and used by cursor rendering.
     std::atomic<float> cursor_white_multiplier_value { 300.0f / 80.0f };
-    // Producer-reported capture white is independent of cursor rendering. Keep
-    // it separate so a cursor constant-buffer failure cannot corrupt encoding.
-    std::atomic<float> producer_sdr_white_nits { 0.0f };
     bool cursor_white_normalization_enabled = false;
     bool cursor_pipeline_ready = false;
 
@@ -439,6 +459,7 @@ namespace platf::dxgi {
    */
   class duplication_t {
   public:
+    std::shared_ptr<perf::capture_source_counter_t> frame_counter;
     dup_t dup;
     bool has_frame {};
     bool local_cursor_mode_was_active {};
@@ -504,6 +525,7 @@ namespace platf::dxgi {
    * Display duplicator that uses the Windows.Graphics.Capture API.
    */
   class wgc_capture_t {
+    std::shared_ptr<perf::capture_source_counter_t> frame_counter;
     winrt::Windows::Graphics::DirectX::Direct3D11::IDirect3DDevice uwp_device { nullptr };
     winrt::Windows::Graphics::Capture::GraphicsCaptureItem item { nullptr };
     winrt::Windows::Graphics::Capture::Direct3D11CaptureFramePool frame_pool { nullptr };
@@ -643,6 +665,8 @@ namespace platf::dxgi {
      */
     int
     init(ID3D11Device *d3d_device, unsigned int monitor_idx);
+
+    std::shared_ptr<perf::capture_source_counter_t> frame_rate_counter;
 
     /**
      * @brief Wait for the next frame (event-driven, no polling).
@@ -802,6 +826,12 @@ namespace platf::dxgi {
     std::chrono::steady_clock::time_point m_nextCursorAttachAttempt {};
     UINT32 m_cursorAttachFailures = 0;
     bool m_cursorUpdatePending = false;
+    // Whether a desktop frame (or the last published picture, see next_frame) was handed out since this capture
+    // attached. A static desktop publishes nothing, so a capture that attaches after the picture was drawn has to ask
+    // for the last picture once instead of waiting for a change that may never come.
+    bool m_acquiredFrame = false;
+    std::chrono::steady_clock::time_point m_attachedAt {};
+    bool m_idleFrameLogged = false;
     UINT32 m_lastSeenCursorShapeId = 0xFFFFFFFFu;
     UINT32 m_lastSeenCursorPositionId = 0xFFFFFFFFu;
 
@@ -840,13 +870,11 @@ namespace platf::dxgi {
     vdd_capture_t dup;
     unsigned int monitor_idx = 0;
     ID3D11Texture2D *current_frame = nullptr;  // Owned ref from dup.next_frame (via AddRef), released in release_snapshot
-    bool vdd_borrow_enabled = false;
     std::chrono::steady_clock::time_point vdd_borrow_cooldown_until {};
     std::chrono::steady_clock::time_point vdd_borrow_last_telemetry {};
     UINT64 vdd_borrow_attempts = 0;
     UINT64 vdd_borrow_successes = 0;
     UINT64 vdd_borrow_fallbacks = 0;
-    UINT64 vdd_borrow_disabled_frames = 0;
     UINT64 vdd_borrow_cooldown_frames = 0;
     UINT64 vdd_borrow_cooldown_events = 0;
     UINT64 vdd_borrow_deferred_frames = 0;

@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { $tp } from '../../../platform-i18n'
+import { MItem, MSwitchItem } from 'foundation-ui/vue'
 
 const props = defineProps({
   config: Object,
@@ -139,130 +140,15 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="vulkan-hdr-card" :class="{ 'is-disabled': !enabled }">
-    <div class="d-flex align-items-start justify-content-between gap-3">
-      <div>
-        <label for="vdd_vulkan_hdr_bridge" class="form-label fw-semibold mb-1">
-          {{ $tp('config.vdd_vulkan_hdr_bridge') }}
-        </label>
-        <div id="vdd_vulkan_hdr_bridge_desc" class="form-text mt-0">
-          {{ $tp('config.vdd_vulkan_hdr_bridge_desc') }}
-        </div>
-      </div>
-      <div class="form-check form-switch flex-shrink-0 mt-1">
-        <input
-          id="vdd_vulkan_hdr_bridge"
-          v-model="enabled"
-          class="form-check-input"
-          type="checkbox"
-          role="switch"
-          aria-describedby="vdd_vulkan_hdr_bridge_desc"
-        />
-      </div>
-    </div>
-
-    <div
-      class="feature-status mt-3"
-      :class="`is-${viewState.tone}`"
-      role="status"
-      aria-live="polite"
-    >
-      <span class="feature-status-dot" aria-hidden="true"></span>
-      <span>{{ $tp(viewState.statusKey) }}</span>
-    </div>
-
-    <div
-      v-if="viewState.showValidateAction"
-      class="d-flex flex-wrap align-items-center gap-2 mt-3"
-    >
-      <button
-        type="button"
-        class="btn btn-outline-secondary btn-sm"
-        :disabled="!viewState.canValidate"
-        @click="validateBridge"
-      >
-        <span
-          v-if="validating"
-          class="spinner-border spinner-border-sm me-1"
-          aria-hidden="true"
-        ></span>
-        {{
-          $tp(
-            validating
-              ? 'config.vdd_vulkan_hdr_bridge_validating'
-              : 'config.vdd_vulkan_hdr_bridge_validate',
-          )
-        }}
-      </button>
-      <small v-if="viewState.showValidateHint" class="text-body-secondary">
-        {{ $tp('config.vdd_vulkan_hdr_bridge_validate_hint') }}
-      </small>
-    </div>
-  </div>
+  <MSwitchItem v-model="enabled" data-cfg="vdd_vulkan_hdr_bridge" :title="$tp('config.vdd_vulkan_hdr_bridge')" :info="$tp('config.vdd_vulkan_hdr_bridge_desc')" />
+  <MItem :icon="({ success: 'check_circle', warning: 'warning', info: 'sync', ready: 'check_circle', muted: 'info' })[viewState.tone] || 'info'" :title="$tp(viewState.statusKey)" />
+  <MItem
+    v-if="viewState.showValidateAction"
+    action
+    icon="play_arrow"
+    :disabled="!viewState.canValidate"
+    :title="$tp(validating ? 'config.vdd_vulkan_hdr_bridge_validating' : 'config.vdd_vulkan_hdr_bridge_validate')"
+    :text="viewState.showValidateHint ? $tp('config.vdd_vulkan_hdr_bridge_validate_hint') : ''"
+    @click="validateBridge"
+  />
 </template>
-
-<style scoped>
-.vulkan-hdr-card {
-  padding: 1rem;
-  border: 1px solid var(--ui-border);
-  border-left: 3px solid var(--ui-accent);
-  border-radius: var(--ui-radius-md);
-  background: var(--ui-accent-soft);
-  transition:
-    border-color 0.2s ease,
-    background-color 0.2s ease,
-    box-shadow 0.2s ease,
-    opacity 0.2s ease;
-}
-
-.vulkan-hdr-card:hover {
-  border-color: var(--ui-border-strong);
-  box-shadow: var(--ui-shadow-sm);
-}
-
-.vulkan-hdr-card.is-disabled {
-  border-left-color: var(--ui-text-muted);
-  background: var(--ui-surface);
-  opacity: 0.78;
-}
-
-.feature-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.875rem;
-  font-weight: 600;
-}
-
-.feature-status-dot {
-  width: 0.55rem;
-  height: 0.55rem;
-  flex: 0 0 auto;
-  border-radius: 50%;
-  background: currentColor;
-  box-shadow: 0 0 0 0.2rem color-mix(in srgb, currentColor 18%, transparent);
-}
-
-.feature-status.is-muted {
-  color: var(--ui-text-muted);
-}
-
-.feature-status.is-ready,
-.feature-status.is-info {
-  color: var(--ui-accent);
-}
-
-.feature-status.is-success {
-  color: var(--ui-success-text);
-}
-
-.feature-status.is-warning {
-  color: var(--ui-warning-text);
-}
-
-@media (max-width: 575.98px) {
-  .vulkan-hdr-card {
-    padding: 0.75rem;
-  }
-}
-</style>

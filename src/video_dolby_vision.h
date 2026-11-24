@@ -260,7 +260,8 @@ namespace video::dolby_vision {
     /// Splice the staged RPU as the access unit's last NAL. No-op when the
     /// injector is disabled or this frame has nothing staged; a refused
     /// splice (e.g. a header-only access unit) leaves the bitstream intact.
-    void
+    /// Returns true only when this packet contains the injected RPU.
+    bool
     inject(uint64_t frame_index, std::vector<uint8_t> &bitstream);
 
     void

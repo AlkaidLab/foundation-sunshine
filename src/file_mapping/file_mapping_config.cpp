@@ -6,12 +6,13 @@
 
 #include <cstdint>
 #include <filesystem>
-#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
 
 #include <nlohmann/json.hpp>
+
+#include "file_mapping_rpc.h"
 
 namespace file_mapping_config {
   namespace {
@@ -63,27 +64,12 @@ namespace file_mapping_config {
         out = fallback;
         return true;
       }
-      std::uint64_t value = 0;
-      if (item[name].is_number_unsigned()) {
-        value = item[name].get<std::uint64_t>();
-      }
-      else if (item[name].is_number_integer()) {
-        const auto signed_value = item[name].get<std::int64_t>();
-        if (signed_value < 0) {
-          warnings.push_back(prefix + name + " must be a non-negative integer");
-          return false;
-        }
-        value = static_cast<std::uint64_t>(signed_value);
-      }
-      else {
+      const auto value = file_mapping::rpc::parse_nonnegative_uintmax(item[name]);
+      if (!value) {
         warnings.push_back(prefix + name + " must be a non-negative integer");
         return false;
       }
-      if (value > std::numeric_limits<std::uintmax_t>::max()) {
-        warnings.push_back(prefix + name + " is too large");
-        return false;
-      }
-      out = static_cast<std::uintmax_t>(value);
+      out = *value;
       return true;
     }
 
@@ -110,11 +96,16 @@ namespace file_mapping_config {
       std::string out;
       out.reserve((text.size() / 4) * 3);
       for (std::size_t i = 0; i < text.size(); i += 4) {
+        const bool is_last_block = i + 4 == text.size();
         const auto c0 = decode_char(static_cast<unsigned char>(text[i]));
         const auto c1 = decode_char(static_cast<unsigned char>(text[i + 1]));
         const auto c2 = text[i + 2] == '=' ? -2 : decode_char(static_cast<unsigned char>(text[i + 2]));
         const auto c3 = text[i + 3] == '=' ? -2 : decode_char(static_cast<unsigned char>(text[i + 3]));
-        if (c0 < 0 || c1 < 0 || c2 == -1 || c3 == -1 || (c2 == -2 && c3 != -2)) {
+        if (c0 < 0 || c1 < 0 || c2 == -1 || c3 == -1 ||
+            (!is_last_block && (c2 == -2 || c3 == -2)) ||
+            (c2 == -2 && c3 != -2) ||
+            (c2 == -2 && (c1 & 0x0f) != 0) ||
+            (c3 == -2 && c2 >= 0 && (c2 & 0x03) != 0)) {
           return std::nullopt;
         }
 

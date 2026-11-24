@@ -4,6 +4,7 @@
  */
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -14,14 +15,41 @@
 
 #include "crypto.h"
 #include "hdr/client_display_capabilities.h"
+#include "image_enhancement/config.h"
 #include "launch_session_manager.h"
+#include "rtsp_limits.h"
+#include "src/platform/frame_contract.h"
 
 namespace stream::session {
   enum class stop_reason_e : int;
 }
+namespace spatial_transport {
+  struct LiveSession;
+}
 
 namespace rtsp_stream {
   constexpr auto RTSP_SETUP_PORT = 21;
+
+  struct synthetic_hdr_config_t {
+    bool enabled { false };
+    int contrast { 0 };
+    int saturation { 0 };
+    int middle_gray { 50 };
+    int peak_nits { 1000 };
+  };
+
+  /** Per-app SDR neural-enhancement (DLSS NR) parameters. */
+  struct dlssnr_config_t {
+    bool enabled { false };
+    int style { 0 };
+    int motion_quality { 0 };  // 0 = zero motion, 1..3 = optical-flow quality tiers
+    float intensity { 1.0f };
+    float local_tone_strength { 1.0f };
+    float local_structure_strength { 1.0f };
+    float skin_structure_strength { 0.0f };
+    bool auto_mask { false };
+    bool ui_correction { false };
+  };
 
   struct launch_session_t {
     uint32_t id;
@@ -36,6 +64,10 @@ namespace rtsp_stream {
     bool highly_suspected_unknown_client {false};
 
     boost::process::v1::environment env;
+
+    // Shared with the active stream after RTSP allocation; released on failure/expiry.
+    std::shared_ptr<void> nvidia_vsync_lease;
+    std::shared_ptr<void> touch_keyboard_lease;
 
     bool host_audio;
     std::string unique_id;
@@ -53,9 +85,40 @@ namespace rtsp_stream {
     bool enable_mic { false };
     bool use_vdd;
     int custom_screen_mode;
+
+    // Client-declared intent to use the on-screen touch keyboard during the
+    // session.  Tri-state: -1 undeclared (fall back to the per-client server
+    // profile), 0 explicitly off and 1 explicitly on. The GUI applies the
+    // preference when it runs in the same Windows session as the capture.
+    int touch_keyboard { -1 };
+    // The client's product family is a touch device (VoidLink runs on phones and tablets). It only answers the
+    // application's question "is this a touch client" (SUNSHINE_CLIENT_TOUCH) when touch_keyboard is undeclared;
+    // it never switches the touch keyboard registry group on.
+    bool touch_family { false };
+
+    // When this launch session was made (the /launch or /resume request), and when the last RTSP step on it ended.
+    // The RTSP handler logs the time of every step against these two, so a slow connect shows which step took it.
+    std::chrono::steady_clock::time_point created { std::chrono::steady_clock::now() };
+    std::chrono::steady_clock::time_point last_rtsp_step { std::chrono::steady_clock::now() };
+    // Client-declared controller emulation type for this session (Sunshine
+    // protocol extension carried on the /launch and /resume query string).
+    // Empty = undeclared: the host-side selection chain applies as before.
+    // One of: auto, x360, ds4, ds5.
+    std::string client_gamepad;
     hdr::client_display_capabilities_t reported_hdr_capabilities;
     hdr::client_display_capabilities_t hdr_capabilities;
     hdr::target_source_e hdr_target_source { hdr::target_source_e::safe_defaults };
+    synthetic_hdr_config_t synthetic_hdr;
+    boost::shared_ptr<const image_enhancement::backend_use_t> hdr_backend;
+    dlssnr_config_t dlssnr_params;
+    int dlssnr_scale_percent { 100 };
+    boost::shared_ptr<const image_enhancement::backend_use_t> dlssnr_backend;
+
+    // Resolved frame-pipeline policy for this session, published by RTSP SETUP
+    // so display preparation consumes the same decision as the capture/encode
+    // side. Unresolved (false) sessions keep the legacy raw-flag behavior.
+    platf::frame_pipeline_policy_t frame_pipeline_policy;
+    bool frame_pipeline_policy_resolved { false };
 
     void
     set_hdr_target(const hdr::client_display_capabilities_t &capabilities, hdr::target_source_e source);
@@ -73,6 +136,7 @@ namespace rtsp_stream {
     bool setup_control { false };
     bool setup_mic { false };
     bool control_only { false };
+    bool endpoint_auto_refresh { false };
 
     // GameStream 的 RTSP 请求可能分别使用独立 TCP 连接，
     // 但一个启动票据最多只能创建一个串流会话。
@@ -83,10 +147,26 @@ namespace rtsp_stream {
     /// 200 response and its idempotent retries alike.
     int negotiated_dynamic_hdr_format { 0 };
     std::string negotiated_dynamic_hdr_fallback;
+    bool mat_live_described { false };
+    bool mat_live_selected { false };
+    std::shared_ptr<spatial_transport::LiveSession> mat_live;
   };
 
   launch_ticket_register_e
   launch_session_raise(std::shared_ptr<launch_session_t> launch_session);
+
+  /**
+   * @brief Track an NVHTTP launch while it prepares the display and publishes its RTSP ticket.
+   */
+  class launch_preparation_guard_t {
+  public:
+    launch_preparation_guard_t() noexcept;
+    ~launch_preparation_guard_t() noexcept;
+
+    launch_preparation_guard_t(const launch_preparation_guard_t &) = delete;
+    launch_preparation_guard_t &
+    operator=(const launch_preparation_guard_t &) = delete;
+  };
 
   /**
    * @brief Clear state for the specified launch session.
@@ -109,12 +189,33 @@ namespace rtsp_stream {
   pending_session_count();
 
   /**
+   * @brief Check whether an NVHTTP launch, RTSP handshake, or stream session is active.
+   */
+  bool
+  session_starting_or_active();
+
+  /**
    * @brief Terminates all streaming sessions on the RTSP execution context.
    * @param reason Reason recorded for sessions that are still running.
    * @param completion Called after the termination attempt finishes.
    */
   void
   terminate_sessions_async(stream::session::stop_reason_e reason, boost::function<void()> completion);
+
+  /// Revoke pending tickets and stop only sessions authenticated as this client.
+  void terminate_client_sessions(const std::string &uuid);
+
+  /**
+   * @brief Terminates streaming sessions asynchronously when a predicate is still true.
+   * @param reason Reason recorded for sessions that are still running.
+   * @param predicate Checked on the RTSP execution context before clearing sessions.
+   * @param completion Called with true when clearing started, or false when skipped.
+   */
+  void
+  terminate_sessions_async_if(
+    stream::session::stop_reason_e reason,
+    boost::function<bool()> predicate,
+    boost::function<void(bool)> completion);
 
   /**
    * @brief Runs the RTSP server loop.

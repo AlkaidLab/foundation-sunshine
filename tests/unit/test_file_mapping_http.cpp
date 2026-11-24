@@ -22,7 +22,7 @@ TEST(FileMappingHttp, CapabilityResponseAdvertisesProtocol) {
   state.port = 47999;
 
   auto response = file_mapping_http::make_capability_response(state);
-  ASSERT_EQ(response.status, SimpleWeb::StatusCode::success_ok);
+  ASSERT_EQ(response.status, web::StatusCode::ok);
 
   auto body = nlohmann::json::parse(response.body);
   EXPECT_TRUE(body["ok"].get<bool>());
@@ -56,6 +56,18 @@ TEST(FileMappingHttp, CapabilityDoesNotBuildSessionUrlFromRequestHost) {
   EXPECT_EQ(body["session_token"].get<std::string>(), "abc123");
 }
 
+TEST(FileMappingHttp, CapabilityReportsErrorsAsUnsuccessful) {
+  file_mapping_http::capability_state_t state;
+  state.enabled = true;
+  state.error = "file mapping session token rate limited";
+
+  auto response = file_mapping_http::make_capability_response(state);
+  auto body = nlohmann::json::parse(response.body);
+
+  EXPECT_FALSE(body["ok"].get<bool>());
+  EXPECT_EQ(body["error"].get<std::string>(), state.error);
+}
+
 TEST(FileMappingHttp, CapabilityStripsTokenFromExplicitSessionUrl) {
   file_mapping_http::capability_state_t state;
   state.enabled = true;
@@ -71,21 +83,21 @@ TEST(FileMappingHttp, CapabilityStripsTokenFromExplicitSessionUrl) {
 }
 
 TEST(FileMappingHttp, SessionPlaceholderRequiresUpgrade) {
-  SimpleWeb::CaseInsensitiveMultimap headers;
+  web::CaseInsensitiveMultimap headers;
   auto response = file_mapping_http::make_session_placeholder_response(headers);
 
-  EXPECT_EQ(response.status, SimpleWeb::StatusCode::client_error_upgrade_required);
+  EXPECT_EQ(response.status, web::StatusCode::upgrade_required);
   auto body = nlohmann::json::parse(response.body);
   EXPECT_EQ(body["error"].get<std::string>(), "upgrade_required");
   EXPECT_NE(response.headers.find("Upgrade"), response.headers.end());
 }
 
 TEST(FileMappingHttp, SessionPlaceholderReservesWebsocketEndpoint) {
-  SimpleWeb::CaseInsensitiveMultimap headers;
+  web::CaseInsensitiveMultimap headers;
   headers.emplace("Upgrade", "websocket");
   auto response = file_mapping_http::make_session_placeholder_response(headers);
 
-  EXPECT_EQ(response.status, SimpleWeb::StatusCode::server_error_not_implemented);
+  EXPECT_EQ(response.status, web::StatusCode::not_implemented);
   auto body = nlohmann::json::parse(response.body);
   EXPECT_EQ(body["error"].get<std::string>(), "session_not_implemented");
 }

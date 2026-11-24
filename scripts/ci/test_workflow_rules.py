@@ -1,0 +1,372 @@
+"""Rules of .github/workflows/main.yml that a typo would break silently (run: python3 -m unittest discover -s scripts/ci -p 'test_*.py')."""
+
+import os
+import pathlib
+import subprocess
+import tempfile
+import unittest
+
+import yaml
+
+WORKFLOW = pathlib.Path(__file__).resolve().parents[2] / ".github" / "workflows" / "main.yml"
+
+
+def load():
+    with open(WORKFLOW, encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
+
+
+def step(job, name):
+    return next(s for s in job["steps"] if s.get("name") == name)
+
+
+class PublishTest(unittest.TestCase):
+    def setUp(self):
+        self.workflow = load()
+        self.setup = self.workflow["jobs"]["setup_release"]
+        self.build = self.workflow["jobs"]["build_win"]
+
+    def test_the_release_action_runs_only_for_a_publishing_push(self):
+        # LizardByte/create-release-action creates a release for a push to master only; a manual run has its own job
+        release = step(self.build, "Create/Update GitHub Release")
+        self.assertEqual(release["if"], "needs.setup_release.outputs.publish_release == 'true' && github.event_name == 'push'")
+
+    def test_a_manual_publish_has_its_own_job_that_alone_can_write(self):
+        publish = self.workflow["jobs"]["publish"]
+        self.assertIn("workflow_dispatch", publish["if"])
+        self.assertIn("publish_release == 'true'", publish["if"])
+        self.assertEqual(publish["permissions"], {"contents": "write"})
+        self.assertIn("build_win", publish["needs"])
+        run = step(publish, "Create the pre-release")["run"]
+        self.assertIn("scripts/ci/publish-prerelease.sh", run)
+        script = (WORKFLOW.parents[2] / "scripts" / "ci" / "publish-prerelease.sh").read_text(encoding="utf-8")
+        for needle in ("gh release create", "--prerelease", "--target", "isPrerelease"):
+            self.assertIn(needle, script)
+
+    def test_permissions_are_read_only_unless_a_job_asks_for_more(self):
+        self.assertEqual(self.workflow["permissions"], {"contents": "read"})
+        writers = sorted(name for name, job in self.workflow["jobs"].items()
+                         if "write" in (job.get("permissions") or {}).values())
+        # shard / shard_cleanup: the claim refs of the cold compile (refs/claims/<run>/<chunk>), nothing else
+        self.assertEqual(writers, ["build_win", "publish", "setup_release", "shard", "shard_cleanup"])
+        self.assertEqual(self.build["permissions"], {"contents": "read", "actions": "write"})
+
+    def test_the_publish_decision_does_not_come_straight_from_the_release_action(self):
+        output = self.setup["outputs"]["publish_release"]
+        self.assertIn("steps.auto_gate.outputs.publish", output)
+        self.assertNotIn("setup_release_auto.outputs.publish_release", output)
+
+    def test_automatic_pre_releases_need_the_repository_variable(self):
+        gate = step(self.setup, "Automatic pre-releases")
+        self.assertEqual(gate["env"]["ENABLED"], "${{ vars.AUTO_PRERELEASE }}")
+        self.assertIn('[ "$AUTO" = true ] && [ "$ENABLED" = true ]', gate["run"])
+        self.assertEqual(gate["if"], "github.event_name == 'push' || github.event_name == 'pull_request'")
+
+    def test_manual_publish_is_an_input_that_defaults_to_off_and_is_wired_through(self):
+        # PyYAML reads the key `on` as the boolean True
+        dispatch = self.workflow[True]["workflow_dispatch"]["inputs"]["publish"]
+        self.assertEqual(dispatch["type"], "boolean")
+        self.assertIs(dispatch["default"], False)
+        manual = step(self.setup, "Setup Release (Manual)")
+        self.assertEqual(manual["env"]["PUBLISH"], "${{ inputs.publish }}")
+        self.assertIn("publish_release=true", manual["run"])
+
+    def run_step(self, name, **env):
+        """Runs the shell of a setup_release step the way the runner does, in the repository root; returns its step outputs."""
+        root = WORKFLOW.parents[2]
+        with tempfile.TemporaryDirectory() as tmp:
+            output = pathlib.Path(tmp) / "output"
+            output.touch()
+            result = subprocess.run(["bash", "-c", step(self.setup, name)["run"]], cwd=root, capture_output=True, text=True,
+                                    env=dict(os.environ, GITHUB_OUTPUT=str(output), COMMIT="a" * 40, **env))
+            values = dict(line.split("=", 1) for line in output.read_text(encoding="utf-8").splitlines() if "=" in line)
+        return result, values
+
+    def test_both_configure_steps_take_the_channel_from_one_decision(self):
+        # a header whose bytes differ between the compile shards and the build job invalidates every cache entry that reads it
+        shard = step(self.workflow["jobs"]["shard"], "Configure Windows")
+        configure = step(self.build, "Configure Windows")
+        for env in (shard["env"], configure["env"]):
+            self.assertEqual(env["SUNSHINE_BUILD_CHANNEL"], "${{ needs.setup_release.outputs.build_channel }}")
+        outputs = self.setup["outputs"]
+        self.assertEqual(outputs["build_channel"], "${{ steps.auto_gate.outputs.channel || steps.setup_release_manual.outputs.channel }}")
+
+    def test_a_build_that_does_not_publish_is_a_dev_build(self):
+        _, manual = self.run_step("Setup Release (Manual)", PUBLISH="false", PUBLISH_STABLE="false", REF_NAME="master")
+        self.assertEqual((manual["publish_release"], manual["channel"], manual["stable"]), ("false", "dev", "false"))
+        for enabled, expected in (("true", ("true", "beta")), ("", ("false", "dev"))):
+            _, auto = self.run_step("Automatic pre-releases", AUTO="true", ENABLED=enabled)
+            self.assertEqual((auto["publish"], auto["channel"]), expected)
+        _, auto = self.run_step("Automatic pre-releases", AUTO="false", ENABLED="true")
+        self.assertEqual((auto["publish"], auto["channel"]), ("false", "dev"))
+
+    def test_a_published_pre_release_is_beta_and_the_stable_publish_is_the_only_stable_build(self):
+        _, beta = self.run_step("Setup Release (Manual)", PUBLISH="true", PUBLISH_STABLE="false", REF_NAME="master")
+        self.assertEqual((beta["publish_release"], beta["channel"], beta["stable"]), ("true", "beta", "false"))
+        _, stable = self.run_step("Setup Release (Manual)", PUBLISH="false", PUBLISH_STABLE="true", REF_NAME="master")
+        self.assertEqual((stable["publish_release"], stable["channel"], stable["stable"]), ("true", "stable", "true"))
+        # the version and tag are the ones a push of the commit would get
+        self.assertEqual(beta["release_tag"], stable["release_tag"])
+        self.assertRegex(stable["release_tag"], r"^v\d{4}\.\d+\.\d+$")
+
+    def test_a_stable_publish_is_master_only_and_a_rehearsal_elsewhere(self):
+        result, values = self.run_step("Setup Release (Manual)", PUBLISH="false", PUBLISH_STABLE="true", REF_NAME="fix/x")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((values["publish_release"], values["channel"], values["stable"]), ("false", "stable", "false"))
+        self.assertTrue(values["release_tag"].startswith("manual-") and values["release_tag"].endswith("-dev"))
+        result, _ = self.run_step("Setup Release (Manual)", PUBLISH="true", PUBLISH_STABLE="false", REF_NAME="fix/x")
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_the_two_publishes_cannot_be_asked_for_together(self):
+        result, _ = self.run_step("Setup Release (Manual)", PUBLISH="true", PUBLISH_STABLE="true", REF_NAME="master")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("choose one", result.stdout)
+
+    def test_the_stable_publish_input_defaults_to_off(self):
+        dispatch = self.workflow[True]["workflow_dispatch"]["inputs"]["publish_stable"]
+        self.assertEqual(dispatch["type"], "boolean")
+        self.assertIs(dispatch["default"], False)
+        self.assertEqual(step(self.setup, "Setup Release (Manual)")["env"]["PUBLISH_STABLE"], "${{ inputs.publish_stable }}")
+
+    def test_the_stable_release_is_created_directly_and_the_pre_release_step_leaves_it_alone(self):
+        publish = self.workflow["jobs"]["publish"]
+        pre = step(publish, "Create the pre-release")
+        stable = step(publish, "Create the stable release")
+        self.assertEqual(self.setup["outputs"]["release_stable"], "${{ steps.setup_release_manual.outputs.stable }}")
+        self.assertEqual(pre["if"], "needs.setup_release.outputs.release_stable != 'true'")
+        self.assertEqual(stable["if"], "needs.setup_release.outputs.release_stable == 'true'")
+        self.assertIn("scripts/ci/publish-stable.sh", stable["run"])
+        # created with the bot token, as the pre-release publisher is: the release event of a full release starts sign-and-repackage.yml
+        self.assertEqual(stable["env"]["GH_TOKEN"], "${{ secrets.GH_BOT_TOKEN }}")
+        script = (WORKFLOW.parents[2] / "scripts" / "ci" / "publish-stable.sh").read_text(encoding="utf-8")
+        self.assertIn("gh release create", script)
+        self.assertIn("--latest", script)
+        self.assertNotIn("--prerelease", script)
+        self.assertNotIn("release edit", script)
+
+    def test_the_nightly_build_is_cold_and_never_publishes(self):
+        schedule = self.workflow[True]["schedule"]
+        self.assertEqual(len(schedule), 1)
+        restore = step(self.build, "Cache compiler objects")
+        # a sharded cold build restores what its shards compiled instead (see ShardTest)
+        self.assertEqual(restore["if"], "github.event_name != 'schedule' && needs.shard.result != 'success'")
+        manual = step(self.setup, "Setup Release (Manual)")
+        self.assertIn("schedule", manual["if"])
+        publish = self.workflow["jobs"]["publish"]
+        self.assertNotIn("schedule", publish["if"])
+
+    def test_artifacts_are_uploaded_whether_or_not_the_run_publishes(self):
+        upload = step(self.build, "Upload Artifacts")
+        self.assertNotIn("publish_release", upload.get("if", ""))
+
+
+class ShardTest(unittest.TestCase):
+    def setUp(self):
+        self.workflow = load()
+        self.jobs = self.workflow["jobs"]
+
+    def test_the_nightly_build_and_a_missing_cache_start_the_shards_and_the_warm_path_does_not(self):
+        plan = step(self.jobs["cold_plan"], "Decide")
+        self.assertIn('[[ "$EVENT" == schedule ]]', plan["run"])
+        self.assertIn("no compiler cache entry for configuration", plan["run"])
+        self.assertEqual(self.jobs["shard"]["if"], "needs.cold_plan.outputs.sharded == 'true'")
+
+    def test_the_build_job_waits_for_the_shards(self):
+        self.assertIn("shard", self.jobs["build_win"]["needs"])
+
+    def test_the_shards_configure_like_the_build_job_apart_from_what_only_orders_the_objects(self):
+        shard = step(self.jobs["shard"], "Configure Windows")
+        build = step(self.jobs["build_win"], "Configure Windows")
+        for name in ("BUILD_VERSION", "SUNSHINE_RTX_HDR", "SUNSHINE_BUILD_COMMIT"):
+            self.assertEqual(shard["env"][name], build["env"][name], name)
+        self.assertIn("-DSUNSHINE_BUILD_MAT_CAPTURE=OFF", shard["run"])
+        self.assertNotIn("MAT_CAPTURE", build["run"])
+
+    def test_the_shards_pin_the_same_build_time_and_path_as_the_build_job(self):
+        # build_info_defs.h is generated at configure time (string(TIMESTAMP) honours SOURCE_DATE_EPOCH), and a
+        # header whose bytes differ between the two invalidates every cache entry that reads it; the dotnet PATH
+        # keeps find_program() in agreement (the found set is part of the configure result).
+        shard = step(self.jobs["shard"], "Configure Windows")
+        build = step(self.jobs["build_win"], "Configure Windows")
+        adapter_configure = next(s for s in self.jobs["adapter_config"]["steps"] if "cmake -B build-adapter-config" in s.get("run", ""))
+        for configure in (shard, build, adapter_configure):
+            self.assertIn('export SOURCE_DATE_EPOCH="$(git log -1 --pretty=%ct)"', configure["run"])
+        for configure in (shard, build):
+            self.assertIn('export PATH="$PATH:/c/Program Files/dotnet"', configure["run"])
+            self.assertIn('ninja -C build -t commands | grep -E " -o [^ ]+[.]obj( |$)" | sort > object-commands.txt', configure["run"])
+
+    def test_a_shard_never_cancels_or_displaces_another_run_and_shares_its_cache(self):
+        # A concurrency group would: GitHub keeps only one pending job per group by default, so a third
+        # run replaces the waiting second (its shards then read as cancelled and the build fails). The
+        # shard instead waits a bounded time for a concurrent run's cache, restores whatever exists
+        # -- including what another run's shards saved -- and saves its own cache for the next run,
+        # because build_win saves only at its end and only on master.
+        shard = self.jobs["shard"]
+        self.assertNotIn("concurrency", shard)
+        self.assertEqual(shard["permissions"], {"contents": "write", "actions": "read"})
+        wait = step(shard, "Wait briefly for a concurrent run's compiler cache")
+        self.assertEqual(wait["if"], "github.event_name != 'schedule'")
+        self.assertIn("while (( waited < 300 )); do", wait["run"])
+        self.assertIn("actions/caches?key=ccache-windows-$FINGERPRINT", wait["run"])
+        restore = step(shard, "Restore the compiler cache")
+        self.assertEqual(restore["if"], "github.event_name != 'schedule'")
+        self.assertEqual(restore["uses"], "actions/cache/restore@v6")
+        self.assertEqual(
+            restore["with"]["restore-keys"],
+            "ccache-windows-${{ needs.cold_plan.outputs.fingerprint }}-\n"
+            "ccache-windows-shard-${{ needs.cold_plan.outputs.fingerprint }}-\n"
+            "ccache-windows-\n",
+        )
+        save = step(shard, "Save the shard compiler cache")
+        self.assertEqual(save["uses"], "actions/cache/save@v6")
+        self.assertEqual(
+            save["with"]["key"],
+            "ccache-windows-shard-${{ needs.cold_plan.outputs.fingerprint }}-${{ github.run_id }}-${{ matrix.index }}",
+        )
+
+    def test_every_ccache_restore_falls_back_to_the_most_recent_lineage(self):
+        # Entries are keyed on the compile command line, so a restored entry of another fingerprint either hits
+        # or misses on its own; a new fingerprint (or an eviction under the exact key) starts warm, not cold.
+        restores = [s for job in self.jobs.values() for s in job.get("steps", [])
+                    if s.get("uses", "").startswith("actions/cache/restore") and "ccache" in s.get("with", {}).get("key", "")]
+        self.assertGreaterEqual(len(restores), 3)
+        for restore in restores:
+            self.assertIn("ccache-windows-\n", restore["with"]["restore-keys"], restore.get("name"))
+
+    def test_the_shard_configure_has_no_token_and_uses_the_pinned_gui_inputs(self):
+        shard = self.jobs["shard"]
+        configure = step(shard, "Configure Windows")
+        self.assertNotIn("GITHUB_TOKEN", configure["env"])
+        self.assertNotIn("DRIVER_DEPS_REQUIRED", configure["env"])  # always OFF: the shards never package
+        self.assertIn("-DDRIVER_DEPS_REQUIRED=OFF", configure["run"])
+        self.assertIn("-DFETCH_GUI=OFF", configure["run"])
+        self.assertIn('-DGUI_DIR=$GUI_BUNDLE_DIR', configure["run"])
+        self.assertIn('${GITHUB_TOKEN:-}', configure["run"])  # fails the step if a token ever reaches it
+        names = [x.get("name") for x in shard["steps"]]
+        self.assertLess(names.index("Fetch pinned installer inputs"), names.index("Configure Windows"))
+        self.assertIn("./scripts/fetch-installer-inputs.ps1 -Destination $dest", step(shard, "Fetch pinned installer inputs")["run"])
+
+    def test_the_write_token_is_in_the_claim_step_and_nowhere_else_of_the_shard_job(self):
+        import json
+        for x in self.jobs["shard"]["steps"]:
+            text = json.dumps(x)
+            # The cache wait also talks to the API (listing entries and runs); like the claim script it
+            # never runs a build command, and CMake and ninja still never see a token.
+            if x.get("name") in ("Compile object files, chunk by chunk", "Wait briefly for a concurrent run's compiler cache"):
+                self.assertIn("github.token", text)
+            else:
+                self.assertNotIn("github.token", text, x.get("name"))
+                self.assertNotIn("secrets.GITHUB_TOKEN", text, x.get("name"))
+
+    def test_the_cache_key_carries_the_configuration_fingerprint(self):
+        fingerprint = "${{ needs.cold_plan.outputs.fingerprint }}"
+        build = self.jobs["build_win"]
+        restore = step(build, "Cache compiler objects")["with"]
+        self.assertEqual(restore["key"], f"ccache-windows-{fingerprint}-${{{{ github.run_id }}}}")
+        # The second line is the fallback to the most recent lineage of any fingerprint: a new fingerprint
+        # starts warm because entries are keyed on the compile command line, not on the fingerprint.
+        self.assertEqual(restore["restore-keys"].strip(), f"ccache-windows-{fingerprint}-\nccache-windows-")
+        save = step(build, "Save compiler cache")["with"]
+        self.assertEqual(save["key"], restore["key"])
+        adapter = step(self.jobs["adapter_config"], "Cache compiler objects")["with"]
+        self.assertEqual(adapter["restore-keys"].strip(), f"ccache-windows-{fingerprint}-\nccache-windows-")
+        self.assertIn("cold_plan", self.jobs["adapter_config"]["needs"])
+        prune = step(build, "Prune stale compiler cache entries")["run"]
+        self.assertIn(f'$current = "ccache-windows-{fingerprint}-${{{{ github.run_id }}}}"', prune)
+        self.assertIn("^ccache-windows-((shard-)?[0-9a-f]{12}-(pinned|newest)-)?[0-9]+(-[0-9]+)?$", prune)  # fingerprinted and per-shard entries (with the toolchain mode) and older keys
+
+    def test_the_cold_plan_shards_on_a_missing_fingerprint_cache_or_a_widely_included_header(self):
+        plan = step(self.jobs["cold_plan"], "Decide")
+        self.assertIn("key=ccache-windows-$FINGERPRINT-", plan["run"])
+        self.assertIn("no compiler cache entry for configuration", plan["run"])
+        self.assertIn("hot-headers.py check scripts/ci/hot-headers.txt", plan["run"])
+        self.assertEqual(self.jobs["cold_plan"]["outputs"]["fingerprint"], "${{ steps.fingerprint.outputs.fingerprint }}")
+
+    def test_the_gate_waits_for_the_shards_and_the_jobs_that_ran_inside_the_build_job_before(self):
+        for name in ("shard", "adapter_config", "setup_ui"):
+            self.assertIn(name, self.jobs["ci-gate"]["needs"])
+
+    def test_the_claim_token_reaches_only_the_compile_script(self):
+        shard = self.jobs["shard"]
+        holders = [x["name"] for x in shard["steps"] if "CLAIM_TOKEN" in x.get("env", {})]
+        self.assertEqual(holders, ["Compile object files, chunk by chunk"])
+        script = pathlib.Path(__file__).with_name("shard-compile.sh").read_text(encoding="utf-8")
+        self.assertIn("unset CLAIM_TOKEN", script)
+
+    def test_the_moved_steps_run_in_their_own_jobs_and_the_build_job_consumes_the_setup_ui(self):
+        build = self.jobs["build_win"]
+        names = [x.get("name") for x in build["steps"]]
+        self.assertNotIn("Test the adapter build configuration without the SDK", names)
+        self.assertIn("Test the adapter build configuration without the SDK", [x.get("name") for x in self.jobs["adapter_config"]["steps"]])
+        self.assertIn("setup_ui", build["needs"])
+        self.assertEqual(step(build, "Installer setup UI")["with"]["name"], "foundation-setup-ui")
+
+    def test_the_build_job_also_runs_after_a_failed_shard_but_not_after_a_cancelled_one(self):
+        condition = self.jobs["build_win"]["if"]
+        self.assertIn("!cancelled()", condition)
+        self.assertIn("contains(fromJSON('[\"success\",\"skipped\",\"failure\"]'), needs.shard.result)", condition)
+        for name in ("Merge the shard compiler caches", "Unpack the shard compiler caches"):
+            self.assertIn("needs.shard.result == 'failure'", step(self.jobs["build_win"], name)["if"])
+        # whatever the shards compiled before they died still reaches build_win
+        for name in ("Pack the compiler cache", "Upload the compiler cache", "Upload the ninja log"):
+            self.assertEqual(step(self.jobs["shard"], name)["if"], "${{ !cancelled() }}")
+
+    def gate(self, **results):
+        """Run the ci-gate script with the given job results (jobs not named succeed)."""
+        script = step(self.jobs["ci-gate"], "Every needed job succeeded or was deliberately skipped")["run"]
+        code = script.split("<<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+        code = "\n".join(line[10:] if line.startswith(" " * 10) else line for line in code.splitlines())
+        needs = {name: {"result": "success"} for name in self.jobs["ci-gate"]["needs"]}
+        for name, result in results.items():
+            needs[name] = {"result": result}
+        import json
+        import os
+        import subprocess
+        import sys
+        env = dict(os.environ, NEEDS=json.dumps(needs))
+        return subprocess.run([sys.executable, "-c", code], env=env, capture_output=True, text=True).returncode
+
+    def test_the_gate_forgives_a_failed_shard_only_when_the_build_job_succeeded(self):
+        self.assertEqual(self.gate(), 0)
+        self.assertEqual(self.gate(shard="skipped", cold_plan="success"), 0)
+        self.assertEqual(self.gate(shard="failure"), 0)
+        self.assertEqual(self.gate(shard="failure", build_win="failure"), 1)
+        self.assertEqual(self.gate(shard="failure", build_win="skipped"), 1)
+        self.assertEqual(self.gate(shard="failure", build_win="cancelled"), 1)
+        self.assertEqual(self.gate(shard="cancelled"), 1)
+        self.assertEqual(self.gate(build_win="failure"), 1)
+        self.assertEqual(self.gate(adapter_config="failure"), 1)
+
+
+class SizeBudgetTest(unittest.TestCase):
+    def setUp(self):
+        self.build = load()["jobs"]["build_win"]
+
+    def test_the_size_budget_runs_on_the_finished_installer_before_the_assets_are_renamed(self):
+        names = [s.get("name") for s in self.build["steps"]]
+        gate = step(self.build, "Installer size budget")
+        self.assertEqual(gate["if"], "needs.changes.outputs.package == 'true'")
+        self.assertGreater(names.index("Installer size budget"), names.index("Run the installer worker (smoke test)"))
+        self.assertLess(names.index("Installer size budget"), names.index("Rename release assets"))
+        self.assertIn("scripts/ci/check-size-budget.py", gate["run"])
+        self.assertIn("artifacts/sunshine-windows-installer.exe", gate["run"])
+        for measured in ("sunshine-windows-portable.zip", "::Sunshine/sunshine.exe", "::Sunshine/assets/gui/sunshine-gui.exe"):
+            self.assertIn(measured, gate["run"])
+        # a failing script must fail the step: pwsh does not stop on a native exit code by itself
+        self.assertIn("exit $LASTEXITCODE", gate["run"])
+
+
+    def test_the_symbols_of_every_build_are_kept_as_an_artifact_of_their_own(self):
+        # a pre-release (and its Symbols-x64.zip) is deleted once two newer ones exist: the artifact outlives it by name
+        keep = step(self.build, "Keep the symbols of this build")
+        self.assertEqual(keep["if"], "needs.changes.outputs.package == 'true'")
+        self.assertEqual(keep["with"]["name"], "sunshine-symbols-${{ needs.setup_release.outputs.release_tag }}")
+        self.assertEqual(keep["with"]["path"], "artifacts/Sunshine.*.Symbols-x64.zip")
+        self.assertEqual(keep["with"]["retention-days"], 90)
+        self.assertEqual(keep["with"]["if-no-files-found"], "error")
+        names = [s.get("name") for s in self.build["steps"]]
+        self.assertGreater(names.index("Keep the symbols of this build"), names.index("Rename release assets"))
+
+
+if __name__ == "__main__":
+    unittest.main()

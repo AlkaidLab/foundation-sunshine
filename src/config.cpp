@@ -3,12 +3,15 @@
  * @brief Definitions for the configuration of Sunshine.
  */
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <iterator>
 #include <mutex>
+#include <system_error>
 #include <thread>
 #include <unordered_map>
 #include <utility>
@@ -21,19 +24,24 @@
 #include "config.h"
 #include "entry_handler.h"
 #include "file_handler.h"
-#include "logging.h"
-#include "nvhttp.h"
-#include "rtsp.h"
-#include "utility.h"
 #include "globals.h"
+#include "hdr/calibration.h"
+#include "logging.h"
+#include "nat_discovery.h"
+#include "nvhttp.h"
+#include "public_address.h"
+#include "rtsp.h"
+#include "streaming/bitrate.h"
+#include "utility.h"
 
 #include "display_device/parsed_config.h"
+#include "doctor/doctor.h"
 #include "platform/common.h"
 #include "remote_connect/types.h"
 
 #ifdef _WIN32
-  #include <shellapi.h>
   #include "platform/windows/misc.h"
+  #include <shellapi.h>
 #endif
 
 #ifndef __APPLE__
@@ -52,8 +60,53 @@ using namespace std::literals;
 namespace config {
 
   namespace {
+    std::mutex generated_cover_style_mutex;
+    std::optional<std::string> generated_cover_style_live;  ///< set when the configuration is saved; unset until then (the startup value is nvhttp.generated_cover_style)
+
+    /// The value of a style key as the configuration file writes it: without the spaces around it ("glass # note" reads "glass ").
+    std::string
+    trimmed_cover_style(std::string value) {
+      const auto first = value.find_first_not_of(" \t\r\n");
+      if (first == std::string::npos) return {};
+      return value.substr(first, value.find_last_not_of(" \t\r\n") - first + 1);
+    }
+
+    bool
+    is_cover_style_name(std::string_view value) {
+      return value == "tonal" || value == "monogram" || value == "icon" || value == "editorial" || value == "glass" || value == "geometric";
+    }
     std::mutex config_file_mutex;
-  }
+    std::unordered_map<std::string, std::string> command_line_config_overrides;
+
+    std::optional<std::string>
+    read_config_file_contents() {
+      const auto path = file_handler::path_from_utf8(sunshine.config_file);
+      std::error_code error;
+      const auto exists = fs::exists(path, error);
+      if (error) {
+        BOOST_LOG(warning) << "Failed to inspect config file: " << error.message();
+        return std::nullopt;
+      }
+      if (!exists) {
+        return std::string {};
+      }
+
+      std::ifstream input(path, std::ios::binary);
+      if (!input.is_open()) {
+        BOOST_LOG(warning) << "Failed to open config file for reading"sv;
+        return std::nullopt;
+      }
+      std::string contents {
+        std::istreambuf_iterator<char>(input),
+        std::istreambuf_iterator<char>()
+      };
+      if (input.bad()) {
+        BOOST_LOG(warning) << "Failed while reading config file"sv;
+        return std::nullopt;
+      }
+      return contents;
+    }
+  }  // namespace
 
   namespace nv {
 
@@ -113,7 +166,8 @@ namespace config {
 
   namespace amd {
 #if !defined(_WIN32) || defined(DOXYGEN)
-  // values accurate as of 27/12/2022, but aren't strictly necessary for MacOS build
+  // values accurate as of the AMF SDK 1.5.3 headers in third-party/AMF, but
+  // aren't strictly necessary for MacOS build
   #define AMF_VIDEO_ENCODER_AV1_QUALITY_PRESET_SPEED 100
   #define AMF_VIDEO_ENCODER_AV1_QUALITY_PRESET_QUALITY 30
   #define AMF_VIDEO_ENCODER_AV1_QUALITY_PRESET_BALANCED 70
@@ -127,14 +181,23 @@ namespace config {
   #define AMF_VIDEO_ENCODER_AV1_RATE_CONTROL_METHOD_CBR 3
   #define AMF_VIDEO_ENCODER_AV1_RATE_CONTROL_METHOD_PEAK_CONSTRAINED_VBR 2
   #define AMF_VIDEO_ENCODER_AV1_RATE_CONTROL_METHOD_LATENCY_CONSTRAINED_VBR 1
+  #define AMF_VIDEO_ENCODER_AV1_RATE_CONTROL_METHOD_QUALITY_VBR 4
+  #define AMF_VIDEO_ENCODER_AV1_RATE_CONTROL_METHOD_HIGH_QUALITY_VBR 5
+  #define AMF_VIDEO_ENCODER_AV1_RATE_CONTROL_METHOD_HIGH_QUALITY_CBR 6
   #define AMF_VIDEO_ENCODER_HEVC_RATE_CONTROL_METHOD_CONSTANT_QP 0
   #define AMF_VIDEO_ENCODER_HEVC_RATE_CONTROL_METHOD_CBR 3
   #define AMF_VIDEO_ENCODER_HEVC_RATE_CONTROL_METHOD_PEAK_CONSTRAINED_VBR 2
   #define AMF_VIDEO_ENCODER_HEVC_RATE_CONTROL_METHOD_LATENCY_CONSTRAINED_VBR 1
+  #define AMF_VIDEO_ENCODER_HEVC_RATE_CONTROL_METHOD_QUALITY_VBR 4
+  #define AMF_VIDEO_ENCODER_HEVC_RATE_CONTROL_METHOD_HIGH_QUALITY_VBR 5
+  #define AMF_VIDEO_ENCODER_HEVC_RATE_CONTROL_METHOD_HIGH_QUALITY_CBR 6
   #define AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD_CONSTANT_QP 0
   #define AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD_CBR 1
   #define AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD_PEAK_CONSTRAINED_VBR 2
   #define AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD_LATENCY_CONSTRAINED_VBR 3
+  #define AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD_QUALITY_VBR 4
+  #define AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD_HIGH_QUALITY_VBR 5
+  #define AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD_HIGH_QUALITY_CBR 6
   #define AMF_VIDEO_ENCODER_AV1_USAGE_TRANSCODING 0
   #define AMF_VIDEO_ENCODER_AV1_USAGE_LOW_LATENCY 1
   #define AMF_VIDEO_ENCODER_AV1_USAGE_ULTRA_LOW_LATENCY 2
@@ -409,12 +472,13 @@ namespace config {
 
     {},  // nv
     true,  // nv_realtime_hags
+    true,  // nv_manage_driver_settings
+    false,  // nv_vdd_force_vsync
     true,  // nv_opengl_vulkan_on_dxgi
     true,  // nv_sunshine_high_power_mode
     false,  // vdd_keep_enabled
     false,  // vdd_headless_create_enabled
     false,  // vdd_reuse (default: recreate VDD for each client)
-    true,  // vdd_borrowed_texture
     true,  // vdd_vulkan_hdr_bridge (automatic for HDR VDD sessions)
     {},  // nv_legacy
 
@@ -442,6 +506,7 @@ namespace config {
       0,  // ltr_frames
       0,  // slices_per_frame
       false,  // avcodec_compat: keep clean standalone AMF path by default
+      -1,  // hevc_gop_size: leave periodic refresh to the driver
     },  // amd
 
     {
@@ -468,7 +533,6 @@ namespace config {
     (int) display_device::parsed_config_t::refresh_rate_change_e::automatic,  // refresh_rate_change
     {},  // manual_refresh_rate
     (int) display_device::parsed_config_t::hdr_prep_e::automatic,  // hdr_prep
-    {},  // display_mode_remapping
     false,  // variable_refresh_rate
     0,  // minimum_fps_target (0 = auto, about half the stream FPS)
     true,  // input_activity_boost
@@ -479,19 +543,25 @@ namespace config {
     "auto"s,  // capture_compute_shader (automatic capability and benefit detection)
     false,  // wgc_disable_secure_desktop (disabled by default for security)
     true,  // dynamic_resolution_follow_display (default: on; matches existing behavior. Set false for legacy clients like PSVita Moonlight.)
+    64 * 1024,  // video_pacing_threshold (protect small-queue paths from large frame bursts)
   };
 
   audio_t audio {
     {},  // audio_sink
     {},  // virtual_sink
-    "vb_cable"s,  // microphone_redirect_backend
+    false,  // keep_sink_default
+    false,  // host_audio
+    "auto"s,  // microphone_redirect_backend
     true,  // stream audio
     true,  // stream_mic (enable microphone streaming from client)
     true,  // install_steam_drivers
+    false,  // mat_live (starts the installed capture helper when enabled)
   };
 
   stream_t stream {
     10s,  // ping_timeout
+    false,  // stop_on_last_video_session
+    true,  // launch_splash
 
     APPS_JSON_PATH,
 
@@ -508,11 +578,20 @@ namespace config {
     CERTIFICATE_FILE,
 
     platf::get_host_name(),  // sunshine_name,
+    {},  // fs_host_icon
+    "tonal"s,  // generated_cover_style
     "[]",
     "sunshine_state.json"s,  // file_state
     "[]"s,  // file_mappings
     48020,  // file_mapping_port
+    false,  // usb_forwarding_enabled: explicit host opt-in
+    0,  // usb_forwarding_port: automatic (main port + 7)
     {},  // external_ip
+    {},  // external_endpoints
+    {},  // stun_servers
+    "enabled",  // network_external_check
+    {},  // network_external_endpoint
+    "enabled",  // network_bypass_proxy
     {
       "1280x720"s,
       "1920x1080"s,
@@ -562,8 +641,8 @@ namespace config {
     true,  // client gamepads with motion events are emulated as DS4
     true,  // client gamepads with touchpads are emulated as DS4
     true,  // ds5_inputtino_randomize_mac
-    false, // enable_dsu_server - disabled by default
-    26760, // dsu_server_port - default DSU server port
+    false,  // enable_dsu_server - disabled by default
+    26760,  // dsu_server_port - default DSU server port
 
     true,  // keyboard enabled
     true,  // mouse enabled
@@ -573,8 +652,9 @@ namespace config {
     true,  // native pen/touch support
     true,  // native touchpad optimization
     true,  // virtual mouse (use driver if available)
-    false, // amf_draw_mouse_cursor
+    false,  // amf_draw_mouse_cursor
     true,  // clipboard_sync (default on; effective only when the user-session GUI agent is alive and forwards data)
+    true,  // client_gamepad_override (client-declared type wins; no official client sends it today)
   };
 
   sunshine_t sunshine {
@@ -586,16 +666,23 @@ namespace config {
     {},  // Username
     {},  // Password
     {},  // Password Salt
+    {},  // widget_token (Game Bar 小部件;为空=功能关闭)
     file_handler::path_to_utf8(platf::appdata() / "sunshine.conf"),  // config file
     {},  // cmd args
     47989,  // Base port number
     "ipv4",  // Address family
     {},  // Bind address
+    config_session_binding::default_mode,  // Capture session binding
     file_handler::path_to_utf8(platf::appdata() / "sunshine.log"),  // log file
     false,  // restore_log - 默认不恢复日志文件
     50,  // max_log_size_mb - 默认50MB，超过自动轮转
     false,  // notify_pre_releases
     true,  // system_tray
+    "fullscreen",  // pin_prompt
+    30,  // session_idle_minutes
+    12,  // session_absolute_hours
+    7 * 24 * 60,  // session_remember_idle_minutes
+    30,  // session_remember_days
     {},  // prep commands
   };
 
@@ -715,7 +802,7 @@ namespace config {
     auto end_name = std::find_if_not(std::make_reverse_iterator(eq), std::make_reverse_iterator(begin), space_tab).base();
     auto begin_val = std::find_if_not(eq + 1, endc, space_tab);
 
-    if (begin_val == endl) {
+    if (begin_val == endc) {
       return std::make_pair(endl, std::nullopt);
     }
 
@@ -790,6 +877,9 @@ namespace config {
   string_restricted_f(std::unordered_map<std::string, std::string> &vars, const std::string &name, std::string &input, const std::vector<std::string_view> &allowed_vals) {
     std::string temp;
     string_f(vars, name, temp);
+    const auto begin = std::find_if_not(temp.begin(), temp.end(), whitespace);
+    const auto end = std::find_if_not(temp.rbegin(), temp.rend(), whitespace).base();
+    temp.assign(begin, end);
 
     for (auto &allowed_val : allowed_vals) {
       if (temp == allowed_val) {
@@ -917,18 +1007,6 @@ namespace config {
     }
   }
 
-  bool
-  to_bool(std::string &boolean) {
-    std::for_each(std::begin(boolean), std::end(boolean), [](char ch) { return (char) std::tolower(ch); });
-
-    return boolean == "true"sv ||
-           boolean == "yes"sv ||
-           boolean == "enable"sv ||
-           boolean == "enabled"sv ||
-           boolean == "on"sv ||
-           (std::find(std::begin(boolean), std::end(boolean), '1') != std::end(boolean));
-  }
-
   void
   bool_f(std::unordered_map<std::string, std::string> &vars, const std::string &name, bool &input) {
     std::string tmp;
@@ -951,6 +1029,29 @@ namespace config {
     }
 
     input = to_bool(tmp);
+  }
+
+  /// The covers of the applications without a picture follow the saved style at once (a key that is gone from the file, or a value that is not one of the six, is tonal).
+  template <class Map>
+  void
+  apply_live_generated_cover_style(const Map &saved) {
+    std::string value = "tonal";
+    if (const auto found = saved.find("generated_cover_style"); found != saved.end() && is_cover_style_name(trimmed_cover_style(found->second))) {
+      value = trimmed_cover_style(found->second);
+    }
+    std::lock_guard lock { generated_cover_style_mutex };
+    generated_cover_style_live = std::move(value);
+  }
+
+  /// 启动画面 takes effect at the next launch: a saved value is in force at once, the way the bitrate ceiling is (a key that is gone from the file is the default, on).
+  template <class Map>
+  void
+  apply_live_launch_splash(const Map &saved) {
+    bool value = true;
+    if (const auto found = saved.find("launch_splash"); found != saved.end() && !found->second.empty()) {
+      value = to_bool(found->second);
+    }
+    stream.launch_splash = value;
   }
 
   void
@@ -1039,40 +1140,6 @@ namespace config {
 
     if (pos != begin) {
       input.emplace_back(begin, pos);
-    }
-  }
-
-  void
-  list_display_mode_remapping_f(std::unordered_map<std::string, std::string> &vars, const std::string &name, std::vector<video_t::display_mode_remapping_t> &input) {
-    std::string string;
-    string_f(vars, name, string);
-
-    std::stringstream jsonStream;
-
-    // check if string is empty, i.e. when the value doesn't exist in the config file
-    if (string.empty()) {
-      return;
-    }
-
-    // We need to add a wrapping object to make it valid JSON, otherwise ptree cannot parse it.
-    jsonStream << "{\"display_mode_remapping\":" << string << "}";
-
-    boost::property_tree::ptree jsonTree;
-    boost::property_tree::read_json(jsonStream, jsonTree);
-
-    for (auto &[_, entry] : jsonTree.get_child("display_mode_remapping"s)) {
-      auto type = entry.get_optional<std::string>("type"s);
-      auto received_resolution = entry.get_optional<std::string>("received_resolution"s);
-      auto received_fps = entry.get_optional<std::string>("received_fps"s);
-      auto final_resolution = entry.get_optional<std::string>("final_resolution"s);
-      auto final_refresh_rate = entry.get_optional<std::string>("final_refresh_rate"s);
-
-      input.push_back(video_t::display_mode_remapping_t {
-        type.value_or(""),
-        received_resolution.value_or(""),
-        received_fps.value_or(""),
-        final_resolution.value_or(""),
-        final_refresh_rate.value_or("") });
     }
   }
 
@@ -1177,6 +1244,7 @@ namespace config {
           break;
         default:
           BOOST_LOG(warning) << "config: Unrecognized flag: ["sv << *line << ']' << std::endl;
+          doctor::record_config_problem("Unrecognized flag [" + std::string(1, *line) + "]");
           ret = -1;
       }
 
@@ -1197,9 +1265,10 @@ namespace config {
     return opts;
   }
 
-  void apply_config(std::unordered_map<std::string, std::string> &&vars) {
+  void
+  apply_config(std::unordered_map<std::string, std::string> &&vars) {
     for (auto &[name, val] : vars) {
-      const bool sensitive = name == "file_mappings" || name == "remote_connect_network_secret";
+      const bool sensitive = name == "file_mappings" || name == "remote_connect_network_secret" || name == "widget_token";
       const auto log_value = sensitive && !val.empty() ? "<redacted>"s : val;
       BOOST_LOG(info) << "config: '"sv << name << "' = "sv << log_value;
       modified_config_settings[name] = val;
@@ -1216,9 +1285,9 @@ namespace config {
     string_f(vars, "sw_tune", video.sw.sw_tune);
 
     int_between_f(vars, "nvenc_preset", video.nv.quality_preset, { 1, 7 });
+    bool_f(vars, "nvenc_frame_budget_guard", video.nv.frame_budget_guard);
     int_between_f(vars, "nvenc_vbv_increase", video.nv.vbv_percentage_increase, { 0, 400 });
     bool_f(vars, "nvenc_spatial_aq", video.nv.adaptive_quantization);
-    bool_f(vars, "nvenc_temporal_aq", video.nv.enable_temporal_aq);
     generic_f(vars, "nvenc_twopass", video.nv.two_pass, nv::twopass_from_view);
     bool_f(vars, "nvenc_h264_cavlc", video.nv.h264_cavlc);
     generic_f(vars, "nvenc_split_encode", video.nv.split_frame_encoding, nv::split_encode_from_view);
@@ -1229,6 +1298,8 @@ namespace config {
     int_between_f(vars, "nvenc_target_quality", video.nv.target_quality, { 0, 63 });
     bool_f(vars, "nvenc_cuda_array_input", video.nv.cuda_array_input);
     bool_f(vars, "nvenc_realtime_hags", video.nv_realtime_hags);
+    bool_f(vars, "nvenc_manage_driver_settings", video.nv_manage_driver_settings);
+    bool_f(vars, "nvenc_vdd_force_vsync", video.nv_vdd_force_vsync);
     bool_f(vars, "nvenc_opengl_vulkan_on_dxgi", video.nv_opengl_vulkan_on_dxgi);
     bool_f(vars, "nvenc_latency_over_power", video.nv_sunshine_high_power_mode);
 
@@ -1302,6 +1373,8 @@ namespace config {
     int_between_f(vars, "amd_ltr_frames", video.amd.amd_ltr_frames, { 0, 4 });
     int_between_f(vars, "amd_slices_per_frame", video.amd.amd_slices_per_frame, { 0, 4 });
     bool_f(vars, "amd_avcodec_compat", video.amd.amd_avcodec_compat);
+    bool_f(vars, "amd_vpe", video.amd.amd_vpe);
+    int_between_f(vars, "amd_hevc_gop_size", video.amd.amd_hevc_gop_size, { -1, 1000 });
     bool_f(vars, "amd_multi_hw_instance", video.amd.amd_multi_hw_instance);
     // FFmpeg-aligned opt-in toggles (default nullopt = let AMD driver decide,
     // matches FFmpeg amfenc.c behavior of never setting the property unless
@@ -1314,14 +1387,21 @@ namespace config {
     int_between_f(vars, "amd_av1_latency_mode", video.amd.amd_av1_latency_mode, { 0, 3 });
 
     int_f(vars, "vt_coder", video.vt.vt_coder, vt::coder_from_view);
-    int_f(vars, "vt_software", video.vt.vt_allow_sw, vt::allow_software_from_view);
-    int_f(vars, "vt_software", video.vt.vt_require_sw, vt::force_software_from_view);
+    // One value feeds both fields: the first read erases the key, so a second
+    // int_f(vars, "vt_software", ...) would find nothing and leave the
+    // required-software flag at its previous value.
+    std::string vt_software;
+    string_f(vars, "vt_software", vt_software);
+    if (!vt_software.empty()) {
+      video.vt.vt_allow_sw = vt::allow_software_from_view(vt_software);
+      video.vt.vt_require_sw = vt::force_software_from_view(vt_software);
+    }
     int_f(vars, "vt_realtime", video.vt.vt_realtime, vt::rt_from_view);
 
     bool_f(vars, "vaapi_strict_rc_buffer", video.vaapi.strict_rc_buffer);
 
     string_f(vars, "capture", video.capture);
-    
+
 #ifdef _WIN32
     // Check if WGC is selected and we're running in service mode
     // If so, automatically switch to DDX since WGC doesn't work in system mode
@@ -1332,7 +1412,7 @@ namespace config {
       }
     }
 #endif
-    
+
     string_f(vars, "encoder", video.encoder);
     string_f(vars, "adapter_name", video.adapter_name);
     {
@@ -1341,8 +1421,7 @@ namespace config {
       std::string trimmed = (first == std::string::npos) ? std::string {} : video.adapter_name.substr(first, last - first + 1);
       std::string lower = trimmed;
       std::transform(lower.begin(), lower.end(), lower.begin(),
-        [](unsigned char c) { return std::tolower(c); }
-      );
+        [](unsigned char c) { return std::tolower(c); });
       if (trimmed.empty() || lower == "default" || lower == "auto") {
         video.adapter_name.clear();
       }
@@ -1351,23 +1430,23 @@ namespace config {
       }
     }
     string_f(vars, "output_name", video.output_name);
-    
+
 #ifdef _WIN32
     // Capture target: "display" (default) or "window"
     string_f(vars, "capture_target", video.capture_target);
     if (video.capture_target.empty()) {
       video.capture_target = "display";  // Default to display capture
     }
-    
+
     // Window title for window capture
     string_f(vars, "window_title", video.window_title);
-    
+
     // Validate capture_target
     if (video.capture_target != "display" && video.capture_target != "window") {
       BOOST_LOG(warning) << "Invalid capture_target: ["sv << video.capture_target << "], defaulting to 'display'"sv;
       video.capture_target = "display";
     }
-    
+
     // If window capture is selected, ensure window_title is provided
     if (video.capture_target == "window" && video.window_title.empty()) {
       BOOST_LOG(warning) << "capture_target=window but window_title is empty. Window capture may fail."sv;
@@ -1376,7 +1455,6 @@ namespace config {
     int_f(vars, "display_device_prep", video.display_device_prep, display_device::parsed_config_t::device_prep_from_view);
     int_f(vars, "resolution_change", video.resolution_change, display_device::parsed_config_t::resolution_change_from_view);
     string_f(vars, "manual_resolution", video.manual_resolution);
-    list_display_mode_remapping_f(vars, "display_mode_remapping", video.display_mode_remapping);
     int_f(vars, "refresh_rate_change", video.refresh_rate_change, display_device::parsed_config_t::refresh_rate_change_from_view);
     string_f(vars, "manual_refresh_rate", video.manual_refresh_rate);
     int_f(vars, "hdr_prep", video.hdr_prep, display_device::parsed_config_t::hdr_prep_from_view);
@@ -1413,10 +1491,10 @@ namespace config {
     }
     bool_f(vars, "wgc_disable_secure_desktop", video.wgc_disable_secure_desktop);
     bool_f(vars, "dynamic_resolution_follow_display", video.dynamic_resolution_follow_display);
+    int_between_f(vars, "video_pacing_threshold", video.video_pacing_threshold, { 0, 16 * 1024 * 1024 });
     bool_f(vars, "vdd_keep_enabled", video.vdd_keep_enabled);
     bool_f(vars, "vdd_headless_create", video.vdd_headless_create_enabled);
     bool_f(vars, "vdd_reuse", video.vdd_reuse);
-    bool_f(vars, "vdd_borrowed_texture", video.vdd_borrowed_texture);
     bool_f(vars, "vdd_vulkan_hdr_bridge", video.vdd_vulkan_hdr_bridge);
 
     // Whether to composite the host mouse cursor into the captured frames.
@@ -1430,10 +1508,10 @@ namespace config {
       video.downscaling_quality = "balanced";  // Default to bicubic
     }
     // Validate downscaling_quality
-    if (video.downscaling_quality != "fast" && 
-        video.downscaling_quality != "balanced" && 
+    if (video.downscaling_quality != "fast" &&
+        video.downscaling_quality != "balanced" &&
         video.downscaling_quality != "high_quality") {
-      BOOST_LOG(warning) << "Invalid downscaling_quality: ["sv << video.downscaling_quality 
+      BOOST_LOG(warning) << "Invalid downscaling_quality: ["sv << video.downscaling_quality
                          << "], valid options are: fast, balanced, high_quality. Defaulting to 'balanced'"sv;
       video.downscaling_quality = "balanced";
     }
@@ -1454,6 +1532,13 @@ namespace config {
     path_f(vars, "pkey", nvhttp.pkey);
     path_f(vars, "cert", nvhttp.cert);
     string_f(vars, "sunshine_name", nvhttp.sunshine_name);
+    string_f(vars, "fs_host_icon", nvhttp.fs_host_icon);
+    string_f(vars, "generated_cover_style", nvhttp.generated_cover_style);
+    nvhttp.generated_cover_style = trimmed_cover_style(std::move(nvhttp.generated_cover_style));
+    if (!is_cover_style_name(nvhttp.generated_cover_style)) {
+      BOOST_LOG(warning) << "Invalid generated_cover_style: [" << nvhttp.generated_cover_style << "] defaulting to tonal";
+      nvhttp.generated_cover_style = "tonal";
+    }
     string_f(vars, "clients", nvhttp.clients);
     path_f(vars, "log_path", config::sunshine.log_file);
     path_f(vars, "file_state", nvhttp.file_state);
@@ -1461,12 +1546,63 @@ namespace config {
     int file_mapping_port = nvhttp.file_mapping_port;
     int_between_f(vars, "file_mapping_port", file_mapping_port, { 1024, 65535 });
     nvhttp.file_mapping_port = static_cast<std::uint16_t>(file_mapping_port);
+    bool_f(vars, "usb_forwarding_enabled", nvhttp.usb_forwarding_enabled);
+    int usb_forwarding_port = nvhttp.usb_forwarding_port;
+    int_f(vars, "usb_forwarding_port", usb_forwarding_port);
+    if (usb_forwarding_port == 0 || (usb_forwarding_port >= 1024 && usb_forwarding_port <= 65535)) {
+      nvhttp.usb_forwarding_port = static_cast<std::uint16_t>(usb_forwarding_port);
+    }
+    else {
+      BOOST_LOG(warning) << "Ignoring invalid usb_forwarding_port: expected 0 or 1024-65535";
+    }
 
     // Must be run after "file_state"
     config::sunshine.credentials_file = config::nvhttp.file_state;
     path_f(vars, "credentials_file", config::sunshine.credentials_file);
 
+    int_between_f(vars, "session_idle_minutes", sunshine.session_idle_minutes, { 1, 1440 });
+    int_between_f(vars, "session_absolute_hours", sunshine.session_absolute_hours, { 1, 720 });
+    int_between_f(vars, "session_remember_idle_minutes", sunshine.session_remember_idle_minutes, { 1, 525600 });
+    int_between_f(vars, "session_remember_days", sunshine.session_remember_days, { 1, 365 });
+
     string_f(vars, "external_ip", nvhttp.external_ip);
+    {
+      const auto trimmed = public_address::trim(nvhttp.external_ip);
+      if (trimmed.empty()) {
+        nvhttp.external_ip.clear();
+      }
+      else if (public_address::is_valid(trimmed)) {
+        nvhttp.external_ip = public_address::normalize(trimmed);
+      }
+      else {
+        BOOST_LOG(warning) << "Ignoring invalid external_ip: expected an IP address or a DNS host name"sv;
+        nvhttp.external_ip.clear();
+      }
+    }
+    string_f(vars, "external_endpoints", nvhttp.external_endpoints);
+    {
+      const auto list = public_address::parse_endpoint_list(nvhttp.external_endpoints);
+      if (!list.rejected.empty()) {
+        BOOST_LOG(warning) << "Ignoring invalid external_endpoints entries: expected host, host:port, IPv4:port or [IPv6]:port"sv;
+      }
+      if (list.truncated) {
+        BOOST_LOG(warning) << "external_endpoints keeps the first "sv << public_address::MAX_ENDPOINTS << " entries"sv;
+      }
+      nvhttp.external_endpoints = public_address::join_endpoints(list.endpoints);
+    }
+    string_f(vars, "stun_servers", nvhttp.stun_servers);
+    string_f(vars, "network_external_check", nvhttp.network_external_check);
+    string_f(vars, "network_external_endpoint", nvhttp.network_external_endpoint);
+    string_f(vars, "network_bypass_proxy", nvhttp.network_bypass_proxy);
+    {
+      const auto list = nat_discovery::parse_server_list(nvhttp.stun_servers);
+      if (!list.rejected.empty()) {
+        BOOST_LOG(warning) << "Ignoring invalid stun_servers entries: expected host or host:port"sv;
+      }
+      if (list.truncated) {
+        BOOST_LOG(warning) << "stun_servers keeps the first "sv << nat_discovery::MAX_SERVERS << " entries"sv;
+      }
+    }
     list_string_f(vars, "resolutions"s, nvhttp.resolutions);
     list_string_f(vars, "fps"s, nvhttp.fps);
     int_between_f(vars, "sleep_mode", nvhttp.sleep_mode, { SLEEP_MODE_SUSPEND, SLEEP_MODE_AWAY });
@@ -1491,21 +1627,22 @@ namespace config {
       vars,
       "client_fingerprint_rules_refresh_hours",
       nvhttp.client_fingerprint_rules_refresh_hours,
-      {1, 168}
-    );
+      { 1, 168 });
     list_prep_cmd_f(vars, "global_prep_cmd", config::sunshine.prep_cmds);
 
     string_f(vars, "audio_sink", audio.sink);
     string_f(vars, "virtual_sink", audio.virtual_sink);
+    bool_f(vars, "keep_sink_default", audio.keep_sink_default);
+    bool_f(vars, "host_audio", audio.host_audio);
     string_restricted_f(
       vars,
       "microphone_redirect_backend",
       audio.microphone_redirect_backend,
-      { "vb_cable"sv, "usbip_experimental"sv, "auto"sv, "disabled"sv }
-    );
+      { "vb_cable"sv, "usbip_experimental"sv, "auto"sv, "disabled"sv });
     bool_f(vars, "stream_audio", audio.stream);
     bool_f(vars, "stream_mic", audio.stream_mic);
     bool_f(vars, "install_steam_audio_drivers", audio.install_steam_drivers);
+    bool_f(vars, "mat_live", audio.mat_live);
 
     string_restricted_f(vars, "origin_web_ui_allowed", nvhttp.origin_web_ui_allowed, { "pc"sv, "lan"sv, "wan"sv });
 
@@ -1514,6 +1651,8 @@ namespace config {
     if (to != -1) {
       stream.ping_timeout = std::chrono::milliseconds(to);
     }
+    bool_f(vars, "stop_on_last_video_session", stream.stop_on_last_video_session);
+    bool_f(vars, "launch_splash", stream.launch_splash);
 
     int_between_f(vars, "lan_encryption_mode", stream.lan_encryption_mode, { 0, 2 });
     int_between_f(vars, "wan_encryption_mode", stream.wan_encryption_mode, { 0, 2 });
@@ -1528,12 +1667,13 @@ namespace config {
       fs::permissions(
         file_apps_path,
         fs::perms::owner_read | fs::perms::owner_write,
-        fs::perm_options::add
-      );
+        fs::perm_options::add);
     }
 #endif
 
-    int_between_f(vars, "fec_percentage", stream.fec_percentage, {1, 255});
+    int_between_f(vars, "fec_percentage", stream.fec_percentage, { 0, 255 });
+    bool_f(vars, "fec_auto", stream.fec_auto);
+    int_between_f(vars, "fec_auto_max_percentage", stream.fec_auto_max_percentage, { 0, 100 });
 
     map_int_int_f(vars, "keybindings"s, input.keybindings);
 
@@ -1571,7 +1711,8 @@ namespace config {
     bool_f(vars, "motion_as_ds4", input.motion_as_ds4);
     bool_f(vars, "touchpad_as_ds4", input.touchpad_as_ds4);
     bool_f(vars, "enable_dsu_server", input.enable_dsu_server);
-    
+    bool_f(vars, "client_gamepad_override", input.client_gamepad_override);
+
     int temp_port = static_cast<int>(input.dsu_server_port);
     int_between_f(vars, "dsu_server_port", temp_port, { 1024, 65535 });
     input.dsu_server_port = static_cast<uint16_t>(temp_port);
@@ -1593,12 +1734,21 @@ namespace config {
 
     bool_f(vars, "system_tray", sunshine.system_tray);
 
+    // Read by the control panel from the saved file when a pairing request comes (no restart); a value that is not one of the two keeps the default.
+    string_restricted_f(vars, "pin_prompt", sunshine.pin_prompt, { "fullscreen"sv, "panel"sv });
+
     int port = sunshine.port;
     int_between_f(vars, "port"s, port, { 1024 + nvhttp::PORT_HTTPS, 65535 - rtsp_stream::RTSP_SETUP_PORT });
     sunshine.port = (std::uint16_t) port;
 
-    string_restricted_f(vars, "address_family", sunshine.address_family, {"ipv4"sv, "both"sv});
+    string_restricted_f(vars, "address_family", sunshine.address_family, { "ipv4"sv, "both"sv });
     string_f(vars, "bind_address", sunshine.bind_address);
+
+    const auto session_binding_key = std::string { config_session_binding::key };
+    if (const auto binding = vars.find(session_binding_key); binding != vars.end()) {
+      sunshine.session_binding = config_session_binding::parse_or_default(binding->second);
+      vars.erase(binding);
+    }
 
     bool upnp = false;
     bool_f(vars, "upnp"s, upnp);
@@ -1638,20 +1788,27 @@ namespace config {
                                                                    "fr"sv,  // French
                                                                    "it"sv,  // Italian
                                                                    "ja"sv,  // Japanese
+                                                                   "ko"sv,  // Korean
+                                                                   "pl"sv,  // Polish
                                                                    "pt"sv,  // Portuguese
+                                                                   "pt_BR"sv,  // Portuguese (Brazil)
                                                                    "ru"sv,  // Russian
                                                                    "sv"sv,  // Swedish
                                                                    "tr"sv,  // Turkish
+                                                                   "uk"sv,  // Ukrainian
                                                                    "zh"sv,  // Chinese
                                                                    "zh_TW"sv,  // Chinese (Traditional)
                                                                  });
 
     // 托盘菜单语言设置
     string_restricted_f(vars, "tray_locale", config::sunshine.tray_locale, {
-                                                                   "en"sv,  // English
-                                                                   "zh"sv,  // Chinese (Simplified)
-                                                                   "ja"sv,  // Japanese
-                                                                 });
+                                                                             "en"sv,  // English
+                                                                             "zh"sv,  // Chinese (Simplified)
+                                                                             "ja"sv,  // Japanese
+                                                                           });
+
+    // Game Bar 小部件本地端点的访问令牌(X-Sunshine-Token);为空表示功能关闭
+    string_f(vars, "widget_token"s, sunshine.widget_token);
 
     std::string log_level_string;
     string_f(vars, "min_log_level", log_level_string);
@@ -1694,8 +1851,9 @@ namespace config {
       vars.erase(it);
     }
 
-    if (sunshine.min_log_level <= 3) {
-      for (auto &[var, _] : vars) {
+    for (auto &[var, _] : vars) {
+      doctor::record_config_problem("Unrecognized configurable option [" + var + "]");
+      if (sunshine.min_log_level <= 3) {
         std::cout << "Warning: Unrecognized configurable option ["sv << var << ']' << std::endl;
       }
     }
@@ -1777,9 +1935,11 @@ namespace config {
       // Read config file
       auto vars = parse_config(file_handler::read_file(sunshine.config_file.c_str()));
 
-      for (auto &[name, value] : cmd_vars) {
-        vars.insert_or_assign(std::move(name), std::move(value));
+      {
+        std::lock_guard lock { config_file_mutex };
+        command_line_config_overrides = cmd_vars;
       }
+      apply_command_line_overrides(vars, cmd_vars);
 
       // Apply the config. Note: This will try to create any paths
       // referenced in the config, so we may receive exceptions if
@@ -1860,20 +2020,39 @@ namespace config {
     return 0;
   }
 
+  static void
+  sync_clients_config_locked(const std::map<std::string, std::string> &values, bool deleted = false) {
+    // A command-line override wins for the whole process lifetime, but bindings
+    // already saved for its UUIDs must survive the assignment. Otherwise a save
+    // that carries "clients" updates the runtime value, one that omits it keeps
+    // whatever is already active, and one that explicitly deletes it resets to [].
+    if (const auto override_clients = command_line_config_overrides.find("clients");
+      override_clients != command_line_config_overrides.end()) {
+      nvhttp.clients = hdr::preserve_client_calibrations(override_clients->second, nvhttp.clients);
+      return;
+    }
+    if (const auto clients = values.find("clients"); clients != values.end()) {
+      nvhttp.clients = clients->second;
+    }
+    else if (deleted) {
+      nvhttp.clients = "[]";
+    }
+  }
+
   bool
   update_config(const std::map<std::string, std::string> &updates) {
     std::lock_guard lock { config_file_mutex };
     try {
-      // 读取现有配置文件
-      std::map<std::string, std::string> configMap;
-      try {
-        std::string fileContent = file_handler::read_file(sunshine.config_file.c_str());
-        auto existingConfig = parse_config(fileContent);
-        configMap.insert(existingConfig.begin(), existingConfig.end());
+      // update_config treats an empty/null value as an explicit deletion, unlike
+      // the full-settings save where it means "omitted".
+      const bool deleted = updates.contains("clients") &&
+                           (updates.at("clients").empty() || updates.at("clients") == "null");
+      const auto file_content = read_config_file_contents();
+      if (!file_content) {
+        return false;
       }
-      catch (const std::exception &e) {
-        BOOST_LOG(debug) << "Failed to read existing config: " << e.what();
-      }
+      const auto existing_config = parse_config(*file_content);
+      std::map<std::string, std::string> configMap { existing_config.begin(), existing_config.end() };
 
       // 更新配置项，同时检查是否有变化
       bool hasChanged = false;
@@ -1888,16 +2067,20 @@ namespace config {
         }
         else {
           // 只有值不同时才更新
-          if (it == configMap.end() || it->second != value) {
-            configMap[key] = value;
+          const auto saved = key == "clients" ? hdr::preserve_client_calibrations(value, nvhttp.clients) : value;
+          if (it == configMap.end() || it->second != saved) {
+            configMap[key] = saved;
             hasChanged = true;
           }
         }
       }
 
       if (!hasChanged) {
+        if (updates.contains("clients")) sync_clients_config_locked(configMap, deleted);
+        // the file already has the style that was asked for, and the host may still be showing another one (the file was edited by hand): the style that was asked for is put in force
+        if (updates.contains("generated_cover_style")) apply_live_generated_cover_style(configMap);
         BOOST_LOG(info) << "Config unchanged, skip writing";
-        return false;
+        return true;
       }
 
       // 按字母顺序写入配置文件
@@ -1912,6 +2095,13 @@ namespace config {
         BOOST_LOG(warning) << "Failed to write config file: " << sunshine.config_file;
         return false;
       }
+      if (updates.contains("clients")) sync_clients_config_locked(configMap, deleted);
+      if (const auto gamepad_update = updates.find("gamepad"); gamepad_update != updates.end()) {
+        const auto gamepad = configMap.find("gamepad");
+        platf::set_global_gamepad_mode(gamepad == configMap.end() ? "auto"sv : std::string_view { gamepad->second });
+      }
+      if (updates.contains("launch_splash")) apply_live_launch_splash(configMap);
+      if (updates.contains("generated_cover_style")) apply_live_generated_cover_style(configMap);
       BOOST_LOG(info) << "Config updated successfully";
       return true;
     }
@@ -1921,37 +2111,93 @@ namespace config {
     }
   }
 
+  void
+  with_config_file_locked(const std::function<void()> &work) {
+    std::lock_guard lock { config_file_mutex };
+    work();
+  }
+
+  std::optional<std::map<std::string, std::string>>
+  get_config_snapshot() {
+    std::lock_guard lock { config_file_mutex };
+    try {
+      const auto file_content = read_config_file_contents();
+      if (!file_content) {
+        return std::nullopt;
+      }
+      const auto config = parse_config(*file_content);
+      return std::map<std::string, std::string> { config.begin(), config.end() };
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(warning) << "Failed to read config snapshot: " << e.what();
+      return std::nullopt;
+    }
+  }
+
+  std::optional<std::map<std::string, std::string>>
+  get_effective_config_snapshot() {
+    auto snapshot = get_config_snapshot();
+    if (snapshot) {
+      std::lock_guard lock { config_file_mutex };
+      apply_command_line_overrides(*snapshot, command_line_config_overrides);
+    }
+    return snapshot;
+  }
+
+  int
+  host_max_bitrate_kbps() {
+    return std::atomic_ref<int>(video.max_bitrate).load(std::memory_order_relaxed);
+  }
+
+  void
+  set_host_max_bitrate_kbps(int kbps) {
+    std::atomic_ref<int>(video.max_bitrate).store(std::max(0, kbps), std::memory_order_relaxed);
+  }
+
+  std::string
+  generated_cover_style() {
+    std::lock_guard lock { generated_cover_style_mutex };
+    return generated_cover_style_live ? *generated_cover_style_live : nvhttp.generated_cover_style;
+  }
+
   bool
-  update_full_config(const std::map<std::string, std::string> &fullConfig) {
+  update_full_config(const std::map<std::string, std::string> &fullConfig, std::string *previous_locale) {
     std::lock_guard lock { config_file_mutex };
     try {
       // 不需要保存到配置文件的只读字段（API响应字段，不是配置项）
       const std::set<std::string> readonlyFields = {
-        "status",           // API响应状态，不是配置项
-        "platform",         // 平台信息，编译时确定，只读
-        "version",          // 版本号，只读
-        "active_encoder",   // 运行时探测后实际使用的编码器，只读
+        "status",  // API响应状态，不是配置项
+        "platform",  // 平台信息，编译时确定，只读
+        "version",  // 版本号，只读
+        "active_encoder",  // 运行时探测后实际使用的编码器，只读
+        "active_hevc_mode",  // 探测后 HEVC 实际提供的模式，只读
+        "active_av1_mode",  // 探测后 AV1 实际提供的模式，只读
+        "nvidia_vsync",  // NVIDIA compatibility capability and runtime state, read-only
+        "active_nvenc_frame_budget",  // NVENC 帧预算护栏的运行时报告，只读
         "display_devices",  // 显示设备列表，运行时枚举，只读
-        "adapters",         // 适配器列表，运行时枚举，只读
-        "pair_name",        // 配对名称，由系统生成，只读
+        "adapters",  // 适配器列表，运行时枚举，只读
+        "pair_name",  // 配对名称，由系统生成，只读
       };
 
       // 受保护的字段：由系统托盘控制，需要保留本地配置文件中的原有值
       const std::set<std::string> protectedFields = {
-        "vdd_keep_enabled",       // 由系统托盘控制，不通过Web UI修改
-        "vdd_headless_create",    // 由系统托盘控制，不通过Web UI修改
-        "tray_locale",            // 由系统托盘控制，不通过Web UI修改
+        "session_binding",
+        "vdd_keep_enabled",  // 由系统托盘控制，不通过Web UI修改
+        "vdd_headless_create",  // 由系统托盘控制，不通过Web UI修改
+        "tray_locale",  // 由系统托盘控制，不通过Web UI修改
+        "widget_token",  // Game Bar 小部件令牌：手动/配对流程写入，不经Web UI修改
       };
 
-      // 读取现有配置文件（用于获取受保护字段的值和后续对比）
-      std::map<std::string, std::string> originalMap;
-      try {
-        std::string originalFileContent = file_handler::read_file(sunshine.config_file.c_str());
-        auto existingConfig = parse_config(originalFileContent);
-        originalMap.insert(existingConfig.begin(), existingConfig.end());
+      const auto original_file_content = read_config_file_contents();
+      if (!original_file_content) {
+        return false;
       }
-      catch (const std::exception &e) {
-        BOOST_LOG(debug) << "Failed to read existing config: " << e.what();
+      const auto existing_config = parse_config(*original_file_content);
+      std::map<std::string, std::string> originalMap { existing_config.begin(), existing_config.end() };
+      if (previous_locale) {
+        // the language of the file before this save (the host's default when the file does not name one)
+        const auto locale = originalMap.find("locale");
+        *previous_locale = locale == originalMap.end() || locale->second.empty() ? "en" : locale->second;
       }
 
       // 使用 std::map 保证按字母顺序保存
@@ -1971,7 +2217,21 @@ namespace config {
         if (value.empty() || value == "null") {
           continue;
         }
-        resultMap[key] = value;
+        resultMap[key] = key == "clients" ? hdr::preserve_client_calibrations(value, nvhttp.clients) : value;
+      }
+
+      // For clients, an omitted key and an empty/null value both mean "keep the
+      // saved list": treating "" as a deletion here would drop the key from the
+      // file while the runtime list survives, and a restart would lose clients
+      // together with their calibration bindings. An explicit "[]" is non-empty
+      // and still clears.
+      const auto submitted_clients = fullConfig.find("clients");
+      if (submitted_clients == fullConfig.end() || submitted_clients->second.empty() ||
+          submitted_clients->second == "null") {
+        const auto clients = originalMap.find("clients");
+        if (clients != originalMap.end() && !clients->second.empty() && clients->second != "null") {
+          resultMap.insert(*clients);
+        }
       }
 
       // 添加受保护字段（使用本地配置文件中的原有值）
@@ -1999,6 +2259,22 @@ namespace config {
         BOOST_LOG(info) << "Config unchanged, skip writing";
       }
 
+      if (fullConfig.contains("clients")) sync_clients_config_locked(resultMap);
+      // The bitrate ceiling is live: the running process takes the saved value now (a key that is gone from the file means no ceiling, as at start-up). The caller then tells the running sessions
+      // (stream::session::apply_host_bitrate_cap), which is why the saved value and the one in force never differ.
+      {
+        const auto cap = resultMap.find("max_bitrate");
+        const auto next = cap == resultMap.end() ? 0 : streaming::parse_bitrate_ceiling_kbps(cap->second);
+        if (next != host_max_bitrate_kbps()) {
+          BOOST_LOG(info) << "Host bitrate ceiling: " << host_max_bitrate_kbps() << " -> " << next << " Kbps (0 = none)";
+          set_host_max_bitrate_kbps(next);
+        }
+      }
+      const auto gamepad = resultMap.find("gamepad");
+      platf::set_global_gamepad_mode(gamepad == resultMap.end() ? "auto"sv : std::string_view { gamepad->second });
+      apply_live_launch_splash(resultMap);
+      apply_live_generated_cover_style(resultMap);
+
       return true;
     }
     catch (const std::exception &e) {
@@ -2014,8 +2290,35 @@ namespace config {
   }
 
   bool
-  save_clients_config(const std::string &clients) {
-    std::lock_guard lock { config_file_mutex };
+  get_client_touch_keyboard_enabled(const std::string &uuid) {
+    if (uuid.empty()) {
+      return false;
+    }
+    try {
+      const auto clients = nlohmann::json::parse(get_clients_config());
+      if (!clients.is_array()) {
+        return false;
+      }
+      for (const auto &entry : clients) {
+        if (!entry.is_object() || !entry.contains("uuid")) {
+          continue;
+        }
+        if (entry["uuid"] != uuid) {
+          continue;
+        }
+        return entry.contains("touch") &&
+               entry["touch"].is_object() &&
+               entry["touch"].value("enabled", false) == true;
+      }
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(warning) << "Failed to read touch profile for client: " << e.what();
+    }
+    return false;
+  }
+
+  static bool
+  save_clients_config_locked(const std::string &clients) {
     try {
       const auto normalized_clients = nlohmann::json::parse(clients).dump();
       std::map<std::string, std::string> config_map;
@@ -2045,6 +2348,64 @@ namespace config {
     }
     catch (const std::exception &e) {
       BOOST_LOG(warning) << "Failed to save client settings: " << e.what();
+      return false;
+    }
+  }
+
+  bool
+  save_clients_config(const std::string &clients) {
+    std::lock_guard lock { config_file_mutex };
+    try {
+      return save_clients_config_locked(hdr::preserve_client_calibrations(clients, nvhttp.clients));
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(warning) << "Failed to save client settings: " << e.what();
+      return false;
+    }
+  }
+
+  bool
+  save_client_hdr_calibration(const std::string &uuid, const nlohmann::json &calibration) {
+    if (uuid.empty()) return false;
+    std::lock_guard lock { config_file_mutex };
+    try {
+      // Merge into the persisted list, not the runtime one: a command-line
+      // override shrinks nvhttp.clients to the override entries, and writing
+      // that back would drop file-only clients and their bindings.
+      std::string persisted_clients;
+      if (const auto file_content = read_config_file_contents(); file_content) {
+        const auto existing_config = parse_config(*file_content);
+        const auto clients = existing_config.find("clients");
+        if (clients != existing_config.end() && !clients->second.empty() && clients->second != "null") {
+          persisted_clients = clients->second;
+        }
+      }
+      auto clients = nlohmann::json::parse(persisted_clients.empty() ? nvhttp.clients : persisted_clients);
+      if (!clients.is_array()) return false;
+      nlohmann::json *match = nullptr;
+      for (auto &client : clients) {
+        if (!client.is_object()) continue;
+        if (client.value("uuid", std::string {}) != uuid) continue;
+        if (match) return false;
+        match = &client;
+      }
+      if (!match) {
+        clients.push_back({ { "uuid", uuid } });
+        match = &clients.back();
+      }
+      (*match)["hdrCalibration"] = calibration;
+      if (!save_clients_config_locked(clients.dump())) {
+        return false;
+      }
+      // Keep the override shape at runtime: its fields win, bindings carry over.
+      if (const auto override_clients = command_line_config_overrides.find("clients");
+        override_clients != command_line_config_overrides.end()) {
+        nvhttp.clients = hdr::preserve_client_calibrations(override_clients->second, nvhttp.clients);
+      }
+      return true;
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(warning) << "Failed to save client HDR calibration: " << e.what();
       return false;
     }
   }

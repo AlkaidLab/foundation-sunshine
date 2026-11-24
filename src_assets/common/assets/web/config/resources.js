@@ -4,24 +4,28 @@ const ALKAIDLAB_WEBSITE_URL = 'https://www.alkaidlab.com/'
 const ALKAIDLAB_WEBSITE_ZH_URL = 'https://www.alkaidlab.cn/'
 const VOIDLINK_APP_STORE_URL = 'https://apps.apple.com/us/app/voidlink-extreme/id6755103808'
 const VOIDLINK_APP_STORE_ZH_URL = 'https://apps.apple.com/cn/app/voidlink/id6747717070'
+const STREAMING_GROUP_URLS = [
+  'https://qm.qq.com/q/AfMQoyKrkc',
+  'https://qm.qq.com/q/vIVhpjDMic',
+  'https://qm.qq.com/q/p0quekk7QI',
+]
 
 export const OFFICIAL_RESOURCES = [
   {
     id: 'official-website',
     href: ALKAIDLAB_WEBSITE_URL,
     zhHref: ALKAIDLAB_WEBSITE_ZH_URL,
-    icon: 'fas fa-globe',
+    icon: 'public',
     titleKey: 'resource_card.official_website_title',
     variant: 'accent',
   },
   {
     id: 'foundation-github',
     href: 'https://github.com/AlkaidLab/foundation-sunshine',
-    icon: 'fab fa-github',
+    icon: 'code',
     title: 'Foundation Sunshine',
-    descriptionKey: 'resource_card.open_source_desc',
     variant: 'github',
-    arrowIcon: 'fas fa-star',
+    arrowIcon: 'star',
     arrowClass: 'text-warning',
   },
 ]
@@ -29,18 +33,18 @@ export const OFFICIAL_RESOURCES = [
 export const QUICK_START_RESOURCES = [
   {
     id: 'tutorial',
-    href: 'https://docs.qq.com/aio/DSGdQc3htbFJjSFdO',
-    icon: 'fas fa-file-alt',
+    href: 'https://www.alkaidlab.com/docs/',
+    zhHref: 'https://www.alkaidlab.cn/docs/',
+    icon: 'description',
     titleKey: 'resource_card.tutorial',
-    descriptionKey: 'resource_card.tutorial_desc',
     variant: 'accent',
   },
   {
     id: 'community-group',
-    href: 'https://qm.qq.com/q/3tWBFVNZ',
-    icon: 'fab fa-qq',
+    href: STREAMING_GROUP_URLS[0],
+    randomHrefs: STREAMING_GROUP_URLS,
+    icon: 'groups',
     titleKey: 'resource_card.join_group',
-    descriptionKey: 'resource_card.join_group_desc',
     variant: 'accent-alt',
   },
 ]
@@ -48,45 +52,50 @@ export const QUICK_START_RESOURCES = [
 export const CLIENT_RESOURCES = [
   {
     id: 'android-vplus',
+    client: 'official',
     href: 'https://github.com/qiin2333/moonlight-vplus',
-    icon: 'fab fa-android',
+    icon: 'android',
     titleKey: 'resource_card.android_vplus_title',
     description: 'Android / Android TV',
     variant: 'android',
   },
   {
     id: 'harmony-vplus',
+    client: 'official',
     href: '#harmony-client',
-    icon: 'fas fa-mobile-alt',
+    icon: 'mobile',
     titleKey: 'resource_card.harmony_client',
     description: 'HarmonyOS NEXT',
     variant: 'harmony',
-    arrowIcon: 'fas fa-chevron-right',
+    arrowIcon: 'chevron_right',
     action: 'harmony',
   },
   {
     id: 'moonlight-desktop',
+    client: 'official',
     href: 'https://github.com/qiin2333/moonlight-qt',
-    icon: 'fas fa-desktop',
+    icon: 'desktop_windows',
     titleKey: 'resource_card.moonlight_pc_title',
     description: 'Windows / macOS / Linux',
     variant: 'desktop',
   },
   {
     id: 'moonlight-macos',
+    client: 'official',
     href: 'https://github.com/skyhua0224/moonlight-macos-enhanced',
-    icon: 'fab fa-apple',
+    icon: 'laptop_mac',
     titleKey: 'resource_card.moonlight_macos_enhanced',
     descriptionKey: 'resource_card.moonlight_macos_enhanced_desc',
     variant: 'apple',
   },
   {
     id: 'voidlink',
+    client: 'partner',
     href: VOIDLINK_APP_STORE_URL,
     zhHref: VOIDLINK_APP_STORE_ZH_URL,
-    icon: 'fab fa-apple',
+    icon: 'mobile',
     titleKey: 'resource_card.voidlink_title',
-    description: 'iOS / iPadOS',
+    description: 'iOS / iPadOS / Apple TV',
     variant: 'apple',
   },
 ]
@@ -94,16 +103,18 @@ export const CLIENT_RESOURCES = [
 export const COMMUNITY_RESOURCES = [
   {
     id: 'crown-edition',
+    client: 'partner',
     href: 'https://github.com/WACrown/moonlight-android',
-    icon: 'fas fa-crown',
+    icon: 'star',
     titleKey: 'resource_card.crown_edition',
     descriptionKey: 'resource_card.crown_edition_desc',
     variant: 'android',
   },
   {
     id: 'moonlight-ohos',
+    client: 'partner',
     href: 'https://gitee.com/smdsbz/moonlight-ohos',
-    icon: 'fas fa-mobile-alt',
+    icon: 'mobile',
     titleKey: 'resource_card.moonlight_ohos',
     descriptionKey: 'resource_card.moonlight_ohos_desc',
     variant: 'harmony',
@@ -114,25 +125,25 @@ export const HOME_RESOURCE_GROUPS = [
   {
     id: 'official',
     titleKey: 'resource_card.official_website',
-    icon: 'fas fa-globe',
+    icon: 'public',
     items: OFFICIAL_RESOURCES,
   },
   {
     id: 'quick-start',
     titleKey: 'resource_card.quick_start',
-    icon: 'fas fa-rocket',
+    icon: 'rocket_launch',
     items: QUICK_START_RESOURCES,
   },
   {
     id: 'clients',
     titleKey: 'resource_card.client_downloads',
-    icon: 'fas fa-download',
+    icon: 'download',
     items: CLIENT_RESOURCES,
   },
   {
     id: 'community',
     titleKey: 'resource_card.third_party_moonlight',
-    icon: 'fas fa-code-branch',
+    icon: 'hub',
     items: COMMUNITY_RESOURCES,
   },
 ]
@@ -141,7 +152,7 @@ export const LEGAL_RESOURCES = [
   {
     id: 'license',
     href: 'https://github.com/AlkaidLab/foundation-sunshine/blob/master/LICENSE',
-    icon: 'fas fa-file-alt',
+    icon: 'description',
     titleKey: 'resource_card.license',
     descriptionKey: 'resource_card.view_license',
     variant: 'accent',
@@ -149,9 +160,8 @@ export const LEGAL_RESOURCES = [
   {
     id: 'third-party-notice',
     href: 'https://github.com/AlkaidLab/foundation-sunshine/blob/master/NOTICE',
-    icon: 'fas fa-exclamation-triangle',
+    icon: 'warning',
     titleKey: 'resource_card.third_party_notice',
-    descriptionKey: 'resource_card.third_party_desc',
     variant: 'accent',
   },
 ]
@@ -185,4 +195,12 @@ export function resolveResourceText(translate, resource, field) {
 
 export function resolveResourceHref(resource, locale) {
   return locale === 'zh' ? resource.zhHref || resource.href : resource.href
+}
+
+export function resolveRandomResourceHref(resource, randomValue = Math.random()) {
+  const hrefs = resource.randomHrefs
+  if (!Array.isArray(hrefs) || hrefs.length === 0) return resolveResourceHref(resource)
+  if (randomValue < 0.1) return hrefs[0]
+  if (randomValue < 0.55) return hrefs[1] || hrefs[0]
+  return hrefs[2] || hrefs[0]
 }

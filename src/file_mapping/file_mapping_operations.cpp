@@ -13,35 +13,22 @@
 #include <optional>
 #include <system_error>
 
+#include "file_mapping_base64.h"
+
 namespace file_mapping::operations {
   namespace {
     namespace fs = std::filesystem;
 
-    std::uint64_t
-    request_id(const nlohmann::json &body) {
-      if (!body.contains("id")) {
-        return 0;
-      }
-      if (body["id"].is_number_unsigned()) {
-        return body["id"].get<std::uint64_t>();
-      }
-      if (body["id"].is_number_integer()) {
-        const auto id = body["id"].get<std::int64_t>();
-        return id < 0 ? 0 : static_cast<std::uint64_t>(id);
-      }
-      return 0;
-    }
-
     nlohmann::json
     error_response(const nlohmann::json &body, std::string code, std::string message) {
-      return rpc::make_error(request_id(body), std::move(code), std::move(message));
+      return rpc::make_error(rpc::request_id(body), std::move(code), std::move(message));
     }
 
     nlohmann::json
     result_response(const nlohmann::json &body) {
       return {
         { "type", "result" },
-        { "id", request_id(body) },
+        { "id", rpc::request_id(body) },
         { "ok", true }
       };
     }
@@ -125,26 +112,6 @@ namespace file_mapping::operations {
         return 0;
       }
       return static_cast<std::uint64_t>(size);
-    }
-
-    std::string
-    base64_encode(const std::vector<unsigned char> &bytes) {
-      static constexpr char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-      std::string out;
-      out.reserve(((bytes.size() + 2) / 3) * 4);
-
-      for (std::size_t i = 0; i < bytes.size(); i += 3) {
-        const auto b0 = bytes[i];
-        const auto b1 = i + 1 < bytes.size() ? bytes[i + 1] : 0;
-        const auto b2 = i + 2 < bytes.size() ? bytes[i + 2] : 0;
-
-        out.push_back(alphabet[(b0 >> 2) & 0x3f]);
-        out.push_back(alphabet[((b0 & 0x03) << 4) | ((b1 >> 4) & 0x0f)]);
-        out.push_back(i + 1 < bytes.size() ? alphabet[((b1 & 0x0f) << 2) | ((b2 >> 6) & 0x03)] : '=');
-        out.push_back(i + 2 < bytes.size() ? alphabet[b2 & 0x3f] : '=');
-      }
-
-      return out;
     }
 
     bool
@@ -369,7 +336,7 @@ namespace file_mapping::operations {
       out["total_size"] = total_size;
       out["eof"] = offset + bytes_read >= total_size;
       out["encoding"] = "base64";
-      out["data"] = base64_encode(bytes);
+      out["data"] = file_mapping::base64::encode(bytes.data(), bytes.size());
       return out;
     }
   }  // namespace

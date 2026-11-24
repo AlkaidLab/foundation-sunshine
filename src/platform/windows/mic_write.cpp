@@ -8,14 +8,11 @@
 #include <audioclient.h>
 #include <avrt.h>
 #include <cmath>
-#include <filesystem>
 #include <mmdeviceapi.h>
 #include <mutex>
 #include <numbers>
 #include <roapi.h>
 #include <synchapi.h>
-#include <urlmon.h>
-#include <winreg.h>
 
 // Local includes
 #include "mic_write.h"
@@ -23,7 +20,6 @@
 #include "src/config.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
-#include "src/platform/windows/virtual_device_host/microphone_client.h"
 
 // Must be the last included file
 // clang-format off
@@ -36,6 +32,15 @@ DEFINE_PROPERTYKEY(PKEY_Device_FriendlyName, 0xa45c254e, 0xdf1c, 0x4efd, 0x80, 0
 DEFINE_PROPERTYKEY(PKEY_DeviceInterface_FriendlyName, 0x026e516e, 0xb814, 0x414b, 0x83, 0xcd, 0x85, 0x6d, 0x6f, 0xef, 0x48, 0x22, 2);
 
 namespace platf::audio {
+
+  namespace {
+    bool
+    is_mic_device_lost(HRESULT status) noexcept {
+      return status == AUDCLNT_E_DEVICE_INVALIDATED ||
+             status == AUDCLNT_E_RESOURCES_INVALIDATED ||
+             status == AUDCLNT_E_SERVICE_NOT_RUNNING;
+    }
+  }  // namespace
 
   template <class T>
   void
@@ -75,22 +80,10 @@ namespace platf::audio {
   mic_write_wasapi_t::cleanup() {
     is_cleaning_up.store(true);
 
-    // 等待音频处理完成
+    // 停止音频客户端，不在清理路径等待尾部数据。
     if (audio_client) {
-      // 停止音频客户端
+      // 停止后 endpoint 不再消费已排队帧，因此不能在这里轮询 padding 等待清空。
       audio_client->Stop();
-
-      // 等待缓冲区清空
-      UINT32 bufferFrameCount = 0;
-      UINT32 padding = 0;
-      HRESULT status = audio_client->GetBufferSize(&bufferFrameCount);
-      if (SUCCEEDED(status)) {
-        // 等待缓冲区完全清空，最多等待 500ms
-        int max_wait = 50;
-        while (SUCCEEDED(audio_client->GetCurrentPadding(&padding)) && padding > 0 && max_wait-- > 0) {
-          Sleep(10);
-        }
-      }
     }
 
     // COM 接口释放顺序很重要：
@@ -105,6 +98,8 @@ namespace platf::audio {
     // 显式释放 audio_client 和 device_enum，确保正确的释放顺序
     audio_client.reset();
     device_enum.reset();
+    buffer_frame_count = 0;
+    pcm_output_buffer.clear();
 
     if (mmcss_task_handle) {
       AvRevertMmThreadCharacteristics(mmcss_task_handle);
@@ -140,8 +135,8 @@ namespace platf::audio {
       // 存储原始音频设备设置
       store_original_audio_settings();
 
-      // 尝试创建或使用虚拟音频设备
-      if (create_virtual_audio_device() != 0) {
+      // 查找已安装的虚拟音频设备；安装由控制面板组件管理负责。
+      if (detect_virtual_audio_device() != 0) {
         BOOST_LOG(warning) << "Virtual audio device not available, microphone redirection may not work";
       }
 
@@ -246,6 +241,13 @@ namespace platf::audio {
     // 保存使用的格式信息
     current_format = *used_format;
 
+    status = audio_client->GetBufferSize(&buffer_frame_count);
+    if (FAILED(status) || buffer_frame_count == 0) {
+      BOOST_LOG(error) << "Failed to get buffer size for mic write: [0x" << util::hex(status).to_string_view() << "]";
+      cleanup();
+      return -1;
+    }
+
     // 启动音频客户端
     status = audio_client->Start();
     if (FAILED(status)) {
@@ -283,42 +285,13 @@ namespace platf::audio {
       return -1;
     }
 
-    // Handle channel conversion if necessary
-    std::vector<int16_t> pcm_output_buffer;
-    auto framesToWrite = static_cast<UINT32>(frame_count);
+    const auto framesToWrite = static_cast<UINT32>(frame_count);
 
-    if (current_format.nChannels == 1) {
-      // Mono output, direct copy
-      pcm_output_buffer.assign(samples, samples + frame_count);
-    }
-    else if (current_format.nChannels == 2) {
-      // Stereo output, duplicate mono samples
-      pcm_output_buffer.resize(frame_count * 2);
-      for (std::size_t i = 0; i < frame_count; ++i) {
-        pcm_output_buffer[i * 2] = samples[i];  // Left channel
-        pcm_output_buffer[i * 2 + 1] = samples[i];  // Right channel
-      }
-    }
-    else {
-      BOOST_LOG(error) << "Unsupported channel count for mic write: " << current_format.nChannels;
-      return -1;
-    }
-
-    // 获取缓冲区大小和当前填充的帧数
-    UINT32 bufferFrameCount = 0;
+    // 共享模式下可用空间等于初始化时的固定 buffer size 减当前 padding。
     UINT32 padding = 0;
-    auto status = audio_client->GetBufferSize(&bufferFrameCount);
+    auto status = audio_client->GetCurrentPadding(&padding);
     if (FAILED(status)) {
-      if (status == AUDCLNT_E_DEVICE_INVALIDATED) {
-        BOOST_LOG(warning) << "Audio device invalidated during mic write (GetBufferSize)";
-        return -2;  // Special return value indicating device invalidated
-      }
-      BOOST_LOG(error) << "Failed to get buffer size for mic write: [0x" << util::hex(status).to_string_view() << "]";
-      return -1;
-    }
-    status = audio_client->GetCurrentPadding(&padding);
-    if (FAILED(status)) {
-      if (status == AUDCLNT_E_DEVICE_INVALIDATED) {
+      if (is_mic_device_lost(status)) {
         BOOST_LOG(warning) << "Audio device invalidated during mic write (GetCurrentPadding)";
         return -2;  // Special return value indicating device invalidated
       }
@@ -326,64 +299,42 @@ namespace platf::audio {
       return -1;
     }
 
-    // 确保padding不超过缓冲区大小
-    if (padding > bufferFrameCount) {
-      BOOST_LOG(warning) << "Invalid padding value: " << padding << " > " << bufferFrameCount << ", using 0";
-      padding = 0;
-    }
-
-    UINT32 availableFrames = bufferFrameCount - padding;
-
-    // 如果缓冲区空间不足，进行多次等待尝试
-    if (framesToWrite > availableFrames) {
-      BOOST_LOG(verbose) << "Buffer full, waiting for space. Need: " << framesToWrite << ", Available: " << availableFrames;
-
-      // 最多尝试3次，每次等待时间递增
-      const int max_retries = 3;
-      for (int retry = 0; retry < max_retries && framesToWrite > availableFrames; ++retry) {
-        // 根据需要的帧数计算等待时间：帧数 / 48000 * 1000 (ms)
-        // 保守估计，等待所需时间的 80%
-        DWORD wait_ms = static_cast<DWORD>((framesToWrite - availableFrames) * 1000 / 48000 * 0.8);
-        wait_ms = std::max(wait_ms, 5ul);  // 最少等待 5ms
-        wait_ms = std::min(wait_ms, 50ul); // 最多等待 50ms
-        
-        Sleep(wait_ms);
-
-        // 重新检查可用空间
-        status = audio_client->GetCurrentPadding(&padding);
-        if (FAILED(status)) {
-          BOOST_LOG(error) << "Failed to get current padding after wait: [0x" << util::hex(status).to_string_view() << "]";
-          return -1;
-        }
-
-        if (padding > bufferFrameCount) {
-          padding = 0;
-        }
-
-        availableFrames = bufferFrameCount - padding;
-        
-        if (framesToWrite <= availableFrames) {
-          BOOST_LOG(verbose) << "Buffer space available after " << (retry + 1) << " retries";
-          break;
-        }
-      }
-
-      // 如果仍然没有足够空间，降级为 debug 日志并截断
-      if (framesToWrite > availableFrames) {
-        BOOST_LOG(warning) << "Mic write buffer still full after retries: " << framesToWrite << " frames requested, " << availableFrames << " available. Truncating.";
-        framesToWrite = availableFrames;
-      }
-    }
-
-    if (framesToWrite == 0) {
+    if (padding > buffer_frame_count) {
+      BOOST_LOG(warning) << "Invalid mic write padding value: " << padding << " > " << buffer_frame_count;
       return 0;
+    }
+
+    const auto availableFrames = buffer_frame_count - padding;
+    if (framesToWrite == 0 || framesToWrite > availableFrames) {
+      // 麦克风 UDP、混音和设备写入共用一个线程。空间不足时整帧丢弃，
+      // 不能在这里等待，否则会同时阻塞所有客户端的收包。
+      return 0;
+    }
+
+    // 确认端点有空间后再转换声道，避免背压丢帧路径做无效拷贝。
+    if (current_format.nChannels == 1) {
+      pcm_output_buffer.assign(samples, samples + frame_count);
+    }
+    else if (current_format.nChannels == 2) {
+      pcm_output_buffer.resize(frame_count * 2);
+      for (std::size_t i = 0; i < frame_count; ++i) {
+        pcm_output_buffer[i * 2] = samples[i];
+        pcm_output_buffer[i * 2 + 1] = samples[i];
+      }
+    }
+    else {
+      BOOST_LOG(error) << "Unsupported channel count for mic write: " << current_format.nChannels;
+      return -1;
     }
 
     // 获取渲染缓冲区
     BYTE *pData = nullptr;
     status = audio_render->GetBuffer(framesToWrite, &pData);
     if (FAILED(status)) {
-      if (status == AUDCLNT_E_DEVICE_INVALIDATED) {
+      if (status == AUDCLNT_E_BUFFER_TOO_LARGE) {
+        return 0;
+      }
+      if (is_mic_device_lost(status)) {
         BOOST_LOG(warning) << "Audio device invalidated during mic write (GetBuffer)";
         return -2;  // Special return value indicating device invalidated
       }
@@ -397,7 +348,7 @@ namespace platf::audio {
     // 释放缓冲区
     status = audio_render->ReleaseBuffer(framesToWrite, 0);
     if (FAILED(status)) {
-      if (status == AUDCLNT_E_DEVICE_INVALIDATED) {
+      if (is_mic_device_lost(status)) {
         BOOST_LOG(warning) << "Audio device invalidated during mic write (ReleaseBuffer)";
         return -2;  // Special return value indicating device invalidated
       }
@@ -438,11 +389,8 @@ namespace platf::audio {
         return -1;
       }
       total_bytes_written += bytes_written;
-      // Stay ahead of playback so the render buffer never drains mid-tone. The
-      // default Windows timer granularity is ~15.6 ms, so any requested delay is
-      // rounded up to a whole tick: Sleep(18) really costs ~31 ms and starves a
-      // 20 ms packet. One tick is comfortably shorter than the packet, and
-      // write_pcm() backs off on its own once the buffer is full.
+      // 测试音保持较短的写入间隔；缓冲区已满时 write_pcm() 会丢弃当前帧，
+      // 不会把测试路径的等待逻辑带回实时写入函数。
       Sleep(10);
     }
 
@@ -462,95 +410,9 @@ namespace platf::audio {
     return total_bytes_written;
   }
 
-  mic_redirect_test_result_t
-  test_mic_redirect() {
-    static std::mutex test_mutex;
-    const std::lock_guard lock(test_mutex);
-
-    const auto backend = config::audio.microphone_redirect_backend;
-    if (!try_begin_mic_redirect_test()) {
-      return { false, "MIC_TEST_BUSY", mic_redirect_status().active_backend };
-    }
-    struct test_reservation_t {
-      ~test_reservation_t() {
-        end_mic_redirect_test();
-      }
-    } test_reservation;
-    if (backend == "disabled") {
-      report_mic_redirect_backend({}, "MIC_BACKEND_DISABLED");
-      return { false, "MIC_BACKEND_DISABLED", "disabled" };
-    }
-
-    std::string usbip_fallback_reason;
-    if (backend == "usbip_experimental" || backend == "auto") {
-      auto &client = virtual_device_host::persistent_microphone_client();
-      if (client.start()) {
-        report_mic_redirect_backend("usbip_experimental");
-        constexpr auto sample_rate = 48'000u;
-        constexpr auto frames_per_packet = 480u;
-        constexpr auto packet_count = 100u;
-        std::array<std::int16_t, frames_per_packet> pcm {};
-        for (std::uint32_t packet = 0; packet < packet_count; ++packet) {
-          for (std::uint32_t frame = 0; frame < frames_per_packet; ++frame) {
-            const auto sample = packet * frames_per_packet + frame;
-            pcm[frame] = static_cast<std::int16_t>(
-              std::sin(sample * 2.0 * std::numbers::pi * 440.0 / sample_rate) * 4096.0);
-          }
-          if (client.write_pcm(pcm.data(), pcm.size()) < 0) {
-            report_mic_redirect_backend({}, "MIC_USBIP_WRITE_FAILED");
-            return { false, "MIC_USBIP_WRITE_FAILED", "usbip_experimental" };
-          }
-          Sleep(10);
-        }
-        if (!client.flush()) {
-          report_mic_redirect_backend({}, "MIC_USBIP_FLUSH_FAILED");
-          return { false, "MIC_USBIP_FLUSH_FAILED", "usbip_experimental" };
-        }
-        return { true, {}, "usbip_experimental" };
-      }
-      const auto status = virtual_device_host::microphone_status();
-      usbip_fallback_reason = status.error_code.empty() ?
-                                "MIC_USBIP_DEVICE_UNAVAILABLE" :
-                                status.error_code;
-      if (backend == "usbip_experimental") {
-        report_mic_redirect_backend({}, usbip_fallback_reason);
-        return { false,
-                 usbip_fallback_reason,
-                 "usbip_experimental" };
-      }
-    }
-
-    const auto com_status = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-    if (FAILED(com_status) && com_status != RPC_E_CHANGED_MODE) {
-      return { false, "MIC_TEST_COM_FAILED", "vb_cable" };
-    }
-
-    mic_redirect_test_result_t result;
-    {
-      mic_write_wasapi_t test_device;
-      if (test_device.init(true) != 0) {
-        result.error_code = "MIC_TEST_DEVICE_UNAVAILABLE";
-      }
-      else if (test_device.test_write() <= 0) {
-        result.error_code = "MIC_TEST_WRITE_FAILED";
-      }
-      else {
-        result.success = true;
-      }
-      result.backend = "vb_cable";
-      report_mic_redirect_backend(result.success ? "vb_cable" : "",
-                                  result.success ? usbip_fallback_reason : result.error_code);
-    }
-
-    if (SUCCEEDED(com_status)) {
-      CoUninitialize();
-    }
-    return result;
-  }
-
   int
-  mic_write_wasapi_t::create_virtual_audio_device() {
-    BOOST_LOG(info) << "Attempting to create/use virtual audio device for client mic redirection";
+  mic_write_wasapi_t::detect_virtual_audio_device() {
+    BOOST_LOG(info) << "Checking virtual audio device for client mic redirection";
 
     // 检查VB-Cable虚拟设备
     auto vb_matched = find_device_id({ { match_field_e::adapter_friendly_name, L"VB-Audio Virtual Cable" } });
@@ -560,66 +422,7 @@ namespace platf::audio {
       return 0;  // 设备已存在
     }
 
-    BOOST_LOG(debug) << "VB-Cable not found, attempting to download...";
-
-    // 检查是否已安装VB-Cable驱动程序
-    HKEY hKey;
-    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"SOFTWARE\\VB\\VBAudioVAC", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
-      RegCloseKey(hKey);
-      BOOST_LOG(info) << "VB-Cable driver is already installed";
-      return -1;  // 已安装但未找到设备，可能是未启用
-    }
-
-    // 检查是否已经下载并解压过（防止重复下载）
-    std::wstring extract_path = std::filesystem::temp_directory_path().wstring() + L"\\VBCABLE_Install";
-    std::wstring installer_path = extract_path + L"\\VBCABLE_Setup_x64.exe";
-    if (std::filesystem::exists(installer_path)) {
-      // 安装程序已存在，只需提示用户安装
-      BOOST_LOG(warning) << "VB-Cable already downloaded to: " << platf::to_utf8(extract_path) << " ; Please run 'VBCABLE_Setup_x64.exe' as administrator to install, then restart Sunshine";
-      return -1;
-    }
-
-    // 下载VB-Cable
-    BOOST_LOG(debug) << "Downloading VB-Cable...";
-
-    // 下载VB-Cable安装程序
-    std::wstring download_url = L"https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack43.zip";
-    std::wstring temp_path = std::filesystem::temp_directory_path().wstring() + L"\\VBCABLE_Driver_Pack43.zip";
-
-    HMODULE urlmon = LoadLibraryW(L"urlmon.dll");
-    if (!urlmon) {
-      BOOST_LOG(warning) << "VB-Cable is required for microphone streaming. Please download from: https://vb-audio.com/Cable/";
-      return -1;
-    }
-
-    auto URLDownloadToFileW_ptr = (decltype(URLDownloadToFileW) *) GetProcAddress(urlmon, "URLDownloadToFileW");
-    if (!URLDownloadToFileW_ptr || URLDownloadToFileW_ptr(nullptr, download_url.c_str(), temp_path.c_str(), 0, nullptr) != S_OK) {
-      BOOST_LOG(warning) << "Failed to download VB-Cable. Please download manually from: https://vb-audio.com/Cable/";
-      FreeLibrary(urlmon);
-      return -1;
-    }
-    FreeLibrary(urlmon);
-
-    // 解压安装包到用户可访问的位置
-    std::error_code ec;
-    std::filesystem::create_directories(extract_path, ec);
-    if (ec && ec != std::errc::file_exists) {
-      BOOST_LOG(error) << "Failed to create extraction directory: " << ec.message();
-      return -1;
-    }
-
-    // 解压VB-Cable
-    BOOST_LOG(debug) << "Extracting VB-Cable...";
-    std::wstring extract_cmd = L"powershell -command \"Expand-Archive -Path '" + temp_path + L"' -DestinationPath '" + extract_path + L"' -Force\"";
-
-    if (_wsystem(extract_cmd.c_str()) != 0) {
-      BOOST_LOG(error) << "Failed to extract VB-Cable installer";
-      return -1;
-    }
-
-    // 引导用户手动安装
-    BOOST_LOG(warning) << "VB-Cable downloaded to: " << platf::to_utf8(extract_path) << " ; Please run 'VBCABLE_Setup_x64.exe' as administrator to install, then restart Sunshine";
-
+    BOOST_LOG(warning) << "VB-Cable is unavailable; manage the component in Sunshine Control Panel";
     return -1;
   }
 

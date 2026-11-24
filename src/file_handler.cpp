@@ -7,6 +7,8 @@
 #include <filesystem>
 #include <fstream>
 
+#include <boost/property_tree/json_parser.hpp>
+
 // local includes
 #include "file_handler.h"
 #include "logging.h"
@@ -80,5 +82,29 @@ namespace file_handler {
     out.flush();
     out.close();
     return out ? 0 : -1;
+  }
+
+  void
+  read_json(std::string_view path, boost::property_tree::ptree &tree) {
+    std::ifstream input(path_from_utf8(path), std::ios::binary);
+    if (!input.is_open()) {
+      throw boost::property_tree::json_parser_error("cannot open file", std::string { path }, 0);
+    }
+
+    boost::property_tree::read_json(input, tree);
+  }
+
+  void
+  write_json(std::string_view path, const boost::property_tree::ptree &tree, bool pretty) {
+    std::ofstream output(path_from_utf8(path), std::ios::binary | std::ios::trunc);
+    if (!output.is_open()) {
+      throw boost::property_tree::json_parser_error("cannot open file", std::string { path }, 0);
+    }
+
+    boost::property_tree::write_json(output, tree, pretty);
+    output.flush();
+    if (!output) {
+      throw boost::property_tree::json_parser_error("write failed", std::string { path }, 0);
+    }
   }
 }  // namespace file_handler

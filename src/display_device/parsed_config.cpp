@@ -278,189 +278,6 @@ namespace display_device {
     }
 
     /**
-     * @brief Remap the already parsed display mode based on the user configuration.
-     * @param config User's video related configuration.
-     * @param parsed_config A reference to a config object that will be modified on success.
-     * @returns True is display mode was remapped or no remapping was needed, false otherwise.
-     *
-     * EXAMPLES:
-     * ```cpp
-     * const std::shared_ptr<rtsp_stream::launch_session_t> launch_session; // Assuming ptr is properly initialized
-     * const config::video_t &video_config { config::video };
-     *
-     * parsed_config_t parsed_config;
-     * const bool success = remap_display_modes_if_needed(video_config, *launch_session, parsed_config);
-     * ```
-     */
-    bool
-    remap_display_modes_if_needed(const config::video_t &config, const rtsp_stream::launch_session_t &session, parsed_config_t &parsed_config) {
-      constexpr auto mixed_remapping { "" };
-      constexpr auto resolution_only_remapping { "resolution_only" };
-      constexpr auto refresh_rate_only_remapping { "refresh_rate_only" };
-
-      const auto resolution_option { static_cast<parsed_config_t::resolution_change_e>(config.resolution_change) };
-      const auto refresh_rate_option { static_cast<parsed_config_t::refresh_rate_change_e>(config.refresh_rate_change) };
-
-      // Copy only the remapping values that we can actually use with our configuration options
-      std::vector<config::video_t::display_mode_remapping_t> remapping_values;
-      std::copy_if(std::begin(config.display_mode_remapping), std::end(config.display_mode_remapping), std::back_inserter(remapping_values), [&](const auto &value) {
-        if (resolution_option == parsed_config_t::resolution_change_e::automatic && refresh_rate_option == parsed_config_t::refresh_rate_change_e::automatic) {
-          return value.type == mixed_remapping;  // Comparison instead of empty check to be explicit
-        }
-        else if (resolution_option == parsed_config_t::resolution_change_e::automatic) {
-          return value.type == resolution_only_remapping;
-        }
-        else if (refresh_rate_option == parsed_config_t::refresh_rate_change_e::automatic) {
-          return value.type == refresh_rate_only_remapping;
-        }
-
-        return false;
-      });
-
-      if (remapping_values.empty()) {
-        BOOST_LOG(debug) << "No values are available for display mode remapping.";
-        return true;
-      }
-      BOOST_LOG(debug) << "Trying to remap display modes...";
-
-      struct parsed_remapping_values_t {
-        boost::optional<resolution_t> received_resolution;
-        boost::optional<refresh_rate_t> received_fps;
-        boost::optional<resolution_t> final_resolution;
-        boost::optional<refresh_rate_t> final_refresh_rate;
-      };
-
-      std::vector<parsed_remapping_values_t> parsed_values;
-      for (const auto &entry : remapping_values) {
-        boost::optional<resolution_t> received_resolution;
-        boost::optional<refresh_rate_t> received_fps;
-        boost::optional<resolution_t> final_resolution;
-        boost::optional<refresh_rate_t> final_refresh_rate;
-
-        if (entry.type == resolution_only_remapping) {
-          if (!parse_resolution_string(entry.received_resolution, received_resolution) ||
-              !parse_resolution_string(entry.final_resolution, final_resolution)) {
-            BOOST_LOG(error) << "Failed to parse entry value: " << entry.received_resolution << " -> " << entry.final_resolution;
-            return false;
-          }
-
-          if (!received_resolution || !final_resolution) {
-            BOOST_LOG(error) << "Both values must be set for remapping resolution! Current entry value: " << entry.received_resolution << " -> " << entry.final_resolution;
-            return false;
-          }
-
-          if (!session.enable_sops) {
-            BOOST_LOG(warning) << "Skipping remapping resolution, because the \"Optimize game settings\" is not set in the client!";
-            return true;
-          }
-        }
-        else if (entry.type == refresh_rate_only_remapping) {
-          if (!parse_refresh_rate_string(entry.received_fps, received_fps, false) ||
-              !parse_refresh_rate_string(entry.final_refresh_rate, final_refresh_rate)) {
-            BOOST_LOG(error) << "Failed to parse entry value: " << entry.received_fps << " -> " << entry.final_refresh_rate;
-            return false;
-          }
-
-          if (!received_fps || !final_refresh_rate) {
-            BOOST_LOG(error) << "Both values must be set for remapping refresh rate! Current entry value: " << entry.received_fps << " -> " << entry.final_refresh_rate;
-            return false;
-          }
-        }
-        else {
-          if (!parse_resolution_string(entry.received_resolution, received_resolution) ||
-              !parse_refresh_rate_string(entry.received_fps, received_fps, false) ||
-              !parse_resolution_string(entry.final_resolution, final_resolution) ||
-              !parse_refresh_rate_string(entry.final_refresh_rate, final_refresh_rate)) {
-            BOOST_LOG(error) << "Failed to parse entry value: "
-                             << "[" << entry.received_resolution << "|" << entry.received_fps << "] -> [" << entry.final_resolution << "|" << entry.final_refresh_rate << "]";
-            return false;
-          }
-
-          if ((!received_resolution && !received_fps) || (!final_resolution && !final_refresh_rate)) {
-            BOOST_LOG(error) << "At least one received and final value must be set for remapping display modes! Entry: "
-                             << "[" << entry.received_resolution << "|" << entry.received_fps << "] -> [" << entry.final_resolution << "|" << entry.final_refresh_rate << "]";
-            return false;
-          }
-
-          if (!session.enable_sops && (received_resolution || final_resolution)) {
-            BOOST_LOG(warning) << "Skipping remapping entry, because the \"Optimize game settings\" is not set in the client! Entry: "
-                               << "[" << entry.received_resolution << "|" << entry.received_fps << "] -> [" << entry.final_resolution << "|" << entry.final_refresh_rate << "]";
-            continue;
-          }
-        }
-
-        parsed_values.push_back({ received_resolution, received_fps, final_resolution, final_refresh_rate });
-      }
-
-      const auto compare_resolution { [](const resolution_t &a, const resolution_t &b) {
-        return a.width == b.width && a.height == b.height;
-      } };
-      const auto compare_refresh_rate { [](const refresh_rate_t &a, const refresh_rate_t &b) {
-        return a.numerator == b.numerator && a.denominator == b.denominator;
-      } };
-
-      for (const auto &entry : parsed_values) {
-        bool do_remap { false };
-        if (entry.received_resolution && entry.received_fps) {
-          if (parsed_config.resolution && parsed_config.refresh_rate) {
-            do_remap = compare_resolution(*entry.received_resolution, *parsed_config.resolution) && compare_refresh_rate(*entry.received_fps, *parsed_config.refresh_rate);
-          }
-          else {
-            // Sanity check
-            BOOST_LOG(error) << "Cannot remap: (parsed_config.resolution && parsed_config.refresh_rate) == false!";
-            return false;
-          }
-        }
-        else if (entry.received_resolution) {
-          if (parsed_config.resolution) {
-            do_remap = compare_resolution(*entry.received_resolution, *parsed_config.resolution);
-          }
-          else {
-            // Sanity check
-            BOOST_LOG(error) << "Cannot remap: parsed_config.resolution == false!";
-            return false;
-          }
-        }
-        else if (entry.received_fps) {
-          if (parsed_config.refresh_rate) {
-            do_remap = compare_refresh_rate(*entry.received_fps, *parsed_config.refresh_rate);
-          }
-          else {
-            // Sanity check
-            BOOST_LOG(error) << "Cannot remap: parsed_config.refresh_rate == false!";
-            return false;
-          }
-        }
-        else {
-          // Sanity check
-          BOOST_LOG(error) << "Cannot remap: (entry.received_resolution || entry.received_fps) == false!";
-          return false;
-        }
-
-        if (do_remap) {
-          if (!entry.final_resolution && !entry.final_refresh_rate) {
-            // Sanity check
-            BOOST_LOG(error) << "Cannot remap: (!entry.final_resolution && !entry.final_refresh_rate) == true!";
-            return false;
-          }
-
-          if (entry.final_resolution) {
-            BOOST_LOG(debug) << "Remapping resolution to: " << to_string(*entry.final_resolution);
-            parsed_config.resolution = entry.final_resolution;
-          }
-          if (entry.final_refresh_rate) {
-            BOOST_LOG(debug) << "Remapping refresh rate to: " << to_string(*entry.final_refresh_rate);
-            parsed_config.refresh_rate = entry.final_refresh_rate;
-          }
-
-          break;
-        }
-      }
-
-      return true;
-    }
-
-    /**
      * @brief Parse HDR option from the user configuration and the session information.
      * @param config User's video related configuration.
      * @param session Session information.
@@ -479,7 +296,10 @@ namespace display_device {
       const auto hdr_prep_option { static_cast<parsed_config_t::hdr_prep_e>(config.hdr_prep) };
       switch (hdr_prep_option) {
         case parsed_config_t::hdr_prep_e::automatic:
-          return session.enable_hdr;
+          // An SDR-to-HDR pre-encode filter needs the source desktop to stay
+          // SDR even though the client-facing stream is HDR. This decision is
+          // made during display preparation, before capture is constructed.
+          return display_prepared_for_hdr(config, session);
         case parsed_config_t::hdr_prep_e::no_operation:
         default:
           return boost::none;
@@ -534,6 +354,22 @@ namespace display_device {
     }
   }  // namespace
 
+  bool
+  display_prepared_for_hdr(const config::video_t &config, const rtsp_stream::launch_session_t &session) {
+    if (session.frame_pipeline_policy_resolved) {
+      switch (session.frame_pipeline_policy.source_display) {
+        case platf::source_display_intent_e::require_hdr:
+          return true;
+        case platf::source_display_intent_e::require_sdr:
+          return false;
+        case platf::source_display_intent_e::unchanged:
+        default:
+          break;
+      }
+    }
+    return session.enable_hdr && !session.synthetic_hdr.enabled;
+  }
+
   display_intent_t
   resolve_display_intent(const config::video_t &config, const rtsp_stream::launch_session_t &session) {
     // The client may pick a display for its own stream; otherwise the host config decides.
@@ -586,7 +422,11 @@ namespace display_device {
       requested_device_is_vdd = device->second.friendly_name == ZAKO_NAME;
     }
 #else
-    requested_device_exists = !find_one_of_the_available_devices(intent.device_id).empty();
+    // The enumeration behind find_one_of_the_available_devices exists on
+    // Windows only (CCD). Other platforms cannot verify the configured id;
+    // keep the intent, as the locked-desktop case above keeps it, and let
+    // stream startup resolve the display.
+    requested_device_exists = true;
 #endif
 
     if (requested_device_is_vdd) {
@@ -704,7 +544,7 @@ namespace display_device {
   }
 
   boost::optional<parsed_config_t>
-  make_parsed_config(const config::video_t &config, const rtsp_stream::launch_session_t &session) {
+  make_parsed_config(const config::video_t &config, const rtsp_stream::launch_session_t &session, bool is_reconfigure) {
     parsed_config_t parsed_config;
 
     // 显示器目标、是否为VDD、以及device_prep统一在此解析
@@ -717,10 +557,12 @@ namespace display_device {
     parsed_config.device_prep = intent.device_prep;
     parsed_config.change_hdr_state = parse_hdr_option(config, session);
 
+    // Resume 的任意零值模式都不能用于显示配置；保持现有分辨率和刷新率。
+    const bool resume_mode_invalid = !is_reconfigure && (session.width <= 0 || session.height <= 0 || session.fps <= 0);
     // 解析分辨率和刷新率配置
-    if (!parse_resolution_option(config, session, parsed_config) ||
-        !parse_refresh_rate_option(config, session, parsed_config) ||
-        !remap_display_modes_if_needed(config, session, parsed_config)) {
+    if (!resume_mode_invalid &&
+        (!parse_resolution_option(config, session, parsed_config) ||
+         !parse_refresh_rate_option(config, session, parsed_config))) {
       // 任何一步失败都返回空值
       return boost::none;
     }

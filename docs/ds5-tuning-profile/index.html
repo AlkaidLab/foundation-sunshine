@@ -1,0 +1,50 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>DualSense tuning</title>
+<style>
+  :root { color-scheme: dark; font: 15px system-ui, sans-serif; }
+  body { max-width: 720px; margin: 32px auto; padding: 0 20px; background: #111827; color: #e5e7eb; }
+  main { display: grid; gap: 16px; } fieldset { border: 1px solid #374151; border-radius: 8px; padding: 16px; display: grid; gap: 12px; }
+  label { display: grid; gap: 4px; } input { padding: 7px; border: 1px solid #4b5563; border-radius: 5px; background: #1f2937; color: inherit; }
+  button { width: fit-content; padding: 8px 14px; border: 0; border-radius: 5px; background: #2563eb; color: white; cursor: pointer; }
+  #status { min-height: 1.2em; }
+</style>
+<main>
+  <h1>Native DualSense tuning</h1>
+  <p>Essential controls for the native USB/IP path. The default audio endpoint guard is always enabled.</p>
+  <fieldset>
+    <legend>Haptics</legend>
+    <label>Maximum effect duration (ms)<input id="duration" type="number" min="1" max="5000" value="5000"></label>
+    <label>Maximum effect rate (Hz)<input id="rate" type="number" min="1" max="500" value="100"></label>
+    <label>Maximum output queue (ms)<input id="queue" type="number" min="1" max="50" value="50"></label>
+    <label><input id="edge" type="checkbox" checked> Preserve zero/non-zero pulse edges</label>
+  </fieldset>
+  <fieldset>
+    <legend>Device and audio</legend>
+    <label>Input report cap (Hz)<input id="report" type="number" min="125" max="1000" value="1000"></label>
+    <label><input id="render" type="checkbox" checked> Four-channel render and authored haptics</label>
+    <label><input id="capture" type="checkbox" checked> Two-channel capture</label>
+    <label>Default endpoint guard<input value="Always enabled" disabled></label>
+  </fieldset>
+  <button id="save">Save</button><output id="status"></output>
+</main>
+<script>
+  const status = document.querySelector('#status');
+  document.querySelector('#save').onclick = async () => {
+    const body = {
+      schema: 'alkaid.ds5.tuning@1',
+      'haptics.max_duration_ms': Number(duration.value),
+      'haptics.max_rate_hz': Number(rate.value),
+      'haptics.max_queue_ms': Number(queue.value),
+      'haptics.edge_triggered_pulse': edge.checked,
+      'device.report_rate_cap_hz': Number(report.value),
+      'audio.render_enabled': render.checked,
+      'audio.capture_enabled': capture.checked,
+      'audio.default_endpoint_guard': true
+    };
+    try {
+      const response = await fetch('/api/dualsense/tuning', {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(body)});
+      status.textContent = response.ok ? 'Saved.' : `Save failed (${response.status}).`;
+    } catch (error) { status.textContent = `Unavailable: ${error.message}`; }
+  };
+</script>

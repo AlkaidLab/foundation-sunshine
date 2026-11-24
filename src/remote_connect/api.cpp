@@ -10,7 +10,7 @@ namespace remote_connect::api {
   namespace {
     using json = nlohmann::json;
 
-    SimpleWeb::CaseInsensitiveMultimap
+    web::CaseInsensitiveMultimap
     json_headers() {
       return {
         { "Content-Type", "application/json" },

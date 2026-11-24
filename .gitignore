@@ -38,6 +38,7 @@
 
 # build directories
 build/
+build-tests/
 cmake-*/
 docs/doxyconfig*
 output/
@@ -107,5 +108,4 @@ src_assets/common/assets/web/dist/
 build.sh
 
 # Sunshine DualSense .NET build outputs
-tools/sunshine-ds5-sidecar/bin/
-tools/sunshine-ds5-sidecar/obj/
+.claude/

@@ -1,3 +1,35 @@
 ©2018 Valve Corporation. Steam and the Steam logo are trademarks and/or
 registered trademarks of Valve Corporation in the U.S. and/or other countries. All
 rights reserved.
+
+The Zenless Zone Zero GENERAL_DATA.bin container transform and its key
+template are ported from Collapse Launcher (MIT License, Copyright (c) 2022
+neon-nyan). The key was decoded from the public CollapseLauncher-ReleaseRepo
+metadata (MIT License, Copyright (c) 2022 neon-nyan).
+Game settings for Genshin Impact, Honkai: Star Rail, Zenless Zone Zero and Honkai Impact 3rd (registry value names, GENERAL_DATA documents, value domains and defaults) are ported from Collapse Launcher (MIT License, Copyright (c) neon-nyan), commit d478585.
+The Endfield direct start in tools/sparxie-launch (DecoyParent.cs) ports the launch method of the Collapse Launcher Endfield plugin (Hi3Helper.Plugin.Endfield, Hi3Helper.Hypergryph.Core, commit 1efd304855ed68535d50e11504d790cd7004a3b1, MIT License, Copyright (c) 2025 Collapse Launcher): a Hypergryph-signed image is started suspended as Games.exe and used as the parent process of Endfield.exe. The MIT License of that code requires this notice: Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, subject to the above copyright notice and this permission notice being included in all copies or substantial portions of the Software. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND.
+
+The Web UI and the control panel are built with foundation-ui (https://github.com/AlkaidLab/foundation-ui), which is licensed under the Mozilla Public License 2.0; the Source Code Form of foundation-ui and the text of that licence are available at that address. As section 3.3 of the MPL-2.0 allows, foundation-ui is distributed here together with the GPL-3.0 code of this project; the files of foundation-ui stay under MPL-2.0 and the rest of this project stays under GPL-3.0.
+
+Third-party binaries in the Windows packages
+
+The Windows installer and portable ZIP include the following third-party
+binaries. Their license texts are installed under `licenses/`; the upstream
+tag, source URL and SHA-256 of each text are recorded in
+`third_party/licenses/manifest.json`.
+
+- ViGEmBus 1.22.0, BSD-3-Clause. Copyright (c) 2016-2020, Nefarius Software
+  Solutions e.U. https://github.com/nefarius/ViGEmBus
+- usbip-win2 0.9.8.1, BSD-2-Clause. Copyright (c) 2021-2026, Vadym Hrynchyshyn
+  <vadimgrn@gmail.com>. https://github.com/vadimgrn/usbip-win2
+- nefcon 1.18.74 (default) and 1.17.40 (cached build directory), MIT. Copyright
+  (c) 2022-2025 Nefarius Software Solutions e.U.
+  https://github.com/nefarius/nefcon
+- ZakoVDD 0.18.2 (latest) and 0.15.10 (Windows 10), MIT. Copyright (c) 2024
+  Virtual Display. https://github.com/qiin2333/zako-vdd
+- Zako Virtual Mouse driver 1.3.2, proprietary license. Distribution of the
+  prebuilt binary as part of a host software package is permitted. Copyright
+  (c) 2025 AlkaidLab. All rights reserved.
+  https://github.com/AlkaidLab/ZakoVirtualMouse
+- zlib (`zlib1.dll` from the build toolchain), Zlib. Copyright (C) 1995-2022
+  Jean-loup Gailly and Mark Adler. https://github.com/madler/zlib

@@ -4,6 +4,7 @@
  */
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <initguid.h>
 #include <iterator>
 #include <thread>
@@ -36,6 +37,7 @@ typedef enum _D3DKMT_GPU_PREFERENCE_QUERY_STATE: DWORD {
 #include "src/globals.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
+#include "src/streaming/client_framerate.h"
 #include "src/video.h"
 
 namespace platf {
@@ -44,12 +46,19 @@ namespace platf {
 namespace platf::dxgi {
   namespace bp = boost::process::v1;
 
+  namespace {
+    std::atomic<std::uint64_t> next_capture_source_generation { 1 };
+  }
+
   /**
    * DDAPI-specific initialization goes here.
    */
   int
   duplication_t::init(display_base_t *display, const ::video::config_t &config) {
     HRESULT status;
+
+    frame_counter = display->frame_rate_source();
+    frame_counter->kind.store(perf::capture_source_kind_e::dxgi_updates, std::memory_order_relaxed);
 
     // Capture format will be determined from the first call to AcquireNextFrame()
     display->capture_format = DXGI_FORMAT_UNKNOWN;
@@ -136,7 +145,14 @@ namespace platf::dxgi {
       return capture_status;
     }
 
+    const auto source_collection_epoch = perf::frame_rate_collection_epoch();
     auto status = dup->AcquireNextFrame(timeout.count(), &frame_info, res_p);
+
+    if (SUCCEEDED(status) && frame_counter && frame_info.LastPresentTime.QuadPart != 0) {
+      // DXGI may coalesce several desktop updates into the returned surface.
+      // Pointer-only notifications do not count as source image updates.
+      frame_counter->record(std::max<UINT>(1, frame_info.AccumulatedFrames), source_collection_epoch);
+    }
 
     switch (status) {
       case S_OK:
@@ -305,6 +321,12 @@ namespace platf::dxgi {
     };
 
     DXGI_RATIONAL client_frame_rate_adjusted = adjust_client_frame_rate();
+    if (client_frame_rate_adjusted.Numerator == 0 || client_frame_rate_adjusted.Denominator == 0) {
+      // the pacing below divides by the numerator; never run it with a rate that is not a number
+      BOOST_LOG(warning) << "Capture rate " << client_frame_rate_adjusted.Numerator << '/' << client_frame_rate_adjusted.Denominator
+                         << " is not usable, pacing at " << client_frame_rate << " fps";
+      client_frame_rate_adjusted = { static_cast<UINT>(client_frame_rate), 1 };
+    }
     std::optional<std::chrono::steady_clock::time_point> frame_pacing_group_start;
     uint32_t frame_pacing_group_frames = 0;
 
@@ -586,6 +608,10 @@ namespace platf::dxgi {
   display_base_t::init(const ::video::config_t &config, const std::string &display_name) {
     static std::once_flag windows_cpp_once_flag;
 
+    capture_contract = config.effective_frame_pipeline_policy().capture;
+    capture_source_generation =
+      next_capture_source_generation.fetch_add(1, std::memory_order_relaxed);
+
     std::call_once(windows_cpp_once_flag, []() {
       if (auto user32 = LoadLibraryA("user32.dll")) {
         if (auto f = (BOOL(*)(HANDLE)) GetProcAddress(user32, "SetProcessDpiAwarenessContext")) {
@@ -611,7 +637,7 @@ namespace platf::dxgi {
     }
 
     auto adapter_name = from_utf8(config::video.adapter_name);
-    const bool is_rdp_session = !is_running_as_system_user && display_device::w_utils::is_any_rdp_session_active();
+    const bool is_rdp_session = !is_running_as_system_user && display_device::w_utils::is_current_session_rdp();
     auto output_name = is_rdp_session ? std::wstring {} : from_utf8(display_name);
     display_device_name.clear();
 
@@ -652,8 +678,18 @@ namespace platf::dxgi {
           continue;
         }
 
-        dxgi::output_t::pointer output_p;
-        for (int y = 0; adapter_tmp->EnumOutputs(y, &output_p) != DXGI_ERROR_NOT_FOUND; ++y) {
+        dxgi::output_t::pointer output_p {};
+        for (int y = 0;; ++y) {
+          // Only DXGI_ERROR_NOT_FOUND ends the list; other failures leave output_p unset
+          // (a Session 0 process gets DXGI_ERROR_NOT_CURRENTLY_AVAILABLE).
+          const HRESULT enum_status = adapter_tmp->EnumOutputs(y, &output_p);
+          if (enum_status == DXGI_ERROR_NOT_FOUND) {
+            break;
+          }
+          if (FAILED(enum_status)) {
+            BOOST_LOG(warning) << "[Display Init] Failed to enumerate outputs [0x"sv << util::hex(enum_status).to_string_view() << ']';
+            break;
+          }
           dxgi::output_t output_tmp { output_p };
 
           DXGI_OUTPUT_DESC desc;
@@ -671,6 +707,8 @@ namespace platf::dxgi {
 
             output = std::move(output_tmp);
             display_device_name = desc.DeviceName;
+            global_offset_x = desc.DesktopCoordinates.left;
+            global_offset_y = desc.DesktopCoordinates.top;
             offset_x = desc.DesktopCoordinates.left;
             offset_y = desc.DesktopCoordinates.top;
             width = desc.DesktopCoordinates.right - offset_x;
@@ -740,6 +778,9 @@ namespace platf::dxgi {
 
     DXGI_ADAPTER_DESC adapter_desc;
     adapter->GetDesc(&adapter_desc);
+    capture_adapter_luid =
+      (static_cast<std::uint64_t>(static_cast<std::uint32_t>(adapter_desc.AdapterLuid.HighPart)) << 32) |
+      static_cast<std::uint32_t>(adapter_desc.AdapterLuid.LowPart);
 
     BOOST_LOG(info)
       << "Device Description : " << to_utf8(adapter_desc.Description)
@@ -835,7 +876,8 @@ namespace platf::dxgi {
       }
     }
 
-    client_frame_rate = config.framerate;
+    // The capture pacing divides by this rate: 0 here was an EXCEPTION_INT_DIVIDE_BY_ZERO at the first pacing group.
+    client_frame_rate = streaming::usable_client_framerate(config.framerate);
 
     if (config.frameRateNum > 0 && config.frameRateDen > 0) {
       client_frame_rate_rational = { static_cast<UINT>(config.frameRateNum), static_cast<UINT>(config.frameRateDen) };
@@ -843,7 +885,7 @@ namespace platf::dxgi {
                       << " (" << static_cast<double>(config.frameRateNum) / config.frameRateDen << " fps)";
     }
     else {
-      client_frame_rate_rational = { static_cast<UINT>(config.framerate), 1 };
+      client_frame_rate_rational = { static_cast<UINT>(client_frame_rate), 1 };
     }
 
     dxgi::output6_t output6 {};
@@ -898,10 +940,23 @@ namespace platf::dxgi {
     // Initialize HDR metadata cache for change detection
     cached_hdr_metadata.reset();
     last_hdr_check_time = std::chrono::steady_clock::now();
-    cached_sdr_white_nits.reset();
-    last_sdr_white_check_time = {};
 
     return 0;
+  }
+
+  captured_frame_desc_t
+  display_base_t::describe_captured_frame(DXGI_FORMAT format, bool borrowed) const {
+    return describe_dxgi_captured_frame(
+      format,
+      capture_linear_gamma,
+      borrowed,
+      capture_adapter_luid,
+      capture_source_generation);
+  }
+
+  std::string
+  display_base_t::captured_display_name() const {
+    return captures_monitor ? to_utf8(display_device_name) : std::string {};
   }
 
   bool
@@ -922,22 +977,15 @@ namespace platf::dxgi {
 
   std::optional<float>
   display_base_t::sdr_white_nits() const {
-    const auto now = std::chrono::steady_clock::now();
-    if (last_sdr_white_check_time.time_since_epoch().count() != 0 &&
-        now - last_sdr_white_check_time < sdr_white_check_interval) {
-      return cached_sdr_white_nits;
-    }
-    last_sdr_white_check_time = now;
-
     if (display_device_name.empty()) {
-      return cached_sdr_white_nits;
+      return std::nullopt;
     }
 
     UINT32 path_count = 0;
     UINT32 mode_count = 0;
     LONG status = GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &path_count, &mode_count);
     if (status != ERROR_SUCCESS) {
-      return cached_sdr_white_nits;
+      return std::nullopt;
     }
 
     // Display topology can change between sizing and querying. Retry once with
@@ -961,7 +1009,7 @@ namespace platf::dxgi {
         }
       }
       if (status != ERROR_SUCCESS) {
-        return cached_sdr_white_nits;
+        return std::nullopt;
       }
 
       paths.resize(queried_path_count);
@@ -982,22 +1030,22 @@ namespace platf::dxgi {
         white_level.header.adapterId = path.targetInfo.adapterId;
         white_level.header.id = path.targetInfo.id;
         if (DisplayConfigGetDeviceInfo(&white_level.header) != ERROR_SUCCESS) {
-          return cached_sdr_white_nits;
+          return std::nullopt;
         }
 
         // DISPLAYCONFIG_SDR_WHITE_LEVEL is an x1000 multiplier of the nominal
         // 80-nit scRGB reference white.
         const float nits = static_cast<float>(white_level.SDRWhiteLevel) * 80.0f / 1000.0f;
         if (std::isfinite(nits) && nits >= 1.0f && nits <= 10000.0f) {
-          cached_sdr_white_nits = nits;
+          return nits;
         }
-        return cached_sdr_white_nits;
+        return std::nullopt;
       }
 
-      return cached_sdr_white_nits;
+      return std::nullopt;
     }
 
-    return cached_sdr_white_nits;
+    return std::nullopt;
   }
 
   bool
@@ -1243,6 +1291,13 @@ namespace platf {
     // Recover ConsentPromptBehaviorAdmin if Sunshine previously crashed during WGC capture (runs only once)
     dxgi::recover_secure_desktop();
 
+    // Every capture method below produces DXGI textures or system memory. An encoder that asks for another kind of memory (the Vulkan encoder, tried during
+    // the encoder probe) has no capture method here, which is an ordinary answer of the probe and not a failure of the display.
+    if (hwdevice_type != mem_type_e::dxgi && hwdevice_type != mem_type_e::system) {
+      BOOST_LOG(debug) << "No capture method produces this memory type on Windows, skipping display creation"sv;
+      return nullptr;
+    }
+
     auto try_init = [&](auto disp) -> std::shared_ptr<display_t> {
       if (!disp->init(config, display_name)) {
         return disp;
@@ -1362,7 +1417,15 @@ namespace platf {
         << ",Share Sys Mem: "sv << adapter_desc.SharedSystemMemory / 1048576 << " MiB"sv;
 
       dxgi::output_t::pointer output_p {};
-      for (int y = 0; adapter->EnumOutputs(y, &output_p) != DXGI_ERROR_NOT_FOUND; ++y) {
+      for (int y = 0;; ++y) {
+        const HRESULT enum_status = adapter->EnumOutputs(y, &output_p);
+        if (enum_status == DXGI_ERROR_NOT_FOUND) {
+          break;
+        }
+        if (FAILED(enum_status)) {
+          BOOST_LOG(warning) << "Failed to enumerate outputs [0x"sv << util::hex(enum_status).to_string_view() << ']';
+          break;
+        }
         dxgi::output_t output { output_p };
 
         DXGI_OUTPUT_DESC desc;
@@ -1380,7 +1443,7 @@ namespace platf {
 
         // Don't include the display in the list if we can't actually capture it
         // In RDP sessions, accept any enumerated output since virtual displays may not report attachment status correctly
-        bool is_rdp = !is_running_as_system_user && display_device::w_utils::is_any_rdp_session_active();
+        bool is_rdp = !is_running_as_system_user && display_device::w_utils::is_current_session_rdp();
 
         bool can_capture = false;
 
@@ -1439,6 +1502,35 @@ namespace platf {
     }
 
     return adapter_names;
+  }
+
+  std::string
+  gpu_signature() {
+    dxgi::factory1_t factory;
+    if (FAILED(CreateDXGIFactory1(IID_IDXGIFactory1, (void **) &factory))) {
+      return {};
+    }
+
+    std::string signature;
+    dxgi::adapter_t::pointer adapter_p;
+    for (int x = 0; factory->EnumAdapters1(x, &adapter_p) != DXGI_ERROR_NOT_FOUND; ++x) {
+      dxgi::adapter_t adapter { adapter_p };
+      DXGI_ADAPTER_DESC1 desc;
+      if (FAILED(adapter->GetDesc1(&desc))) {
+        return {};
+      }
+      // The user-mode driver version changes with every driver install; without it a new driver on the same card would reuse the old answer.
+      LARGE_INTEGER driver_version {};
+      if (FAILED(adapter->CheckInterfaceSupport(IID_IDXGIDevice, &driver_version))) {
+        driver_version.QuadPart = 0;
+      }
+      char piece[160];
+      std::snprintf(piece, sizeof(piece), "%04x:%04x:%08lx%08lx:%016llx:%08x;", desc.VendorId, desc.DeviceId,
+        static_cast<unsigned long>(desc.AdapterLuid.HighPart), static_cast<unsigned long>(desc.AdapterLuid.LowPart),
+        static_cast<unsigned long long>(driver_version.QuadPart), desc.Flags);
+      signature += piece;
+    }
+    return signature;
   }
 
   /**

@@ -33,6 +33,7 @@ namespace nvprefs {
   private:
     undo_file_t() = default;
     safe_handle file_handle;
+    std::filesystem::path file_path;
   };
 
 }  // namespace nvprefs

@@ -1,6 +1,15 @@
 @echo off
-set "PATH=%SystemRoot%\System32;%SystemRoot%;%SystemRoot%\System32\Wbem;%SystemRoot%\System32\WindowsPowerShell\v1.0"
 setlocal enabledelayedexpansion
+set "PATH=%SystemRoot%\System32;%SystemRoot%;%SystemRoot%\System32\Wbem;%SystemRoot%\System32\WindowsPowerShell\v1.0"
+set "PATHEXT=.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC"
+
+rem Record the exit code next to this script: the installer reads it to tell "done", "restart needed" (3010) and "failed".
+call :main %*
+set "STEP_RC=!ERRORLEVEL!"
+> "%~dp0result-gamepad.txt" echo !STEP_RC!
+exit /b !STEP_RC!
+
+:main
 
 if /I "%~1"=="--verify-only" (
   set "VERIFY_ONLY=1"

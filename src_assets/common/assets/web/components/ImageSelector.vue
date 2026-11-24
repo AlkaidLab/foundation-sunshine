@@ -1,67 +1,53 @@
 <template>
-  <div class="form-group-enhanced">
-    <label for="appImagePath" class="form-label-enhanced">{{ $t('apps.image') }}</label>
-
-    <!-- 使用桌面图片选项 -->
-    <div class="form-check mb-3">
-      <input
-        type="checkbox"
-        class="form-check-input"
-        id="useDesktopImage"
-        :checked="isDesktopImage"
-        @change="handleDesktopImageChange"
-      />
-      <label for="useDesktopImage" class="form-check-label">{{ $t('apps.use_desktop_image') }}</label>
-    </div>
-
-    <!-- 图片路径输入 -->
-    <div
-      v-if="!isDesktopImage"
-      class="input-group image-input-group"
-      :class="{ 'is-dragging': dragCounter > 0 }"
-    >
-      <input
-        type="file"
-        class="form-control image-file-input"
-        @change="handleFileSelect"
-        accept="image/png,image/jpg,image/jpeg,image/gif,image/bmp,image/webp"
-      />
-      <input
-        type="text"
-        class="form-control form-control-enhanced monospace"
-        id="appImagePath"
-        :value="imagePath"
-        @input="updateImagePath"
-        @dragenter="handleDragEnter"
-        @dragleave="handleDragLeave"
-        @dragover.prevent
-        @drop.prevent.stop="handleDrop"
-        placeholder="选择图片文件或拖拽到此处"
-      />
-      <button
-        class="btn btn-outline-secondary"
-        type="button"
-        @click="openCoverFinder"
-        :disabled="!appName"
-      >
-        <i class="fas fa-search me-1"></i>{{ $t('apps.find_cover') }}
-      </button>
-    </div>
-
-    <!-- 图片预览 -->
-    <div v-if="!isDesktopImage && imagePath" class="image-preview-container mt-3">
-      <div class="image-preview">
-        <img :src="previewUrl" alt="图片预览" @error="handleImageError" />
+  <section class="cover-card" :class="[`cover-card--${kind}`, { 'is-dragging': dragCounter > 0 }]" :aria-label="title" @dragenter="handleDragEnter" @dragleave="handleDragLeave" @dragover.prevent @drop.prevent.stop="handleDrop">
+    <header v-if="title" class="cover-card__head">
+      <h3 class="cover-card__title">{{ title }}</h3>
+      <MChip>{{ statusText || ratioLabel }}</MChip>
+    </header>
+    <MGroup>
+      <div class="m-item cover-stage">
+        <div class="cover-stage__row">
+          <div class="cover-frame" :class="{ 'is-empty': !hasPicture, 'is-broken': showBroken }">
+            <div v-if="isDesktopImage" class="cover-frame__state"><MIcon name="wallpaper" fill /><span>{{ $t('apps.use_desktop_image') }}</span></div>
+            <img v-else-if="ownPath && !broken" class="image-preview" :class="`image-preview--${kind}`" :src="previewUrl" :alt="$t('apps.image_preview')" @error="handleImageError" />
+            <div v-else-if="showBroken" class="cover-frame__state cover-frame__state--error" role="alert"><MIcon name="error" fill /><span>{{ $t('apps.image_load_failed') }}</span></div>
+            <img v-else-if="showGenerated" class="image-preview image-preview--generated" :class="`image-preview--${kind}`" :src="generatedSrc" alt="" @error="generatedBroken = true" />
+            <button v-else type="button" class="cover-frame__state cover-frame__choose" @click="pickFile"><MIcon name="image" fill /><span>{{ $t('apps.choose_image') }}</span></button>
+            <CoverBadge v-if="badge && hasPicture && !isDesktopImage" :kind="kind" />
+            <div v-if="dragCounter > 0" class="cover-frame__scrim"><MIcon name="upload" fill /><span>{{ $t('apps.image_drop_hint') }}</span></div>
+            <div v-else-if="uploading" class="cover-frame__scrim" role="status" aria-live="polite"><MLoading /><span>{{ $t('apps.image_uploading') }}</span></div>
+          </div>
+          <div v-if="kind === 'poster' && ownPath && !isDesktopImage && !broken" class="image-preview-circle" aria-hidden="true">
+            <img :src="previewUrl" alt="" @error="handleImageError" />
+          </div>
+        </div>
+        <CoverStyleStrip
+          v-if="showStrip && showGenerated"
+          :model-value="coverStyle"
+          :app-id="appId"
+          :name="savedName"
+          :orientation="kind === 'hero' ? 'landscape' : 'portrait'"
+          allow-auto
+          :global-style="globalStyle"
+          :aria-label="$t('apps.cover_style_title')"
+          @update:model-value="(value) => $emit('update:coverStyle', value)"
+        />
+        <div v-if="!isDesktopImage" class="cover-actions">
+          <input ref="fileInput" type="file" class="image-file-input" tabindex="-1" aria-hidden="true" accept="image/png,image/jpg,image/jpeg,image/gif,image/bmp,image/webp" @change="handleFileSelect" />
+          <MButton variant="tonal" icon="upload" :loading="uploading" @click="pickFile">{{ $t('apps.choose_image') }}</MButton>
+          <MButton v-if="kind === 'poster'" variant="tonal" icon="search" @click="openCoverFinder">{{ $t('apps.find_cover') }}</MButton>
+          <MButton v-if="imagePath && !generate" variant="text" icon="close" data-image="clear" @click="$emit('update-image', '')">{{ $t('apps.image_clear') }}</MButton>
+          <MButton v-if="ownPath && generate" variant="text" icon="palette" data-image="use-generated" @click="$emit('update-image', '')">{{ $t('apps.cover_use_generated') }}</MButton>
+        </div>
       </div>
-      <div class="image-preview-circle">
-        <img :src="previewUrl" alt="图片预览" @error="handleImageError" />
+      <MSwitchItem v-if="kind === 'poster'" :model-value="isDesktopImage" icon="wallpaper" :title="$t('apps.use_desktop_image')" @update:model-value="(on) => $emit('update-image', on ? 'desktop' : '')" />
+      <div v-if="!isDesktopImage" class="m-item m-item--field image-path">
+        <MField :model-value="imagePath" :label="$t('apps.image')" :placeholder="$t('apps.image_path_placeholder')" :supporting="kind === 'poster' ? $t('apps.image_desc') : ''" @update:model-value="(value) => $emit('update-image', value)" />
       </div>
-    </div>
+    </MGroup>
 
-    <div class="field-hint">{{ $t('apps.image_desc') }}</div>
-
-    <!-- 封面查找器 -->
     <CoverFinder
+      v-if="kind === 'poster'"
       :visible="showCoverFinder"
       :search-term="appName"
       @close="closeCoverFinder"
@@ -69,19 +55,33 @@
       @loading="handleCoverLoading"
       @error="handleCoverError"
     />
-  </div>
+  </section>
 </template>
 
 <script>
+import { MButton, MChip, MField, MGroup, MIcon, MIconButton, MLoading, MSwitchItem } from 'foundation-ui/vue'
 import CoverFinder from './CoverFinder.vue'
+import CoverStyleStrip from './CoverStyleStrip.vue'
+import CoverBadge from './sparxie/CoverBadge.vue'
 import { validateFile } from '../utils/validation.js'
 import { getImagePreviewUrl } from '../utils/imageUtils.js'
+import { isPlaceholderImagePath } from '../utils/generatedCover.js'
 import { apiPostJson } from '../utils/apiFetch.js'
 
 export default {
   name: 'ImageSelector',
   components: {
+    CoverBadge,
     CoverFinder,
+    CoverStyleStrip,
+    MButton,
+    MChip,
+    MField,
+    MGroup,
+    MIcon,
+    MIconButton,
+    MLoading,
+    MSwitchItem,
   },
   props: {
     imagePath: {
@@ -92,12 +92,66 @@ export default {
       type: String,
       default: '',
     },
+    // 'poster' is the portrait cover (image-path: stock Moonlight shows it); 'hero' is the landscape cover (served to clients as /appasset?type=hero)
+    kind: {
+      type: String,
+      default: 'poster',
+      validator: (value) => value === 'poster' || value === 'hero',
+    },
+    title: {
+      type: String,
+      default: '',
+    },
+    // the cover carries the Sparxie mark where the host draws it (a Sparxie application with the badge on): shown on the preview
+    badge: {
+      type: Boolean,
+      default: false,
+    },
+    // the generated cover of the host (GET /api/apps/cover-preview): shown while the application has no picture of its own; empty when the host cannot draw one (a new application)
+    generatedSrc: {
+      type: String,
+      default: '',
+    },
+    // the application can have a generated cover: a picture of its own is then replaced by it with one action, and the strip of styles is under the preview
+    generate: {
+      type: Boolean,
+      default: false,
+    },
+    showStrip: {
+      type: Boolean,
+      default: false,
+    },
+    // 'auto' (follow the global style) or one of the six
+    coverStyle: {
+      type: String,
+      default: 'auto',
+    },
+    appId: {
+      type: String,
+      default: '',
+    },
+    savedName: {
+      type: String,
+      default: '',
+    },
+    globalStyle: {
+      type: String,
+      default: '',
+    },
+    // one short line in place of the ratio: what the cover is, e.g. 生成 · 毛玻璃
+    statusText: {
+      type: String,
+      default: '',
+    },
   },
   data() {
     return {
       showCoverFinder: false,
       coverLoading: false,
       dragCounter: 0,
+      uploading: false,
+      broken: false,
+      generatedBroken: false,
     }
   },
   computed: {
@@ -106,6 +160,32 @@ export default {
     },
     previewUrl() {
       return getImagePreviewUrl(this.imagePath)
+    },
+    ratioLabel() {
+      return this.kind === 'hero' ? '16:9' : '2:3'
+    },
+    // the picture of the person's: the host's placeholder (box.png, as the Xbox entry and older versions wrote it) is not one when the host draws a cover instead
+    ownPath() {
+      return this.generate && isPlaceholderImagePath(this.imagePath) ? '' : this.imagePath
+    },
+    hasPicture() {
+      return this.isDesktopImage || (!!this.ownPath && !this.broken)
+    },
+    showBroken() {
+      return !this.isDesktopImage && !!this.ownPath && this.broken
+    },
+    // nothing of the person's own, and the host draws a cover: that cover is the preview
+    showGenerated() {
+      return !this.ownPath && !!this.generatedSrc && !this.generatedBroken
+    },
+  },
+  watch: {
+    // a new path is a new picture: it has not failed yet
+    imagePath() {
+      this.broken = false
+    },
+    generatedSrc() {
+      this.generatedBroken = false
     },
   },
   methods: {
@@ -128,6 +208,7 @@ export default {
      */
     async handleFileSelect(event) {
       const file = event.target.files[0]
+      event.target.value = ''
       if (!file) return
 
       await this.processFile(file)
@@ -139,7 +220,6 @@ export default {
     handleDragEnter(event) {
       event.preventDefault()
       this.dragCounter++
-      this.$emit('image-error', '杂鱼~快放进来呀~')
     },
 
     /**
@@ -147,10 +227,7 @@ export default {
      */
     handleDragLeave(event) {
       event.preventDefault()
-      this.dragCounter--
-      if (this.dragCounter === 0) {
-        this.$emit('image-error', '')
-      }
+      this.dragCounter = Math.max(0, this.dragCounter - 1)
     },
 
     /**
@@ -162,7 +239,7 @@ export default {
 
       const file = event.dataTransfer.files[0]
       if (!file) {
-        this.$emit('image-error', '其他地方不可以！')
+        this.$emit('image-error', this.$t('apps.image_drop_empty'))
         return
       }
 
@@ -173,20 +250,23 @@ export default {
      * 处理文件上传
      */
     async processFile(file) {
-      const validation = validateFile(file)
+      const validation = validateFile(file, { translate: this.$t })
       if (!validation.isValid) {
         this.$emit('image-error', validation.message)
         return
       }
 
+      this.uploading = true
       try {
-        this.$emit('image-error', '正在上传图片...')
+        this.$emit('image-error', '')
         const path = await this.uploadImageToSunshine(file)
         this.$emit('update-image', path)
         this.$emit('image-error', '')
       } catch (error) {
         console.error('上传图片失败:', error)
-        this.$emit('image-error', `上传图片失败: ${error.message}`)
+        this.$emit('image-error', this.$t('apps.image_upload_failed', { error: error.message }))
+      } finally {
+        this.uploading = false
       }
     },
 
@@ -221,7 +301,8 @@ export default {
     generateImageKey() {
       const timestamp = Date.now()
       const appName = this.appName || 'custom'
-      return `app_${appName}_${timestamp}`.replace(/[^a-zA-Z0-9_-]/g, '_')
+      const prefix = this.kind === 'hero' ? 'app_hero' : 'app'
+      return `${prefix}_${appName}_${timestamp}`.replace(/[^a-zA-Z0-9_-]/g, '_')
     },
 
     /**
@@ -235,7 +316,13 @@ export default {
      * 处理图片加载错误
      */
     handleImageError() {
-      this.$emit('image-error', '图片加载失败，请检查文件路径')
+      this.broken = true
+      this.$emit('image-error', this.$t('apps.image_load_failed'))
+    },
+
+    /** 打开文件选择 */
+    pickFile() {
+      this.$refs.fileInput?.click()
     },
 
     /**
@@ -243,7 +330,7 @@ export default {
      */
     openCoverFinder() {
       if (!this.appName) {
-        this.$emit('image-error', '请先输入应用名称')
+        this.$emit('image-error', this.$t('apps.image_app_name_required'))
         return
       }
       this.showCoverFinder = true
@@ -282,135 +369,153 @@ export default {
 </script>
 
 <style scoped>
-.monospace {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+.cover-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
 }
 
-.image-file-input {
-  flex: 0 0 132px !important;
-  max-width: 132px;
-}
-
-.image-input-group .form-control[type='file'] {
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
-}
-
-.image-input-group .form-control:not([type='file']) {
-  border-right: 0;
-  border-left: 0;
-  border-radius: 0;
-}
-
-.image-input-group .btn {
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
-}
-
-.image-input-group.is-dragging .form-control-enhanced {
-  background: var(--ui-accent-soft);
-  border-color: var(--ui-accent);
-  box-shadow: inset 0 0 0 1px var(--ui-accent);
-}
-
-.btn:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
-}
-
-.image-preview-container {
+.cover-card__head {
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  gap: 1rem;
-  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 16px;
+}
+
+.cover-card__title {
+  margin: 0;
+  font: var(--m-title-small);
+  color: var(--md-sys-color-on-surface-variant);
+}
+
+.cover-stage {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 16px;
+  padding: 16px;
+}
+
+.cover-stage__row {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+}
+
+/* the frame has the shape of the cover: 2:3 for the portrait one, 16:9 for the landscape one */
+.cover-frame {
+  position: relative;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--md-sys-color-surface-container-highest);
+  border-radius: var(--md-sys-shape-corner-large);
+}
+
+.cover-card--poster .cover-stage__row { justify-content: center; }
+
+.cover-card--poster .cover-frame {
+  width: min(100%, 240px);
+  aspect-ratio: 2 / 3;
+}
+
+.cover-card--hero .cover-frame {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+}
+
+.cover-frame.is-broken {
+  background: var(--md-sys-color-error-container);
+  color: var(--md-sys-color-on-error-container);
 }
 
 .image-preview {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.cover-frame__state {
+  position: absolute;
+  inset: 0;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
-  width: min(100%, 320px);
-  min-height: 172px;
-  padding: 1rem;
+  gap: 8px;
+  padding: 12px;
   text-align: center;
-  background: var(--ui-surface);
-  border: 1px solid var(--ui-border);
-  border-radius: var(--ui-radius-md);
+  font: var(--m-label-large);
+  color: var(--md-sys-color-on-surface-variant);
 }
 
-.image-preview img {
-  max-width: 100%;
-  max-height: 148px;
-  object-fit: contain;
-  border-radius: var(--ui-radius-sm);
-  box-shadow: var(--ui-shadow-sm);
+.cover-frame.is-broken .cover-frame__state {
+  color: inherit;
 }
 
+.cover-frame__state .m-icon {
+  font-size: 32px;
+}
+
+button.cover-frame__choose {
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+button.cover-frame__choose:focus-visible {
+  outline: 2px solid var(--md-sys-color-primary);
+  outline-offset: -4px;
+  border-radius: inherit;
+}
+
+.cover-frame__scrim {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px;
+  text-align: center;
+  font: var(--m-label-large);
+  color: var(--md-sys-color-on-primary-container);
+  background: var(--md-sys-color-primary-container);
+}
+
+.cover-card.is-dragging .cover-stage {
+  box-shadow: inset 0 0 0 2px var(--md-sys-color-primary);
+}
+
+.cover-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.image-file-input {
+  display: none;
+}
+
+/* how the cover is cut where the client draws it round */
 .image-preview-circle {
   position: relative;
-  width: 132px;
-  height: 132px;
-  padding: 3px;
+  flex: none;
+  width: 72px;
+  height: 72px;
   overflow: hidden;
-  text-align: center;
-  background: var(--ui-surface);
-  border: 1px solid var(--ui-border);
+  background: var(--md-sys-color-surface-container-highest);
   border-radius: 50%;
-  box-shadow: var(--ui-shadow-sm);
 }
 
 .image-preview-circle img {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: calc(100% - 6px);
-  height: calc(100% - 6px);
+  width: 100%;
+  height: 100%;
   object-fit: cover;
-  border-radius: 50%;
-  transform: translate(-50%, -50%);
-}
-
-.image-preview-circle::after {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 16%;
-  height: 16%;
-  content: '';
-  background: var(--ui-surface-strong);
-  border: 1px solid var(--ui-border-strong);
-  border-radius: 50%;
-  transform: translate(-50%, -50%);
-}
-
-@media (max-width: 768px) {
-  .image-input-group {
-    flex-direction: column;
-    gap: 0.5rem;
-  }
-
-  .image-input-group .form-control,
-  .image-input-group .btn,
-  .image-file-input {
-    width: 100% !important;
-    max-width: none;
-    margin: 0;
-    border: 1px solid var(--ui-border) !important;
-    border-radius: var(--ui-radius-sm) !important;
-  }
-
-  .image-preview-container {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .image-preview {
-    width: 100%;
-  }
-
-  .image-preview-circle {
-    align-self: center;
-  }
 }
 </style>

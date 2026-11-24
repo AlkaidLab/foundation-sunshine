@@ -3,16 +3,16 @@
  * @brief Definitions for logging related functions.
  */
 // standard includes
+#include <ctime>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
-#include <filesystem>
-#include <ctime>
 
 // lib includes
 #include <boost/core/null_deleter.hpp>
-#include <boost/format.hpp>
 #include <boost/filesystem/path.hpp>
+#include <boost/format.hpp>
 #include <boost/log/attributes/clock.hpp>
 #include <boost/log/common.hpp>
 #include <boost/log/expressions.hpp>
@@ -23,14 +23,23 @@
 #include <boost/log/utility/setup/file.hpp>
 
 // local includes
-#include "logging.h"
 #include "file_handler.h"
+#include "log_retention.h"
+#include "logging.h"
+
+#ifdef _WIN32
+  #include "src/platform/windows/misc.h"
+#endif
 
 extern "C" {
 #include <libavutil/log.h>
 }
 
 using namespace std::literals;
+
+// Sink types are only used here; keeping them out of logging.h keeps boost/log/sinks.hpp out of ~220 translation units.
+using text_sink = boost::log::sinks::asynchronous_sink<boost::log::sinks::text_ostream_backend>;
+using file_sink = boost::log::sinks::synchronous_sink<boost::log::sinks::text_file_backend>;
 
 namespace bl = boost::log;
 
@@ -43,7 +52,7 @@ namespace {
     return boost::filesystem::path { path.string() };
 #endif
   }
-}
+}  // namespace
 
 boost::shared_ptr<boost::log::sinks::asynchronous_sink<boost::log::sinks::text_ostream_backend>> console_sink;
 boost::shared_ptr<boost::log::sinks::synchronous_sink<boost::log::sinks::text_file_backend>> file_sink_ptr;
@@ -117,29 +126,29 @@ namespace logging {
       auto now = std::chrono::system_clock::now();
       auto time_t = std::chrono::system_clock::to_time_t(now);
       auto tm = *std::localtime(&time_t);
-      
+
       // 生成带日期的备份文件名（只精确到日期）
       std::ostringstream backup_name;
-      backup_name << "sunshine_" 
-                  << std::put_time(&tm, "%Y%m%d") 
+      backup_name << "sunshine_"
+                  << std::put_time(&tm, "%Y%m%d")
                   << ".log";
-      
+
       // 构建备份文件路径
       fs::path backup_path = log_path.parent_path() / backup_name.str();
-      
+
       // 如果备份文件已存在，则追加到文件尾部
       if (fs::exists(backup_path)) {
         std::ifstream source(log_path, std::ios::binary);
         std::ofstream dest(backup_path, std::ios::binary | std::ios::app);
-        
+
         if (source && dest) {
           dest << source.rdbuf();
           dest.close();
           source.close();
-          
+
           // 删除原日志文件
           fs::remove(log_path);
-          
+
           BOOST_LOG(info) << "Appended log file to: " << file_handler::path_to_utf8(backup_path);
         }
         else {
@@ -159,7 +168,7 @@ namespace logging {
 
   void
   formatter(const boost::log::record_view &view, boost::log::formatting_ostream &os) {
-    constexpr const char *message = "Message";
+    constexpr const char *message_attribute = "Message";
     constexpr const char *severity = "Severity";
 
     auto log_level = view.attribute_values()[severity].extract<int>().get();
@@ -198,8 +207,20 @@ namespace logging {
     auto t = std::chrono::system_clock::to_time_t(now);
     auto lt = *std::localtime(&t);
 
+    const auto message_value = view.attribute_values()[message_attribute].extract<std::string>();
+    std::string message = message_value ? message_value.get() : std::string {};
+#ifdef _WIN32
+    // A third-party library or a CRT error string can still hand us the legacy
+    // ANSI code page. The file and both streams are UTF-8, so keep valid UTF-8
+    // and convert only a line that is not.
+    if (!platf::is_valid_utf8(message)) {
+      message = platf::to_utf8_best_effort(message, GetACP());
+    }
+#endif
     os << "["sv << std::put_time(&lt, "%Y-%m-%d %H:%M:%S.") << boost::format("%03u") % ms.count() << "]: "sv
-       << log_type << view.attribute_values()[message].extract<std::string>();
+       << log_type << message;
+    // error and fatal lines end with the place of the statement: [src/stream.cpp:3912:videoBroadcastThread]
+    append_site(os, view);
   }
 
   /**
@@ -237,6 +258,17 @@ namespace logging {
     if (config::sunshine.restore_log) {
       archive_existing_log(log_file);
     }
+    else {
+      // The default start used to delete or truncate the previous log, and the service restart after a crash is seconds away: the log of the crashed run was gone.
+      // The previous run's log is kept as sunshine.log.1 (older runs shift up, five are kept): the file itself after a crash or kill, or the newest file the log
+      // sink moved into logs_archive when the run stopped cleanly (an upgrade or a restart).
+      const auto previous_log = file_handler::path_from_utf8(log_file);
+      std::error_code retain_error;
+      log_retention::retain_previous_run(previous_log, previous_log.parent_path() / "logs_archive", log_retention::default_keep, retain_error);
+      if (retain_error) {
+        BOOST_LOG(warning) << "Could not keep the previous log completely: " << retain_error.message();
+      }
+    }
 
     // File sink with rotation support
     namespace fs = std::filesystem;
@@ -270,15 +302,13 @@ namespace logging {
       auto file_backend = boost::make_shared<bl::sinks::text_file_backend>(
         bl::keywords::file_name = boost_log_path,
         bl::keywords::rotation_size = static_cast<uintmax_t>(max_log_size_mb) * 1024 * 1024,
-        bl::keywords::open_mode = open_mode
-      );
+        bl::keywords::open_mode = open_mode);
 
       // Set up file collector to manage rotated log files
       file_backend->set_file_collector(bl::sinks::file::make_collector(
         bl::keywords::target = boost_archive_path,
         bl::keywords::max_size = static_cast<uintmax_t>(max_log_size_mb) * 1024 * 1024 * 5,  // Keep up to 5x max_size total
-        bl::keywords::max_files = 10
-      ));
+        bl::keywords::max_files = 10));
 
       file_backend->auto_flush(true);
       // Scan for any previously rotated files to properly manage the archive
@@ -313,14 +343,16 @@ namespace logging {
       av_log_set_level(AV_LOG_DEBUG);
     }
     av_log_set_callback([](void *ptr, int level, const char *fmt, va_list vl) {
-      static int print_prefix = 1;
+      // ffmpeg-log-20261120, av_log_set_callback: codecs may call this on several threads.
+      thread_local int print_prefix = 1;
       char buffer[1024];
 
       av_log_format_line(ptr, level, fmt, vl, buffer, sizeof(buffer), &print_prefix);
       if (level <= AV_LOG_ERROR) {
         // We print AV_LOG_FATAL at the error level. FFmpeg prints things as fatal that
         // are expected in some cases, such as lack of codec support or similar things.
-        BOOST_LOG(error) << buffer;
+        // boost-log-add-value-1.92-20261120, operator<<: own the format string in the record.
+        BOOST_LOG(error) << bl::add_value(MESSAGE_TEMPLATE_ATTRIBUTE, std::string { fmt }) << buffer;
       }
       else if (level <= AV_LOG_WARNING) {
         BOOST_LOG(warning) << buffer;

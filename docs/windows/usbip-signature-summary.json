@@ -1,0 +1,75 @@
+{
+  "run_url": "https://github.com/skyhua0224/foundation-sunshine/actions/runs/44002163274",
+  "files": [
+    {
+      "file": "devnode.exe",
+      "sha256": "ccbf1813c7ef33303a7febe6e288f27bfa9b0ea189d1baafcbabf2ada7105964",
+      "verification": "pinned upstream SHA-256: passed"
+    },
+    {
+      "file": "libusbip.dll",
+      "sha256": "f123ef5d288b817a890cbe39a3c2d212b3d8b1765c691c8703ccb76c7337986c",
+      "verification": "pinned upstream SHA-256: passed"
+    },
+    {
+      "file": "resources.dll",
+      "sha256": "4bfc862e5891d9b4c12a8ebd43d3ba871ebf94b65f7a00c22527c905949e0fff",
+      "verification": "pinned upstream SHA-256: passed"
+    },
+    {
+      "file": "usbip.exe",
+      "sha256": "817da219fa153b4b37c3bc1aa8fcc63f33e046188c57cc3dd2c60a6ef0883c56",
+      "verification": "pinned upstream SHA-256: passed"
+    },
+    {
+      "file": "driver/usbip2_filter.cat",
+      "sha256": "f259d60bdb5ad9d7a976418bfc9156b788dfcec9b67c8d05d036eb03fb18ffe1",
+      "verification": "signtool /kp: passed"
+    },
+    {
+      "file": "driver/usbip2_filter.inf",
+      "sha256": "b7fe01b04793d2f83cf3407601f2c835f1a10c2618e32a52c8fdef1da6b79bff",
+      "verification": "signtool /kp: passed"
+    },
+    {
+      "file": "driver/usbip2_filter.sys",
+      "sha256": "b93a5fc3c23d56f9b49634742374e32f269e53f764caa2d5fcb43e3259f7eced",
+      "verification": "signtool /kp: passed"
+    },
+    {
+      "file": "driver/usbip2_ude.cat",
+      "sha256": "84dd6cc5985857adf1514a9ee202210ff3ee1384c9be40fd49d6810e23e25f3a",
+      "verification": "signtool /kp: passed"
+    },
+    {
+      "file": "driver/usbip2_ude.inf",
+      "sha256": "1ae9e8dc497929de1a6be1291ae1dca6a19e7fd6c0351e8c266f65dd91f15073",
+      "verification": "signtool /kp: passed"
+    },
+    {
+      "file": "driver/usbip2_ude.sys",
+      "sha256": "abd4fc43dce40e027e4acc884cbfe92433e026206f6565c5ee5284a39441169a",
+      "verification": "signtool /kp: passed"
+    },
+    {
+      "file": "msvcp140.dll",
+      "sha256": "7c26614e1d733892c2deac7e245ce115504b1d80592dd0a01b08e3e5a55f89ca",
+      "verification": "Microsoft Authenticode: valid"
+    },
+    {
+      "file": "msvcp140_atomic_wait.dll",
+      "sha256": "3d0cbfaa1bf3eecf5a3f4491d2960ee803cb994f30292c6adc4a07c498f60e2b",
+      "verification": "Microsoft Authenticode: valid"
+    },
+    {
+      "file": "vcruntime140.dll",
+      "sha256": "d1f4225df2cd877dbf130d5668a021dce3f94118455ff5ec952061c30afc9ce7",
+      "verification": "Microsoft Authenticode: valid"
+    },
+    {
+      "file": "vcruntime140_1.dll",
+      "sha256": "a7146c08f89fe5b04541ab507cdb59ff7b44534d4ba3c668a426c6450a03434e",
+      "verification": "Microsoft Authenticode: valid"
+    }
+  ]
+}

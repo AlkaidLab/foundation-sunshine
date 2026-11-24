@@ -6,13 +6,16 @@
 
 // standard includes
 #include <algorithm>
-#include <array>
 #include <cstdint>
 #include <iostream>
+#include <string>
 #include <system_error>
+#include <vector>
 
 // local includes
+#include "display_scale_steps.h"
 #include "src/logging.h"
+#include "src/platform/common.h"
 #include "src/platform/windows/misc.h"
 #include "src/utility.h"
 #include "windows_utils.h"
@@ -21,13 +24,12 @@
 #include <SetupApi.h>
 #include <wtsapi32.h>
 
+// Keep Win32-dependent helpers after the host headers above.
+#include "hdr_state_api.h"
+
 namespace display_device::w_utils {
 
   namespace {
-
-    constexpr std::array<int, 16> DISPLAY_SCALE_PERCENT_VALUES {
-      100, 120, 125, 140, 150, 160, 175, 180, 200, 225, 250, 300, 350, 400, 450, 500
-    };
 
     constexpr auto DISPLAYCONFIG_DEVICE_INFO_GET_DPI_SCALE {
       static_cast<DISPLAYCONFIG_DEVICE_INFO_TYPE>(-3)
@@ -115,34 +117,25 @@ namespace display_device::w_utils {
         return display_scale_details_t { std::move(info), 0, result };
       }
 
-      const int recommended_index { -scale_get.min_scale_rel };
-      const int min_index { recommended_index + scale_get.min_scale_rel };
-      const int current_index { recommended_index + scale_get.cur_scale_rel };
-      const int max_index { recommended_index + scale_get.max_scale_rel };
-
-      if (min_index < 0 ||
-          current_index < min_index ||
-          current_index > max_index ||
-          max_index >= static_cast<int>(DISPLAY_SCALE_PERCENT_VALUES.size()) ||
-          recommended_index < min_index ||
-          recommended_index > max_index) {
+      const auto range { dpi_scale::decode_range(scale_get.min_scale_rel, scale_get.cur_scale_rel, scale_get.max_scale_rel) };
+      if (!range) {
         BOOST_LOG(warning) << "Unexpected display DPI scale range for " << info.display_name
                            << ": min_rel=" << scale_get.min_scale_rel
                            << ", cur_rel=" << scale_get.cur_scale_rel
                            << ", max_rel=" << scale_get.max_scale_rel;
         info.scale_set_supported = false;
-        return display_scale_details_t { std::move(info), recommended_index, ERROR_INVALID_DATA };
+        return display_scale_details_t { std::move(info), 0, ERROR_INVALID_DATA };
       }
 
-      info.current_scale_percent = DISPLAY_SCALE_PERCENT_VALUES[current_index];
-      info.recommended_scale_percent = DISPLAY_SCALE_PERCENT_VALUES[recommended_index];
-      info.supported_scale_percents.reserve(max_index - min_index + 1);
-      for (int i = min_index; i <= max_index; ++i) {
-        info.supported_scale_percents.push_back(DISPLAY_SCALE_PERCENT_VALUES[i]);
+      info.current_scale_percent = dpi_scale::percent_values[range->current_index];
+      info.recommended_scale_percent = dpi_scale::percent_values[range->recommended_index];
+      info.supported_scale_percents.reserve(range->max_index + 1);
+      for (int i = 0; i <= range->max_index; ++i) {
+        info.supported_scale_percents.push_back(dpi_scale::percent_values[i]);
       }
       info.scale_set_supported = true;
 
-      return display_scale_details_t { std::move(info), recommended_index, result };
+      return display_scale_details_t { std::move(info), range->recommended_index, result };
     }
 
     /**
@@ -255,7 +248,7 @@ namespace display_device::w_utils {
         // ERROR_FILE_NOT_FOUND (2) is expected for some displays (virtual, RDP, etc.)
         // Code has fallback mechanism, so this is not a critical error
         if (status == ERROR_FILE_NOT_FOUND) {
-          BOOST_LOG(debug) << get_error_string(status) << " \"RegQueryValueExW\" failed when getting size (EDID not found, using fallback).";
+          BOOST_LOG(verbose) << get_error_string(status) << " \"RegQueryValueExW\" failed when getting size (EDID not found, using fallback).";
         }
         else {
           BOOST_LOG(warning) << get_error_string(status) << " \"RegQueryValueExW\" failed when getting size.";
@@ -267,12 +260,9 @@ namespace display_device::w_utils {
 
       status = RegQueryValueExW(reg_key, L"EDID", nullptr, nullptr, edid.data(), &required_size_in_bytes);
       if (status != ERROR_SUCCESS) {
-        // ERROR_FILE_NOT_FOUND (2) is expected for some displays (virtual, RDP, etc.)
-        // Code has fallback mechanism, so this is not a critical error
-        if (status == ERROR_FILE_NOT_FOUND) {
-          BOOST_LOG(debug) << get_error_string(status) << " \"RegQueryValueExW\" failed when getting size (EDID not found, using fallback).";
-        }
-        else {
+        // ERROR_FILE_NOT_FOUND is expected for some displays (virtual, RDP,
+        // etc.). The caller uses the device path fallback in that case.
+        if (status != ERROR_FILE_NOT_FOUND) {
           BOOST_LOG(warning) << get_error_string(status) << " \"RegQueryValueExW\" failed when getting size.";
         }
         return false;
@@ -423,6 +413,8 @@ namespace display_device::w_utils {
           break;
         }
 
+        // friendlyNameFromEdid describes the name source, not EDID availability.
+        // Keep the registry lookup and device-path fallback so saved IDs remain valid.
         if (!get_device_edid(dev_info_handle, dev_info_data, device_id_data)) {
           // Error already logged
           break;
@@ -582,34 +574,20 @@ namespace display_device::w_utils {
       return hdr_state_e::unknown;
     }
 
-    DISPLAYCONFIG_GET_ADVANCED_COLOR_INFO color_info = {};
-    color_info.header.adapterId = path.targetInfo.adapterId;
-    color_info.header.id = path.targetInfo.id;
-    color_info.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_ADVANCED_COLOR_INFO;
-    color_info.header.size = sizeof(color_info);
-
-    LONG result { DisplayConfigGetDeviceInfo(&color_info.header) };
-    if (result != ERROR_SUCCESS) {
-      BOOST_LOG(error) << get_error_string(result) << " failed to get advanced color info! ";
+    const auto state = hdr_state_api::query(path.targetInfo, DisplayConfigGetDeviceInfo);
+    if (state.status != ERROR_SUCCESS) {
+      BOOST_LOG(error) << get_error_string(state.status) << " failed to get HDR state!";
       return hdr_state_e::unknown;
     }
 
-    return color_info.advancedColorSupported ? color_info.advancedColorEnabled ? hdr_state_e::enabled : hdr_state_e::disabled : hdr_state_e::unknown;
+    return state.supported ? state.enabled ? hdr_state_e::enabled : hdr_state_e::disabled : hdr_state_e::unknown;
   }
 
   bool
   set_hdr_state(const DISPLAYCONFIG_PATH_INFO &path, bool enable) {
-    DISPLAYCONFIG_SET_ADVANCED_COLOR_STATE color_state = {};
-    color_state.header.adapterId = path.targetInfo.adapterId;
-    color_state.header.id = path.targetInfo.id;
-    color_state.header.type = DISPLAYCONFIG_DEVICE_INFO_SET_ADVANCED_COLOR_STATE;
-    color_state.header.size = sizeof(color_state);
-
-    color_state.enableAdvancedColor = enable ? 1 : 0;
-
-    LONG result { DisplayConfigSetDeviceInfo(&color_state.header) };
+    const LONG result = hdr_state_api::set(path.targetInfo, enable, DisplayConfigGetDeviceInfo, DisplayConfigSetDeviceInfo);
     if (result != ERROR_SUCCESS) {
-      BOOST_LOG(error) << get_error_string(result) << " failed to set advanced color info!";
+      BOOST_LOG(error) << get_error_string(result) << " failed to set HDR state!";
       return false;
     }
 
@@ -903,10 +881,9 @@ namespace display_device::w_utils {
     result.previous_scale_percent = details->info.current_scale_percent;
     result.supported_scale_percents = details->info.supported_scale_percents;
 
-    const auto scale_it { std::find(std::begin(DISPLAY_SCALE_PERCENT_VALUES), std::end(DISPLAY_SCALE_PERCENT_VALUES), scale_percent) };
-    const bool supported_by_windows_table { scale_it != std::end(DISPLAY_SCALE_PERCENT_VALUES) };
+    const auto relative_scale { dpi_scale::relative_from_percent(scale_percent, details->recommended_scale_index) };
     const bool supported_by_display { std::find(std::begin(details->info.supported_scale_percents), std::end(details->info.supported_scale_percents), scale_percent) != std::end(details->info.supported_scale_percents) };
-    if (!supported_by_windows_table || !supported_by_display) {
+    if (!relative_scale || !supported_by_display) {
       result.error = display_scale_error_e::unsupported_scale;
       result.message = "Unsupported display scale";
       result.current_scale_percent = details->info.current_scale_percent;
@@ -918,7 +895,7 @@ namespace display_device::w_utils {
     scale_set.header.id = path->sourceInfo.id;
     scale_set.header.type = DISPLAYCONFIG_DEVICE_INFO_SET_DPI_SCALE;
     scale_set.header.size = sizeof(scale_set);
-    scale_set.scale_rel = static_cast<std::int32_t>(std::distance(std::begin(DISPLAY_SCALE_PERCENT_VALUES), scale_it) - details->recommended_scale_index);
+    scale_set.scale_rel = *relative_scale;
 
     const LONG set_result { DisplayConfigSetDeviceInfo(&scale_set.header) };
     if (set_result != ERROR_SUCCESS) {
@@ -968,38 +945,14 @@ namespace display_device::w_utils {
 
   bool
   is_user_session_locked() {
-    LPWSTR buffer { nullptr };
-    const auto cleanup_guard {
-      util::fail_guard([&buffer]() {
-        if (buffer) {
-          WTSFreeMemory(buffer);
-        }
-      })
-    };
-
-    DWORD buffer_size_in_bytes { 0 };
-    if (WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, WTSGetActiveConsoleSessionId(), WTSSessionInfoEx, &buffer, &buffer_size_in_bytes)) {
-      if (buffer_size_in_bytes > 0) {
-        const auto wts_info { reinterpret_cast<const WTSINFOEXW *>(buffer) };
-        if (wts_info && wts_info->Level == 1) {
-          const bool is_locked { wts_info->Data.WTSInfoExLevel1.SessionFlags == WTS_SESSIONSTATE_LOCK };
-          const auto session_flags = wts_info->Data.WTSInfoExLevel1.SessionFlags;
-          
-          BOOST_LOG(info) << "Session lock check - Locked: " << is_locked 
-                           << ", SessionFlags: " << session_flags 
-                           << " (LOCK=" << WTS_SESSIONSTATE_LOCK 
-                           << ", UNLOCK=" << WTS_SESSIONSTATE_UNLOCK << ")";
-          return is_locked;
-        }
-      }
-
-      BOOST_LOG(warning) << "Failed to get session info in is_user_session_locked.";
-    }
-    else {
-      BOOST_LOG(error) << get_error_string(GetLastError()) << " failed while calling WTSQuerySessionInformationW!";
+    const auto locked = platf::query_session_locked();
+    if (!locked) {
+      BOOST_LOG(warning) << "Failed to query the session lock state in is_user_session_locked.";
+      return false;
     }
 
-    return false;
+    BOOST_LOG(info) << "Session lock check - Locked: " << *locked;
+    return *locked;
   }
 
   bool
@@ -1028,6 +981,10 @@ namespace display_device::w_utils {
 
   bool
   togglePnpDeviceByFriendlyName(const std::string &friendlyName, const bool &stat) {
+    // The caller passes a UTF-8 name (the display settings are UTF-8 end to
+    // end). Comparing it with the ANSI property buffer never matched a
+    // Chinese device name, so read the wide property and compare wide text.
+    const std::wstring wanted_name = platf::from_utf8(friendlyName);
     HDEVINFO deviceInfoSet = SetupDiGetClassDevs(NULL, NULL, NULL, DIGCF_PRESENT | DIGCF_ALLCLASSES);
     if (deviceInfoSet == INVALID_HANDLE_VALUE) {
       std::cerr << "Failed to get device information set." << std::endl;
@@ -1039,9 +996,9 @@ namespace display_device::w_utils {
 
     bool deviceFound = false;
     for (DWORD i = 0; SetupDiEnumDeviceInfo(deviceInfoSet, i, &deviceInfoData); ++i) {
-      TCHAR deviceFriendlyName[256];
-      if (SetupDiGetDeviceRegistryProperty(deviceInfoSet, &deviceInfoData, SPDRP_FRIENDLYNAME, NULL, (PBYTE) deviceFriendlyName, sizeof(deviceFriendlyName), NULL)) {
-        if (friendlyName == deviceFriendlyName) {
+      std::vector<wchar_t> deviceFriendlyName(1024, L'\0');
+      if (SetupDiGetDeviceRegistryPropertyW(deviceInfoSet, &deviceInfoData, SPDRP_FRIENDLYNAME, NULL, reinterpret_cast<PBYTE>(deviceFriendlyName.data()), static_cast<DWORD>(deviceFriendlyName.size() * sizeof(wchar_t)), NULL)) {
+        if (!wanted_name.empty() && wanted_name == deviceFriendlyName.data()) {
           deviceFound = true;
           break;
         }
@@ -1071,51 +1028,23 @@ namespace display_device::w_utils {
     SetupDiDestroyDeviceInfoList(deviceInfoSet);
     return true;
   }
-  
-  // 检测RDP会话
-  bool is_any_rdp_session_active() {
-    PWTS_SESSION_INFO pSessionInfo = nullptr;
-    DWORD sessionCount = 0;
 
-    if (!WTSEnumerateSessions(WTS_CURRENT_SERVER_HANDLE, 0, 1, &pSessionInfo, &sessionCount)) {
-      BOOST_LOG(warning) << "[Check_RDP_Session] WTSEnumerateSessions failed: " << GetLastError();
-      return false; // 异常默认返回false
+  bool
+  is_current_session_rdp() {
+    LPWSTR buffer = nullptr;
+    DWORD bytes_returned = 0;
+    if (!WTSQuerySessionInformationW(WTS_CURRENT_SERVER_HANDLE, WTS_CURRENT_SESSION,
+          WTSClientProtocolType, &buffer, &bytes_returned)) {
+      BOOST_LOG(warning) << "[Check_RDP_Session] Could not query the capture session: " << GetLastError();
+      return false;
     }
-    
-    BOOST_LOG(debug) << "[Check_RDP_Session] Checking " << sessionCount << " sessions";
-    
-    // 遍历所有会话，检测是否有rdp会话
-    for (DWORD i = 0; i < sessionCount; ++i) {
-      WTS_SESSION_INFO si = pSessionInfo[i];
 
-      if (si.State != WTSActive){
-        continue;
-      }
-
-      LPTSTR buffer = nullptr;
-      DWORD bytesReturned = 0;
-
-      if (WTSQuerySessionInformation(WTS_CURRENT_SERVER_HANDLE, si.SessionId, WTSClientProtocolType, &buffer, &bytesReturned)) {
-        USHORT protocolType = *(USHORT*)buffer;
-        WTSFreeMemory(buffer);
-        
-        BOOST_LOG(debug) << "[Check_RDP_Session] Session " << si.SessionId 
-                         << " - State: " << si.State 
-                         << ", Protocol: " << protocolType 
-                         << " (Console=0, RDP=2)";
-        
-        if (protocolType == 2) { // RDP 协议
-          BOOST_LOG(info) << "[Check_RDP_Session] Active RDP session detected, session ID = " << si.SessionId;
-          WTSFreeMemory(pSessionInfo);
-          return true;
-        }
-      } else {
-        BOOST_LOG(warning) << "[Check_RDP_Session] WTSQuerySessionInformation failed for session " << si.SessionId << ", error = " << GetLastError();
-      }
+    const bool is_rdp = buffer != nullptr && bytes_returned >= sizeof(USHORT) &&
+                        *reinterpret_cast<const USHORT *>(buffer) == 2;
+    if (buffer != nullptr) {
+      WTSFreeMemory(buffer);
     }
-    WTSFreeMemory(pSessionInfo);
-    BOOST_LOG(debug) << "[Check_RDP_Session] No active RDP session found.";
-    return false;
+    return is_rdp;
   }
 
   bool

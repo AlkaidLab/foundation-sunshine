@@ -1,796 +1,523 @@
 <template>
   <div class="home-page">
-    <Navbar v-if="!showSetupWizard" />
+    <MPage :title="$t('home.dash.title')" wide full>
+      <template #actions>
+        <MButton v-if="edit" variant="tonal" icon="check" @click="edit = false">{{ $t('home.grid.done') }}</MButton>
+        <MIconButton v-else icon="edit" data-coach="home-edit" :label="$t('home.grid.edit')" @click="edit = true" />
+      </template>
 
-    <!-- 首次设置向导 -->
-    <SetupWizard
-      v-if="showSetupWizard"
-      :adapters="adapters"
-      :display-devices="displayDevices"
-      :has-locale="hasLocale"
-      @setup-complete="onSetupComplete"
+      <MBanner v-if="hostStatus === 'error'" tone="error" icon="error">
+        <b>{{ $t('_common.error') }}</b> {{ $t('index.startup_errors').replace(/<[^>]+>/g, '') }}
+      </MBanner>
+      <!-- the host's startup problems as a compact card: one short line each, the original message behind a toggle, the log and (where known) the fix at the trailing end -->
+      <!-- the safe mode, the encoder check that runs after the start, and a failure that lay in the graphics driver (the same component as the Panel home) -->
+      <MDriverGuardNotice :guard="driverGuard" :locale="String(locale)" :open="openExternalUrl" @dismiss="dismissDriver" @retry="retryProbe" />
+      <MStartupProblems v-if="startup.length" :problems="startup" :locale="String(locale)" @logs="go('troubleshooting')" @fix="onStartupFix" />
+
+      <MAnnouncementStrip v-if="announcements.top.value" :item="announcements.top.value" :total="announcements.unread.value" :texts="announceTexts" @dismiss="announcements.dismiss" @open-url="openExternalUrl" @open-list="announceOpen = true" />
+      <MHomeDash v-model:edit="edit" :cards="cards" :details="allDetails" :ctx="dashCtx" storage-key="web-home" :texts="dashTexts" :config="hostConfig" :locale="locale" :layout-store="layoutStore" @action="onAction" />
+    </MPage>
+
+    <!-- Update sheet: current -> new, channel, driver notice, short release notes, link to the release (this page cannot install) -->
+    <VersionCard
+      v-if="showVersion"
+      v-model="versionSheet"
+      :version="version"
+      :github-version="githubVersion"
+      :pre-release-version="preReleaseVersion"
+      :notify-pre-releases="notifyPreReleases"
+      :loading="loading"
+      :check-failed="versionCheckStatus === VERSION_CHECK_STATUS.ERROR"
+      :installed-version-not-stable="installedVersionNotStable"
+      :stable-build-available="stableBuildAvailable"
+      :pre-release-build-available="preReleaseBuildAvailable"
+      :build-version-is-dirty="buildVersionIsDirty"
+      @retry="fetchVersions(hostConfig)"
     />
+    <MAnnouncementSheet v-if="showAnnouncements" v-model="announceOpen" :items="announcements.list.value" :title="homeTexts(locale).annTitle" :texts="announceTexts" :close-label="$t('_common.close')" @dismiss="announcements.dismiss" @open-url="openExternalUrl" />
+    <MSupportSheet v-if="showSponsors" v-model="sponsorSheet" :title="$t('home.dash.sponsor')" :sections="supportSections" :close-label="$t('_common.close')" @open="onSupportOpen" />
+    <ResourceSheet v-if="showLinks" v-model="linksSheet" />
 
-    <!-- 正常首页内容 -->
-    <main v-if="!showSetupWizard" id="content" class="container home-content">
-      <section class="home-hero" aria-labelledby="home-title">
-        <div class="page-header home-intro">
-          <div class="home-intro-copy">
-            <h1 id="home-title" class="page-title">{{ $t('index.welcome') }}</h1>
-            <p class="page-subtitle">{{ $t('index.description') }}</p>
-          </div>
-          <component
-            :is="showVersionDetails ? 'button' : 'div'"
-            class="home-status"
-            :class="[`home-status-${statusState}`, { 'home-status-action': showVersionDetails }]"
-            :type="showVersionDetails ? 'button' : undefined"
-            :role="showVersionDetails ? 'button' : 'status'"
-            :aria-live="statusState === 'loading' ? 'polite' : 'off'"
-            :aria-label="statusAriaLabel"
-            :aria-controls="showVersionDetails ? 'version-details' : undefined"
-            :title="statusTitle"
-            @click="handleStatusClick"
-          >
-            <span class="home-status-dot" aria-hidden="true"></span>
-            <span>{{ statusLabel }}</span>
-          </component>
-        </div>
-
-        <div class="host-overview">
-          <div class="host-overview-main">
-            <span class="host-mark" aria-hidden="true">
-              <i class="fas fa-server"></i>
-            </span>
-            <div class="host-summary">
-              <h2 class="host-name">{{ hostConfig?.sunshine_name || 'Sunshine' }}</h2>
-              <p class="host-meta">
-                <span v-if="hostConfig?.platform">{{ hostConfig.platform }}</span>
-                <span v-if="hostConfig?.platform" aria-hidden="true"> · </span>
-                <span>{{ versionLabel }}</span>
-              </p>
-            </div>
-          </div>
-
-          <div class="host-metrics" aria-label="Host summary">
-            <div class="host-metric">
-              <span class="metric-icon" aria-hidden="true"><i class="fas fa-display"></i></span>
-              <span class="metric-value">{{ clientsCount ?? '—' }}</span>
-              <span class="metric-label">{{ $t('navbar.clients') }}</span>
-            </div>
-            <div class="host-metric">
-              <span class="metric-icon" aria-hidden="true"><i class="fas fa-gamepad"></i></span>
-              <span class="metric-value">{{ appsCount ?? '—' }}</span>
-              <span class="metric-label">{{ $t('navbar.applications') }}</span>
-            </div>
-          </div>
-
-          <nav class="quick-actions" :aria-label="$t('resource_card.quick_start')">
-            <a
-              v-for="action in quickActions"
-              :key="action.id"
-              class="quick-action"
-              :class="{ 'quick-action-primary': action.primary }"
-              :href="action.href"
-            >
-              <span class="quick-action-icon" aria-hidden="true"><i :class="action.icon"></i></span>
-              <span class="quick-action-copy">
-                <span>{{ $t(action.labelKey) }}</span>
-                <small>{{ $t(action.descriptionKey) }}</small>
-              </span>
-              <i class="fas fa-chevron-right quick-action-arrow" aria-hidden="true"></i>
-            </a>
-          </nav>
-        </div>
-      </section>
-
-      <div v-if="hostStatus === 'error'" class="home-alert" role="alert">
-        <i class="fas fa-triangle-exclamation" aria-hidden="true"></i>
-        <div>
-          <strong>{{ $t('_common.error') }}</strong>
-          <p>{{ $t('index.startup_errors').replace(/<[^>]+>/g, '') }}</p>
-        </div>
-      </div>
-
-      <!-- 错误日志 -->
-      <ErrorLogs :fatal-logs="fatalLogs" />
-
-      <!-- 版本信息 -->
-      <VersionCard
-        v-if="showVersionDetails"
-        id="version-details"
-        :version="version"
-        :github-version="githubVersion"
-        :pre-release-version="preReleaseVersion"
-        :notify-pre-releases="notifyPreReleases"
-        :loading="loading"
-        :installed-version-not-stable="installedVersionNotStable"
-        :stable-build-available="stableBuildAvailable"
-        :pre-release-build-available="preReleaseBuildAvailable"
-        :build-version-is-dirty="buildVersionIsDirty"
-        :parsed-stable-body="parsedStableBody"
-        :parsed-pre-release-body="parsedPreReleaseBody"
-      />
-
-      <!-- 资源卡片 -->
-      <ResourceCard class="home-resources" />
-    </main>
+    <ConfirmDialog :show="stopAsk" dialog-id="home-stop-session" :title="$t('home.stop_session')" title-icon="warning" tone="danger" :close-label="$t('_common.close')" @close="stopAsk = false">
+      <p>{{ $t('home.stop_body') }}</p>
+      <template #actions>
+        <MButton variant="text" @click="stopAsk = false">{{ $t('_common.cancel') }}</MButton>
+        <MButton variant="danger" @click="stopSessions">{{ $t('home.stop_session') }}</MButton>
+      </template>
+    </ConfirmDialog>
+    <ConfirmDialog :show="restartAsk" dialog-id="home-restart" :title="$t('troubleshooting.restart_sunshine')" title-icon="refresh" tone="danger" :close-label="$t('_common.close')" @close="restartAsk = false">
+      <p>{{ $t('troubleshooting.restart_sunshine_desc') }}</p>
+      <template #actions>
+        <MButton variant="text" @click="restartAsk = false">{{ $t('_common.cancel') }}</MButton>
+        <MButton variant="danger" icon="refresh" @click="restartHost">{{ $t('troubleshooting.restart_sunshine') }}</MButton>
+      </template>
+    </ConfirmDialog>
+    <MSnackbar v-model="notice" :message="noticeText" />
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, inject, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import Navbar from '../components/layout/Navbar.vue'
-import SetupWizard from '../components/SetupWizard.vue'
-import ResourceCard from '../components/common/ResourceCard.vue'
-import ErrorLogs from '../components/common/ErrorLogs.vue'
-import VersionCard from '../components/common/VersionCard.vue'
+import { createHostLayoutStore, coverKnown, heroArtReady, firstImage, micIsReady, startupProblems, MStartupProblems, MDriverGuardNotice, MBanner, MButton, MIcon, MIconButton, MPage, MSheet, MSnackbar, MHomeDash, MAnnouncementStrip, useAnnouncements, useGuideCard, buildHomeModel, buildStartSteps, buildCards, useJourneyHome, useReleaseAssets, useStarCard, useSystemInfo, reachProblemOf, registeredComponentStatus, guideCardData, downloadCardData, sponsorCardData, GUIDE_TARGET, homeTexts, parseErrorLog, parseSessionLog } from 'foundation-ui/vue'
+import { realSession, buildCatalogue, buildCatalogueDetails, createHistory, createPairQr, saveSettingKey, recentKeys, rememberRecent, createQueuedCalls, createSerialCalls, pipelineAverages } from 'foundation-ui/vue'
+import QRCode from 'qrcode'
+import { useVddSettings } from '../composables/useVddSettings.js'
+import { useSharedConfig } from '../composables/configStore.js'
+import { hasOpened, lazyPane } from '../utils/lazyPane.js'
+import ConfirmDialog from '../components/common/ConfirmDialog.vue'
 import { VERSION_CHECK_STATUS, useVersion } from '../composables/useVersion.js'
 import { useLogs } from '../composables/useLogs.js'
 import { useSetupWizard } from '../composables/useSetupWizard.js'
-import { trackEvents } from '../config/firebase.js'
-import { getBootstrapConfig } from '../config/bootstrapData.js'
-import { apiJson } from '../utils/apiFetch.js'
+import { useReach } from '../composables/useReach.js'
+import { useHostLive } from '../composables/useHostLive.js'
+import { useDriverGuard } from '../composables/useDriverGuard.js'
+import { canOpenBigScreen, openBigScreenOnHost } from '../composables/openBigScreen.js'
+import { useShellLive } from '../composables/useShellLive.js'
+import { trackEvents } from '../config/telemetry.js'
+import { hostData } from '../composables/hostData.js'
+import { kept, SETTLE_CAP_MS } from '../composables/homeKept.js'
+import { SPONSORS, sponsorUrl } from '../config/sponsors.js'
+import { deviceIconFor } from '../utils/homeData.js'
+import { openExternalUrl } from '../utils/helpers.js'
+import { getImagePreviewUrl } from '../utils/imageUtils.js'
+import { ds4HintOf } from '../utils/gamepadHint.js'
+import { apiFetch, apiJson, apiPostJson } from '../utils/apiFetch.js'
+import { $tp, setPlatformHint } from '../platform-i18n'
 
-const { t } = useI18n()
-const hostConfig = ref(null)
-const hostStatus = ref('loading')
-const appsCount = ref(null)
-const clientsCount = ref(null)
+const { t, locale } = useI18n()
+const { guard: driverGuard, dismiss: dismissDriver, retry: retryProbe } = useDriverGuard()
+const webShell = inject('webShell', null)
+// the host's last answer (hostData keeps it): the page starts from it and the read below replaces it
+const hostConfig = ref(hostData.peek('config'))
+const hostStatus = ref(hostConfig.value ? 'ready' : 'loading')
+const edit = ref(false)
+const T = computed(() => homeTexts(locale.value))
 
-const quickActions = [
-  {
-    id: 'pin',
-    href: '/pin',
-    icon: 'fas fa-link',
-    labelKey: 'navbar.clients',
-    descriptionKey: 'pin.pin_pairing',
-    primary: true,
-  },
-  {
-    id: 'apps',
-    href: '/apps',
-    icon: 'fas fa-gamepad',
-    labelKey: 'navbar.applications',
-    descriptionKey: 'apps.applications_title',
-  },
-  {
-    id: 'config',
-    href: '/config',
-    icon: 'fas fa-sliders-h',
-    labelKey: 'navbar.configuration',
-    descriptionKey: 'config.configuration',
-  },
-]
+const platform = computed(() => hostConfig.value?.platform)
+// the platform variants of a text ($tp) need the platform wherever they are asked, also in a callback outside of rendering
+watch(platform, (value) => setPlatformHint(value), { immediate: true })
+const announcements = useAnnouncements({ locale, version: computed(() => hostConfig.value?.version) })
+const lazySheet = (load) => lazyPane(load, { loading: () => null })
+const VersionCard = lazySheet(() => import('../components/common/VersionCard.vue'))
+const ResourceSheet = lazySheet(() => import('../components/common/ResourceSheet.vue'))
+const MSupportSheet = lazySheet(() => import('foundation-ui/vue/MSupportSheet.vue'))
+const MAnnouncementSheet = lazySheet(() => import('foundation-ui/vue/MAnnouncementSheet.vue'))
+const announceOpen = ref(false)
+const showAnnouncements = hasOpened(announceOpen)
+const announceTexts = computed(() => { const x = homeTexts(locale.value); return { open: x.annOpen, dismiss: x.annDismiss, all: x.annAll, read: x.annRead, none: x.annNone } })
+const WANT = new Set(['session', 'latency', 'bitrate', 'fps', 'hdr', 'mic', 'vdd', 'cpu', 'gpu', 'memory'])
+const live = useHostLive({ want: () => WANT, platform: () => platform.value, keep: true })
+const go = (id) => (webShell?.nav ? webShell.nav.go(id) : (window.location.href = id === 'home' ? '/' : `/${id}`))
+const pairClient = () => { go('pin'); if (webShell) webShell.pending.value = 'pair' }
 
+// ---- Data ----
+const appsOf = (data) => {
+  const list = Array.isArray(data) ? data : data?.apps
+  return Array.isArray(list) ? list.map((a) => ({ id: a.uuid || a.name, name: a.name, cover: a['image-path'] ? getImagePreviewUrl(a['image-path']) : '' })) : null
+}
+const apps = ref(appsOf(hostData.peek('apps')))
+const shellLive = useShellLive()
+// the session with the real name of its client (realSession), and its measured bitrate from either route of the host (sessions[] or perf/current); `bitrate` stays the budget
+const rawSession = computed(() => realSession(live.sessions.value[0] || null, shellLive.clients.value?.list))
+const liveSession = computed(() => { const s = rawSession.value; if (!s) return s; const m = Number.isFinite(s.measured_bitrate_kbps) ? s.measured_bitrate_kbps : live.perf.value?.measuredKbps; return Number.isFinite(m) ? { ...s, measured_bitrate_kbps: m } : s })
+// A stream that is running when the page is drawn is drawn in its first frame, not idle and then redrawn: the page takes the session when what the streaming overview is drawn from is known (the DualSense keys of the
+// stream, the cover of its game and the colours the host card takes from it), or after SETTLE_CAP_MS. A visit that kept its data starts with it.
+const liveArt = computed(() => (apps.value || []).find((a) => a.name === rawSession.value?.app_name)?.cover || '')
+const startReady = computed(() => shellLive.dualsenseKnown.value && coverKnown(liveArt.value) && heroArtReady(liveArt.value))
+const session = ref(kept.settled ? liveSession.value : null)
+let startTimer = 0
+watch([liveSession, startReady], () => {
+  const raw = liveSession.value
+  clearTimeout(startTimer)
+  if (!raw || session.value || startReady.value) { session.value = raw; return }
+  startTimer = setTimeout(() => { session.value = liveSession.value }, SETTLE_CAP_MS)
+}, { immediate: true })
+onBeforeUnmount(() => clearTimeout(startTimer))
+// the host audio of the running client is a tile (live-audio, foundation-ui): its switch sends the command of the stream, one command per client at a time in the order chosen (while one runs
+// only the newest choice waits, so the last choice wins); a refusal puts the switch back
+const setHostAudio = createQueuedCalls(async ({ client, enabled, failed }) => {
+  try {
+    const d = await apiPostJson('/api/runtime/audio', { clientname: client, enabled })
+    if (!d?.success) throw new Error(d?.status_message || 'host audio')
+  } catch { failed?.(); say($tp('config.host_audio_failed', 'Host audio could not be changed.')) }
+}, (a) => a.client)
+const bitrateSample = (s) => (s && Number.isFinite(s.measured_bitrate_kbps) ? s.measured_bitrate_kbps : s?.bitrate)
+const perf = live.perf
+const sys = live.system
+const pushSample = (list, v) => { if (Number.isFinite(v)) list.value = [...list.value.slice(-59), v] }
+// The samples behind the lines of 码率, 帧率, CPU and GPU. A page starts them empty (the host keeps no history of them), so a phone that opens the page, or comes back to its tab, had no line for the first seconds; they
+// are kept for a minute in the tab's own storage and the page starts from them (the control panel is one long-lived window and has them all the time).
+const SERIES_KEY = 'foundation.home.series'
+const SERIES_KEPT_MS = 60000
+const storedSeries = () => { try { const v = JSON.parse(sessionStorage.getItem(SERIES_KEY) || 'null'); return v && Date.now() - v.at < SERIES_KEPT_MS && v.series && typeof v.series === 'object' ? v.series : null } catch { return null } }
+const startSeries = kept.series || storedSeries() || {}
+const series = Object.fromEntries(['cpu', 'gpu', 'bitrate', 'fps'].map((k) => [k, ref([...(Array.isArray(startSeries[k]) ? startSeries[k].filter((v) => Number.isFinite(v)) : [])])]))
+watch(Object.values(series), () => { try { sessionStorage.setItem(SERIES_KEY, JSON.stringify({ at: Date.now(), series: Object.fromEntries(Object.entries(series).map(([k, v]) => [k, v.value])) })) } catch { /* storage unavailable */ } })
+onBeforeUnmount(() => { kept.series = Object.fromEntries(Object.entries(series).map(([k, v]) => [k, v.value])) })
+watch(sys, (s) => { if (s) { pushSample(series.cpu, s.cpu_percent); pushSample(series.gpu, s.gpu_percent) } })
+watch(() => [bitrateSample(session.value), perf.value?.fps], ([b, f]) => { if (session.value) { pushSample(series.bitrate, b); pushSample(series.fps, f) } else { series.bitrate.value = []; series.fps.value = [] } })
+
+// history this interface keeps itself (the host has none): finished sessions and minutes per day, plus samples the curves need
+const history = createHistory(localStorage, 'foundation-ui.history.web-home')
+const historyTick = ref(0)
+watch(session, (s) => { if (history.observe(s ? { ...s, fpsMeasured: perf.value?.fps, latencyP95Ms: perf.value?.p95Ms } : null)) historyTick.value += 1 }, { immediate: true })
+// one sample of every live number every three seconds, kept for an hour (the time ranges of the detail sheets read it)
+const SAMPLE_SEC = 3
+function sampleAll() {
+  const s = session.value, sy = sys.value
+  history.sample('cpu', sy?.cpu_percent); history.sample('gpu', sy?.gpu_percent)
+  if (sy?.memory_total) history.sample('mem', ((sy.memory_total - (sy.memory_available || 0)) / sy.memory_total) * 100)
+  if (s) { history.sample('bitrate', bitrateSample(s)); history.sample('fps', perf.value?.fps); history.sample('latency', perf.value?.avgMs); history.sample('loss', s.packet_loss); history.sample('dropped', s.dropped_frames) } else for (const k of ['bitrate', 'fps', 'latency', 'loss', 'dropped']) history.clear(k)
+  historyTick.value += 1
+}
+let sampler = 0
+onMounted(() => { sampleAll(); sampler = setInterval(sampleAll, SAMPLE_SEC * 1000) })
+onBeforeUnmount(() => clearInterval(sampler))
+
+async function fetchApps() {
+  try { apps.value = appsOf(await hostData.refresh('apps')) } catch { apps.value = null }
+}
+
+// gamepad type: the host's controller configuration, applied to the next controller a client creates (no restart)
+const gamepadMode = ref(kept.gamepad)
+watch(gamepadMode, (v) => { kept.gamepad = v })
+const gamepadBusy = ref(false)
+async function fetchGamepad() {
+  try {
+    const data = await apiJson('/api/gamepad/config')
+    gamepadMode.value = data?.status === 'true' && ['auto', 'x360', 'ds4', 'ds5'].includes(data.gamepad) ? data.gamepad : ''
+  } catch { gamepadMode.value = '' }
+}
+async function setGamepad(value) {
+  if (gamepadBusy.value || value === gamepadMode.value) return
+  const before = gamepadMode.value
+  gamepadMode.value = value
+  gamepadBusy.value = true
+  try {
+    const data = await apiPostJson('/api/gamepad/config', { gamepad: value })
+    if (data?.status !== 'true') throw new Error('not saved')
+    say(t('home.dash.pad_saved'))
+  } catch { gamepadMode.value = before; say(t('_common.error')) } finally { gamepadBusy.value = false }
+}
+
+const hdrState = computed(() => {
+  const h = live.hdr.value
+  if (!h) return ''
+  const key = `home.hdr_state.${h.state}`
+  const text = t(key)
+  return text === key ? String(h.state || '') : text
+})
+const vddState = computed(() => {
+  const v = live.vdd.value
+  if (!v) return ''
+  const key = `home.vdd_state.${v.state}`
+  const text = t(key)
+  return text === key ? String(v.state || '') : text
+})
+const micText = computed(() => {
+  const m = live.mic.value
+  return m ? t(m.host_streaming ? 'home.mic_in_use' : m.online ? 'home.mic_online' : 'home.mic_offline') : ''
+})
+
+const { logs, fatalLogs, fetchLogs } = useLogs()
+const logErrors = computed(() => parseErrorLog(logs.value))
+const logSessions = computed(() => parseSessionLog(logs.value))
+if (kept.logs) logs.value = kept.logs
+watch(logs, (v) => { if (v) kept.logs = v })
+const startup = computed(() => startupProblems(fatalLogs.value.map((log) => log.value), String(locale.value)))
+// the fix of a known problem: the driver page of this UI, else the page of the project's documents that names it
+const onStartupFix = (problem) => {
+  const known = problem.known || {}
+  if (known.go === 'drivers') go('components')
+  else if (known.link) openExternalUrl(known.link)
+  else if (known.go) go('config')
+}
+
+// ---- Get started card: steps tick from real data ----
+const SEEN_KEY = 'foundation-ui.guide.web-home.sessionSeen'
+const sessionSeen = ref(localStorage.getItem(SEEN_KEY) === '1')
+watch(() => !!session.value || (logSessions.value?.length || 0) > 0, (v) => { if (v && !sessionSeen.value) { sessionSeen.value = true; try { localStorage.setItem(SEEN_KEY, '1') } catch { /* storage unavailable */ } } }, { immediate: true })
+const guide = useGuideCard('web-home', () => (shellLive.clients.value && apps.value ? buildStartSteps(T.value, { paired: shellLive.clients.value.total, sessionSeen: sessionSeen.value, apps: apps.value }) : []))
+const openGuide = async () => (await import('../utils/guideLauncher.js')).openGuide()
+const downloadFor = (id) => { window.location.href = `/downloads?platform=${encodeURIComponent(id)}` }
+
+// ---- Host status and version (unchanged behaviour of the old home) ----
+const {
+  version, githubVersion, preReleaseVersion, notifyPreReleases, versionCheckStatus, loading, installedVersionNotStable,
+  stableBuildAvailable, preReleaseBuildAvailable, buildVersionIsDirty, fetchVersions,
+} = useVersion()
+const versionSheet = ref(false)
+const showVersion = hasOpened(versionSheet)
 const hasStableUpdate = computed(() => stableBuildAvailable.value)
 const hasPreReleaseUpdate = computed(() => notifyPreReleases.value && preReleaseBuildAvailable.value)
-
-const statusState = computed(() => {
-  if (hostStatus.value === 'error' || versionCheckStatus.value === VERSION_CHECK_STATUS.ERROR) return 'error'
-  if (
-    hostStatus.value === 'loading' ||
-    versionCheckStatus.value === VERSION_CHECK_STATUS.IDLE ||
-    versionCheckStatus.value === VERSION_CHECK_STATUS.CHECKING
-  ) {
-    return 'loading'
-  }
-  if (hasStableUpdate.value || hasPreReleaseUpdate.value) return 'update'
-  return 'ready'
-})
-
-const statusLabel = computed(() => {
-  if (statusState.value === 'loading') return t('index.loading_latest')
-  if (statusState.value === 'error') return t('_common.error')
-  if (hasStableUpdate.value) return t('index.new_stable')
-  if (hasPreReleaseUpdate.value) return t('index.new_pre_release')
-  return t('index.version_latest')
-})
-
-const statusTitle = computed(() =>
-  versionCheckStatus.value === VERSION_CHECK_STATUS.ERROR ? t('welcome.network_error') : undefined,
-)
-
-const statusAriaLabel = computed(() => statusTitle.value || statusLabel.value)
-
+const updateLabel = computed(() => (hasStableUpdate.value ? t('index.new_stable') : hasPreReleaseUpdate.value ? t('index.new_pre_release') : ''))
 const versionLabel = computed(() => {
-  const currentVersion = version.value?.version || hostConfig.value?.version
-  return currentVersion ? `Ver ${currentVersion}` : t('index.loading_latest')
+  const current = version.value?.version || hostConfig.value?.version
+  return current ? `Ver ${current}` : ''
 })
 
-const showVersionDetails = computed(
-  () =>
-    buildVersionIsDirty.value ||
-    installedVersionNotStable.value ||
-    hasStableUpdate.value ||
-    hasPreReleaseUpdate.value,
-)
-
-const handleStatusClick = () => {
-  if (!showVersionDetails.value) return
-  document.getElementById('version-details')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+// ---- The model of the shared dashboard ----
+const dashTexts = computed(() => ({ ...homeTexts(locale.value), done: t('home.grid.done'), reset: t('home.grid.reset'), earlier: t('home.grid.earlier'), later: t('home.grid.later'), addTitle: t('home.grid.add'), nothing: t('home.grid.nothing'), hide: t('home.grid.remove'), close: t('_common.close') }))
+const PAD_LABELS = computed(() => ({ auto: t('home.dash.pad_auto'), x360: 'Xbox 360', ds4: 'DualShock 4', ds5: 'DualSense' }))
+const PLATFORM_NAMES = { windows: 'Windows', linux: 'Linux', macos: 'macOS' }
+// the pad a streaming client really runs: the host reports the active type of the session's PlayStation controller
+const padSession = computed(() => live.sessions.value.find((s) => s && s.gamepad_type) || null)
+// one short line with the reason and what to do while a client's PlayStation pad runs as a DualShock 4
+const ds4Hint = computed(() => ds4HintOf(live.sessions.value, gamepadMode.value))
+const padLabel = computed(() => {
+  const type = padSession.value?.gamepad_type
+  if (type) return PAD_LABELS.value[type] || type
+  return gamepadMode.value ? PAD_LABELS.value[gamepadMode.value] : ''
+})
+const model = computed(() => {
+  const s = session.value
+  const sy = sys.value
+  const base = buildHomeModel({
+    host: { name: hostConfig.value?.sunshine_name || 'Sunshine', platform: PLATFORM_NAMES[platform.value] || '', version: versionLabel.value, running: hostStatus.value !== 'error', update: updateLabel.value },
+    session: s ? { ...s, fpsMeasured: perf.value?.fps, latencyMs: perf.value?.avgMs, latencyP95Ms: perf.value?.p95Ms, latencyLastMs: perf.value?.lastMs, capture: perf.value?.capture, uptimeMs: perf.value?.uptimeMs } : null,
+    sessionCount: live.sessions.value.length,
+    series: { cpu: series.cpu.value, gpu: series.gpu.value, bitrate: series.bitrate.value, fps: series.fps.value, latency: perf.value?.series || [] },
+    codecModes: hostConfig.value && hostConfig.value.hevc_mode !== undefined ? { hevc: hostConfig.value.hevc_mode, av1: hostConfig.value.av1_mode } : null,
+    sys: sy ? { cpu: sy.cpu_percent, gpu: sy.gpu_percent, gpuName: sy.gpu_name || '', memTotal: sy.memory_total || 0, memAvail: sy.memory_available || 0 } : null,
+    encoder: shellLive.encoder.value,
+    vdd: live.vdd.value ? { state: live.vdd.value.state === 'ready' ? 'ready' : (live.vdd.value.state === 'missing' || live.vdd.value.state === 'not_installed') ? 'missing' : 'idle', text: vddState.value, hdr: live.hdr.value ? !!live.hdr.value.hdrEnabled : undefined } : null,
+    display: hdrState.value || vddState.value ? { hdr: live.hdr.value ? !!live.hdr.value.hdrEnabled : undefined, hdrText: hdrState.value, nits: live.hdr.value?.calibrated ? live.hdr.value.maxNits : null, vddText: vddState.value, vddTone: live.vdd.value?.state === 'ready' ? 'ok' : 'warn' } : null,
+    pads: padLabel.value ? { word: padLabel.value, text: ds4Hint.value ? `${padLabel.value} · ${t(ds4Hint.value.key)}` : padLabel.value } : null,
+    mic: micText.value ? { ready: micIsReady(live.mic.value), text: micText.value, sub: live.mic.value?.underruns ? t('home.underruns', { n: live.mic.value.underruns }) : '' } : null,
+    clients: shellLive.clients.value?.list ? shellLive.clients.value.list.map((c) => ({ ...c, icon: deviceIconFor(c.name, c.os) })) : null,
+    apps: apps.value,
+    logs: logErrors.value,
+    recent: logSessions.value,
+    canAct: live.local.value !== false || !s,
+  }, homeTexts(locale.value))
+  base.strip = gamepadMode.value
+    ? { label: t('home.dash.gamepad_type'), icon: 'sports_esports', value: gamepadMode.value, busy: gamepadBusy.value, options: ['auto', 'x360', 'ds4', 'ds5'].filter((m) => m !== 'ds4' && m !== 'x360' ? true : platform.value !== 'linux').map((value) => ({ value, label: PAD_LABELS.value[value] })), switches: [] }
+    : null
+  if (base.strip && ds4Hint.value) base.strip.note = t(ds4Hint.value.key)
+  // the version sheet is the details of the host card (release notes, update channels)
+  base.details = { ...base.details, hero: { external: true } }
+  return base
+})
+// the shared virtual display control and the store the settings page uses, so a change in one shows in the other
+const vddStore = useVddSettings()
+onMounted(() => { const shared = useSharedConfig(); if (!shared.config.value) shared.loadConfig(); vddStore.refresh() })
+const catalogueInput = computed(() => {
+  void historyTick.value
+  const s = session.value
+  const sy = sys.value
+  return {
+    sampleSec: SAMPLE_SEC, vddStore: live.vdd.value ? vddStore : null,
+    reach: reach.view.report, reachChecking: reach.view.status === 'loading', reachStatus: reach.view.status, reachCause: reach.view.cause, reachHttp: reach.view.http, reachProgress: reach.view.progress,
+    sysinfo: nics.info.value,
+    host: { version: versionLabel.value, update: updateLabel.value },
+    session: s ? { ...s, fpsMeasured: perf.value?.fps, latencyMs: perf.value?.avgMs, latencyP95Ms: perf.value?.p95Ms, uptimeMs: perf.value?.uptimeMs, frameRates: perf.value?.frameRates, perfCapture: perf.value?.capture, ...pipelineAverages({ pipeline: perf.value?.sessionId === s.session_id ? perf.value?.pipeline : null }) } : null,
+    mic: live.mic.value,
+    history: { samples: history.samples, sessions: history.sessions, days: history.days, last: () => history.last() },
+    sys: sy ? { memTotal: sy.memory_total || 0, memAvail: sy.memory_available || 0 } : null,
+    config: hostConfig.value, audio: webShell?.audio?.value || null, logText: logs.value, logs: logErrors.value, clients: model.value.table?.tabs?.find((x) => x.id === 'clients') ? shellLive.clients.value.list.map((c) => ({ ...c, icon: deviceIconFor(c.name, c.os) })) : null, apps: apps.value,
+    codecModes: hostConfig.value && hostConfig.value.hevc_mode !== undefined ? { hevc: hostConfig.value.hevc_mode, av1: hostConfig.value.av1_mode } : null,
+    pads: padLabel.value ? { word: padLabel.value, text: ds4Hint.value ? `${padLabel.value} · ${t(ds4Hint.value.key)}` : padLabel.value } : null,
+    display: live.hdr.value ? { hdr: !!live.hdr.value.hdrEnabled, hdrText: hdrState.value, nits: live.hdr.value.calibrated ? live.hdr.value.maxNits : null } : null,
+    canAct: live.local.value !== false || !s,
+    canOpenDesktop: canOpenBigScreen({ platform: platform.value, local: live.local.value, hostname: window.location.hostname }),
+    recent: recentKeys.value, canRuntime: live.local.value !== false, ds5Keys: shellLive.dualsenseKeys.value,
+    pairQr: pairQr.view,
+    announcements: announcements.list.value.map((a) => ({ id: a.id, title: a.title || a.text || '', category: a.category, banner: a.banner || firstImage(a.body), date: dateOfPost(a.published), read: a.read || a.snoozed, hasText: !!a.body, url: a.url || '' })),
+  }
+})
+const catalogue = computed(() => buildCatalogue(catalogueInput.value, T.value).data)
+const allDetails = computed(() => ({ ...model.value.details, ...buildCatalogueDetails(catalogueInput.value, T.value) }))
+const isNew = computed(() => guide.visible.value)
+const cards = computed(() => buildCards(model.value, { texts: T.value, catalogue: catalogue.value, guide: guideCardData(T.value, guide.steps.value, guide.visible.value), download: downloadCardData(T.value, { locale: locale.value, assetsOf: releases.assetsOf, versionOf: releases.versionOf, qr: (text) => QRCode.create(text, { errorCorrectionLevel: 'M' }).modules }), sponsor: sponsorCardData(T.value, SPONSORS), journey: journey.data.value, sysinfo: nics.info.value, temps: null }))
+// the system information of the host (the network adapters, the CPU, the GPU, the system): a host without the API leaves those tiles out
+const sysJson = async (path) => { const r = await apiFetch(path); if (!r.ok) throw Object.assign(new Error(`HTTP ${r.status}`), { status: r.status }); return r.json() }
+// the overview layout is kept on the host, so the control panel of the same host draws the same cards, order and sizes (foundation-ui hostLayout.js)
+const layoutStore = createHostLayoutStore({ request: (path, init) => apiFetch(path, init) })
+const nics = useSystemInfo({ fetchJson: sysJson })
+if (kept.nics) nics.info.value = kept.nics
+watch(nics.info, (v) => { if (v) kept.nics = v })
+const reachProblem = computed(() => reachProblemOf(reach.view.report))
+// what the smart overview reads (all local): the paired clients, a stream, problems, the network of the host
+const compRows = () => registeredComponentStatus()?.rows?.value || []
+const smartSignals = computed(() => ({
+  pairedCount: shellLive.clients.value?.list ? shellLive.clients.value.list.length : null,
+  streaming: !!session.value, lastStreamAt: (void historyTick.value, history.last()?.end || 0), // ms since epoch of the end of the last finished session this page saw (0: none): the after-stream scenario runs 30 minutes from it
+  problems: startup.value.length, problemComponents: compRows().filter((r) => r.state === 'error' || r.state === 'warn').map((r) => r.id),
+  recentErrors: logErrors.value?.rows.length || 0, isNew: isNew.value,
+  wifiHost: nics.defaultNic.value?.type === 'wifi', linkSlowMbps: nics.defaultNic.value?.link_speed_mbps && nics.defaultNic.value.link_speed_mbps < 1000 ? nics.defaultNic.value.link_speed_mbps : 0,
+  reachBad: reachProblem.value, updateAvailable: !!updateLabel.value,
+}))
+// The overview is drawn (not its skeleton) once what it is drawn from is known: the host's config, apps, log and gamepad type, the session and the paired clients, and for a running stream the keys, the cover and the
+// colours of the host card. A visit after the first starts from what it kept (nothing is waited for); a first visit waits for the reads, which go out together, and for at most SETTLE_CAP_MS, so a host that
+// answers slowly does not hold the page. The system information is not waited for: it only adds a tile when the link is bad, which then comes in with the motion of a change.
+const reads = reactive({ config: kept.settled, logs: kept.settled, apps: kept.settled, pad: kept.settled })
+const capped = ref(false)
+let capTimer = 0
+onBeforeUnmount(() => clearTimeout(capTimer))
+const known = computed(() => Object.values(reads).every(Boolean) && live.local.value !== null && !!shellLive.clients.value)
+const pending = computed(() => !(capped.value || (known.value && (!rawSession.value || startReady.value) && coverKnown(catalogue.value['last-session']?.cover || ''))))
+const dashCtx = computed(() => ({ pending: pending.value, live: !!session.value, isNew: isNew.value, ...journey.ctx.value, star: star.visible.value, starNames: (shellLive.clients.value?.list || []).map((c) => c.name), clientList: (shellLive.clients.value?.list || []).map((c) => ({ name: c.name, uuid: c.uuid, family: c.family, official: c.official, os: c.os, version: c.version, last_seen: c.last_seen })), sessionClient: session.value ? { uuid: session.value.client_cert_uuid || session.value.uuid || session.value.client_uuid || '', name: session.value.client_name || '', family: session.value.client_family || '', os: session.value.client_os || '', official: session.value.client_official } : null, signals: smartSignals.value }))
+// the date of a post in the 资讯 tile, YYYY-MM-DD
+const dateOfPost = (at) => { if (!at) return ''; const d = new Date(at); const p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}` }
+function onAction(a) {
+  switch (a.type) {
+    case 'news-open': webShell?.nav ? webShell.nav.go('announcements', { id: a.value?.id }) : go('home'); break
+    case 'hero': onHero(); break
+    case 'group': setGamepad(a.value); break
+    case 'table-action': pairClient(); break
+    case 'pair-pin': pairPin(a.value?.pin); break
+    case 'pair-qr': go('pin'); if (webShell) webShell.pending.value = 'pair-qr'; break
+    case 'star-dismiss': star.dismiss(); break
+    case 'address-save': saveSetting({ key: 'external_endpoints', value: a.value?.value ?? '' }).then(() => saveSetting({ key: 'external_ip', value: '' })).then(() => reach.refresh(true)).catch(() => {}); break
+    case 'reach-check': reach.refresh(true); break
+    case 'pin-open': webShell?.openSetting?.(a.value?.key); break
+    case 'open-url': window.open(a.value, '_blank', 'noopener,noreferrer'); break
+    case 'open-desktop': openBigScreenOnHost().catch((e) => say(`${T.value.openDesktopFailed}${e?.message ? `: ${e.message}` : ''}`)); break
+    case 'pair-qr-begin': pairQr.begin(a.value === true); break
+    case 'pair-qr-stop': pairQr.stop(); break
+    case 'table-row': onTableRow(a.value); break
+    case 'app': go('apps'); break
+    case 'add-app': go('apps'); if (webShell) webShell.pending.value = 'addApp'; break
+    case 'scan-games': go('apps'); if (webShell) webShell.pending.value = 'scanGames'; break
+    case 'open': go({ vdd: 'config', settings: 'config', clients: 'pin', diagnostics: 'troubleshooting' }[a.value] || a.value); break
+    case 'detail-external': versionSheet.value = true; break
+    case 'guide-go': { const to = GUIDE_TARGET[a.value.id]; if (to === 'welcome') openGuide(); else if (to === 'clients') pairClient(); else go(to === 'downloads' ? 'downloads' : to) } break
+    case 'guide-skip': guide.toggle(a.value); break
+    case 'download': downloadFor(a.value); break
+    case 'link': window.open(a.value, '_blank', 'noopener,noreferrer'); break
+    case 'setting': saveSetting(a.value); break
+    case 'runtime-bitrate': runtimeBitrate(a.value); break
+    case 'runtime-host-audio': setHostAudio(a.value); break
+    case 'ds5-tune': ds5Tune(a.value); break
+    case 'sponsor': { const target = SPONSORS.find((x) => x.id === a.value); if (a.value === 'star') window.open('https://github.com/AlkaidLab/foundation-sunshine', '_blank', 'noopener,noreferrer'); else if (target) window.open(sponsorUrl(target, locale.value), '_blank', 'noopener,noreferrer'); else sponsorSheet.value = true; break }
+    default: break
+  }
 }
-
-const countCollection = (payload, key) => {
-  if (Array.isArray(payload)) return payload.length
-  if (Array.isArray(payload?.[key])) return payload[key].length
-  if (key === 'clients' && Array.isArray(payload?.named_certs)) return payload.named_certs.length
-  return null
-}
-
-// 使用组合式函数
-const {
-  version,
-  githubVersion,
-  preReleaseVersion,
-  notifyPreReleases,
-  versionCheckStatus,
-  loading,
-  installedVersionNotStable,
-  stableBuildAvailable,
-  preReleaseBuildAvailable,
-  buildVersionIsDirty,
-  parsedStableBody,
-  parsedPreReleaseBody,
-  fetchVersions,
-} = useVersion()
-
-const { fatalLogs, fetchLogs } = useLogs()
-
-const { showSetupWizard, adapters, displayDevices, hasLocale, checkSetupWizard, onSetupComplete } = useSetupWizard()
-
-// 上报显卡信息
-const reportGPUInfo = (config) => {
+// a control card saves its setting the way the settings do: read the configuration, change the key, write it back
+const hostApi = { getJson: (path) => apiJson(path), postJson: (path, body) => apiJson(path, { method: 'POST', body }) }
+// the QR code of the pairing card: a pairing window is open on the host only while the card shows it (the card asks and gives it back)
+const pairQr = createPairQr({
+  autoRenew: false,
+  start: async () => { const d = await apiJson('/api/qr-pair', { method: 'POST' }); if (String(d.status) !== 'true') throw new Error(d.error || 'qr'); return d },
+  poll: () => apiJson('/api/qr-pair'),
+  cancel: () => apiFetch('/api/qr-pair/cancel', { method: 'POST' }),
+  render: (url) => QRCode.toDataURL(url, { width: 280, margin: 2, color: { dark: '#000000', light: '#ffffff' } }),
+})
+onBeforeUnmount(() => pairQr.stop())
+// the connect journey card: on by default while no client is paired (choose the device, install, pair, done)
+const releases = useReleaseAssets()
+const journey = useJourneyHome({ storageKey: 'web-home', assetsOf: releases.assetsOf, versionOf: releases.versionOf, count: () => (shellLive.clients.value?.list ? shellLive.clients.value.list.length : null), latest: () => (shellLive.clients.value?.list?.length ? shellLive.clients.value.list[shellLive.clients.value.list.length - 1].name : ''), locale: () => locale.value, qr: (text) => QRCode.create(text, { errorCorrectionLevel: 'M' }).modules, pairQr: pairQr.view })
+// the star card: due after the first pairing or the first stream; while a stream runs the star of the client in use, otherwise the host and the sponsor entry; 以后再说 hides it until the next stream
+const star = useStarCard({ storageKey: 'web-home', triggered: () => journey.done.value || sessionSeen.value, paired: () => shellLive.clients.value?.list?.length || 0, streaming: () => !!session.value })
+// the PIN typed on the pairing card goes to the host like the pairing sheet sends it
+async function pairPin(pin) {
+  if (!/^\d{4}$/.test(String(pin || ''))) return
   try {
-    const adapters = config.adapters || []
-    const adapterNames = adapters.map((a) => (typeof a === 'string' ? a : a?.name || String(a))).join(', ')
+    const response = await apiFetch('/api/pin', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ pin: String(pin), name: T.value.pairDefaultName }) })
+    const data = await response.json()
+    say(String(data.status) === 'true' ? T.value.pairSent : T.value.pairFailed)
+  } catch { say(T.value.pairFailed) }
+}
+// a control the keyboard repeats (a slider held on an arrow key) posts one command per destination at a time; the value that is sent is always the last one chosen
+const saveSetting = createSerialCalls(async ({ key, value, failed }) => { const r = await saveSettingKey(hostApi, key, value); if (r.ok) { hostConfig.value = r.config; rememberRecent(key) } else { say(T.value.saveFailed); failed?.() } }, (a) => a.key)
+// what acts on a running stream (host audit 2026-11-05): the bitrate command is taken from this computer only; the DualSense tuning applies to the controller in use
+const runtimeBitrate = createQueuedCalls(async ({ client, kbps }) => {
+  try { const r = await apiFetch(`/api/runtime/bitrate?bitrate=${kbps}&clientname=${encodeURIComponent(client)}`); const d = await r.json().catch(() => ({})); say(r.ok && d.success !== false ? T.value.lbSent.replace('{client}', client) : T.value.lbFailed) } catch { say(T.value.lbFailed) }
+}, (a) => a.client)
+const ds5Tune = createQueuedCalls(async ({ key, value }) => {
+  try { const d = await apiPostJson('/api/dualsense/tuning', { schema: 'ALK-DS5T/1', values: { [key]: value } }); if (d?.status === false) say(T.value.dsFailed); else shellLive.refresh?.() } catch { say(T.value.dsFailed) }
+}, (a) => a.key)
+const onTableRow = (row) => go(row.tab === 'errors' || row.tab === 'sessions' ? 'troubleshooting' : 'pin')
+const onDetail = (id) => { if (id === 'hero') versionSheet.value = true }
 
-    const gpuInfo = {
-      platform: config.platform || 'unknown',
-      adapter_count: adapters.length,
-      adapters: adapterNames,
-      selected_adapter: config.adapter_name || (adapters.length ? 'auto' : 'none'),
-      has_selected_adapter: !!config.adapter_name,
-    }
-
-    trackEvents.gpuReported(gpuInfo)
+// ---- Sheets, confirmations ----
+const sponsorSheet = ref(false)
+const linksSheet = ref(false)
+const showLinks = hasOpened(linksSheet)
+const showSponsors = hasOpened(sponsorSheet)
+const supportSections = computed(() => [
+  { title: t('home.dash.sponsor'), items: SPONSORS.map((x) => ({ id: x.id, icon: 'favorite', title: x.label, url: sponsorUrl(x, locale.value) })) },
+  { items: [
+    { id: 'star', icon: 'star', title: t('home.dash.star'), url: 'https://github.com/AlkaidLab/foundation-sunshine' },
+    { id: 'qq', icon: 'groups', title: t('home.dash.qq'), url: 'https://qm.qq.com/q/AfMQoyKrkc' },
+    { id: 'more', icon: 'public', title: t('home.dash.more_resources') },
+  ] },
+])
+const onSupportOpen = (item) => {
+  if (item.id === 'more') { sponsorSheet.value = false; linksSheet.value = true; return }
+  window.open(item.url, '_blank', 'noopener,noreferrer')
+}
+const stopAsk = ref(false)
+const restartAsk = ref(false)
+const notice = ref(false)
+const noticeText = ref('')
+const say = (text) => { noticeText.value = text; notice.value = true }
+const onHero = () => { if (session.value) stopAsk.value = true; else restartAsk.value = true }
+async function stopSessions() {
+  stopAsk.value = false
+  try {
+    const response = await apiFetch('/api/runtime/sessions/stop', { method: 'POST' })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    say(t('home.stop_done'))
+  } catch (error) { console.error('Failed to stop sessions:', error); say(t('_common.error')) }
+}
+async function restartHost() {
+  restartAsk.value = false
+  try {
+    await apiFetch('/api/restart?reason=home', { method: 'POST' })
+    say(t('troubleshooting.restart_sunshine_success'))
   } catch (error) {
-    console.error('上报显卡信息失败:', error)
+    // the host drops the connection while it restarts
+    say(t('troubleshooting.restart_sunshine_success'))
+    console.warn('Restart request ended:', error)
   }
 }
 
-// 初始化
-onMounted(async () => {
-  // 记录页面访问
-  trackEvents.pageView('home')
+// The first run is the guided flow (the same one as the control panel's welcome), a large window over a scrim
+const { checkSetupWizard } = useSetupWizard()
+const reach = useReach()
 
+let refreshTimer = 0
+let unmounted = false
+onMounted(async () => {
+  watch(pending, (p) => { if (!p) kept.settled = true }, { immediate: true }) // set up here, not above: the catalogue it reads is built from things declared further down
+  if (!kept.settled) capTimer = setTimeout(() => { capped.value = true }, SETTLE_CAP_MS)
+  void reach.refresh()
+  nics.start()
+  shellLive.start()
+  void fetchApps().finally(() => { reads.apps = true })
+  void fetchGamepad().finally(() => { reads.pad = true })
+  void fetchLogs().finally(() => { reads.logs = true })
+  refreshTimer = setInterval(() => {
+    if (document.hidden) return
+    void fetchApps()
+    void fetchLogs()
+  }, 30000)
   try {
-    const config = await getBootstrapConfig()
+    const config = await hostData.refresh('config')
+    if (unmounted) return
     hostConfig.value = config
     hostStatus.value = 'ready'
-
-    setTimeout(() => {
-      reportGPUInfo(config)
-    }, 1000)
-
-    // 检查是否需要显示设置向导
-    if (checkSetupWizard(config)) {
-      return
-    }
-
-    const [appsResult, clientsResult] = await Promise.allSettled([
-      apiJson('/api/apps'),
-      apiJson('/api/clients/list'),
-    ])
-    if (appsResult.status === 'fulfilled') appsCount.value = countCollection(appsResult.value, 'apps')
-    if (clientsResult.status === 'fulfilled') clientsCount.value = countCollection(clientsResult.value, 'clients')
-
-    // 版本和日志互不阻塞，避免外部版本检查拖延本机状态提示
-    await Promise.allSettled([fetchVersions(config), fetchLogs()])
-
-    // 更新页面标题
-    if (version.value) {
-      document.title += ` Ver ${version.value.version}`
-    }
+    reads.config = true
+    void nextTick(() => trackEvents.homeReady())
+    if (checkSetupWizard(config)) void import('../utils/guideLauncher.js').then((m) => m.maybeAutoOpenGuide({ ignorePaired: true }))
+    await fetchVersions(config)
+    if (!unmounted && version.value) document.title += ` Ver ${version.value.version}`
   } catch (e) {
     hostStatus.value = 'error'
-    // 在预览模式下，API 不可用是正常的，只记录警告
-    if (e?.message?.includes('JSON') || e?.message?.includes('<!DOCTYPE')) {
-      console.warn('API not available in preview mode:', e.message)
-    } else {
+    reads.config = true
+    // in preview mode the API is not there; that is expected
+    if (e?.message?.includes('JSON') || e?.message?.includes('<!DOCTYPE')) console.warn('API not available in preview mode:', e.message)
+    else {
       console.error('Failed to initialize:', e)
       trackEvents.errorOccurred('home_initialization', e.message)
     }
   }
 })
+onBeforeUnmount(() => {
+  unmounted = true
+  clearInterval(refreshTimer)
+  shellLive.stop()
+})
 </script>
-
-<style>
-@import '../styles/global.less';
-
-.home-content {
-  display: flex;
-  min-height: calc(100vh - 77px);
-  max-width: 1180px;
-  box-sizing: border-box;
-  flex-direction: column;
-  padding-top: 0.45rem;
-  padding-bottom: 0.35rem;
-}
-
-.home-hero {
-  position: relative;
-  margin: 0.45rem 0 0.7rem;
-  overflow: hidden;
-  border: 1px solid var(--ui-border, rgba(74, 158, 255, 0.22));
-  border-radius: calc(var(--ui-radius-lg, 16px) + 2px);
-  background: linear-gradient(
-    145deg,
-    color-mix(in srgb, var(--ui-surface-strong) 94%, var(--ui-accent-soft)),
-    color-mix(in srgb, var(--ui-surface) 92%, transparent)
-  );
-  box-shadow: var(--ui-shadow-md, 0 12px 32px rgba(58, 126, 213, 0.14));
-  backdrop-filter: blur(18px);
-}
-
-.home-hero::before,
-.home-hero::after {
-  position: absolute;
-  border-radius: 50%;
-  background: var(--ui-accent-soft, rgba(74, 158, 255, 0.12));
-  content: '';
-  pointer-events: none;
-}
-
-.home-hero::before {
-  top: -3.2rem;
-  right: 11rem;
-  width: 8rem;
-  height: 8rem;
-  opacity: 0.65;
-}
-
-.home-hero::after {
-  top: 1.25rem;
-  right: 8.5rem;
-  width: 0.65rem;
-  height: 0.65rem;
-  box-shadow: 1.1rem -0.75rem 0 -0.12rem var(--ui-accent-soft, rgba(74, 158, 255, 0.12));
-}
-
-.home-intro {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  margin: 0;
-  padding: 0.72rem 1rem 0.65rem 1.1rem;
-}
-
-.home-intro .page-title {
-  margin-bottom: 0.18rem;
-  font-size: 1.9rem;
-  line-height: 1.15;
-  font-weight: 650;
-  letter-spacing: -0.03em;
-}
-
-.home-intro .page-subtitle {
-  max-width: 48rem;
-}
-
-.home-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-shrink: 0;
-  padding: 0.45rem 0.7rem;
-  border: 1px solid var(--ui-border, rgba(74, 158, 255, 0.22));
-  border-radius: var(--ui-radius-md, 12px);
-  background: color-mix(in srgb, var(--ui-surface) 88%, transparent);
-  color: var(--ui-text-primary, #1e293b);
-  backdrop-filter: blur(10px);
-  font-size: var(--font-size-sm);
-  font-weight: 600;
-  font-family: inherit;
-  text-align: left;
-  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
-}
-
-.home-status-action {
-  appearance: none;
-  cursor: pointer;
-}
-
-.home-status-action:hover,
-.home-status-action:focus-visible {
-  border-color: var(--ui-border-strong, rgba(74, 158, 255, 0.42));
-  box-shadow: var(--ui-shadow-sm, 0 4px 16px rgba(74, 158, 255, 0.1));
-  transform: translateY(-1px);
-}
-
-.home-status-action:focus-visible {
-  outline: 2px solid var(--ui-accent, #4a9eff);
-  outline-offset: 2px;
-}
-
-.home-status-dot {
-  width: 0.48rem;
-  height: 0.48rem;
-  border-radius: 50%;
-  background: currentColor;
-  box-shadow: 0 0 0 0.2rem color-mix(in srgb, currentColor 16%, transparent);
-}
-
-.home-status-ready {
-  border-color: var(--ui-success-border, rgba(78, 205, 196, 0.34));
-  background: var(--ui-success-soft, rgba(78, 205, 196, 0.12));
-  color: var(--ui-success-text, #287d4c);
-}
-
-.home-status-loading {
-  border-color: var(--ui-warning-border, rgba(255, 193, 7, 0.38));
-  background: var(--ui-warning-soft, rgba(255, 193, 7, 0.13));
-  color: var(--ui-warning-text, #9a6700);
-}
-
-.home-status-error {
-  border-color: var(--ui-danger-border, rgba(255, 107, 107, 0.34));
-  background: var(--ui-danger-soft, rgba(255, 107, 107, 0.12));
-  color: var(--ui-danger-text, #b4233a);
-}
-
-.home-status-update {
-  border-color: var(--ui-info-border, rgba(122, 184, 255, 0.34));
-  background: var(--ui-info-soft, rgba(122, 184, 255, 0.12));
-  color: var(--ui-info-text, #306fae);
-}
-
-.host-overview {
-  position: relative;
-  z-index: 1;
-  display: grid;
-  grid-template-columns: minmax(13rem, 1.1fr) auto minmax(29rem, 2fr);
-  align-items: center;
-  gap: 0.75rem 1rem;
-  padding: 0.68rem 0.78rem;
-  border-top: 1px solid var(--ui-border, rgba(74, 158, 255, 0.22));
-  background: color-mix(in srgb, var(--ui-surface) 76%, transparent);
-}
-
-.host-overview-main {
-  display: flex;
-  align-items: center;
-  gap: 0.7rem;
-  min-width: 0;
-}
-
-.host-mark {
-  display: inline-flex;
-  width: 2.55rem;
-  height: 2.55rem;
-  flex: 0 0 auto;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--ui-border-strong, rgba(74, 158, 255, 0.42));
-  border-radius: 0.9rem;
-  background: var(--ui-accent-soft, rgba(74, 158, 255, 0.12));
-  color: var(--ui-accent, #4a9eff);
-  box-shadow: inset 0 1px 0 color-mix(in srgb, white 40%, transparent);
-  font-size: 1rem;
-}
-
-.host-summary {
-  min-width: 0;
-}
-
-.host-name {
-  margin: 0;
-  overflow: hidden;
-  color: var(--ui-text-primary, #1e293b);
-  font-size: clamp(1.2rem, 2.3vw, 1.55rem);
-  font-weight: 650;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.host-meta {
-  margin: 0.22rem 0 0;
-  color: var(--ui-text-secondary, #64748b);
-  font-size: var(--font-size-sm);
-}
-
-.host-metrics {
-  display: flex;
-  align-items: stretch;
-  gap: 0.38rem;
-}
-
-.host-metric {
-  display: grid;
-  min-width: 5.3rem;
-  grid-template-columns: 1.6rem auto;
-  grid-template-rows: auto auto;
-  column-gap: 0.45rem;
-  align-items: center;
-  padding: 0.45rem 0.55rem;
-  border: 1px solid var(--ui-border, rgba(74, 158, 255, 0.22));
-  border-radius: var(--ui-radius-md, 12px);
-  background: color-mix(in srgb, var(--ui-surface-strong) 76%, transparent);
-}
-
-.metric-icon {
-  display: inline-flex;
-  width: 1.6rem;
-  height: 1.6rem;
-  grid-row: 1 / 3;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0.55rem;
-  background: var(--ui-accent-soft, rgba(74, 158, 255, 0.12));
-  color: var(--ui-accent, #4a9eff);
-  font-size: 0.7rem;
-}
-
-.metric-value {
-  color: var(--ui-text-primary, #1e293b);
-  font-size: 1.05rem;
-  font-weight: 700;
-  line-height: 1;
-}
-
-.metric-label {
-  color: var(--ui-text-secondary, #64748b);
-  font-size: var(--font-size-xs);
-  line-height: 1.1;
-}
-
-.quick-actions {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.38rem;
-}
-
-.quick-action {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: 1.8rem minmax(0, 1fr) auto;
-  column-gap: 0.45rem;
-  align-items: center;
-  padding: 0.42rem 0.5rem;
-  border: 1px solid var(--ui-border, rgba(74, 158, 255, 0.22));
-  border-radius: var(--ui-radius-md, 12px);
-  background-color: color-mix(in srgb, var(--ui-surface-strong) 78%, transparent);
-  color: var(--ui-text-primary, #1e293b);
-  text-decoration: none;
-  transition: transform 0.2s ease, background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
-}
-
-.quick-action:hover,
-.quick-action:focus-visible {
-  border-color: var(--ui-border-strong, rgba(74, 158, 255, 0.42));
-  background-color: var(--ui-surface-hover, rgba(255, 255, 255, 0.8));
-  color: var(--ui-text-primary, #1e293b);
-  box-shadow: var(--ui-shadow-sm, 0 4px 16px rgba(74, 158, 255, 0.1));
-  transform: translateY(-1px);
-}
-
-.quick-action-primary {
-  border-color: var(--ui-border-strong, rgba(74, 158, 255, 0.42));
-  background-color: color-mix(in srgb, var(--ui-accent-soft) 68%, var(--ui-surface-strong));
-}
-
-.quick-action-icon {
-  display: inline-flex;
-  width: 1.8rem;
-  height: 1.8rem;
-  align-items: center;
-  justify-content: center;
-  border-radius: 0.62rem;
-  background: var(--ui-accent-soft, rgba(74, 158, 255, 0.12));
-  color: var(--ui-accent, #4a9eff);
-  font-size: 0.75rem;
-}
-
-.quick-action-copy {
-  display: block;
-  min-width: 0;
-}
-
-.quick-action-copy > span,
-.quick-action-copy > small {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.quick-action-copy > span {
-  font-size: var(--font-size-sm);
-  font-weight: 650;
-}
-
-.quick-action-copy > small {
-  color: var(--ui-text-secondary, #64748b);
-  font-size: var(--font-size-xs);
-}
-
-.quick-action-arrow {
-  color: var(--ui-text-muted, #94a3b8);
-  font-size: 0.58rem;
-  transition: transform 0.2s ease;
-}
-
-.quick-action:hover .quick-action-arrow,
-.quick-action:focus-visible .quick-action-arrow {
-  transform: translateX(2px);
-}
-
-.home-resources {
-  display: flex;
-  flex: 1 0 auto;
-  flex-direction: column;
-  margin-bottom: 0;
-}
-
-#version-details {
-  scroll-margin-top: 1rem;
-}
-
-@media (min-width: 1440px) {
-  .home-content {
-    width: calc(100% - 2rem);
-    max-width: 1760px;
-  }
-}
-
-@media (min-width: 1440px) and (min-height: 820px) {
-  .home-content {
-    padding-top: 0.75rem;
-  }
-
-  .home-hero {
-    margin-bottom: 0.9rem;
-  }
-
-  .home-intro {
-    gap: 1.5rem;
-    padding: 1rem 1.25rem 0.9rem 1.35rem;
-  }
-
-  .home-status {
-    padding: 0.55rem 0.9rem;
-  }
-
-  .host-overview {
-    grid-template-columns: minmax(16rem, 1.2fr) auto minmax(38rem, 2.3fr);
-    gap: 1rem 1.25rem;
-    padding: 0.9rem 1rem;
-  }
-
-  .host-mark {
-    width: 3rem;
-    height: 3rem;
-    font-size: 1.1rem;
-  }
-
-  .host-name {
-    font-size: 1.7rem;
-  }
-
-  .host-metrics,
-  .quick-actions {
-    gap: 0.55rem;
-  }
-
-  .host-metric {
-    min-width: 6.25rem;
-    grid-template-columns: 1.9rem auto;
-    column-gap: 0.55rem;
-    padding: 0.58rem 0.7rem;
-  }
-
-  .metric-icon {
-    width: 1.9rem;
-    height: 1.9rem;
-    font-size: 0.78rem;
-  }
-
-  .metric-value {
-    font-size: 1.2rem;
-  }
-
-  .quick-action {
-    grid-template-columns: 2.1rem minmax(0, 1fr) auto;
-    column-gap: 0.58rem;
-    padding: 0.58rem 0.68rem;
-  }
-
-  .quick-action-icon {
-    width: 2.1rem;
-    height: 2.1rem;
-    font-size: 0.82rem;
-  }
-
-}
-
-@media (max-width: 1199.98px) {
-  .host-overview {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  .quick-actions {
-    grid-column: 1 / -1;
-  }
-}
-
-.home-alert {
-  display: flex;
-  align-items: flex-start;
-  gap: 0.75rem;
-  margin: 1rem 0;
-  padding: 0.9rem 1rem;
-  border: 1px solid var(--ui-danger-border, rgba(180, 35, 58, 0.28));
-  border-radius: var(--ui-radius-md, 12px);
-  background: var(--ui-danger-soft, rgba(180, 35, 58, 0.1));
-  color: var(--ui-danger-text, #b4233a);
-}
-
-.home-alert > i {
-  margin-top: 0.15rem;
-  color: var(--ui-danger-text, #b4233a);
-}
-
-.home-alert p {
-  margin: 0.25rem 0 0;
-  font-size: 0.85rem;
-}
-
-@media (max-width: 767.98px) {
-  .home-hero::before {
-    right: -2.5rem;
-  }
-
-  .home-hero::after {
-    display: none;
-  }
-
-  .home-intro {
-    align-items: flex-start;
-    flex-direction: column;
-    gap: 0.65rem;
-    padding: 0.85rem;
-  }
-
-  .home-intro .page-title {
-    font-size: 1.7rem;
-  }
-
-  .home-status {
-    align-self: stretch;
-    justify-content: center;
-  }
-
-  .host-overview {
-    grid-template-columns: 1fr;
-    gap: 0.65rem;
-    padding: 0.75rem;
-  }
-
-  .host-metrics {
-    gap: 0.4rem;
-  }
-
-  .host-metric {
-    flex: 1;
-    min-width: 0;
-    padding: 0.45rem 0.55rem;
-  }
-
-  .quick-actions {
-    grid-template-columns: 1fr;
-  }
-}
-</style>

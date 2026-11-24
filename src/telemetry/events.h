@@ -1,0 +1,252 @@
+/**
+ * @file src/telemetry/events.h
+ * @brief Telemetry v1 event shapes: the allow-list per event name, scrubbing, buckets and the batch envelope.
+ *
+ * Pure code (std + nlohmann::json only), so it is unit tested on its own. The contract is
+ * docs/privacy_telemetry.md: unknown names and properties never leave the computer, free text is
+ * scrubbed, and nothing that identifies a person (typed text, host or user names, paths, addresses) is carried.
+ */
+#pragma once
+
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include <nlohmann/json.hpp>
+
+namespace telemetry {
+
+  /** The wire schema version of POST /v1/events. */
+  inline constexpr int WIRE_VERSION = 1;
+  /** Limits of one POST /v1/events request (contract). */
+  inline constexpr std::size_t MAX_BATCH_EVENTS = 500;
+  inline constexpr std::size_t MAX_BATCH_BYTES = 256 * 1024;
+  /** The longest scrubbed message of an error event. */
+  inline constexpr std::size_t MAX_MESSAGE_CHARS = 200;
+  /** The longest message of a user_report (what the person wrote in the error dialog). */
+  inline constexpr std::size_t MAX_USER_REPORT_CHARS = 2000;
+  /** The longest contact line a person can leave with a user_report. */
+  inline constexpr std::size_t MAX_USER_CONTACT_CHARS = 200;
+  /** The most bytes of a screenshot that is taken with a feedback report (the page sends at most 700 KB; the Worker takes 1 MiB). */
+  inline constexpr std::size_t MAX_USER_SHOT_BYTES = 800 * 1024;
+
+  /** What the host tells the page about a batch besides how many events it kept. `shot`: what became of the screenshot of a feedback report in the batch ("uploaded", or why it was left out); empty when there was none. */
+  struct ingest_report_t {
+    std::string shot;
+    std::size_t queued = 0;  ///< feedback reports of this call that are on the disk now, waiting for the service (they are sent as soon as it takes them and survive a restart)
+  };
+
+  enum class kind_e {
+    usage,
+    error,
+    experience,
+  };
+
+  /** "usage" | "error" | "experience". */
+  std::string_view
+  kind_name(kind_e kind);
+  std::optional<kind_e>
+  parse_kind(std::string_view text);
+
+  /** The consent that governs a kind: usage and experience follow the usage statistics, error follows the error reports. */
+  enum class consent_e {
+    usage_statistics,
+    error_reports,
+  };
+  consent_e
+  consent_of(kind_e kind);
+
+  struct event_t {
+    std::int64_t t = 0;  ///< ms since the epoch
+    kind_e kind = kind_e::usage;
+    std::string name;
+    nlohmann::json props = nlohmann::json::object();
+    std::string product = "host";  ///< host | panel | web | sparxie-launch
+    std::string version;  ///< product version when it differs from the host's (panel and web); empty = the host's
+    int priority = -1;  ///< 0, 1 or 2 (see event_priority); -1: by the event's name
+    std::string report_id;  ///< a feedback report sent with both switches off: its one-time random id, used in place of an install id (empty for every other event)
+    std::string report_install;  ///< a feedback report: the install id it was given when it was accepted (empty when it has a one-time `report_id` instead, and for every other event). The identity of a report is fixed at that moment and never looked up again
+    std::uint64_t count = 1;  ///< occurrences the sender merged into this record (see aggregate_events); 1 is a single event
+    std::string session_id;  ///< a record about an earlier run (session_abnormal): that run's session id, sent in an envelope of its own; empty = this run
+  };
+
+  /** True for the high-volume usage and experience families the sender holds and merges before it uploads. */
+  inline bool
+  high_volume_event(std::string_view name) {
+    static const std::array<std::string_view, 11> names {
+      "app_start",
+      "app_exit",
+      "feature_used",
+      "setting_changed",
+      "stream_start",
+      "stream_end",
+      "stream_quality",
+      "startup",
+      "panel_page",
+      "page_vitals",
+      "api_latency",
+    };
+    return std::find(names.begin(), names.end(), name) != names.end();
+  }
+
+  /** True when a stage of a stream start took longer than its bound (3 s; 5 s for the app launch and the first frame): only those are worth an event. */
+  bool
+  stage_is_slow(std::string_view stage, std::int64_t ms);
+
+  /**
+   * Merges the high-volume events of one batch by name, kind, version and their non-numeric properties. Counters and bucket vectors (page_vitals, api_latency) are summed, the other numbers are
+   * averaged, `count` holds the occurrences. Everything else (priority records, reports) passes through unchanged. `origin[i]` lists the positions in `events` that went into the result `i`.
+   */
+  std::vector<event_t>
+  aggregate_events(const std::vector<event_t> &events, std::vector<std::vector<std::size_t>> &origin);
+
+  /**
+   * How much an event matters when something has to give: 0 is never sampled away, sent first and the last to be dropped (user reports, fatal errors, the first report of an error, serious stream problems, the
+   * per-stream summary); 1 is reduced when the server asks (further reports of a known error, smaller problems, comparisons with the install's own baseline); 2 is the first to shrink or stop (usage, performance detail).
+   */
+  int
+  event_priority(const event_t &event);
+
+  /**
+   * How a record must be delivered. A feedback report and an error (priority 0 of the error kind: the first report of an error, a fatal error, a failed install or update) are kept on disk until they arrive,
+   * leave as soon as the sender may send, and are the last to be dropped when the queue is full: feedback after errors, errors after everything else. Everything else is routine: it leaves with the
+   * install's daily share of reports (report_slot.h) and is the first to give way.
+   */
+  enum class delivery_e : int {
+    routine = 0,
+    error = 1,
+    feedback = 2,
+  };
+  delivery_e
+  delivery_of(const event_t &event);
+
+  /**
+   * True for the routine records that only a sample of the installs sends (and that carry the sample weight): usage, performance and health records of priority 1 or 2 and the per-stream health summaries.
+   * Never true for a record of the error kind, a feedback report or anything of priority 0 other than the health summary: failures are not sampled away.
+   */
+  bool
+  sampled_family(const event_t &event);
+
+  /** Products the host sender accepts events for. */
+  bool
+  known_product(std::string_view product);
+  /** Event names a page (panel or web) may send through the host API; the host-only names (streams, quality, log summary) are refused so one stream is never counted twice. */
+  bool
+  client_may_send(std::string_view product, kind_e kind, std::string_view name);
+
+  /** A feedback report the person sent on purpose: pressing 发送 is the consent for that one send, so the error-report switch does not hold it back. */
+  inline bool
+  is_user_report(kind_e kind, std::string_view name) { return kind == kind_e::error && name == "user_report"; }
+
+  /**
+   * Text with names, addresses, paths and secrets removed, no control characters, cut to `max` characters (counted as UTF-8 code points).
+   * The rules follow foundation-ui scrubText (m3e src/telemetry/scrub.js).
+   */
+  std::string
+  scrub_text(std::string_view text, std::size_t max = MAX_MESSAGE_CHARS);
+
+  /** scrub_text for a line of the host log: whatever stands between quotes, brackets or braces is dropped first (names a person chose: a device, an app, a game). */
+  std::string
+  scrub_log_message(std::string_view text, std::size_t max = MAX_MESSAGE_CHARS);
+
+  /** A product version as the Worker takes it (letters, digits, . _ + - space, at most 64 characters), else empty. */
+  std::string
+  safe_version(std::string_view version);
+  /** An OS version string made only of letters, digits and . _ + - space, at most 48 characters, else empty. */
+  std::string
+  safe_os_version(std::string_view text);
+  /** A language tag (zh, zh-CN, pt_BR), else empty. */
+  std::string
+  safe_locale(std::string_view text);
+
+  /** A catalogue id: lower case letters, digits, '.', '_' and '-', 1 to `max` characters, starting with a letter or digit. Anything else -> empty. */
+  std::string
+  catalogue_id(std::string_view text, std::size_t max = 48);
+
+  /**
+   * Check an event against the allow-list of its name and rebuild it with only the allowed properties, each clamped or normalised.
+   * @return nullopt when the name is not allowed for the kind, or a required property is missing or invalid.
+   */
+  std::optional<event_t>
+  shape_event(kind_e kind, std::string_view name, const nlohmann::json &props, std::int64_t now_ms);
+
+  /** The configuration keys whose changes are reported (setting_changed), and the value of a change reduced to the allow-listed enum or bucket ("other" when it is not one). Empty key -> not reported. */
+  bool
+  setting_key_allowed(std::string_view key);
+  std::string
+  setting_value_bucket(std::string_view key, std::string_view value);
+  const std::vector<std::string_view> &
+  setting_keys();
+
+  /** Bucket of a bitrate in kbps for stream_quality (rounded to a lower bound step) so a value cannot single a person out. */
+  std::int64_t
+  round_to_step(double value, std::int64_t step);
+
+  /** What every batch carries about this install (contract: envelope). All text is a catalogue-like short string. */
+  struct context_t {
+    std::string install_id;
+    std::string session_id;
+    std::string version;
+    std::string channel;
+    std::string os;
+    std::string os_version;
+    std::string arch;
+    std::string gpu_vendor;
+    std::string locale;
+    /** 1: every install reports. Above 1: this install is one of a sample and stands for that many (report_slot.h); the batch says so in `sample_weight`. */
+    double sample_weight = 1.0;
+  };
+
+  /** The fields every batch carries besides its events, as they are sent (what the person sees in "see what will be sent"). `sample_weight` is only there when it is above 1. */
+  nlohmann::json
+  envelope_fields(const context_t &context, std::string_view product, const std::string &version);
+
+  /**
+   * Batches for one product: events of that product are split in as many envelopes as the 500 events and 256 KB limits need.
+   * `events` must all carry `product`; a product version on an event (panel, web) replaces the context's version.
+   */
+  std::vector<nlohmann::json>
+  build_envelopes(const context_t &context, std::string_view product, const std::vector<event_t> &events);
+
+  /** The same, and `members` receives the positions in `events` that every envelope holds (a version starts its own envelope, so they are not a range): a caller that
+   *  puts back what a failed write left unwritten re-queues the events of the envelopes that were not pushed, not the whole group. */
+  std::vector<nlohmann::json>
+  build_envelopes(const context_t &context, std::string_view product, const std::vector<event_t> &events,
+    std::vector<std::vector<std::size_t>> &members);
+
+  /** event <-> json (the form kept in the disk queue and sent in a batch). */
+  nlohmann::json
+  event_to_json(const event_t &event);
+  std::optional<event_t>
+  event_from_json(const nlohmann::json &json);
+
+  /** Percentiles over samples (nearest rank on a sorted copy). Empty input -> 0. p in [0, 100]. */
+  double
+  percentile(std::vector<double> samples, double p);
+
+  /** A fixed-size histogram for latency-like values, so a stream of any length keeps O(1) memory. Not thread safe. */
+  class histogram_t {
+  public:
+    histogram_t(double max_value = 2000.0, std::size_t buckets = 400);
+    void
+    add(double value);
+    std::uint64_t
+    count() const { return count_; }
+    /** p in [0, 100]; the upper edge of the bucket holding that rank. 0 when empty. */
+    double
+    percentile(double p) const;
+    void
+    clear();
+
+  private:
+    double max_;
+    double width_;
+    std::vector<std::uint32_t> bins_;
+    std::uint64_t count_ = 0;
+  };
+
+}  // namespace telemetry

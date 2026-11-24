@@ -637,7 +637,7 @@ TEST(DolbyVisionInjector, IsInertBeforeConfigure) {
 
   bytes_t au = make_au();
   injector.stage(1, valid_stats());
-  injector.inject(1, au);
+  EXPECT_FALSE(injector.inject(1, au));
   EXPECT_EQ(au, make_au());
 }
 
@@ -658,7 +658,7 @@ TEST(DolbyVisionInjector, ColdAnalyzerShipsWithoutRpu) {
   injector.stage(1, cold);
 
   bytes_t au = make_au();
-  injector.inject(1, au);
+  EXPECT_FALSE(injector.inject(1, au));
   EXPECT_EQ(au, make_au()) << "no analysis yet means no RPU, like the HDR10+ cold path";
 }
 
@@ -669,17 +669,17 @@ TEST(DolbyVisionInjector, BindsRpuToTheEncodedFrameIndex) {
 
   // A different frame's output takes nothing.
   bytes_t other = make_au();
-  injector.inject(6, other);
+  EXPECT_FALSE(injector.inject(6, other));
   EXPECT_EQ(other, make_au());
 
   bytes_t au = make_au();
-  injector.inject(5, au);
+  EXPECT_TRUE(injector.inject(5, au));
   EXPECT_EQ(count_rpu_nals(au), 1u);
   EXPECT_GT(au.size(), make_au().size());
 
   // take() consumed the entry.
   bytes_t again = make_au();
-  injector.inject(5, again);
+  EXPECT_FALSE(injector.inject(5, again));
   EXPECT_EQ(again, make_au());
 }
 

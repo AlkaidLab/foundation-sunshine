@@ -1192,6 +1192,11 @@ namespace platf {
   }
 
   void
+  set_global_gamepad_mode(std::string_view) {
+    // Runtime gamepad selection is currently implemented by the Windows backend.
+  }
+
+  void
   move_mouse(input_t &input, int deltaX, int deltaY) {
     auto raw = (input_raw_t *) input.get();
     auto mouse_rel = raw->mouse_rel_input.get();
@@ -1581,13 +1586,30 @@ namespace platf {
   }
 
   int
-  alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata, feedback_queue_t feedback_queue) {
+  alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata,
+                feedback_queue_t feedback_queue, std::string_view) {
     return ((input_raw_t *) input.get())->alloc_gamepad(id, metadata, std::move(feedback_queue));
   }
 
   void
   free_gamepad(input_t &input, int nr) {
     ((input_raw_t *) input.get())->clear_gamepad(nr);
+  }
+
+  bool
+  gamepad_is_ds5(input_t &, int) {
+    return false;
+  }
+
+  std::string_view
+  gamepad_virtual_type(input_t &, int) {
+    // The generic uinput pad is not named in the DS4/DualSense vocabulary used by the session API.
+    return {};
+  }
+
+  bool
+  gamepad_has_ds5_audio_haptics(input_t &) {
+    return false;
   }
 
   void
@@ -2102,6 +2124,11 @@ namespace platf {
     // Unimplemented
   }
 
+  void
+  gamepad_ds5_status(input_t &input, const gamepad_ds5_status_t &status) {
+    // No virtual DualSense on this path.
+  }
+
   /**
    * @brief Initialize a new keyboard and return it.
    * @examples
@@ -2578,7 +2605,7 @@ namespace platf {
    * @return Capability flags.
    */
   platform_caps::caps_t
-  get_capabilities() {
+  get_capabilities(std::string_view) {
     platform_caps::caps_t caps = 0;
 
     // Pen and touch emulation requires uinput

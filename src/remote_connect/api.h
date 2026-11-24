@@ -2,11 +2,11 @@
 
 #include <memory>
 
-#include <Simple-Web-Server/server_https.hpp>
+#include "src/confighttp/types.h"
 
 namespace remote_connect::api {
-  using resp_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTPS>::Response>;
-  using req_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SimpleWeb::HTTPS>::Request>;
+  using resp_https_t = confighttp::resp_https_t;
+  using req_https_t = confighttp::req_https_t;
 
   // These handlers are called after the Web UI layer has authenticated the request.
   void

@@ -8,6 +8,7 @@
  * clients that report no capabilities.
  */
 #include <src/hdr/dynamic_hdr_selection.h>
+#include "third-party/moonlight-common-c/src/PyrowaveProtocol.h"
 
 #include <string_view>
 #include <vector>
@@ -26,6 +27,7 @@ namespace {
   using hdr::select_dynamic_hdr;
 
   using hdr::DYNAMIC_HDR_CAPS_DOLBY_VISION_81;
+  using hdr::DYNAMIC_HDR_CAPS_DOLBY_VISION_84;
   using hdr::DYNAMIC_HDR_CAPS_HDR10_PLUS;
   using hdr::DYNAMIC_HDR_CAPS_NONE;
 
@@ -46,6 +48,37 @@ namespace {
   }
 
 }  // namespace
+
+TEST(DynamicHdrSelection, PyrowaveMappingSelectsOnlyTheRequestedBaseCompatibleFormat) {
+  struct entry_t { std::uint32_t caps; int mode; dynamic_hdr_format_e format; };
+  const entry_t cases[] {
+    { hdr::DYNAMIC_HDR_CAPS_HDR10_PLUS, 1, dynamic_hdr_format_e::hdr10_plus },
+    { hdr::DYNAMIC_HDR_CAPS_VIVID_PQ, 1, dynamic_hdr_format_e::vivid_pq },
+    { hdr::DYNAMIC_HDR_CAPS_VIVID_HLG, 2, dynamic_hdr_format_e::vivid_hlg },
+    { hdr::DYNAMIC_HDR_CAPS_DOLBY_VISION_81, 1, dynamic_hdr_format_e::dolby_vision_profile_81 },
+    { hdr::DYNAMIC_HDR_CAPS_DOLBY_VISION_84, 2, dynamic_hdr_format_e::dolby_vision_profile_84 },
+  };
+  for (const auto &entry : cases) {
+    const dynamic_hdr_request_t request { .caps_mask = entry.caps, .caps_reported = true };
+    const dynamic_hdr_host_gates_t gates {
+      .video_format = LI_PYROWAVE_VIDEO_FORMAT, .dynamic_range_mode = entry.mode,
+      .pyrowave_dynamic_hdr_mapping = true,
+    };
+    EXPECT_EQ(select_dynamic_hdr(request, gates).format, entry.format);
+    auto unsupported = gates;
+    unsupported.pyrowave_dynamic_hdr_mapping = false;
+    EXPECT_EQ(select_dynamic_hdr(request, unsupported).format, dynamic_hdr_format_e::none);
+    unsupported = gates;
+    unsupported.dynamic_range_mode = 0;
+    EXPECT_EQ(select_dynamic_hdr(request, unsupported).format, dynamic_hdr_format_e::none);
+    auto disabled = request;
+    disabled.preference = dynamic_hdr_preference_e::hdr10_only;
+    EXPECT_EQ(select_dynamic_hdr(disabled, gates).format, dynamic_hdr_format_e::none);
+    disabled = request;
+    disabled.caps_reported = false;
+    EXPECT_EQ(select_dynamic_hdr(disabled, gates).format, dynamic_hdr_format_e::none);
+  }
+}
 
 TEST(DynamicHdrSelection, SelectsDolbyVisionWhenEveryGatePasses) {
   const auto selection = select_dynamic_hdr(full_dv_client(), hevc_pq_host());
@@ -174,18 +207,18 @@ TEST(DynamicHdrSelection, ParsesSdpArguments) {
   // Unknown capability bits are masked off, not fatal: a future client keeps
   // its negotiation with the subset this host understands.
   const auto future = parse_dynamic_hdr_request(
-    std::string_view("25"),      // HDR10+ | DV 8.1 | unknown bit 4
+    std::string_view("49"),      // HDR10+ | DV 8.4 | unknown bit 5
     std::string_view("1"),
     std::string_view("0"));
   EXPECT_TRUE(future.caps_reported);
   EXPECT_EQ(future.caps_mask,
-    DYNAMIC_HDR_CAPS_HDR10_PLUS | DYNAMIC_HDR_CAPS_DOLBY_VISION_81);
+    DYNAMIC_HDR_CAPS_HDR10_PLUS | DYNAMIC_HDR_CAPS_DOLBY_VISION_84);
 
   // A report carrying ONLY unknown bits is still a report: it must land in
   // the negotiated "no formats" downgrade, never back in the legacy path
   // that keeps unconditional HDR10+.
   const auto only_unknown = parse_dynamic_hdr_request(
-    std::string_view("16"),      // unknown bit 4 alone
+    std::string_view("32"),      // unknown bit 5 alone
     std::string_view("0"),
     std::string_view("0"));
   EXPECT_TRUE(only_unknown.caps_reported);
@@ -231,7 +264,78 @@ TEST(DynamicHdrSelection, WireValuesAreStable) {
   EXPECT_EQ(hdr::to_wire(dynamic_hdr_format_e::vivid_pq), 2);
   EXPECT_EQ(hdr::to_wire(dynamic_hdr_format_e::vivid_hlg), 3);
   EXPECT_EQ(hdr::to_wire(dynamic_hdr_format_e::dolby_vision_profile_81), 4);
+  EXPECT_EQ(hdr::to_wire(dynamic_hdr_format_e::dolby_vision_profile_84), 5);
 
   EXPECT_EQ(hdr::to_string(dynamic_hdr_format_e::dolby_vision_profile_81), "dolby_vision_profile_81");
+  EXPECT_EQ(hdr::to_string(dynamic_hdr_format_e::dolby_vision_profile_84), "dolby_vision_profile_84");
   EXPECT_EQ(hdr::to_string(dynamic_hdr_fallback_e::direct_surface_missing), "direct_surface_missing");
+}
+
+namespace {
+
+  // An 8.4-only client: no 8.1 report, direct surface.
+  dynamic_hdr_request_t
+  dv84_client(dynamic_hdr_preference_e preference = dynamic_hdr_preference_e::automatic) {
+    dynamic_hdr_request_t request;
+    request.caps_mask = DYNAMIC_HDR_CAPS_HDR10_PLUS | DYNAMIC_HDR_CAPS_DOLBY_VISION_84;
+    request.caps_reported = true;
+    request.dolby_vision_direct_surface = true;
+    request.preference = preference;
+    return request;
+  }
+
+  dynamic_hdr_host_gates_t
+  hevc_hlg_host() {
+    return { .video_format = 1, .dynamic_range_mode = 2 };
+  }
+
+}  // namespace
+
+TEST(DynamicHdrSelection, Selects84WhenOnly84ReportedAndHlgRequested) {
+  const auto selection = select_dynamic_hdr(dv84_client(), hevc_hlg_host());
+  EXPECT_EQ(selection.format, dynamic_hdr_format_e::dolby_vision_profile_84);
+  EXPECT_TRUE(selection.dolby_vision_active());
+  EXPECT_EQ(selection.fallback_reason, dynamic_hdr_fallback_e::none);
+}
+
+TEST(DynamicHdrSelection, AlwaysPrefers81WhenReported) {
+  // Both bits reported + PQ: 8.1, never 8.4.
+  dynamic_hdr_request_t both = dv84_client();
+  both.caps_mask |= DYNAMIC_HDR_CAPS_DOLBY_VISION_81;
+  const auto pq = select_dynamic_hdr(both, hevc_pq_host());
+  EXPECT_EQ(pq.format, dynamic_hdr_format_e::dolby_vision_profile_81);
+
+  // Both bits reported + HLG: 8.1 is unservable and 8.4 must not step in for
+  // an 8.1-capable client (profile84.md §3.1) — colorspace refusal.
+  const auto hlg = select_dynamic_hdr(both, hevc_hlg_host());
+  EXPECT_EQ(hlg.format, dynamic_hdr_format_e::none);
+  EXPECT_EQ(hlg.fallback_reason, dynamic_hdr_fallback_e::colorspace_unsupported);
+}
+
+TEST(DynamicHdrSelection, SyntheticHdrAppExcludes84ButNot81) {
+  // An RTX HDR app is excluded from 8.4 for the whole app (profile84.md §2),
+  // including the HLG ANNOUNCE path where the filter itself stays off —
+  // the exclusion follows the app feature, not the per-session filter state.
+  const auto hlg = select_dynamic_hdr(dv84_client(), { .video_format = 1, .dynamic_range_mode = 2, .synthetic_hdr_enabled = true });
+  EXPECT_EQ(hlg.format, dynamic_hdr_format_e::none);
+  EXPECT_EQ(hlg.fallback_reason, dynamic_hdr_fallback_e::colorspace_unsupported);
+
+  // 8.1 rides the same PQ signal the filter produces, so it stays available.
+  const auto pq = select_dynamic_hdr(full_dv_client(), { .video_format = 1, .dynamic_range_mode = 1, .synthetic_hdr_enabled = true });
+  EXPECT_EQ(pq.format, dynamic_hdr_format_e::dolby_vision_profile_81);
+
+  // Without the app feature the same HLG report still negotiates 8.4.
+  const auto plain_hlg = select_dynamic_hdr(dv84_client(), hevc_hlg_host());
+  EXPECT_EQ(plain_hlg.format, dynamic_hdr_format_e::dolby_vision_profile_84);
+}
+
+TEST(DynamicHdrSelection, EightyFourRefusalOnHlgHasNoHdr10PlusFallthrough) {
+  // 8.4 needs a direct surface like 8.1 does; the refusal lands on plain
+  // HDR10 because HDR10+ is PQ-only and this session is HLG.
+  dynamic_hdr_request_t no_surface = dv84_client(dynamic_hdr_preference_e::dolby_vision);
+  no_surface.dolby_vision_direct_surface = false;
+  const auto selection = select_dynamic_hdr(no_surface, hevc_hlg_host());
+  EXPECT_EQ(selection.fallback_reason, dynamic_hdr_fallback_e::direct_surface_missing);
+  EXPECT_EQ(selection.format, dynamic_hdr_format_e::none);
+  EXPECT_FALSE(selection.dolby_vision_active());
 }

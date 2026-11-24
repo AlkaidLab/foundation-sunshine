@@ -25,6 +25,7 @@ test('version check reports ready and skips prerelease requests when disabled', 
   })
 
   globalThis.fetch = async (url) => {
+    if (String(url) === '/api/version') return createResponse({ dirty: false })
     requests.push(String(url))
     return createResponse(createRelease('v2.0.0'))
   }
@@ -47,6 +48,7 @@ test('version check loads prereleases only when subscribed', async (t) => {
   })
 
   globalThis.fetch = async (url) => {
+    if (String(url) === '/api/version') return createResponse({ dirty: false })
     requests.push(String(url))
     if (String(url).endsWith('/latest')) return createResponse(createRelease('v1.0.0'))
     return createResponse([createRelease('v1.1.0', true)])
@@ -93,4 +95,69 @@ test('version check reports an error instead of treating a failed request as lat
   assert.equal(state.versionCheckStatus.value, VERSION_CHECK_STATUS.ERROR)
   assert.equal(state.loading.value, false)
   assert.equal(state.stableBuildAvailable.value, false)
+})
+
+// A GitHub answer for one stable release and a host build record for /api/version
+function hostWith(t, { stable, build }) {
+  const originalFetch = globalThis.fetch
+  t.after(() => {
+    globalThis.fetch = originalFetch
+  })
+  globalThis.fetch = async (url) => {
+    if (String(url) === '/api/version') {
+      if (build === null) return createResponse(null, 404)
+      return createResponse(build)
+    }
+    return createResponse(createRelease(stable))
+  }
+}
+
+test('dirty comes from /api/version only, never from the version string (.杂鱼 is on every CI release)', async (t) => {
+  hostWith(t, { stable: 'v2026.1103.21122.杂鱼', build: { dirty: false } })
+  const clean = useVersion()
+  await clean.fetchVersions({ version: '2026.1103.021122.杂鱼', notify_pre_releases: false })
+  assert.equal(clean.buildVersionIsDirty.value, false)
+
+  hostWith(t, { stable: 'v2026.1103.21122.杂鱼', build: { dirty: true } })
+  const dirty = useVersion()
+  await dirty.fetchVersions({ version: '2026.1103.021122', notify_pre_releases: false })
+  assert.equal(dirty.buildVersionIsDirty.value, true)
+})
+
+test('a host without /api/version is not dirty and the version check still succeeds', async (t) => {
+  hostWith(t, { stable: 'v2026.1103.21122.杂鱼', build: null })
+  const state = useVersion()
+  await state.fetchVersions({ version: '2026.1103.021122.杂鱼', notify_pre_releases: false })
+  assert.equal(state.versionCheckStatus.value, VERSION_CHECK_STATUS.READY)
+  assert.equal(state.buildVersionIsDirty.value, false)
+})
+
+test('a build newer than the stable release is a pre-release; the same build with another suffix or padding is not', async (t) => {
+  hostWith(t, { stable: 'v2026.1103.21122.杂鱼', build: { dirty: false } })
+  const newer = useVersion()
+  await newer.fetchVersions({ version: '2026.1112.025657.970e0298b', notify_pre_releases: false })
+  assert.equal(newer.installedVersionNotStable.value, true)
+  assert.equal(newer.stableBuildAvailable.value, false)
+
+  for (const installed of ['2026.1103.021122', '2026.1103.021122.杂鱼', '2026.1103.21122.970e0298b', 'manual-20261103-021122-dev']) {
+    const same = useVersion()
+    await same.fetchVersions({ version: installed, notify_pre_releases: false })
+    assert.equal(same.installedVersionNotStable.value, false, installed)
+    assert.equal(same.stableBuildAvailable.value, false, installed)
+  }
+
+  const older = useVersion()
+  await older.fetchVersions({ version: '2026.1031.121458.杂鱼', notify_pre_releases: false })
+  assert.equal(older.installedVersionNotStable.value, false)
+  assert.equal(older.stableBuildAvailable.value, true)
+})
+
+test('a manual build with no date, or an unreadable version, is never an update and never a pre-release', async (t) => {
+  hostWith(t, { stable: 'v2026.1103.21122.杂鱼', build: { dirty: false } })
+  for (const installed of ['manual-latest', 'Unknown']) {
+    const state = useVersion()
+    await state.fetchVersions({ version: installed, notify_pre_releases: false })
+    assert.equal(state.stableBuildAvailable.value, false, installed)
+    assert.equal(state.installedVersionNotStable.value, false, installed)
+  }
 })

@@ -1,0 +1,10 @@
+@echo off
+setlocal
+set "PATH=%SystemRoot%\System32;%SystemRoot%;%SystemRoot%\System32\WindowsPowerShell\v1.0"
+set "PATHEXT=.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC"
+set "action=install"
+if /I "%~1"=="--verify-only" set "action=verify"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0usbip-package.ps1" -Action %action%
+set "rc=%ERRORLEVEL%"
+> "%~dp0result-usbip.txt" echo %rc%
+exit /b %rc%

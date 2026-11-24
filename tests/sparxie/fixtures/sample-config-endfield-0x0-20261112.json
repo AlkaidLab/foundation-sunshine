@@ -1,0 +1,166 @@
+{
+  "desktop": {
+    "afterLaunch": null,
+    "closeAction": null,
+    "debugMode": false,
+    "lastProfileByGame": {
+      "Genshin": "genshin-cn-1"
+    },
+    "selectedGame": null,
+    "theme": "System"
+  },
+  "profiles": [
+    {
+      "displayName": "原神触屏",
+      "executablePath": "C:\\Games\\mihoyo\\Genshin\\YuanShen.exe",
+      "game": "genshin",
+      "hoyo": {
+        "backgroundFps": 10,
+        "backgroundFpsLimitEnabled": true,
+        "endfieldAutoResolution": true,
+        "endfieldHeight": 0,
+        "endfieldInputMode": "auto",
+        "endfieldRefreshRate": 120,
+        "endfieldWidth": 0,
+        "fpsUnlockEnabled": false,
+        "genshinFollowInGamePreset": false,
+        "genshinPreset30Fps": 60,
+        "genshinPreset60Fps": 1000,
+        "genshinTouchUiScaleOverrideEnabled": false,
+        "genshinTouchUiScalePercent": 400,
+        "processPriority": "normal",
+        "targetFps": 120,
+        "touchUiEnabled": true
+      },
+      "id": "genshin-cn-1"
+    },
+    {
+      "displayName": "星铁触屏",
+      "executablePath": "C:\\Games\\mihoyo\\StarRail\\StarRail.exe",
+      "game": "starRail",
+      "hoyo": {
+        "backgroundFps": 10,
+        "backgroundFpsLimitEnabled": true,
+        "endfieldAutoResolution": true,
+        "endfieldHeight": 0,
+        "endfieldInputMode": "touch",
+        "endfieldRefreshRate": 120,
+        "endfieldWidth": 0,
+        "fpsUnlockEnabled": false,
+        "genshinFollowInGamePreset": false,
+        "genshinPreset30Fps": 60,
+        "genshinPreset60Fps": 1000,
+        "genshinTouchUiScaleOverrideEnabled": false,
+        "genshinTouchUiScalePercent": 400,
+        "processPriority": "normal",
+        "targetFps": 120,
+        "touchUiEnabled": true
+      },
+      "id": "starrail-cn-1"
+    },
+    {
+      "displayName": "绝区零触屏",
+      "executablePath": "C:\\Games\\mihoyo\\ZZZ\\ZenlessZoneZero.exe",
+      "game": "zenlessZoneZero",
+      "id": "zzz-cn-1"
+    },
+    {
+      "displayName": "星穹铁道",
+      "executablePath": "C:\\Games\\mihoyo\\StarRail\\StarRail.exe",
+      "game": "starRail",
+      "hoyo": {
+        "backgroundFps": 10,
+        "backgroundFpsLimitEnabled": true,
+        "endfieldAutoResolution": true,
+        "endfieldHeight": 0,
+        "endfieldInputMode": "pc",
+        "endfieldRefreshRate": 120,
+        "endfieldWidth": 0,
+        "fpsUnlockEnabled": true,
+        "genshinFollowInGamePreset": false,
+        "genshinPreset30Fps": 60,
+        "genshinPreset60Fps": 1000,
+        "genshinTouchUiScaleOverrideEnabled": false,
+        "genshinTouchUiScalePercent": 400,
+        "processPriority": "normal",
+        "targetFps": 120,
+        "touchUiEnabled": false
+      },
+      "id": "starrail-cn-2"
+    },
+    {
+      "displayName": "原神",
+      "executablePath": "C:\\Games\\mihoyo\\Genshin\\YuanShen.exe",
+      "game": "genshin",
+      "hoyo": {
+        "backgroundFps": 10,
+        "backgroundFpsLimitEnabled": true,
+        "endfieldAutoResolution": true,
+        "endfieldHeight": 0,
+        "endfieldInputMode": "pc",
+        "endfieldRefreshRate": 120,
+        "endfieldWidth": 0,
+        "fpsUnlockEnabled": true,
+        "genshinFollowInGamePreset": false,
+        "genshinPreset30Fps": 60,
+        "genshinPreset60Fps": 1000,
+        "genshinTouchUiScaleOverrideEnabled": false,
+        "genshinTouchUiScalePercent": 400,
+        "processPriority": "normal",
+        "targetFps": 120,
+        "touchUiEnabled": false
+      },
+      "id": "genshin-cn-2"
+    },
+    {
+      "displayName": "终末地触屏",
+      "executablePath": "C:\\Games\\hypergryph\\Hypergryph Launcher\\games\\Arknights Endfield\\Endfield.exe",
+      "game": "endfield",
+      "hoyo": {
+        "backgroundFps": 10,
+        "backgroundFpsLimitEnabled": true,
+        "endfieldAutoResolution": true,
+        "endfieldHeight": 0,
+        "endfieldInputMode": "touch",
+        "endfieldRefreshRate": 120,
+        "endfieldWidth": 0,
+        "fpsUnlockEnabled": true,
+        "genshinFollowInGamePreset": false,
+        "genshinPreset30Fps": 60,
+        "genshinPreset60Fps": 1000,
+        "genshinTouchUiScaleOverrideEnabled": false,
+        "genshinTouchUiScalePercent": 400,
+        "processPriority": "high",
+        "targetFps": 120,
+        "touchUiEnabled": true
+      },
+      "id": "endfield-cn-1"
+    },
+    {
+      "displayName": "明日方舟：终末地",
+      "executablePath": "C:\\Games\\hypergryph\\Hypergryph Launcher\\games\\Arknights Endfield\\Endfield.exe",
+      "game": "endfield",
+      "hoyo": {
+        "backgroundFps": 10,
+        "backgroundFpsLimitEnabled": true,
+        "endfieldAutoResolution": true,
+        "endfieldHeight": 0,
+        "endfieldInputMode": "pc",
+        "endfieldRefreshRate": 100,
+        "endfieldWidth": 0,
+        "fpsUnlockEnabled": true,
+        "genshinFollowInGamePreset": false,
+        "genshinPreset30Fps": 60,
+        "genshinPreset60Fps": 1000,
+        "genshinTouchUiScaleOverrideEnabled": false,
+        "genshinTouchUiScalePercent": 400,
+        "processPriority": "high",
+        "targetFps": 120,
+        "touchUiEnabled": false
+      },
+      "id": "endfield-cn-2"
+    }
+  ],
+  "schemaVersion": 1,
+  "selectedProfileId": "genshin-cn-1"
+}

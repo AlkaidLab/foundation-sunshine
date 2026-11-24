@@ -377,7 +377,7 @@ namespace platf {
   }
 
   void
-  restart() {
+  restart(std::string_view /* reason */) {
     // Gracefully clean up and restart ourselves instead of exiting
     atexit(restart_on_exit);
     lifetime::exit_sunshine(0, true);
@@ -1072,5 +1072,10 @@ namespace platf {
   std::unique_ptr<high_precision_timer>
   create_high_precision_timer() {
     return std::make_unique<linux_high_precision_timer>();
+  }
+
+  std::optional<bool>
+  query_session_locked() {
+    return std::nullopt;
   }
 }  // namespace platf

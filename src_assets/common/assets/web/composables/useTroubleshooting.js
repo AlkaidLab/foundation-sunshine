@@ -1,10 +1,13 @@
+import { useNotify } from 'foundation-ui/notify'
 import { ref, computed, onUnmounted } from 'vue'
-import { getBootstrapConfig } from '../config/bootstrapData.js'
+import { createLogByteDecoder } from 'foundation-ui/diagnostics'
+import { hostData } from './hostData.js'
 import { apiFetch, apiJson } from '../utils/apiFetch.js'
 
 const LOG_REFRESH_INTERVAL = 5000
 const STATUS_RESET_DELAY = 5000
-const MAX_LOG_DISPLAY_SIZE = 4 * 1024 * 1024 // 4 MB cap for in-memory log string
+const MAX_LOG_DISPLAY_SIZE = 256 * 1024 // Live-view cap; downloads still fetch the complete file
+const MAX_RENDERED_LOG_LINES = 2000
 
 /**
  * Creates a delayed status reset helper
@@ -36,7 +39,10 @@ const withPressedState = async (pressedRef, action, autoReset = false) => {
 /**
  * Troubleshooting composable
  */
-export function useTroubleshooting() {
+const fetchLogsFromApi = (offset) =>
+  apiFetch('/api/logs', { headers: { 'X-Log-Offset': String(offset) } })
+
+export function useTroubleshooting({ fetchLogs = fetchLogsFromApi } = {}) {
   const platform = ref('')
   const closeAppPressed = ref(false)
   const closeAppStatus = ref(null)
@@ -50,13 +56,22 @@ export function useTroubleshooting() {
   const matchMode = ref('contains')
   const ignoreCase = ref(true)
   const logInterval = ref(null)
+  let logBytes = createLogByteDecoder()
+
+  // response.text() replaces invalid bytes before the viewer can try the old
+  // GBK line. Read the bytes and decode per line instead; a test double that
+  // only offers text() still works.
+  const readLogChunk = async (response, { final = false } = {}) => {
+    if (typeof response.arrayBuffer !== 'function') return response.text()
+    return logBytes.push(new Uint8Array(await response.arrayBuffer()), { final })
+  }
 
   const actualLogs = computed(() => {
-    if (!logFilter.value) return logs.value
+    const lines = logs.value.split('\n')
+    if (lines.at(-1) === '') lines.pop()
+    if (!logFilter.value) return lines.slice(-MAX_RENDERED_LOG_LINES).join('\n')
 
     const filter = ignoreCase.value ? logFilter.value.toLowerCase() : logFilter.value
-    const lines = logs.value.split('\n')
-
     const filterFn = (() => {
       switch (matchMode.value) {
         case 'exact':
@@ -79,15 +94,18 @@ export function useTroubleshooting() {
       }
     })()
 
-    return lines.filter(filterFn).join('\n')
+    return lines.filter(filterFn).slice(-MAX_RENDERED_LOG_LINES).join('\n')
   })
 
+  let refreshingLogs = false
   const refreshLogs = async () => {
+    if (refreshingLogs) return
+
+    refreshingLogs = true
     try {
       const offset = Number(logOffset.value)
       // Always send X-Log-Offset to use cached tail mode (without it, server returns full file for download)
-      const headers = { 'X-Log-Offset': String(Number.isNaN(offset) ? 0 : offset) }
-      const response = await apiFetch('/api/logs', { headers })
+      const response = await fetchLogs(Number.isNaN(offset) ? 0 : offset)
 
       if (response.status === 304) {
         const sizeHeader = response.headers.get('X-Log-Size')
@@ -104,7 +122,8 @@ export function useTroubleshooting() {
       const rawSize = Number.parseInt(response.headers.get('X-Log-Size') || '0', 10)
       const newSize = Number.isNaN(rawSize) || rawSize < 0 ? 0 : rawSize
       const logRange = (response.headers.get('X-Log-Range') || '').trim().toLowerCase()
-      const text = await response.text()
+      if (logRange !== 'incremental') logBytes = createLogByteDecoder()
+      const text = await readLogChunk(response, { final: logRange !== 'incremental' })
 
       if (logRange === 'incremental' && text.length > 0) {
         logs.value += text
@@ -119,6 +138,8 @@ export function useTroubleshooting() {
       logOffset.value = newSize
     } catch (e) {
       console.error('Failed to refresh logs:', e)
+    } finally {
+      refreshingLogs = false
     }
   }
 
@@ -138,7 +159,7 @@ export function useTroubleshooting() {
       restartPressed,
       async () => {
         try {
-          await apiFetch('/api/restart', { method: 'POST' })
+          await apiFetch('/api/restart?reason=troubleshooting', { method: 'POST' })
         } catch {}
       },
       true
@@ -172,9 +193,9 @@ export function useTroubleshooting() {
     try {
       const data = await apiJson('/api/config')
       await navigator.clipboard.writeText(JSON.stringify(data, null, 2))
-      alert(t('troubleshooting.copy_config_success'))
+      useNotify().snack(t('troubleshooting.copy_config_success'))
     } catch {
-      alert(t('troubleshooting.copy_config_error'))
+      useNotify().snack(t('troubleshooting.copy_config_error'))
     }
   }
 
@@ -189,23 +210,26 @@ export function useTroubleshooting() {
       })
 
       if (saveResponse.ok) {
+        // the person asked for the setup again: the guide starts from its first step
+        try { window.localStorage.removeItem('foundation.guide.web'); window.sessionStorage.removeItem('foundation.guide.dismissed') } catch { /* the guide resumes where it was */ }
         window.location.href = '/'
       } else {
-        alert(t('troubleshooting.reopen_setup_wizard_error'))
+        useNotify().snack(t('troubleshooting.reopen_setup_wizard_error'))
       }
     } catch {
-      alert(t('troubleshooting.reopen_setup_wizard_error'))
+      useNotify().snack(t('troubleshooting.reopen_setup_wizard_error'))
     }
   }
 
   const loadPlatform = async () => {
     try {
-      const data = await getBootstrapConfig()
+      const data = await hostData.refresh('config')
       platform.value = data.platform || ''
     } catch {}
   }
 
   const startLogRefresh = () => {
+    stopLogRefresh()
     logInterval.value = setInterval(refreshLogs, LOG_REFRESH_INTERVAL)
   }
 
@@ -242,6 +266,7 @@ export function useTroubleshooting() {
     resetDisplayDevicePressed,
     resetDisplayDeviceStatus,
     logs,
+    logOffset,
     logFilter,
     matchMode,
     ignoreCase,

@@ -1,9 +1,12 @@
 [CmdletBinding()]
 param(
-  [string] $HelperScript = (Join-Path $PSScriptRoot 'stop-process-tree.ps1')
+  [string] $HelperScript
 )
 
 $ErrorActionPreference = 'Stop'
+if (-not $HelperScript) {
+  $HelperScript = Join-Path $PSScriptRoot 'stop-process-tree.ps1'
+}
 
 function Assert-True([bool] $Condition, [string] $Message) {
   if (-not $Condition) {

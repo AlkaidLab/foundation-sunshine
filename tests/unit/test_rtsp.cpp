@@ -4,6 +4,8 @@
  */
 
 #include <array>
+#include <limits>
+#include <string>
 
 #include "src/launch_session_manager.h"
 #include "src/rtsp.h"
@@ -31,7 +33,7 @@ namespace {
   }
 }  // namespace
 
-TEST(LaunchSessionManager, RoutesConcurrentPlaintextClientsAndPreservesSingletonFallback) {
+TEST(LaunchSessionManager, RoutesConcurrentPlaintextClientsAndRejectsCrossAddressClaim) {
   rtsp_stream::launch_session_manager_t manager;
   const auto now = rtsp_stream::launch_session_manager_t::clock_t::now();
 
@@ -50,9 +52,23 @@ TEST(LaunchSessionManager, RoutesConcurrentPlaintextClientsAndPreservesSingleton
   rtsp_stream::launch_session_manager_t singleton_manager;
   ASSERT_EQ(singleton_manager.register_session(make_session(3, "cert-c", "198.51.100.10"), 10s, now),
             rtsp_stream::launch_ticket_register_e::accepted);
-  auto fallback = singleton_manager.claim_plaintext("198.51.100.20", now);
-  ASSERT_TRUE(fallback);
-  EXPECT_EQ(fallback->id, 3U);
+  EXPECT_FALSE(singleton_manager.claim_plaintext({}, now));
+  EXPECT_FALSE(singleton_manager.claim_plaintext("198.51.100.20", now));
+
+  auto same_address = singleton_manager.claim_plaintext("198.51.100.10", now);
+  ASSERT_TRUE(same_address);
+  EXPECT_EQ(same_address->id, 3U);
+}
+
+TEST(LaunchSessionManager, ClientRevocationRemovesItsPendingAndClaimedTicketsOnly) {
+  rtsp_stream::launch_session_manager_t manager;
+  EXPECT_EQ(manager.register_session(make_session(1, "cert-a", "192.0.2.10"), 10s), rtsp_stream::launch_ticket_register_e::accepted);
+  EXPECT_EQ(manager.register_session(make_session(2, "cert-b", "192.0.2.20"), 10s), rtsp_stream::launch_ticket_register_e::accepted);
+  ASSERT_TRUE(manager.claim_plaintext("192.0.2.10"));
+  EXPECT_EQ(manager.erase_client("cert-a"), 1U);
+  EXPECT_EQ(manager.erase_client(""), 0U);
+  EXPECT_FALSE(manager.claim_plaintext("192.0.2.10"));
+  EXPECT_TRUE(manager.claim_plaintext("192.0.2.20"));
 }
 
 TEST(LaunchSessionManager, ReplacesPendingRetryButDoesNotReplaceClaimedHandshake) {
@@ -237,4 +253,129 @@ TEST(LaunchSessionManager, AuthenticatesEncryptedClaimByGcmTagAcrossRouteChanges
   ASSERT_TRUE(claim);
   EXPECT_EQ(claim.session->id, 31U);
   EXPECT_EQ(std::string_view(reinterpret_cast<const char *>(claim.plaintext.data()), claim.plaintext.size()), plaintext);
+}
+
+TEST(LaunchSessionManager, ExpiredTicketReleasesCompatibilityLease) {
+  rtsp_stream::launch_session_manager_t manager;
+  const auto now = rtsp_stream::launch_session_manager_t::clock_t::now();
+  auto session = make_session(1001, "lease-cert", "192.0.2.1");
+  bool released = false;
+  session->nvidia_vsync_lease = std::shared_ptr<void>(new int {}, [&](void *value) {
+    delete static_cast<int *>(value);
+    released = true;
+  });
+  ASSERT_EQ(manager.register_session(session, 1s, now), rtsp_stream::launch_ticket_register_e::accepted);
+  session.reset();
+  EXPECT_FALSE(released);
+  EXPECT_EQ(manager.prune(now + 2s), 1U);
+  EXPECT_TRUE(released);
+}
+
+TEST(LaunchSessionManager, FinalClaimReleaseRenewsExpiryAndReleasesSessionResources) {
+  rtsp_stream::launch_session_manager_t manager;
+  const auto now = rtsp_stream::launch_session_manager_t::clock_t::now();
+  auto session = make_session(1003, "renewed-lease", "192.0.2.3");
+  std::weak_ptr<void> resource;
+  session->nvidia_vsync_lease = std::make_shared<int>();
+  resource = session->nvidia_vsync_lease;
+  ASSERT_EQ(manager.register_session(session, 1s, now), rtsp_stream::launch_ticket_register_e::accepted);
+  auto describe = manager.claim_plaintext("192.0.2.3", now);
+  auto second = manager.claim_plaintext("192.0.2.3", now + 500ms);
+  ASSERT_TRUE(describe);
+  ASSERT_TRUE(second);
+  session.reset();
+  EXPECT_EQ(manager.prune(now + 2s), 0U);
+  EXPECT_TRUE(manager.release(1003, 1s, now + 2s));
+  describe.reset();
+  EXPECT_EQ(manager.prune(now + 3s), 0U);
+  EXPECT_TRUE(manager.release(1003, 1s, now + 3s));
+  second.reset();
+  EXPECT_EQ(manager.prune(now + 3999ms), 0U);
+  EXPECT_FALSE(resource.expired());
+  EXPECT_EQ(manager.prune(now + 4s), 1U);
+  EXPECT_TRUE(resource.expired());
+}
+
+TEST(LaunchSessionManager, ActiveStreamRetainsCompatibilityLeaseAfterHandshakeClear) {
+  rtsp_stream::launch_session_manager_t manager;
+  auto session = make_session(1002, "lease-cert", "192.0.2.2");
+  bool released = false;
+  session->nvidia_vsync_lease = std::shared_ptr<void>(new int {}, [&](void *value) {
+    delete static_cast<int *>(value);
+    released = true;
+  });
+  ASSERT_EQ(manager.register_session(session, 1s), rtsp_stream::launch_ticket_register_e::accepted);
+  auto active_stream_lease = session->nvidia_vsync_lease;
+  session->nvidia_vsync_lease.reset();
+  EXPECT_TRUE(manager.erase(session->id));
+  session.reset();
+  EXPECT_FALSE(released);
+  active_stream_lease.reset();
+  EXPECT_TRUE(released);
+}
+
+// --- the size of one message -------------------------------------------------------------------------------------------------------------------
+
+namespace {
+  constexpr std::size_t encrypted_header_size = 24;  // type and length (4), sequence number (4), GCM tag (16)
+}
+
+TEST(RtspMessageLimit, AnAnnounceOfSeveralKilobytesFits) {
+  // an ANNOUNCE with automatic FEC and bitrate went past the old 2048-byte limit
+  for (const std::size_t payload : { std::size_t { 1500 }, std::size_t { 2048 }, std::size_t { 2100 }, std::size_t { 4096 }, std::size_t { 8192 } }) {
+    EXPECT_TRUE(rtsp_stream::rtsp_message_fits(rtsp_stream::RTSP_MAX_MESSAGE_SIZE, 0, encrypted_header_size, payload)) << payload;
+  }
+  EXPECT_GE(rtsp_stream::RTSP_MAX_MESSAGE_SIZE, std::size_t { 16 * 1024 });
+}
+
+TEST(RtspMessageLimit, TheLimitStaysSmall) {
+  // a peer that is not known yet makes the host hold this much: it must not grow into a memory sink
+  EXPECT_LE(rtsp_stream::RTSP_MAX_MESSAGE_SIZE, std::size_t { 64 * 1024 });
+}
+
+TEST(RtspMessageLimit, TheLastByteFitsAndOneMoreDoesNot) {
+  constexpr auto capacity = rtsp_stream::RTSP_MAX_MESSAGE_SIZE;
+  constexpr auto room = capacity - encrypted_header_size;
+  EXPECT_TRUE(rtsp_stream::rtsp_message_fits(capacity, 0, encrypted_header_size, room));
+  EXPECT_FALSE(rtsp_stream::rtsp_message_fits(capacity, 0, encrypted_header_size, room + 1));
+}
+
+TEST(RtspMessageLimit, ThePositionInTheBufferCounts) {
+  constexpr auto capacity = rtsp_stream::RTSP_MAX_MESSAGE_SIZE;
+  EXPECT_TRUE(rtsp_stream::rtsp_message_fits(capacity, 100, encrypted_header_size, capacity - 100 - encrypted_header_size));
+  EXPECT_FALSE(rtsp_stream::rtsp_message_fits(capacity, 100, encrypted_header_size, capacity - 100 - encrypted_header_size + 1));
+}
+
+TEST(RtspMessageLimit, ALengthTheHeaderCannotEvenHoldIsRefusedWithoutWrapping) {
+  constexpr auto capacity = rtsp_stream::RTSP_MAX_MESSAGE_SIZE;
+  // the encrypted header declares up to 2^31 - 1 bytes; a sum with the buffer position must not wrap and let it through
+  EXPECT_FALSE(rtsp_stream::rtsp_message_fits(capacity, 0, encrypted_header_size, 0x7fffffffu));
+  EXPECT_FALSE(rtsp_stream::rtsp_message_fits(capacity, 0, encrypted_header_size, std::numeric_limits<std::uint64_t>::max()));
+  EXPECT_FALSE(rtsp_stream::rtsp_message_fits(capacity, 0, encrypted_header_size, std::numeric_limits<std::uint64_t>::max() - encrypted_header_size + 1));
+}
+
+TEST(RtspMessageLimit, ABufferWithoutRoomForTheHeaderRefusesEverything) {
+  EXPECT_FALSE(rtsp_stream::rtsp_message_fits(16, 0, encrypted_header_size, 0));
+  EXPECT_FALSE(rtsp_stream::rtsp_message_fits(100, 90, encrypted_header_size, 0));
+  EXPECT_FALSE(rtsp_stream::rtsp_message_fits(100, 101, 0, 0));  // used beyond the end
+  EXPECT_TRUE(rtsp_stream::rtsp_message_fits(100, 76, encrypted_header_size, 0));
+}
+
+TEST(RtspMessageLimit, TheLogLineNamesThePeerTheLengthAndTheLimit) {
+  const auto line = rtsp_stream::describe_oversized_rtsp_message("handle_read_encrypted_header()", "192.0.2.7", 20'000, rtsp_stream::RTSP_MAX_MESSAGE_SIZE);
+  EXPECT_NE(line.find("handle_read_encrypted_header()"), std::string::npos) << line;
+  EXPECT_NE(line.find("192.0.2.7"), std::string::npos) << line;
+  EXPECT_NE(line.find("20000"), std::string::npos) << line;
+  EXPECT_NE(line.find(std::to_string(rtsp_stream::RTSP_MAX_MESSAGE_SIZE)), std::string::npos) << line;
+  EXPECT_EQ(line.find("at least"), std::string::npos) << line;
+}
+
+TEST(RtspMessageLimit, ALengthThatIsOnlyTheBytesReadSoFarSaysSo) {
+  const auto line = rtsp_stream::describe_oversized_rtsp_message("read()", "198.51.100.4", 16'384, 16'384, false);
+  EXPECT_NE(line.find("is at least 16384 bytes"), std::string::npos) << line;
+}
+
+TEST(RtspMessageLimit, AnUnknownPeerIsNamedAsSuch) {
+  const auto line = rtsp_stream::describe_oversized_rtsp_message("read()", "", 1, 2);
+  EXPECT_NE(line.find("(unknown)"), std::string::npos) << line;
 }

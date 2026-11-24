@@ -13,6 +13,8 @@
 
 #include "../tests_common.h"
 
+// These identifiers are consumed through session JSON, webhooks and logs.
+// Their spelling is a compatibility contract, even when the mapping is simple.
 TEST(StreamSessionObservability, NamesEveryStopReason) {
   using stream::session::stop_reason_e;
   using stream::session::stop_reason_name;
@@ -66,8 +68,10 @@ TEST(StreamSessionObservability, PublishesOneConcurrentStopReason) {
 }
 
 TEST(StreamSessionObservability, SerializesSessionBoundaries) {
+  stream::session::lifecycle_t lifecycle { stream::session::state_e::RUNNING };
+  ASSERT_TRUE(lifecycle.request_stop(stream::session::stop_reason_e::control_disconnect));
   stream::session_info_t info {};
-  info.stop_reason = "control_disconnect";
+  info.stop_reason = stream::session::stop_reason_name(lifecycle.snapshot().stop_reason);
   info.uptime_ms = 123;
   info.control_connected = false;
   info.control_idle_ms = -1;
@@ -82,4 +86,22 @@ TEST(StreamSessionObservability, SerializesSessionBoundaries) {
   EXPECT_TRUE(json["control_idle_ms"].is_null());
   EXPECT_TRUE(json["video_idle_ms"].is_null());
   EXPECT_TRUE(json["audio_idle_ms"].is_null());
+}
+
+TEST(StreamSessionObservability, SerializesCodecAndReportedLoss) {
+  stream::session_info_t info {};
+  info.video_format = 1;
+  info.codec = stream::codec_name(info.video_format);
+
+  auto json = nvhttp::sessions::make_session_json(info);
+  EXPECT_EQ(json["video_format"], 1);
+  EXPECT_EQ(json["codec"], "hevc");
+  EXPECT_TRUE(json["packet_loss"].is_null());
+  EXPECT_TRUE(json["dropped_frames"].is_null());
+
+  info.packet_loss = 2.5;
+  info.dropped_frames = 3;
+  json = nvhttp::sessions::make_session_json(info);
+  EXPECT_DOUBLE_EQ(json["packet_loss"].get<double>(), 2.5);
+  EXPECT_EQ(json["dropped_frames"], 3);
 }

@@ -30,7 +30,7 @@ on:
 jobs:
   update-version:
     name: Update Driver Version Pin
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       pull-requests: write
@@ -89,7 +89,7 @@ jobs:
           }
 
           declare -A REPOS=(
-            [vmouse]="AlkaidLab/ZakoVirtualMouse"
+            [vmouse]="AlkaidLab/zako-vmouse-release"
             [vdd]="qiin2333/zako-vdd"
             [vdd-win10]="qiin2333/zako-vdd"
             [nefcon]="nefarius/nefcon"

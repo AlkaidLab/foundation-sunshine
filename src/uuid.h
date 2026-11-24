@@ -4,7 +4,17 @@
  */
 #pragma once
 
+#include <algorithm>
+#include <cstdint>
+#include <iterator>
+#include <limits>
 #include <random>
+#include <string>
+#include <string_view>
+
+#include <openssl/rand.h>
+
+#include "utility.h"
 
 /**
  * @brief UUID utilities.
@@ -16,6 +26,13 @@ namespace uuid_util {
     std::uint32_t b32[4];
     std::uint64_t b64[2];
 
+    static void
+    set_rfc4122_bits(uuid_t &buf) {
+      // UUID v4 uses four version bits and the RFC 4122 variant bits.
+      buf.b8[6] = static_cast<std::uint8_t>((buf.b8[6] & 0x0F) | 0x40);
+      buf.b8[8] = static_cast<std::uint8_t>((buf.b8[8] & 0x3F) | 0x80);
+    }
+
     static uuid_t
     generate(std::default_random_engine &engine) {
       std::uniform_int_distribution<std::uint8_t> dist(0, std::numeric_limits<std::uint8_t>::max());
@@ -25,14 +42,21 @@ namespace uuid_util {
         el = dist(engine);
       }
 
-      buf.b8[7] &= (std::uint8_t) 0b00101111;
-      buf.b8[9] &= (std::uint8_t) 0b10011111;
+      set_rfc4122_bits(buf);
 
       return buf;
     }
 
     static uuid_t
     generate() {
+      uuid_t buf {};
+      if (RAND_bytes(buf.b8, sizeof(buf.b8)) == 1) {
+        set_rfc4122_bits(buf);
+        return buf;
+      }
+
+      // Keep the existing fallback for platforms where OpenSSL's RNG is not
+      // available yet. Normal Sunshine startup initializes OpenSSL first.
       std::random_device r;
 
       std::default_random_engine engine { r() };

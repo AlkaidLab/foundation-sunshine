@@ -52,6 +52,13 @@ namespace nvenc {
     sdk_version() const = 0;
 
     /**
+     * @brief Keep CUDA contexts acquired during one encoder probe alive until
+     *        the returned token is released. Does not create a CUDA context.
+     */
+    virtual std::shared_ptr<void>
+    retain_cuda_interop_contexts() = 0;
+
+    /**
      * @brief Create native Direct3D11 NVENC encoder.
      * @param d3d_device Direct3D11 device.
      * @return `unique_ptr` containing encoder on success, empty `unique_ptr` on error.

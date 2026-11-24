@@ -1,0 +1,108 @@
+/**
+ * @file src/text_context/bridge.h
+ * @brief Correlates user-session text-focus observations with remote input.
+ */
+#pragma once
+
+#include <cstdint>
+#include <deque>
+#include <memory>
+#include <optional>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace text_context {
+  using session_id = std::uint64_t;
+  using payload_t = std::vector<std::uint8_t>;
+
+  constexpr std::uint8_t kWireVersion = 1;
+  constexpr std::size_t kWireSize = 76;
+
+  enum class source_e : std::uint8_t {
+    input_pane = 1,
+    uia = 2,
+  };
+
+  enum class cause_e : std::uint8_t {
+    unknown = 0,
+    remote_touch = 1,
+    remote_mouse = 2,
+  };
+
+  struct screen_rect_t {
+    std::int32_t left {};
+    std::int32_t top {};
+    std::int32_t right {};
+    std::int32_t bottom {};
+
+    bool valid() const { return right > left && bottom > top; }
+  };
+
+  struct observation_t {
+    std::string agent_id;
+    std::uint64_t generation {0};
+    source_e source {source_e::input_pane};
+    bool active {false};
+    bool editable {false};
+    bool password {false};
+    bool multiline {false};
+    bool pane_visible {false};
+    bool auto_show {false};
+    std::optional<screen_rect_t> element_rect;
+    std::optional<screen_rect_t> caret_rect;
+  };
+
+  struct outbound_msg_t {
+    session_id target {};
+    payload_t bytes;
+  };
+
+  class bridge_t {
+  public:
+    static bridge_t &instance();
+
+    void session_started(session_id sid);
+    void session_stopped(session_id sid);
+
+    void record_touch(session_id sid, std::uint8_t event_type, std::uint32_t pointer_id,
+                      std::int32_t screen_x, std::int32_t screen_y,
+                      std::int32_t capture_global_left, std::int32_t capture_global_top,
+                      std::uint32_t capture_width, std::uint32_t capture_height);
+    void record_mouse_button(session_id sid, bool release,
+                             std::int32_t screen_x, std::int32_t screen_y,
+                             std::int32_t capture_global_left, std::int32_t capture_global_top,
+                             std::uint32_t capture_width, std::uint32_t capture_height);
+
+    /// Drops any in-flight mouse candidate for the session (right-click/scroll).
+    void cancel_mouse(session_id sid);
+
+    /// Returns true while at least one streaming input session can use text
+    /// context correlation. Input paths use this as a lock-free fast path.
+    bool input_tracking_active() const noexcept;
+
+    /// Returns true when the observation consumed a matching remote input.
+    bool observe(const observation_t &observation);
+    void drain_outbound(std::deque<outbound_msg_t> &out);
+
+    /// Records the GUI agent heartbeat. `agent_present` is separate from the
+    /// observer capabilities so an idle GUI can still participate in the
+    /// first RTSP capability negotiation without running UIA.
+    void notify_gui_alive(bool input_pane, bool uia, bool agent_present,
+                          bool observer_active, std::uint64_t generation,
+                          std::string_view agent_id);
+    bool gui_alive() const;
+    bool input_pane_available() const;
+    bool uia_available() const;
+
+    bridge_t(const bridge_t &) = delete;
+    bridge_t &operator=(const bridge_t &) = delete;
+
+  private:
+    bridge_t();
+    ~bridge_t();
+    bool correlate_locked(const observation_t &observation);
+    struct impl_t;
+    std::unique_ptr<impl_t> _impl;
+  };
+}  // namespace text_context

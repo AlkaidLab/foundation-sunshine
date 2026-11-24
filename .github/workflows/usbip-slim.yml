@@ -1,0 +1,49 @@
+name: USB-IP payload
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/usbip-slim, fix/usbip-ownership, fix/usbip-legacy-cleanup]
+  pull_request:
+    branches: [master]
+    paths:
+      - 'scripts/packaging/**'
+      - 'tools/usbip-win2-root.ps1'
+      - 'src_assets/windows/misc/usbip/**'
+      - '.github/workflows/usbip-slim.yml'
+permissions:
+  contents: read
+jobs:
+  payload:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Unit regressions without driver installation
+        shell: powershell
+        run: |
+          python scripts/packaging/test_usbip_payload.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\scripts\packaging\test-usbip-root.ps1
+          & .\src_assets\windows\misc\usbip\smoke-test-usbip-ownership.ps1
+          & .\src_assets\windows\misc\usbip\smoke-test-usbip-package.ps1
+          & .\src_assets\windows\misc\usbip\smoke-test-usbip-roothub-guard.ps1
+      - name: Extract immutable upstream package and verify kernel catalogs
+        shell: powershell
+        run: |
+          New-Item -ItemType Directory -Force evidence | Out-Null
+          Invoke-WebRequest -UseBasicParsing -Uri 'https://github.com/vadimgrn/usbip-win2/releases/download/v.0.9.8.1/USBip-0.9.8.1-x64.exe' -OutFile evidence/upstream.exe
+          python scripts/packaging/extract-usbip.py --installer evidence/upstream.exe --output evidence/payload --scratch evidence/scratch
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\evidence\payload\usbip.exe --version
+          if ($LASTEXITCODE -ne 0) { throw 'USB/IP tool did not load with the app-local runtime' }
+          Remove-Item -Recurse -Force evidence/scratch
+          Remove-Item evidence/upstream.exe
+      - name: Save payload, file hashes and signature results
+        uses: actions/upload-artifact@v6
+        with:
+          name: usbip-slim-payload
+          path: evidence/
+          retention-days: 14

@@ -123,33 +123,107 @@ TEST(HlgSystemGamma, FallsBackToReferencePeakForInvalidValues) {
   EXPECT_NEAR(video::hlg_system_gamma(std::numeric_limits<float>::quiet_NaN()), 1.2f, 0.00001f);
 }
 
-TEST(DynamicSdrWhite, AcceptsOnlyFiniteValuesWithinProtocolRange) {
-  EXPECT_FALSE(video::is_valid_client_sdr_white_nits(49.0f));
-  EXPECT_TRUE(video::is_valid_client_sdr_white_nits(50.0f));
-  EXPECT_TRUE(video::is_valid_client_sdr_white_nits(1000.0f));
-  EXPECT_FALSE(video::is_valid_client_sdr_white_nits(1001.0f));
-  EXPECT_FALSE(video::is_valid_client_sdr_white_nits(std::numeric_limits<float>::quiet_NaN()));
-  EXPECT_FALSE(video::is_valid_client_sdr_white_nits(std::numeric_limits<float>::infinity()));
-}
-
 TEST(VideoBitrate, ConvertsTotalBitrateToEncoderBitrate) {
-  EXPECT_EQ(video::encoder_bitrate_from_total_bitrate(50000, 10), 45000);
-  EXPECT_EQ(video::encoder_bitrate_from_total_bitrate(50000, 80), 10000);
+  EXPECT_EQ(video::encoder_bitrate_from_total_bitrate(50000, 10), 45454);
+  EXPECT_EQ(video::encoder_bitrate_from_total_bitrate(50000, 80), 27777);
   EXPECT_EQ(video::encoder_bitrate_from_total_bitrate(50000, 0), 50000);
   EXPECT_EQ(video::encoder_bitrate_from_total_bitrate(50000, -1), 50000);
-  EXPECT_EQ(video::encoder_bitrate_from_total_bitrate(50000, 81), 50000);
+  EXPECT_EQ(video::encoder_bitrate_from_total_bitrate(50000, 81), 27624);
+  EXPECT_EQ(video::encoder_bitrate_from_total_bitrate(50000, 100), 25000);
 }
 
 TEST(VideoBitrate, ConvertsCappedTotalRequestToEncoderBitrate) {
-  EXPECT_EQ(video::encoder_bitrate_for_total_request(90000, 0, 10), 81000);
-  EXPECT_EQ(video::encoder_bitrate_for_total_request(90000, 50000, 10), 45000);
-  EXPECT_EQ(video::encoder_bitrate_for_total_request(40000, 50000, 10), 36000);
+  EXPECT_EQ(video::encoder_bitrate_for_total_request(90000, 0, 10), 81818);
+  EXPECT_EQ(video::encoder_bitrate_for_total_request(90000, 50000, 10), 45454);
+  EXPECT_EQ(video::encoder_bitrate_for_total_request(40000, 50000, 10), 36363);
 }
 
 TEST(VideoBitrate, CapsInitialEncoderBitrateUsingTotalBitrateLimit) {
   EXPECT_EQ(video::cap_initial_encoder_bitrate(90000, 0, 10), 90000);
-  EXPECT_EQ(video::cap_initial_encoder_bitrate(90000, 50000, 10), 45000);
+  EXPECT_EQ(video::cap_initial_encoder_bitrate(90000, 50000, 10), 45454);
   EXPECT_EQ(video::cap_initial_encoder_bitrate(40000, 50000, 10), 40000);
+}
+
+TEST(VideoBitrate, PyrowaveUsesHostCapWithoutLegacyRtpFecConversion) {
+  EXPECT_EQ(video::cap_initial_encoder_bitrate(90000, 50000, 0), 50000);
+  EXPECT_EQ(video::encoder_bitrate_for_total_request(90000, 50000, 0), 50000);
+}
+
+TEST(HdrPipelineStatus, RunningStreamFollowsGlobalSwitchAndKeepsItsParameters) {
+  video::hdr_pipeline_status_t pipeline;
+  pipeline.nr_toggle_supported = true;
+  const auto id = video::register_hdr_pipeline_status(pipeline);
+  ASSERT_EQ(video::request_nr_enabled(id, true, 75), 202);
+  const auto off = video::requested_nr_settings(id, false).value();
+  EXPECT_FALSE(off.enabled);
+  EXPECT_EQ(off.scale_percent, 75);
+  video::update_hdr_pipeline_status(id, pipeline);
+  const auto on = video::requested_nr_settings(id, true).value();
+  EXPECT_TRUE(on.enabled);
+  EXPECT_GT(on.revision, off.revision);
+  EXPECT_EQ(video::requested_nr_settings(id, true)->revision, on.revision);
+  video::unregister_hdr_pipeline_status(id);
+}
+
+TEST(HdrPipelineStatus, RequestChangesRaiseADeferredSignal) {
+  video::hdr_pipeline_status_t pipeline;
+  pipeline.nr_toggle_supported = true;
+  const auto id = video::register_hdr_pipeline_status(pipeline);
+  const auto signal = video::nr_change_signal(id);
+  ASSERT_TRUE(signal);
+  EXPECT_TRUE(signal->pop(std::chrono::milliseconds { 0 }));
+  EXPECT_FALSE(signal->pop(std::chrono::milliseconds { 0 }));
+  signal->raise(false);
+  EXPECT_FALSE(signal->peek());
+  EXPECT_FALSE(signal->pop(std::chrono::milliseconds { 0 }));
+  EXPECT_EQ(video::request_nr_enabled(id, true), 202);
+  EXPECT_TRUE(signal->pop(std::chrono::milliseconds { 0 }));
+  EXPECT_FALSE(signal->pop(std::chrono::milliseconds { 0 }));
+  video::notify_nr_change();
+  EXPECT_TRUE(signal->pop(std::chrono::milliseconds { 0 }));
+  video::unregister_hdr_pipeline_status(id);
+  EXPECT_FALSE(video::nr_change_signal(id));
+}
+
+TEST(HdrPipelineStatus, LiveNrRequestsAreScopedAndSurviveStaleStatusPublication) {
+  video::hdr_pipeline_status_t status;
+  status.nr_toggle_supported = true;
+  const auto first = video::register_hdr_pipeline_status(status);
+  const auto second = video::register_hdr_pipeline_status(status);
+  EXPECT_EQ(video::request_nr_enabled(first, true), 202);
+  video::update_hdr_pipeline_status(first, status);
+  EXPECT_EQ(video::requested_nr_settings(first).value().enabled, true);
+  EXPECT_EQ(video::requested_nr_settings(second).value().enabled, false);
+  EXPECT_EQ(video::request_nr_enabled(first, false), 202);
+  EXPECT_EQ(video::requested_nr_settings(first).value().enabled, false);
+  video::unregister_hdr_pipeline_status(first);
+  EXPECT_EQ(video::request_nr_enabled(first, true), 404);
+  EXPECT_FALSE(video::requested_nr_settings(first).has_value());
+  video::unregister_hdr_pipeline_status(second);
+  status.nr_toggle_supported = false;
+  const auto blocked = video::register_hdr_pipeline_status(status);
+  EXPECT_EQ(video::request_nr_enabled(blocked, true), 409);
+  video::unregister_hdr_pipeline_status(blocked);
+}
+
+TEST(HdrPipelineStatus, ScaleRequestsValidateAndRollbackWithoutOverwritingNewerCommands) {
+  video::hdr_pipeline_status_t status;
+  status.nr_toggle_supported = true;
+  const auto id = video::register_hdr_pipeline_status(status);
+  EXPECT_EQ(video::request_nr_enabled(id, true, 67), 400);
+  EXPECT_EQ(video::request_nr_enabled(id, true, 75), 202);
+  video::update_hdr_pipeline_status(id, status);
+  EXPECT_EQ(video::requested_nr_settings(id)->scale_percent, 75);
+  const auto attempt = video::requested_nr_settings(id).value();
+  EXPECT_TRUE(video::rollback_nr_settings(id, attempt, { true, 100 }));
+  EXPECT_EQ(video::requested_nr_settings(id)->scale_percent, 100);
+  EXPECT_EQ(video::request_nr_enabled(id, true, 50), 202);
+  EXPECT_FALSE(video::rollback_nr_settings(id, attempt, { true, 100 }));
+  EXPECT_EQ(video::requested_nr_settings(id)->scale_percent, 50);
+  EXPECT_EQ(video::request_nr_enabled(id, false), 202);
+  EXPECT_FALSE(video::rollback_nr_settings(id, attempt, { true, 100 }));
+  EXPECT_EQ(video::requested_nr_settings(id)->scale_percent, 50);
+  video::unregister_hdr_pipeline_status(id);
 }
 
 TEST(HdrPipelineStatus, RegistersUpdatesAndRemovesPipelineState) {
@@ -180,23 +254,7 @@ TEST(HdrPipelineStatus, RegistersUpdatesAndRemovesPipelineState) {
   EXPECT_EQ(std::ranges::find(statuses, id, &video::hdr_pipeline_status_t::id), statuses.end());
 }
 
-struct EncoderTest: PlatformTestSuite, testing::WithParamInterface<video::encoder_t *> {
-  void
-  SetUp() override {
-    auto &encoder = *GetParam();
-    const auto probe_display_name = display_device::get_display_name(config::video.output_name);
-    if (!video::validate_encoder(encoder, false, std::nullopt, probe_display_name)) {
-      // Encoder failed validation,
-      // if it's software - fail, otherwise skip
-      if (encoder.name == "software") {
-        FAIL() << "Software encoder not available";
-      }
-      else {
-        GTEST_SKIP() << "Encoder not available";
-      }
-    }
-  }
-};
+struct EncoderTest: PlatformTestSuite, testing::WithParamInterface<video::encoder_t *> {};
 
 INSTANTIATE_TEST_SUITE_P(
   EncoderVariants,
@@ -219,5 +277,48 @@ INSTANTIATE_TEST_SUITE_P(
   [](const auto &info) { return std::string(info.param->name); });
 
 TEST_P(EncoderTest, ValidateEncoder) {
-  // todo:: test something besides fixture setup
+  auto &encoder = *GetParam();
+  const auto probe_display_name = display_device::get_display_name(config::video.output_name);
+  const bool available = video::validate_encoder(encoder, false, std::nullopt, probe_display_name);
+  if (!available && encoder.name != "software") {
+    GTEST_SKIP() << "Encoder not available";
+  }
+  EXPECT_TRUE(available) << "Software encoder not available";
+}
+
+TEST(HdrPipelineStatus, LiveControlsValidateAndPreserveNewerRequests) {
+  video::hdr_pipeline_status_t initial;
+  initial.nr_toggle_supported = true;
+  const auto id = video::register_hdr_pipeline_status(initial);
+  for (int scale = 20; scale <= 100; scale += 5) {
+    EXPECT_EQ(video::request_nr_enabled(id, false, scale), 202);
+  }
+  for (int scale : {0, 19, 21, 67, 101}) EXPECT_EQ(video::request_nr_enabled(id, true, scale), 400);
+  EXPECT_EQ(video::request_nr_enabled(id, true, 20, -0.1f), 400);
+  EXPECT_EQ(video::request_nr_enabled(id, true, 20, 1.1f), 400);
+  EXPECT_EQ(video::request_nr_enabled(id, true, 20, std::nullopt, true, 4), 400);
+  EXPECT_EQ(video::request_nr_enabled(id, true, 20, 0.5f, true, 2, 4, 0.75f, true), 202);
+  const auto failed = video::requested_nr_settings(id).value();
+  EXPECT_FLOAT_EQ(failed.intensity, 0.5f);
+  EXPECT_TRUE(failed.ui_correction);
+  EXPECT_EQ(failed.motion_quality, 2);
+  EXPECT_EQ(failed.style, 4);
+  EXPECT_FLOAT_EQ(failed.skin_structure_strength, 0.75f);
+  EXPECT_TRUE(failed.auto_mask);
+  EXPECT_EQ(video::request_nr_enabled(id, true, 20, 1.0f, false, 0, 5), 400);
+  EXPECT_EQ(video::request_nr_enabled(id, true, 20, 1.0f, false, 0, 0, -0.1f), 400);
+  EXPECT_EQ(video::request_nr_enabled(id, true, 20, 1.0f, false, 0, 0, 1.1f), 400);
+  video::update_hdr_pipeline_status(id, initial);
+  EXPECT_FLOAT_EQ(video::requested_nr_settings(id)->intensity, 0.5f);
+  EXPECT_TRUE(video::rollback_nr_settings(id, failed, {true, 100, 1.0f, false, 0}));
+  EXPECT_FLOAT_EQ(video::requested_nr_settings(id)->intensity, 1.0f);
+  EXPECT_EQ(video::requested_nr_settings(id)->style, 0);
+  EXPECT_FLOAT_EQ(video::requested_nr_settings(id)->skin_structure_strength, 0.0f);
+  EXPECT_FALSE(video::requested_nr_settings(id)->auto_mask);
+  EXPECT_EQ(video::request_nr_enabled(id, true, 20, 0.5f, true, 2, 4, 0.75f, true), 202);
+  // Even an identical later request must not be overwritten by an old failure.
+  EXPECT_FALSE(video::rollback_nr_settings(id, failed, {true, 100}));
+  EXPECT_EQ(video::request_nr_enabled(id, false), 202);
+  EXPECT_FLOAT_EQ(video::requested_nr_settings(id)->intensity, 0.5f);
+  video::unregister_hdr_pipeline_status(id);
 }

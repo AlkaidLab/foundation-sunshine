@@ -16,6 +16,9 @@ namespace remote_connect {
     }
     if (pairing_state.enabled) {
       request.host = pairing_state.enrollment->virtual_ip;
+      if (request.remote_port != 0) {
+        request.port = request.remote_port;
+      }
     }
 
     try {

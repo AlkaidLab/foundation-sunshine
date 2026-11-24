@@ -122,33 +122,21 @@ namespace rtsp_stream {
     std::lock_guard lock { _impl->mutex };
     _impl->prune_locked(now);
 
-    launch_ticket_t *match = nullptr;
-    if (!remote_address.empty()) {
-      for (auto &ticket : _impl->tickets) {
-        if (!ticket.session ||
-            ticket.session->rtsp_cipher ||
-            ticket.session->rtsp_peer_address != remote_address) {
-          continue;
-        }
-        if (match) {
-          return nullptr;
-        }
-        match = &ticket;
-      }
+    if (remote_address.empty()) {
+      return nullptr;
     }
 
-    if (!match) {
-      auto only_pending = static_cast<launch_ticket_t *>(nullptr);
-      for (auto &ticket : _impl->tickets) {
-        if (!ticket.session || ticket.session->rtsp_cipher) {
-          continue;
-        }
-        if (only_pending) {
-          return nullptr;
-        }
-        only_pending = &ticket;
+    launch_ticket_t *match = nullptr;
+    for (auto &ticket : _impl->tickets) {
+      if (!ticket.session ||
+          ticket.session->rtsp_cipher ||
+          ticket.session->rtsp_peer_address != remote_address) {
+        continue;
       }
-      match = only_pending;
+      if (match) {
+        return nullptr;
+      }
+      match = &ticket;
     }
 
     if (!match) {
@@ -258,6 +246,15 @@ namespace rtsp_stream {
   launch_session_manager_t::clear() {
     std::lock_guard lock { _impl->mutex };
     _impl->tickets.clear();
+  }
+
+  std::size_t
+  launch_session_manager_t::erase_client(std::string_view client_uuid) {
+    if (client_uuid.empty()) return 0;
+    std::lock_guard lock { _impl->mutex };
+    return std::erase_if(_impl->tickets, [&](const auto &ticket) {
+      return ticket.session && ticket.session->client_cert_uuid == client_uuid;
+    });
   }
 
   std::size_t

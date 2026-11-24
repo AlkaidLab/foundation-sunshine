@@ -33,6 +33,7 @@ namespace nvhttp::sessions {
     json session_obj;
     session_obj["client_name"] = session_info.client_name;
     session_obj["client_uuid"] = session_info.client_uuid;
+    stream::add_session_client_json(session_obj, session_info);
     session_obj["client_address"] = session_info.client_address;
     session_obj["state"] = session_info.state;
     session_obj["stop_reason"] = session_info.stop_reason;
@@ -50,6 +51,7 @@ namespace nvhttp::sessions {
     session_obj["enable_mic"] = session_info.enable_mic;
     session_obj["app_name"] = session_info.app_name;
     session_obj["app_id"] = session_info.app_id;
+    stream::add_session_quality_json(session_obj, session_info);
     return session_obj;
   }
 
@@ -57,7 +59,7 @@ namespace nvhttp::sessions {
   get(resp_https_t response, req_https_t request) {
     log_request(request);
 
-    SimpleWeb::CaseInsensitiveMultimap headers;
+    web::CaseInsensitiveMultimap headers;
     headers.emplace("Content-Type", "application/json");
 
     auto client_address = request->remote_endpoint().address();
@@ -71,7 +73,7 @@ namespace nvhttp::sessions {
       msg_stream << "Access denied. Only localhost requests are allowed. Client IP: " << client_address.to_string();
       response_json["status_message"] = msg_stream.str();
 
-      response->write(SimpleWeb::StatusCode::client_error_forbidden, response_json.dump(), headers);
+      response->write(web::StatusCode::forbidden, response_json.dump(), headers);
       response->close_connection_after_response = true;
       return;
     }
@@ -96,7 +98,7 @@ namespace nvhttp::sessions {
 
       BOOST_LOG(info) << "NVHTTP API: Session info requested from localhost, returned " << sessions_info.size() << " sessions";
 
-      response->write(SimpleWeb::StatusCode::success_ok, response_json.dump(), headers);
+      response->write(web::StatusCode::ok, response_json.dump(), headers);
       response->close_connection_after_response = true;
     }
     catch (std::exception &e) {
@@ -107,7 +109,7 @@ namespace nvhttp::sessions {
       error_json["status_code"] = 500;
       error_json["status_message"] = e.what();
 
-      response->write(SimpleWeb::StatusCode::server_error_internal_server_error, error_json.dump(), headers);
+      response->write(web::StatusCode::internal_server_error, error_json.dump(), headers);
       response->close_connection_after_response = true;
     }
   }

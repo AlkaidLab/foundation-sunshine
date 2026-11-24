@@ -1,0 +1,50 @@
+{
+  "schema": 1,
+  "items": [
+    {
+      "id": "2026-11-driver-update",
+      "severity": "warn",
+      "title": {
+        "zh": "建议更新显卡驱动",
+        "en": "Update your graphics driver"
+      },
+      "body": {
+        "zh": "旧版驱动在某些显卡上会导致串流花屏，请更新到最新版本。",
+        "en": "Older drivers can cause corrupted video on some GPUs. Please update to the latest version."
+      },
+      "url": "https://www.alkaidlab.com/docs/graphics-driver",
+      "starts": "2026-11-01T00:00:00Z",
+      "ends": "2026-12-01T00:00:00Z",
+      "minVersion": "2026.900.0",
+      "pinned": true
+    },
+    {
+      "id": "release-cadence",
+      "severity": "info",
+      "title": {
+        "zh": "新版本发布节奏",
+        "zh_TW": "新版本發佈節奏",
+        "en": "New release schedule"
+      },
+      "body": {
+        "en": "Stable builds now ship every two weeks.\nSee the website for details."
+      },
+      "url": "https://www.alkaidlab.com/",
+      "starts": "2026-10-20"
+    },
+    {
+      "id": "pairing-service-outage",
+      "severity": "critical",
+      "title": {
+        "zh": "配对服务临时故障",
+        "en": "Pairing service outage"
+      },
+      "body": {
+        "en": "New pairings may fail until the service is restored."
+      },
+      "starts": "2026-11-01T08:00:00+08:00",
+      "ends": "2026-11-02T00:00:00+08:00",
+      "maxVersion": "v2026.1100.0"
+    }
+  ]
+}

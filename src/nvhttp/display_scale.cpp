@@ -1,19 +1,20 @@
 #include "display_scale.h"
 
+#include <optional>
 #include <sstream>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
-#include <Simple-Web-Server/server_http.hpp>
+#include "src/http/server.h"
 
-#include "url_utils.h"
 #include "src/logging.h"
 
 #ifdef _WIN32
-#include "src/display_device/display_device.h"
-#include "src/platform/windows/display_device/windows_utils.h"
+  #include "src/display_device/display_device.h"
+  #include "src/platform/windows/display_device/windows_utils.h"
+  #include "src/stream.h"
 #endif
 
 using json = nlohmann::json;
@@ -32,6 +33,39 @@ namespace nvhttp::display_scale {
     }
 
 #ifdef _WIN32
+    void
+    write_current_error(resp_https_t response, json &response_json,
+      const web::CaseInsensitiveMultimap &headers, const char *code, const char *message) {
+      response_json["target"] = "current";
+      response_json["status_code"] = 409;
+      response_json["status_message"] = message;
+      response_json["success"] = false;
+      response_json["error_code"] = code;
+      response->write(web::StatusCode::conflict, response_json.dump(), headers);
+    }
+
+    // Resolves the display captured by the caller's video stream, or writes a 409.
+    boost::optional<display_device::w_utils::display_scale_info_t>
+    resolve_current_capture(resp_https_t response, const req_https_t &request, json &response_json,
+      const web::CaseInsensitiveMultimap &headers) {
+      response_json["target"] = "current";
+      const auto selected = stream::session::current_capture_for_client(nvhttp::get_client_cert_uuid_from_request(request));
+      if (!selected.found) {
+        write_current_error(response, response_json, headers, "no_active_stream", "No active video stream for this client");
+        return boost::none;
+      }
+      const auto display_name = selected.target ? selected.target->display_name() : std::string {};
+      boost::optional<display_device::w_utils::display_scale_info_t> scale_info;
+      if (!display_name.empty()) {
+        scale_info = display_device::w_utils::get_display_scale_info(display_name, {});
+      }
+      if (!scale_info || scale_info->device_id.empty()) {
+        write_current_error(response, response_json, headers, "display_target_unavailable", "Captured display is unavailable");
+        return boost::none;
+      }
+      return scale_info;
+    }
+
     void
     add_fields(json &node, const display_device::w_utils::display_scale_info_t &scale_info) {
       node["is_primary"] = scale_info.is_primary;
@@ -91,27 +125,27 @@ namespace nvhttp::display_scale {
       }
     }
 
-    SimpleWeb::StatusCode
+    web::StatusCode
     http_status(display_device::w_utils::display_scale_error_e error) {
       switch (error) {
         case display_device::w_utils::display_scale_error_e::display_not_found:
-          return SimpleWeb::StatusCode::client_error_not_found;
+          return web::StatusCode::not_found;
         case display_device::w_utils::display_scale_error_e::unsupported_scale:
-          return SimpleWeb::StatusCode::client_error_bad_request;
+          return web::StatusCode::bad_request;
         case display_device::w_utils::display_scale_error_e::permission_denied:
-          return SimpleWeb::StatusCode::client_error_forbidden;
+          return web::StatusCode::forbidden;
         case display_device::w_utils::display_scale_error_e::apply_failed:
-          return SimpleWeb::StatusCode::server_error_internal_server_error;
+          return web::StatusCode::internal_server_error;
         case display_device::w_utils::display_scale_error_e::none:
         default:
-          return SimpleWeb::StatusCode::success_ok;
+          return web::StatusCode::ok;
       }
     }
 #endif
 
-    SimpleWeb::CaseInsensitiveMultimap
+    web::CaseInsensitiveMultimap
     json_headers() {
-      SimpleWeb::CaseInsensitiveMultimap headers;
+      web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "application/json");
       return headers;
     }
@@ -121,12 +155,14 @@ namespace nvhttp::display_scale {
 #ifdef _WIN32
   json
   build_windows_displays(const std::vector<std::string> &display_names) {
+    display_device::device_info_map_t available_devices;
     std::unordered_map<std::string, std::pair<std::string, std::string>> display_info_map;
     try {
       for (const auto &device : display_device::enum_available_devices()) {
         const auto &device_id = device.first;
-        if (std::string gdi_name = display_device::get_display_name(device_id); !gdi_name.empty()) {
-          display_info_map[gdi_name] = { device_id, display_device::get_display_friendly_name(device_id) };
+        available_devices.emplace(device_id, device.second);
+        if (!device.second.display_name.empty()) {
+          display_info_map[device.second.display_name] = { device_id, device.second.friendly_name };
         }
       }
     }
@@ -176,6 +212,19 @@ namespace nvhttp::display_scale {
       displays_array.push_back(std::move(display_node));
     }
 
+    for (const auto &[device_id, device] : available_devices) {
+      if (device.device_state != display_device::device_state_e::inactive) {
+        continue;
+      }
+
+      json display_node { { "index", static_cast<int>(displays_array.size()) },
+        { "display_name", device.display_name },
+        { "device_id", device_id },
+        { "friendly_name", device.friendly_name } };
+      add_unsupported_fields(display_node);
+      displays_array.push_back(std::move(display_node));
+    }
+
     return displays_array;
   }
 #endif
@@ -195,8 +244,28 @@ namespace nvhttp::display_scale {
       const auto args = request->parse_query_string();
       const auto display_name_it = args.find("display_name");
       const auto device_id_it = args.find("device_id");
-      const std::string display_name = display_name_it != args.end() ? url_utils::decode(display_name_it->second) : std::string {};
-      const std::string device_id = device_id_it != args.end() ? url_utils::decode(device_id_it->second) : std::string {};
+      // parse_query_string() already percent-decodes query values.
+      const std::string display_name = display_name_it != args.end() ? display_name_it->second : std::string {};
+      const std::string device_id = device_id_it != args.end() ? device_id_it->second : std::string {};
+
+      const auto target_it = args.find("target");
+      if (target_it != args.end()) {
+        if (target_it->second != "current") {
+          response_json["status_code"] = 400;
+          response_json["status_message"] = "Invalid target";
+          response_json["success"] = false;
+          response_json["error_code"] = "invalid_request";
+          response->write(web::StatusCode::bad_request, response_json.dump(), headers);
+          return;
+        }
+        const auto scale_info = resolve_current_capture(response, request, response_json, headers);
+        if (scale_info) {
+          response_json.update(to_json(*scale_info));
+          response_json["success"] = true;
+          response->write(web::StatusCode::ok, response_json.dump(), headers);
+        }
+        return;
+      }
 
       const auto scale_info = display_device::w_utils::get_display_scale_info(display_name, device_id);
       if (!scale_info) {
@@ -204,13 +273,13 @@ namespace nvhttp::display_scale {
         response_json["status_message"] = "Display not found";
         response_json["success"] = false;
         response_json["error_code"] = "display_not_found";
-        response->write(SimpleWeb::StatusCode::client_error_not_found, response_json.dump(), headers);
+        response->write(web::StatusCode::not_found, response_json.dump(), headers);
         return;
       }
 
       response_json.update(to_json(*scale_info));
       response_json["success"] = true;
-      response->write(SimpleWeb::StatusCode::success_ok, response_json.dump(), headers);
+      response->write(web::StatusCode::ok, response_json.dump(), headers);
     }
     catch (const std::exception &e) {
       BOOST_LOG(error) << "Error getting display scale options: " << e.what();
@@ -218,7 +287,7 @@ namespace nvhttp::display_scale {
       response_json["status_message"] = "Internal server error: " + std::string(e.what());
       response_json["success"] = false;
       response_json["error_code"] = "apply_failed";
-      response->write(SimpleWeb::StatusCode::server_error_internal_server_error, response_json.dump(), headers);
+      response->write(web::StatusCode::internal_server_error, response_json.dump(), headers);
     }
 #else
     response_json["status_code"] = 501;
@@ -226,7 +295,7 @@ namespace nvhttp::display_scale {
     response_json["success"] = false;
     response_json["error_code"] = "unsupported_platform";
     add_unsupported_scale_options_fields(response_json);
-    response->write(SimpleWeb::StatusCode::server_error_not_implemented, response_json.dump(), headers);
+    response->write(web::StatusCode::not_implemented, response_json.dump(), headers);
 #endif
   }
 
@@ -251,7 +320,7 @@ namespace nvhttp::display_scale {
         response_json["status_message"] = "Missing or invalid scale_percent";
         response_json["success"] = false;
         response_json["error_code"] = "invalid_request";
-        response->write(SimpleWeb::StatusCode::client_error_bad_request, response_json.dump(), headers);
+        response->write(web::StatusCode::bad_request, response_json.dump(), headers);
         return;
       }
 
@@ -259,7 +328,28 @@ namespace nvhttp::display_scale {
       const std::string device_id = body.contains("device_id") && body["device_id"].is_string() ? body["device_id"].get<std::string>() : std::string {};
       const int scale_percent = body["scale_percent"].get<int>();
 
-      const auto set_result = display_device::w_utils::set_display_scale(display_name, device_id, scale_percent);
+      std::optional<display_device::w_utils::set_display_scale_result_t> applied;
+      if (body.contains("target")) {
+        if (!body["target"].is_string() || body["target"].get<std::string>() != "current") {
+          response_json["status_code"] = 400;
+          response_json["status_message"] = "Invalid target";
+          response_json["success"] = false;
+          response_json["error_code"] = "invalid_request";
+          response->write(web::StatusCode::bad_request, response_json.dump(), headers);
+          return;
+        }
+        const auto scale_info = resolve_current_capture(response, request, response_json, headers);
+        if (!scale_info) {
+          return;
+        }
+        // Set by device ID only so a reused GDI name cannot redirect the change.
+        applied = display_device::w_utils::set_display_scale({}, scale_info->device_id, scale_percent);
+      }
+      else {
+        applied = display_device::w_utils::set_display_scale(display_name, device_id, scale_percent);
+      }
+
+      const auto &set_result = *applied;
       response_json["success"] = set_result.success;
       response_json["display_name"] = set_result.display_name;
       response_json["device_id"] = set_result.device_id;
@@ -271,7 +361,7 @@ namespace nvhttp::display_scale {
 
       if (set_result.success) {
         response_json["status_message"] = set_result.message.empty() ? "OK" : set_result.message;
-        response->write(SimpleWeb::StatusCode::success_ok, response_json.dump(), headers);
+        response->write(web::StatusCode::ok, response_json.dump(), headers);
         return;
       }
 
@@ -301,7 +391,7 @@ namespace nvhttp::display_scale {
       response_json["status_message"] = "Invalid JSON body: " + std::string(e.what());
       response_json["success"] = false;
       response_json["error_code"] = "invalid_request";
-      response->write(SimpleWeb::StatusCode::client_error_bad_request, response_json.dump(), headers);
+      response->write(web::StatusCode::bad_request, response_json.dump(), headers);
     }
     catch (const std::exception &e) {
       BOOST_LOG(error) << "Error setting display scale: " << e.what();
@@ -309,14 +399,14 @@ namespace nvhttp::display_scale {
       response_json["status_message"] = "Internal server error: " + std::string(e.what());
       response_json["success"] = false;
       response_json["error_code"] = "apply_failed";
-      response->write(SimpleWeb::StatusCode::server_error_internal_server_error, response_json.dump(), headers);
+      response->write(web::StatusCode::internal_server_error, response_json.dump(), headers);
     }
 #else
     response_json["status_code"] = 501;
     response_json["status_message"] = "Display scale is not supported on this platform";
     response_json["success"] = false;
     response_json["error_code"] = "unsupported_platform";
-    response->write(SimpleWeb::StatusCode::server_error_not_implemented, response_json.dump(), headers);
+    response->write(web::StatusCode::not_implemented, response_json.dump(), headers);
 #endif
   }
 

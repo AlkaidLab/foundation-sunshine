@@ -56,10 +56,13 @@ namespace nvprefs {
     restore_global_profile_to_undo(const undo_data_t &undo_data);
 
     bool
-    check_and_modify_global_profile(std::optional<undo_data_t> &undo_data);
+    check_and_modify_global_profile(std::optional<undo_data_t> &undo_data, bool opengl_vulkan_on_dxgi, bool force_vsync = false);
 
     bool
-    check_and_modify_application_profile(bool &modified);
+    verify_global_vsync();
+
+    bool
+    check_and_modify_application_profile(bool &modified, bool sunshine_high_power_mode);
 
   private:
     NvDRSSessionHandle session_handle = 0;

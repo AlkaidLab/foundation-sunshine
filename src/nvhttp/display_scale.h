@@ -10,8 +10,8 @@
 
 namespace nvhttp::display_scale {
 
-  using resp_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SunshineHTTPS>::Response>;
-  using req_https_t = std::shared_ptr<typename SimpleWeb::ServerBase<SunshineHTTPS>::Request>;
+  using resp_https_t = std::shared_ptr<typename web::ServerBase<SunshineHTTPS>::Response>;
+  using req_https_t = std::shared_ptr<typename web::ServerBase<SunshineHTTPS>::Request>;
 
 #ifdef _WIN32
   nlohmann::json

@@ -38,7 +38,8 @@ namespace nvenc {
     create_encoder(const nvenc_config &config,
       const video::config_t &client_config,
       const video::sunshine_colorspace_t &sunshine_colorspace,
-      platf::pix_fmt_e sunshine_buffer_format) override;
+      platf::pix_fmt_e sunshine_buffer_format,
+      bool is_probe) override;
 
     void
     destroy_encoder() override;
@@ -49,7 +50,7 @@ namespace nvenc {
     bool
     invalidate_ref_frames(uint64_t first_frame, uint64_t last_frame) override;
 
-    void
+    bool
     set_bitrate(int bitrate_kbps) override;
 
     void
@@ -119,6 +120,7 @@ namespace nvenc {
     NV_ENC_REGISTERED_PTR registered_input_buffer = nullptr;  ///< Platform-specific input surface registered with `NvEncRegisterResource()`.
                                                               ///< Should be set in `create_and_register_input_buffer()`.
     void *async_event_handle = nullptr;  ///< (optional) Platform-specific handle of event object event.
+    bool async_event_registered = false;  ///< `async_event_handle` is registered with the encoder session (only then it can be unregistered).
                                          ///< Can be set in constructor or `init_library()`, must override `wait_for_async_event()`.
 
   private:

@@ -44,9 +44,15 @@ namespace amf {
     encode_frame(uint64_t frame_index, bool force_idr) override;
 
     bool
+    has_pending_output() const override;
+
+    amf_encoded_frame
+    receive_frame() override;
+
+    bool
     invalidate_ref_frames(uint64_t first_frame, uint64_t last_frame) override;
 
-    void
+    bool
     set_bitrate(int bitrate_kbps) override;
 
     void
@@ -59,6 +65,9 @@ namespace amf {
     get_input_texture() override;
 
   private:
+    amf_encoded_frame
+    make_encoded_frame(const ::amf::AMFDataPtr &output_data);
+
     bool
     init_amf_library();
 
@@ -141,7 +150,7 @@ namespace amf {
     std::optional<video::hdr_bitstream::codec_e> dynamic_metadata_codec;
     video::hdr_metadata::dynamic_metadata_builder_t dynamic_metadata;
     platf::hdr_frame_luminance_stats_t luminance_stats {};
-    std::optional<uint16_t> hdr_display_luminance;
+    std::optional<uint16_t> target_display_luminance;
     std::unordered_map<uint64_t, std::vector<uint8_t>> staged_metadata_units;
     static constexpr size_t MAX_TRACKED_FRAMES = 256;
 
@@ -153,7 +162,6 @@ namespace amf {
     int hwsurfaces_in_queue = 0;
     static constexpr int HWSURFACES_IN_QUEUE_DEFAULT = 16;
     int hwsurfaces_in_queue_max = HWSURFACES_IN_QUEUE_DEFAULT;
-    bool user_configured_rate_control = false;
     bool avcodec_compat_profile = false;
     amf_avcodec_scheduler avcodec_scheduler;
 

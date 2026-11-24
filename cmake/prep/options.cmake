@@ -13,6 +13,7 @@ option(BUILD_TRAY_TESTS "Build the focused tray protocol tests" OFF)
 option(NPM_OFFLINE "Use offline npm packages. You must ensure packages are in your npm cache." OFF)
 
 option(BUILD_WERROR "Enable -Werror flag." OFF)
+option(SUNSHINE_PRECOMPILED_HEADERS "Precompile the heavy common headers for targets with many sources." OFF)
 
 # if this option is set, the build will exit after configuring special package configuration files
 option(SUNSHINE_CONFIGURE_ONLY "Configure special files only, then exit." OFF)
@@ -21,7 +22,6 @@ option(SUNSHINE_ENABLE_TRAY "Enable system tray icon. This option will be ignore
 option(SUNSHINE_REQUIRE_TRAY "Require system tray icon. Fail the build if tray requirements are not met." ON)
 option(SUNSHINE_ENABLE_LEGACY_TRAY "Use the in-process C++ tray instead of the Windows GUI user agent." OFF)
 
-option(SUNSHINE_SYSTEM_NLOHMANN_JSON "Use system installation of nlohmann_json rather than the submodule." OFF)
 option(SUNSHINE_SYSTEM_WAYLAND_PROTOCOLS "Use system installation of wayland-protocols rather than the submodule." OFF)
 
 if(APPLE)

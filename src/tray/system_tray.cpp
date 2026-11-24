@@ -44,7 +44,7 @@
   #include "tray/src/tray.h"
 
   // local includes
-  #include "src/confighttp.h"
+#include "src/confighttp.h"
   #include "src/display_device/session.h"
   #include "src/display_device/vdd_utils.h"
   #include "src/file_handler.h"
@@ -400,7 +400,7 @@ namespace system_tray {
 
   auto tray_restart_cb = [](struct tray_menu *item) {
     BOOST_LOG(info) << "Restarting from system tray"sv;
-    platf::restart();
+    platf::restart("tray");
   };
 
   auto terminate_gui_processes = []() {
@@ -492,7 +492,7 @@ namespace system_tray {
   // 安全验证：检查文件路径是否安全
   auto is_safe_config_path = [](const std::string &path) -> bool {
     try {
-      std::filesystem::path p(path);
+      const auto p = file_handler::path_from_utf8(path);
 
       // 检查文件是否存在
       if (!std::filesystem::exists(p)) {
@@ -712,7 +712,7 @@ namespace system_tray {
         if (!is_safe_config_content(config_content)) {
           BOOST_LOG(error) << "[tray_import_config] Config import rejected: unsafe content: " << file_path;
           std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_TITLE));
-          std::wstring message = L"配置文件内容无效、太大或格式错误。\n最大文件大小：1MB";
+          std::wstring message = L"配置文件内容无效、太大或格式错误。\n最大文件大小：1 MB";
           MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
           return;
         }
@@ -746,7 +746,9 @@ namespace system_tray {
 
         // 原子性替换：重命名临时文件为实际配置文件
         try {
-          std::filesystem::rename(temp_path, config::sunshine.config_file);
+          std::filesystem::rename(
+            file_handler::path_from_utf8(temp_path),
+            file_handler::path_from_utf8(config::sunshine.config_file));
           BOOST_LOG(info) << "[tray_import_config] Configuration imported successfully from: " << file_path;
           
           // 询问用户是否重启Sunshine以应用新配置
@@ -757,7 +759,7 @@ namespace system_tray {
           if (result == IDYES) {
             BOOST_LOG(info) << "[tray_import_config] User chose to restart Sunshine"sv;
             // 重启Sunshine
-            platf::restart();
+            platf::restart("import");
           }
           else {
             BOOST_LOG(info) << "[tray_import_config] User chose not to restart Sunshine"sv;
@@ -766,7 +768,7 @@ namespace system_tray {
         catch (const std::exception &e) {
           BOOST_LOG(error) << "[tray_import_config] Failed to rename temp file: " << e.what();
           // 清理临时文件
-          std::filesystem::remove(temp_path);
+          std::filesystem::remove(file_handler::path_from_utf8(temp_path));
           std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_TITLE));
           std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_IMPORT_ERROR_WRITE));
           MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
@@ -930,7 +932,7 @@ namespace system_tray {
 
       // 安全验证：检查输出文件路径（基本检查）
       try {
-        std::filesystem::path p(file_path);
+        const auto p = file_handler::path_from_utf8(file_path);
         
         // 检查文件扩展名
         if (p.extension() != ".conf") {
@@ -983,7 +985,9 @@ namespace system_tray {
 
         // 原子性替换
         try {
-          std::filesystem::rename(temp_path, file_path);
+          std::filesystem::rename(
+            file_handler::path_from_utf8(temp_path),
+            file_handler::path_from_utf8(file_path));
           BOOST_LOG(info) << "[tray_export_config] Configuration exported successfully to: " << file_path;
           std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_SUCCESS_TITLE));
           std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_SUCCESS_MSG));
@@ -992,7 +996,7 @@ namespace system_tray {
         catch (const std::exception &e) {
           BOOST_LOG(error) << "[tray_export_config] Failed to rename temp export file: " << e.what();
           // 清理临时文件
-          std::filesystem::remove(temp_path);
+          std::filesystem::remove(file_handler::path_from_utf8(temp_path));
           std::wstring title = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_TITLE));
           std::wstring message = system_tray_i18n::utf8_to_wstring(system_tray_i18n::get_localized_string(system_tray_i18n::KEY_EXPORT_ERROR_WRITE));
           MessageBoxW(NULL, message.c_str(), title.c_str(), MB_OK | MB_ICONERROR);
@@ -1058,7 +1062,7 @@ namespace system_tray {
         }
 
         // 创建空的配置文件（重置为默认值）
-        std::ofstream config_file(config::sunshine.config_file);
+        std::ofstream config_file(file_handler::path_from_utf8(config::sunshine.config_file));
         if (config_file.is_open()) {
           config_file.close();
           BOOST_LOG(info) << "Configuration reset successfully";

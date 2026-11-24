@@ -6,6 +6,7 @@
 #include "amf_d3d11.h"
 
 #include "amf_avcodec_compat.h"
+#include "amf_runtime_pin.h"
 
 #include <chrono>
 #include <thread>
@@ -39,6 +40,7 @@ namespace amf {
   amf_d3d11::init_amf_library() {
     if (factory) return true;
 
+    pin_runtime();
     amf_dll = LoadLibraryA(AMF_DLL_NAMEA);
     if (!amf_dll) {
       BOOST_LOG(error) << "AMF: failed to load " << AMF_DLL_NAMEA;
@@ -133,8 +135,13 @@ namespace amf {
     auto bitrate = static_cast<int64_t>(client_config.bitrate) * 1000;
     auto framerate = AMFConstructRate(client_config.framerate, 1);
     avcodec_compat_profile = config.avcodec_compat;
-    user_configured_rate_control = config.rc_mode.has_value();
     hwsurfaces_in_queue_max = HWSURFACES_IN_QUEUE_DEFAULT;
+    // Rate control is always pinned — explicitly chosen amd_rc, otherwise CBR —
+    // through amf_avcodec_compat::rate_control_*() plus the peak/VBV properties
+    // set below, identically on the standalone and avcodec-compatible paths.
+    // Leaving the AMF driver default (Latency Constrained VBR) in charge lets
+    // short-term bursts exceed the client's bitrate target by a wide margin:
+    // the encoder must never run without a hard constraint.
 
     auto configure_multi_hw_instance = [&](const wchar_t *multi_hw_property,
                                            const wchar_t *sav_property,
@@ -260,7 +267,6 @@ namespace amf {
         return false;
       }
       hwsurfaces_in_queue_max = compat.hwsurfaces_in_queue_max;
-      user_configured_rate_control = compat.manages_rate_control;
 
       if (video_format == 0) {
         configure_multi_hw_instance(
@@ -291,12 +297,12 @@ namespace amf {
       // H.264
       if (config.usage) encoder->SetProperty(AMF_VIDEO_ENCODER_USAGE, (amf_int64) *config.usage);
       if (config.quality_preset) encoder->SetProperty(AMF_VIDEO_ENCODER_QUALITY_PRESET, (amf_int64) *config.quality_preset);
-      if (config.rc_mode) encoder->SetProperty(AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD, (amf_int64) *config.rc_mode);
+      encoder->SetProperty(AMF_VIDEO_ENCODER_RATE_CONTROL_METHOD,
+        (amf_int64) amf_avcodec_compat::rate_control_h264(config, client_config));
       encoder->SetProperty(AMF_VIDEO_ENCODER_TARGET_BITRATE, bitrate);
-      if (user_configured_rate_control) {
-        encoder->SetProperty(AMF_VIDEO_ENCODER_PEAK_BITRATE, bitrate);
-        encoder->SetProperty(AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE, bitrate);
-      }
+      encoder->SetProperty(AMF_VIDEO_ENCODER_PEAK_BITRATE, bitrate);
+      encoder->SetProperty(AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE,
+        amf_avcodec_compat::vbv_buffer_size(client_config.bitrate, client_config));
       encoder->SetProperty(AMF_VIDEO_ENCODER_FRAMERATE, framerate);
       if (config.enforce_hrd) encoder->SetProperty(AMF_VIDEO_ENCODER_ENFORCE_HRD, !!(*config.enforce_hrd));
       encoder->SetProperty(AMF_VIDEO_ENCODER_IDR_PERIOD, (amf_int64) 0);
@@ -376,16 +382,22 @@ namespace amf {
       // HEVC
       if (config.usage) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_USAGE, (amf_int64) *config.usage);
       if (config.quality_preset) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_QUALITY_PRESET, (amf_int64) *config.quality_preset);
-      if (config.rc_mode) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_RATE_CONTROL_METHOD, (amf_int64) *config.rc_mode);
+      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_RATE_CONTROL_METHOD,
+        (amf_int64) amf_avcodec_compat::rate_control_hevc(config, client_config));
       encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_TARGET_BITRATE, bitrate);
-      if (user_configured_rate_control) {
-        encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_PEAK_BITRATE, bitrate);
-        encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_VBV_BUFFER_SIZE, bitrate);
-      }
+      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_PEAK_BITRATE, bitrate);
+      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_VBV_BUFFER_SIZE,
+        amf_avcodec_compat::vbv_buffer_size(client_config.bitrate, client_config));
       encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_FRAMERATE, framerate);
       if (config.enforce_hrd) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_ENFORCE_HRD, !!(*config.enforce_hrd));
       encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_NUM_GOPS_PER_IDR, (amf_int64) 1);
-      encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_GOP_SIZE, (amf_int64) 60);
+      // Like FFmpeg's -g=-1, leave the driver GOP untouched by default.
+      if (config.hevc_gop_size >= 0) {
+        const auto gop_result = encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_GOP_SIZE, (amf_int64) config.hevc_gop_size);
+        if (gop_result != AMF_OK) {
+          BOOST_LOG(warning) << "AMF: HEVC GOP override rejected, error: " << gop_result;
+        }
+      }
       encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_HEADER_INSERTION_MODE, (amf_int64) AMF_VIDEO_ENCODER_HEVC_HEADER_INSERTION_MODE_IDR_ALIGNED);
       if (config.preanalysis) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_PRE_ANALYSIS_ENABLE, !!(*config.preanalysis));
       if (config.vbaq) encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_ENABLE_VBAQ, !!(*config.vbaq));
@@ -448,12 +460,12 @@ namespace amf {
       // AV1
       if (config.usage) encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_USAGE, (amf_int64) *config.usage);
       if (config.quality_preset) encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_QUALITY_PRESET, (amf_int64) *config.quality_preset);
-      if (config.rc_mode) encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_RATE_CONTROL_METHOD, (amf_int64) *config.rc_mode);
+      encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_RATE_CONTROL_METHOD,
+        (amf_int64) amf_avcodec_compat::rate_control_av1(config, client_config));
       encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_TARGET_BITRATE, bitrate);
-      if (user_configured_rate_control) {
-        encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_PEAK_BITRATE, bitrate);
-        encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE, bitrate);
-      }
+      encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_PEAK_BITRATE, bitrate);
+      encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE,
+        amf_avcodec_compat::vbv_buffer_size(client_config.bitrate, client_config));
       encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_FRAMERATE, framerate);
       if (config.enforce_hrd) encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_ENFORCE_HRD, !!(*config.enforce_hrd));
       encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_ALIGNMENT_MODE, (amf_int64) AMF_VIDEO_ENCODER_AV1_ALIGNMENT_MODE_NO_RESTRICTIONS);
@@ -757,6 +769,17 @@ namespace amf {
     if (res != AMF_OK) {
       BOOST_LOG(error) << "AMF: encoder Init failed after fallbacks, error: " << res;
       return false;
+    }
+
+    if (video_format == 1) {
+      amf_int64 effective_gop = 0;
+      if (encoder->GetProperty(AMF_VIDEO_ENCODER_HEVC_GOP_SIZE, &effective_gop) == AMF_OK) {
+        BOOST_LOG(info) << "AMF: HEVC GOP " << effective_gop << " frames (requested " << config.hevc_gop_size
+                        << "; -1=driver default, 0=on-demand refresh)";
+      }
+      else {
+        BOOST_LOG(warning) << "AMF: HEVC GOP could not be read back";
+      }
     }
 
     // Derive runtime watchdog threshold from framerate so the fatal-error
@@ -1182,12 +1205,60 @@ namespace amf {
       --hwsurfaces_in_queue;
     }
     }
-    consecutive_empty_outputs = 0;
+    return make_encoded_frame(output_data);
+  }
 
-    auto output_pts = output_data->GetPts();
-    if (output_pts >= 0) {
-      result.frame_index = static_cast<uint64_t>(output_pts);
+  bool
+  amf_d3d11::has_pending_output() const {
+    if (!encoder) return false;
+    return avcodec_compat_profile ? avcodec_scheduler.has_pending_output() :
+                                    !pending_outputs.empty() || hwsurfaces_in_queue > 0;
+  }
+
+  amf_encoded_frame
+  amf_d3d11::receive_frame() {
+    amf_encoded_frame result;
+    if (!has_pending_output()) return result;
+
+    ::amf::AMFDataPtr output_data;
+    AMF_RESULT res = AMF_OK;
+    if (avcodec_compat_profile) {
+      res = avcodec_scheduler.receive_output(encoder, output_data);
     }
+    else if (!pending_outputs.empty()) {
+      output_data = pending_outputs.front();
+      pending_outputs.pop_front();
+      // These outputs were already removed from hwsurfaces_in_queue when collected.
+    }
+    else {
+      res = encoder->QueryOutput(&output_data);
+      if (output_data) --hwsurfaces_in_queue;
+    }
+
+    if (res != AMF_OK && res != AMF_REPEAT && res != AMF_NEED_MORE_INPUT) {
+      BOOST_LOG(error) << "AMF: output collection failed, error: " << res;
+      result.fatal = true;
+      return result;
+    }
+    if (!output_data) {
+      // Idle polling must not consume the submission-based stall watchdog budget.
+      if (device && device->GetDeviceRemovedReason() != S_OK) result.fatal = true;
+      return result;
+    }
+    return make_encoded_frame(output_data);
+  }
+
+  amf_encoded_frame
+  amf_d3d11::make_encoded_frame(const ::amf::AMFDataPtr &output_data) {
+    amf_encoded_frame result;
+    const auto output_pts = output_data->GetPts();
+    if (output_pts < 0) {
+      BOOST_LOG(error) << "AMF: output has no input frame identity";
+      result.fatal = true;
+      return result;
+    }
+    result.frame_index = static_cast<uint64_t>(output_pts);
+    consecutive_empty_outputs = 0;
     auto rfi_flag = frame_rfi_flags.find(result.frame_index);
     if (rfi_flag != frame_rfi_flags.end()) {
       result.after_ref_frame_invalidation = rfi_flag->second;
@@ -1201,24 +1272,26 @@ namespace amf {
     ::amf::AMFBufferPtr buffer(output_data);
     if (!buffer) {
       BOOST_LOG(error) << "AMF: output is not a buffer";
+      result.fatal = true;
       return result;
     }
 
-    auto data_ptr = static_cast<uint8_t *>(buffer->GetNative());
-    auto data_size = buffer->GetSize();
-    result.data.assign(data_ptr, data_ptr + data_size);
+    const std::span<const uint8_t> bitstream { static_cast<const uint8_t *>(buffer->GetNative()), buffer->GetSize() };
 
     // Splice this frame's dynamic HDR metadata into the finished bitstream. A frame
     // whose units cannot be placed (a header-only access unit, or an AV1 temporal
     // unit that cannot be walked) is sent unchanged rather than dropped: losing a
     // frame is worse than a frame without dynamic metadata.
     auto staged = staged_metadata_units.find(result.frame_index);
-    if (staged != staged_metadata_units.end()) {
-      if (dynamic_metadata_codec &&
-          !video::hdr_bitstream::insert(*dynamic_metadata_codec, staged->second, result.data)) {
+    if (staged != staged_metadata_units.end() && dynamic_metadata_codec) {
+      if (!video::hdr_bitstream::copy_with_metadata(*dynamic_metadata_codec, bitstream, staged->second, result.data)) {
         BOOST_LOG(debug) << "AMF: no insertion point for dynamic HDR metadata in frame "
                          << result.frame_index << ", sending it without";
       }
+    } else {
+      result.data.assign(bitstream.begin(), bitstream.end());
+    }
+    if (staged != staged_metadata_units.end()) {
       staged_metadata_units.erase(staged);
     }
     while (staged_metadata_units.size() > MAX_TRACKED_FRAMES) {
@@ -1250,7 +1323,7 @@ namespace amf {
                                    (video_format == 1) ? AMF_VIDEO_ENCODER_HEVC_STATISTIC_AVERAGE_QP :
                                                          AMF_VIDEO_ENCODER_AV1_STATISTIC_AVERAGE_Q_INDEX;
       if (output_data->GetProperty(avg_qp_prop, &avg_qp) == AMF_OK) {
-        BOOST_LOG(debug) << "AMF: frame " << frame_index << " avg_qp=" << avg_qp << " size=" << data_size;
+        BOOST_LOG(debug) << "AMF: frame " << result.frame_index << " avg_qp=" << avg_qp << " size=" << bitstream.size();
       }
     }
     if (psnr_enabled) {
@@ -1259,7 +1332,7 @@ namespace amf {
                                  (video_format == 1) ? AMF_VIDEO_ENCODER_HEVC_STATISTIC_PSNR_Y :
                                                        AMF_VIDEO_ENCODER_AV1_STATISTIC_PSNR_Y;
       if (output_data->GetProperty(psnr_prop, &psnr_y) == AMF_OK) {
-        BOOST_LOG(debug) << "AMF: frame " << frame_index << " PSNR_Y=" << psnr_y;
+        BOOST_LOG(debug) << "AMF: frame " << result.frame_index << " PSNR_Y=" << psnr_y;
       }
     }
     if (ssim_enabled) {
@@ -1268,7 +1341,7 @@ namespace amf {
                                  (video_format == 1) ? AMF_VIDEO_ENCODER_HEVC_STATISTIC_SSIM_Y :
                                                        AMF_VIDEO_ENCODER_AV1_STATISTIC_SSIM_Y;
       if (output_data->GetProperty(ssim_prop, &ssim_y) == AMF_OK) {
-        BOOST_LOG(debug) << "AMF: frame " << frame_index << " SSIM_Y=" << ssim_y;
+        BOOST_LOG(debug) << "AMF: frame " << result.frame_index << " SSIM_Y=" << ssim_y;
       }
     }
 
@@ -1312,56 +1385,104 @@ namespace amf {
     return true;
   }
 
-  void
+  // Dynamic bitrate update. Returns true only when the complete budget —
+  // target and peak, plus VBV where the codec accepts it at runtime — was
+  // accepted by the driver. false means the update never wrote anything
+  // (snapshot failure) or was rolled back to the snapshot; the sole residual
+  // case is a rollback write itself being rejected, which can leave a mixed
+  // budget behind — the caller keeps its previous allowance either way, but a
+  // session in that state should be recreated rather than re-driven.
+  bool
   amf_d3d11::set_bitrate(int bitrate_kbps) {
-    if (!encoder) return;
+    if (!encoder || bitrate_kbps <= 0) return false;
 
     auto bitrate = static_cast<int64_t>(bitrate_kbps) * 1000;
-    auto vbv_size = avcodec_compat_profile ? amf_avcodec_compat::vbv_buffer_size(bitrate_kbps, current_config) : bitrate;
-    AMF_RESULT res;
 
-    if (video_format == 0) {
-      res = encoder->SetProperty(AMF_VIDEO_ENCODER_TARGET_BITRATE, bitrate);
-      if (user_configured_rate_control) {
-        encoder->SetProperty(AMF_VIDEO_ENCODER_PEAK_BITRATE, bitrate);
-        encoder->SetProperty(AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE, vbv_size);
-      }
+    // One row per codec: 0 = H.264, 1 = HEVC, 2 = AV1. AMF 1.5.3 classifies
+    // the HEVC VBV size as static — settable only before Init() — so its
+    // runtime entry stays empty while H.264 and AV1 list it as dynamic. A
+    // runtime write on HEVC stores the value without ever applying it; the
+    // session keeps the budget chosen at Init until it is recreated. For CBR
+    // (peak == target) the VBV size is only a smoothing window, so a stale
+    // window after an HEVC bitrate change stays coherent.
+    struct budget_props_t {
+      const wchar_t *target;
+      const wchar_t *peak;
+      const wchar_t *vbv;
+    };
+    constexpr budget_props_t budget_props[] = {
+      { AMF_VIDEO_ENCODER_TARGET_BITRATE, AMF_VIDEO_ENCODER_PEAK_BITRATE, AMF_VIDEO_ENCODER_VBV_BUFFER_SIZE },
+      { AMF_VIDEO_ENCODER_HEVC_TARGET_BITRATE, AMF_VIDEO_ENCODER_HEVC_PEAK_BITRATE, nullptr },
+      { AMF_VIDEO_ENCODER_AV1_TARGET_BITRATE, AMF_VIDEO_ENCODER_AV1_PEAK_BITRATE, AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE },
+    };
+    // Map an out-of-range video_format to the H.264 row, matching the
+    // get_codec_id() default branch, so the table lookup can never go OOB.
+    const auto &props = budget_props[video_format >= 0 && video_format <= 2 ? video_format : 0];
+    auto vbv_size = props.vbv ? amf_avcodec_compat::vbv_buffer_size(bitrate_kbps, current_config) :
+                                int64_t { 0 };
+
+    // The trio is one rate-control budget: snapshot the current values first
+    // so a rejected write can be rolled back and the encoder never sits in a
+    // half-updated state (target on the new budget, peak/VBV on the old one).
+    amf_int64 old_target = 0;
+    amf_int64 old_peak = 0;
+    amf_int64 old_vbv = 0;
+    bool snapshot_ok = encoder->GetProperty(props.target, &old_target) == AMF_OK &&
+                       encoder->GetProperty(props.peak, &old_peak) == AMF_OK;
+    if (props.vbv) {
+      snapshot_ok = snapshot_ok && encoder->GetProperty(props.vbv, &old_vbv) == AMF_OK;
     }
-    else if (video_format == 1) {
-      res = encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_TARGET_BITRATE, bitrate);
-      if (user_configured_rate_control) {
-        encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_PEAK_BITRATE, bitrate);
-        encoder->SetProperty(AMF_VIDEO_ENCODER_HEVC_VBV_BUFFER_SIZE, vbv_size);
-      }
-    }
-    else {
-      res = encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_TARGET_BITRATE, bitrate);
-      if (user_configured_rate_control) {
-        encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_PEAK_BITRATE, bitrate);
-        encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_VBV_BUFFER_SIZE, vbv_size);
-      }
+    if (!snapshot_ok) {
+      // Without a snapshot there is no way to restore the old budget if a
+      // write lands but a later one is rejected. Refuse to write at all: the
+      // caller retains its previous allowance and retries on a later budget
+      // tick, and the encoder stays exactly as it was.
+      BOOST_LOG(warning) << "AMF: could not snapshot the current rate-control budget; skipping the bitrate update to "
+                            << bitrate_kbps << " Kbps";
+      return false;
     }
 
-    if (res == AMF_OK) {
-      BOOST_LOG(info) << "AMF: bitrate dynamically changed to " << bitrate_kbps << " Kbps";
+    const auto target_res = encoder->SetProperty(props.target, bitrate);
+    const auto peak_res = encoder->SetProperty(props.peak, bitrate);
+    const auto vbv_res = props.vbv ? encoder->SetProperty(props.vbv, vbv_size) : AMF_OK;
+
+    if (target_res != AMF_OK || peak_res != AMF_OK || vbv_res != AMF_OK) {
+      BOOST_LOG(warning) << "AMF: set_bitrate(" << bitrate_kbps << " Kbps) rejected by driver"
+                         << " (target: " << target_res << ", peak: " << peak_res << ", vbv: " << vbv_res << ")";
+      // Roll back whatever landed: an unapplied property keeps its snapshot
+      // value, so only the writes that took effect need restoring.
+      auto rollback = [&](const char *what, const wchar_t *prop, amf_int64 value, AMF_RESULT write_res) {
+        if (write_res != AMF_OK) return;
+        const auto res = encoder->SetProperty(prop, value);
+        if (res != AMF_OK) {
+          BOOST_LOG(error) << "AMF: failed to roll back " << what
+                           << ", error: " << res
+                           << " — the encoder may keep a mixed budget; recreate the session if this repeats";
+        }
+      };
+      rollback("target bitrate", props.target, old_target, target_res);
+      rollback("peak bitrate", props.peak, old_peak, peak_res);
+      if (props.vbv) {
+        rollback("VBV budget", props.vbv, old_vbv, vbv_res);
+      }
+      return false;
     }
-    else {
-      BOOST_LOG(warning) << "AMF: set_bitrate failed, error: " << res;
-    }
+
+    BOOST_LOG(info) << "AMF: bitrate dynamically changed to " << bitrate_kbps << " Kbps";
+    return true;
   }
 
   void
   amf_d3d11::set_hdr_metadata(const std::optional<amf_hdr_metadata> &metadata) {
-    // Remembered even when the encoder is not ready yet: ST 2094-40 reports the
-    // mastering display peak, so the dynamic metadata builder needs the same value
-    // the static metadata was built from. Held as an optional rather than a plain
-    // peak because a display may legitimately report zero (display_base.cpp copies
-    // DXGI's MaxLuminance verbatim, and the VDD path clamps to a 0 floor); what
-    // gates dynamic metadata is whether HDR was configured at all, mirroring the
-    // `hdr_metadata &&` check on the NVENC side.
-    hdr_display_luminance = metadata ?
-                              std::optional<uint16_t> { metadata->maxDisplayLuminance } :
-                              std::nullopt;
+    // Remembered even when the encoder is not ready yet: dynamic HDR metadata
+    // reports the receiving display target independently from the content mastering
+    // peak carried by static metadata. Held as an optional rather than a plain
+    // peak so the absence of HDR configuration remains distinguishable from a
+    // resolved fallback target, mirroring the `hdr_metadata &&` check on the
+    // NVENC side.
+    target_display_luminance = metadata ?
+                                   std::optional<uint16_t> { metadata->targetDisplayLuminance } :
+                                   std::nullopt;
 
     if (!encoder || !context) return;
 
@@ -1402,7 +1523,8 @@ namespace amf {
         encoder->SetProperty(AMF_VIDEO_ENCODER_AV1_INPUT_HDR_METADATA, hdr_buffer);
       }
 
-      BOOST_LOG(info) << "AMF: HDR metadata set (max luminance: " << metadata->maxDisplayLuminance << " nits)";
+      BOOST_LOG(info) << "AMF: HDR metadata set (mastering peak: " << metadata->maxDisplayLuminance
+                      << " nits, target display: " << metadata->targetDisplayLuminance << " nits)";
     }
   }
 
@@ -1421,12 +1543,12 @@ namespace amf {
     // No carriage for this codec, HDR never configured, or nothing this stream may
     // emit: the frame goes out as the encoder produced it. A zero display peak is
     // not a reason to skip — hdr10plus_from_luminance() falls back to 1000 nits for
-    // the targeted system display, and HDR Vivid never reads the value.
-    if (!dynamic_metadata_codec || !hdr_display_luminance || !luminance_stats.valid) {
+    // the targeted system display.
+    if (!dynamic_metadata_codec || !target_display_luminance || !luminance_stats.valid) {
       return;
     }
 
-    const auto payloads = dynamic_metadata.build(luminance_stats, *hdr_display_luminance);
+    const auto payloads = dynamic_metadata.build(luminance_stats, *target_display_luminance);
     if (payloads.empty()) {
       return;
     }

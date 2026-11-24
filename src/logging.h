@@ -6,21 +6,8 @@
 
 // lib includes
 #include <boost/log/common.hpp>
-#include <boost/log/sinks.hpp>
-#include <boost/log/sinks/text_file_backend.hpp>
 
-using text_sink = boost::log::sinks::asynchronous_sink<boost::log::sinks::text_ostream_backend>;
-using file_sink = boost::log::sinks::synchronous_sink<boost::log::sinks::text_file_backend>;
-
-extern boost::log::sources::severity_logger<int> verbose;
-extern boost::log::sources::severity_logger<int> debug;
-extern boost::log::sources::severity_logger<int> info;
-extern boost::log::sources::severity_logger<int> warning;
-extern boost::log::sources::severity_logger<int> error;
-extern boost::log::sources::severity_logger<int> fatal;
-#ifdef SUNSHINE_TESTS
-extern boost::log::sources::severity_logger<int> tests;
-#endif
+#include "logging_severity.h"
 
 #include "config.h"
 #include "stat_trackers.h"

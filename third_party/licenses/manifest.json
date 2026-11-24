@@ -1,0 +1,138 @@
+{
+  "schema_version": 1,
+  "description": "License provenance for third-party binaries fetched for the Windows package.",
+  "standard_sources": ["spdx-license-list-20261117"],
+  "components": [
+    {
+      "id": "vigembus",
+      "name": "ViGEmBus",
+      "version": "1.22.0",
+      "tag": "v1.22.0",
+      "license": "BSD-3-Clause",
+      "copyright": "Copyright (c) 2016-2020, Nefarius Software Solutions e.U.",
+      "upstream": "https://github.com/nefarius/ViGEmBus/tree/v1.22.0",
+      "notice_url": "https://github.com/nefarius/ViGEmBus",
+      "license_source": "https://raw.githubusercontent.com/nefarius/ViGEmBus/v1.22.0/LICENSE",
+      "source_key": "third-party-vigembus-license-20261117",
+      "license_file": "third_party/licenses/vigembus/LICENSE",
+      "license_sha256": "3959f6ca50466675190590dfd024585744b6456ae7d39a3222e6550d62882586",
+      "notice_versions": ["1.22.0"],
+      "fetch_calls": ["_fetch_vigembus"],
+      "repositories": ["nefarius/ViGEmBus"],
+      "cmake_variables": {
+        "VIGEMBUS_VERSION": "v1.22.0",
+        "VIGEMBUS_ASSET_NAME": "ViGEmBus_1.22.0_x64_x86_arm64.exe"
+      },
+      "packaged_at": ["scripts/gamepad/ViGEmBus_1.22.0_x64_x86_arm64.exe"]
+    },
+    {
+      "id": "usbip-win2",
+      "name": "usbip-win2",
+      "version": "0.9.8.1",
+      "tag": "v.0.9.8.1",
+      "license": "BSD-2-Clause",
+      "copyright": "Copyright (c) 2021-2026, Vadym Hrynchyshyn <vadimgrn@gmail.com>",
+      "upstream": "https://github.com/vadimgrn/usbip-win2/tree/v.0.9.8.1",
+      "notice_url": "https://github.com/vadimgrn/usbip-win2",
+      "license_source": "https://raw.githubusercontent.com/vadimgrn/usbip-win2/v.0.9.8.1/LICENSE.txt",
+      "source_key": "third-party-usbip-win2-license-20261117",
+      "license_file": "third_party/licenses/usbip-win2/LICENSE",
+      "license_sha256": "4a4d332cbf1c623639df7ffc756243d86462beb4c79c8b11081cb44a4792eda2",
+      "notice_versions": ["0.9.8.1"],
+      "fetch_calls": ["_fetch_usbip"],
+      "repositories": ["vadimgrn/usbip-win2"],
+      "cmake_variables": {
+        "USBIP_VERSION": "0.9.8.1",
+        "USBIP_ASSET_NAME": "USBip-0.9.8.1-x64.exe"
+      },
+      "packaged_at": ["scripts/usbip/USBip-0.9.8.1-x64.exe"]
+    },
+    {
+      "id": "nefcon",
+      "name": "nefcon",
+      "version": "1.18.74 (default) or 1.17.40 (cached build directory)",
+      "tag": "v1.18.74",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2022-2025 Nefarius Software Solutions e.U.",
+      "upstream": "https://github.com/nefarius/nefcon/tree/v1.18.74",
+      "notice_url": "https://github.com/nefarius/nefcon",
+      "license_source": "https://raw.githubusercontent.com/nefarius/nefcon/v1.18.74/LICENSE",
+      "source_key": "third-party-nefcon-license-20261117",
+      "license_file": "third_party/licenses/nefcon/LICENSE",
+      "license_sha256": "19be8cb05e2604e7dad1c8970b2605288275abbe8519746bbc6421ed55a9df73",
+      "notice_versions": ["1.18.74", "1.17.40"],
+      "fetch_calls": ["_fetch_nefcon"],
+      "repositories": ["nefarius/nefcon"],
+      "cmake_variables": {
+        "NEFCON_VERSION": "v1.18.74"
+      },
+      "cmake_alternatives": {
+        "NEFCON_VERSION": ["v1.17.40"]
+      },
+      "packaged_at": ["tools/nefconw.exe"]
+    },
+    {
+      "id": "zakovdd",
+      "name": "ZakoVDD",
+      "version": "0.18.2 (latest) and 0.15.10 (Windows 10)",
+      "tag": "v0.18.2 and v0.15.10",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2024 Virtual Display",
+      "upstream": "https://github.com/qiin2333/zako-vdd/tree/v0.18.2",
+      "notice_url": "https://github.com/qiin2333/zako-vdd",
+      "license_source": "https://raw.githubusercontent.com/qiin2333/zako-vdd/v0.18.2/LICENSE",
+      "source_key": "third-party-zakovdd-license-20261117",
+      "license_file": "third_party/licenses/zakovdd/LICENSE",
+      "license_sha256": "c2285c867ddc9b88f43b4f8fa2c77a9eec66207166c1217b37353a2ccd62ac03",
+      "notice_versions": ["0.18.2", "0.15.10"],
+      "fetch_calls": ["_fetch_vdd"],
+      "repositories": ["qiin2333/zako-vdd"],
+      "cmake_variables": {
+        "VDD_DRIVER_VERSION": "v0.18.2",
+        "VDD_WIN10_DRIVER_VERSION": "v0.15.10",
+        "VDD_DRIVER_ASSET_NAME": "zakovdd.zip",
+        "VDD_WIN10_DRIVER_ASSET_NAME": "zakovdd.zip"
+      },
+      "packaged_at": ["scripts/driver/latest", "scripts/driver/win10", "tools/vulkan_hdr"]
+    },
+    {
+      "id": "zako-virtual-mouse",
+      "name": "Zako Virtual Mouse driver",
+      "version": "1.3.2",
+      "tag": "v1.3.2",
+      "license": "LicenseRef-ZakoVirtualMouse-Proprietary",
+      "copyright": "Copyright (c) 2025 AlkaidLab. All rights reserved.",
+      "upstream": "https://github.com/AlkaidLab/ZakoVirtualMouse/tree/v1.3.2",
+      "notice_url": "https://github.com/AlkaidLab/ZakoVirtualMouse",
+      "license_source": "https://raw.githubusercontent.com/AlkaidLab/ZakoVirtualMouse/v1.3.2/LICENSE",
+      "source_key": "third-party-zako-virtual-mouse-license-20261117",
+      "license_file": "third_party/licenses/zako-virtual-mouse/LICENSE",
+      "license_sha256": "f33639f4bd29e2dc801b789f129ee760291793444f7658b579607c5e07ee1573",
+      "notice_versions": ["1.3.2"],
+      "fetch_calls": ["_fetch_vmouse"],
+      "repositories": ["AlkaidLab/zako-vmouse-release", "AlkaidLab/ZakoVirtualMouse"],
+      "cmake_variables": {
+        "VMOUSE_DRIVER_VERSION": "v1.3.2",
+        "VMOUSE_PUBLIC_REPO": "AlkaidLab/zako-vmouse-release"
+      },
+      "packaged_at": ["scripts/vmouse/driver"]
+    }
+  ],
+  "runtime_libraries": [
+    {
+      "id": "zlib",
+      "name": "zlib",
+      "version": "toolchain-provided zlib1.dll (version not pinned)",
+      "license": "Zlib",
+      "copyright": "Copyright (C) 1995-2022 Jean-loup Gailly and Mark Adler",
+      "upstream": "https://github.com/madler/zlib/tree/v1.3.1",
+      "notice_url": "https://github.com/madler/zlib",
+      "license_source": "https://raw.githubusercontent.com/madler/zlib/v1.3.1/LICENSE",
+      "source_key": "third-party-zlib-license-20261117",
+      "license_file": "third_party/licenses/zlib/LICENSE",
+      "license_sha256": "845efc77857d485d91fb3e0b884aaa929368c717ae8186b66fe1ed2495753243",
+      "notice_versions": [],
+      "packaged_at": ["zlib1.dll"]
+    }
+  ]
+}

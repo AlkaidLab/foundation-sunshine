@@ -1,7 +1,11 @@
-import { API_ENDPOINTS, DEFAULT_BUILT_IN_APPS } from '../utils/constants.js';
+import { translateFallback } from '../utils/localizedMessage.js'
+import { API_ENDPOINTS } from '../utils/constants.js';
+import { getDefaultBuiltInApps, restoreDefaultBuiltInApps } from 'foundation-ui/apps';
 import { apiJson, apiPostJson } from '../utils/apiFetch.js';
+import { hostData } from '../composables/hostData.js';
 import { deepClone, formatError } from '../utils/helpers.js';
 import { normalizePerAppGamepadMode } from '../utils/gamepadModes.js';
+import { normalizeDlssnrConfig } from '../utils/dlssnr.js';
 
 const cloneData = deepClone;
 const normalizeAppName = (name) => String(name || '').trim().toLowerCase();
@@ -20,7 +24,8 @@ export class AppService {
    */
   static async getApps() {
     try {
-      const data = await apiJson(API_ENDPOINTS.APPS);
+      // through hostData: the answer is kept, so the next start of the page draws from it at once
+      const data = await hostData.refresh('apps');
       return data.apps || [];
     } catch (error) {
       console.error('获取应用列表失败:', error);
@@ -36,7 +41,10 @@ export class AppService {
    */
   static async saveApps(apps, editApp = null) {
     try {
-      await apiPostJson(API_ENDPOINTS.APPS, { apps, editApp });
+      const result = await apiPostJson(API_ENDPOINTS.APPS, { apps, editApp });
+      if (result.status === false || result.status === 'false') {
+        throw new Error(result.error || translateFallback('apps.feedback.save_failed'));
+      }
       return true;
     } catch (error) {
       console.error('保存应用失败:', error);
@@ -68,7 +76,7 @@ export class AppService {
     try {
       const data = await apiPostJson(API_ENDPOINTS.APPS_BATCH_DELETE, { indices });
       if (data.status === false || data.status === 'false') {
-        throw new Error(data.error || '批量删除失败');
+        throw new Error(data.error || translateFallback('apps.batch_delete_failed'));
       }
       return {
         deleted: Number(data.deleted) || 0,
@@ -86,7 +94,7 @@ export class AppService {
    */
   static async getPlatform() {
     try {
-      const data = await apiJson(API_ENDPOINTS.CONFIG);
+      const data = await hostData.refresh('config');
       return data.platform || 'windows';
     } catch (error) {
       console.error('获取平台信息失败:', error);
@@ -96,46 +104,19 @@ export class AppService {
   }
 
   /**
-   * Get the platform default built-in apps.
+   * Get the platform default built-in apps (shared with the panel: foundation-ui/apps).
+   * @param {string} platform
+   * @param {Function} [translate] i18n t(); default menu command names follow the current UI language
    */
-  static getDefaultBuiltInApps(platform) {
-    return cloneData(DEFAULT_BUILT_IN_APPS[platform] || []);
+  static getDefaultBuiltInApps(platform, translate) {
+    return getDefaultBuiltInApps(platform, translate);
   }
 
   /**
    * Restore matching built-in app defaults and append missing built-in apps.
    */
-  static restoreDefaultBuiltInApps(apps, platform) {
-    const defaults = AppService.getDefaultBuiltInApps(platform);
-    const nextApps = cloneData(Array.isArray(apps) ? apps : []);
-    let added = 0;
-    let restored = 0;
-
-    defaults.forEach((defaultApp) => {
-      const defaultName = normalizeAppName(defaultApp.name);
-      const existingIndex = nextApps.findIndex((app) => normalizeAppName(app.name) === defaultName);
-      const cleanDefault = cloneData(defaultApp);
-
-      if (existingIndex === -1) {
-        nextApps.push(cleanDefault);
-        added++;
-        return;
-      }
-
-      const currentComparable = JSON.stringify(withoutIndex(nextApps[existingIndex]));
-      const defaultComparable = JSON.stringify(cleanDefault);
-      if (currentComparable !== defaultComparable) {
-        nextApps[existingIndex] = cleanDefault;
-        restored++;
-      }
-    });
-
-    return {
-      apps: nextApps,
-      added,
-      restored,
-      changed: added + restored
-    };
+  static restoreDefaultBuiltInApps(apps, platform, translate) {
+    return restoreDefaultBuiltInApps(apps, platform, translate);
   }
 
   /**
@@ -161,21 +142,21 @@ export class AppService {
    * @param {Object} app 应用对象
    * @returns {Object} 验证结果
    */
-  static validateApp(app) {
+  static validateApp(app, translate = translateFallback) {
     const errors = [];
     
     if (!app.name || !app.name.trim()) {
-      errors.push('应用名称不能为空');
+      errors.push(translate('apps.validation.required'));
     }
     
     if (!app.cmd || !app.cmd.trim()) {
-      errors.push('应用命令不能为空');
+      errors.push(translate('apps.validation.required'));
     }
     
     // 验证退出超时时间
     if (app['exit-timeout'] !== undefined && 
         (isNaN(app['exit-timeout']) || app['exit-timeout'] < 0)) {
-      errors.push('退出超时时间必须是非负数');
+      errors.push(translate('apps.validation.min_value', { value: 0 }));
     }
     
     return {
@@ -213,6 +194,14 @@ export class AppService {
       'prep-cmd': filteredPrepCmd,
       'menu-cmd': Array.isArray(app['menu-cmd']) ? app['menu-cmd'] : [],
       detached: Array.isArray(app.detached) ? app.detached : [],
+      'rtx-hdr': {
+        mode: ['inherit', 'on', 'off'].includes(app['rtx-hdr']?.mode) ? app['rtx-hdr'].mode : 'inherit',
+        contrast: Math.max(-100, Math.min(100, Number(app['rtx-hdr']?.contrast) || 0)),
+        saturation: Math.max(-100, Math.min(100, Number(app['rtx-hdr']?.saturation) || 0)),
+        'middle-gray': Math.max(10, Math.min(100, Number(app['rtx-hdr']?.['middle-gray']) || 50)),
+        'peak-nits': Math.max(400, Math.min(1000, Number(app['rtx-hdr']?.['peak-nits']) || 1000)),
+      },
+      dlssnr: normalizeDlssnrConfig(app.dlssnr),
       'image-path': app['image-path']?.trim() || '',
       'working-dir': app['working-dir']?.trim() || ''
     };

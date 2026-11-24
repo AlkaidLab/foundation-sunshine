@@ -8,6 +8,7 @@
  * Usage:
  *   node scripts/validate-i18n.js              # Validate only (report missing keys, exit with error code on failure)
  *   node scripts/validate-i18n.js --sync       # Auto-sync missing keys with English values
+ *   node scripts/validate-i18n.js --downloads-only # Check only the download page catalogs
  */
 
 import fs from 'fs'
@@ -18,6 +19,7 @@ const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
 const localeDir = path.join(__dirname, '../src_assets/common/assets/web/public/assets/locale')
+const downloadsLocaleDir = path.join(__dirname, '../src_assets/common/assets/web/i18n/downloads')
 const baseLocale = 'en.json'
 
 // Parse command line arguments
@@ -131,12 +133,6 @@ function getEnglishOnlyKeys() {
     "gamepad_x360", // X360 (Xbox 360) - product name
     "gamepad_xone", // XOne (Xbox One) - product name
     "port_web_ui", // Web UI
-    "boom_sunshine", // Boom!
-    "boom_sunshine_title", // Boom!
-    "boom_sunshine_button", // Boom!
-    "boom_sunshine_button_desc", // Boom!
-    "boom_sunshine_button_title", // Boom!
-    "boom_sunshine_button_desc", // Boom!
     "upnp", // UPnP
     "scan_result_type_url", // URL
     "scan_result_filter_url_title", // URL
@@ -361,7 +357,7 @@ function findWebhookLanguageMismatches(baseContent, localeContent, localeFile) {
 /**
  * Main validation function
  */
-function validateLocales() {
+function validateLocales(localeDir) {
   console.log('🔍 Validating i18n translations...\n')
   
   // Read base locale
@@ -672,4 +668,5 @@ function validateLocales() {
 }
 
 // Run validation
-validateLocales()
+if (!args.includes('--downloads-only')) validateLocales(localeDir)
+validateLocales(downloadsLocaleDir)

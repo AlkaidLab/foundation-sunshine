@@ -8,12 +8,16 @@
   #define __kernel_entry
 #endif
 
+#include <cstdint>
+#include <mutex>
 #include <optional>
 #include <unordered_map>
 
 #include <boost/process/v1.hpp>
 
+#include "client_interface.h"
 #include "config.h"
+#include "generated_cover.h"
 #include "platform/common.h"
 #include "rtsp.h"
 #include "utility.h"
@@ -65,13 +69,18 @@ namespace proc {
     std::string working_dir;
     std::string output;
     std::string image_path;
+    std::string cover_style;
+    bool xbox_app = false;
+    client_interface::app_facts_t fs_facts;
     std::string id;
     bool elevated;
     bool auto_detach;
     bool wait_all;
     int mouse_mode;  ///< 0=auto (use global config), 1=force virtual mouse, 2=force SendInput
-    int gamepad_mode;  ///< 0=inherit global, 1=auto, 2=Xbox 360, 3=DualShock 4
+    int gamepad_mode;  ///< 0=inherit global, 1=auto, 2=Xbox 360, 3=DualShock 4, 4=DualSense
     std::chrono::seconds exit_timeout;
+    std::optional<rtsp_stream::synthetic_hdr_config_t> rtx_hdr;
+    std::optional<rtsp_stream::dlssnr_config_t> dlssnr;
   };
 
   class proc_t {
@@ -108,8 +117,15 @@ namespace proc {
     get_app_name(int app_id);
     std::string
     get_app_cmd(int app_id);
+    /** Return the PID of the process started for the current app, if any. */
+    std::optional<unsigned long>
+    get_running_pid() const;
     std::string
     get_last_run_app_name();
+    std::optional<rtsp_stream::synthetic_hdr_config_t>
+    get_app_rtx_hdr_config(int app_id) const;
+    std::optional<rtsp_stream::dlssnr_config_t>
+    get_app_dlssnr_config(int app_id) const;
     const boost::process::v1::environment &
     get_env() const;
     boost::process::v1::environment &
@@ -124,6 +140,19 @@ namespace proc {
     get_apps_etag() const;
 
   private:
+    /// Start and end of the application run in one place at a time: the global cancel, a new launch and the shutdown all end the running application, and two of them
+    /// walking the undo commands together read `_app` while the other replaces it. Recursive: `execute()` ends the previous run through `terminate()`.
+    /// Moving a `proc_t` (the application list is replaced on a reload) leaves the lock of the destination alone: it may be held by another thread right then.
+    struct lifecycle_mutex_t: std::recursive_mutex {
+      lifecycle_mutex_t() = default;
+      lifecycle_mutex_t(lifecycle_mutex_t &&) noexcept {}
+      lifecycle_mutex_t &
+      operator=(lifecycle_mutex_t &&) noexcept {
+        return *this;
+      }
+    };
+    lifecycle_mutex_t _lifecycle_mutex;
+
     int _app_id;
 
     std::string _apps_etag;
@@ -153,6 +182,30 @@ namespace proc {
 
   std::string
   validate_app_image_path(std::string app_image_path);
+
+  /// The file of one kind of art ("poster", "hero", "logo", "icon") of an application as it exists now; empty when the application has none (or the configured file is not an image).
+  std::string
+  app_art_asset_path(const ctx_t &app, std::string_view type);
+
+  /// A copy of the application list, made while no save is replacing it: for the readers that must not meet a list that is being replaced.
+  std::vector<ctx_t>
+  apps_snapshot();
+
+  /// The host's own placeholder picture (assets/box.png): what the poster lookup falls back to.
+  std::string
+  default_app_image_path();
+
+  /// The application as the cover generator sees it. `quiet` (the application list tag) finds the poster without logging a missing one or downloading a picture.
+  generated_cover::app_t
+  cover_app(const ctx_t &app, bool quiet = false);
+
+  /// The version tag of the art of an application as it is now: the configured paths' own tag plus the size and the time of every present art file, so a file replaced under
+  /// the same name is a new version, plus the generated cover when the application has no picture of its own (so the switch from the placeholder to a generated cover is a
+  /// new version too). A URL poster is not statted here: resolving it can download a picture.
+  /// `quiet` (the application list tag) finds the poster without logging a missing one.
+  /// `cover_style` is the global style the caller chose the cover with (empty: the style in force now): an answer whose file was picked with one style carries the tag of that style.
+  std::string
+  app_art_version(const ctx_t &app, bool quiet = false, std::string_view cover_style = {});
   void
   refresh(const std::string &file_name);
   std::optional<proc::proc_t>

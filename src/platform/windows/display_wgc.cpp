@@ -19,6 +19,7 @@
 #include "misc.h"
 #include "src/config.h"
 #include "src/globals.h"
+#include "src/log_text.h"
 #include "src/logging.h"
 #include "src/process.h"
 #include <boost/program_options/parsers.hpp>
@@ -411,7 +412,7 @@ namespace platf::dxgi {
     if (enum_data.best_match_hwnd != nullptr && enum_data.best_match_score > 0) {
       wchar_t actual_title[256] = { 0 };
       GetWindowTextW(enum_data.best_match_hwnd, actual_title, sizeof(actual_title) / sizeof(actual_title[0]));
-      BOOST_LOG(debug) << "Using fuzzy match: ["sv << platf::to_utf8(actual_title) << "] for search ["sv << window_title << "] (score: "sv << enum_data.best_match_score << ")";
+      BOOST_LOG(debug) << "Using fuzzy match: "sv << logging::quoted_name(platf::to_utf8(actual_title)) << " for search "sv << logging::quoted_name(window_title) << " (score: "sv << enum_data.best_match_score << ")";
       return enum_data.best_match_hwnd;
     }
 
@@ -444,6 +445,8 @@ namespace platf::dxgi {
    */
   int
   wgc_capture_t::init(display_base_t *display, const ::video::config_t &config) {
+    frame_counter = display->frame_rate_source();
+    frame_counter->kind.store(perf::capture_source_kind_e::wgc_arrivals, std::memory_order_relaxed);
     // WGC is not supported in service mode (running as SYSTEM user)
     // Fail fast to avoid unnecessary attempts and potential deadlocks
     if (is_running_as_system_user) {
@@ -451,7 +454,17 @@ namespace platf::dxgi {
       return -1;
     }
 
-    if (!winrt::GraphicsCaptureSession::IsSupported()) {
+    // IsSupported() throws when the activation factory is missing (a Windows edition without the media features, a broken installation): the host ended in
+    // std::terminate on it, the caller falls back to the other capture when this returns -1
+    bool supported = false;
+    try {
+      supported = winrt::GraphicsCaptureSession::IsSupported();
+    }
+    catch (winrt::hresult_error &e) {
+      BOOST_LOG(error) << "Screen capture is not available on this device: [0x"sv << util::hex(e.code()).to_string_view() << ']';
+      return -1;
+    }
+    if (!supported) {
       BOOST_LOG(error) << "Screen capture is not supported on this device for this release of Windows!"sv;
       return -1;
     }
@@ -475,7 +488,12 @@ namespace platf::dxgi {
       return -1;
     }
 
-    uwp_device = d3d_comhandle.as<winrt::IDirect3DDevice>();
+    // as<>() throws when the object cannot be queried (a device that was lost, an older Windows build): nothing above this line catches it, and the exception ended the host
+    uwp_device = d3d_comhandle.try_as<winrt::IDirect3DDevice>();
+    if (uwp_device == nullptr) {
+      BOOST_LOG(error) << "Screen capture is not supported on this device for this release of Windows: the device has no WinRT Direct3D interface"sv;
+      return -1;
+    }
 
     auto capture_factory = winrt::get_activation_factory<winrt::GraphicsCaptureItem, IGraphicsCaptureItemInterop>();
     if (capture_factory == nullptr) {
@@ -516,7 +534,7 @@ namespace platf::dxgi {
               window_title = (last_dot != std::string::npos) ? filename.substr(0, last_dot) : filename;
 
               if (!window_title.empty()) {
-                BOOST_LOG(info) << "Window title not specified, using executable filename: ["sv << window_title << "] (from: ["sv << app_cmd << "])";
+                BOOST_LOG(info) << "Window title not specified, using executable filename: "sv << logging::quoted_name(window_title) << " (from: "sv << logging::quoted_name(app_cmd) << ")";
               }
             }
           }
@@ -525,7 +543,7 @@ namespace platf::dxgi {
           if (window_title.empty()) {
             window_title = proc::proc.get_app_name(running_app_id);
             if (!window_title.empty()) {
-              BOOST_LOG(info) << "Window title not specified, using app name: ["sv << window_title << "]";
+              BOOST_LOG(info) << "Window title not specified, using app name: "sv << logging::quoted_name(window_title);
             }
           }
 
@@ -564,19 +582,19 @@ namespace platf::dxgi {
           target_hwnd = nullptr;
 
           if (retry < max_retries - 1) {
-            BOOST_LOG(info) << "Window not found yet: ["sv << window_title << "], retrying in "sv << retry_interval_ms << "ms ("sv << (retry + 1) << "/"sv << max_retries << ")..."sv;
+            BOOST_LOG(info) << "Window not found yet: "sv << logging::quoted_name(window_title) << ", retrying in "sv << retry_interval_ms << "ms ("sv << (retry + 1) << "/"sv << max_retries << ")..."sv;
             Sleep(retry_interval_ms);
           }
         }
 
         if (!target_hwnd) {
-          BOOST_LOG(warning) << "Window not found or invalid after "sv << max_retries << " attempts: ["sv << window_title << "]. Falling back to display capture."sv;
+          BOOST_LOG(warning) << "Window not found or invalid after "sv << max_retries << " attempts: "sv << logging::quoted_name(window_title) << ". Falling back to display capture."sv;
           capture_window = false;
         }
         else {
           wchar_t actual_title[256] = {};
           GetWindowTextW(target_hwnd, actual_title, std::size(actual_title));
-          BOOST_LOG(info) << "Capturing window: ["sv << platf::to_utf8(actual_title) << "] (searched for: ["sv << window_title << "])";
+          BOOST_LOG(info) << "Capturing window: "sv << logging::quoted_name(platf::to_utf8(actual_title)) << " (searched for: "sv << logging::quoted_name(window_title) << ")";
 
           // Maximize the window first for better capture experience
           if (!IsZoomed(target_hwnd)) {
@@ -594,6 +612,9 @@ namespace platf::dxgi {
           }
 
           captured_window_hwnd = target_hwnd;
+          // A window can move between monitors while this capture stays open.
+          // It has no fixed current monitor for display-scale control.
+          display->captures_monitor = false;
 
           auto window_size = item.Size();
           window_capture_width = static_cast<int>(window_size.Width);
@@ -632,7 +653,8 @@ namespace platf::dxgi {
       }
     }
 
-    display->capture_format = config.dynamicRange ? DXGI_FORMAT_R16G16B16A16_FLOAT : DXGI_FORMAT_B8G8R8A8_UNORM;
+    display->capture_format =
+      select_wgc_capture_format(config.effective_frame_pipeline_policy().capture);
 
     // Use the actual capture item size for frame pool creation
     auto item_size = item.Size();
@@ -698,6 +720,7 @@ namespace platf::dxgi {
    */
   void
   wgc_capture_t::on_frame_arrived(winrt::Direct3D11CaptureFramePool const &sender, winrt::IInspectable const &) {
+    const auto source_collection_epoch = perf::frame_rate_collection_epoch();
     winrt::Windows::Graphics::Capture::Direct3D11CaptureFrame frame { nullptr };
     try {
       frame = sender.TryGetNextFrame();
@@ -707,6 +730,8 @@ namespace platf::dxgi {
       return;
     }
     if (frame != nullptr) {
+      // Count arrivals before the latest-frame mailbox can overwrite a frame.
+      frame_counter->record(1, source_collection_epoch);
       AcquireSRWLockExclusive(&frame_lock);
       if (produced_frame) {
         produced_frame.Close();
@@ -749,12 +774,30 @@ namespace platf::dxgi {
       return capture_e::timeout;
     }
 
-    auto capture_access = consumed_frame.Surface().as<winrt::IDirect3DDxgiInterfaceAccess>();
-    if (capture_access == nullptr) {
-      return capture_e::error;
+    // the surface and the time of a frame throw when the device was lost under the capture; the capture thread handles an error by starting over
+    try {
+      auto capture_access = consumed_frame.Surface().as<winrt::IDirect3DDxgiInterfaceAccess>();
+      if (capture_access == nullptr) {
+        return capture_e::error;
+      }
+      capture_access->GetInterface(IID_ID3D11Texture2D, (void **) out);
+      out_time = consumed_frame.SystemRelativeTime().count();  // raw ticks from query performance counter
     }
-    capture_access->GetInterface(IID_ID3D11Texture2D, (void **) out);
-    out_time = consumed_frame.SystemRelativeTime().count();  // raw ticks from query performance counter
+    catch (winrt::hresult_error &e) {
+      BOOST_LOG(warning) << "Failed to read the captured frame: [0x"sv << util::hex(e.code()).to_string_view() << ']';
+      // A lost or reset device and a frame that was closed under the capture are recoverable: the capture starts over. Anything else stops it.
+      switch (static_cast<std::int32_t>(e.code())) {
+        case static_cast<std::int32_t>(DXGI_ERROR_DEVICE_REMOVED):
+        case static_cast<std::int32_t>(DXGI_ERROR_DEVICE_RESET):
+        case static_cast<std::int32_t>(DXGI_ERROR_DEVICE_HUNG):
+        case static_cast<std::int32_t>(DXGI_ERROR_DRIVER_INTERNAL_ERROR):
+        case static_cast<std::int32_t>(DXGI_ERROR_ACCESS_LOST):
+        case static_cast<std::int32_t>(0x80000013L):  // RO_E_CLOSED
+          return capture_e::reinit;
+        default:
+          return capture_e::error;
+      }
+    }
     return capture_e::ok;
   }
 

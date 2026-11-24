@@ -50,6 +50,8 @@ namespace nvprefs {
   error_message(const std::string &message);
 
   struct nvprefs_options {
+    bool manage_driver_settings = true;
+    bool vdd_force_vsync = false;
     bool opengl_vulkan_on_dxgi = true;
     bool sunshine_high_power_mode = true;
   };

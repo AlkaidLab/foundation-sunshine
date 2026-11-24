@@ -1,7 +1,18 @@
 <script setup>
-import { ref } from 'vue'
-import Checkbox from '../../components/Checkbox.vue'
+import { inject, reactive, ref } from 'vue'
+import { computed } from 'vue'
+import { MFooter, MGroup, MInfo, MResetEntry, MSection, guideTexts } from 'foundation-ui/vue'
+import { useI18n } from 'vue-i18n'
+import { detectSystemLocale, localeChoice, resolveChoice, setLocaleChoice } from '../../config/i18n.js'
 import CommandTable from '../../components/CommandTable.vue'
+import CfgChoice from '../../components/cfg/CfgChoice.vue'
+import CfgExpert from '../../components/cfg/CfgExpert.vue'
+import { isChanged } from 'foundation-ui/settings/index.js'
+import CfgField from '../../components/cfg/CfgField.vue'
+import CfgRow from '../../components/cfg/CfgRow.vue'
+import CfgSub from '../../components/cfg/CfgSub.vue'
+import CfgSwitch from '../../components/cfg/CfgSwitch.vue'
+import CfgTop from '../../components/cfg/CfgTop.vue'
 
 const props = defineProps({
   platform: String,
@@ -9,8 +20,13 @@ const props = defineProps({
   globalPrepCmd: Array,
 })
 
+const { t, locale } = useI18n()
 const config = ref(props.config)
 const globalPrepCmd = ref(props.globalPrepCmd)
+const isEmbeddedGui = window.isTauri === true && window.parent !== window
+// 恢复默认设置 is a page of its own: from here it opens in this shell, or, in the control panel's frame, in the panel (which adds its own preferences to it)
+const shell = inject('webShell', null)
+const openReset = () => { if (isEmbeddedGui) window.parent.postMessage({ type: 'foundation-open', page: 'reset' }, '*'); else shell?.nav?.go('reset') }
 
 function addCmd() {
   let template = {
@@ -32,108 +48,67 @@ function handleCommandOrderChanged(newOrder) {
   // 更新命令顺序
   globalPrepCmd.value.splice(0, globalPrepCmd.value.length, ...newOrder)
 }
+
+const LOCALES = [
+  ['en', 'English'], ['en_GB', 'English (UK)'], ['en_US', 'English (US)'], ['zh', '简体中文'], ['zh_TW', '繁體中文'],
+  ['de', 'Deutsch'], ['fr', 'Français'], ['es', 'Español'], ['it', 'Italiano'], ['ja', '日本語'], ['ko', '한국어'],
+  ['ru', 'Русский'], ['uk', 'Українська'], ['pt', 'Português'], ['pt_BR', 'Português (Brasil)'], ['pl', 'Polski'],
+  ['sv', 'Svenska'], ['tr', 'Türkçe'], ['cs', 'Čeština'], ['bg', 'Български'],
+].map(([value, label]) => ({ value, label }))
+// 跟随系统 (the default) is a choice of this window, stored as `system`; the host's own language (config locale) keeps the code that is shown
+const localeOptions = computed(() => [{ value: 'system', label: `${guideTexts(String(locale.value)).intro.followSystem} · ${LOCALES.find((o) => o.value === detectSystemLocale())?.label || detectSystemLocale()}` }, ...LOCALES])
+const localeProxy = reactive({
+  get locale() { return localeChoice.value },
+  set locale(choice) { void setLocaleChoice(choice); config.value.locale = resolveChoice(choice) },
+})
+// The host writes a level by name ("debug") and reads either the name or its number, so the names are the values and the
+// numbers are accepted for a configuration that kept one.
+const LOG_LEVELS = ['verbose', 'debug', 'info', 'warning', 'error', 'fatal', 'none']
+const logLevels = computed(() => LOG_LEVELS.map((name, n) => ({ value: name, aliases: [String(n)], label: t(`config.log_level_${n}`) })))
+// where a pairing request asks for its PIN: the control panel's full-screen entry (default) or its own pairing page; the panel reads the saved value at every request
+const pinPrompts = computed(() => [{ value: 'fullscreen', label: t('config.pin_prompt_fullscreen') }, { value: 'panel', label: t('config.pin_prompt_panel') }])
+const sleepModes = computed(() => [['0', 'suspend'], ['1', 'hibernate'], ['2', 'away']].map(([value, key]) => ({ value, label: t(`config.sleep_mode_${key}`) })))
 </script>
 
 <template>
-  <div id="general" class="config-page">
-    <div class="settings-grid">
-      <!-- Locale -->
-      <div class="settings-field">
-        <label for="locale" class="form-label">{{ $t('config.locale') }}</label>
-        <select id="locale" class="form-select" v-model="config.locale">
-          <option value="bg">Български (Bulgarian)</option>
-          <option value="cs">Čeština (Czech)</option>
-          <option value="de">Deutsch (German)</option>
-          <option value="en">English</option>
-          <option value="en_GB">English, UK</option>
-          <option value="en_US">English, US</option>
-          <option value="es">Español (Spanish)</option>
-          <option value="fr">Français (French)</option>
-          <option value="it">Italiano (Italian)</option>
-          <option value="ja">日本語 (Japanese)</option>
-          <option value="pt">Português (Portuguese)</option>
-          <option value="ru">Русский (Russian)</option>
-          <option value="sv">svenska (Swedish)</option>
-          <option value="tr">Türkçe (Turkish)</option>
-          <option value="zh">简体中文 (Chinese Simplified)</option>
-          <option value="zh_TW">繁體中文 (Chinese Traditional)</option>
-        </select>
-        <div class="form-text">{{ $t('config.locale_desc') }}</div>
-      </div>
+  <CfgTop>
+    <MSection>
+      <MGroup>
+        <CfgChoice :config="localeProxy" k="locale" :options="localeOptions" />
+        <CfgField :config="config" k="sunshine_name" placeholder="Sunshine" />
+        <CfgChoice :config="config" k="sleep_mode" :options="sleepModes" :icons="{ 0: 'bedtime', 1: 'power_settings_new', 2: 'visibility' }" />
+      </MGroup>
+    </MSection>
 
-      <!-- Sunshine Name -->
-      <div class="settings-field">
-        <label for="sunshine_name" class="form-label">{{ $t('config.sunshine_name') }}</label>
-        <input
-          type="text"
-          class="form-control"
-          id="sunshine_name"
-          placeholder="Sunshine"
-          v-model="config.sunshine_name"
-        />
-        <div class="form-text">{{ $t('config.sunshine_name_desc') }}</div>
-      </div>
+    <MSection>
+      <MGroup>
+        <CfgSwitch :config="config" k="notify_pre_releases" :on="true" :off="false" def="false" />
+        <CfgChoice :config="config" k="pin_prompt" def="fullscreen" :options="pinPrompts" />
+        <CfgSwitch v-if="!isEmbeddedGui" :config="config" k="system_tray" :on="true" :off="false" def="true" />
+        <CfgSwitch :config="config" k="stop_on_last_video_session" :on="true" :off="false" def="false" />
+        <CfgSwitch :config="config" k="launch_splash" :on="true" :off="false" def="true" />
+      </MGroup>
+    </MSection>
 
-      <!-- Log Level -->
-      <div class="settings-field">
-        <label for="min_log_level" class="form-label">{{ $t('config.log_level') }}</label>
-        <select id="min_log_level" class="form-select" v-model="config.min_log_level">
-          <option value="0">{{ $t('config.log_level_0') }}</option>
-          <option value="1">{{ $t('config.log_level_1') }}</option>
-          <option value="2">{{ $t('config.log_level_2') }}</option>
-          <option value="3">{{ $t('config.log_level_3') }}</option>
-          <option value="4">{{ $t('config.log_level_4') }}</option>
-          <option value="5">{{ $t('config.log_level_5') }}</option>
-          <option value="6">{{ $t('config.log_level_6') }}</option>
-        </select>
-        <div class="form-text">{{ $t('config.log_level_desc') }}</div>
-      </div>
+    <MResetEntry :locale="String(locale)" @open="openReset" />
+  </CfgTop>
 
-      <!-- Sleep Mode -->
-      <div class="settings-field">
-        <label for="sleep_mode" class="form-label">{{ $t('config.sleep_mode') }}</label>
-        <select id="sleep_mode" class="form-select" v-model="config.sleep_mode">
-          <option value="0">{{ $t('config.sleep_mode_suspend') }}</option>
-          <option value="1">{{ $t('config.sleep_mode_hibernate') }}</option>
-          <option value="2">{{ $t('config.sleep_mode_away') }}</option>
-        </select>
-        <div class="form-text">{{ $t('config.sleep_mode_desc') }}</div>
-      </div>
-    </div>
+  <CfgSub id="expert" :title="$t('tabs.advanced')" inline>
+    <MSection :title="$t('tabs.advanced')">
+      <MGroup>
+        <CfgExpert :config="config" k="min_log_level" control="sheet" :options="logLevels" label="config.log_level" help="config.log_level_desc" def="2" />
+        <CfgExpert :config="config" k="max_log_size_mb" type="number" placeholder="50" help="config.max_log_size_mb_desc" />
+        <CfgSwitch :config="config" k="restore_log" :on="true" :off="false" def="false" help="config.restore_log_desc" />
+        <CfgExpert :config="config" k="fs_host_icon" help="config.fs_host_icon_desc" />
+      </MGroup>
+    </MSection>
+  </CfgSub>
 
-    <!-- Global Prep Commands -->
-    <div class="settings-panel mt-3">
-      <label class="form-label">{{ $t('config.global_prep_cmd') }}</label>
-      <div class="form-text">{{ $t('config.global_prep_cmd_desc') }}</div>
-      <CommandTable
-        class="mt-3"
-        :commands="globalPrepCmd"
-        :platform="platform"
-        type="prep"
-        @add-command="addCmd"
-        @remove-command="removeCmd"
-        @order-changed="handleCommandOrderChanged"
-      />
-    </div>
-
-    <div class="settings-grid mt-3">
-      <!-- Notify Pre-Releases -->
-      <Checkbox
-        container-class="settings-field settings-toggle-field"
-        id="notify_pre_releases"
-        locale-prefix="config"
-        v-model="config.notify_pre_releases"
-        default="false"
-      ></Checkbox>
-
-      <!-- Enable system tray -->
-      <Checkbox
-        container-class="settings-field settings-toggle-field"
-        id="system_tray"
-        locale-prefix="config"
-        v-model="config.system_tray"
-        default="true"
-      ></Checkbox>
-    </div>
-  </div>
+  <CfgSub id="prep" :title="$t('config.global_prep_cmd')" inline>
+    <MSection :title="$t('config.global_prep_cmd')">
+      <template #action><MInfo :text="$t('config.global_prep_cmd_desc')" /></template>
+      <CommandTable :commands="globalPrepCmd" :platform="platform" type="prep" @add-command="addCmd" @remove-command="removeCmd" @order-changed="handleCommandOrderChanged" />
+    </MSection>
+    <MFooter>{{ $t('config.global_prep_cmd_desc') }}</MFooter>
+  </CfgSub>
 </template>

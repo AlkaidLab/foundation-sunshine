@@ -9,12 +9,18 @@
 
 #include <src/tray/tray_state.h>
 
+#ifdef _WIN32
+  #include <Windows.h>
+  #include <src/touch_keyboard_session.h>
+#endif
+
 class TrayStateTest: public ::testing::Test {
 protected:
   void
   SetUp() override {
     tray_state::set_change_sink({});
     tray_state::clear_sessions();
+    tray_state::set_touch_keyboard(std::nullopt);
     tray_state::clear_pairing_required();
     tray_state::clear_notification();
     tray_state::set_vdd_state(false, false, false, false);
@@ -29,6 +35,54 @@ protected:
     tray_state::set_change_sink({});
   }
 };
+
+TEST_F(TrayStateTest, PublishesAndClearsTouchKeyboardPreference) {
+  const auto before = tray_state::get().revision;
+  tray_state::set_touch_keyboard(tray_state::touch_keyboard_t { false, 42 });
+  const auto disabled = tray_state::to_json();
+  EXPECT_FALSE(disabled.at("touch_keyboard").at("enabled").get<bool>());
+  EXPECT_EQ(disabled.at("touch_keyboard").at("session_id"), 42);
+  const auto revision = tray_state::get().revision;
+  EXPECT_GT(revision, before);
+
+  tray_state::set_touch_keyboard(tray_state::touch_keyboard_t { false, 42 });
+  EXPECT_EQ(tray_state::get().revision, revision);
+  tray_state::set_touch_keyboard(std::nullopt);
+  EXPECT_TRUE(tray_state::to_json().at("touch_keyboard").is_null());
+}
+
+#ifdef _WIN32
+TEST_F(TrayStateTest, TouchKeyboardPreferenceFollowsOwningSessions) {
+  DWORD capture_session = 0;
+  ASSERT_TRUE(ProcessIdToSessionId(GetCurrentProcessId(), &capture_session));
+  EXPECT_FALSE(touch_kb::acquire(-1));
+  EXPECT_TRUE(tray_state::to_json().at("touch_keyboard").is_null());
+
+  auto first = touch_kb::acquire(0);
+  ASSERT_TRUE(first);
+  EXPECT_FALSE(tray_state::to_json().at("touch_keyboard").at("enabled").get<bool>());
+  EXPECT_EQ(tray_state::to_json().at("touch_keyboard").at("session_id"), capture_session);
+
+  auto second = touch_kb::acquire(1);
+  ASSERT_TRUE(second);
+  EXPECT_FALSE(tray_state::to_json().at("touch_keyboard").at("enabled").get<bool>());
+  first.reset();
+  EXPECT_TRUE(tray_state::to_json().at("touch_keyboard").at("enabled").get<bool>());
+  second.reset();
+  EXPECT_TRUE(tray_state::to_json().at("touch_keyboard").is_null());
+
+  first = touch_kb::acquire(0);
+  second = touch_kb::acquire(1);
+  ASSERT_TRUE(first);
+  ASSERT_TRUE(second);
+  const auto revision = tray_state::get().revision;
+  second.reset();
+  EXPECT_FALSE(tray_state::to_json().at("touch_keyboard").at("enabled").get<bool>());
+  EXPECT_EQ(tray_state::get().revision, revision);
+  first.reset();
+  EXPECT_TRUE(tray_state::to_json().at("touch_keyboard").is_null());
+}
+#endif
 
 TEST_F(TrayStateTest, PublishesStreamingLifecycle) {
   const auto initial_revision = tray_state::get().revision;
@@ -234,4 +288,41 @@ TEST_F(TrayStateTest, AcknowledgesOnlyCurrentNonPairingNotification) {
   EXPECT_FALSE(tray_state::acknowledge_notification(pairing_id));
   EXPECT_TRUE(tray_state::to_json().at("notification").at("active"));
   tray_state::clear_pairing_required();
+}
+
+TEST_F(TrayStateTest, PublishesTheLaunchSplashAndOnlyWhenItChanges) {
+  tray_state::launch_t launch;
+  launch.id = "100-1";
+  launch.active = true;
+  launch.app_id = "13";
+  launch.app_name = "Genshin Impact";
+  launch.stage = "waiting-window";
+  launch.display = "\\\\.\\DISPLAY3";
+  launch.pids = { 4242, 4343 };
+  launch.started_at_ms = 100;
+  launch.deadline_ms = 60100;
+
+  const auto before = tray_state::get().revision;
+  tray_state::set_launch(launch);
+  const auto after = tray_state::get().revision;
+  EXPECT_GT(after, before);
+
+  tray_state::set_launch(launch);  // the same state again: no revision, no event for the Panel
+  EXPECT_EQ(tray_state::get().revision, after);
+
+  const auto json = tray_state::to_json();
+  const auto &published = json.at("launch");
+  EXPECT_EQ(published.at("id"), "100-1");
+  EXPECT_TRUE(published.at("active").get<bool>());
+  EXPECT_EQ(published.at("app_name"), "Genshin Impact");
+  EXPECT_EQ(published.at("stage"), "waiting-window");
+  EXPECT_EQ(published.at("display"), "\\\\.\\DISPLAY3");
+  EXPECT_EQ(published.at("pids"), nlohmann::json::array({ 4242, 4343 }));
+  EXPECT_EQ(published.at("deadline_ms"), 60100);
+  EXPECT_NE(std::find(json.at("capabilities").begin(), json.at("capabilities").end(), "launch-splash-v1"), json.at("capabilities").end());
+
+  launch.active = false;
+  tray_state::set_launch(launch);
+  EXPECT_GT(tray_state::get().revision, after);
+  EXPECT_FALSE(tray_state::to_json().at("launch").at("active").get<bool>());
 }

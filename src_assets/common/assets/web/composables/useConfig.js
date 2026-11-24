@@ -1,8 +1,10 @@
 import { ref } from 'vue'
-import { trackEvents } from '../config/firebase.js'
-import { getBootstrapConfig } from '../config/bootstrapData.js'
+import { trackEvents } from '../config/telemetry.js'
+import { hostData, keepKey } from './hostData.js'
 import { apiFetch, apiJson } from '../utils/apiFetch.js'
 import { deepClone, safeJsonParse } from '../utils/helpers.js'
+import { validateListenerSettings } from '../utils/listenerSettings.js'
+import { setRestartPlatform } from './restartKeys.js'
 
 // 平台相关的标签页排除规则
 const PLATFORM_EXCLUSIONS = {
@@ -14,6 +16,12 @@ const PLATFORM_EXCLUSIONS = {
 // 不参与默认值比较的键
 const EXCLUDED_DEFAULT_KEYS = new Set(['resolutions', 'fps', 'adapter_name'])
 
+export function parseHevcGopSize(value) {
+  if (typeof value !== 'number' && (typeof value !== 'string' || value.trim() === '')) return undefined
+  const size = Number(value)
+  return Number.isInteger(size) && size >= -1 && size <= 1000 ? size : undefined
+}
+
 // 默认标签页配置
 const DEFAULT_TABS = [
   {
@@ -23,8 +31,12 @@ const DEFAULT_TABS = [
       locale: 'en',
       sunshine_name: '',
       min_log_level: 2,
+      sleep_mode: 0,
       global_prep_cmd: '[]',
       notify_pre_releases: 'disabled',
+      pin_prompt: 'fullscreen',
+      stop_on_last_video_session: 'disabled',
+      launch_splash: 'enabled',
     },
   },
   {
@@ -38,11 +50,14 @@ const DEFAULT_TABS = [
       touchpad_as_ds4: 'enabled',
       back_button_timeout: -1,
       keyboard: 'enabled',
+      clipboard_sync: 'enabled',
       key_repeat_delay: 500,
       key_repeat_frequency: 24.9,
       always_send_scancodes: 'enabled',
       key_rightalt_to_key_win: 'disabled',
       mouse: 'enabled',
+      usb_forwarding_enabled: 'disabled',
+      usb_forwarding_port: 0,
       high_resolution_scrolling: 'enabled',
       native_pen_touch: 'enabled',
       native_touchpad_optimization: 'enabled',
@@ -60,13 +75,15 @@ const DEFAULT_TABS = [
     options: {
       audio_sink: '',
       virtual_sink: '',
-      microphone_redirect_backend: 'vb_cable',
+      mat_live: 'disabled',
+      keep_sink_default: false,
+      microphone_redirect_backend: 'auto',
       stream_mic: true,
       install_steam_audio_drivers: 'enabled',
       output_name: '',
       hdr_luminance_analysis: 'auto',
-      vdd_borrowed_texture: 'enabled',
       vdd_vulkan_hdr_bridge: 'enabled',
+      nvenc_vdd_force_vsync: 'disabled',
       display_device_prep: 'no_operation',
       vdd_reuse: 'disabled',
       resolution_change: 'automatic',
@@ -87,9 +104,11 @@ const DEFAULT_TABS = [
     options: {
       upnp: 'disabled',
       address_family: 'ipv4',
+      bind_address: '',
       port: 47989,
       origin_web_ui_allowed: 'lan',
       external_ip: '',
+      external_endpoints: '',
       lan_encryption_mode: 0,
       wan_encryption_mode: 1,
       close_verify_safe: 'disabled',
@@ -97,6 +116,8 @@ const DEFAULT_TABS = [
       ping_timeout: 10000,
       pair_max_attempts: 10,
       fec_percentage: 20,
+      fec_auto: 'disabled',
+      fec_auto_max_percentage: 50,
     },
   },
   {
@@ -119,7 +140,6 @@ const DEFAULT_TABS = [
       capture_target: 'display',
       capture_compute_shader: 'auto',
       window_title: '',
-      display_mode_remapping: '[]',
       hevc_mode: 0,
       av1_mode: 0,
       capture: '',
@@ -135,10 +155,10 @@ const DEFAULT_TABS = [
         id: 'nv',
         name: 'NVIDIA NVENC Encoder',
         options: {
-          nvenc_preset: 1,
+          nvenc_preset: 4,
+          nvenc_frame_budget_guard: 'enabled',
           nvenc_twopass: 'quarter_res',
-          nvenc_spatial_aq: 'disabled',
-          nvenc_temporal_aq: 'disabled',
+          nvenc_spatial_aq: 'enabled',
           nvenc_vbv_increase: 0,
           nvenc_lookahead_depth: 0,
           nvenc_lookahead_level: 'disabled',
@@ -146,6 +166,7 @@ const DEFAULT_TABS = [
           nvenc_rate_control: 'cbr',
           nvenc_target_quality: 0,
           nvenc_realtime_hags: 'enabled',
+          nvenc_manage_driver_settings: 'enabled',
           nvenc_split_encode: 'driver_decides',
           nvenc_latency_over_power: 'enabled',
           nvenc_opengl_vulkan_on_dxgi: 'enabled',
@@ -174,6 +195,8 @@ const DEFAULT_TABS = [
           amd_vbaq: '',
           amd_coder: 'auto',
           amd_avcodec_compat: 'disabled',
+          amd_vpe: 'disabled',
+          amd_hevc_gop_size: -1,
           // AMF advanced (driver workarounds): empty string = driver default
           // (FFmpeg-aligned). Users can override per-property if troubleshooting
           // freezes or tuning latency. See issue #666 (RDNA4 26.5.x).
@@ -332,7 +355,13 @@ const createRisk = (
 /**
  * 配置管理组合式函数
  */
+// The last answer of the host's configuration is kept by hostData (composables/hostData.js); these stay for the code that reads it directly.
+export const CONFIG_CACHE_KEY = keepKey('config')
+export const readCachedConfig = () => hostData.peek('config')
+
 export function useConfig() {
+  const validationError = ref('')
+  const saveError = ref('')
   const platform = ref('')
   const saved = ref(false)
   const restarted = ref(false)
@@ -341,7 +370,6 @@ export function useConfig() {
   const resolutions = ref([])
   const currentTab = ref('general')
   const global_prep_cmd = ref([])
-  const display_mode_remapping = ref([])
   const tabs = ref([])
 
   // 原始配置快照
@@ -350,7 +378,6 @@ export function useConfig() {
     fps: null,
     resolutions: null,
     global_prep_cmd: null,
-    display_mode_remapping: null,
   })
 
   /**
@@ -362,7 +389,6 @@ export function useConfig() {
       fps: deepClone(fps.value),
       resolutions: deepClone(resolutions.value),
       global_prep_cmd: deepClone(global_prep_cmd.value),
-      display_mode_remapping: deepClone(display_mode_remapping.value),
     }
   }
 
@@ -410,29 +436,50 @@ export function useConfig() {
     fps.value = safeParseJSON(config.value.fps)
     resolutions.value = parseResolutions(config.value.resolutions)
     global_prep_cmd.value = safeParseJSON(config.value.global_prep_cmd)
-    display_mode_remapping.value = safeParseJSON(config.value.display_mode_remapping)
 
-    config.value.global_prep_cmd = config.value.global_prep_cmd || []
-    config.value.display_mode_remapping = config.value.display_mode_remapping || []
+    // keep the same form the page compares and sends ("[]"), so a host that leaves the key out does not look like an edit
+    config.value.global_prep_cmd = JSON.stringify(global_prep_cmd.value)
   }
 
   /**
    * 加载配置
    */
+  // Stale-while-revalidate (the Web UI in the panel is as smooth as a native app, no blank page or spinner for data on this computer): the last answer of the host is kept
+  // (CONFIG_CACHE_KEY) and the page draws from it at once; the fresh answer replaces it in place when it arrives, unless the person has already edited something in between.
+  const applyConfigData = (data) => {
+    platform.value = data.platform || ''
+    setRestartPlatform(platform.value)
+    filterTabsByPlatform(platform.value)
+
+    const { platform: _, status, version, usb_forwarding_config_version, ...configData } = data
+    configData.amd_avcodec_compat = normalizeEnabledDisabledValue(configData.amd_avcodec_compat)
+    configData.amd_vpe = normalizeEnabledDisabledValue(configData.amd_vpe)
+    configData.amd_hevc_gop_size = parseHevcGopSize(configData.amd_hevc_gop_size) ?? -1
+    configData.fec_auto = normalizeEnabledDisabledValue(configData.fec_auto)
+    configData.mat_live = normalizeEnabledDisabledValue(configData.mat_live)
+    configData.nvenc_manage_driver_settings = normalizeEnabledDisabledValue(configData.nvenc_manage_driver_settings)
+    configData.nvenc_vdd_force_vsync = normalizeEnabledDisabledValue(configData.nvenc_vdd_force_vsync)
+    config.value = configData
+
+    fillDefaultValues()
+    parseSpecialFields()
+    saveSnapshots()
+  }
+
   const loadConfig = async () => {
+    let drewFromCache = false
+    let drawn = ''
+    if (!config.value) {
+      const cached = hostData.peek('config')
+      if (cached) {
+        try { applyConfigData(cached); drewFromCache = true; drawn = JSON.stringify(config.value) } catch (error) { console.error('The kept configuration could not be used:', error) }
+      }
+    }
     try {
-      const data = await getBootstrapConfig()
-
-      platform.value = data.platform || ''
-      filterTabsByPlatform(platform.value)
-
-      const { platform: _, status, version, ...configData } = data
-      configData.amd_avcodec_compat = normalizeEnabledDisabledValue(configData.amd_avcodec_compat)
-      config.value = configData
-
-      fillDefaultValues()
-      parseSpecialFields()
-      saveSnapshots()
+      const data = await hostData.refresh('config')
+      // an edit made on the kept values is the person's: the fresh answer does not take it away (the next load, after a save, applies it)
+      if (drewFromCache && JSON.stringify(config.value) !== drawn) return
+      applyConfigData(data)
     } catch (error) {
       console.error('Failed to load config:', error)
     }
@@ -446,7 +493,6 @@ export function useConfig() {
     fps.value = filterValidFps(fps.value)
     config.value.fps = serializeFps(fps.value)
     config.value.global_prep_cmd = JSON.stringify(global_prep_cmd.value)
-    config.value.display_mode_remapping = JSON.stringify(display_mode_remapping.value)
   }
 
   /**
@@ -457,12 +503,10 @@ export function useConfig() {
     currentConfig.resolutions = serializeResolutions(resolutions.value)
     currentConfig.fps = serializeFps(filterValidFps([...fps.value]))
     currentConfig.global_prep_cmd = JSON.stringify(global_prep_cmd.value)
-    currentConfig.display_mode_remapping = JSON.stringify(display_mode_remapping.value)
 
     return {
       config: currentConfig,
       global_prep_cmd: deepClone(global_prep_cmd.value),
-      display_mode_remapping: deepClone(display_mode_remapping.value),
     }
   }
 
@@ -528,7 +572,7 @@ export function useConfig() {
     const sensitiveFileKeys = ['credentials_file', 'pkey', 'cert', 'file_state']
     const changedSensitiveFiles = sensitiveFileKeys.filter((key) => valueChanged(currentConfig, key))
     if (changedSensitiveFiles.length > 0) {
-      addRisk(risks, createRisk('sensitive_files_changed', 'high', { currentValue: changedSensitiveFiles.join(', ') }))
+      addRisk(risks, createRisk('sensitive_files_changed', 'high', { currentValue: changedSensitiveFiles.map((key) => `${key} → ${currentConfig[key] || 'default'}`).join('  ·  ') }))
     }
 
     if (
@@ -564,18 +608,6 @@ export function useConfig() {
           }),
         )
       }
-    }
-
-    if (
-      listChanged(current.display_mode_remapping, snapshots.value.display_mode_remapping) &&
-      current.display_mode_remapping.length > 0
-    ) {
-      addRisk(
-        risks,
-        createRisk('display_mode_remapping', 'medium', {
-          currentValue: String(current.display_mode_remapping.length),
-        }),
-      )
     }
 
     if (
@@ -616,6 +648,14 @@ export function useConfig() {
   const save = async () => {
     saved.value = false
     restarted.value = false
+    validationError.value = ''
+    saveError.value = ''
+    validationError.value = validateListenerSettings(config.value)
+    if (validationError.value) return false
+    if (parseHevcGopSize(config.value.amd_hevc_gop_size ?? -1) === undefined) {
+      validationError.value = 'config.amd_hevc_gop_size_desc'
+      return false
+    }
     serialize()
 
     const configData = deepClone(config.value)
@@ -636,11 +676,13 @@ export function useConfig() {
       if (saved.value) {
         trackEvents.configChanged(currentTab.value, 'save')
         saveSnapshots()
+        window.dispatchEvent(new Event('sunshine:config-saved'))
       }
 
       return saved.value
     } catch (error) {
       console.error('Save failed:', error)
+      saveError.value = error.message
       trackEvents.errorOccurred('config_save', error.message)
       return false
     }
@@ -656,16 +698,19 @@ export function useConfig() {
     const result = await save()
     if (!result) return
 
-    restarted.value = true
-    setTimeout(() => {
-      saved.value = false
-      restarted.value = false
-    }, 5000)
-
     try {
-      await apiFetch('/api/restart', { method: 'POST' })
+      const response = await apiFetch('/api/restart?reason=settings', { method: 'POST' })
+      // The native proxy can return 503 when Core exits before responding.
+      // Treat that expected restart response like a successful restart.
+      if (response.status !== 503 && !response.ok) throw new Error(`HTTP ${response.status}`)
+      restarted.value = true
+      setTimeout(() => {
+        saved.value = false
+        restarted.value = false
+      }, 5000)
       trackEvents.userAction('config_applied')
     } catch (error) {
+      saveError.value = error.message
       console.error('Failed to restart:', error)
     }
   }
@@ -736,6 +781,12 @@ export function useConfig() {
   /**
    * 检测是否有未保存的更改
    */
+  // a key written to the host on its own (the public address of the remote access card): the page's model and its saved copy both take the value, so the page does not call it a change
+  const markKeySaved = (key, value) => {
+    if (config.value) config.value[key] = value
+    if (snapshots.value.config) snapshots.value.config[key] = value
+  }
+
   const hasUnsavedChanges = () => {
     if (!config.value || !snapshots.value.config) {
       return false
@@ -746,12 +797,49 @@ export function useConfig() {
     tempConfig.resolutions = serializeResolutions(resolutions.value)
     tempConfig.fps = serializeFps(filterValidFps(fps.value))
     tempConfig.global_prep_cmd = JSON.stringify(global_prep_cmd.value)
-    tempConfig.display_mode_remapping = JSON.stringify(display_mode_remapping.value)
 
     return !configsAreEqual(tempConfig, snapshots.value.config)
   }
 
+  // the edits as a list for the window's unsaved state: every key whose value is not the one the host has, in the form the page compares
+  const currentForCompare = () => {
+    const current = deepClone(config.value)
+    current.resolutions = serializeResolutions(resolutions.value)
+    current.fps = serializeFps(filterValidFps(fps.value))
+    current.global_prep_cmd = JSON.stringify(global_prep_cmd.value)
+    return current
+  }
+  const changedEntries = () => {
+    if (!config.value || !snapshots.value.config) return []
+    const current = currentForCompare()
+    const original = snapshots.value.config
+    const out = []
+    for (const key of new Set([...Object.keys(current), ...Object.keys(original)])) {
+      if (!isEqual(current[key], original[key])) out.push({ key, before: original[key], after: current[key] })
+    }
+    return out
+  }
+  const setKey = (key, value) => {
+    if (key === 'resolutions') resolutions.value = parseResolutions(value)
+    else if (key === 'fps') fps.value = safeParseJSON(value)
+    else if (key === 'global_prep_cmd') global_prep_cmd.value = safeParseJSON(value)
+    if (value === undefined) delete config.value[key]
+    else config.value[key] = deepClone(value)
+  }
+  const revertKey = (key) => { if (config.value && snapshots.value.config) setKey(key, snapshots.value.config[key]) }
+  const restoreEntries = (entries) => { if (config.value) for (const e of entries) setKey(e.key, e.after) }
+  const isLoaded = () => !!config.value && !!snapshots.value.config
+  const pendingRisks = () => getRiskyChanges('save')
+
   return {
+    changedEntries,
+    revertKey,
+    setKey,
+    restoreEntries,
+    isLoaded,
+    pendingRisks,
+    validationError,
+    saveError,
     platform,
     saved,
     restarted,
@@ -760,7 +848,6 @@ export function useConfig() {
     resolutions,
     currentTab,
     global_prep_cmd,
-    display_mode_remapping,
     tabs,
     initTabs,
     loadConfig,
@@ -769,5 +856,6 @@ export function useConfig() {
     getRiskyChanges,
     handleHash,
     hasUnsavedChanges,
+    markKeySaved,
   }
 }

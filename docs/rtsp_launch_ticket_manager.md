@@ -28,9 +28,10 @@ separate TCP connection for each RTSP request.
 - Encrypted RTSP is claimed by successfully verifying the first request's
   AES-GCM authentication tag. The HTTPS and RTSP source addresses are only a
   candidate-order hint and are not identity.
-- Plaintext legacy RTSP is matched by a unique observed source address.
-- The historical single-pending-ticket fallback remains for legacy clients
-  whose HTTPS and RTSP routes differ.
+- Plaintext legacy RTSP tickets require a unique match to the source address
+  observed during `/launch` or `/resume`.
+- Requests from a different or unknown source address fail closed; Sunshine
+  does not fall back to an unrelated singleton ticket.
 - Multiple plaintext candidates behind the same visible address fail closed;
   Sunshine never guesses and risks attaching one client's keys to another.
 

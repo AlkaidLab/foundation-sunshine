@@ -29,7 +29,7 @@ namespace display_device {
       ensure_active, /**< Activate the device if needed. */
       ensure_primary, /**< Activate the device if needed and make it a primary display. */
       ensure_only_display, /**< Deactivate other displays and turn on the specified one only. */
-      ensure_secondary /**< Stream on the display as a secondary (extended) display. In VDD mode, physical stays primary+ VDD secondary. */
+      ensure_secondary /**< Stream on the display as a secondary (extended) display. In VDD mode, physical stays primary + VDD secondary when a physical display exists; headless VDD is the sole display. */
     };
 
     /**
@@ -126,7 +126,7 @@ namespace display_device {
     enum class vdd_prep_e : int {
       no_operation, /**< Do nothing to physical displays. */
       vdd_as_primary, /**< VDD as primary display, physical displays as secondary (extend mode). */
-      vdd_as_secondary, /**< Physical displays as primary, VDD as secondary (extend mode). */
+      vdd_as_secondary, /**< Physical displays as primary, VDD as secondary (extend mode); VDD is primary when no physical display exists. */
       display_off /**< Turn off physical displays, only VDD remains active. */
     };
 
@@ -202,16 +202,29 @@ namespace display_device {
    * @brief Parse the user configuration and the session information.
    * @param config User's video related configuration.
    * @param session Session information.
+   * @param is_reconfigure True for Launch and dynamic reconfiguration; false for Resume.
    * @returns Parsed configuration or empty optional if parsing has failed.
    *
    * EXAMPLES:
    * ```cpp
    * const std::shared_ptr<rtsp_stream::launch_session_t> launch_session; // Assuming ptr is properly initialized
    * const config::video_t &video_config { config::video };
-   * const auto parsed_config = make_parsed_config(video_config, *launch_session);
+   * const auto parsed_config = make_parsed_config(video_config, *launch_session, false);
    * ```
    */
   boost::optional<parsed_config_t>
-  make_parsed_config(const config::video_t &config, const rtsp_stream::launch_session_t &session);
+  make_parsed_config(const config::video_t &config, const rtsp_stream::launch_session_t &session, bool is_reconfigure);
+
+  /**
+   * @brief Whether display preparation should put the source display in HDR mode.
+   * @param config User's video related configuration.
+   * @param session Session information.
+   * @returns The session's resolved source-display intent when available, with
+   *          the legacy enable_hdr/synthetic_hdr flags as fallback. This is the
+   *          single decision shared by HDR prep and every display-prep consumer
+   *          (e.g. the Vulkan HDR bridge); do not re-derive it from raw flags.
+   */
+  bool
+  display_prepared_for_hdr(const config::video_t &config, const rtsp_stream::launch_session_t &session);
 
 }  // namespace display_device

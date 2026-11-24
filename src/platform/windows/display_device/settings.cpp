@@ -5,25 +5,22 @@
 #include <thread>
 
 // local includes
-#include "settings_topology.h"
+#include "color_profile.h"
+#include "settings_restore.h"
 #include "src/audio.h"
+#include "src/config.h"
 #include "src/display_device/color_profile.h"
 #include "src/display_device/session.h"
 #include "src/display_device/to_string.h"
 #include "src/globals.h"
+#include "src/hdr/session_target.h"
 #include "src/logging.h"
-#include "src/config.h"
 #include "src/rtsp.h"
-#include "color_profile.h"
 #include "windows_utils.h"
 
 namespace display_device {
 
-  struct settings_t::persistent_data_t {
-    topology_pair_t topology; /**< Contains topology before the modification and the one we modified. */
-    std::string original_primary_display; /**< Original primary display in the topology we modified. Empty value if we didn't modify it. */
-    device_display_mode_map_t original_modes; /**< Original display modes in the topology we modified. Empty value if we didn't modify it. */
-    hdr_state_map_t original_hdr_states; /**< Original display HDR states in the topology we modified. Empty value if we didn't modify it. */
+  struct settings_t::persistent_data_t: display_restore_state_t {
     std::optional<win_color_profile::state_t> color_profile; /**< Temporary physical-display ICC override and its restore snapshot. */
 
     /**
@@ -191,6 +188,14 @@ namespace display_device {
       }
 
       if (should_restore_physical_primary_for_vdd_secondary(config)) {
+        // A headless host has no physical primary to restore. After VDD prep,
+        // the VDD-only topology is already valid and the VDD is necessarily
+        // Windows' primary display.
+        if (is_vdd_only_topology(metadata.current_topology, config.device_id)) {
+          BOOST_LOG(info) << "VDD-only topology detected; keeping VDD as the active primary display";
+          return std::string {};
+        }
+
         const auto physical_primary_display =
           is_physical_primary_candidate(previous_primary_display, config.device_id) ?
             previous_primary_display :
@@ -264,7 +269,7 @@ namespace display_device {
     /**
      * @brief Remove entries from a device_id-keyed map whose keys are not in the valid set.
      */
-    template<typename MapT>
+    template <typename MapT>
     void
     filter_stale_devices(MapT &map, const std::unordered_set<std::string> &valid_ids, const char *label) {
       for (auto it = map.begin(); it != map.end();) {
@@ -284,7 +289,7 @@ namespace display_device {
      * VDD device IDs are unstable (change on destroy/recreate), so they should not be
      * persisted. This function removes them before saving to persistent_data.
      */
-    template<typename MapT>
+    template <typename MapT>
     void
     filter_vdd_devices(MapT &map) {
       for (auto it = map.begin(); it != map.end();) {
@@ -623,13 +628,16 @@ namespace display_device {
         }
       }
 
+      // Keep the original snapshot intact so a partial restore can be retried.
+      auto restore_topology = data.topology;
+
       // 在移除VDD之前，先检查拓扑中是否有VDD
       // 收集VDD的设备ID，分别记录：
       // - vdd_device_ids: 所有VDD设备ID（用于从HDR/modes中清理）
       // - vdd_in_modified_only: 只在modified拓扑中的VDD（需要销毁）
       std::unordered_set<std::string> vdd_device_ids;
       std::unordered_set<std::string> vdd_in_initial;
-      
+
       // 收集 initial 拓扑中的 VDD
       for (const auto &group : data.topology.initial) {
         for (const auto &device_id : group) {
@@ -640,7 +648,7 @@ namespace display_device {
           }
         }
       }
-      
+
       // 收集 modified 拓扑中的 VDD
       for (const auto &group : data.topology.modified) {
         for (const auto &device_id : group) {
@@ -663,7 +671,7 @@ namespace display_device {
           }
         }
       }
-      
+
       if (skip_vdd_destroy) {
         BOOST_LOG(debug) << "VDD已由调用方销毁，跳过try_revert_settings中的VDD销毁逻辑";
       }
@@ -680,120 +688,41 @@ namespace display_device {
 
       // Remove VDD devices from topology before reverting, as VDD may have been destroyed
       // This function now returns the IDs of removed devices
-      const auto vdd_ids_from_initial = remove_vdd_from_topology(data.topology.initial);
-      const auto vdd_ids_from_modified = remove_vdd_from_topology(data.topology.modified);
-      
+      const auto vdd_ids_from_initial = remove_vdd_from_topology(restore_topology.initial);
+      const auto vdd_ids_from_modified = remove_vdd_from_topology(restore_topology.modified);
+
       // Merge VDD IDs from both topologies
       std::unordered_set<std::string> all_removed_vdd_ids = vdd_ids_from_initial;
       all_removed_vdd_ids.insert(vdd_ids_from_modified.begin(), vdd_ids_from_modified.end());
-      
+
       if (!all_removed_vdd_ids.empty()) {
         BOOST_LOG(info) << "Removed VDD devices from persistent topology (VDD may have been destroyed)";
-        data_modified = true;
-        
+
         // Clean up HDR states and display modes using the VDD IDs from topology removal
         // This works even after VDD is destroyed, since we got IDs before checking friendly_name
-        for (const auto& vdd_id : all_removed_vdd_ids) {
+        for (const auto &vdd_id : all_removed_vdd_ids) {
           if (data.original_hdr_states.erase(vdd_id) > 0) {
+            data_modified = true;
             BOOST_LOG(debug) << "Removed VDD from original_hdr_states: " << vdd_id;
           }
           if (data.original_modes.erase(vdd_id) > 0) {
+            data_modified = true;
             BOOST_LOG(debug) << "Removed VDD from original_modes: " << vdd_id;
           }
         }
       }
 
-      const bool modified_topology_valid = is_topology_valid(data.topology.modified);
-      const bool initial_topology_valid = is_topology_valid(data.topology.initial);
-      const bool have_changes_for_modified_topology = !data.original_primary_display.empty() ||
-                                                      !data.original_modes.empty() ||
-                                                      !data.original_hdr_states.empty();
-
-      std::unordered_set<std::string> newly_enabled_devices;
-      auto current_topology = get_current_topology();
-
-      // Handle modified topology changes
-      if (have_changes_for_modified_topology) {
-        if (modified_topology_valid && set_topology(data.topology.modified)) {
-          newly_enabled_devices = get_newly_enabled_devices_from_topology(current_topology, data.topology.modified);
-          current_topology = data.topology.modified;
-
-          // Revert HDR states
-          if (!data.original_hdr_states.empty()) {
-            BOOST_LOG(info) << "Changing back the HDR states to: " << to_string(data.original_hdr_states);
-            if (set_hdr_states(data.original_hdr_states)) {
-              data.original_hdr_states.clear();
-              data_modified = true;
-            }
-            else {
-              partially_failed = true;
-            }
-          }
-
-          // Revert display modes
-          if (!data.original_modes.empty()) {
-            BOOST_LOG(info) << "Changing back the display modes to: " << to_string(data.original_modes);
-            if (set_display_modes(data.original_modes)) {
-              data.original_modes.clear();
-              data_modified = true;
-            }
-            else {
-              partially_failed = true;
-            }
-          }
-
-          // Revert primary display
-          if (!data.original_primary_display.empty()) {
-            BOOST_LOG(info) << "Changing back the primary device to: " << data.original_primary_display;
-            if (set_as_primary_device(data.original_primary_display)) {
-              data.original_primary_display.clear();
-              data_modified = true;
-            }
-            else {
-              partially_failed = true;
-            }
-          }
-        }
-        else if (!modified_topology_valid) {
-          // Modified topology invalid, clear settings that depend on it
-          BOOST_LOG(warning) << "Modified topology invalid, skipping restoration of HDR, modes, and primary display";
-          data.original_hdr_states.clear();
-          data.original_modes.clear();
-          data.original_primary_display.clear();
-          data_modified = true;
-        }
-        else {
-          BOOST_LOG(error) << "Cannot switch to the topology to undo changes!";
-          partially_failed = true;
-        }
-      }
-
-      // Revert to initial topology
-      BOOST_LOG(info) << "Changing display topology back to: " << to_string(data.topology.initial);
-      if (initial_topology_valid) {
-        if (set_topology(data.topology.initial)) {
-          newly_enabled_devices.merge(get_newly_enabled_devices_from_topology(current_topology, data.topology.initial));
-          current_topology = data.topology.initial;
-          data_modified = true;
-        }
-        else {
-          BOOST_LOG(error) << "Failed to switch back to the initial topology!";
-          partially_failed = true;
-        }
-      }
-      else {
-        BOOST_LOG(warning) << "Initial topology invalid (VDD may have been removed), keeping current topology";
-      }
+      auto result = restore_display_settings(data, restore_topology, data_modified);
 
       // Fix HDR states for newly enabled devices
-      if (!newly_enabled_devices.empty()) {
-        const auto current_hdr_states = get_current_hdr_states(get_device_ids_from_topology(current_topology));
+      if (!result.newly_enabled_devices.empty()) {
+        const auto current_hdr_states = get_current_hdr_states(get_device_ids_from_topology(result.active_topology));
         BOOST_LOG(debug) << "Trying to fix HDR states (if needed).";
-        blank_hdr_states(current_hdr_states, newly_enabled_devices);
+        blank_hdr_states(current_hdr_states, result.newly_enabled_devices);
         set_hdr_states(current_hdr_states);
       }
 
-      return !partially_failed;
+      return result.success && !partially_failed;
     }
 
     /**
@@ -918,19 +847,19 @@ namespace display_device {
   bool
   settings_t::is_changing_settings_going_to_fail() const {
     const bool session_locked = w_utils::is_user_session_locked();
-    
+
     // 如果会话已锁定，直接返回true，跳过CCD API测试
     // 这避免了在锁屏状态下频繁调用显示API导致ERROR_ACCESS_DENIED和WATCHDOG事件
     if (session_locked) {
       BOOST_LOG(info) << "Changing settings will fail - session_locked: true";
       return true;
     }
-    
+
     const bool no_ccd_access = w_utils::test_no_access_to_ccd_api();
     if (no_ccd_access) {
       BOOST_LOG(info) << "Changing settings will fail - no_ccd_access: true";
     }
-    
+
     return no_ccd_access;
   }
 
@@ -950,7 +879,7 @@ namespace display_device {
     }
 
     const bool client_hdr_enabled = session.enable_hdr;
-    const auto do_apply_config { [this, &pre_saved_initial_topology, &profile_setting, client_hdr_enabled](const parsed_config_t &config) -> settings_t::apply_result_t {
+    const auto do_apply_config { [this, &pre_saved_initial_topology, &profile_setting, &session, client_hdr_enabled](const parsed_config_t &config) -> settings_t::apply_result_t {
       // 检测是否为VDD模式
       const bool is_vdd_mode = config.use_vdd && *config.use_vdd;
 
@@ -979,8 +908,8 @@ namespace display_device {
           BOOST_LOG(info) << "Display device preparation mode is set to no_operation, topology will not be changed";
         }
 
-        const boost::optional<topology_pair_t> previously_configured_topology { 
-          persistent_data ? boost::make_optional(persistent_data->topology) : boost::none 
+        const boost::optional<topology_pair_t> previously_configured_topology {
+          persistent_data ? boost::make_optional(persistent_data->topology) : boost::none
         };
 
         // On Windows the display settings are kept per an active topology list - each topology
@@ -996,8 +925,7 @@ namespace display_device {
           if (audio_sink_was_captured && !audio_data) {
             capture_audio_sink();
           }
-          return true;
-        }, pre_saved_initial_topology);
+          return true; }, pre_saved_initial_topology);
       }
 
       if (!topology_result) {
@@ -1020,7 +948,7 @@ namespace display_device {
       //
       // Therefore, we are always sticking with the first initial topology before the first configuration
       // was applied.
-      persistent_data_t new_settings { topology_result->pair };
+      persistent_data_t new_settings { { topology_result->pair } };
       persistent_data_t &current_settings { persistent_data ? *persistent_data : new_settings };
       const bool should_skip_new_vdd_only_persistence =
         is_vdd_mode &&
@@ -1127,6 +1055,10 @@ namespace display_device {
         BOOST_LOG(info) << "Ignoring physical-display ICC override for VDD; client luminance capabilities are programmed directly into the virtual display";
       }
 
+      if (is_vdd_mode && !hdr::apply_vdd_calibration(session, config.device_id)) {
+        return { apply_result_t::result_e::color_profile_fail };
+      }
+
       if (wants_physical_profile) {
         if (!current_settings.color_profile) {
           current_settings.color_profile = win_color_profile::snapshot(config.device_id, *profile_setting.profile);
@@ -1166,7 +1098,6 @@ namespace display_device {
         // the session for a display that again exist is pointless.
         release_audio_sink();
       }
-
     }
 
     if (!result) {
@@ -1241,7 +1172,7 @@ namespace display_device {
     if (!persistent_data) {
       return false;
     }
-    
+
     for (const auto &group : persistent_data->topology.initial) {
       for (const auto &device_id : group) {
         const auto friendly_name = get_display_friendly_name(device_id);
@@ -1254,57 +1185,55 @@ namespace display_device {
   }
 
   void
-  settings_t::remove_vdd_from_initial_topology(const std::string& vdd_id) {
+  settings_t::remove_vdd_from_initial_topology(const std::string &vdd_id) {
     if (!persistent_data) {
       return;
     }
-    
+
     // Remove from initial topology
-    for (auto& group : persistent_data->topology.initial) {
+    for (auto &group : persistent_data->topology.initial) {
       group.erase(
         std::remove(group.begin(), group.end(), vdd_id),
-        group.end()
-      );
+        group.end());
     }
-    
+
     // Remove from modified topology
-    for (auto& group : persistent_data->topology.modified) {
+    for (auto &group : persistent_data->topology.modified) {
       group.erase(
         std::remove(group.begin(), group.end(), vdd_id),
-        group.end()
-      );
+        group.end());
     }
-    
+
     // Remove VDD from HDR states (avoid trying to restore HDR for destroyed VDD)
     if (persistent_data->original_hdr_states.erase(vdd_id) > 0) {
       BOOST_LOG(debug) << "Removed VDD from original_hdr_states: " << vdd_id;
     }
-    
+
     // Remove VDD from display modes (avoid trying to restore mode for destroyed VDD)
     if (persistent_data->original_modes.erase(vdd_id) > 0) {
       BOOST_LOG(debug) << "Removed VDD from original_modes: " << vdd_id;
     }
-    
+
     // Save updated persistent data
     save_settings(filepath, *persistent_data);
   }
 
   void
-  settings_t::replace_vdd_id(const std::string& old_id, const std::string& new_id) {
+  settings_t::replace_vdd_id(const std::string &old_id, const std::string &new_id) {
     if (!persistent_data) {
       return;
     }
-    
+
     // Replace in initial topology
-    for (auto& group : persistent_data->topology.initial) {
+    for (auto &group : persistent_data->topology.initial) {
       std::replace(group.begin(), group.end(), old_id, new_id);
     }
-    
+
     // Replace in modified topology
-    for (auto& group : persistent_data->topology.modified) {
+    for (auto &group : persistent_data->topology.modified) {
       std::replace(group.begin(), group.end(), old_id, new_id);
     }
-    
+
     // Replace VDD ID in HDR states map
     if (auto it = persistent_data->original_hdr_states.find(old_id); it != persistent_data->original_hdr_states.end()) {
       auto hdr_value = it->second;
@@ -1312,7 +1241,7 @@ namespace display_device {
       persistent_data->original_hdr_states[new_id] = hdr_value;
       BOOST_LOG(debug) << "Replaced VDD ID in original_hdr_states: " << old_id << " -> " << new_id;
     }
-    
+
     // Replace VDD ID in display modes map
     if (auto it = persistent_data->original_modes.find(old_id); it != persistent_data->original_modes.end()) {
       auto mode_value = it->second;
@@ -1320,7 +1249,7 @@ namespace display_device {
       persistent_data->original_modes[new_id] = mode_value;
       BOOST_LOG(debug) << "Replaced VDD ID in original_modes: " << old_id << " -> " << new_id;
     }
-    
+
     // Save updated persistent data
     save_settings(filepath, *persistent_data);
   }

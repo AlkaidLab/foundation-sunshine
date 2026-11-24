@@ -4,16 +4,23 @@
  */
 #pragma once
 
+#include <algorithm>
 #include <bitset>
+#include <cctype>
 #include <chrono>
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <vector>
 
+#include <nlohmann/json_fwd.hpp>
+
 #include "nvenc/nvenc_config.h"
+#include "config_session_binding.h"
 
 namespace config {
   // track modified config options
@@ -36,6 +43,8 @@ namespace config {
 
     nvenc::nvenc_config nv;
     bool nv_realtime_hags;
+    bool nv_manage_driver_settings;
+    bool nv_vdd_force_vsync;
     bool nv_opengl_vulkan_on_dxgi;
     bool nv_sunshine_high_power_mode;
     bool vdd_keep_enabled;
@@ -43,8 +52,6 @@ namespace config {
     bool vdd_headless_create_enabled;
     /** When true, reuse existing VDD on client switch instead of destroying and recreating. Default true. */
     bool vdd_reuse;
-    /** When true, Zako Direct Capture borrows VDD shared textures instead of copying into Sunshine-owned capture textures. */
-    bool vdd_borrowed_texture;
     /** Automatically validate and expose Vulkan HDR colorspaces for HDR VDD sessions. */
     bool vdd_vulkan_hdr_bridge;
 
@@ -80,6 +87,8 @@ namespace config {
       int amd_ltr_frames = 0;  // LTR frames for RFI (0=disabled by default; matches FFmpeg amfenc behavior to avoid static-region color blocks)
       int amd_slices_per_frame = 0;  // Slices/tiles per frame (0=client decides, 1-4=minimum)
       bool amd_avcodec_compat = false;  // Optional AVCodec-like AMF adapter; false keeps the clean standalone path.
+      int amd_hevc_gop_size = -1;  // -1: driver default, 0: on-demand IDR, 1-1000: frames.
+      bool amd_vpe = false;  // Experimental AMF VideoConverter preference for SDR and HDR.
       std::optional<bool> amd_multi_hw_instance;
       // The properties below historically had aggressive hardcoded defaults that
       // forced AMF code paths FFmpeg never touches (HIGH_MOTION_QUALITY_BOOST=on,
@@ -91,8 +100,8 @@ namespace config {
       std::optional<bool> amd_high_motion_qb;
       std::optional<bool> amd_lowlatency_mode;
       // Standalone: AMF INPUT_QUEUE_SIZE. AVCodec compatibility: async_depth cap.
-      std::optional<int> amd_input_queue_size;   // 1-16
-      std::optional<int> amd_av1_latency_mode;   // AMF_VIDEO_ENCODER_AV1_ENCODING_LATENCY_MODE_*
+      std::optional<int> amd_input_queue_size;  // 1-16
+      std::optional<int> amd_av1_latency_mode;  // AMF_VIDEO_ENCODER_AV1_ENCODING_LATENCY_MODE_*
     } amd;
 
     struct {
@@ -110,25 +119,16 @@ namespace config {
     std::string encoder;
     std::string adapter_name;
 
-    struct display_mode_remapping_t {
-      std::string type;
-      std::string received_resolution;
-      std::string received_fps;
-      std::string final_resolution;
-      std::string final_refresh_rate;
-    };
-
     std::string output_name;
     std::string capture_target;  // "display" or "window" - determines whether to capture display or window
-    std::string window_title;     // Window title to capture when capture_target="window"
-    bool capture_cursor;          // Whether to composite the host mouse cursor into the stream (toggle: Ctrl+Alt+Shift+N)
+    std::string window_title;  // Window title to capture when capture_target="window"
+    bool capture_cursor;  // Whether to composite the host mouse cursor into the stream (toggle: Ctrl+Alt+Shift+N)
     int display_device_prep;
     int resolution_change;
     std::string manual_resolution;
     int refresh_rate_change;
     std::string manual_refresh_rate;
     int hdr_prep;
-    std::vector<display_mode_remapping_t> display_mode_remapping;
     bool variable_refresh_rate;  // Allow video stream framerate to match render framerate for VRR support
     int minimum_fps_target;  // Minimum FPS target (0 = auto, 1-1000 = minimum FPS to maintain)
     bool input_activity_boost;  // Temporarily raise encoding cadence after local input while VRR is active
@@ -139,15 +139,19 @@ namespace config {
     std::string capture_compute_shader;  // GPU frame conversion: "auto", "on", "off"
     bool wgc_disable_secure_desktop;  // Auto-disable UAC secure desktop when using WGC capture
     bool dynamic_resolution_follow_display;  // If true, follow mid-stream host display resolution changes and notify client via extension; if false, keep initial stream resolution and let scaler handle changes (compatible with legacy clients like PSVita Moonlight that don't implement the extension)
+    int video_pacing_threshold;  // Minimum encoded frame size in bytes for UDP pacing; 0 disables the additional pacing path
   };
 
   struct audio_t {
     std::string sink;
     std::string virtual_sink;
+    bool keep_sink_default;  // Keep the selected Windows audio output device as the system default while streaming
+    bool host_audio;  // Default to keeping stream audio on the host as well as sending it to the client
     std::string microphone_redirect_backend;
     bool stream;
     bool stream_mic;
     bool install_steam_drivers;
+    bool mat_live;  // Use the trusted local capture tool's automatic endpoint.
   };
 
   constexpr int ENCRYPTION_MODE_NEVER = 0;  // Never use video encryption, even if the client supports it
@@ -156,6 +160,8 @@ namespace config {
 
   struct stream_t {
     std::chrono::milliseconds ping_timeout;
+    bool stop_on_last_video_session;
+    bool launch_splash;  ///< 启动画面: the Panel shows the app's name and stage on the streamed display until its window is up
 
     std::string file_apps;
 
@@ -164,12 +170,14 @@ namespace config {
     // Video encryption settings for LAN and WAN streams
     int lan_encryption_mode;
     int wan_encryption_mode;
+    bool fec_auto = false;
+    int fec_auto_max_percentage = 50;
   };
 
   // Sleep mode options for PC sleep command
-  constexpr int SLEEP_MODE_SUSPEND = 0;   // S3 Sleep (traditional suspend via SetSuspendState)
+  constexpr int SLEEP_MODE_SUSPEND = 0;  // S3 Sleep (traditional suspend via SetSuspendState)
   constexpr int SLEEP_MODE_HIBERNATE = 1;  // S4 Hibernate (deeper sleep, saves to disk)
-  constexpr int SLEEP_MODE_AWAY = 2;       // Away Mode (display off, system stays on, instant wake)
+  constexpr int SLEEP_MODE_AWAY = 2;  // Away Mode (display off, system stays on, instant wake)
 
   struct nvhttp_t {
     // Could be any of the following values:
@@ -180,13 +188,22 @@ namespace config {
     std::string cert;
 
     std::string sunshine_name;
+    std::string fs_host_icon;  ///< Optional specialised-client host icon token.
+    std::string generated_cover_style;  ///< Default style for applications that follow the generated-cover setting.
     std::string clients;
 
     std::string file_state;
     std::string file_mappings;
     std::uint16_t file_mapping_port;
+    bool usb_forwarding_enabled;
+    std::uint16_t usb_forwarding_port;  // 0: main port + 7; otherwise explicit override
 
-    std::string external_ip;
+    std::string external_ip;  ///< legacy single public address; external_endpoints wins when both are set
+    std::string external_endpoints;  ///< public endpoints, `host[:port]` separated by commas
+    std::string stun_servers;  ///< STUN servers of the network overview; empty: built-in list, "none": off
+    std::string network_external_check;  ///< "enabled" (default): the network check asks a service on the internet to connect to the public addresses (network_external.h); anything else: off
+    std::string network_external_endpoint;  ///< base URL of that service; empty: the built-in one
+    std::string network_bypass_proxy;  ///< "enabled" (default): the probes of the network check leave through the physical adapter, not through a tunnel adapter of a proxy (network_pin.h); anything else: the system route
     std::vector<std::string> resolutions;
     std::vector<std::string> fps;  // 支持小数刷新率，如 "119.88"
 
@@ -237,6 +254,7 @@ namespace config {
     bool virtual_mouse;
     bool amf_draw_mouse_cursor;
     bool clipboard_sync;  ///< Bidirectional clipboard sync (text + single image). On by default; effective only when the user-session GUI agent is alive. Set to false to force-disable.
+    bool client_gamepad_override;  ///< Honor the client-declared controller type carried on the /launch query (Sunshine extension). On by default; set false to keep host-side selection authoritative.
   };
 
   namespace flag {
@@ -272,6 +290,9 @@ namespace config {
     std::string password;
     std::string salt;
 
+    // Game Bar 小部件本地端点(/api/widget/*)的访问令牌;为空时该组端点不注册功能(404)
+    std::string widget_token;
+
     std::string config_file;
 
     struct cmd_t {
@@ -283,12 +304,22 @@ namespace config {
     std::uint16_t port;
     std::string address_family;
     std::string bind_address;
+    // Capture-session policy: 0 (default) selects the automatic console/RDP
+    // policy; 1 selects the console. GUI identity is selected separately.
+    config_session_binding::mode_e session_binding;
 
     std::string log_file;
     bool restore_log;  // 是否恢复日志文件（true=恢复，false=覆盖）
     int max_log_size_mb;  // 日志文件最大大小（MB），超过后自动轮转，0=不限制
     bool notify_pre_releases;
     bool system_tray;
+    // Where a pairing request asks for its PIN: "fullscreen" (the control panel's full-screen entry, the default) or "panel" (the control panel's own pairing page).
+    std::string pin_prompt;
+    // Web UI session lifetimes. Defaults follow OWASP ASVS 4.0.3 V3.3.2.
+    int session_idle_minutes;
+    int session_absolute_hours;
+    int session_remember_idle_minutes;
+    int session_remember_days;
     std::vector<prep_cmd_t> prep_cmds;
   };
 
@@ -304,11 +335,57 @@ namespace config {
   std::unordered_map<std::string, std::string>
   parse_config(const std::string_view &file_content);
 
+  /** Parse the same boolean tokens for startup settings and saved-setting reloads. */
+  inline bool
+  to_bool(std::string_view boolean) {
+    std::string value { boolean };
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) { return std::tolower(ch); });
+    return value == "true" || value == "yes" || value == "enable" ||
+           value == "enabled" || value == "on" || value == "1";
+  }
+
   bool
   update_config(const std::map<std::string, std::string> &updates);
 
+  /**
+   * Run `work` while no other save of the settings file runs (the lock of update_config and update_full_config), so that a reset of the settings file does not
+   * interleave with a save. `work` must not call back into the functions of this header that save.
+   */
+  void
+  with_config_file_locked(const std::function<void()> &work);
+
+  std::optional<std::map<std::string, std::string>>
+  get_config_snapshot();
+
+  /** Overlay immutable startup command-line values on a newly read configuration. */
+  template <typename Settings>
+  void
+  apply_command_line_overrides(Settings &settings, const std::unordered_map<std::string, std::string> &overrides) {
+    for (const auto &[name, value] : overrides) settings.insert_or_assign(name, value);
+  }
+
+  /** Read saved settings while retaining command-line precedence for runtime policies. */
+  std::optional<std::map<std::string, std::string>>
+  get_effective_config_snapshot();
+
   bool
-  update_full_config(const std::map<std::string, std::string> &fullConfig);
+  update_full_config(const std::map<std::string, std::string> &fullConfig, std::string *previous_locale = nullptr);
+
+  /**
+   * The host's bitrate ceiling in Kbps (the `max_bitrate` setting, 0 = none). It is read while streams run and written when the configuration is saved (update_full_config), so every reader asks here and
+   * none caches `video.max_bitrate`. Relaxed atomics: a reader sees the old or the new value, never a torn one.
+   */
+  int
+  host_max_bitrate_kbps();
+  void
+  set_host_max_bitrate_kbps(int kbps);
+
+  /**
+   * The style the generated covers follow (the `generated_cover_style` setting). It is read by the HTTP handlers while the configuration can be saved, so every reader asks here:
+   * a saved value is in force at once, without a restart, and a value the host does not know is the default (tonal).
+   */
+  std::string
+  generated_cover_style();
 
   /**
    * Return a synchronized snapshot of the serialized per-client settings.
@@ -317,9 +394,21 @@ namespace config {
   get_clients_config();
 
   /**
+   * Return the per-client touch-keyboard preference: true when the client
+   * entry exists and its touch.enabled is true.  Unknown clients and
+   * entries without a touch object default to false.
+   */
+  bool
+  get_client_touch_keyboard_enabled(const std::string &uuid);
+
+  /**
    * Persist per-client settings and publish them to the running process.
-   * Unlike update_config(), an unchanged value is still a successful save.
+   * An unchanged value is treated as a successful save.
    */
   bool
   save_clients_config(const std::string &clients);
+
+  /** Update only Core-owned calibration data under the existing configuration lock. */
+  bool
+  save_client_hdr_calibration(const std::string &uuid, const nlohmann::json &calibration);
 }  // namespace config

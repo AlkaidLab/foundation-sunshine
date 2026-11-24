@@ -49,6 +49,18 @@ namespace amf {
     virtual amf_encoded_frame
     encode_frame(uint64_t frame_index, bool force_idr) = 0;
 
+    /// Whether an accepted input or a previously collected output still needs servicing.
+    virtual bool
+    has_pending_output() const = 0;
+
+    /**
+     * @brief Collect one output without submitting or changing the current input.
+     * @return An encoded frame, an empty frame if not ready, or a fatal error.
+     * Called on the encoder owner thread. A driver query may wait for its timeout.
+     */
+    virtual amf_encoded_frame
+    receive_frame() = 0;
+
     /**
      * @brief Perform reference frame invalidation (RFI).
      * @param first_frame First frame index of the invalidation range.
@@ -62,7 +74,7 @@ namespace amf {
      * @brief Set the bitrate for the encoder dynamically.
      * @param bitrate_kbps Bitrate in kilobits per second.
      */
-    virtual void
+    virtual bool
     set_bitrate(int bitrate_kbps) = 0;
 
     /**

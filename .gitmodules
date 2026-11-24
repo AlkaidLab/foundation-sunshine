@@ -1,11 +1,3 @@
-[submodule "packaging/linux/flatpak/deps/flatpak-builder-tools"]
-	path = packaging/linux/flatpak/deps/flatpak-builder-tools
-	url = https://github.com/flatpak/flatpak-builder-tools.git
-	branch = master
-[submodule "packaging/linux/flatpak/deps/shared-modules"]
-	path = packaging/linux/flatpak/deps/shared-modules
-	url = https://github.com/flathub/shared-modules.git
-	branch = master
 [submodule "third-party/build-deps"]
 	path = third-party/build-deps
 	url = https://github.com/AlkaidLab/foundation-build-deps.git
@@ -49,22 +41,21 @@
 [submodule "third-party/AMF"]
 	path = third-party/AMF
 	url = https://github.com/GPUOpen-LibrariesAndSDKs/AMF.git
-	branch = v1.5.2
+	# Pinned release: v1.5.3 (recorded by the superproject gitlink).
 	shallow = true
 	# Headers-only consumption (we only need amf/public/include/).
 	# After clone, run:
 	#   git -C third-party/AMF sparse-checkout init --cone
 	#   git -C third-party/AMF sparse-checkout set amf/public/include
-	# To upgrade: edit branch above, then `git submodule update --remote third-party/AMF`.
+	# To upgrade: fetch/check out a release tag, then commit the updated pin and gitlink.
+	# Release tags are not remote branches, so `git submodule update --remote` cannot select them.
+	#   git -C third-party/AMF fetch --depth=1 origin tag v1.5.3
+	#   git -C third-party/AMF checkout --detach v1.5.3
 	# AMF headers are backward-compatible; single version is sufficient.
 [submodule "third-party/nvapi"]
 	path = third-party/nvapi
 	url = https://github.com/NVIDIA/nvapi.git
 	branch = main
-[submodule "third-party/Simple-Web-Server"]
-	path = third-party/Simple-Web-Server
-	url = https://gitlab.com/eidheim/Simple-Web-Server.git
-	branch = master
 [submodule "third-party/TPCircularBuffer"]
 	path = third-party/TPCircularBuffer
 	url = https://github.com/michaeltyson/TPCircularBuffer.git
@@ -87,9 +78,13 @@
 	branch = master
 [submodule "src_assets/common/sunshine-control-panel"]
 	path = src_assets/common/sunshine-control-panel
-	url = https://github.com/qiin2333/sunshine-control-panel.git
+	url = https://github.com/AlkaidLab/foundation-panel.git
 	branch = main
 [submodule "third-party/moonlight-audio-haptics"]
 	path = third-party/moonlight-audio-haptics
 	url = https://github.com/AlkaidLab/moonlight-audio-haptics.git
 	branch = main
+[submodule "third-party/pyrowave"]
+	path = third-party/pyrowave
+	url = https://github.com/AlkaidLab/pyrowave.git
+	branch = master

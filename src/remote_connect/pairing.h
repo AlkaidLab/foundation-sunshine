@@ -11,6 +11,7 @@ namespace remote_connect {
     std::string pin;
     std::string server_name;
     std::int64_t expires_at;
+    std::uint16_t remote_port = 0;
   };
 
   struct pairing_result_t {

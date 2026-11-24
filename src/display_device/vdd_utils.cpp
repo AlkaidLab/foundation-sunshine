@@ -3,6 +3,8 @@
 #include "vdd_utils.h"
 
 #include "vdd_ioctl.h"
+#include "src/telemetry/telemetry.h"
+#include "vdd_mode_list.h"
 
 #include <algorithm>
 #include <atomic>
@@ -17,15 +19,18 @@
 #include <boost/uuid/uuid_io.hpp>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <future>
 #include <limits>
 #include <locale>
 #include <sstream>
+#include <stdexcept>
 #include <thread>
 #include <unordered_set>
 #include <vector>
 
 #include "src/globals.h"
+#include "src/file_handler.h"
 #include "src/platform/common.h"
 #include "src/platform/run_command.h"
 #include "src/platform/windows/display_device/windows_utils.h"
@@ -145,7 +150,8 @@ namespace display_device {
 
     bool
     execute_vdd_disable_enable_command() {
-      static const std::string kDevManPath = (std::filesystem::path(SUNSHINE_ASSETS_DIR).parent_path() / "tools" / "DevManView.exe").string();
+      static const std::string kDevManPath = file_handler::path_to_utf8(
+        file_handler::path_from_utf8(SUNSHINE_ASSETS_DIR).parent_path() / "tools" / "DevManView.exe");
       static const std::string kDriverName = "Zako Display Adapter";
       static constexpr auto kAction = "disable_enable";
 
@@ -200,13 +206,25 @@ namespace display_device {
       try {
         pt::ptree root;
         if (std::filesystem::exists(settings_path)) {
-          pt::read_xml(settings_path.string(), root);
+          std::ifstream input(settings_path, std::ios::binary);
+          if (!input.is_open()) {
+            throw std::runtime_error("unable to open VDD settings for reading");
+          }
+          pt::read_xml(input, root);
         }
 
         root.put("vdd_settings.cursor.HardwareCursor", enabled ? "true" : "false");
 
         auto setting = boost::property_tree::xml_writer_make_settings<std::string>(' ', 2);
-        pt::write_xml(settings_path.string(), root, std::locale(), setting);
+        std::ofstream output(settings_path, std::ios::binary | std::ios::trunc);
+        if (!output.is_open()) {
+          throw std::runtime_error("unable to open VDD settings for writing");
+        }
+        pt::write_xml(output, root, setting);
+        output.flush();
+        if (!output) {
+          throw std::runtime_error("unable to write VDD settings");
+        }
         return true;
       }
       catch (const std::exception &e) {
@@ -233,7 +251,11 @@ namespace display_device {
       try {
         if (std::filesystem::exists(settings_path)) {
           pt::ptree tree;
-          pt::read_xml(settings_path.string(), tree);
+          std::ifstream input(settings_path, std::ios::binary);
+          if (!input.is_open()) {
+            throw std::runtime_error("unable to open VDD settings for reading");
+          }
+          pt::read_xml(input, tree);
 
           if (const auto value = tree.get_optional<std::string>("vdd_settings.cursor.HardwareCursor")) {
             persisted_enabled = hardware_cursor_export_enabled(*value);
@@ -398,34 +420,20 @@ namespace display_device {
         return set_vdd_result::invalid_config;
       }
 
-      auto resolutions = settings.resolution_modes;
-      auto refresh_rates_hz = settings.refresh_rates_hz;
-      append_unique_resolution(resolutions, *config.resolution);
-      append_unique_refresh_rate(refresh_rates_hz, *session_refresh_hz);
-
-      if (resolutions.empty() || refresh_rates_hz.empty()) {
+      // Bounded by the driver's mode and command-length limits; the requested
+      // mode always fits, configured modes are left out by priority.
+      const vdd_mode_list::vdd_mode_t requested { *config.resolution, *session_refresh_hz };
+      const auto plan = vdd_mode_list::plan_modes(settings.resolution_modes, settings.refresh_rates_hz, *session_refresh_hz, &requested);
+      const auto command_string = vdd_mode_list::format_setmodes_command(plan.modes);
+      const auto mode_count = plan.modes.size();
+      if (command_string.empty()) {
         BOOST_LOG(warning) << "SETMODES skipped: full VDD mode list is empty";
         return set_vdd_result::invalid_config;
       }
-
-      std::wstringstream command;
-      command << L"SETMODES ";
-      std::size_t mode_count = 0;
-      for (const auto &resolution : resolutions) {
-        for (const auto refresh_hz : refresh_rates_hz) {
-          if (mode_count > 0) {
-            command << L",";
-          }
-          command << resolution.width << L"x" << resolution.height << L"x" << refresh_hz;
-          ++mode_count;
-        }
-      }
-
-      const auto command_string = command.str();
-      if (command_string.size() >= 2048) {
-        BOOST_LOG(warning) << "SETMODES command too large (" << command_string.size()
-                           << " wchar_t); refusing a partial mode-list update";
-        return set_vdd_result::failed;
+      if (plan.configured_left_out > 0) {
+        BOOST_LOG(info) << "VDD mode list limited to " << mode_count << " modes; " << plan.configured_left_out
+                        << " configured resolution and refresh-rate combination(s) left out (driver limit "
+                        << vdd_mode_list::kMaxTotalModes << " modes)";
       }
 
       switch (vdd_ioctl::send_command(command_string)) {
@@ -475,7 +483,8 @@ namespace display_device {
       static const std::unordered_map<std::string, physical_size_t> size_map = {
         { "small", { 13.3f, 7.5f } },  // 小型设备：约6英寸，16:9比例
         { "medium", { 34.5f, 19.4f } },  // 中型设备：约15.6英寸，16:9比例
-        { "large", { 70.8f, 39.8f } }  // 大型设备：约32英寸，16:9比例
+        { "large", { 40.7f, 22.9f } },  // 大型设备：约18.4英寸，16:9比例（1080p下推荐缩放125%）
+        { "huge", { 70.8f, 39.8f } }  // 巨型设备：约32英寸，16:9比例（1080p下推荐缩放100%）
       };
 
       try {
@@ -504,6 +513,7 @@ namespace display_device {
       if (!status.is_usable()) {
         const auto error_code = status.installed ? "VDD_DRIVER_UNAVAILABLE" : "VDD_DRIVER_NOT_INSTALLED";
         BOOST_LOG(error) << error_code << ": ZakoVDD must be installed and healthy before creating a virtual display. Open the Sunshine desktop VDD settings to install or repair it.";
+        telemetry::driver_failed("vdd", "create", error_code);
         return false;
       }
 
@@ -564,9 +574,11 @@ namespace display_device {
           return true;
         case vdd_ioctl::result::failed:
           BOOST_LOG(error) << "创建虚拟显示器失败 (IOCTL)";
+          telemetry::driver_failed("vdd", "create", "VDD_IOCTL_FAILED");
           return false;
         case vdd_ioctl::result::interface_missing:
           BOOST_LOG(error) << "创建虚拟显示器失败: VDD IOCTL interface missing";
+          telemetry::driver_failed("vdd", "create", "VDD_IOCTL_MISSING");
           return false;
       }
       return false;
@@ -1048,9 +1060,15 @@ namespace display_device {
         case parsed_config_t::vdd_prep_e::vdd_as_secondary: {
           // VDD为副屏模式：物理显示器为主屏，VDD作为扩展显示器
           BOOST_LOG(info) << "应用vdd_prep: 物理显示器为主屏，VDD为副屏";
-          // 物理显示器放在前面（第一个为主显示器）
+          // 不能按物理显示器的枚举顺序选择主屏；枚举结果不保证首个设备就是原主屏。
+          // 先放入 VDD 创建前识别的原主屏，避免把副屏误设为主屏。
+          if (!original_primary_id.empty() && original_primary_id != vdd_device_id) {
+            new_topology.push_back({ original_primary_id });
+          }
           for (const auto &physical_id : physical_devices) {
-            new_topology.push_back({ physical_id });
+            if (physical_id != original_primary_id) {
+              new_topology.push_back({ physical_id });
+            }
           }
           // VDD单独一组（作为副显示器）
           new_topology.push_back({ vdd_device_id });

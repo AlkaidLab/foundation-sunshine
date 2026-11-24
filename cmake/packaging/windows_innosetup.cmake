@@ -23,6 +23,11 @@ if(NOT ISCC_EXECUTABLE)
     return()
 endif()
 
+find_program(INSTALLER_PAYLOAD_PYTHON_EXECUTABLE python3 python)
+if(NOT INSTALLER_PAYLOAD_PYTHON_EXECUTABLE)
+    message(FATAL_ERROR "Python is required to assemble the native installer payload")
+endif()
+
 message(STATUS "Found Inno Setup: ${ISCC_EXECUTABLE}")
 
 # Configure the .iss template with CMake variables
@@ -59,17 +64,36 @@ add_custom_target(innosetup
     COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/inno_staging/tools/sunshinesvc.exe"
     COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/inno_staging/tools/dxgi-info.exe"
     COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/inno_staging/tools/audio-info.exe"
-    COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/inno_staging/tools/stylus-input-probe.exe"
+
+    # The COFF symbol table is not part of a loaded image and is not the crash-symbol source. The runtime image keeps
+    # its CodeView GUID, so the symbol zip still matches a dump; a signed module is left byte for byte as it is.
+    COMMAND "${INSTALLER_PAYLOAD_PYTHON_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tools/pe_symbols.py"
+            "${CMAKE_BINARY_DIR}/tools/sunshine-installer-shell.exe"
+    COMMAND "${INSTALLER_PAYLOAD_PYTHON_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tools/pe_symbols.py" --recursive "${CMAKE_BINARY_DIR}/inno_staging"
     
     # Run Inno Setup compiler
     COMMAND "${ISCC_EXECUTABLE}" "${CMAKE_BINARY_DIR}/sunshine_installer.iss"
+
+    # Wrap the generated Inno engine in the native shell. The shell is the
+    # user-facing executable; the engine remains only as the per-run payload.
+    COMMAND "${INSTALLER_PAYLOAD_PYTHON_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tools/append_installer_payload.py"
+            "${CMAKE_BINARY_DIR}/tools/sunshine-installer-shell.exe"
+            "${CPACK_PACKAGE_DIRECTORY}/Sunshine-engine.exe"
+            "${CPACK_PACKAGE_DIRECTORY}/Sunshine.exe"
     
     WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
     VERBATIM
 )
 
 # Make sure sunshine is built before creating the installer
-add_dependencies(innosetup sunshine stylus-input-probe)
+add_dependencies(innosetup sunshine)
+add_dependencies(innosetup sunshine-installer-shell)
+if(TARGET web-ui)
+    add_dependencies(innosetup web-ui)
+endif()
 
 # Also provide a convenience target to just generate the staging directory
 add_custom_target(innosetup-staging
@@ -79,4 +103,7 @@ add_custom_target(innosetup-staging
     WORKING_DIRECTORY "${CMAKE_BINARY_DIR}"
     VERBATIM
 )
-add_dependencies(innosetup-staging stylus-input-probe)
+add_dependencies(innosetup-staging sunshine)
+if(TARGET web-ui)
+    add_dependencies(innosetup-staging web-ui)
+endif()

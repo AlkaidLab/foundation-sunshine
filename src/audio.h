@@ -9,7 +9,14 @@
 #include "thread_safe.h"
 #include "utility.h"
 
+#include <atomic>
 #include <bitset>
+#include <functional>
+#include <memory>
+#include <mutex>
+namespace spatial_transport {
+  struct LiveSession;
+}
 
 namespace audio {
   // Audio codec values negotiated via the "x-ml-audio.codec" RTSP attribute.
@@ -20,7 +27,10 @@ namespace audio {
     CODEC_AC3 = 1,
     CODEC_EAC3 = 2,
     CODEC_PCM_S16 = 3,  ///< Raw signed 16-bit interleaved LPCM (no compression)
+    CODEC_MAT_LIVE = 7,  ///< Native live MAT; authenticated 64-bit packet counter
   };
+  inline bool
+  is_mat_codec(int codec) { return codec == CODEC_MAT_LIVE; }
 
   enum stream_config_e : int {
     STEREO,  ///< Stereo
@@ -53,6 +63,7 @@ namespace audio {
   extern opus_stream_config_t stream_configs[MAX_STREAM_CONFIG];
 
   struct config_t {
+    std::shared_ptr<spatial_transport::LiveSession> mat_live;
     enum flags_e : int {
       HIGH_QUALITY,  ///< High quality audio
       HOST_AUDIO,  ///< Host audio
@@ -79,6 +90,10 @@ namespace audio {
     stream_params_t customStreamParams;
 
     std::bitset<MAX_FLAGS> flags;
+    // Shared with the session control API so a running capture can rebuild its
+    // source when host playback is toggled. A missing pointer keeps the
+    // negotiated session value for older callers.
+    std::shared_ptr<std::atomic_bool> host_audio_enabled;
   };
 
   struct audio_ctx_t {
@@ -89,14 +104,31 @@ namespace audio {
 
     bool restore_sink;
     platf::sink_t sink;
+
+    // The system has no default playback device: the stream goes on without sound and capture starts when one appears.
+    // Set while the context is built, cleared by wait_default_output(); `sink` is empty until then.
+    std::atomic_bool awaiting_default_output { false };
+    // A running capture lost its default device and waits for a new one (reported as `host_waiting` by GET /api/audio/devices).
+    std::atomic_bool capture_waiting_for_device { false };
+    // Guards `sink` against the capture thread that fills it in when the device appears.
+    mutable std::mutex sink_mutex;
   };
 
+  /**
+   * @brief Block until the system has a default playback device, then fill in the sink information.
+   * @param ctx The audio context; returns true at once when it is not waiting for a device.
+   * @param stop Returns true when the stream ended.
+   * @returns True when capture can start, false when the stream ended while waiting.
+   */
+  bool
+  wait_default_output(audio_ctx_t &ctx, const std::function<bool()> &stop);
+
   using buffer_t = util::buffer_t<std::uint8_t>;
-  using packet_t = std::pair<void *, buffer_t>;
+  using packet_t = std::pair<std::uint64_t, buffer_t>;
   using audio_ctx_ref_t = safe::shared_t<audio_ctx_t>::ptr_t;
 
   void
-  capture(safe::mail_t mail, config_t config, void *channel_data);
+  capture(safe::mail_t mail, config_t config, std::uint64_t channel_data);
 
   /**
    * @brief Get the reference to the audio context.
@@ -168,7 +200,8 @@ namespace audio {
    * @note Must be called serially by micRecvThread with the other microphone redirect device APIs.
    * @param samples Pointer to the PCM samples.
    * @param frame_count Number of mono frames to write.
-   * @returns Number of bytes written, -1 on a generic error, or -2 when the device was invalidated.
+   * @returns Number of bytes written, 0 when the current frame was dropped due to backpressure,
+   *          -1 on a generic error, or -2 when the active output backend became unavailable.
    */
   int
   write_mic_pcm(const std::int16_t *samples, std::size_t frame_count);

@@ -6,6 +6,7 @@
 
 #include <tuple>
 #include <utility>
+#include <vector>
 
 #include <boost/asio.hpp>
 
@@ -14,6 +15,13 @@
 #include "utility.h"
 
 namespace net {
+  struct local_address_t {
+    std::string name;
+    std::string address;
+  };
+  std::vector<local_address_t> local_addresses();
+  /// Validate a single local bind IP and its configured address family.
+  void validate_bind_address(const std::string &address, const std::string &family);
   void
   free_host(ENetHost *host);
 
@@ -43,6 +51,7 @@ namespace net {
     IPV4,  ///< IPv4 only
     BOTH  ///< IPv4 and IPv6
   };
+  bool bind_uses_ipv4(af_e af);
 
   net_e
   from_enum_string(const std::string_view &view);
@@ -77,6 +86,16 @@ namespace net {
    * @return The configured bind address or wildcard if not configured.
    */
   std::string get_bind_address(af_e af);
+
+  /**
+   * @brief Get the loopback host used to open the local Web UI.
+   * @details The configuration HTTPS service keeps an IPv4 loopback listener
+   *          for local GUI/tray access even when a concrete interface address
+   *          is configured.
+   * @return URL-safe host name or address.
+   */
+  std::string
+  get_web_ui_host();
 
   /**
    * @brief Convert an address to a normalized form.

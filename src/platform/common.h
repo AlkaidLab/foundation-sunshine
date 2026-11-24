@@ -11,9 +11,11 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 
 // lib includes
 #include <boost/core/noncopyable.hpp>
@@ -25,6 +27,8 @@
 // local includes
 #include "src/config.h"
 #include "src/logging.h"
+#include "src/platform/datagram_send.h"
+#include "src/platform/frame_contract.h"
 #include "src/thread_safe.h"
 #include "src/utility.h"
 #include "src/video_colorspace.h"
@@ -41,6 +45,10 @@ struct AVBufferRef;
 struct AVHWFramesContext;
 struct AVCodecContext;
 struct AVDictionary;
+
+namespace perf {
+  struct capture_source_counter_t;
+}
 
 #ifdef _WIN32
 // Forward declarations of boost classes to avoid having to include boost headers
@@ -104,6 +112,8 @@ namespace platf {
     set_rgb_led,  ///< Set RGB LED
     set_adaptive_triggers,  ///< Set adaptive triggers
     ds5_haptics_pcm,  ///< Authored DualSense actuator PCM (48 kHz, stereo, S16LE)
+    ds5_haptics_state,  ///< Absolute actuator mode and claimed control groups
+    ds5_output_extension,  ///< Player and mute LEDs, volumes, microphone mute, routing, lightbar brightness (0x5515)
   };
 
   struct gamepad_feedback_msg_t {
@@ -155,8 +165,9 @@ namespace platf {
 
     static gamepad_feedback_msg_t
     make_ds5_haptics_pcm(std::uint16_t id, std::uint8_t flags, std::uint16_t frame_count,
-                         std::uint32_t sequence, std::uint64_t presentation_time_us,
-                         const std::uint8_t *pcm, std::size_t pcm_size) {
+      std::uint32_t sequence, std::uint64_t presentation_time_us,
+      const std::uint8_t *pcm, std::size_t pcm_size,
+      const std::uint8_t *speaker_pcm = nullptr, bool haptics_enabled = true) {
       gamepad_feedback_msg_t msg {};
       msg.type = gamepad_feedback_e::ds5_haptics_pcm;
       msg.id = id;
@@ -166,6 +177,31 @@ namespace platf {
       msg.data.ds5_haptics.presentation_time_us = presentation_time_us;
       const auto expected_size = static_cast<std::size_t>(msg.data.ds5_haptics.frame_count) * 4;
       std::copy_n(pcm, std::min(expected_size, pcm_size), msg.data.ds5_haptics.pcm.begin());
+      msg.data.ds5_haptics.haptics_enabled = haptics_enabled;
+      msg.data.ds5_haptics.has_speaker = speaker_pcm != nullptr;
+      if (speaker_pcm != nullptr) std::copy_n(speaker_pcm, expected_size, msg.data.ds5_haptics.speaker_pcm.begin());
+      return msg;
+    }
+
+    static gamepad_feedback_msg_t
+    make_ds5_haptics_state(std::uint16_t id, const std::uint8_t *state) {
+      gamepad_feedback_msg_t msg {};
+      msg.type = gamepad_feedback_e::ds5_haptics_state;
+      msg.id = id;
+      std::copy_n(state, 8, msg.data.ds5_haptics_state.begin());
+      return msg;
+    }
+
+    static gamepad_feedback_msg_t
+    make_ds5_output_extension(std::uint16_t id, std::uint32_t valid_mask, std::uint8_t player_led_mask,
+      std::uint8_t mute_led, std::uint8_t speaker_volume, std::uint8_t headphone_volume,
+      std::uint8_t mic_volume, std::uint8_t mic_mute, std::uint8_t audio_routing,
+      std::uint8_t lightbar_brightness) {
+      gamepad_feedback_msg_t msg {};
+      msg.type = gamepad_feedback_e::ds5_output_extension;
+      msg.id = id;
+      msg.data.ds5_output_extension = { valid_mask, player_led_mask, mute_led, speaker_volume, headphone_volume,
+        mic_volume, mic_mute, audio_routing, lightbar_brightness };
       return msg;
     }
 
@@ -209,11 +245,37 @@ namespace platf {
         std::uint32_t sequence;
         std::uint64_t presentation_time_us;
         std::array<std::uint8_t, 240 * 2 * sizeof(std::int16_t)> pcm;
+        /// The pad's speaker channels (left, right per frame) of the same frames; valid when has_speaker.
+        std::array<std::uint8_t, 240 * 2 * sizeof(std::int16_t)> speaker_pcm;
+        bool has_speaker;
+        /// False when the haptics path is switched off: pcm is then silence and only the speaker part is real.
+        bool haptics_enabled;
       } ds5_haptics;
+      std::array<std::uint8_t, 8> ds5_haptics_state;
+
+      struct {
+        std::uint32_t valid_mask;
+        std::uint8_t player_led_mask;
+        std::uint8_t mute_led;
+        std::uint8_t speaker_volume;
+        std::uint8_t headphone_volume;
+        std::uint8_t mic_volume;
+        std::uint8_t mic_mute;
+        std::uint8_t audio_routing;
+        std::uint8_t lightbar_brightness;
+      } ds5_output_extension;
     } data;
   };
 
   using feedback_queue_t = safe::mail_raw_t::queue_t<gamepad_feedback_msg_t>;
+
+  using ds5_haptics_state_event_t = safe::mail_raw_t::event_t<gamepad_feedback_msg_t>;
+
+  // Absolute state is latest-value feedback: PCM queue overflow must never discard it.
+  inline ds5_haptics_state_event_t
+  ds5_haptics_state_event(const safe::mail_t &mail, unsigned controller) {
+    return mail->event<gamepad_feedback_msg_t>("ds5_haptics_state." + std::to_string(controller));
+  }
 
   namespace speaker {
     enum speaker_e {
@@ -319,7 +381,9 @@ namespace platf {
     int width, height;
   };
 
-  // These values must match Limelight-internal.h's SS_FF_* constants!
+  // These values must match moonlight-common-c's LI_FF_* constants. Existing
+  // low bits are frozen legacy assignments; new fork-only capabilities use
+  // the high-bit registry documented in common-c/docs/protocol-extension-registry.md.
   namespace platform_caps {
     typedef uint32_t caps_t;
 
@@ -331,7 +395,11 @@ namespace platf {
     constexpr caps_t touchpad_frame = 0x20;  // Native precision touchpad frame events
     constexpr caps_t cursor_shape = 0x40;  // Client-rendered cursor shape updates
     constexpr caps_t ds5_haptics_pcm = 0x80;  // Native DualSense authored haptics PCM
-    constexpr caps_t dynamic_sdr_white = 0x100;  // Runtime client SDR reference white updates
+    constexpr caps_t dynamic_sdr_white = 0x100;  // Reserved legacy SDR white updates; never advertised
+    constexpr caps_t remote_text_context = 0x200;  // InputPane/UIA text context updates
+    constexpr caps_t host_session_state = 0x800;  // Session lock state updates (0x550E)
+    constexpr caps_t bitrate_callback = 0x4000;  // Host-to-client runtime bitrate updates (0x5506); registry: LI_FF_BITRATE_CALLBACK
+    constexpr caps_t endpoint_auto_refresh = 0x8000;  // Authenticated UDP endpoint migration v1
   };  // namespace platform_caps
 
   struct gamepad_state_t {
@@ -385,6 +453,15 @@ namespace platf {
     gamepad_id_t id;
     std::uint8_t state;
     std::uint8_t percentage;
+  };
+
+  /** @brief Headset and microphone facts reported by a DualSense client (control message 0x5516). */
+  struct gamepad_ds5_status_t {
+    gamepad_id_t id;
+    std::uint32_t valid_mask;  ///< ds5::control_extension::in_* bits
+    std::uint8_t headset_present;
+    std::uint8_t microphone_present;
+    std::uint8_t microphone_muted;
   };
 
   struct touch_input_t {
@@ -442,6 +519,7 @@ namespace platf {
     float pressureOrDistance;  // Distance for hover and pressure for contact
     float contactAreaMajor;
     float contactAreaMinor;
+    std::uint16_t barrelRoll = 0xffff;  // Independent axial twist, or unknown
   };
 
   class deinit_t {
@@ -455,6 +533,9 @@ namespace platf {
     std::optional<std::chrono::steady_clock::time_point> convert_end;
     std::optional<std::chrono::steady_clock::time_point> encode_submit;
     std::optional<std::chrono::steady_clock::time_point> packet_ready;
+    // The existing performance recorder uses this bit to count PyroWave
+    // frames without adding a second per-frame instrumentation path.
+    bool pyrowave = false;
   };
 
   struct img_t: std::enable_shared_from_this<img_t> {
@@ -476,6 +557,7 @@ namespace platf {
 
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
     std::optional<frame_pipeline_trace_t> pipeline_trace;
+    captured_frame_desc_t frame_desc;
 
     virtual ~img_t() = default;
   };
@@ -494,6 +576,10 @@ namespace platf {
     };
 
     std::optional<null_t> null;
+
+    // The device in `null` is the one chosen as the device to capture (a virtual device such as VB-CABLE), not Steam Streaming
+    // Speakers or the configured virtual sink: the stream runs on it whether or not the client plays the audio on the host
+    bool null_is_selected_device = false;
   };
 
   /**
@@ -512,9 +598,9 @@ namespace platf {
     /// Kept in sync with video::hdr_metadata::hdr10plus_percentages by a static_assert there.
     static constexpr size_t HDR10PLUS_PERCENTILES = 9;
 
-    float min_maxrgb = 0.0f;    ///< Minimum of max(R,G,B) across all pixels (nits)
-    float max_maxrgb = 0.0f;    ///< Maximum of max(R,G,B) across all pixels (nits)
-    float avg_maxrgb = 0.0f;    ///< Arithmetic mean of max(R,G,B) in linear light (nits), for HDR10+
+    float min_maxrgb = 0.0f;  ///< Minimum of max(R,G,B) across all pixels (nits)
+    float max_maxrgb = 0.0f;  ///< Maximum of max(R,G,B) across all pixels (nits)
+    float avg_maxrgb = 0.0f;  ///< Arithmetic mean of max(R,G,B) in linear light (nits), for HDR10+
     /// Arithmetic mean of the PQ-coded max(R,G,B), in normalized PQ signal space, for
     /// HDR Vivid. Accumulated per pixel by the analyzer, like avg_maxrgb, and
     /// deliberately derived from neither its result nor the histogram: PQ is concave,
@@ -535,9 +621,9 @@ namespace platf {
     float percentile_99 = 0.0f;
     /// maxRGB (nits) at each HDR10+ percentage, ordered like hdr10plus_percentages.
     float distribution_maxrgb[HDR10PLUS_PERCENTILES] = {};
-    float analysis_max_nits = 0.0f; ///< Upper luminance bound used by the analyzer
-    uint64_t sample_sequence = 0;   ///< Increments only when a new GPU readback completes
-    bool valid = false;         ///< Whether stats are available (false on first frame)
+    float analysis_max_nits = 0.0f;  ///< Upper luminance bound used by the analyzer
+    uint64_t sample_sequence = 0;  ///< Increments only when a new GPU readback completes
+    bool valid = false;  ///< Whether stats are available (false on first frame)
   };
 
   struct encode_device_t {
@@ -546,10 +632,19 @@ namespace platf {
     virtual int
     convert(platf::img_t &img) = 0;
 
-    // Optional: supported HDR converters can apply this at a frame boundary.
-    virtual void
-    set_client_sdr_white_nits(float) {
+    // Runtime image-enhancement changes are delivered to the owning encode
+    // thread. The default implementation keeps non-D3D devices unchanged.
+    virtual std::shared_ptr<safe::signal_t>
+    nr_change_event() {
+      return {};
     }
+
+    virtual void
+    apply_nr_change() {}
+
+    // Packet-level confirmation, independent of the PQ/HLG transfer function.
+    virtual void
+    report_dolby_vision_output(bool injected, bool enabled) {}
 
     video::sunshine_colorspace_t colorspace;
 
@@ -664,9 +759,24 @@ namespace platf {
      */
     using pull_free_image_cb_t = std::function<bool(std::shared_ptr<img_t> &img_out)>;
 
+    // Optional raw-source telemetry, shared by sessions using this display.
+    virtual std::shared_ptr<perf::capture_source_counter_t>
+    frame_rate_source() const {
+      return {};
+    }
+
+    // The output actually opened by this backend, or empty when the capture
+    // has no fixed monitor (e.g. window capture).
+    virtual std::string
+    captured_display_name() const {
+      return {};
+    }
+
     display_t() noexcept:
         offset_x { 0 },
-        offset_y { 0 } {
+        offset_y { 0 },
+        global_offset_x { 0 },
+        global_offset_y { 0 } {
     }
 
     /**
@@ -705,8 +815,35 @@ namespace platf {
       return nullptr;
     }
 
+    // 编码器使用会话自身的配置，不能借用共享采集设备的首个会话配置。
+    virtual std::unique_ptr<avcodec_encode_device_t>
+    make_avcodec_encode_device(pix_fmt_e pix_fmt, const ::video::config_t &config) {
+      return make_avcodec_encode_device(pix_fmt);
+    }
+
+    virtual std::unique_ptr<nvenc_encode_device_t>
+    make_nvenc_encode_device(pix_fmt_e pix_fmt, const ::video::config_t &config) {
+      return make_nvenc_encode_device(pix_fmt);
+    }
+
+    virtual std::unique_ptr<amf_encode_device_t>
+    make_amf_encode_device(pix_fmt_e pix_fmt, const ::video::config_t &config) {
+      return make_amf_encode_device(pix_fmt);
+    }
+
     virtual bool
     is_hdr() {
+      return false;
+    }
+
+    /**
+     * @brief Whether this capture/display path can run the configured pre-encode
+     *        filter. Sessions on paths returning false must disable the filter
+     *        (and re-resolve the frame pipeline policy) instead of signalling
+     *        HDR output no filter produces.
+     */
+    virtual bool
+    supports_pre_encode_filter() {
       return false;
     }
 
@@ -731,6 +868,10 @@ namespace platf {
 
     // Offsets for when streaming a specific monitor. By default, they are 0.
     int offset_x, offset_y;
+    // The selected display's origin in Windows/global screen coordinates. This
+    // is separate from offset_x/offset_y, which may be virtual-desktop-relative
+    // for absolute pointer injection.
+    int global_offset_x, global_offset_y;
     int env_width, env_height;
 
     int width, height;
@@ -753,8 +894,36 @@ namespace platf {
     virtual int
     set_sink(const std::string &sink) = 0;
 
+    /**
+     * @brief Restore the previous sink only when this controller still owns the default sink.
+     * @param sink Sink to restore.
+     * @returns True when the platform handled the decision, including skipping restoration
+     *          because the user selected another default sink; false when the platform has
+     *          no ownership-aware implementation.
+     */
+    virtual bool
+    restore_sink_if_assigned(const std::string &sink) {
+      return false;
+    }
+
+    virtual bool
+    has_assigned_sink() {
+      return false;
+    }
+
     virtual std::unique_ptr<mic_t>
     microphone(const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size, bool continuous) = 0;
+
+    /**
+     * @brief Create a capture client for a selected sink.
+     * @param sink Sink to capture. An empty sink follows the current default device.
+     * @returns The capture client, or null on failure. Platforms without explicit sink
+     *          capture can fall back to their default microphone implementation.
+     */
+    virtual std::unique_ptr<mic_t>
+    microphone(const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size, bool continuous, const std::string &sink) {
+      return microphone(mapping, channels, sample_rate, frame_size, continuous);
+    }
 
     /**
      * @brief Check if the audio sink is available in the system.
@@ -764,14 +933,45 @@ namespace platf {
     virtual bool
     is_sink_available(const std::string &sink) = 0;
 
+    /**
+     * @brief Check if a virtual sink supports the channel layout encoded in its name.
+     * @param sink Sink to be checked, as returned by sink_info().
+     * @returns False only when the platform knows the layout is unsupported.
+     */
+    virtual bool
+    is_sink_format_supported(const std::string &sink) {
+      return true;
+    }
+
     virtual std::optional<sink_t>
     sink_info() = 0;
+
+    /**
+     * @brief Whether the system has no default playback device right now (Windows: nothing plugged in, enabled or virtual).
+     * @returns True only when the platform knows there is none. The stream then goes on without sound until a device appears:
+     *          see wait_for_default_output().
+     */
+    virtual bool
+    default_output_missing() {
+      return false;
+    }
+
+    /**
+     * @brief Wait for a default playback device.
+     * @param timeout Longest time to block; a device that appears (or becomes the default) ends the wait early.
+     * @returns True when a default playback device exists now. Platforms that always have one return true at once.
+     */
+    virtual bool
+    wait_for_default_output(std::chrono::milliseconds timeout) {
+      return true;
+    }
 
     /**
      * @brief Write mono 48 kHz signed 16-bit PCM to the virtual microphone device.
      * @param samples Pointer to the PCM samples.
      * @param frame_count Number of mono frames to write.
-     * @returns Number of bytes written, -1 on a generic error, or -2 when the device was invalidated.
+     * @returns Number of bytes written, 0 when the current frame was dropped due to backpressure,
+     *          -1 on a generic error, or -2 when the active output backend became unavailable.
      */
     virtual int
     write_mic_pcm(const std::int16_t *samples, std::size_t frame_count) = 0;
@@ -836,6 +1036,15 @@ namespace platf {
   std::vector<std::string>
   adapter_names();
 
+#ifdef _WIN32
+  /**
+   * @brief What identifies the installed GPUs and their drivers: vendor, device, LUID and user-mode driver version of every adapter, in enumeration order.
+   * @return Empty when the adapters cannot be enumerated; the encoder probe then never reuses a previous result.
+   */
+  std::string
+  gpu_signature();
+#endif
+
   /**
    * @brief Check if GPUs/drivers have changed since the last call to this function.
    * @return `true` if a change has occurred or if it is unknown whether a change occurred.
@@ -895,8 +1104,11 @@ namespace platf {
   bool
   system_hibernate();
 
+  /**
+   * Restart the program. `reason` is one word of src/restart_reason.h that says what asked (it is reported with the restart; an unknown word is "api").
+   */
   void
-  restart();
+  restart(std::string_view reason = "api");
 
   /**
    * @brief Set an environment variable.
@@ -914,85 +1126,6 @@ namespace platf {
    */
   int
   unset_env(const std::string &name);
-
-  struct buffer_descriptor_t {
-    const char *buffer;
-    size_t size;
-
-    // Constructors required for emplace_back() prior to C++20
-    buffer_descriptor_t(const char *buffer, size_t size):
-        buffer(buffer),
-        size(size) {
-    }
-
-    buffer_descriptor_t():
-        buffer(nullptr),
-        size(0) {
-    }
-  };
-
-  struct batched_send_info_t {
-    // Optional headers to be prepended to each packet
-    const char *headers;
-    size_t header_size;
-
-    // One or more data buffers to use for the payloads
-    //
-    // NB: Data buffers must be aligned to payload size!
-    std::vector<buffer_descriptor_t> &payload_buffers;
-    size_t payload_size;
-
-    // The offset (in header+payload message blocks) in the header and payload
-    // buffers to begin sending messages from
-    size_t block_offset;
-
-    // The number of header+payload message blocks to send
-    size_t block_count;
-
-    std::uintptr_t native_socket;
-    boost::asio::ip::address &target_address;
-    uint16_t target_port;
-    boost::asio::ip::address &source_address;
-
-    /**
-     * @brief Returns a payload buffer descriptor for the given payload offset.
-     * @param offset The offset in the total payload data (bytes).
-     * @return Buffer descriptor describing the region at the given offset.
-     */
-    buffer_descriptor_t
-    buffer_for_payload_offset(ptrdiff_t offset) {
-      for (const auto &desc : payload_buffers) {
-        if (offset < desc.size) {
-          return {
-            desc.buffer + offset,
-            desc.size - offset,
-          };
-        }
-        else {
-          offset -= desc.size;
-        }
-      }
-      return {};
-    }
-  };
-
-  bool
-  send_batch(batched_send_info_t &send_info);
-
-  struct send_info_t {
-    const char *header;
-    size_t header_size;
-    const char *payload;
-    size_t payload_size;
-
-    std::uintptr_t native_socket;
-    boost::asio::ip::address &target_address;
-    uint16_t target_port;
-    boost::asio::ip::address &source_address;
-  };
-
-  bool
-  send(send_info_t &send_info);
 
   enum class qos_data_type_e : int {
     audio,  ///< Audio
@@ -1062,10 +1195,16 @@ namespace platf {
   set_mouse_mode(int mode);
   /**
    * @brief Select the gamepad emulation policy for the currently running app.
-   * @param mode 0=inherit global, 1=auto, 2=Xbox 360, 3=DualShock 4.
+   * @param mode 0=inherit global, 1=auto, 2=Xbox 360, 3=DualShock 4, 4=DualSense.
    */
   void
   set_gamepad_mode(int mode);
+  /**
+   * @brief Hot-apply the persisted global gamepad policy for future allocations.
+   * @param preference One of: auto, x360, ds4, ds5.
+   */
+  void
+  set_global_gamepad_mode(std::string_view preference);
   void
   abs_mouse(input_t &input, const touch_port_t &touch_port, float x, float y);
   void
@@ -1150,24 +1289,71 @@ namespace platf {
   gamepad_battery(input_t &input, const gamepad_battery_t &battery);
 
   /**
+   * @brief Pass the headset and microphone state of a DualSense client to the virtual controller.
+   * @param input The global input context.
+   * @param status The state reported with control message 0x5516. Platforms without a virtual
+   *               DualSense ignore it.
+   */
+  void
+  gamepad_ds5_status(input_t &input, const gamepad_ds5_status_t &status);
+
+  /**
    * @brief Create a new virtual gamepad.
    * @param input The global input context.
    * @param id The gamepad ID.
    * @param metadata Controller metadata from client (empty if none provided).
    * @param feedback_queue The queue for posting messages back to the client.
+   * @param client_gamepad Client-declared gamepad type for this session, or empty when undeclared.
    * @return 0 on success.
    */
   int
-  alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata, feedback_queue_t feedback_queue);
+  alloc_gamepad(input_t &input, const gamepad_id_t &id, const gamepad_arrival_t &metadata,
+    feedback_queue_t feedback_queue, std::string_view client_gamepad);
   void
   free_gamepad(input_t &input, int nr);
+  /**
+   * @brief Check whether an allocated gamepad is backed by the DualSense path.
+   * @param input The global platform input context.
+   * @param nr The global gamepad index.
+   * @return true only when the platform allocated a DualSense for this index.
+   */
+  bool
+  gamepad_is_ds5(input_t &input, int nr);
+
+  /**
+   * @brief The virtual pad type the platform created for an allocated gamepad.
+   * @param input The global platform input context.
+   * @param nr The global gamepad index.
+   * @return A gamepad_selection pad_type_* name ("ds4", "ds5", "x360"); empty
+   *         when the index is not allocated or the platform does not name its
+   *         virtual pads in that vocabulary.
+   */
+  std::string_view
+  gamepad_virtual_type(input_t &input, int nr);
+
+  /**
+   * @brief 检查已分配的 DualSense 音频触觉会话是否仍可用。
+   * @param input 平台输入上下文。
+   * @return 音频触觉协商成功且未降级或断线时返回 true。
+   */
+  bool
+  gamepad_has_ds5_audio_haptics(input_t &input);
 
   /**
    * @brief Get the supported platform capabilities to advertise to the client.
+   * @param client_gamepad Client-declared gamepad type for this session, or empty when undeclared.
    * @return Capability flags.
    */
   platform_caps::caps_t
-  get_capabilities();
+  get_capabilities(std::string_view client_gamepad);
+
+  /**
+   * @brief Query whether the capture process's interactive session is locked.
+   * @return The lock state, or std::nullopt when the platform cannot determine it.
+   * @note Distinguishes the lock screen from other secure desktops such as UAC prompts.
+   */
+  std::optional<bool>
+  query_session_locked();
 
 #define SERVICE_NAME "Sunshine"
 #define SERVICE_TYPE "_nvstream._tcp"

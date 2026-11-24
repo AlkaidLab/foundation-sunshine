@@ -22,6 +22,19 @@ namespace platf::audio {
     bool success = false;
     std::string error_code;
     std::string backend;
+    /** "tone" after a test sound was played; "live" when a stream owns the path and the route was reported. */
+    std::string mode;
+    /** Live mode: peak of the client microphone input since the last reader, 0..1. */
+    double input_peak = 0.0;
+    /** Live mode: milliseconds since the last client frame; -1 when none arrived. */
+    std::int64_t input_active_ms = -1;
+    /** Tone mode: seconds of audio the Windows capture endpoint delivered. */
+    double heard_seconds = -1.0;
+    /** Tone mode: 500 ms windows judged, and how many of them held the tone. */
+    int windows_total = 0;
+    int windows_good = 0;
+    /** Tone mode: amplitude of the test tone found on the capture endpoint (0.18 was written). */
+    double heard_amplitude = 0.0;
   };
 
   struct mic_redirect_status_t {
@@ -40,6 +53,12 @@ namespace platf::audio {
     std::int32_t last_error = 0;
     std::string state = "absent";
     std::string error_code;
+    /** Peak of the client microphone input since the previous status read, 0..1. */
+    double input_peak = 0.0;
+    /** Milliseconds since the last client microphone frame; -1 when none arrived. */
+    std::int64_t input_active_ms = -1;
+    /** Total client microphone frames received since the process started. */
+    std::uint64_t input_frames = 0;
   };
 
   /**
@@ -56,6 +75,18 @@ namespace platf::audio {
   void
   report_mic_redirect_backend(std::string active_backend, std::string fallback_reason = {});
 
+  /** Select and open the configured backend for a stream session; -1 when none can be used. */
+  int
+  init_mic_redirect();
+
+  /** Close the session's backend. */
+  void
+  release_mic_redirect();
+
+  /** Write mono 48 kHz S16 PCM to the session's backend; see mic_write_wasapi_t::write_pcm for the result codes. */
+  int
+  write_mic_redirect_pcm(const std::int16_t *samples, std::size_t frame_count);
+
   /** Atomically reserve the redirect path for a UI test. */
   bool
   try_begin_mic_redirect_test();
@@ -63,13 +94,14 @@ namespace platf::audio {
   /** Release a redirect-path reservation obtained by try_begin_mic_redirect_test(). */
   void
   end_mic_redirect_test();
-  
+
   // COM interface Release helper for safe_ptr
-  template<typename T>
-  inline void Release(T *p) {
+  template <typename T>
+  inline void
+  Release(T *p) {
     if (p) p->Release();
   }
-  
+
   // COM interface smart pointer types
   using device_enum_t = util::safe_ptr<IMMDeviceEnumerator, Release<IMMDeviceEnumerator>>;
   using audio_client_t = util::safe_ptr<IAudioClient, Release<IAudioClient>>;
@@ -86,7 +118,7 @@ namespace platf::audio {
 
   /**
    * @brief Windows WASAPI microphone write class for client mic redirection
-   * 
+   *
    * This class handles writing mixed client microphone PCM to virtual audio devices.
    */
   class mic_write_wasapi_t: public mic_t {
@@ -111,7 +143,8 @@ namespace platf::audio {
      * @brief Write mono 48 kHz signed 16-bit PCM to the virtual audio device.
      * @param samples Pointer to the PCM samples.
      * @param frame_count Number of mono frames to write.
-     * @return Number of bytes written, -1 on a generic error, or -2 when the device was invalidated.
+     * @return Number of bytes written, 0 when the current frame was dropped due to backpressure,
+     *         -1 on a generic error, or -2 when the device was invalidated.
      */
     int
     write_pcm(const std::int16_t *samples, std::size_t frame_count);
@@ -145,11 +178,11 @@ namespace platf::audio {
     };
 
     /**
-     * @brief Create or use virtual audio device
+     * @brief Find an installed virtual audio device without changing the system
      * @return 0 on success, -1 on failure
      */
     int
-    create_virtual_audio_device();
+    detect_virtual_audio_device();
 
     /**
      * @brief Setup virtual microphone loopback
@@ -230,6 +263,8 @@ namespace platf::audio {
     IAudioRenderClient *audio_render = nullptr;
     HANDLE mmcss_task_handle = nullptr;
     WAVEFORMATEX current_format = {};
+    UINT32 buffer_frame_count = 0;
+    std::vector<std::int16_t> pcm_output_buffer;
     VirtualDeviceType virtual_device_type = VirtualDeviceType::NONE;
 
     // Audio device restoration state

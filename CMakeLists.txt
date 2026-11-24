@@ -1,8 +1,14 @@
-cmake_minimum_required(VERSION 3.20)
-# `CMAKE_CUDA_ARCHITECTURES` requires 3.18
-# `set_source_files_properties` requires 3.18
-# `cmake_path(CONVERT ... TO_NATIVE_PATH_LIST ...)` requires 3.20
-# todo - set this conditionally
+cmake_minimum_required(VERSION 3.25)
+# Presets format 6 and the dependency discovery options require CMake 3.25.
+
+# Keep the private download credential out of compiler probes and build children.
+# This is a normal, non-cache variable, consumed only by the SDK downloader.
+set(_SUNSHINE_RTX_VIDEO_SDK_TOKEN "$ENV{RTX_VIDEO_SDK_TOKEN}")
+if (_SUNSHINE_RTX_VIDEO_SDK_TOKEN STREQUAL "")
+    set(_SUNSHINE_RTX_VIDEO_SDK_TOKEN "$ENV{DRIVER_DOWNLOAD_TOKEN}")
+endif ()
+unset(ENV{RTX_VIDEO_SDK_TOKEN})
+unset(ENV{DRIVER_DOWNLOAD_TOKEN})
 
 project(Sunshine VERSION 0.0.0
         DESCRIPTION "Self-hosted game stream host for Moonlight"
@@ -32,9 +38,12 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # set version info for this build
 include(${CMAKE_MODULE_PATH}/prep/build_version.cmake)
+# build identity: full commit, channel, UTC build time, variant, package
+include(${CMAKE_MODULE_PATH}/prep/build_info.cmake)
 
 # cmake build flags
 include(${CMAKE_MODULE_PATH}/prep/options.cmake)
+include(${CMAKE_MODULE_PATH}/targets/project_options.cmake)
 
 # initial prep
 include(${CMAKE_MODULE_PATH}/prep/init.cmake)
@@ -55,12 +64,27 @@ include(${CMAKE_MODULE_PATH}/macros/common.cmake)
 
 # load dependencies
 include(${CMAKE_MODULE_PATH}/dependencies/common.cmake)
+include(${CMAKE_MODULE_PATH}/dependencies/boost_separate.cmake)
+
+# Standalone DS5 and USB/IP semantic cores. These plain-C libraries have no
+# dependency on the Platform Runtime or Module SDK.
+add_subdirectory("${CMAKE_SOURCE_DIR}/third-party/alkaidlab-ds5-core")
+# STUN wire codec of the Platform (core/network/stun), used by the network overview.
+add_subdirectory("${CMAKE_SOURCE_DIR}/third-party/alkaidlab-stun-codec")
+# Brotli decoder for the single-copy precompressed Web UI assets.
+add_subdirectory("${CMAKE_SOURCE_DIR}/third-party/brotli")
+
+# Explicit inventories are shared by the host and its test variant.
+include(${CMAKE_MODULE_PATH}/sources/host.cmake)
 
 # setup compile definitions
 include(${CMAKE_MODULE_PATH}/compile_definitions/common.cmake)
 
 # target definitions
+include(${CMAKE_MODULE_PATH}/targets/beast_http.cmake)
+include(${CMAKE_MODULE_PATH}/targets/core.cmake)
 include(${CMAKE_MODULE_PATH}/targets/common.cmake)
+include(${CMAKE_MODULE_PATH}/targets/precompiled_headers.cmake)
 
 # packaging
 include(${CMAKE_MODULE_PATH}/packaging/common.cmake)

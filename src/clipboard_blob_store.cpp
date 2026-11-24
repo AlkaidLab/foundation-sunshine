@@ -6,13 +6,14 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <deque>
 #include <mutex>
 #include <stdexcept>
 #include <unordered_map>
 #include <utility>
 
-#include <openssl/rand.h>
+#include "src/crypto.h"
 
 namespace clipboard_blob_store {
   namespace {
@@ -39,13 +40,14 @@ namespace clipboard_blob_store {
     /// 122 bits of CSPRNG entropy + the 60 s TTL make guessing infeasible.
     std::string
     make_id() {
-      std::uint8_t raw[16];
-      if (RAND_bytes(raw, sizeof(raw)) != 1) {
-        // RAND_bytes only fails when the OpenSSL RNG is uninitialised, which
-        // would make the whole TLS stack unusable too — surface as a hard
-        // error rather than silently degrading entropy.
-        throw std::runtime_error("clipboard_blob_store: RAND_bytes failed");
+      const auto random = crypto::rand(16);
+      if (random.size() != 16) {
+        // A failed CSPRNG must not silently degrade this bearer capability.
+        throw std::runtime_error("clipboard_blob_store: CSPRNG failed");
       }
+
+      std::uint8_t raw[16];
+      std::memcpy(raw, random.data(), sizeof(raw));
 
       // Force version=4 nibble and RFC 4122 variant bits.
       raw[6] = static_cast<std::uint8_t>((raw[6] & 0x0F) | 0x40);
@@ -114,10 +116,16 @@ namespace clipboard_blob_store {
     sweep_locked(now);
     evict_for_locked(incoming);
 
-    blob_id id = make_id();
-    // Defensive: ensure no collision (vanishingly unlikely).
-    while (g_entries.find(id) != g_entries.end()) {
+    blob_id id;
+    try {
       id = make_id();
+      // Defensive: ensure no collision (vanishingly unlikely).
+      while (g_entries.find(id) != g_entries.end()) {
+        id = make_id();
+      }
+    }
+    catch (const std::exception &) {
+      return { {}, false, "internal" };
     }
 
     entry_t e;

@@ -12,8 +12,8 @@ set(CPACK_NSIS_INSTALLED_ICON_NAME "${PROJECT__DIR}\\\\${PROJECT_EXE}")
 
 set(CPACK_NSIS_INSTALLER_MUI_ICON_CODE "
 ; 定义安装程序图标
-!define MUI_ICON \\\"${CMAKE_SOURCE_DIR}/sunshine.ico\\\"
-!define MUI_UNICON \\\"${CMAKE_SOURCE_DIR}/sunshine.ico\\\"
+!define MUI_ICON \\\"${CMAKE_SOURCE_DIR}/assets/brand/sunshine.ico\\\"
+!define MUI_UNICON \\\"${CMAKE_SOURCE_DIR}/assets/brand/sunshine.ico\\\"
 
 ; 定义在目录页面显示前执行的函数
 !define MUI_PAGE_CUSTOMFUNCTION_PRE PreDirectoryPage
@@ -69,13 +69,13 @@ Function GetParent
 FunctionEnd
 
 ; Finish Page 自定义选项
-; 复选框1: 打开使用教程（默认勾选）
+; 复选框1: 查看文档（默认勾选）
 !define MUI_FINISHPAGE_RUN
-!define MUI_FINISHPAGE_RUN_TEXT '打开使用教程'
+!define MUI_FINISHPAGE_RUN_TEXT '查看文档'
 !define MUI_FINISHPAGE_RUN_FUNCTION OpenDocumentation
 
 Function OpenDocumentation
-    ExecShell 'open' 'https://docs.qq.com/aio/DSGdQc3htbFJjSFdO?p=DXpTjzl2kZwBjN7jlRMkRJ'
+    ExecShell 'open' 'https://www.alkaidlab.com/docs/'
 FunctionEnd
 ")
 
@@ -97,13 +97,13 @@ ManifestDPIAware true
 ")
 
 # Basic installer configuration
-set(CPACK_NSIS_MUI_ICON "${CMAKE_SOURCE_DIR}\\\\sunshine.ico")
-set(CPACK_NSIS_MUI_UNIICON "${CMAKE_SOURCE_DIR}\\\\sunshine.ico")
+set(CPACK_NSIS_MUI_ICON "${CMAKE_SOURCE_DIR}\\\\assets\\\\brand\\\\sunshine.ico")
+set(CPACK_NSIS_MUI_UNIICON "${CMAKE_SOURCE_DIR}\\\\assets\\\\brand\\\\sunshine.ico")
 
 # 设置DPI感知
 set(CPACK_NSIS_MANIFEST_DPI_AWARE ON)
-set(CPACK_NSIS_MUI_WELCOMEFINISHPAGE_BITMAP "${CMAKE_SOURCE_DIR}\\\\welcome.bmp")
-set(CPACK_NSIS_MUI_UNWELCOMEFINISHPAGE_BITMAP "${CMAKE_SOURCE_DIR}\\\\welcome.bmp")
+set(CPACK_NSIS_MUI_WELCOMEFINISHPAGE_BITMAP "${CMAKE_SOURCE_DIR}\\\\assets\\\\installer\\\\welcome.bmp")
+set(CPACK_NSIS_MUI_UNWELCOMEFINISHPAGE_BITMAP "${CMAKE_SOURCE_DIR}\\\\assets\\\\installer\\\\welcome.bmp")
 
 # 头部图像（需要150x57像素）
 # set(CPACK_NSIS_MUI_HEADERIMAGE_BITMAP "${CMAKE_SOURCE_DIR}\\\\cmake\\\\packaging\\\\welcome.bmp")
@@ -338,7 +338,7 @@ set(CPACK_NSIS_COMPRESSOR_OPTIONS "/SOLID")  # Solid compression for smaller fil
 # Support Links and Documentation
 # ==============================================================================
 
-set(CPACK_NSIS_HELP_LINK "https://alkaidlab.com/sunshine/docs")
+set(CPACK_NSIS_HELP_LINK "https://www.alkaidlab.com/docs/")
 set(CPACK_NSIS_URL_INFO_ABOUT "${CMAKE_PROJECT_HOMEPAGE_URL}")
 set(CPACK_NSIS_CONTACT "${CMAKE_PROJECT_HOMEPAGE_URL}/support")
 

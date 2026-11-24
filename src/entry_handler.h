@@ -102,6 +102,40 @@ namespace lifetime {
   debug_trap();
 
   /**
+   * @brief Unconditionally terminates Sunshine immediately.
+   *
+   * Bypasses user-mode exception dispatch and preserves the requested exit code.
+   * Windows may still wait for pending kernel I/O to complete or be canceled.
+   */
+  void
+  force_terminate();
+
+  /**
+   * @brief Starts the independent ten-second deadline for process shutdown.
+   * Safe to call more than once: only the first call starts the deadline. exit_sunshine() starts it too, because a
+   * shutdown asked for while the start is still blocked in a driver call never reaches the main thread's own call.
+   * Normal process exit ends the detached thread; a Windows debugger attached at the deadline suppresses forced
+   * termination.
+   */
+  void
+  start_shutdown_watchdog();
+
+  /**
+   * @brief Creates the per-process state events the Windows service reads before it adopts a running core.
+   * Call once, after the single-instance claim. Does nothing on other platforms.
+   */
+  void
+  core_state_open();
+
+  /// The start finished: servers listening, probe done. The service adopts only a core that says so.
+  void
+  core_state_ready();
+
+  /// Shutdown began. Set by exit_sunshine() before anything else, so the service never adopts a core on its way out.
+  void
+  core_state_stopping();
+
+  /**
    * @brief Get the argv array passed to main().
    */
   char **

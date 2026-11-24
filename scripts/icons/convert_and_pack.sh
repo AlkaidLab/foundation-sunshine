@@ -40,7 +40,7 @@ echo ${icon_sizes[@]}
 src_vectors=("../../src_assets/common/assets/web/public/images/sunshine-locked.svg"
              "../../src_assets/common/assets/web/public/images/sunshine-pausing.svg"
              "../../src_assets/common/assets/web/public/images/sunshine-playing.svg"
-             "../../sunshine.svg")
+             "../../assets/brand/sunshine.svg")
 
 echo "using sources vectors:"
 echo ${src_vectors[@]}

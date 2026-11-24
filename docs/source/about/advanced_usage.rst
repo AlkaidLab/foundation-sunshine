@@ -30,7 +30,6 @@ location by modifying the configuration file.
    =========   ===========
    Value       Description
    =========   ===========
-   Docker      /config/
    Linux       ~/.config/sunshine/
    macOS       ~/.config/sunshine/
    Windows     %ProgramFiles%\\Sunshine\\config
@@ -43,6 +42,16 @@ location by modifying the configuration file.
 
 Although it is recommended to use the configuration UI, it is possible manually configure sunshine by
 editing the `conf` file in a text editor. Use the examples as reference.
+
+Windows capture session
+^^^^^^^^^^^^^^^^^^^^^^^
+
+The service uses the console for capture by default. The GUI independently follows the active
+interactive user, who is granted read access to the restricted local authentication token. Set
+``session_binding = 0`` in ``sunshine.conf`` to follow the active interactive session for capture,
+or set it to ``1`` to explicitly use the console. Restart the service after a change. A console
+without a signed-in user may show the Windows sign-in screen rather than the desktop of a separate
+RDP session.
 
 `General <https://localhost:47990/config/#general>`__
 -----------------------------------------------------
@@ -174,6 +183,36 @@ editing the `conf` file in a text editor. Use the examples as reference.
    .. code-block:: text
 
       notify_pre_releases = disabled
+
+`pin_prompt <https://localhost:47990/config/#pin_prompt>`__
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+**Description**
+   Where a pairing request asks for its PIN. ``fullscreen`` opens the control panel's full-screen PIN entry;
+   ``panel`` opens the control panel on its own pairing page instead. The control panel reads the saved value
+   each time a client asks to pair, so a change applies to the next request without restarting Sunshine.
+   It applies to pairing requests handled by the Foundation Panel; when the host's own tray handles them because
+   no Panel is running, the Web UI ``/pin`` page still opens.
+
+**Choices**
+
+.. table::
+   :widths: auto
+
+   ==========     ===========
+   Value          Description
+   ==========     ===========
+   fullscreen     Full-screen PIN entry
+   panel          Enter the PIN on the control panel's pairing page
+   ==========     ===========
+
+**Default**
+   ``fullscreen``
+
+**Example**
+   .. code-block:: text
+
+      pin_prompt = panel
 
 `Input <https://localhost:47990/config/#input>`__
 -------------------------------------------------
@@ -862,7 +901,9 @@ min_fps_factor <https://localhost:47990/config/#min_fps_factor>`__
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 **Description**
-   If no external IP address is given, Sunshine will attempt to automatically detect external ip-address.
+   The public address clients use outside the network: an IP address or a DNS host name (for example a
+   dynamic DNS name). The value is validated; a malformed value is ignored with a warning. If it is not
+   set, Sunshine uses the automatically discovered address and clients fall back to discovery.
 
 **Default**
    Automatic
@@ -870,7 +911,8 @@ min_fps_factor <https://localhost:47990/config/#min_fps_factor>`__
 **Example**
    .. code-block:: text
 
-      external_ip = 123.456.789.12
+      external_ip = 203.0.113.9
+      external_ip = home.example.ddns.net
 
 `lan_encryption_mode <https://localhost:47990/config/#lan_encryption_mode>`__
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -1239,19 +1281,51 @@ min_fps_factor <https://localhost:47990/config/#min_fps_factor>`__
    1          P1 (fastest)
    2          P2
    3          P3
-   4          P4
+   4          P4 (default)
    5          P5
    6          P6
    7          P7 (slowest)
    ========== ===========
 
 **Default**
-   ``1``
+   ``4``
 
 **Example**
    .. code-block:: text
 
-      nvenc_preset = 1
+      nvenc_preset = 4
+
+`nvenc_frame_budget_guard <https://localhost:47990/config/#nvenc_frame_budget_guard>`__
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+**Description**
+   Automatically lowers the performance preset when its estimated encode time would not fit within a fixed fraction of the frame interval (for example, 4K 120fps clamps the default P4 down to P1 on a single-NVENC GPU).
+   This keeps encoding from falling behind the stream regardless of the configured preset.
+   Estimates are calibrated on recent high-end GPUs with a conservative margin.
+
+   .. note:: This option only applies when using NVENC `encoder`_.
+
+   .. note:: The effective preset of the latest session is reported in the ``active_nvenc_frame_budget`` field of the config API, and clamping is logged at warning level.
+
+**Choices**
+
+.. table::
+   :widths: auto
+
+   ========== ===========
+   Value      Description
+   ========== ===========
+   enabled    Clamp the preset to the frame budget (recommended)
+   disabled   Never change the configured preset
+   ========== ===========
+
+**Default**
+   ``enabled``
+
+**Example**
+   .. code-block:: text
+
+      nvenc_frame_budget_guard = disabled
 
 `nvenc_twopass <https://localhost:47990/config/#nvenc_twopass>`__
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -1288,8 +1362,7 @@ min_fps_factor <https://localhost:47990/config/#min_fps_factor>`__
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 **Description**
-   Assign higher QP values to flat regions of the video.
-   Recommended to enable when streaming at lower bitrates.
+   Enabled by default. Assigns higher QP values to flat regions of the video, improving perceived quality at constrained bitrates.
 
    .. Note:: This option only applies when using NVENC `encoder`_.
 
@@ -1302,16 +1375,16 @@ min_fps_factor <https://localhost:47990/config/#min_fps_factor>`__
    Value      Description
    ========== ===========
    disabled   Don't enable Spatial AQ (faster)
-   enabled    Enable Spatial AQ (slower)
+   enabled    Enable Spatial AQ (default)
    ========== ===========
 
 **Default**
-   ``disabled``
+   ``enabled``
 
 **Example**
    .. code-block:: text
 
-      nvenc_spatial_aq = disabled
+      nvenc_spatial_aq = enabled
 
 `nvenc_vbv_increase <https://localhost:47990/config/#nvenc_vbv_increase>`__
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

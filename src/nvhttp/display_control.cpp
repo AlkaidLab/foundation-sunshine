@@ -1,14 +1,15 @@
 #include "display_control.h"
 
+#include <chrono>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <Simple-Web-Server/server_http.hpp>
+#include "src/http/server.h"
 #include <nlohmann/json.hpp>
 
 #include "display_scale.h"
-#include "url_utils.h"
 #include "src/config.h"
 #include "src/display_device/display_device.h"
 #include "src/display_device/vdd_capability.h"
@@ -16,7 +17,7 @@
 #include "src/platform/common.h"
 
 #ifdef _WIN32
-#include "src/platform/windows/display_device/windows_utils.h"
+  #include "src/platform/windows/display_device/windows_utils.h"
 #endif
 
 using json = nlohmann::json;
@@ -24,6 +25,17 @@ using json = nlohmann::json;
 namespace nvhttp::display_control {
 
   namespace {
+
+#ifdef _WIN32
+    struct display_cache_t {
+      std::mutex mutex;
+      json displays;
+      std::chrono::steady_clock::time_point updated_at {};
+      bool valid { false };
+    };
+
+    display_cache_t display_cache;
+#endif
 
     void
     log_request(const req_https_t &request) {
@@ -34,26 +46,26 @@ namespace nvhttp::display_control {
                        << ", PATH: " << request->path;
     }
 
-    SimpleWeb::CaseInsensitiveMultimap
+    web::CaseInsensitiveMultimap
     json_headers() {
-      SimpleWeb::CaseInsensitiveMultimap headers;
+      web::CaseInsensitiveMultimap headers;
       headers.emplace("Content-Type", "application/json");
       return headers;
     }
 
-    SimpleWeb::StatusCode
+    web::StatusCode
     http_status_from_json(const json &response_json) {
       switch (response_json.value("status_code", 200)) {
         case 400:
-          return SimpleWeb::StatusCode::client_error_bad_request;
+          return web::StatusCode::bad_request;
         case 404:
-          return SimpleWeb::StatusCode::client_error_not_found;
+          return web::StatusCode::not_found;
         case 500:
-          return SimpleWeb::StatusCode::server_error_internal_server_error;
+          return web::StatusCode::internal_server_error;
         case 501:
-          return SimpleWeb::StatusCode::server_error_not_implemented;
+          return web::StatusCode::not_implemented;
         default:
-          return SimpleWeb::StatusCode::success_ok;
+          return web::StatusCode::ok;
       }
     }
 
@@ -66,13 +78,29 @@ namespace nvhttp::display_control {
     json response_json;
     response_json["status_code"] = 200;
     response_json["status_message"] = "OK";
-    auto response_status = SimpleWeb::StatusCode::success_ok;
+    auto response_status = web::StatusCode::ok;
 
     try {
+      json displays_array = json::array();
+
+#ifndef _WIN32
       std::vector<std::string> display_names;
+#endif
 
 #ifdef _WIN32
-      display_names = platf::display_names(platf::mem_type_e::dxgi);
+      {
+        std::lock_guard lock { display_cache.mutex };
+        const auto now = std::chrono::steady_clock::now();
+        if (display_cache.valid && now - display_cache.updated_at < std::chrono::seconds { 3 }) {
+          displays_array = display_cache.displays;
+        }
+        else {
+          displays_array = display_scale::build_windows_displays(platf::display_names(platf::mem_type_e::dxgi));
+          display_cache.displays = displays_array;
+          display_cache.updated_at = now;
+          display_cache.valid = true;
+        }
+      }
 #elif defined(__linux__)
       for (auto mem_type : { platf::mem_type_e::vaapi, platf::mem_type_e::cuda, platf::mem_type_e::system }) {
         display_names = platf::display_names(mem_type);
@@ -84,11 +112,7 @@ namespace nvhttp::display_control {
       display_names = platf::display_names(platf::mem_type_e::system);
 #endif
 
-      json displays_array = json::array();
-
-#ifdef _WIN32
-      displays_array = display_scale::build_windows_displays(display_names);
-#else
+#ifndef _WIN32
       for (size_t i = 0; i < display_names.size(); ++i) {
         const auto &name = display_names[i];
         displays_array.push_back({ { "index", static_cast<int>(i) },
@@ -103,8 +127,8 @@ namespace nvhttp::display_control {
       }
 #endif
 
+      response_json["count"] = static_cast<int>(displays_array.size());
       response_json["displays"] = std::move(displays_array);
-      response_json["count"] = static_cast<int>(display_names.size());
 
       const auto vdd_state = display_device::vdd_capability::query_state();
       response_json["vdd"] = {
@@ -122,7 +146,7 @@ namespace nvhttp::display_control {
       response_json["status_message"] = "Internal server error";
       response_json["displays"] = json::array();
       response_json["count"] = 0;
-      response_status = SimpleWeb::StatusCode::server_error_internal_server_error;
+      response_status = web::StatusCode::internal_server_error;
     }
 
     response->write(response_status, response_json.dump(), json_headers());
@@ -136,7 +160,7 @@ namespace nvhttp::display_control {
     response_json["status_code"] = 200;
     response_json["status_message"] = "OK";
 
-    auto send_response = [&](SimpleWeb::StatusCode status_code) {
+    auto send_response = [&](web::StatusCode status_code) {
       response->write(status_code, response_json.dump(), json_headers());
       response->close_connection_after_response = true;
     };
@@ -150,7 +174,7 @@ namespace nvhttp::display_control {
         response_json["status_message"] = "Missing angle parameter";
         response_json["success"] = false;
         BOOST_LOG(warning) << "rotate_display: Missing angle parameter";
-        send_response(SimpleWeb::StatusCode::client_error_bad_request);
+        send_response(web::StatusCode::bad_request);
         return;
       }
 
@@ -161,15 +185,12 @@ namespace nvhttp::display_control {
         response_json["status_message"] = "Invalid angle value. Must be 0, 90, 180, or 270";
         response_json["success"] = false;
         BOOST_LOG(warning) << "rotate_display: Invalid angle value: " << angle;
-        send_response(SimpleWeb::StatusCode::client_error_bad_request);
+        send_response(web::StatusCode::bad_request);
         return;
       }
 
       auto display_name_param = args.find("display_name");
       std::string display_name = display_name_param != args.end() ? display_name_param->second : "";
-      if (!display_name.empty()) {
-        display_name = url_utils::decode(std::move(display_name));
-      }
 
       if (display_name.empty() && !config::video.output_name.empty()) {
         display_name = display_device::get_display_name(config::video.output_name);

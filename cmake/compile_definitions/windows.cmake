@@ -3,16 +3,41 @@
 add_compile_definitions(SUNSHINE_PLATFORM="windows")
 
 enable_language(RC)
-set(CMAKE_RC_COMPILER windres)
-set(CMAKE_RC_FLAGS "${CMAKE_RC_FLAGS} --use-temp-file")
-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -static")
+
+# Crash-dump symbols (scripts/ci/make-symbols.py). The MinGW toolchain makes no PDB, so a crash report could name only
+# module+offset. -g1 keeps function names and line tables in the build tree (the packages are stripped), and --build-id
+# gives every module a CodeView GUID that survives stripping and signing: the key between a minidump and its symbols.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    foreach(lang C CXX)
+        string(APPEND CMAKE_${lang}_FLAGS_RELEASE " -g1")
+    endforeach()
+    # On 2026-11-20 the GCC nightly built a 46,583,321-byte installer against the 46,000,000-byte release
+    # budget; the same commit built with Clang produced 43,172,884 bytes. The GCC build is the fallback, so
+    # it builds for size: appending after the -O3 of CMAKE_<LANG>_FLAGS_RELEASE keeps -Os in effect (CMake
+    # documentation, CMAKE_<LANG>_FLAGS_<CONFIG>, source fs-cmake-flags-config-20261121). Clang keeps -O3.
+    sunshine_gcc_release_size_flag(_sunshine_gcc_release_size_flag "${CMAKE_CXX_COMPILER_ID}")
+    if(_sunshine_gcc_release_size_flag)
+        foreach(lang C CXX)
+            string(APPEND CMAKE_${lang}_FLAGS_RELEASE " ${_sunshine_gcc_release_size_flag}")
+        endforeach()
+    endif()
+    foreach(kind EXE SHARED MODULE)
+        string(APPEND CMAKE_${kind}_LINKER_FLAGS " -Wl,--build-id")
+    endforeach()
+endif()
+
+sunshine_gcc_string_constructor_aliases(_sunshine_gcc_string_constructor_aliases "${CMAKE_CXX_COMPILER_ID}")
+foreach(kind EXE SHARED MODULE)
+    foreach(alias IN LISTS _sunshine_gcc_string_constructor_aliases)
+        string(APPEND CMAKE_${kind}_LINKER_FLAGS " ${alias}")
+    endforeach()
+endforeach()
 
 # gcc complains about misleading indentation in some mingw includes
 list(APPEND SUNSHINE_COMPILE_OPTIONS -Wno-misleading-indentation)
 
-# gcc15 complains about non-template type 'coroutine_handle' used as a template in Windows.Foundation.h
-# can remove after https://gcc.gnu.org/bugzilla/show_bug.cgi?id=120495 is available in mingw-w64
-list(APPEND SUNSHINE_COMPILE_OPTIONS -Wno-template-body)
+# gcc15 complains about non-template type 'coroutine_handle' used as a template in Windows.Foundation.h.
+# This is added only for GNU below because Clang diagnoses the option itself as unknown.
 
 # Template-heavy translation units (confighttp.cpp in particular) exceed the
 # 32767-section COFF limit. Without big-obj the assembler silently writes a
@@ -41,14 +66,6 @@ if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND CMAKE_CXX_COMPILER_VERSION VERSION_G
     # Force using experimental coroutine ABI for compatibility
     add_definitions(-D_ALLOW_COROUTINE_ABI_MISMATCH)
 endif()
-
-# curl
-add_definitions(-DCURL_STATICLIB)
-include_directories(SYSTEM ${CURL_STATIC_INCLUDE_DIRS})
-link_directories(${CURL_STATIC_LIBRARY_DIRS})
-
-# miniupnpc
-add_definitions(-DMINIUPNP_STATICLIB)
 
 # extra tools/binaries for audio/display devices
 add_subdirectory(tools)  # todo - this is temporary, only tools for Windows are needed, for now
@@ -128,6 +145,8 @@ set(AMF_SDK_STAGE "${CMAKE_BINARY_DIR}/amf_include")
 if(NOT EXISTS "${AMF_SDK_SRC}/core/Version.h")
     message(FATAL_ERROR "AMF submodule not initialized. Run: git submodule update --init third-party/AMF")
 endif()
+# Restage headers automatically when the AMF submodule changes SDK versions.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${AMF_SDK_SRC}/core/Version.h")
 file(MAKE_DIRECTORY "${AMF_SDK_STAGE}/AMF")
 file(COPY "${AMF_SDK_SRC}/core" "${AMF_SDK_SRC}/components"
         DESTINATION "${AMF_SDK_STAGE}/AMF")
@@ -141,7 +160,7 @@ include_directories(SYSTEM "${CMAKE_SOURCE_DIR}/third-party/ViGEmClient/include"
 
 # sunshine icon
 if(NOT DEFINED SUNSHINE_ICON_PATH)
-    set(SUNSHINE_ICON_PATH "${CMAKE_SOURCE_DIR}/sunshine.ico")
+    set(SUNSHINE_ICON_PATH "${CMAKE_SOURCE_DIR}/assets/brand/sunshine.ico")
 endif()
 
 configure_file("${CMAKE_SOURCE_DIR}/src/platform/windows/windows.rc.in" windows.rc @ONLY)
@@ -158,28 +177,60 @@ else()
 endif()
 
 set(PLATFORM_TARGET_FILES
-        "${CMAKE_CURRENT_BINARY_DIR}/windows.rc"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/publish.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/ftime_compat.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/system_load_win.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/misc.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/misc.cpp"
+        "${CMAKE_SOURCE_DIR}/src/telemetry/wer_event_win.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/gui_agent_supervisor.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/text_encoding.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/win_dark_mode.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/win_dark_mode.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/input.cpp"
-        "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_sidecar_client.h"
-        "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_sidecar_client.cpp"
-        "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_device_host/microphone_client.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_attach_policy.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_native_client.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_native_client.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_pad_audio.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_pad_audio.cpp"
+        "${CMAKE_SOURCE_DIR}/src/touch_keyboard_session.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/touch_keyboard_session.cpp"
+
         "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_mouse.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_mouse.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/dsu_server.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/dsu_server.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/frame_contract.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/frame_contract.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/pre_encode_filter.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/pre_encode_filter.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/pre_encode_filter_helpers.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/backend_factory.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/backend_factory.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/rtx_hdr/truehdr_filter.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/rtx_hdr/truehdr_filter.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/rtx_hdr/adapter_abi.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/rtx_hdr/adapter_loader.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/rtx_hdr/adapter_loader.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/dlss_nr/dlssnr_filter.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/dlss_nr/dlssnr_filter.cpp"
+            "${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/dlss_nr/hdr_filter.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/dlss_nr/adapter_abi.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/dlss_nr/adapter_loader.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/image_enhancement/dlss_nr/adapter_loader.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_cursor.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_cursor.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_vram_internal.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_vram_internal.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_base.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_vram.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/pyrowave/cpu_encoder.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/pyrowave/cpu_encoder.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/pyrowave/gpu_encoder.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/pyrowave/gpu_encoder.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/pyrowave/transport.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/pyrowave/transport.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_ram.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_wgc.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_amd.cpp"
@@ -188,7 +239,21 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/windows/vulkan_hdr_bridge_session.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/vulkan_hdr_bridge_session.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/audio.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/audio_devices.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/mic_write.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/mic_redirect.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_microphone.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_microphone.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_microphone_selftest.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_microphone_selftest.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/usbip_device_transport.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/usbip_device_transport.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/paced_reply_queue.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/unicode_input.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/audio_default_guard.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/audio_default_guard.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/capture_endpoint_recorder.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/capture_endpoint_recorder.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/color_profile.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/color_profile.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/device_hdr_states.cpp"
@@ -197,6 +262,7 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/general_functions.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/settings_topology.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/settings_topology.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/settings_restore.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/settings.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/windows_utils.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/windows_utils.cpp"
@@ -211,12 +277,7 @@ set(PLATFORM_TARGET_FILES
         ${NVENC_SOURCES}
         ${AMF_SOURCES})
 
-set(OPENSSL_LIBRARIES
-        libssl.a
-        libcrypto.a)
-
 list(PREPEND PLATFORM_LIBRARIES
-        ${CURL_STATIC_LIBRARIES}
         advapi32
         avrt
         crypt32
@@ -234,13 +295,20 @@ list(PREPEND PLATFORM_LIBRARIES
         nlohmann_json::nlohmann_json
         ntdll
         ole32
+        wevtapi
+        pdh
         PowrProf
         setupapi
+        cfgmgr32
         shlwapi
         synchronization.lib
         userenv
+        uuid
+        wintrust
         ws2_32
         wsock32
+        wlanapi
+        wtsapi32
 )
 
 if(SUNSHINE_ENABLE_TRAY AND SUNSHINE_ENABLE_LEGACY_TRAY)
