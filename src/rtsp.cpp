@@ -1329,7 +1329,7 @@ namespace rtsp_stream {
     if (live_requests == 1 && session.mat_live) ss << spatial_transport::describe_live(*session.mat_live);
 
     ss << "a=x-ss-general.encryptionSupported:" << encryption_flags_supported << std::endl;
-    ss << "a=x-ss-video[0].fecControlVersion:2" << std::endl;
+    ss << "a=x-ss-video[0].fecControlVersion:1" << std::endl;
     ss << "a=x-ss-general.encryptionRequested:" << encryption_flags_requested << std::endl;
 
     // 记录加密请求状态用于调试
