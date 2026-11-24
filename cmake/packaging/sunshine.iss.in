@@ -1524,12 +1524,25 @@ begin
   end;
 end;
 
+// The directory Setup chose, empty while it has chosen none. {app} exists only once the wizard has
+// been built: a run that stops in InitializeSetup, or is cancelled on its first page, has none, and
+// expanding it raises the internal error that then hides the real reason for stopping (#1463).
+function ChosenAppDir(): String;
+begin
+  Result := '';
+  try
+    Result := ExpandConstant('{app}');
+  except
+    Result := '';
+  end;
+end;
+
 // A restart is requested only when a driver step returned 3010, or Windows itself reports a pending
 // restart on one of our drivers. The decision and its reasons go to the event log ('reboot').
 procedure DecideRestart();
 var
   ResultCode: Integer;
-  OutFile, Names: String;
+  AppDir, OutFile, Names: String;
   Lines: TArrayOfString;
   I: Integer;
 begin
@@ -1545,10 +1558,12 @@ begin
     AddRebootReason('usbip');
   OutFile := ExpandConstant('{tmp}\sunshine-reboot-check.txt');
   DeleteFile(OutFile);
-  if FileExists(ExpandConstant('{app}\tools\driver-reboot-check.ps1')) then
+  // A run that stopped before Setup chose a directory has nothing installed to ask (#1463).
+  AppDir := ChosenAppDir();
+  if (AppDir <> '') and FileExists(AppDir + '\tools\driver-reboot-check.ps1') then
   begin
     if Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-            '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{app}\tools\driver-reboot-check.ps1') + '" -Out "' + OutFile + '"',
+            '-NoProfile -ExecutionPolicy Bypass -File "' + AppDir + '\tools\driver-reboot-check.ps1' + '" -Out "' + OutFile + '"',
             '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and LoadStringsFromFile(OutFile, Lines) then
     begin
       for I := 0 to GetArrayLength(Lines) - 1 do
@@ -1837,14 +1852,18 @@ begin
   // metadata. Offer to clean it up rather than blocking the install entirely.
   if (UninstallExe = '') or (not FileExists(UninstallExe)) then
   begin
-    // Without interactive consent, preserve old installation metadata and stop.
-    if InstallerMessageBox(CustomMessage('MsgOldNSISStaleRegistry'), mbConfirmation, MB_YESNO, IDNO) = IDYES then
+    // An interactive run asks first and keeps the entry without consent. A silent run has nobody
+    // to ask, and the panel's updater is one: stopping here left a machine with this dead entry
+    // unable to install at all (#1463), so a silent run cleans it up and goes on.
+    if WizardSilent or (InstallerMessageBox(CustomMessage('MsgOldNSISStaleRegistry'), mbConfirmation, MB_YESNO, IDNO) = IDYES) then
     begin
       if not CleanupOldNSISRegistry() then
       begin
         InstallerMessageBox(CustomMessage('MsgOldNSISCleanupFailed'), mbError, MB_OK, IDOK);
         Result := False;
-      end;
+      end
+      else if WizardSilent then
+        Log('Stale NSIS uninstall entry without its uninstaller: cleaned up in a silent run.');
     end
     else
     begin
