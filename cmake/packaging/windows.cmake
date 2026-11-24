@@ -224,10 +224,10 @@ set(VDD_VULKAN_HDR_FILES
     "${VDD_DRIVER_DIR}/zako_vulkan_hdr_bridge.dll"
     "${VDD_DRIVER_DIR}/VkLayer_zako_virtual_hdr.json"
     "${VDD_DRIVER_DIR}/vulkan_hdr_probe.exe")
-set(VDD_VULKAN_HDR_AVAILABLE TRUE)
+set(VDD_VULKAN_HDR_AVAILABLE 1)
 foreach(VDD_VULKAN_HDR_FILE IN LISTS VDD_VULKAN_HDR_FILES)
   if(NOT EXISTS "${VDD_VULKAN_HDR_FILE}")
-    set(VDD_VULKAN_HDR_AVAILABLE FALSE)
+    set(VDD_VULKAN_HDR_AVAILABLE 0)
   endif()
 endforeach()
 if(VDD_VULKAN_HDR_AVAILABLE)

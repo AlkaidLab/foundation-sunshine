@@ -8,6 +8,7 @@ runs:
       run: >-
         ./scripts/ci/test-installer-silent.ps1
         -Installer build/cpack_artifacts/Sunshine-engine.exe
+        -StagingDirectory build/inno_staging
         -EvidenceDirectory "${{ runner.temp }}/installer-silent-evidence"
     - name: Keep installer smoke evidence
       if: always()
