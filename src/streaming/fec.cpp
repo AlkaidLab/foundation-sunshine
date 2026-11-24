@@ -8,7 +8,9 @@ namespace video_fec {
   namespace {
     constexpr unsigned max_wire_percentage = 255;
     constexpr std::size_t max_rs_shards = 255;
-    constexpr std::uint32_t max_feedback_data_packets = 1000000;
+    // The client accumulates at most 1,000,000 data and 1,000,000 parity shards per report;
+    // version 2 summaries report the two totals combined.
+    constexpr std::uint32_t max_feedback_data_packets = 2000000;
     constexpr std::uint32_t sequence_half_range = 0x80000000U;
     constexpr std::int64_t feedback_timeout_ms = 3000;
     constexpr double frame_failure_target = 0.001;

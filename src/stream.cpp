@@ -2241,10 +2241,20 @@ namespace stream {
     });
 
     server->map(0x5510, [](session_t *session, const std::string_view &payload) {
-      if (!session->config.fec_feedback || session->config.monitor.videoFormat == LI_PYROWAVE_VIDEO_FORMAT || payload.size() != 12) return;
-      uint32_t values[3];
-      std::memcpy(values, payload.data(), sizeof(values));
-      session->config.fec_control->report(util::endian::big(values[0]), util::endian::big(values[1]), util::endian::big(values[2]), steady_now_ms());
+      if (!session->config.fec_feedback || session->config.monitor.videoFormat == LI_PYROWAVE_VIDEO_FORMAT) return;
+      // Version 1 summaries carry data shards only; version 2 adds parity shards, so the
+      // estimate covers what was lost before FEC recovery instead of what the parity absorbed.
+      if (payload.size() == 12) {
+        uint32_t values[3];
+        std::memcpy(values, payload.data(), sizeof(values));
+        session->config.fec_control->report(util::endian::big(values[0]), util::endian::big(values[1]), util::endian::big(values[2]), steady_now_ms());
+      }
+      else if (payload.size() == 20) {
+        uint32_t values[5];
+        std::memcpy(values, payload.data(), sizeof(values));
+        session->config.fec_control->report(util::endian::big(values[0]), util::endian::big(values[1]) + util::endian::big(values[3]),
+          util::endian::big(values[2]) + util::endian::big(values[4]), steady_now_ms());
+      }
     });
 
     // 统一动态参数更新协议 (IDX_DYNAMIC_PARAM_CHANGE)

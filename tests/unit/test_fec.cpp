@@ -315,6 +315,39 @@ TEST(VideoFecBudget, ArmingProtectionSkipsTheWindow) {
   EXPECT_FALSE(budget.pending(999));
 }
 
+// A raise reconfigures the encoder and, on NVENC HEVC, forces a keyframe, while the per-frame
+// request jitters by a few points on streams with varying frame sizes. Hold raises to a clear
+// step; drops stay immediate.
+TEST(VideoFecBudget, RaisesNeedAClearStepWhileDropsStayImmediate) {
+  streaming::bitrate_budget_t budget(10000, 0, 0, 0, 20, true);
+  budget.observe_fec(23, 0);
+  budget.observe_fec(23, 1000);
+  EXPECT_FALSE(budget.pending(1000));  // +3 is jitter
+  budget.observe_fec(27, 2000);
+  EXPECT_FALSE(budget.pending(2000));  // still the held 23
+  budget.observe_fec(27, 3000);
+  const auto raised = budget.pending(3000);
+  ASSERT_TRUE(raised);  // +7 is a clear step
+  EXPECT_EQ(raised->fec_percentage, 27);
+  budget.commit(*raised);
+  budget.observe_fec(25, 4000);
+  EXPECT_FALSE(budget.pending(4000));  // the completed window still says 27
+  budget.observe_fec(25, 5000);
+  const auto dropped = budget.pending(5000);
+  ASSERT_TRUE(dropped);  // the two-point drop applies one window later
+  budget.commit(*dropped);
+  budget.observe_fec(24, 6000);
+  EXPECT_FALSE(budget.pending(6000));  // a one-point drop is still held
+  // The floor grows with the ratio: at 50% a raise needs ten points.
+  streaming::bitrate_budget_t high(10000, 0, 0, 0, 50, true);
+  high.observe_fec(55, 0);
+  high.observe_fec(55, 1000);
+  EXPECT_FALSE(high.pending(1000));
+  high.observe_fec(60, 2000);
+  high.observe_fec(60, 3000);
+  ASSERT_TRUE(high.pending(3000));
+}
+
 // While unprotected the controller must not follow the reported loss estimate down: a falling
 // estimate only says the parity in place is absorbing the loss, not that the link recovered.
 TEST(VideoFec, ProtectionHoldsTheStrongestLossOfItsEpochWhileLossContinues) {

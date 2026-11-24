@@ -122,8 +122,16 @@ namespace streaming {
     auto next = allocate();
     if (next == applied_ || now < 0) return {};
     // Ignore one-point oscillations, but always allow enabling/disabling protection.
-    if (next.total_kbps == applied_.total_kbps && next.fec_percentage != 0 && applied_.fec_percentage != 0 &&
-        std::abs(static_cast<int>(next.fec_percentage) - static_cast<int>(applied_.fec_percentage)) < 2) return {};
+    if (next.total_kbps == applied_.total_kbps && next.fec_percentage != 0 && applied_.fec_percentage != 0) {
+      const auto applied = static_cast<int>(applied_.fec_percentage);
+      const auto delta = static_cast<int>(next.fec_percentage) - applied;
+      // A raise reconfigures the encoder and, on NVENC HEVC, forces a keyframe. The request is
+      // re-evaluated per frame against that frame's packet count, so its equilibrium jitters by
+      // several points on streams with varying frame sizes. Genuine escalation jumps far more
+      // than this, so hold raises to a clear step while drops stay immediate.
+      const auto minimum_raise = std::max(5, applied / 5);
+      if (delta > 0 ? delta < minimum_raise : delta > -2) return {};
+    }
     if (attempted_ == next && (now < attempt_ms_ || now - attempt_ms_ < update_interval_ms)) return {};
     attempted_ = next;
     attempt_ms_ = now;
