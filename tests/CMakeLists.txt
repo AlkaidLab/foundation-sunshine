@@ -928,6 +928,7 @@ add_test(NAME video_probe_unit_tests COMMAND video_probe_unit_tests)
 add_executable(remote_connect_invite_unit_tests
         ${CMAKE_SOURCE_DIR}/src/nvhttp/url_utils.cpp
         ${CMAKE_SOURCE_DIR}/src/remote_connect/invite.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/pairing.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_connect_invite.cpp)
 target_include_directories(remote_connect_invite_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(remote_connect_invite_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)

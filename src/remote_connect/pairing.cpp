@@ -10,15 +10,10 @@ namespace remote_connect {
 
   pairing_result_t
   create_pairing_invite(pairing_request_t request) {
-    auto pairing_state = prepare_pairing();
-    if (!pairing_state.success) {
-      return { false, pairing_state.enabled, {}, {}, std::move(pairing_state.error) };
-    }
-    if (pairing_state.enabled) {
-      request.host = pairing_state.enrollment->virtual_ip;
-      if (request.remote_port != 0) {
-        request.port = request.remote_port;
-      }
+    if (status().enabled) {
+      // The old remote invite carried the permanent EasyTier network secret.
+      // Refuse to issue it until authenticated, per-device enrollment exists.
+      return { false, true, {}, {}, "Secure remote enrollment is not available yet" };
     }
 
     try {
@@ -27,13 +22,13 @@ namespace remote_connect {
         request.port,
         std::move(request.pin),
         std::move(request.server_name),
-        std::move(pairing_state.enrollment),
+        std::nullopt,
         request.expires_at,
       });
-      return { true, pairing_state.enabled, std::move(request.host), std::move(url), {} };
+      return { true, false, std::move(request.host), std::move(url), {} };
     }
     catch (const std::exception &e) {
-      return { false, pairing_state.enabled, {}, {}, e.what() };
+      return { false, false, {}, {}, e.what() };
     }
   }
 

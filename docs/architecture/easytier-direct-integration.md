@@ -38,10 +38,14 @@ Before implementation, verify that the bootstrap endpoint can be isolated on Win
 
 The current in-memory enrollment token store is a tested primitive only; it is
 not exposed by the QR or network API. It cannot verify a host identity, prove
-possession of a client key, or revoke an already claimed transaction. Current
-QR invitations still include the permanent shared secret. PIN generation now
-protects a newer PIN from cleanup by a failed older request, but the existing
-cancel and PIN-consumption APIs are not bound to an invitation generation.
+possession of a client key, or revoke an already claimed transaction. The old
+remote QR flow is disabled until secure enrollment is available; LAN QR
+generation remains available when remote connect is disabled. Existing remote
+QR codes and any previously exposed shared secret remain valid until the user
+explicitly resets the network, which can interrupt existing connections. PIN
+generation now protects a newer PIN from cleanup by a failed older request,
+but the existing cancel and PIN-consumption APIs are not bound to an invitation
+generation.
 
 ## Implementation order
 
