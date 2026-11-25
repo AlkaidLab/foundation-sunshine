@@ -312,10 +312,11 @@ target_include_directories(poster_unit_tests PRIVATE
         "${CMAKE_SOURCE_DIR}"
         "${CMAKE_BINARY_DIR}")  # generated version.h
 # poster.cpp reaches platform/common.h for platf::appdata(). The headers it brings (the configuration model, Boost.Log,
-# the protocol library) come with the interface the other standalone suites link, and Boost::boost supplies the
-# header-only Boost include paths (property_tree, format) pulled in by file_handler.h and stat_trackers.h; the stub
-# file supplies the loggers and the appdata directory themselves.
-target_link_libraries(poster_unit_tests PRIVATE gtest_main OpenSSL::Crypto Boost::boost Boost::log Boost::thread
+# the protocol library) come with the interface the other standalone suites link; Boost::format and Boost::property_tree
+# carry the header-only include paths pulled in by stat_trackers.h and file_handler.h, and the stub file supplies the
+# loggers, the appdata directory and the UTF-8 path conversion themselves.
+target_link_libraries(poster_unit_tests PRIVATE gtest_main OpenSSL::Crypto Boost::format Boost::log Boost::thread
+        Boost::property_tree
         sunshine::host_headers sunshine_project_options sunshine_coverage)
 target_compile_definitions(poster_unit_tests PRIVATE ${SUNSHINE_DEFINITIONS})
 set_target_properties(poster_unit_tests PROPERTIES CXX_STANDARD 23)
