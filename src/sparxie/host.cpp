@@ -1519,10 +1519,14 @@ namespace sparxie {
     }
     if (app_index >= 0 && app_index < static_cast<int>(apps["apps"].size()) && apps["apps"][app_index].contains("sparxie")) {
       json updated = apps;
-      json stored_settings = updated["apps"][app_index]["sparxie"].value("settings", json::object());
+      auto &block = updated["apps"][app_index]["sparxie"];
+      json stored_settings = block.value("settings", json::object());
       if (!stored_settings.is_object() || chosen_fields(stored_settings).empty()) stored_settings = json::object();
       for (auto it = chosen.begin(); it != chosen.end(); ++it) stored_settings[it.key()] = it.value();
-      updated["apps"][app_index]["sparxie"]["settings"] = stored_settings;
+      block["settings"] = stored_settings;
+      // The saved launch options take precedence when the app starts through Sparxie.
+      if (auto launch = block.find("launchOptions"); launch != block.end() && launch->is_object() && chosen.contains("graphicsApi"))
+        (*launch)["graphicsApi"] = chosen["graphicsApi"];
       commit_apps(env, updated);
     }
     result.body = { { "ok", true }, { "running", false }, { "values", chosen }, { "applied", wrote.applied }, { "unavailable", wrote.unavailable } };

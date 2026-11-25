@@ -365,6 +365,38 @@ TEST(SparxieLaunchArgs, AnExistingTouchAppSendsItsOwnGraphicsApiAndCustomArgumen
   EXPECT_EQ(args, screen);
 }
 
+TEST(SparxieLaunchArgs, GameSettingsWriteUpdatesTheNextTouchLaunch) {
+  for (const bool has_launch_options : { true, false }) {
+    SCOPED_TRACE(has_launch_options);
+    const fs::path root = fresh(has_launch_options ? "sparxie-touch-graphics-edit" : "sparxie-touch-graphics-legacy");
+    sparxie::HostEnv env = env_at(root);
+    sparxie::MemoryRegistry registry;
+    env.registry = &registry;
+    touch(root / "game" / "ZenlessZoneZero.exe");
+    const std::string cmd = "sparxie-launch.exe --sparxie Sparxie.exe --profile zzz-cn-1";
+    const json settings = { { "graphicsApi", "12" }, { "customArgs", "-screen-quality 2" } };
+    auto block = block_of(root, "zzz", "cn", "ZenlessZoneZero.exe", "touch", { { "profile", "zzz-cn-1" }, { "settings", settings } });
+    if (has_launch_options) block["launchOptions"] = settings;
+    write_apps(env, { { "name", "ZZZ" }, { "cmd", cmd }, { "sparxie", block } });
+
+    const auto saved = sparxie::write_game_settings_for(env, { { "app", 0 }, { "values", { { "graphicsApi", "11.1ns" } } } });
+    ASSERT_TRUE(saved.status.ok) << saved.status.error;
+
+    std::string args;
+    ASSERT_TRUE(sparxie::prepare_launch(env, "ZZZ", cmd, { 1920, 1080, 60 }, &args).ok);
+    EXPECT_EQ(args, " --screen-width 1920 --screen-height 1080 --window-mode fullscreen --zzz-dx12=off --game-args \"-screen-quality 2\"");
+
+    std::ifstream in(env.apps_file);
+    const auto apps = json::parse(in);
+    const auto &stored = apps.at("apps").at(0).at("sparxie");
+    EXPECT_EQ(stored.at("settings").at("graphicsApi"), "11.1ns");
+    if (has_launch_options)
+      EXPECT_EQ(stored.at("launchOptions"), (json { { "graphicsApi", "11.1ns" }, { "customArgs", "-screen-quality 2" } }));
+    else
+      EXPECT_FALSE(stored.contains("launchOptions"));
+  }
+}
+
 TEST(StreamDisplay, CreateAndEditKeepTheChoiceAndFixedSizesReachTheCommand) {
   const fs::path root = fresh("sparxie-sd-create");
   sparxie::HostEnv env = env_at(root);
