@@ -374,7 +374,6 @@ namespace nvhttp::apps::poster {
       const auto scale = std::min(1.0, static_cast<double>(preview_longest_side) / std::max(width, height));
       width = std::max(1, static_cast<int>(width * scale));
       height = std::max(1, static_cast<int>(height * scale));
-      bool preview_written = false;
       for (int attempt = 0; attempt < 12; ++attempt) {
         const auto resized = resize_rgba(pixels, width, height);
         std::optional<std::vector<unsigned char>> encoded = alpha ? encode_png(resized, width, height) : encode_jpeg(resized, width, height, 85);
