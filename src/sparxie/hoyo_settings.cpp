@@ -173,7 +173,7 @@ namespace sparxie {
     }
 
     bool
-    quote_args(std::string_view raw, std::string &out) {
+    quote_args(std::string_view raw, std::string &out, bool quote_tokens = true) {
       out.clear();
       if (raw.empty()) return true;
       auto ok = [](unsigned char c) {
@@ -200,9 +200,9 @@ namespace sparxie {
         }
         if (token.empty()) return false;
         if (!out.empty()) out.push_back(' ');
-        out.push_back('"');
+        if (quote_tokens) out.push_back('"');
         out += token;
-        out.push_back('"');
+        if (quote_tokens) out.push_back('"');
       }
       return true;
     }
@@ -1064,6 +1064,22 @@ namespace sparxie {
       if (quote_args(options["customArgs"].get<std::string>(), quoted) && !quoted.empty()) command += " " + quoted;
     }
     return command;
+  }
+
+  std::string
+  touch_game_arguments(std::string_view game, const json &options) {
+    if (!hoyo_game(game)) return {};
+    std::string arguments;
+    if (game == "zzz" && options.contains("graphicsApi") && options["graphicsApi"].is_string()) {
+      const int api = api_index(options["graphicsApi"].get<std::string>());
+      if (api >= 0) arguments += api == 4 ? " --zzz-dx12=on" : " --zzz-dx12=off";
+    }
+    if (options.contains("customArgs") && options["customArgs"].is_string()) {
+      // Every validated token is free of spaces and quotes, so the list fits in one launcher argument.
+      std::string tokens;
+      if (quote_args(options["customArgs"].get<std::string>(), tokens, false) && !tokens.empty()) arguments += " --game-args \"" + tokens + "\"";
+    }
+    return arguments;
   }
 
   bool

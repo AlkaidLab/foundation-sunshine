@@ -673,6 +673,17 @@ namespace sparxie {
       const std::string sparxie_launcher = !launcher.empty() ? launcher.string() : "sparxie-launch.exe";
       return apply_template(templ, { { "sparxie", sparxie }, { "sparxie-launch", sparxie_launcher }, { "profile", profile }, { "exe", install.exe_path }, { "dir", install.dir }, { "id", install.id }, { "name", name } });
     }
+    bool
+    uses_touch_launcher(std::string_view command) {
+      const auto first = command.find_first_not_of(" \t");
+      if (first == std::string_view::npos) return false;
+      command.remove_prefix(first);
+      const bool quoted = command.front() == '"';
+      if (quoted) command.remove_prefix(1);
+      const auto exe = command.substr(0, command.find_first_of(quoted ? "\"" : " \t"));
+      const auto slash = exe.find_last_of("/\\");
+      return ascii_lower(exe.substr(slash == std::string_view::npos ? 0 : slash + 1)) == "sparxie-launch.exe";
+    }
     // Direct launch (直接启动): a store build starts the way its store wants,
     // an Endfield launcher build starts the way the Collapse Launcher's Endfield
     // plugin starts it (sparxie-launch --endfield-direct: the game is created
@@ -1986,15 +1997,23 @@ namespace sparxie {
       const DisplayChoice choice = display_choice_of(block);
       const StreamMode stream = resolve_stream_mode(session, env.display_size ? env.display_size() : std::pair<int, int> { 0, 0 }, display_refresh_of(env));
       const DisplayPlan plan = plan_display(install.game, choice, stream);
+      const bool touch = block.value("mode", std::string("pc")) == "touch";
+      if (arguments) {
+        *arguments = stream_launch_arguments(install.game, cmd, choice, stream, touch);
+        if (touch && uses_touch_launcher(cmd) && block.value("settingsMode", std::string()) != "auto") {
+          // Keep these settings specific to the Sunshine app, even when it shares a Sparxie profile with another app.
+          auto launch = launch_options_of(settings, install.game);
+          const auto saved = block.find("launchOptions");
+          if (saved != block.end() && saved->is_object()) launch.update(*saved);
+          *arguments += touch_game_arguments(install.game, launch);
+        }
+      }
       if (install.game == "endfield") {
         // Endfield is sized through its Sparxie session; the game still applies its own saved display after it starts, so the same size and window go to its keys
         const ScreenPlan screen = plan_screen(install.game, choice, stream);
-        if (arguments) *arguments = stream_launch_arguments(install.game, cmd, choice, stream, block.value("mode", std::string("pc")) == "touch");
         if (screen.empty()) return Status::success();
         return write_endfield_display(install, registry, screen.width, screen.height, screen.window, backup, block.value("restore", std::string("restore")) == "keep" ? "keep" : "restore");
       }
-      // the same size and window go to the game on its command line (the registry above agrees); a touch application hands them to Sparxie through sparxie-launch
-      if (arguments) *arguments = stream_launch_arguments(install.game, cmd, choice, stream, block.value("mode", std::string("pc")) == "touch");
       if (plan.writes) {
         fields.insert("display");
         values.display = plan.window;

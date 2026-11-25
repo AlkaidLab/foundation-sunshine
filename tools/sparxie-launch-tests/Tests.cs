@@ -23,6 +23,7 @@ internal static partial class Tests
             LogRotation(scratch);
             LogFallback(scratch);
             ProfileWire();
+            ExtraGameArguments(scratch);
             NamesAndStages();
             PureTouchRules(scratch);
             SparxieLogCopy(scratch);
@@ -528,15 +529,21 @@ internal static partial class Tests
         }
         Check(LaunchOptions.Parse([.. args, "--screen-width"], out var missing) is null && missing.Contains("needs a value"), "a screen flag without a value is refused like the others");
 
-        // the wire: ScreenArgs screen = 6 { width 1, height 2, window_mode 3 }, only when asked
+        // The screen-only layout still uses field 6. The Sky fork has LaunchSettings at 6 and ScreenArgs at 7.
         var profile = new Profile("p", "n", "starRail", @"C:\S\StarRail.exe", null, new ScreenArgs(1280, 720, "windowed"));
-        var nested = Proto.Parse(Proto.Parse(BrokerRpc.StartSessionPayload(profile, "r")).First(x => x.Number == 3).Bytes);
-        var screen = Proto.Parse(nested.First(x => x.Number == 6).Bytes);
-        Same(1280, Proto.Int(screen, 1), "wire width");
-        Same(720, Proto.Int(screen, 2), "wire height");
-        Same("windowed", Proto.String(screen, 3), "wire window mode");
-        var plain = Proto.Parse(Proto.Parse(BrokerRpc.StartSessionPayload(profile with { Screen = null }, "r")).First(x => x.Number == 3).Bytes);
-        Check(!plain.Any(x => x.Number == 6), "no screen object when nothing is asked");
+        var screenOnly = new BrokerCapabilities(new HashSet<string> { "screen-args" }, CapabilitySource.Ping);
+        var sky = screenOnly with { HasLaunchArguments = true };
+        foreach (var (capabilities, field) in new[] { (screenOnly, 6), (sky, 7) })
+        {
+            var nested = Proto.Parse(Proto.Parse(BrokerRpc.StartSessionPayload(profile, "r", capabilities)).First(x => x.Number == 3).Bytes);
+            Check(!nested.Any(x => (x.Number is 6 or 7) && x.Number != field), "only the supported screen field is sent");
+            var screen = Proto.Parse(nested.First(x => x.Number == field).Bytes);
+            Same(1280, Proto.Int(screen, 1), "wire width");
+            Same(720, Proto.Int(screen, 2), "wire height");
+            Same("windowed", Proto.String(screen, 3), "wire window mode");
+        }
+        var plain = Proto.Parse(Proto.Parse(BrokerRpc.StartSessionPayload(profile with { Screen = null }, "r", sky)).First(x => x.Number == 3).Bytes);
+        Check(!plain.Any(x => x.Number is 6 or 7), "no launch or screen object when nothing is asked");
         Same("screen-args", PingInfo.ScreenArgsCapability, "the capability name");
         Check(PingInfo.Parse(Proto.Message((1, Proto.Int(1)), (3, Proto.String("screen-args")))).Has(PingInfo.ScreenArgsCapability), "a Broker that lists it is understood");
 

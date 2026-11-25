@@ -20,7 +20,7 @@ internal enum CapabilitySource
 /// What the installed Sparxie can do. Two different situations must not be confused: a Broker that lists its features and leaves one out
 /// (the feature is really missing: refuse), and a Broker that lists nothing because it predates the list (look at what is installed).
 /// </summary>
-internal sealed record BrokerCapabilities(IReadOnlySet<string> Names, CapabilitySource Source)
+internal sealed record BrokerCapabilities(IReadOnlySet<string> Names, CapabilitySource Source, bool HasLaunchArguments = false)
 {
     public const string ManifestFileName = "capabilities.json";
 
@@ -28,10 +28,19 @@ internal sealed record BrokerCapabilities(IReadOnlySet<string> Names, Capability
     private static readonly (string Capability, string Marker)[] ContractMarkers =
     [
         (PingInfo.TouchUiSwitch, "TouchUiEnabled"),
-        (PingInfo.ScreenArgsCapability, "ScreenArgs"),
+        (PingInfo.ScreenArgsCapability, "ScreenFieldNumber"),
     ];
 
     public bool Has(string capability) => Names.Contains(capability);
+
+    // The published screen-args fork carries LaunchSettings at 6 and ScreenArgs at 7.
+    // Preserve the screen-only layout for builds advertising screen-args without LaunchSettings.
+    public int ScreenField(string game)
+    {
+        if (!Has(PingInfo.ScreenArgsCapability)) return 0;
+        if (!HasLaunchArguments) return 6;
+        return GameIds.IsPlugin(game) ? 0 : 7; // field 7 carries settings_json on plugin builds
+    }
 
     public override string ToString() =>
         (Names.Count > 0 ? string.Join(",", Names.Order(StringComparer.Ordinal)) : "none")
@@ -40,23 +49,26 @@ internal sealed record BrokerCapabilities(IReadOnlySet<string> Names, Capability
             CapabilitySource.Ping => "reported by the Broker",
             CapabilitySource.Manifest => "from capabilities.json of the install",
             _ => "read from the installed files, the Broker reports none",
-        } + ")";
+        } + "), launch arguments " + (HasLaunchArguments ? "supported" : "unavailable");
 
     /// <summary>The Ping list when the Broker gives one, else the install's capabilities.json, else what the installed files show.</summary>
     public static BrokerCapabilities Resolve(PingInfo? ping, string brokerPath)
     {
+        var directory = Path.GetDirectoryName(brokerPath) ?? ".";
+        var contracts = ReadContracts(directory);
+        // LaunchSettings is part of the core contract on builds that ship it, including ones whose Ping or manifest never lists it.
+        var launchArguments = HasMarker(contracts, "LaunchFieldNumber") && HasMarker(contracts, "ExtraArgumentsFieldNumber");
         if (ping is { Capabilities.Count: > 0 })
         {
-            return new BrokerCapabilities(ping.Capabilities.ToHashSet(StringComparer.Ordinal), CapabilitySource.Ping);
+            return new BrokerCapabilities(ping.Capabilities.ToHashSet(StringComparer.Ordinal), CapabilitySource.Ping, launchArguments);
         }
 
-        var directory = Path.GetDirectoryName(brokerPath) ?? ".";
         if (ReadManifest(Path.Combine(directory, ManifestFileName)) is { } listed)
         {
-            return new BrokerCapabilities(listed, CapabilitySource.Manifest);
+            return new BrokerCapabilities(listed, CapabilitySource.Manifest, launchArguments);
         }
 
-        return new BrokerCapabilities(InferFromFiles(directory), CapabilitySource.InstalledFiles);
+        return new BrokerCapabilities(InferFromFiles(directory, contracts), CapabilitySource.InstalledFiles, launchArguments);
     }
 
     /// <summary>{ "schema": 1, "capabilities": [ ... ] }; anything else (missing, unreadable, another schema) is no manifest.</summary>
@@ -92,7 +104,7 @@ internal sealed record BrokerCapabilities(IReadOnlySet<string> Names, Capability
     /// For builds that report nothing: Endfield is there when both Endfield libraries ship; the touch-interface switch and the screen arguments
     /// are there when the protocol types of Sparxie.Contracts.dll carry their fields.
     /// </summary>
-    internal static HashSet<string> InferFromFiles(string directory)
+    private static HashSet<string> InferFromFiles(string directory, byte[] contracts)
     {
         var names = new HashSet<string>(StringComparer.Ordinal);
         if (File.Exists(Path.Combine(directory, "EndfieldCore.dll")) && File.Exists(Path.Combine(directory, "EndfieldRuntime.dll")))
@@ -100,15 +112,19 @@ internal sealed record BrokerCapabilities(IReadOnlySet<string> Names, Capability
             names.Add(PingInfo.Endfield);
         }
 
-        byte[] contracts;
-        try { contracts = File.ReadAllBytes(Path.Combine(directory, "Sparxie.Contracts.dll")); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return names; }
-
         foreach (var (capability, marker) in ContractMarkers)
         {
-            if (contracts.AsSpan().IndexOf(Encoding.ASCII.GetBytes(marker)) >= 0) names.Add(capability);
+            if (HasMarker(contracts, marker)) names.Add(capability);
         }
 
         return names;
     }
+
+    private static byte[] ReadContracts(string directory)
+    {
+        try { return File.ReadAllBytes(Path.Combine(directory, "Sparxie.Contracts.dll")); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return []; }
+    }
+
+    private static bool HasMarker(byte[] contracts, string marker) => contracts.AsSpan().IndexOf(Encoding.ASCII.GetBytes(marker)) >= 0;
 }

@@ -25,6 +25,14 @@ test('the status carries whether Sparxie is open, the state of its storage and w
   assert.equal((await clientOf({ scene: 'data', running: true }).client.status()).running, true)
 })
 
+test('the status exposes the skipped launch arguments notice and clears it with the next clean launch', () => {
+  const note = { kind: 'launch_arguments_omitted', message: '本次跳过了附加启动参数', messageEn: 'This launch skipped the extra arguments' }
+  assert.deepEqual(normalizeStatus({ installed: true, launchNotice: note }).launchArgumentsNotice, { zh: note.message, en: note.messageEn })
+  assert.equal(normalizeStatus({ installed: true }).launchArgumentsNotice, null)
+  assert.equal(normalizeStatus({ installed: false, launchNotice: note }).launchArgumentsNotice, null)
+  assert.equal(normalizeStatus({ installed: true, launchNotice: { ...note, kind: 'retried' } }).launchArgumentsNotice, null)
+})
+
 test('the status says whether the installed Sparxie can run a session without its touch interface (keyboard, mouse and gamepad)', async () => {
   assert.equal(ABSENT.touchUiSwitch, false)
   assert.equal((await clientOf({ scene: 'data' }).client.status()).touchUiSwitch, false, 'a build without capabilities.json has no switch')

@@ -42,8 +42,15 @@ internal static partial class Tests
         Same(CapabilitySource.InstalledFiles, legacyEndfield.Source, "no manifest: the files");
         Check(legacyEndfield.Has("endfield") && !legacyEndfield.Has("touch-ui-switch") && !legacyEndfield.Has("screen-args"), "Endfield libraries alone give Endfield only");
 
-        var legacyFull = BrokerCapabilities.Resolve(null, NewInstall("full", d => { EndfieldLibraries(d); Contracts(d, "TouchUiEnabled", "ScreenArgs"); }));
+        var legacyFull = BrokerCapabilities.Resolve(null, NewInstall("full", d => { EndfieldLibraries(d); Contracts(d, "TouchUiEnabled", "ScreenFieldNumber"); }));
         Check(legacyFull.Has("endfield") && legacyFull.Has("touch-ui-switch") && legacyFull.Has("screen-args"), "the protocol markers give the touch switch and the screen arguments");
+
+        var author = BrokerCapabilities.Resolve(Ping(), NewInstall("author", d => Contracts(d, "LaunchFieldNumber", "ExtraArgumentsFieldNumber")));
+        Check(author.HasLaunchArguments && author.ScreenField("zenlessZoneZero") == 0, "a stock build supports launch settings independently of screen arguments");
+        var sky = BrokerCapabilities.Resolve(Ping("screen-args"), NewInstall("sky", d => Contracts(d, "LaunchFieldNumber", "ExtraArgumentsFieldNumber", "ScreenFieldNumber")));
+        Check(sky.HasLaunchArguments && sky.ScreenField("zenlessZoneZero") == 7, "Sky's explicit screen capability and core launch contract coexist");
+        var legacy = BrokerCapabilities.Resolve(Ping(), NewInstall("legacy", d => Contracts(d, "ProfileSnapshot")));
+        Check(!legacy.HasLaunchArguments, "the launch settings are unavailable on builds predating the contract");
 
         var onlyOneLibrary = BrokerCapabilities.Resolve(Ping(), NewInstall("one-library", d => File.WriteAllText(Path.Combine(d, "EndfieldCore.dll"), "")));
         Check(!onlyOneLibrary.Has("endfield"), "one Endfield library is not Endfield support");

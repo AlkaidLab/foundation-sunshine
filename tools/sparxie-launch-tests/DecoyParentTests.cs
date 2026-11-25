@@ -98,6 +98,7 @@ internal static partial class Tests
             return;
         }
         DummyGameRuns(root, fakeDir);
+        FallbackGameArguments(root, fakeDir);
     }
 
     private static string ReadShared(string path)
@@ -139,6 +140,31 @@ internal static partial class Tests
             Thread.Sleep(50);
         }
         return false;
+    }
+
+    private static void FallbackGameArguments(string root, string fakeDir)
+    {
+        var dir = NewGameDir(root, "e2e-fallback-args", fakeDir);
+        var exe = Path.Combine(dir, "ZenlessZoneZero.exe");
+        File.Move(Path.Combine(dir, "Endfield.exe"), exe);
+        var record = Path.Combine(dir, "record.txt");
+        Environment.SetEnvironmentVariable("ECL_FAKE_RECORD", record);
+        Environment.SetEnvironmentVariable("ECL_FAKE_LIFE_MS", "500");
+        try
+        {
+            using var log = RunLog.Open([Path.Combine(dir, "logs")]);
+            var profile = new Profile("zzz-cn-1", "Zenless", "zenlessZoneZero", exe, null,
+                new ScreenArgs(1920, 1080, "borderless"), ExtraArguments: "-use-d3d12 --label \"two words\"");
+            Same(0, DirectLaunch.RunAsync(profile, log, true, dir).GetAwaiter().GetResult(), "the Zenless fallback follows the game's exit code");
+            var line = ReadRecord(record).GetValueOrDefault("cmdline") ?? "";
+            Check(line.EndsWith(" -screen-width 1920 -screen-height 1080 -screen-fullscreen 0 -popupwindow -use-d3d12 --label \"two words\"", StringComparison.Ordinal),
+                "the fallback game process receives the screen plan and quoted extra launch arguments");
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("ECL_FAKE_RECORD", null);
+            Environment.SetEnvironmentVariable("ECL_FAKE_LIFE_MS", null);
+        }
     }
 
     private static void DummyGameRuns(string root, string fakeDir)

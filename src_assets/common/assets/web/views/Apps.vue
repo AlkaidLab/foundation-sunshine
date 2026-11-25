@@ -5,6 +5,8 @@
         <MOverflow :items="menuItems" :label="$t('shell.more')" @select="onMenu" />
       </template>
 
+      <MBanner v-if="launchArgumentsMessage" tone="warn" icon="warning">{{ launchArgumentsMessage }}</MBanner>
+
       <Transition name="fade">
         <div v-if="scanProgress.active" class="apps-scan" role="status" aria-live="polite">
           <div class="apps-scan__copy">
@@ -238,7 +240,7 @@ import { computed, inject, reactive, ref, onBeforeUnmount, onMounted, watch } fr
 import { useI18n } from 'vue-i18n'
 import { hostData } from '../composables/hostData.js'
 import { deepClone } from '../utils/helpers.js'
-import { MButton, MChipRow, MCoverGrid, MDialog, MEmpty, MFab, MFabMenu, MField, MFooter, MGroup, MIcon, MOverflow, MPage, MProgress, MSceneFab, MSection, MSeg, MSheet, MSkeleton, MSnackbar, MSwitchItem, MTable, usePageFilter } from 'foundation-ui/vue'
+import { MBanner, MButton, MChipRow, MCoverGrid, MDialog, MEmpty, MFab, MFabMenu, MField, MFooter, MGroup, MIcon, MOverflow, MPage, MProgress, MSceneFab, MSection, MSeg, MSheet, MSkeleton, MSnackbar, MSwitchItem, MTable, usePageFilter } from 'foundation-ui/vue'
 import ScanResultModal from '../components/ScanResultModal.vue'
 import AppEditorLoading from '../components/AppEditorLoading.vue'
 import { lazyPane } from '../utils/lazyPane.js'
@@ -253,6 +255,7 @@ import SparxieNewApp from '../components/sparxie/SparxieNewApp.vue'
 import { AppService } from '../services/appService.js'
 import { sparxieClient, useSparxie } from '../composables/useSparxie.js'
 import { useSparxieCopy } from '../composables/useSparxieCopy.js'
+import { sparxieLang } from '../utils/sparxie/copy.js'
 import { appChips, artUrl, sparxieOf } from '../utils/sparxie/model.js'
 
 const { t, locale } = useI18n()
@@ -267,7 +270,11 @@ const hasKept = ref(!!(keptApps && Array.isArray(keptApps.apps)))
 const ready = computed(() => isLoaded.value || hasKept.value)
 
 // the Sparxie component: two more entries in the add menu while it is installed; without it the menu is the page's own
-const { present: spxPresent, available: spxAvailable, refresh: refreshSparxie } = useSparxie()
+const { state: spxStatus, present: spxPresent, available: spxAvailable, refresh: refreshSparxie } = useSparxie()
+const launchArgumentsMessage = computed(() => {
+  const notice = spxStatus.launchArgumentsNotice
+  return notice?.[sparxieLang(locale.value)] || notice?.zh
+})
 const spxCopy = useSparxieCopy()
 const spxPage = ref('')
 const fabItems = computed(() => {

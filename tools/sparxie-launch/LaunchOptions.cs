@@ -3,9 +3,9 @@ using System.Globalization;
 namespace Sparxie.Launch;
 
 /// <summary>The command line the host writes: <c>--sparxie &lt;Sparxie.exe&gt; --profile &lt;id&gt;</c>.</summary>
-internal sealed record LaunchOptions(string SparxiePath, string ProfileId, ScreenArgs? Screen = null, string? ScreenWarning = null)
+internal sealed record LaunchOptions(string SparxiePath, string ProfileId, ScreenArgs? Screen = null, string? ScreenWarning = null, bool? ZzzDx12 = null, string ExtraArguments = "")
 {
-    public const string Usage = "usage: sparxie-launch --sparxie <path to Sparxie.exe> --profile <profile id> [--screen-width <w> --screen-height <h>] [--window-mode fullscreen|windowed|borderless]";
+    public const string Usage = "usage: sparxie-launch --sparxie <path to Sparxie.exe> --profile <profile id> [--screen-width <w> --screen-height <h>] [--window-mode fullscreen|windowed|borderless] [--zzz-dx12 on|off] [--game-args <arguments>]";
 
     /// <summary>Returns the options, or null with a one-line reason.</summary>
     public static LaunchOptions? Parse(IReadOnlyList<string> args, out string error)
@@ -13,6 +13,8 @@ internal sealed record LaunchOptions(string SparxiePath, string ProfileId, Scree
         string? sparxie = null;
         string? profile = null;
         string? screenWidth = null, screenHeight = null, windowMode = null;
+        string? zzzDx12 = null;
+        string extraArguments = "";
         for (var i = 0; i < args.Count; i++)
         {
             var arg = args[i];
@@ -31,6 +33,8 @@ internal sealed record LaunchOptions(string SparxiePath, string ProfileId, Scree
                 case "--screen-width":
                 case "--screen-height":
                 case "--window-mode":
+                case "--zzz-dx12":
+                case "--game-args":
                     string? value = inline;
                     if (value is null)
                     {
@@ -47,7 +51,9 @@ internal sealed record LaunchOptions(string SparxiePath, string ProfileId, Scree
                         case "--profile": profile = value; break;
                         case "--screen-width": screenWidth = value; break;
                         case "--screen-height": screenHeight = value; break;
-                        default: windowMode = value; break;
+                        case "--window-mode": windowMode = value; break;
+                        case "--zzz-dx12": zzzDx12 = value; break;
+                        case "--game-args": extraArguments = value; break;
                     }
                     break;
                 default:
@@ -64,6 +70,11 @@ internal sealed record LaunchOptions(string SparxiePath, string ProfileId, Scree
         if (string.IsNullOrWhiteSpace(profile))
         {
             error = $"--profile is missing. {Usage}";
+            return null;
+        }
+        if (zzzDx12 is not (null or "on" or "off"))
+        {
+            error = $"--zzz-dx12 must be on or off. {Usage}";
             return null;
         }
 
@@ -88,7 +99,7 @@ internal sealed record LaunchOptions(string SparxiePath, string ProfileId, Scree
             else if (new ScreenArgs(w, h, mode) is { IsEmpty: false } ok)
                 screen = ok;
         }
-        return new LaunchOptions(full, profile.Trim(), screen, warning);
+        return new LaunchOptions(full, profile.Trim(), screen, warning, zzzDx12 is null ? null : zzzDx12 == "on", extraArguments);
     }
 }
 

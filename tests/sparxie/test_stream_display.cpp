@@ -326,6 +326,45 @@ TEST(StreamDisplay, ADirectStartGetsTheArgumentsAndATouchStartDoesNot) {
   EXPECT_EQ(args, " --screen-width 2868 --screen-height 1320 --window-mode fullscreen") << "Sparxie's broker starts the game itself: sparxie-launch hands it the size and the window, and the settings above agree";
 }
 
+TEST(SparxieLaunchArgs, AnExistingTouchAppSendsItsOwnGraphicsApiAndCustomArguments) {
+  const fs::path root = fresh("sparxie-touch-launch-args");
+  sparxie::HostEnv env = env_at(root);
+  sparxie::MemoryRegistry registry;
+  env.registry = &registry;
+  const std::string cmd = "\"C:\\Sunshine Test\\tools\\sparxie-launch.exe\" --sparxie \"C:\\Sparxie\\Sparxie.exe\" --profile zzz-cn-1";
+  const std::string screen = " --screen-width 1920 --screen-height 1080 --window-mode fullscreen";
+  touch(root / "game" / "ZenlessZoneZero.exe");
+  const json extra = {
+    { "profile", "zzz-cn-1" },
+    { "settings", { { "graphicsApi", "12" }, { "customArgs", "\"-screen-quality\" 2" } } },
+    { "launchOptions", { { "graphicsApi", "12" } } },
+  };
+  auto block = block_of(root, "zzz", "cn", "ZenlessZoneZero.exe", "touch", extra);
+
+  std::string args;
+  auto prepare = [&](const std::string &command) {
+    write_apps(env, { { "name", "ZZZ" }, { "cmd", command }, { "sparxie", block } });
+    ASSERT_TRUE(sparxie::prepare_launch(env, "ZZZ", command, { 1920, 1080, 60 }, &args).ok);
+  };
+  prepare(cmd);
+  EXPECT_EQ(args, screen + " --zzz-dx12=on --game-args \"-screen-quality 2\"");
+
+  block["launchOptions"]["graphicsApi"] = "11.1ns";
+  prepare(cmd);
+  EXPECT_EQ(args, screen + " --zzz-dx12=off --game-args \"-screen-quality 2\"");
+
+  block.erase("launchOptions");
+  prepare(cmd);
+  EXPECT_EQ(args, screen + " --zzz-dx12=on --game-args \"-screen-quality 2\"");
+
+  prepare("\"C:\\Sparxie\\Sparxie.exe\" --profile zzz-cn-1");
+  EXPECT_EQ(args, screen);
+
+  block.erase("settings");
+  prepare(cmd);
+  EXPECT_EQ(args, screen);
+}
+
 TEST(StreamDisplay, CreateAndEditKeepTheChoiceAndFixedSizesReachTheCommand) {
   const fs::path root = fresh("sparxie-sd-create");
   sparxie::HostEnv env = env_at(root);

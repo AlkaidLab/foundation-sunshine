@@ -57,7 +57,6 @@ internal static class Launcher
         string user;
         try { user = WindowsIdentity.GetCurrent().Name; } catch (Exception) { user = "?"; }
         log.Info($"sparxie-launch {version} pid={Environment.ProcessId} session={Process.GetCurrentProcess().SessionId} user={user} elevated={elevated} cwd={Environment.CurrentDirectory}");
-        log.Info("args: " + string.Join(" ", args.Select(a => a.Contains(' ') ? "\"" + a + "\"" : a)));
 
         // the host's own Endfield direct start (no Sparxie session): the game under a decoy parent, as the Collapse Launcher's Endfield plugin starts it
         if (EndfieldDirect.IsRequested(args)) return await EndfieldDirect.RunAsync(args, log, elevated).ConfigureAwait(false);
@@ -77,6 +76,7 @@ internal static class Launcher
         log.Info($"profile found: id={profile.Id} name={profile.DisplayName} game={profile.Game} exe={profile.ExecutablePath}");
         // an Endfield session learns the client's device and the stream's size here; the other games are unchanged
         profile = EndfieldSession.Resolve(profile, env);
+        profile = profile with { ExtraArguments = GameArguments.Resolve(profile, options, log.Warn) };
         // the window and size the host chose for this stream (Unity arguments of the game; the registry write of the host agrees with them)
         if (options.ScreenWarning is not null) log.Warn($"screen arguments ignored: {options.ScreenWarning}");
         if (options.Screen is { } requested)
@@ -88,8 +88,10 @@ internal static class Launcher
         if (!File.Exists(profile.ExecutablePath)) log.Warn($"the game executable does not exist: {profile.ExecutablePath}");
 
         var noticeDirs = LaunchNotice.CandidateDirectories(exeDirectory, env).ToList();
+        var launchArgumentsOmitted = false;
         void Note(string kind, string reason)
         {
+            if (kind == LaunchNotice.KindArgumentsOmitted) launchArgumentsOmitted = true;
             var json = LaunchNotice.Build(kind, profile, reason, log.Path, DateTime.UtcNow);
             var where = LaunchNotice.Write(noticeDirs, json);
             if (kind == LaunchNotice.KindDirect) StageReport.Notice("direct");
@@ -123,12 +125,15 @@ internal static class Launcher
 
         // attempt 1
         log.LinePrefix = "[1] ";
-        var first = await AttemptAsync(sent, brokerPath, useJob: true, elevated, log, sparxieLogs).ConfigureAwait(false);
+        var first = await AttemptAsync(sent, brokerPath, useJob: true, elevated, log, sparxieLogs, Note).ConfigureAwait(false);
         log.LinePrefix = "";
         if (first.Outcome != Outcome.NotStarted)
         {
-            if (first.Outcome == Outcome.Completed && unlockForced) Note(LaunchNotice.KindUnlock, first.Reason);
-            else if (first.Outcome == Outcome.Completed) LaunchNotice.Clear(noticeDirs);
+            if (first.Outcome == Outcome.Completed && !launchArgumentsOmitted)
+            {
+                if (unlockForced) Note(LaunchNotice.KindUnlock, first.Reason);
+                else LaunchNotice.Clear(noticeDirs);
+            }
             return Finish(log, first.ExitCode, first.Reason);
         }
         log.Warn($"attempt 1 ended before the game started: {first.Reason}");
@@ -148,11 +153,11 @@ internal static class Launcher
         var retryProfile = PureTouch.WithUnlock(sent);
         log.Info("retrying once: new Broker, no job object of ours" + (PureTouch.IsTouchOnly(sent) ? $", unlock on with {PureTouch.GameOwnCap} FPS" : ""));
         log.LinePrefix = "[2] ";
-        var second = await AttemptAsync(retryProfile, brokerPath, useJob: false, elevated, log, sparxieLogs).ConfigureAwait(false);
+        var second = await AttemptAsync(retryProfile, brokerPath, useJob: false, elevated, log, sparxieLogs, Note).ConfigureAwait(false);
         log.LinePrefix = "";
         if (second.Outcome != Outcome.NotStarted)
         {
-            if (second.Outcome == Outcome.Completed) Note(LaunchNotice.KindRetried, $"attempt 1: {first.Reason}");
+            if (second.Outcome == Outcome.Completed && !launchArgumentsOmitted) Note(LaunchNotice.KindRetried, $"attempt 1: {first.Reason}");
             return Finish(log, second.ExitCode, second.Reason);
         }
         log.Warn($"attempt 2 ended before the game started: {second.Reason}");
@@ -221,7 +226,7 @@ internal static class Launcher
     }
 
     /// <summary>One try at a Sparxie session. It always cleans up after itself (the Broker, and the job when there is one).</summary>
-    private static async Task<AttemptResult> AttemptAsync(Profile profile, string brokerPath, bool useJob, bool elevated, RunLog log, SparxieLogs sparxieLogs)
+    private static async Task<AttemptResult> AttemptAsync(Profile profile, string brokerPath, bool useJob, bool elevated, RunLog log, SparxieLogs sparxieLogs, Action<string, string> note)
     {
         JobGuard? job = null;
         if (useJob)
@@ -237,7 +242,7 @@ internal static class Launcher
         AttemptResult result;
         try
         {
-            result = await RunSessionAsync(profile, brokerPath, job, elevated, log, stop, b => broker = b, e => events = e, r => rpc = r).ConfigureAwait(false);
+            result = await RunSessionAsync(profile, brokerPath, job, elevated, log, stop, b => broker = b, e => events = e, r => rpc = r, note).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
@@ -262,7 +267,7 @@ internal static class Launcher
             return "this profile asks for a session without the touch interface, but the installed Sparxie does not support that (no touch-ui-switch capability)";
 
         // the screen arguments need a Broker that carries them; an older one would drop them silently, so the log says so and the registry stays the only lever
-        if (profile.Screen is { IsEmpty: false } && !capabilities.Has(PingInfo.ScreenArgsCapability))
+        if (profile.Screen is { IsEmpty: false } && capabilities.ScreenField(profile.Game) == 0)
         {
             warn("the installed Sparxie has no screen-args capability: the game starts without screen arguments (the host's registry write still applies)");
             profile = profile with { Screen = null };
@@ -278,7 +283,7 @@ internal static class Launcher
     }
 
     private static async Task<AttemptResult> RunSessionAsync(Profile profile, string brokerPath, JobGuard? job, bool elevated, RunLog log, CancellationTokenSource stop,
-        Action<Process> setBroker, Action<EventStream> setEvents, Action<BrokerRpc> setRpc)
+        Action<Process> setBroker, Action<EventStream> setEvents, Action<BrokerRpc> setRpc, Action<string, string> note)
     {
         static AttemptResult Not(int code, string reason) => new(Outcome.NotStarted, code, reason);
 
@@ -327,6 +332,9 @@ internal static class Launcher
         log.Info($"capabilities: {capabilities}");
         var refusal = CheckSupport(ref profile, capabilities, log.Warn);
         if (refusal is not null) return Not(ExitCodes.Unsupported, refusal);
+        const string omittedReason = "the installed Sparxie Broker does not support extra launch arguments";
+        var argumentsOmitted = profile.ExtraArguments.Length > 0 && !capabilities.HasLaunchArguments;
+        if (argumentsOmitted) log.Warn(omittedReason);
 
         // the event stream first, then the session
         var events = rpc.OpenEvents(stop.Token);
@@ -356,7 +364,7 @@ internal static class Launcher
 
         StartResponse answer;
         log.Info($"StartSession: profile={profile.Id} game={profile.Game} exe={profile.ExecutablePath} {(profile.Hoyo is { } h ? h.Describe() : profile.PluginSettings is { } plugin ? "settings_json=" + plugin : "")}");
-        try { answer = await rpc.StartSessionAsync(profile, StartSessionLimit).ConfigureAwait(false); }
+        try { answer = await rpc.StartSessionAsync(profile, capabilities, StartSessionLimit).ConfigureAwait(false); }
         catch (Exception ex) when (ex is HttpRequestException or IOException or OperationCanceledException or GrpcStatusException or InvalidDataException)
         { return Not(ExitCodes.Rpc, $"StartSession failed: {Short(ex)}"); }
         log.Info($"StartSession answer: accepted={answer.Accepted} session={answer.SessionId} stage={SparxieNames.Stage(answer.Stage)} error={SparxieNames.Error(answer.ErrorCode)} message={answer.Message}");
@@ -369,6 +377,7 @@ internal static class Launcher
         if (first == running.Task)
         {
             log.Info($"the game is running after {waited.ElapsedMilliseconds} ms");
+            if (argumentsOmitted) note(LaunchNotice.KindArgumentsOmitted, omittedReason);
             await GuardGameAsync(profile, job, log).ConfigureAwait(false);
             StageReport.Pids(BrokerProcess.FindGameProcesses(profile.ExecutablePath));
         }

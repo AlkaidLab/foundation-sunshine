@@ -36,7 +36,7 @@ internal sealed record PingInfo(int Protocol, string BrokerVersion, IReadOnlyLis
     /// <summary>A Broker that understands game = "endfield" sessions (and the Endfield fields 12-16 of the settings).</summary>
     public const string Endfield = "endfield";
 
-    /// <summary>ProfileSnapshot.screen (field 6): the session's size and window mode as Unity arguments of the game.</summary>
+    /// <summary>ProfileSnapshot.screen: the session's size and window mode as Unity arguments of the game.</summary>
     public const string ScreenArgsCapability = "screen-args";
 
     public bool Has(string capability) => Capabilities.Contains(capability);
@@ -96,7 +96,7 @@ internal sealed class BrokerRpc : IDisposable
     }
 
     /// <summary>The StartSession request: protocol version, request id, and the profile with every Sparxie setting.</summary>
-    internal static byte[] StartSessionPayload(Profile profile, string requestId)
+    internal static byte[] StartSessionPayload(Profile profile, string requestId, BrokerCapabilities? capabilities = null)
     {
         var nested = Proto.Message((1, Proto.String(profile.Id)), (2, Proto.String(profile.DisplayName)), (3, Proto.String(profile.Game)), (4, Proto.String(profile.ExecutablePath)));
         if (profile.Hoyo is { } h)
@@ -125,15 +125,19 @@ internal sealed class BrokerRpc : IDisposable
         // means its defaults. The built-in games carry none, and the Broker refuses them when they do.
         if (profile.PluginSettings is { Length: > 0 } pluginSettings && GameIds.IsPlugin(profile.Game))
             nested = Proto.Append(nested, 7, System.Text.Encoding.UTF8.GetBytes(pluginSettings));
-        // ScreenArgs screen = 6 { width 1, height 2, window_mode 3 }; only when there is something to say (a Broker without the capability must not be sent it)
-        if (profile.Screen is { IsEmpty: false } screen)
-            nested = Proto.Append(nested, 6, Proto.Message((1, Proto.Int(screen.Width)), (2, Proto.Int(screen.Height)), (3, Proto.String(screen.WindowMode))));
+        // LaunchSettings launch = 6 { ... string extra_arguments = 4 }. Display settings keep their own path.
+        if (capabilities is { HasLaunchArguments: true } && profile.ExtraArguments.Length > 0)
+            nested = Proto.Append(nested, 6, Proto.Message((4, Proto.String(profile.ExtraArguments))));
+        // ScreenArgs { width 1, height 2, window_mode 3 } uses a separate field on builds with LaunchSettings.
+        var screenField = capabilities?.ScreenField(profile.Game) ?? 0;
+        if (screenField > 0 && profile.Screen is { IsEmpty: false } screen)
+            nested = Proto.Append(nested, screenField, Proto.Message((1, Proto.Int(screen.Width)), (2, Proto.Int(screen.Height)), (3, Proto.String(screen.WindowMode))));
         return Proto.Message((1, Proto.Int(ProtocolVersion)), (2, Proto.String(requestId)), (3, Proto.Bytes(nested)));
     }
 
-    public async Task<StartResponse> StartSessionAsync(Profile profile, TimeSpan limit)
+    public async Task<StartResponse> StartSessionAsync(Profile profile, BrokerCapabilities capabilities, TimeSpan limit)
     {
-        var payload = StartSessionPayload(profile, Guid.NewGuid().ToString("N"));
+        var payload = StartSessionPayload(profile, Guid.NewGuid().ToString("N"), capabilities);
         using var cancel = new CancellationTokenSource(limit);
         return StartResponse.Parse(await UnaryAsync("StartSession", payload, cancel.Token).ConfigureAwait(false));
     }

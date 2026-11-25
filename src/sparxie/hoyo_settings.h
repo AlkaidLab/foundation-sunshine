@@ -26,6 +26,8 @@ namespace sparxie {
   game_launch_options(const json &settings, std::string_view game);
   std::string
   game_launch_command(std::string command, const Install &install, const json &options);
+  std::string
+  touch_game_arguments(std::string_view game, const json &options);
   // 提升游戏优先级 (Collapse's UseGameBoost) is kept by the host, not written to the game: the host raises the priority of the game process after it starts.
   // It counts only when the application holds it as one of its changed items (an application keeps only the items the person changed).
   bool

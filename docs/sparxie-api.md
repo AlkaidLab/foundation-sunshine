@@ -304,7 +304,7 @@ beside the host executable. `version` comes from `component.json` or
 in the build this host was written against, so `protocol` and `runtime`
 stay empty until that command exists.
 
-The same response carries `launchNotice`: `null`, or the note the touch launcher left after a launch that needed its safety net (`config\\sparxie\\launch-notice.json`: `version`, `id`, `time` (UTC), `kind` (`direct`: Sparxie could not start the session and the game was started directly; `retried`: the first session failed and the automatic retry worked; `unlock_forced`: the installed Hoyo runtime cannot run touch only, so the game started with the unlock at 60 FPS), `profile`, `game`, `message` (Chinese), `messageEn`, `reason`, `log`). A clean launch removes the note, so it always describes the last launch; a page shows `message` once per `id`.
+The same response carries `launchNotice`, the last launch note or `null`. The note in `config\\sparxie\\launch-notice.json` has `version`, `id`, `time` (UTC), `kind`, `profile`, `game`, `message` (Chinese), `messageEn`, `reason` and `log`. The `kind` is `direct` for a direct fallback, `retried` for a successful retry, `unlock_forced` for a touch-only session launched with the 60 FPS unlock, or `launch_arguments_omitted` for a session started by a Broker that predates extra launch arguments. The Applications page displays the omitted-arguments message from the status response. A clean launch removes the note.
 
 The same response also carries `noticeAck` (true only after
 `POST /api/sparxie/warning`), `installHint` / `installHintEn` (the one line
@@ -628,6 +628,13 @@ It exits 0 when the session ends with `Exited`, 7 for `Failed` or a crashed Sess
 Every run writes `config\logs\sparxie-launch-<yyyymmdd-hhmmss>.log` beside the host (the newest 20 are kept; `%LOCALAPPDATA%\Sunshine\logs` when
 that folder cannot be written; `SPARXIE_LAUNCH_LOG_DIR` overrides). The Broker, SessionHost and game are put in a job object that kills them when
 the launcher ends, so ending the Sunshine application, even by killing the launcher, ends the game.
+
+Touch launches carry the Sunshine application's saved custom arguments and Sparxie's `profiles[].launch.extraArguments`.
+An explicit Sunshine graphics API choice for Zenless Zone Zero takes precedence over renderer switches in both argument sources.
+DirectX 12 adds one `-use-d3d12`. An explicit DirectX 11 choice removes conflicting switches and uses the game's DirectX 11 setting.
+The bridge sends the merged text as `ProfileSnapshot.launch.extra_arguments` when the installed `Sparxie.Contracts.dll` carries that contract.
+That field is independent of the session's screen plan. A Broker that predates it starts the session with its supported fields and leaves a `launch_arguments_omitted` notice.
+If a session falls back to starting the game directly, the command line includes both the screen plan and the extra arguments.
 
 A launch is not allowed to end in failure while the game can still be started. A Hoyo profile whose frame-rate unlock is off ("touch only") is sent with the unlock on at 60 FPS, the
 game's own cap, when the installed `HoyoTouchCore.dll` is a build known to fail touch-only sessions (preview.9: the session ends `Failed`, Hoyo error 6). If a session fails before the

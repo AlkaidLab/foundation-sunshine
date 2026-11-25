@@ -29,7 +29,7 @@ internal static class DirectLaunch
     /// <summary>Starts the game and waits for it; the result is the game's exit code (or a launcher code when it never started).</summary>
     /// <param name="parentSource">Endfield only: the image copied to Games.exe (default PlatformProcess.exe in the game's folder).</param>
     /// <param name="verifySigner">Endfield only: false skips the Authenticode checks (tests).</param>
-    /// <param name="gameArguments">The game's command line from the host's screen plan (`--endfield-direct ... -- args`); null takes the profile's own screen arguments.</param>
+    /// <param name="gameArguments">The game's command line from the host's screen plan (`--endfield-direct ... -- args`); null uses the session's screen and extra arguments.</param>
     public static async Task<int> RunAsync(Profile profile, RunLog log, bool elevated, string cwd, string? parentSource = null, bool verifySigner = true, string? gameArguments = null)
     {
         var exe = profile.ExecutablePath;
@@ -41,7 +41,8 @@ internal static class DirectLaunch
         var dir = WorkingDirectory(cwd, exe);
         JobGuard? job = null;
         try { job = JobGuard.Create(); } catch (Exception ex) { log.Warn($"direct start: no job object ({ex.Message}); the game will not stop with the launcher on its own"); }
-        var arguments = gameArguments ?? profile.Screen?.Arguments() ?? "";
+        var screen = profile.Screen?.Arguments() ?? "";
+        var arguments = gameArguments ?? GameArguments.Combine(screen, profile.ExtraArguments);
         Process? game = null;
         DecoyParent? decoy = null;
         try
@@ -58,7 +59,8 @@ internal static class DirectLaunch
                 game = Process.Start(new ProcessStartInfo(exe) { UseShellExecute = true, Verb = "runas", WorkingDirectory = dir, Arguments = arguments })
                     ?? throw new InvalidOperationException("Process.Start returned nothing");
             }
-            log.Info($"direct start: game started, pid={game.Id}, working directory {dir}" + (arguments.Length > 0 ? $", arguments {arguments}" : ""));
+            var loggedArguments = gameArguments ?? screen;
+            log.Info($"direct start: game started, pid={game.Id}, working directory {dir}" + (loggedArguments.Length > 0 ? $", arguments {loggedArguments}" : ""));
             StageReport.Report(StageReport.WaitingWindow);
             StageReport.Pids([game.Id]);
             var joined = job?.TryAssign(game.Id);

@@ -3,7 +3,7 @@ using System.Globalization;
 namespace Sparxie.Launch;
 
 /// <summary>
-/// The window and size the host wants for this session (the Broker's ScreenArgs, field 6 of the profile snapshot). Sparxie turns them into Unity player
+/// The window and size the host wants for this session (the Broker's ScreenArgs). Sparxie turns them into Unity player
 /// arguments for the game; a direct start puts the same text on the game's command line. Only integers and fixed tokens are ever built.
 /// Unity manual, Standalone Player command-line arguments: -screen-width, -screen-height, -screen-fullscreen 0|1, -popupwindow.
 /// </summary>
