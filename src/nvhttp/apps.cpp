@@ -233,14 +233,11 @@ namespace nvhttp::apps {
         response->write(web::StatusCode::not_found, "App asset not found");
         return;
       }
-      // fs-poster-preview-only-20261125: a preview request, and every poster request of the desktop wallpaper, carries the
-      // preview alone once the source is larger than poster::preview_limit_bytes. A wallpaper is a photograph of many
-      // megabytes, and a client keeps what it was told is immutable for a whole art version. While the background pass is
-      // still producing the preview the request waits for it, within poster::preview_wait_limit. A preview that does not
-      // appear is answered with the host's default cover, uncacheable. A client that honors HTTP caching does not store
-      // it and asks again the next time it needs the cover, then gets the preview. Moonlight v+ and the qt fork were
-      // verified to keep their own per-host cover cache instead: they keep showing the default cover until that cache
-      // is invalidated client-side.
+      // fs-poster-preview-only-20261125: desktop wallpaper poster requests and explicit preview requests get the preview
+      // alone once the source exceeds poster::preview_limit_bytes, a photograph of many megabytes. The request waits for
+      // the background pass within poster::preview_wait_limit; if the preview still does not appear, the default cover
+      // answers, uncacheable. HTTP-caching clients ask again and get the preview; Moonlight v+ and the qt fork cache
+      // covers per host and keep the default until that cache is invalidated client-side.
       const auto preview_only = type == "poster" && (app->image_path == "desktop" || (args.find("fsVariant") != args.end() && args.find("fsVariant")->second == "preview"));
       std::optional<poster::representation_t> preview;
       bool default_cover = false;
