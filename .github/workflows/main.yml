@@ -1870,7 +1870,9 @@ jobs:
   publish:
     name: Publish release
     needs: [setup_release, build_win]
-    if: needs.setup_release.outputs.publish_release == 'true' && github.event_name == 'workflow_dispatch'
+    # A status function is required: without one this job is skipped whenever any job upstream of build_win was
+    # skipped (for example the compile shards on a warm cache), even though build_win itself succeeded.
+    if: ${{ !cancelled() && needs.build_win.result == 'success' && needs.setup_release.result == 'success' && needs.setup_release.outputs.publish_release == 'true' && github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
