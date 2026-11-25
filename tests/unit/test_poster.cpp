@@ -128,6 +128,25 @@ TEST(Poster, BackgroundPreviewIsBoundedAndScaled) {
   test_support::remove_tree_quiet(root);
 }
 
+TEST(Poster, EvictedPreviewIsGeneratedAgain) {
+  // The capacity limit evicts by age, so a version this run built can be removed again later. The generation ran and
+  // succeeded, which cleared the attempt record: a new request must build the file again instead of staying lost.
+  const auto root = test_root();
+  const auto source = write_png(root / "source.png", 1600, 900, true);
+  nvhttp::apps::poster::schedule(source);
+  ASSERT_TRUE(nvhttp::apps::poster::wait_idle());
+  auto preview = nvhttp::apps::poster::preview(source);
+  ASSERT_TRUE(preview);
+  std::filesystem::remove(preview->path);
+
+  nvhttp::apps::poster::schedule(source);
+  ASSERT_TRUE(nvhttp::apps::poster::wait_idle());
+  preview = nvhttp::apps::poster::preview(source);
+  EXPECT_TRUE(preview) << "the preview is generated again after the cached file was evicted";
+  EXPECT_TRUE(nvhttp::apps::poster::wait_idle());
+  test_support::remove_tree_quiet(root);
+}
+
 TEST(Poster, RepeatedScheduleDoesNotRebuildVariants) {
   // schedule() is called for every application on every app-list and poster request: a source whose variants exist must not be decoded and encoded again
   const auto root = test_root();

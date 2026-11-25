@@ -363,8 +363,10 @@ namespace nvhttp::apps::poster {
       if (!load_pixels(path, pixels)) return;
 
       const auto alpha = pixels.source_channels == 2 || pixels.source_channels == 4;
+      bool full_written = false;
+      bool preview_written = false;
       if (const auto full_png = encode_png(pixels.rgba, pixels.width, pixels.height)) {
-        if (full_png->size() < source->size) write_atomically(full_cache_path(*source), *full_png);
+        if (full_png->size() < source->size) full_written = write_atomically(full_cache_path(*source), *full_png);
       }
 
       int width = pixels.width;
@@ -377,28 +379,28 @@ namespace nvhttp::apps::poster {
         const auto resized = resize_rgba(pixels, width, height);
         std::optional<std::vector<unsigned char>> encoded = alpha ? encode_png(resized, width, height) : encode_jpeg(resized, width, height, 85);
         if (encoded && encoded->size() <= preview_limit_bytes) {
-          write_atomically(preview_cache_path(*source, alpha), *encoded);
-          preview_written = true;
+          preview_written = write_atomically(preview_cache_path(*source, alpha), *encoded);
           break;
         }
         width = std::max(1, static_cast<int>(width * 0.8));
         height = std::max(1, static_cast<int>(height * 0.8));
       }
-      if (!preview_written) return;
-      {
+      if (!full_written && !preview_written) return;
+      if (preview_written) {
         auto &queue = work_queue();
         std::lock_guard lock(queue.mutex);
-        // The attempt record throttles the sources whose preview cannot be built; this one landed, and the disk
-        // check above takes over the deduplication. If the capacity limit evicts the file later, the next request
-        // may rebuild it.
+        // The attempt record throttles the sources whose preview cannot be built; this one landed on disk, and the
+        // disk check above takes over the deduplication. If the capacity limit evicts the file later, the next
+        // request may rebuild it. A write that failed keeps the record: rebuilding would decode and encode the same
+        // source again for nothing.
         queue.attempted.erase(source->key);
       }
       // fs-poster-cache-20261125: the startup pass sweeps the leftovers and sets the initial limit; every generation
-      // that landed repeats the same bounded scan here, so a long-lived process cannot grow the cache past
-      // cache_file_limit. Eviction is by age and the file just written has the newest timestamp.
+      // that landed a file repeats the same bounded scan here, so a long-lived process cannot grow the cache past
+      // cache_file_limit. Eviction is by age and the files just written have the newest timestamps.
       const auto maintenance = cleanup_cache_dir(cache_root());
       if (maintenance.evicted != 0) {
-        BOOST_LOG(info) << "Poster cache evicted " << maintenance.evicted << " old file(s) after one more preview";
+        BOOST_LOG(info) << "Poster cache evicted " << maintenance.evicted << " old file(s) after one more pass";
       }
     }
 
