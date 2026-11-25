@@ -11,6 +11,9 @@ export const gdiNameOf = (data = '') => {
   return m ? `\\\\.\\${m[1]}` : ''
 }
 
+/** The physical display whose mode card applies to the chosen target. The virtual stream uses the primary physical display's Windows mode. */
+export const modeTargetOf = (chosen, physical) => physical.find((d) => d.id === chosen) || (chosen === 'virtual' ? physical.find((d) => d.primary) : null) || null
+
 /** The scaling stops of the card: 100 % to 300 % in steps of 25, as the DPI tool offers. */
 export const SCALES = Object.freeze([100, 125, 150, 175, 200, 225, 250, 275, 300])
 
