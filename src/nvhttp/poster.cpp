@@ -84,7 +84,11 @@ namespace nvhttp::apps::poster {
       std::mutex mutex;
       std::condition_variable condition;
       std::condition_variable drained;
-      std::deque<std::filesystem::path> pending;
+      struct queued_source_t {
+        std::filesystem::path path;
+        std::string normalized;  // resolved once by schedule(): the worker erases the queue entry with it
+      };
+      std::deque<queued_source_t> pending;
       std::unordered_set<std::string> queued;
       std::unordered_set<std::string> attempted;  // keys of the source versions whose variants were built (or tried) in this run
       bool started = false;
@@ -345,11 +349,9 @@ namespace nvhttp::apps::poster {
     build_variants(const std::filesystem::path &path) {
       const auto source = source_info(path);
       if (!source || source->size <= preview_limit_bytes) return;
-      // schedule() runs for every application on every app-list and every poster request, so the same file version arrives again and again. The variants are named after
-      // the file's path, size and modification time: when the preview is already on disk, or a generation for it already ran in this run without producing one, there
-      // is nothing to do.
-      // Without this each request decoded the poster and encoded it again (several seconds of one core for a large one).
-      // The error_code overloads: a cache name that the file system refuses (a source name close to the length limit, with the prefix and key added) must count as a miss, not throw out of the worker.
+      // schedule() runs on every app-list and every poster request, so the same version arrives again and again. The variants are named after the file's path, size
+      // and modification time: with the preview already on disk, or a generation for this version already run without producing one, there is nothing to do. The
+      // error_code overloads keep a cache name the file system refuses a miss instead of an exception out of the worker.
       std::error_code probe_error;
       if (std::filesystem::is_regular_file(preview_cache_path(*source, true), probe_error) || std::filesystem::is_regular_file(preview_cache_path(*source, false), probe_error)) return;
       {
@@ -434,14 +436,13 @@ namespace nvhttp::apps::poster {
           {
             std::unique_lock lock(queue.mutex);
             queue.condition.wait(lock, [&]() { return !queue.pending.empty(); });
-            path = std::move(queue.pending.front());
+            auto source = std::move(queue.pending.front());
             queue.pending.pop_front();
-            std::error_code error;
-            auto key = normalized_path(path, error);
-            queue.queued.erase(key);
-            queue.current = std::move(key);
+            queue.queued.erase(source.normalized);
+            queue.current = std::move(source.normalized);
             queue.busy = true;
             processing = true;
+            path = std::move(source.path);
           }
           build_variants(path);
         }
@@ -599,11 +600,11 @@ namespace nvhttp::apps::poster {
     auto &queue = work_queue();
     // A path that cannot be resolved is not queued: its poster is served from the source.
     std::error_code error;
-    const auto key = normalized_path(source, error);
+    const auto normalized = normalized_path(source, error);
     if (error) return;
     {
       std::lock_guard lock(queue.mutex);
-      if (queue.queued.insert(key).second) queue.pending.push_back(source);
+      if (queue.queued.insert(normalized).second) queue.pending.push_back({ source, normalized });
       if (!queue.started) {
         // One attempt per process: without the worker nothing is cached, and nobody waits for what nobody produces.
         queue.started = true;
