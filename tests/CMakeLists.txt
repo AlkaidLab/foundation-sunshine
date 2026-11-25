@@ -306,9 +306,17 @@ add_test(NAME background_probe_unit_tests COMMAND background_probe_unit_tests)
 
 add_executable(poster_unit_tests
         ${CMAKE_SOURCE_DIR}/src/nvhttp/poster.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/poster_platform_stubs.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_poster.cpp)
-target_include_directories(poster_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
-target_link_libraries(poster_unit_tests PRIVATE gtest_main OpenSSL::Crypto sunshine_project_options sunshine_coverage)
+target_include_directories(poster_unit_tests PRIVATE
+        "${CMAKE_SOURCE_DIR}"
+        "${CMAKE_BINARY_DIR}")  # generated version.h
+# poster.cpp uses host headers and Boost header-only components. The stub supplies the loggers, appdata directory and
+# UTF-8 path conversion used by this standalone target.
+target_link_libraries(poster_unit_tests PRIVATE gtest_main OpenSSL::Crypto Boost::format Boost::log Boost::thread
+        Boost::property_tree
+        sunshine::host_headers sunshine_project_options sunshine_coverage)
+target_compile_definitions(poster_unit_tests PRIVATE ${SUNSHINE_DEFINITIONS})
 set_target_properties(poster_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME poster_unit_tests COMMAND poster_unit_tests)
 
@@ -1684,10 +1692,12 @@ list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/usbip/external_readonly_
         ${CMAKE_SOURCE_DIR}/tests/unit/test_uac1_microphone.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_video_probe.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_virtual_touchscreen_device.cpp
-        # test_amf_rate_control pulls boost headers transitively via src/video.h;
-        # it runs in its own Windows-only target, not the aggregate.
+        # This test has a separate Windows-only target.
         ${CMAKE_SOURCE_DIR}/tests/unit/test_amf_rate_control.cpp
-        ${CMAKE_SOURCE_DIR}/tests/unit/pairing_pending_platform_stubs.cpp)
+        ${CMAKE_SOURCE_DIR}/tests/unit/pairing_pending_platform_stubs.cpp
+        # These poster tests use private host stubs and must stay in poster_unit_tests.
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_poster.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/poster_platform_stubs.cpp)
 
 set(ABR_TEST_STUB_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/abr_test_stubs.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${ABR_TEST_STUB_SOURCE})

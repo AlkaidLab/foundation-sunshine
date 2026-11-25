@@ -8,6 +8,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -232,8 +233,23 @@ namespace nvhttp::apps {
         response->write(web::StatusCode::not_found, "App asset not found");
         return;
       }
-      const auto preview_requested = type == "poster" && args.find("fsVariant") != args.end() && args.find("fsVariant")->second == "preview";
-      const auto selected = preview_requested ? poster::preview(source).value_or(*full) : *full;
+      // Desktop wallpaper posters and explicit preview requests use the preview representation. Large sources wait
+      // briefly for generation, then return an uncached default cover when it is still pending.
+      const auto preview_only = type == "poster" && (app->image_path == "desktop" || (args.find("fsVariant") != args.end() && args.find("fsVariant")->second == "preview"));
+      std::optional<poster::representation_t> preview;
+      bool default_cover = false;
+      if (preview_only) {
+        preview = poster::preview_when_ready(source);
+        if (!preview) {
+          preview = poster::full(file_handler::path_from_utf8(proc::default_app_image_path()));
+          default_cover = true;
+        }
+        if (!preview) {
+          response->write(web::StatusCode::not_found, "App asset not found");
+          return;
+        }
+      }
+      const auto &selected = preview_only ? *preview : *full;
 
       web::CaseInsensitiveMultimap headers;
       // fs-rfc9110-ranges-20261112 sections 8.8.3, 13.1.2, 14.2-14.4:
@@ -242,12 +258,19 @@ namespace nvhttp::apps {
       headers.emplace("ETag", selected.etag);
       headers.emplace("Accept-Ranges", "bytes");
       headers.emplace("Content-Type", selected.content_type);
-      if (preview_requested) {
-        headers.emplace("X-FS-Poster-Variant", "preview");
+      if (preview_only) {
+        // Identify whether the response body is the preview or the fallback cover.
+        headers.emplace("X-FS-Poster-Variant", default_cover ? "default" : "preview");
         headers.emplace("X-FS-Poster-Full-ETag", full->etag);
         headers.emplace("X-FS-Poster-Full-Length", std::to_string(full->length));
       }
-      if (args.find("v") != args.end()) headers.emplace("Cache-Control", "public, immutable");
+      // Do not let the fallback cover become the immutable representation for this art version.
+      if (default_cover) {
+        headers.emplace("Cache-Control", "no-store");
+      }
+      else if (args.find("v") != args.end()) {
+        headers.emplace("Cache-Control", "public, immutable");
+      }
 
       std::string if_none_match;
       for (auto [it, end] = request->header.equal_range("If-None-Match"); it != end; ++it) {
