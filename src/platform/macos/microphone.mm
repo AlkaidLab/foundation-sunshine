@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <cstring>
 #include <thread>
 #include <vector>
@@ -95,6 +96,21 @@ namespace platf {
       UInt32 alive = 0;
       UInt32 size = sizeof(alive);
       if (AudioObjectGetPropertyData(device_id, &address, 0, nullptr, &size, &alive) != noErr || alive == 0) {
+        return false;
+      }
+      // TN2091: device sample rate must match the client format we opened with.
+      // Users can change nominal rate while the device stays alive; reopen on mismatch.
+      AudioObjectPropertyAddress rate_address {
+        kAudioDevicePropertyNominalSampleRate,
+        kAudioObjectPropertyScopeGlobal,
+        kAudioObjectPropertyElementMain
+      };
+      Float64 current_rate = 0.0;
+      UInt32 rate_size = sizeof(current_rate);
+      if (AudioObjectGetPropertyData(device_id, &rate_address, 0, nullptr, &rate_size, &current_rate) != noErr) {
+        return false;
+      }
+      if (std::fabs(current_rate - sample_rate) > 0.5) {
         return false;
       }
       return true;
