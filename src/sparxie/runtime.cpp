@@ -192,6 +192,7 @@ namespace sparxie {
     });
     env.launch_gui = launch_in_user_session;
     env.warn = [](const std::string &message) { BOOST_LOG(warning) << "Sparxie: " << message; };
+    env.store_hooks.warn = env.warn;
     env.registry = &host_registry();
     env.process_running = host_process_running;
     env.display_refresh = streamed_display_refresh;

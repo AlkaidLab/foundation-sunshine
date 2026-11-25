@@ -281,6 +281,40 @@ TEST(StreamDisplay, AFixedDisplayWritesThePersonsSizeAndWindowMode) {
   EXPECT_EQ(values.display, "windowed");
 }
 
+TEST(StreamDisplay, ZenlessTouchLaunchLeavesTheSparxieProfileAlone) {
+  const fs::path root = fresh("sparxie-zzz-launch-no-profile-write");
+  sparxie::HostEnv env = env_at(root);
+  sparxie::MemoryRegistry registry;
+  env.registry = &registry;
+  const fs::path exe = root / "game" / "ZenlessZoneZero.exe";
+  touch(exe);
+  sparxie::ProfileDraft draft;
+  draft.id = "zzz-cn-1";
+  draft.display_name = "Sparxie profile label";
+  draft.game = "zzz";
+  draft.executable = exe.string();
+  ASSERT_TRUE(sparxie::add_profile(env.data_dir, draft, {}).status.ok);
+  const auto before = sparxie::read_store(env.data_dir);
+  ASSERT_TRUE(before.status.ok) << before.status.error;
+
+  const json extra = {
+    { "profile", draft.id },
+    { "options", { { "fps", 120 }, { "fpsUnlock", true } } },
+    { "settings", { { "gameBoost", true } } },
+  };
+  const auto block = block_of(root, "zzz", "cn", "ZenlessZoneZero.exe", "touch", extra);
+  write_apps(env, { { "name", "Sunshine app label" }, { "cmd", "x" }, { "sparxie", block } });
+  int backups = 0;
+  env.store_hooks.utc_stamp = [&backups] {
+    ++backups;
+    return std::string("20261110T120000Z");
+  };
+  for (int n = 0; n < 2; ++n)
+    ASSERT_TRUE(sparxie::prepare_launch(env, "Sunshine app label", "x", { 1920, 1080, 60 }).ok);
+  EXPECT_EQ(sparxie::read_store(env.data_dir).document, before.document);
+  EXPECT_EQ(backups, 0);
+}
+
 TEST(StreamDisplay, ZenlessFollowsThroughItsListAndUnrealThroughItsFile) {
   const fs::path root = fresh("sparxie-sd-others");
   sparxie::HostEnv env = env_at(root);

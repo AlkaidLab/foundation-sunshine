@@ -591,8 +591,9 @@ modified.
 
 | state | Meaning |
 |---|---|
-| `written` | A profile was appended and the read-back check passed. |
+| `written` | The profile was written and the read-back check passed. |
 | `created` | Sparxie had no file. The host created schema 1 at the resolved data directory. |
+| `unchanged` | An update left the parsed document identical. The host kept the original file and returned an empty backup name. |
 | `skipped` | `mode` is `pc`, so no profile was written. The command is the game executable. |
 | `refused_running` | Not written because Sparxie is running. HTTP 409 `sparxie_running`. |
 | `refused_schema` | Not written because `schemaVersion` is not 1. HTTP 409. |
@@ -601,11 +602,12 @@ modified.
 Write-back follows Sparxie's own add-game rules:
 
 * `schemaVersion` must be 1, otherwise the host refuses and does not touch the file.
-* The host copies the current file to `config.backup-<UTC>.json` and keeps the newest five backups.
+* Before a real edit the host copies the current file to `config.backup-<UTC>.json`, using a numbered suffix for other copies from the same second. The backup remains available through replacement and read-back.
+* After a successful write or an unchanged update, the host retains the five most recent regular backups with its naming scheme. It keeps the current write's backup if the clock moved back. It logs file listing and removal errors and retries old deletions on a later update.
 * The profile is appended to the parsed JSON document, so fields this host does not know survive. `selectedProfileId` is set to the new id only when it was empty.
 * The result is validated (unique non-empty id, non-empty name, known game, executable file name on the whitelist, no `hoyo` object for Zenless Zone Zero, frame-rate 10–1000, touch scale 100–500, known priority).
 * The host writes a temporary file in the same directory, flushes it, and replaces `config.json`. On Windows the replace is `MoveFileExW` with `MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH`. A sharing violation is retried three times, 50 ms apart.
-* If the file's modification time or SHA-256 changes while the new document is built, the host re-reads and applies the same addition once. A second change is `config_conflict`.
+* If the file appears, disappears or its SHA-256 changes while the new document is built, the host re-reads and retries the edit once. A second change is `config_conflict`.
 * The host reads the file back and checks the new profile. If that check fails, it restores the backup and returns `write_failed`.
 * The host does not write while Sparxie is running.
 

@@ -1,13 +1,18 @@
 #include "src/sparxie/store.h"
 #include "src/sparxie/sha256.h"
 #include <algorithm>
+#include <charconv>
 #include <chrono>
+#include <cstdint>
 #include <ctime>
 #include <fstream>
 #include <iterator>
+#include <limits>
+#include <mutex>
 #include <random>
 #include <set>
 #include <thread>
+#include <tuple>
 #if defined(_WIN32)
   #ifndef NOMINMAX
     #define NOMINMAX
@@ -219,29 +224,123 @@ namespace sparxie {
       if (draft.game == "zzz" && profile.contains("hoyo")) profile.erase("hoyo");
       if (profile.value("game", std::string()) == kEndfieldPluginId && profile.contains("hoyo")) profile.erase("hoyo");
     }
+    constexpr std::string_view kBackupPrefix = "config.backup-";
+    constexpr std::string_view kBackupExtension = ".json";
+    constexpr std::size_t kBackupsToKeep = 5;
+
+    struct Backup {
+      fs::path path;
+      std::string stamp;
+      std::uint64_t sequence;
+    };
+
+    std::string
+    path_text(const fs::path &path) {
+      const auto utf8 = path.u8string();
+      return { utf8.begin(), utf8.end() };
+    }
+
     void
-    prune_backups(const fs::path &dir) {
-      std::vector<fs::path> found;
-      std::error_code ec;
-      for (const auto &entry : fs::directory_iterator(dir, ec)) {
-        const std::string name = entry.path().filename().string();
-        if (name.rfind("config.backup-", 0) == 0 && name.ends_with(".json")) found.push_back(entry.path());
+    warn_file_error(const StoreHooks &hooks, std::string_view action, const fs::path &path, const std::error_code &ec) {
+      if (hooks.warn) hooks.warn(std::string(action) + " \"" + path_text(path) + "\" (" + ec.message() + ")");
+    }
+
+    std::optional<Backup>
+    parse_backup(const fs::path &path) {
+      const auto filename = path_text(path.filename());
+      std::string_view name = filename;
+      if (!name.starts_with(kBackupPrefix) || !name.ends_with(kBackupExtension)) return std::nullopt;
+      name.remove_prefix(kBackupPrefix.size());
+      name.remove_suffix(kBackupExtension.size());
+      if (name.size() < 16) return std::nullopt;
+      const auto stamp = name.substr(0, 16);
+      const auto digit = [](char c) { return c >= '0' && c <= '9'; };
+      if (stamp[8] != 'T' || stamp[15] != 'Z' || !std::all_of(stamp.begin(), stamp.begin() + 8, digit) || !std::all_of(stamp.begin() + 9, stamp.begin() + 15, digit))
+        return std::nullopt;
+      const auto suffix = name.substr(16);
+      std::uint64_t sequence = 1;
+      if (suffix == "-x") {
+        sequence = 100;  // Older hosts used -x after -99.
       }
-      std::sort(found.begin(), found.end());
-      while (found.size() > 5) {
-        fs::remove(found.front(), ec);
-        found.erase(found.begin());
+      else if (!suffix.empty()) {
+        if (!suffix.starts_with('-') || suffix.size() < 2 || suffix[1] == '0') return std::nullopt;
+        const auto end = suffix.data() + suffix.size();
+        const auto [p, error] = std::from_chars(suffix.data() + 1, end, sequence);
+        if (error != std::errc() || p != end || sequence < 2) return std::nullopt;
+      }
+      return Backup { path, std::string(stamp), sequence };
+    }
+
+    std::optional<std::vector<Backup>>
+    list_backups(const fs::path &dir, const StoreHooks &hooks) {
+      std::vector<Backup> found;
+      std::error_code ec;
+      for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+        auto backup = parse_backup(it->path());
+        if (!backup) continue;
+        const auto type = it->symlink_status(ec);
+        if (ec == std::errc::no_such_file_or_directory) {
+          ec.clear();
+          continue;
+        }
+        if (ec) {
+          warn_file_error(hooks, "Could not inspect config backup", it->path(), ec);
+          return std::nullopt;
+        }
+        if (fs::is_regular_file(type)) found.push_back(std::move(*backup));
+      }
+      if (ec) {
+        warn_file_error(hooks, "Could not list config backups in", dir, ec);
+        return std::nullopt;
+      }
+      return found;
+    }
+
+    void
+    prune_backups(const fs::path &dir, const StoreHooks &hooks, const std::string &current = {}) {
+      auto found = list_backups(dir, hooks);
+      if (!found || found->size() <= kBackupsToKeep) return;
+      // Always keep the current commit's backup, even when the system clock moved back.
+      const auto key = [current_path = dir / current](const Backup &backup) {
+        return std::tuple { backup.path == current_path, std::string_view(backup.stamp), backup.sequence };
+      };
+      std::sort(found->begin(), found->end(), [&](const Backup &a, const Backup &b) { return key(a) > key(b); });
+      for (std::size_t i = kBackupsToKeep; i < found->size(); ++i) {
+        const auto &path = (*found)[i].path;
+        std::error_code ec;
+        const auto type = fs::symlink_status(path, ec);
+        if (ec == std::errc::no_such_file_or_directory) continue;
+        if (!ec && fs::is_regular_file(type)) {
+          if (hooks.remove_backup)
+            hooks.remove_backup(path, ec);
+          else
+            fs::remove(path, ec);
+        }
+        if (ec) warn_file_error(hooks, "Could not remove config backup", path, ec);
       }
     }
+
     std::string
-    backup_name(const fs::path &dir, const std::string &stamp) {
-      fs::path path = dir / ("config.backup-" + stamp + ".json");
-      if (!fs::exists(path)) return path.filename().string();
-      for (int n = 2; n < 100; ++n) {
-        path = dir / ("config.backup-" + stamp + "-" + std::to_string(n) + ".json");
-        if (!fs::exists(path)) return path.filename().string();
+    copy_backup(const fs::path &dir, const fs::path &path, const StoreHooks &hooks, std::error_code &ec) {
+      const std::string stamp = hooks.utc_stamp ? hooks.utc_stamp() : utc_now();
+      std::uint64_t sequence = 0;
+      // Rotation may already have deleted the unsuffixed name and smaller numbers.
+      if (const auto found = list_backups(dir, hooks))
+        for (const auto &backup : *found)
+          if (backup.stamp == stamp) sequence = std::max(sequence, backup.sequence);
+      while (sequence < std::numeric_limits<std::uint64_t>::max()) {
+        ++sequence;
+        const std::string suffix = sequence == 1 ? std::string() : "-" + std::to_string(sequence);
+        const std::string name = std::string(kBackupPrefix) + stamp + suffix + std::string(kBackupExtension);
+        const fs::path destination = dir / name;
+        const auto type = fs::symlink_status(destination, ec);
+        if (ec && ec != std::errc::no_such_file_or_directory) return {};
+        if (fs::exists(type)) continue;
+        if (fs::copy_file(path, destination, ec)) return name;
+        if (ec != std::errc::file_exists) return {};
       }
-      return "config.backup-" + stamp + "-x.json";
+      ec = std::make_error_code(std::errc::value_too_large);
+      return {};
     }
     WriteResult
     commit_doc(const fs::path &dir, const json &document, const std::string &profile_id, bool created, StoreHooks hooks, const SparxieBuild &build) {
@@ -250,16 +349,14 @@ namespace sparxie {
       const fs::path path = dir / "config.json";
       std::error_code ec;
       fs::create_directories(dir, ec);
-      if (!created && fs::exists(path)) {
-        const std::string stamp = hooks.utc_stamp ? hooks.utc_stamp() : utc_now();
-        result.backup = backup_name(dir, stamp);
-        fs::copy_file(path, dir / result.backup, fs::copy_options::overwrite_existing, ec);
-        if (ec) {
+      if (!created) {
+        result.backup = copy_backup(dir, path, hooks, ec);
+        if (result.backup.empty()) {
+          warn_file_error(hooks, "Could not back up", path, ec);
           result.state = "write_failed";
           result.status = Status::fail(500, "write_failed", "Could not back up Sparxie config.json");
           return result;
         }
-        prune_backups(dir);
       }
       const std::string body = document.dump(2);
       const fs::path tmp = dir / ("config.json.tmp." + std::to_string(std::random_device {}()));
@@ -300,9 +397,11 @@ namespace sparxie {
         else
           fs::remove(path, ec);
         result.state = "write_failed";
-        result.status = Status::fail(500, "write_failed", "Sparxie config.json failed the read-back check and was restored");
+        if (ec) warn_file_error(hooks, "Could not undo failed config replacement at", path, ec);
+        result.status = Status::fail(500, "write_failed", ec ? "Sparxie config.json failed the read-back check and rollback failed" : "Sparxie config.json failed the read-back check and was restored");
         return result;
       }
+      prune_backups(dir, hooks, result.backup);
       result.state = created ? "created" : "written";
       result.status = Status::success();
       return result;
@@ -362,6 +461,9 @@ namespace sparxie {
         refused.status = Status::fail(409, "sparxie_running", "Sparxie is running, close it before writing");
         return refused;
       }
+      // The host's app saves and launch preparation can both edit this store.
+      static std::mutex store_edits;
+      std::lock_guard lock(store_edits);
       const fs::path path = dir / "config.json";
       std::error_code ec;
       const SparxieBuild build = hooks.build ? *hooks.build : detect_build(dir);
@@ -369,7 +471,7 @@ namespace sparxie {
         const bool existed = fs::exists(path, ec);
         const std::string bytes = existed ? read_bytes(path) : std::string();
         const std::string hash = sha256::hash(bytes);
-        json document;
+        json document, original;
         if (!existed) {
           document = json { { "schemaVersion", 1 }, { "selectedProfileId", "" }, { "profiles", json::array() } };
         }
@@ -383,6 +485,7 @@ namespace sparxie {
             bad.status = Status::fail(409, "config_unreadable", "Sparxie config.json could not be parsed");
             return bad;
           }
+          original = document;
           repair_document(document, build);
           Status valid = validate_document(document, &build);
           if (!valid.ok) {
@@ -407,7 +510,8 @@ namespace sparxie {
           bad.status = again;
           return bad;
         }
-        if (existed && sha256::hash(read_bytes(path)) != hash) {
+        const bool still_exists = fs::exists(path, ec);
+        if (ec || existed != still_exists || (existed && sha256::hash(read_bytes(path)) != hash)) {
           if (pass == 1) {
             WriteResult race;
             race.state = "config_conflict";
@@ -415,6 +519,10 @@ namespace sparxie {
             return race;
           }
           continue;
+        }
+        if (existed && document == original) {
+          prune_backups(dir, hooks);
+          return { Status::success(), "unchanged", profile_id, {} };
         }
         return commit_doc(dir, document, profile_id, !existed, hooks, build);
       }

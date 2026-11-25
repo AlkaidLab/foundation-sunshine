@@ -1,8 +1,31 @@
 #include <gtest/gtest.h>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <set>
+#include <vector>
 #include "src/sparxie/store.h"
 namespace fs = std::filesystem;
+
+namespace {
+  std::string
+  contents(const fs::path &path) {
+    std::ifstream in(path, std::ios::binary);
+    return std::string(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+  }
+
+  std::set<std::string>
+  backup_names(const fs::path &dir) {
+    std::set<std::string> names;
+    for (const auto &entry : fs::directory_iterator(dir)) {
+      const auto name = entry.path().filename().string();
+      if (name.starts_with("config.backup-")) names.insert(name);
+    }
+    return names;
+  }
+}  // namespace
+
 TEST(Store, AppendPreservesUnknownFieldsAndBackups) {
   const fs::path dir = fs::temp_directory_path() / "sparxie-store-1";
   fs::remove_all(dir);
@@ -76,12 +99,23 @@ TEST(Store, RefusesSchemaRunningAndRestoresCorruptWrite) {
     std::ofstream out(path, std::ios::trunc);
     out << "not-json";
   };
+  // If the clock moved back, the rollback copy can have the oldest name.
+  for (int n = 0; n < 5; ++n)
+    std::ofstream(dir / ("config.backup-20261111T12000" + std::to_string(n) + "Z.json")) << original;
   auto restored = sparxie::add_profile(dir, draft, hooks);
   EXPECT_EQ(restored.status.error_code, "write_failed");
-  std::ifstream in(dir / "config.json");
-  std::string body((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-  EXPECT_NE(body.find("keep"), std::string::npos);
-  EXPECT_EQ(body.find("not-json"), std::string::npos);
+  EXPECT_EQ(contents(dir / "config.json"), original);
+  EXPECT_EQ(contents(dir / restored.backup), original);
+  hooks.after_replace = {};
+  hooks.fail_replace_times = 3;
+  const auto failed = sparxie::add_profile(dir, draft, hooks);
+  EXPECT_EQ(failed.status.error_code, "write_failed");
+  EXPECT_EQ(contents(dir / "config.json"), original);
+  hooks.fail_replace_times = 0;
+  const auto success = sparxie::add_profile(dir, draft, hooks);
+  ASSERT_TRUE(success.status.ok) << success.status.error;
+  EXPECT_EQ(contents(dir / success.backup), original);
+  EXPECT_EQ(backup_names(dir).size(), 5u);
 }
 TEST(Store, CreatesWhenMissingAndUpdatesWithoutDroppingFields) {
   const fs::path dir = fs::temp_directory_path() / "sparxie-store-3";
@@ -112,6 +146,197 @@ TEST(Store, CreatesWhenMissingAndUpdatesWithoutDroppingFields) {
   EXPECT_EQ(after.document["profiles"][0]["vendorExtra"], 7);
   EXPECT_FALSE(after.document["profiles"][0].contains("hoyo"));
 }
+
+TEST(Store, RepeatedIdenticalUpdatesPreserveTheFileAndRealEditsBackItUp) {
+  const fs::path dir = fs::temp_directory_path() / "sparxie-store-unchanged";
+  fs::remove_all(dir);
+  fs::create_directories(dir);
+  const fs::path path = dir / "config.json";
+  const std::string original = R"({"profiles":[{"id":"zzz-1","displayName":"ZZZ","game":"zenlessZoneZero","executablePath":"C:/Games/ZenlessZoneZero.exe","launch":{"extraArguments":"-use-d3d12"},"future":1}],"selectedProfileId":"zzz-1","schemaVersion":1})";
+  std::ofstream(path, std::ios::binary) << original;
+  fs::last_write_time(path, fs::file_time_type::clock::now() - std::chrono::hours(1));
+  const auto original_time = fs::last_write_time(path);
+  sparxie::ProfileDraft draft;
+  draft.display_name = "ZZZ";
+  draft.game = "zzz";
+  draft.executable = "C:/Games/ZenlessZoneZero.exe";
+  draft.options = { { "fpsUnlock", true }, { "fps", 120 } };
+  sparxie::StoreHooks hooks;
+  hooks.utc_stamp = [] { return std::string("20261110T120000Z"); };
+
+  for (int n = 0; n < 10; ++n) {
+    const auto same = sparxie::update_profile(dir, "zzz-1", draft, hooks);
+    ASSERT_TRUE(same.status.ok) << same.status.error;
+    if (n == 0) EXPECT_EQ(same.state, "unchanged");
+    EXPECT_TRUE(same.backup.empty());
+  }
+  EXPECT_EQ(contents(path), original);
+  EXPECT_EQ(fs::last_write_time(path), original_time);
+  EXPECT_TRUE(backup_names(dir).empty());
+
+  draft.display_name = "ZZZ renamed";
+  const auto changed = sparxie::update_profile(dir, "zzz-1", draft, hooks);
+  ASSERT_TRUE(changed.status.ok) << changed.status.error;
+  EXPECT_EQ(changed.state, "written");
+  EXPECT_EQ(backup_names(dir), (std::set<std::string> { changed.backup }));
+  EXPECT_EQ(contents(dir / changed.backup), original);
+  const auto after = sparxie::read_store(dir);
+  ASSERT_TRUE(after.status.ok) << after.status.error;
+  const auto &profile = after.document["profiles"][0];
+  EXPECT_EQ(profile["displayName"], "ZZZ renamed");
+  EXPECT_EQ(profile["launch"]["extraArguments"], "-use-d3d12");
+  EXPECT_EQ(profile["future"], 1);
+}
+
+TEST(Store, SameSecondBackupsKeepTheFiveMostRecentEdits) {
+  const fs::path dir = fs::temp_directory_path() / "sparxie-store-numbered";
+  fs::remove_all(dir);
+  sparxie::ProfileDraft draft;
+  draft.id = "zzz-1";
+  draft.display_name = "Revision 0";
+  draft.game = "zzz";
+  draft.executable = "C:/Games/ZenlessZoneZero.exe";
+  ASSERT_TRUE(sparxie::add_profile(dir, draft, {}).status.ok);
+  sparxie::StoreHooks hooks;
+  hooks.utc_stamp = [] { return std::string("20261110T120000Z"); };
+  for (int n = 1; n <= 12; ++n) {
+    draft.display_name = "Revision " + std::to_string(n);
+    const auto wrote = sparxie::update_profile(dir, draft.id, draft, hooks);
+    ASSERT_TRUE(wrote.status.ok) << wrote.status.error;
+  }
+  std::set<std::string> expected;
+  for (int n = 8; n <= 12; ++n)
+    expected.insert("config.backup-20261110T120000Z-" + std::to_string(n) + ".json");
+  EXPECT_EQ(backup_names(dir), expected);
+  const auto last = sparxie::json::parse(contents(dir / "config.backup-20261110T120000Z-12.json"), nullptr, false);
+  ASSERT_TRUE(last.is_object());
+  EXPECT_EQ(last["profiles"][0]["displayName"], "Revision 11");
+
+  const auto legacy = dir / "config.backup-20261110T120000Z-x.json";
+  std::ofstream(legacy) << last.dump();
+  draft.display_name = "Revision 13";
+  const auto with_legacy = sparxie::update_profile(dir, draft.id, draft, hooks);
+  ASSERT_TRUE(with_legacy.status.ok) << with_legacy.status.error;
+  EXPECT_EQ(with_legacy.backup, "config.backup-20261110T120000Z-101.json");
+  EXPECT_TRUE(fs::is_regular_file(legacy));
+  EXPECT_EQ(backup_names(dir).size(), 5u);
+}
+
+TEST(Store, AnUnchangedProfileUpdateStillSavesRepairsToTheDocument) {
+  const fs::path dir = fs::temp_directory_path() / "sparxie-store-repair-unchanged";
+  fs::remove_all(dir);
+  fs::create_directories(dir);
+  const std::string original = R"({"schemaVersion":1,"profiles":[{"id":"zzz-1","displayName":"ZZZ","game":"zenlessZoneZero","executablePath":"C:/Games/ZenlessZoneZero.exe"},{"id":"endfield-1","displayName":"Endfield","game":"endfield","hoyo":{"endfieldWidth":0,"endfieldHeight":0}}]})";
+  std::ofstream(dir / "config.json", std::ios::binary) << original;
+  sparxie::ProfileDraft draft;
+  draft.display_name = "ZZZ";
+  draft.game = "zzz";
+  draft.executable = "C:/Games/ZenlessZoneZero.exe";
+
+  const auto repaired = sparxie::update_profile(dir, "zzz-1", draft, {});
+  ASSERT_TRUE(repaired.status.ok) << repaired.status.error;
+  EXPECT_EQ(repaired.state, "written");
+  EXPECT_EQ(contents(dir / repaired.backup), original);
+  const auto view = sparxie::read_store(dir);
+  ASSERT_TRUE(view.status.ok) << view.status.error;
+  EXPECT_EQ(view.document["profiles"][1]["hoyo"]["endfieldWidth"], 1920);
+  EXPECT_EQ(view.document["profiles"][1]["hoyo"]["endfieldHeight"], 1080);
+  EXPECT_EQ(sparxie::update_profile(dir, "zzz-1", draft, {}).state, "unchanged");
+  EXPECT_EQ(backup_names(dir).size(), 1u);
+}
+
+TEST(Store, RotationWarnsAboutLockedOrInaccessibleBackupsAndRetries) {
+  const fs::path dir = fs::temp_directory_path() / "sparxie-store-retry-prune";
+  fs::remove_all(dir);
+  sparxie::ProfileDraft draft;
+  draft.id = "zzz-1";
+  draft.display_name = "ZZZ";
+  draft.game = "zzz";
+  draft.executable = "C:/Games/ZenlessZoneZero.exe";
+  ASSERT_TRUE(sparxie::add_profile(dir, draft, {}).status.ok);
+  const std::string current = contents(dir / "config.json");
+  std::vector<fs::path> copies;
+  for (int n = 0; n < 8; ++n) {
+    copies.push_back(dir / ("config.backup-20261110T12000" + std::to_string(n) + "Z.json"));
+    std::ofstream(copies.back(), std::ios::binary) << current;
+  }
+  const auto backup_dir = dir / "config.backup-20261109T000000Z.json";
+  fs::create_directory(backup_dir);
+  const std::vector<std::string> unrelated { "config.invalid-20261109T000000Z.json", "config.repaired-20261109T000000Z.json", "config.backup-manual.json", "config.backup-20261109T000000Z-manual.json" };
+  for (const auto &name : unrelated)
+    std::ofstream(dir / name) << "keep";
+  std::error_code link_error;
+  const auto link = dir / "config.backup-20261109T000001Z.json";
+  fs::create_symlink(dir / unrelated.front(), link, link_error);
+
+  std::vector<std::string> warnings;
+  sparxie::StoreHooks hooks;
+  hooks.warn = [&warnings](const auto &message) { warnings.push_back(message); };
+  hooks.remove_backup = [&](const fs::path &path, std::error_code &ec) {
+    if (path == copies[0])
+      ec = std::make_error_code(std::errc::device_or_resource_busy);
+    else if (path == copies[1])
+      ec = std::make_error_code(std::errc::permission_denied);
+    else
+      fs::remove(path, ec);
+  };
+  const auto unchanged = sparxie::update_profile(dir, draft.id, draft, hooks);
+  ASSERT_TRUE(unchanged.status.ok) << unchanged.status.error;
+  EXPECT_EQ(unchanged.state, "unchanged");
+  ASSERT_EQ(warnings.size(), 2u);
+  const std::string diagnostics = warnings[0] + warnings[1];
+  EXPECT_NE(diagnostics.find(copies[0].filename().string()), std::string::npos);
+  EXPECT_NE(diagnostics.find(copies[1].filename().string()), std::string::npos);
+  EXPECT_NE(diagnostics.find(std::make_error_code(std::errc::permission_denied).message()), std::string::npos);
+  EXPECT_NE(diagnostics.find(std::make_error_code(std::errc::device_or_resource_busy).message()), std::string::npos);
+  EXPECT_TRUE(fs::exists(copies[0]));
+  EXPECT_TRUE(fs::exists(copies[1]));
+  EXPECT_FALSE(fs::exists(copies[2]));
+
+  hooks.remove_backup = {};
+  EXPECT_EQ(sparxie::update_profile(dir, draft.id, draft, hooks).state, "unchanged");
+  for (std::size_t i = 0; i < copies.size(); ++i)
+    EXPECT_EQ(fs::exists(copies[i]), i >= 3) << copies[i];
+  EXPECT_EQ(contents(dir / "config.json"), current);
+  EXPECT_TRUE(fs::is_directory(backup_dir));
+  if (!link_error) EXPECT_TRUE(fs::is_symlink(fs::symlink_status(link)));
+  for (const auto &name : unrelated)
+    EXPECT_EQ(contents(dir / name), "keep") << name;
+}
+
+#if !defined(_WIN32)
+TEST(Store, AnUnreadableBackupListingOnlyWarnsOnAnUnchangedUpdate) {
+  const fs::path dir = fs::temp_directory_path() / "sparxie-store-listing-error";
+  fs::remove_all(dir);
+  sparxie::ProfileDraft draft;
+  draft.id = "zzz-1";
+  draft.display_name = "ZZZ";
+  draft.game = "zzz";
+  draft.executable = "C:/Games/ZenlessZoneZero.exe";
+  ASSERT_TRUE(sparxie::add_profile(dir, draft, {}).status.ok);
+  const std::string original = contents(dir / "config.json");
+  const auto permissions = fs::status(dir).permissions();
+  fs::permissions(dir, fs::perms::owner_exec);
+  std::error_code denied;
+  const fs::directory_iterator probe(dir, denied);
+  if (!denied) {
+    fs::permissions(dir, permissions);
+    GTEST_SKIP() << "The test process can enumerate the directory despite its permissions";
+  }
+  std::vector<std::string> warnings;
+  sparxie::StoreHooks hooks;
+  hooks.warn = [&warnings](const auto &message) { warnings.push_back(message); };
+  const auto unchanged = sparxie::update_profile(dir, draft.id, draft, hooks);
+  fs::permissions(dir, permissions);
+
+  ASSERT_TRUE(unchanged.status.ok) << unchanged.status.error;
+  EXPECT_EQ(unchanged.state, "unchanged");
+  ASSERT_EQ(warnings.size(), 1u);
+  EXPECT_NE(warnings[0].find("Could not list config backups"), std::string::npos);
+  EXPECT_NE(warnings[0].find(denied.message()), std::string::npos);
+  EXPECT_EQ(contents(dir / "config.json"), original);
+}
+#endif
 // keyboard, mouse and gamepad is a Sparxie session without the touch interface: the profile says so (HoyoSettings.touch_ui_enabled)
 TEST(Store, TheInputChoiceIsWrittenAsTouchUiEnabledAndReadBack) {
   const fs::path dir = fs::temp_directory_path() / "sparxie-store-touchui";

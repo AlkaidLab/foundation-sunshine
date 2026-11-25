@@ -2,6 +2,7 @@
 #include "src/sparxie/model.h"
 #include "src/sparxie/sparxie_build.h"
 #include <functional>
+#include <system_error>
 namespace sparxie {
   struct StoreHooks {
     bool running = false;
@@ -10,6 +11,9 @@ namespace sparxie {
     std::function<void(const fs::path &)> after_replace;
     // The Sparxie build the write is checked against (tests; unset: the host looks at the install around the data folder, see detect_build)
     std::optional<SparxieBuild> build;
+    std::function<void(const std::string &)> warn;
+    // Override deletion to exercise locked or inaccessible backups in tests.
+    std::function<void(const fs::path &, std::error_code &)> remove_backup;
   };
   struct ProfileDraft {
     std::string id;

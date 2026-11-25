@@ -1307,7 +1307,7 @@ namespace sparxie {
           const WriteResult stored = update_profile(config_dir(env), profile_id, draft, hooks);
           if (!stored.status.ok) return failure(stored.status, { { "write_back", { { "state", stored.state } } } });
           write_back = { { "state", stored.state }, { "profile", profile_id }, { "backup", stored.backup } };
-          wrote = true;
+          wrote = stored.state != "unchanged";
         }
       }
       // a change of the settings alone: Sparxie's priority follows the boost (best effort; a Sparxie that is open keeps the old value until the next launch writes it)
@@ -1320,7 +1320,11 @@ namespace sparxie {
         draft.display_fps = resolve_target_fps(block["options"], display_refresh_of(env));
         StoreHooks hooks = env.store_hooks;
         hooks.running = false;
-        update_profile(config_dir(env), profile_id, draft, hooks);
+        const auto stored = update_profile(config_dir(env), profile_id, draft, hooks);
+        if (stored.status.ok) {
+          write_back = { { "state", stored.state }, { "profile", profile_id }, { "backup", stored.backup } };
+          wrote = stored.state != "unchanged";
+        }
       }
       app["name"] = name;
       const std::string templ = env.launch_template.empty() ? std::string(kDefaultLaunchTemplate) : env.launch_template;
@@ -1922,9 +1926,11 @@ namespace sparxie {
       reconcile_pending_settings(install, registry, backup, env.zzz_magics);
       const json &options = block.value("options", json::object());
       const std::string profile = block.value("profile", std::string());
+      // Zenless Zone Zero has no Hoyo settings to synchronize before launch.
+      const bool sync_profile = !profile.empty() && install.game != "zzz" && block.value("mode", std::string("pc")) == "touch";
       // A keyboard, mouse and gamepad application made before the touch-interface switch existed (or edited by hand) has a profile that still says
       // touch: the profile follows the application's input at launch, when the installed Sparxie can run it. A refused write (Sparxie is open) leaves it.
-      if (!profile.empty() && install.game != "zzz" && block.value("mode", std::string("pc")) == "touch" && touch_ui_switch(env)) {
+      if (sync_profile && touch_ui_switch(env)) {
         const ConfigView view = read_store(config_dir(env));
         bool stored_touch = true;
         bool found = false;
@@ -1953,7 +1959,7 @@ namespace sparxie {
       // display and its number is resolved here, at launch; a fixed tier is stored as chosen. A refused write (Sparxie is open, the
       // store is unreadable) leaves the last resolved target.
       // An Endfield session is sized by its profile (the stream's own size, or a fixed one): the display choice reaches the profile here.
-      if (!profile.empty() && ((block.value("mode", std::string()) == "touch" && (options.contains("fps") || options.value("fpsUnlock", false))) || (boost && block.value("mode", std::string()) == "touch") || (install.game == "endfield" && block.value("mode", std::string()) == "touch"))) {
+      if (sync_profile && (options.contains("fps") || options.value("fpsUnlock", false) || boost || install.game == "endfield")) {
         ProfileDraft draft;
         draft.game = install.game;
         draft.display_name = app_name;
