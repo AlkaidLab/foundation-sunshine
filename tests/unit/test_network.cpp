@@ -169,3 +169,32 @@ TEST(AddressNormalizationTest, PreservesNativeIpv4AndIpv6) {
   EXPECT_EQ(net::normalize_address(ipv4), ipv4);
   EXPECT_EQ(net::normalize_address(ipv6), ipv6);
 }
+
+TEST(AddressNormalizationTest, MatchesPlainAndMappedIpv4SessionAddresses) {
+  const auto ipv4 = boost::asio::ip::make_address("192.0.2.10");
+  const auto mapped = boost::asio::ip::make_address("::ffff:192.0.2.10");
+
+  EXPECT_TRUE(net::peer_address_matches(ipv4, "::ffff:192.0.2.10"));
+  EXPECT_TRUE(net::peer_address_matches(mapped, "192.0.2.10"));
+  EXPECT_TRUE(net::peer_address_matches(mapped, "::ffff:c000:20a"));
+  EXPECT_TRUE(net::peer_address_matches(ipv4, "192.0.2.10"));
+  EXPECT_FALSE(net::peer_address_matches(mapped, "::ffff:192.0.2.11"));
+  EXPECT_FALSE(net::peer_address_matches(ipv4, "2001:db8::c000:20a"));
+}
+
+TEST(AddressNormalizationTest, MatchesNativeIpv6WithoutDiscardingTheScope) {
+  const auto ipv6 = boost::asio::ip::make_address("2001:db8::10");
+  const auto scoped = boost::asio::ip::make_address("fe80::1%2");
+
+  EXPECT_TRUE(net::peer_address_matches(ipv6, "2001:0db8:0:0:0:0:0:10"));
+  EXPECT_FALSE(net::peer_address_matches(ipv6, "2001:db8::11"));
+  EXPECT_TRUE(net::peer_address_matches(scoped, "fe80::1%2"));
+  EXPECT_FALSE(net::peer_address_matches(scoped, "fe80::1%3"));
+}
+
+TEST(AddressNormalizationTest, InvalidSessionAddressesNeverMatch) {
+  const auto peer = boost::asio::ip::address_v4::any();
+
+  EXPECT_FALSE(net::peer_address_matches(peer, ""));
+  EXPECT_FALSE(net::peer_address_matches(peer, "not-an-address"));
+}

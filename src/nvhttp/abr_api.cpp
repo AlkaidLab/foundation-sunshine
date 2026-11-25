@@ -46,11 +46,11 @@ namespace nvhttp::abr_api {
 
     resolved_client_t
     resolve_client(req_https_t request) {
-      auto client_addr = net::addr_to_normalized_string(request->remote_endpoint().address());
+      const auto peer = request->remote_endpoint().address();
       try {
         auto sessions_info = stream::session::get_all_sessions_info();
         for (const auto &si : sessions_info) {
-          if (si.client_address == client_addr && si.state == "RUNNING") {
+          if (si.state == "RUNNING" && net::peer_address_matches(peer, si.client_address)) {
             return { si.client_name, si.bitrate, si.app_name };
           }
         }
