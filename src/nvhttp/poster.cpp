@@ -346,7 +346,8 @@ namespace nvhttp::apps::poster {
       const auto source = source_info(path);
       if (!source || source->size <= preview_limit_bytes) return;
       // schedule() runs for every application on every app-list and every poster request, so the same file version arrives again and again. The variants are named after
-      // the file's path, size and modification time: when the preview is already on disk (made by an earlier run) or was built or tried in this run, there is nothing to do.
+      // the file's path, size and modification time: when the preview is already on disk, or a generation for it already ran in this run without producing one, there
+      // is nothing to do.
       // Without this each request decoded the poster and encoded it again (several seconds of one core for a large one).
       // The error_code overloads: a cache name that the file system refuses (a source name close to the length limit, with the prefix and key added) must count as a miss, not throw out of the worker.
       std::error_code probe_error;
@@ -371,15 +372,33 @@ namespace nvhttp::apps::poster {
       const auto scale = std::min(1.0, static_cast<double>(preview_longest_side) / std::max(width, height));
       width = std::max(1, static_cast<int>(width * scale));
       height = std::max(1, static_cast<int>(height * scale));
+      bool preview_written = false;
       for (int attempt = 0; attempt < 12; ++attempt) {
         const auto resized = resize_rgba(pixels, width, height);
         std::optional<std::vector<unsigned char>> encoded = alpha ? encode_png(resized, width, height) : encode_jpeg(resized, width, height, 85);
         if (encoded && encoded->size() <= preview_limit_bytes) {
           write_atomically(preview_cache_path(*source, alpha), *encoded);
-          return;
+          preview_written = true;
+          break;
         }
         width = std::max(1, static_cast<int>(width * 0.8));
         height = std::max(1, static_cast<int>(height * 0.8));
+      }
+      if (!preview_written) return;
+      {
+        auto &queue = work_queue();
+        std::lock_guard lock(queue.mutex);
+        // The attempt record throttles the sources whose preview cannot be built; this one landed, and the disk
+        // check above takes over the deduplication. If the capacity limit evicts the file later, the next request
+        // may rebuild it.
+        queue.attempted.erase(source->key);
+      }
+      // fs-poster-cache-20261125: the startup pass sweeps the leftovers and sets the initial limit; every generation
+      // that landed repeats the same bounded scan here, so a long-lived process cannot grow the cache past
+      // cache_file_limit. Eviction is by age and the file just written has the newest timestamp.
+      const auto maintenance = cleanup_cache_dir(cache_root());
+      if (maintenance.evicted != 0) {
+        BOOST_LOG(info) << "Poster cache evicted " << maintenance.evicted << " old file(s) after one more preview";
       }
     }
 
@@ -388,7 +407,8 @@ namespace nvhttp::apps::poster {
       lower_worker_priority();
       try {
         // fs-poster-cache-20261125: once per process, on this thread and never on a request thread: the temporary files
-        // of a run that ended mid-write, and the oldest cache files beyond the limit.
+        // of a run that ended mid-write, and the oldest cache files beyond the limit. Every generation repeats the
+        // same scan afterwards to keep the limit in a long-lived process.
         const auto cleanup = cleanup_cache_dir(cache_root());
         auto &queue = work_queue();
         {

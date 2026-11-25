@@ -1698,6 +1698,9 @@ list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/usbip/external_readonly_
         # it runs in its own Windows-only target, not the aggregate.
         ${CMAKE_SOURCE_DIR}/tests/unit/test_amf_rate_control.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/pairing_pending_platform_stubs.cpp
+        # test_poster.cpp runs in poster_unit_tests with the stand-ins below; in the aggregate it would reach the
+        # real platf::appdata() and the real poster cache directory.
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_poster.cpp
         # poster.cpp runs in poster_unit_tests with its own stand-ins for the loggers, appdata() and the UTF-8
         # path conversion; in the aggregate they would be defined twice.
         ${CMAKE_SOURCE_DIR}/tests/unit/poster_platform_stubs.cpp)
