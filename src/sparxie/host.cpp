@@ -1525,8 +1525,10 @@ namespace sparxie {
       for (auto it = chosen.begin(); it != chosen.end(); ++it) stored_settings[it.key()] = it.value();
       block["settings"] = stored_settings;
       // The saved launch options take precedence when the app starts through Sparxie.
-      if (auto launch = block.find("launchOptions"); launch != block.end() && launch->is_object() && chosen.contains("graphicsApi"))
-        (*launch)["graphicsApi"] = chosen["graphicsApi"];
+      if (auto launch = block.find("launchOptions"); launch != block.end() && launch->is_object()) {
+        for (const char *key : { "graphicsApi", "customArgs" })
+          if (const auto value = chosen.find(key); value != chosen.end()) (*launch)[key] = *value;
+      }
       commit_apps(env, updated);
     }
     result.body = { { "ok", true }, { "running", false }, { "values", chosen }, { "applied", wrote.applied }, { "unavailable", wrote.unavailable } };

@@ -379,21 +379,31 @@ TEST(SparxieLaunchArgs, GameSettingsWriteUpdatesTheNextTouchLaunch) {
     if (has_launch_options) block["launchOptions"] = settings;
     write_apps(env, { { "name", "ZZZ" }, { "cmd", cmd }, { "sparxie", block } });
 
-    const auto saved = sparxie::write_game_settings_for(env, { { "app", 0 }, { "values", { { "graphicsApi", "11.1ns" } } } });
-    ASSERT_TRUE(saved.status.ok) << saved.status.error;
+    const std::pair<json, std::string> saves[] = {
+      { { { "graphicsApi", "11.1ns" } }, "-screen-quality 2" },
+      { { { "customArgs", "-screen-quality 3" } }, "-screen-quality 3" },
+      { { { "customArgs", "" } }, "" },
+    };
+    for (const auto &[values, custom_args] : saves) {
+      SCOPED_TRACE(values.dump());
+      const auto saved = sparxie::write_game_settings_for(env, { { "app", 0 }, { "values", values } });
+      ASSERT_TRUE(saved.status.ok) << saved.status.error;
 
-    std::string args;
-    ASSERT_TRUE(sparxie::prepare_launch(env, "ZZZ", cmd, { 1920, 1080, 60 }, &args).ok);
-    EXPECT_EQ(args, " --screen-width 1920 --screen-height 1080 --window-mode fullscreen --zzz-dx12=off --game-args \"-screen-quality 2\"");
+      std::string args;
+      ASSERT_TRUE(sparxie::prepare_launch(env, "ZZZ", cmd, { 1920, 1080, 60 }, &args).ok);
+      const std::string game_args = custom_args.empty() ? "" : " --game-args \"" + custom_args + "\"";
+      EXPECT_EQ(args, " --screen-width 1920 --screen-height 1080 --window-mode fullscreen --zzz-dx12=off" + game_args);
 
-    std::ifstream in(env.apps_file);
-    const auto apps = json::parse(in);
-    const auto &stored = apps.at("apps").at(0).at("sparxie");
-    EXPECT_EQ(stored.at("settings").at("graphicsApi"), "11.1ns");
-    if (has_launch_options)
-      EXPECT_EQ(stored.at("launchOptions"), (json { { "graphicsApi", "11.1ns" }, { "customArgs", "-screen-quality 2" } }));
-    else
-      EXPECT_FALSE(stored.contains("launchOptions"));
+      std::ifstream in(env.apps_file);
+      const auto apps = json::parse(in);
+      const auto &stored = apps.at("apps").at(0).at("sparxie");
+      const json expected = { { "graphicsApi", "11.1ns" }, { "customArgs", custom_args } };
+      EXPECT_EQ(stored.at("settings"), expected);
+      if (has_launch_options)
+        EXPECT_EQ(stored.at("launchOptions"), expected);
+      else
+        EXPECT_FALSE(stored.contains("launchOptions"));
+    }
   }
 }
 
