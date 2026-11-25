@@ -76,7 +76,7 @@ namespace {
 
   void
   write_undecodable(const std::filesystem::path &path, std::size_t size) {
-    // Larger than preview_limit_bytes and not an image at all: the background pass gives up on it at once.
+    // Large invalid input makes the worker give up immediately.
     std::vector<unsigned char> bytes(size, 'x');
     std::mt19937 generator(0xbad5);
     for (std::size_t index = 8; index < bytes.size(); ++index) {
@@ -102,7 +102,7 @@ TEST(Poster, FullRepresentationPreservesPixelsAndUsesByteEtag) {
   EXPECT_EQ(source_width, full_width);
   EXPECT_EQ(source_height, full_height);
   EXPECT_TRUE(full->etag.size() == 66 && full->etag.front() == '"' && full->etag.back() == '"');
-  // The background pass may still be reading source.png; Windows refuses to delete a file that is open.
+  // Wait for the worker before removing the source on Windows.
   EXPECT_TRUE(nvhttp::apps::poster::wait_idle());
   EXPECT_TRUE(nvhttp::apps::poster::preview(source)) << "once idle, the pass has finished and its preview is on disk";
   test_support::remove_tree_quiet(root);
@@ -129,8 +129,7 @@ TEST(Poster, BackgroundPreviewIsBoundedAndScaled) {
 }
 
 TEST(Poster, EvictedPreviewIsGeneratedAgain) {
-  // The capacity limit evicts by age, so a version this run built can be removed again later. The generation ran and
-  // succeeded, which cleared the attempt record: a new request must build the file again instead of staying lost.
+  // A successfully generated version can be rebuilt after its cache file is removed.
   const auto root = test_root();
   const auto source = write_png(root / "source.png", 1600, 900, true);
   nvhttp::apps::poster::schedule(source);
@@ -148,7 +147,6 @@ TEST(Poster, EvictedPreviewIsGeneratedAgain) {
 }
 
 TEST(Poster, RepeatedScheduleDoesNotRebuildVariants) {
-  // schedule() is called for every application on every app-list and poster request: a source whose variants exist must not be decoded and encoded again
   const auto root = test_root();
   const auto source = write_png(root / "source.png", 1600, 900, true);
   nvhttp::apps::poster::schedule(source);
@@ -202,14 +200,13 @@ TEST(Poster, RangeAndConditionalValidators) {
 }
 
 TEST(Poster, NonAsciiSourceCachesUnderAppdataWithAnAsciiName) {
-  // fs-poster-cache-20261125: the cache lives under the configuration directory and is named by the key alone. Beside the
-  // source it polluted the user's folder, and a name made from the source name was garbled by the system code page.
+  // Cache paths use appdata and ASCII keys, so the source directory is unchanged.
   const auto root = test_root();
   const auto directory = root / utf8_path(u8"下载 空格");
   std::filesystem::create_directories(directory);
   const auto source = write_png(directory / utf8_path(u8"鸿蒙壁纸1.png"), 1200, 700, true);
   nvhttp::apps::poster::schedule(source);
-  // Random pixels make a slow preview (several shrinking passes); the limit of a poster request is not what is tested here.
+  // Random pixels may need several shrinking passes.
   const auto preview = nvhttp::apps::poster::preview_when_ready(source, std::chrono::seconds(30));
   ASSERT_TRUE(preview);
   EXPECT_EQ(preview->path.parent_path(), platf::appdata() / "covers" / "cache" / "poster");
@@ -218,14 +215,14 @@ TEST(Poster, NonAsciiSourceCachesUnderAppdataWithAnAsciiName) {
   EXPECT_TRUE(std::all_of(name.begin(), name.end(), [](unsigned char character) { return character < 0x80; }));
   EXPECT_NE(name.rfind("-preview."), std::string::npos);
   ASSERT_TRUE(nvhttp::apps::poster::wait_idle());
-  // Nothing was written beside the source: its folder holds the source alone.
+  // The source directory contains only the source file.
   const auto entries = std::distance(std::filesystem::directory_iterator { directory }, std::filesystem::directory_iterator {});
   EXPECT_EQ(entries, 1);
   test_support::remove_tree_quiet(root);
 }
 
 TEST(Poster, OverwrittenSourceGetsANewPreviewAndTheOldOneStays) {
-  // The key is the path, the size and the modification time: a replaced file is a new version with a cache of its own.
+  // A changed source version gets a new cache key.
   const auto root = test_root();
   const auto source = write_png(root / "source.png", 1600, 900, true);
   nvhttp::apps::poster::schedule(source);
@@ -263,7 +260,7 @@ TEST(Poster, CleanupRemovesLeftoverTemporaryFilesAndKeepsCacheFiles) {
   EXPECT_EQ(result.evicted, 0u);
   EXPECT_FALSE(std::filesystem::exists(leftover));
   EXPECT_TRUE(std::filesystem::exists(kept));
-  // The probe file of the writability check is gone again: the cache file is all that is left.
+  // Only the cache file remains after the write probe is removed.
   const auto entries = std::distance(std::filesystem::directory_iterator { cache }, std::filesystem::directory_iterator {});
   EXPECT_EQ(entries, 1);
   test_support::remove_tree_quiet(root);
@@ -306,7 +303,7 @@ TEST(Poster, CleanupReportsAnUnavailableDirectoryWithoutThrowing) {
   EXPECT_FALSE(nvhttp::apps::poster::cleanup_cache_dir(occupied).available);
   EXPECT_FALSE(nvhttp::apps::poster::cleanup_cache_dir(occupied / "cache").available);
   EXPECT_TRUE(std::filesystem::exists(occupied)) << "the file in the way is left alone";
-  // A directory that does not exist yet is made.
+  // Missing parent directories are created.
   const auto made = root / "made" / "poster";
   const auto result = nvhttp::apps::poster::cleanup_cache_dir(made);
   EXPECT_TRUE(result.available);
@@ -346,7 +343,7 @@ TEST(Poster, WaitEndsWhenThePassGivesUpOnTheSource) {
   const auto started = std::chrono::steady_clock::now();
   const auto waited = nvhttp::apps::poster::preview_when_ready(source, std::chrono::seconds(20));
   EXPECT_FALSE(waited);
-  // The pass fails on the file at once, and the wait ends with it, long before the limit.
+  // An invalid source ends the wait before the timeout.
   EXPECT_LT(std::chrono::steady_clock::now() - started, std::chrono::seconds(5));
   ASSERT_TRUE(nvhttp::apps::poster::wait_idle());
   test_support::remove_tree_quiet(root);

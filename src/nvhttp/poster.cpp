@@ -4,8 +4,7 @@
  */
 #include "poster.h"
 
-// fs-stb-image-api-20261112: use the bundled stb loader/writer APIs; no new
-// image dependency is introduced for preview generation.
+// Use the bundled stb APIs for image decoding and preview encoding.
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-function"  // the static stb implementation carries entry points this file never calls
 #define STBI_ONLY_PNG
@@ -52,7 +51,7 @@
   #include <unistd.h>
 #endif
 
-// After the platform block: <windows.h> has to see NOMINMAX first, and the platform header includes it again.
+// Include platform headers after defining NOMINMAX on Windows.
 #include "src/file_handler.h"
 #include "src/logging_severity.h"
 #include "src/platform/common.h"
@@ -63,7 +62,7 @@ namespace nvhttp::apps::poster {
 
     struct source_info_t {
       std::filesystem::path path;
-      std::string normalized;  // the absolute, lexically normal path as UTF-8: lossless, unlike path::string() under the system code page
+      std::string normalized;  // absolute, normalized UTF-8 path used for queue identity
       std::uintmax_t size = 0;
       std::filesystem::file_time_type modified {};
       std::string key;
@@ -90,12 +89,12 @@ namespace nvhttp::apps::poster {
       };
       std::deque<queued_source_t> pending;
       std::unordered_set<std::string> queued;
-      std::unordered_set<std::string> attempted;  // keys of the source versions whose variants were built (or tried) in this run
+      std::unordered_set<std::string> attempted;  // source versions attempted in this process
       bool started = false;
-      bool busy = false;  // the worker holds a source it popped and has not finished with it
-      std::string current;  // the queue key of the source the worker holds: a waiter tells a version still in its hands from one it gave up
-      bool worker_running = false;  // the worker thread exists; without it nothing produces a preview
-      bool cache_available = true;  // the startup cleanup found or made the cache directory
+      bool busy = false;  // the worker holds a source
+      std::string current;  // queue key held by the worker
+      bool worker_running = false;  // a worker can produce previews
+      bool cache_available = true;  // startup cleanup found a usable cache directory
     };
 
     struct digest_cache_t {
@@ -115,11 +114,8 @@ namespace nvhttp::apps::poster {
       return *cache;
     }
 
-    // fs-poster-cache-20261125: every poster cache file lives under the configuration directory. Beside the source it
-    // polluted the user's folders, and a name made from the source name went through the system code page when the file
-    // was created and came out garbled. The name is the key alone, which is ASCII.
-    // Leaked on purpose, like the queue and the digest cache: the worker is detached and can still be running when
-    // the static objects of the process are destroyed.
+    // Keep cache files under the configuration directory. The key-only filenames are ASCII, so source filenames never
+    // enter cache paths. This object is intentionally leaked because the worker is detached.
     std::filesystem::path
     cache_root() {
       static const auto *root = new std::filesystem::path(platf::appdata() / "covers" / "cache" / "poster");
@@ -136,7 +132,7 @@ namespace nvhttp::apps::poster {
 
     std::string
     process_id_text() {
-      // Leaked like cache_root(): the worker names its temporary files with it.
+      // Keep this alive while the detached worker can still write a temporary file.
 #ifdef _WIN32
       static const auto *id = new std::string(std::to_string(GetCurrentProcessId()));
 #else
@@ -309,10 +305,8 @@ namespace nvhttp::apps::poster {
 
     bool
     write_atomically(const std::filesystem::path &path, const std::vector<unsigned char> &bytes) {
-      // fs-poster-cache-20261125: the temporary name stays in the path domain. A narrow name is created through the system
-      // code page and renamed through UTF-8, and the two disagree under a non-ASCII directory (an installation path with
-      // Chinese characters): the rename then never finds the file that was just written. The process id keeps the
-      // temporary files of two instances apart; the pass is one thread per process.
+      // Build the temporary name as a filesystem path so non-ASCII parent directories use the same name for write and
+      // rename. The process ID separates temporary files from other Sunshine instances.
       auto temporary = path;
       temporary += ".tmp-" + process_id_text();
       {
@@ -335,11 +329,10 @@ namespace nvhttp::apps::poster {
     void
     lower_worker_priority() noexcept {
 #ifdef _WIN32
-      // fs-win-setthreadpriority-20261112: background poster work uses the
-      // documented below-normal thread priority.
+      // Preview encoding runs below normal priority.
       SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
 #elif defined(__linux__)
-      // fs-linux-setpriority-20261112: Linux nice is a per-thread attribute.
+      // Linux nice values are per-thread attributes.
       const auto thread_id = static_cast<id_t>(::syscall(SYS_gettid));
       (void) setpriority(PRIO_PROCESS, thread_id, 10);
 #endif
@@ -349,15 +342,14 @@ namespace nvhttp::apps::poster {
     build_variants(const std::filesystem::path &path) {
       const auto source = source_info(path);
       if (!source || source->size <= preview_limit_bytes) return;
-      // schedule() runs on every app-list and every poster request, so the same version arrives again and again. The variants are named after the file's path, size
-      // and modification time: with the preview already on disk, or a generation for this version already run without producing one, there is nothing to do. The
-      // error_code overloads keep a cache name the file system refuses a miss instead of an exception out of the worker.
+      // Repeated requests can enqueue the same version. A cache hit or attempted key prevents repeated decoding.
+      // Use error_code filesystem APIs so an invalid cache path becomes a miss instead of an exception.
       std::error_code probe_error;
       if (std::filesystem::is_regular_file(preview_cache_path(*source, true), probe_error) || std::filesystem::is_regular_file(preview_cache_path(*source, false), probe_error)) return;
       {
         auto &queue = work_queue();
         std::lock_guard lock(queue.mutex);
-        // The startup cleanup found the cache directory unusable: nothing this run writes would land.
+        // Do not start work when the cache directory cannot accept files.
         if (!queue.cache_available) return;
         if (!queue.attempted.insert(source->key).second) return;
       }
@@ -390,15 +382,10 @@ namespace nvhttp::apps::poster {
       if (preview_written) {
         auto &queue = work_queue();
         std::lock_guard lock(queue.mutex);
-        // The attempt record throttles the sources whose preview cannot be built; this one landed on disk, and the
-        // disk check above takes over the deduplication. If the capacity limit evicts the file later, the next
-        // request may rebuild it. A write that failed keeps the record: rebuilding would decode and encode the same
-        // source again for nothing.
+        // A successful write can be rebuilt after eviction. Failed writes remain throttled to avoid repeated encoding.
         queue.attempted.erase(source->key);
       }
-      // fs-poster-cache-20261125: the startup pass sweeps the leftovers and sets the initial limit; every generation
-      // that landed a file repeats the same bounded scan here, so a long-lived process cannot grow the cache past
-      // cache_file_limit. Eviction is by age and the files just written have the newest timestamps.
+      // Maintain the cache limit after each successful cache write.
       const auto maintenance = cleanup_cache_dir(cache_root());
       if (maintenance.evicted != 0) {
         BOOST_LOG(info) << "Poster cache evicted " << maintenance.evicted << " old file(s) after one more pass";
@@ -409,9 +396,7 @@ namespace nvhttp::apps::poster {
     run_worker() {
       lower_worker_priority();
       try {
-        // fs-poster-cache-20261125: once per process, on this thread and never on a request thread: the temporary files
-        // of a run that ended mid-write, and the oldest cache files beyond the limit. Every generation repeats the
-        // same scan afterwards to keep the limit in a long-lived process.
+        // Remove stale temporary files and enforce the cache limit before processing tasks.
         const auto cleanup = cleanup_cache_dir(cache_root());
         auto &queue = work_queue();
         {
@@ -426,7 +411,7 @@ namespace nvhttp::apps::poster {
         }
       }
       catch (...) {
-        // The cleanup is best effort by contract. A failure here costs the log line, nothing else.
+        // Cleanup is best effort. A failure only skips maintenance.
       }
       auto &queue = work_queue();
       for (;;) {
@@ -447,8 +432,7 @@ namespace nvhttp::apps::poster {
           build_variants(path);
         }
         catch (const std::exception &e) {
-          // fs-poster-cache-20261125: the worker is detached, so an exception that leaves this thread ends the process.
-          // One source that fails costs its preview, nothing else.
+          // The detached worker must contain failures to the current source.
           BOOST_LOG(warning) << "Poster pass dropped one source: " << e.what();
         }
         catch (...) {
@@ -468,8 +452,7 @@ namespace nvhttp::apps::poster {
       const auto source = source_info(path);
       if (!source) return std::nullopt;
       const auto full_path = full_cache_path(*source);
-      // fs-poster-cache-20261125: the error_code overloads. A throwing one failed the whole asset request on a path
-      // the file system refuses; here that is a miss.
+      // Filesystem errors are cache misses on this request.
       std::error_code probe_error;
       const auto chosen_full = std::filesystem::is_regular_file(full_path, probe_error) ? full_path : source->path;
       auto chosen = chosen_full;
@@ -502,22 +485,18 @@ namespace nvhttp::apps::poster {
       return representation_t { chosen, content_type, "\"" + digest + "\"", length };
     }
 
-    /**
-     * The preview of a source of more than preview_limit_bytes, for a caller that has just scheduled it: waits while the
-     * background pass still has this version, and no longer than `limit`. `source` is what `source_info()` found for `path`;
-     * a preview of this version is known not to be on disk yet.
-     */
+    /** Wait for a scheduled source to produce a preview, up to `limit`. */
     std::optional<representation_t>
     wait_for_preview(const std::filesystem::path &path, const source_info_t &source, std::chrono::milliseconds limit) {
       auto &queue = work_queue();
       const auto deadline = std::chrono::steady_clock::now() + limit;
       std::unique_lock lock(queue.mutex);
       for (;;) {
-        // Nothing produces a preview without the worker or without a directory to write it to.
+        // No worker or usable cache means no preview can be produced.
         if (!queue.worker_running || !queue.cache_available) return std::nullopt;
         const bool queued = queue.queued.count(source.normalized) != 0;
         const bool in_progress = queue.busy && queue.current == source.normalized;
-        // The pass was never asked for this version or is done with it, built or given up: nothing more will appear.
+        // Nothing pending means no preview will appear.
         const bool finished = !queued && !in_progress;
         const auto remaining = deadline - std::chrono::steady_clock::now();
         if (finished || remaining <= std::chrono::steady_clock::duration::zero()) {
@@ -528,7 +507,7 @@ namespace nvhttp::apps::poster {
           return std::nullopt;
         }
         queue.drained.wait_for(lock, remaining);
-        // Woken by the pass: look at the directory without holding the lock its threads take.
+        // Check the cache without holding the queue lock.
         lock.unlock();
         auto ready = representation(path, true);
         if (ready) return ready;
@@ -546,10 +525,9 @@ namespace nvhttp::apps::poster {
       if (!std::filesystem::is_directory(directory, error)) {
         std::filesystem::create_directories(directory, error);
       }
-      // Also the answer when a regular file occupies the directory or one of its parents.
+      // A regular file may occupy the directory or one of its parents.
       if (!std::filesystem::is_directory(directory, error)) return result;
-      // A directory that exists can still refuse files, a read-only configuration directory for one. Ask with a probe
-      // file; it carries a temporary name, so a run that ends before the removal leaves nothing behind for good.
+      // Probe write access because an existing directory may still be read-only.
       const auto probe = directory / (".probe-" + process_id_text() + ".tmp-0");
       {
         std::ofstream output(probe, std::ios::binary);
@@ -590,7 +568,7 @@ namespace nvhttp::apps::poster {
       }
     }
     catch (...) {
-      // Best effort by contract: whatever failed stays as it is, and the result tells how far it got.
+      // Best effort. Failed operations leave their files in place and are reflected in the result.
     }
     return result;
   }
@@ -598,7 +576,7 @@ namespace nvhttp::apps::poster {
   void
   schedule(const std::filesystem::path &source) {
     auto &queue = work_queue();
-    // A path that cannot be resolved is not queued: its poster is served from the source.
+    // Unresolvable paths are served from the source without caching.
     std::error_code error;
     const auto normalized = normalized_path(source, error);
     if (error) return;
@@ -606,7 +584,7 @@ namespace nvhttp::apps::poster {
       std::lock_guard lock(queue.mutex);
       if (queue.queued.insert(normalized).second) queue.pending.push_back({ source, normalized });
       if (!queue.started) {
-        // One attempt per process: without the worker nothing is cached, and nobody waits for what nobody produces.
+        // Start one worker. A failed launch leaves caching disabled for this process.
         queue.started = true;
         try {
           std::thread(run_worker).detach();
@@ -641,13 +619,13 @@ namespace nvhttp::apps::poster {
   preview_when_ready(const std::filesystem::path &source, std::chrono::milliseconds limit) {
     const auto info = source_info(source);
     if (!info) return std::nullopt;
-    // A source of at most preview_limit_bytes is its own preview, and one from an earlier run is simply there.
+    // Small sources and previews from an earlier run are ready immediately.
     if (auto ready = representation(source, true)) return ready;
     try {
       return wait_for_preview(source, *info, limit);
     }
     catch (const std::system_error &e) {
-      // fs-poster-cache-20261125: condition_variable::wait_for is the one call on this path that can fail. A miss is the answer then.
+      // Treat a wait failure as a missing preview.
       BOOST_LOG(warning) << "Poster preview wait failed, the request gets no preview: " << e.what();
       return std::nullopt;
     }

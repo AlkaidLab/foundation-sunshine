@@ -311,10 +311,8 @@ add_executable(poster_unit_tests
 target_include_directories(poster_unit_tests PRIVATE
         "${CMAKE_SOURCE_DIR}"
         "${CMAKE_BINARY_DIR}")  # generated version.h
-# poster.cpp reaches platform/common.h for platf::appdata(). The headers it brings (the configuration model, Boost.Log,
-# the protocol library) come with the interface the other standalone suites link; Boost::format and Boost::property_tree
-# carry the header-only include paths pulled in by stat_trackers.h and file_handler.h, and the stub file supplies the
-# loggers, the appdata directory and the UTF-8 path conversion themselves.
+# poster.cpp uses host headers and Boost header-only components. The stub supplies the loggers, appdata directory and
+# UTF-8 path conversion used by this standalone target.
 target_link_libraries(poster_unit_tests PRIVATE gtest_main OpenSSL::Crypto Boost::format Boost::log Boost::thread
         Boost::property_tree
         sunshine::host_headers sunshine_project_options sunshine_coverage)
@@ -1694,15 +1692,11 @@ list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/usbip/external_readonly_
         ${CMAKE_SOURCE_DIR}/tests/unit/test_uac1_microphone.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_video_probe.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_virtual_touchscreen_device.cpp
-        # test_amf_rate_control pulls boost headers transitively via src/video.h;
-        # it runs in its own Windows-only target, not the aggregate.
+        # This test has a separate Windows-only target.
         ${CMAKE_SOURCE_DIR}/tests/unit/test_amf_rate_control.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/pairing_pending_platform_stubs.cpp
-        # test_poster.cpp runs in poster_unit_tests with the stand-ins below; in the aggregate it would reach the
-        # real platf::appdata() and the real poster cache directory.
+        # These poster tests use private host stubs and must stay in poster_unit_tests.
         ${CMAKE_SOURCE_DIR}/tests/unit/test_poster.cpp
-        # poster.cpp runs in poster_unit_tests with its own stand-ins for the loggers, appdata() and the UTF-8
-        # path conversion; in the aggregate they would be defined twice.
         ${CMAKE_SOURCE_DIR}/tests/unit/poster_platform_stubs.cpp)
 
 set(ABR_TEST_STUB_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/abr_test_stubs.cpp)

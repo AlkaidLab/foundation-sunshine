@@ -16,9 +16,9 @@ namespace nvhttp::apps::poster {
 
   inline constexpr std::size_t preview_limit_bytes = 200 * 1024;
   inline constexpr int preview_longest_side = 640;
-  /** Cache files kept in the poster cache directory; the oldest are removed beyond it. */
+  /** Maximum number of files kept in the poster cache. */
   inline constexpr std::size_t cache_file_limit = 64;
-  /** The longest a poster request waits for a preview that the background pass is still producing. */
+  /** Maximum time a poster request waits for a preview. */
   inline constexpr std::chrono::milliseconds preview_wait_limit { 2000 };
 
   struct representation_t {
@@ -33,7 +33,7 @@ namespace nvhttp::apps::poster {
     std::uintmax_t last = 0;
   };
 
-  /** What one pass over the cache directory found and did. */
+  /** Result of one cache cleanup pass. */
   struct cleanup_result_t {
     bool available = false;  ///< the directory exists and can hold files
     std::size_t removed_temporary = 0;  ///< temporary files of writes that never finished
@@ -44,18 +44,11 @@ namespace nvhttp::apps::poster {
   void
   schedule(const std::filesystem::path &source);
 
-  /**
-   * Block until the background pass has finished every scheduled source and holds no file open.
-   * The worker is detached, so a caller that deletes a source right after scheduling it (a test) waits here first.
-   * @return false when the timeout passed with work still pending.
-   */
+  /** Wait until scheduled work finishes or `timeout` expires. */
   bool
   wait_idle(std::chrono::milliseconds timeout = std::chrono::seconds(30));
 
-  /**
-   * Remove the temporary files that unfinished writes left in `directory` and the oldest cache files beyond
-   * cache_file_limit. Best effort: whatever fails stays as it is, and the result tells how far it got. Never throws.
-   */
+  /** Remove stale temporary files and old cache files. Best effort and never throws. */
   cleanup_result_t
   cleanup_cache_dir(const std::filesystem::path &directory) noexcept;
 
@@ -63,16 +56,11 @@ namespace nvhttp::apps::poster {
   std::optional<representation_t>
   full(const std::filesystem::path &source);
 
-  /** Return a ready preview, or nullopt while the background pass is pending. Does not wait. */
+  /** Return a ready preview without waiting for the background pass. */
   std::optional<representation_t>
   preview(const std::filesystem::path &source);
 
-  /**
-   * The preview of a source of more than preview_limit_bytes, for a caller that has just scheduled it: waits while
-   * the background pass still has this version, and no longer than `limit`. A smaller source is its own preview.
-   * @return nullopt at once when nothing will produce the preview (the pass was not asked for this version, gave up
-   * on it, or cannot write the cache), and when the limit passed without one.
-   */
+  /** Wait for a scheduled source to produce a preview, up to `limit`. */
   std::optional<representation_t>
   preview_when_ready(const std::filesystem::path &source, std::chrono::milliseconds limit = preview_wait_limit);
 

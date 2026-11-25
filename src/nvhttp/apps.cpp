@@ -233,11 +233,8 @@ namespace nvhttp::apps {
         response->write(web::StatusCode::not_found, "App asset not found");
         return;
       }
-      // fs-poster-preview-only-20261125: desktop wallpaper poster requests and explicit preview requests get the preview
-      // alone once the source exceeds poster::preview_limit_bytes, a photograph of many megabytes. The request waits for
-      // the background pass within poster::preview_wait_limit; if the preview still does not appear, the default cover
-      // answers, uncacheable. HTTP-caching clients ask again and get the preview; Moonlight v+ and the qt fork cache
-      // covers per host and keep the default until that cache is invalidated client-side.
+      // Desktop wallpaper posters and explicit preview requests use the preview representation. Large sources wait
+      // briefly for generation, then return an uncached default cover when it is still pending.
       const auto preview_only = type == "poster" && (app->image_path == "desktop" || (args.find("fsVariant") != args.end() && args.find("fsVariant")->second == "preview"));
       std::optional<poster::representation_t> preview;
       bool default_cover = false;
@@ -262,14 +259,12 @@ namespace nvhttp::apps {
       headers.emplace("Accept-Ranges", "bytes");
       headers.emplace("Content-Type", selected.content_type);
       if (preview_only) {
-        // fs-poster-preview-only-20261125: the header describes the body. A default cover standing in for a missing
-        // preview must not claim to be the preview.
+        // Identify whether the response body is the preview or the fallback cover.
         headers.emplace("X-FS-Poster-Variant", default_cover ? "default" : "preview");
         headers.emplace("X-FS-Poster-Full-ETag", full->etag);
         headers.emplace("X-FS-Poster-Full-Length", std::to_string(full->length));
       }
-      // fs-poster-preview-only-20261125: the default cover stands in for a preview that is not there yet. Told it is
-      // immutable, the client would keep it for the whole art version and never ask for the preview.
+      // Do not let the fallback cover become the immutable representation for this art version.
       if (default_cover) {
         headers.emplace("Cache-Control", "no-store");
       }
