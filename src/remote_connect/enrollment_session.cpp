@@ -200,6 +200,17 @@ namespace remote_connect {
     return true;
   }
 
+  std::optional<enrollment_session_t::confirmed_candidate_t>
+  enrollment_session_t::take_confirmed_candidate(std::uint64_t generation) {
+    std::lock_guard lock(mutex_);
+    if (!current_locked(generation) || state_ != state_t::candidate_confirmed_not_authorized) return std::nullopt;
+    confirmed_candidate_t candidate {candidate_public_, candidate_certificate_sha256_};
+    // Ends the invitation as well: the candidate is now the caller's to commit
+    // or discard, and must not be taken a second time or cancelled.
+    clear_locked();
+    return candidate;
+  }
+
   bool
   enrollment_session_t::cancel(std::uint64_t generation) {
     std::lock_guard lock(mutex_);

@@ -66,6 +66,15 @@ namespace remote_connect::credential_transaction {
     std::string target_id;
   };
 
+  // True when `record` is a well-formed record in a known phase: every device
+  // has a valid id and two distinct non-zero keys, tombstones and active
+  // devices never share an id, a key or a certificate, and the phase agrees
+  // with the candidate and revoke target it carries. reduce() applies the same
+  // check to whatever it is given, so a record read from storage should be
+  // checked with this before anything is built on it.
+  bool
+  valid(const record_t &record);
+
   // Pure value transformation. The caller must atomically compare/persist
   // the returned revision before any corresponding side effect. The caller
   // must independently verify that a closed gate, core shutdown/readiness,

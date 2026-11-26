@@ -73,6 +73,11 @@ namespace remote_connect::credential_transaction {
     }
   }  // namespace
 
+  bool
+  valid(const record_t &record) {
+    return valid_record(record);
+  }
+
   std::optional<record_t>
   reduce(const record_t &before, const event_t &event) {
     if (!valid_record(before) || event.expected_revision != before.revision ||

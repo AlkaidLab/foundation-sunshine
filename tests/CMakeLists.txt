@@ -1007,6 +1007,23 @@ if (WIN32)
 endif ()
 add_test(NAME remote_connect_credential_transaction_unit_tests COMMAND remote_connect_credential_transaction_unit_tests)
 
+set(REMOTE_CONNECT_DEVICE_AUTHORIZATION_TEST_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_connect_device_authorization.cpp)
+add_executable(remote_connect_device_authorization_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/credential_transaction.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/device_authorization.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/enrollment_token.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/enrollment_proof.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/enrollment_session.cpp
+        ${REMOTE_CONNECT_DEVICE_AUTHORIZATION_TEST_SOURCE})
+target_include_directories(remote_connect_device_authorization_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(remote_connect_device_authorization_unit_tests PRIVATE OpenSSL::Crypto gtest_main sunshine_project_options sunshine_coverage)
+target_compile_options(remote_connect_device_authorization_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(remote_connect_device_authorization_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(remote_connect_device_authorization_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME remote_connect_device_authorization_unit_tests COMMAND remote_connect_device_authorization_unit_tests)
+
 set(REMOTE_CONNECT_SERVICE_TEST_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_connect_service.cpp)
 add_executable(remote_connect_service_unit_tests
         ${CMAKE_SOURCE_DIR}/src/remote_connect/service.cpp
@@ -1780,7 +1797,7 @@ list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/usbip/external_readonly_
         ${CMAKE_SOURCE_DIR}/tests/unit/test_amf_rate_control.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/pairing_pending_platform_stubs.cpp)
 
-list(REMOVE_ITEM TEST_SOURCES ${REMOTE_CONNECT_SERVICE_TEST_SOURCE} ${REMOTE_CONNECT_ENROLLMENT_TOKEN_TEST_SOURCE} ${REMOTE_CONNECT_ENROLLMENT_PROOF_TEST_SOURCE} ${REMOTE_CONNECT_ENROLLMENT_SESSION_TEST_SOURCE} ${REMOTE_CONNECT_CREDENTIAL_TRANSACTION_TEST_SOURCE} ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_connect_invite.cpp ${REMOTE_CONNECT_STRICT_POLICY_TEST_SOURCE} ${CMAKE_SOURCE_DIR}/tests/unit/test_preset_pin_generation.cpp)
+list(REMOVE_ITEM TEST_SOURCES ${REMOTE_CONNECT_SERVICE_TEST_SOURCE} ${REMOTE_CONNECT_ENROLLMENT_TOKEN_TEST_SOURCE} ${REMOTE_CONNECT_ENROLLMENT_PROOF_TEST_SOURCE} ${REMOTE_CONNECT_ENROLLMENT_SESSION_TEST_SOURCE} ${REMOTE_CONNECT_CREDENTIAL_TRANSACTION_TEST_SOURCE} ${REMOTE_CONNECT_DEVICE_AUTHORIZATION_TEST_SOURCE} ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_connect_invite.cpp ${REMOTE_CONNECT_STRICT_POLICY_TEST_SOURCE} ${CMAKE_SOURCE_DIR}/tests/unit/test_preset_pin_generation.cpp)
 set(ABR_TEST_STUB_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/abr_test_stubs.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${ABR_TEST_STUB_SOURCE})
 if (WIN32)

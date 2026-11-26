@@ -79,10 +79,26 @@ namespace remote_connect {
           const enrollment_bytes32_t &client_public, const enrollment_bytes32_t &client_certificate_sha256,
           const enrollment_bytes32_t &proof);
 
+    // What an owner-confirmed candidate consists of. It is handed over once,
+    // by take_confirmed_candidate(), and cannot be retrieved again.
+    struct confirmed_candidate_t {
+      enrollment_bytes32_t client_public;
+      enrollment_bytes32_t client_certificate_sha256;
+    };
+
     // Called only after a trusted host UI has asked the user to compare codes.
     // True means "candidate confirmed", NOT that it is persisted or authorized.
     bool
     confirm_candidate(std::uint64_t generation, const enrollment_confirmation_t &compared_code);
+
+    // Hands the confirmed candidate to the caller and ends the invitation.
+    // Succeeds only for a generation that is still unexpired and in the
+    // candidate_confirmed_not_authorized state, so a stale invitation, an
+    // unconfirmed candidate and a second call all fail. After it returns the
+    // candidate cannot be cancelled: cancel() reports false from here on, and
+    // the caller owns committing or discarding it.
+    std::optional<confirmed_candidate_t>
+    take_confirmed_candidate(std::uint64_t generation);
 
     // A stale generation/connection cannot affect a newer invitation. Even a
     // confirmed candidate is destroyed; there is no commit/activation API yet.
