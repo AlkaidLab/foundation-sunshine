@@ -487,6 +487,29 @@ namespace video::dolby_vision {
     return true;
   }
 
+  rpu_injector_t::startup_action_e
+  rpu_injector_t::prepare_frame(const platf::hdr_frame_luminance_stats_t &stats, std::chrono::steady_clock::time_point now) {
+    if (!startup_pending()) {
+      return startup_action_e::emit;
+    }
+    if (!startup_started_) {
+      startup_started_ = now;
+    }
+    if (last_metadata_ || frame_metadata_from_stats(stats)) {
+      // Keep requesting IDR until an output actually carries an RPU: an encoder
+      // may buffer or drop the first submission. Merely observing valid stats
+      // must not release startup if another gate still holds this frame.
+      return startup_action_e::idr;
+    }
+    if (now - *startup_started_ >= STARTUP_TIMEOUT) {
+      BOOST_LOG(warning) << "Dolby Vision: no usable startup metadata after " << STARTUP_TIMEOUT.count()
+                         << " ms; disabling RPU output for this encoder session and using the base layer";
+      disable();
+      return startup_action_e::timed_out;
+    }
+    return startup_action_e::hold;
+  }
+
   void
   rpu_injector_t::stage(uint64_t frame_index, const platf::hdr_frame_luminance_stats_t &stats) {
     if (!enabled_) {
@@ -509,10 +532,12 @@ namespace video::dolby_vision {
       pending_scene_refresh_ = false;
     }
     if (!last_metadata_) {
-      return;  // cold analyzer: this frame ships without an RPU, like HDR10+ does
+      return;  // prepare_frame() keeps a cold DV session from submitting this frame
     }
 
-    const auto metadata_for_frame = *last_metadata_;
+    auto metadata_for_frame = *last_metadata_;
+    // A dropped first submission must not consume the decoder's initial refresh.
+    metadata_for_frame.scene_refresh |= !output_started_;
     // Reused luminance is intentional, but a refresh belongs to one picture.
     last_metadata_->scene_refresh = false;
     if (!queue_.stage(frame_index, generator_, metadata_for_frame)) {
@@ -541,6 +566,7 @@ namespace video::dolby_vision {
                        << "; access unit sent without RPU";
       return false;
     }
+    output_started_ = true;
     return true;
   }
 
@@ -550,7 +576,9 @@ namespace video::dolby_vision {
     scene_detector_.reset();
     level1_filter_.reset();
     last_metadata_.reset();
+    startup_started_.reset();
     pending_scene_refresh_ = false;
+    output_started_ = false;
     queue_.clear();
     generator_.reset();
   }
