@@ -72,7 +72,9 @@ namespace pyrowave {
       PROCESS_INFORMATION process {};
       // The child inherits this process's token, session and environment, so the probe sees the
       // same Vulkan registry state and drivers as the in-process encoder device creation.
-      if (!CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process)) {
+      // The child starts in its own directory, so the working directory of the host never becomes
+      // part of the child's DLL search path.
+      if (!CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, probe.parent_path().c_str(), &startup, &process)) {
         safe_probe_log([] {
           BOOST_LOG(warning) << "PyroWave runtime probe: the probe tool (tools/alkaidlab_pyrowave_probe.exe) could not be started"sv;
         });

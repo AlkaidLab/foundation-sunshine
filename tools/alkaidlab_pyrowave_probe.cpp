@@ -25,6 +25,12 @@ main() {
   // only, never with a window.
   SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
 
+  // DLL resolution keeps to the system directories and this tool's own directory: a module that
+  // is not either of those (a hijacked working directory, a user-writable path) is never loaded.
+  // The Vulkan stack is unaffected: vulkan-1.dll comes from System32, and the loader opens ICDs
+  // and layers by the absolute paths of their manifests.
+  SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32 | LOAD_LIBRARY_SEARCH_APPLICATION_DIR);
+
   try {
     std::uint32_t major = 0;
     std::uint32_t minor = 0;
