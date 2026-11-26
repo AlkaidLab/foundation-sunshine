@@ -1360,6 +1360,9 @@ jobs:
           for tool in dxgi-info audio-info sunshinesvc; do
             python scripts/ci/check-windows-release.py "build/tools/$tool.exe" --max-code-bytes 1600000
           done
+          # The PyroWave probe statically links the Vulkan framework, so only its stack reserve
+          # is a release property here; its code size is expected to exceed the display helpers.
+          python scripts/ci/check-windows-release.py build/tools/alkaidlab_pyrowave_probe.exe --stack-only
 
       # The installer shell is also the elevated worker and the updater. LLD gives an executable a 1 MiB stack by default, and the
       # worker's inlined 1 MiB buffer overflowed it before the first event (issue #1326): the reserve is a release property.

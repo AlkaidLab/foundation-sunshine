@@ -64,6 +64,7 @@ add_custom_target(innosetup
     COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/inno_staging/tools/sunshinesvc.exe"
     COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/inno_staging/tools/dxgi-info.exe"
     COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/inno_staging/tools/audio-info.exe"
+    COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/inno_staging/tools/alkaidlab_pyrowave_probe.exe"
 
     # The COFF symbol table is not part of a loaded image and is not the crash-symbol source. The runtime image keeps
     # its CodeView GUID, so the symbol zip still matches a dump; a signed module is left byte for byte as it is.

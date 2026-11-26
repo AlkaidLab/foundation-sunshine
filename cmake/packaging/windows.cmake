@@ -103,6 +103,7 @@ install(TARGETS audio-info RUNTIME DESTINATION "tools" COMPONENT audio)
 # Mandatory tools
 install(TARGETS sunshinesvc RUNTIME DESTINATION "tools" COMPONENT application)
 install(TARGETS qiin-tabtip RUNTIME DESTINATION "tools" COMPONENT application)
+install(TARGETS alkaidlab_pyrowave_probe RUNTIME DESTINATION "tools" COMPONENT application)
 
 # The touch application command uses this host-owned protocol launcher. It is
 # published from tools/sparxie-launch when the Windows SDK build has dotnet.

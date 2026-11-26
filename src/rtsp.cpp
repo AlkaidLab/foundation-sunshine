@@ -1354,11 +1354,13 @@ namespace rtsp_stream {
 
 #ifdef _WIN32
     // Clients that do not advertise CAPABILITY_PYROWAVE ignore this Windows
-    // extension and negotiate one of the legacy formats below. Do not
-    // advertise it if this host cannot create the Vulkan runtime device; that
-    // lets clients fall back before ANNOUNCE instead of failing on the first
-    // encoded frame.
-    if (pyrowave::is_server_runtime_available()) {
+    // extension and negotiate one of the legacy formats below. The advertisement
+    // is optimistic: the client's capability is not visible until ANNOUNCE, so
+    // the runtime probe runs (in its own process, once) only when a client
+    // actually selects the format there. A host whose probe fails stops
+    // advertising for the rest of the process, and the client falls back to a
+    // legacy format on its next connection.
+    if (pyrowave::may_advertise()) {
       // Select PyroWave only through the versioned x-ss-pyrowave contract.
       // Do not put its out-of-range numeric ID in the legacy bitStreamFormat
       // attribute, which older clients may parse.

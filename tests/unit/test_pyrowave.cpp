@@ -1718,6 +1718,35 @@ TEST(PyrowaveRuntimeTest, ExposesFormatOnlyOnSupportedServerPlatform) {
 #endif
 }
 
+TEST(PyrowaveRuntimeTest, AdvertisementStateTurnsOffAfterAFailedProbe) {
+  pyrowave::probe_state_t state;
+  EXPECT_TRUE(state.may_advertise());
+  state.record_probe_result(true);
+  EXPECT_TRUE(state.may_advertise());
+  state.record_probe_result(false);
+  EXPECT_FALSE(state.may_advertise());
+}
+
+TEST(PyrowaveRuntimeTest, AdvertisementMatchesTheServerPlatform) {
+#ifdef _WIN32
+  EXPECT_TRUE(pyrowave::may_advertise());
+#else
+  EXPECT_FALSE(pyrowave::may_advertise());
+#endif
+}
+
+TEST(PyrowaveRuntimeTest, ProbeExitCodeReasonNamesTheKnownFailures) {
+  EXPECT_EQ(pyrowave::probe_exit_code_reason(0), "the runtime is available");
+  EXPECT_EQ(pyrowave::probe_exit_code_reason(2), "the PyroWave API version does not match");
+  EXPECT_EQ(pyrowave::probe_exit_code_reason(3), "the default Vulkan device could not be created");
+  EXPECT_EQ(pyrowave::probe_exit_code_reason(4), "the default device does not support the required interop");
+  EXPECT_EQ(pyrowave::probe_exit_code_reason(5), "the probe process failed unexpectedly");
+  EXPECT_EQ(pyrowave::probe_exit_code_reason(0xC0000005u),
+            "the probe process crashed (0xC0000005); a third-party Vulkan implicit layer may be at fault");
+  EXPECT_TRUE(pyrowave::probe_exit_code_reason(1).empty());
+  EXPECT_TRUE(pyrowave::probe_exit_code_reason(12345).empty());
+}
+
 TEST(PyrowavePacketTest, RejectsNegativeReassemblyDeadline) {
   pyrowave::reassembly_policy_t policy;
   policy.deadline = std::chrono::milliseconds { -1 };

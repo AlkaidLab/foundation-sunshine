@@ -1,0 +1,57 @@
+/**
+ * @file tools/alkaidlab_pyrowave_probe.cpp
+ * @brief The out-of-process Vulkan probe of the PyroWave runtime.
+ *
+ * The host runs this tool once, when a client actually selects the PyroWave format, and reads the
+ * exit code: 0 available, 2 API version, 3 default device, 4 interop, 5 unexpected failure. A
+ * third-party Vulkan implicit layer that crashes or hangs ends only this process, and the host
+ * stops advertising PyroWave for the rest of its lifetime.
+ *
+ * The tool is a headless helper: no configuration, no log, no output and no dialog, and every
+ * path ends in an exit code.
+ */
+#define NOMINMAX
+#include <windows.h>
+
+#include <cstdint>
+
+extern "C" {
+#include <pyrowave.h>
+}
+
+int
+main() {
+  // Loader hard errors and fault boxes are suppressed: this helper answers with its exit code
+  // only, never with a window.
+  SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+
+  try {
+    std::uint32_t major = 0;
+    std::uint32_t minor = 0;
+    std::uint32_t patch = 0;
+    pyrowave_get_api_version(&major, &minor, &patch);
+    if (major != PYROWAVE_API_VERSION_MAJOR ||
+        minor != PYROWAVE_API_VERSION_MINOR ||
+        patch != PYROWAVE_API_VERSION_PATCH) {
+      return 2;
+    }
+
+    pyrowave_device device = nullptr;
+    const auto create_result = pyrowave_create_default_device(&device);
+    if (create_result != PYROWAVE_SUCCESS || device == nullptr) {
+      if (device != nullptr) {
+        pyrowave_device_destroy(device);
+      }
+      return 3;
+    }
+
+    const auto interop_supported = pyrowave_device_confirm_interop_support(device);
+    pyrowave_device_destroy(device);
+    return interop_supported ? 0 : 4;
+  }
+  catch (...) {
+    // The C API is implemented in C++: an exception that escapes it answers "unavailable" with a
+    // code of its own, instead of an abort that would read like a device-creation failure.
+    return 5;
+  }
+}

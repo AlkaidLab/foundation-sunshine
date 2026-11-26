@@ -117,6 +117,18 @@ if(MINGW)
     )
 endif()
 
+# The out-of-process Vulkan probe of the PyroWave runtime: the host runs it once
+# when a client actually selects the format, and its exit code is the whole answer. A third-party
+# implicit layer that crashes or hangs ends only this process.
+add_executable(alkaidlab_pyrowave_probe alkaidlab_pyrowave_probe.cpp)
+set_target_properties(alkaidlab_pyrowave_probe PROPERTIES CXX_STANDARD 23)
+target_link_libraries(alkaidlab_pyrowave_probe
+        PRIVATE Pyrowave::Runtime
+        Threads::Threads
+        ${PLATFORM_LIBRARIES}
+        sunshine_project_options)
+target_compile_options(alkaidlab_pyrowave_probe PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
+
 if(WIN32)
     # The package version comes from PROJECT_VERSION here: CPACK_PACKAGE_VERSION is set by packaging/common.cmake,
     # which is included after this directory, so it is still empty at this point.
