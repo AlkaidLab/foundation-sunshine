@@ -1056,7 +1056,10 @@ namespace video {
       const auto now = std::chrono::steady_clock::now();
       // Collect completed analysis before either gate observes it. DV 8.4 also
       // uses HLG/Vivid, so both timeouts must advance before any hold returns.
-      const auto dv_action = dolby_vision_.prepare_device_frame(*device, now);
+      if (dolby_vision_.startup_pending()) {
+        device->collect_hdr_luminance_stats();
+      }
+      const auto dv_action = dolby_vision_.prepare_frame(device->hdr_luminance_stats, now);
       const auto gated = vivid_gate.observe(device->hdr_luminance_stats, now);
       if (dv_action == dv_action_e::idr || dv_action == dv_action_e::timed_out) {
         force_idr = true;
@@ -1203,7 +1206,10 @@ namespace video {
       using decision_e = hdr_metadata::vivid_startup_gate_t::decision_e;
       using dv_action_e = dolby_vision::rpu_injector_t::startup_action_e;
       const auto now = std::chrono::steady_clock::now();
-      const auto dv_action = dolby_vision_.prepare_device_frame(*device, now);
+      if (dolby_vision_.startup_pending()) {
+        device->collect_hdr_luminance_stats();
+      }
+      const auto dv_action = dolby_vision_.prepare_frame(device->hdr_luminance_stats, now);
       const auto gated = vivid_gate.observe(device->hdr_luminance_stats, now);
       if (dv_action == dv_action_e::idr || dv_action == dv_action_e::timed_out) {
         force_idr = true;

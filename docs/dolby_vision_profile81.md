@@ -259,8 +259,9 @@ make_nvenc/amf_encode_session
     └─ 协商为 DV 且 分析器可用 且 最终色彩空间符合协商 profile 时
        从主机显示的【原始】mastering 元数据（未经客户端峰值调整）配置 L6
 encode_frame(frame_index)            提交侧
-    └─ prepare_device_frame(device, now)
+    └─ device.collect_hdr_luminance_stats()
        启动期间非阻塞收取已完成的 GPU 统计，无新捕获画面时也能推进；每份在途分析最多主动提交一次
+    └─ prepare_frame(hdr_luminance_stats, now)
        冷启动继续转换/分析，但在能生成合法 RPU 前暂缓编码；首次实际带 RPU 输出前持续请求 IDR
        等待上限 1500 ms，超时则关闭当前编码会话的 DV、以基础层 IDR 开播，不自动中途恢复 RPU
     └─ stage(frame_index, hdr_luminance_stats)

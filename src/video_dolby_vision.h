@@ -276,17 +276,6 @@ namespace video::dolby_vision {
     startup_action_e
     prepare_frame(const platf::hdr_frame_luminance_stats_t &stats, std::chrono::steady_clock::time_point now);
 
-    /// A static desktop may never call convert() again after dispatching the
-    /// first analysis. Poll its completion before evaluating the startup gate.
-    template <class EncodeDevice>
-    startup_action_e
-    prepare_device_frame(EncodeDevice &device, std::chrono::steady_clock::time_point now) {
-      if (startup_pending()) {
-        device.collect_hdr_luminance_stats();
-      }
-      return prepare_frame(device.hdr_luminance_stats, now);
-    }
-
     void
     stage(uint64_t frame_index, const platf::hdr_frame_luminance_stats_t &stats);
 
