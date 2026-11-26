@@ -219,6 +219,11 @@ namespace config {
     std::string remote_connect_network_name;
     std::string remote_connect_network_secret;
     std::string remote_connect_peer;
+    // Semicolon-separated 64-hex X25519 public keys of enrolled remote
+    // clients, bound into the strict-data experiment policy. Public
+    // material, but written only by the enrollment service, never by the
+    // generic settings save path.
+    std::string remote_connect_strict_client_keys;
 
     // Signed, warning-only client fingerprint rule feed.
     bool client_fingerprint_remote_rules;

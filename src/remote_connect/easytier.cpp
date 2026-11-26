@@ -19,6 +19,7 @@
 #endif
 
 #include "src/file_handler.h"
+#include "src/logging.h"
 #include "src/network.h"
 #include "src/nvhttp.h"
 #include "src/platform/common.h"
@@ -26,6 +27,8 @@
 #include "src/process.h"
 #include "src/rtsp.h"
 #include "src/stream.h"
+#include "src/config.h"
+#include "strict_policy.h"
 
 using namespace std::literals;
 
@@ -102,6 +105,18 @@ namespace remote_connect::easytier {
 
     bool
     write_config(const enrollment_t &enrollment, const std::string &hostname) {
+      // The strict-data experiment policy carries the enrolled client keys.
+      // An invalid persisted list must fail the start loudly: silently
+      // omitting the table would downgrade an intended strict host to an
+      // unrestricted one.
+      const auto strict_keys = strict_policy::parse_client_keys(
+        config::nvhttp.remote_connect_strict_client_keys
+      );
+      if (!strict_keys.valid) {
+        BOOST_LOG(error) << "Remote connection strict client keys are invalid: " << strict_keys.error;
+        return false;
+      }
+
       std::ostringstream toml;
       toml << "instance_name = \"Sunshine Remote\"\n"
            << "hostname = \"" << toml_escape(hostname) << "\"\n"
@@ -132,7 +147,8 @@ namespace remote_connect::easytier {
            << "enable_exit_node = false\n"
            << "proxy_forward_by_system = false\n"
            << "accept_dns = false\n"
-           << "relay_network_whitelist = \"\"\n";
+           << "relay_network_whitelist = \"\"\n"
+           << strict_policy::render_table(strict_keys.keys);
       return file_handler::write_file(file_handler::path_to_utf8(config_path()).c_str(), toml.str()) == 0;
     }
   }  // namespace

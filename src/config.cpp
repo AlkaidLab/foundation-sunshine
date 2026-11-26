@@ -616,6 +616,7 @@ namespace config {
     {},  // remote_connect_network_name
     {},  // remote_connect_network_secret
     remote_connect::default_peer,  // remote_connect_peer
+    {},  // remote_connect_strict_client_keys
 
     true,  // client_fingerprint_remote_rules
     "https://raw.githubusercontent.com/AlkaidLab/sunshine-client-fingerprint-rules/main/stable.json",
@@ -1613,6 +1614,7 @@ namespace config {
     string_f(vars, "remote_connect_network_name", nvhttp.remote_connect_network_name);
     string_f(vars, "remote_connect_network_secret", nvhttp.remote_connect_network_secret);
     string_f(vars, "remote_connect_peer", nvhttp.remote_connect_peer);
+    string_f(vars, "remote_connect_strict_client_keys", nvhttp.remote_connect_strict_client_keys);
     bool_f(vars, "client_fingerprint_remote_rules", nvhttp.client_fingerprint_remote_rules);
     string_f(vars, "client_fingerprint_rules_url", nvhttp.client_fingerprint_rules_url);
     string_f(vars, "client_fingerprint_rules_certificate", nvhttp.client_fingerprint_rules_certificate);
@@ -2193,6 +2195,7 @@ namespace config {
         "remote_connect_network_name",
         "remote_connect_network_secret",
         "remote_connect_peer",
+        "remote_connect_strict_client_keys",
       };
 
       const auto original_file_content = read_config_file_contents();
