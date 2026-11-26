@@ -102,12 +102,17 @@ namespace {
         node = text;
         return;
       }
+      // anywhere in the text, not only at its start: a command line quotes this run's folder in the middle, and that folder names the person who ran the dump
       const std::string prefix = root.string();
-      if (text.rfind(prefix, 0) != 0) return;
-      std::string rest = text.substr(prefix.size());
-      for (char &c : rest)
-        if (c == '/') c = '\\';
-      node = "C:\\Program Files\\Sunshine\\config" + rest;
+      const std::string captured = "C:\\Program Files\\Sunshine\\config";
+      std::size_t at = text.find(prefix);
+      if (at == std::string::npos) return;
+      for (; at != std::string::npos; at = text.find(prefix, at)) {
+        text.replace(at, prefix.size(), captured);
+        for (at += captured.size(); at < text.size() && text[at] != '"'; ++at)
+          if (text[at] == '/') text[at] = '\\';
+      }
+      node = text;
     }
     else if (node.is_array() || node.is_object()) {
       for (auto &child : node)
@@ -273,7 +278,10 @@ TEST(CapturedGate, HostStartSettlesTheCapturedApplicationsAndIsStableAfterwards)
   if (const char *path = std::getenv("SPARXIE_CAPTURED_GATE_OUT")) {
     json written = out;
     as_captured(written, fs::temp_directory_path() / "sparxie-captured-gate-captured");
+    const std::string text = written.dump(2);
+    // the dump is committed: nothing of this machine's folders may be left in it
+    EXPECT_EQ(text.find("sparxie-captured-gate-"), std::string::npos);
     fs::create_directories(fs::path(path).parent_path());
-    std::ofstream(path, std::ios::binary | std::ios::trunc) << written.dump(2) << "\n";
+    std::ofstream(path, std::ios::binary | std::ios::trunc) << text << "\n";
   }
 }
