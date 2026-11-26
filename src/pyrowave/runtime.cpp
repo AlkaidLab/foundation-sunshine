@@ -158,7 +158,11 @@ namespace pyrowave {
 
   void
   probe_state_t::record_probe_result(bool available) noexcept {
-    failed_.store(!available, std::memory_order_release);
+    // Only a failure changes the state: the probe answers once per process, and the class keeps
+    // that one-way semantic even if a future caller records a second result.
+    if (!available) {
+      failed_.store(true, std::memory_order_release);
+    }
   }
 
   std::string_view

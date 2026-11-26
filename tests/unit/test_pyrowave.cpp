@@ -1725,6 +1725,8 @@ TEST(PyrowaveRuntimeTest, AdvertisementStateTurnsOffAfterAFailedProbe) {
   EXPECT_TRUE(state.may_advertise());
   state.record_probe_result(false);
   EXPECT_FALSE(state.may_advertise());
+  state.record_probe_result(true);
+  EXPECT_FALSE(state.may_advertise());
 }
 
 TEST(PyrowaveRuntimeTest, AdvertisementMatchesTheServerPlatform) {
