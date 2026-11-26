@@ -693,6 +693,50 @@ TEST(DolbyVisionInjector, ColdStartupWaitsForAnalysisAndRefreshesTheFirstOutput)
   EXPECT_EQ(injector.prepare_frame(stats, start + 64ms), startup_action::emit);
 }
 
+TEST(DolbyVisionInjector, CollectsPendingAnalysisWithoutAnotherConvertedFrame) {
+  struct pending_analyzer_device_t {
+    platf::hdr_frame_luminance_stats_t hdr_luminance_stats;
+    std::optional<platf::hdr_frame_luminance_stats_t> completed;
+    int polls = 0;
+    void
+    collect_hdr_luminance_stats() {
+      ++polls;
+      if (completed) {
+        hdr_luminance_stats = *completed;
+        completed.reset();
+      }
+    }
+  } device;
+  rpu_injector_t injector;
+  const auto start = std::chrono::steady_clock::time_point {};
+  EXPECT_EQ(injector.prepare_device_frame(device, start), startup_action::emit);
+  EXPECT_EQ(device.polls, 0);
+  ASSERT_TRUE(injector.configure(session_config_t {}));
+  EXPECT_EQ(injector.prepare_device_frame(device, start), startup_action::hold);
+  EXPECT_EQ(device.polls, 1);
+
+  // The previously dispatched GPU result completes on an unchanged desktop.
+  device.completed = valid_stats();
+  EXPECT_EQ(injector.prepare_device_frame(device, start + 16ms), startup_action::idr);
+  EXPECT_EQ(device.polls, 2);
+  injector.stage(1, device.hdr_luminance_stats);
+  bytes_t au = make_au();
+  ASSERT_TRUE(injector.inject(1, au));
+  EXPECT_EQ(parse_injected_rpu(au).scene_refresh, 1u);  // Includes CRC verification.
+  EXPECT_EQ(injector.prepare_device_frame(device, start + 32ms), startup_action::emit);
+  EXPECT_EQ(device.polls, 2);
+
+  ASSERT_TRUE(injector.configure(session_config_t {}));
+  device.hdr_luminance_stats = {};
+  EXPECT_EQ(injector.prepare_device_frame(device, start + 1s), startup_action::hold);
+  EXPECT_EQ(injector.prepare_device_frame(device, start + 1s + rpu_injector_t::STARTUP_TIMEOUT),
+    startup_action::timed_out);
+  const int timeout_polls = device.polls;
+  device.completed = valid_stats();
+  EXPECT_EQ(injector.prepare_device_frame(device, start + 4s), startup_action::emit);
+  EXPECT_EQ(device.polls, timeout_polls);
+}
+
 TEST(DolbyVisionInjector, StartupRejectsInvalidPqAnalysisButAcceptsRealBlack) {
   rpu_injector_t injector;
   ASSERT_TRUE(injector.configure(session_config_t {}));

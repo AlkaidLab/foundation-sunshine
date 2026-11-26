@@ -719,6 +719,12 @@ namespace platf {
     virtual bool
     init_encoder(const video::config_t &client_config, const video::sunshine_colorspace_t &colorspace, bool is_probe = false) = 0;
 
+    // Non-blocking startup readback on the encode thread, even without a new convert().
+    virtual bool
+    collect_hdr_luminance_stats() {
+      return hdr_luminance_stats.valid;
+    }
+
     nvenc::nvenc_encoder *nvenc = nullptr;
     bool hdr_luminance_analysis_available = false;
   };
@@ -726,6 +732,11 @@ namespace platf {
   struct amf_encode_device_t: encode_device_t {
     virtual bool
     init_encoder(const video::config_t &client_config, const video::sunshine_colorspace_t &colorspace, bool is_probe = false) = 0;
+
+    virtual bool
+    collect_hdr_luminance_stats() {
+      return hdr_luminance_stats.valid;
+    }
 
     amf::amf_encoder *amf = nullptr;
     bool hdr_luminance_analysis_available = false;
