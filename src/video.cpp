@@ -1052,17 +1052,27 @@ namespace video {
       if (!device || !device->nvenc) return {};
 
       using decision_e = hdr_metadata::vivid_startup_gate_t::decision_e;
-      const auto gated = vivid_gate.observe(device->hdr_luminance_stats, std::chrono::steady_clock::now());
+      using dv_action_e = dolby_vision::rpu_injector_t::startup_action_e;
+      const auto now = std::chrono::steady_clock::now();
+      // Collect completed analysis before either gate observes it. DV 8.4 also
+      // uses HLG/Vivid, so both timeouts must advance before any hold returns.
+      if (dolby_vision_.startup_pending()) {
+        device->collect_hdr_luminance_stats();
+      }
+      const auto dv_action = dolby_vision_.prepare_frame(device->hdr_luminance_stats, now);
+      const auto gated = vivid_gate.observe(device->hdr_luminance_stats, now);
+      if (dv_action == dv_action_e::idr || dv_action == dv_action_e::timed_out) {
+        force_idr = true;
+      }
       if (gated.transition != hdr_metadata::vivid_startup_gate_t::transition_e::none) {
         // The stream's metadata content changes here, so the client needs a fresh
         // IDR rather than a P frame that references pre-transition pictures.
         force_idr = true;
         log_vivid_gate_transition("NVENC", gated.transition, vivid_gate, device->hdr_luminance_stats);
       }
-      if (gated.decision == decision_e::hold) {
-        // Keep converting capture frames so the asynchronous GPU analyzer can
-        // produce independent samples, but do not let the client see a plain-HLG
-        // IDR followed by a mid-stream transition into HDR Vivid.
+      if (gated.decision == decision_e::hold || dv_action == dv_action_e::hold) {
+        // Keep converting so the asynchronous analyzer advances, without
+        // sending a startup IDR before its dynamic metadata is ready.
         return { {}, frame_index, false, false };
       }
 
@@ -1194,14 +1204,22 @@ namespace video {
       if (!device || !device->amf) return {};
 
       using decision_e = hdr_metadata::vivid_startup_gate_t::decision_e;
-      const auto gated = vivid_gate.observe(device->hdr_luminance_stats, std::chrono::steady_clock::now());
+      using dv_action_e = dolby_vision::rpu_injector_t::startup_action_e;
+      const auto now = std::chrono::steady_clock::now();
+      if (dolby_vision_.startup_pending()) {
+        device->collect_hdr_luminance_stats();
+      }
+      const auto dv_action = dolby_vision_.prepare_frame(device->hdr_luminance_stats, now);
+      const auto gated = vivid_gate.observe(device->hdr_luminance_stats, now);
+      if (dv_action == dv_action_e::idr || dv_action == dv_action_e::timed_out) {
+        force_idr = true;
+      }
       if (gated.transition != hdr_metadata::vivid_startup_gate_t::transition_e::none) {
         force_idr = true;
         log_vivid_gate_transition("AMF", gated.transition, vivid_gate, device->hdr_luminance_stats);
       }
-      if (gated.decision == decision_e::hold) {
-        // Same reasoning as NVENC: keep converting so the analyzer converges, but
-        // do not let the client see plain HLG before the switch into Vivid.
+      if (gated.decision == decision_e::hold || dv_action == dv_action_e::hold) {
+        // Keep converting during preroll, as in the NVENC path.
         amf::amf_encoded_frame held;
         held.frame_index = frame_index;
         return held;
@@ -2660,7 +2678,16 @@ namespace video {
 
     // The RPU rides with the access unit it was generated for, matched by the
     // encoder's own frame index round trip — never by callback order.
+    const bool dv_startup = session.dolby_vision_.startup_pending();
+    if (dv_startup && !encoded_frame.idr) {
+      BOOST_LOG(error) << "NVENC: Dolby Vision startup output is not an IDR; requesting encoder recovery";
+      return -1;
+    }
     const bool dv_injected = session.dolby_vision_.inject(encoded_frame.frame_index, encoded_frame.data);
+    if (dv_startup && !dv_injected) {
+      BOOST_LOG(warning) << "NVENC: first Dolby Vision IDR has no RPU; using the base layer for this encoder session";
+      session.dolby_vision_.disable();
+    }
     session.report_dolby_vision_output(dv_injected);
 
     auto packet = std::make_unique<packet_raw_generic>(std::move(encoded_frame.data), encoded_frame.frame_index, encoded_frame.idr);
@@ -2699,7 +2726,16 @@ namespace video {
 
     // AMF may return an older frame than the one submitted; the RPU splice
     // keys on the encoder's own output index, so pipeline lag cannot mismatch.
+    const bool dv_startup = session.dolby_vision_.startup_pending();
+    if (dv_startup && !encoded_frame.idr) {
+      BOOST_LOG(error) << "AMF: Dolby Vision startup output is not an IDR; requesting encoder recovery";
+      return -1;
+    }
     const bool dv_injected = session.dolby_vision_.inject(encoded_frame.frame_index, encoded_frame.data);
+    if (dv_startup && !dv_injected) {
+      BOOST_LOG(warning) << "AMF: first Dolby Vision IDR has no RPU; using the base layer for this encoder session";
+      session.dolby_vision_.disable();
+    }
     session.report_dolby_vision_output(dv_injected);
 
     auto packet = std::make_unique<packet_raw_generic>(std::move(encoded_frame.data), encoded_frame.frame_index, encoded_frame.idr);
