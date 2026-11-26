@@ -39,7 +39,6 @@ namespace crash::context {
     enhancement,  ///< HDR/image enhancement components
     platform_init,  ///< platf::init (capture, audio, input back ends)
     proc_init,  ///< proc::init
-    pyrowave,  ///< PyroWave runtime probe
     network,  ///< http::init, client fingerprint rules, mDNS and UPnP
     webhook,  ///< webhook configuration and runtime
     listeners,  ///< the HTTP/RTSP listener threads
@@ -63,7 +62,6 @@ namespace crash::context {
       case phase_e::enhancement: return "enhancement";
       case phase_e::platform_init: return "platform-init";
       case phase_e::proc_init: return "proc-init";
-      case phase_e::pyrowave: return "pyrowave";
       case phase_e::network: return "network";
       case phase_e::webhook: return "webhook";
       case phase_e::listeners: return "listeners";

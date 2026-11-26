@@ -37,7 +37,6 @@
 #include "main.h"
 #include "nvhttp.h"
 #include "process.h"
-#include "pyrowave/runtime.h"
 #include "background_probe.h"
 #include "startup_gate.h"
 #include "stream.h"
@@ -689,11 +688,6 @@ main(int argc, char *argv[]) {
   }
 
   reed_solomon_init();
-
-  // The PyroWave runtime probe creates a Vulkan device; run it now beside the other start-up work instead of inside the
-  // first RTSP DESCRIBE (which also serves every other RTSP request on the same thread).
-  crash::context::set_phase(crash::context::phase_e::pyrowave);
-  pyrowave::prewarm_server_runtime();
 
   // The input devices (the HID enumeration of the virtual mouse, the gamepad back ends) are opened beside the encoder probe, not before it: neither needs the other,
   // and a stream waits for both (startup::await_stream_ready). The guard keeps the place it had, so the order of the tear-down is the one it was.

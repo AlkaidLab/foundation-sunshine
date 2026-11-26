@@ -259,6 +259,7 @@ Source: "{#MySourceDir}\licenses\*"; DestDir: "{app}\licenses"; Flags: ignorever
 ; Mandatory tools
 Source: "{#MySourceDir}\tools\sunshinesvc.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
 Source: "{#MySourceDir}\tools\qiin-tabtip.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
+Source: "{#MySourceDir}\tools\alkaidlab_pyrowave_probe.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
 #if @SUNSHINE_MAT_CAPTURE_AVAILABLE@
 Source: "{#MySourceDir}\tools\mat-capture\sunshine-plugin-mat-capture.exe"; DestDir: "{app}\tools\mat-capture"; Flags: ignoreversion; Components: application
 Source: "{#MySourceDir}\tools\mat-capture\*.dll"; DestDir: "{app}\tools\mat-capture"; Flags: onlyifdoesntexist uninsrestartdelete; Components: application
