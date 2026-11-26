@@ -26,7 +26,6 @@ const NO_CONTROL = Object.freeze({
   remote_connect_network_secret: 'internal remote connection credential, never a searchable setting',
   remote_connect_peer: 'internal remote connection state',
   remote_connect_profile: 'internal remote connection state',
-  remote_connect_strict_client_keys: 'internal remote connection state: the public keys of enrolled remote clients, written by the enrollment service, never a searchable setting',
   remote_connect_virtual_ip: 'internal remote connection state',
   session_absolute_hours: 'new with the web login sessions (12 h default, 1..720): the defaults suit a person, no control in the redesigned UI, set in the config file',
   session_idle_minutes: 'new with the web login sessions (30 min default, 1..1440): the defaults suit a person, no control in the redesigned UI, set in the config file',

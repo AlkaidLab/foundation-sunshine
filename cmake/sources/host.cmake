@@ -93,6 +93,7 @@ set(SUNSHINE_HOST_SOURCES
     src/remote_connect/enrollment_session.cpp src/remote_connect/enrollment_session.h
     src/remote_connect/credential_transaction.cpp src/remote_connect/credential_transaction.h
     src/remote_connect/device_authorization.cpp src/remote_connect/device_authorization.h
+    src/remote_connect/device_record_store.cpp src/remote_connect/device_record_store.h
     src/remote_connect/invite.cpp src/remote_connect/invite.h
     src/remote_connect/pairing.cpp src/remote_connect/pairing.h
     src/remote_connect/service.cpp src/remote_connect/service.h

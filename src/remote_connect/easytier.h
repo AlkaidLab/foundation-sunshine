@@ -2,6 +2,7 @@
 
 #include <memory>
 #include <string>
+#include <vector>
 
 #include "types.h"
 
@@ -28,8 +29,17 @@ namespace remote_connect::easytier {
     bool
     running(std::string &error);
 
+    // Starts the core with `authorized_client_keys` in force: the EasyTier
+    // public keys of the devices this host authorizes, as lowercase hex. An
+    // empty set authorizes no device. The set is passed in on every start, so
+    // it always reflects what the caller currently considers authorized.
     bool
-    start(const enrollment_t &enrollment, const std::string &hostname, std::string &error);
+    start(
+      const enrollment_t &enrollment,
+      const std::vector<std::string> &authorized_client_keys,
+      const std::string &hostname,
+      std::string &error
+    );
 
     void
     stop();

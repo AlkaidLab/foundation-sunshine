@@ -27,7 +27,6 @@
 #include "src/process.h"
 #include "src/rtsp.h"
 #include "src/stream.h"
-#include "src/config.h"
 #include "strict_policy.h"
 
 using namespace std::literals;
@@ -103,17 +102,23 @@ namespace remote_connect::easytier {
       return escaped;
     }
 
+    // `authorized_client_keys` is what the core will be told: the EasyTier
+    // public keys of the devices the host authorizes, as lowercase hex. The
+    // caller passes the set it wants in force; nothing is read from storage
+    // here, so the configuration always matches the caller's idea of who is
+    // authorized.
     bool
-    write_config(const enrollment_t &enrollment, const std::string &hostname) {
-      // The strict-data experiment policy carries the enrolled client keys.
-      // An invalid persisted list must fail the start loudly: silently
-      // omitting the table would downgrade an intended strict host to an
-      // unrestricted one.
-      const auto strict_keys = strict_policy::parse_client_keys(
-        config::nvhttp.remote_connect_strict_client_keys
-      );
-      if (!strict_keys.valid) {
-        BOOST_LOG(error) << "Remote connection strict client keys are invalid: " << strict_keys.error;
+    write_config(
+      const enrollment_t &enrollment,
+      const std::vector<std::string> &authorized_client_keys,
+      const std::string &hostname
+    ) {
+      // A malformed key would change what the strict-data table says, or
+      // break the table. Leaving the table out instead would quietly turn a
+      // host that means to be strict into one that is not, so the start fails.
+      const auto strict_table = strict_policy::render_table(authorized_client_keys);
+      if (!strict_table) {
+        BOOST_LOG(error) << "An authorized remote client key is not well-formed; refusing to start EasyTier with it";
         return false;
       }
 
@@ -148,7 +153,7 @@ namespace remote_connect::easytier {
            << "proxy_forward_by_system = false\n"
            << "accept_dns = false\n"
            << "relay_network_whitelist = \"\"\n"
-           << strict_policy::render_table(strict_keys.keys);
+           << *strict_table;
       return file_handler::write_file(file_handler::path_to_utf8(config_path()).c_str(), toml.str()) == 0;
     }
   }  // namespace
@@ -244,7 +249,12 @@ namespace remote_connect::easytier {
   }
 
   bool
-  runtime_t::start(const enrollment_t &enrollment, const std::string &hostname, std::string &error) {
+  runtime_t::start(
+    const enrollment_t &enrollment,
+    const std::vector<std::string> &authorized_client_keys,
+    const std::string &hostname,
+    std::string &error
+  ) {
     if (running(error)) return true;
 
     state_->process.reset();
@@ -256,7 +266,7 @@ namespace remote_connect::easytier {
       return false;
     }
 
-    if (!write_config(enrollment, hostname)) {
+    if (!write_config(enrollment, authorized_client_keys, hostname)) {
       error = "Unable to write EasyTier configuration";
       return false;
     }

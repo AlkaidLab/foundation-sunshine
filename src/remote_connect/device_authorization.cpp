@@ -3,12 +3,13 @@
 #include <algorithm>
 #include <utility>
 
+#include "strict_policy.h"
+
 namespace remote_connect {
   namespace {
     using credential_transaction::action_t;
     using credential_transaction::device_t;
     using credential_transaction::phase_t;
-    using credential_transaction::public_key_t;
     using credential_transaction::record_t;
 
     // The in-memory record is the revision that is on disk, or is unrecovered;
@@ -24,25 +25,13 @@ namespace remote_connect {
       return { false, std::move(error) };
     }
 
-    std::string
-    to_hex(const public_key_t &key) {
-      static constexpr char digits[] = "0123456789abcdef";
-      std::string out;
-      out.reserve(key.size() * 2);
-      for (const auto byte : key) {
-        out.push_back(digits[byte >> 4]);
-        out.push_back(digits[byte & 0x0f]);
-      }
-      return out;
-    }
-
     std::vector<std::string>
     active_keys(const record_t &record) {
       std::vector<std::string> keys;
       keys.reserve(record.active.size());
       for (const auto &[id, device] : record.active) {
         (void) id;
-        keys.push_back(to_hex(device.easytier_public_key));
+        keys.push_back(strict_policy::key_hex(device.easytier_public_key));
       }
       return keys;
     }

@@ -1,5 +1,9 @@
 #pragma once
 
+#include <string>
+#include <vector>
+
+#include "credential_transaction.h"
 #include "types.h"
 
 namespace remote_connect {
@@ -23,19 +27,21 @@ namespace remote_connect {
   operation_result_t
   reset_enrollment();
 
-  // Registers or removes one enrolled remote client public key (64 hex
-  // characters, X25519). The caller must have authenticated the key through
-  // the enrollment protocol first; these functions only persist and apply it.
+  // The remote devices this host authorizes, in id order.
   //
-  // Both are idempotent and serialized against every other service operation.
-  // The whole list is persisted before the in-memory value changes, and a
-  // running core is restarted so the new policy takes effect; if the restart
-  // fails the previous list is restored. The first enrolled key turns this
-  // host strict, which disconnects any client that is not enrolled.
-  operation_result_t
-  enroll_strict_client_key(const std::string &key_hex);
+  // The device record is the single source of truth for who is authorized.
+  // The EasyTier core is told the keys of these devices each time it starts,
+  // and nowhere else. Returns an empty list when the record could not be
+  // adopted; status() then carries the reason.
+  std::vector<credential_transaction::device_t>
+  devices();
 
+  // Revokes a device for good: its key and certificate can never be enrolled
+  // again. The core is restarted with the device's key removed, which
+  // interrupts every current remote session on this host. This ends the
+  // device's access to the virtual network; a GameStream pairing it already
+  // holds is managed by the clients page.
   operation_result_t
-  revoke_strict_client_key(const std::string &key_hex);
+  revoke_device(const std::string &device_id);
 
 }  // namespace remote_connect

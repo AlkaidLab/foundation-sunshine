@@ -1,9 +1,13 @@
 #include "service.h"
+#include "device_authorization.h"
+#include "device_record_store.h"
 #include "easytier.h"
-#include "strict_policy.h"
 
 #include <algorithm>
+#include <cstdint>
+#include <filesystem>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <stdexcept>
@@ -12,13 +16,27 @@
 #include <openssl/rand.h>
 
 #include "src/config.h"
+#include "src/file_handler.h"
 #include "src/logging.h"
+#include "src/platform/common.h"
 
 namespace remote_connect {
   namespace {
     std::mutex service_mutex;
     easytier::runtime_t runtime;
     std::string last_error;
+
+    // The authorized client keys are a projection of the device record: the
+    // EasyTier public keys the core is told to authorize when it next starts,
+    // and the ones the running core was started with. They are set only by the
+    // authorizer's apply effect, so they cannot drift from the record.
+    std::vector<std::string> authorized_client_keys;
+
+    std::mutex adoption_mutex;
+    // The device record that has been read and recovered, and from where. It
+    // is adopted once per location, before the core is first started.
+    std::filesystem::path adopted_record_path;
+    bool devices_adopted = false;
 
     std::string
     random_hex(std::size_t byte_count) {
@@ -145,7 +163,7 @@ namespace remote_connect {
     bool
     start_locked() {
       if (!ensure_config_locked()) return false;
-      const bool started = runtime.start(current_enrollment(), config::nvhttp.sunshine_name, last_error);
+      const bool started = runtime.start(current_enrollment(), authorized_client_keys, config::nvhttp.sunshine_name, last_error);
       if (started) last_error.clear();
       return started;
     }
@@ -156,81 +174,93 @@ namespace remote_connect {
       last_error.clear();
     }
 
-    operation_result_t
-    update_strict_client_key(const std::string &key_hex, bool enroll) {
-      // An invalid persisted list is never repaired as a side effect of adding
-      // or removing one key: refuse the change and surface the problem.
-      const auto previous_raw = config::nvhttp.remote_connect_strict_client_keys;
-      const auto current = strict_policy::parse_client_keys(previous_raw);
-      if (!current.valid) {
-        last_error = "Remote connection client keys are invalid: " + current.error;
-        return {false, status_locked()};
-      }
+    // The core is told who is authorized only when it starts, so putting a
+    // changed authorized set in force means a restart, which interrupts every
+    // current remote session on this host.
+    bool
+    realign_runtime_locked() {
+      runtime.stop();
+      const bool started = start_locked();
+      if (!started) runtime.stop();
+      return started;
+    }
 
-      const auto requested = strict_policy::parse_client_keys(key_hex);
-      if (!requested.valid || requested.keys.size() != 1) {
-        last_error = "Remote client key must be 64 hex characters";
-        return {false, status_locked()};
-      }
-      const auto &key = requested.keys[0];
+    std::filesystem::path
+    device_record_path() {
+      return platf::appdata() / "remote-devices.json";
+    }
 
-      auto keys = current.keys;
-      const auto existing = std::find(keys.begin(), keys.end(), key);
-      const bool changes_list = enroll ? existing == keys.end() : existing != keys.end();
-      if (!changes_list) {
-        last_error.clear();
-        return {true, status_locked()};
-      }
-      if (enroll) {
-        keys.push_back(key);
-      }
-      else {
-        keys.erase(existing);
-      }
-
-      std::string replacement;
-      for (std::size_t index = 0; index < keys.size(); ++index) {
-        if (index != 0) replacement += ';';
-        replacement += keys[index];
-      }
-
-      // Persist first: on failure the in-memory list and the runtime are
-      // untouched, so the running core keeps exactly the policy it started with.
-      if (!config::update_config({{"remote_connect_strict_client_keys", replacement}})) {
-        last_error = "Unable to persist remote connection client keys";
-        return {false, status_locked()};
-      }
-      config::nvhttp.remote_connect_strict_client_keys = replacement;
-
-      // A running core loaded the previous policy at start; restart it so the
-      // change takes effect now rather than at the next start.
-      if (config::nvhttp.remote_connect_enabled) {
-        runtime.stop();
-        if (!start_locked()) {
-          const auto replacement_error = last_error;
-          runtime.stop();
-          if (config::update_config({{"remote_connect_strict_client_keys", previous_raw}})) {
-            config::nvhttp.remote_connect_strict_client_keys = previous_raw;
-            last_error.clear();
-            if (!start_locked()) {
-              const auto rollback_error = last_error;
-              last_error = replacement_error + "; previous client keys were restored, but their runtime also failed to start: " + rollback_error;
-            }
-            else {
-              last_error = replacement_error + "; previous client keys and runtime were restored";
-            }
-          }
-          else {
-            // The new list is what is on disk. Leave memory matching it instead
-            // of reporting a rollback that would silently undo itself on restart.
-            last_error = replacement_error + "; unable to persist the previous client keys during rollback, so the new client keys remain saved and take effect at the next start";
-          }
-          return {false, status_locked()};
+    // Lock order: the authorizer's lock is taken before the service lock, by
+    // the apply effect below. Nothing that holds the service lock may call
+    // into the authorizer, or the two would deadlock.
+    device_authorization_effects_t
+    authorization_effects() {
+      device_authorization_effects_t effects;
+      effects.persist = [](const credential_transaction::record_t &record) {
+        return device_record_store::store(device_record_path(), record);
+      };
+      effects.apply = [](const std::vector<std::string> &keys) {
+        std::lock_guard lock(service_mutex);
+        authorized_client_keys = keys;
+        std::string ignored;
+        // Not running: the next start picks the set up.
+        if (!runtime.running(ignored)) return true;
+        return realign_runtime_locked();
+      };
+      effects.next_transaction_id = []() -> std::optional<credential_transaction::transaction_id_t> {
+        credential_transaction::transaction_id_t id {};
+        // A zero id is what reduce() treats as "no transaction".
+        if (RAND_bytes(id.data(), static_cast<int>(id.size())) != 1 ||
+            std::all_of(id.begin(), id.end(), [](std::uint8_t byte) { return byte == 0; })) {
+          return std::nullopt;
         }
+        return id;
+      };
+      return effects;
+    }
+
+    // The session that takes enrollments. No endpoint issues invitations yet.
+    enrollment_session_t enrollment_session;
+    std::unique_ptr<device_authorizer_t> authorizer = std::make_unique<device_authorizer_t>(enrollment_session, authorization_effects());
+
+    // Reads the device record and recovers one a crash left mid-transaction.
+    // It has to run before the service lock is taken: adopting a record
+    // realigns the runtime, and that takes the service lock.
+    bool
+    ensure_devices_adopted() {
+      std::lock_guard lock(adoption_mutex);
+      const auto path = device_record_path();
+      if (devices_adopted && adopted_record_path == path) return true;
+
+      const auto loaded = device_record_store::load(path);
+      const auto refuse = [&path](const std::string &message) {
+        {
+          std::lock_guard lock(service_mutex);
+          last_error = message;
+        }
+        BOOST_LOG(error) << message;
+        return false;
+      };
+
+      // Neither of these may be treated as "no devices". Starting from an
+      // empty record would authorize nobody, which is safe by itself, but the
+      // next enrollment would then overwrite a file that may still hold this
+      // host's devices.
+      switch (loaded.status) {
+        case device_record_store::load_status_e::invalid:
+          return refuse("The remote device record is not valid, so remote access stays off to keep it from being overwritten: " + file_handler::path_to_utf8(path));
+        case device_record_store::load_status_e::unreadable:
+          return refuse("The remote device record could not be read, so remote access stays off: " + file_handler::path_to_utf8(path));
+        case device_record_store::load_status_e::fresh:
+        case device_record_store::load_status_e::loaded:
+          break;
       }
 
-      last_error.clear();
-      return {true, status_locked()};
+      const auto adopted = authorizer->adopt(loaded.record);
+      if (!adopted.success) return refuse(adopted.error);
+      adopted_record_path = path;
+      devices_adopted = true;
+      return true;
     }
   }  // namespace
 
@@ -242,6 +272,10 @@ namespace remote_connect {
 
   pairing_state_t
   prepare_pairing() {
+    if (!ensure_devices_adopted()) {
+      std::lock_guard lock(service_mutex);
+      return { false, config::nvhttp.remote_connect_enabled, std::nullopt, last_error };
+    }
     std::lock_guard lock(service_mutex);
     if (!config::nvhttp.remote_connect_enabled) {
       return { true, false, std::nullopt, {} };
@@ -260,6 +294,15 @@ namespace remote_connect {
 
   void
   start_if_enabled() {
+    if (!ensure_devices_adopted()) {
+      std::string message;
+      {
+        std::lock_guard lock(service_mutex);
+        message = last_error;
+      }
+      BOOST_LOG(warning) << "Remote connection failed to start: " << message;
+      return;
+    }
     std::lock_guard lock(service_mutex);
     if (config::nvhttp.remote_connect_enabled && !start_locked()) {
       BOOST_LOG(warning) << "Remote connection failed to start: " << last_error;
@@ -268,6 +311,10 @@ namespace remote_connect {
 
   operation_result_t
   set_enabled(bool enabled) {
+    if (enabled && !ensure_devices_adopted()) {
+      std::lock_guard lock(service_mutex);
+      return {false, status_locked()};
+    }
     std::lock_guard lock(service_mutex);
     const bool previous = config::nvhttp.remote_connect_enabled;
 
@@ -298,6 +345,12 @@ namespace remote_connect {
 
   operation_result_t
   reset_enrollment() {
+    // This can start the core, so it is held to the same rule as the other
+    // entry points: no core is started until the device record is adopted.
+    if (!ensure_devices_adopted()) {
+      std::lock_guard lock(service_mutex);
+      return {false, status_locked()};
+    }
     std::lock_guard lock(service_mutex);
     const auto previous = current_enrollment();
 
@@ -348,13 +401,26 @@ namespace remote_connect {
     }
   }
 
-  operation_result_t
-  enroll_strict_client_key(const std::string &key_hex) {
-    return update_strict_client_key(key_hex, true);
+  std::vector<credential_transaction::device_t>
+  devices() {
+    if (!ensure_devices_adopted()) return {};
+    return authorizer->devices();
   }
 
   operation_result_t
-  revoke_strict_client_key(const std::string &key_hex) {
-    return update_strict_client_key(key_hex, false);
+  revoke_device(const std::string &device_id) {
+    if (!ensure_devices_adopted()) {
+      std::lock_guard lock(service_mutex);
+      return {false, status_locked()};
+    }
+    // Holds the authorizer's lock; its apply effect takes the service lock
+    // to restart the core with the device's key removed.
+    const auto revoked = authorizer->revoke(device_id);
+    std::lock_guard lock(service_mutex);
+    if (!revoked.success) {
+      last_error = revoked.error;
+      BOOST_LOG(error) << "Remote device was not revoked: " << revoked.error;
+    }
+    return {revoked.success, status_locked()};
   }
 }  // namespace remote_connect
