@@ -78,6 +78,10 @@ internal static partial class Tests
         Same("-popupwindow -force-d3d12", LaunchSettings.DirectArguments(own.Launch, null), "direct start: the profile's borderless window and extra arguments");
         Same("-screen-width 1280 -screen-height 720 -screen-fullscreen 0 -force-d3d12", LaunchSettings.DirectArguments(own.Launch, new ScreenArgs(1280, 720, ScreenArgs.Windowed)),
             "direct start: the host's screen plan, then the extra arguments");
+        Same("-screen-width 1280 -screen-height 720 -popupwindow -force-d3d12", LaunchSettings.DirectArguments(own.Launch, new ScreenArgs(1280, 720, "")),
+            "direct start: a size-only screen plan keeps the profile's borderless -popupwindow");
+        Same("-screen-width 1280 -screen-height 720 -popupwindow -x", LaunchSettings.DirectArguments(new LaunchSettings(Borderless: true, ExtraArguments: "-popupwindow -x"), new ScreenArgs(1280, 720, "")),
+            "direct start: -popupwindow is not repeated when ExtraArguments already carries it");
         Same("-popupwindow -x", new LaunchSettings(Borderless: true, ExtraArguments: "-popupwindow -x").Arguments(), "-popupwindow is not repeated");
         Same("", LaunchSettings.DirectArguments(null, null), "direct start: nothing asked");
     }

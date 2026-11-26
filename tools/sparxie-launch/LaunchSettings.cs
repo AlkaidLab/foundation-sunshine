@@ -64,11 +64,12 @@ internal sealed record LaunchSettings(int Width = 0, int Height = 0, bool? Fulls
         return string.Join(' ', new[] { Borderless && !repeated ? BorderlessArgument : "", ExtraArguments }.Where(part => part.Length > 0));
     }
 
-    /// <summary>The command line of a direct start: the host's screen arguments (else the profile's borderless window), then the person's extra arguments.</summary>
+    /// <summary>The command line of a direct start: the host's screen arguments (keeping the profile's borderless window when the plan leaves the window mode unspecified), then the person's extra arguments.</summary>
     public static string DirectArguments(LaunchSettings? profile, ScreenArgs? screen)
     {
         if (screen is null || screen.IsEmpty) return profile?.Arguments() ?? "";
-        return string.Join(' ', new[] { screen.Arguments(), profile?.ExtraArguments ?? "" }.Where(part => part.Length > 0));
+        var tail = screen.WindowMode.Length == 0 ? (profile?.Arguments() ?? "") : (profile?.ExtraArguments ?? "");
+        return string.Join(' ', new[] { screen.Arguments(), tail }.Where(part => part.Length > 0));
     }
 
     public byte[] Encode() => Proto.Message(
