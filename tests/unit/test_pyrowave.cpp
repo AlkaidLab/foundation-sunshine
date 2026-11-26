@@ -35,6 +35,7 @@ extern "C" {
 #include <iterator>
 #include <limits>
 #include <memory>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -1738,13 +1739,15 @@ TEST(PyrowaveRuntimeTest, AdvertisementMatchesTheServerPlatform) {
 }
 
 TEST(PyrowaveRuntimeTest, ProbeExitCodeReasonNamesTheKnownFailures) {
+  constexpr std::string_view crash_reason = "the probe process crashed; a third-party Vulkan implicit layer may be at fault";
   EXPECT_EQ(pyrowave::probe_exit_code_reason(0), "the runtime is available");
   EXPECT_EQ(pyrowave::probe_exit_code_reason(2), "the PyroWave API version does not match");
-  EXPECT_EQ(pyrowave::probe_exit_code_reason(3), "the default Vulkan device could not be created");
-  EXPECT_EQ(pyrowave::probe_exit_code_reason(4), "the default device does not support the required interop");
-  EXPECT_EQ(pyrowave::probe_exit_code_reason(5), "the probe process failed unexpectedly");
-  EXPECT_EQ(pyrowave::probe_exit_code_reason(0xC0000005u),
-            "the probe process crashed (0xC0000005); a third-party Vulkan implicit layer may be at fault");
+  EXPECT_EQ(pyrowave::probe_exit_code_reason(3), "the probe process aborted");
+  EXPECT_EQ(pyrowave::probe_exit_code_reason(4), "the default Vulkan device could not be created");
+  EXPECT_EQ(pyrowave::probe_exit_code_reason(5), "the default device does not support the required interop");
+  EXPECT_EQ(pyrowave::probe_exit_code_reason(6), "the probe process failed unexpectedly");
+  EXPECT_EQ(pyrowave::probe_exit_code_reason(0xC0000005u), crash_reason);
+  EXPECT_EQ(pyrowave::probe_exit_code_reason(0xC00000FDu), crash_reason);
   EXPECT_TRUE(pyrowave::probe_exit_code_reason(1).empty());
   EXPECT_TRUE(pyrowave::probe_exit_code_reason(12345).empty());
 }

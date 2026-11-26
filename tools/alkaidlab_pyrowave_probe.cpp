@@ -3,12 +3,13 @@
  * @brief The out-of-process Vulkan probe of the PyroWave runtime.
  *
  * The host runs this tool once, when a client actually selects the PyroWave format, and reads the
- * exit code: 0 available, 2 API version, 3 default device, 4 interop, 5 unexpected failure. A
+ * exit code: 0 available, 2 API version, 4 default device, 5 interop, 6 unexpected failure. A
  * third-party Vulkan implicit layer that crashes or hangs ends only this process, and the host
  * stops advertising PyroWave for the rest of its lifetime.
  *
  * The tool is a headless helper: no configuration, no log, no output and no dialog, and every
- * path ends in an exit code.
+ * path ends in an exit code. The codes skip 3: it is the exit code of the C runtime's abort(),
+ * so an abnormal end of this process is never mistaken for one of its own answers.
  */
 #define NOMINMAX
 #include <windows.h>
@@ -48,16 +49,16 @@ main() {
       if (device != nullptr) {
         pyrowave_device_destroy(device);
       }
-      return 3;
+      return 4;
     }
 
     const auto interop_supported = pyrowave_device_confirm_interop_support(device);
     pyrowave_device_destroy(device);
-    return interop_supported ? 0 : 4;
+    return interop_supported ? 0 : 5;
   }
   catch (...) {
     // The C API is implemented in C++: an exception that escapes it answers "unavailable" with a
-    // code of its own, instead of an abort that would read like a device-creation failure.
-    return 5;
+    // code of its own, so it is told apart from an abnormal end of the process.
+    return 6;
   }
 }

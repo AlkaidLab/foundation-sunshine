@@ -138,10 +138,12 @@ namespace pyrowave {
         const auto reason = probe_exit_code_reason(exit_code);
         safe_probe_log([&] {
           if (reason.empty()) {
-            BOOST_LOG(warning) << "PyroWave runtime probe failed: the probe process exited with code "sv << exit_code;
+            BOOST_LOG(warning) << "PyroWave runtime probe failed: the probe process exited with code 0x"sv
+                               << util::hex(exit_code).to_string_view();
           }
           else {
-            BOOST_LOG(warning) << "PyroWave runtime probe failed: "sv << reason;
+            BOOST_LOG(warning) << "PyroWave runtime probe failed: "sv << reason << " (exit code 0x"sv
+                               << util::hex(exit_code).to_string_view() << ')';
           }
         });
         return false;
@@ -173,14 +175,20 @@ namespace pyrowave {
       case 2:
         return "the PyroWave API version does not match"sv;
       case 3:
-        return "the default Vulkan device could not be created"sv;
+        // The C runtime ends a process with this code on abort(); the tool itself never returns it.
+        return "the probe process aborted"sv;
       case 4:
-        return "the default device does not support the required interop"sv;
+        return "the default Vulkan device could not be created"sv;
       case 5:
+        return "the default device does not support the required interop"sv;
+      case 6:
         return "the probe process failed unexpectedly"sv;
-      case 0xC0000005u:
-        return "the probe process crashed (0xC0000005); a third-party Vulkan implicit layer may be at fault"sv;
       default:
+        if (exit_code >= 0x80000000u) {
+          // The process was ended by an NTSTATUS failure, an exception or the loader, instead of returning from
+          // main. A defective third-party Vulkan implicit layer is the usual cause.
+          return "the probe process crashed; a third-party Vulkan implicit layer may be at fault"sv;
+        }
         return {};
     }
   }
@@ -214,7 +222,16 @@ namespace pyrowave {
     static std::once_flag probe_once_flag;
     static bool available = false;
     std::call_once(probe_once_flag, [] {
-      available = probe_once();
+      // The gate is noexcept and the probe is optional: an exception out of it, out of building the command
+      // line for instance, leaves PyroWave unavailable instead of ending the host.
+      try {
+        available = probe_once();
+      }
+      catch (...) {
+        safe_probe_log([] {
+          BOOST_LOG(warning) << "PyroWave runtime probe failed: an exception escaped the probe"sv;
+        });
+      }
       g_probe_state.record_probe_result(available);
     });
     return available;
