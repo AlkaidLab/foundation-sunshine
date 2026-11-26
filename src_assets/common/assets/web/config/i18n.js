@@ -83,6 +83,12 @@ export default async function() {
         }
     }
     if (!locale) {
+        // GUI 内嵌页面：面板代理把面板语言写进页面的 cookie，优先于 WebView 的浏览器语言
+        // （部分机器上 WebView2 报告的语言与面板实际使用的语言不一致）
+        const panel = document.cookie.match(/(?:^|;\s*)sunshine_panel_locale=([A-Za-z_]+)/);
+        if (panel && SUPPORTED_LOCALES.includes(panel[1])) locale = panel[1];
+    }
+    if (!locale) {
         locale = detectSystemLocale();
     }
     // zh 变体归一：消息文件只有 zh.json 与 zh_TW.json 两份，后端白名单也只有 zh/zh_TW——但旧配置可能残留 zh_CN 之类白名单外的值，
