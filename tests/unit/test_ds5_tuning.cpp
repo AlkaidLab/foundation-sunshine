@@ -1464,7 +1464,7 @@ TEST(Ds5TuningRuntime, ExtensionTuningFoldsPlayerMuteVolumeAndRouteIntoTheOutput
   EXPECT_EQ(fields.speaker_volume, ds5::tuning::runtime::speaker_level_byte(0.5f));
   EXPECT_EQ(fields.headphone_volume, ds5::tuning::runtime::headset_level_byte(0.25f));
   EXPECT_EQ(fields.mic_volume, 0x40u);
-  EXPECT_EQ(fields.audio_routing, 3u);  // speaker path
+  EXPECT_EQ(fields.audio_routing, 0x30u);  // speaker path in bits 5:4
   state.audio_route.store(2);
   fields = {};
   ds5::tuning::runtime::apply_extension_tuning(fields, false);
@@ -1480,6 +1480,29 @@ TEST(Ds5TuningRuntime, ExtensionTuningFoldsPlayerMuteVolumeAndRouteIntoTheOutput
   EXPECT_NE(fields.valid_mask & ext::out_mic_mute, 0u);
   EXPECT_EQ(fields.mic_mute, 1u);
   reset();
+}
+
+TEST_F(Ds5TuningStore, AudioRoutingOverridePreservesOtherAudioControlBits) {
+  namespace ext = ds5::control_extension;
+  std::array<std::uint8_t, 47> report {};
+  report[0] = ext::report_flags::flag0_audio_control;
+  report[7] = 0xAD;  // Output path 2, with other audio control bits set.
+  const auto game = ext::from_output_report(report.data(), 0);
+  ext::output_t sent;
+  const std::array<std::pair<std::uint32_t, std::uint8_t>, 3> routes {
+    std::pair<std::uint32_t, std::uint8_t> { 1, 0xBD },  // Speaker: output path 3.
+    { 2, 0x8D },  // Headset: output path 0.
+    { 0, 0xAD },  // Auto: restore the game's original byte.
+  };
+  for (const auto &[route, expected] : routes) {
+    SCOPED_TRACE(route);
+    ds5::tuning::runtime::state().audio_route.store(route);
+    const auto delta = ds5::tuning::runtime::plan_extension_update(game, sent, 0, false);
+    EXPECT_EQ(delta.valid_mask, ext::out_audio_routing);
+    const auto body = ext::encode(delta);
+    ASSERT_TRUE(body.has_value());
+    EXPECT_EQ((*body)[14], expected);
+  }
 }
 
 TEST_F(Ds5TuningStore, PublishesTheLedAndAudioKeysIntoTheRuntime) {

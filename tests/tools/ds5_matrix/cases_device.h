@@ -205,8 +205,8 @@ namespace ds5::matrix {
     ext_case(94, { val(kv(94, true), "muted") }, { 5, 13 }, json::object(), kv(94, true), [](const sig_t &, const vecs &v) { return v[0][5] == 1 && v[0][13] == 1 ? std::string {} : std::string("microphone mute is not 1; "); });
     ext_case(95, { val(kv(95, "speaker"), "speaker"), val(kv(95, "headset"), "headset") }, { 6, 14 }, json::object(), kv(95, "speaker"), [](const sig_t &, const vecs &v) {
       std::string why;
-      if (v[0][6] != 3 || v[0][14] != 3) why += "speaker route is not 3; ";
-      if (v[1][6] != 0 || v[1][14] != 0) why += "headset route is not 0; ";
+      if (v[0][6] != 0x32 || v[0][14] != 0x30) why += "speaker route did not set bits 5:4 while preserving other audio controls; ";
+      if (v[1][6] != 0x02 || v[1][14] != 0) why += "headset route did not clear bits 5:4 while preserving other audio controls; ";
       return why;
     });
 
