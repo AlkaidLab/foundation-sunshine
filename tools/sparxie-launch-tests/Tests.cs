@@ -37,6 +37,7 @@ internal static partial class Tests
             EndfieldFields();
             PluginGames(scratch);
             ScreenArguments(scratch);
+            LaunchSettingsSession(scratch);
             StageReports(scratch);
             CrashReports(scratch);
         }

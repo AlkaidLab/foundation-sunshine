@@ -84,6 +84,7 @@ internal static class Launcher
             profile = profile with { Screen = requested };
             log.Info($"screen arguments: {requested.Arguments()}");
         }
+        if (profile.Launch is { } stored) log.Info("launch settings of the profile: " + stored.Describe());
         log.Info("settings: " + (profile.Hoyo?.Describe() ?? (profile.PluginSettings is { } plugin ? $"plugin {profile.Game}: {plugin}" : "none (the profile carries no hoyo block)")));
         if (!File.Exists(profile.ExecutablePath)) log.Warn($"the game executable does not exist: {profile.ExecutablePath}");
 
@@ -261,11 +262,21 @@ internal static class Launcher
         if (profile.Hoyo is { TouchUi: false } && !capabilities.Has(PingInfo.TouchUiSwitch))
             return "this profile asks for a session without the touch interface, but the installed Sparxie does not support that (no touch-ui-switch capability)";
 
-        // the screen arguments need a Broker that carries them; an older one would drop them silently, so the log says so and the registry stays the only lever
-        if (profile.Screen is { IsEmpty: false } && !capabilities.Has(PingInfo.ScreenArgsCapability))
+        // Field 6 of the snapshot is ScreenArgs in a build with screen-args and LaunchSettings in official Sparxie: only what the build reads is left on the profile.
+        // Without either, the screen arguments would be dropped silently, so the log says so and the registry stays the only lever.
+        if (capabilities.Has(PingInfo.ScreenArgsCapability))
         {
-            warn("the installed Sparxie has no screen-args capability: the game starts without screen arguments (the host's registry write still applies)");
-            profile = profile with { Screen = null };
+            profile = profile with { Launch = null };
+        }
+        else if (capabilities.Has(PingInfo.LaunchSettingsCapability))
+        {
+            profile = profile with { Launch = LaunchSettings.Merge(profile.Launch, profile.Screen), Screen = null };
+        }
+        else
+        {
+            if (profile.Screen is { IsEmpty: false })
+                warn("the installed Sparxie has no screen-args or launch-settings capability: the game starts without screen arguments (the host's registry write still applies)");
+            profile = profile with { Screen = null, Launch = null };
         }
 
         // an Endfield session of the first generation needs a Broker that knows the title; an older one would refuse it or start something else.
@@ -327,6 +338,7 @@ internal static class Launcher
         log.Info($"capabilities: {capabilities}");
         var refusal = CheckSupport(ref profile, capabilities, log.Warn);
         if (refusal is not null) return Not(ExitCodes.Unsupported, refusal);
+        if (profile.Launch is { } launching) log.Info("launch settings sent: " + launching.Describe());
 
         // the event stream first, then the session
         var events = rpc.OpenEvents(stop.Token);

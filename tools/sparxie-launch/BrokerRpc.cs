@@ -39,6 +39,9 @@ internal sealed record PingInfo(int Protocol, string BrokerVersion, IReadOnlyLis
     /// <summary>ProfileSnapshot.screen (field 6): the session's size and window mode as Unity arguments of the game.</summary>
     public const string ScreenArgsCapability = "screen-args";
 
+    /// <summary>ProfileSnapshot.launch (field 6) of official Sparxie: size, full screen, borderless window and extra game arguments.</summary>
+    public const string LaunchSettingsCapability = "launch-settings";
+
     public bool Has(string capability) => Capabilities.Contains(capability);
 
     public static PingInfo Parse(byte[] bytes)
@@ -125,9 +128,12 @@ internal sealed class BrokerRpc : IDisposable
         // means its defaults. The built-in games carry none, and the Broker refuses them when they do.
         if (profile.PluginSettings is { Length: > 0 } pluginSettings && GameIds.IsPlugin(profile.Game))
             nested = Proto.Append(nested, 7, System.Text.Encoding.UTF8.GetBytes(pluginSettings));
-        // ScreenArgs screen = 6 { width 1, height 2, window_mode 3 }; only when there is something to say (a Broker without the capability must not be sent it)
+        // Field 6 is one of two messages, by the build (Launcher.CheckSupport leaves only the one it reads), and only when there is something to say:
+        // ScreenArgs screen = 6 { width 1, height 2, window_mode 3 } (screen-args), or LaunchSettings launch = 6 (launch-settings, official Sparxie)
         if (profile.Screen is { IsEmpty: false } screen)
             nested = Proto.Append(nested, 6, Proto.Message((1, Proto.Int(screen.Width)), (2, Proto.Int(screen.Height)), (3, Proto.String(screen.WindowMode))));
+        else if (profile.Launch is { IsEmpty: false } launch)
+            nested = Proto.Append(nested, 6, launch.Encode());
         return Proto.Message((1, Proto.Int(ProtocolVersion)), (2, Proto.String(requestId)), (3, Proto.Bytes(nested)));
     }
 

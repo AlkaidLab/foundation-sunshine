@@ -212,6 +212,8 @@ The launcher tells a Broker that lists no features apart from one that lists the
 2. `capabilities.json` beside `Sparxie.Broker.exe`, for builds whose Broker predates the `Ping` list (an empty list there also means no features);
 3. the installed files: `endfield` when both `EndfieldCore.dll` and `EndfieldRuntime.dll` ship, `touch-ui-switch` and `screen-args` when `Sparxie.Contracts.dll` carries the protocol types `TouchUiEnabled` and `ScreenArgs`.
 
+`launch-settings` is apart from this order: no Broker lists it, so it is added whatever the source when `Sparxie.Contracts.dll` carries `ExtraArguments` and no `ScreenArgs` (official Sparxie, see [Official Sparxie launch settings](#official-sparxie-launch-settings)) and the list has no `screen-args`.
+
 A feature found by none of these is missing, and the refusals above apply to it.
 
 * `touchUiSwitch: true`: a `kbm` application keeps `mode: "touch"` (the launcher, Sparxie's settings) and its profile says `touchUiEnabled: false`.
@@ -1015,6 +1017,20 @@ The plugin's `settings` for an Endfield application, limited to the keys its `se
   starts the game directly under the decoy parent, with the usual notice.
 * **Keyboard, mouse and gamepad.** Endfield's input is the plugin's `inputMode`, so an Endfield `kbm` application runs through Sparxie without the touch-interface switch the
   Hoyo titles need.
+
+## Official Sparxie launch settings
+
+Official Sparxie ([sparxie-dev/Sparxie](https://github.com/sparxie-dev/Sparxie), 0.2.0) belongs to the second generation above. It ships no `capabilities.json`, its
+`Ping` lists nothing, and field 6 of `ProfileSnapshot` is `LaunchSettings launch { width 1, height 2, fullscreen 3 (0 unchanged, 1 full screen, 2 window),
+extra_arguments 4, borderless 5 }`, not `ScreenArgs`. `sparxie-launch` detects it as `launch-settings` and sends that message; a Broker is sent one of the two, never both.
+
+* The profile's `launch` block (`width`, `height`, `fullscreen`, `borderless`, `extraArguments`, edited in Sparxie) is sent. The host never writes or removes it.
+* The host's screen plan (`--screen-width`, `--screen-height`, `--window-mode`) wins over the block's size and window mode; the extra arguments stay. `windowed` and
+  `borderless` are `fullscreen: 2`, and `borderless` also sets `borderless`.
+* Sparxie writes 1920x1080 as soon as full screen is set without a size, so full screen is only sent together with a size. A size outside Sparxie's 640x480 - 16384x16384
+  is not sent (its Broker would refuse the session).
+* Sparxie writes the size and window mode into the game's settings and restores them when the game quits; its command line gets `-popupwindow` and the extra arguments
+  (a plugin game gets them only when its manifest has `needsArgs`). A direct start by `sparxie-launch` gets the screen arguments and the extra arguments.
 
 ## Warning
 

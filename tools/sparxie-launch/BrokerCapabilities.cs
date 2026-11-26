@@ -45,6 +45,27 @@ internal sealed record BrokerCapabilities(IReadOnlySet<string> Names, Capability
     /// <summary>The Ping list when the Broker gives one, else the install's capabilities.json, else what the installed files show.</summary>
     public static BrokerCapabilities Resolve(PingInfo? ping, string brokerPath)
     {
+        var listed = Listed(ping, brokerPath);
+
+        // launch-settings is not a name any Broker lists (the message was there before the list), so it is read from the contracts whatever the source:
+        // an official Sparxie that starts to list other features must not lose its launch settings
+        var directory = Path.GetDirectoryName(brokerPath) ?? ".";
+        if (listed.Has(PingInfo.ScreenArgsCapability) || !TakesLaunchSettings(ReadContracts(directory))) return listed;
+        return listed with { Names = new HashSet<string>(listed.Names, StringComparer.Ordinal) { PingInfo.LaunchSettingsCapability } };
+    }
+
+    /// <summary>Official Sparxie has LaunchSettings in field 6; a build whose contracts name ScreenArgs is not taken for one.</summary>
+    private static bool TakesLaunchSettings(byte[] contracts) =>
+        contracts.AsSpan().IndexOf("ExtraArguments"u8) >= 0 && contracts.AsSpan().IndexOf("ScreenArgs"u8) < 0;
+
+    private static byte[] ReadContracts(string directory)
+    {
+        try { return File.ReadAllBytes(Path.Combine(directory, "Sparxie.Contracts.dll")); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return []; }
+    }
+
+    private static BrokerCapabilities Listed(PingInfo? ping, string brokerPath)
+    {
         if (ping is { Capabilities.Count: > 0 })
         {
             return new BrokerCapabilities(ping.Capabilities.ToHashSet(StringComparer.Ordinal), CapabilitySource.Ping);
@@ -100,10 +121,7 @@ internal sealed record BrokerCapabilities(IReadOnlySet<string> Names, Capability
             names.Add(PingInfo.Endfield);
         }
 
-        byte[] contracts;
-        try { contracts = File.ReadAllBytes(Path.Combine(directory, "Sparxie.Contracts.dll")); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return names; }
-
+        var contracts = ReadContracts(directory);
         foreach (var (capability, marker) in ContractMarkers)
         {
             if (contracts.AsSpan().IndexOf(Encoding.ASCII.GetBytes(marker)) >= 0) names.Add(capability);

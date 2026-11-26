@@ -75,7 +75,9 @@ internal static class EndfieldSession
 }
 
 /// <param name="PluginSettings">The "settings" object of a plugin game's profile as JSON text (the plugin's own options, Sparxie.Contracts GameProfile.Settings); null for the built-in games.</param>
-internal sealed record Profile(string Id, string DisplayName, string Game, string ExecutablePath, HoyoSettings? Hoyo, ScreenArgs? Screen = null, string? PluginSettings = null)
+/// <param name="Launch">The profile's launch settings (official Sparxie); null when it has none.</param>
+internal sealed record Profile(string Id, string DisplayName, string Game, string ExecutablePath, HoyoSettings? Hoyo, ScreenArgs? Screen = null, string? PluginSettings = null,
+    LaunchSettings? Launch = null)
 {
     public static Profile FromJson(JsonElement value)
     {
@@ -86,7 +88,8 @@ internal sealed record Profile(string Id, string DisplayName, string Game, strin
         if (value.TryGetProperty("hoyo", out var h) && h.ValueKind == JsonValueKind.Object) hoyo = HoyoSettings.FromJson(h);
         string? pluginSettings = null;
         if (GameIds.IsPlugin(game) && value.TryGetProperty("settings", out var s) && s.ValueKind == JsonValueKind.Object) pluginSettings = s.GetRawText();
-        return new Profile(Str("id"), Str("displayName"), game, Str("executablePath"), hoyo, null, pluginSettings);
+        var launch = value.TryGetProperty("launch", out var l) && l.ValueKind == JsonValueKind.Object ? LaunchSettings.FromJson(l) : null;
+        return new Profile(Str("id"), Str("displayName"), game, Str("executablePath"), hoyo, null, pluginSettings, launch);
     }
 }
 
