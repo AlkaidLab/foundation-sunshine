@@ -221,6 +221,8 @@ namespace platf {
       last_displays.clear();
       return true;
     }
+    // Second query may shrink count if a display was removed mid-call; drop trailing zeros.
+    current_displays.resize(count);
     std::sort(current_displays.begin(), current_displays.end());
     if (last_displays.empty() || current_displays != last_displays) {
       last_displays = current_displays;

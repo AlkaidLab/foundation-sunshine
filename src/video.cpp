@@ -117,6 +117,8 @@ namespace video {
       if (CGGetActiveDisplayList(count, displays.data(), &count) != kCGErrorSuccess) {
         return "";
       }
+      // Second query may shrink count if a display was removed mid-call; drop trailing zeros.
+      displays.resize(count);
       std::sort(displays.begin(), displays.end());
       std::ostringstream out;
       for (auto id : displays) {
