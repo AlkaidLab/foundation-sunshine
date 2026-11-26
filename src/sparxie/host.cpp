@@ -479,64 +479,20 @@ namespace sparxie {
       }
       return {};
     }
-    // The optional features of the installed Sparxie build (app-<version>/capabilities.json, written by its package: "capabilities": ["touch-ui-switch"]).
-    // A build without the file (preview.9 and older) has none.
-    std::vector<std::string>
-    component_capabilities(const fs::path &exe) {
-      std::vector<std::string> found;
-      if (exe.empty()) return found;
-      std::vector<fs::path> dirs = { exe.parent_path() };
-      std::error_code ec;
-      for (const auto &entry : fs::directory_iterator(exe.parent_path(), ec))
-        if (entry.is_directory(ec) && entry.path().filename().string().rfind("app-", 0) == 0) dirs.push_back(entry.path());
-      for (const auto &dir : dirs) {
-        const std::string text = read_text(dir / "capabilities.json");
-        if (text.empty()) continue;
-        try {
-          const json body = json::parse(text);
-          if (!body.contains("capabilities") || !body["capabilities"].is_array()) continue;
-          for (const auto &item : body["capabilities"])
-            if (item.is_string() && std::find(found.begin(), found.end(), item.get<std::string>()) == found.end()) found.push_back(item.get<std::string>());
-        }
-        catch (const std::exception &) {
-        }
-      }
-      return found;
-    }
-    // The installed Sparxie can run a session without its touch interface (HoyoSettings.touch_ui_enabled), so keyboard, mouse and gamepad can use its settings.
-    bool
-    touch_ui_switch(HostEnv &env) {
-      if (env.sparxie_exe.empty() && !env.component_dir.empty()) env.sparxie_exe = find_sparxie_exe(env.component_dir);
-      if (env.sparxie_exe.empty()) env.sparxie_exe = find_sparxie_exe(env.install_root);
-      const auto caps = component_capabilities(env.sparxie_exe);
-      return std::find(caps.begin(), caps.end(), std::string(kCapTouchUiSwitch)) != caps.end();
-    }
     bool
     sparxie_installed(HostEnv &env) {
       if (env.sparxie_exe.empty() && !env.component_dir.empty()) env.sparxie_exe = find_sparxie_exe(env.component_dir);
       if (env.sparxie_exe.empty()) env.sparxie_exe = find_sparxie_exe(env.install_root);
       return !env.sparxie_exe.empty() && fs::is_regular_file(env.sparxie_exe);
     }
-    // Keyboard, mouse and gamepad is a Sparxie session without the touch interface. An installed Sparxie that cannot start one cannot serve it: the
-    // application then starts the game directly (it stays a Sparxie title; nothing is lost when a newer Sparxie is installed and the app is saved again).
-    // Without the component at all the caller's mode stands (the pages send a direct start then).
-    // The titles whose Sparxie session can run with the keyboard, mouse and gamepad input: Genshin and Star Rail (the PC-interface switch) and Endfield (its own PC input);
-    // Zenless Zone Zero has no such session, so its keyboard, mouse and gamepad application starts the game directly.
+    // Keyboard, mouse and gamepad is a Sparxie session without the touch interface (top-level disableTouchUi=true for built-in and plugin titles; legacy first-generation Endfield uses endfieldInputMode).
     bool
     kbm_through_sparxie(const std::string &game) {
-      return game == "genshin" || game == "starrail" || game == "endfield";
-    }
-    // Endfield in the second generation of Sparxie: its keyboard, mouse and gamepad input is the plugin's own inputMode, so it needs no touch-interface switch of the build.
-    bool
-    endfield_input_is_plugins(const HostEnv &env, const std::string &game) {
-      if (game != "endfield") return false;
-      const fs::path dir = !env.data_dir.empty() ? env.data_dir : env.host_data / "sparxie-config";
-      return endfield_support(detect_build(dir)) == EndfieldSupport::plugin;
+      return game == "genshin" || game == "starrail" || game == "zzz" || game == "endfield";
     }
     std::string
     mode_for_input(HostEnv &env, const std::string &mode, const json &options, const std::string &game) {
-      if (mode == "touch" && options.is_object() && options.value("input", std::string("touch")) == "kbm" && sparxie_installed(env) &&
-          ((!touch_ui_switch(env) && !endfield_input_is_plugins(env, game)) || !kbm_through_sparxie(game)))
+      if (mode == "touch" && options.is_object() && options.value("input", std::string("touch")) == "kbm" && sparxie_installed(env) && !kbm_through_sparxie(game))
         return "pc";
       return mode;
     }
@@ -866,7 +822,6 @@ namespace sparxie {
     if (!installed && state == "empty" && !fs::exists(config_dir(env) / "config.json")) state = "unused";
     if (!store.status.ok) state = "unreadable";
     json warning = warning_body(env, installed);
-    const std::vector<std::string> capabilities = installed ? component_capabilities(env.sparxie_exe) : std::vector<std::string> {};
     const SparxieBuild build = detect_build(config_dir(env));
     ApiResult result;
     result.body = {
@@ -876,9 +831,6 @@ namespace sparxie {
       { "version", component_version(env.sparxie_exe) },
       { "protocol", "" },
       { "runtime", { { "hoyo", "" }, { "zzz", "" } } },
-      { "capabilities", capabilities },
-      // true: keyboard, mouse and gamepad applications run through Sparxie with its settings (fps unlock) and without the touch interface
-      { "touchUiSwitch", std::find(capabilities.begin(), capabilities.end(), std::string(kCapTouchUiSwitch)) != capabilities.end() },
       // how Sparxie takes Endfield: its own title, or the plugin (and whether the plugin is there): see docs/sparxie-api.md
       { "generation", build.generation == Generation::plugin ? "plugin" : build.generation == Generation::legacy ? "legacy" : "unknown" },
       { "endfield", endfield_status(build) },
@@ -1751,17 +1703,17 @@ namespace sparxie {
       block["launchTemplate"] = templ;
       ++attached;
     }
-    // With a Sparxie that can run a session without the touch interface, a Genshin or Star Rail application that was made as a direct launch (keyboard, mouse and gamepad, no profile yet)
-    // goes the launcher route like every other application of a Sparxie title: its Sparxie options (frame-rate unlock, target frame rate, background frame rate, priority) then apply. It
+    // With Sparxie installed, a Genshin, Star Rail or Zenless Zone Zero application that was made as a direct launch (keyboard, mouse and gamepad, no profile yet)
+    // goes the launcher route like every other application of a Sparxie title: its Sparxie options (frame-rate unlock, target frame rate, background frame rate, priority, launch settings) then apply. It
     // keeps its options and gets the input it always had. An open Sparxie cannot be written to: the application waits for the next start.
-    if (sparxie_installed(env) && touch_ui_switch(env) && launcher_shipped) {
+    if (sparxie_installed(env) && launcher_shipped) {
       bool open_checked = false;
       bool open = false;
       for (auto &app : apps["apps"]) {
         if (!app.contains("sparxie") || !app["sparxie"].is_object()) continue;
         json &block = app["sparxie"];
         const std::string game = block.value("game", std::string());
-        if (block.value("mode", std::string()) != "pc" || !block.value("profile", std::string()).empty() || (game != "genshin" && game != "starrail")) continue;
+        if (block.value("mode", std::string()) != "pc" || !block.value("profile", std::string()).empty() || (game != "genshin" && game != "starrail" && game != "zzz")) continue;
         if (block.value("exe", std::string()).empty()) continue;
         if (!open_checked) {
           open = sparxie_open(env);
@@ -1923,20 +1875,21 @@ namespace sparxie {
       const json &options = block.value("options", json::object());
       const std::string profile = block.value("profile", std::string());
       // A keyboard, mouse and gamepad application made before the touch-interface switch existed (or edited by hand) has a profile that still says
-      // touch: the profile follows the application's input at launch, when the installed Sparxie can run it. A refused write (Sparxie is open) leaves it.
-      if (!profile.empty() && install.game != "zzz" && block.value("mode", std::string("pc")) == "touch" && touch_ui_switch(env)) {
+      // touch: the profile follows the application's input at launch. A refused write (Sparxie is open) leaves it.
+      if (!profile.empty() && block.value("mode", std::string("pc")) == "touch") {
         const ConfigView view = read_store(config_dir(env));
-        bool stored_touch = true;
+        bool stored_disable = false;
         bool found = false;
         if (view.status.ok && view.document.contains("profiles") && view.document["profiles"].is_array()) {
           for (const auto &entry : view.document["profiles"]) {
             if (!entry.is_object() || entry.value("id", std::string()) != profile) continue;
+            if (entry.value("game", std::string()) == "endfield") continue;  // legacy first-generation Endfield uses hoyo.endfieldInputMode
             found = true;
-            if (entry.contains("hoyo") && entry["hoyo"].is_object() && entry["hoyo"].contains("touchUiEnabled") && entry["hoyo"]["touchUiEnabled"].is_boolean()) stored_touch = entry["hoyo"]["touchUiEnabled"].get<bool>();
+            if (entry.contains("disableTouchUi") && entry["disableTouchUi"].is_boolean()) stored_disable = entry["disableTouchUi"].get<bool>();
           }
         }
-        const bool wanted_touch = options.value("input", std::string("touch")) != "kbm";
-        if (found && stored_touch != wanted_touch) {
+        const bool wanted_disable = options.value("input", std::string("touch")) == "kbm";
+        if (found && stored_disable != wanted_disable) {
           ProfileDraft draft;
           draft.game = install.game;
           draft.display_name = app_name;

@@ -129,7 +129,6 @@ namespace sparxie {
       const std::pair<int, int> size = fixed_size ? fixed : kept;
       const bool unlock = options.contains("fpsUnlock") && options["fpsUnlock"].is_boolean() ? options["fpsUnlock"].get<bool>() : false;
       const json all = {
-        { "inputMode", options.value("input", std::string("touch")) == "kbm" ? "pc" : "touch" },
         { "autoResolution", !fixed_size },
         { "width", size.first },
         { "height", size.second },
@@ -156,7 +155,9 @@ namespace sparxie {
       // Star Rail accepts 30/60/120 in its own GraphicsSettings model. Keep
       // HoyoTouchCore for rates above that cap; the native path is more stable
       // and also makes the game's saved setting agree with the stream.
-      const bool native_starrail_fps = game == "starrail" && (target_fps == 30 || target_fps == 60 || target_fps == 120);
+      // Not without the touch interface (kbm): the unlock is then all Sparxie installs, and it refuses a profile with both off.
+      const bool native_starrail_fps = game == "starrail" && options.value("input", std::string("touch")) != "kbm" &&
+                                       (target_fps == 30 || target_fps == 60 || target_fps == 120);
       const std::string priority = known_priority(options.value("priority", std::string("normal")));
       const std::string input = options.value("input", std::string("touch"));
       const std::string resolution = options.value("resolution", std::string("auto"));
@@ -164,8 +165,6 @@ namespace sparxie {
       const bool fixed_size = fixed.first > 0;
       const std::pair<int, int> size = fixed_size ? fixed : kept_endfield_size(existing);
       return json {
-        // keyboard, mouse and gamepad (kbm) is a Sparxie session without the touch interface: HoyoSettings.touch_ui_enabled
-        { "touchUiEnabled", options.value("input", std::string("touch")) != "kbm" },
         { "fpsUnlockEnabled", flag("fpsUnlock", false) && !native_starrail_fps },
         { "targetFps", num("fps", target_fps, kFpsMin, kFpsMax) },
         { "backgroundFpsLimitEnabled", flag("bgLimit", true) },
@@ -196,12 +195,18 @@ namespace sparxie {
         { "executablePath", draft.executable },
       };
       if (plugin_endfield) {
-        // a plugin game has no hoyo block: its options are the plugin's settings
+        // a plugin game has no hoyo block: its options are the plugin's settings, and kbm uses the universal top-level disableTouchUi field (ProfileSnapshot.disable_touch_ui = 8).
+        if (draft.options.value("input", std::string("touch")) == "kbm")
+          profile["disableTouchUi"] = true;
         profile["settings"] = endfield_plugin_settings(draft.options, draft.display_fps, build.endfield, existing);
         return profile;
       }
       const json *existing_hoyo = existing && existing->is_object() && existing->contains("hoyo") && (*existing)["hoyo"].is_object() ? &(*existing)["hoyo"] : nullptr;
-      if (draft.game != "zzz") profile["hoyo"] = hoyo_object(draft.options, draft.display_fps, draft.game, existing_hoyo);
+      // keyboard, mouse and gamepad (kbm) disables the touch interface: top-level disableTouchUi (ProfileSnapshot.disable_touch_ui = 8), omitted when false.
+      if (draft.game != "endfield" && draft.options.value("input", std::string("touch")) == "kbm")
+        profile["disableTouchUi"] = true;
+      if (draft.game != "zzz")
+        profile["hoyo"] = hoyo_object(draft.options, draft.display_fps, draft.game, existing_hoyo);
       return profile;
     }
     void
@@ -216,8 +221,15 @@ namespace sparxie {
           profile[it.key()] = it.value();
         }
       }
+      if (!fresh.contains("disableTouchUi") && profile.contains("disableTouchUi")) profile.erase("disableTouchUi");
+      if (profile.contains("touchUiEnabled")) profile.erase("touchUiEnabled");
+      if (profile.contains("hoyo") && profile["hoyo"].is_object() && profile["hoyo"].contains("touchUiEnabled")) profile["hoyo"].erase("touchUiEnabled");
       if (draft.game == "zzz" && profile.contains("hoyo")) profile.erase("hoyo");
-      if (profile.value("game", std::string()) == kEndfieldPluginId && profile.contains("hoyo")) profile.erase("hoyo");
+      if (profile.value("game", std::string()) == kEndfieldPluginId) {
+        if (profile.contains("hoyo")) profile.erase("hoyo");
+        if (profile.contains("settings") && profile["settings"].is_object() && profile["settings"].contains("inputMode"))
+          profile["settings"].erase("inputMode");
+      }
     }
     void
     prune_backups(const fs::path &dir) {
@@ -323,9 +335,14 @@ namespace sparxie {
           profile["game"] = kEndfieldPluginId;
           // what the profile already holds as plugin settings (a key of the plugin's own, such as the interface scale) stays; the host's keys are set over it
           json settings = profile.contains("settings") && profile["settings"].is_object() ? profile["settings"] : json::object();
+          settings.erase("inputMode");
           const json managed = endfield_plugin_settings(options, hoyo.value("endfieldRefreshRate", 0), build.endfield, &size_of);
           for (auto field = managed.begin(); field != managed.end(); ++field) settings[field.key()] = field.value();
           profile["settings"] = settings;
+          if (options.value("input", std::string("touch")) == "kbm")
+            profile["disableTouchUi"] = true;
+          else
+            profile.erase("disableTouchUi");
           profile.erase("hoyo");
           changed = true;
           continue;
@@ -520,7 +537,7 @@ namespace sparxie {
   options_from_hoyo(const json &hoyo) {
     if (!hoyo.is_object()) return json::object();
     json options = json {
-      { "input", hoyo.value("touchUiEnabled", true) ? "touch" : "kbm" },
+      { "input", "touch" },
       { "fpsUnlock", hoyo.value("fpsUnlockEnabled", false) },
       { "fps", hoyo.value("targetFps", 120) },
       { "bgLimit", hoyo.value("backgroundFpsLimitEnabled", true) },
@@ -556,8 +573,18 @@ namespace sparxie {
   json
   options_from_profile(const json &profile) {
     if (!profile.is_object()) return default_options();
-    if (is_plugin_game_id(profile.value("game", std::string()))) return options_from_settings(profile.contains("settings") ? profile["settings"] : json::object());
-    return profile.contains("hoyo") ? options_from_hoyo(profile["hoyo"]) : default_options();
+    if (is_plugin_game_id(profile.value("game", std::string()))) {
+      json options = options_from_settings(profile.contains("settings") ? profile["settings"] : json::object());
+      if (profile.contains("disableTouchUi") && profile["disableTouchUi"].is_boolean())
+        options["input"] = profile["disableTouchUi"].get<bool>() ? "kbm" : "touch";
+      return options;
+    }
+    json options = profile.contains("hoyo") ? options_from_hoyo(profile["hoyo"]) : default_options();
+    if (profile.value("game", std::string()) != "endfield") {
+      const bool disable_touch = profile.contains("disableTouchUi") && profile["disableTouchUi"].is_boolean() && profile["disableTouchUi"].get<bool>();
+      options["input"] = disable_touch ? "kbm" : "touch";
+    }
+    return options;
   }
   std::string
   next_profile_id(const json &document, const std::string &prefix) {
@@ -600,10 +627,12 @@ namespace sparxie {
       const bool zzz = game == "zenlessZoneZero";
       if (zzz && profile.contains("hoyo") && !profile["hoyo"].is_null())
         return Status::fail(409, "config_unreadable", "Zenless Zone Zero profiles cannot contain hoyo settings");
+      if (profile.contains("disableTouchUi") && !profile["disableTouchUi"].is_null() && !profile["disableTouchUi"].is_boolean())
+        return Status::fail(409, "config_unreadable", "disableTouchUi is not true or false");
       if (!zzz && !is_plugin_game_id(game) && profile.contains("hoyo") && profile["hoyo"].is_object()) {
         const json &hoyo = profile["hoyo"];
         // the same rules as Sparxie's AppConfigValidator (and the types its JSON reader needs: a wrong type makes the whole file unreadable for it)
-        const char *flags[] = { "touchUiEnabled", "fpsUnlockEnabled", "backgroundFpsLimitEnabled", "genshinFollowInGamePreset", "genshinTouchUiScaleOverrideEnabled", "endfieldAutoResolution" };
+        const char *flags[] = { "fpsUnlockEnabled", "backgroundFpsLimitEnabled", "genshinFollowInGamePreset", "genshinTouchUiScaleOverrideEnabled", "endfieldAutoResolution" };
         for (const char *field : flags) {
           if (hoyo.contains(field) && !hoyo[field].is_boolean()) return Status::fail(409, "config_unreadable", std::string(field) + " is not true or false");
         }

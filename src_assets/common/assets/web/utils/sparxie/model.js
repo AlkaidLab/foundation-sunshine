@@ -135,8 +135,8 @@ export const sparxieOf = (app) => (app && typeof app.sparxie === 'object' && app
 /** Whether the poster of a touch application shows the Sparxie mark: what the block says, else on for the official cover and off for a cover of the person's own */
 export const badgeOf = (block) => (typeof block?.badge === 'boolean' ? block.badge : block?.cover !== 'custom')
 
-/** The titles whose Sparxie session can run with keyboard, mouse and gamepad (the PC-interface switch of Genshin and Star Rail, Endfield's PC input); Zenless Zone Zero starts the game directly then */
-export const KBM_SPARXIE_GAMES = ['genshin', 'starrail', 'endfield']
+/** The titles whose Sparxie session can run with keyboard, mouse and gamepad (the PC-interface switch of Genshin and Star Rail, Zenless Zone Zero without DLL injection, Endfield's PC input) */
+export const KBM_SPARXIE_GAMES = ['genshin', 'starrail', 'zzz', 'endfield']
 
 /** The input of an application: the stored one, else what its launch was (an application of the first builds that starts the game directly is keyboard, mouse and gamepad) */
 export const inputOf = (block) => (block?.options?.input === 'auto' ? 'touch' : block?.options?.input) || (block?.mode === 'pc' ? 'kbm' : 'touch') // the removed automatic input reads as touch

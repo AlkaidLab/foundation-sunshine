@@ -97,8 +97,8 @@ export const FOLDERS = {
   unrecognised: null,
 }
 
-export function createMockHost({ scene = 'data', running = false, game = false, folder = 'region-add', warned = false, failCreate = false, newArt = false, titles = 'three', fields = 'full', touchUiSwitch = false } = {}) {
-  const st = { scene, touchUiSwitch, running, game, folder, warned, failCreate, newArt, artVersion: '', opened: 0, profiles: scene === 'data' || scene === 'running' ? ['genshin-cn', 'starrail-cn', 'zzz-cn'] : [], calls: [] }
+export function createMockHost({ scene = 'data', running = false, game = false, folder = 'region-add', warned = false, failCreate = false, newArt = false, titles = 'three', fields = 'full' } = {}) {
+  const st = { scene, running, game, folder, warned, failCreate, newArt, artVersion: '', opened: 0, profiles: scene === 'data' || scene === 'running' ? ['genshin-cn', 'starrail-cn', 'zzz-cn'] : [], calls: [] }
   const err = (status, code, message, data) => Object.assign(new Error(message || code), { status, code, data })
   const storeState = () => (st.scene === 'unused' ? 'unused' : st.scene === 'unreadable' ? 'unreadable' : st.profiles.length ? 'data' : 'empty')
   const stored = () => st.profiles.map((id) => withArt(byId(id), id))
@@ -111,7 +111,7 @@ export function createMockHost({ scene = 'data', running = false, game = false, 
     if (st.scene === 'nocomp' && p === '/api/sparxie/status') return { installed: false, running: false, version: '', store: { state: 'unused', profiles: 0 }, warned: true, statement: STATEMENT.zh, statement_en: STATEMENT.en }
     if (st.scene === 'absent' && p.startsWith('/api/sparxie') && p !== '/api/sparxie/status') throw err(409, 'absent')
     if (st.scene === 'absent' && p === '/api/sparxie/status') return { installed: false, running: false, version: '', store: { state: 'unused', profiles: 0 }, warned: true, statement: STATEMENT.zh, statement_en: STATEMENT.en }
-    if (p === '/api/sparxie/status') return { installed: true, running: st.running, version: '1.4.2', capabilities: st.touchUiSwitch ? ['touch-ui-switch'] : [], touchUiSwitch: !!st.touchUiSwitch, store: { state: storeState(), profiles: st.profiles.length }, warned: st.warned, statement: STATEMENT.zh, statement_en: STATEMENT.en }
+    if (p === '/api/sparxie/status') return { installed: true, running: st.running, version: '1.4.2', store: { state: storeState(), profiles: st.profiles.length }, warned: st.warned, statement: STATEMENT.zh, statement_en: STATEMENT.en }
     if (p === '/api/sparxie/games') return { stored: stored(), detected: detected(), catalog: (titles === 'many' ? [...CATALOG, ...MORE_TITLES] : CATALOG).map(({ settings, sparxie, ...rest }) => (fields === 'none' ? rest : { settings, sparxie, ...rest })), art: Object.fromEntries(INSTALLS.filter((i) => i.id.endsWith('-cn') || i.id.endsWith('-global')).map((i) => [i.id, { version: st.artVersion || ART.version }])) }
     if (p === '/api/sparxie/pick') throw err(409, 'picker_unavailable')
     if (p === '/api/sparxie/scan') {

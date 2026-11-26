@@ -30,8 +30,8 @@ internal static partial class Tests
         Check(official.Has(PingInfo.LaunchSettingsCapability) && !official.Has(PingInfo.ScreenArgsCapability), "official Sparxie takes launch settings");
         Check(screenBuild.Has(PingInfo.ScreenArgsCapability) && !screenBuild.Has(PingInfo.LaunchSettingsCapability), "a screen-args build is not sent launch settings");
         var officialBroker = Path.Combine(scratch, "launch-official", "Sparxie.Broker.exe");
-        var listing = BrokerCapabilities.Resolve(new PingInfo(1, "0.3.0", [PingInfo.TouchUiSwitch]), officialBroker);
-        Check(listing.Has(PingInfo.TouchUiSwitch) && listing.Has(PingInfo.LaunchSettingsCapability) && listing.Source == CapabilitySource.Ping,
+        var listing = BrokerCapabilities.Resolve(new PingInfo(1, "0.3.0", [PingInfo.Endfield]), officialBroker);
+        Check(listing.Has(PingInfo.Endfield) && listing.Has(PingInfo.LaunchSettingsCapability) && listing.Source == CapabilitySource.Ping,
             "an official Broker that lists other features still takes launch settings");
         File.WriteAllText(Path.Combine(scratch, "launch-official", BrokerCapabilities.ManifestFileName), """{ "schema": 1, "capabilities": [ "touch-ui-switch" ] }""");
         Check(BrokerCapabilities.Resolve(null, officialBroker).Has(PingInfo.LaunchSettingsCapability), "and so does one with a capabilities.json");

@@ -27,7 +27,6 @@ internal sealed record BrokerCapabilities(IReadOnlySet<string> Names, Capability
     /// <summary>Markers in Sparxie.Contracts.dll (the names of the generated protocol types): a Broker built from them reads the field.</summary>
     private static readonly (string Capability, string Marker)[] ContractMarkers =
     [
-        (PingInfo.TouchUiSwitch, "TouchUiEnabled"),
         (PingInfo.ScreenArgsCapability, "ScreenArgs"),
     ];
 

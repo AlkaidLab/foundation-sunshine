@@ -69,7 +69,6 @@
            the input (touch, or keyboard, mouse and gamepad) is one of these settings and hides only what is for touch alone -->
       <template v-if="reach(4) && touch">
         <SparxieOptions :block="optBlock" :fields="sparxieFields" />
-        <MBanner v-if="!viaSparxie && !kbmThroughSparxie && KBM_SPARXIE_GAMES.includes(game)" tone="info" icon="info">{{ C.kbmNeedsTouch }}</MBanner>
         <MFooter>{{ C.noticeFoot }}</MFooter>
       </template>
 
@@ -196,9 +195,8 @@ const copyForNames = computed(() => ({ games: names.value, regions: C.value.regi
 // an app of a Sparxie title starts through Sparxie whenever the component is installed (no launch choice); without it the game starts directly
 const touchAllowed = computed(() => !!status.installed && !!catalog.value?.[game.value]?.touch)
 const touch = computed(() => touchAllowed.value)
-// keyboard, mouse and gamepad runs a Sparxie session without the touch interface: a Sparxie build without that switch cannot serve it, and the host then starts the game directly
-// Endfield of a plugin-based Sparxie has its own keyboard, mouse and gamepad input (the plugin's inputMode), so it needs no touch-interface switch
-const kbmThroughSparxie = computed(() => KBM_SPARXIE_GAMES.includes(game.value) && (!!status.touchUiSwitch || (game.value === 'endfield' && !!status.endfieldPlugin)))
+// keyboard, mouse and gamepad runs a Sparxie session without the touch interface; the other titles start the game directly
+const kbmThroughSparxie = computed(() => KBM_SPARXIE_GAMES.includes(game.value))
 const viaSparxie = computed(() => touch.value && (optBlock.options.input !== 'kbm' || kbmThroughSparxie.value))
 // how the app starts: an app that is saved as a direct launch (mode pc) stays one when it is edited, whatever the Sparxie items on this page show; creating follows the component
 const launchMode = computed(() => (viaSparxie.value ? 'touch' : 'pc'))

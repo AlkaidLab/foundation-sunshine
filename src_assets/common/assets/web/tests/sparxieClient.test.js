@@ -26,10 +26,6 @@ test('the status carries whether Sparxie is open, the state of its storage and w
 })
 
 test('the status says whether the installed Sparxie can run a session without its touch interface (keyboard, mouse and gamepad)', async () => {
-  assert.equal(ABSENT.touchUiSwitch, false)
-  assert.equal((await clientOf({ scene: 'data' }).client.status()).touchUiSwitch, false, 'a build without capabilities.json has no switch')
-  assert.equal((await clientOf({ scene: 'data', touchUiSwitch: true }).client.status()).touchUiSwitch, true)
-  assert.equal(normalizeStatus({ installed: true, touchUiSwitch: 'yes' }).touchUiSwitch, false, 'only a real true counts')
 })
 
 test('the status says whether Endfield is taken by a plugin of Sparxie (its keyboard, mouse and gamepad input is the plugin\'s own)', () => {

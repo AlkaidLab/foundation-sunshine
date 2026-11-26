@@ -118,7 +118,7 @@ namespace {
   struct Machine {
     fs::path root;
     sparxie::HostEnv env;
-    explicit Machine(const fs::path &where, bool with_switch): root(where) {
+    explicit Machine(const fs::path &where): root(where) {
       env.host_data = root / "sparxie";
       env.data_dir = root / "sparxie-data";
       env.apps_file = root / "apps.json";
@@ -131,7 +131,6 @@ namespace {
       touch_file(component / "Sparxie.exe");
       env.sparxie_exe = component / "Sparxie.exe";  // the host resolves it once at start, like runtime.cpp
       touch_file(component / "version.ini", "exe_path=app-0.1.0-test.1\\Sparxie.Desktop.exe\n");
-      touch_file(component / "app-0.1.0-test.1" / "capabilities.json", json({ { "schema", 1 }, { "capabilities", with_switch ? json::array({ "touch-ui-switch", "endfield" }) : json::array() } }).dump());
       touch_file(env.install_root / "tools" / "sparxie-launch.exe");
       // official art of the three installs (plain and badged covers, heroes), then the captured files: its apps.json and Sparxie config
       for (const std::pair<const char *, int> &install : { std::pair<const char *, int> { "genshin-cn", 10 }, { "starrail-cn", 60 }, { "zzz-cn", 110 } }) {
@@ -180,11 +179,10 @@ namespace {
 TEST(CapturedGate, HostStartSettlesTheCapturedApplicationsAndIsStableAfterwards) {
   json out = json::object();
   const json saves = bodies();
-  for (const bool with_switch : { true, false }) {
-    const std::string variant = with_switch ? "withSwitch" : "withoutSwitch";
-    Machine machine(fs::temp_directory_path() / ("sparxie-captured-gate-" + variant), with_switch);
+  {
+    const std::string variant = "captured";
+    Machine machine(fs::temp_directory_path() / ("sparxie-captured-gate-" + variant));
     const json before = machine.apps();
-    EXPECT_EQ(sparxie::component_status(machine.env).body["touchUiSwitch"], with_switch) << variant;
     // host start
     const int changed = sparxie::attach_official_covers(machine.env);
     EXPECT_GT(changed, 0);
@@ -217,15 +215,14 @@ TEST(CapturedGate, HostStartSettlesTheCapturedApplicationsAndIsStableAfterwards)
     EXPECT_EQ(sr["image-path"].get<std::string>().find("app_"), std::string::npos);
     EXPECT_NE(sr["hero"].get<std::string>().find("hero.jpg"), std::string::npos);
     EXPECT_EQ(sr["hero"].get<std::string>().find("hero-badge"), std::string::npos);
-    // the direct 原神 / 绝区零: through the launcher with a Sparxie that has the switch (Genshin only: Zenless Zone Zero has no PC-interface switch), direct without it
-    const json &gi = named("原神");
-    EXPECT_EQ(gi["sparxie"]["mode"], with_switch ? "touch" : "pc") << variant;
-    if (with_switch) {
-      EXPECT_EQ(gi["sparxie"]["options"]["input"], "kbm");
-      EXPECT_NE(gi["cmd"].get<std::string>().find("sparxie-launch"), std::string::npos);
-      EXPECT_FALSE(gi["sparxie"]["profile"].get<std::string>().empty());
+    // the direct 原神 / 绝区零: both go through the launcher with kbm input (disableTouchUi=true)
+    for (const char *name : { "原神", "绝区零" }) {
+      const json &app = named(name);
+      EXPECT_EQ(app["sparxie"]["mode"], "touch") << variant << " " << name;
+      EXPECT_EQ(app["sparxie"]["options"]["input"], "kbm") << variant << " " << name;
+      EXPECT_NE(app["cmd"].get<std::string>().find("sparxie-launch"), std::string::npos) << variant << " " << name;
+      EXPECT_FALSE(app["sparxie"]["profile"].get<std::string>().empty()) << variant << " " << name;
     }
-    EXPECT_EQ(named("绝区零")["sparxie"]["mode"], "pc") << variant;
 
     json v = json::object();
     v["status"] = sparxie::component_status(machine.env).body;
@@ -275,8 +272,7 @@ TEST(CapturedGate, HostStartSettlesTheCapturedApplicationsAndIsStableAfterwards)
   }
   if (const char *path = std::getenv("SPARXIE_CAPTURED_GATE_OUT")) {
     json written = out;
-    as_captured(written, fs::temp_directory_path() / "sparxie-captured-gate-withSwitch");
-    as_captured(written, fs::temp_directory_path() / "sparxie-captured-gate-withoutSwitch");
+    as_captured(written, fs::temp_directory_path() / "sparxie-captured-gate-captured");
     fs::create_directories(fs::path(path).parent_path());
     std::ofstream(path, std::ios::binary | std::ios::trunc) << written.dump(2) << "\n";
   }

@@ -30,9 +30,6 @@ internal sealed record SessionEvent(string SessionId, string State, int Stage, i
 /// <summary>The Ping answer: protocol, Broker version and the optional features the Broker lists (field 3, repeated).</summary>
 internal sealed record PingInfo(int Protocol, string BrokerVersion, IReadOnlyList<string> Capabilities)
 {
-    /// <summary>HoyoSettings.touch_ui_enabled (field 11): a session without the touch interface.</summary>
-    public const string TouchUiSwitch = "touch-ui-switch";
-
     /// <summary>A Broker that understands game = "endfield" sessions (and the Endfield fields 12-16 of the settings).</summary>
     public const string Endfield = "endfield";
 
@@ -109,8 +106,6 @@ internal sealed class BrokerRpc : IDisposable
                 (1, Proto.Bool(h.FpsUnlock)), (2, Proto.Int(h.TargetFps)), (3, Proto.Bool(h.BackgroundLimit)), (4, Proto.Int(h.BackgroundFps)),
                 (5, Proto.String(h.Priority)), (6, Proto.Bool(h.FollowPreset)), (7, Proto.Int(h.Preset30)), (8, Proto.Int(h.Preset60)),
                 (9, Proto.Bool(h.ScaleOverride)), (10, Proto.Int(h.Scale)),
-                // optional bool touch_ui_enabled = 11: always sent, so a Broker that knows it never has to guess; one that does not skips it (and Ping tells)
-                (11, Proto.Bool(h.TouchUi)),
             };
             // an Endfield session also carries its input, resolution and refresh rate (12-16); the other games leave them out
             if (profile.Game == "endfield")
@@ -128,6 +123,9 @@ internal sealed class BrokerRpc : IDisposable
         // means its defaults. The built-in games carry none, and the Broker refuses them when they do.
         if (profile.PluginSettings is { Length: > 0 } pluginSettings && GameIds.IsPlugin(profile.Game))
             nested = Proto.Append(nested, 7, System.Text.Encoding.UTF8.GetBytes(pluginSettings));
+        // bool disable_touch_ui = 8 on ProfileSnapshot: false (omitted) = touch UI enabled, true = disable touch UI (built-in games and ABI 1.1 plugins)
+        if (profile.DisableTouchUi)
+            nested = Proto.Append(nested, 8, Proto.Bool(true));
         // Field 6 is one of two messages, by the build (Launcher.CheckSupport leaves only the one it reads), and only when there is something to say:
         // ScreenArgs screen = 6 { width 1, height 2, window_mode 3 } (screen-args), or LaunchSettings launch = 6 (launch-settings, official Sparxie)
         if (profile.Screen is { IsEmpty: false } screen)

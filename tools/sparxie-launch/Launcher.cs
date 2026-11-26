@@ -85,7 +85,8 @@ internal static class Launcher
             log.Info($"screen arguments: {requested.Arguments()}");
         }
         if (profile.Launch is { } stored) log.Info("launch settings of the profile: " + stored.Describe());
-        log.Info("settings: " + (profile.Hoyo?.Describe() ?? (profile.PluginSettings is { } plugin ? $"plugin {profile.Game}: {plugin}" : "none (the profile carries no hoyo block)")));
+        var disableTag = profile.DisableTouchUi ? " disableTouchUi=True" : "";
+        log.Info("settings: " + (profile.Hoyo is { } hDesc ? hDesc.Describe() + disableTag : profile.PluginSettings is { } plugin ? $"plugin {profile.Game}: {plugin}{disableTag}" : profile.DisableTouchUi ? "disableTouchUi=True" : "none (the profile carries no hoyo block)"));
         if (!File.Exists(profile.ExecutablePath)) log.Warn($"the game executable does not exist: {profile.ExecutablePath}");
 
         var noticeDirs = LaunchNotice.CandidateDirectories(exeDirectory, env).ToList();
@@ -258,10 +259,6 @@ internal static class Launcher
     /// </summary>
     internal static string? CheckSupport(ref Profile profile, BrokerCapabilities capabilities, Action<string> warn)
     {
-        // A session without the touch interface needs a Broker that knows the field; an older one would start the touch interface anyway.
-        if (profile.Hoyo is { TouchUi: false } && !capabilities.Has(PingInfo.TouchUiSwitch))
-            return "this profile asks for a session without the touch interface, but the installed Sparxie does not support that (no touch-ui-switch capability)";
-
         // Field 6 of the snapshot is ScreenArgs in a build with screen-args and LaunchSettings in official Sparxie: only what the build reads is left on the profile.
         // Without either, the screen arguments would be dropped silently, so the log says so and the registry stays the only lever.
         if (capabilities.Has(PingInfo.ScreenArgsCapability))
@@ -367,7 +364,7 @@ internal static class Launcher
         });
 
         StartResponse answer;
-        log.Info($"StartSession: profile={profile.Id} game={profile.Game} exe={profile.ExecutablePath} {(profile.Hoyo is { } h ? h.Describe() : profile.PluginSettings is { } plugin ? "settings_json=" + plugin : "")}");
+        log.Info($"StartSession: profile={profile.Id} game={profile.Game} exe={profile.ExecutablePath} {(profile.Hoyo is { } h ? h.Describe() + (profile.DisableTouchUi ? " disableTouchUi=True" : "") : profile.PluginSettings is { } plugin ? "settings_json=" + plugin + (profile.DisableTouchUi ? " disableTouchUi=True" : "") : profile.DisableTouchUi ? "disableTouchUi=True" : "")}");
         try { answer = await rpc.StartSessionAsync(profile, StartSessionLimit).ConfigureAwait(false); }
         catch (Exception ex) when (ex is HttpRequestException or IOException or OperationCanceledException or GrpcStatusException or InvalidDataException)
         { return Not(ExitCodes.Rpc, $"StartSession failed: {Short(ex)}"); }

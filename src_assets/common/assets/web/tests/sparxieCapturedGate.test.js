@@ -10,12 +10,11 @@ import { COPY } from '../utils/sparxie/copy.js'
 //   open: 保存 is off and nothing was written; the page says the input the application really has (a direct launch is keyboard, mouse and gamepad), never an unexplained 直接启动;
 //   change one field: 保存 is on; change it back: off; press 保存 while it is off: no request;
 //   change and save: the body goes to the host, 保存 is off again, and reopening the application as the host stored it (the host's own answer to that body) is clean again.
-// The two variants are a host with a Sparxie that has the touch-ui-switch capability (the patched build) and with one that has not.
 // Regenerate the host answers: see tests/sparxie/test_captured_gate.cpp. The bodies the editor sends are kept in fixtures/sparxie-captured-bodies.json (SPARXIE_GATE_WRITE_BODIES=1 rewrites it).
 const fx = JSON.parse(readFileSync(new URL('./fixtures/sparxie-captured.json', import.meta.url), 'utf8'))
 const bodiesUrl = new URL('./fixtures/sparxie-captured-bodies.json', import.meta.url)
 const committedBodies = existsSync(bodiesUrl) ? JSON.parse(readFileSync(bodiesUrl, 'utf8')) : null
-const written = { withSwitch: {}, withoutSwitch: {} }
+const written = { captured: {} }
 const rows = []
 const ZH = COPY.zh
 
@@ -80,7 +79,7 @@ async function openSparxie(variant, app, index, { saved = null } = {}) {
 const inputRadio = (page, k) => page.radios(INPUT_LABEL[k]).filter((n) => n.parentNode?.attrs?.role === 'radiogroup' && n.parentNode.attrs['aria-label'] === ZH.inputName)
 const selectedInput = (page) => ['touch', 'kbm'].filter((k) => inputRadio(page, k).some((n) => page.selected(n)))
 
-for (const variant of process.env.SPARXIE_GATE_VARIANT ? [process.env.SPARXIE_GATE_VARIANT] : ['withSwitch', 'withoutSwitch']) {
+for (const variant of process.env.SPARXIE_GATE_VARIANT ? [process.env.SPARXIE_GATE_VARIANT] : ['captured']) {
   const apps = fx[variant].apps
   apps.forEach((app, index) => {
     if (!app.sparxie) return
@@ -94,8 +93,6 @@ for (const variant of process.env.SPARXIE_GATE_VARIANT ? [process.env.SPARXIE_GA
       assert.deepEqual(selectedInput(page), [inputOf(app)], `${app.name}: the page says the input the application really has`)
       const bar = textOf(findAll(page.root, (n) => n.attrs.role === 'toolbar')[0])
       assert.ok(!bar.includes('直接启动'), `${app.name}: the bar never says 直接启动 for a game of Sparxie: ${bar}`)
-      const wantsLine = !fx[variant].status.touchUiSwitch && inputOf(app) === 'kbm' && ['genshin', 'starrail', 'endfield'].includes(app.sparxie.game)
-      assert.equal(page.text().includes(ZH.kbmNeedsTouch), wantsLine, `${app.name}: the one line about a Sparxie that cannot keep the PC interface is there when it applies and only then`)
       // pressing 保存 while it is off asks nothing of the host
       await page.press(page.button('保存'))
       assert.equal(host.writes().length, 0, `${app.name}: nothing is written when nothing changed`)
@@ -211,7 +208,7 @@ for (const variant of process.env.SPARXIE_GATE_VARIANT ? [process.env.SPARXIE_GA
 }
 
 // ---- Endfield, added through the host's own path: the editor offers what the host describes for it, and does not say "this game version does not allow" ----
-for (const variant of process.env.SPARXIE_GATE_VARIANT ? [process.env.SPARXIE_GATE_VARIANT] : ['withSwitch', 'withoutSwitch']) {
+for (const variant of process.env.SPARXIE_GATE_VARIANT ? [process.env.SPARXIE_GATE_VARIANT] : ['captured']) {
   test(`${variant}: Endfield opens clean with its own items and no game-settings list that cannot be changed`, async () => {
     const e = fx[variant].endfield
     assert.ok(e, 'the host dumped an Endfield application')
@@ -271,7 +268,7 @@ for (const variant of process.env.SPARXIE_GATE_VARIANT ? [process.env.SPARXIE_GA
 }
 
 // ---- 显示: the choice of the display (跟随串流 or 固定) on every captured application: it opens as 跟随串流 and clean, a switch to 固定 lights 保存, back puts it off, and a saved fixed display is sent as text ----
-for (const variant of process.env.SPARXIE_GATE_VARIANT ? [process.env.SPARXIE_GATE_VARIANT] : ['withSwitch', 'withoutSwitch']) {
+for (const variant of process.env.SPARXIE_GATE_VARIANT ? [process.env.SPARXIE_GATE_VARIANT] : ['captured']) {
   fx[variant].apps.forEach((app, index) => {
     if (!app.sparxie) return
     test(`${variant}: ${app.name} opens following the stream; 固定 lights 保存, 跟随串流 puts it off, and a saved fixed display goes out as text`, async () => {

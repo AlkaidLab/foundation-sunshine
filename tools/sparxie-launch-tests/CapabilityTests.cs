@@ -40,10 +40,10 @@ internal static partial class Tests
         // no manifest: the installed files. The 1116 case: Endfield libraries but a protocol without the touch switch or screen fields
         var legacyEndfield = BrokerCapabilities.Resolve(Ping(), NewInstall("endfield-only", d => { EndfieldLibraries(d); Contracts(d, "EndfieldWidth", "ProfileSnapshot"); }));
         Same(CapabilitySource.InstalledFiles, legacyEndfield.Source, "no manifest: the files");
-        Check(legacyEndfield.Has("endfield") && !legacyEndfield.Has("touch-ui-switch") && !legacyEndfield.Has("screen-args"), "Endfield libraries alone give Endfield only");
+        Check(legacyEndfield.Has("endfield") && !legacyEndfield.Has("screen-args"), "Endfield libraries alone give Endfield only");
 
         var legacyFull = BrokerCapabilities.Resolve(null, NewInstall("full", d => { EndfieldLibraries(d); Contracts(d, "TouchUiEnabled", "ScreenArgs"); }));
-        Check(legacyFull.Has("endfield") && legacyFull.Has("touch-ui-switch") && legacyFull.Has("screen-args"), "the protocol markers give the touch switch and the screen arguments");
+        Check(legacyFull.Has("endfield") && legacyFull.Has("screen-args"), "the protocol markers give the screen arguments");
 
         var onlyOneLibrary = BrokerCapabilities.Resolve(Ping(), NewInstall("one-library", d => File.WriteAllText(Path.Combine(d, "EndfieldCore.dll"), "")));
         Check(!onlyOneLibrary.Has("endfield"), "one Endfield library is not Endfield support");
@@ -62,17 +62,15 @@ internal static partial class Tests
         Check(listed.ToString().Contains("reported by the Broker") && withManifest.ToString().Contains("capabilities.json") && legacyFull.ToString().Contains("installed files"), "the log line says where the list came from");
 
         // the decisions of the launcher
-        static Profile P(string game, bool touchUi = true, ScreenArgs? screen = null) =>
-            new("p", "p", game, @"C:\G\Game.exe", new HoyoSettings(true, 120, false, 10, "normal", false, 60, 60, false, 100, TouchUi: touchUi), screen);
+        static Profile P(string game, bool disableTouchUi = false, ScreenArgs? screen = null) =>
+            new("p", "p", game, @"C:\G\Game.exe", new HoyoSettings(true, 120, false, 10, "normal", false, 60, 60, false, 100), screen, DisableTouchUi: disableTouchUi);
         var warnings = new List<string>();
         var endfieldProfile = P("endfield");
         Same(null, Launcher.CheckSupport(ref endfieldProfile, legacyEndfield, warnings.Add), "an Endfield session on an older build that ships the libraries starts");
         var endfieldRefused = P("endfield");
         Check(Launcher.CheckSupport(ref endfieldRefused, bare, warnings.Add)?.Contains("endfield capability") == true, "an Endfield session on a build without Endfield is refused");
-        var pcProfile = P("starRail", touchUi: false);
-        Check(Launcher.CheckSupport(ref pcProfile, legacyEndfield, warnings.Add)?.Contains("touch-ui-switch") == true, "a PC-interface session on a build without the switch is refused");
-        var pcOk = P("starRail", touchUi: false);
-        Same(null, Launcher.CheckSupport(ref pcOk, withManifest, warnings.Add), "a PC-interface session on a build with the switch starts");
+        var pcProfile = P("starRail", disableTouchUi: true);
+        Same(null, Launcher.CheckSupport(ref pcProfile, bare, warnings.Add), "a PC-interface session is never held back: the launcher does not ask whether the build has it");
         var screenProfile = P("genshin", screen: new ScreenArgs(2388, 1668, ScreenArgs.Fullscreen));
         Same(null, Launcher.CheckSupport(ref screenProfile, legacyEndfield, warnings.Add), "screen arguments do not stop a session");
         Check(screenProfile.Screen is null && warnings.Count == 1, "screen arguments are dropped with one warning when the build cannot carry them");
@@ -103,7 +101,7 @@ internal static partial class Tests
             var resolved = BrokerCapabilities.Resolve(ping, exe);
             Console.WriteLine($"packaged Broker {exe}: {ping}; resolved: {resolved}");
             Same(CapabilitySource.Ping, resolved.Source, "the packaged Broker lists its features itself");
-            Check(resolved.Has("endfield") && resolved.Has("screen-args") && resolved.Has("touch-ui-switch"), "the packaged Broker reports endfield, screen-args and touch-ui-switch");
+            Check(resolved.Has("endfield") && resolved.Has("screen-args"), "the packaged Broker reports endfield and screen-args");
             // its capabilities.json says the same, so a launcher that cannot read the Ping list gets the same answer
             var fromManifest = BrokerCapabilities.Resolve(new PingInfo(1, "x", []), exe);
             Same(CapabilitySource.Manifest, fromManifest.Source, "the package ships capabilities.json");

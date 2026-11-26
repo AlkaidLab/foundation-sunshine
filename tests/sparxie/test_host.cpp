@@ -1367,9 +1367,9 @@ TEST(Host, ABlankDecodeIsAFailedDecodeForEveryTitleAndABlankHeroIsHealedForEvery
 }
 
 namespace {
-  // a Genshin install (bili marker) and a Sparxie component beside the host; the component may list capabilities
+  // a Genshin install (bili marker) and a Sparxie component beside the host
   sparxie::HostEnv
-  kbm_env(const fs::path &root, bool with_switch, bool with_file) {
+  kbm_env(const fs::path &root) {
     fs::remove_all(root);
     fs::create_directories(root / "game" / "YuanShen_Data" / "Plugins");
     std::ofstream(root / "game" / "YuanShen.exe") << "x";
@@ -1379,20 +1379,14 @@ namespace {
     fs::create_directories(component / "app-0.1.0-test");
     std::ofstream(component / "Sparxie.exe") << "x";
     std::ofstream(component / "version.ini") << "exe_path=app-0.1.0-test\\Sparxie.Desktop.exe\n";
-    if (with_file) {
-      sparxie::json body = { { "schema", 1 }, { "capabilities", with_switch ? sparxie::json::array({ "touch-ui-switch" }) : sparxie::json::array() } };
-      std::ofstream(component / "app-0.1.0-test" / "capabilities.json") << body.dump();
-    }
     env.process_running = [](const std::vector<std::string> &) { return false; };
     return env;
   }
 }  // namespace
-TEST(Host, ASparxieWithTheSwitchServesKeyboardMouseAndGamepadThroughItself) {
+TEST(Host, SparxieServesKeyboardMouseAndGamepadThroughItself) {
   const fs::path root = fs::temp_directory_path() / "sparxie-host-kbm-switch";
-  sparxie::HostEnv env = kbm_env(root, true, true);
+  sparxie::HostEnv env = kbm_env(root);
   const auto status = sparxie::component_status(env);
-  EXPECT_TRUE(status.body["touchUiSwitch"]);
-  EXPECT_EQ(status.body["capabilities"], sparxie::json::array({ "touch-ui-switch" }));
   auto kbm = sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin pad" }, { "options", { { "input", "kbm" }, { "fpsUnlock", true }, { "fps", 144 } } } });
   ASSERT_TRUE(kbm.status.ok) << kbm.status.error;
   // still a Sparxie launch (the launcher), with the profile saying: no touch interface
@@ -1401,12 +1395,12 @@ TEST(Host, ASparxieWithTheSwitchServesKeyboardMouseAndGamepadThroughItself) {
   EXPECT_EQ(kbm.body["app"]["sparxie"]["options"]["input"], "kbm");
   const auto stored = sparxie::read_store(env.data_dir);
   ASSERT_TRUE(stored.status.ok);
-  EXPECT_EQ(stored.document["profiles"][0]["hoyo"]["touchUiEnabled"], false);
+  EXPECT_EQ(stored.document["profiles"][0]["disableTouchUi"], true);
   EXPECT_EQ(stored.document["profiles"][0]["hoyo"]["fpsUnlockEnabled"], true);
-  // the same title with touch: the profile has the touch interface
+  // the same title with touch: the profile has the touch interface (disableTouchUi omitted)
   auto touch = sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin touch" }, { "options", { { "input", "touch" } } } });
   ASSERT_TRUE(touch.status.ok) << touch.status.error;
-  EXPECT_EQ(sparxie::read_store(env.data_dir).document["profiles"][1]["hoyo"]["touchUiEnabled"], true);
+  EXPECT_FALSE(sparxie::read_store(env.data_dir).document["profiles"][1].contains("disableTouchUi"));
   // editing the pad application back to touch turns the interface on in its own profile and leaves the other one alone
   sparxie::json apps;
   {
@@ -1417,39 +1411,18 @@ TEST(Host, ASparxieWithTheSwitchServesKeyboardMouseAndGamepadThroughItself) {
   auto edit = sparxie::update_app(env, pad_index, { { "options", { { "input", "touch" }, { "fpsUnlock", true }, { "fps", 144 } } } });
   ASSERT_TRUE(edit.status.ok) << edit.status.error;
   const auto after = sparxie::read_store(env.data_dir);
-  EXPECT_EQ(after.document["profiles"][0]["hoyo"]["touchUiEnabled"], true);
-  EXPECT_EQ(after.document["profiles"][1]["hoyo"]["touchUiEnabled"], true);
-}
-TEST(Host, ASparxieWithoutTheSwitchStartsAKeyboardMouseApplicationDirectly) {
-  for (const bool with_file : { false, true }) {
-    // no capabilities.json (preview.9 and older) and a file that lists nothing both mean: no switch
-    const fs::path root = fs::temp_directory_path() / (with_file ? "sparxie-host-kbm-empty" : "sparxie-host-kbm-old");
-    sparxie::HostEnv env = kbm_env(root, false, with_file);
-    const auto status = sparxie::component_status(env);
-    EXPECT_TRUE(status.body["installed"]);
-    EXPECT_FALSE(status.body["touchUiSwitch"]);
-    auto kbm = sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin pad" }, { "options", { { "input", "kbm" } } } });
-    ASSERT_TRUE(kbm.status.ok) << kbm.status.error;
-    EXPECT_EQ(kbm.body["app"]["sparxie"]["mode"], "pc");
-    EXPECT_EQ(kbm.body["app"]["cmd"].get<std::string>().find("--profile"), std::string::npos);
-    EXPECT_NE(kbm.body["app"]["cmd"].get<std::string>().find("YuanShen.exe"), std::string::npos);
-    EXPECT_FALSE(kbm.body["wrote"]);
-    // touch still goes through Sparxie
-    auto touch = sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin touch" }, { "options", { { "input", "touch" } } } });
-    ASSERT_TRUE(touch.status.ok) << touch.status.error;
-    EXPECT_EQ(touch.body["app"]["sparxie"]["mode"], "touch");
-  }
+  EXPECT_FALSE(after.document["profiles"][0].contains("disableTouchUi"));
+  EXPECT_FALSE(after.document["profiles"][1].contains("disableTouchUi"));
 }
 TEST(Host, ALaunchBringsAnOlderKeyboardMouseProfileInLineWithTheApplication) {
   const fs::path root = fs::temp_directory_path() / "sparxie-host-kbm-launch";
-  sparxie::HostEnv env = kbm_env(root, true, true);
-  ASSERT_TRUE(sparxie::component_status(env).body["touchUiSwitch"]);
+  sparxie::HostEnv env = kbm_env(root);
   auto made = sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin pad" }, { "options", { { "input", "kbm" } } } });
   ASSERT_TRUE(made.status.ok) << made.status.error;
   const std::string cmd = made.body["app"]["cmd"];
-  // an application made before the switch existed: its profile has no touchUiEnabled (Sparxie reads that as the touch interface)
+  // an application made before the switch existed: its profile has no disableTouchUi (Sparxie reads that as the touch interface)
   sparxie::json doc = sparxie::read_store(env.data_dir).document;
-  doc["profiles"][0]["hoyo"].erase("touchUiEnabled");
+  doc["profiles"][0].erase("disableTouchUi");
   {
     std::ofstream out(env.data_dir / "config.json");
     out << doc.dump(2);
@@ -1457,12 +1430,12 @@ TEST(Host, ALaunchBringsAnOlderKeyboardMouseProfileInLineWithTheApplication) {
   // Sparxie open: nothing is written
   env.process_running = [](const std::vector<std::string> &names) { return std::find(names.begin(), names.end(), "Sparxie.exe") != names.end(); };
   EXPECT_TRUE(sparxie::prepare_launch(env, "Genshin pad", cmd).ok);
-  EXPECT_FALSE(sparxie::read_store(env.data_dir).document["profiles"][0]["hoyo"].contains("touchUiEnabled"));
+  EXPECT_FALSE(sparxie::read_store(env.data_dir).document["profiles"][0].contains("disableTouchUi"));
   // Sparxie closed: the profile says no touch interface, and nothing else in it changed
   env.process_running = [](const std::vector<std::string> &) { return false; };
   EXPECT_TRUE(sparxie::prepare_launch(env, "Genshin pad", cmd).ok);
   const auto after = sparxie::read_store(env.data_dir).document;
-  EXPECT_EQ(after["profiles"][0]["hoyo"]["touchUiEnabled"], false);
+  EXPECT_EQ(after["profiles"][0]["disableTouchUi"], true);
   EXPECT_EQ(after["profiles"][0]["hoyo"]["targetFps"], 120);
   EXPECT_EQ(after["profiles"].size(), 1u);
 }
@@ -1479,7 +1452,7 @@ namespace {
 }  // namespace
 TEST(AppsOfTheFirstBuilds, ADirectLaunchIsKeyboardMouseAndGamepadAndGoesThroughASparxieThatCanKeepThePcInterface) {
   const fs::path root = fs::temp_directory_path() / "sparxie-pc-legacy";
-  sparxie::HostEnv env = kbm_env(root, true, true);
+  sparxie::HostEnv env = kbm_env(root);
   fs::create_directories(env.install_root / "tools");
   std::ofstream(env.install_root / "tools" / "sparxie-launch.exe") << "x";
   // made as a direct launch, with options but no input (the first builds)
@@ -1507,44 +1480,38 @@ TEST(AppsOfTheFirstBuilds, ADirectLaunchIsKeyboardMouseAndGamepadAndGoesThroughA
   EXPECT_EQ(app["elevated"], true);
   const auto store = sparxie::read_store(env.data_dir).document;
   ASSERT_EQ(store["profiles"].size(), 1u);
-  EXPECT_EQ(store["profiles"][0]["hoyo"]["touchUiEnabled"], false) << "a session with the PC interface";
+  EXPECT_EQ(store["profiles"][0]["disableTouchUi"], true) << "a session with the PC interface";
   EXPECT_EQ(store["profiles"][0]["hoyo"]["fpsUnlockEnabled"], true);
   EXPECT_EQ(sparxie::attach_official_covers(env), 0) << "the next start changes nothing";
 }
 
-TEST(AppsOfTheFirstBuilds, WithoutTheSwitchADirectLaunchStaysDirectAndTheEditStoresItsInput) {
-  const fs::path root = fs::temp_directory_path() / "sparxie-pc-legacy-noswitch";
-  sparxie::HostEnv env = kbm_env(root, false, true);
-  fs::create_directories(env.install_root / "tools");
-  std::ofstream(env.install_root / "tools" / "sparxie-launch.exe") << "x";
-  auto made = sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "pc" }, { "name", "Genshin direct" } });
-  ASSERT_TRUE(made.status.ok) << made.status.error;
-  {
-    auto apps = read_apps(env.apps_file);
-    apps["apps"][0]["sparxie"]["options"].erase("input");  // the first builds stored no input
-    std::ofstream(env.apps_file) << apps.dump();
-  }
-  EXPECT_EQ(sparxie::attach_official_covers(env), 0);
-  EXPECT_EQ(read_apps(env.apps_file)["apps"][0]["sparxie"]["mode"], "pc") << "an installed Sparxie that cannot keep the PC interface keeps the direct launch";
-  // saving the application stores the input it had implicitly (kbm) and does not turn it into a touch application
-  const auto saved = sparxie::update_app(env, 0, { { "name", "Genshin direct" } });
-  ASSERT_TRUE(saved.status.ok) << saved.status.error;
-  const auto app = read_apps(env.apps_file)["apps"][0];
-  EXPECT_EQ(app["sparxie"]["mode"], "pc");
-  EXPECT_EQ(app["sparxie"]["options"]["input"], "kbm");
-}
-
-TEST(AppsOfTheFirstBuilds, ZenlessZoneZeroHasNoPcInterfaceSessionSoItsKeyboardAppStartsTheGameDirectly) {
+TEST(AppsOfTheFirstBuilds, ZenlessZoneZeroServesKeyboardMouseAndGamepadThroughSparxieWithoutDllInjection) {
   const fs::path root = fs::temp_directory_path() / "sparxie-zzz-kbm";
-  sparxie::HostEnv env = kbm_env(root, true, true);
+  sparxie::HostEnv env = kbm_env(root);
   fs::create_directories(root / "zzz");
   std::ofstream(root / "zzz" / "ZenlessZoneZero.exe") << "x";
   auto made = sparxie::create_app(env, { { "path", (root / "zzz" / "ZenlessZoneZero.exe").string() }, { "region", "cn" }, { "mode", "touch" }, { "name", "ZZZ pad" }, { "options", { { "input", "kbm" } } } });
   ASSERT_TRUE(made.status.ok) << made.status.error;
-  EXPECT_EQ(made.body["app"]["sparxie"]["mode"], "pc") << "the patched Sparxie keeps the PC interface of Genshin and Star Rail only";
+  EXPECT_EQ(made.body["app"]["sparxie"]["mode"], "touch") << "ZZZ kbm launches via Sparxie with disableTouchUi=true (no DLL injection)";
+  EXPECT_NE(made.body["app"]["cmd"].get<std::string>().find("--profile"), std::string::npos);
+  EXPECT_EQ(made.body["app"]["sparxie"]["options"]["input"], "kbm");
+  const auto store = sparxie::read_store(env.data_dir).document;
+  ASSERT_EQ(store["profiles"].size(), 1u);
+  EXPECT_FALSE(store["profiles"][0].contains("hoyo"));
+  EXPECT_EQ(store["profiles"][0]["disableTouchUi"], true);
+  // prepare_launch brings an older ZZZ profile (missing disableTouchUi) in line with input=kbm
+  sparxie::json stale = store;
+  stale["profiles"][0].erase("disableTouchUi");
+  {
+    std::ofstream out(env.data_dir / "config.json");
+    out << stale.dump(2);
+  }
+  EXPECT_TRUE(sparxie::prepare_launch(env, "ZZZ pad", made.body["app"]["cmd"]).ok);
+  EXPECT_EQ(sparxie::read_store(env.data_dir).document["profiles"][0]["disableTouchUi"], true);
   auto touch = sparxie::create_app(env, { { "path", (root / "zzz" / "ZenlessZoneZero.exe").string() }, { "region", "cn" }, { "mode", "touch" }, { "name", "ZZZ touch" }, { "options", { { "input", "touch" } } } });
   ASSERT_TRUE(touch.status.ok) << touch.status.error;
   EXPECT_EQ(touch.body["app"]["sparxie"]["mode"], "touch");
+  EXPECT_FALSE(sparxie::read_store(env.data_dir).document["profiles"][1].contains("disableTouchUi"));
 }
 
 TEST(Store, AnEndfieldProfileIsAcceptedAndItsResolutionRoundTrips) {
@@ -1735,4 +1702,28 @@ TEST(Host, AComposedCoverOfAnOlderCompositionIsMadeAgainFromTheCacheAndACapsuleI
   EXPECT_EQ(kind_of("nte-cn")["coverRev"], 1);
   EXPECT_EQ(read(capsule), capsule_before) << "a finished capsule is never recomposed";
   EXPECT_EQ(net.pictures, quiet_pictures) << "the recomposition fetches nothing more than a quiet run";
+}
+
+// Without the touch interface the unlock is all Sparxie installs (it refuses a profile with both off), so a Star Rail keyboard application keeps it at the native tiers too.
+TEST(Host, AStarRailKeyboardProfileKeepsTheUnlockAtTheNativeTiers) {
+  const fs::path dir = fs::temp_directory_path() / "sparxie-starrail-kbm-unlock";
+  fs::remove_all(dir);
+  int n = 0;
+  for (const char *input : { "kbm", "touch" }) {
+    for (const int fps : { 30, 60, 120 }) {
+      sparxie::ProfileDraft draft;
+      draft.game = "starrail";
+      draft.display_name = "star";
+      draft.executable = "C:\\S\\StarRail.exe";
+      draft.options = sparxie::default_options();
+      draft.options["input"] = input;
+      draft.options["fps"] = fps;
+      ASSERT_TRUE(sparxie::add_profile(dir, draft, {}).status.ok);
+      const auto profile = sparxie::read_store(dir).document["profiles"][n++];
+      const auto &hoyo = profile["hoyo"];
+      const bool kbm = std::string(input) == "kbm";
+      EXPECT_EQ(profile.value("disableTouchUi", false), kbm) << input << " " << fps;
+      EXPECT_EQ(hoyo["fpsUnlockEnabled"], kbm) << input << " " << fps;
+    }
+  }
 }
