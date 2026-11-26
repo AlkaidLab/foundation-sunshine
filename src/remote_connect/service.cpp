@@ -1,6 +1,8 @@
 #include "service.h"
 #include "easytier.h"
+#include "strict_policy.h"
 
+#include <algorithm>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -153,6 +155,83 @@ namespace remote_connect {
       runtime.stop();
       last_error.clear();
     }
+
+    operation_result_t
+    update_strict_client_key(const std::string &key_hex, bool enroll) {
+      // An invalid persisted list is never repaired as a side effect of adding
+      // or removing one key: refuse the change and surface the problem.
+      const auto previous_raw = config::nvhttp.remote_connect_strict_client_keys;
+      const auto current = strict_policy::parse_client_keys(previous_raw);
+      if (!current.valid) {
+        last_error = "Remote connection client keys are invalid: " + current.error;
+        return {false, status_locked()};
+      }
+
+      const auto requested = strict_policy::parse_client_keys(key_hex);
+      if (!requested.valid || requested.keys.size() != 1) {
+        last_error = "Remote client key must be 64 hex characters";
+        return {false, status_locked()};
+      }
+      const auto &key = requested.keys[0];
+
+      auto keys = current.keys;
+      const auto existing = std::find(keys.begin(), keys.end(), key);
+      const bool changes_list = enroll ? existing == keys.end() : existing != keys.end();
+      if (!changes_list) {
+        last_error.clear();
+        return {true, status_locked()};
+      }
+      if (enroll) {
+        keys.push_back(key);
+      }
+      else {
+        keys.erase(existing);
+      }
+
+      std::string replacement;
+      for (std::size_t index = 0; index < keys.size(); ++index) {
+        if (index != 0) replacement += ';';
+        replacement += keys[index];
+      }
+
+      // Persist first: on failure the in-memory list and the runtime are
+      // untouched, so the running core keeps exactly the policy it started with.
+      if (!config::update_config({{"remote_connect_strict_client_keys", replacement}})) {
+        last_error = "Unable to persist remote connection client keys";
+        return {false, status_locked()};
+      }
+      config::nvhttp.remote_connect_strict_client_keys = replacement;
+
+      // A running core loaded the previous policy at start; restart it so the
+      // change takes effect now rather than at the next start.
+      if (config::nvhttp.remote_connect_enabled) {
+        runtime.stop();
+        if (!start_locked()) {
+          const auto replacement_error = last_error;
+          runtime.stop();
+          if (config::update_config({{"remote_connect_strict_client_keys", previous_raw}})) {
+            config::nvhttp.remote_connect_strict_client_keys = previous_raw;
+            last_error.clear();
+            if (!start_locked()) {
+              const auto rollback_error = last_error;
+              last_error = replacement_error + "; previous client keys were restored, but their runtime also failed to start: " + rollback_error;
+            }
+            else {
+              last_error = replacement_error + "; previous client keys and runtime were restored";
+            }
+          }
+          else {
+            // The new list is what is on disk. Leave memory matching it instead
+            // of reporting a rollback that would silently undo itself on restart.
+            last_error = replacement_error + "; unable to persist the previous client keys during rollback, so the new client keys remain saved and take effect at the next start";
+          }
+          return {false, status_locked()};
+        }
+      }
+
+      last_error.clear();
+      return {true, status_locked()};
+    }
   }  // namespace
 
   status_t
@@ -269,4 +348,13 @@ namespace remote_connect {
     }
   }
 
+  operation_result_t
+  enroll_strict_client_key(const std::string &key_hex) {
+    return update_strict_client_key(key_hex, true);
+  }
+
+  operation_result_t
+  revoke_strict_client_key(const std::string &key_hex) {
+    return update_strict_client_key(key_hex, false);
+  }
 }  // namespace remote_connect
