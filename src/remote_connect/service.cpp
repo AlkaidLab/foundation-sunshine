@@ -16,9 +16,7 @@
 #include <openssl/rand.h>
 
 #include "src/config.h"
-#include "src/file_handler.h"
 #include "src/logging.h"
-#include "src/platform/common.h"
 
 namespace remote_connect {
   namespace {
@@ -187,7 +185,15 @@ namespace remote_connect {
 
     std::filesystem::path
     device_record_path() {
-      return platf::appdata() / "remote-devices.json";
+      return easytier::state_directory() / "remote-devices.json";
+    }
+
+    // A path as text for a message, UTF-8 on every platform. Asking a Windows
+    // path for a narrow string gives the local code page instead.
+    std::string
+    path_text(const std::filesystem::path &path) {
+      const auto text = path.u8string();
+      return { reinterpret_cast<const char *>(text.data()), text.size() };
     }
 
     // Lock order: the authorizer's lock is taken before the service lock, by
@@ -248,9 +254,9 @@ namespace remote_connect {
       // host's devices.
       switch (loaded.status) {
         case device_record_store::load_status_e::invalid:
-          return refuse("The remote device record is not valid, so remote access stays off to keep it from being overwritten: " + file_handler::path_to_utf8(path));
+          return refuse("The remote device record is not valid, so remote access stays off to keep it from being overwritten: " + path_text(path));
         case device_record_store::load_status_e::unreadable:
-          return refuse("The remote device record could not be read, so remote access stays off: " + file_handler::path_to_utf8(path));
+          return refuse("The remote device record could not be read, so remote access stays off: " + path_text(path));
         case device_record_store::load_status_e::fresh:
         case device_record_store::load_status_e::loaded:
           break;

@@ -158,6 +158,11 @@ namespace remote_connect::easytier {
     }
   }  // namespace
 
+  std::filesystem::path
+  state_directory() {
+    return platf::appdata();
+  }
+
   bool
   virtual_subnet_conflicts(const std::string &virtual_ip) {
 #ifdef _WIN32

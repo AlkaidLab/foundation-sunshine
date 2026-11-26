@@ -17,9 +17,7 @@
 #include <gtest/gtest.h>
 
 #include "src/config.h"
-#include "src/file_handler.h"
 #include "src/logging.h"
-#include "src/platform/common.h"
 #include "src/remote_connect/credential_transaction.h"
 #include "src/remote_connect/device_record_store.h"
 #include "src/remote_connect/easytier.h"
@@ -57,8 +55,8 @@ namespace {
   std::mutex start_keys_mutex;
   std::vector<std::vector<std::string>> start_keys_history;
 
-  // The folder platf::appdata() answers with. One fresh folder per test: the
-  // service adopts the device record once per location.
+  // The folder easytier::state_directory() answers with. One fresh folder
+  // per test: the service adopts the device record once per location.
   std::filesystem::path appdata_directory;
   std::filesystem::path previous_directory;
 
@@ -213,24 +211,17 @@ namespace config {
   }
 }  // namespace config
 
-namespace platf {
-  std::filesystem::path
-  appdata() {
-    return appdata_directory;
-  }
-}  // namespace platf
-
-namespace file_handler {
-  std::string
-  path_to_utf8(const std::filesystem::path &path) {
-    return path.generic_string();
-  }
-}  // namespace file_handler
-
 namespace remote_connect::easytier {
   struct runtime_t::state_t {
     bool running = false;
   };
+
+  // The fake state folder: a fresh temporary folder per test. The service
+  // adopts the device record once per location, so each test starts clean.
+  std::filesystem::path
+  state_directory() {
+    return appdata_directory;
+  }
 
   bool
   virtual_subnet_conflicts(const std::string &) {

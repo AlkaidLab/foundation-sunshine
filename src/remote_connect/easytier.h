@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <memory>
 #include <string>
 #include <vector>
@@ -10,6 +11,13 @@ namespace remote_connect::easytier {
 
   inline constexpr char installation_required_error[] =
     "EasyTier is not installed in its official default location. Install EasyTier separately, then restart Sunshine.";
+
+  // The folder Sunshine keeps its state in, where the files of the remote
+  // connection modules live. The rest of these modules ask here instead of
+  // including the platform header themselves: that header brings in
+  // Boost.Asio and Boost.Process, which they otherwise do not need.
+  std::filesystem::path
+  state_directory();
 
   bool
   virtual_subnet_conflicts(const std::string &virtual_ip);
