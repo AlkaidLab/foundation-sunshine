@@ -581,32 +581,44 @@ namespace {
     // that takes over the abandoned mutex never meets a running engine. On a normal exit the
     // handle closes after the engine has finished, when there is nothing left to kill. The service
     // and the host are started by the Service Control Manager, so they are not in the job and
-    // survive the worker as they must.
+    // survive the worker as they must. The engine is created suspended and enters the job before
+    // its first instruction: created running, it could outlive a worker that died between the two
+    // calls. A worker without the job does not install: its engine would outlive it unbound.
     HANDLE engine_job = CreateJobObjectW(nullptr, nullptr);
-    if (engine_job) {
-      JOBOBJECT_EXTENDED_LIMIT_INFORMATION job_limits {};
-      job_limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-      if (!SetInformationJobObject(engine_job, JobObjectExtendedLimitInformation, &job_limits, sizeof(job_limits))) {
-        CloseHandle(engine_job);
-        engine_job = nullptr;
-      }
-    }
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION job_limits {};
+    job_limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    const bool job_ready = engine_job != nullptr &&
+                           SetInformationJobObject(engine_job, JobObjectExtendedLimitInformation, &job_limits, sizeof(job_limits)) != FALSE;
     STARTUPINFOW startup {};
     startup.cb = sizeof(startup);
     PROCESS_INFORMATION process {};
-    if (!CreateProcessW(engine.c_str(), command_line.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
-          run_dir.c_str(), &startup, &process)) {
+    if (!job_ready) {
       if (engine_job) CloseHandle(engine_job);
+      return false;
+    }
+    if (!CreateProcessW(engine.c_str(), command_line.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr,
+          run_dir.c_str(), &startup, &process)) {
+      CloseHandle(engine_job);
+      return false;
+    }
+    if (!AssignProcessToJobObject(engine_job, process.hProcess)) {
+      // The engine exists but is not bound to this worker's life: end it rather than let it run
+      // unbound, and report the start as failed.
+      TerminateProcess(process.hProcess, ERROR_PROCESS_ABORTED);
+      WaitForSingleObject(process.hProcess, INFINITE);
+      CloseHandle(process.hThread);
+      CloseHandle(process.hProcess);
+      CloseHandle(engine_job);
       return false;
     }
     // The engine's scripts and driver helpers are children of the engine, so they stay in the job
     // too and end with the worker if it dies.
-    if (engine_job) AssignProcessToJobObject(engine_job, process.hProcess);
+    ResumeThread(process.hThread);
     WaitForSingleObject(process.hProcess, INFINITE);
     const bool got_code = GetExitCodeProcess(process.hProcess, exit_code) != FALSE;
     CloseHandle(process.hThread);
     CloseHandle(process.hProcess);
-    if (engine_job) CloseHandle(engine_job);
+    CloseHandle(engine_job);
     return got_code;
   }
 
@@ -706,8 +718,8 @@ namespace {
         // or waited for. Refusing the install, with the reason in the run's own files, beats a
         // second engine beside a running one and the exit code 5 that produces.
         make_directory_tree(g_run.directory);
-        write_text_atomic(g_run.result, "{\"schema\":1,\"run\":\"" + id_utf8 + "\",\"state\":\"failed\",\"result_code\":102,\"message_key\":\"WorkerLockUnavailable\"" + installer_failure::result_fields(installer_failure::step::engine, 102) + "}\\n");
-        append_event(g_run.events, "{\"schema\":1,\"run\":\"" + id_utf8 + "\",\"seq\":1,\"phase\":\"engine\",\"state\":\"failed\",\"result_code\":102,\"message_key\":\"WorkerLockUnavailable\"}\\n");
+        write_text_atomic(g_run.result, "{\"schema\":1,\"run\":\"" + id_utf8 + "\",\"state\":\"failed\",\"result_code\":102,\"message_key\":\"WorkerLockUnavailable\"" + installer_failure::result_fields(installer_failure::step::engine, 102) + "}\n");
+        append_event(g_run.events, "{\"schema\":1,\"run\":\"" + id_utf8 + "\",\"seq\":1,\"phase\":\"engine\",\"state\":\"failed\",\"result_code\":102,\"message_key\":\"WorkerLockUnavailable\"}\n");
         return 102;
       }
     }
