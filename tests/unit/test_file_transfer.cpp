@@ -184,6 +184,25 @@ TEST_F(FileTransfer, RefusesWhatItCannotOffer) {
 #endif
 }
 
+TEST(FileTransferInput, RegisteredPathsMustBeAbsoluteAndPlain) {
+  EXPECT_FALSE(file_transfer::input_path("relative/a.txt"));
+#ifdef _WIN32
+  EXPECT_EQ(file_transfer::input_path("C:\\dir\\..\\a.txt")->native(), L"C:\\a.txt");
+  // UNC paths (shares, mapped drives' targets, WSL) keep their leading "\\":
+  // lexically_normal() would make them "\server\..." and relative.
+  EXPECT_EQ(file_transfer::input_path("\\\\nas\\share\\dir\\a.txt")->native(), L"\\\\nas\\share\\dir\\a.txt");
+  EXPECT_EQ(file_transfer::input_path("\\\\wsl.localhost\\Ubuntu\\home\\a.sh")->native(), L"\\\\wsl.localhost\\Ubuntu\\home\\a.sh");
+  EXPECT_EQ(file_transfer::input_path("//nas/share/dir/")->native(), L"\\\\nas\\share\\dir");
+  EXPECT_EQ(file_transfer::input_path("\\\\nas\\share")->filename().native(), L"share");
+  EXPECT_FALSE(file_transfer::input_path("\\\\nas\\share\\..\\x"));
+  EXPECT_FALSE(file_transfer::input_path("\\\\nas\\share\\.\\x"));
+  EXPECT_FALSE(file_transfer::input_path("\\\\nas\\\\share"));
+  EXPECT_FALSE(file_transfer::input_path("\\\\nas"));
+#else
+  EXPECT_EQ(file_transfer::input_path("/tmp/dir/../a.txt")->native(), "/tmp/a.txt");
+#endif
+}
+
 TEST_F(FileTransfer, RelativePathsStayInsideTheOfferAndFitMaxPath) {
   EXPECT_EQ(file_transfer::relative_path("dir", fs::path("sub") / "c.txt"), "dir/sub/c.txt");
   EXPECT_EQ(file_transfer::relative_path("a.txt", {}), "a.txt");

@@ -154,6 +154,12 @@ namespace file_transfer {
   std::optional<std::uint64_t>
   parse_range(std::string_view header, std::uint64_t size, bool &unsatisfiable);
 
+  /// A path the agent registered, ready to list: absolute and without "." or
+  /// "..", or nullopt. On Windows a UNC path (\\server\share\..., \\wsl.localhost\...)
+  /// keeps its leading "\\", which lexically_normal() would lose.
+  std::optional<std::filesystem::path>
+  input_path(std::string_view raw);
+
   /// Turn a path below a listed root into the offer's relative form, or
   /// nullopt when it does not fit (too long, or not representable).
   std::optional<std::string>

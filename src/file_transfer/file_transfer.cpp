@@ -370,12 +370,13 @@ namespace file_transfer {
       try {
         std::set<std::string> top_names;
         for (const auto &raw : paths) {
-          fs::path in = from_utf8(raw).lexically_normal();
-          if (!in.is_absolute()) {
+          const auto input = input_path(raw);
+          if (!input) {
             out.error = "not_found";
             out.detail = raw;
             return;
           }
+          fs::path in = *input;
           if (in.filename().empty() && in.has_relative_path()) {
             in = in.parent_path();  // "D:\dir\" names the folder
           }
@@ -470,6 +471,36 @@ namespace file_transfer {
       }
     }
   }  // namespace
+
+  std::optional<fs::path>
+  input_path(std::string_view raw) {
+#ifdef _WIN32
+    const auto separator = [](char c) { return c == '\\' || c == '/'; };
+    if (raw.size() > 2 && separator(raw[0]) && separator(raw[1])) {
+      // A UNC path (a share, a mapped drive's target, \\wsl.localhost\...):
+      // libstdc++'s lexically_normal() merges the leading "\\" into one and
+      // the result is no longer absolute, so it is kept as it is. What the
+      // normalization did otherwise is checked here instead: no "." or ".."
+      // and no empty part, at least a server and a share.
+      std::string text(raw);
+      std::replace(text.begin(), text.end(), '/', '\\');
+      while (text.size() > 2 && text.back() == '\\') text.pop_back();
+      std::size_t parts = 0;
+      for (std::size_t at = 2; at <= text.size();) {
+        const auto end = std::min(text.find('\\', at), text.size());
+        const auto part = std::string_view(text).substr(at, end - at);
+        if (part.empty() || part == "." || part == "..") return std::nullopt;
+        ++parts;
+        at = end + 1;
+      }
+      if (parts < 2) return std::nullopt;
+      return from_utf8(text);
+    }
+#endif
+    fs::path path = from_utf8(std::string(raw)).lexically_normal();
+    if (!path.is_absolute()) return std::nullopt;
+    return path;
+  }
 
   std::optional<std::string>
   relative_path(const fs::path &root_name, const fs::path &below) {
