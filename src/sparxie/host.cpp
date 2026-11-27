@@ -872,21 +872,8 @@ namespace sparxie {
     return !out.fail();
   }
   bool
-  sparxie_admin_only(const HostEnv &env, fs::path *blocker) {
-    return !env.admin_only || env.sparxie_exe.empty() || env.admin_only(sparxie_root(env.sparxie_exe), blocker);
-  }
-  void
-  guard_sparxie_store(HostEnv &env) {
-    const fs::path exe = env.sparxie_exe;
-    const bool missing = exe.empty() && !env.external_dir.empty();
-    const auto check = env.admin_only;
-    env.store_hooks.guard = [exe, missing, check]() {
-      if (missing) return Status::fail(409, "sparxie_external_missing", "所选目录里找不到 Sparxie，请重新选择");
-      fs::path blocker;
-      if (check && !exe.empty() && !check(sparxie_root(exe), &blocker))
-        return Status::fail(409, "sparxie_unprotected", "Sparxie 目录可被普通用户修改，不能用于触屏启动。请把它放到只有管理员能写入的目录（例如 Program Files）：" + blocker.string());
-      return Status::success();
-    };
+  sparxie_admin_only(const HostEnv &env) {
+    return !env.admin_only || env.sparxie_exe.empty() || env.admin_only(sparxie_root(env.sparxie_exe), nullptr);
   }
   ApiResult
   select_component(HostEnv &env, const json &request) {
@@ -918,8 +905,7 @@ namespace sparxie {
   }
   void
   adopt_component(HostEnv &env) {
-    if (!sparxie_installed(env) || !sparxie_admin_only(env) || sparxie_open(env)) {
-      // the applications still follow the choice: the launcher does not give administrator rights to an install other users can change
+    if (!sparxie_installed(env) || sparxie_open(env)) {
       attach_official_covers(env);
       return;
     }
@@ -988,13 +974,8 @@ namespace sparxie {
       { "statement_en", warning["statement_en"] },
       { "launchNotice", launch_notice(env) },
     };
-    fs::path blocker;
-    const bool admin_only = installed && sparxie_admin_only(env, &blocker);
     result.body["external"] = !env.external_dir.empty();
     result.body["externalDir"] = env.external_dir.string();
-    // false: the Broker of this install is not started as administrator, so touch launch is not available
-    result.body["adminOnly"] = admin_only;
-    result.body["adminOnlyBlocker"] = installed && !admin_only ? blocker.string() : std::string();
     const json extra = install_status_fields(env);
     for (auto it = extra.begin(); it != extra.end(); ++it) result.body[it.key()] = it.value();
     return result;
@@ -1079,7 +1060,10 @@ namespace sparxie {
       return result;
     }
     if (!env.launch_gui) return failure(Status::fail(409, "launch_unavailable", "This host cannot start Sparxie"));
-    const Status started = env.launch_gui(env.sparxie_exe);
+    // normal rights where the person can write the install, administrator rights where they cannot: either way the window can save its config
+    const bool elevated = sparxie_admin_only(env);
+    const Status started = env.launch_gui(env.sparxie_exe, elevated);
+    result.body["elevated"] = elevated;
     if (!started.ok) return failure(started);
     return result;
   }
@@ -1855,7 +1839,7 @@ namespace sparxie {
     // With Sparxie installed, a Genshin, Star Rail or Zenless Zone Zero application that was made as a direct launch (keyboard, mouse and gamepad, no profile yet)
     // goes the launcher route like every other application of a Sparxie title: its Sparxie options (frame-rate unlock, target frame rate, background frame rate, priority, launch settings) then apply. It
     // keeps its options and gets the input it always had. An open Sparxie cannot be written to: the application waits for the next start.
-    if (sparxie_installed(env) && launcher_shipped && sparxie_admin_only(env)) {
+    if (sparxie_installed(env) && launcher_shipped) {
       bool open_checked = false;
       bool open = false;
       for (auto &app : apps["apps"]) {

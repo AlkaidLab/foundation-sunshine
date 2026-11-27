@@ -14,5 +14,5 @@ namespace sparxie {
 
   // Starts a program in the signed-in user's session without waiting for it.
   Status
-  launch_in_user_session(const fs::path &exe);
+  launch_in_user_session(const fs::path &exe, bool elevated);
 }  // namespace sparxie

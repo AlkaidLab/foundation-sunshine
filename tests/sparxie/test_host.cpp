@@ -1749,7 +1749,6 @@ namespace {
     env.external_dir = sparxie::external_sparxie(env.host_data);
     env.sparxie_exe = env.external_dir.empty() ? fs::path {} : sparxie::find_sparxie_exe(env.external_dir);
     if (!env.sparxie_exe.empty()) env.data_dir = sparxie::sparxie_root(env.sparxie_exe);
-    sparxie::guard_sparxie_store(env);
     return env;
   }
 }  // namespace
@@ -1779,7 +1778,6 @@ TEST(ExternalSparxie, ChoosingAFolderMovesTheTouchApplicationsToIt) {
   EXPECT_NE(cmd.find((root / "external" / "Sparxie.exe").string()), std::string::npos) << cmd;
   const auto status = sparxie::component_status(next);
   EXPECT_TRUE(status.body["external"].get<bool>());
-  EXPECT_TRUE(status.body["adminOnly"].get<bool>());
   // an empty path goes back to the host's own component
   ASSERT_TRUE(sparxie::select_component(next, { { "path", "" } }).status.ok);
   EXPECT_TRUE(sparxie::external_sparxie(env.host_data).empty());
@@ -1806,27 +1804,26 @@ TEST(ExternalSparxie, AChosenFolderThatLostItsSparxieIsNotReplacedByAnother) {
   const auto status = sparxie::component_status(next);
   EXPECT_FALSE(status.body["installed"].get<bool>());
   EXPECT_TRUE(status.body["external"].get<bool>());
-  EXPECT_EQ(next.store_hooks.guard().error_code, "sparxie_external_missing");
   fs::remove_all(root);
 }
 
-TEST(ExternalSparxie, AFolderOtherUsersCanChangeGetsNoConfigWriteAndNoTouchApplication) {
+TEST(ExternalSparxie, AFolderOtherUsersCanWriteTakesTouchApplicationsAndOpensWithNormalRights) {
   const fs::path root = fs::temp_directory_path() / "sparxie-external-open";
   sparxie::HostEnv env = external_env(root, nullptr);
   ASSERT_TRUE(sparxie::set_external_sparxie(env.host_data, root / "external"));
-  env.admin_only = [&](const fs::path &folder, fs::path *blocker) {
-    if (blocker) *blocker = folder;
-    return false;
-  };
+  env.admin_only = [](const fs::path &, fs::path *) { return false; };
   sparxie::HostEnv next = after_choice(env);
   sparxie::adopt_component(next);
   auto touch = sparxie::create_app(next, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin 2" } });
-  EXPECT_EQ(touch.status.error_code, "sparxie_unprotected") << touch.status.error;
-  EXPECT_FALSE(fs::exists(root / "external" / "config.json"));
-  const auto status = sparxie::component_status(next);
-  EXPECT_TRUE(status.body["installed"].get<bool>());
-  EXPECT_FALSE(status.body["adminOnly"].get<bool>());
-  EXPECT_EQ(status.body["adminOnlyBlocker"], (root / "external").string());
+  ASSERT_TRUE(touch.status.ok) << touch.status.error;
+  EXPECT_TRUE(fs::exists(root / "external" / "config.json"));
+  bool elevated = true;
+  next.launch_gui = [&](const fs::path &, bool as_admin) {
+    elevated = as_admin;
+    return sparxie::Status::success();
+  };
+  ASSERT_TRUE(sparxie::open_component(next).status.ok);
+  EXPECT_FALSE(elevated);
   fs::remove_all(root);
 }
 

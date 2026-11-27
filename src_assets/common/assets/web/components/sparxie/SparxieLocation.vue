@@ -1,7 +1,6 @@
 <template>
   <MSection v-if="state.loaded && state.available" :title="C.locationTitle" class="spx-location">
     <MBanner v-if="state.external && !state.installed" tone="error" icon="error">{{ C.errors.sparxie_external_missing }}</MBanner>
-    <MBanner v-else-if="state.installed && !state.adminOnly" tone="warn" icon="warning">{{ C.locationOpen(state.adminOnlyBlocker) }}</MBanner>
     <MGroup>
       <MItem wrap icon="folder" :title="state.external ? state.externalDir : C.locationBuiltin">
         <template #trail>
@@ -23,7 +22,7 @@ import { useSparxie } from '../../composables/useSparxie.js'
 import { useSparxieCopy } from '../../composables/useSparxieCopy.js'
 import { failureText } from '../../utils/sparxie/copy.js'
 
-// Which Sparxie the host uses: its own component, or an install the person keeps elsewhere. An install that other users can change is usable only without administrator rights.
+// Which Sparxie the host uses: its own component, or an install the person keeps elsewhere.
 const emit = defineEmits(['changed'])
 const C = useSparxieCopy()
 const { state, client, refresh } = useSparxie()

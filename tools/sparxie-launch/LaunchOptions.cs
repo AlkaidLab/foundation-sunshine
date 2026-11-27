@@ -106,7 +106,6 @@ internal static class ExitCodes
     public const int TimedOut = 9;        // the game never reached Running
     public const int Internal = 10;       // anything unexpected
     public const int Unsupported = 11;    // the profile needs a Sparxie feature the installed build lacks (Endfield)
-    public const int Unprotected = 12;  // users who are not administrators can change the Sparxie install: its Broker is not started
 
     public static int ForState(string state) => state switch
     {

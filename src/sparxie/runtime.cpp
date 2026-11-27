@@ -204,10 +204,7 @@ namespace sparxie {
     }
     fs::path override_dir;
     if (const char *dir = std::getenv("SPARXIE_DATA_DIR")) override_dir = dir;
-    // finding the data folder writes a probe file, which this host (SYSTEM) does not do in a folder other users control: such an install keeps its data beside itself
-    if (override_dir.empty() && !env.sparxie_exe.empty() && !sparxie_admin_only(env)) override_dir = sparxie_root(env.sparxie_exe);
     env.data_dir = resolve_data_dir(env.sparxie_exe, override_dir, local_sparxie_dir());
-    guard_sparxie_store(env);
     env.data_dir_provisional = true;
     static std::once_flag runner_once;
     std::call_once(runner_once, [] {

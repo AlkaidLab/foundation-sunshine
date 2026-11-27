@@ -42,8 +42,9 @@ namespace sparxie {
     // key names come from vendors.h); unset means the host reads the machine's
     // own records. Tests answer with fixture folders.
     std::function<std::vector<fs::path>(const std::vector<std::string> &)> uninstall_locations;
-    // Starts the Sparxie program in the signed-in user's session with that person's normal rights (Sparxie is a window; it must not run as the service).
-    std::function<Status(const fs::path &)> launch_gui;
+    // Starts the Sparxie program in the signed-in user's session (Sparxie is a window; it must not run as the service). `elevated` starts it with administrator
+    // rights: asked for an install that other users cannot write, whose window could not save its config without them (see admin_only).
+    std::function<Status(const fs::path &, bool elevated)> launch_gui;
     // The external install folder the person chose; empty: the host's own component. While it is set no other install is used, also when it has gone missing.
     fs::path external_dir;
     // host_admin_only_tree; unset (tests): every install counts as administrator-only
@@ -70,12 +71,9 @@ namespace sparxie {
   // Stores or (empty) forgets that choice; the other members of the file are kept. False when the file cannot be written.
   bool
   set_external_sparxie(const fs::path &host_data, const fs::path &dir);
-  // Whether the installed Sparxie may run with administrator rights; `blocker` names the path another user can change.
+  // Whether only administrators can write the installed Sparxie (false: other users can, or it cannot be told).
   bool
-  sparxie_admin_only(const HostEnv &env, fs::path *blocker = nullptr);
-  // Puts the admin-only rule in front of every write of Sparxie's config: the host writes as SYSTEM and does not write into a folder that other users control.
-  void
-  guard_sparxie_store(HostEnv &env);
+  sparxie_admin_only(const HostEnv &env);
   fs::path
   resolve_data_dir(const fs::path &exe, const fs::path &override_dir, const fs::path &fallback);
   // The note the touch launcher leaves in the host's Sparxie data folder (launch-notice.json) after a launch that needed its safety net: the object, or null.

@@ -49,9 +49,6 @@ internal static class Launcher
     public static readonly TimeSpan RunningLimit = TimeSpan.FromSeconds(120);
     public static readonly TimeSpan ShutdownGrace = TimeSpan.FromSeconds(3);
 
-    /// <summary>The admin-only rule (<see cref="InstallTrust.Blocker"/>). Only tests replace it, for their stand-in installs; nothing a user can set reaches it.</summary>
-    internal static Func<string, string, string?> InstallBlocker = InstallTrust.Blocker;
-
     public static async Task<int> RunAsync(string[] args, RunLog log, Func<string, string?> env, string exeDirectory)
     {
         var version = typeof(Launcher).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "?";
@@ -67,15 +64,6 @@ internal static class Launcher
 
         var options = LaunchOptions.Parse(args, out var optionError);
         if (options is null) return Finish(log, ExitCodes.Usage, optionError);
-
-        // the Broker is started as administrator only from an install that administrators alone can change
-        if (InstallBlocker(options.SparxiePath, InstallTrust.HostRoot(exeDirectory)) is { } blocker)
-        {
-            var refused = new Profile(options.ProfileId, options.ProfileId, "", "", null);
-            var why = $"the Sparxie install can be changed by users who are not administrators ({blocker}); its Broker is not started as administrator";
-            LaunchNotice.Write(LaunchNotice.CandidateDirectories(exeDirectory, env), LaunchNotice.Build(LaunchNotice.KindUnprotected, refused, why, log.Path, DateTime.UtcNow));
-            return Finish(log, ExitCodes.Unprotected, why);
-        }
 
         // the profile
         var dataDirs = SparxieConfig.DataDirectories(options.SparxiePath, env(SparxieConfig.DataDirEnv), env("LOCALAPPDATA"));

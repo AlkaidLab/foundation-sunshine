@@ -23,7 +23,6 @@ const ZH = {
   appName: '应用名称',
   // the browse list of the Web UI (the host lists its own drives and folders; a browser cannot give the host a path)
   locationTitle: 'Sparxie 位置', locationBuiltin: '内置组件', locationChoose: '选择外部安装', locationReset: '改用内置组件',
-  locationOpen: (path) => `普通用户可以修改此目录，不会以管理员身份启动 Broker，触屏启动不可用${path ? `：${path}` : ''}`,
   browseTitleSparxie: '选择 Sparxie 文件夹',
   browseTitleFile: '选择游戏主程序', browseTitleFolder: '选择游戏文件夹', browseRoot: '这台电脑', browseUp: '上一级', browseHere: '选择此文件夹', browseEmpty: '这里没有可显示的内容', browseMore: (n) => `只显示前 ${n} 项`, browseFailed: '无法读取这个位置', browseClose: '返回',
   coverFollow: '跟随官方海报', coverFollowText: '随版本更新', coverUpdated: (t) => `已更新 ${t}`, coverNone: '尚未取得官方海报', coverCustom: '自定义封面', coverRestore: '恢复官方海报',
@@ -58,7 +57,7 @@ const ZH = {
   // every error_code the Sparxie routes answer with, as one plain sentence; a code that is not here shows the host's own message
   errors: {
     invalid_art_job: '图片刷新任务编号无效', invalid_art_action: '图片刷新操作无效',
-    sparxie_running: '关闭 Sparxie 后才能写入它的配置', sparxie_unprotected: 'Sparxie 目录可被普通用户修改，不能用于触屏启动。请放到只有管理员能写入的目录（例如 Program Files）', sparxie_external_missing: '所选目录里找不到 Sparxie，请重新选择', not_sparxie: '该文件夹里没有 Sparxie.exe', config_unreadable: 'Sparxie 的配置文件无法读取', config_conflict: 'Sparxie 的配置在写入期间发生了变化', schema_unsupported: '不支持这个版本的 Sparxie 配置',
+    sparxie_running: '关闭 Sparxie 后才能写入它的配置', sparxie_external_missing: '所选目录里找不到 Sparxie，请重新选择', not_sparxie: '该文件夹里没有 Sparxie.exe', config_unreadable: 'Sparxie 的配置文件无法读取', config_conflict: 'Sparxie 的配置在写入期间发生了变化', schema_unsupported: '不支持这个版本的 Sparxie 配置',
     write_failed: '无法写入 Sparxie 配置', apps_write_failed: '无法保存应用列表', endfield_plugin_missing: '需要终末地插件：请先在 Sparxie 中安装并启用终末地插件', endfield_unsupported: '当前 Sparxie 不支持终末地', no_user_session: '这台电脑当前没有已登录的用户', not_found: '没有找到这个应用，应用列表可能已经变化',
     invalid_input: '填写的内容无效', invalid_region: '所选区服与安装位置不符', is_sparxie: '这是 Sparxie 的位置，不是游戏', wrong_game: '这个文件不属于所选游戏', unrecognised: '没有找到已知的游戏主程序',
     game_running: '游戏正在运行，关闭游戏后再保存', registry_write_failed: '游戏设置没有写入成功', ambiguous: '这个文件夹里有多个已知游戏的主程序', not_readable: '无法读取这个文件夹', settings_unsupported: '这个游戏的设置只能在游戏内修改', launch_failed: '无法启动 Sparxie', art_unavailable: '无法生成官方海报', absent: '尚未安装 Sparxie', launch_unavailable: '主机无法启动 Sparxie', picker_unavailable: '主机不提供文件选择窗口',
@@ -85,7 +84,6 @@ const EN = {
   region: 'Region', coverAuto: 'Official poster, updated with each version', coverChange: 'Change cover',
   appName: 'Application name',
   locationTitle: 'Sparxie location', locationBuiltin: 'Built-in component', locationChoose: 'Use another install', locationReset: 'Use the built-in component',
-  locationOpen: (path) => `Users who are not administrators can change this folder, so the Broker is not started as administrator and touch launch is unavailable${path ? `: ${path}` : ''}`,
   browseTitleSparxie: 'Choose the Sparxie folder',
   browseTitleFile: 'Choose the game executable', browseTitleFolder: 'Choose the game folder', browseRoot: 'This PC', browseUp: 'Up', browseHere: 'Choose this folder', browseEmpty: 'Nothing to show here', browseMore: (n) => `Showing the first ${n}`, browseFailed: 'This location cannot be read', browseClose: 'Back',
   coverFollow: 'Follow the official poster', coverFollowText: 'Updates with each version', coverUpdated: (t) => `Updated ${t}`, coverNone: 'No official poster yet', coverCustom: 'Custom cover', coverRestore: 'Restore the official poster',
@@ -117,7 +115,7 @@ const EN = {
   tagSparxie: 'Sparxie application',
   errors: {
     invalid_art_job: 'The artwork refresh job ID is invalid', invalid_art_action: 'The artwork refresh action is invalid',
-    sparxie_running: 'Close Sparxie before its config is written', sparxie_unprotected: 'Users who are not administrators can change the Sparxie folder, so touch launch cannot use it. Put it in a folder only administrators can write, such as Program Files', sparxie_external_missing: 'There is no Sparxie in the chosen folder. Choose it again', not_sparxie: 'That folder has no Sparxie.exe', config_unreadable: 'The Sparxie config file cannot be read', config_conflict: 'The Sparxie config changed while it was being written', schema_unsupported: 'This version of the Sparxie config is not supported',
+    sparxie_running: 'Close Sparxie before its config is written', sparxie_external_missing: 'There is no Sparxie in the chosen folder. Choose it again', not_sparxie: 'That folder has no Sparxie.exe', config_unreadable: 'The Sparxie config file cannot be read', config_conflict: 'The Sparxie config changed while it was being written', schema_unsupported: 'This version of the Sparxie config is not supported',
     write_failed: 'The Sparxie config could not be written', apps_write_failed: 'The application list could not be saved', endfield_plugin_missing: 'The Endfield plugin is needed: install and enable it in Sparxie first', endfield_unsupported: 'The installed Sparxie does not support Endfield', no_user_session: 'Nobody is signed in on this PC', not_found: 'That application was not found; the list may have changed',
     invalid_input: 'Some of the input is not valid', invalid_region: 'The region does not match the install', is_sparxie: 'That is Sparxie\'s own location, not a game', wrong_game: 'That file does not belong to the chosen game', unrecognised: 'No known game executable was found',
     game_running: 'The game is running. Close it, then save', registry_write_failed: 'The game settings could not be stored', ambiguous: 'That folder holds more than one known game executable', not_readable: 'That folder cannot be read', settings_unsupported: 'This game\'s settings can only be changed in the game', launch_failed: 'Sparxie could not be started', art_unavailable: 'The official poster could not be composed', absent: 'Sparxie is not installed', launch_unavailable: 'The host cannot start Sparxie', picker_unavailable: 'The host does not offer a file dialog',

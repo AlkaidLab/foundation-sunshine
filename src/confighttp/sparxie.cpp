@@ -203,7 +203,7 @@ namespace confighttp::sparxie {
       draft.executable = body.value("exe", std::string());
       draft.game = body.value("game", std::string("genshin"));
       if (body.contains("options") && body["options"].is_object()) draft.options = body["options"];
-      ::sparxie::StoreHooks hooks = env.store_hooks;
+      ::sparxie::StoreHooks hooks;
       hooks.running = ::sparxie::host_process_running({ "Sparxie.exe", "Sparxie.Desktop.exe", "Sparxie.Launcher.exe" });
       if (hooks.running) {
         json err;
