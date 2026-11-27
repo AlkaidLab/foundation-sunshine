@@ -44,9 +44,6 @@ namespace sparxie {
     std::function<std::vector<fs::path>(const std::vector<std::string> &)> uninstall_locations;
     // Starts the Sparxie program in the signed-in user's session (Sparxie is a window; it must not run as the service).
     std::function<Status(const fs::path &)> launch_gui;
-    // The folder of an external Sparxie whose config.json the host shares; empty: the config of the host's own component. Only that file is shared: the host runs
-    // no program of the external install.
-    fs::path shared_config;
     // Folder search limits; tests lower them.
     ScanOptions scan;
     // Where the host writes a warning (tests capture it; the host logs it).
@@ -62,12 +59,6 @@ namespace sparxie {
   find_sparxie_exe(const fs::path &root);
   fs::path
   resolve_data_dir(const fs::path &exe, const fs::path &override_dir, const fs::path &fallback);
-  // The shared folder stored in <host data>/sparxie-host.json ("sharedConfigDir"); empty when none is chosen.
-  fs::path
-  stored_shared_config(const fs::path &host_data);
-  // Makes `dir` the config folder of this environment: read and written as the signed-in person, checked against the host's own Sparxie build (the one that runs it).
-  void
-  use_shared_config(HostEnv &env, const fs::path &dir);
   // The note the touch launcher leaves in the host's Sparxie data folder (launch-notice.json) after a launch that needed its safety net: the object, or null.
   json
   launch_notice(const HostEnv &env);
@@ -84,13 +75,6 @@ namespace sparxie {
   // Opens the Sparxie program in the signed-in user's session.
   ApiResult
   open_component(HostEnv &env);
-  // Chooses whose config.json the host uses: { path } is the folder of an external Sparxie (or its Sparxie.exe or config.json) on a local drive; an empty path goes
-  // back to the host's own component.
-  ApiResult
-  select_shared_config(HostEnv &env, const json &request);
-  // After a new choice, with an environment made for it: the touch applications' profiles go into the config it lacks them in and their commands follow it.
-  void
-  adopt_shared_config(HostEnv &env);
   ApiResult
   list_games(HostEnv &env);
   ApiResult

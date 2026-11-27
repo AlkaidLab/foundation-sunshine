@@ -2,14 +2,10 @@ using System.Globalization;
 
 namespace Sparxie.Launch;
 
-/// <summary>The command line the host writes: <c>--sparxie &lt;Sparxie.exe&gt; --profile &lt;id&gt;</c>, and for a config shared with an external Sparxie
-/// <c>--config-dir &lt;folder&gt; --exe &lt;game&gt;</c>.</summary>
-/// <param name="ConfigDir">The folder config.json is read from; null: the Sparxie install's own.</param>
-/// <param name="GameExe">The program to start, whatever the profile says. It always comes with <paramref name="ConfigDir"/>: that config can be changed without
-/// administrator rights, and the launcher has them.</param>
-internal sealed record LaunchOptions(string SparxiePath, string ProfileId, ScreenArgs? Screen = null, string? ScreenWarning = null, string? ConfigDir = null, string? GameExe = null)
+/// <summary>The command line the host writes: <c>--sparxie &lt;Sparxie.exe&gt; --profile &lt;id&gt;</c>.</summary>
+internal sealed record LaunchOptions(string SparxiePath, string ProfileId, ScreenArgs? Screen = null, string? ScreenWarning = null)
 {
-    public const string Usage = "usage: sparxie-launch --sparxie <path to Sparxie.exe> --profile <profile id> [--screen-width <w> --screen-height <h>] [--window-mode fullscreen|windowed|borderless] [--config-dir <folder> --exe <game.exe>]";
+    public const string Usage = "usage: sparxie-launch --sparxie <path to Sparxie.exe> --profile <profile id> [--screen-width <w> --screen-height <h>] [--window-mode fullscreen|windowed|borderless]";
 
     /// <summary>Returns the options, or null with a one-line reason.</summary>
     public static LaunchOptions? Parse(IReadOnlyList<string> args, out string error)
@@ -17,7 +13,6 @@ internal sealed record LaunchOptions(string SparxiePath, string ProfileId, Scree
         string? sparxie = null;
         string? profile = null;
         string? screenWidth = null, screenHeight = null, windowMode = null;
-        string? configDir = null, gameExe = null;
         for (var i = 0; i < args.Count; i++)
         {
             var arg = args[i];
@@ -36,8 +31,6 @@ internal sealed record LaunchOptions(string SparxiePath, string ProfileId, Scree
                 case "--screen-width":
                 case "--screen-height":
                 case "--window-mode":
-                case "--config-dir":
-                case "--exe":
                     string? value = inline;
                     if (value is null)
                     {
@@ -54,8 +47,6 @@ internal sealed record LaunchOptions(string SparxiePath, string ProfileId, Scree
                         case "--profile": profile = value; break;
                         case "--screen-width": screenWidth = value; break;
                         case "--screen-height": screenHeight = value; break;
-                        case "--config-dir": configDir = value; break;
-                        case "--exe": gameExe = value; break;
                         default: windowMode = value; break;
                     }
                     break;
@@ -83,11 +74,6 @@ internal sealed record LaunchOptions(string SparxiePath, string ProfileId, Scree
             error = $"--sparxie is not a usable path: {ex.Message}";
             return null;
         }
-        if (string.IsNullOrWhiteSpace(configDir) != string.IsNullOrWhiteSpace(gameExe))
-        {
-            error = $"--config-dir and --exe come together. {Usage}";
-            return null;
-        }
         error = "";
         // the screen arguments never stop a launch: a value that cannot be used is dropped and said so in the log
         ScreenArgs? screen = null;
@@ -102,8 +88,7 @@ internal sealed record LaunchOptions(string SparxiePath, string ProfileId, Scree
             else if (new ScreenArgs(w, h, mode) is { IsEmpty: false } ok)
                 screen = ok;
         }
-        return new LaunchOptions(full, profile.Trim(), screen, warning,
-            string.IsNullOrWhiteSpace(configDir) ? null : configDir, string.IsNullOrWhiteSpace(gameExe) ? null : gameExe);
+        return new LaunchOptions(full, profile.Trim(), screen, warning);
     }
 }
 

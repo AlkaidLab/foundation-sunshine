@@ -184,16 +184,13 @@ namespace sparxie {
     if (env.sparxie_exe.empty()) env.sparxie_exe = find_sparxie_exe(env.install_root);
     fs::path override_dir;
     if (const char *dir = std::getenv("SPARXIE_DATA_DIR")) override_dir = dir;
-    const fs::path shared = stored_shared_config(env.host_data);
-    if (shared.empty()) env.data_dir = resolve_data_dir(env.sparxie_exe, override_dir, local_sparxie_dir());
+    env.data_dir = resolve_data_dir(env.sparxie_exe, override_dir, local_sparxie_dir());
     env.data_dir_provisional = true;
     static std::once_flag runner_once;
     std::call_once(runner_once, [] {
       if (auto runner = make_user_runner()) set_user_runner(std::move(runner));
     });
     env.launch_gui = launch_in_user_session;
-    // after the user runner: a shared config is only touched as the signed-in person
-    if (!shared.empty()) use_shared_config(env, shared);
     env.warn = [](const std::string &message) { BOOST_LOG(warning) << "Sparxie: " << message; };
     env.registry = &host_registry();
     env.process_running = host_process_running;

@@ -379,22 +379,6 @@ namespace sparxie {
         refused.status = Status::fail(409, "sparxie_running", "Sparxie is running, close it before writing");
         return refused;
       }
-      if (hooks.run_as) {
-        StoreHooks inner = hooks;
-        inner.run_as = {};
-        WriteResult result;
-        bool present = false;
-        const bool ran = hooks.run_as([&] {
-          std::error_code missing;
-          present = fs::is_directory(dir, missing);
-          if (present) result = edit_store(dir, inner, edit);
-        });
-        if (ran && present) return result;
-        WriteResult refused;
-        refused.state = "refused_shared";
-        refused.status = ran ? Status::fail(409, "shared_config_missing", "共享配置的文件夹不存在，请重新选择") : Status::fail(409, "no_user_session", "Nobody is signed in on this PC");
-        return refused;
-      }
       const fs::path path = dir / "config.json";
       std::error_code ec;
       const SparxieBuild build = hooks.build ? *hooks.build : detect_build(dir);

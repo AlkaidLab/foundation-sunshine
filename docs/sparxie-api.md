@@ -493,19 +493,6 @@ with the same counters. Reads happen as the signed-in user; nobody signed in is
 Folders come first, then `.exe` files with the known game executables leading;
 at most 3000 entries. A network path (`\\server\share`) is 400 `invalid_input`.
 
-### Sharing the config with an external Sparxie
-
-The host runs only its own component (the window `open` starts, and the Broker). A Sparxie the person keeps elsewhere can share its `config.json`: `POST /api/sparxie/shared-config` `{ "path": "D:\\Apps\\Sparxie" }` takes that Sparxie's folder (or the `Sparxie.exe` or `config.json` in it); an empty `path` goes back to the component's own config. The choice is `sharedConfigDir` in `sparxie-host.json` and `sharedConfigDir` in the status, which is also the answer. 409 `sparxie_running`, 404 `not_sparxie`, 400 `invalid_input` (relative or network path).
-
-That folder can be changed without administrator rights, so:
-
-* the host reads and writes it as the signed-in user, never with the service's rights (409 `no_user_session` when nobody is signed in, 409 `shared_config_missing` when the folder is gone);
-* the touch command gets `--config-dir "<folder>" --exe "<game>"`: `sparxie-launch` reads the profile's settings from that folder, but starts the program the application was made for, not the one the config names (the two flags only come together);
-* profiles are checked against the component's build (and its plugins), which is the one that runs them;
-* the host removes no profile from it on its own, and uninstalling the component leaves it.
-
-Choosing a folder adds the touch applications' profiles it lacks and rewrites their commands. The window `open` starts is the component's and shows the component's own config; the shared one is edited in the external Sparxie.
-
 `POST /api/sparxie/open` starts the Sparxie program in the signed-in user's
 session with the host's launch-as-user path (never as the service):
 `{ ok, already_running }`. Not installed is 409 `absent`.
