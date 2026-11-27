@@ -315,7 +315,9 @@ namespace file_transfer {
         // without that right, and the paste would only fail later); what
         // opened is the file every download must find again.
         if (!open_source(source, src.identity).valid()) {
-          out.error = "unreadable";
+          // Gone since it was listed, or there but not for this user to read.
+          std::error_code ec;
+          out.error = fs::exists(fs::symlink_status(source, ec)) ? "unreadable" : "not_found";
           out.detail = to_utf8(source.u8string());
           return false;
         }
