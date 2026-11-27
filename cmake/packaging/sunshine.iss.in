@@ -814,6 +814,31 @@ begin
   Result := (VDDResultCode <> 101) and (not ServiceVerifyFailed);
 end;
 
+// The helper's output is the only place a VDD failure names its reason (the exit code alone is
+// just 101). install-vdd.bat keeps it next to the script and echoes it; mirror it into the setup
+// log and the run directory either way, so a failure is diagnosable from the files a person can
+// send us.
+procedure SurfaceVddHelperLog();
+var
+  HelperLog: String;
+  Lines: TArrayOfString;
+  Joined: String;
+  I: LongInt;
+begin
+  HelperLog := ExpandConstant('{app}\scripts\vdd-install-last.log');
+  if not LoadStringsFromFile(HelperLog, Lines) then begin
+    Log('VDD helper output is unavailable; the helper either was not run or wrote nothing.');
+    Exit;
+  end;
+  Joined := '';
+  for I := 0 to GetArrayLength(Lines) - 1 do begin
+    Log('VDD helper: ' + Lines[I]);
+    Joined := Joined + Lines[I] + #13#10;
+  end;
+  if InstallRunDir <> '' then
+    SaveStringToFile(AddBackslash(InstallRunDir) + 'vdd-install.log', AnsiString(Joined), False);
+end;
+
 procedure InstallAndVerifyVDD();
 var
   ResultCode: Integer;
@@ -853,6 +878,8 @@ begin
     Log('VDD installation or verification failed with exit code ' + IntToStr(ResultCode) + '.');
     EmitInstallerEvent('install-vdd', 'failed', 'StatusInstallVDD', 101);
   end;
+
+  SurfaceVddHelperLog;
 
   // the exit code of the helper itself (-1: it could not be started), not the 101 this script maps it to
   JournalComponent('vdd', 'install', ResultCode);
