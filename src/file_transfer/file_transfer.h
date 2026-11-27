@@ -68,6 +68,7 @@ namespace file_transfer {
     std::optional<offer_t> offer;
     std::string error;  ///< "no_paths", "not_found", "unreadable", "bad_name" (not UTF-8), "unsupported", "too_many_entries", "path_too_long", "duplicate_name", "no_user"
     std::string detail;  ///< the path the error is about, when there is one
+    std::string cause;  ///< what the system said about it, for the log ("system error 53: ...")
   };
 
   /// List `paths` (absolute, UTF-8) as the interactive user and remember the

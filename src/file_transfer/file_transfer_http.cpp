@@ -107,7 +107,9 @@ namespace file_transfer_http {
       return error(web::StatusCode::internal_server_error, "internal");
     }
     if (!result.offer) {
-      BOOST_LOG(warning) << "File transfer: registration refused: "sv << result.error;
+      BOOST_LOG(warning) << "File transfer: registration refused: "sv << result.error
+                         << (result.detail.empty() ? ""s : " ("s + result.detail + ")"s)
+                         << (result.cause.empty() ? ""s : ", "s + result.cause);
       const auto status = result.error == "no_user"    ? web::StatusCode::service_unavailable :
                           result.error == "not_found"  ? web::StatusCode::not_found :
                           result.error == "unreadable" ? web::StatusCode::forbidden :

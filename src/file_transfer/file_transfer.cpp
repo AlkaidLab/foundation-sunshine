@@ -5,12 +5,14 @@
 #include "file_transfer.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <charconv>
 #include <cstring>
 #include <deque>
 #include <mutex>
 #include <set>
 #include <stdexcept>
+#include <system_error>
 #include <unordered_map>
 #include <utility>
 
@@ -181,6 +183,7 @@ namespace file_transfer {
       std::uint64_t total = 0;
       std::string error;
       std::string detail;
+      std::string cause;
     };
 
     /// True when `text` is well-formed UTF-8. Names that are not (possible outside
@@ -274,23 +277,45 @@ namespace file_transfer {
     }
 #endif
 
+    /// True when `ec` says the path does not exist (not that it could not be reached or read).
+    bool
+    missing(const std::error_code &ec) {
+#ifdef _WIN32
+      if (ec.category() == std::system_category() && (ec.value() == ERROR_FILE_NOT_FOUND || ec.value() == ERROR_PATH_NOT_FOUND)) {
+        return true;
+      }
+#endif
+      return ec == std::errc::no_such_file_or_directory;
+    }
+
+    /// "system error 53: <the system's text>" for the log.
+    std::string
+    describe(const std::error_code &ec) {
+      return "system error " + std::to_string(ec.value()) + ": " + ec.message();
+    }
+
     /// Open `source` for reading as a regular file (never following a link at
-    /// its last component on POSIX, never blocking on a FIFO). Invalid on failure.
+    /// its last component on POSIX, never blocking on a FIFO). Invalid on
+    /// failure, with the reason in `why`.
     open_file_t
-    open_source(const fs::path &source, identity_t &identity) {
+    open_source(const fs::path &source, identity_t &identity, std::error_code *why = nullptr) {
+      const auto fail = [why](std::error_code ec) {
+        if (why != nullptr) *why = ec;
+        return open_file_t {};
+      };
 #ifdef _WIN32
       // Writers and deleters may keep working on the file; the identity check catches a change.
       HANDLE h = CreateFileW(source.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
-      if (h == INVALID_HANDLE_VALUE) return {};
+      if (h == INVALID_HANDLE_VALUE) return fail(std::error_code(static_cast<int>(GetLastError()), std::system_category()));
       open_file_t file(h, 0);
-      if (!identity_of(h, identity)) return {};
+      if (!identity_of(h, identity)) return fail(std::make_error_code(std::errc::not_supported));
       return open_file_t(file.release(), identity.size);
 #else
       // O_NONBLOCK: a FIFO swapped in must not block; regular files ignore it, cleared anyway.
       const int fd = ::open(source.c_str(), O_RDONLY | O_CLOEXEC | O_NONBLOCK | O_NOFOLLOW);
-      if (fd < 0) return {};
+      if (fd < 0) return fail(std::error_code(errno, std::generic_category()));
       open_file_t file(fd, 0);
-      if (!identity_of(fd, identity)) return {};
+      if (!identity_of(fd, identity)) return fail(std::make_error_code(std::errc::not_supported));
       const int flags = ::fcntl(fd, F_GETFL);
       if (flags >= 0) ::fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
       return open_file_t(file.release(), identity.size);
@@ -314,11 +339,12 @@ namespace file_transfer {
         // The user must be able to open it (the type and size can be read
         // without that right, and the paste would only fail later); what
         // opened is the file every download must find again.
-        if (!open_source(source, src.identity).valid()) {
+        std::error_code why;
+        if (!open_source(source, src.identity, &why).valid()) {
           // Gone since it was listed, or there but not for this user to read.
-          std::error_code ec;
-          out.error = fs::exists(fs::symlink_status(source, ec)) ? "unreadable" : "not_found";
+          out.error = missing(why) ? "not_found" : "unreadable";
           out.detail = to_utf8(source.u8string());
+          out.cause = describe(why);
           return false;
         }
         src.path = source;
@@ -374,8 +400,11 @@ namespace file_transfer {
           std::error_code ec;
           const auto st = fs::status(in, ec);
           if (ec || !fs::exists(st)) {
-            out.error = "not_found";
+            // A path that exists but cannot be reached (a network share the
+            // user's session has and this one has not, access denied) is not "not found".
+            out.error = !ec || missing(ec) ? "not_found" : "unreadable";
             out.detail = raw;
+            if (ec) out.cause = describe(ec);
             return;
           }
           auto top = relative_path(name, {});
@@ -429,8 +458,9 @@ namespace file_transfer {
           }
           if (ec) {
             // The folder (or one below it) vanished or could not be opened.
-            out.error = ec == std::errc::no_such_file_or_directory ? "not_found" : "unreadable";
+            out.error = missing(ec) ? "not_found" : "unreadable";
             out.detail = to_utf8(last.u8string());
+            out.cause = describe(ec);
             return;
           }
         }
@@ -480,6 +510,7 @@ namespace file_transfer {
     if (!listing.error.empty()) {
       result.error = std::move(listing.error);
       result.detail = std::move(listing.detail);
+      result.cause = std::move(listing.cause);
       return result;
     }
 

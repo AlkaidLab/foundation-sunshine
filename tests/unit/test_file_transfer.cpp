@@ -143,7 +143,9 @@ TEST_F(FileTransfer, OneFileSentToTheClientKeepsTheSingleFileFields) {
 
 TEST_F(FileTransfer, RefusesWhatItCannotOffer) {
   EXPECT_EQ(file_transfer::register_paths({}, "clipboard").error, "no_paths");
-  EXPECT_EQ(file_transfer::register_paths({ utf8(root / "missing") }, "clipboard").error, "not_found");
+  const auto missing = file_transfer::register_paths({ utf8(root / "missing") }, "clipboard");
+  EXPECT_EQ(missing.error, "not_found");
+  EXPECT_EQ(missing.detail, utf8(root / "missing"));
   EXPECT_EQ(file_transfer::register_paths({ "relative/a.txt" }, "clipboard").error, "not_found");
   fs::create_directories(root / "other");
   write(root / "other" / "a.txt", "x");
@@ -165,6 +167,14 @@ TEST_F(FileTransfer, RefusesWhatItCannotOffer) {
     fs::permissions(root / "dir" / "b.bin", fs::perms::owner_all);
     EXPECT_EQ(file_result.error, "unreadable");
     EXPECT_NE(file_result.detail.find("b.bin"), std::string::npos) << file_result.detail;
+    EXPECT_NE(file_result.cause.find("system error"), std::string::npos) << file_result.cause;
+
+    // A path that exists but cannot be reached is not "not found": the log says why.
+    fs::permissions(root / "dir", fs::perms::none);
+    const auto blocked = file_transfer::register_paths({ utf8(root / "dir" / "b.bin") }, "clipboard");
+    fs::permissions(root / "dir", fs::perms::owner_all);
+    EXPECT_EQ(blocked.error, "unreadable");
+    EXPECT_NE(blocked.cause.find("system error"), std::string::npos) << blocked.cause;
   }
 
   // Names that are not UTF-8 would all become the same replacement characters.
