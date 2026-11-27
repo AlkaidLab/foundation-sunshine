@@ -203,7 +203,7 @@ const portRows = computed(() => {
   <!-- USB 有线串流: the VoidLink host opt-in, which client platforms have it and where to get that client -->
   <MSection v-if="platform === 'windows'" :title="$t('shell.usb_wired_streaming')" :description="$t('config.usb_wired_streaming_description')">
     <MGroup>
-      <CfgSwitch :config="config" k="usb_wired_streaming_enabled" def="disabled" />
+      <CfgSwitch :config="config" k="usb_wired_streaming_enabled" :on="true" :off="false" def="false" />
       <MItem icon="mobile" :title="$t('config.usb_wired_platform_ios')" :value="$t('config.usb_wired_platform_ios_status')" />
       <MItem icon="android" :title="$t('config.usb_wired_platform_android')" :value="$t('config.usb_wired_platform_wip')" />
       <MItem icon="desktop_windows" :title="$t('config.usb_wired_platform_pc')" :value="$t('config.usb_wired_platform_wip')" />
