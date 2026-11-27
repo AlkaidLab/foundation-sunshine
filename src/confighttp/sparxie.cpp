@@ -94,18 +94,18 @@ namespace confighttp::sparxie {
       finish(response, ::sparxie::browse_path(env, body));
     }
     void
-    post_location(resp_https_t response, req_https_t request) {
+    post_shared_config(resp_https_t response, req_https_t request) {
       if (!ready(response, request, true)) return;
       json body;
       if (!read_json_body(response, request, body)) return;
       auto env = ::sparxie::make_host_env();
-      auto result = ::sparxie::select_component(env, body);
+      auto result = ::sparxie::select_shared_config(env, body);
       if (!result.status.ok) {
         finish(response, std::move(result));
         return;
       }
       auto chosen = ::sparxie::make_host_env();
-      ::sparxie::adopt_component(chosen);
+      ::sparxie::adopt_shared_config(chosen);
       reload_apps(chosen);
       finish(response, ::sparxie::component_status(chosen));
     }
@@ -203,7 +203,7 @@ namespace confighttp::sparxie {
       draft.executable = body.value("exe", std::string());
       draft.game = body.value("game", std::string("genshin"));
       if (body.contains("options") && body["options"].is_object()) draft.options = body["options"];
-      ::sparxie::StoreHooks hooks;
+      ::sparxie::StoreHooks hooks = env.store_hooks;
       hooks.running = ::sparxie::host_process_running({ "Sparxie.exe", "Sparxie.Desktop.exe", "Sparxie.Launcher.exe" });
       if (hooks.running) {
         json err;
@@ -399,8 +399,8 @@ namespace confighttp::sparxie {
     auto env = ::sparxie::make_host_env();
     ::sparxie::UninstallRequest req;
     req.dest = env.component_dir;
-    // an external install is not the host's to remove: its config stays whatever is asked about the component
-    if (env.external_dir.empty()) req.data_dir = env.data_dir;
+    // a shared config belongs to the external Sparxie: removing the component never removes it
+    if (env.shared_config.empty()) req.data_dir = env.data_dir;
     req.running = ::sparxie::host_process_running({ "Sparxie.exe", "Sparxie.Desktop.exe", "Sparxie.Launcher.exe" });
     if (body.contains("delete_config") && body["delete_config"].is_boolean()) {
       req.delete_config_set = true;
@@ -437,7 +437,7 @@ namespace confighttp::sparxie {
     server.resource["^/api/sparxie/scan$"]["POST"] = guarded(post_scan);
     server.resource["^/api/sparxie/browse$"]["POST"] = guarded(post_browse);
     server.resource["^/api/sparxie/open$"]["POST"] = guarded(post_open);
-    server.resource["^/api/sparxie/location$"]["POST"] = guarded(post_location);
+    server.resource["^/api/sparxie/shared-config$"]["POST"] = guarded(post_shared_config);
     server.resource["^/api/sparxie/pick$"]["POST"] = guarded(post_pick);
     server.resource["^/api/sparxie/apps$"]["POST"] = guarded(post_create);
     server.resource["^/api/sparxie/apps/([0-9]+)$"]["PUT"] = guarded(put_app);

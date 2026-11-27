@@ -167,8 +167,7 @@ namespace confighttp::apps_scan {
 #endif
       std::filesystem::path sparxie_exe;
       if (const char *home = std::getenv("SPARXIE_HOME")) sparxie_exe = sparxie::find_sparxie_exe(app_scan::from_utf8(home));
-      if (const auto chosen = sparxie::external_sparxie(platf::appdata() / "sparxie"); !chosen.empty()) sparxie_exe = sparxie::find_sparxie_exe(chosen);
-      else if (sparxie_exe.empty()) sparxie_exe = sparxie::find_sparxie_exe(platf::appdata() / "components" / "sparxie");
+      if (sparxie_exe.empty()) sparxie_exe = sparxie::find_sparxie_exe(platf::appdata() / "components" / "sparxie");
       if (!sparxie_exe.empty() && std::filesystem::is_regular_file(sparxie_exe)) {
         context.sparxie_exe = sparxie_exe;
         std::filesystem::path data = sparxie_exe.parent_path();

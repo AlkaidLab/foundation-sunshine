@@ -66,7 +66,7 @@ internal static class Launcher
         if (options is null) return Finish(log, ExitCodes.Usage, optionError);
 
         // the profile
-        var dataDirs = SparxieConfig.DataDirectories(options.SparxiePath, env(SparxieConfig.DataDirEnv), env("LOCALAPPDATA"));
+        var dataDirs = options.ConfigDir is { } shared ? [shared] : SparxieConfig.DataDirectories(options.SparxiePath, env(SparxieConfig.DataDirEnv), env("LOCALAPPDATA"));
         var dataDir = SparxieConfig.PickDataDirectory(dataDirs);
         var configPath = Path.Combine(dataDir, "config.json");
         log.Info($"sparxie={options.SparxiePath} profile={options.ProfileId} dataDir={dataDir} config={configPath}");
@@ -74,6 +74,7 @@ internal static class Launcher
         try { profile = SparxieConfig.Load(configPath, options.ProfileId); }
         catch (Exception ex) when (ex is IOException or InvalidDataException or UnauthorizedAccessException)
         { return Finish(log, ExitCodes.Config, ex.Message); }
+        profile = PinGame(profile, options, log);
         log.Info($"profile found: id={profile.Id} name={profile.DisplayName} game={profile.Game} exe={profile.ExecutablePath}");
         // an Endfield session learns the client's device and the stream's size here; the other games are unchanged
         profile = EndfieldSession.Resolve(profile, env);
@@ -163,6 +164,15 @@ internal static class Launcher
         if (Plan.After(2, second.Outcome, GameRunning(profile), brokerAvailable: true) == Next.FollowRunningGame)
             return await FollowAsync(profile, log, "a process of the game is still running", Note).ConfigureAwait(false);
         return await FallBackAsync(profile, log, elevated, Note, $"attempt 1: {first.Reason}; attempt 2: {second.Reason}").ConfigureAwait(false);
+    }
+
+    /// <summary>The program to start is the one the host named, when it named one (see <see cref="LaunchOptions.GameExe"/>).</summary>
+    internal static Profile PinGame(Profile profile, LaunchOptions options, RunLog log)
+    {
+        if (options.GameExe is not { } exe) return profile;
+        if (!string.Equals(profile.ExecutablePath, exe, StringComparison.OrdinalIgnoreCase))
+            log.Warn($"the shared config names another program ({profile.ExecutablePath}); the one the application was made for is started: {exe}");
+        return profile with { ExecutablePath = exe };
     }
 
     private static bool GameRunning(Profile profile) => BrokerProcess.FindGameProcesses(profile.ExecutablePath).Count > 0;

@@ -29,6 +29,7 @@ internal static partial class Tests
             NoticeFile(scratch);
             PlanRules();
             AdoptRunningGame(scratch);
+            SharedConfigRules(scratch);
             DirectStart(scratch);
             DecoyParentChecks(scratch);
             TouchUiField(scratch);

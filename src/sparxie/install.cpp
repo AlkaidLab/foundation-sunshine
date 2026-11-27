@@ -387,8 +387,6 @@ namespace sparxie {
       if (!out_file) return stop(409, "not_writable", "component.json could not be written");
       out_file << component.dump(2);
     }
-    // a package imported here is the one to use from now on: an external install chosen earlier no longer stands before it
-    set_external_sparxie(env.host_data, {});
     note(out, progress, "done", 100);
     out.body = {
       { "ok", true },

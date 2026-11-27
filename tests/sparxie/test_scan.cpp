@@ -282,9 +282,7 @@ TEST(HostApi, OpeningSparxieGoesThroughTheUserSessionLauncherOnly) {
   EXPECT_EQ(sparxie::open_component(env).status.error_code, "launch_unavailable");
   int launched = 0;
   fs::path last;
-  bool elevated = false;
-  env.launch_gui = [&](const fs::path &exe, bool as_admin) {
-    elevated = as_admin;
+  env.launch_gui = [&](const fs::path &exe) {
     ++launched;
     last = exe;
     return sparxie::Status::success();
@@ -294,21 +292,12 @@ TEST(HostApi, OpeningSparxieGoesThroughTheUserSessionLauncherOnly) {
   EXPECT_EQ(launched, 1);
   EXPECT_EQ(last, env.sparxie_exe);
   EXPECT_FALSE(started.body["already_running"].get<bool>());
-  EXPECT_TRUE(elevated);
-  // an install that other users can change is opened without administrator rights
-  env.admin_only = [](const fs::path &, fs::path *) { return false; };
-  auto plain = sparxie::open_component(env);
-  ASSERT_TRUE(plain.status.ok);
-  EXPECT_FALSE(elevated);
-  EXPECT_FALSE(plain.body["elevated"].get<bool>());
-  env.admin_only = {};
-  launched = 1;
   env.process_running = [](const std::vector<std::string> &) { return true; };
   auto again = sparxie::open_component(env);
   EXPECT_TRUE(again.body["already_running"].get<bool>());
   EXPECT_EQ(launched, 1);
   env.process_running = {};
-  env.launch_gui = [](const fs::path &, bool) { return sparxie::Status::fail(500, "launch_failed", "denied"); };
+  env.launch_gui = [](const fs::path &) { return sparxie::Status::fail(500, "launch_failed", "denied"); };
   EXPECT_EQ(sparxie::open_component(env).status.error_code, "launch_failed");
 }
 

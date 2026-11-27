@@ -1,16 +1,15 @@
 <template>
-  <MSection v-if="state.loaded && state.available" :title="C.locationTitle" class="spx-location">
-    <MBanner v-if="state.external && !state.installed" tone="error" icon="error">{{ C.errors.sparxie_external_missing }}</MBanner>
+  <MSection v-if="state.loaded && state.available" :title="C.configTitle" class="spx-shared">
     <MGroup>
-      <MItem wrap icon="folder" :title="state.external ? state.externalDir : C.locationBuiltin">
+      <MItem wrap icon="description" :title="state.sharedConfigDir || C.configBuiltin">
         <template #trail>
-          <MButton v-if="state.external" variant="text" :disabled="busy" @click="select('')">{{ C.locationReset }}</MButton>
-          <MButton variant="text" :disabled="busy" @click="browsing = !browsing">{{ C.locationChoose }}</MButton>
+          <MButton v-if="state.sharedConfigDir" variant="text" :disabled="busy" @click="select('')">{{ C.configReset }}</MButton>
+          <MButton variant="text" :disabled="busy" @click="browsing = !browsing">{{ C.configChoose }}</MButton>
         </template>
       </MItem>
     </MGroup>
     <MBanner v-if="error" tone="error" icon="error">{{ error }}</MBanner>
-    <SparxieBrowse v-if="browsing" kind="folder" :title="C.browseTitleSparxie" :start="state.externalDir" @choose="select" @cancel="browsing = false" />
+    <SparxieBrowse v-if="browsing" kind="folder" :title="C.browseTitleSparxie" :start="state.sharedConfigDir" @choose="select" @cancel="browsing = false" />
   </MSection>
 </template>
 
@@ -22,7 +21,7 @@ import { useSparxie } from '../../composables/useSparxie.js'
 import { useSparxieCopy } from '../../composables/useSparxieCopy.js'
 import { failureText } from '../../utils/sparxie/copy.js'
 
-// Which Sparxie the host uses: its own component, or an install the person keeps elsewhere.
+// Whose config.json the host uses: the component's own, or that of a Sparxie the person keeps elsewhere. The host runs only its component.
 const emit = defineEmits(['changed'])
 const C = useSparxieCopy()
 const { state, client, refresh } = useSparxie()
@@ -33,7 +32,7 @@ const error = ref('')
 async function select(path) {
   busy.value = true; error.value = ''; browsing.value = false
   try {
-    await client().selectLocation(path)
+    await client().selectSharedConfig(path)
     await refresh()
     emit('changed')
   } catch (e) {
@@ -44,5 +43,5 @@ onMounted(() => refresh())
 </script>
 
 <style scoped>
-.spx-location { margin-top: 16px; }
+.spx-shared { margin-top: 16px; }
 </style>

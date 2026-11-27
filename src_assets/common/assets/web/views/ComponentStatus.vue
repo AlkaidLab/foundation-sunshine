@@ -1,7 +1,7 @@
 <template>
   <div class="m-app m-root component-status-page">
     <MComponentStatus :status="status" />
-    <SparxieLocation @changed="status.check('sparxie')" />
+    <SparxieSharedConfig @changed="status.check('sparxie')" />
     <VersionCard
       v-model="sheet"
       :version="update.version.value"
@@ -23,7 +23,7 @@
 import { onBeforeUnmount, ref } from 'vue'
 import { MComponentStatus } from 'foundation-ui/vue'
 import VersionCard from '../components/common/VersionCard.vue'
-import SparxieLocation from '../components/sparxie/SparxieLocation.vue'
+import SparxieSharedConfig from '../components/sparxie/SparxieSharedConfig.vue'
 import { useUpdateStatus } from '../composables/useUpdateStatus.js'
 import { useComponentStatus } from '../composables/useComponentStatus.js'
 

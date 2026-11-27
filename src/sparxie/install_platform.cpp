@@ -9,8 +9,6 @@
     #define NOMINMAX
   #endif
   #include <windows.h>
-  #include <aclapi.h>
-  #include <sddl.h>
 #endif
 
 namespace sparxie {
@@ -77,82 +75,7 @@ namespace sparxie {
       fs::remove(probe, ec);
       return true;
     }
-    // SYSTEM, BUILTIN\Administrators, NT SERVICE\TrustedInstaller (installer-ms-well-known-sids-20261119)
-    bool
-    administrative(PSID sid) {
-      LPWSTR text = nullptr;
-      if (!sid || !ConvertSidToStringSidW(sid, &text)) return false;
-      const std::wstring value(text);
-      LocalFree(text);
-      return value == L"S-1-5-18" || value == L"S-1-5-32-544" || value == L"S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
-    }
-
-    // No link, an administrative owner, and no allow entry that gives another principal one of the `writes` rights on this object itself.
-    bool
-    closed_to_others(const fs::path &path, DWORD writes) {
-      const DWORD attributes = GetFileAttributesW(path.c_str());
-      if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_REPARSE_POINT)) return false;
-      PSID owner = nullptr;
-      PACL acl = nullptr;
-      PSECURITY_DESCRIPTOR descriptor = nullptr;
-      if (GetNamedSecurityInfoW(path.c_str(), SE_FILE_OBJECT, OWNER_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION, &owner, nullptr, &acl, nullptr, &descriptor) != ERROR_SUCCESS) return false;
-      // no DACL at all (also what a file system without permissions answers) lets everyone do everything
-      bool closed = acl && administrative(owner);
-      for (DWORD i = 0; closed && i < acl->AceCount; ++i) {
-        void *entry = nullptr;
-        if (!GetAce(acl, i, &entry)) {
-          closed = false;
-          break;
-        }
-        const auto *header = static_cast<ACE_HEADER *>(entry);
-        if ((header->AceFlags & INHERIT_ONLY_ACE) || header->AceType == ACCESS_DENIED_ACE_TYPE) continue;
-        if (header->AceType != ACCESS_ALLOWED_ACE_TYPE) {
-          closed = false;  // conditional and object grants are not interpreted
-          break;
-        }
-        auto *ace = static_cast<ACCESS_ALLOWED_ACE *>(entry);
-        if ((ace->Mask & writes) && !administrative(reinterpret_cast<PSID>(&ace->SidStart))) closed = false;
-      }
-      LocalFree(descriptor);
-      return closed;
-    }
   }  // namespace
-
-  bool
-  host_admin_only_tree(const fs::path &root, fs::path *blocker, const fs::path &host_root) {
-    constexpr DWORD kChange = FILE_WRITE_DATA | FILE_APPEND_DATA | FILE_WRITE_EA | FILE_WRITE_ATTRIBUTES | FILE_DELETE_CHILD | DELETE | WRITE_DAC | WRITE_OWNER | GENERIC_WRITE | GENERIC_ALL;
-    // above the folder only what swaps an existing entry matters: the root of C: lets every user add a folder of their own, which replaces nothing
-    constexpr DWORD kSwap = FILE_DELETE_CHILD | DELETE | WRITE_DAC | WRITE_OWNER | GENERIC_ALL;
-    constexpr int kMaxEntries = 20000;
-    auto refuse = [&](const fs::path &path) {
-      if (blocker) *blocker = path;
-      return false;
-    };
-    fs::path folder = root.lexically_normal();
-    folder.make_preferred();
-    if (!folder.is_absolute() || !folder.has_root_name()) return refuse(root);
-    const fs::path top = folder.root_path();
-    if (GetDriveTypeW(top.c_str()) != DRIVE_FIXED) return refuse(folder);
-    if (!closed_to_others(folder, kChange)) return refuse(folder);
-    std::error_code ec;
-    int entries = 0;
-    for (auto it = fs::recursive_directory_iterator(folder, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
-      if (++entries > kMaxEntries || !closed_to_others(it->path(), kChange)) return refuse(it->path());
-    }
-    if (ec) return refuse(folder);
-    const auto is_host_root = [&](const fs::path &path) {
-      std::error_code same;
-      return !host_root.empty() && fs::equivalent(path, host_root, same) && !same;
-    };
-    if (is_host_root(folder)) return true;
-    for (fs::path above = folder.parent_path(); above.has_relative_path(); above = above.parent_path()) {
-      if (!closed_to_others(above, kSwap)) return refuse(above);
-      if (is_host_root(above)) return true;
-    }
-    // nobody deletes or renames the root of a drive, so the DELETE a data drive grants on it replaces nothing
-    if (!closed_to_others(top, kSwap & ~static_cast<DWORD>(DELETE))) return refuse(top);
-    return true;
-  }
 
   // Windows build: RtlGetVersion, not GetVersionEx (ms-rtlgetversion-20261110).
   // Free space: GetDiskFreeSpaceExW (ms-getdiskfreespaceexw-20261110).
@@ -227,10 +150,6 @@ namespace sparxie {
   Probes
   current_probes(const fs::path &) {
     return {};
-  }
-  bool
-  host_admin_only_tree(const fs::path &, fs::path *, const fs::path &) {
-    return true;
   }
 #endif
 }  // namespace sparxie

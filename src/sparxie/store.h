@@ -5,6 +5,9 @@
 namespace sparxie {
   struct StoreHooks {
     bool running = false;
+    // Set for a config shared with an external Sparxie: the whole write runs through it, as the signed-in person (false: nobody is signed in). The folder is that
+    // person's to change, so the host does not write into it with its own rights.
+    std::function<bool(const std::function<void()> &)> run_as;
     int fail_replace_times = 0;
     std::function<std::string()> utc_stamp;
     std::function<void(const fs::path &)> after_replace;
