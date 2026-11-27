@@ -2,7 +2,7 @@
 import { computed, inject, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import QRCode from 'qrcode'
-import { MBanner, MButton, MDialog, MFooter, MGroup, MItem, MReachOverview, MRemoteWindow, MSection, MWebAccess, endpointsOfConfig, lanView, reachTexts, remoteTexts, webAccessTexts } from 'foundation-ui/vue'
+import { MBanner, MButton, MDialog, MFooter, MGroup, MItem, MNotice, MReachOverview, MRemoteWindow, MSection, MWebAccess, endpointsOfConfig, lanView, reachTexts, remoteTexts, webAccessTexts } from 'foundation-ui/vue'
 import { useReach } from '../../composables/useReach.js'
 import { useGuide } from '../../composables/useGuide.js'
 import CfgChoice from '../../components/cfg/CfgChoice.vue'
@@ -49,6 +49,9 @@ const tutorial = ref(false)
 const tutorialMode = ref('')
 const openTutorial = (action) => { tutorialMode.value = action === 'mesh' ? 'mesh' : 'public'; tutorial.value = true }
 const platform = computed(() => String(props.config?.platform || 'windows').toLowerCase())
+// The App Store page of the VoidLink client: the only client that speaks the USB wired streaming today.
+const VOIDLINK_APP_STORE_URL = 'https://apps.apple.com/cn/app/voidlink/id6747717070'
+const openVoidLink = () => window.open(VOIDLINK_APP_STORE_URL, '_blank', 'noopener,noreferrer')
 onMounted(() => { void reach.refresh() })
 const defaultMoonlightPort = 47989
 const config = ref(props.config)
@@ -196,6 +199,22 @@ const portRows = computed(() => {
   </CfgSub>
 
   <CfgSub id="webhook" title="Webhook"><WebhookCard /></CfgSub>
+
+  <!-- USB 有线串流: the VoidLink host opt-in, which client platforms have it and where to get that client -->
+  <MSection v-if="platform === 'windows'" :title="$t('shell.usb_wired_streaming')" :description="$t('config.usb_wired_streaming_description')">
+    <MGroup>
+      <CfgSwitch :config="config" k="usb_wired_streaming_enabled" def="disabled" />
+      <MItem icon="mobile" :title="$t('config.usb_wired_platform_ios')" :value="$t('config.usb_wired_platform_ios_status')" />
+      <MItem icon="android" :title="$t('config.usb_wired_platform_android')" :value="$t('config.usb_wired_platform_wip')" />
+      <MItem icon="desktop_windows" :title="$t('config.usb_wired_platform_pc')" :value="$t('config.usb_wired_platform_wip')" />
+    </MGroup>
+    <MNotice>
+      <span>{{ $t('config.usb_wired_ios_notice') }}</span>
+      <template #action>
+        <MButton variant="text" size="sm" @click="openVoidLink">{{ $t('config.usb_wired_get_voidlink') }}</MButton>
+      </template>
+    </MNotice>
+  </MSection>
 
   <MDialog v-model="upnpAsk" :title="rm.confirmTitle" icon="warning" tone="warning">
     <p>{{ rm.confirmText }}</p>

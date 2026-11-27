@@ -3,7 +3,7 @@ import { useNotify } from 'foundation-ui/notify'
 import { askConfirm } from '../../composables/askDialog.js'
 import { reactive, computed, onMounted, onBeforeUnmount, toRef } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MButton, MChip, MControllerArt, MFooter, MGroup, MIconButton, MItem, MNotice, MSection } from 'foundation-ui/vue'
+import { MChip, MControllerArt, MFooter, MGroup, MIconButton, MItem, MSection } from 'foundation-ui/vue'
 import { isChanged } from 'foundation-ui/settings/index.js'
 import CfgCards from '../../components/cfg/CfgCards.vue'
 import CfgChoice from '../../components/cfg/CfgChoice.vue'
@@ -179,9 +179,6 @@ const on = (value, fallback) => String(value ?? fallback) === 'enabled'
 // The DualSense block shows while DualSense is the chosen type, and for "automatic" (the host can resolve it to DualSense)
 const dualsenseShown = computed(() => props.platform !== 'macos' && ((config.value.gamepad ?? 'auto') === 'ds5' || (config.value.gamepad ?? 'auto') === 'auto'))
 const perGameOptions = computed(() => gamepadOptions.value.filter((o) => o.value !== 'auto').concat([{ value: 'auto', label: t('_common.auto') }]))
-// The App Store page of the VoidLink client: the only client that speaks the USB wired streaming today.
-const VOIDLINK_APP_STORE_URL = 'https://apps.apple.com/cn/app/voidlink/id6747717070'
-const openVoidLink = () => window.open(VOIDLINK_APP_STORE_URL, '_blank', 'noopener,noreferrer')
 </script>
 
 <template>
@@ -295,26 +292,6 @@ const openVoidLink = () => window.open(VOIDLINK_APP_STORE_URL, '_blank', 'noopen
         <CfgSwitch :config="config" k="usb_forwarding_enabled" help="config.usb_forwarding_description" />
         <CfgExpert v-if="on(config.usb_forwarding_enabled, 'disabled')" :config="config" k="usb_forwarding_port" type="number" placeholder="0" help="config.usb_forwarding_port_hint" />
       </MGroup>
-    </MSection>
-  </CfgSub>
-
-  <!-- USB 有线串流: the VoidLink host opt-in, which client platforms have it and where to get that client -->
-  <CfgSub v-if="platform === 'windows'" id="usb-wired" :title="$t('shell.usb_wired_streaming')">
-    <MSection>
-      <MGroup>
-        <CfgSwitch :config="config" k="usb_wired_streaming_enabled" def="disabled" help="config.usb_wired_streaming_description" />
-      </MGroup>
-      <MGroup>
-        <MItem icon="mobile" :title="$t('config.usb_wired_platform_ios')" :text="$t('config.usb_wired_platform_ios_status')" />
-        <MItem icon="android" :title="$t('config.usb_wired_platform_android')" :text="$t('config.usb_wired_platform_wip')" />
-        <MItem icon="desktop_windows" :title="$t('config.usb_wired_platform_pc')" :text="$t('config.usb_wired_platform_wip')" />
-      </MGroup>
-      <MNotice>
-        <span>{{ $t('config.usb_wired_ios_notice') }}</span>
-        <template #action>
-          <MButton variant="text" size="sm" @click="openVoidLink">{{ $t('config.usb_wired_get_voidlink') }}</MButton>
-        </template>
-      </MNotice>
     </MSection>
   </CfgSub>
 

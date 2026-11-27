@@ -145,7 +145,6 @@ const PLACES = {
   keyboard: { tab: 'input', sub: 'keyboard' },
   mouse: { tab: 'input', sub: 'mouse' },
   usb: { tab: 'input', sub: 'usb' },
-  'usb-wired': { tab: 'input', sub: 'usb-wired' },
   microphone: { tab: 'audio', sub: 'microphone' },
   'audio-output': { tab: 'audio', sub: 'sound' },
   'display-output': { tab: 'display', sub: 'output' },
@@ -190,12 +189,11 @@ const PAGES = {
   downloads: { rail: 'stream', path: '/downloads', icon: 'download', tone: 'success', label: 'resource_card.client_downloads' },
   config: { rail: 'config', path: '/config', icon: 'tune', tone: 'primary', label: 'navbar.configuration' },
   password: { rail: 'config', path: '/password', icon: 'verified_user', tone: 'error', label: 'navbar.security' },
-  // 输入与外设: a place of the input tab each (the two USB places exist on a Windows host only; the list of the devices on the computer is the control panel's own page)
+  // 输入与外设: a place of the input tab each (USB forwarding exists on a Windows host only; the list of the devices on the computer is the control panel's own page)
   gamepad: { rail: 'input', place: true, path: '/config', icon: 'sports_esports', tone: 'primary', label: 'shell.gamepad' },
   keyboard: { rail: 'input', place: true, path: '/config', icon: 'keyboard', tone: 'secondary', label: 'config.input_keyboard_title' },
   mouse: { rail: 'input', place: true, path: '/config', icon: 'mouse', tone: 'tertiary', label: 'config.input_mouse_title' },
   usb: { rail: 'input', place: true, windows: true, path: '/config', icon: 'usb', tone: 'success', label: 'shell.usb_forwarding' },
-  'usb-wired': { rail: 'input', place: true, windows: true, path: '/config', icon: 'cable', tone: 'tertiary', label: 'shell.usb_wired_streaming' },
   // 音频: a place of the audio tab each
   'audio-output': { rail: 'audio', place: true, path: '/config', icon: 'speaker', tone: 'primary', label: 'shell.audio_output' },
   microphone: { rail: 'audio', place: true, path: '/config', icon: 'mic', tone: 'tertiary', label: 'shell.microphone' },
