@@ -11,6 +11,7 @@ const { labelOf } = await import('foundation-ui/settings/provider.js')
 // and by its key name), unless it has no control in the Web UI at all. The list below is those keys: none of them had a
 // control in the original Web UI either (checked against the commit before the redesign), they are set in the config file.
 const NO_CONTROL = Object.freeze({
+  allow_client_resolution_change: 'new with client-requested resolution changes (0x5506 RESOLUTION, on by default): no control in the redesigned UI yet, set in the config file',
   amd_ltr_frames: 'no control in the original UI',
   generated_cover_style: 'chosen on the 应用程序 page (the style strip above the list), not on a settings page; the host takes the saved value at once',
   clients: 'the paired clients are managed on the clients page, not a setting',
