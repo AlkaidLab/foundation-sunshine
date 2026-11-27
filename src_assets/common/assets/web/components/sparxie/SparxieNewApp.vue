@@ -91,7 +91,7 @@
           </div>
           <MBanner v-if="imageError" tone="error" icon="error">{{ imageError }}</MBanner>
         </template>
-        <MBanner v-if="isEdit && editBlock.mode === 'touch' && !touchAllowed" tone="info" icon="info">{{ C.touchNeeds }}</MBanner>
+        <MBanner v-if="isEdit && editBlock.mode === 'touch' && !touchAllowed" tone="info" icon="info">{{ status.installed && status.adminOnly === false ? C.touchOpen : C.touchNeeds }}</MBanner>
         <MBanner v-if="block === 'running'" tone="warn" icon="lock">
           {{ C.closeSparxie }}
           <template #actions><MButton variant="text" size="sm" icon="refresh" @click="recheck">{{ C.retry }}</MButton></template>
@@ -193,7 +193,8 @@ const subtitleOf = (g) => { const row = catalog.value?.[g]; const other = locale
 const titleIcon = (g) => artUrl('icon', { id: gameArtId(g) }, artMap.value[gameArtId(g)])
 const copyForNames = computed(() => ({ games: names.value, regions: C.value.regions }))
 // an app of a Sparxie title starts through Sparxie whenever the component is installed (no launch choice); without it the game starts directly
-const touchAllowed = computed(() => !!status.installed && !!catalog.value?.[game.value]?.touch)
+// an install that other users can change gets no administrator rights, which touch launch needs: the game then starts directly
+const touchAllowed = computed(() => !!status.installed && status.adminOnly !== false && !!catalog.value?.[game.value]?.touch)
 const touch = computed(() => touchAllowed.value)
 // keyboard, mouse and gamepad runs a Sparxie session without the touch interface; the other titles start the game directly
 const kbmThroughSparxie = computed(() => KBM_SPARXIE_GAMES.includes(game.value))
