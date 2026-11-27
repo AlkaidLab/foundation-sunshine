@@ -37,6 +37,7 @@ struct shell_state {
   std::vector<button_spec> specs;
   int frame_w = 0, frame_h = 0;
   HANDLE worker = nullptr;
+  bool run_starting = false;  // begin_install is between its start and S.worker being set: the elevation wait can re-enter it
   ULONGLONG start_tick = 0;
   ULONGLONG opening_since = 0;
   int hover_id = 0;
@@ -972,7 +973,13 @@ component_list() {
 
 void
 begin_install() {
-  if (S.worker) return;  // a run is already in flight: a repeated trigger (a double click, a second press) must not start a second engine beside it
+  if (S.worker || S.run_starting) return;  // a run is already in flight or being started: a repeated trigger (a double click, a second press) must not start a second engine beside it
+  // The elevation wait of ShellExecuteExW below can still dispatch messages, and a second press
+  // re-enters here before S.worker exists: the marker covers that window, S.worker the run itself.
+  S.run_starting = true;
+  struct starting_reset {
+    ~starting_reset() { S.run_starting = false; }
+  } starting_guard;
   if (g_choosing_dir) return;  // the folder picker is open: the folder is not chosen yet, and an install now would use the one from before
   // Keep the engine's explicit component list safe even if an old UI or the select-all action re-enabled a component after the page was drawn.
   apply_os_limits(S.v);
