@@ -34,9 +34,29 @@ namespace file_transfer {
   namespace {
     using clock_t = std::chrono::steady_clock;
 
+    /// Which file a path named when it was listed, taken from the opened handle.
+    /// A download serves the entry only while its path still opens this same
+    /// file, unchanged: replacing it (or a folder above it) with a link, or
+    /// with another file of the same size, must not hand out something else.
+    struct identity_t {
+      std::uint64_t volume = 0;
+      std::uint64_t file_lo = 0;
+      std::uint64_t file_hi = 0;  ///< upper half of a 128-bit (ReFS) file id
+      std::uint64_t size = 0;
+      std::int64_t mtime_ns = 0;  ///< last write, nanoseconds since the Unix epoch
+
+      bool
+      operator==(const identity_t &) const = default;
+    };
+
+    struct source_t {
+      fs::path path;  ///< empty for folders
+      identity_t identity;
+    };
+
     struct stored_t {
       offer_t offer;
-      std::vector<fs::path> sources;  ///< parallel to offer.entries; empty for folders
+      std::vector<source_t> sources;  ///< parallel to offer.entries
       clock_t::time_point expires_at;
     };
 
@@ -115,12 +135,12 @@ namespace file_transfer {
     /// up the tree. Other reparse points (OneDrive and other cloud placeholders)
     /// are ordinary files and folders to the user and stay in.
     bool
-    is_link_like(const fs::directory_entry &entry) {
+    is_link_like(const fs::path &path) {
       std::error_code ec;
-      if (entry.is_symlink(ec)) return true;
+      if (fs::is_symlink(fs::symlink_status(path, ec))) return true;
 #ifdef _WIN32
       WIN32_FIND_DATAW data {};
-      HANDLE find = FindFirstFileW(entry.path().c_str(), &data);
+      HANDLE find = FindFirstFileW(path.c_str(), &data);
       if (find == INVALID_HANDLE_VALUE) return false;
       FindClose(find);
       if (data.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) {
@@ -157,7 +177,7 @@ namespace file_transfer {
 
     struct listing_t {
       std::vector<entry_t> entries;
-      std::vector<fs::path> sources;
+      std::vector<source_t> sources;
       std::uint64_t total = 0;
       std::string error;
       std::string detail;
@@ -205,28 +225,80 @@ namespace file_transfer {
       return true;
     }
 
-    /// Whether the user can open `source` for reading (open and close it right away): the type and size
-    /// can be read without that right, and the paste would only fail later.
-    bool
-    readable(const fs::path &source) {
 #ifdef _WIN32
-      HANDLE h = CreateFileW(source.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
-      if (h == INVALID_HANDLE_VALUE) return false;
-      CloseHandle(h);
+    std::int64_t
+    filetime_to_unix_ns(const FILETIME &ft) {
+      const auto ticks = (static_cast<std::int64_t>(ft.dwHighDateTime) << 32) | ft.dwLowDateTime;
+      // FILETIME counts 100 ns ticks from 1601-01-01.
+      return (ticks - 116444736000000000LL) * 100;
+    }
+
+    /// Identity of an open handle. False when it is not a regular file.
+    bool
+    identity_of(HANDLE h, identity_t &out) {
+      BY_HANDLE_FILE_INFORMATION info {};
+      if (!GetFileInformationByHandle(h, &info) || (info.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+        return false;
+      }
+      out.volume = info.dwVolumeSerialNumber;
+      out.file_lo = (static_cast<std::uint64_t>(info.nFileIndexHigh) << 32) | info.nFileIndexLow;
+      out.file_hi = 0;
+      out.size = (static_cast<std::uint64_t>(info.nFileSizeHigh) << 32) | info.nFileSizeLow;
+      out.mtime_ns = filetime_to_unix_ns(info.ftLastWriteTime);
+      // ReFS ids are 128 bits; the 64-bit index above may repeat there.
+      FILE_ID_INFO id {};
+      if (GetFileInformationByHandleEx(h, FileIdInfo, &id, sizeof(id))) {
+        out.volume = id.VolumeSerialNumber;
+        std::memcpy(&out.file_lo, id.FileId.Identifier, 8);
+        std::memcpy(&out.file_hi, id.FileId.Identifier + 8, 8);
+      }
       return true;
+    }
 #else
-      // O_NONBLOCK: a FIFO swapped in after the type check must not block registration.
-      const int fd = ::open(source.c_str(), O_RDONLY | O_CLOEXEC | O_NONBLOCK);
-      if (fd < 0) return false;
+    /// Identity of an open descriptor. False when it is not a regular file.
+    bool
+    identity_of(int fd, identity_t &out) {
       struct stat st {};
-      const bool regular = ::fstat(fd, &st) == 0 && S_ISREG(st.st_mode);
-      ::close(fd);
-      return regular;
+      if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) return false;
+      out.volume = static_cast<std::uint64_t>(st.st_dev);
+      out.file_lo = static_cast<std::uint64_t>(st.st_ino);
+      out.file_hi = 0;
+      out.size = static_cast<std::uint64_t>(st.st_size);
+  #ifdef __APPLE__
+      const auto &mt = st.st_mtimespec;
+  #else
+      const auto &mt = st.st_mtim;
+  #endif
+      out.mtime_ns = static_cast<std::int64_t>(mt.tv_sec) * 1000000000LL + mt.tv_nsec;
+      return true;
+    }
+#endif
+
+    /// Open `source` for reading as a regular file (never following a link at
+    /// its last component on POSIX, never blocking on a FIFO). Invalid on failure.
+    open_file_t
+    open_source(const fs::path &source, identity_t &identity) {
+#ifdef _WIN32
+      // Writers and deleters may keep working on the file; the identity check catches a change.
+      HANDLE h = CreateFileW(source.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+      if (h == INVALID_HANDLE_VALUE) return {};
+      open_file_t file(h, 0);
+      if (!identity_of(h, identity)) return {};
+      return open_file_t(file.release(), identity.size);
+#else
+      // O_NONBLOCK: a FIFO swapped in must not block; regular files ignore it, cleared anyway.
+      const int fd = ::open(source.c_str(), O_RDONLY | O_CLOEXEC | O_NONBLOCK | O_NOFOLLOW);
+      if (fd < 0) return {};
+      open_file_t file(fd, 0);
+      if (!identity_of(fd, identity)) return {};
+      const int flags = ::fcntl(fd, F_GETFL);
+      if (flags >= 0) ::fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
+      return open_file_t(file.release(), identity.size);
 #endif
     }
 
     bool
-    add_entry(listing_t &out, std::string rel, const fs::path &source, bool dir, std::uint64_t size) {
+    add_entry(listing_t &out, std::string rel, const fs::path &source, bool dir) {
       if (out.entries.size() >= kMaxEntries) {
         out.error = "too_many_entries";
         return false;
@@ -236,19 +308,31 @@ namespace file_transfer {
         out.detail = rel;
         return false;
       }
-      if (!dir && !readable(source)) {
-        out.error = "unreadable";
-        out.detail = to_utf8(source.u8string());
-        return false;
-      }
+      source_t src;
       entry_t e;
+      if (!dir) {
+        // The user must be able to open it (the type and size can be read
+        // without that right, and the paste would only fail later); what
+        // opened is the file every download must find again.
+        if (!open_source(source, src.identity).valid()) {
+          out.error = "unreadable";
+          out.detail = to_utf8(source.u8string());
+          return false;
+        }
+        src.path = source;
+        e.size = src.identity.size;
+        // Floor division: a time before 1970 still rounds down.
+        const auto ns = src.identity.mtime_ns;
+        e.mtime = ns / 1000000000LL - (ns % 1000000000LL < 0 ? 1 : 0);
+      }
+      else {
+        e.mtime = unix_mtime(source);
+      }
       e.path = std::move(rel);
       e.dir = dir;
-      e.size = dir ? 0 : size;
-      e.mtime = unix_mtime(source);
       out.total += e.size;
       out.entries.push_back(std::move(e));
-      out.sources.push_back(dir ? fs::path {} : source);
+      out.sources.push_back(std::move(src));
       return true;
     }
 
@@ -279,6 +363,12 @@ namespace file_transfer {
             return;
           }
 
+          if (is_link_like(in)) {
+            // Links are left out below a folder; a selected one is not followed either.
+            out.error = "unsupported";
+            out.detail = raw;
+            return;
+          }
           std::error_code ec;
           const auto st = fs::status(in, ec);
           if (ec || !fs::exists(st)) {
@@ -294,13 +384,7 @@ namespace file_transfer {
           }
 
           if (fs::is_regular_file(st)) {
-            const auto size = fs::file_size(in, ec);
-            if (ec) {
-              out.error = "not_found";
-              out.detail = raw;
-              return;
-            }
-            if (!add_entry(out, *top, in, false, size)) return;
+            if (!add_entry(out, *top, in, false)) return;
             continue;
           }
           if (!fs::is_directory(st)) {
@@ -309,7 +393,7 @@ namespace file_transfer {
             return;
           }
 
-          if (!add_entry(out, *top, in, true, 0)) return;
+          if (!add_entry(out, *top, in, true)) return;
           // A folder or file that cannot be read fails the offer: skipped, the
           // client would paste the folder without it and never know.
           fs::recursive_directory_iterator it(in, fs::directory_options::none, ec);
@@ -318,7 +402,7 @@ namespace file_transfer {
           for (; !ec && it != end; it.increment(ec)) {
             const auto &entry = *it;
             last = entry.path();
-            if (is_link_like(entry)) {
+            if (is_link_like(entry.path())) {
               it.disable_recursion_pending();
               continue;
             }
@@ -339,13 +423,7 @@ namespace file_transfer {
               out.detail = to_utf8(entry.path().u8string());
               return;
             }
-            const std::uint64_t size = file ? entry.file_size(entry_ec) : 0;
-            if (entry_ec) {
-              out.error = "unreadable";
-              out.detail = to_utf8(entry.path().u8string());
-              return;
-            }
-            if (!add_entry(out, std::move(*rel), entry.path(), dir, size)) return;
+            if (!add_entry(out, std::move(*rel), entry.path(), dir)) return;
           }
           if (ec) {
             // The folder (or one below it) vanished or could not be opened.
@@ -521,8 +599,7 @@ namespace file_transfer {
       return result;
     }
 
-    fs::path source;
-    std::uint64_t expected = 0;
+    source_t source;
     {
       std::lock_guard lk(g_mu);
       sweep_locked(clock_t::now());
@@ -533,54 +610,26 @@ namespace file_transfer {
         return result;
       }
       source = it->second.sources[index];
-      expected = it->second.offer.entries[index].size;
     }
 
-    open_file_t::native_t native {};
-    std::uint64_t size = 0;
-    bool opened = false;
-    const bool user = as_user([&]() {
-#ifdef _WIN32
-      // Writers and deleters may keep working on the file; a size change is caught below.
-      HANDLE h = CreateFileW(source.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
-      if (h == INVALID_HANDLE_VALUE) return;
-      LARGE_INTEGER li {};
-      if (!GetFileSizeEx(h, &li)) {
-        CloseHandle(h);
-        return;
-      }
-      native = h;
-      size = static_cast<std::uint64_t>(li.QuadPart);
-      opened = true;
-#else
-      // Same as readable(): never block on a FIFO; regular files ignore O_NONBLOCK, cleared anyway.
-      const int fd = ::open(source.c_str(), O_RDONLY | O_CLOEXEC | O_NONBLOCK);
-      if (fd < 0) return;
-      struct stat st {};
-      if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
-        ::close(fd);
-        return;
-      }
-      const int flags = ::fcntl(fd, F_GETFL);
-      if (flags >= 0) ::fcntl(fd, F_SETFL, flags & ~O_NONBLOCK);
-      native = fd;
-      size = static_cast<std::uint64_t>(st.st_size);
-      opened = true;
-#endif
-    });
+    open_file_t file;
+    identity_t now;
+    const bool user = as_user([&]() { file = open_source(source.path, now); });
     if (!user) {
       result.status = 503;
       result.error = "no_user";
       return result;
     }
-    if (!opened) {
+    if (!file.valid()) {
       result.status = 410;
       result.error = "gone";
       return result;
     }
-    open_file_t file(native, size);
-    if (size != expected) {
-      // The client already announced the old size to the paste target; a different body would be cut or padded.
+    if (now != source.identity) {
+      // Checked on the handle that will be read, so nothing can be swapped in
+      // between. Another file under the path (a link, a moved folder) or new
+      // contents: the client already announced the old name and size to the
+      // paste target, so the entry is no longer served.
       result.status = 409;
       result.error = "changed";
       return result;

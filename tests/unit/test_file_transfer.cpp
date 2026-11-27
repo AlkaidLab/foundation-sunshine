@@ -227,6 +227,72 @@ TEST_F(FileTransfer, OpensFilesOnlyWhileUnchanged) {
   EXPECT_EQ(file_transfer::open_entry(id, "0").error, "gone");
 }
 
+TEST_F(FileTransfer, AnotherFileOfTheSameSizeIsNotServed) {
+  const auto result = file_transfer::register_paths({ utf8(root / "a.txt") }, "clipboard");
+  ASSERT_TRUE(result.offer) << result.error;
+  const auto &id = result.offer->id;
+  ASSERT_TRUE(file_transfer::open_entry(id, "0").file.valid());
+
+  // New contents in place, same size: the last write time moves.
+  write(root / "a.txt", "HELLO");
+  fs::last_write_time(root / "a.txt", fs::last_write_time(root / "a.txt") + std::chrono::seconds(10));
+  EXPECT_EQ(file_transfer::open_entry(id, "0").error, "changed");
+
+  // Another file put in its place, same size and time: a different file id.
+  const auto again = file_transfer::register_paths({ utf8(root / "a.txt") }, "clipboard");
+  ASSERT_TRUE(again.offer) << again.error;
+  const auto time = fs::last_write_time(root / "a.txt");
+  write(root / "spare.txt", "WORLD");
+  fs::last_write_time(root / "spare.txt", time);
+  fs::rename(root / "spare.txt", root / "a.txt");
+  EXPECT_EQ(file_transfer::open_entry(again.offer->id, "0").error, "changed");
+}
+
+TEST_F(FileTransfer, LinksSwappedInAfterListingAreNotFollowed) {
+  fs::create_directories(root / "selected");
+  fs::create_directories(root / "outside");
+  write(root / "selected" / "a.txt", "PUBLIC");
+  write(root / "outside" / "a.txt", "SECRET");
+
+  const auto file = file_transfer::register_paths({ utf8(root / "selected" / "a.txt") }, "clipboard");
+  const auto folder = file_transfer::register_paths({ utf8(root / "selected") }, "clipboard");
+  ASSERT_TRUE(file.offer) << file.error;
+  ASSERT_TRUE(folder.offer) << folder.error;
+  ASSERT_EQ(folder.offer->entries.size(), 2u);
+  ASSERT_TRUE(file_transfer::open_entry(file.offer->id, "0").file.valid());
+
+  // Creating links needs a privilege on Windows that CI may not have.
+  std::error_code ec;
+  fs::create_symlink(root / "outside" / "a.txt", root / "link.txt", ec);
+  if (ec) GTEST_SKIP() << "cannot create symbolic links here: " << ec.message();
+
+  // A selected path that is itself a link is refused like the links below a folder.
+  EXPECT_EQ(file_transfer::register_paths({ utf8(root / "link.txt") }, "clipboard").error, "unsupported");
+  fs::create_directory_symlink(root / "outside", root / "outside_link", ec);
+  ASSERT_FALSE(ec) << ec.message();
+  EXPECT_EQ(file_transfer::register_paths({ utf8(root / "outside_link") }, "clipboard").error, "unsupported");
+
+  // The listed file replaced with a link to another file of the same size.
+  fs::remove(root / "selected" / "a.txt");
+  fs::create_symlink(root / "outside" / "a.txt", root / "selected" / "a.txt");
+  auto opened = file_transfer::open_entry(file.offer->id, "0");
+  EXPECT_FALSE(opened.file.valid());
+  EXPECT_TRUE(opened.error == "changed" || opened.error == "gone") << opened.error;
+  EXPECT_NE(opened.status, 200);
+
+  // The listed folder moved away and a link to another folder put in its place.
+  fs::remove(root / "selected" / "a.txt");
+  write(root / "selected" / "a.txt", "PUBLIC");
+  const auto fresh = file_transfer::register_paths({ utf8(root / "selected") }, "clipboard");
+  ASSERT_TRUE(fresh.offer) << fresh.error;
+  fs::rename(root / "selected", root / "moved");
+  fs::create_directory_symlink(root / "outside", root / "selected");
+  opened = file_transfer::open_entry(fresh.offer->id, "1");
+  EXPECT_FALSE(opened.file.valid());
+  EXPECT_EQ(opened.error, "changed");
+  EXPECT_EQ(opened.status, 409);
+}
+
 TEST_F(FileTransfer, OldestOfferIsDroppedPastTheLimit) {
   std::vector<std::string> ids;
   for (std::size_t i = 0; i <= file_transfer::kMaxOffers; ++i) {

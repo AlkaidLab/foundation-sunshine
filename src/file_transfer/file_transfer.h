@@ -72,7 +72,9 @@ namespace file_transfer {
 
   /// List `paths` (absolute, UTF-8) as the interactive user and remember the
   /// offer. A folder is listed with everything below it, parents first;
-  /// symbolic links and other non-regular entries are left out.
+  /// symbolic links and other non-regular entries are left out, and a selected
+  /// path that is a link fails with "unsupported". Each file is opened once to
+  /// record which file it is (volume and file id, size, last write time).
   register_result_t
   register_paths(const std::vector<std::string> &paths, std::string type);
 
@@ -128,7 +130,7 @@ namespace file_transfer {
   struct open_result_t {
     open_file_t file;
     int status = 200;  ///< HTTP status to answer with when the file did not open
-    std::string error;  ///< "not_found" (no such offer or entry), "gone" (the file is no longer readable), "changed" (its size changed), "no_user"
+    std::string error;  ///< "not_found" (no such offer or entry), "gone" (the file is no longer readable), "changed" (the path no longer opens the same, unchanged file), "no_user"
   };
 
   /// True when offer `id` is a single regular file (what the single-file route serves).
@@ -136,6 +138,7 @@ namespace file_transfer {
   is_single_file(std::string_view id);
 
   /// Open entry `index` of offer `id` for reading, as the interactive user.
+  /// The opened handle must be the file that was listed, unchanged.
   open_result_t
   open_entry(std::string_view id, std::string_view index);
 
