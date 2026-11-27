@@ -16,6 +16,8 @@
 #include <boost/property_tree/xml_parser.hpp>
 #include <nlohmann/json.hpp>
 
+#include "logging.h"
+
 namespace usb_stream_tunnel {
   namespace {
     namespace asio = boost::asio;
@@ -24,6 +26,7 @@ namespace usb_stream_tunnel {
     using asio::ip::udp;
     using boost::system::error_code;
     using namespace std::chrono_literals;
+    using namespace std::literals;
 
     constexpr unsigned mux_port = 27015;
     constexpr unsigned app_port = 41849;
@@ -39,6 +42,14 @@ namespace usb_stream_tunnel {
     bool
     would_block(const error_code &error) {
       return error == asio::error::would_block || error == asio::error::try_again;
+    }
+
+    // A connected UDP socket reports an earlier ICMP port-unreachable as one of
+    // these errors on the next operation. That datagram is lost, but the relay
+    // stays up and waits for the service to bind its port.
+    bool
+    udp_target_unreachable(const error_code &error) {
+      return error == asio::error::connection_refused || error == asio::error::connection_reset;
     }
 
     // These transfers run off the Sunshine network threads. Management traffic
@@ -241,7 +252,7 @@ namespace usb_stream_tunnel {
               return;
             }
             local.async_send(asio::buffer(to_local.data(), size), [&](error_code error, std::size_t) {
-              if (error)
+              if (error && !udp_target_unreachable(error))
                 lifetime.close();
               else
                 receive_usb();
@@ -251,6 +262,10 @@ namespace usb_stream_tunnel {
       };
       receive_local = [&] {
         local.async_receive(asio::buffer(to_usb.data() + 2, max_datagram), [&](error_code error, std::size_t size) {
+          if (udp_target_unreachable(error)) {
+            receive_local();
+            return;
+          }
           if (error) {
             lifetime.close();
             return;
@@ -310,7 +325,8 @@ namespace usb_stream_tunnel {
           break;
         }
       }
-      catch (const std::exception &) { /* A failed writer is local to this video stream. */
+      catch (const std::exception &error) {
+        BOOST_LOG(debug) << "Direct USB video channel " << id << " on device " << device << " ended: " << error.what();
       }
       channel->close();
       std::lock_guard lock { video_offers_mutex };
@@ -353,7 +369,8 @@ namespace usb_stream_tunnel {
             try {
               work(stop);
             }
-            catch (const std::exception &) { /* USB or a local endpoint closed. */
+            catch (const std::exception &error) {
+              BOOST_LOG(debug) << "VoidLink USB channel worker ended: " << error.what();
             }
             completion->store(true);
           } } {}
@@ -399,7 +416,11 @@ namespace usb_stream_tunnel {
           if (id_result.ec != std::errc {} || id == 0 || id_result.ptr == end || *id_result.ptr != ' ') return;
           const auto service_result = std::from_chars(id_result.ptr + 1, end, service);
           if (service_result.ec != std::errc {} || service_result.ptr != end || service > direct_video_service) return;
-          if (channels.size() >= max_channels || channels.contains(id)) continue;
+          if (channels.size() >= max_channels || channels.contains(id)) {
+            BOOST_LOG(debug) << "Ignoring OPEN " << id << " service " << service << " on USB device " << device
+                             << (channels.contains(id) ? ": duplicate channel id"sv : ": channel limit reached"sv);
+            continue;
+          }
           channels.try_emplace(id, [&, id, service](std::stop_token channel_stop) {
             if (service == direct_video_service) {
               run_video(channel_stop, device, session, id, make_session());
@@ -507,10 +528,14 @@ namespace usb_stream_tunnel {
   void
   run(std::stop_token stop, std::string host_id, std::string host_name,
     std::string local_address, ports_t ports, std::function<std::string()> make_session) {
-    error_code error;
-    const auto local = asio::ip::make_address(local_address, error);
-    if (error || local.is_unspecified() || local.is_multicast()) return;
+    error_code address_error;
+    const auto local = asio::ip::make_address(local_address, address_error);
+    if (address_error || local.is_unspecified() || local.is_multicast()) {
+      BOOST_LOG(error) << "VoidLink USB streaming cannot start: invalid local address ["sv << local_address << ']';
+      return;
+    }
     std::unordered_map<unsigned, worker_t> devices;
+    std::string discovery_error;
     while (!stop.stop_requested()) {
       std::erase_if(devices, [](const auto &entry) { return entry.second.done->load(); });
       try {
@@ -532,8 +557,18 @@ namespace usb_stream_tunnel {
             });
           }
         }
+        if (!discovery_error.empty()) {
+          BOOST_LOG(info) << "VoidLink USB discovery is available again"sv;
+          discovery_error.clear();
+        }
       }
-      catch (const std::exception &) { /* Apple Devices is optional. */
+      catch (const std::exception &failure) {
+        // The loop retries every two seconds. Report each distinct reason once,
+        // for example while Apple Mobile Device Service is not running.
+        if (discovery_error != failure.what()) {
+          discovery_error = failure.what();
+          BOOST_LOG(warning) << "VoidLink USB discovery unavailable: " << discovery_error;
+        }
       }
       for (int i = 0; i < 20 && !stop.stop_requested(); ++i) std::this_thread::sleep_for(100ms);
     }

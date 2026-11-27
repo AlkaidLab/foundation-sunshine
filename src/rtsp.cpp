@@ -1640,7 +1640,9 @@ namespace rtsp_stream {
         dynamic_hdr_headers.attach(option);
         mat_live_response_headers_t mat_headers(session);
         mat_headers.attach(option);
+#ifdef _WIN32
         attach_direct_usb_video_header(option, usb_video_option, session);
+#endif
         respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
       }
       else {
@@ -2271,7 +2273,7 @@ namespace rtsp_stream {
     if (session.direct_usb_video || usb_video != args.end()) {
       if (!session.direct_usb_video || !session.direct_usb_video->active() || usb_video == args.end() ||
           usb_video->second != "1" || !session.setup_video || session.control_only ||
-          config.packetsize <= 0 || config.packetsize > 65000) {
+          config.packetsize <= static_cast<int>(sizeof(NV_VIDEO_PACKET)) || config.packetsize > 65000) {
         respond(sock, session, &option, 461, "Direct USB Video Unavailable", req->sequenceNumber, {});
         return;
       }

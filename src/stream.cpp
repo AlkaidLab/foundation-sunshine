@@ -4023,7 +4023,7 @@ namespace stream {
           size_t next_shard_to_send = 0;
 
           // set FEC info now that we know for sure what our percentage will be for this frame
-          for (auto x = 0; x < shards.size(); ++x) {
+          for (auto x = 0; x < shards.size() && !direct_usb_frame_failed; ++x) {
             auto *inspect = (video_packet_raw_t *) shards.data(x);
 
             inspect->packet.fecInfo =

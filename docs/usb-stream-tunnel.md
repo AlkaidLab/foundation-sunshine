@@ -14,16 +14,22 @@ first connection carries a two-byte big-endian size and a JSON offer with
 `type` (`offer`), `session`, `hostId`, `hostName` and the seven mapped port
 numbers in this order. It also advertises `directVideo: true`:
 
-1. GameStream HTTP, including initial pairing.
-2. GameStream HTTPS, including pairing completion, apps, launch and resume.
-3. RTSP.
-4. Legacy video UDP port, unused by VoidLink in direct-video mode.
-5. ENet control and input UDP.
-6. Audio UDP.
-7. Microphone UDP.
+| `service-index` | Service | Transport |
+| --- | --- | --- |
+| 0 | GameStream HTTP, including initial pairing | TCP |
+| 1 | GameStream HTTPS, including pairing completion, apps, launch and resume | TCP |
+| 2 | RTSP | TCP |
+| 3 | Legacy video UDP port, unused by VoidLink in direct-video mode | UDP |
+| 4 | ENet control and input | UDP |
+| 5 | Audio | UDP |
+| 6 | Microphone | UDP |
+| 7 | Direct video channel, not backed by any port in the offer | Direct USB |
 
-The iPad binds local proxies for the other six services and sends `OPEN <id> <service-index>\n` on the
-first connection. Windows opens the requested Sunshine endpoint on the PC
+The indices are zero-based. The `ports` array holds entries 0 to 6 in the
+order above; index 7 opens the direct video channel instead of a port.
+The iPad binds a local proxy for each port in the offer and sends
+`OPEN <id> <service-index>\n` on the first connection. Windows opens the
+requested Sunshine endpoint on the PC
 locally, then opens another USB connection. Its size-prefixed JSON header has
 `type` (`channel`), the same `session`, and the requested `id`. TCP services
 carry bytes directly after the header. UDP services prefix each datagram with
@@ -45,3 +51,5 @@ affected stream after the transport timeout.
 The tunnel forwards only Sunshine's configured GameStream ports. GameStream
 still handles authentication, certificate checks, RTSP and media encryption.
 A USB selection uses iPad loopback endpoints and does not select a LAN address.
+Sunshine connects to its own bind address, which must be empty, a wildcard or
+a loopback address for tunnel requests to be classified as local.
