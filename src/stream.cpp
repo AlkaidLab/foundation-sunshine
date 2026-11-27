@@ -91,6 +91,7 @@ extern "C" {
 #include "webhook/webhook.h"
 
 #include "clipboard_bridge.h"
+#include "clipboard_li.h"
 #include "cursor_channel.h"
 #include "platform/common.h"
 #include "telemetry/hooks.h"
@@ -2418,16 +2419,23 @@ namespace stream {
     });
 
     server->map(packetTypes[IDX_CLIPBOARD], [](session_t *session, const std::string_view &payload) {
-      // Forward opaque payload to the user-session GUI agent. Drop silently if
-      // disabled by config or if the GUI is not currently subscribed.
+      // Translate the client's LI_CLIPBOARD multi-packet protocol into the
+      // agent wire frame, then forward. Drop (with a log) if disabled by
+      // config or if the GUI is not currently subscribed.
       auto &bridge = clipboard_bridge::bridge_t::instance();
+      const auto sid = session->launch_session_id;
       if (!config::input.clipboard_sync || !bridge.gui_alive()) {
-        bridge.note_inbound(session->launch_session_id, false);
+        bridge.note_inbound(sid, false);
         return;
       }
-      clipboard_bridge::payload_t bytes(payload.begin(), payload.end());
-      const bool dispatched = bridge.on_inbound(session->launch_session_id, std::move(bytes));
-      bridge.note_inbound(session->launch_session_id, dispatched);
+      clipboard_li::bytes_t raw(payload.begin(), payload.end());
+      const bool emitted = clipboard_li::inbound_instance().feed(sid, raw, [sid](clipboard_li::item_t item) {
+        const std::uint8_t kind = (item.type == clipboard_li::kItemTypeText) ? clipboard_li::kAgentKindText : clipboard_li::kAgentKindPng;
+        auto frame = clipboard_li::make_agent_frame(kind, 0, item.data);
+        clipboard_bridge::bridge_t::instance().on_inbound(sid, std::move(frame));
+      });
+      (void) emitted;
+      bridge.note_inbound(sid, true);
     });
 
     server->map(packetTypes[IDX_CURSOR], [](session_t *session, const std::string_view &payload) {
@@ -2597,6 +2605,7 @@ namespace stream {
 
           if (session->lifecycle.state() == session::state_e::STOPPING) {
             clipboard_bridge::bridge_t::instance().session_stopped(session->launch_session_id);
+            clipboard_li::inbound_instance().reset(session->launch_session_id);
             text_context::bridge_t::instance().session_stopped(session->launch_session_id);
             cursor_channel::remove_session(session->launch_session_id);
             pos = server->_sessions->erase(pos);
@@ -2749,6 +2758,20 @@ namespace stream {
           std::deque<clipboard_bridge::outbound_msg_t> msgs;
           clipboard_bridge::bridge_t::instance().drain_outbound(msgs);
           for (auto &msg : msgs) {
+            // Translate the agent wire frame into the client's LI_CLIPBOARD
+            // packets. A frame the agent cannot have sent (shape mismatch)
+            // is logged and dropped; kinds without a LI counterpart (blob
+            // ref / file offer) are dropped by the translator itself.
+            std::uint8_t kind = 0;
+            std::uint32_t token = 0;
+            clipboard_li::bytes_t content;
+            if (!clipboard_li::parse_agent_frame(msg.bytes, kind, token, content)) {
+              BOOST_LOG(info) << "clipboard_li: outbound frame from agent is not a wire frame (first byte "
+                              << (msg.bytes.empty() ? 0 : static_cast<unsigned>(msg.bytes[0]))
+                              << ", " << msg.bytes.size() << " bytes); dropped";
+              continue;
+            }
+            const auto packets = clipboard_li::outbound_packets(kind, content);
             for (auto *s : *server->_sessions) {
               if (!s->control.peer) {
                 continue;
@@ -2756,7 +2779,14 @@ namespace stream {
               if (msg.target != clipboard_bridge::kBroadcast && s->launch_session_id != msg.target) {
                 continue;
               }
-              if (send_clipboard(s, msg.bytes) == 0) {
+              bool all_ok = true;
+              for (auto &pkt : packets) {
+                if (send_clipboard(s, pkt) != 0) {
+                  all_ok = false;
+                  break;
+                }
+              }
+              if (all_ok) {
                 clipboard_bridge::bridge_t::instance().note_outbound(s->launch_session_id);
               }
             }
@@ -2822,6 +2852,7 @@ namespace stream {
       // final shutdown path instead, make the same paired lifecycle update here
       // so capability/session_count cannot retain stale launch IDs.
       clipboard_bridge::bridge_t::instance().session_stopped(session->launch_session_id);
+      clipboard_li::inbound_instance().reset(session->launch_session_id);
       text_context::bridge_t::instance().session_stopped(session->launch_session_id);
       cursor_channel::remove_session(session->launch_session_id);
 
@@ -5081,6 +5112,7 @@ namespace stream {
         session.broadcast_ref->control_server._sessions->push_back(&session);
       }
       clipboard_bridge::bridge_t::instance().session_started(session.launch_session_id);
+      clipboard_li::inbound_instance().reset(session.launch_session_id);
 
       // Publish before capture threads run so a perf snapshot can see the
       // first frames. The handle drops the publication when the session
