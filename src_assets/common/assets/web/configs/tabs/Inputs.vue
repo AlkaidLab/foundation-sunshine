@@ -3,7 +3,7 @@ import { useNotify } from 'foundation-ui/notify'
 import { askConfirm } from '../../composables/askDialog.js'
 import { reactive, computed, onMounted, onBeforeUnmount, toRef } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MBanner, MButton, MChip, MControllerArt, MFooter, MGroup, MIconButton, MIcon, MItem, MSection } from 'foundation-ui/vue'
+import { MButton, MChip, MControllerArt, MFooter, MGroup, MIconButton, MItem, MNotice, MSection } from 'foundation-ui/vue'
 import { isChanged } from 'foundation-ui/settings/index.js'
 import CfgCards from '../../components/cfg/CfgCards.vue'
 import CfgChoice from '../../components/cfg/CfgChoice.vue'
@@ -309,12 +309,12 @@ const openVoidLink = () => window.open(VOIDLINK_APP_STORE_URL, '_blank', 'noopen
         <MItem icon="android" :title="$t('config.usb_wired_platform_android')" :text="$t('config.usb_wired_platform_wip')" />
         <MItem icon="desktop_windows" :title="$t('config.usb_wired_platform_pc')" :text="$t('config.usb_wired_platform_wip')" />
       </MGroup>
-      <MBanner tone="info" icon="info">
-        <strong>{{ $t('config.usb_wired_ios_notice') }}</strong>
-        <template #actions>
-          <MButton variant="text" size="sm" @click="openVoidLink">{{ $t('config.usb_wired_get_voidlink') }}<MIcon name="open_in_new" /></MButton>
+      <MNotice>
+        <span>{{ $t('config.usb_wired_ios_notice') }}</span>
+        <template #action>
+          <MButton variant="text" size="sm" @click="openVoidLink">{{ $t('config.usb_wired_get_voidlink') }}</MButton>
         </template>
-      </MBanner>
+      </MNotice>
     </MSection>
   </CfgSub>
 
