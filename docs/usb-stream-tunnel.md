@@ -55,6 +55,10 @@ The tunnel forwards only Sunshine's configured GameStream ports. GameStream
 still handles authentication, certificate checks, RTSP and media encryption.
 A USB selection uses iPad loopback endpoints and does not select a LAN address.
 Sunshine connects to its own bind address: empty or `0.0.0.0` becomes
-`127.0.0.1`, `::` becomes `::1`, and a loopback address is used as is, so tunnel
-requests are classified as local. Any other bind address classifies them as
-LAN, and the host-only checks reject them.
+`127.0.0.1`, `::` becomes `::1`, and a loopback address is used as is. The
+host-only checks classify a connection by the source address the server sees;
+the system selects that source for the target, and on Windows a target on the
+host's own loopback or interface address is sourced from that same address.
+Loopback targets therefore classify as local, while any other bind address
+sources the tunnel requests from a LAN address and the host-only checks reject
+them.
