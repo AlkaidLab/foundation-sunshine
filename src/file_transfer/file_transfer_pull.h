@@ -71,6 +71,11 @@ namespace file_transfer_pull {
   void
   clear();
 
+  /// Streaming session `sid` has ended: answer its waiting chunk requests with
+  /// 410 "no_session" now instead of at their deadline (its client is gone).
+  void
+  session_stopped(std::uint64_t sid);
+
   /// Chunk requests waiting for their client.
   std::size_t
   pending_count();

@@ -90,6 +90,7 @@ extern "C" {
 
 #include "clipboard_bridge.h"
 #include "cursor_channel.h"
+#include "file_transfer/file_transfer_pull.h"
 #include "platform/common.h"
 #include "telemetry/hooks.h"
 #include "telemetry/telemetry.h"
@@ -2629,6 +2630,7 @@ namespace stream {
 
           if (session->lifecycle.state() == session::state_e::STOPPING) {
             clipboard_bridge::bridge_t::instance().session_stopped(session->launch_session_id);
+            file_transfer_pull::session_stopped(session->launch_session_id);
             text_context::bridge_t::instance().session_stopped(session->launch_session_id);
             cursor_channel::remove_session(session->launch_session_id);
             pos = server->_sessions->erase(pos);

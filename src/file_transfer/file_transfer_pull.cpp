@@ -34,6 +34,7 @@ namespace file_transfer_pull {
 
     struct pending_t {
       response_ptr response;
+      std::uint64_t sid = 0;  ///< the streaming session the chunk was asked of
       std::string client_uuid;
       std::uint64_t length = 0;
       clock_t::time_point deadline;
@@ -186,6 +187,29 @@ namespace file_transfer_pull {
     }
   }
 
+  void
+  session_stopped(std::uint64_t sid) {
+    std::vector<pending_t> ended;
+    {
+      std::lock_guard lk(g_mu);
+      for (auto it = g_pending.begin(); it != g_pending.end();) {
+        if (it->second.sid == sid) {
+          ended.push_back(std::move(it->second));
+          it = g_pending.erase(it);
+        }
+        else {
+          ++it;
+        }
+      }
+    }
+    if (!ended.empty()) {
+      BOOST_LOG(info) << "File transfer: session "sv << sid << " ended with "sv << ended.size() << " chunk request(s) waiting"sv;
+    }
+    for (auto &p : ended) {
+      reply_error(*p.response, web::StatusCode::gone, "no_session");
+    }
+  }
+
   std::size_t
   pending_count() {
     std::lock_guard lk(g_mu);
@@ -266,7 +290,7 @@ namespace file_transfer_pull {
       }
       ticket = make_ticket();
       const auto timeout = hooks.chunk_timeout.count() > 0 ? chunk_deadline(length, hooks.chunk_timeout) : chunk_deadline(length);
-      g_pending.emplace(ticket, pending_t { response, *client, length, clock_t::now() + timeout });
+      g_pending.emplace(ticket, pending_t { response, sid, *client, length, clock_t::now() + timeout });
     }
     ensure_reaper();
     hooks.send(sid, make_pull_frame(ticket, id, index, offset, length));

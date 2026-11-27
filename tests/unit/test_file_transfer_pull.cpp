@@ -225,6 +225,22 @@ TEST_F(FileTransferPull, TurningClipboardSyncOffStopsAChunkOnItsWay) {
   EXPECT_TRUE(answer.starts_with("HTTP/1.1 503")) << answer.substr(0, 200);
 }
 
+TEST_F(FileTransferPull, AnEndedSessionAnswersItsWaitingChunksAtOnce) {
+  auto agent = pull("offset=0&length=4");
+  const auto ticket = next_frame().second["ticket"].get<std::string>();
+  file_transfer_pull::session_stopped(8);  // another session
+  EXPECT_EQ(file_transfer_pull::pending_count(), 1u);
+
+  // The client of session 7 went away: no waiting for the ticket's deadline.
+  file_transfer_pull::session_stopped(7);
+  ASSERT_EQ(agent.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+  const auto answer = agent.get();
+  EXPECT_TRUE(answer.starts_with("HTTP/1.1 410")) << answer.substr(0, 200);
+  EXPECT_NE(answer.find("no_session"), std::string::npos);
+  EXPECT_EQ(file_transfer_pull::pending_count(), 0u);
+  EXPECT_TRUE(chunk(ticket, "abcd").starts_with("HTTP/1.1 404"));
+}
+
 TEST(FileTransferPullDeadline, GrowsWithTheChunk) {
   using namespace std::chrono_literals;
   using file_transfer_pull::chunk_deadline;
