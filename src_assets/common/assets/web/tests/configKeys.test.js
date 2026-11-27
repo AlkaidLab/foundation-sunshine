@@ -31,6 +31,7 @@ const NO_CONTROL = Object.freeze({
   file_mappings: 'the shared folders the control panel edits (a JSON list the panel file mapping UI writes)',
   qp: 'parsed but unused: no encoder reads it (the runtime QP change is a session param), so there is nothing to open',
   video_pacing_threshold: 'new with the poster and pacing work (bytes, 0 = off, default 65536): no control in the redesigned UI, set in the config file',
+  usb_wired_streaming_enabled: 'new with VoidLink USB wired streaming (Windows): host opt-in in the config file, no control in the redesigned UI',
 })
 
 const source = readFileSync(new URL('../../../../../src/config.cpp', import.meta.url), 'utf8')

@@ -585,6 +585,7 @@ namespace config {
     48020,  // file_mapping_port
     false,  // usb_forwarding_enabled: explicit host opt-in
     0,  // usb_forwarding_port: automatic (main port + 7)
+    false,  // usb_wired_streaming_enabled: explicit host opt-in
     {},  // external_ip
     {},  // external_endpoints
     {},  // stun_servers
@@ -1546,6 +1547,7 @@ namespace config {
     else {
       BOOST_LOG(warning) << "Ignoring invalid usb_forwarding_port: expected 0 or 1024-65535";
     }
+    bool_f(vars, "usb_wired_streaming_enabled", nvhttp.usb_wired_streaming_enabled);
 
     // Must be run after "file_state"
     config::sunshine.credentials_file = config::nvhttp.file_state;

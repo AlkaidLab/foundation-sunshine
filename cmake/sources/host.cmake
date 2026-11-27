@@ -301,4 +301,8 @@ set(SUNSHINE_HOST_SOURCES
     src/confighttp/sparxie.cpp src/confighttp/sparxie.h
     src/confighttp/telemetry.cpp src/confighttp/telemetry.h
 )
+if(WIN32)
+    list(APPEND SUNSHINE_HOST_SOURCES
+        src/usb_stream_tunnel.cpp src/usb_stream_tunnel.h)
+endif()
 list(TRANSFORM SUNSHINE_HOST_SOURCES PREPEND "${CMAKE_SOURCE_DIR}/")
