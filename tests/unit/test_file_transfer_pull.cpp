@@ -224,3 +224,60 @@ TEST_F(FileTransferPull, TurningClipboardSyncOffStopsAChunkOnItsWay) {
   const auto answer = agent.get();
   EXPECT_TRUE(answer.starts_with("HTTP/1.1 503")) << answer.substr(0, 200);
 }
+
+TEST(FileTransferPullDeadline, GrowsWithTheChunk) {
+  using namespace std::chrono_literals;
+  using file_transfer_pull::chunk_deadline;
+  EXPECT_EQ(chunk_deadline(0), 30s);
+  EXPECT_EQ(chunk_deadline(1 << 20), 46s);  // 1 MiB at 64 KiB/s
+  EXPECT_EQ(chunk_deadline(file_transfer_pull::kMaxChunk), 94s);
+  EXPECT_EQ(chunk_deadline(1, 50ms), 51ms);  // rounded up
+  // A 1 MiB chunk over a 1 Mbit/s uplink (125000 bytes/s) needs about 8.4 s;
+  // a 4 MiB one about 33.6 s, past the old fixed 30 s.
+  EXPECT_GT(chunk_deadline(1 << 20) - 30s, std::chrono::milliseconds((1 << 20) * 1000 / 125000));
+  EXPECT_GT(chunk_deadline(file_transfer_pull::kMaxChunk) - 30s, std::chrono::milliseconds(file_transfer_pull::kMaxChunk * 1000 / 125000));
+}
+
+class FileTransferPullReaped: public FileTransferPull {
+protected:
+  void
+  SetUp() override {
+    chunk_timeout = std::chrono::milliseconds(200);
+    FileTransferPull::SetUp();
+  }
+};
+
+TEST_F(FileTransferPullReaped, AClientThatNeverAnswersIsGivenUpOn) {
+  auto agent = pull("offset=0&length=4");
+  const auto ticket = next_frame().second["ticket"].get<std::string>();
+  EXPECT_EQ(file_transfer_pull::pending_count(), 1u);
+  // No chunk ever comes: the reaper answers the agent and forgets the ticket.
+  ASSERT_EQ(agent.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+  const auto answer = agent.get();
+  EXPECT_TRUE(answer.starts_with("HTTP/1.1 504")) << answer.substr(0, 200);
+  EXPECT_NE(answer.find("timeout"), std::string::npos);
+  EXPECT_EQ(file_transfer_pull::pending_count(), 0u);
+  EXPECT_TRUE(chunk(ticket, "abcd").starts_with("HTTP/1.1 404"));
+}
+
+TEST_F(FileTransferPullReaped, TheWaitingLimitRecoversOnceTicketsExpire) {
+  std::vector<std::future<std::string>> waiting;
+  for (std::size_t i = 0; i < file_transfer_pull::kMaxPending; ++i) {
+    waiting.push_back(pull("offset=0&length=4"));
+    next_frame();
+  }
+  EXPECT_EQ(file_transfer_pull::pending_count(), file_transfer_pull::kMaxPending);
+  const auto busy = pull("offset=0&length=4").get();
+  EXPECT_TRUE(busy.starts_with("HTTP/1.1 503")) << busy.substr(0, 200);
+  EXPECT_NE(busy.find("busy"), std::string::npos);
+
+  for (auto &w : waiting) {
+    ASSERT_EQ(w.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+    EXPECT_TRUE(w.get().starts_with("HTTP/1.1 504"));
+  }
+  EXPECT_EQ(file_transfer_pull::pending_count(), 0u);
+
+  auto agent = pull("offset=0&length=4");
+  EXPECT_TRUE(chunk(next_frame().second["ticket"], "abcd").starts_with("HTTP/1.1 204"));
+  EXPECT_EQ(body_of(agent.get()), "abcd");
+}

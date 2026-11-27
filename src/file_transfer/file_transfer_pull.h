@@ -43,8 +43,11 @@ namespace file_transfer_pull {
   constexpr std::uint8_t kKindPull = 5;
   /// Largest chunk the agent may ask for (the client's POST body is buffered).
   constexpr std::uint64_t kMaxChunk = 4 * 1024 * 1024;
-  /// How long the client has to post a chunk.
+  /// How long the client has to start answering: read the chunk and reach us.
   constexpr std::chrono::seconds kChunkTimeout { 30 };
+  /// Slowest client upload a chunk is given time for (64 KiB/s, about 0.5 Mbit/s):
+  /// a ticket lasts kChunkTimeout plus the chunk's length at this rate.
+  constexpr std::uint64_t kMinUploadBytesPerSecond = 64 * 1024;
   /// Chunks waiting at once, over every session.
   constexpr std::size_t kMaxPending = 32;
 
@@ -54,7 +57,7 @@ namespace file_transfer_pull {
     std::function<std::optional<std::string>(std::uint64_t sid)> session_client;
     /// Send a clipboard payload to session `sid`.
     std::function<void(std::uint64_t sid, std::vector<std::uint8_t> payload)> send;
-    /// How long a client has to post a chunk; zero means kChunkTimeout.
+    /// Replaces kChunkTimeout in chunk_deadline() when not zero (tests).
     std::chrono::milliseconds chunk_timeout { 0 };
     /// Whether the reaper answers expired requests (a test turns it off to reach handle_chunk's own check).
     bool reap = true;
@@ -80,6 +83,13 @@ namespace file_transfer_pull {
   /// The client's chunk. path_match: [1] ticket.
   void
   handle_chunk(web::detail::ResponseBuffer &response, const web::Request &request);
+
+  /// How long the client has to post a chunk of `length` bytes: `base` plus
+  /// the upload at kMinUploadBytesPerSecond. A slow uplink keeps a ticket for
+  /// its whole chunk (a fixed 30 s ran out at 1 Mbit/s for 4 MiB) while a client
+  /// that never answers is still given up on.
+  std::chrono::milliseconds
+  chunk_deadline(std::uint64_t length, std::chrono::milliseconds base = kChunkTimeout);
 
   /// The kind 5 frame that asks a client for a chunk (version 1 clipboard framing).
   std::vector<std::uint8_t>

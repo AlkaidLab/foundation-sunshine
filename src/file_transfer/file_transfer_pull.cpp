@@ -192,6 +192,12 @@ namespace file_transfer_pull {
     return g_pending.size();
   }
 
+  std::chrono::milliseconds
+  chunk_deadline(std::uint64_t length, std::chrono::milliseconds base) {
+    // Rounded up to whole milliseconds; length is at most kMaxChunk, so no overflow.
+    return base + std::chrono::milliseconds((length * 1000 + kMinUploadBytesPerSecond - 1) / kMinUploadBytesPerSecond);
+  }
+
   std::vector<std::uint8_t>
   make_pull_frame(std::string_view ticket, std::string_view id, std::uint32_t index, std::uint64_t offset, std::uint64_t length) {
     const auto json = nlohmann::json {
@@ -259,7 +265,7 @@ namespace file_transfer_pull {
         return;
       }
       ticket = make_ticket();
-      const auto timeout = hooks.chunk_timeout.count() > 0 ? clock_t::duration(hooks.chunk_timeout) : clock_t::duration(kChunkTimeout);
+      const auto timeout = hooks.chunk_timeout.count() > 0 ? chunk_deadline(length, hooks.chunk_timeout) : chunk_deadline(length);
       g_pending.emplace(ticket, pending_t { response, *client, length, clock_t::now() + timeout });
     }
     ensure_reaper();
