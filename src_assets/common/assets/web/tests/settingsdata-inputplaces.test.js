@@ -35,7 +35,7 @@ test('the places of 输入与外设: 手柄, 键盘, 鼠标与触控, USB 转发
   assert.equal(PLACE_TABS.input, INPUT_PLACES); assert.equal(DEFAULT_PLACE.input, 'gamepad')
   assert.deepEqual(placesOf('input', 'linux').map((p) => p.id), ['gamepad', 'keyboard', 'mouse']); assert.equal(placesOf('input', 'windows').length, 4)
   assert.equal(SETTINGS_GROUPS.flatMap((g) => g.categories).includes('input'), false)
-  assert.equal(labelOf('zh', 'config.input_mouse_title'), '鼠标与触控'); assert.equal(labelOf('zh', 'shell.usb_forwarding'), 'USB 转发')
+  assert.equal(labelOf('zh', 'config.input_mouse_title'), '鼠标与触控'); assert.equal(labelOf('zh', 'shell.usb_forwarding'), 'USB 转发/挂载')
 })
 
 test('the old addresses of 输入 lead to the page of the key, else to 手柄', () => {

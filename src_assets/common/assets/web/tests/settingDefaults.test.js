@@ -65,6 +65,7 @@ const STATIC_DEFAULT_KEYS = new Set([
 const HOST_DEFAULTS = Object.freeze({
   locale: 'en', sunshine_name: null, min_log_level: 2, sleep_mode: '0', notify_pre_releases: false, pin_prompt: 'fullscreen', system_tray: true,
   stop_on_last_video_session: false, launch_splash: true, controller: true, gamepad: 'auto', usb_forwarding_enabled: false,
+  usb_wired_streaming_enabled: false,
   usb_forwarding_port: 0, ds4_back_as_touchpad_click: true, motion_as_ds4: true, touchpad_as_ds4: true,
   enable_dsu_server: false, dsu_server_port: 26760, back_button_timeout: -1, keyboard: true, key_repeat_delay: 500,
   key_repeat_frequency: 24.9, always_send_scancodes: true, key_rightalt_to_key_win: false, mouse: true,
