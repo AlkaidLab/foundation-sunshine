@@ -51,6 +51,9 @@ extern "C" {
 #include "spatial_transport/mat_live_session.h"
 #include "src/log_text.h"
 #include "stream.h"
+#ifdef _WIN32
+  #include "usb_stream_tunnel.h"
+#endif
 #include "streaming/client_framerate.h"
 #include "streaming/expected_failures.h"
 #include "streaming/fec.h"
@@ -1597,9 +1600,25 @@ namespace rtsp_stream {
     }
   };
 
+#ifdef _WIN32
+  static void
+  attach_direct_usb_video_header(OPTION_ITEM &head, OPTION_ITEM &video,
+    const launch_session_t &session) {
+    if (!session.direct_usb_video) return;
+    video.option = const_cast<char *>("X-SS-USB-Video-Version");
+    video.content = const_cast<char *>("1");
+    auto tail = &head;
+    while (tail->next) tail = tail->next;
+    tail->next = &video;
+  }
+#endif
+
   void
   cmd_announce(rtsp_server_t *server, tcp::socket &sock, launch_session_t &session, msg_t &&req) {
     OPTION_ITEM option {};
+#ifdef _WIN32
+    OPTION_ITEM usb_video_option {};
+#endif
 
     // I know these string literals will not be modified
     option.option = const_cast<char *>("CSeq");
@@ -1621,6 +1640,7 @@ namespace rtsp_stream {
         dynamic_hdr_headers.attach(option);
         mat_live_response_headers_t mat_headers(session);
         mat_headers.attach(option);
+        attach_direct_usb_video_header(option, usb_video_option, session);
         respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
       }
       else {
@@ -1674,8 +1694,8 @@ namespace rtsp_stream {
         if (!val.empty() && val.back() == ' ') {
           val = val.substr(0, val.size() - 1);
         }
-        if (name == "x-ml-general.endpointAutoRefreshVersion"sv && args.contains(name)) {
-          respond(sock, session, &option, 400, "Duplicate endpoint refresh version", req->sequenceNumber, {});
+        if ((name == "x-ml-general.endpointAutoRefreshVersion"sv || name == "x-ml-video.usbStreamVersion"sv) && args.contains(name)) {
+          respond(sock, session, &option, 400, "Duplicate transport version", req->sequenceNumber, {});
           return;
         }
         auto [entry, inserted] = args.emplace(name, val);
@@ -2246,6 +2266,18 @@ namespace rtsp_stream {
       BOOST_LOG(info) << "Control-only session detected: client "sv << logging::quoted_name(session.client_name) << " will only provide input control"sv;
     }
 
+#ifdef _WIN32
+    const auto usb_video = args.find("x-ml-video.usbStreamVersion"sv);
+    if (session.direct_usb_video || usb_video != args.end()) {
+      if (!session.direct_usb_video || !session.direct_usb_video->active() || usb_video == args.end() ||
+          usb_video->second != "1" || !session.setup_video || session.control_only ||
+          config.packetsize <= 0 || config.packetsize > 65000) {
+        respond(sock, session, &option, 461, "Direct USB Video Unavailable", req->sequenceNumber, {});
+        return;
+      }
+    }
+#endif
+
     // Check that any required encryption is enabled
     // 对于仅控制流会话，跳过视频/音频加密检查
     if (!session.control_only) {
@@ -2295,6 +2327,9 @@ namespace rtsp_stream {
     dynamic_hdr_headers.attach(option);
     mat_live_response_headers_t mat_headers(session);
     mat_headers.attach(option);
+#ifdef _WIN32
+    attach_direct_usb_video_header(option, usb_video_option, session);
+#endif
 
     respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
   }
