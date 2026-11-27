@@ -972,6 +972,7 @@ component_list() {
 
 void
 begin_install() {
+  if (S.worker) return;  // a run is already in flight: a repeated trigger (a double click, a second press) must not start a second engine beside it
   if (g_choosing_dir) return;  // the folder picker is open: the folder is not chosen yet, and an install now would use the one from before
   // Keep the engine's explicit component list safe even if an old UI or the select-all action re-enabled a component after the page was drawn.
   apply_os_limits(S.v);

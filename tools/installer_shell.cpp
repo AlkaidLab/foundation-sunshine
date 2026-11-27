@@ -653,6 +653,30 @@ namespace {
   worker_main() {
     const std::wstring id = g_run.id;
     const bool selftest = !g_run.selftest_directory.empty();
+    // One engine at a time on this machine. Two engines installing side by side replace each other's
+    // files mid-copy, and the loser rolls back with Inno exit code 5, which the window reports as
+    // "the installer engine stopped". Whatever started two workers (a double click on the window,
+    // the Panel's updater and a person, two scripts), this worker waits here until the earlier one
+    // has released the engine, then installs as planned. A worker that died mid-install leaves the
+    // mutex abandoned, which the wait reports as taken: a dead process holds nothing, so this run
+    // goes on.
+    struct worker_engine_lock {
+      HANDLE mutex = nullptr;
+      bool owned = false;
+      ~worker_engine_lock() {
+        if (mutex) {
+          if (owned) ReleaseMutex(mutex);
+          CloseHandle(mutex);
+        }
+      }
+    } engine_lock;
+    if (!selftest) {
+      engine_lock.mutex = CreateMutexW(nullptr, FALSE, L"Global\\FoundationSunshine-install-worker");
+      if (engine_lock.mutex) {
+        const DWORD wait = WaitForSingleObject(engine_lock.mutex, INFINITE);
+        engine_lock.owned = wait == WAIT_OBJECT_0 || wait == WAIT_ABANDONED;
+      }
+    }
     const std::wstring root = program_data() + L"\\" + kRunRoot;
     g_run.directory = selftest ? g_run.selftest_directory : root + L"\\" + id;
     g_run.events = g_run.directory + L"\\events.jsonl";
