@@ -4,7 +4,7 @@ using System.Security.Principal;
 namespace Sparxie.Launch;
 
 /// <summary>
-/// Whether the Sparxie install may run with administrator rights: only when administrators alone can change it. Otherwise any program of the signed-in person could swap
+/// Whether the Broker of a Sparxie install may be started as administrator: only when administrators alone can change it. Otherwise any program of the signed-in person could swap
 /// Sparxie.Broker.exe (or a DLL it loads) and be run as administrator by the next launch. The host applies the same rule (host_admin_only_tree, install_platform.cpp);
 /// the launcher checks again right before it would start anything of the install, because the folder can have changed since the application was saved.
 /// </summary>
@@ -101,34 +101,5 @@ internal static class InstallTrust
             if ((common.AccessMask & writes) != 0 && !Administrative(common.SecurityIdentifier)) return false;
         }
         return true;
-    }
-
-    /// <summary>The known executables of the titles that can start through Sparxie, with the game id each one has.</summary>
-    private static readonly (string Name, string Game)[] KnownGames =
-    [
-        ("YuanShen.exe", "genshin"), ("GenshinImpact.exe", "genshin"), ("StarRail.exe", "starRail"),
-        ("ZenlessZoneZero.exe", "zenlessZoneZero"), ("ZenlessZoneZeroBeta.exe", "zenlessZoneZero"), ("Endfield.exe", "endfield"),
-    ];
-
-    /// <summary>
-    /// The game of an application whose Sparxie may not be trusted: its config is as open as the install, so nothing in it decides what runs as administrator. The
-    /// working directory Sunshine gave the application (the game's folder, from the host's own application list) does: the one known game executable in it or one level
-    /// under it. Null when there is none, or more than one.
-    /// </summary>
-    public static Profile? GameIn(string workingDirectory, string profileId)
-    {
-        try
-        {
-            if (!Directory.Exists(workingDirectory)) return null;
-            List<(string Path, string Game)> Under(IEnumerable<string> folders) =>
-                folders.SelectMany(f => KnownGames.Select(k => (Path: System.IO.Path.Combine(f, k.Name), k.Game))).Where(c => File.Exists(c.Path)).ToList();
-            var found = Under([workingDirectory]);
-            if (found.Count == 0) found = Under(Directory.GetDirectories(workingDirectory));
-            return found.Count == 1 ? new Profile(profileId, profileId, found[0].Game, found[0].Path, null) : null;
-        }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        {
-            return null;
-        }
     }
 }

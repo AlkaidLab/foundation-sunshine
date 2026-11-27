@@ -992,7 +992,7 @@ namespace sparxie {
     const bool admin_only = installed && sparxie_admin_only(env, &blocker);
     result.body["external"] = !env.external_dir.empty();
     result.body["externalDir"] = env.external_dir.string();
-    // false: this host starts the install without administrator rights, and touch launch (which needs them) is not offered
+    // false: the Broker of this install is not started as administrator, so touch launch is not available
     result.body["adminOnly"] = admin_only;
     result.body["adminOnlyBlocker"] = installed && !admin_only ? blocker.string() : std::string();
     const json extra = install_status_fields(env);
@@ -1079,9 +1079,7 @@ namespace sparxie {
       return result;
     }
     if (!env.launch_gui) return failure(Status::fail(409, "launch_unavailable", "This host cannot start Sparxie"));
-    const bool elevated = sparxie_admin_only(env);
-    const Status started = env.launch_gui(env.sparxie_exe, elevated);
-    result.body["elevated"] = elevated;
+    const Status started = env.launch_gui(env.sparxie_exe);
     if (!started.ok) return failure(started);
     return result;
   }

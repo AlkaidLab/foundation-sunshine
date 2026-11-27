@@ -42,9 +42,8 @@ namespace sparxie {
     // key names come from vendors.h); unset means the host reads the machine's
     // own records. Tests answer with fixture folders.
     std::function<std::vector<fs::path>(const std::vector<std::string> &)> uninstall_locations;
-    // Starts the Sparxie program in the signed-in user's session (Sparxie is a window; it must not run as the service). `elevated` starts it with administrator
-    // rights, which is only asked for an install that administrators alone can change (see admin_only).
-    std::function<Status(const fs::path &, bool elevated)> launch_gui;
+    // Starts the Sparxie program in the signed-in user's session with that person's normal rights (Sparxie is a window; it must not run as the service).
+    std::function<Status(const fs::path &)> launch_gui;
     // The external install folder the person chose; empty: the host's own component. While it is set no other install is used, also when it has gone missing.
     fs::path external_dir;
     // host_admin_only_tree; unset (tests): every install counts as administrator-only

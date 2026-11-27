@@ -68,9 +68,14 @@ internal static class Launcher
         var options = LaunchOptions.Parse(args, out var optionError);
         if (options is null) return Finish(log, ExitCodes.Usage, optionError);
 
-        // nothing of an install that others can change runs from here: this launcher is (or would ask to be) administrator
+        // the Broker is started as administrator only from an install that administrators alone can change
         if (InstallBlocker(options.SparxiePath, InstallTrust.HostRoot(exeDirectory)) is { } blocker)
-            return await UntrustedAsync(options, blocker, log, elevated, env, exeDirectory).ConfigureAwait(false);
+        {
+            var refused = new Profile(options.ProfileId, options.ProfileId, "", "", null);
+            var why = $"the Sparxie install can be changed by users who are not administrators ({blocker}); its Broker is not started as administrator";
+            LaunchNotice.Write(LaunchNotice.CandidateDirectories(exeDirectory, env), LaunchNotice.Build(LaunchNotice.KindUnprotected, refused, why, log.Path, DateTime.UtcNow));
+            return Finish(log, ExitCodes.Unprotected, why);
+        }
 
         // the profile
         var dataDirs = SparxieConfig.DataDirectories(options.SparxiePath, env(SparxieConfig.DataDirEnv), env("LOCALAPPDATA"));
@@ -170,27 +175,6 @@ internal static class Launcher
         if (Plan.After(2, second.Outcome, GameRunning(profile), brokerAvailable: true) == Next.FollowRunningGame)
             return await FollowAsync(profile, log, "a process of the game is still running", Note).ConfigureAwait(false);
         return await FallBackAsync(profile, log, elevated, Note, $"attempt 1: {first.Reason}; attempt 2: {second.Reason}").ConfigureAwait(false);
-    }
-
-    private static async Task<int> UntrustedAsync(LaunchOptions options, string blocker, RunLog log, bool elevated, Func<string, string?> env, string exeDirectory)
-    {
-        var reason = $"the Sparxie install can be changed by users who are not administrators ({blocker}); nothing of it is run as administrator";
-        log.Warn(reason);
-        if (InstallTrust.GameIn(Environment.CurrentDirectory, options.ProfileId) is not { } game)
-            return Finish(log, ExitCodes.Unsupported, $"{reason}, and the working directory {Environment.CurrentDirectory} does not hold exactly one known game executable to start directly");
-        if (options.Screen is { } screen) game = game with { Screen = screen };
-        var noticeDirs = LaunchNotice.CandidateDirectories(exeDirectory, env).ToList();
-        if (Plan.AtStart(GameRunning(game)) == Start.AdoptRunningGame)
-            return await AdoptAsync(game, log, noticeDirs).ConfigureAwait(false);
-        void Note(string kind, string why)
-        {
-            var where = LaunchNotice.Write(noticeDirs, LaunchNotice.Build(kind, game, why, log.Path, DateTime.UtcNow));
-            StageReport.Notice("direct");
-            log.Info(where is null ? $"host notice ({kind}) could not be written" : $"host notice ({kind}) written to {where}");
-        }
-        Note(LaunchNotice.KindUnprotected, reason);
-        var code = await DirectLaunch.RunAsync(game, log, elevated, Environment.CurrentDirectory).ConfigureAwait(false);
-        return Finish(log, code, "direct start: the game ended");
     }
 
     private static bool GameRunning(Profile profile) => BrokerProcess.FindGameProcesses(profile.ExecutablePath).Count > 0;

@@ -2,7 +2,7 @@ namespace Sparxie.Launch;
 
 internal static partial class Tests
 {
-    // ---- only an install that administrators alone can change is run as administrator ----
+    // ---- the Broker is started as administrator only from an install that administrators alone can change ----
     private static void InstallTrustRules(string scratch)
     {
         var mine = Path.Combine(scratch, "trust", "sparxie");
@@ -15,32 +15,16 @@ internal static partial class Tests
         Same<string?>(null, InstallTrust.Blocker(system), "a folder under Program Files is administrator-only");
         Check(InstallTrust.Blocker(@"\\server\share\Sparxie\Sparxie.exe") is not null, "a network path is refused");
 
-        // without trust in the config, the working directory alone names the game
-        var game = Path.Combine(scratch, "trust", "game");
-        Directory.CreateDirectory(Path.Combine(game, "Game"));
-        Same<Profile?>(null, InstallTrust.GameIn(game, "p"), "no known executable: nothing is started");
-        File.WriteAllText(Path.Combine(game, "Game", "StarRail.exe"), "x");
-        Same("starRail", InstallTrust.GameIn(game, "p")?.Game, "the one known executable one level under the game's folder");
-        Directory.CreateDirectory(Path.Combine(game, "Other"));
-        File.WriteAllText(Path.Combine(game, "Other", "YuanShen.exe"), "x");
-        Same<Profile?>(null, InstallTrust.GameIn(game, "p"), "two games: none is chosen");
-
-        // end to end: an install the person can change runs nothing of itself, and its config is not read
-        var before = Environment.CurrentDirectory;
+        // end to end: for an install the person can change nothing is started, and its config is not read
         var noticeDir = Path.Combine(scratch, "trust", "notice");
-        try
         {
-            Environment.CurrentDirectory = Path.Combine(scratch, "trust");
             Launcher.InstallBlocker = InstallTrust.Blocker;
             Same(Path.Combine(scratch, "host"), InstallTrust.HostRoot(Path.Combine(scratch, "host", "tools") + "\\"), "the host's folder is above tools");
             using var log = RunLog.Open([Path.Combine(scratch, "trust", "log")], () => new DateTime(2026, 11, 27, 9, 0, 0));
             string? Env(string name) => name == LaunchNotice.DirEnv ? noticeDir : null;
             var code = Launcher.RunAsync(["--sparxie", Path.Combine(mine, "Sparxie.exe"), "--profile", "genshin-cn-1"], log, Env, scratch).GetAwaiter().GetResult();
-            Same(ExitCodes.Unsupported, code, "no game in the working directory: the untrusted install ends the launch without reading its config");
-        }
-        finally
-        {
-            Environment.CurrentDirectory = before;
+            Same(ExitCodes.Unprotected, code, "the launch ends before the config is read or anything of the install runs");
+            Check(File.ReadAllText(Path.Combine(noticeDir, LaunchNotice.FileName)).Contains("\"kind\":\"unprotected\""), "the page is told why");
         }
     }
 }

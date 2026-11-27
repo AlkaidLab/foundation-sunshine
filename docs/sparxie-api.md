@@ -301,7 +301,7 @@ beside the host executable. `version` comes from `component.json` or
 in the build this host was written against, so `protocol` and `runtime`
 stay empty until that command exists.
 
-The same response carries `launchNotice`: `null`, or the note the touch launcher left after a launch that needed its safety net (`config\\sparxie\\launch-notice.json`: `version`, `id`, `time` (UTC), `kind` (`direct`: Sparxie could not start the session and the game was started directly; `retried`: the first session failed and the automatic retry worked; `unlock_forced`: the installed Hoyo runtime cannot run touch only, so the game started with the unlock at 60 FPS; `unprotected`: users who are not administrators can change the install, so nothing of it ran and the game was started directly), `profile`, `game`, `message` (Chinese), `messageEn`, `reason`, `log`). A clean launch removes the note, so it always describes the last launch; a page shows `message` once per `id`.
+The same response carries `launchNotice`: `null`, or the note the touch launcher left after a launch that needed its safety net (`config\\sparxie\\launch-notice.json`: `version`, `id`, `time` (UTC), `kind` (`direct`: Sparxie could not start the session and the game was started directly; `retried`: the first session failed and the automatic retry worked; `unlock_forced`: the installed Hoyo runtime cannot run touch only, so the game started with the unlock at 60 FPS; `unprotected`: users who are not administrators can change the install, so its Broker was not started and the game did not start), `profile`, `game`, `message` (Chinese), `messageEn`, `reason`, `log`). A clean launch removes the note, so it always describes the last launch; a page shows `message` once per `id`.
 
 The same response also carries `noticeAck` (true only after
 `POST /api/sparxie/warning`), `installHint` / `installHintEn` (the one line
@@ -498,14 +498,13 @@ at most 3000 entries. A network path (`\\server\share`) is 400 `invalid_input`.
 
 `POST /api/sparxie/location` `{ "path": "D:\\Apps\\Sparxie" }` chooses the install the host uses: a folder on a local fixed drive, or the `Sparxie.exe` in it. An empty `path` goes back to the host's own component; importing a package does too. The choice is `externalDir` in `sparxie-host.json`, and the answer is the new status. 409 `sparxie_running`, 404 `not_sparxie`, 400 `invalid_input` (relative or network path). Touch applications are pointed at the chosen install, and the profiles its config lacks are added to it. Uninstalling the component never touches an external install.
 
-Administrator rights are given only to an install that administrators alone can change: every file and folder in it is owned by SYSTEM, Administrators or TrustedInstaller and grants no one else a write, no ancestor folder lets anyone else rename or replace it, it is on a local fixed drive, and it holds no links. For an install inside the host's own install folder the ancestor rule stops at that folder: whoever could swap a folder above it could swap the host's own programs. This applies to every install, the host's own component and `SPARXIE_HOME` included. The status has `external`, `externalDir`, `adminOnly` and `adminOnlyBlocker` (the first path that failed). For an install that fails:
+The Broker is started as administrator only from an install that administrators alone can change: every file and folder in it is owned by SYSTEM, Administrators or TrustedInstaller and grants no one else a write, no ancestor folder lets anyone else rename or replace it, it is on a local fixed drive, and it holds no links. For an install inside the host's own install folder the ancestor rule stops at that folder: whoever could swap a folder above it could swap the host's own programs. This applies to every install, the host's own component and `SPARXIE_HOME` included. The status has `external`, `externalDir`, `adminOnly` and `adminOnlyBlocker` (the first path that failed). For an install that fails:
 
-* `POST /api/sparxie/open` starts Sparxie as the signed-in user.
-* The host does not write its config: a write is 409 `sparxie_unprotected`, so no touch application can be made. (A chosen folder without Sparxie is 409 `sparxie_external_missing`.)
-* `sparxie-launch` checks again at every launch and runs nothing of it. It does not read its config either; it starts directly the one known game executable in the application's working directory (or one level under it), leaving the note `unprotected`, and exits 11 when there is no such single file.
+* `sparxie-launch` checks at every launch. It does not read the config or start anything: it leaves the note `unprotected` and exits 12.
+* The host does not write its config (it writes as SYSTEM): a write is 409 `sparxie_unprotected`, so no touch application can be made. (A chosen folder without Sparxie is 409 `sparxie_external_missing`.)
 
 `POST /api/sparxie/open` starts the Sparxie program in the signed-in user's
-session with the host's launch-as-user path (never as the service):
+session with the host's launch-as-user path (never as the service), always with that person's normal rights, whatever the install. A Sparxie in a folder they cannot write says so itself and cannot save its config from that window. The answer:
 `{ ok, already_running }`. Not installed is 409 `absent`.
 
 `GET /api/sparxie/games` also carries `catalog` (per game: its executables and,
@@ -631,7 +630,7 @@ It starts `Sparxie.Broker.exe` at once with `--pipe-name=<random> --parent-pid=<
 normal case because the host starts Sparxie applications elevated; through `runas`, so with a UAC prompt, only when it is not), pings the
 Broker, opens the event stream, sends `StartSession` with the profile and every `hoyo` setting, and then stays alive until the final event.
 It exits 0 when the session ends with `Exited`, 7 for `Failed` or a crashed SessionHost, and another non-zero code for each earlier failure
-(2 command line, 3 config or profile, 4 Broker, 5 session refused, 6 pipe error, 8 event stream lost, 9 the game never reached Running, 10 unexpected, 11 the profile needs a Sparxie feature the installed build lacks).
+(2 command line, 3 config or profile, 4 Broker, 5 session refused, 6 pipe error, 8 event stream lost, 9 the game never reached Running, 10 unexpected, 11 the profile needs a Sparxie feature the installed build lacks, 12 users who are not administrators can change the Sparxie install).
 Every run writes `config\logs\sparxie-launch-<yyyymmdd-hhmmss>.log` beside the host (the newest 20 are kept; `%LOCALAPPDATA%\Sunshine\logs` when
 that folder cannot be written; `SPARXIE_LAUNCH_LOG_DIR` overrides). The Broker, SessionHost and game are put in a job object that kills them when
 the launcher ends, so ending the Sunshine application, even by killing the launcher, ends the game.
