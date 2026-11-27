@@ -1003,6 +1003,16 @@ namespace sparxie {
   }
 
   std::string
+  graphics_api_argument(std::string_view game, const json &settings) {
+    if (!settings.is_object() || (game != "genshin" && game != "starrail" && game != "zzz")) return {};
+    auto text = [&](const char *key) { return settings.contains(key) && settings[key].is_string() ? settings[key].get<std::string>() : std::string(); };
+    // Zenless Zone Zero has its own item; the two others take the common one (the same choice as in game_launch_command)
+    if (game == "zzz" && !text("graphicsApi").empty()) return text("graphicsApi") == "12" ? "-use-d3d12" : "";
+    const std::string dx = text("dxVersion");
+    return dx == "dx11" ? "-force-d3d11" : dx == "dx12" ? "-force-d3d12" : "";
+  }
+
+  std::string
   game_launch_command(std::string command, const Install &install, const json &options) {
     if (!options.is_object() || options.empty()) return command;
     const bool store = install.source == "steam" || install.source == "epic" || std::find(install.sources.begin(), install.sources.end(), "steam") != install.sources.end() || std::find(install.sources.begin(), install.sources.end(), "epic") != install.sources.end();

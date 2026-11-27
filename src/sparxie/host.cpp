@@ -1029,6 +1029,44 @@ namespace sparxie {
     return result;
   }
   namespace {
+    // 图形 API through Sparxie: the game is started by Sparxie, so the argument a direct start puts on its command line goes into the profile's extra launch
+    // arguments. The block's "sparxieArguments" are the ones the host may have left in the profile, which it takes out again when the choice changes.
+    std::string
+    chosen_graphics_argument(const json &block) {
+      if (block.value("settingsMode", std::string()) == "auto") return {};
+      return graphics_api_argument(block.value("game", std::string()), block.value("settings", json::object()));
+    }
+    std::vector<std::string>
+    host_graphics_arguments(const json &block) {
+      std::vector<std::string> out;
+      if (block.contains("sparxieArguments") && block["sparxieArguments"].is_array())
+        for (const auto &item : block["sparxieArguments"])
+          if (item.is_string()) out.push_back(item.get<std::string>());
+      return out;
+    }
+    // true when the profile now reads as chosen (also when there was never anything to do); a Sparxie that is open leaves it for the next save or launch
+    bool
+    sync_graphics_argument(HostEnv &env, const json &block, const std::string &profile) {
+      const std::string wanted = chosen_graphics_argument(block);
+      const std::vector<std::string> ours = host_graphics_arguments(block);
+      if (profile.empty() || (wanted.empty() && ours.empty())) return true;
+      StoreHooks hooks = env.store_hooks;
+      hooks.running = sparxie_open(env);
+      const WriteResult stored = set_graphics_argument(config_dir(env), profile, wanted, ours, hooks);
+      if (!stored.status.ok && env.warn) env.warn("the graphics API argument was not written to the Sparxie profile: " + stored.status.error);
+      return stored.status.ok;
+    }
+    // after a save: what the host may have left in the profile is the choice alone when it was written, else also what was there before
+    void
+    keep_graphics_arguments(json &block, bool written) {
+      const std::string wanted = chosen_graphics_argument(block);
+      std::vector<std::string> ours = written ? std::vector<std::string> {} : host_graphics_arguments(block);
+      if (!wanted.empty() && std::find(ours.begin(), ours.end(), wanted) == ours.end()) ours.push_back(wanted);
+      if (ours.empty())
+        block.erase("sparxieArguments");
+      else
+        block["sparxieArguments"] = ours;
+    }
     // A profile this request added to Sparxie's config goes again when the request does not end well: the profile and the application list are one change.
     void
     take_back_profile(HostEnv &env, const std::string &id) {
@@ -1173,6 +1211,7 @@ namespace sparxie {
       block["display"] = display;
       block["game"] = found.install.game;
       mirror_display_to_options(block);
+      if (mode == "touch") keep_graphics_arguments(block, sync_graphics_argument(env, block, profile_id));
       // the Sparxie badge on the posters of a touch application: on for the official cover, off for a cover of the person's own unless they ask for it
       if (mode == "touch") block["badge"] = request.contains("badge") && request["badge"].is_boolean() ? request["badge"].get<bool>() : !custom_cover;
       // the games ask for administrator rights in their manifest, so a direct start is elevated too (else Windows refuses it: 740)
@@ -1299,6 +1338,7 @@ namespace sparxie {
       if (request.contains("restore")) block["restore"] = request.value("restore", std::string("restore")) == "keep" ? "keep" : "restore";
       if (request.contains("settings")) block["settings"] = settings_without_game_fps(mode, block.value("options", json::object()), sparse_settings(request.value("settings", json::object())));
       block.erase("settingsMode");  // the two-mode switch is gone: no changed items means the game's own settings stay
+      if (mode == "touch") keep_graphics_arguments(block, sync_graphics_argument(env, block, profile_id));
       if (request.contains("badge") && request["badge"].is_boolean()) block["badge"] = request["badge"].get<bool>();
       if (request.contains("cover")) {
         const bool custom = request.value("cover", std::string("official")) == "custom";
@@ -1757,6 +1797,7 @@ namespace sparxie {
         block["launchTemplate"] = templ;
         app["cmd"] = touch_command(env, stored.profile, install, app.value("name", std::string()));
         app["elevated"] = true;
+        keep_graphics_arguments(block, sync_graphics_argument(env, block, stored.profile));
         ++attached;
       }
     }
@@ -1922,6 +1963,7 @@ namespace sparxie {
         hooks.running = sparxie_open(env);
         if (!hooks.running) update_profile(config_dir(env), profile, draft, hooks);
       }
+      if (block.value("mode", std::string()) == "touch") sync_graphics_argument(env, block, profile);
       // Only the items this application holds (the ones the person changed) are written; every other item follows the game's own value. A block of the removed two-mode
       // switch that still says "auto" holds nothing the person chose.
       const json settings = block.value("settingsMode", std::string()) == "auto" ? json::object() : block.value("settings", json::object());

@@ -1,4 +1,5 @@
 #include "src/sparxie/host.h"
+#include "src/sparxie/hoyo_settings.h"
 #include "tests/sparxie/pe_fixture.h"
 #include "src/sparxie/platform.h"
 #include "src/sparxie/art_refresh_job.h"
@@ -1736,5 +1737,88 @@ TEST(InstallVersion, APackageImportedBeforeItsReleaseWasKnownShowsTheRelease) {
     seed << R"x({"version":"unknown","verified":false,"sha256":"53bc95771fb0f8883605b33aae4acb19f66fac0d81323359488d57028763062a"})x";
   }
   EXPECT_EQ(sparxie::component_status(env).body["version"], "0.2.1");
+  fs::remove_all(root);
+}
+
+TEST(GraphicsApi, TheArgumentJoinsTheOnesThePersonTypedAndLeavesAgain) {
+  using sparxie::with_graphics_argument;
+  EXPECT_EQ(with_graphics_argument("", "-force-d3d12", {}), "-force-d3d12");
+  EXPECT_EQ(with_graphics_argument("-foo  \"a b\"", "-force-d3d12", {}), "-foo  \"a b\" -force-d3d12");
+  EXPECT_EQ(with_graphics_argument("-force-d3d12 -foo", "-force-d3d12", {}), "-force-d3d12 -foo");
+  EXPECT_EQ(with_graphics_argument("-force-d3d11 -foo", "-force-d3d12", { "-force-d3d11" }), "-foo -force-d3d12");
+  EXPECT_EQ(with_graphics_argument("-foo -force-d3d12 -bar", "", { "-force-d3d12" }), "-foo -bar");
+  // with no choice, an argument the host never put there stays
+  EXPECT_EQ(with_graphics_argument("-force-d3d11 -foo", "", {}), "-force-d3d11 -foo");
+  EXPECT_EQ(with_graphics_argument("-force-d3d12", "", { "-force-d3d12" }), "");
+}
+
+TEST(GraphicsApi, EachTitleTakesItsOwnItemAndSpelling) {
+  using sparxie::graphics_api_argument;
+  EXPECT_EQ(graphics_api_argument("genshin", { { "dxVersion", "dx12" } }), "-force-d3d12");
+  EXPECT_EQ(graphics_api_argument("starrail", { { "dxVersion", "dx11" } }), "-force-d3d11");
+  EXPECT_EQ(graphics_api_argument("starrail", { { "dxVersion", "auto" } }), "");
+  EXPECT_EQ(graphics_api_argument("zzz", { { "graphicsApi", "12" } }), "-use-d3d12");
+  EXPECT_EQ(graphics_api_argument("zzz", { { "graphicsApi", "11.0" } }), "");
+  EXPECT_EQ(graphics_api_argument("endfield", { { "dxVersion", "dx12" } }), "");
+  EXPECT_EQ(graphics_api_argument("genshin", sparxie::json::object()), "");
+}
+
+namespace {
+  std::string
+  profile_arguments(const fs::path &data) {
+    const auto store = sparxie::read_store(data);
+    const auto &profile = store.document.at("profiles").at(0);
+    return profile.contains("launch") ? profile.at("launch").value("extraArguments", std::string()) : std::string();
+  }
+  void
+  type_arguments(const fs::path &data, const std::string &arguments) {
+    sparxie::json document = sparxie::read_store(data).document;
+    document["profiles"][0]["launch"] = { { "borderless", true }, { "extraArguments", arguments } };
+    std::ofstream out(data / "config.json", std::ios::binary | std::ios::trunc);
+    out << document.dump(2);
+  }
+  sparxie::json
+  first_app(const sparxie::HostEnv &env) {
+    std::ifstream in(env.apps_file);
+    return sparxie::json::parse(in)["apps"][0];
+  }
+}  // namespace
+
+TEST(GraphicsApi, ASparxieApplicationCarriesTheChoiceInItsProfile) {
+  const fs::path root = fs::temp_directory_path() / "sparxie-graphics-api";
+  sparxie::HostEnv env = kbm_env(root);
+  const auto made = sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin" }, { "settings", { { "dxVersion", "dx12" } } } });
+  ASSERT_TRUE(made.status.ok) << made.status.error;
+  EXPECT_EQ(profile_arguments(env.data_dir), "-force-d3d12");
+  EXPECT_EQ(first_app(env)["cmd"].get<std::string>().find("-force-d3d12"), std::string::npos) << "the argument is Sparxie's, not the launcher's";
+
+  type_arguments(env.data_dir, "-force-d3d12 -mine");
+  ASSERT_TRUE(sparxie::update_app(env, 0, { { "settings", { { "dxVersion", "dx11" } } } }).status.ok);
+  EXPECT_EQ(profile_arguments(env.data_dir), "-mine -force-d3d11");
+  EXPECT_EQ(sparxie::read_store(env.data_dir).document["profiles"][0]["launch"]["borderless"], true) << "the rest of the launch settings stays";
+
+  ASSERT_TRUE(sparxie::update_app(env, 0, { { "settings", sparxie::json::object() } }).status.ok);
+  EXPECT_EQ(profile_arguments(env.data_dir), "-mine");
+  EXPECT_FALSE(first_app(env)["sparxie"].contains("sparxieArguments"));
+
+  // with no choice the host leaves what the person types alone, also at a launch
+  type_arguments(env.data_dir, "-force-d3d12");
+  const auto app = first_app(env);
+  sparxie::prepare_launch(env, "Genshin", app["cmd"].get<std::string>(), {}, nullptr);
+  EXPECT_EQ(profile_arguments(env.data_dir), "-force-d3d12");
+  fs::remove_all(root);
+}
+
+TEST(GraphicsApi, AChoiceSavedWhileSparxieWasOpenReachesTheProfileAtTheNextLaunch) {
+  const fs::path root = fs::temp_directory_path() / "sparxie-graphics-api-open";
+  sparxie::HostEnv env = kbm_env(root);
+  ASSERT_TRUE(sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin" }, { "settings", { { "dxVersion", "dx12" } } } }).status.ok);
+  env.process_running = [](const std::vector<std::string> &names) { return std::find(names.begin(), names.end(), "Sparxie.exe") != names.end(); };
+  ASSERT_TRUE(sparxie::update_app(env, 0, { { "settings", sparxie::json::object() } }).status.ok);
+  EXPECT_EQ(profile_arguments(env.data_dir), "-force-d3d12");
+  env.process_running = [](const std::vector<std::string> &) { return false; };
+  const auto app = first_app(env);
+  sparxie::prepare_launch(env, "Genshin", app["cmd"].get<std::string>(), {}, nullptr);
+  EXPECT_EQ(profile_arguments(env.data_dir), "");
   fs::remove_all(root);
 }

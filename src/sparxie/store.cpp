@@ -729,6 +729,72 @@ namespace sparxie {
       return Status::success();
     });
   }
+  std::string
+  with_graphics_argument(const std::string &arguments, const std::string &wanted, const std::vector<std::string> &ours) {
+    static const char *const kApiArguments[] = { "-force-d3d11", "-force-d3d12", "-use-d3d12" };
+    auto goes = [&](const std::string &token) {
+      if (token == wanted) return false;
+      if (std::find(ours.begin(), ours.end(), token) != ours.end()) return true;
+      return !wanted.empty() && std::find(std::begin(kApiArguments), std::end(kApiArguments), token) != std::end(kApiArguments);
+    };
+    std::string out;
+    bool present = false;
+    std::size_t at = 0;
+    while (at < arguments.size()) {
+      // a token with the blanks before it, so that what stays keeps its spacing
+      const std::size_t start = arguments.find_first_not_of(' ', at);
+      if (start == std::string::npos) break;
+      std::size_t end = arguments.find(' ', start);
+      if (end == std::string::npos) end = arguments.size();
+      const std::string token = arguments.substr(start, end - start);
+      if (!goes(token)) {
+        out += out.empty() ? token : arguments.substr(at, end - at);
+        present = present || token == wanted;
+      }
+      at = end;
+    }
+    if (!wanted.empty() && !present) out += out.empty() ? wanted : " " + wanted;
+    return out;
+  }
+  WriteResult
+  set_graphics_argument(const fs::path &dir, const std::string &id, const std::string &wanted, const std::vector<std::string> &ours, StoreHooks hooks) {
+    // Sparxie's limit (LaunchSettingsRules): a longer text would make it refuse the profile
+    constexpr std::size_t kMaxExtraArguments = 512;
+    auto arguments_of = [](const json &profile) {
+      if (!profile.contains("launch") || !profile["launch"].is_object()) return std::string();
+      const json &launch = profile["launch"];
+      return launch.contains("extraArguments") && launch["extraArguments"].is_string() ? launch["extraArguments"].get<std::string>() : std::string();
+    };
+    const ConfigView view = read_store(dir);
+    if (view.status.ok && view.document.contains("profiles") && view.document["profiles"].is_array()) {
+      for (const auto &profile : view.document["profiles"]) {
+        if (!profile.is_object() || profile.value("id", std::string()) != id) continue;
+        const std::string now = arguments_of(profile);
+        if (with_graphics_argument(now, wanted, ours) == now) {
+          WriteResult same;
+          same.state = "unchanged";
+          same.profile = id;
+          return same;
+        }
+      }
+    }
+    return edit_store(dir, hooks, [&](json &document, std::string &profile_id, const SparxieBuild &) {
+      profile_id = id;
+      for (auto &profile : document["profiles"]) {
+        if (profile.value("id", std::string()) != id) continue;
+        const std::string next = with_graphics_argument(arguments_of(profile), wanted, ours);
+        if (next.size() > kMaxExtraArguments) return Status::fail(400, "invalid_input", "Sparxie's extra launch arguments would be too long");
+        if (!profile.contains("launch") || !profile["launch"].is_object()) profile["launch"] = json::object();
+        if (next.empty())
+          profile["launch"].erase("extraArguments");
+        else
+          profile["launch"]["extraArguments"] = next;
+        if (profile["launch"].empty()) profile.erase("launch");
+        return Status::success();
+      }
+      return Status::fail(404, "not_found", "That Sparxie profile does not exist");
+    });
+  }
   WriteResult
   remove_profiles(const fs::path &dir, const std::vector<std::string> &ids, StoreHooks hooks) {
     int removed = 0;

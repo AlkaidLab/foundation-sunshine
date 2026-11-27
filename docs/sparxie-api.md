@@ -612,6 +612,8 @@ portable root, not an `app-<version>` subdirectory), otherwise
 `%LOCALAPPDATA%\Sparxie`. `dataDirProvisional` stays true until upstream
 documents a data-directory command.
 
+图形 API (`dxVersion`; `graphicsApi` for Zenless Zone Zero) reaches a game that starts through Sparxie in the profile's `launch.extraArguments`: `-force-d3d11` or `-force-d3d12`, and `-use-d3d12` for Zenless Zone Zero. The host appends it and leaves the person's other arguments as typed; another API argument there gives way to the chosen one. With no choice, only the argument the host put there before goes (`sparxie.sparxieArguments` in `apps.json` records it). It is written when the application is saved and again before a launch if needed, never while Sparxie is open. A Sparxie without launch settings (before official 0.2.0) does not get the argument.
+
 The touch command is the host-owned launcher template `"{sparxie-launch}" --sparxie "{sparxie}" --profile {profile}`.
 `{sparxie-launch}` is installed in the host `tools` directory; it loads the profile and speaks the Broker contract. `{sparxie}` is replaced by the component executable path. The helper follows source record `sparxie-broker-contract-031efe2`.
 
