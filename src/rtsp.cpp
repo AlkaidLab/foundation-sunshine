@@ -2271,9 +2271,22 @@ namespace rtsp_stream {
 #ifdef _WIN32
     const auto usb_video = args.find("x-ml-video.usbStreamVersion"sv);
     if (session.direct_usb_video || usb_video != args.end()) {
+      // videoBroadcastThread drops every frame above stream::max_encodable_frame_bytes(packetsize), and
+      // the regular path leaves that ceiling to the client's packet size. Direct USB holds it to the
+      // ceiling of the smallest packet size Moonlight clients negotiate (1024 bytes, moonlight-common-c's
+      // remote IPv4 cap), so a smaller request is refused here instead of dropping frames once the
+      // session runs.
+      constexpr int moonlight_min_packetsize = 1024;
+      const auto usb_min_frame_bytes = stream::max_encodable_frame_bytes(moonlight_min_packetsize);
+      const bool usb_packet_size_ok = config.packetsize <= 65000 &&
+                                      stream::max_encodable_frame_bytes(config.packetsize) >= usb_min_frame_bytes;
+      if (!usb_packet_size_ok) {
+        BOOST_LOG(warning) << "Rejecting direct USB video: packet size "sv << config.packetsize
+                           << " cannot carry a "sv << usb_min_frame_bytes << "-byte frame"sv;
+      }
       if (!session.direct_usb_video || !session.direct_usb_video->active() || usb_video == args.end() ||
           usb_video->second != "1" || !session.setup_video || session.control_only ||
-          config.packetsize <= static_cast<int>(sizeof(NV_VIDEO_PACKET)) || config.packetsize > 65000) {
+          !usb_packet_size_ok) {
         respond(sock, session, &option, 461, "Direct USB Video Unavailable", req->sequenceNumber, {});
         return;
       }

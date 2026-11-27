@@ -40,7 +40,10 @@ Video uses `OPEN <id> 7\n`. The size-prefixed response has `type: video`,
 `session`, `id`, and a single-use `token`. VoidLink sends the token on its
 paired HTTPS launch/resume in `X-SS-USB-Direct-Video`. RTSP ANNOUNCE must request
 `x-ml-video.usbStreamVersion:1`; the host acknowledges the direct channel with
-`X-SS-USB-Video-Version: 1`. The iPad sends a single `V` byte on the video
+`X-SS-USB-Video-Version: 1`. `x-nv-video[0].packetSize` must be at least 1024:
+the host answers 461 when the packet size would lower the per-frame ceiling of
+the RS layout below what Moonlight's smallest client packet size provides.
+The iPad sends a single `V` byte on the video
 connection when common-c starts reading. Sunshine then sends the existing
 video datagrams, including encryption prefixes and FEC, with two-byte
 big-endian lengths. This channel has no local UDP forwarding or video UDP
@@ -51,5 +54,7 @@ affected stream after the transport timeout.
 The tunnel forwards only Sunshine's configured GameStream ports. GameStream
 still handles authentication, certificate checks, RTSP and media encryption.
 A USB selection uses iPad loopback endpoints and does not select a LAN address.
-Sunshine connects to its own bind address, which must be empty, a wildcard or
-a loopback address for tunnel requests to be classified as local.
+Sunshine connects to its own bind address: empty or `0.0.0.0` becomes
+`127.0.0.1`, `::` becomes `::1`, and a loopback address is used as is, so tunnel
+requests are classified as local. Any other bind address classifies them as
+LAN, and the host-only checks reject them.

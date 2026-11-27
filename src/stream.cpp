@@ -1417,6 +1417,21 @@ namespace stream {
     return result;
   }
 
+  std::size_t
+  max_encodable_frame_bytes(int packetsize) noexcept {
+    static_assert(sizeof(video_packet_raw_t) == 32, "Video packet header must be 32 bytes");
+    // Mirrors videoBroadcastThread: one RS block is packetsize + MAX_RTP_HEADER_SIZE bytes and
+    // holds a video_packet_raw_t followed by packetsize - sizeof(NV_VIDEO_PACKET) encoded bytes;
+    // the short frame header leads the first block. Each data packet therefore fills exactly one
+    // block whether or not the per-packet headers are counted, so the frame needs
+    // ceil((frame + header) / payload_blocksize) data packets and no more than
+    // video_fec::max_data_shards_per_frame of them.
+    const auto payload_blocksize = packetsize - static_cast<int>(sizeof(NV_VIDEO_PACKET));
+    if (payload_blocksize <= 0) return 0;
+    return video_fec::max_data_shards_per_frame * static_cast<std::size_t>(payload_blocksize) -
+           sizeof(video_short_frame_header_t);
+  }
+
   std::vector<uint8_t>
   replace(const std::string_view &original, const std::string_view &old, const std::string_view &_new) {
     std::vector<uint8_t> replaced;
