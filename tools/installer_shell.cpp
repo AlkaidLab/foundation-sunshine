@@ -576,17 +576,49 @@ namespace {
       command += L" /MERGETASKS=\"!desktopicon\"";
     std::vector<wchar_t> command_line(command.begin(), command.end());
     command_line.push_back(L'\0');
+    // The engine's life is bound to this worker: if the worker is killed mid-install, this job's
+    // handle closes and Windows ends the engine, and anything it started, with it, so the worker
+    // that takes over the abandoned mutex never meets a running engine. On a normal exit the
+    // handle closes after the engine has finished, when there is nothing left to kill. The service
+    // and the host are started by the Service Control Manager, so they are not in the job and
+    // survive the worker as they must. The engine is created suspended and enters the job before
+    // its first instruction: created running, it could outlive a worker that died between the two
+    // calls. A worker without the job does not install: its engine would outlive it unbound.
+    HANDLE engine_job = CreateJobObjectW(nullptr, nullptr);
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION job_limits {};
+    job_limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    const bool job_ready = engine_job != nullptr &&
+                           SetInformationJobObject(engine_job, JobObjectExtendedLimitInformation, &job_limits, sizeof(job_limits)) != FALSE;
     STARTUPINFOW startup {};
     startup.cb = sizeof(startup);
     PROCESS_INFORMATION process {};
-    if (!CreateProcessW(engine.c_str(), command_line.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
-          run_dir.c_str(), &startup, &process)) {
+    if (!job_ready) {
+      if (engine_job) CloseHandle(engine_job);
       return false;
     }
+    if (!CreateProcessW(engine.c_str(), command_line.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr,
+          run_dir.c_str(), &startup, &process)) {
+      CloseHandle(engine_job);
+      return false;
+    }
+    if (!AssignProcessToJobObject(engine_job, process.hProcess)) {
+      // The engine exists but is not bound to this worker's life: end it rather than let it run
+      // unbound, and report the start as failed.
+      TerminateProcess(process.hProcess, ERROR_PROCESS_ABORTED);
+      WaitForSingleObject(process.hProcess, INFINITE);
+      CloseHandle(process.hThread);
+      CloseHandle(process.hProcess);
+      CloseHandle(engine_job);
+      return false;
+    }
+    // The engine's scripts and driver helpers are children of the engine, so they stay in the job
+    // too and end with the worker if it dies.
+    ResumeThread(process.hThread);
     WaitForSingleObject(process.hProcess, INFINITE);
     const bool got_code = GetExitCodeProcess(process.hProcess, exit_code) != FALSE;
     CloseHandle(process.hThread);
     CloseHandle(process.hProcess);
+    CloseHandle(engine_job);
     return got_code;
   }
 
@@ -657,8 +689,41 @@ namespace {
     g_run.directory = selftest ? g_run.selftest_directory : root + L"\\" + id;
     g_run.events = g_run.directory + L"\\events.jsonl";
     g_run.result = g_run.directory + L"\\install-result.json";
-    if (!make_directory_tree(g_run.directory) || (!selftest && !protect_run_directory(g_run.directory))) return 5;
     const std::string id_utf8(id.begin(), id.end());
+    // One engine at a time on this machine. Two engines installing side by side replace each other's
+    // files mid-copy, and the loser rolls back with Inno exit code 5, which the window reports as
+    // "the installer engine stopped". Whatever started two workers (a double click on the window,
+    // the Panel's updater and a person, two scripts), this worker waits here until the earlier one
+    // has released the engine, then installs as planned. A worker that died mid-install leaves the
+    // mutex abandoned, and its engine died with it (run_engine binds the engine's life to the
+    // worker), so the run that takes over the abandoned lock starts with no engine behind it.
+    struct worker_engine_lock {
+      HANDLE mutex = nullptr;
+      bool owned = false;
+      ~worker_engine_lock() {
+        if (mutex) {
+          if (owned) ReleaseMutex(mutex);
+          CloseHandle(mutex);
+        }
+      }
+    } engine_lock;
+    if (!selftest) {
+      engine_lock.mutex = CreateMutexW(nullptr, FALSE, L"Global\\FoundationSunshine-install-worker");
+      if (engine_lock.mutex) {
+        const DWORD wait = WaitForSingleObject(engine_lock.mutex, INFINITE);
+        engine_lock.owned = wait == WAIT_OBJECT_0 || wait == WAIT_ABANDONED;
+      }
+      if (!engine_lock.owned) {
+        // The one-engine guarantee cannot be had on this machine: the mutex could not be created
+        // or waited for. Refusing the install, with the reason in the run's own files, beats a
+        // second engine beside a running one and the exit code 5 that produces.
+        make_directory_tree(g_run.directory);
+        write_text_atomic(g_run.result, "{\"schema\":1,\"run\":\"" + id_utf8 + "\",\"state\":\"failed\",\"result_code\":102,\"message_key\":\"WorkerLockUnavailable\"" + installer_failure::result_fields(installer_failure::step::engine, 102) + "}\n");
+        append_event(g_run.events, "{\"schema\":1,\"run\":\"" + id_utf8 + "\",\"seq\":1,\"phase\":\"engine\",\"state\":\"failed\",\"result_code\":102,\"message_key\":\"WorkerLockUnavailable\"}\n");
+        return 102;
+      }
+    }
+    if (!make_directory_tree(g_run.directory) || (!selftest && !protect_run_directory(g_run.directory))) return 5;
     append_event(g_run.events, "{\"schema\":1,\"run\":\"" + id_utf8 +
                                  "\",\"seq\":1,\"phase\":\"worker\",\"state\":\"running\",\"result_code\":0,\"message_key\":\"WorkerStarted\"}\n");
     const std::wstring engine = g_run.directory + L"\\sunshine-engine.exe";
