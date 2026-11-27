@@ -56,6 +56,7 @@ export const ALIASES = Object.freeze({
   vaapi_strict_rc_buffer: ['vaapi 缓冲', '码率缓冲', 'vaapi buffer'],
   usb_forwarding_enabled: ['usb 转发', '外设转发', '设备转发', 'usb 设备', 'usbip', 'usb forwarding'],
   usb_forwarding_port: ['usb 端口', 'usb port'],
+  usb_wired_streaming_enabled: ['usb 有线串流', '有线串流', '插线串流', 'voidlink', 'ipad', 'iphone', 'usb cable', 'usb streaming', 'wired streaming'],
   // 音频
   stream_audio: ['声音', '音频', '开启声音', '静音', '没声音', '主机静音', 'audio', 'sound', 'mute', 'no sound', 'volume'],
   audio_sink: ['喇叭', '扬声器', '耳机', '声卡', '音箱', '输出设备', '音频设备', '选择扬声器', 'speaker', 'headphones', 'headset', 'output device', 'audio device', 'sound card'],

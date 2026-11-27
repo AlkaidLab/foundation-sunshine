@@ -2,26 +2,28 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
-// 输入与外设 has four rail places: /config#tab=input&sub=gamepad|keyboard|mouse|usb; there is no 高级 section and no drivers page
+// 输入与外设 has five rail places: /config#tab=input&sub=gamepad|keyboard|mouse|usb|usb-wired; there is no 高级 section and no drivers page
 const read = (p) => readFile(new URL(p, import.meta.url), 'utf8')
 
-test('the input tab has four rail places and the clipboard sync switch lives in the keyboard page', async () => {
+test('the input tab has five rail places and the clipboard sync switch lives in the keyboard page', async () => {
   const inputs = await read('../configs/tabs/Inputs.vue')
-  assert.deepEqual([...inputs.matchAll(/<CfgSub (?:v-if="[^"]*" )?id="(\w[\w-]*)"/g)].map((m) => m[1]), ['gamepad', 'keyboard', 'mouse', 'usb'])
+  assert.deepEqual([...inputs.matchAll(/<CfgSub (?:v-if="[^"]*" )?id="(\w[\w-]*)"/g)].map((m) => m[1]), ['gamepad', 'keyboard', 'mouse', 'usb', 'usb-wired'])
   assert.ok(!/<CfgSub[^>]*id="(expert|drivers)"/.test(inputs) && !/<CfgTop/.test(inputs), 'no 高级 page, no drivers page: the items are at the bottom of their own page')
   assert.match(inputs, /<CfgSub v-if="platform === 'windows'" id="usb"/, 'USB forwarding is a Windows host setting')
+  assert.match(inputs, /<CfgSub v-if="platform === 'windows'" id="usb-wired"/, 'USB wired streaming is a Windows host setting')
   const keyboard = inputs.slice(inputs.indexOf('<CfgSub id="keyboard"'), inputs.indexOf('<CfgSub id="mouse"'))
   for (const key of ['keyboard', 'clipboard_sync', 'always_send_scancodes', 'key_rightalt_to_key_win', 'key_repeat_delay', 'key_repeat_frequency']) assert.ok(keyboard.includes(`k="${key}"`), key)
 })
 
-test('the shell has the four pages as a list of the rail, the way audio has', async () => {
+test('the shell has the five pages as a list of the rail, the way audio has', async () => {
   const shell = await read('../views/WebShell.vue')
-  for (const id of ['gamepad', 'keyboard', 'mouse', 'usb']) {
-    assert.match(shell, new RegExp(`${id}: \\{ tab: 'input', sub: '${id}' \\}`), `${id} is a place`)
-    assert.match(shell, new RegExp(`\\n  ${id}: \\{ rail: 'input', place: true,`), `${id} is a page of the rail`)
+  for (const id of ['gamepad', 'keyboard', 'mouse', 'usb', 'usb-wired']) {
+    assert.match(shell, new RegExp(`'?${id}'?: \\{ tab: 'input', sub: '${id}' \\}`), `${id} is a place`)
+    assert.match(shell, new RegExp(`\\n  '?${id}'?: \\{ rail: 'input', place: true,`), `${id} is a page of the rail`)
   }
   assert.ok(!/gamepad: \{ rail: 'input', place: true, list: false/.test(shell), 'the list of 输入与外设 is drawn')
   assert.match(shell, /usb: \{ rail: 'input', place: true, windows: true/)
+  assert.match(shell, /'usb-wired': \{ rail: 'input', place: true, windows: true/)
 })
 
 test('a page inside the gamepad page opens the gamepad place; Back of such a page goes to the place', async () => {
