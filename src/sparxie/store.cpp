@@ -379,6 +379,14 @@ namespace sparxie {
         refused.status = Status::fail(409, "sparxie_running", "Sparxie is running, close it before writing");
         return refused;
       }
+      if (hooks.guard) {
+        if (const Status allowed = hooks.guard(); !allowed.ok) {
+          WriteResult refused;
+          refused.state = "refused_install";
+          refused.status = allowed;
+          return refused;
+        }
+      }
       const fs::path path = dir / "config.json";
       std::error_code ec;
       const SparxieBuild build = hooks.build ? *hooks.build : detect_build(dir);

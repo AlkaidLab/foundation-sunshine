@@ -464,6 +464,11 @@ namespace sparxie {
         if (!component.empty()) {
           try {
             const json body = json::parse(component);
+            // imported before the host knew this release: the checksum recorded then names it now
+            if (body.contains("sha256") && body["sha256"].is_string()) {
+              for (const auto &pin : builtin_pins())
+                if (pin.sha256 == body["sha256"].get<std::string>()) return pin.version;
+            }
             if (body.contains("version") && body["version"].is_string()) return body["version"].get<std::string>();
           }
           catch (const std::exception &) {
@@ -479,10 +484,20 @@ namespace sparxie {
       }
       return {};
     }
+    // The Sparxie this host uses: the chosen external folder alone while one is chosen, else the host's component, else the copy beside the host.
+    void
+    locate_sparxie(HostEnv &env) {
+      if (!env.sparxie_exe.empty()) return;
+      if (!env.external_dir.empty()) {
+        env.sparxie_exe = find_sparxie_exe(env.external_dir);
+        return;
+      }
+      if (!env.component_dir.empty()) env.sparxie_exe = find_sparxie_exe(env.component_dir);
+      if (env.sparxie_exe.empty()) env.sparxie_exe = find_sparxie_exe(env.install_root);
+    }
     bool
     sparxie_installed(HostEnv &env) {
-      if (env.sparxie_exe.empty() && !env.component_dir.empty()) env.sparxie_exe = find_sparxie_exe(env.component_dir);
-      if (env.sparxie_exe.empty()) env.sparxie_exe = find_sparxie_exe(env.install_root);
+      locate_sparxie(env);
       return !env.sparxie_exe.empty() && fs::is_regular_file(env.sparxie_exe);
     }
     // Keyboard, mouse and gamepad is a Sparxie session without the touch interface (top-level disableTouchUi=true for built-in and plugin titles; legacy first-generation Endfield uses endfieldInputMode).
@@ -812,10 +827,138 @@ namespace sparxie {
       return nullptr;
     }
   }
+  fs::path
+  sparxie_root(const fs::path &exe) {
+    fs::path dir = exe.parent_path();
+    if (dir.filename().string().rfind("app-", 0) == 0) dir = dir.parent_path();
+    return dir;
+  }
+  fs::path
+  external_sparxie(const fs::path &host_data) {
+    const std::string text = read_text(host_data / "sparxie-host.json");
+    if (text.empty()) return {};
+    try {
+      const json body = json::parse(text);
+      if (body.is_object() && body.contains("externalDir") && body["externalDir"].is_string()) return fs::path(body["externalDir"].get<std::string>());
+    }
+    catch (const std::exception &) {
+    }
+    return {};
+  }
+  bool
+  set_external_sparxie(const fs::path &host_data, const fs::path &dir) {
+    if (host_data.empty()) return dir.empty();
+    const fs::path file = host_data / "sparxie-host.json";
+    json body = json::object();
+    try {
+      const std::string text = read_text(file);
+      if (!text.empty()) body = json::parse(text);
+    }
+    catch (const std::exception &) {
+    }
+    if (!body.is_object()) body = json::object();
+    if (dir.empty()) {
+      if (!body.contains("externalDir")) return true;
+      body.erase("externalDir");
+    }
+    else {
+      body["externalDir"] = dir.string();
+    }
+    std::error_code ec;
+    fs::create_directories(host_data, ec);
+    std::ofstream out(file, std::ios::trunc);
+    out << body.dump(2);
+    out.close();
+    return !out.fail();
+  }
+  bool
+  sparxie_admin_only(const HostEnv &env, fs::path *blocker) {
+    return !env.admin_only || env.sparxie_exe.empty() || env.admin_only(sparxie_root(env.sparxie_exe), blocker);
+  }
+  void
+  guard_sparxie_store(HostEnv &env) {
+    const fs::path exe = env.sparxie_exe;
+    const bool missing = exe.empty() && !env.external_dir.empty();
+    const auto check = env.admin_only;
+    env.store_hooks.guard = [exe, missing, check]() {
+      if (missing) return Status::fail(409, "sparxie_external_missing", "所选目录里找不到 Sparxie，请重新选择");
+      fs::path blocker;
+      if (check && !exe.empty() && !check(sparxie_root(exe), &blocker))
+        return Status::fail(409, "sparxie_unprotected", "Sparxie 目录可被普通用户修改，不能用于触屏启动。请把它放到只有管理员能写入的目录（例如 Program Files）：" + blocker.string());
+      return Status::success();
+    };
+  }
+  ApiResult
+  select_component(HostEnv &env, const json &request) {
+    const std::string text = request.is_object() && request.contains("path") && request["path"].is_string() ? request["path"].get<std::string>() : std::string();
+    locate_sparxie(env);
+    if (sparxie_open(env)) return failure(Status::fail(409, "sparxie_running", "Sparxie is running, close it before changing the install"));
+    fs::path chosen;
+    if (!text.empty()) {
+      // a network path would make the host reach out with the person's credentials, and its permissions are not this PC's
+      if (text.rfind("\\", 0) == 0 || text.rfind("//", 0) == 0) return failure(Status::fail(400, "invalid_input", "Network paths cannot be used"));
+      fs::path path = fs::path(text).lexically_normal();
+      if (!path.is_absolute()) return failure(Status::fail(400, "invalid_input", "An absolute path is required"));
+      if (!path.has_filename()) path = path.parent_path();
+      std::error_code ec;
+      const std::string name = ascii_lower(path.filename().string());
+      if ((name == "sparxie.exe" || name == "sparxie.launcher.exe") && fs::is_regular_file(path, ec)) path = path.parent_path();
+      if (path.filename().string().rfind("app-", 0) == 0) path = path.parent_path();
+      const fs::path exe = find_sparxie_exe(path);
+      if (exe.empty()) return failure(Status::fail(404, "not_sparxie", "That folder has no Sparxie.exe"));
+      chosen = sparxie_root(exe);
+      if (!env.component_dir.empty() && paths_equal(chosen, env.component_dir)) chosen.clear();
+    }
+    if (!set_external_sparxie(env.host_data, chosen)) return failure(Status::fail(500, "write_failed", "The choice could not be saved"));
+    env.external_dir = chosen;
+    env.sparxie_exe.clear();
+    ApiResult result;
+    result.body = { { "ok", true } };
+    return result;
+  }
+  void
+  adopt_component(HostEnv &env) {
+    if (!sparxie_installed(env) || !sparxie_admin_only(env) || sparxie_open(env)) {
+      // the applications still follow the choice: the launcher does not give administrator rights to an install other users can change
+      attach_official_covers(env);
+      return;
+    }
+    // a touch application names a profile of Sparxie's config: the chosen install has a config of its own, which gets the profiles it lacks
+    json apps;
+    {
+      std::lock_guard apps_lock(apps_file_mutex);
+      apps = read_apps(env.apps_file);
+    }
+    for (const auto &app : apps.value("apps", json::array())) {
+      if (!app.contains("sparxie") || !app["sparxie"].is_object()) continue;
+      const json &block = app["sparxie"];
+      const std::string id = block.value("profile", std::string());
+      if (block.value("mode", std::string()) != "touch" || id.empty() || block.value("exe", std::string()).empty()) continue;
+      const ConfigView view = read_store(config_dir(env));
+      if (!view.status.ok) break;
+      bool present = false;
+      for (const auto &profile : view.document.value("profiles", json::array()))
+        if (profile.value("id", std::string()) == id) present = true;
+      if (present) continue;
+      ProfileDraft draft;
+      draft.id = id;
+      draft.game = block.value("game", std::string());
+      draft.display_name = app.value("name", std::string());
+      draft.executable = block.value("exe", std::string());
+      draft.options = block.contains("options") && block["options"].is_object() ? block["options"] : default_options();
+      if (!normalize_options(draft.options).ok) continue;
+      draft.options = options_with_boost(draft.options, game_boost_on(block.value("settings", json::object())));
+      draft.display_fps = resolve_target_fps(draft.options, display_refresh_of(env));
+      StoreHooks hooks = env.store_hooks;
+      hooks.running = false;
+      const WriteResult stored = add_profile(config_dir(env), draft, hooks);
+      if (!stored.status.ok && env.warn) env.warn("the chosen Sparxie did not take the profile of " + app.value("name", std::string()) + ": " + stored.status.error);
+    }
+    attach_official_covers(env);
+  }
   ApiResult
   component_status(HostEnv &env) {
-    if (env.sparxie_exe.empty() && !env.component_dir.empty()) env.sparxie_exe = find_sparxie_exe(env.component_dir);
-    if (env.sparxie_exe.empty()) env.sparxie_exe = find_sparxie_exe(env.install_root);
+    locate_sparxie(env);
     const bool installed = !env.sparxie_exe.empty() && fs::is_regular_file(env.sparxie_exe);
     const ConfigView store = read_store(config_dir(env));
     std::string state = store.state;
@@ -845,6 +988,13 @@ namespace sparxie {
       { "statement_en", warning["statement_en"] },
       { "launchNotice", launch_notice(env) },
     };
+    fs::path blocker;
+    const bool admin_only = installed && sparxie_admin_only(env, &blocker);
+    result.body["external"] = !env.external_dir.empty();
+    result.body["externalDir"] = env.external_dir.string();
+    // false: this host starts the install without administrator rights, and touch launch (which needs them) is not offered
+    result.body["adminOnly"] = admin_only;
+    result.body["adminOnlyBlocker"] = installed && !admin_only ? blocker.string() : std::string();
     const json extra = install_status_fields(env);
     for (auto it = extra.begin(); it != extra.end(); ++it) result.body[it.key()] = it.value();
     return result;
@@ -920,8 +1070,7 @@ namespace sparxie {
   }
   ApiResult
   open_component(HostEnv &env) {
-    if (env.sparxie_exe.empty() && !env.component_dir.empty()) env.sparxie_exe = find_sparxie_exe(env.component_dir);
-    if (env.sparxie_exe.empty()) env.sparxie_exe = find_sparxie_exe(env.install_root);
+    locate_sparxie(env);
     if (env.sparxie_exe.empty() || !fs::is_regular_file(env.sparxie_exe)) return failure(Status::fail(409, "absent", "Sparxie is not installed"));
     ApiResult result;
     result.body = { { "ok", true }, { "already_running", false } };
@@ -930,7 +1079,9 @@ namespace sparxie {
       return result;
     }
     if (!env.launch_gui) return failure(Status::fail(409, "launch_unavailable", "This host cannot start Sparxie"));
-    const Status started = env.launch_gui(env.sparxie_exe);
+    const bool elevated = sparxie_admin_only(env);
+    const Status started = env.launch_gui(env.sparxie_exe, elevated);
+    result.body["elevated"] = elevated;
     if (!started.ok) return failure(started);
     return result;
   }
@@ -1706,7 +1857,7 @@ namespace sparxie {
     // With Sparxie installed, a Genshin, Star Rail or Zenless Zone Zero application that was made as a direct launch (keyboard, mouse and gamepad, no profile yet)
     // goes the launcher route like every other application of a Sparxie title: its Sparxie options (frame-rate unlock, target frame rate, background frame rate, priority, launch settings) then apply. It
     // keeps its options and gets the input it always had. An open Sparxie cannot be written to: the application waits for the next start.
-    if (sparxie_installed(env) && launcher_shipped) {
+    if (sparxie_installed(env) && launcher_shipped && sparxie_admin_only(env)) {
       bool open_checked = false;
       bool open = false;
       for (auto &app : apps["apps"]) {

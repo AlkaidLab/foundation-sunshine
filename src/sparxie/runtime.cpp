@@ -7,6 +7,7 @@
 #include "src/logging.h"
 #include "src/platform/common.h"
 #include "src/process.h"
+#include "src/sparxie/install.h"
 #include "src/sparxie/platform.h"
 #include "src/sparxie/user_session.h"
 #include "src/sparxie/vendors.h"
@@ -17,6 +18,8 @@
 #include <fstream>
 #include <functional>
 #include <iterator>
+#include <map>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <thread>
@@ -179,12 +182,32 @@ namespace sparxie {
     env.covers_dir = platf::appdata() / "covers";
     env.install_root = executable_dir();
     env.component_dir = platf::appdata() / "components" / "sparxie";
-    if (const char *home = std::getenv("SPARXIE_HOME")) env.sparxie_exe = find_sparxie_exe(home);
-    if (env.sparxie_exe.empty()) env.sparxie_exe = find_sparxie_exe(env.component_dir);
-    if (env.sparxie_exe.empty()) env.sparxie_exe = find_sparxie_exe(env.install_root);
+    // checking an install walks all of it: once per request is enough
+    env.admin_only = [host_root = env.install_root, seen = std::make_shared<std::map<fs::path, std::pair<bool, fs::path>>>()](const fs::path &root, fs::path *blocker) {
+      auto found = seen->find(root);
+      if (found == seen->end()) {
+        fs::path first;
+        const bool closed = host_admin_only_tree(root, &first, host_root);
+        found = seen->emplace(root, std::make_pair(closed, first)).first;
+      }
+      if (blocker) *blocker = found->second.second;
+      return found->second.first;
+    };
+    env.external_dir = external_sparxie(env.host_data);
+    if (!env.external_dir.empty()) {
+      env.sparxie_exe = find_sparxie_exe(env.external_dir);
+    }
+    else {
+      if (const char *home = std::getenv("SPARXIE_HOME")) env.sparxie_exe = find_sparxie_exe(home);
+      if (env.sparxie_exe.empty()) env.sparxie_exe = find_sparxie_exe(env.component_dir);
+      if (env.sparxie_exe.empty()) env.sparxie_exe = find_sparxie_exe(env.install_root);
+    }
     fs::path override_dir;
     if (const char *dir = std::getenv("SPARXIE_DATA_DIR")) override_dir = dir;
+    // finding the data folder writes a probe file, which this host (SYSTEM) does not do in a folder other users control: such an install keeps its data beside itself
+    if (override_dir.empty() && !env.sparxie_exe.empty() && !sparxie_admin_only(env)) override_dir = sparxie_root(env.sparxie_exe);
     env.data_dir = resolve_data_dir(env.sparxie_exe, override_dir, local_sparxie_dir());
+    guard_sparxie_store(env);
     env.data_dir_provisional = true;
     static std::once_flag runner_once;
     std::call_once(runner_once, [] {

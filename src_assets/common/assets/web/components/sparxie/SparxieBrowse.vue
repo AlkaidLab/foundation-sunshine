@@ -1,5 +1,5 @@
 <template>
-  <MSection :title="kind === 'file' ? C.browseTitleFile : C.browseTitleFolder" class="spx-browse">
+  <MSection :title="title || (kind === 'file' ? C.browseTitleFile : C.browseTitleFolder)" class="spx-browse">
     <MGroup>
       <MItem class="spx-browse__bar" :title="here ? midCut(here, 56) : C.browseRoot" :icon="here ? 'folder_open' : 'computer'">
         <template #trail>
@@ -33,7 +33,7 @@ import { midCut } from '../../utils/sparxie/model.js'
 
 // The picker of a browser: it cannot give the host a path, and the host never opens a dialog of its own (it is a service). The host lists its drives and folders as the signed-in person, read-only,
 // and the page shows them here. `kind` 'folder' chooses the folder that is open; 'file' chooses an .exe, the known game executables first.
-const props = defineProps({ kind: { type: String, default: 'file' }, start: { type: String, default: '' } })
+const props = defineProps({ kind: { type: String, default: 'file' }, start: { type: String, default: '' }, title: { type: String, default: '' } })
 const emit = defineEmits(['choose', 'cancel'])
 const C = useSparxieCopy()
 const { client } = useSparxie()

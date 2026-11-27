@@ -48,13 +48,14 @@ namespace sparxie {
   }
 
   Status
-  launch_in_user_session(const fs::path &exe) {
+  launch_in_user_session(const fs::path &exe, bool elevated) {
     boost::filesystem::path working_dir = exe.parent_path().wstring();
     const std::string command = "\"" + exe.string() + "\"";
     std::error_code ec;
     auto environment = boost::this_process::environment();
     // Elevated like the host's own elevated applications, with no UAC prompt (the host holds the rights). The file picker of Sparxie.Desktop is the Win32 IFileOpenDialog, which works elevated; the WinRT picker did not.
-    auto child = platf::run_command(true, false, command, working_dir, environment, nullptr, ec, nullptr);
+    // Only an install that administrators alone can change gets those rights (the caller decides); any other runs as the signed-in person.
+    auto child = platf::run_command(elevated, false, command, working_dir, environment, nullptr, ec, nullptr);
     if (ec) {
       BOOST_LOG(warning) << "Sparxie did not start in the user session: " << ec.message();
       return Status::fail(500, "launch_failed", ec.message());
@@ -67,6 +68,6 @@ namespace sparxie {
   make_user_runner() { return {}; }
 
   Status
-  launch_in_user_session(const fs::path &) { return Status::fail(409, "launch_unavailable", "Sparxie only runs on Windows"); }
+  launch_in_user_session(const fs::path &, bool) { return Status::fail(409, "launch_unavailable", "Sparxie only runs on Windows"); }
 #endif
 }  // namespace sparxie

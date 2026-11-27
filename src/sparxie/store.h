@@ -5,6 +5,8 @@
 namespace sparxie {
   struct StoreHooks {
     bool running = false;
+    // asked before anything is written; a failure refuses the write with that status
+    std::function<Status()> guard;
     int fail_replace_times = 0;
     std::function<std::string()> utc_stamp;
     std::function<void(const fs::path &)> after_replace;

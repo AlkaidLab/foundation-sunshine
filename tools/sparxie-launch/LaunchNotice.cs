@@ -15,12 +15,14 @@ internal static class LaunchNotice
     public const string KindDirect = "direct";           // Sparxie could not start the session, the game was started directly
     public const string KindRetried = "retried";         // the first session failed, the automatic retry worked
     public const string KindUnlock = "unlock_forced";    // touch only (unlock off) is not supported by this Sparxie runtime: the game started with the unlock at the game's own cap
+    public const string KindUnprotected = "unprotected"; // the install can be changed by users who are not administrators: nothing of it was run, the game was started directly
 
     public static (string Zh, string En) Messages(string kind) => kind switch
     {
         KindDirect => ("Sparxie 未能接管本次启动，已直接启动游戏", "Sparxie could not take over this launch; the game was started directly"),
         KindRetried => ("Sparxie 首次启动失败，已自动重试并成功", "Sparxie failed the first time; the automatic retry worked"),
         KindUnlock => ($"当前 Sparxie 运行时不支持纯触屏（关闭帧率解锁），本次已按 {PureTouch.GameOwnCap} FPS 解锁启动", $"This Sparxie runtime cannot run touch only (frame-rate unlock off); the game started with the unlock at {PureTouch.GameOwnCap} FPS"),
+        KindUnprotected => ("Sparxie 目录可被普通用户修改，未以管理员身份运行它；游戏已直接启动", "The Sparxie folder can be changed by users who are not administrators, so it was not run as administrator; the game was started directly"),
         _ => ("", ""),
     };
 

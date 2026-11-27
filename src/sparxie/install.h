@@ -67,6 +67,13 @@ namespace sparxie {
 
   std::vector<Pin>
   builtin_pins();
+  // True when only administrators (SYSTEM, Administrators, TrustedInstaller) can change anything the programs under `root` are made of: every entry of the tree is
+  // owned by one of them and grants no other principal a write, and no ancestor lets another principal rename or replace the folder. A network or removable drive, a
+  // link, an entry that cannot be read and a tree too large to check all answer false; `blocker` then names the first path that failed.
+  // `host_root` is the host's own install folder: for a tree inside it the ancestors are checked up to that folder and no further, because whoever could swap a folder
+  // above it could swap the host's own programs, which already run as SYSTEM.
+  bool
+  host_admin_only_tree(const fs::path &root, fs::path *blocker = nullptr, const fs::path &host_root = {});
   json
   manifest_json();
   bool

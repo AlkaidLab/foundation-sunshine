@@ -10,6 +10,7 @@ export const PATHS = Object.freeze({
   scan: '/api/sparxie/scan',
   browse: '/api/sparxie/browse',
   open: '/api/sparxie/open',
+  location: '/api/sparxie/location',
   artRefresh: '/api/sparxie/art/refresh',
   create: '/api/sparxie/apps',
   profiles: '/api/sparxie/profiles',
@@ -18,7 +19,7 @@ export const PATHS = Object.freeze({
   notice: '/api/sparxie/warning',
 })
 
-export const ABSENT = Object.freeze({ available: false, installed: false, running: false, version: '', exe: '', endfieldPlugin: false, store: Object.freeze({ state: 'unused', profiles: 0 }), warned: true, statement: Object.freeze({ zh: '', en: '' }) })
+export const ABSENT = Object.freeze({ available: false, installed: false, running: false, version: '', exe: '', endfieldPlugin: false, store: Object.freeze({ state: 'unused', profiles: 0 }), warned: true, statement: Object.freeze({ zh: '', en: '' }), external: false, externalDir: '', adminOnly: true, adminOnlyBlocker: '' })
 
 /** An error the host answered with: `code` is its error_code (sparxie_running, config_unreadable, unrecognised, game_running…) */
 export class SparxieError extends Error {
@@ -98,10 +99,10 @@ export function normalizeCatalog(raw) {
 export function normalizeStatus(raw) {
   if (!raw || typeof raw !== 'object') return ABSENT
   // not installed: nothing is shown, but the host's statement is kept (it is sent also when the component is absent)
-  if (raw.installed === false) return { ...ABSENT, available: true, statement: { zh: str(raw.statement), en: str(raw.statement_en) } }
+  if (raw.installed === false) return { ...ABSENT, available: true, statement: { zh: str(raw.statement), en: str(raw.statement_en) }, external: !!raw.external, externalDir: str(raw.externalDir) }
   const s = raw.store && typeof raw.store === 'object' ? raw.store : {}
   const state = ['data', 'empty', 'unused', 'unreadable'].includes(s.state) ? s.state : 'unused'
-  return { available: true, installed: true, running: !!raw.running, version: str(raw.version), exe: str(raw.exe), endfieldPlugin: !!raw.endfield && typeof raw.endfield === 'object' && raw.endfield.support === 'plugin', store: { state, profiles: Number(s.profiles) || 0 }, warned: raw.warned !== false, statement: { zh: str(raw.statement), en: str(raw.statement_en) } }
+  return { available: true, installed: true, running: !!raw.running, version: str(raw.version), exe: str(raw.exe), endfieldPlugin: !!raw.endfield && typeof raw.endfield === 'object' && raw.endfield.support === 'plugin', store: { state, profiles: Number(s.profiles) || 0 }, warned: raw.warned !== false, statement: { zh: str(raw.statement), en: str(raw.statement_en) }, external: !!raw.external, externalDir: str(raw.externalDir), adminOnly: raw.adminOnly !== false, adminOnlyBlocker: str(raw.adminOnlyBlocker) }
 }
 
 const waitForArt = (ms, signal) => new Promise((resolve) => {
@@ -153,6 +154,10 @@ export function createClient({ get = apiJson, post = apiPostJson, put = (url, bo
     async openSparxie() {
       const raw = await post(PATHS.open, {}).catch(fail)
       return { alreadyRunning: !!raw?.already_running }
+    },
+    /** Chooses the Sparxie install the host uses: a folder on this PC; '' goes back to the host's own component */
+    async selectLocation(path) {
+      await post(PATHS.location, { path }).catch(fail)
     },
     /** Changes a game application in place: { name, mode, settings, restore, cover, 'image-path', hero, options } (any of them). Resolves { app, index, wrote }. */
     async updateApp(index, body) {

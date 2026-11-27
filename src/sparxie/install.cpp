@@ -238,6 +238,7 @@ namespace sparxie {
   std::vector<Pin>
   builtin_pins() {
     return {
+      { "0.2.1", "Sparxie-desktop-0.2.1-win-x64.zip", "53bc95771fb0f8883605b33aae4acb19f66fac0d81323359488d57028763062a", 86295160ull, "official release v0.2.1" },
       { "0.2.0", "Sparxie-desktop-0.2.0-win-x64.zip", "fad15aed3d516fdd76c2c093c4c6c2c615dc05ba8e81b40b66a815143ddb1a7b", 83473484ull, "official release v0.2.0" },
       { "0.1.0-preview.9", "Sparxie-desktop-0.1.0-preview.9-win-x64.zip", "3e5591d7126aeb63972f30aaaf3f6649d695271312803454f7d217d79e903c7c", 100832503ull, "collaborator package" },
       { "ci-4438b663e", "Sparxie-desktop-ci-4438b663e-win-x64.zip", "5053db25f803c1637eda1ccdb156266210d38c185e1180dea7e976be7799db77", 103911941ull, "build-test artifact main 4438b663e run 42796922646; not a download address" },
@@ -386,6 +387,8 @@ namespace sparxie {
       if (!out_file) return stop(409, "not_writable", "component.json could not be written");
       out_file << component.dump(2);
     }
+    // a package imported here is the one to use from now on: an external install chosen earlier no longer stands before it
+    set_external_sparxie(env.host_data, {});
     note(out, progress, "done", 100);
     out.body = {
       { "ok", true },

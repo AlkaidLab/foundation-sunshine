@@ -1,4 +1,5 @@
 #include "src/sparxie/host.h"
+#include "src/sparxie/install.h"
 #include "tests/sparxie/pe_fixture.h"
 #include "src/sparxie/platform.h"
 #include "src/sparxie/art_refresh_job.h"
@@ -1727,3 +1728,132 @@ TEST(Host, AStarRailKeyboardProfileKeepsTheUnlockAtTheNativeTiers) {
     }
   }
 }
+
+namespace {
+  // kbm_env with the host's launcher shipped, one touch application, and a second Sparxie in a folder of the person's choice
+  sparxie::HostEnv
+  external_env(const fs::path &root, std::string *profile) {
+    sparxie::HostEnv env = kbm_env(root);
+    fs::create_directories(env.install_root / "tools");
+    std::ofstream(env.install_root / "tools" / "sparxie-launch.exe") << "x";
+    fs::create_directories(root / "external" / "app-0.2.1");
+    std::ofstream(root / "external" / "Sparxie.exe") << "x";
+    auto made = sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin" } });
+    EXPECT_TRUE(made.status.ok) << made.status.error;
+    if (profile && made.status.ok) *profile = made.body["app"]["sparxie"]["profile"].get<std::string>();
+    return env;
+  }
+  // what make_host_env builds after a choice was saved
+  sparxie::HostEnv
+  after_choice(sparxie::HostEnv env) {
+    env.external_dir = sparxie::external_sparxie(env.host_data);
+    env.sparxie_exe = env.external_dir.empty() ? fs::path {} : sparxie::find_sparxie_exe(env.external_dir);
+    if (!env.sparxie_exe.empty()) env.data_dir = sparxie::sparxie_root(env.sparxie_exe);
+    sparxie::guard_sparxie_store(env);
+    return env;
+  }
+}  // namespace
+
+TEST(ExternalSparxie, ChoosingAFolderMovesTheTouchApplicationsToIt) {
+  const fs::path root = fs::temp_directory_path() / "sparxie-external-choose";
+  std::string profile;
+  sparxie::HostEnv env = external_env(root, &profile);
+  fs::create_directories(env.host_data);
+  { std::ofstream seed(env.host_data / "sparxie-host.json"); seed << R"x({"launchTemplate":""})x"; }
+  const auto chosen = sparxie::select_component(env, { { "path", (root / "external" / "Sparxie.exe").string() } });
+  ASSERT_TRUE(chosen.status.ok) << chosen.status.error;
+  EXPECT_EQ(sparxie::external_sparxie(env.host_data), root / "external");
+  // the other members of the file stay
+  std::ifstream saved(env.host_data / "sparxie-host.json");
+  EXPECT_TRUE(sparxie::json::parse(saved).contains("launchTemplate"));
+  saved.close();
+  sparxie::HostEnv next = after_choice(env);
+  sparxie::adopt_component(next);
+  const auto store = sparxie::read_store(root / "external");
+  ASSERT_TRUE(store.status.ok) << store.status.error;
+  ASSERT_EQ(store.document["profiles"].size(), 1u);
+  EXPECT_EQ(store.document["profiles"][0]["id"], profile);
+  std::ifstream apps(next.apps_file);
+  const std::string cmd = sparxie::json::parse(apps)["apps"][0]["cmd"].get<std::string>();
+  apps.close();
+  EXPECT_NE(cmd.find((root / "external" / "Sparxie.exe").string()), std::string::npos) << cmd;
+  const auto status = sparxie::component_status(next);
+  EXPECT_TRUE(status.body["external"].get<bool>());
+  EXPECT_TRUE(status.body["adminOnly"].get<bool>());
+  // an empty path goes back to the host's own component
+  ASSERT_TRUE(sparxie::select_component(next, { { "path", "" } }).status.ok);
+  EXPECT_TRUE(sparxie::external_sparxie(env.host_data).empty());
+  fs::remove_all(root);
+}
+
+TEST(ExternalSparxie, WhatIsNotALocalSparxieFolderIsRefused) {
+  const fs::path root = fs::temp_directory_path() / "sparxie-external-refused";
+  sparxie::HostEnv env = external_env(root, nullptr);
+  EXPECT_EQ(sparxie::select_component(env, { { "path", "\\\\server\\share\\Sparxie" } }).status.error_code, "invalid_input");
+  EXPECT_EQ(sparxie::select_component(env, { { "path", "relative/Sparxie" } }).status.error_code, "invalid_input");
+  EXPECT_EQ(sparxie::select_component(env, { { "path", (root / "game").string() } }).status.error_code, "not_sparxie");
+  env.process_running = [](const std::vector<std::string> &) { return true; };
+  EXPECT_EQ(sparxie::select_component(env, { { "path", (root / "external").string() } }).status.error_code, "sparxie_running");
+  EXPECT_TRUE(sparxie::external_sparxie(env.host_data).empty());
+  fs::remove_all(root);
+}
+
+TEST(ExternalSparxie, AChosenFolderThatLostItsSparxieIsNotReplacedByAnother) {
+  const fs::path root = fs::temp_directory_path() / "sparxie-external-missing";
+  sparxie::HostEnv env = external_env(root, nullptr);
+  ASSERT_TRUE(sparxie::set_external_sparxie(env.host_data, root / "gone"));
+  sparxie::HostEnv next = after_choice(env);
+  const auto status = sparxie::component_status(next);
+  EXPECT_FALSE(status.body["installed"].get<bool>());
+  EXPECT_TRUE(status.body["external"].get<bool>());
+  EXPECT_EQ(next.store_hooks.guard().error_code, "sparxie_external_missing");
+  fs::remove_all(root);
+}
+
+TEST(ExternalSparxie, AFolderOtherUsersCanChangeGetsNoConfigWriteAndNoTouchApplication) {
+  const fs::path root = fs::temp_directory_path() / "sparxie-external-open";
+  sparxie::HostEnv env = external_env(root, nullptr);
+  ASSERT_TRUE(sparxie::set_external_sparxie(env.host_data, root / "external"));
+  env.admin_only = [&](const fs::path &folder, fs::path *blocker) {
+    if (blocker) *blocker = folder;
+    return false;
+  };
+  sparxie::HostEnv next = after_choice(env);
+  sparxie::adopt_component(next);
+  auto touch = sparxie::create_app(next, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin 2" } });
+  EXPECT_EQ(touch.status.error_code, "sparxie_unprotected") << touch.status.error;
+  EXPECT_FALSE(fs::exists(root / "external" / "config.json"));
+  const auto status = sparxie::component_status(next);
+  EXPECT_TRUE(status.body["installed"].get<bool>());
+  EXPECT_FALSE(status.body["adminOnly"].get<bool>());
+  EXPECT_EQ(status.body["adminOnlyBlocker"], (root / "external").string());
+  fs::remove_all(root);
+}
+
+TEST(ExternalSparxie, APackageImportedBeforeItsReleaseWasKnownShowsTheRelease) {
+  const fs::path root = fs::temp_directory_path() / "sparxie-external-relabel";
+  sparxie::HostEnv env = kbm_env(root);
+  { std::ofstream seed(env.install_root / "components" / "sparxie" / "component.json"); seed << R"x({"version":"unknown","verified":false,"sha256":"53bc95771fb0f8883605b33aae4acb19f66fac0d81323359488d57028763062a"})x"; }
+  EXPECT_EQ(sparxie::component_status(env).body["version"], "0.2.1");
+  fs::remove_all(root);
+}
+
+#ifdef _WIN32
+TEST(AdminOnlyTree, AFolderOfTheSignedInPersonFailsAndOneOfWindowsPasses) {
+  const fs::path root = fs::temp_directory_path() / "sparxie-admin-only";
+  fs::remove_all(root);
+  fs::create_directories(root);
+  std::ofstream(root / "Sparxie.exe") << "x";
+  fs::path blocker;
+  EXPECT_FALSE(sparxie::host_admin_only_tree(root, &blocker));
+  EXPECT_FALSE(blocker.empty());
+  fs::remove_all(root);
+  // a small folder that Windows itself protects
+  const char *programs = std::getenv("ProgramFiles");
+  ASSERT_NE(programs, nullptr);
+  const fs::path system = fs::path(programs) / "Windows NT" / "TableTextService";
+  blocker.clear();
+  EXPECT_TRUE(sparxie::host_admin_only_tree(system, &blocker)) << blocker.string();
+  EXPECT_FALSE(sparxie::host_admin_only_tree("relative", nullptr));
+}
+#endif

@@ -53,6 +53,7 @@ internal static partial class Tests
             Check(BrokerProcess.FindGameProcesses(exe).Contains(game.Id) || WaitFound(exe, game.Id), "the dummy game is found by its path");
             using var log = RunLog.Open([Path.Combine(root, "log")], () => new DateTime(2026, 11, 12, 15, 0, 0));
             string? Env(string name) => name == LaunchNotice.DirEnv ? noticeDir : name == SparxieConfig.DataDirEnv ? sparxieDir : null;
+            Launcher.InstallBlocker = (_, _) => null;  // the stand-in install lives in a temporary folder of the person
             var clock = Stopwatch.StartNew();
             // no Sparxie.Broker.exe exists in the fake install: a launch that tried a session would fall back to the direct start instead of joining
             var code = Launcher.RunAsync(["--sparxie", Path.Combine(sparxieDir, "Sparxie.exe"), "--profile", "endfield-cn-1"], log, Env, root).GetAwaiter().GetResult();

@@ -42,8 +42,13 @@ namespace sparxie {
     // key names come from vendors.h); unset means the host reads the machine's
     // own records. Tests answer with fixture folders.
     std::function<std::vector<fs::path>(const std::vector<std::string> &)> uninstall_locations;
-    // Starts the Sparxie program in the signed-in user's session (Sparxie is a window; it must not run as the service).
-    std::function<Status(const fs::path &)> launch_gui;
+    // Starts the Sparxie program in the signed-in user's session (Sparxie is a window; it must not run as the service). `elevated` starts it with administrator
+    // rights, which is only asked for an install that administrators alone can change (see admin_only).
+    std::function<Status(const fs::path &, bool elevated)> launch_gui;
+    // The external install folder the person chose; empty: the host's own component. While it is set no other install is used, also when it has gone missing.
+    fs::path external_dir;
+    // host_admin_only_tree; unset (tests): every install counts as administrator-only
+    std::function<bool(const fs::path &, fs::path *)> admin_only;
     // Folder search limits; tests lower them.
     ScanOptions scan;
     // Where the host writes a warning (tests capture it; the host logs it).
@@ -57,6 +62,21 @@ namespace sparxie {
   };
   fs::path
   find_sparxie_exe(const fs::path &root);
+  // The folder an install is made of: the one that holds Sparxie.exe (above app-*).
+  fs::path
+  sparxie_root(const fs::path &exe);
+  // The external install folder stored in <host data>/sparxie-host.json ("externalDir"); empty when none is chosen.
+  fs::path
+  external_sparxie(const fs::path &host_data);
+  // Stores or (empty) forgets that choice; the other members of the file are kept. False when the file cannot be written.
+  bool
+  set_external_sparxie(const fs::path &host_data, const fs::path &dir);
+  // Whether the installed Sparxie may run with administrator rights; `blocker` names the path another user can change.
+  bool
+  sparxie_admin_only(const HostEnv &env, fs::path *blocker = nullptr);
+  // Puts the admin-only rule in front of every write of Sparxie's config: the host writes as SYSTEM and does not write into a folder that other users control.
+  void
+  guard_sparxie_store(HostEnv &env);
   fs::path
   resolve_data_dir(const fs::path &exe, const fs::path &override_dir, const fs::path &fallback);
   // The note the touch launcher leaves in the host's Sparxie data folder (launch-notice.json) after a launch that needed its safety net: the object, or null.
@@ -75,6 +95,13 @@ namespace sparxie {
   // Opens the Sparxie program in the signed-in user's session.
   ApiResult
   open_component(HostEnv &env);
+  // Chooses the Sparxie install to use: { path } is a folder of an install or its Sparxie.exe on a local drive; an empty path goes back to the host's own component.
+  // Answers with the new component status. Game applications that start through Sparxie are pointed at the chosen install.
+  ApiResult
+  select_component(HostEnv &env, const json &request);
+  // After a new choice, with an environment made for it: the touch applications' profiles go into the chosen install's config and their commands name it.
+  void
+  adopt_component(HostEnv &env);
   ApiResult
   list_games(HostEnv &env);
   ApiResult

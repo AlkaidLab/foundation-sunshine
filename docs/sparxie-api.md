@@ -293,14 +293,15 @@ open, or an unreadable rate, leaves the last resolved number in place.
 ```
 
 `installed` is true when `Sparxie.exe` or `Sparxie.Launcher.exe` is found.
-The search order is `SPARXIE_HOME`, then `components/sparxie` under the
+While an external install is chosen (`POST /api/sparxie/location`) only that folder
+is searched. Otherwise the search order is `SPARXIE_HOME`, then `components/sparxie` under the
 host data directory (the writable install location), then `components/sparxie`
 beside the host executable. `version` comes from `component.json` or
 `version.ini` beside that executable. There is no `version --json` command
 in the build this host was written against, so `protocol` and `runtime`
 stay empty until that command exists.
 
-The same response carries `launchNotice`: `null`, or the note the touch launcher left after a launch that needed its safety net (`config\\sparxie\\launch-notice.json`: `version`, `id`, `time` (UTC), `kind` (`direct`: Sparxie could not start the session and the game was started directly; `retried`: the first session failed and the automatic retry worked; `unlock_forced`: the installed Hoyo runtime cannot run touch only, so the game started with the unlock at 60 FPS), `profile`, `game`, `message` (Chinese), `messageEn`, `reason`, `log`). A clean launch removes the note, so it always describes the last launch; a page shows `message` once per `id`.
+The same response carries `launchNotice`: `null`, or the note the touch launcher left after a launch that needed its safety net (`config\\sparxie\\launch-notice.json`: `version`, `id`, `time` (UTC), `kind` (`direct`: Sparxie could not start the session and the game was started directly; `retried`: the first session failed and the automatic retry worked; `unlock_forced`: the installed Hoyo runtime cannot run touch only, so the game started with the unlock at 60 FPS; `unprotected`: users who are not administrators can change the install, so nothing of it ran and the game was started directly), `profile`, `game`, `message` (Chinese), `messageEn`, `reason`, `log`). A clean launch removes the note, so it always describes the last launch; a page shows `message` once per `id`.
 
 The same response also carries `noticeAck` (true only after
 `POST /api/sparxie/warning`), `installHint` / `installHintEn` (the one line
@@ -492,6 +493,16 @@ with the same counters. Reads happen as the signed-in user; nobody signed in is
 `{ ok, path, parent, entries: [{ name, path, kind: "drive"|"dir"|"file", known? }], truncated }`.
 Folders come first, then `.exe` files with the known game executables leading;
 at most 3000 entries. A network path (`\\server\share`) is 400 `invalid_input`.
+
+### External install and administrator rights
+
+`POST /api/sparxie/location` `{ "path": "D:\\Apps\\Sparxie" }` chooses the install the host uses: a folder on a local fixed drive, or the `Sparxie.exe` in it. An empty `path` goes back to the host's own component; importing a package does too. The choice is `externalDir` in `sparxie-host.json`, and the answer is the new status. 409 `sparxie_running`, 404 `not_sparxie`, 400 `invalid_input` (relative or network path). Touch applications are pointed at the chosen install, and the profiles its config lacks are added to it. Uninstalling the component never touches an external install.
+
+Administrator rights are given only to an install that administrators alone can change: every file and folder in it is owned by SYSTEM, Administrators or TrustedInstaller and grants no one else a write, no ancestor folder lets anyone else rename or replace it, it is on a local fixed drive, and it holds no links. For an install inside the host's own install folder the ancestor rule stops at that folder: whoever could swap a folder above it could swap the host's own programs. This applies to every install, the host's own component and `SPARXIE_HOME` included. The status has `external`, `externalDir`, `adminOnly` and `adminOnlyBlocker` (the first path that failed). For an install that fails:
+
+* `POST /api/sparxie/open` starts Sparxie as the signed-in user.
+* The host does not write its config: a write is 409 `sparxie_unprotected`, so no touch application can be made. (A chosen folder without Sparxie is 409 `sparxie_external_missing`.)
+* `sparxie-launch` checks again at every launch and runs nothing of it. It does not read its config either; it starts directly the one known game executable in the application's working directory (or one level under it), leaving the note `unprotected`, and exits 11 when there is no such single file.
 
 `POST /api/sparxie/open` starts the Sparxie program in the signed-in user's
 session with the host's launch-as-user path (never as the service):
