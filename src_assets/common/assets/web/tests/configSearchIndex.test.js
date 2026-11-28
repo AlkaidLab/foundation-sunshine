@@ -64,3 +64,10 @@ test('known settings land on their section', () => {
   // an old address that names the advanced section still opens the tab page and jumps to the row
   assert.deepEqual(parseSettingsHash('#tab=network&sub=expert&focus=fec_percentage', SEARCH_INDEX), { tab: 'network', sub: 'expert', focus: 'fec_percentage' })
 })
+
+test('the webhook card is searchable (a card outside the tabs folder that saves on its own)', () => {
+  const hits = SEARCH_INDEX.filter((entry) => entry.params.sub === 'webhook')
+  for (const id of ['webhook_enabled', 'webhook_url', 'webhook_events', 'webhook_skip_ssl_verify', 'webhook_timeout']) {
+    assert.ok(hits.some((entry) => entry.id === id), `${id} is missing from the search index`)
+  }
+})

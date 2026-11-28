@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { MBanner, MButton, MFieldItem, MFooter, MGroup, MItem, MLoading, MChip, MSection, MSheet, MSnackbar, MSwitchItem } from 'foundation-ui/vue'
 import {
@@ -37,6 +37,19 @@ const savedEnabled = ref(null)
 let copyResetTimer = null
 let toastTimer = null
 let copyGeneration = 0
+
+// A search hit for a webhook field lands on this card: open the sheet so the field exists, and the caller's
+// row jump (Config.vue retries the selector for a moment) finds it once the config has loaded.
+const WEBHOOK_FOCUS_IDS = new Set(['webhook_enabled', 'webhook_url', 'webhook_events', 'webhook_skip_ssl_verify', 'webhook_timeout'])
+let focusAutoOpen = false
+const onFoundationFocus = (event) => {
+  if (!WEBHOOK_FOCUS_IDS.has(event.detail?.focus)) return
+  if (modalOpen.value) return
+  focusAutoOpen = true
+  void open()
+}
+onMounted(() => window.addEventListener('foundation-focus', onFoundationFocus))
+onUnmounted(() => window.removeEventListener('foundation-focus', onFoundationFocus))
 
 const webhookEventOptions = [
   { id: 0, label: 'notifications.webhook.events.config_pin_success' },
@@ -280,6 +293,11 @@ const load = async () => {
     loaded.value = true
   } catch (error) {
     if (generation !== loadGeneration.value) return
+    if (focusAutoOpen) {
+      // a search jump that cannot load just lands on the network page: no sheet, no error text
+      close()
+      return
+    }
     loaded.value = false
     savedEnabled.value = null
     errorMessage.value = error.code === 'webhook_config_invalid'
@@ -288,6 +306,7 @@ const load = async () => {
   } finally {
     if (generation === loadGeneration.value) {
       loading.value = false
+      focusAutoOpen = false
     }
   }
 }
@@ -305,6 +324,7 @@ const close = () => {
   ++loadGeneration.value
   ++copyGeneration
   loading.value = false
+  focusAutoOpen = false
   modalOpen.value = false
   clearMessages()
   showWebhookUrl.value = false
@@ -477,24 +497,24 @@ onUnmounted(() => {
           <MBanner v-if="successMessage" tone="info" icon="check_circle">{{ successMessage }}</MBanner>
 
           <MGroup>
-            <MSwitchItem v-model="enabledSwitch" :title="$t('config.webhook_enabled')" :info="$t('config.webhook_enabled_desc')" :disabled="saving || testing" />
+            <MSwitchItem v-model="enabledSwitch" data-cfg="webhook_enabled" :title="$t('config.webhook_enabled')" :info="$t('config.webhook_enabled_desc')" :disabled="saving || testing" />
           </MGroup>
 
           <MSection :title="$t('config.webhook_url')">
             <MGroup>
-              <MFieldItem v-model="urlModel" :label="$t('config.webhook_url')" :type="showWebhookUrl ? 'url' : 'password'" :info="$t('config.webhook_url_desc')" placeholder="https://example.invalid/webhook" autocomplete="off" :disabled="saving || testing" />
+              <MFieldItem v-model="urlModel" data-cfg="webhook_url" :label="$t('config.webhook_url')" :type="showWebhookUrl ? 'url' : 'password'" :info="$t('config.webhook_url_desc')" placeholder="https://example.invalid/webhook" autocomplete="off" :disabled="saving || testing" />
               <MSwitchItem v-model="showWebhookUrl" :title="$t(showWebhookUrl ? 'notifications.webhook.hide_url' : 'notifications.webhook.show_url')" :disabled="saving || testing" />
             </MGroup>
             <MBanner v-if="usesPlainHttp" tone="warn" icon="warning">{{ $t('notifications.webhook.http_warning') }}</MBanner>
           </MSection>
 
           <MGroup>
-            <MSwitchItem v-model="skipSslSwitch" :title="$t('config.webhook_skip_ssl_verify')" :info="$t('config.webhook_skip_ssl_verify_desc')" :disabled="saving || testing" />
-            <MFieldItem v-model="timeoutSeconds" :label="$t('config.webhook_timeout')" type="number" :min="1" :max="15" :step="1" :info="$t('config.webhook_timeout_desc')" :disabled="saving || testing" />
+            <MSwitchItem v-model="skipSslSwitch" data-cfg="webhook_skip_ssl_verify" :title="$t('config.webhook_skip_ssl_verify')" :info="$t('config.webhook_skip_ssl_verify_desc')" :disabled="saving || testing" />
+            <MFieldItem v-model="timeoutSeconds" data-cfg="webhook_timeout" :label="$t('config.webhook_timeout')" type="number" :min="1" :max="15" :step="1" :info="$t('config.webhook_timeout_desc')" :disabled="saving || testing" />
           </MGroup>
           <MBanner v-if="skipSslSwitch" tone="warn" icon="shield">{{ $t('notifications.webhook.skip_ssl_verify_warning') }}</MBanner>
 
-          <MSection :title="$t('config.webhook_events')">
+          <MSection :title="$t('config.webhook_events')" data-cfg="webhook_events">
             <div class="webhook-event-actions">
               <MButton variant="tonal" size="sm" :disabled="saving || testing" @click="selectAllEvents">{{ $t('config.webhook_events_select_all') }}</MButton>
               <MButton variant="tonal" size="sm" :disabled="saving || testing" @click="clearEvents">{{ $t('config.webhook_events_clear') }}</MButton>
