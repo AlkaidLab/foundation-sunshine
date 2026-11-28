@@ -10,7 +10,11 @@ export const WRITES = {
 }
 
 /** controls that save through an action of their own (a card with its own button) and so are never pending changes of the page */
-export const OWN_SAVE = new Set(['external_endpoints'])
+export const OWN_SAVE = new Set([
+  'external_endpoints',
+  // the webhook card saves through /api/webhook with its own save button
+  'webhook_enabled', 'webhook_url', 'webhook_events', 'webhook_skip_ssl_verify', 'webhook_timeout',
+])
 
 /** rows of the page that are not a setting: they open the component manager of the enhancement components */
 export const NOT_A_KEY = new Set(['hdr_enhanced'])

@@ -477,24 +477,24 @@ onUnmounted(() => {
           <MBanner v-if="successMessage" tone="info" icon="check_circle">{{ successMessage }}</MBanner>
 
           <MGroup>
-            <MSwitchItem v-model="enabledSwitch" :title="$t('config.webhook_enabled')" :info="$t('config.webhook_enabled_desc')" :disabled="saving || testing" />
+            <MSwitchItem v-model="enabledSwitch" data-cfg="webhook_enabled" :title="$t('config.webhook_enabled')" :info="$t('config.webhook_enabled_desc')" :disabled="saving || testing" />
           </MGroup>
 
           <MSection :title="$t('config.webhook_url')">
             <MGroup>
-              <MFieldItem v-model="urlModel" :label="$t('config.webhook_url')" :type="showWebhookUrl ? 'url' : 'password'" :info="$t('config.webhook_url_desc')" placeholder="https://example.invalid/webhook" autocomplete="off" :disabled="saving || testing" />
+              <MFieldItem v-model="urlModel" data-cfg="webhook_url" :label="$t('config.webhook_url')" :type="showWebhookUrl ? 'url' : 'password'" :info="$t('config.webhook_url_desc')" placeholder="https://example.invalid/webhook" autocomplete="off" :disabled="saving || testing" />
               <MSwitchItem v-model="showWebhookUrl" :title="$t(showWebhookUrl ? 'notifications.webhook.hide_url' : 'notifications.webhook.show_url')" :disabled="saving || testing" />
             </MGroup>
             <MBanner v-if="usesPlainHttp" tone="warn" icon="warning">{{ $t('notifications.webhook.http_warning') }}</MBanner>
           </MSection>
 
           <MGroup>
-            <MSwitchItem v-model="skipSslSwitch" :title="$t('config.webhook_skip_ssl_verify')" :info="$t('config.webhook_skip_ssl_verify_desc')" :disabled="saving || testing" />
-            <MFieldItem v-model="timeoutSeconds" :label="$t('config.webhook_timeout')" type="number" :min="1" :max="15" :step="1" :info="$t('config.webhook_timeout_desc')" :disabled="saving || testing" />
+            <MSwitchItem v-model="skipSslSwitch" data-cfg="webhook_skip_ssl_verify" :title="$t('config.webhook_skip_ssl_verify')" :info="$t('config.webhook_skip_ssl_verify_desc')" :disabled="saving || testing" />
+            <MFieldItem v-model="timeoutSeconds" data-cfg="webhook_timeout" :label="$t('config.webhook_timeout')" type="number" :min="1" :max="15" :step="1" :info="$t('config.webhook_timeout_desc')" :disabled="saving || testing" />
           </MGroup>
           <MBanner v-if="skipSslSwitch" tone="warn" icon="shield">{{ $t('notifications.webhook.skip_ssl_verify_warning') }}</MBanner>
 
-          <MSection :title="$t('config.webhook_events')">
+          <MSection :title="$t('config.webhook_events')" data-cfg="webhook_events">
             <div class="webhook-event-actions">
               <MButton variant="tonal" size="sm" :disabled="saving || testing" @click="selectAllEvents">{{ $t('config.webhook_events_select_all') }}</MButton>
               <MButton variant="tonal" size="sm" :disabled="saving || testing" @click="clearEvents">{{ $t('config.webhook_events_clear') }}</MButton>
