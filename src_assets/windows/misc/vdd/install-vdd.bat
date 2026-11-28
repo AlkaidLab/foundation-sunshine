@@ -11,11 +11,12 @@ for %%A in (%*) do (
     if /i "%%~A"=="--preserve-healthy-existing" set "PRESERVE_HEALTHY_EXISTING=-PreserveHealthyExisting"
 )
 
-rem The helper's answer is the only place a failure names its reason. Keep the full
-rem output next to this script when the scripts folder is writable, and in the
-rem caller's temp folder when it is not, then echo it for the console.
-set "HELPER_LOG=%~dp0vdd-install-last.log"
-copy /y nul "%HELPER_LOG%" >nul 2>nul && set "HELPER_LOG=%~dp0vdd-install-last.log"
+rem The helper's answer is the only place a failure names its reason. Probe each
+rem location first and set HELPER_LOG only when the probe succeeds, so an unwritable
+rem scripts folder falls through to the caller's temp folder and, when neither is
+rem writable, the helper still starts below without a redirection.
+set "HELPER_LOG="
+copy /y nul "%~dp0vdd-install-last.log" >nul 2>nul && set "HELPER_LOG=%~dp0vdd-install-last.log"
 if not defined HELPER_LOG copy /y nul "%TEMP%\vdd-install-last.log" >nul 2>nul && set "HELPER_LOG=%TEMP%\vdd-install-last.log"
 rem When neither log location is writable, run the helper without a redirection: a run without
 rem a log is still far better than a helper that never starts.
