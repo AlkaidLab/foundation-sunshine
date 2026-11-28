@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { MBanner, MButton, MFieldItem, MFooter, MGroup, MItem, MLoading, MChip, MSection, MSheet, MSnackbar, MSwitchItem } from 'foundation-ui/vue'
 import {
@@ -37,6 +37,16 @@ const savedEnabled = ref(null)
 let copyResetTimer = null
 let toastTimer = null
 let copyGeneration = 0
+
+// A search hit for a webhook field lands on this card: open the sheet so the field exists, and the caller's
+// row jump (Config.vue retries the selector for a moment) finds it once the config has loaded.
+const WEBHOOK_FOCUS_IDS = new Set(['webhook_enabled', 'webhook_url', 'webhook_events', 'webhook_skip_ssl_verify', 'webhook_timeout'])
+const onFoundationFocus = (event) => {
+  if (!WEBHOOK_FOCUS_IDS.has(event.detail?.focus)) return
+  if (!modalOpen.value) void open()
+}
+onMounted(() => window.addEventListener('foundation-focus', onFoundationFocus))
+onUnmounted(() => window.removeEventListener('foundation-focus', onFoundationFocus))
 
 const webhookEventOptions = [
   { id: 0, label: 'notifications.webhook.events.config_pin_success' },
