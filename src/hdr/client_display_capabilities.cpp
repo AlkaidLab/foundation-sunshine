@@ -6,6 +6,8 @@
 
 #include <charconv>
 #include <cmath>
+#include <locale>
+#include <sstream>
 
 #include <nlohmann/json.hpp>
 
@@ -13,14 +15,28 @@ namespace hdr {
   namespace {
     bool
     parse_finite_float(std::string_view text, float &value) noexcept {
-      if (text.empty()) {
+      if (text.empty() || text.front() == '+') {
         return false;
       }
 
-      const char *begin = text.data();
-      const char *end = begin + text.size();
-      const auto [position, error] = std::from_chars(begin, end, value, std::chars_format::general);
-      return error == std::errc {} && position == end && std::isfinite(value);
+#if defined(__cpp_lib_to_chars) && __cpp_lib_to_chars >= 201611L && !defined(__APPLE__)
+      const auto [ptr, ec] = std::from_chars(text.data(), text.data() + text.size(), value);
+      return ec == std::errc {} && ptr == text.data() + text.size() && std::isfinite(value);
+#else
+      try {
+        std::string str(text);
+        std::istringstream iss(str);
+        iss.imbue(std::locale::classic());
+        float parsed = 0.0f;
+        if ((iss >> parsed) && iss.eof() && std::isfinite(parsed)) {
+          value = parsed;
+          return true;
+        }
+      }
+      catch (...) {
+      }
+      return false;
+#endif
     }
 
     effective_target_t

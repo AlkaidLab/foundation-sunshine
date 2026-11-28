@@ -685,7 +685,7 @@ namespace stream {
       safe::mail_raw_t::event_t<video::dynamic_param_t> dynamic_param_change_events;  // 新增：动态参数调整事件
 
       std::unique_ptr<platf::deinit_t> qos;
-      std::atomic<endpoint_refresh_ptr> endpoint_refresh { nullptr };
+      endpoint_refresh_ptr endpoint_refresh;
     } video;
 
     struct {
@@ -708,7 +708,7 @@ namespace stream {
 
       bool enable_mic;
       bool mic_registered { false };
-      std::atomic<endpoint_refresh_ptr> endpoint_refresh { nullptr };
+      endpoint_refresh_ptr endpoint_refresh;
     } audio;
 
     struct {
@@ -2201,7 +2201,11 @@ namespace stream {
         });
         if (device_it != devices.end()) {
           temp_launch_session.env["SUNSHINE_CLIENT_DISPLAY_NAME"] = device_it->first;
+#ifdef _WIN32
           temp_launch_session.use_vdd = device_it->second.friendly_name == ZAKO_NAME;
+#else
+          temp_launch_session.use_vdd = false;
+#endif
         }
         else if (has_active_display) {
           active_display_resolved = false;
@@ -3768,7 +3772,7 @@ namespace stream {
         }
       }
       auto lowseq = session->video.lowseq;
-      auto endpoint_refresh = session->video.endpoint_refresh.load(std::memory_order_acquire);
+      auto endpoint_refresh = std::atomic_load_explicit(&session->video.endpoint_refresh, std::memory_order_acquire);
       if (endpoint_refresh) {
         auto port = endpoint_refresh->port();
         if (port && port != session->video.peer.port()) {
@@ -4225,7 +4229,7 @@ namespace stream {
         continue;
       }
       session->last_audio_activity_ms.store(steady_now_ms(), std::memory_order_relaxed);
-      auto endpoint_refresh = session->audio.endpoint_refresh.load(std::memory_order_acquire);
+      auto endpoint_refresh = std::atomic_load_explicit(&session->audio.endpoint_refresh, std::memory_order_acquire);
       if (endpoint_refresh) {
         auto port = endpoint_refresh->port();
         if (port && port != session->audio.peer.port()) {
@@ -4525,10 +4529,10 @@ namespace stream {
       }
     }
     if (type == socket_e::video) {
-      session->video.endpoint_refresh.store(refresh, std::memory_order_release);
+      std::atomic_store_explicit(&session->video.endpoint_refresh, refresh, std::memory_order_release);
     }
     else {
-      session->audio.endpoint_refresh.store(refresh, std::memory_order_release);
+      std::atomic_store_explicit(&session->audio.endpoint_refresh, refresh, std::memory_order_release);
     }
 
     // Only allow matches on the peer address for legacy clients
@@ -4546,10 +4550,10 @@ namespace stream {
 
       if (!validated) {
         if (type == socket_e::video) {
-          session->video.endpoint_refresh.store(endpoint_refresh_ptr {}, std::memory_order_release);
+          std::atomic_store_explicit(&session->video.endpoint_refresh, endpoint_refresh_ptr {}, std::memory_order_release);
         }
         else {
-          session->audio.endpoint_refresh.store(endpoint_refresh_ptr {}, std::memory_order_release);
+          std::atomic_store_explicit(&session->audio.endpoint_refresh, endpoint_refresh_ptr {}, std::memory_order_release);
         }
       }
 
@@ -4624,10 +4628,10 @@ namespace stream {
 #endif
 
     auto refresh_cleanup = util::fail_guard([&]() {
-      if (auto refresh = session->video.endpoint_refresh.load(std::memory_order_acquire)) {
+      if (auto refresh = std::atomic_load_explicit(&session->video.endpoint_refresh, std::memory_order_acquire)) {
         log_endpoint_refresh_summary(*session, "video", refresh->stats());
       }
-      session->video.endpoint_refresh.store(endpoint_refresh_ptr {}, std::memory_order_release);
+      std::atomic_store_explicit(&session->video.endpoint_refresh, endpoint_refresh_ptr {}, std::memory_order_release);
 #ifdef _WIN32
     if (!session->video.direct_usb)
 #endif
@@ -4671,10 +4675,10 @@ namespace stream {
     // Keep the refresh mapping alive for the whole audio worker, including
     // the MAT live early-return path, then remove it on every exit path.
     auto refresh_cleanup = util::fail_guard([&]() {
-      if (auto refresh = session->audio.endpoint_refresh.load(std::memory_order_acquire)) {
+      if (auto refresh = std::atomic_load_explicit(&session->audio.endpoint_refresh, std::memory_order_acquire)) {
         log_endpoint_refresh_summary(*session, "audio", refresh->stats());
       }
-      session->audio.endpoint_refresh.store(endpoint_refresh_ptr {}, std::memory_order_release);
+      std::atomic_store_explicit(&session->audio.endpoint_refresh, endpoint_refresh_ptr {}, std::memory_order_release);
       ref->message_queue_queue->raise(socket_e::audio, av_session_id_t { session->audio.ping_payload }, nullptr, nullptr);
     });
 

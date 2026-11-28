@@ -208,8 +208,12 @@ namespace system_tray {
 
   // 检查 VDD 是否存在
   static bool is_vdd_active() {
+#ifdef _WIN32
     auto vdd_device_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
     return !vdd_device_id.empty();
+#else
+    return false;
+#endif
   }
 
   static bool ensure_vdd_prerequisite() {

@@ -138,6 +138,7 @@ namespace confighttp::configuration {
       // what the encoder probe resolved the two codec settings to (0 = not probed yet, 1 = not offered, 2 = offered, 3 = offered with 10-bit)
       outputTree.put("active_hevc_mode", video::active_hevc_mode);
       outputTree.put("active_av1_mode", video::active_av1_mode);
+#if defined(SUNSHINE_ENABLE_CUDA) || defined(_WIN32)
       if (auto frame_budget = nvenc::get_frame_budget_report()) {
         pt::ptree budget_node;
         budget_node.put("clamped", frame_budget->clamped);
@@ -152,6 +153,7 @@ namespace confighttp::configuration {
         budget_node.put("num_engines", frame_budget->num_engines);
         outputTree.add_child("active_nvenc_frame_budget", budget_node);
       }
+#endif
       // Configuration capability only; never expose the paired-client tunnel token here.
       outputTree.put("usb_forwarding_config_version", "1");
       outputTree.put("pair_name", nvhttp::get_pair_name());

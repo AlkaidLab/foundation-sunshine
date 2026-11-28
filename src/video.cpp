@@ -66,6 +66,8 @@ extern "C" {
   #include <libavutil/hwcontext_d3d11va.h>
 }
   #include "platform/windows/display_device/windows_utils.h"
+#elif defined(__APPLE__)
+  #include <CoreGraphics/CoreGraphics.h>
 #endif
 
 using namespace std::literals;
@@ -106,6 +108,44 @@ namespace video {
     /** Every active display with its mode and HDR state, so a launch that changes either one is not mistaken for the last one. */
     std::string
     desktop_facts() {
+#ifdef __APPLE__
+      uint32_t count = 0;
+      if (CGGetActiveDisplayList(0, nullptr, &count) != kCGErrorSuccess || count == 0) {
+        return "";
+      }
+      std::vector<CGDirectDisplayID> displays;
+      // Retry once if capacity was saturated (display may have been added between queries).
+      for (int attempt = 0; attempt < 2; ++attempt) {
+        displays.assign(count, 0);
+        uint32_t filled = count;
+        if (CGGetActiveDisplayList(count, displays.data(), &filled) != kCGErrorSuccess) {
+          return "";
+        }
+        displays.resize(filled);
+        if (filled < count) {
+          break;
+        }
+        uint32_t recount = 0;
+        if (CGGetActiveDisplayList(0, nullptr, &recount) != kCGErrorSuccess || recount <= count) {
+          break;
+        }
+        count = recount;
+      }
+      std::sort(displays.begin(), displays.end());
+      std::ostringstream out;
+      for (auto id : displays) {
+        CGDisplayModeRef mode = CGDisplayCopyDisplayMode(id);
+        if (mode) {
+          out << id << ' ' << CGDisplayModeGetPixelWidth(mode) << 'x' << CGDisplayModeGetPixelHeight(mode)
+              << '@' << static_cast<int>(CGDisplayModeGetRefreshRate(mode)) << ';';
+          CGDisplayModeRelease(mode);
+        }
+        else {
+          out << id << " mode?;";
+        }
+      }
+      return out.str();
+#else
       const auto devices { display_device::enum_available_devices() };
       std::unordered_set<std::string> active_ids;
       for (const auto &[id, device] : devices) {
@@ -131,6 +171,7 @@ namespace video {
         out << ' ' << display_device::to_string(device.hdr_state) << ';';
       }
       return out.str();
+#endif
     }
 
     /** The options whose change can change what the probe finds. config::video is only rewritten by parse and by the temporary swap, which forgets the memo. */
@@ -1279,7 +1320,7 @@ namespace video {
   };
 
   struct sync_session_ctx_t {
-    safe::signal_t *join_event;
+    std::shared_ptr<safe::signal_t> join_event;
     safe::mail_raw_t::event_t<bool> shutdown_event;
     safe::mail_raw_t::queue_t<packet_t> packets;
     safe::mail_raw_t::event_t<bool> idr_events;
@@ -4372,7 +4413,9 @@ namespace video {
           auto ctx = pos->ctx;
           if (ctx->shutdown_event->peek()) {
             // Let waiting thread know it can delete shutdown_event
-            ctx->join_event->raise(true);
+            if (ctx->join_event) {
+              ctx->join_event->raise(true);
+            }
 
             pos = synced_sessions.erase(pos);
             synced_session_ctxs.erase(std::find_if(std::begin(synced_session_ctxs), std::end(synced_session_ctxs), [&ctx_p = ctx](auto &ctx) {
@@ -4485,12 +4528,16 @@ namespace video {
 
       for (auto &ctx : synced_session_ctxs) {
         ctx->shutdown_event->raise(true);
-        ctx->join_event->raise(true);
+        if (ctx->join_event) {
+          ctx->join_event->raise(true);
+        }
       }
 
       for (auto &ctx : ctx.unsafe()) {
         ctx.shutdown_event->raise(true);
-        ctx.join_event->raise(true);
+        if (ctx.join_event) {
+          ctx.join_event->raise(true);
+        }
       }
     });
 
@@ -4512,9 +4559,12 @@ namespace video {
     auto shutdown_event = mail->event<bool>(mail::shutdown);
 
     auto images = std::make_shared<captured_frame_event_t::element_type>();
-    auto lg = util::fail_guard([&]() {
-      images->stop();
-      shutdown_event->raise(true);
+    auto lg = util::fail_guard([&]() noexcept {
+      try {
+        images->stop();
+        shutdown_event->raise(true);
+      }
+      catch (...) {}
     });
 
     auto ref = capture_thread_async.ref();
@@ -4532,10 +4582,15 @@ namespace video {
         return;
       }
     }
-    auto admission_guard = util::fail_guard([&]() {
-      images->stop();
-      auto lock = ref->capture_policy.lock();
-      ref->capture_policy->detach();
+    auto admission_guard = util::fail_guard([&]() noexcept {
+      try {
+        images->stop();
+        if (ref) {
+          auto lock = ref->capture_policy.lock();
+          ref->capture_policy->detach();
+        }
+      }
+      catch (...) {}
     });
 
     ref->capture_ctx_queue->raise(capture_ctx_t { images, config });
@@ -4928,10 +4983,10 @@ namespace video {
       capture_async(std::move(mail), config, channel_data, dynamic_param_events, packet_size);
     }
     else {
-      safe::signal_t join_event;
+      auto join_event = std::make_shared<safe::signal_t>();
       auto ref = capture_thread_sync.ref();
       ref->encode_session_ctx_queue.raise(sync_session_ctx_t {
-        &join_event,
+        join_event,
         mail->event<bool>(mail::shutdown),
         mail::man->queue<packet_t>(mail::video_packets),
         std::move(idr_events),
@@ -4942,8 +4997,16 @@ namespace video {
         channel_data,
       });
 
-      // Wait for join signal
-      join_event.view();
+      // Wait for the sync worker to take ownership of the shared queue and finish.
+      // On shutdown, still hold the ref briefly so captureThreadSync can ref()
+      // before the queue is destroyed (avoids a second idle capture thread).
+      auto shutdown_evt = mail->event<bool>(mail::shutdown);
+      while (!join_event->view(100ms)) {
+        if (shutdown_evt->peek()) {
+          join_event->view(2s);
+          break;
+        }
+      }
     }
   }
 
@@ -4976,12 +5039,11 @@ namespace video {
     auto packets = mail::man->queue<packet_t>(mail::video_packets);
     auto encode_start = std::chrono::steady_clock::now();
     while (!packets->peek()) {
-      if (encode(1, session, packets, 0, {}, {})) {
+      if (std::chrono::steady_clock::now() - encode_start > std::chrono::seconds(2)) {
+        BOOST_LOG(warning) << "validate_config: encode timed out (2s), encoder may be incompatible with current settings";
         return -1;
       }
-      // Timeout protection: if encoding takes more than 5 seconds, it's likely hung
-      if (std::chrono::steady_clock::now() - encode_start > std::chrono::seconds(5)) {
-        BOOST_LOG(error) << "validate_config: encode timed out (5s), encoder may be incompatible with current settings";
+      if (encode(1, session, packets, 0, {}, {})) {
         return -1;
       }
     }
@@ -5551,6 +5613,10 @@ namespace video {
     encoder_snapshot::probe_fingerprint_t fingerprint;
 #ifdef _WIN32
     fingerprint.gpus = platf::gpu_signature();
+#elif defined(__APPLE__)
+    // No reliable per-adapter identity on macOS yet. Leave empty so decide_reuse
+    // returns unknown_gpu and does not reuse a probe across GPU changes.
+    fingerprint.gpus.clear();
 #endif
     fingerprint.options = probe_options_digest();
     fingerprint.capture_backend = config::video.capture;

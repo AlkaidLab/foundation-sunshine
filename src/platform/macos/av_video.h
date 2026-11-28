@@ -28,6 +28,7 @@ typedef bool (^FrameCallbackBlock)(CMSampleBufferRef);
 @property (nonatomic, assign) NSMapTable<AVCaptureConnection *, AVCaptureVideoDataOutput *> *videoOutputs;
 @property (nonatomic, assign) NSMapTable<AVCaptureConnection *, FrameCallbackBlock> *captureCallbacks;
 @property (nonatomic, assign) NSMapTable<AVCaptureConnection *, dispatch_semaphore_t> *captureSignals;
+@property (nonatomic, retain) id runtimeErrorObserver;
 
 + (NSArray<NSDictionary *> *)displayNames;
 + (NSString *)getDisplayName:(CGDirectDisplayID)displayID;

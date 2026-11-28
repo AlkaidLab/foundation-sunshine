@@ -31,40 +31,49 @@ namespace platf {
     capture_e
     capture(const push_captured_image_cb_t &push_captured_image_cb, const pull_free_image_cb_t &pull_free_image_cb, bool *cursor) override {
       auto signal = [av_capture capture:^(CMSampleBufferRef sampleBuffer) {
-        auto new_sample_buffer = std::make_shared<av_sample_buf_t>(sampleBuffer);
-        auto new_pixel_buffer = std::make_shared<av_pixel_buf_t>(new_sample_buffer->buf);
+        try {
+          auto new_sample_buffer = std::make_shared<av_sample_buf_t>(sampleBuffer);
+          auto new_pixel_buffer = std::make_shared<av_pixel_buf_t>(new_sample_buffer->buf);
 
-        std::shared_ptr<img_t> img_out;
-        if (!pull_free_image_cb(img_out)) {
-          // got interrupt signal
-          // returning false here stops capture backend
+          std::shared_ptr<img_t> img_out;
+          if (!pull_free_image_cb(img_out)) {
+            // got interrupt signal
+            // returning false here stops capture backend
+            return false;
+          }
+          auto av_img = std::static_pointer_cast<av_img_t>(img_out);
+
+          auto old_data_retainer = std::make_shared<temp_retain_av_img_t>(
+            av_img->sample_buffer,
+            av_img->pixel_buffer,
+            img_out->data);
+
+          av_img->sample_buffer = new_sample_buffer;
+          av_img->pixel_buffer = new_pixel_buffer;
+          img_out->data = new_pixel_buffer->data();
+
+          img_out->width = (int) CVPixelBufferGetWidth(new_pixel_buffer->buf);
+          img_out->height = (int) CVPixelBufferGetHeight(new_pixel_buffer->buf);
+          img_out->row_pitch = (int) CVPixelBufferGetBytesPerRow(new_pixel_buffer->buf);
+          img_out->pixel_pitch = img_out->row_pitch / img_out->width;
+
+          old_data_retainer = nullptr;
+
+          if (!push_captured_image_cb(std::move(img_out), true)) {
+            // got interrupt signal
+            // returning false here stops capture backend
+            return false;
+          }
+
+          return true;
+        }
+        catch (const std::exception &e) {
+          BOOST_LOG(debug) << "Capture callback interrupted during session teardown: "sv << e.what();
           return false;
         }
-        auto av_img = std::static_pointer_cast<av_img_t>(img_out);
-
-        auto old_data_retainer = std::make_shared<temp_retain_av_img_t>(
-          av_img->sample_buffer,
-          av_img->pixel_buffer,
-          img_out->data);
-
-        av_img->sample_buffer = new_sample_buffer;
-        av_img->pixel_buffer = new_pixel_buffer;
-        img_out->data = new_pixel_buffer->data();
-
-        img_out->width = (int) CVPixelBufferGetWidth(new_pixel_buffer->buf);
-        img_out->height = (int) CVPixelBufferGetHeight(new_pixel_buffer->buf);
-        img_out->row_pitch = (int) CVPixelBufferGetBytesPerRow(new_pixel_buffer->buf);
-        img_out->pixel_pitch = img_out->row_pitch / img_out->width;
-
-        old_data_retainer = nullptr;
-
-        if (!push_captured_image_cb(std::move(img_out), true)) {
-          // got interrupt signal
-          // returning false here stops capture backend
+        catch (...) {
           return false;
         }
-
-        return true;
       }];
 
       // FIXME: We should time out if an image isn't returned for a while
@@ -100,35 +109,23 @@ namespace platf {
 
     int
     dummy_img(img_t *img) override {
-      auto signal = [av_capture capture:^(CMSampleBufferRef sampleBuffer) {
-        auto new_sample_buffer = std::make_shared<av_sample_buf_t>(sampleBuffer);
-        auto new_pixel_buffer = std::make_shared<av_pixel_buf_t>(new_sample_buffer->buf);
-
+      int w = av_capture.frameWidth > 0 ? av_capture.frameWidth : 1920;
+      int h = av_capture.frameHeight > 0 ? av_capture.frameHeight : 1080;
+      OSType fmt = av_capture.pixelFormat ? av_capture.pixelFormat : kCVPixelFormatType_32BGRA;
+      CVPixelBufferRef pb = nullptr;
+      if (CVPixelBufferCreate(kCFAllocatorDefault, w, h, fmt, nullptr, &pb) == kCVReturnSuccess && pb) {
+        auto new_pixel_buffer = std::make_shared<av_pixel_buf_t>(pb, true);
         auto av_img = (av_img_t *) img;
-
-        auto old_data_retainer = std::make_shared<temp_retain_av_img_t>(
-          av_img->sample_buffer,
-          av_img->pixel_buffer,
-          img->data);
-
-        av_img->sample_buffer = new_sample_buffer;
+        av_img->sample_buffer = nullptr;
         av_img->pixel_buffer = new_pixel_buffer;
         img->data = new_pixel_buffer->data();
-
-        img->width = (int) CVPixelBufferGetWidth(new_pixel_buffer->buf);
-        img->height = (int) CVPixelBufferGetHeight(new_pixel_buffer->buf);
-        img->row_pitch = (int) CVPixelBufferGetBytesPerRow(new_pixel_buffer->buf);
-        img->pixel_pitch = img->row_pitch / img->width;
-
-        old_data_retainer = nullptr;
-
-        // returning false here stops capture backend
-        return false;
-      }];
-
-      dispatch_semaphore_wait(signal, DISPATCH_TIME_FOREVER);
-
-      return 0;
+        img->width = w;
+        img->height = h;
+        img->row_pitch = (int) CVPixelBufferGetBytesPerRow(pb);
+        img->pixel_pitch = img->row_pitch / w;
+        return 0;
+      }
+      return -1;
     }
 
     /**
@@ -213,7 +210,38 @@ namespace platf {
    */
   bool
   needs_encoder_reenumeration() {
-    // We don't track GPU state, so we will always reenumerate. Fortunately, it is fast on macOS.
-    return true;
+    static std::vector<CGDirectDisplayID> last_displays;
+    uint32_t count = 0;
+    if (CGGetActiveDisplayList(0, nullptr, &count) != kCGErrorSuccess || count == 0) {
+      last_displays.clear();
+      return true;
+    }
+    std::vector<CGDirectDisplayID> current_displays;
+    // Retry once if capacity was saturated (display may have been added between queries).
+    for (int attempt = 0; attempt < 2; ++attempt) {
+      current_displays.assign(count, 0);
+      uint32_t filled = count;
+      if (CGGetActiveDisplayList(count, current_displays.data(), &filled) != kCGErrorSuccess) {
+        last_displays.clear();
+        return true;
+      }
+      // Second query may shrink filled if a display was removed; drop trailing slots.
+      current_displays.resize(filled);
+      if (filled < count) {
+        break;
+      }
+      // filled == capacity: may be truncated. Re-count and retry once if larger.
+      uint32_t recount = 0;
+      if (CGGetActiveDisplayList(0, nullptr, &recount) != kCGErrorSuccess || recount <= count) {
+        break;
+      }
+      count = recount;
+    }
+    std::sort(current_displays.begin(), current_displays.end());
+    if (last_displays.empty() || current_displays != last_displays) {
+      last_displays = current_displays;
+      return true;
+    }
+    return false;
   }
 }  // namespace platf

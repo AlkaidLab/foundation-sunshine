@@ -231,7 +231,7 @@ namespace client_interface {
     if (error) return {};
     const auto written = std::filesystem::last_write_time(path, error).time_since_epoch().count();
     if (error) return {};
-    return std::to_string(size) + ':' + std::to_string(written);
+    return std::to_string(size) + ':' + std::to_string(static_cast<long long>(written));
   }
 
   std::unordered_map<std::string, play_record_t>

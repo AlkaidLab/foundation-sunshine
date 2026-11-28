@@ -2,6 +2,16 @@
  * @file src/platform/macos/microphone.mm
  * @brief Definitions for microphone capture on macOS.
  */
+#import <AudioToolbox/AudioToolbox.h>
+#import <CoreAudio/CoreAudio.h>
+
+#include <algorithm>
+#include <atomic>
+#include <cmath>
+#include <cstring>
+#include <thread>
+#include <vector>
+
 #include "src/platform/common.h"
 #include "src/platform/macos/av_audio.h"
 
@@ -41,8 +51,280 @@ namespace platf {
     }
   };
 
+  /**
+   * @brief Plays the client's microphone into a virtual audio device, so that host
+   *        applications can record it from that device's input side.
+   *
+   * write_pcm() is the only producer and the device's IO thread the only consumer,
+   * which is the one-reader-one-writer case TPCircularBuffer is safe for without a lock.
+   */
+  struct mic_redirect_t {
+    AudioComponentInstance unit {};
+    AudioDeviceID device_id { kAudioObjectUnknown };
+    Float64 sample_rate { 48000.0 };
+    TPCircularBuffer ring {};
+    UInt32 channels { 2 };
+    std::atomic<bool> stopping { false };
+    std::atomic<int> active_renders { 0 };
+
+    ~mic_redirect_t() {
+      stopping.store(true, std::memory_order_release);
+      if (unit) {
+        AURenderCallbackStruct empty_cb { nullptr, nullptr };
+        AudioUnitSetProperty(unit, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input, 0, &empty_cb, sizeof(empty_cb));
+        AudioOutputUnitStop(unit);
+        AudioUnitUninitialize(unit);
+        AudioComponentInstanceDispose(unit);
+        unit = nullptr;
+      }
+      while (active_renders.load(std::memory_order_acquire) > 0) {
+        std::this_thread::yield();
+      }
+      TPCircularBufferCleanup(&ring);
+    }
+
+    bool
+    is_device_alive() const {
+      if (device_id == kAudioObjectUnknown) {
+        return false;
+      }
+      AudioObjectPropertyAddress address {
+        kAudioDevicePropertyDeviceIsAlive,
+        kAudioObjectPropertyScopeGlobal,
+        kAudioObjectPropertyElementMain
+      };
+      UInt32 alive = 0;
+      UInt32 size = sizeof(alive);
+      if (AudioObjectGetPropertyData(device_id, &address, 0, nullptr, &size, &alive) != noErr || alive == 0) {
+        return false;
+      }
+      // TN2091: device sample rate must match the client format we opened with.
+      // Users can change nominal rate while the device stays alive; reopen on mismatch.
+      AudioObjectPropertyAddress rate_address {
+        kAudioDevicePropertyNominalSampleRate,
+        kAudioObjectPropertyScopeGlobal,
+        kAudioObjectPropertyElementMain
+      };
+      Float64 current_rate = 0.0;
+      UInt32 rate_size = sizeof(current_rate);
+      if (AudioObjectGetPropertyData(device_id, &rate_address, 0, nullptr, &rate_size, &current_rate) != noErr) {
+        return false;
+      }
+      if (std::fabs(current_rate - sample_rate) > 0.5) {
+        return false;
+      }
+      return true;
+    }
+
+    static std::string
+    string_property(AudioDeviceID device, AudioObjectPropertySelector selector) {
+      AudioObjectPropertyAddress address { selector, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain };
+      CFStringRef value = nullptr;
+      UInt32 size = sizeof(value);
+      if (AudioObjectGetPropertyData(device, &address, 0, nullptr, &size, &value) != noErr || !value) {
+        return {};
+      }
+      CFIndex utf8_max = CFStringGetMaximumSizeForEncoding(CFStringGetLength(value), kCFStringEncodingUTF8) + 1;
+      std::string text(utf8_max, '\0');
+      if (CFStringGetCString(value, text.data(), utf8_max, kCFStringEncodingUTF8)) {
+        text.resize(std::strlen(text.c_str()));
+      }
+      else {
+        text.clear();
+      }
+      CFRelease(value);
+      return text;
+    }
+
+    /// The output device named by `virtual_sink` (name or UID); without that setting, the first virtual one.
+    static AudioDeviceID
+    find_device(const std::string &wanted) {
+      AudioObjectPropertyAddress address { kAudioHardwarePropertyDevices, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain };
+      UInt32 size = 0;
+      if (AudioObjectGetPropertyDataSize(kAudioObjectSystemObject, &address, 0, nullptr, &size) != noErr) {
+        return kAudioObjectUnknown;
+      }
+      std::vector<AudioDeviceID> devices(size / sizeof(AudioDeviceID));
+      if (AudioObjectGetPropertyData(kAudioObjectSystemObject, &address, 0, nullptr, &size, devices.data()) != noErr) {
+        return kAudioObjectUnknown;
+      }
+
+      if (!wanted.empty()) {
+        // Pass 1: exact match on Device UID
+        for (auto device : devices) {
+          AudioObjectPropertyAddress streams { kAudioDevicePropertyStreams, kAudioObjectPropertyScopeOutput, kAudioObjectPropertyElementMain };
+          UInt32 streams_size = 0;
+          if (AudioObjectGetPropertyDataSize(device, &streams, 0, nullptr, &streams_size) != noErr || streams_size == 0) {
+            continue;
+          }
+          if (string_property(device, kAudioDevicePropertyDeviceUID) == wanted) {
+            return device;
+          }
+        }
+        // Pass 2: match on Device Name
+        for (auto device : devices) {
+          AudioObjectPropertyAddress streams { kAudioDevicePropertyStreams, kAudioObjectPropertyScopeOutput, kAudioObjectPropertyElementMain };
+          UInt32 streams_size = 0;
+          if (AudioObjectGetPropertyDataSize(device, &streams, 0, nullptr, &streams_size) != noErr || streams_size == 0) {
+            continue;
+          }
+          if (string_property(device, kAudioObjectPropertyName) == wanted) {
+            return device;
+          }
+        }
+        return kAudioObjectUnknown;
+      }
+
+      // Default: first device with virtual transport type
+      for (auto device : devices) {
+        AudioObjectPropertyAddress streams { kAudioDevicePropertyStreams, kAudioObjectPropertyScopeOutput, kAudioObjectPropertyElementMain };
+        UInt32 streams_size = 0;
+        if (AudioObjectGetPropertyDataSize(device, &streams, 0, nullptr, &streams_size) != noErr || streams_size == 0) {
+          continue;  // no output side
+        }
+
+        AudioObjectPropertyAddress transport_address { kAudioDevicePropertyTransportType, kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain };
+        UInt32 transport = 0;
+        UInt32 transport_size = sizeof(transport);
+        if (AudioObjectGetPropertyData(device, &transport_address, 0, nullptr, &transport_size, &transport) == noErr &&
+            transport == kAudioDeviceTransportTypeVirtual) {
+          return device;
+        }
+      }
+      return kAudioObjectUnknown;
+    }
+
+    static OSStatus
+    render(void *self_ptr, AudioUnitRenderActionFlags *, const AudioTimeStamp *, UInt32, UInt32, AudioBufferList *data) {
+      auto *self = static_cast<mic_redirect_t *>(self_ptr);
+      if (!self || self->stopping.load(std::memory_order_acquire)) {
+        if (data && data->mNumberBuffers > 0) {
+          std::memset(data->mBuffers[0].mData, 0, data->mBuffers[0].mDataByteSize);
+        }
+        return noErr;
+      }
+
+      self->active_renders.fetch_add(1, std::memory_order_acquire);
+      auto guard = util::fail_guard([&]() {
+        self->active_renders.fetch_sub(1, std::memory_order_release);
+      });
+
+      if (self->stopping.load(std::memory_order_acquire)) {
+        if (data && data->mNumberBuffers > 0) {
+          std::memset(data->mBuffers[0].mData, 0, data->mBuffers[0].mDataByteSize);
+        }
+        return noErr;
+      }
+
+      auto &out = data->mBuffers[0];
+
+      uint32_t available = 0;
+      void *tail = TPCircularBufferTail(&self->ring, &available);
+      const auto copied = std::min<uint32_t>(available, out.mDataByteSize);
+      if (copied) {
+        std::memcpy(out.mData, tail, copied);
+        TPCircularBufferConsume(&self->ring, copied);
+      }
+      std::memset(static_cast<char *>(out.mData) + copied, 0, out.mDataByteSize - copied);  // silence when the client sends nothing
+      return noErr;
+    }
+
+    static std::unique_ptr<mic_redirect_t>
+    open(const std::string &wanted) {
+      auto device = find_device(wanted);
+      if (device == kAudioObjectUnknown) {
+        BOOST_LOG(warning) << "Microphone redirect: no "sv << (wanted.empty() ? "virtual audio output device"s : "output device named ["s + wanted + ']')
+                           << " found. Install a virtual audio driver, or set 'virtual_sink'."sv;
+        return nullptr;
+      }
+
+      AudioComponentDescription description { kAudioUnitType_Output, kAudioUnitSubType_HALOutput, kAudioUnitManufacturer_Apple };
+      auto self = std::make_unique<mic_redirect_t>();
+      if (AudioComponentInstanceNew(AudioComponentFindNext(nullptr, &description), &self->unit) != noErr) {
+        self->unit = nullptr;
+        return nullptr;
+      }
+
+      AudioStreamBasicDescription format {};
+      UInt32 size = sizeof(format);
+      bool ok = AudioUnitSetProperty(self->unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global, 0, &device, sizeof(device)) == noErr;
+      Float64 device_sample_rate = 48000.0;
+      if (ok && AudioUnitGetProperty(self->unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Output, 0, &format, &size) == noErr) {
+        if (format.mChannelsPerFrame) {
+          self->channels = format.mChannelsPerFrame;
+        }
+        if (format.mSampleRate > 0) {
+          device_sample_rate = format.mSampleRate;
+        }
+      }
+
+      // Buffer capacity scales with channel count to comfortably hold at least 500ms of audio
+      const auto buffer_capacity = std::max<std::size_t>(128 * 1024, self->channels * sizeof(float) * static_cast<std::size_t>(device_sample_rate / 2.0));
+      if (!TPCircularBufferInit(&self->ring, buffer_capacity)) {
+        BOOST_LOG(error) << "Microphone redirect: failed to allocate circular buffer for "sv << self->channels << " channels"sv;
+        return nullptr;
+      }
+
+      self->device_id = device;
+      self->sample_rate = device_sample_rate;
+
+      format = {};
+      format.mSampleRate = device_sample_rate;
+      format.mFormatID = kAudioFormatLinearPCM;
+      format.mFormatFlags = kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked;
+      format.mChannelsPerFrame = self->channels;
+      format.mBitsPerChannel = 32;
+      format.mFramesPerPacket = 1;
+      format.mBytesPerFrame = format.mBytesPerPacket = self->channels * sizeof(float);
+      AURenderCallbackStruct callback { render, self.get() };
+      ok = ok && AudioUnitSetProperty(self->unit, kAudioUnitProperty_StreamFormat, kAudioUnitScope_Input, 0, &format, sizeof(format)) == noErr &&
+           AudioUnitSetProperty(self->unit, kAudioUnitProperty_SetRenderCallback, kAudioUnitScope_Input, 0, &callback, sizeof(callback)) == noErr &&
+           AudioUnitInitialize(self->unit) == noErr &&
+           AudioOutputUnitStart(self->unit) == noErr;
+      if (!ok) {
+        BOOST_LOG(error) << "Microphone redirect: couldn't open ["sv << string_property(device, kAudioObjectPropertyName) << ']';
+        return nullptr;
+      }
+
+      BOOST_LOG(info) << "Microphone redirect: client microphone plays into ["sv << string_property(device, kAudioObjectPropertyName) << ']';
+      return self;
+    }
+
+    /// @param samples Mono 48 kHz samples, copied to every channel of the device.
+    int
+    write_pcm(const std::int16_t *samples, std::size_t frame_count) {
+      if (!unit) {
+        return -1;
+      }
+      if (!is_device_alive()) {
+        return -2;  // Device invalid or removed: signal stream.cpp to reopen
+      }
+      std::size_t out_frames = frame_count;
+      if (sample_rate != 48000.0 && sample_rate > 0) {
+        out_frames = static_cast<std::size_t>(std::round(frame_count * (sample_rate / 48000.0)));
+      }
+      std::vector<float> out(out_frames * channels);
+      const double step = static_cast<double>(frame_count) / static_cast<double>(out_frames);
+      for (std::size_t f = 0; f < out_frames; ++f) {
+        double src_idx = f * step;
+        std::size_t idx0 = static_cast<std::size_t>(src_idx);
+        std::size_t idx1 = std::min(idx0 + 1, frame_count - 1);
+        double frac = src_idx - idx0;
+        float sample = (samples[idx0] * (1.0 - frac) + samples[idx1] * frac) / 32768.0f;
+        for (UInt32 c = 0; c < channels; ++c) {
+          out[f * channels + c] = sample;
+        }
+      }
+      if (!TPCircularBufferProduceBytes(&ring, out.data(), out.size() * sizeof(float))) {
+        return 0;  // Ring buffer full: drop frame gracefully, return 0 consumed
+      }
+      return static_cast<int>(frame_count * sizeof(std::int16_t));
+    }
+  };
+
   struct macos_audio_control_t: public audio_control_t {
     AVCaptureDevice *audio_capture_device {};
+    std::unique_ptr<mic_redirect_t> mic_redirect;
 
   public:
     int
@@ -96,21 +378,20 @@ namespace platf {
 
     int
     write_mic_pcm(const std::int16_t *samples, std::size_t frame_count) override {
-      // Microphone redirect to the host is not implemented on macOS yet.
-      (void) samples;
-      (void) frame_count;
-      return -1;
+      return mic_redirect ? mic_redirect->write_pcm(samples, frame_count) : -1;
     }
 
     int
     init_mic_redirect_device() override {
-      // No host-side virtual mic on macOS.
-      return -1;
+      if (!mic_redirect) {
+        mic_redirect = mic_redirect_t::open(config::audio.virtual_sink);
+      }
+      return mic_redirect ? 0 : -1;
     }
 
     void
     release_mic_redirect_device() override {
-      // Nothing to release.
+      mic_redirect.reset();
     }
   };
 
