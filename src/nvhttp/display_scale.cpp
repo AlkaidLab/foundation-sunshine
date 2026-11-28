@@ -155,12 +155,14 @@ namespace nvhttp::display_scale {
 #ifdef _WIN32
   json
   build_windows_displays(const std::vector<std::string> &display_names) {
+    display_device::device_info_map_t available_devices;
     std::unordered_map<std::string, std::pair<std::string, std::string>> display_info_map;
     try {
       for (const auto &device : display_device::enum_available_devices()) {
         const auto &device_id = device.first;
-        if (std::string gdi_name = display_device::get_display_name(device_id); !gdi_name.empty()) {
-          display_info_map[gdi_name] = { device_id, display_device::get_display_friendly_name(device_id) };
+        available_devices.emplace(device_id, device.second);
+        if (!device.second.display_name.empty()) {
+          display_info_map[device.second.display_name] = { device_id, device.second.friendly_name };
         }
       }
     }
@@ -207,6 +209,19 @@ namespace nvhttp::display_scale {
         add_unsupported_fields(display_node);
       }
 
+      displays_array.push_back(std::move(display_node));
+    }
+
+    for (const auto &[device_id, device] : available_devices) {
+      if (device.device_state != display_device::device_state_e::inactive) {
+        continue;
+      }
+
+      json display_node { { "index", static_cast<int>(displays_array.size()) },
+        { "display_name", device.display_name },
+        { "device_id", device_id },
+        { "friendly_name", device.friendly_name } };
+      add_unsupported_fields(display_node);
       displays_array.push_back(std::move(display_node));
     }
 

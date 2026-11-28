@@ -526,10 +526,44 @@ namespace sparxie {
     kbm_through_sparxie(const std::string &game) {
       return game == "genshin" || game == "starrail" || game == "endfield";
     }
+    // Endfield in the second generation of Sparxie: its keyboard, mouse and gamepad input is the plugin's own inputMode, so it needs no touch-interface switch of the build.
+    bool
+    endfield_input_is_plugins(const HostEnv &env, const std::string &game) {
+      if (game != "endfield") return false;
+      const fs::path dir = !env.data_dir.empty() ? env.data_dir : env.host_data / "sparxie-config";
+      return endfield_support(detect_build(dir)) == EndfieldSupport::plugin;
+    }
     std::string
     mode_for_input(HostEnv &env, const std::string &mode, const json &options, const std::string &game) {
-      if (mode == "touch" && options.is_object() && options.value("input", std::string("touch")) == "kbm" && sparxie_installed(env) && (!touch_ui_switch(env) || !kbm_through_sparxie(game))) return "pc";
+      if (mode == "touch" && options.is_object() && options.value("input", std::string("touch")) == "kbm" && sparxie_installed(env) &&
+          ((!touch_ui_switch(env) && !endfield_input_is_plugins(env, game)) || !kbm_through_sparxie(game)))
+        return "pc";
       return mode;
+    }
+    // What the Endfield profile of this install will be: the first generation's own title, the plugin (installed, enabled or not) or nothing yet.
+    json
+    endfield_status(const SparxieBuild &build) {
+      const EndfieldSupport support = endfield_support(build);
+      std::string state = "ready";
+      std::string message;
+      if (support == EndfieldSupport::plugin_missing) {
+        state = "plugin_missing";
+        message = "需要终末地插件";
+      }
+      else if (support == EndfieldSupport::unsupported) {
+        state = "unsupported";
+        message = "当前 Sparxie 不支持终末地";
+      }
+      else if (support == EndfieldSupport::plugin && !build.endfield.trusted) {
+        state = "plugin_untrusted";
+        message = "终末地插件尚未在 Sparxie 中启用";
+      }
+      return json {
+        { "support", std::string(endfield_support_name(support)) },
+        { "state", state },
+        { "message", message },
+        { "plugin", { { "id", kEndfieldPluginId }, { "installed", build.endfield.installed }, { "trusted", build.endfield.trusted }, { "version", build.endfield.version } } },
+      };
     }
     // What an application's input is: the stored one, else what its launch was (an application of the first builds that starts the game directly is keyboard, mouse and gamepad)
     std::string
@@ -833,6 +867,7 @@ namespace sparxie {
     if (!store.status.ok) state = "unreadable";
     json warning = warning_body(env, installed);
     const std::vector<std::string> capabilities = installed ? component_capabilities(env.sparxie_exe) : std::vector<std::string> {};
+    const SparxieBuild build = detect_build(config_dir(env));
     ApiResult result;
     result.body = {
       { "ok", true },
@@ -844,6 +879,9 @@ namespace sparxie {
       { "capabilities", capabilities },
       // true: keyboard, mouse and gamepad applications run through Sparxie with its settings (fps unlock) and without the touch interface
       { "touchUiSwitch", std::find(capabilities.begin(), capabilities.end(), std::string(kCapTouchUiSwitch)) != capabilities.end() },
+      // how Sparxie takes Endfield: its own title, or the plugin (and whether the plugin is there): see docs/sparxie-api.md
+      { "generation", build.generation == Generation::plugin ? "plugin" : build.generation == Generation::legacy ? "legacy" : "unknown" },
+      { "endfield", endfield_status(build) },
       { "exe", installed ? env.sparxie_exe.string() : std::string() },
       { "dataDir", config_dir(env).string() },
       { "dataDirProvisional", env.data_dir_provisional },
@@ -1372,7 +1410,7 @@ namespace sparxie {
         found.install.id = found.install.game.empty() ? id : found.install.game + "-open";
       }
       found.install.profile = id;
-      json options = profile->contains("hoyo") ? options_from_hoyo((*profile)["hoyo"]) : default_options();
+      json options = options_from_profile(*profile);
       normalize_options(options);
       const std::string name = profile->value("displayName", id);
       json block = app_block(found.install, id, "touch", options, templ);

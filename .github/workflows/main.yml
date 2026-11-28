@@ -34,6 +34,10 @@ on:
         description: 'Publish a pre-release of this master build (the release step is skipped otherwise)'
         type: boolean
         default: false
+      publish_stable:
+        description: 'Publish this master build as the stable release: compiled as channel stable and created as a full release marked Latest, never as a pre-release (master only; on another branch it is a rehearsal that builds the stable binaries and publishes nothing)'
+        type: boolean
+        default: false
       build_setup_ui_from_submodule:
         description: 'Build the installer setup UI from the Panel submodule instead of downloading the Panel repository build'
         type: boolean
@@ -327,6 +331,11 @@ jobs:
       release_generate_release_notes: ${{ steps.setup_release_auto.outputs.release_generate_release_notes || steps.setup_release_manual.outputs.release_generate_release_notes }}
       release_tag: ${{ steps.setup_release_auto.outputs.release_tag || steps.setup_release_manual.outputs.release_tag }}
       release_version: ${{ steps.setup_release_auto.outputs.release_version || steps.setup_release_manual.outputs.release_version }}
+      # The channel compiled into the binaries (build identity, SUNSHINE_BUILD_CHANNEL): stable only for a manual stable publish, beta for
+      # every other published build, dev for the rest. Both Windows configure steps read it, so the compile shards and the build agree.
+      build_channel: ${{ steps.auto_gate.outputs.channel || steps.setup_release_manual.outputs.channel }}
+      # Whether the published release is the stable one (a full release marked Latest) instead of a pre-release.
+      release_stable: ${{ steps.setup_release_manual.outputs.stable }}
     permissions:
       contents: write  # read does not work to check squash and merge details
     # Pinned: the ubuntu-latest label migrates to Ubuntu 26 (actions/runner-images#14748); move this on purpose, not by label.
@@ -354,25 +363,35 @@ jobs:
         run: |
           if [ "$AUTO" = true ] && [ "$ENABLED" = true ]; then
             echo "publish=true" >> "$GITHUB_OUTPUT"
+            echo "channel=beta" >> "$GITHUB_OUTPUT"
           else
             echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "channel=dev" >> "$GITHUB_OUTPUT"
             if [ "$AUTO" = true ]; then
               echo "::notice title=Pre-release::not published: set the repository variable AUTO_PRERELEASE to true, or run this workflow manually with publish enabled"
             fi
           fi
 
-      # Manual runs: publish=true (master only) publishes with the version and tag a push of this commit would get, from the
+      # Manual runs: publish=true (master only) publishes a pre-release with the version and tag a push of this commit would get, from the
       # committer date (scripts/ci/release-info.py); otherwise the run is a dev build with a manual-<date> tag.
+      # publish_stable=true is the stable release: the same version and tag, compiled as channel stable and published as a full release
+      # (a stable build never passes through a pre-release, so the release relay and the mirrors see it as stable from the start). On a branch
+      # other than master it is a rehearsal: the stable binaries are built and nothing is published.
       - name: Setup Release (Manual)
         id: setup_release_manual
         if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
         env:
           PUBLISH: ${{ inputs.publish }}
+          PUBLISH_STABLE: ${{ inputs.publish_stable }}
           REF_NAME: ${{ github.ref_name }}
           COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
-          if [ "$PUBLISH" = true ]; then
+          if [ "$PUBLISH" = true ] && [ "$PUBLISH_STABLE" = true ]; then
+            echo "::error title=Publish::publish and publish_stable are different releases: choose one"
+            exit 1
+          fi
+          if [ "$PUBLISH" = true ] || { [ "$PUBLISH_STABLE" = true ] && [ "$REF_NAME" = master ]; }; then
             if [ "$REF_NAME" != master ]; then
               echo "::error title=Publish::publish is only allowed on master"
               exit 1
@@ -383,11 +402,23 @@ jobs:
               echo "release_body=Manual publish (master)"
               echo "release_commit=$COMMIT"
               echo "release_generate_release_notes=true"
+              if [ "$PUBLISH_STABLE" = true ]; then
+                echo "channel=stable"
+                echo "stable=true"
+              else
+                echo "channel=beta"
+                echo "stable=false"
+              fi
             } >> "$GITHUB_OUTPUT"
             exit 0
           fi
           SUFFIX=$([ "$REF_NAME" = "master" ] && echo "" || echo "-dev")
           STAMP="manual-$(date +%Y%m%d-%H%M%S)${SUFFIX}"
+          CHANNEL=dev
+          if [ "$PUBLISH_STABLE" = true ]; then
+            CHANNEL=stable
+            echo "::notice title=Stable rehearsal::$REF_NAME is not master: the stable binaries are built and nothing is published"
+          fi
           {
             echo "publish_release=false"
             echo "release_body=Manual build ($REF_NAME)"
@@ -395,6 +426,8 @@ jobs:
             echo "release_generate_release_notes=false"
             echo "release_tag=$STAMP"
             echo "release_version=$STAMP"
+            echo "channel=$CHANNEL"
+            echo "stable=false"
           } >> "$GITHUB_OUTPUT"
 
       - name: Filter bot contributors
@@ -680,7 +713,7 @@ jobs:
           COMMIT: ${{ needs.setup_release.outputs.release_commit }}
           SUNSHINE_BUILD_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
           SUNSHINE_BUILD_BRANCH: ${{ github.head_ref || github.ref_name }}
-          SUNSHINE_BUILD_CHANNEL: ${{ needs.setup_release.outputs.publish_release == 'true' && 'beta' || 'dev' }}
+          SUNSHINE_BUILD_CHANNEL: ${{ needs.setup_release.outputs.build_channel }}
           SUNSHINE_BUILD_BUILDER: ci
           SUNSHINE_BUILD_CI_RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           CCACHE_DIR: ${{ github.workspace }}\.ccache
@@ -1186,7 +1219,7 @@ jobs:
           # pre-release (beta); PRs and manual runs are dev builds. One build makes both packages, so the package stays auto.
           SUNSHINE_BUILD_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
           SUNSHINE_BUILD_BRANCH: ${{ github.head_ref || github.ref_name }}
-          SUNSHINE_BUILD_CHANNEL: ${{ needs.setup_release.outputs.publish_release == 'true' && 'beta' || 'dev' }}
+          SUNSHINE_BUILD_CHANNEL: ${{ needs.setup_release.outputs.build_channel }}
           SUNSHINE_BUILD_BUILDER: ci
           SUNSHINE_BUILD_CI_RUN: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           # ccache.exe is a native binary, so it reads the Windows-style path
@@ -1327,6 +1360,10 @@ jobs:
           for tool in dxgi-info audio-info sunshinesvc; do
             python scripts/ci/check-windows-release.py "build/tools/$tool.exe" --max-code-bytes 1600000
           done
+          # The PyroWave probe statically links the Vulkan framework, so it is larger than the display helpers and
+          # has no size limit. Its imports are still checked: they are resolved before main runs, so a missing DLL
+          # would bring up a loader dialog before the tool can answer with its exit code.
+          python scripts/ci/check-windows-release.py build/tools/alkaidlab_pyrowave_probe.exe
 
       # The installer shell is also the elevated worker and the updater. LLD gives an executable a 1 MiB stack by default, and the
       # worker's inlined 1 MiB buffer overflowed it before the first event (issue #1326): the reserve is a release property.
@@ -1831,13 +1868,15 @@ jobs:
           tag: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
           token: ${{ secrets.GH_BOT_TOKEN }}
 
-  # Manual publication (Run workflow with publish=true, master only): the release is created by the GitHub CLI from the
+  # Manual publication (Run workflow with publish=true or publish_stable=true, master only): the release is created by the GitHub CLI from the
   # artifacts of this run, in a job of its own so that the Windows job, which runs the build scripts of the commit, never
   # holds a token that can write to the repository.
   publish:
-    name: Publish pre-release
+    name: Publish release
     needs: [setup_release, build_win]
-    if: needs.setup_release.outputs.publish_release == 'true' && github.event_name == 'workflow_dispatch'
+    # A status function is required: without one this job is skipped whenever any job upstream of build_win was
+    # skipped (for example the compile shards on a warm cache), even though build_win itself succeeded.
+    if: ${{ !cancelled() && needs.build_win.result == 'success' && needs.setup_release.result == 'success' && needs.setup_release.outputs.publish_release == 'true' && github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -1857,6 +1896,7 @@ jobs:
       # Creates the pre-release, or replaces the assets of a pre-release that is already there; a tag that belongs to a
       # published release is an error (scripts/ci/publish-prerelease.sh).
       - name: Create the pre-release
+        if: needs.setup_release.outputs.release_stable != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
@@ -1864,6 +1904,21 @@ jobs:
           COMMIT: ${{ needs.setup_release.outputs.release_commit }}
         shell: bash
         run: bash scripts/ci/publish-prerelease.sh dist | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # The stable release: a full release marked Latest, created directly with the bot token so that its `release: published` event starts the
+      # signing workflow. A tag that already has a release of any kind is an error (scripts/ci/publish-stable.sh): a stable build is a new
+      # commit, never a promoted pre-release.
+      - name: Create the stable release
+        if: needs.setup_release.outputs.release_stable == 'true'
+        env:
+          # The bot token, like the pre-release publisher: a release created with the workflow token starts no other workflow, and the
+          # signing workflow (sign-and-repackage.yml, `release: published`) must start for a full release.
+          GH_TOKEN: ${{ secrets.GH_BOT_TOKEN }}
+          TAG: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
+          BODY: ${{ needs.setup_release.outputs.release_body }}
+          COMMIT: ${{ needs.setup_release.outputs.release_commit }}
+        shell: bash
+        run: bash scripts/ci/publish-stable.sh dist | tee -a "$GITHUB_STEP_SUMMARY"
 
   # The single status check to require. `always()` is what keeps a failed or cancelled job from being skipped past: a job
   # whose dependency failed is skipped, and a skipped required check counts as passing.

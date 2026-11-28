@@ -983,3 +983,148 @@ TEST(CrashMeta, ANameForTheStartUpPhaseIsAFixedWordAndOnlyWhileTheHostIsStarting
   EXPECT_EQ(crash::context::phase_word(0), nullptr);
   EXPECT_EQ(crash::context::phase_word(static_cast<int>(crash::context::phase_e::tray) + 1), nullptr);
 }
+
+// A feedback reports uploads share one deadline inside the pages 45 s wait: each gets at most 20 s of what is left, none starts with less than 2 s, and without a budget the fixed 20 s holds.
+TEST(CrashFeedbackBudget, UploadsShareOneDeadline) {
+  crash::end_feedback_budget();
+  EXPECT_EQ(crash::feedback_upload_timeout_for_tests(), 20);
+  crash::begin_feedback_budget(std::chrono::seconds { 35 });
+  EXPECT_EQ(crash::feedback_upload_timeout_for_tests(), 20);
+  crash::begin_feedback_budget(std::chrono::seconds { 10 });
+  const auto left = crash::feedback_upload_timeout_for_tests();
+  EXPECT_GE(left, 8);
+  EXPECT_LE(left, 10);
+  crash::begin_feedback_budget(std::chrono::seconds { 1 });
+  EXPECT_EQ(crash::feedback_upload_timeout_for_tests(), 0);
+  crash::end_feedback_budget();
+  EXPECT_EQ(crash::feedback_upload_timeout_for_tests(), 20);
+}
+
+// The log of a feedback report is read, anonymised and packed inside the same deadline: with too little left it is not read, a slow read or a slow pack ends in "unreachable" without an upload,
+// and the whole call stays inside the budget.
+namespace {
+  struct stage_probe_t {
+    std::atomic<int> collects { 0 };
+    std::atomic<int> packs { 0 };
+    std::atomic<std::size_t> read_cap { 0 };
+  };
+
+  crash::log_stages_t
+  stages_of(stage_probe_t &probe, std::chrono::milliseconds collect_takes, bool pack_waits_for_deadline) {
+    crash::log_stages_t stages;
+    stages.collect = [&probe, collect_takes](const fs::path &file, std::size_t max_bytes) {
+      ++probe.collects;
+      probe.read_cap = max_bytes;
+      std::this_thread::sleep_for(collect_takes);
+      std::ifstream in(file, std::ios::binary);
+      return std::string(std::istreambuf_iterator<char>(in), {});
+    };
+    stages.pack = [&probe, pack_waits_for_deadline](std::string_view text, const std::function<bool()> &expired) -> std::optional<crash::logfile::packed_t> {
+      ++probe.packs;
+      if (pack_waits_for_deadline)  // a packing that is slow but looks at the deadline, as the real one does
+        while (!expired || !expired()) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+      return crash::logfile::pack(text, crash::logfile::max_gz_bytes, expired);
+    };
+    return stages;
+  }
+}  // namespace
+
+TEST(CrashFeedbackBudget, ALogThatCannotBeReadInTimeIsNotReadAtAll) {
+  mock_server_t server;
+  const auto config = scratch("logbudget-none");
+  put(config / "sunshine.log", "[2026-11-24 10:00:00.000]: Info: started\n");
+  stage_probe_t probe;
+  const auto stages = stages_of(probe, std::chrono::milliseconds(0), false);
+  crash::begin_feedback_budget(std::chrono::seconds { 5 });  // the upload keeps 5 s of it: nothing is left for the work in front of it
+  const auto begun = std::chrono::steady_clock::now();
+  EXPECT_FALSE(crash::upload_session_log_from(config, server.url(), "x", "v", &stages).has_value());
+  crash::end_feedback_budget();
+  EXPECT_LT(std::chrono::steady_clock::now() - begun, std::chrono::seconds(1));
+  EXPECT_EQ(probe.collects.load(), 0);
+  EXPECT_EQ(probe.packs.load(), 0);
+  EXPECT_STREQ(crash::session_log_state(), "unreachable");
+  EXPECT_TRUE(server.targets.empty());
+  fs::remove_all(config);
+}
+
+TEST(CrashFeedbackBudget, ASlowCollectionIsNotFollowedByAPackingOrAnUploadAndStaysInsideTheBudget) {
+  mock_server_t server;
+  const auto config = scratch("logbudget-slow-collect");
+  put(config / "sunshine.log", "[2026-11-24 10:00:00.000]: Info: started\n");
+  stage_probe_t probe;
+  const auto stages = stages_of(probe, std::chrono::milliseconds(2400), false);  // the work gets 2 s of the 7: the read overruns it
+  crash::begin_feedback_budget(std::chrono::seconds { 7 });
+  const auto begun = std::chrono::steady_clock::now();
+  EXPECT_FALSE(crash::upload_session_log_from(config, server.url(), "x", "v", &stages).has_value());
+  const auto took = std::chrono::steady_clock::now() - begun;
+  crash::end_feedback_budget();
+  EXPECT_LT(took, std::chrono::seconds(7));
+  EXPECT_EQ(probe.collects.load(), 1);
+  EXPECT_EQ(probe.packs.load(), 0);
+  EXPECT_EQ(probe.read_cap.load(), crash::logfile::bounded_read_bytes);
+  EXPECT_STREQ(crash::session_log_state(), "unreachable");
+  EXPECT_TRUE(server.targets.empty());
+  fs::remove_all(config);
+}
+
+TEST(CrashFeedbackBudget, ASlowPackingStopsWhereItsShareEndsAndTheReportGoesWithoutTheLog) {
+  mock_server_t server;
+  const auto config = scratch("logbudget-slow-pack");
+  put(config / "sunshine.log", "[2026-11-24 10:00:00.000]: Info: started\n");
+  stage_probe_t probe;
+  const auto stages = stages_of(probe, std::chrono::milliseconds(0), true);
+  crash::begin_feedback_budget(std::chrono::seconds { 7 });
+  const auto begun = std::chrono::steady_clock::now();
+  EXPECT_FALSE(crash::upload_session_log_from(config, server.url(), "x", "v", &stages).has_value());
+  const auto took = std::chrono::steady_clock::now() - begun;
+  crash::end_feedback_budget();
+  EXPECT_GE(took, std::chrono::milliseconds(1500));  // it waited for its own share, not for the whole budget
+  EXPECT_LT(took, std::chrono::seconds(4));
+  EXPECT_EQ(probe.packs.load(), 1);
+  EXPECT_STREQ(crash::session_log_state(), "unreachable");
+  EXPECT_TRUE(server.targets.empty());
+  fs::remove_all(config);
+}
+
+TEST(CrashFeedbackBudget, APackingThatSucceedsAfterItsShareIsNotUploaded) {
+  mock_server_t server;
+  const auto config = scratch("logbudget-late-pack");
+  put(config / "sunshine.log", "[2026-11-24 10:00:00.000]: Info: started\n");
+  stage_probe_t probe;
+  auto stages = stages_of(probe, std::chrono::milliseconds(0), false);
+  // a packing that ignores the deadline and still returns a result after its share ended
+  stages.pack = [&probe](std::string_view text, const std::function<bool()> &expired) -> std::optional<crash::logfile::packed_t> {
+    ++probe.packs;
+    while (!expired || !expired()) std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    return crash::logfile::pack(text, crash::logfile::max_gz_bytes, {});
+  };
+  crash::begin_feedback_budget(std::chrono::seconds { 7 });
+  EXPECT_FALSE(crash::upload_session_log_from(config, server.url(), "x", "v", &stages).has_value());
+  crash::end_feedback_budget();
+  EXPECT_EQ(probe.packs.load(), 1);
+  EXPECT_STREQ(crash::session_log_state(), "unreachable");
+  EXPECT_TRUE(server.targets.empty());
+  fs::remove_all(config);
+}
+
+TEST(CrashFeedbackBudget, InTimeTheLogGoesUpWithABoundedReadAndWithoutABudgetTheReadIsNotBounded) {
+  mock_server_t server;
+  {
+    std::lock_guard lock(server.mutex);
+    server.reply_body = R"({"ok":true,"log":"stored","ref":"logs-2026-11/in-time.log.gz"})";
+  }
+  const auto config = scratch("logbudget-fast");
+  put(config / "sunshine.log", "[2026-11-24 10:00:00.000]: Info: started\n[2026-11-24 10:00:01.000]: Error: frozen\n");
+  stage_probe_t probe;
+  const auto stages = stages_of(probe, std::chrono::milliseconds(0), false);
+  crash::begin_feedback_budget(std::chrono::seconds { 35 });
+  const auto ref = crash::upload_session_log_from(config, server.url(), "x", "v", &stages);
+  crash::end_feedback_budget();
+  ASSERT_TRUE(ref.has_value());
+  EXPECT_EQ(*ref, "logs-2026-11/in-time.log.gz");
+  EXPECT_EQ(probe.read_cap.load(), crash::logfile::bounded_read_bytes);
+  EXPECT_STREQ(crash::session_log_state(), "uploaded");
+  EXPECT_TRUE(crash::upload_session_log_from(config, server.url(), "x", "v", &stages).has_value());  // no budget: the old behaviour
+  EXPECT_EQ(probe.read_cap.load(), crash::logfile::max_read_bytes);
+  fs::remove_all(config);
+}

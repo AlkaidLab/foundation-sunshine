@@ -18,7 +18,7 @@ export const PATHS = Object.freeze({
   notice: '/api/sparxie/warning',
 })
 
-export const ABSENT = Object.freeze({ available: false, installed: false, running: false, version: '', exe: '', touchUiSwitch: false, store: Object.freeze({ state: 'unused', profiles: 0 }), warned: true, statement: Object.freeze({ zh: '', en: '' }) })
+export const ABSENT = Object.freeze({ available: false, installed: false, running: false, version: '', exe: '', touchUiSwitch: false, endfieldPlugin: false, store: Object.freeze({ state: 'unused', profiles: 0 }), warned: true, statement: Object.freeze({ zh: '', en: '' }) })
 
 /** An error the host answered with: `code` is its error_code (sparxie_running, config_unreadable, unrecognised, game_running…) */
 export class SparxieError extends Error {
@@ -101,7 +101,7 @@ export function normalizeStatus(raw) {
   if (raw.installed === false) return { ...ABSENT, available: true, statement: { zh: str(raw.statement), en: str(raw.statement_en) } }
   const s = raw.store && typeof raw.store === 'object' ? raw.store : {}
   const state = ['data', 'empty', 'unused', 'unreadable'].includes(s.state) ? s.state : 'unused'
-  return { available: true, installed: true, running: !!raw.running, version: str(raw.version), exe: str(raw.exe), touchUiSwitch: raw.touchUiSwitch === true, store: { state, profiles: Number(s.profiles) || 0 }, warned: raw.warned !== false, statement: { zh: str(raw.statement), en: str(raw.statement_en) } }
+  return { available: true, installed: true, running: !!raw.running, version: str(raw.version), exe: str(raw.exe), touchUiSwitch: raw.touchUiSwitch === true, endfieldPlugin: !!raw.endfield && typeof raw.endfield === 'object' && raw.endfield.support === 'plugin', store: { state, profiles: Number(s.profiles) || 0 }, warned: raw.warned !== false, statement: { zh: str(raw.statement), en: str(raw.statement_en) } }
 }
 
 const waitForArt = (ms, signal) => new Promise((resolve) => {

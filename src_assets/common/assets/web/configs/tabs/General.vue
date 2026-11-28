@@ -65,6 +65,8 @@ const localeProxy = reactive({
 // numbers are accepted for a configuration that kept one.
 const LOG_LEVELS = ['verbose', 'debug', 'info', 'warning', 'error', 'fatal', 'none']
 const logLevels = computed(() => LOG_LEVELS.map((name, n) => ({ value: name, aliases: [String(n)], label: t(`config.log_level_${n}`) })))
+// where a pairing request asks for its PIN: the control panel's full-screen entry (default) or its own pairing page; the panel reads the saved value at every request
+const pinPrompts = computed(() => [{ value: 'fullscreen', label: t('config.pin_prompt_fullscreen') }, { value: 'panel', label: t('config.pin_prompt_panel') }])
 const sleepModes = computed(() => [['0', 'suspend'], ['1', 'hibernate'], ['2', 'away']].map(([value, key]) => ({ value, label: t(`config.sleep_mode_${key}`) })))
 </script>
 
@@ -81,6 +83,7 @@ const sleepModes = computed(() => [['0', 'suspend'], ['1', 'hibernate'], ['2', '
     <MSection>
       <MGroup>
         <CfgSwitch :config="config" k="notify_pre_releases" :on="true" :off="false" def="false" />
+        <CfgChoice :config="config" k="pin_prompt" def="fullscreen" :options="pinPrompts" />
         <CfgSwitch v-if="!isEmbeddedGui" :config="config" k="system_tray" :on="true" :off="false" def="true" />
         <CfgSwitch :config="config" k="stop_on_last_video_session" :on="true" :off="false" def="false" />
         <CfgSwitch :config="config" k="launch_splash" :on="true" :off="false" def="true" />

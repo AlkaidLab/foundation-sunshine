@@ -311,11 +311,40 @@ add_test(NAME background_probe_unit_tests COMMAND background_probe_unit_tests)
 
 add_executable(poster_unit_tests
         ${CMAKE_SOURCE_DIR}/src/nvhttp/poster.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/poster_platform_stubs.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_poster.cpp)
-target_include_directories(poster_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
-target_link_libraries(poster_unit_tests PRIVATE gtest_main OpenSSL::Crypto sunshine_project_options sunshine_coverage)
+target_include_directories(poster_unit_tests PRIVATE
+        "${CMAKE_SOURCE_DIR}"
+        "${CMAKE_BINARY_DIR}")  # generated version.h
+# poster.cpp uses host headers and Boost header-only components. The stub supplies the loggers, appdata directory and
+# UTF-8 path conversion used by this standalone target.
+target_link_libraries(poster_unit_tests PRIVATE gtest_main OpenSSL::Crypto Boost::format Boost::log Boost::thread
+        Boost::property_tree
+        sunshine::host_headers sunshine_project_options sunshine_coverage)
+target_compile_definitions(poster_unit_tests PRIVATE ${SUNSHINE_DEFINITIONS})
 set_target_properties(poster_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME poster_unit_tests COMMAND poster_unit_tests)
+
+add_executable(generated_cover_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/generated_cover.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_generated_cover.cpp)
+target_include_directories(generated_cover_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(generated_cover_unit_tests PRIVATE gtest_main OpenSSL::Crypto sunshine_project_options sunshine_coverage)
+if (WIN32)
+    target_link_libraries(generated_cover_unit_tests PRIVATE windowscodecs ole32 shell32 d2d1 dwrite)
+endif ()
+set_target_properties(generated_cover_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME generated_cover_unit_tests COMMAND generated_cover_unit_tests)
+
+add_executable(generated_cover_render_tool
+        ${CMAKE_SOURCE_DIR}/src/generated_cover.cpp
+        ${CMAKE_SOURCE_DIR}/tests/tools/generate_cover_renders.cpp)
+target_include_directories(generated_cover_render_tool PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(generated_cover_render_tool PRIVATE OpenSSL::Crypto sunshine_project_options)
+if (WIN32)
+    target_link_libraries(generated_cover_render_tool PRIVATE windowscodecs ole32 shell32 d2d1 dwrite)
+endif ()
+set_target_properties(generated_cover_render_tool PROPERTIES CXX_STANDARD 23)
 
 add_executable(measured_bitrate_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_measured_bitrate.cpp)
 target_include_directories(measured_bitrate_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
@@ -447,6 +476,12 @@ target_link_libraries(vdd_mode_list_unit_tests PRIVATE gtest_main nlohmann_json:
 set_target_properties(vdd_mode_list_unit_tests PROPERTIES CXX_STANDARD 23)
 add_test(NAME vdd_mode_list_unit_tests COMMAND vdd_mode_list_unit_tests)
 
+add_executable(vdd_unreachable_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_vdd_unreachable.cpp)
+target_include_directories(vdd_unreachable_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(vdd_unreachable_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(vdd_unreachable_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME vdd_unreachable_unit_tests COMMAND vdd_unreachable_unit_tests)
+
 add_executable(current_capture_target_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_current_capture_target.cpp)
 target_include_directories(current_capture_target_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
 target_link_libraries(current_capture_target_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
@@ -548,6 +583,12 @@ if (WIN32)
     set_target_properties(paced_reply_queue_unit_tests PROPERTIES CXX_STANDARD 23)
     add_test(NAME paced_reply_queue_unit_tests COMMAND paced_reply_queue_unit_tests)
 endif ()
+
+add_executable(unicode_input_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/platform/windows/test_unicode_input.cpp)
+target_include_directories(unicode_input_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(unicode_input_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+set_target_properties(unicode_input_unit_tests PROPERTIES CXX_STANDARD 23)
+add_test(NAME unicode_input_unit_tests COMMAND unicode_input_unit_tests)
 
 add_executable(ds5_haptics_wire_unit_tests ${CMAKE_SOURCE_DIR}/tests/unit/test_ds5_haptics_wire.cpp)
 target_include_directories(ds5_haptics_wire_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
@@ -1657,10 +1698,12 @@ list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/usbip/external_readonly_
         ${CMAKE_SOURCE_DIR}/tests/unit/test_uac1_microphone.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_video_probe.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_virtual_touchscreen_device.cpp
-        # test_amf_rate_control pulls boost headers transitively via src/video.h;
-        # it runs in its own Windows-only target, not the aggregate.
+        # This test has a separate Windows-only target.
         ${CMAKE_SOURCE_DIR}/tests/unit/test_amf_rate_control.cpp
-        ${CMAKE_SOURCE_DIR}/tests/unit/pairing_pending_platform_stubs.cpp)
+        ${CMAKE_SOURCE_DIR}/tests/unit/pairing_pending_platform_stubs.cpp
+        # These poster tests use private host stubs and must stay in poster_unit_tests.
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_poster.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/poster_platform_stubs.cpp)
 
 set(ABR_TEST_STUB_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/abr_test_stubs.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${ABR_TEST_STUB_SOURCE})
@@ -1724,8 +1767,9 @@ target_link_libraries(${PROJECT_NAME}
         ${PLATFORM_LIBRARIES}
         sunshine_project_options sunshine_coverage sunshine_crypto sunshine_ai_provider sunshine_ai_stream)
 if (WIN32)
-    # src/sparxie/platform.cpp downloads through WinHTTP, as the sunshine target links it.
-    target_link_libraries(${PROJECT_NAME} PRIVATE winhttp)
+    # src/sparxie/platform.cpp downloads through WinHTTP, as the sunshine target links it;
+    # src/generated_cover.cpp draws with Direct2D and DirectWrite and reads icons through the shell.
+    target_link_libraries(${PROJECT_NAME} PRIVATE winhttp windowscodecs ole32 shell32 d2d1 dwrite)
 endif ()
 target_compile_definitions(${PROJECT_NAME} PUBLIC
         SUNSHINE_SOURCE_DIR="${CMAKE_SOURCE_DIR}"

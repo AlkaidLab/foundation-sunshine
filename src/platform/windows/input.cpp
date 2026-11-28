@@ -13,6 +13,7 @@
 #include <cmath>
 #include <limits>
 #include <mutex>
+#include <span>
 #include <thread>
 #include <vector>
 
@@ -29,6 +30,7 @@
 #include "src/platform/common.h"
 #include "src/platform/gamepad_selection.h"
 #include "src/telemetry/telemetry.h"
+#include "unicode_input.h"
 #include "virtual_mouse.h"
 
 // Note: HSYNTHETICPOINTERDEVICE and related functions are now included in
@@ -675,6 +677,35 @@ namespace platf {
       }
       BOOST_LOG(error) << "Couldn't send input"sv;
     }
+  }
+
+  /**
+   * @brief Calls SendInput() for a batch and switches input desktops if required.
+   * @details One call keeps the events in order and uninterrupted by other input.
+   *          SendInput returns how many events it inserted, which can be fewer than asked for
+   *          (Microsoft Learn, SendInput, "Return value"): the remaining events are retried,
+   *          after a switch of the input desktop when there was one, at most three calls in all.
+   * @param inputs The `INPUT` structs to send.
+   * @param count The number of elements in `inputs`.
+   * @return How many events from the start of `inputs` were inserted.
+   */
+  UINT
+  send_inputs(INPUT *inputs, UINT count) {
+    constexpr int max_calls = 3;
+    UINT done = 0;
+    for (int call = 0; call < max_calls && done < count; call++) {
+      done += SendInput(count - done, inputs + done, sizeof(INPUT));
+      if (done < count) {
+        auto hDesk = syncThreadDesktop();
+        if (_lastKnownInputDesktop != hDesk) {
+          _lastKnownInputDesktop = hDesk;
+        }
+      }
+    }
+    if (done < count) {
+      BOOST_LOG(error) << "Couldn't send input batch ("sv << done << "/"sv << count << " events inserted)"sv;
+    }
+    return done;
   }
 
   /**
@@ -1983,22 +2014,39 @@ namespace platf {
       return;
     }
 
-    // Send all key down events
-    for (int i = 0; i < chars; i++) {
-      INPUT input {};
-      input.type = INPUT_KEYBOARD;
-      input.ki.wScan = wide[i];
-      input.ki.dwFlags = KEYEVENTF_UNICODE;
-      send_input(input);
+    // Down and up per UTF-16 unit, all in one SendInput call: a VK_PACKET key must be
+    // released before the next character, otherwise VK_PACKET-aware apps take the
+    // later characters for auto-repeat of the held key (see unicode_input.h).
+    auto events = win_unicode::interleaved_key_events(std::span<const WCHAR>(wide.data(), static_cast<std::size_t>(chars)));
+    std::vector<INPUT> batch(events.size());
+    for (std::size_t i = 0; i < events.size(); i++) {
+      batch[i].type = INPUT_KEYBOARD;
+      batch[i].ki.wScan = events[i].unit;
+      batch[i].ki.dwFlags = KEYEVENTF_UNICODE | (events[i].up ? KEYEVENTF_KEYUP : 0);
+    }
+    const auto injected = send_inputs(batch.data(), static_cast<UINT>(batch.size()));
+    if (injected == batch.size()) {
+      return;
     }
 
-    // Send all key up events
-    for (int i = 0; i < chars; i++) {
-      INPUT input {};
-      input.type = INPUT_KEYBOARD;
-      input.ki.wScan = wide[i];
-      input.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
-      send_input(input);
+    // Only a prefix went out. Release every key that was pressed without its key-up so VK_PACKET
+    // is not left down for the next text run or for the user's own typing.
+    auto owed = win_unicode::pending_key_ups(events, injected);
+    BOOST_LOG(warning) << "Unicode text input was cut short: "sv << injected << " of "sv << batch.size()
+                       << " events inserted, releasing "sv << owed.size() << " pressed key(s)"sv;
+    if (owed.empty()) {
+      return;
+    }
+    std::vector<INPUT> releases(owed.size());
+    for (std::size_t i = 0; i < owed.size(); i++) {
+      releases[i].type = INPUT_KEYBOARD;
+      releases[i].ki.wScan = owed[i].unit;
+      releases[i].ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
+    }
+    const auto released = send_inputs(releases.data(), static_cast<UINT>(releases.size()));
+    if (released != releases.size()) {
+      BOOST_LOG(error) << "Could not release "sv << (releases.size() - released) << " of "sv << releases.size()
+                       << " pressed unicode key(s)"sv;
     }
   }
 

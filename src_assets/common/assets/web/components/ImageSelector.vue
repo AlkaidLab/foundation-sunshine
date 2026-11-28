@@ -2,29 +2,42 @@
   <section class="cover-card" :class="[`cover-card--${kind}`, { 'is-dragging': dragCounter > 0 }]" :aria-label="title" @dragenter="handleDragEnter" @dragleave="handleDragLeave" @dragover.prevent @drop.prevent.stop="handleDrop">
     <header v-if="title" class="cover-card__head">
       <h3 class="cover-card__title">{{ title }}</h3>
-      <MChip>{{ ratioLabel }}</MChip>
+      <MChip>{{ statusText || ratioLabel }}</MChip>
     </header>
     <MGroup>
       <div class="m-item cover-stage">
         <div class="cover-stage__row">
           <div class="cover-frame" :class="{ 'is-empty': !hasPicture, 'is-broken': showBroken }">
             <div v-if="isDesktopImage" class="cover-frame__state"><MIcon name="wallpaper" fill /><span>{{ $t('apps.use_desktop_image') }}</span></div>
-            <img v-else-if="imagePath && !broken" class="image-preview" :class="`image-preview--${kind}`" :src="previewUrl" :alt="$t('apps.image_preview')" @error="handleImageError" />
+            <img v-else-if="ownPath && !broken" class="image-preview" :class="`image-preview--${kind}`" :src="previewUrl" :alt="$t('apps.image_preview')" @error="handleImageError" />
             <div v-else-if="showBroken" class="cover-frame__state cover-frame__state--error" role="alert"><MIcon name="error" fill /><span>{{ $t('apps.image_load_failed') }}</span></div>
+            <img v-else-if="showGenerated" class="image-preview image-preview--generated" :class="`image-preview--${kind}`" :src="generatedSrc" alt="" @error="generatedBroken = true" />
             <button v-else type="button" class="cover-frame__state cover-frame__choose" @click="pickFile"><MIcon name="image" fill /><span>{{ $t('apps.choose_image') }}</span></button>
             <CoverBadge v-if="badge && hasPicture && !isDesktopImage" :kind="kind" />
             <div v-if="dragCounter > 0" class="cover-frame__scrim"><MIcon name="upload" fill /><span>{{ $t('apps.image_drop_hint') }}</span></div>
             <div v-else-if="uploading" class="cover-frame__scrim" role="status" aria-live="polite"><MLoading /><span>{{ $t('apps.image_uploading') }}</span></div>
           </div>
-          <div v-if="kind === 'poster' && imagePath && !isDesktopImage && !broken" class="image-preview-circle" aria-hidden="true">
+          <div v-if="kind === 'poster' && ownPath && !isDesktopImage && !broken" class="image-preview-circle" aria-hidden="true">
             <img :src="previewUrl" alt="" @error="handleImageError" />
           </div>
         </div>
+        <CoverStyleStrip
+          v-if="showStrip && showGenerated"
+          :model-value="coverStyle"
+          :app-id="appId"
+          :name="savedName"
+          :orientation="kind === 'hero' ? 'landscape' : 'portrait'"
+          allow-auto
+          :global-style="globalStyle"
+          :aria-label="$t('apps.cover_style_title')"
+          @update:model-value="(value) => $emit('update:coverStyle', value)"
+        />
         <div v-if="!isDesktopImage" class="cover-actions">
           <input ref="fileInput" type="file" class="image-file-input" tabindex="-1" aria-hidden="true" accept="image/png,image/jpg,image/jpeg,image/gif,image/bmp,image/webp" @change="handleFileSelect" />
           <MButton variant="tonal" icon="upload" :loading="uploading" @click="pickFile">{{ $t('apps.choose_image') }}</MButton>
           <MButton v-if="kind === 'poster'" variant="tonal" icon="search" @click="openCoverFinder">{{ $t('apps.find_cover') }}</MButton>
-          <MButton v-if="imagePath" variant="text" icon="close" data-image="clear" @click="$emit('update-image', '')">{{ $t('apps.image_clear') }}</MButton>
+          <MButton v-if="imagePath && !generate" variant="text" icon="close" data-image="clear" @click="$emit('update-image', '')">{{ $t('apps.image_clear') }}</MButton>
+          <MButton v-if="ownPath && generate" variant="text" icon="palette" data-image="use-generated" @click="$emit('update-image', '')">{{ $t('apps.cover_use_generated') }}</MButton>
         </div>
       </div>
       <MSwitchItem v-if="kind === 'poster'" :model-value="isDesktopImage" icon="wallpaper" :title="$t('apps.use_desktop_image')" @update:model-value="(on) => $emit('update-image', on ? 'desktop' : '')" />
@@ -48,9 +61,11 @@
 <script>
 import { MButton, MChip, MField, MGroup, MIcon, MIconButton, MLoading, MSwitchItem } from 'foundation-ui/vue'
 import CoverFinder from './CoverFinder.vue'
+import CoverStyleStrip from './CoverStyleStrip.vue'
 import CoverBadge from './sparxie/CoverBadge.vue'
 import { validateFile } from '../utils/validation.js'
 import { getImagePreviewUrl } from '../utils/imageUtils.js'
+import { isPlaceholderImagePath } from '../utils/generatedCover.js'
 import { apiPostJson } from '../utils/apiFetch.js'
 
 export default {
@@ -58,6 +73,7 @@ export default {
   components: {
     CoverBadge,
     CoverFinder,
+    CoverStyleStrip,
     MButton,
     MChip,
     MField,
@@ -91,6 +107,42 @@ export default {
       type: Boolean,
       default: false,
     },
+    // the generated cover of the host (GET /api/apps/cover-preview): shown while the application has no picture of its own; empty when the host cannot draw one (a new application)
+    generatedSrc: {
+      type: String,
+      default: '',
+    },
+    // the application can have a generated cover: a picture of its own is then replaced by it with one action, and the strip of styles is under the preview
+    generate: {
+      type: Boolean,
+      default: false,
+    },
+    showStrip: {
+      type: Boolean,
+      default: false,
+    },
+    // 'auto' (follow the global style) or one of the six
+    coverStyle: {
+      type: String,
+      default: 'auto',
+    },
+    appId: {
+      type: String,
+      default: '',
+    },
+    savedName: {
+      type: String,
+      default: '',
+    },
+    globalStyle: {
+      type: String,
+      default: '',
+    },
+    // one short line in place of the ratio: what the cover is, e.g. 生成 · 毛玻璃
+    statusText: {
+      type: String,
+      default: '',
+    },
   },
   data() {
     return {
@@ -99,6 +151,7 @@ export default {
       dragCounter: 0,
       uploading: false,
       broken: false,
+      generatedBroken: false,
     }
   },
   computed: {
@@ -111,17 +164,28 @@ export default {
     ratioLabel() {
       return this.kind === 'hero' ? '16:9' : '2:3'
     },
+    // the picture of the person's: the host's placeholder (box.png, as the Xbox entry and older versions wrote it) is not one when the host draws a cover instead
+    ownPath() {
+      return this.generate && isPlaceholderImagePath(this.imagePath) ? '' : this.imagePath
+    },
     hasPicture() {
-      return this.isDesktopImage || (!!this.imagePath && !this.broken)
+      return this.isDesktopImage || (!!this.ownPath && !this.broken)
     },
     showBroken() {
-      return !this.isDesktopImage && !!this.imagePath && this.broken
+      return !this.isDesktopImage && !!this.ownPath && this.broken
+    },
+    // nothing of the person's own, and the host draws a cover: that cover is the preview
+    showGenerated() {
+      return !this.ownPath && !!this.generatedSrc && !this.generatedBroken
     },
   },
   watch: {
     // a new path is a new picture: it has not failed yet
     imagePath() {
       this.broken = false
+    },
+    generatedSrc() {
+      this.generatedBroken = false
     },
   },
   methods: {
@@ -349,8 +413,10 @@ export default {
   border-radius: var(--md-sys-shape-corner-large);
 }
 
+.cover-card--poster .cover-stage__row { justify-content: center; }
+
 .cover-card--poster .cover-frame {
-  width: min(100%, 176px);
+  width: min(100%, 240px);
   aspect-ratio: 2 / 3;
 }
 

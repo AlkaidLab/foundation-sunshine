@@ -184,7 +184,9 @@ function Resolve-UsbipOwnership($Inventory, [switch]$ConfirmedReplace) {
   $reason = 'unproven-origin'
   if (-not $Inventory.Present) { $owner = 'absent'; $reason = 'not-installed' }
   elseif ($Inventory.Extras -and -not $proven) { $reason = 'gui-or-sdk' }
-  elseif (-not $compatible) { $reason = 'unsupported-version' }
+  # No uninstall entry and no receipt, yet driver services, tools or controllers remain: what another tool's own usbip-win2
+  # leaves behind after it was removed. Installed apps has nothing to uninstall here, and the panel's instruction says so.
+  elseif (-not $compatible) { $reason = if ($versions.Count -eq 0) { 'no-registration' } else { 'unsupported-version' } }
   elseif ($null -ne $Inventory.Receipt -and
       (Get-UsbipValue $Inventory.Receipt 'InstallLayout') -eq 'usbip-slim-v1' -and
       (Get-UsbipValue $Inventory.Receipt 'SourceSHA256') -eq $script:UsbipSourceHash -and

@@ -44,6 +44,8 @@ namespace perf {
     recovery,
   };
 
+  enum class pyrowave_queue_event_e { replaced_pending, dropped_full };
+
   void begin_session(const session_metadata_t &metadata);
   void end_session(std::uint32_t session_id);
   void update_session_bitrate(std::uint32_t session_id, int bitrate_kbps);
@@ -51,6 +53,7 @@ namespace perf {
   void record_host_latency(std::uint32_t session_id, double latency_ms, std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
   void record_pipeline_sample(std::uint32_t session_id, const pipeline_sample_t &sample, std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
   void record_pyrowave_failure(std::uint32_t session_id, pyrowave_failure_stage_e stage);
+  void record_pyrowave_queue_event(std::uint32_t session_id, pyrowave_queue_event_e event);
 
   void record_capture_frame(std::uint32_t session_id, const std::shared_ptr<capture_source_counter_t> &source,
     std::chrono::steady_clock::time_point now = {});

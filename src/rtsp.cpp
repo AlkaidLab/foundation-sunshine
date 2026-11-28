@@ -51,6 +51,9 @@ extern "C" {
 #include "spatial_transport/mat_live_session.h"
 #include "src/log_text.h"
 #include "stream.h"
+#ifdef _WIN32
+  #include "usb_stream_tunnel.h"
+#endif
 #include "streaming/client_framerate.h"
 #include "streaming/expected_failures.h"
 #include "streaming/fec.h"
@@ -1354,11 +1357,13 @@ namespace rtsp_stream {
 
 #ifdef _WIN32
     // Clients that do not advertise CAPABILITY_PYROWAVE ignore this Windows
-    // extension and negotiate one of the legacy formats below. Do not
-    // advertise it if this host cannot create the Vulkan runtime device; that
-    // lets clients fall back before ANNOUNCE instead of failing on the first
-    // encoded frame.
-    if (pyrowave::is_server_runtime_available()) {
+    // extension and negotiate one of the legacy formats below. The advertisement
+    // is optimistic: the client's capability is not visible until ANNOUNCE, so
+    // the runtime probe runs (in its own process, once) only when a client
+    // actually selects the format there. A host whose probe fails stops
+    // advertising for the rest of the process, and the client falls back to a
+    // legacy format on its next connection.
+    if (pyrowave::may_advertise()) {
       // Select PyroWave only through the versioned x-ss-pyrowave contract.
       // Do not put its out-of-range numeric ID in the legacy bitStreamFormat
       // attribute, which older clients may parse.
@@ -1595,9 +1600,25 @@ namespace rtsp_stream {
     }
   };
 
+#ifdef _WIN32
+  static void
+  attach_direct_usb_video_header(OPTION_ITEM &head, OPTION_ITEM &video,
+    const launch_session_t &session) {
+    if (!session.direct_usb_video) return;
+    video.option = const_cast<char *>("X-SS-USB-Video-Version");
+    video.content = const_cast<char *>("1");
+    auto tail = &head;
+    while (tail->next) tail = tail->next;
+    tail->next = &video;
+  }
+#endif
+
   void
   cmd_announce(rtsp_server_t *server, tcp::socket &sock, launch_session_t &session, msg_t &&req) {
     OPTION_ITEM option {};
+#ifdef _WIN32
+    OPTION_ITEM usb_video_option {};
+#endif
 
     // I know these string literals will not be modified
     option.option = const_cast<char *>("CSeq");
@@ -1619,6 +1640,9 @@ namespace rtsp_stream {
         dynamic_hdr_headers.attach(option);
         mat_live_response_headers_t mat_headers(session);
         mat_headers.attach(option);
+#ifdef _WIN32
+        attach_direct_usb_video_header(option, usb_video_option, session);
+#endif
         respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
       }
       else {
@@ -1672,8 +1696,8 @@ namespace rtsp_stream {
         if (!val.empty() && val.back() == ' ') {
           val = val.substr(0, val.size() - 1);
         }
-        if (name == "x-ml-general.endpointAutoRefreshVersion"sv && args.contains(name)) {
-          respond(sock, session, &option, 400, "Duplicate endpoint refresh version", req->sequenceNumber, {});
+        if ((name == "x-ml-general.endpointAutoRefreshVersion"sv || name == "x-ml-video.usbStreamVersion"sv) && args.contains(name)) {
+          respond(sock, session, &option, 400, "Duplicate transport version", req->sequenceNumber, {});
           return;
         }
         auto [entry, inserted] = args.emplace(name, val);
@@ -2244,6 +2268,31 @@ namespace rtsp_stream {
       BOOST_LOG(info) << "Control-only session detected: client "sv << logging::quoted_name(session.client_name) << " will only provide input control"sv;
     }
 
+#ifdef _WIN32
+    const auto usb_video = args.find("x-ml-video.usbStreamVersion"sv);
+    if (session.direct_usb_video || usb_video != args.end()) {
+      // videoBroadcastThread drops every frame above stream::max_encodable_frame_bytes(packetsize), and
+      // the regular path leaves that ceiling to the client's packet size. Direct USB holds it to the
+      // ceiling of the smallest packet size Moonlight clients negotiate (1024 bytes, moonlight-common-c's
+      // remote IPv4 cap), so a smaller request is refused here instead of dropping frames once the
+      // session runs.
+      constexpr int moonlight_min_packetsize = 1024;
+      const auto usb_min_frame_bytes = stream::max_encodable_frame_bytes(moonlight_min_packetsize);
+      const bool usb_packet_size_ok = config.packetsize <= 65000 &&
+                                      stream::max_encodable_frame_bytes(config.packetsize) >= usb_min_frame_bytes;
+      if (!usb_packet_size_ok) {
+        BOOST_LOG(warning) << "Rejecting direct USB video: packet size "sv << config.packetsize
+                           << " cannot carry a "sv << usb_min_frame_bytes << "-byte frame"sv;
+      }
+      if (!session.direct_usb_video || !session.direct_usb_video->active() || usb_video == args.end() ||
+          usb_video->second != "1" || !session.setup_video || session.control_only ||
+          !usb_packet_size_ok) {
+        respond(sock, session, &option, 461, "Direct USB Video Unavailable", req->sequenceNumber, {});
+        return;
+      }
+    }
+#endif
+
     // Check that any required encryption is enabled
     // 对于仅控制流会话，跳过视频/音频加密检查
     if (!session.control_only) {
@@ -2293,6 +2342,9 @@ namespace rtsp_stream {
     dynamic_hdr_headers.attach(option);
     mat_live_response_headers_t mat_headers(session);
     mat_headers.attach(option);
+#ifdef _WIN32
+    attach_direct_usb_video_header(option, usb_video_option, session);
+#endif
 
     respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
   }

@@ -21,6 +21,7 @@ Sunshine-setup.exe  (outer, the one download)
    ├─ --native ─────────────────────► the Direct2D window (unchanged)
    └─ default ──► web_main() (tools/installer_web.inc)
                   │  no WebView2 Runtime / no UI payload / UI does not start or load in 15 s
+                  │  / a VNC server is running (tools/installer_remote_capture.h; FOUNDATION_SETUP_IGNORE_VNC keeps the web UI)
                   │  ──► the Direct2D window (fallback; nothing has been shown yet)
                   ▼
                   extracts foundation-setup-ui.exe to %TEMP%\FoundationSunshine-setup-ui-<id>\

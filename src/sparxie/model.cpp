@@ -1,5 +1,6 @@
 #include "src/sparxie/model.h"
 #include "src/sparxie/stream_display.h"
+#include "src/sparxie/sparxie_build.h"
 
 #include "src/sparxie/region.h"
 
@@ -152,7 +153,8 @@ namespace sparxie {
   to_sparxie_game(std::string_view game) {
     if (game == "starrail") return "starRail";
     if (game == "zzz") return "zenlessZoneZero";
-    if (game == "endfield") return "endfield";  // the Broker's game id of an Endfield session (capability "endfield")
+    // the first generation's id of an Endfield session (capability "endfield"); the second generation's plugin id is chosen by endfield_game_id() from the installed build
+    if (game == "endfield") return "endfield";
     return "genshin";
   }
 
@@ -161,7 +163,7 @@ namespace sparxie {
     if (game == "starRail") return "starrail";
     if (game == "zenlessZoneZero") return "zzz";
     if (game == "genshin") return "genshin";
-    if (game == "endfield") return "endfield";
+    if (game == "endfield" || game == kEndfieldPluginId) return "endfield";
     return {};
   }
 

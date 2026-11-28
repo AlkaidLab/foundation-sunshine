@@ -249,6 +249,7 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/windows/usbip_device_transport.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/usbip_device_transport.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/paced_reply_queue.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/unicode_input.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/audio_default_guard.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/audio_default_guard.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/capture_endpoint_recorder.h"

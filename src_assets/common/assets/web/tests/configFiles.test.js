@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { hostData } from '../composables/hostData.js'
+import { useConfig } from '../composables/useConfig.js'
 import { PATH_KEYS, configFileName, configLines, configText, differences, importPlan, parseConfigText } from '../utils/configBackup.js'
 
 const WEB = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -42,6 +44,30 @@ test('the differences from the defaults name the place of each setting, in the o
   assert.equal(port.value, '57989')
   assert.ok(!rows.some((r) => r.key === 'min_log_level' && r.value === 'info' && r.def === 'info'), 'a value equal to its default is not a difference')
   assert.deepEqual(differences({}), [])
+})
+
+test('the configuration difference list uses the NVENC defaults filled by the settings page', async (t) => {
+  let saved = {}
+  t.mock.method(hostData, 'refresh', async () => ({ platform: 'windows', ...saved }))
+  const state = useConfig()
+  state.initTabs()
+
+  const preset = { key: 'nvenc_preset', value: '1', def: '4' }
+  const spatialAq = { key: 'nvenc_spatial_aq', value: 'disabled', def: 'enabled' }
+  for (const [settings, expected] of [
+    [{}, []],
+    [{ nvenc_preset: '4', nvenc_spatial_aq: 'true' }, []],
+    [{ nvenc_preset: '4', nvenc_spatial_aq: '1' }, []],
+    [{ nvenc_preset: '1', nvenc_spatial_aq: 'enabled' }, [preset]],
+    [{ nvenc_preset: '4', nvenc_spatial_aq: 'disabled' }, [spatialAq]],
+  ]) {
+    saved = settings
+    await state.loadConfig()
+    const rows = differences(state.config.value)
+      .filter(({ key }) => key === preset.key || key === spatialAq.key)
+      .map(({ key, value, def }) => ({ key, value, def }))
+    assert.deepEqual(rows, expected, JSON.stringify(settings))
+  }
 })
 
 test('the page is a set of groups, not one closed accordion; every file row keeps its key, and import goes through the unsaved changes', () => {

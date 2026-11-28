@@ -12,6 +12,7 @@
 
 #include "../tests_common.h"
 
+#include <chrono>
 #include <limits>
 #include <vector>
 
@@ -589,6 +590,8 @@ TEST(DolbyVisionRpu, StagedQueueRefusesOverflowInsteadOfEvicting) {
 namespace {
 
   using video::dolby_vision::rpu_injector_t;
+  using startup_action = rpu_injector_t::startup_action_e;
+  using namespace std::chrono_literals;
 
   /// A minimal access unit with one VCL NAL, a valid injection target.
   bytes_t
@@ -634,6 +637,8 @@ namespace {
 TEST(DolbyVisionInjector, IsInertBeforeConfigure) {
   rpu_injector_t injector;
   EXPECT_FALSE(injector.enabled());
+  EXPECT_FALSE(injector.startup_pending());
+  EXPECT_EQ(injector.prepare_frame(valid_stats(), {}), startup_action::emit);
 
   bytes_t au = make_au();
   injector.stage(1, valid_stats());
@@ -649,7 +654,7 @@ TEST(DolbyVisionInjector, ConfigureRejectsOutOfRangeConfig) {
   EXPECT_FALSE(injector.enabled());
 }
 
-TEST(DolbyVisionInjector, ColdAnalyzerShipsWithoutRpu) {
+TEST(DolbyVisionInjector, ColdAnalyzerDoesNotStageRpu) {
   rpu_injector_t injector;
   ASSERT_TRUE(injector.configure(video::dolby_vision::session_config_t {}));
 
@@ -659,23 +664,158 @@ TEST(DolbyVisionInjector, ColdAnalyzerShipsWithoutRpu) {
 
   bytes_t au = make_au();
   EXPECT_FALSE(injector.inject(1, au));
-  EXPECT_EQ(au, make_au()) << "no analysis yet means no RPU, like the HDR10+ cold path";
+  EXPECT_EQ(au, make_au()) << "startup gating must hold this frame until metadata is available";
+}
+
+TEST(DolbyVisionInjector, ColdStartupWaitsForAnalysisAndRefreshesTheFirstOutput) {
+  rpu_injector_t injector;
+  ASSERT_TRUE(injector.configure(session_config_t {}));
+  EXPECT_TRUE(injector.startup_pending());
+  const auto start = std::chrono::steady_clock::time_point {};
+  const platf::hdr_frame_luminance_stats_t cold;
+  for (int frame = 0; frame < 3; ++frame) {
+    EXPECT_EQ(injector.prepare_frame(cold, start + frame * 16ms), startup_action::hold);
+  }
+
+  // The encode session supplies the completed analysis to this startup gate.
+  const auto stats = valid_stats();
+  EXPECT_EQ(injector.prepare_frame(stats, start + 48ms), startup_action::idr);
+  EXPECT_EQ(injector.prepare_frame(stats, start + 49ms), startup_action::idr);
+  EXPECT_TRUE(injector.startup_pending());
+  injector.stage(4, stats);
+  bytes_t au = make_au();
+  ASSERT_TRUE(injector.inject(4, au));
+  const auto rpu = parse_injected_rpu(au);  // Also verifies the RPU's CRC and syntax.
+  EXPECT_EQ(count_rpu_nals(au), 1u);
+  EXPECT_EQ(rpu.scene_refresh, 1u);
+  EXPECT_EQ(rpu.l1_avg, 2048u);
+  EXPECT_EQ(rpu.l1_max, 3079u);
+  EXPECT_FALSE(injector.startup_pending());
+  EXPECT_EQ(injector.prepare_frame(stats, start + 64ms), startup_action::emit);
+}
+
+TEST(DolbyVisionInjector, StartupRejectsInvalidPqAnalysisButAcceptsRealBlack) {
+  rpu_injector_t injector;
+  ASSERT_TRUE(injector.configure(session_config_t {}));
+  const auto start = std::chrono::steady_clock::time_point {};
+  for (float pq : { 0.0f, -0.1f, 1.1f, std::numeric_limits<float>::quiet_NaN() }) {
+    auto stats = valid_stats();
+    stats.avg_maxrgb_pq = pq;
+    EXPECT_EQ(injector.prepare_frame(stats, start), startup_action::hold);
+  }
+
+  platf::hdr_frame_luminance_stats_t black;
+  black.valid = true;
+  EXPECT_EQ(injector.prepare_frame(black, start + 16ms), startup_action::idr);
+  injector.stage(1, black);
+  bytes_t au = make_au();
+  ASSERT_TRUE(injector.inject(1, au));
+  const auto rpu = parse_injected_rpu(au);
+  EXPECT_EQ(rpu.scene_refresh, 1u);
+  EXPECT_EQ(rpu.l1_min, 0u);
+  EXPECT_EQ(rpu.l1_max, video::dolby_vision::l1_max_pq_min);
+  EXPECT_EQ(rpu.l1_avg, video::dolby_vision::l1_avg_pq_min);
+}
+
+TEST(DolbyVisionInjector, ReadyProbeDoesNotCommitAnalysisWhenAnotherStartupGateHolds) {
+  rpu_injector_t injector;
+  ASSERT_TRUE(injector.configure(session_config_t {}));
+  const auto start = std::chrono::steady_clock::time_point {};
+  EXPECT_EQ(injector.prepare_frame(valid_stats(), start), startup_action::idr);
+
+  // A different startup gate holds the capture, so it never reaches stage().
+  bytes_t unstaged = make_au();
+  EXPECT_FALSE(injector.inject(1, unstaged));
+  const platf::hdr_frame_luminance_stats_t missing;
+  EXPECT_EQ(injector.prepare_frame(missing, start + 16ms), startup_action::hold);
+  EXPECT_TRUE(injector.startup_pending());
+
+  auto next = valid_stats();
+  next.avg_maxrgb_pq = 0.25f;
+  EXPECT_EQ(injector.prepare_frame(next, start + 32ms), startup_action::idr);
+  injector.stage(2, next);
+  bytes_t au = make_au();
+  ASSERT_TRUE(injector.inject(2, au));
+  const auto rpu = parse_injected_rpu(au);
+  EXPECT_EQ(rpu.l1_avg, 1024u) << "the held probe must not enter the temporal filter";
+  EXPECT_EQ(rpu.scene_refresh, 1u);
+}
+
+TEST(DolbyVisionInjector, StartupTimeoutDisablesUntilReconfigured) {
+  rpu_injector_t injector;
+  ASSERT_TRUE(injector.configure(session_config_t {}));
+  const auto start = std::chrono::steady_clock::time_point {};
+  const platf::hdr_frame_luminance_stats_t missing;
+  EXPECT_EQ(injector.prepare_frame(missing, start), startup_action::hold);
+  EXPECT_EQ(injector.prepare_frame(missing, start + rpu_injector_t::STARTUP_TIMEOUT - 1ms),
+    startup_action::hold);
+  EXPECT_EQ(injector.prepare_frame(missing, start + rpu_injector_t::STARTUP_TIMEOUT),
+    startup_action::timed_out);
+  EXPECT_FALSE(injector.enabled());
+  EXPECT_FALSE(injector.startup_pending());
+
+  EXPECT_EQ(injector.prepare_frame(valid_stats(), start + 2s), startup_action::emit);
+  injector.stage(1, valid_stats());
+  bytes_t au = make_au();
+  EXPECT_FALSE(injector.inject(1, au));
+  EXPECT_EQ(au, make_au());
+
+  ASSERT_TRUE(injector.configure(session_config_t {}));
+  EXPECT_TRUE(injector.startup_pending());
+  EXPECT_EQ(injector.prepare_frame(missing, start + 3s), startup_action::hold);
+  EXPECT_EQ(injector.prepare_frame(valid_stats(), start + 3016ms), startup_action::idr);
+  injector.stage(2, valid_stats());
+  ASSERT_TRUE(injector.inject(2, au));
+  EXPECT_EQ(parse_injected_rpu(au).scene_refresh, 1u);
+}
+
+TEST(DolbyVisionInjector, DroppedFirstEncodeKeepsRequestingIdrAndSceneRefresh) {
+  rpu_injector_t injector;
+  ASSERT_TRUE(injector.configure(session_config_t {}));
+  const auto start = std::chrono::steady_clock::time_point {};
+  auto stats = valid_stats();
+  stats.sample_sequence = 1;
+  EXPECT_EQ(injector.prepare_frame(stats, start), startup_action::idr);
+  injector.stage(1, stats);
+
+  // The encoder never produces frame 1. Even a missing next analysis can use
+  // its staged metadata, but cannot complete startup before an RPU is emitted.
+  const platf::hdr_frame_luminance_stats_t missing;
+  EXPECT_EQ(injector.prepare_frame(missing, start + 16ms), startup_action::idr);
+  injector.stage(2, missing);
+  EXPECT_TRUE(injector.startup_pending());
+  bytes_t au = make_au();
+  ASSERT_TRUE(injector.inject(2, au));
+  const auto rpu = parse_injected_rpu(au);
+  EXPECT_EQ(rpu.scene_refresh, 1u);
+  EXPECT_EQ(rpu.l1_avg, 2048u);
+  EXPECT_FALSE(injector.startup_pending());
+  EXPECT_EQ(injector.prepare_frame(missing, start + 32ms), startup_action::emit);
 }
 
 TEST(DolbyVisionInjector, BindsRpuToTheEncodedFrameIndex) {
   rpu_injector_t injector;
   ASSERT_TRUE(injector.configure(video::dolby_vision::session_config_t {}));
   injector.stage(5, valid_stats());
+  auto later = valid_stats();
+  later.avg_maxrgb_pq = 0.75f;
+  injector.stage(6, later);
 
   // A different frame's output takes nothing.
   bytes_t other = make_au();
-  EXPECT_FALSE(injector.inject(6, other));
+  EXPECT_FALSE(injector.inject(7, other));
   EXPECT_EQ(other, make_au());
+  EXPECT_TRUE(injector.startup_pending());
 
+  // The first output arrives after a later frame has already been staged.
   bytes_t au = make_au();
-  EXPECT_TRUE(injector.inject(5, au));
+  ASSERT_TRUE(injector.inject(5, au));
   EXPECT_EQ(count_rpu_nals(au), 1u);
-  EXPECT_GT(au.size(), make_au().size());
+  EXPECT_EQ(parse_injected_rpu(au).l1_avg, 2048u);
+  EXPECT_FALSE(injector.startup_pending());
+  bytes_t later_au = make_au();
+  ASSERT_TRUE(injector.inject(6, later_au));
+  EXPECT_GT(parse_injected_rpu(later_au).l1_avg, parse_injected_rpu(au).l1_avg);
 
   // take() consumed the entry.
   bytes_t again = make_au();
@@ -688,13 +828,22 @@ TEST(DolbyVisionInjector, ReusesLastAnalysisWhenStatsGoMissing) {
   ASSERT_TRUE(injector.configure(video::dolby_vision::session_config_t {}));
 
   injector.stage(1, valid_stats());
+  bytes_t first = make_au();
+  ASSERT_TRUE(injector.inject(1, first));
+  const auto first_rpu = parse_injected_rpu(first);
   platf::hdr_frame_luminance_stats_t lost;
   lost.valid = false;
+  EXPECT_EQ(injector.prepare_frame(lost, {}), startup_action::emit);
   injector.stage(2, lost);
 
   bytes_t au = make_au();
-  injector.inject(2, au);
+  ASSERT_TRUE(injector.inject(2, au));
   EXPECT_EQ(count_rpu_nals(au), 1u) << "conservative metadata beats a metadata-less frame";
+  const auto rpu = parse_injected_rpu(au);
+  EXPECT_EQ(rpu.l1_min, first_rpu.l1_min);
+  EXPECT_EQ(rpu.l1_max, first_rpu.l1_max);
+  EXPECT_EQ(rpu.l1_avg, first_rpu.l1_avg);
+  EXPECT_EQ(rpu.scene_refresh, 0u);
 }
 
 TEST(DolbyVisionInjector, MarksEachDetectedSceneExactlyOnce) {

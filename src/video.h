@@ -519,7 +519,7 @@ namespace video {
     virtual int64_t
     frame_index() = 0;
 
-    virtual uint8_t *
+    virtual const uint8_t *
     data() = 0;
 
     virtual size_t
@@ -537,6 +537,8 @@ namespace video {
 
     std::shared_ptr<const std::vector<replace_t>> replacements;
     std::uint64_t channel_data = 0;
+    // Only independent PyroWave frames opt into replacing a pending frame.
+    bool pyrowave_pending_replace = false;
     bool after_ref_frame_invalidation = false;
     unsigned fec_percentage = 0;  // Protection budget when this frame was submitted.
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
@@ -562,7 +564,7 @@ namespace video {
       return av_packet->pts;
     }
 
-    uint8_t *
+    const uint8_t *
     data() override {
       return av_packet->data;
     }
@@ -590,7 +592,7 @@ namespace video {
       return index;
     }
 
-    uint8_t *
+    const uint8_t *
     data() override {
       return frame_data.data();
     }
@@ -601,6 +603,23 @@ namespace video {
     }
 
     std::vector<uint8_t> frame_data;
+    int64_t index;
+    bool idr;
+  };
+
+  // Holds immutable packetized bytes through asynchronous broadcast without
+  // copying them. The broadcast path only reads packet data before producing
+  // its own writable RTP buffers.
+  struct packet_raw_shared: packet_raw_t {
+    packet_raw_shared(std::shared_ptr<const std::vector<uint8_t>> frame_data, int64_t frame_index, bool idr):
+        frame_data { std::move(frame_data) }, index { frame_index }, idr { idr } {}
+
+    bool is_idr() override { return idr; }
+    int64_t frame_index() override { return index; }
+    const uint8_t *data() override { return frame_data->data(); }
+    size_t data_size() override { return frame_data->size(); }
+
+    std::shared_ptr<const std::vector<uint8_t>> frame_data;
     int64_t index;
     bool idr;
   };

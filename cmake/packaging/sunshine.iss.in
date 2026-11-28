@@ -139,10 +139,10 @@ english.MsgOldNSISStaleRegistry=The previous installation files appear to be gon
 english.MsgOldNSISCleanupFailed=Failed to clean up the previous installation registry entries.%nPlease remove HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine manually and try again.
 english.MsgUpdateBlocked=Sunshine cannot be updated while something is still using its files. The existing installation has not been changed.%n%n%1%n%nClose what is using them and run the installer again.
 english.MsgServiceInstallFailed=Sunshine service could not be installed or verified.%n%nThe files were installed and are kept. Reboot and run "{app}\scripts\install-service.bat" as administrator, or use the repair action in the Sunshine GUI. The installer log in your TEMP folder has the details.
-english.MsgServiceAutostartFailed=Sunshine was installed, but its automatic startup could not be configured or verified. Check the installer log or configure the service in the Sunshine panel.
+english.MsgServiceAutostartFailed=Sunshine was installed, but its automatic startup could not be configured - security software often blocks this change.%n%nYou can enable automatic startup later in the Sunshine panel. The installer log has the details.
 english.MsgServiceStartFailed=The Sunshine service was registered, but could not start now. Setup will still apply your automatic startup choice. Check the installer log and try starting the service again from the Sunshine panel.
 english.MsgDirProtectFailed=The install folder could not be protected from changes by other users, so nothing was installed.%n%nThe service runs the programs in this folder as SYSTEM. Pick a folder on a local NTFS or ReFS drive and run setup again. The installer log in your TEMP folder has the details.
-english.MsgVDDInstallFailed=The virtual display driver could not be installed or verified.%n%nSunshine was installed but has not been started. Review the installer log in your TEMP folder, then use the repair action in the Sunshine GUI.
+english.MsgVDDInstallFailed=The virtual display driver could not be installed or verified.%n%nEverything else is installed and the service is running; virtual displays stay unavailable until the driver is repaired (Windows 10 22H2 or newer is required). Use the repair action in the Sunshine panel. The installer log in your TEMP folder has the details.
 english.MsgUninstallGamepad=Do you want to remove Virtual Gamepad?
 english.MsgUninstallData=Do you want to remove all data in %1?%n(This includes configuration, cover images, and settings)
 english.StatusStoppingService=Stopping Sunshine service...
@@ -190,10 +190,10 @@ chinesesimplified.MsgOldNSISStaleRegistry=旧版本的文件已经不存在，�
 chinesesimplified.MsgOldNSISCleanupFailed=清理旧版注册表项失败。%n请手动删除 HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine 后重试。
 chinesesimplified.MsgUpdateBlocked=Sunshine 的文件仍被占用，无法更新。现有安装没有被改动。%n%n%1%n%n请关闭占用它们的程序后重新运行安装程序。
 chinesesimplified.MsgServiceInstallFailed=无法安装或验证 Sunshine 服务。%n%n程序文件已经装好并会保留。请重启后以管理员身份运行 "{app}\scripts\install-service.bat"，或在 Sunshine 管理界面里使用修复功能。详细信息见 TEMP 目录下的安装日志。
-chinesesimplified.MsgServiceAutostartFailed=Sunshine 已安装，但无法配置或验证开机自动启动。请查看安装日志，或在 Sunshine 管理界面中配置服务。
+chinesesimplified.MsgServiceAutostartFailed=Sunshine 已安装成功，但开机自启动设置失败——通常是安全软件拦截了该修改。%n%n可稍后在 Sunshine 管理界面中手动开启自启动，详情见安装日志。
 chinesesimplified.MsgServiceStartFailed=Sunshine 服务已注册，但本次启动失败。安装程序仍会应用您选择的开机启动设置。请查看安装日志，并在 Sunshine 管理界面中重试启动服务。
 chinesesimplified.MsgDirProtectFailed=无法保护安装目录不被其他用户修改，所以没有安装任何文件。%n%n后台服务以 SYSTEM 身份运行这个目录里的程序。请选择本机 NTFS 或 ReFS 磁盘上的文件夹，再运行一次安装程序。详细信息见 TEMP 目录下的安装日志。
-chinesesimplified.MsgVDDInstallFailed=无法安装或验证基地虚拟显示器。%n%nSunshine 已安装但尚未启动。请检查 TEMP 目录中的安装日志，然后在 Sunshine 管理界面中使用修复功能。
+chinesesimplified.MsgVDDInstallFailed=无法安装或验证基地虚拟显示器。%n%nSunshine 已安装、服务正在运行；驱动修复前虚拟显示器暂不可用（需要 Windows 10 22H2 或更新）。请在 Sunshine 管理界面中使用修复功能，原因见 TEMP 目录下的安装日志。
 chinesesimplified.MsgUninstallGamepad=是否移除虚拟手柄（ViGEmBus）？
 chinesesimplified.MsgUninstallData=是否删除 %1 中的所有数据？%n（包括配置文件、封面图片和设置）
 chinesesimplified.StatusStoppingService=正在停止 Sunshine 服务...
@@ -259,6 +259,7 @@ Source: "{#MySourceDir}\licenses\*"; DestDir: "{app}\licenses"; Flags: ignorever
 ; Mandatory tools
 Source: "{#MySourceDir}\tools\sunshinesvc.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
 Source: "{#MySourceDir}\tools\qiin-tabtip.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
+Source: "{#MySourceDir}\tools\alkaidlab_pyrowave_probe.exe"; DestDir: "{app}\tools"; Flags: ignoreversion; Components: application
 #if @SUNSHINE_MAT_CAPTURE_AVAILABLE@
 Source: "{#MySourceDir}\tools\mat-capture\sunshine-plugin-mat-capture.exe"; DestDir: "{app}\tools\mat-capture"; Flags: ignoreversion; Components: application
 Source: "{#MySourceDir}\tools\mat-capture\*.dll"; DestDir: "{app}\tools\mat-capture"; Flags: onlyifdoesntexist uninsrestartdelete; Components: application
@@ -339,9 +340,13 @@ Source: "{#MySourceDir}\scripts\driver\*"; DestDir: "{app}\scripts\driver"; Flag
 Source: "{#MySourceDir}\scripts\usbip-package*"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: assets
 Source: "{#MySourceDir}\scripts\usbip-roothub-guard.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion skipifsourcedoesntexist; Components: assets
 
-Source: "{#MySourceDir}\licenses\usbip-win2\*"; DestDir: "{app}\licenses\usbip-win2"; Flags: ignoreversion; Components: usbip
+; The signed payload (about 3.4 MB) and its license go onto disk with every installation, whether or not the USB/IP component is
+; chosen. Choosing the component only runs install-usbip.bat; the panel's one-click repair installs from this very payload later,
+; and without it that repair stopped at "cannot verify the shared transport" (feedback #1461). Nothing is installed or registered
+; with the files alone: the filter driver still needs the component or the person's confirmation in the panel.
+Source: "{#MySourceDir}\licenses\usbip-win2\*"; DestDir: "{app}\licenses\usbip-win2"; Flags: ignoreversion; Components: assets
 Source: "{#MySourceDir}\scripts\install-usbip.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion skipifsourcedoesntexist; Components: usbip
-Source: "{#MySourceDir}\scripts\usbip\*"; DestDir: "{app}\scripts\usbip"; Flags: ignoreversion recursesubdirs skipifsourcedoesntexist; Components: usbip
+Source: "{#MySourceDir}\scripts\usbip\*"; DestDir: "{app}\scripts\usbip"; Flags: ignoreversion recursesubdirs skipifsourcedoesntexist; Components: assets
 Source: "{#MySourceDir}\scripts\install-gamepad.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#MySourceDir}\scripts\uninstall-gamepad.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#MySourceDir}\scripts\gamepad\*"; DestDir: "{app}\scripts\gamepad"; Flags: ignoreversion recursesubdirs skipifsourcedoesntexist; Components: gamepad
@@ -485,6 +490,10 @@ var
   // callers still see a failure — the GUI updater runs us with /VERYSILENT
   // and treats exit code 0 as "update installed successfully".
   ServiceVerifyFailed: Boolean;
+  // Autostart could not be configured (most often security software refusing the change).
+  // Not fatal: the service is installed and running, so the install finishes successfully and
+  // the done page carries the warning instead of a failure exit code (#1511).
+  AutostartFailed: Boolean;
   // Starting now is independent of registration and the user's boot setting.
   ServiceStartFailed: Boolean;
   PermissionsRepairInProgress: Boolean;
@@ -798,21 +807,108 @@ end;
 
 function GetServiceInstallParameters(Param: String): String;
 begin
-  if VDDResultCode = 0 then
-    Result := ''
+  // Non-fatal by design: a host whose VDD cannot be installed (below Windows 10 22H2, or a
+  // driver blocked by security software) still gets a running service and panel; the VDD page
+  // carries its state and the repair action. Only the reboot-required case starts nothing,
+  // because the half-installed driver needs the restart first.
+  if VDDResultCode = 3010 then
+    Result := '--no-start'
   else
-    Result := '--no-start';
+    Result := '';
 end;
 
 function ShouldConfigureServiceAutostart(): Boolean;
 begin
-  Result := (VDDResultCode <> 101) and (not ServiceVerifyFailed);
+  Result := (not ServiceVerifyFailed);
+end;
+
+// A log left by an earlier run must not pass for this run's diagnosis: both copies are cleared
+// right before the helper starts, and only the copies that were cleared count later (a locked
+// copy is skipped, because its content is from an earlier run). A read-only scripts folder
+// makes install-vdd.bat keep its copy in {tmp}, which is where Setup points the child
+// processes' TEMP.
+procedure ClearStaleHelperLogs(var ScriptsUsable, TempUsable: Boolean);
+begin
+  if FileExists(ExpandConstant('{app}\scripts\vdd-install-last.log')) then begin
+    ScriptsUsable := DeleteFile(ExpandConstant('{app}\scripts\vdd-install-last.log'));
+    if not ScriptsUsable then
+      Log('The old helper log in the scripts folder is locked; it will not be read.');
+  end else
+    ScriptsUsable := True;
+  if FileExists(ExpandConstant('{tmp}\vdd-install-last.log')) then begin
+    TempUsable := DeleteFile(ExpandConstant('{tmp}\vdd-install-last.log'));
+    if not TempUsable then
+      Log('The old helper log in the temporary folder is locked; it will not be read.');
+  end else
+    TempUsable := True;
+end;
+
+// The helper's output is the only place a VDD failure names its reason (the exit code alone is
+// just 101). install-vdd.bat keeps it next to the script, or in {tmp} when the scripts folder
+// is read-only; mirror whichever copy this run produced into the setup log and the run
+// directory, so a failure is diagnosable from the files a person can send us.
+// Returns the verdict the log carries: 0 completed, 3010 restart required, 1 failed,
+// -1 when this run produced no readable log.
+function SurfaceVddHelperLog(ScriptsUsable, TempUsable: Boolean): Integer;
+var
+  HelperLog: String;
+  Lines: TArrayOfString;
+  Joined: String;
+  I: LongInt;
+  Found: Boolean;
+begin
+  Result := -1;
+  HelperLog := '';
+  Found := False;
+  // only copies that were cleared before the run are this run's output; a locked one is skipped
+  if ScriptsUsable and LoadStringsFromFile(ExpandConstant('{app}\scripts\vdd-install-last.log'), Lines) then begin
+    HelperLog := ExpandConstant('{app}\scripts\vdd-install-last.log');
+    Found := True;
+  end;
+  if (not Found) and TempUsable and LoadStringsFromFile(ExpandConstant('{tmp}\vdd-install-last.log'), Lines) then begin
+    HelperLog := ExpandConstant('{tmp}\vdd-install-last.log');
+    Found := True;
+  end;
+  if not Found then begin
+    Log('VDD helper output is unavailable; nothing this run wrote a readable log.');
+    Exit;
+  end;
+  Log('VDD helper output taken from ' + HelperLog + '.');
+  Joined := '';
+  for I := 0 to GetArrayLength(Lines) - 1 do begin
+    Log('VDD helper: ' + Lines[I]);
+    Joined := Joined + Lines[I] + #13#10;
+  end;
+  if InstallRunDir <> '' then
+    SaveStringToFile(AddBackslash(InstallRunDir) + 'vdd-install.log', AnsiString(Joined), False);
+
+  // The markers the helper and the batch write into the log are the authority: 3010 first,
+  // then the failure marker; a completed line with neither is a successful run.
+  for I := 0 to GetArrayLength(Lines) - 1 do begin
+    // whole-line compares: a path or text that merely contains a marker must not match
+    if Lines[I] = 'VDD_RESTART_REQUIRED=1' then begin
+      Result := 3010;
+      Exit;
+    end;
+    if Lines[I] = 'VDD_INSTALL_FAILED=1' then begin
+      Result := 1;
+      Exit;
+    end;
+  end;
+  for I := 0 to GetArrayLength(Lines) - 1 do begin
+    if Lines[I] = 'VDD installation completed.' then begin
+      Result := 0;
+      Exit;
+    end;
+  end;
 end;
 
 procedure InstallAndVerifyVDD();
 var
   ResultCode: Integer;
   Params, Detail: String;
+  Verdict: Integer;
+  ScriptsUsable, TempUsable: Boolean;
 begin
   if not VDDComponentSelected() then
     Exit;
@@ -820,6 +916,7 @@ begin
   WizardForm.StatusLabel.Caption := CustomMessage('StatusInstallVDD');
   EmitInstallerEvent('install-vdd', 'running', 'StatusInstallVDD', 0);
   Params := '--preserve-healthy-existing';
+  ClearStaleHelperLogs(ScriptsUsable, TempUsable);
   ResultCode := -1;
   if not Exec(ExpandConstant('{app}\scripts\install-vdd.bat'), Params, '',
               SW_HIDE, ewWaitUntilTerminated, ResultCode) then
@@ -827,26 +924,47 @@ begin
     VDDResultCode := 101;
     Log('Could not launch the VDD installer helper.');
   end
-  else if ResultCode = 0 then
-  begin
-    Log('VDD installation and control-interface verification succeeded.');
-    EmitInstallerEvent('install-vdd', 'done', 'StatusInstallVDD', 0);
-  end
-  // 3010 only comes with a real Windows restart signal (vdd-device-helper.ps1 Get-VddWindowsRestartSignal:
-  // ERROR_SUCCESS_REBOOT_REQUIRED from the bind or staging, CM_PROB_NEED_RESTART, DEVPKEY_Device_IsRebootRequired).
-  // A device that is bound but not ready in time without one makes the helper exit 1: VDDResultCode 101 below, the
-  // engine exits 101 and the shell shows the driver failure page with 修复安装.
-  else if ResultCode = 3010 then
-  begin
-    VDDResultCode := 3010;
-    Log('VDD installation requires a Windows restart; Sunshine will not start in this boot.');
-    EmitInstallerEvent('install-vdd', 'needs-reboot', 'StatusInstallVDD', 3010);
-  end
   else
   begin
-    VDDResultCode := 101;
-    Log('VDD installation or verification failed with exit code ' + IntToStr(ResultCode) + '.');
-    EmitInstallerEvent('install-vdd', 'failed', 'StatusInstallVDD', 101);
+    // The markers the helper and the batch write into the log are the authority over the
+    // process exit code: a failing cmd AutoRun hook (a leftover registry entry whose script
+    // is gone) fails on every cmd start and hands back a polluted code even for a completed
+    // run.
+    Verdict := SurfaceVddHelperLog(ScriptsUsable, TempUsable);
+    if Verdict = 0 then
+      VDDResultCode := 0
+    else if Verdict = 3010 then
+      VDDResultCode := 3010
+    else if Verdict = 1 then
+      VDDResultCode := 101
+    else begin
+      // no readable log this run: the process exit code decides (0 success, 3010 reboot, else failed)
+      if ResultCode = 0 then
+        VDDResultCode := 0
+      else if ResultCode = 3010 then
+        VDDResultCode := 3010
+      else
+        VDDResultCode := 101;
+      Log('VDD helper log unavailable; the exit code ' + IntToStr(ResultCode) + ' decides.');
+    end;
+
+    // one result event, matching the final verdict
+    if VDDResultCode = 0 then begin
+      Log('VDD installation and control-interface verification succeeded.');
+      EmitInstallerEvent('install-vdd', 'done', 'StatusInstallVDD', 0);
+    end
+    else if VDDResultCode = 3010 then begin
+      // 3010 only comes with a real Windows restart signal (vdd-device-helper.ps1 Get-VddWindowsRestartSignal:
+      // ERROR_SUCCESS_REBOOT_REQUIRED from the bind or staging, CM_PROB_NEED_RESTART, DEVPKEY_Device_IsRebootRequired).
+  // A device that is bound but not ready in time without one makes the helper exit 1: a non-fatal
+  // failure below, carried by the warning box and the VDD page of the panel (修复安装).
+      Log('VDD installation requires a Windows restart; Sunshine will not start in this boot.');
+      EmitInstallerEvent('install-vdd', 'needs-reboot', 'StatusInstallVDD', 3010);
+    end
+    else begin
+      Log('VDD installation or verification failed with exit code ' + IntToStr(ResultCode) + '.');
+      EmitInstallerEvent('install-vdd', 'failed', 'StatusInstallVDD', 101);
+    end;
   end;
 
   // the exit code of the helper itself (-1: it could not be started), not the 101 this script maps it to
@@ -856,7 +974,8 @@ begin
   begin
     Detail := CustomMessage('MsgVDDInstallFailed') + #13#10 + #13#10 +
               'Exit code: ' + IntToStr(ResultCode);
-    InstallerMessageBox(Detail, mbError, MB_OK, IDOK);
+    // non-fatal: everything else is installed and the service runs; the box says how to repair
+    InstallerMessageBox(Detail, mbConfirmation, MB_OK, IDOK);
   end;
 end;
 
@@ -1006,23 +1125,6 @@ begin
   end;
 end;
 
-function GetOldNSISUninstallString(): String;
-var
-  UninstallString: String;
-begin
-  Result := '';
-  if RegQueryStringValue(HKLM, 'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine',
-    'UninstallString', UninstallString) then
-  begin
-    Result := UninstallString;
-  end
-  else if RegQueryStringValue(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine',
-    'UninstallString', UninstallString) then
-  begin
-    Result := UninstallString;
-  end;
-end;
-
 // Strip the executable path out of an UninstallString that may include
 // surrounding quotes and/or trailing arguments (e.g. '"...\Uninstall.exe" /S').
 function GetOldNSISUninstallExe(UninstallString: String): String;
@@ -1068,6 +1170,31 @@ begin
     SlashPos := SlashPos - 1;
   if SlashPos > 1 then
     Result := Copy(Path, 1, SlashPos - 1);
+end;
+
+// The UninstallString of one old NSIS entry (native or WOW6432Node) while its uninstaller is
+// still there, empty otherwise.
+function LiveOldNSISUninstallStringOf(const Key: String): String;
+var
+  UninstallString, Exe: String;
+begin
+  Result := '';
+  if RegQueryStringValue(HKLM, Key, 'UninstallString', UninstallString) then
+  begin
+    Exe := GetOldNSISUninstallExe(UninstallString);
+    if (Exe <> '') and FileExists(Exe) then
+      Result := UninstallString;
+  end;
+end;
+
+// The old NSIS entry that can still uninstall, the native one before the WOW6432Node one. Empty
+// when neither can: what remains is stale metadata, and cleaning that up must not touch an entry
+// that can still uninstall (#1463).
+function GetLiveOldNSISUninstallString(): String;
+begin
+  Result := LiveOldNSISUninstallStringOf('SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine');
+  if Result = '' then
+    Result := LiveOldNSISUninstallStringOf('SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine');
 end;
 
 // Force-delete the NSIS uninstall registry entries left behind by an old
@@ -1497,11 +1624,14 @@ begin
     Detail := 'Start: <missing>';
   Detail := 'Autostart script exit: ' + IntToStr(ResultCode) + #13#10 + Detail;
   Log('Service autostart verification failed. ' + Detail);
-  ServiceVerifyFailed := True;
+  // Non-fatal by design (#1511): the service itself is installed and running; only the boot
+  // choice failed - most often security software refusing ChangeServiceConfig. The install
+  // finishes (exit code 0) and the warning below tells the person how to recover.
+  AutostartFailed := True;
   EmitInstallerEvent('autostart', 'failed', 'StatusAutostart', 100);
   JournalComponent('autostart', 'verify', 100);
   if not WizardSilent then
-    InstallerMessageBox(CustomMessage('MsgServiceAutostartFailed') + #13#10 + #13#10 + Detail, mbError, MB_OK, IDOK);
+    InstallerMessageBox(CustomMessage('MsgServiceAutostartFailed') + #13#10 + #13#10 + Detail, mbConfirmation, MB_OK, IDOK);
 end;
 
 // Report a nonzero exit code when the service could not be verified. Inno
@@ -1520,12 +1650,25 @@ begin
   end;
 end;
 
+// The directory Setup chose, empty while it has chosen none. {app} exists only once the wizard has
+// been built: a run that stops in InitializeSetup, or is cancelled on its first page, has none, and
+// expanding it raises the internal error that then hides the real reason for stopping (#1463).
+function ChosenAppDir(): String;
+begin
+  Result := '';
+  try
+    Result := ExpandConstant('{app}');
+  except
+    Result := '';
+  end;
+end;
+
 // A restart is requested only when a driver step returned 3010, or Windows itself reports a pending
 // restart on one of our drivers. The decision and its reasons go to the event log ('reboot').
 procedure DecideRestart();
 var
   ResultCode: Integer;
-  OutFile, Names: String;
+  AppDir, OutFile, Names: String;
   Lines: TArrayOfString;
   I: Integer;
 begin
@@ -1541,10 +1684,12 @@ begin
     AddRebootReason('usbip');
   OutFile := ExpandConstant('{tmp}\sunshine-reboot-check.txt');
   DeleteFile(OutFile);
-  if FileExists(ExpandConstant('{app}\tools\driver-reboot-check.ps1')) then
+  // A run that stopped before Setup chose a directory has nothing installed to ask (#1463).
+  AppDir := ChosenAppDir();
+  if (AppDir <> '') and FileExists(AppDir + '\tools\driver-reboot-check.ps1') then
   begin
     if Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-            '-NoProfile -ExecutionPolicy Bypass -File "' + ExpandConstant('{app}\tools\driver-reboot-check.ps1') + '" -Out "' + OutFile + '"',
+            '-NoProfile -ExecutionPolicy Bypass -File "' + AppDir + '\tools\driver-reboot-check.ps1' + '" -Out "' + OutFile + '"',
             '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and LoadStringsFromFile(OutFile, Lines) then
     begin
       for I := 0 to GetArrayLength(Lines) - 1 do
@@ -1572,9 +1717,9 @@ end;
 function GetCustomSetupExitCode(): Integer;
 begin
   DecideRestart();
-  if VDDResultCode = 101 then
-    Result := 101
-  else if ServiceVerifyFailed or ServiceStartFailed then
+  // A VDD failure is not fatal (the service, the panel and the rest run without it): the run
+  // ends successfully and the warning plus the VDD page carry the repair path.
+  if ServiceVerifyFailed or ServiceStartFailed then
     Result := 100
   else if RebootReasons <> '' then
     Result := 3010
@@ -1822,25 +1967,23 @@ begin
   if not DetectOldNSISInstall() then
     Exit;
 
-  UninstallString := GetOldNSISUninstallString();
+  // An entry that still has its uninstaller names the installation to remove first. Only when
+  // neither entry has one is what remains stale metadata, to clean up rather than block the install.
+  UninstallString := GetLiveOldNSISUninstallString();
   if UninstallString = '' then
-    Exit;
-
-  UninstallExe := GetOldNSISUninstallExe(UninstallString);
-  InstallDir := GetOldNSISInstallDir(UninstallString);
-
-  // If the uninstaller binary itself is gone, the registry entry is just stale
-  // metadata. Offer to clean it up rather than blocking the install entirely.
-  if (UninstallExe = '') or (not FileExists(UninstallExe)) then
   begin
-    // Without interactive consent, preserve old installation metadata and stop.
-    if InstallerMessageBox(CustomMessage('MsgOldNSISStaleRegistry'), mbConfirmation, MB_YESNO, IDNO) = IDYES then
+    // An interactive run asks first and keeps the entries without consent. A silent run has nobody
+    // to ask, and the panel's updater is one: stopping here left a machine with these dead entries
+    // unable to install at all (#1463), so a silent run cleans them up and goes on.
+    if WizardSilent or (InstallerMessageBox(CustomMessage('MsgOldNSISStaleRegistry'), mbConfirmation, MB_YESNO, IDNO) = IDYES) then
     begin
       if not CleanupOldNSISRegistry() then
       begin
         InstallerMessageBox(CustomMessage('MsgOldNSISCleanupFailed'), mbError, MB_OK, IDOK);
         Result := False;
-      end;
+      end
+      else if WizardSilent then
+        Log('Stale NSIS uninstall entries without their uninstaller: cleaned up in a silent run.');
     end
     else
     begin
@@ -1848,6 +1991,9 @@ begin
     end;
     Exit;
   end;
+
+  UninstallExe := GetOldNSISUninstallExe(UninstallString);
+  InstallDir := GetOldNSISInstallDir(UninstallString);
 
   // Do not silently run an older uninstaller that could remove user data.
   if InstallerMessageBox(CustomMessage('MsgOldNSISDetected'), mbConfirmation, MB_YESNO, IDNO) <> IDYES then

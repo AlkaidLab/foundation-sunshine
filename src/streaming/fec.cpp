@@ -8,12 +8,16 @@ namespace video_fec {
   namespace {
     constexpr unsigned max_wire_percentage = 255;
     constexpr std::size_t max_rs_shards = 255;
-    constexpr std::size_t max_data_shards_per_block = 1023;  // Ten-bit packet index.
-    constexpr std::size_t max_data_shards_per_frame = max_blocks * max_data_shards_per_block;
     constexpr std::uint32_t max_feedback_data_packets = 1000000;
     constexpr std::uint32_t sequence_half_range = 0x80000000U;
     constexpr std::int64_t feedback_timeout_ms = 3000;
     constexpr double frame_failure_target = 0.001;
+    // The summary counts data shards only, so parity that absorbed the loss reads as a clean
+    // second: a release can look safe while the link is still overloaded. Loss reported this
+    // soon after a release means the protection it removed was still needed.
+    constexpr std::int64_t premature_release_ms = 4000;
+    // Longest extra clean time demanded before a release after repeated premature ones.
+    constexpr std::int64_t release_backoff_maximum_ms = 160000;
 
     unsigned
     select_percentage(double loss, std::size_t data, unsigned minimum_parity, unsigned maximum) {
@@ -136,6 +140,12 @@ namespace video_fec {
     last_report_ms_ = -1;
     resume_since_ms_ = -1;
     loss_window_ = {};
+    clean_since_ms_ = -1;
+    released_ms_ = -1;
+    decay_at_ms_ = -1;
+    release_delay_ms_ = 0;
+    epoch_loss_ = 0;
+    released_loss_ = 0;
   }
 
   bool
@@ -161,6 +171,11 @@ namespace video_fec {
     if (last_report_ms_ >= 0 && (delta != 1 || now - last_report_ms_ > feedback_timeout_ms)) {
       resume_since_ms_ = now;
       loss_window_ = {};  // Do not combine observations across an unknown gap.
+      // The clean and decay clocks of the discarded history must not count the unknown
+      // interval: resume as protected by the held epoch and demand the whole wait again
+      // before the next release.
+      clean_since_ms_ = -1;
+      released_ms_ = -1;
     }
     loss_window_.record(data, missing, now);
     last_sequence_ = sequence;
@@ -169,7 +184,7 @@ namespace video_fec {
   }
 
   unsigned
-  controller_t::percentage(std::size_t data, unsigned minimum_parity, std::int64_t now) const {
+  controller_t::percentage(std::size_t data, unsigned minimum_parity, std::int64_t now) {
     unsigned fallback, maximum;
     double loss;
     {
@@ -187,10 +202,60 @@ namespace video_fec {
       // A missing report or feedback timeout is unknown, not clean. Before releasing protection,
       // require a new observation period after resumption. Startup is distinct.
       if (!estimate || (*estimate == 0 && resume_since_ms_ >= 0 &&
-                        now - resume_since_ms_ < loss_window_t::duration_ms)) {
+                         now - resume_since_ms_ < loss_window_t::duration_ms)) {
         return fallback;
       }
-      loss = *estimate;
+      if (*estimate > 0) {
+        if (released_ms_ >= 0) {
+          // Loss returned after a release. Within a few seconds it means the release removed
+          // protection that was still needed: demand more clean time before the next release,
+          // and re-arm no weaker than what was released, because the summary counts data
+          // shards only and parity that absorbed the loss read as clean seconds.
+          if (now - released_ms_ <= premature_release_ms) {
+            release_delay_ms_ = release_delay_ms_ > 0 ? std::min(release_delay_ms_ * 2, release_backoff_maximum_ms) :
+                                                        loss_window_t::duration_ms;
+            epoch_loss_ = std::max(*estimate, released_loss_);
+          }
+          else {
+            epoch_loss_ = *estimate;
+          }
+          released_ms_ = -1;
+        }
+        else {
+          // Protected: follow the loss estimate up, never down. A falling estimate only says
+          // the parity in place is absorbing the loss, not that the link has recovered.
+          epoch_loss_ = std::max(epoch_loss_, *estimate);
+        }
+        clean_since_ms_ = -1;
+        loss = epoch_loss_;
+      }
+      else if (released_ms_ >= 0) {
+        // Released and still clean. A release that stays safe halves the extra wait for the next one.
+        if (release_delay_ms_ > 0 && now >= decay_at_ms_) {
+          release_delay_ms_ /= 2;
+          decay_at_ms_ = now + release_delay_ms_ + loss_window_t::duration_ms;
+        }
+        return 0;
+      }
+      else {
+        if (epoch_loss_ == 0) {
+          // Started clean and stayed clean: staying at zero protects nothing and is not a
+          // release, so a first loss must not pay the premature-release penalty.
+          return 0;
+        }
+        // The loss history has expired. Keep the protection that silenced the loss until the
+        // stream has stayed clean for the extra time earlier premature releases earned.
+        if (clean_since_ms_ < 0) clean_since_ms_ = now;
+        if (now - clean_since_ms_ < release_delay_ms_) {
+          loss = epoch_loss_;
+        }
+        else {
+          released_ms_ = now;
+          released_loss_ = epoch_loss_;
+          decay_at_ms_ = now + release_delay_ms_ + loss_window_t::duration_ms;
+          return 0;
+        }
+      }
     }
     return select_percentage(loss, data, minimum_parity, maximum);
   }

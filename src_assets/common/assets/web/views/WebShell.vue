@@ -128,6 +128,7 @@ const VIEWS = {
   downloads: lazy(() => import('./Downloads.vue')),
   troubleshooting: lazy(() => import('./Troubleshooting.vue')),
   password: lazy(() => import('./SecurityLogin.vue')),
+  'help-page': lazy(() => import('./Help.vue')),
   about: lazy(() => import('./About.vue')),
   appearance: lazy(() => import('./Appearance.vue')),
   'latency-clock': lazy(() => import('./LatencyClock.vue')),
@@ -219,6 +220,8 @@ const PAGES = {
   'latency-clock': { rail: 'system', path: null, hash: 'latency-clock', icon: 'speed', tone: 'tertiary', text: (locale) => latencyClockTexts(locale).title },
   'stream-timer': { rail: 'system', path: null, hash: 'stream-timer', icon: 'timer', tone: 'tertiary', text: (locale) => streamTimerTexts(locale).title },
   appearance: { rail: 'appearance', list: false, path: null, hash: 'appearance', icon: 'palette', tone: 'primary', text: (locale) => labelOf(locale, 'shell.appearance') },
+  // 帮助与关于: the four tiles and the way to 关于 (the About page opens over it, from the list)
+  'help-page': { rail: 'help', list: false, path: null, hash: 'help', icon: 'help', tone: 'primary', label: 'shell.help_about' },
   about: { rail: 'help', rootRail: 'about', list: false, push: true, path: null, hash: 'about', icon: 'info', tone: 'primary', text: (locale) => aboutTexts(locale).title },
 }
 // the rail of the control panel, without what only the control panel can do (the local USB/IP, the picture enhancement, the toolbox, 米塔 AI, the panel's own settings): see docs/parity.md of foundation-ui
@@ -454,7 +457,7 @@ const railLabel = (rail) => t(RAIL.find((r) => r.id === rail)?.label || 'navbar.
 const settingsList = useSettingsList({ locale: uiLocale, config: live.config, dualsenseKeys: live.dualsenseKeys, sources: { clients: computed(() => live.clients.value?.list), apps: live.apps, components: computed(() => componentStatus.rows.value), ds: live.ds, mic: live.mic, audio: audioDevices.render } })
 watchEffect(() => { hubLines.value = settingsList.lines.value })
 // the row ids of foundation-ui's rowLines for the pages of the list panes
-const ROW_OF_PAGE = { pin: 'clients', apps: 'apps', downloads: 'downloads', gamepad: 'gamepad', keyboard: 'keyboard', mouse: 'mouse', usb: 'usb', microphone: 'microphone', 'display-output': 'display-output', 'display-modes': 'display-modes', 'display-encoders': 'display-encoders', 'display-hdr': 'display-hdr', 'display-advanced': 'display-advanced', 'audio-output': 'audio-output', vdd: 'vdd', components: 'components', network: 'network', 'latency-clock': 'latency-clock', 'test-tools': 'test-tools', 'stream-timer': 'stream-timer', troubleshooting: 'diagnostics', about: 'help' }
+const ROW_OF_PAGE = { pin: 'clients', apps: 'apps', downloads: 'downloads', gamepad: 'gamepad', keyboard: 'keyboard', mouse: 'mouse', usb: 'usb', microphone: 'microphone', 'display-output': 'display-output', 'display-modes': 'display-modes', 'display-encoders': 'display-encoders', 'display-hdr': 'display-hdr', 'display-advanced': 'display-advanced', 'audio-output': 'audio-output', vdd: 'vdd', components: 'components', network: 'network', 'latency-clock': 'latency-clock', 'test-tools': 'test-tools', 'stream-timer': 'stream-timer', troubleshooting: 'diagnostics', about: 'help', 'help-page': 'help' }
 // the pages of a host: the Windows-only ones (HDR, the virtual display) are not offered on another system
 const hostPlatform = computed(() => live.config.value?.platform || 'windows')
 const onThisHost = ([, p]) => !p.windows || hostPlatform.value === 'windows'

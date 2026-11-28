@@ -433,10 +433,6 @@ namespace platf::dxgi {
 
         // Poll the previous analysis result before taking the capture mutex.
         read_hdr_analysis_results();
-        if (hdr_luminance_stats_out.valid && !runtime_status.scene_metadata_active) {
-          runtime_status.scene_metadata_active = true;
-          ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
-        }
 
         // Acquire encoder mutex to synchronize with capture code. Normal
         // Sunshine-owned images use key 0; borrowed VDD slots cycle on key 2
@@ -863,6 +859,7 @@ namespace platf::dxgi {
       nr_signal.reset();
       hdr_luminance_stats_out = {};
       hdr_analysis_pending = false;
+      hdr_analysis_flushed = false;
       hdr_analysis_frame_index = 0;
       hdr_analysis_sample_sequence = 0;
 
@@ -2063,6 +2060,7 @@ namespace platf::dxgi {
     uint64_t hdr_analysis_frame_index = 0; // Used to downsample analysis frequency
     uint64_t hdr_analysis_sample_sequence = 0; // Counts completed, independent GPU samples
     bool hdr_analysis_pending = false;     // Prevents overwriting a readback the GPU has not completed
+    bool hdr_analysis_flushed = false;  // Startup polling explicitly submits each pending sample at most once
     bool hdr_analysis_ready = false;       // Whether the analyzer's GPU resources were created
     bool hdr_analysis_enabled = false;     // Whether analysis runs: resources exist and the stream can carry metadata
     ::video::hdr_metadata::formats_t hdr_metadata_formats;  // Dynamic metadata formats this stream may carry
@@ -2562,6 +2560,7 @@ namespace platf::dxgi {
 
       device_ctx->CopyResource(hdr_staging_buf.get(), hdr_final_result_buf.get());
       hdr_analysis_pending = true;
+      hdr_analysis_flushed = false;
     }
 
     /**
@@ -2570,9 +2569,16 @@ namespace platf::dxgi {
      * and computes PQ-domain percentiles from the histogram.
      */
     void
-    read_hdr_analysis_results() {
+    read_hdr_analysis_results(bool submit_pending = false) {
       if (!hdr_analysis_pending) {
         return;
+      }
+      if (submit_pending && !hdr_analysis_flushed) {
+        // Startup can hold encoding with no further capture/convert calls to
+        // submit this analysis. Flush submits commands without waiting for GPU
+        // completion; Map below remains non-blocking on every poll.
+        device_ctx->Flush();
+        hdr_analysis_flushed = true;
       }
       D3D11_MAPPED_SUBRESOURCE mapped = {};
       HRESULT status = device_ctx->Map(
@@ -2680,6 +2686,10 @@ namespace platf::dxgi {
 
       device_ctx->Unmap(hdr_staging_buf.get(), 0);
       hdr_analysis_pending = false;
+      if (hdr_luminance_stats_out.valid && !runtime_status.scene_metadata_active) {
+        runtime_status.scene_metadata_active = true;
+        ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
+      }
     }
 
     // ===== Compute-shader RGB->P010 fast path (Phase 1) =====
@@ -3547,6 +3557,13 @@ namespace platf::dxgi {
       return result;
     }
 
+    bool
+    collect_hdr_luminance_stats() override {
+      base.read_hdr_analysis_results(true);
+      hdr_luminance_stats = base.hdr_luminance_stats_out;
+      return hdr_luminance_stats.valid;
+    }
+
     std::shared_ptr<safe::signal_t>
     nr_change_event() override {
       return base.nr_change_event();
@@ -3676,6 +3693,13 @@ namespace platf::dxgi {
       int result = base.convert(img_base);
       hdr_luminance_stats = base.hdr_luminance_stats_out;
       return result;
+    }
+
+    bool
+    collect_hdr_luminance_stats() override {
+      base.read_hdr_analysis_results(true);
+      hdr_luminance_stats = base.hdr_luminance_stats_out;
+      return hdr_luminance_stats.valid;
     }
 
     std::shared_ptr<safe::signal_t>

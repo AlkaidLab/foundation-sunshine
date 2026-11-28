@@ -27,6 +27,8 @@ A JSON error has HTTP status 4xx and this body:
 | `schema_unsupported` | 409 | `schemaVersion` is not 1. The file is left untouched. |
 | `config_unreadable` | 409 | The file exists but is not valid schema 1 JSON. The host does not rewrite it. |
 | `config_conflict` | 409 | The file changed while the host was preparing a write. |
+| `endfield_plugin_missing` | 409 | The installed Sparxie loads Endfield as a plugin and the Endfield plugin is not installed: no Endfield profile is written (see "Two Sparxie generations"). |
+| `endfield_unsupported` | 409 | The installed Sparxie has no Endfield at all: no Endfield profile is written. |
 | `write_failed` | 500 | The temp file could not be committed, or the read-back check failed and the backup was restored. |
 | `apps_write_failed` | 500 | The application list (apps.json) could not be saved. A Sparxie profile that the same request had added is taken out of Sparxie's config again. |
 | `internal_error` | 500 | The host raised an exception while handling the request; `error` carries its text. |
@@ -281,6 +283,8 @@ open, or an unreadable rate, leaves the last resolved number in place.
   "runtime": { "hoyo": "", "zzz": "" },
   "capabilities": [],
   "touchUiSwitch": false,
+  "generation": "legacy",
+  "endfield": { "support": "builtin", "state": "ready", "message": "", "plugin": { "id": "ext.skyhua0224.endfield", "installed": false, "trusted": false, "version": "" } },
   "dataDir": "C:\\Users\\me\\AppData\\Local\\Sparxie",
   "dataDirProvisional": true,
   "launchTemplate": "\"{sparxie-launch}\" --sparxie \"{sparxie}\" --profile {profile}",
@@ -309,6 +313,8 @@ that tells the person to bring the package and choose it here), `componentDir`,
 `{ id, result, detail, required }` with ids `os`, `disk`, `webview2`,
 `vcruntime`, `admin` and `quarantine`. `result` is `ok`, `error` or `skip`.
 `manifest.online` is false: this host does not download the package.
+
+`generation` is `plugin`, `legacy` or `unknown`, and `endfield` says what an Endfield profile needs on this install; both come from the installed files (see "Two Sparxie generations"). `endfield.support` is `builtin` (the build carries Endfield, or there is no build to look at), `plugin`, `plugin_missing` or `unsupported`; `endfield.state` is `ready`, `plugin_missing`, `plugin_untrusted` (the plugin is in place but not yet enabled in Sparxie) or `unsupported`, and `endfield.message` is the text for a person (「需要终末地插件」, 「终末地插件尚未在 Sparxie 中启用」, 「当前 Sparxie 不支持终末地」; empty when `ready`).
 
 `running` is true when `Sparxie.exe`, `Sparxie.Desktop.exe` or
 `Sparxie.Launcher.exe` is running. Those are the processes that keep
@@ -974,6 +980,41 @@ that starts the game directly (`mode: pc`) never has it.
 * **Migrated covers.** The installer's `migrate-images.ps1` used to copy every poster that is not a bare file name to `covers/app_<hash>_<time>.png`, the official covers of game applications included. It now skips the host's posters of a game application, and at host start an `app_*` file whose bytes equal one of the install's official covers (`covers/sparxie-<install>-*.png`) is the official cover again; a custom cover and a picture of the person's own stay.
 * **Catalog.** Every row has `settingsManaged`: true when the host reads and writes some of the title's own settings. Endfield has none (`settings` is empty, `settingsManaged` false): the page says once that its in-game settings are not changed, it does not list items as unavailable. Endfield's Sparxie items are `input` (`auto` by the client's device, `touch`, `kbm`), `resolution` (`auto` follows the stream, or `WxH`), the target frame rate (tiers up to 240 and `display`), and the launch options (background limit, priority). The profile's `game` for Endfield is `endfield`.
 * **Endfield session fields.** `sparxie-launch` sends `endfield_input_mode` (12), `endfield_auto_resolution` (13), `endfield_width` (14), `endfield_height` (15) and `endfield_refresh_rate` (16) of the Broker protocol: the stored choice, resolved with the variables Sunshine gives the application (`SUNSHINE_CLIENT_TOUCH`, which the host sets from the client's touch intent, and `SUNSHINE_CLIENT_WIDTH`, `_HEIGHT`, `_FPS`). Without the touch variable, `auto` stays `auto`. A Broker that lists no `endfield` capability gets no Endfield session: the launcher starts the game directly and says so.
+
+## Two Sparxie generations (2026-11-23)
+
+Sparxie 0.1.0-dev.d8256c5 stopped carrying Endfield. That build knows `genshin`, `starRail` and `zenlessZoneZero` and loads every other game as a plugin
+(`<data dir>\plugins\<id>\plugin.json` and `module.dll`, confirmed in `plugin-trust.json`); a profile names its game by the plugin's id,
+`ext.<vendor>.<game>` (`^ext\.[a-z0-9-]{2,32}\.[a-z0-9-]{2,32}$`), and keeps the plugin's own options in its `settings` object. A profile that still says
+`"game": "endfield"` is invalid for it, and Sparxie then puts the **whole** `config.json` aside (`config.invalid-<utc>-<id>.json`) and starts an empty one, which made
+every Sparxie application fail with "profile not found" on 2026-11-23. The host therefore writes what the installed build reads.
+
+| | first generation (preview.9 sky builds) | second generation (plugins) |
+|---|---|---|
+| how the host knows | `Sparxie.Contracts.dll` has no `GameIds` and no `SettingsJson` | `Sparxie.Contracts.dll` names both |
+| Endfield in the build | `capabilities.json` lists `endfield`, or `EndfieldCore.dll` and `EndfieldRuntime.dll` are in the app folder | never; the plugin `ext.skyhua0224.endfield` (`plugins\ext.skyhua0224.endfield\plugin.json` with `Endfield.exe` on its `exeNames`, and `module.dll`) |
+| profile written | `game: "endfield"`, options in `hoyo.endfield*` | `game: "ext.skyhua0224.endfield"`, options in `settings`, no `hoyo` |
+| without Endfield | `409 endfield_unsupported`, nothing written | `409 endfield_plugin_missing` (「需要终末地插件」), nothing written |
+
+The detection looks at the app folder `version.ini` names (else the newest `app-*`), never at a version string. With no installed build to look at the host keeps the
+first spelling, since nothing reads the file yet.
+
+The plugin's `settings` for an Endfield application, limited to the keys its `settingsSchema` declares: `inputMode` (`touch`, or `pc` for the `kbm` input), `autoResolution`
+(false for a fixed size), `width`, `height` (the last accepted size, 1920x1080 by default, while the size follows the stream), `refreshRate` (the streamed display's rate,
+24-1000), `fpsUnlock` and `targetFps` (10-1000). A write changes these keys and leaves the others (`uiScalePercent`, the safe area, a key a newer plugin adds) as they are.
+
+* **Own writes are checked first.** Every write is judged against the installed build's rules (the id syntax, `settings` being one JSON object, the game being one the
+  build reads, the first generation's value ranges) before it replaces the file; a document the build would reject is not written and the file stays as it was.
+  `read_store` judges the same way, so a profile the installed build would reject shows the store as `unreadable` instead of being passed on.
+* **What an earlier host left.** A profile of the first spelling in a build of the second generation with the plugin installed is rewritten at the next write of the host
+  into the plugin's spelling (game id, `settings` from `hoyo.endfield*` and the fps values, no `hoyo`). Without the plugin it cannot be rewritten: the write is refused
+  and the file is not touched.
+* **Launch.** `sparxie-launch` reads the profile's `settings` and sends it as `settings_json` (field 7 of the profile snapshot); a profile that follows the main display is told
+  the stream's size and rate first, as the first generation's Endfield session was. The second generation lists no capabilities, so the launcher does not hold a plugin
+  profile back for a missing `endfield` capability: the Broker answers the session, and when it refuses (plugin missing or not enabled) the launcher retries once and then
+  starts the game directly under the decoy parent, with the usual notice.
+* **Keyboard, mouse and gamepad.** Endfield's input is the plugin's `inputMode`, so an Endfield `kbm` application runs through Sparxie without the touch-interface switch the
+  Hoyo titles need.
 
 ## Warning
 

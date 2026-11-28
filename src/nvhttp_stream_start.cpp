@@ -337,7 +337,8 @@ namespace nvhttp::stream_start {
         return true;
       }
 
-      const auto state = display_device::vdd_capability::query_state();
+      const auto detail = display_device::vdd_capability::query_detail();
+      const auto state = detail.state;
       using state_e = display_device::vdd_capability::state_e;
       switch (state) {
         case state_e::ready:
@@ -366,18 +367,24 @@ namespace nvhttp::stream_start {
             "vdd_preflight",
             true);
           return false;
-        case state_e::driver_unreachable:
+        case state_e::driver_unreachable: {
+          // the host log had no trace of why the preflight said this; the cause and Windows' problem code are what a report needs
+          const auto text = display_device::vdd_capability::describe_unreachable(detail.unreachable);
+          BOOST_LOG(warning) << "VDD preflight: driver_unreachable, cause " << text.cause_word
+                             << ", Device Manager problem code " << detail.unreachable.problem_code
+                             << ", control interface answered: " << (detail.control_available ? "yes" : "no");
           set_sunshine_error(
             tree,
             503,
-            "The virtual display driver is currently unreachable.",
+            text.message,
             "VDD_DRIVER_UNREACHABLE",
-            "Restart or repair ZakoVDD, then try again.",
-            "repair_vdd_driver",
+            text.hint,
+            text.recovery_action,
             "display",
             "vdd_preflight",
             true);
           return false;
+        }
       }
 
       return false;

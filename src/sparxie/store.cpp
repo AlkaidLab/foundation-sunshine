@@ -61,8 +61,9 @@ namespace sparxie {
       if (game == "genshin") return name == "yuanshen.exe" || name == "genshinimpact.exe";
       if (game == "starRail") return name == "starrail.exe";
       if (game == "zenlessZoneZero") return name == "zenlesszonezero.exe" || name == "zenlesszonezerobeta.exe";
-      if (game == "endfield") return name == "endfield.exe";
-      return false;
+      if (game == "endfield" || game == kEndfieldPluginId) return name == "endfield.exe";
+      // another plugin's executables are the plugin's own list (plugin.json exeNames); the host cannot judge them
+      return is_plugin_game_id(game);
     }
     bool
     in_range(int value, int lo, int hi) { return value >= lo && value <= hi; }
@@ -112,6 +113,35 @@ namespace sparxie {
       }
       return { kEndfieldDefaultWidth, kEndfieldDefaultHeight };
     }
+    // The options of an Endfield application as the profile "settings" of the second generation, limited to the keys the installed plugin declares.
+    // `existing` is the profile as it is now (its width and height stay while the size follows the stream).
+    json
+    endfield_plugin_settings(const json &options, int display_fps, const EndfieldPlugin &plugin, const json *existing) {
+      const std::pair<int, int> fixed = endfield_size(options.value("resolution", std::string("auto")));
+      const bool fixed_size = fixed.first > 0;
+      std::pair<int, int> kept = { kEndfieldDefaultWidth, kEndfieldDefaultHeight };
+      if (existing && existing->is_object() && existing->contains("settings") && (*existing)["settings"].is_object()) {
+        const json &old = (*existing)["settings"];
+        if (old.contains("width") && old.contains("height") && old["width"].is_number_integer() && old["height"].is_number_integer() &&
+            endfield_size_ok(old["width"].get<int>(), old["height"].get<int>()))
+          kept = { old["width"].get<int>(), old["height"].get<int>() };
+      }
+      const std::pair<int, int> size = fixed_size ? fixed : kept;
+      const bool unlock = options.contains("fpsUnlock") && options["fpsUnlock"].is_boolean() ? options["fpsUnlock"].get<bool>() : false;
+      const json all = {
+        { "inputMode", options.value("input", std::string("touch")) == "kbm" ? "pc" : "touch" },
+        { "autoResolution", !fixed_size },
+        { "width", size.first },
+        { "height", size.second },
+        { "refreshRate", std::clamp(display_fps > 0 ? display_fps : 60, kEndfieldRefreshMin, kEndfieldRefreshMax) },
+        { "fpsUnlock", unlock },
+        { "targetFps", std::clamp(resolve_target_fps(options, display_fps), kFpsMin, kFpsMax) },
+      };
+      json settings = json::object();
+      for (auto it = all.begin(); it != all.end(); ++it)
+        if (!plugin.keys_known || std::find(plugin.keys.begin(), plugin.keys.end(), it.key()) != plugin.keys.end()) settings[it.key()] = it.value();
+      return settings;
+    }
     json
     hoyo_object(const json &options, int display_fps, const std::string &game, const json *existing = nullptr) {
       auto flag = [&](const char *key, bool fallback) {
@@ -154,29 +184,40 @@ namespace sparxie {
         { "endfieldRefreshRate", std::clamp(display_fps > 0 ? display_fps : 60, kEndfieldRefreshMin, kEndfieldRefreshMax) },
       };
     }
+    // The profile for a draft in the spelling the installed build reads. An Endfield draft of a build that cannot hold one never gets here (endfield_write_check).
+    // `existing` is the profile as it is now; the values the host does not manage stay as they are.
     json
-    make_profile(const ProfileDraft &draft, const json *existing_hoyo = nullptr) {
+    make_profile(const ProfileDraft &draft, const SparxieBuild &build, const json *existing = nullptr) {
+      const bool plugin_endfield = draft.game == "endfield" && endfield_support(build) == EndfieldSupport::plugin;
       json profile = {
         { "id", draft.id },
         { "displayName", draft.display_name },
-        { "game", to_sparxie_game(draft.game) },
+        { "game", plugin_endfield ? std::string(kEndfieldPluginId) : to_sparxie_game(draft.game) },
         { "executablePath", draft.executable },
       };
+      if (plugin_endfield) {
+        // a plugin game has no hoyo block: its options are the plugin's settings
+        profile["settings"] = endfield_plugin_settings(draft.options, draft.display_fps, build.endfield, existing);
+        return profile;
+      }
+      const json *existing_hoyo = existing && existing->is_object() && existing->contains("hoyo") && (*existing)["hoyo"].is_object() ? &(*existing)["hoyo"] : nullptr;
       if (draft.game != "zzz") profile["hoyo"] = hoyo_object(draft.options, draft.display_fps, draft.game, existing_hoyo);
       return profile;
     }
     void
-    merge_profile(json &profile, const ProfileDraft &draft) {
-      const json fresh = make_profile(draft, profile.contains("hoyo") && profile["hoyo"].is_object() ? &profile["hoyo"] : nullptr);
+    merge_profile(json &profile, const ProfileDraft &draft, const SparxieBuild &build) {
+      const json fresh = make_profile(draft, build, &profile);
       for (auto it = fresh.begin(); it != fresh.end(); ++it) {
-        if (it.key() == "hoyo" && profile.contains("hoyo") && profile["hoyo"].is_object() && it.value().is_object()) {
-          for (auto field = it.value().begin(); field != it.value().end(); ++field) profile["hoyo"][field.key()] = field.value();
+        // the host's keys of the block go in one by one; what else the block holds (Sparxie's own settings of the plugin, say) stays
+        if ((it.key() == "hoyo" || it.key() == "settings") && profile.contains(it.key()) && profile[it.key()].is_object() && it.value().is_object()) {
+          for (auto field = it.value().begin(); field != it.value().end(); ++field) profile[it.key()][field.key()] = field.value();
         }
         else {
           profile[it.key()] = it.value();
         }
       }
       if (draft.game == "zzz" && profile.contains("hoyo")) profile.erase("hoyo");
+      if (profile.value("game", std::string()) == kEndfieldPluginId && profile.contains("hoyo")) profile.erase("hoyo");
     }
     void
     prune_backups(const fs::path &dir) {
@@ -203,7 +244,7 @@ namespace sparxie {
       return "config.backup-" + stamp + "-x.json";
     }
     WriteResult
-    commit_doc(const fs::path &dir, const json &document, const std::string &profile_id, bool created, StoreHooks hooks) {
+    commit_doc(const fs::path &dir, const json &document, const std::string &profile_id, bool created, StoreHooks hooks, const SparxieBuild &build) {
       WriteResult result;
       result.profile = profile_id;
       const fs::path path = dir / "config.json";
@@ -247,7 +288,7 @@ namespace sparxie {
         return result;
       }
       if (hooks.after_replace) hooks.after_replace(path);
-      ConfigView check = read_store(dir);
+      ConfigView check = read_store(dir, build);
       bool present = profile_id.empty();  // a change that removes profiles names none
       if (check.status.ok && check.document.contains("profiles")) {
         for (const auto &profile : check.document["profiles"])
@@ -269,10 +310,26 @@ namespace sparxie {
     // What an earlier host (and an earlier Sparxie) left in the file that Sparxie's validator would reject, put back to a value it accepts. Nothing else is touched.
     // The 2026-11-12 case: the host wrote endfieldWidth/Height 0 for "follow the stream", Sparxie then moved the whole config aside. Returns true when something changed.
     bool
-    repair_document(json &document) {
+    repair_document(json &document, const SparxieBuild &build) {
       bool changed = false;
       if (!document.is_object() || !document.contains("profiles") || !document["profiles"].is_array()) return false;
       for (auto &profile : document["profiles"]) {
+        // A profile of Endfield in the first generation's spelling, in a build that reads the plugin's id: that build would put the whole file aside. The same
+        // application (game, options, size) goes on under the plugin, whose settings take what the profile held.
+        if (profile.is_object() && profile.value("game", std::string()) == "endfield" && endfield_support(build) == EndfieldSupport::plugin) {
+          const json hoyo = profile.contains("hoyo") && profile["hoyo"].is_object() ? profile["hoyo"] : json::object();
+          const json options = options_from_hoyo(hoyo);
+          const json size_of = { { "settings", { { "width", hoyo.value("endfieldWidth", 0) }, { "height", hoyo.value("endfieldHeight", 0) } } } };
+          profile["game"] = kEndfieldPluginId;
+          // what the profile already holds as plugin settings (a key of the plugin's own, such as the interface scale) stays; the host's keys are set over it
+          json settings = profile.contains("settings") && profile["settings"].is_object() ? profile["settings"] : json::object();
+          const json managed = endfield_plugin_settings(options, hoyo.value("endfieldRefreshRate", 0), build.endfield, &size_of);
+          for (auto field = managed.begin(); field != managed.end(); ++field) settings[field.key()] = field.value();
+          profile["settings"] = settings;
+          profile.erase("hoyo");
+          changed = true;
+          continue;
+        }
         if (!profile.is_object() || !profile.contains("hoyo") || !profile["hoyo"].is_object()) continue;
         json &hoyo = profile["hoyo"];
         const bool endfield = profile.value("game", std::string()) == "endfield";
@@ -298,7 +355,7 @@ namespace sparxie {
       return changed;
     }
     WriteResult
-    edit_store(const fs::path &dir, StoreHooks hooks, const std::function<Status(json &, std::string &)> &edit) {
+    edit_store(const fs::path &dir, StoreHooks hooks, const std::function<Status(json &, std::string &, const SparxieBuild &)> &edit) {
       if (hooks.running) {
         WriteResult refused;
         refused.state = "refused_running";
@@ -307,6 +364,7 @@ namespace sparxie {
       }
       const fs::path path = dir / "config.json";
       std::error_code ec;
+      const SparxieBuild build = hooks.build ? *hooks.build : detect_build(dir);
       for (int pass = 0; pass < 2; ++pass) {
         const bool existed = fs::exists(path, ec);
         const std::string bytes = existed ? read_bytes(path) : std::string();
@@ -325,8 +383,8 @@ namespace sparxie {
             bad.status = Status::fail(409, "config_unreadable", "Sparxie config.json could not be parsed");
             return bad;
           }
-          repair_document(document);
-          Status valid = validate_document(document);
+          repair_document(document, build);
+          Status valid = validate_document(document, &build);
           if (!valid.ok) {
             WriteResult bad;
             bad.state = valid.error_code == "schema_unsupported" ? "refused_schema" : "refused_unreadable";
@@ -335,14 +393,14 @@ namespace sparxie {
           }
         }
         std::string profile_id;
-        Status edited = edit(document, profile_id);
+        Status edited = edit(document, profile_id, build);
         if (!edited.ok) {
           WriteResult bad;
-          bad.state = edited.error_code == "not_found" ? "not_found" : "refused_unreadable";
+          bad.state = edited.error_code == "not_found" ? "not_found" : edited.error_code.rfind("endfield_", 0) == 0 ? "refused_endfield" : "refused_unreadable";
           bad.status = edited;
           return bad;
         }
-        Status again = validate_document(document);
+        Status again = validate_document(document, &build);
         if (!again.ok) {
           WriteResult bad;
           bad.state = "refused_unreadable";
@@ -358,7 +416,7 @@ namespace sparxie {
           }
           continue;
         }
-        return commit_doc(dir, document, profile_id, !existed, hooks);
+        return commit_doc(dir, document, profile_id, !existed, hooks, build);
       }
       WriteResult race;
       race.state = "config_conflict";
@@ -483,6 +541,24 @@ namespace sparxie {
       options["resolution"] = std::to_string(hoyo.value("endfieldWidth", 0)) + "\xC3\x97" + std::to_string(hoyo.value("endfieldHeight", 0));
     return options;
   }
+  json
+  options_from_settings(const json &settings) {
+    // the options of a new application, then what the plugin's settings say (the schema defaults: unlock on, 120)
+    json options = default_options();
+    if (!settings.is_object()) return options;
+    if (settings.contains("inputMode") && settings["inputMode"].is_string()) options["input"] = settings["inputMode"].get<std::string>() == "pc" ? "kbm" : "touch";
+    if (settings.contains("fpsUnlock") && settings["fpsUnlock"].is_boolean()) options["fpsUnlock"] = settings["fpsUnlock"].get<bool>();
+    if (settings.contains("targetFps") && settings["targetFps"].is_number_integer()) options["fps"] = std::clamp(settings["targetFps"].get<int>(), kFpsMin, kFpsMax);
+    if (settings.contains("autoResolution") && settings["autoResolution"].is_boolean() && !settings["autoResolution"].get<bool>() && settings.value("width", 0) > 0 && settings.value("height", 0) > 0)
+      options["resolution"] = std::to_string(settings.value("width", 0)) + "\xC3\x97" + std::to_string(settings.value("height", 0));
+    return options;
+  }
+  json
+  options_from_profile(const json &profile) {
+    if (!profile.is_object()) return default_options();
+    if (is_plugin_game_id(profile.value("game", std::string()))) return options_from_settings(profile.contains("settings") ? profile["settings"] : json::object());
+    return profile.contains("hoyo") ? options_from_hoyo(profile["hoyo"]) : default_options();
+  }
   std::string
   next_profile_id(const json &document, const std::string &prefix) {
     std::set<std::string> ids;
@@ -497,7 +573,8 @@ namespace sparxie {
     return prefix + "x";
   }
   Status
-  validate_document(const json &document) {
+  validate_document(const json &document, const SparxieBuild *build_in) {
+    const SparxieBuild build = build_in ? *build_in : SparxieBuild {};
     if (!document.is_object()) return Status::fail(409, "config_unreadable", "Sparxie config is not a JSON object");
     if (!document.contains("schemaVersion") || !document["schemaVersion"].is_number_integer())
       return Status::fail(409, "config_unreadable", "Sparxie config has no schemaVersion");
@@ -512,14 +589,18 @@ namespace sparxie {
       if (id.empty() || !ids.insert(id).second) return Status::fail(409, "config_unreadable", "Sparxie profile ids must be unique and non-empty");
       if (profile.value("displayName", std::string()).empty()) return Status::fail(409, "config_unreadable", "A Sparxie profile name is empty");
       const std::string game = profile.value("game", std::string());
-      if (game != "genshin" && game != "starRail" && game != "zenlessZoneZero" && game != "endfield")
-        return Status::fail(409, "config_unreadable", "A Sparxie profile game is not recognised");
+      if (game == "endfield" && build.generation == Generation::plugin)
+        return Status::fail(409, "config_unreadable", "This Sparxie reads Endfield as a plugin (" + std::string(kEndfieldPluginId) + "); a profile still says endfield");
+      if (!build_reads_game(build, game)) return Status::fail(409, "config_unreadable", "A Sparxie profile game is not recognised");
+      // a plugin game's settings are the plugin's own: Sparxie reads them as one JSON object and cannot read the file when it is anything else
+      if (is_plugin_game_id(game) && profile.contains("settings") && !profile["settings"].is_null() && !profile["settings"].is_object())
+        return Status::fail(409, "config_unreadable", "A Sparxie plugin profile's settings is not an object");
       const std::string exe = profile.value("executablePath", std::string());
       if (!exe.empty() && !allowed_exe(game, exe)) return Status::fail(409, "config_unreadable", "A Sparxie profile executable is not on the whitelist");
       const bool zzz = game == "zenlessZoneZero";
       if (zzz && profile.contains("hoyo") && !profile["hoyo"].is_null())
         return Status::fail(409, "config_unreadable", "Zenless Zone Zero profiles cannot contain hoyo settings");
-      if (!zzz && profile.contains("hoyo") && profile["hoyo"].is_object()) {
+      if (!zzz && !is_plugin_game_id(game) && profile.contains("hoyo") && profile["hoyo"].is_object()) {
         const json &hoyo = profile["hoyo"];
         // the same rules as Sparxie's AppConfigValidator (and the types its JSON reader needs: a wrong type makes the whole file unreadable for it)
         const char *flags[] = { "touchUiEnabled", "fpsUnlockEnabled", "backgroundFpsLimitEnabled", "genshinFollowInGamePreset", "genshinTouchUiScaleOverrideEnabled", "endfieldAutoResolution" };
@@ -559,6 +640,10 @@ namespace sparxie {
   }
   ConfigView
   read_store(const fs::path &dir) {
+    return read_store(dir, detect_build(dir));
+  }
+  ConfigView
+  read_store(const fs::path &dir, const SparxieBuild &build) {
     ConfigView view;
     const fs::path path = dir / "config.json";
     std::error_code ec;
@@ -575,7 +660,7 @@ namespace sparxie {
       view.status = Status::fail(409, "config_unreadable", "Sparxie config.json could not be parsed");
       return view;
     }
-    view.status = validate_document(view.document);
+    view.status = validate_document(view.document, &build);
     if (!view.status.ok) {
       view.state = "unreadable";
       return view;
@@ -586,24 +671,28 @@ namespace sparxie {
   }
   WriteResult
   add_profile(const fs::path &dir, ProfileDraft draft, StoreHooks hooks) {
-    return edit_store(dir, hooks, [&](json &document, std::string &profile_id) {
+    return edit_store(dir, hooks, [&](json &document, std::string &profile_id, const SparxieBuild &build) {
+      if (draft.game == "endfield")
+        if (const Status held = endfield_write_check(build); !held.ok) return held;
       if (draft.id.empty()) draft.id = next_profile_id(document, draft.game + "-");
       profile_id = draft.id;
       if (!document["selectedProfileId"].is_string() || document["selectedProfileId"].get<std::string>().empty())
         document["selectedProfileId"] = draft.id;
-      document["profiles"].push_back(make_profile(draft));
+      document["profiles"].push_back(make_profile(draft, build));
       return Status::success();
     });
   }
   WriteResult
   update_profile(const fs::path &dir, const std::string &id, ProfileDraft draft, StoreHooks hooks) {
     draft.id = id;
-    return edit_store(dir, hooks, [&](json &document, std::string &profile_id) {
+    return edit_store(dir, hooks, [&](json &document, std::string &profile_id, const SparxieBuild &build) {
       profile_id = id;
+      if (draft.game == "endfield")
+        if (const Status held = endfield_write_check(build); !held.ok) return held;
       bool found = false;
       for (auto &profile : document["profiles"]) {
         if (profile.value("id", std::string()) == id) {
-          merge_profile(profile, draft);
+          merge_profile(profile, draft, build);
           found = true;
         }
       }
@@ -614,7 +703,7 @@ namespace sparxie {
   WriteResult
   remove_profiles(const fs::path &dir, const std::vector<std::string> &ids, StoreHooks hooks) {
     int removed = 0;
-    WriteResult result = edit_store(dir, hooks, [&](json &document, std::string &profile_id) {
+    WriteResult result = edit_store(dir, hooks, [&](json &document, std::string &profile_id, const SparxieBuild &) {
       json kept = json::array();
       for (const auto &profile : document["profiles"]) {
         if (std::find(ids.begin(), ids.end(), profile.value("id", std::string())) != ids.end())

@@ -39,8 +39,8 @@
       <!-- the cover -->
       <MSection id="apps-cover" :title="t('apps.image_settings')">
         <div class="cover-pair">
-        <ImageSelector kind="poster" :title="t('apps.cover_portrait')" :image-path="formData['image-path']" :app-name="formData.name" @update-image="updateImage" @image-error="handleImageError" />
-        <ImageSelector kind="hero" :title="t('apps.cover_landscape')" :image-path="formData.hero" :app-name="formData.name" @update-image="updateHero" @image-error="handleImageError" />
+          <ImageSelector kind="poster" :title="t('apps.cover_portrait')" :image-path="formData['image-path']" :app-name="formData.name" :generated-src="posterGeneratedSrc" :generate="generatedPossible" :show-strip="posterGenerated" :cover-style="coverChoice" :app-id="coverId" :saved-name="savedName" :global-style="globalCoverStyle" :status-text="posterGenerated ? coverStatus : ''" @update-image="updateImage" @update:cover-style="setCoverChoice" @image-error="handleImageError" />
+          <ImageSelector kind="hero" :title="t('apps.cover_landscape')" :image-path="formData.hero" :app-name="formData.name" :generated-src="heroGeneratedSrc" :generate="generatedPossible" :show-strip="heroGenerated" :cover-style="coverChoice" :app-id="coverId" :saved-name="savedName" :global-style="globalCoverStyle" :status-text="heroStatus" @update-image="updateHero" @update:cover-style="setCoverChoice" @image-error="handleImageError" />
         </div>
       </MSection>
 
@@ -171,6 +171,8 @@ import { useSparxie } from '../composables/useSparxie.js'
 import { useSparxieCopy } from '../composables/useSparxieCopy.js'
 import { DEFAULT_CATALOG } from '../utils/sparxie/model.js'
 import { getImagePreviewUrl } from '../utils/imageUtils.js'
+import { COVER_STYLE_AUTO, appCoverChoice, coverAppId, isPlaceholderImagePath, coverPreviewUrl, coverSourceOf, isCoverStyle, normalizeCoverStyle, withoutCoverReport } from '../utils/generatedCover.js'
+import { hostData } from '../composables/hostData.js'
 
 const DEFAULT_FORM_DATA = Object.freeze({
   dlssnr: normalizeDlssnrConfig(),
@@ -265,7 +267,38 @@ watch(() => formData.value?.cmd, async (cmd) => {
 })
 const gameHint = computed(() => (hint.value ? { path: hint.value.path, text: spxCopy.value.gameHint(hint.value.name, hint.value.region ? spxCopy.value.regions[hint.value.region] : '') } : null))
 // the hero shows the poster of the application (its own image)
+// the global style of the host (what an application that follows it shows) and this application's own choice
+const globalCoverStyle = ref(normalizeCoverStyle(hostData.peek('config')?.generated_cover_style))
+const coverChoice = computed(() => appCoverChoice(formData.value))
+const setCoverChoice = (value) => {
+  // 跟随全局 is the absence of the field, so choosing it again leaves the form as it was
+  if (isCoverStyle(value)) formData.value['cover-style'] = value
+  else delete formData.value['cover-style']
+}
+let stopConfig = () => {}
+
+// What the cover is. The host draws one for an application without a picture of its own (not for the Xbox entry, nor for art the game library brings), and only a saved application has one to preview.
+// a picture of the person's: not the placeholder, and not a saved path that the host could not use (it drew a cover for it) until another one is picked
+const isOwnPicture = (path) => !isPlaceholderImagePath(path) && !(coverSourceOf(props.app) === 'generated' && String(path || '') === String(props.app?.['image-path'] || ''))
+const savedName = computed(() => props.app?.name || '')
+const coverId = computed(() => (isNewApp.value ? '' : coverAppId(props.app)))
+const libraryArt = computed(() => coverSourceOf(props.app) === 'poster' && !isOwnPicture(String(props.app?.['image-path'] || '')))
+const generatedPossible = computed(() => !!coverId.value && coverSourceOf(props.app) !== 'xbox' && !libraryArt.value)
+const posterGenerated = computed(() => generatedPossible.value && !isOwnPicture(formData.value?.['image-path']))
+const heroGenerated = computed(() => posterGenerated.value && !formData.value?.hero)
+const previewStyle = computed(() => (coverChoice.value === COVER_STYLE_AUTO ? globalCoverStyle.value : coverChoice.value))
+const generatedUrl = (orientation) => coverPreviewUrl(coverId.value, previewStyle.value, orientation, savedName.value)
+const posterGeneratedSrc = computed(() => (posterGenerated.value ? generatedUrl('portrait') : ''))
+// with a picture of its own and no landscape one, the landscape cover the host serves is that picture (hero first, else the poster): the frame shows it, as the clients get it
+const posterOwnSrc = computed(() => (isOwnPicture(formData.value?.['image-path']) ? getImagePreviewUrl(String(formData.value['image-path']).replace(/"/g, '')) : ''))
+const heroGeneratedSrc = computed(() => (heroGenerated.value ? generatedUrl('landscape') : !formData.value?.hero ? posterOwnSrc.value : ''))
+const heroStatus = computed(() => (heroGenerated.value ? coverStatus.value : !formData.value?.hero && posterOwnSrc.value ? t('apps.cover_status_poster') : ''))
+// the one line that says what is shown: 生成 · 毛玻璃 (the style of the application) or 生成 · 渐变（跟随全局）
+const coverStatus = computed(() => t(coverChoice.value === COVER_STYLE_AUTO ? 'apps.cover_status_following' : 'apps.cover_status_generated', { style: t(`apps.cover_style_${previewStyle.value}`) }))
+
+// the hero shows the poster of the application (its own image); an application whose cover the host draws shows the landscape cover of the style it has now
 const heroUrl = computed(() => {
+  if (heroGenerated.value) return heroGeneratedSrc.value
   const img = formData.value?.hero || formData.value?.['image-path']
   return img ? getImagePreviewUrl(String(img).replace(/"/g, '')) : ''
 })
@@ -570,7 +603,9 @@ const saveApp = async () => {
     return
   }
 
-  const editedApp = { ...formData.value }
+  // the cover fields of the list describe the cover; the host sets them and takes none of them back
+  const editedApp = withoutCoverReport(formData.value)
+  if (!isCoverStyle(editedApp['cover-style'])) delete editedApp['cover-style']
   if (editedApp['image-path']) {
     editedApp['image-path'] = editedApp['image-path'].toString().replace(/"/g, '')
   }
@@ -595,6 +630,7 @@ watch(
 onMounted(() => {
   window.scrollTo(0, 0)
   nextTick(initializeFileSelector)
+  stopConfig = hostData.subscribe('config', (config) => { globalCoverStyle.value = normalizeCoverStyle(config?.generated_cover_style) })
 })
 
 // Live validation while typing (the fields have no blur event)
@@ -608,7 +644,7 @@ watch(() => formData.value?.cmd, () => {
   else handleCmdInput()
 })
 
-onBeforeUnmount(cleanup)
+onBeforeUnmount(() => { stopConfig(); cleanup() })
 </script>
 
 

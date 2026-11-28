@@ -191,6 +191,7 @@ namespace config {
 
     std::string sunshine_name;
     std::string fs_host_icon;  ///< Optional specialised-client host icon token.
+    std::string generated_cover_style;  ///< Default style for applications that follow the generated-cover setting.
     std::string clients;
 
     std::string file_state;
@@ -198,6 +199,7 @@ namespace config {
     std::uint16_t file_mapping_port;
     bool usb_forwarding_enabled;
     std::uint16_t usb_forwarding_port;  // 0: main port + 7; otherwise explicit override
+    bool usb_wired_streaming_enabled;  // Windows VoidLink usbmux streaming
 
     std::string external_ip;  ///< legacy single public address; external_endpoints wins when both are set
     std::string external_endpoints;  ///< public endpoints, `host[:port]` separated by commas
@@ -305,6 +307,8 @@ namespace config {
     int max_log_size_mb;  // 日志文件最大大小（MB），超过后自动轮转，0=不限制
     bool notify_pre_releases;
     bool system_tray;
+    // Where a pairing request asks for its PIN: "fullscreen" (the control panel's full-screen entry, the default) or "panel" (the control panel's own pairing page).
+    std::string pin_prompt;
     // Web UI session lifetimes. Defaults follow OWASP ASVS 4.0.3 V3.3.2.
     int session_idle_minutes;
     int session_absolute_hours;
@@ -370,6 +374,13 @@ namespace config {
   host_max_bitrate_kbps();
   void
   set_host_max_bitrate_kbps(int kbps);
+
+  /**
+   * The style the generated covers follow (the `generated_cover_style` setting). It is read by the HTTP handlers while the configuration can be saved, so every reader asks here:
+   * a saved value is in force at once, without a restart, and a value the host does not know is the default (tonal).
+   */
+  std::string
+  generated_cover_style();
 
   /**
    * Return a synchronized snapshot of the serialized per-client settings.

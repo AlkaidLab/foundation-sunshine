@@ -8,6 +8,7 @@ export const ALIASES = Object.freeze({
   locale: ['语言', '界面语言', '中文', '英文', 'language', 'interface language'],
   sunshine_name: ['主机名', '电脑名称', '计算机名', '设备名称', 'host name', 'computer name', 'pc name'],
   sleep_mode: ['睡眠', '休眠', '待机', '唤醒', '电源', 'sleep', 'hibernate', 'standby', 'wake', 'power'],
+  pin_prompt: ['配对', '全屏', '输入 pin', 'pairing', 'pin', 'fullscreen', 'full screen', 'control panel'],
   notify_pre_releases: ['测试版', '预览版', '更新通知', 'beta', 'preview', 'update notification'],
   system_tray: ['托盘图标', '任务栏图标', '系统托盘', 'tray icon', 'taskbar icon'],
   stop_on_last_video_session: ['自动结束', '断开后关闭', '结束串流', '退出游戏', 'auto stop', 'end stream', 'quit after disconnect'],
@@ -55,6 +56,7 @@ export const ALIASES = Object.freeze({
   vaapi_strict_rc_buffer: ['vaapi 缓冲', '码率缓冲', 'vaapi buffer'],
   usb_forwarding_enabled: ['usb 转发', '外设转发', '设备转发', 'usb 设备', 'usbip', 'usb forwarding'],
   usb_forwarding_port: ['usb 端口', 'usb port'],
+  usb_wired_streaming_enabled: ['usb 有线串流', '有线串流', '插线串流', 'voidlink', 'ipad', 'iphone', 'usb cable', 'usb streaming', 'wired streaming'],
   // 音频
   stream_audio: ['声音', '音频', '开启声音', '静音', '没声音', '主机静音', 'audio', 'sound', 'mute', 'no sound', 'volume'],
   audio_sink: ['喇叭', '扬声器', '耳机', '声卡', '音箱', '输出设备', '音频设备', '选择扬声器', 'speaker', 'headphones', 'headset', 'output device', 'audio device', 'sound card'],

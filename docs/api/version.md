@@ -31,7 +31,7 @@ Every build records what exactly it is (`cmake/prep/build_info.cmake`). The same
 |---|---|---|
 | `commit` | full 40-hex commit, empty when unknown | `SUNSHINE_BUILD_COMMIT`, else `git rev-parse HEAD`, else (a `git archive` tree without `.git`) `cmake/prep/build_identity_archive.txt`, else `$COMMIT` |
 | `dirty` | `true` when the tree had uncommitted changes | `git diff --quiet HEAD`; an archive of a commit is that commit, so `false` |
-| `channel` | `stable`, `beta`, `dev`, `local` | `SUNSHINE_BUILD_CHANNEL`; CI: published master build `beta`, PR and manual runs `dev`; local builds `local` |
+| `channel` | `stable`, `beta`, `dev`, `local` | `SUNSHINE_BUILD_CHANNEL`; CI: a published pre-release `beta`, the stable release (`publish_stable` run on master) `stable`, PR and manual runs `dev`; local builds `local` |
 | `build_time_utc` | ISO 8601, UTC, `Z` | configure time; honours `SOURCE_DATE_EPOCH` |
 | `variant` | product line | `SUNSHINE_BUILD_VARIANT`, default `foundation-sunshine` (Product Zero builds set `product-zero`) |
 | `package` | `installer`, `portable` | `SUNSHINE_BUILD_PACKAGE`; the CI build makes both packages from one binary, so it records `auto` and the host decides from its folder: an Inno Setup uninstaller (`unins###.exe`) next to `sunshine.exe` means `installer` (`package_source: layout`) |

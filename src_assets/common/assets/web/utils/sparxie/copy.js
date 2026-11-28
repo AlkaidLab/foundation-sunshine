@@ -56,7 +56,7 @@ const ZH = {
   errors: {
     invalid_art_job: '图片刷新任务编号无效', invalid_art_action: '图片刷新操作无效',
     sparxie_running: '关闭 Sparxie 后才能写入它的配置', config_unreadable: 'Sparxie 的配置文件无法读取', config_conflict: 'Sparxie 的配置在写入期间发生了变化', schema_unsupported: '不支持这个版本的 Sparxie 配置',
-    write_failed: '无法写入 Sparxie 配置', apps_write_failed: '无法保存应用列表', no_user_session: '这台电脑当前没有已登录的用户', not_found: '没有找到这个应用，应用列表可能已经变化',
+    write_failed: '无法写入 Sparxie 配置', apps_write_failed: '无法保存应用列表', endfield_plugin_missing: '需要终末地插件：请先在 Sparxie 中安装并启用终末地插件', endfield_unsupported: '当前 Sparxie 不支持终末地', no_user_session: '这台电脑当前没有已登录的用户', not_found: '没有找到这个应用，应用列表可能已经变化',
     invalid_input: '填写的内容无效', invalid_region: '所选区服与安装位置不符', is_sparxie: '这是 Sparxie 的位置，不是游戏', wrong_game: '这个文件不属于所选游戏', unrecognised: '没有找到已知的游戏主程序',
     game_running: '游戏正在运行，关闭游戏后再保存', registry_write_failed: '游戏设置没有写入成功', ambiguous: '这个文件夹里有多个已知游戏的主程序', not_readable: '无法读取这个文件夹', settings_unsupported: '这个游戏的设置只能在游戏内修改', launch_failed: '无法启动 Sparxie', art_unavailable: '无法生成官方海报', absent: '尚未安装 Sparxie', launch_unavailable: '主机无法启动 Sparxie', picker_unavailable: '主机不提供文件选择窗口',
   },
@@ -112,7 +112,7 @@ const EN = {
   errors: {
     invalid_art_job: 'The artwork refresh job ID is invalid', invalid_art_action: 'The artwork refresh action is invalid',
     sparxie_running: 'Close Sparxie before its config is written', config_unreadable: 'The Sparxie config file cannot be read', config_conflict: 'The Sparxie config changed while it was being written', schema_unsupported: 'This version of the Sparxie config is not supported',
-    write_failed: 'The Sparxie config could not be written', apps_write_failed: 'The application list could not be saved', no_user_session: 'Nobody is signed in on this PC', not_found: 'That application was not found; the list may have changed',
+    write_failed: 'The Sparxie config could not be written', apps_write_failed: 'The application list could not be saved', endfield_plugin_missing: 'The Endfield plugin is needed: install and enable it in Sparxie first', endfield_unsupported: 'The installed Sparxie does not support Endfield', no_user_session: 'Nobody is signed in on this PC', not_found: 'That application was not found; the list may have changed',
     invalid_input: 'Some of the input is not valid', invalid_region: 'The region does not match the install', is_sparxie: 'That is Sparxie\'s own location, not a game', wrong_game: 'That file does not belong to the chosen game', unrecognised: 'No known game executable was found',
     game_running: 'The game is running. Close it, then save', registry_write_failed: 'The game settings could not be stored', ambiguous: 'That folder holds more than one known game executable', not_readable: 'That folder cannot be read', settings_unsupported: 'This game\'s settings can only be changed in the game', launch_failed: 'Sparxie could not be started', art_unavailable: 'The official poster could not be composed', absent: 'Sparxie is not installed', launch_unavailable: 'The host cannot start Sparxie', picker_unavailable: 'The host does not offer a file dialog',
   },

@@ -245,6 +245,42 @@ provide the desktop of a separate RDP session.
     </tr>
 </table>
 
+### [pin_prompt](https://localhost:47990/config/#pin_prompt)
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            Where a pairing request asks for its PIN. <code>fullscreen</code> opens the control panel's full-screen
+            PIN entry; <code>panel</code> opens the control panel on its own pairing page instead. The control panel
+            reads the saved value each time a client asks to pair, so a change applies to the next request without
+            restarting Sunshine. It applies to pairing requests handled by the Foundation Panel; when the host's own
+            tray handles them because no Panel is running, the Web UI <code>/pin</code> page still opens.
+        </td>
+    </tr>
+    <tr>
+        <td>Choices</td>
+        <td colspan="2">
+            <table>
+                <tr><td>fullscreen</td><td>Full-screen PIN entry</td></tr>
+                <tr><td>panel</td><td>Enter the PIN on the control panel's pairing page</td></tr>
+            </table>
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            fullscreen
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            pin_prompt = panel
+            @endcode</td>
+    </tr>
+</table>
+
 ### [stop_on_last_video_session](https://localhost:47990/config/#stop_on_last_video_session)
 
 <table>

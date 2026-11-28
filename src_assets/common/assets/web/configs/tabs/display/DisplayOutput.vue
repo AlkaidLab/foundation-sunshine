@@ -1,7 +1,7 @@
 <script setup>
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MDisplayCards, MExpander, MFooter, MGroup, MItem, MModeCard, MPrepSeg, MSection, MSeg, MSwitchItem, displayTreeTexts } from 'foundation-ui/vue'
+import { MDisplayCards, MExpander, MFooter, MGroup, MItem, MModeCard, MPrepSeg, MSection, MSeg, MSwitchItem, displayTreeTexts, vddOn } from 'foundation-ui/vue'
 import { vddPhysicalDisplays } from 'foundation-ui/settings/index.js'
 import { $tp } from '../../../platform-i18n'
 import CfgExpert from '../../../components/cfg/CfgExpert.vue'
@@ -9,7 +9,7 @@ import CfgField from '../../../components/cfg/CfgField.vue'
 import CfgSwitch from '../../../components/cfg/CfgSwitch.vue'
 import { useVddSettings } from '../../../composables/useVddSettings.js'
 import { prepChoices } from '../../../composables/displayPrep.js'
-import { gdiNameOf, SCALES, useDisplayLive } from '../../../composables/useDisplayLive.js'
+import { gdiNameOf, modeTargetOf, SCALES, useDisplayLive } from '../../../composables/useDisplayLive.js'
 
 // 显示器: the output display (cards like Windows' display settings, 自动 first), the display mode of the display that is streamed (three sliders, applied live by the control panel),
 // how the physical displays are handled during a stream, and the headless switch. The physical display names and ids are in the 高级 expander.
@@ -28,13 +28,14 @@ const chosen = computed({
   get: () => (props.config.output_name === VDD ? 'virtual' : props.config.output_name ? props.config.output_name : 'auto'),
   set: (id) => { props.config.output_name = id === 'virtual' ? VDD : id === 'auto' ? '' : id },
 })
-// the display the mode card applies to: the chosen physical display, else the virtual one while it exists, else the main display
-const target = computed(() => physical.value.find((d) => d.id === chosen.value)?.gdi || '')
+// The virtual display is the streamed target, but Windows applies its mode and scale through the physical display that is primary underneath it.
+const modeTarget = computed(() => modeTargetOf(chosen.value, physical.value))
+const target = computed(() => modeTarget.value?.gdi || '')
 const live = useDisplayLive(() => target.value)
 const { model: modeModel, resolutions: modeResolutions, refreshes: modeRefreshes, state: modeState, error: modeError } = live
 live.load()
 const streamed = computed(() => !!props.session)
-const targetName = computed(() => (chosen.value === 'virtual' ? x.value.display.virtual : physical.value.find((d) => d.id === chosen.value)?.name || (chosen.value === 'auto' ? x.value.display.auto : '')))
+const targetName = computed(() => modeTarget.value?.name || (chosen.value === 'auto' || chosen.value === 'virtual' ? x.value.display.auto : ''))
 const sizeOf = (id) => (id === chosen.value && modeModel.value.resolution ? modeModel.value.resolution : '')
 const cards = computed(() => [
   { id: 'auto', kind: 'auto', title: x.value.display.auto, text: x.value.display.autoText, size: sizeOf('auto') },
@@ -51,7 +52,7 @@ const prepOptions = computed(() => prepChoices({ windows: windows.value, virtual
 const prepModel = computed({ get: () => props.config.display_device_prep || 'no_operation', set: (value) => { props.config.display_device_prep = value } })
 const prepEffect = computed(() => x.value.prep.effect?.[prepModel.value] || '')
 
-const headless = computed({ get: () => store.summary.value.headless || (String(props.config.vdd_headless_create) === 'enabled' || props.config.vdd_headless_create === true), set: (value) => store.set({ vdd_headless_create: value }) })
+const headless = computed({ get: () => vddOn(props.config?.vdd_headless_create), set: (value) => store.set({ vdd_headless_create: value }) })
 const open = ref(props.focus === 'display_devices')
 </script>
 

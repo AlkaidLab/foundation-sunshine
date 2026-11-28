@@ -12,3 +12,13 @@ test('the language is read from the kept answer at once and revalidated in the b
   // the guard reads the LIVE preference at revalidate time, not the snapshot captured at boot: a language picked after start must not be overwritten by the host's fresh answer
   assert.doesNotMatch(src, /&& !pref\) applyLocale/)
 })
+
+test('inside the GUI the panel language cookie beats the WebView browser language', () => {
+  // the fallback order stays: explicit choice > host locale > panel cookie > WebView language
+  assert.match(src, /const panel = document\.cookie\.match\(/)
+  assert.match(src, /sunshine_panel_locale=/)
+  // the cookie is read as one complete value: a hyphenated tag such as en-US fails the supported check and falls through, instead of being accepted as a language prefix
+  assert.match(src, /sunshine_panel_locale=\(\[\^;\\s\]\+\)/)
+  assert.match(src, /if \(panel && SUPPORTED_LOCALES\.includes\(panel\[1\]\)\) locale = panel\[1\]/)
+  assert.match(src, /if \(!locale\) \{\s*locale = detectSystemLocale\(\);/)
+})

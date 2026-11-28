@@ -16,7 +16,7 @@ const WHERE = {
   mouse: ['mouse', 'high_resolution_scrolling', 'capture_cursor', 'native_pen_touch', 'native_touchpad_optimization', 'amf_draw_mouse_cursor', 'virtual_mouse'],
   usb: ['usb_forwarding_enabled', 'usb_forwarding_port'],
 }
-const INPUT_PAGES = ['gamepad', 'keyboard', 'mouse', 'clipboard', 'usb']
+const INPUT_PAGES = ['gamepad', 'keyboard', 'mouse', 'usb']
 
 const entry = (id) => SEARCH_INDEX.filter((e) => e.id === id)
 
@@ -26,8 +26,8 @@ test('every key of the old input page is on exactly one of the four pages, and e
   for (const [key, p] of OLD_INPUT_KEYS.map((k, i) => [k, placed[i]])) assert.equal(p.tab, 'input', `${key} stays in 输入与外设`)
   for (const [place, keys] of Object.entries(WHERE)) for (const key of keys) assert.equal(entry(key)[0].params.sub, place, `${key} is on ${place}`)
   assert.equal(Object.values(WHERE).flat().length, OLD_INPUT_KEYS.length, 'no key is on two pages')
-  assert.equal(entry('clipboard_sync')[0].params.sub, 'clipboard')
-  assert.deepEqual(SEARCH_INDEX.filter((e) => e.params.tab === 'input' && !INPUT_PAGES.includes(e.params.sub)), [], 'no entry is on a page outside the four rail places and clipboard page (no 高级, no drivers page)')
+  assert.equal(entry('clipboard_sync')[0].params.sub, 'keyboard')
+  assert.deepEqual(SEARCH_INDEX.filter((e) => e.params.tab === 'input' && !INPUT_PAGES.includes(e.params.sub)), [], 'no entry is on a page outside the four rail places (no 高级, no drivers page)')
 })
 
 test('the places of 输入与外设: 手柄, 键盘, 鼠标与触控, USB 转发 (Windows only); the first one is the default; the rows are not under the stream settings', () => {
@@ -35,7 +35,7 @@ test('the places of 输入与外设: 手柄, 键盘, 鼠标与触控, USB 转发
   assert.equal(PLACE_TABS.input, INPUT_PLACES); assert.equal(DEFAULT_PLACE.input, 'gamepad')
   assert.deepEqual(placesOf('input', 'linux').map((p) => p.id), ['gamepad', 'keyboard', 'mouse']); assert.equal(placesOf('input', 'windows').length, 4)
   assert.equal(SETTINGS_GROUPS.flatMap((g) => g.categories).includes('input'), false)
-  assert.equal(labelOf('zh', 'config.input_mouse_title'), '鼠标与触控'); assert.equal(labelOf('zh', 'shell.usb_forwarding'), 'USB 转发')
+  assert.equal(labelOf('zh', 'config.input_mouse_title'), '鼠标与触控'); assert.equal(labelOf('zh', 'shell.usb_forwarding'), 'USB 转发/挂载')
 })
 
 test('the old addresses of 输入 lead to the page of the key, else to 手柄', () => {

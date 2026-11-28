@@ -32,6 +32,15 @@ test('the status says whether the installed Sparxie can run a session without it
   assert.equal(normalizeStatus({ installed: true, touchUiSwitch: 'yes' }).touchUiSwitch, false, 'only a real true counts')
 })
 
+test('the status says whether Endfield is taken by a plugin of Sparxie (its keyboard, mouse and gamepad input is the plugin\'s own)', () => {
+  assert.equal(ABSENT.endfieldPlugin, false)
+  assert.equal(normalizeStatus({ installed: true }).endfieldPlugin, false, 'a host that says nothing about Endfield')
+  assert.equal(normalizeStatus({ installed: true, endfield: { support: 'plugin', state: 'ready' } }).endfieldPlugin, true)
+  assert.equal(normalizeStatus({ installed: true, endfield: { support: 'plugin', state: 'plugin_untrusted' } }).endfieldPlugin, true, 'in place but not enabled yet: the session is still a Sparxie one')
+  for (const support of ['builtin', 'plugin_missing', 'unsupported', 7, null]) assert.equal(normalizeStatus({ installed: true, endfield: { support } }).endfieldPlugin, false, String(support))
+  assert.equal(normalizeStatus({ installed: true, endfield: 'plugin' }).endfieldPlugin, false)
+})
+
 test('the games Sparxie stores come apart from the ones the host found', async () => {
   const { client } = clientOf({ scene: 'data' })
   const games = await client.games()

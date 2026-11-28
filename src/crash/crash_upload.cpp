@@ -110,7 +110,7 @@ namespace crash {
 
     /// One multipart POST. `dump`, `log` and `image` (the screenshot of a feedback report) are optional.
     answer_t
-    post(const std::string &url, const std::string &meta, const std::string &dump, const logfile::packed_t *log = nullptr, const std::string *image = nullptr) {
+    post(const std::string &url, const std::string &meta, const std::string &dump, const logfile::packed_t *log = nullptr, const std::string *image = nullptr, long timeout_s = 120) {
       answer_t answer;
       CURL *curl = curl_easy_init();
       if (!curl) return answer;
@@ -141,7 +141,7 @@ namespace crash {
       curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_line);
       curl_easy_setopt(curl, CURLOPT_HEADERDATA, &answer.retry_after);
       curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
-      curl_easy_setopt(curl, CURLOPT_TIMEOUT, 120L);
+      curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout_s);
       curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
       curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
       curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
@@ -381,6 +381,40 @@ namespace crash {
 
   namespace {
     std::atomic<const char *> g_session_log_state { "no_log" };
+    /// The Panel and the Web UI wait for the host's answer to a feedback report while the screenshot and the log are uploaded, one after the other (the page gives up at 45 s):
+    /// the two uploads and the log's collection and packing between them share one deadline (begin_feedback_budget), each upload gets at most 20 s of what is left,
+    /// and an upload that would start with less than kFeedbackMinUploadSeconds left is not started: the report goes without it and says why (unreachable).
+    constexpr long kFeedbackUploadTimeoutSeconds = 20;
+    constexpr long kFeedbackMinUploadSeconds = 2;
+    /// The log's collection and packing take at most this long, and what they leave must still be enough for the upload to have a chance (kFeedbackUploadReserveSeconds).
+    constexpr long kFeedbackPrepareSeconds = 10;
+    constexpr long kFeedbackUploadReserveSeconds = 5;
+    /// No deadline: an upload outside a feedback report (the tests, the tools) keeps the fixed 20 s.
+    thread_local std::optional<std::chrono::steady_clock::time_point> t_feedback_deadline;
+
+    /// Seconds the next feedback upload may take, or 0 when it should not start.
+    long
+    feedback_upload_timeout_s() {
+      if (!t_feedback_deadline) return kFeedbackUploadTimeoutSeconds;
+      const auto left = std::chrono::duration_cast<std::chrono::seconds>(*t_feedback_deadline - std::chrono::steady_clock::now()).count();
+      if (left < kFeedbackMinUploadSeconds) return 0;
+      return left < kFeedbackUploadTimeoutSeconds ? static_cast<long>(left) : kFeedbackUploadTimeoutSeconds;
+    }
+  }
+
+  void
+  begin_feedback_budget(std::chrono::seconds total) {
+    t_feedback_deadline = std::chrono::steady_clock::now() + total;
+  }
+
+  void
+  end_feedback_budget() {
+    t_feedback_deadline.reset();
+  }
+
+  long
+  feedback_upload_timeout_for_tests() {
+    return feedback_upload_timeout_s();
   }
 
   const char *
@@ -412,7 +446,12 @@ namespace crash {
       std::string base = endpoint;
       while (!base.empty() && base.back() == '/') base.pop_back();
       const nlohmann::json meta { { "v", 1 }, { "install_id", install_id }, { "version", version } };
-      const auto answer = post(base + "/v1/user-screenshot", meta.dump(), {}, nullptr, &image);
+      const long timeout_s = feedback_upload_timeout_s();
+      if (timeout_s <= 0) {
+        g_session_shot_state.store("unreachable");  // the report's deadline is spent: it goes without the picture rather than past the page's wait
+        return std::nullopt;
+      }
+      const auto answer = post(base + "/v1/user-screenshot", meta.dump(), {}, nullptr, &image, timeout_s);
       if (answer.status == 0) {
         g_session_shot_state.store("unreachable");
         return std::nullopt;
@@ -440,20 +479,54 @@ namespace crash {
   }
 
   std::optional<std::string>
-  upload_session_log_from(const fs::path &config_dir, const std::string &endpoint, const std::string &install_id, const std::string &version) {
+  upload_session_log_from(const fs::path &config_dir, const std::string &endpoint, const std::string &install_id, const std::string &version, const log_stages_t *stages) {
     g_session_log_state.store("no_log");
     try {
       std::call_once(g_curl_once, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
-      const auto text = logfile::collect_current(log_path_of(config_dir));
+      // Inside a feedback report the collecting and the packing run on the report's deadline too: with too little left the log is not even read, a big file is read from its end only, and
+      // the work stops where its own share has passed (the upload keeps kFeedbackUploadReserveSeconds of the rest).
+      std::size_t read_bytes = logfile::max_read_bytes;
+      std::function<bool()> expired;
+      if (t_feedback_deadline) {
+        const auto now = std::chrono::steady_clock::now();
+        const auto spare = std::chrono::duration_cast<std::chrono::milliseconds>(*t_feedback_deadline - now) - std::chrono::seconds(kFeedbackUploadReserveSeconds);
+        if (spare < std::chrono::seconds(1)) {
+          g_session_log_state.store("unreachable");
+          return std::nullopt;
+        }
+        const auto until = now + std::min<std::chrono::milliseconds>(spare, std::chrono::seconds(kFeedbackPrepareSeconds));
+        expired = [until] { return std::chrono::steady_clock::now() >= until; };
+        read_bytes = logfile::bounded_read_bytes;
+      }
+      const auto prepare_spent = [&] { return expired && expired(); };
+      const auto text = stages && stages->collect ? stages->collect(log_path_of(config_dir), read_bytes) : logfile::collect_current(log_path_of(config_dir), read_bytes);
       if (text.empty()) return std::nullopt;
+      if (prepare_spent()) {
+        g_session_log_state.store("unreachable");
+        return std::nullopt;
+      }
       g_session_log_state.store("pack_failed");
-      const auto packed = logfile::pack(text);
-      if (!packed) return std::nullopt;
+      const auto packed = stages && stages->pack ? stages->pack(text, expired) : logfile::pack(text, logfile::max_gz_bytes, expired);
+      if (!packed) {
+        if (prepare_spent()) g_session_log_state.store("unreachable");  // stopped by the deadline, not by the log
+        return std::nullopt;
+      }
+      // a packing that finished after its share ended is not used either: the upload keeps the time it was promised
+      if (prepare_spent()) {
+        g_session_log_state.store("unreachable");
+        return std::nullopt;
+      }
       std::string base = endpoint;
       while (!base.empty() && base.back() == '/') base.pop_back();
       const nlohmann::json meta { { "v", 1 }, { "install_id", install_id }, { "version", version } };
+      // what is left of the report's deadline is measured after them
+      const long timeout_s = feedback_upload_timeout_s();
+      if (timeout_s <= 0) {
+        g_session_log_state.store("unreachable");
+        return std::nullopt;
+      }
       // a service without the endpoint (404), a limit (429), a refusal: the report goes without the log
-      const auto answer = post(base + "/v1/user-log", meta.dump(), {}, &*packed);
+      const auto answer = post(base + "/v1/user-log", meta.dump(), {}, &*packed, nullptr, timeout_s);
       if (answer.status == 0) {
         g_session_log_state.store("unreachable");
         return std::nullopt;

@@ -229,6 +229,10 @@
     "method": "POST"
   },
   {
+    "pattern": "^/api/apps/cover-preview$",
+    "method": "GET"
+  },
+  {
     "pattern": "^/api/clients/unpair-all$",
     "method": "POST"
   },
