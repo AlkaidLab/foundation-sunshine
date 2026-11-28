@@ -1088,6 +1088,7 @@ if ($MyInvocation.InvocationName -ne '.') {
         exit 0
     }
     catch {
+        Write-Output 'VDD_INSTALL_FAILED=1'
         Write-Error $_
         exit 1
     }

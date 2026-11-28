@@ -139,7 +139,7 @@ english.MsgOldNSISStaleRegistry=The previous installation files appear to be gon
 english.MsgOldNSISCleanupFailed=Failed to clean up the previous installation registry entries.%nPlease remove HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine manually and try again.
 english.MsgUpdateBlocked=Sunshine cannot be updated while something is still using its files. The existing installation has not been changed.%n%n%1%n%nClose what is using them and run the installer again.
 english.MsgServiceInstallFailed=Sunshine service could not be installed or verified.%n%nThe files were installed and are kept. Reboot and run "{app}\scripts\install-service.bat" as administrator, or use the repair action in the Sunshine GUI. The installer log in your TEMP folder has the details.
-english.MsgServiceAutostartFailed=Sunshine was installed, but its automatic startup could not be configured - security software often blocks this change.%n%nThe service is running; you can enable automatic startup later in the Sunshine panel. The installer log has the details.
+english.MsgServiceAutostartFailed=Sunshine was installed, but its automatic startup could not be configured - security software often blocks this change.%n%nYou can enable automatic startup later in the Sunshine panel. The installer log has the details.
 english.MsgServiceStartFailed=The Sunshine service was registered, but could not start now. Setup will still apply your automatic startup choice. Check the installer log and try starting the service again from the Sunshine panel.
 english.MsgDirProtectFailed=The install folder could not be protected from changes by other users, so nothing was installed.%n%nThe service runs the programs in this folder as SYSTEM. Pick a folder on a local NTFS or ReFS drive and run setup again. The installer log in your TEMP folder has the details.
 english.MsgVDDInstallFailed=The virtual display driver could not be installed or verified.%n%nSunshine was installed but has not been started. Review the installer log in your TEMP folder, then use the repair action in the Sunshine GUI.
@@ -190,7 +190,7 @@ chinesesimplified.MsgOldNSISStaleRegistry=旧版本的文件已经不存在，�
 chinesesimplified.MsgOldNSISCleanupFailed=清理旧版注册表项失败。%n请手动删除 HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine 后重试。
 chinesesimplified.MsgUpdateBlocked=Sunshine 的文件仍被占用，无法更新。现有安装没有被改动。%n%n%1%n%n请关闭占用它们的程序后重新运行安装程序。
 chinesesimplified.MsgServiceInstallFailed=无法安装或验证 Sunshine 服务。%n%n程序文件已经装好并会保留。请重启后以管理员身份运行 "{app}\scripts\install-service.bat"，或在 Sunshine 管理界面里使用修复功能。详细信息见 TEMP 目录下的安装日志。
-chinesesimplified.MsgServiceAutostartFailed=Sunshine 已安装成功，但开机自启动设置失败——通常是安全软件拦截了该修改。%n%n服务正在运行，不影响使用；可稍后在 Sunshine 管理界面中手动开启自启动，详情见安装日志。
+chinesesimplified.MsgServiceAutostartFailed=Sunshine 已安装成功，但开机自启动设置失败——通常是安全软件拦截了该修改。%n%n可稍后在 Sunshine 管理界面中手动开启自启动，详情见安装日志。
 chinesesimplified.MsgServiceStartFailed=Sunshine 服务已注册，但本次启动失败。安装程序仍会应用您选择的开机启动设置。请查看安装日志，并在 Sunshine 管理界面中重试启动服务。
 chinesesimplified.MsgDirProtectFailed=无法保护安装目录不被其他用户修改，所以没有安装任何文件。%n%n后台服务以 SYSTEM 身份运行这个目录里的程序。请选择本机 NTFS 或 ReFS 磁盘上的文件夹，再运行一次安装程序。详细信息见 TEMP 目录下的安装日志。
 chinesesimplified.MsgVDDInstallFailed=无法安装或验证基地虚拟显示器。%n%nSunshine 已安装但尚未启动。请检查 TEMP 目录中的安装日志，然后在 Sunshine 管理界面中使用修复功能。
@@ -818,22 +818,47 @@ begin
   Result := (VDDResultCode <> 101) and (not ServiceVerifyFailed);
 end;
 
+// A log left by an earlier run must not pass for this run's diagnosis: both copies are cleared
+// right before the helper starts (a read-only scripts folder makes install-vdd.bat keep its
+// copy in {tmp}, which is where Setup points the child processes' TEMP).
+procedure ClearStaleHelperLogs();
+begin
+  DeleteFile(ExpandConstant('{app}\scripts\vdd-install-last.log'));
+  DeleteFile(ExpandConstant('{tmp}\vdd-install-last.log'));
+end;
+
 // The helper's output is the only place a VDD failure names its reason (the exit code alone is
-// just 101). install-vdd.bat keeps it next to the script and echoes it; mirror it into the setup
-// log and the run directory either way, so a failure is diagnosable from the files a person can
-// send us.
-procedure SurfaceVddHelperLog();
+// just 101). install-vdd.bat keeps it next to the script, or in {tmp} when the scripts folder
+// is read-only; mirror whichever copy this run produced into the setup log and the run
+// directory, so a failure is diagnosable from the files a person can send us.
+// Returns the verdict the log carries: 0 completed, 3010 restart required, 1 failed,
+// -1 when this run produced no log.
+function SurfaceVddHelperLog(): Integer;
 var
+  Candidates: array[0..1] of String;
   HelperLog: String;
   Lines: TArrayOfString;
   Joined: String;
   I: LongInt;
+  Found: Boolean;
 begin
-  HelperLog := ExpandConstant('{app}\scripts\vdd-install-last.log');
-  if not LoadStringsFromFile(HelperLog, Lines) then begin
-    Log('VDD helper output is unavailable; the helper either was not run or wrote nothing.');
+  Result := -1;
+  Candidates[0] := ExpandConstant('{app}\scripts\vdd-install-last.log');
+  Candidates[1] := ExpandConstant('{tmp}\vdd-install-last.log');
+  HelperLog := '';
+  Found := False;
+  for I := 0 to 1 do begin
+    if LoadStringsFromFile(Candidates[I], Lines) then begin
+      HelperLog := Candidates[I];
+      Found := True;
+      Break;
+    end;
+  end;
+  if not Found then begin
+    Log('VDD helper output is unavailable; the helper either did not run or wrote nothing this run.');
     Exit;
   end;
+  Log('VDD helper output taken from ' + HelperLog + '.');
   Joined := '';
   for I := 0 to GetArrayLength(Lines) - 1 do begin
     Log('VDD helper: ' + Lines[I]);
@@ -841,12 +866,32 @@ begin
   end;
   if InstallRunDir <> '' then
     SaveStringToFile(AddBackslash(InstallRunDir) + 'vdd-install.log', AnsiString(Joined), False);
+
+  // The markers the helper and the batch write into the log are the authority: 3010 first,
+  // then the failure marker; a completed line with neither is a successful run.
+  for I := 0 to GetArrayLength(Lines) - 1 do begin
+    if Pos('VDD_RESTART_REQUIRED=1', Lines[I]) > 0 then begin
+      Result := 3010;
+      Exit;
+    end;
+    if Pos('VDD_INSTALL_FAILED=1', Lines[I]) > 0 then begin
+      Result := 1;
+      Exit;
+    end;
+  end;
+  for I := 0 to GetArrayLength(Lines) - 1 do begin
+    if Pos('VDD installation completed.', Lines[I]) > 0 then begin
+      Result := 0;
+      Exit;
+    end;
+  end;
 end;
 
 procedure InstallAndVerifyVDD();
 var
   ResultCode: Integer;
   Params, Detail: String;
+  Verdict: Integer;
 begin
   if not VDDComponentSelected() then
     Exit;
@@ -854,6 +899,7 @@ begin
   WizardForm.StatusLabel.Caption := CustomMessage('StatusInstallVDD');
   EmitInstallerEvent('install-vdd', 'running', 'StatusInstallVDD', 0);
   Params := '--preserve-healthy-existing';
+  ClearStaleHelperLogs;
   ResultCode := -1;
   if not Exec(ExpandConstant('{app}\scripts\install-vdd.bat'), Params, '',
               SW_HIDE, ewWaitUntilTerminated, ResultCode) then
@@ -883,7 +929,23 @@ begin
     EmitInstallerEvent('install-vdd', 'failed', 'StatusInstallVDD', 101);
   end;
 
-  SurfaceVddHelperLog;
+  Verdict := SurfaceVddHelperLog;
+
+  // A failing cmd AutoRun hook (a leftover registry entry whose script is gone) fails on every
+  // cmd start and hands back a polluted process exit code even for a completed run; the log's
+  // own verdict is the authority over it.
+  if (Verdict = 0) and (VDDResultCode = 101) then begin
+    Log('The helper log reports a completed install while the exit code is ' + IntToStr(ResultCode) + '; a failing cmd AutoRun hook can pollute it. Treating the install as successful.');
+    VDDResultCode := 0;
+  end
+  else if (Verdict = 3010) and (VDDResultCode <> 3010) then begin
+    Log('The helper log reports a restart requirement while the exit code is ' + IntToStr(ResultCode) + '; treating the install as needs-reboot.');
+    VDDResultCode := 3010;
+  end
+  else if (Verdict = 1) and (VDDResultCode = 0) then begin
+    Log('The helper log reports a failed install while the exit code is 0; treating the install as failed.');
+    VDDResultCode := 101;
+  end;
 
   // the exit code of the helper itself (-1: it could not be started), not the 101 this script maps it to
   JournalComponent('vdd', 'install', ResultCode);
