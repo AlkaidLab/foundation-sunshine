@@ -11,6 +11,7 @@ installer-ms-wait-for-exit-20261118 (WaitForExit(Int32)).
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$Installer,
+    [string]$StagingDirectory,
     [string]$EvidenceDirectory = (Join-Path $env:TEMP 'installer-silent-evidence'),
     [ValidateRange(10, 300)][int]$TimeoutSeconds = 120
 )
@@ -180,6 +181,12 @@ function Assert-SameManifest($Expected, $Actual, [string]$Phase, [string]$What) 
     }
 }
 
+function Assert-VulkanHdrPayload([string]$Folder, [string]$Phase) {
+    if ($null -ne $stagedVulkanHdr) {
+        Assert-SameManifest $stagedVulkanHdr (Get-Manifest $Folder $vulkanHdrFiles) $Phase 'the Vulkan HDR payload'
+    }
+}
+
 function Assert-TestServiceRunning([string]$Phase) {
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     while ($true) {
@@ -249,6 +256,11 @@ function Test-UpdateSafety {
         Start-Sleep -Seconds 1
         $before = Get-Manifest $app $kept
         if (-not (Test-Path -LiteralPath (Join-Path $app 'assets\web\index.html'))) { throw 'update-fresh: no Web UI folder to protect.' }
+        Assert-VulkanHdrPayload $app 'update-fresh'
+        # Older installers left this payload out. Recreate that layout before the first update.
+        if ($null -ne $stagedVulkanHdr -and $stagedVulkanHdr.Count -gt 0) {
+            foreach ($file in $vulkanHdrFiles) { Remove-Item -LiteralPath (Join-Path $app $file) }
+        }
 
         # A. A program of the folder is running (what the updater of an older Control Panel leaves behind).
         Copy-Item -LiteralPath (Join-Path $env:SystemRoot 'System32\ping.exe') -Destination $gui -Force
@@ -257,6 +269,7 @@ function Test-UpdateSafety {
         if (-not $stub.HasExited) { throw 'update-running-program: the program of the folder was not ended.' }
         Stop-TestService 'update-running-program'
         Assert-SameManifest $before (Get-Manifest $app $kept) 'update-running-program' 'the installed files'
+        Assert-VulkanHdrPayload $app 'update-running-program'
         if (Test-Path -LiteralPath $previous) { throw 'update-running-program: the old Web UI folder was left behind.' }
         Assert-NothingParked $app 'update-running-program'
 
@@ -377,6 +390,12 @@ function Test-UpdateSafety {
 
 try {
     Assert-CleanMachine
+    $vulkanHdrFiles = @('tools\vulkan_hdr\zako_vulkan_hdr_bridge.dll', 'tools\vulkan_hdr\VkLayer_zako_virtual_hdr.json', 'tools\vulkan_hdr\vulkan_hdr_probe.exe')
+    $stagedVulkanHdr = $null
+    if ($StagingDirectory) {
+        $stagedVulkanHdr = Get-Manifest (Resolve-Path -LiteralPath $StagingDirectory).Path $vulkanHdrFiles
+        if ($stagedVulkanHdr.Count -notin @(0, $vulkanHdrFiles.Count)) { throw 'The staged Vulkan HDR payload is incomplete.' }
+    }
     # Spaces exercise Inno's command-line quoting. Keep logs outside the
     # installed tree so uninstall failures remain inspectable as artifacts.
     $testRoot = Join-Path $env:TEMP ("silent installer smoke " + [Guid]::NewGuid().ToString('N'))
@@ -386,6 +405,7 @@ try {
         $uninstallLog = Join-Path $EvidenceDirectory "$mode-uninstall.log"
         $arguments = "/$mode /SP- /NORESTART /LANG=english /TYPE=custom /COMPONENTS=application,assets,gui /TASKS= /DIR=`"$app`" /LOG=`"$installLog`""
         Invoke-BoundedProcess -File $Installer -Arguments $arguments -Phase "$mode-install"
+        Assert-VulkanHdrPayload $app "$mode-install"
         $binaries = @('sunshine.exe', 'tools\sunshinesvc.exe', 'assets\gui\sunshine-gui.exe', 'unins000.exe')
         foreach ($file in $binaries) {
             if (-not (Test-Path -LiteralPath (Join-Path $app $file) -PathType Leaf)) {

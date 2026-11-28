@@ -269,6 +269,13 @@ Source: "{#MySourceDir}\tools\nefconw.exe"; DestDir: "{app}\tools"; Flags: ignor
 ; the protocol launcher of the Sparxie touch applications (published from tools/sparxie-launch when the build has dotnet)
 Source: "{#MySourceDir}\tools\sparxie-launch.exe"; DestDir: "{app}\tools"; Flags: ignoreversion skipifsourcedoesntexist; Components: application
 
+; The Core uses these three files together during an HDR session on ZakoVDD.
+#if @VDD_VULKAN_HDR_AVAILABLE@
+Source: "{#MySourceDir}\tools\vulkan_hdr\zako_vulkan_hdr_bridge.dll"; DestDir: "{app}\tools\vulkan_hdr"; Flags: ignoreversion; Components: application
+Source: "{#MySourceDir}\tools\vulkan_hdr\VkLayer_zako_virtual_hdr.json"; DestDir: "{app}\tools\vulkan_hdr"; Flags: ignoreversion; Components: application
+Source: "{#MySourceDir}\tools\vulkan_hdr\vulkan_hdr_probe.exe"; DestDir: "{app}\tools\vulkan_hdr"; Flags: ignoreversion; Components: application
+#endif
+
 ; Optional HDR adapter shipped with Sunshine. List first-party files explicitly
 ; so a stale local staging directory cannot add a vendor runtime to the package.
 Source: "{#MySourceDir}\tools\hdr_enhanced\nvidia_rtx_video\foundation_rtx_video_adapter.dll"; DestDir: "{app}\tools\hdr_enhanced\nvidia_rtx_video"; Flags: ignoreversion skipifsourcedoesntexist; Components: application
