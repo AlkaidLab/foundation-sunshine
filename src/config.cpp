@@ -2156,6 +2156,8 @@ namespace config {
         "status",  // API响应状态，不是配置项
         "platform",  // 平台信息，编译时确定，只读
         "version",  // 版本号，只读
+        "windows_build",
+        "widget_token_configured",
         "active_encoder",  // 运行时探测后实际使用的编码器，只读
         "active_hevc_mode",  // 探测后 HEVC 实际提供的模式，只读
         "active_av1_mode",  // 探测后 AV1 实际提供的模式，只读
