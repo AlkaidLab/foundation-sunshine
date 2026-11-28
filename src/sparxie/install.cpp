@@ -3,7 +3,9 @@
 #include "src/sparxie/sha256.h"
 #include "src/sparxie/zip_extract.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <ctime>
 #include <fstream>
 #include <map>
@@ -235,11 +237,55 @@ namespace sparxie {
     }
   }  // namespace
 
+  bool
+  later_release(const std::string &a, const std::string &b) {
+    auto digit = [](char c) { return c >= '0' && c <= '9'; };
+    std::size_t i = 0, j = 0;
+    while (i < a.size() && j < b.size()) {
+      if (digit(a[i]) && digit(b[j])) {
+        auto number = [&digit](const std::string &text, std::size_t &at) {
+          while (at < text.size() && text[at] == '0') ++at;
+          const std::size_t from = at;
+          while (at < text.size() && digit(text[at])) ++at;
+          return text.substr(from, at - from);
+        };
+        const std::string x = number(a, i), y = number(b, j);
+        if (x.size() != y.size()) return x.size() > y.size();
+        if (x != y) return x > y;
+      }
+      else {
+        if (a[i] != b[j]) return a[i] > b[j];
+        ++i;
+        ++j;
+      }
+    }
+    return a.size() - i > b.size() - j;
+  }
+
+  bool
+  outdated_version(const std::string &version) {
+    int parts[3] = { 0, 0, 0 };
+    std::size_t at = 0;
+    for (int i = 0; i < 3; ++i) {
+      std::size_t digits = 0;
+      while (at < version.size() && version[at] >= '0' && version[at] <= '9' && digits < 6) {
+        parts[i] = parts[i] * 10 + (version[at++] - '0');
+        ++digits;
+      }
+      if (digits == 0) return false;
+      if (i < 2 && (at >= version.size() || version[at++] != '.')) return false;
+    }
+    int oldest[3] = { 0, 0, 0 };
+    std::sscanf(kCurrentVersion, "%d.%d.%d", &oldest[0], &oldest[1], &oldest[2]);
+    return std::lexicographical_compare(parts, parts + 3, oldest, oldest + 3);
+  }
+
   std::vector<Pin>
   builtin_pins() {
     return {
-      { "0.1.0-preview.9", "Sparxie-desktop-0.1.0-preview.9-win-x64.zip", "3e5591d7126aeb63972f30aaaf3f6649d695271312803454f7d217d79e903c7c", 100832503ull, "collaborator package" },
-      { "ci-4438b663e", "Sparxie-desktop-ci-4438b663e-win-x64.zip", "5053db25f803c1637eda1ccdb156266210d38c185e1180dea7e976be7799db77", 103911941ull, "build-test artifact main 4438b663e run 42796922646; not a download address" },
+      { "0.2.1", "Sparxie-desktop-0.2.1-win-x64.zip", "53bc95771fb0f8883605b33aae4acb19f66fac0d81323359488d57028763062a", 86295160ull, "official release v0.2.1" },
+      { "0.2.0", "Sparxie-desktop-0.2.0-win-x64.zip", "fad15aed3d516fdd76c2c093c4c6c2c615dc05ba8e81b40b66a815143ddb1a7b", 83473484ull, "official release v0.2.0", true },
+      { "0.1.0", "Sparxie-desktop-0.1.0-win-x64.zip", "b317a4e0b66a98c9c0183e3090d9a736fe26e4b72f870cc2e4362e86cc7738ac", 101308674ull, "official release v0.1.0", true },
     };
   }
 
@@ -253,11 +299,12 @@ namespace sparxie {
         { "sha256", pin.sha256 },
         { "bytes", pin.bytes },
         { "note", pin.note },
+        { "outdated", pin.outdated },
       });
     }
     return {
       { "name", "sparxie" },
-      { "publisher", "暗檬" },
+      { "publisher", "ShadowLemoon" },
       { "online", false },
       { "minOsBuild", kMinBuild },
       { "arch", "x64" },
@@ -372,7 +419,7 @@ namespace sparxie {
     const std::string version = pin ? pin->version : std::string("未经验证的版本");
     json component = {
       { "name", "sparxie" },
-      { "publisher", "暗檬" },
+      { "publisher", "ShadowLemoon" },
       { "version", version },
       { "sha256", hash },
       { "verified", pin != nullptr },
@@ -391,6 +438,8 @@ namespace sparxie {
       { "installed", true },
       { "version", version },
       { "verified", pin != nullptr },
+      { "outdated", pin ? pin->outdated : outdated_version(app.rfind("app-", 0) == 0 ? app.substr(4) : app) },
+      { "latestVersion", kCurrentVersion },
       { "sha256", hash },
       { "app", app },
       { "dest", req.dest.string() },

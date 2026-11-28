@@ -161,11 +161,12 @@ Genshin-only fields (`followPreset`, `preset30`, `preset60`,
 has no `hoyo` object in Sparxie's file. The host's created profiles default
 `fpsUnlock` to `true` with `fps` 120, the way Sparxie's own editor starts
 a profile. `options.input` (`touch` or `kbm`, default `touch`) is stored
-with the application, and a Sparxie profile of Genshin or Star Rail carries it
-as `hoyo.touchUiEnabled` (`false` for `kbm`): Sparxie's `HoyoSettings.touch_ui_enabled`,
-a session that installs the frame-rate unlock and the other runtime settings but not the touch interface
-(see "Input, touch interface and `touchUiSwitch`" below). Zenless Zone Zero has no `hoyo` object, so it stores nothing.
-A profile without the field (an older Sparxie, or one written by hand) is a touch profile; importing it gives `options.input: "touch"`.
+with the application, and a Sparxie profile (Genshin, Star Rail, Zenless Zone Zero, and plugin games such as Endfield) carries `kbm`
+as top-level `disableTouchUi: true` (`ProfileSnapshot.disable_touch_ui`, field 8; plain `bool`, omitted when `false`).
+For Genshin and Star Rail it installs the frame-rate unlock and other runtime settings without the touch interface
+(see "Input and the touch interface" below); for Zenless Zone Zero it starts the game directly without injecting
+`ZZZTouchCore`/`ZZZTouchRuntime`; for plugin games it passes `SpxLaunchRequest.disable_touch_ui = 1` (ABI 1.1) when the plugin declares `disableTouchUi`, or skips loading non-`createsProcess` plugins.
+A profile without `disableTouchUi` (default `false`) is a touch profile; importing it gives `options.input: "touch"` (older Endfield plugin profiles with `settings.inputMode: "pc"` still import as `kbm`).
 
 `settings.display` is `fullscreen` or `windowed`. These three games do
 not document a borderless mode. Sending `borderless` is `invalid_input`.
@@ -190,35 +191,32 @@ this launch wrote and the game left alone goes back. `keep` leaves everything as
 ## Described settings, input and frame-rate ownership (interface the Web UI draws from)
 
 A Sparxie title always starts through Sparxie while the component is installed (`mode: "touch"` is the stored value of that path; `"sparxie"` is accepted as a name for it, `"pc"`/`"direct"` is the game started directly, used without the component). There is no launch choice in the UI.
-Input (touch, or keyboard, mouse and gamepad) is a setting of the Sparxie session, `options.input`: `"touch"` (default) or `"kbm"`. For Genshin and Star Rail it reaches Sparxie as `hoyo.touchUiEnabled` / `HoyoSettings.touch_ui_enabled` (see the next section); the host also keeps it in the application and uses it to decide which touch-only items apply. Neither input hides the other Sparxie settings (frame-rate unlock, the tiers, the Genshin preset mapping, background frame rate, priority).
+Input (touch, or keyboard, mouse and gamepad) is a setting of the Sparxie session, `options.input`: `"touch"` (default) or `"kbm"`. For built-in and plugin games (second generation) it reaches Sparxie universally as top-level `disableTouchUi` / `ProfileSnapshot.disable_touch_ui` (see the next section); the host also keeps it in the application and uses it to decide which touch-only items apply. Neither input hides the other Sparxie settings (frame-rate unlock, the tiers, the Genshin preset mapping, background frame rate, priority).
 
-### Input, touch interface and `touchUiSwitch`
+### Input and the touch interface
 
-Sparxie's runtime (the `Genshin_StarRail_fps_unlocker` code) installs the game's mobile interface only on request. A Sparxie build with the switch
-(`HoyoSettings.touch_ui_enabled`, proto3 `optional bool`, field 11; absent means true) starts a session without that interface when it is `false`, and the
-frame-rate unlock works the same. `GET /api/sparxie/status` reports whether the installed build has it:
+Sparxie's runtime installs the game's touch interface only when `ProfileSnapshot.disable_touch_ui` (proto3 `bool`, field 8; default `false`) is `false`.
+Setting `disable_touch_ui = true` starts Genshin or Star Rail without the mobile interface (keeping the frame-rate unlock working the same), starts Zenless Zone Zero directly without injecting `ZZZTouchCore`/`ZZZTouchRuntime`, and forwards `disable_touch_ui = 1` to plugins that declare the optional `disableTouchUi` capability (or skips non-`createsProcess` plugins that do not).
+The host and `sparxie-launch` do not ask whether the installed build has this: they always write and send it. A Sparxie build that does not know the field
+ignores it and starts the touch interface.
 
-```json
-{ "installed": true, "capabilities": ["touch-ui-switch"], "touchUiSwitch": true }
-```
-
-`capabilities` is read from `capabilities.json` in the component's `app-<version>` folder (`{ "schema": 1, "capabilities": ["touch-ui-switch"] }`, written by the Sparxie package);
-a build without that file (preview.9 and older) has none and `touchUiSwitch` is `false`. The launcher checks the Broker as well: it sends `touch_ui_enabled` in every `StartSession`,
-and when the profile says `false` while the Broker's `Ping` lists no `touch-ui-switch` it refuses to start (exit code 11, logged), because an older Broker would ignore the field and start the touch interface.
-
+`sparxie-launch` still reads a build's features for the other cases (Endfield, screen arguments).
 The launcher tells a Broker that lists no features apart from one that lists them and leaves one out. It reads the build's features in this order and logs which source it used (`capabilities: ... (reported by the Broker | from capabilities.json of the install | read from the installed files, the Broker reports none)`):
 
 1. the `Ping` list, when it is not empty: exact, a feature it leaves out is really missing;
 2. `capabilities.json` beside `Sparxie.Broker.exe`, for builds whose Broker predates the `Ping` list (an empty list there also means no features);
-3. the installed files: `endfield` when both `EndfieldCore.dll` and `EndfieldRuntime.dll` ship, `touch-ui-switch` and `screen-args` when `Sparxie.Contracts.dll` carries the protocol types `TouchUiEnabled` and `ScreenArgs`.
+3. the installed files: `endfield` when both `EndfieldCore.dll` and `EndfieldRuntime.dll` ship, `screen-args` when `Sparxie.Contracts.dll` carries the protocol type `ScreenArgs`.
+
+`launch-settings` is apart from this order: no Broker lists it, so it is added whatever the source when `Sparxie.Contracts.dll` carries `ExtraArguments` and no `ScreenArgs` (official Sparxie, see [Official Sparxie launch settings](#official-sparxie-launch-settings)) and the list has no `screen-args`.
 
 A feature found by none of these is missing, and the refusals above apply to it.
 
-* `touchUiSwitch: true`: a `kbm` application keeps `mode: "touch"` (the launcher, Sparxie's settings) and its profile says `touchUiEnabled: false`.
-* `touchUiSwitch: false` with Sparxie installed: a `kbm` application is created (and saved) with `mode: "pc"`, the game started directly; Sparxie's settings do not apply to it, and the page says so.
-  Saving it again after a newer Sparxie is installed makes it a Sparxie application. Without the component at all the mode is whatever the caller sent.
-* An application made before the switch existed (its profile has no `touchUiEnabled`) is brought in line at its next launch: `prepare_launch` writes `touchUiEnabled: false` into the profile when the application says `kbm`, the installed build has the switch and Sparxie is not open (a refused write leaves the profile as it is).
-* A profile with both `touchUiEnabled: false` and `fpsUnlockEnabled: false` has nothing for Sparxie to install; Sparxie's Broker refuses it (`touchUiEnabled` and `fpsUnlockEnabled` cannot both be false).
+* A Genshin, Star Rail or plugin-era Endfield `kbm` application with the frame-rate unlock on (see "Applications that ask nothing of Sparxie": without it, and always for Zenless Zone Zero, the application starts the game directly) keeps `mode: "touch"` (the launcher, Sparxie's settings) and sets top-level `disableTouchUi: true` (`ProfileSnapshot.disable_touch_ui = 8`).
+  A Star Rail one keeps Sparxie's unlock on also at 30, 60 and 120 (because the unlock is then all Sparxie installs; the host still writes the game's own tier).
+  For Zenless Zone Zero, `disableTouchUi: true` starts the game directly without injecting DLLs.
+* A profile that still says touch while its application says `kbm` is brought in line at its next launch: `prepare_launch` writes `disableTouchUi: true`
+  when Sparxie is not open (a refused write leaves the profile as it is).
+* A Genshin or Star Rail profile with both `disableTouchUi: true` and `fpsUnlockEnabled: false` has nothing for Sparxie to install; Sparxie's Broker refuses it (`disableTouchUi` cannot be `true` when `fpsUnlockEnabled` is `false`).
 
 `GET /api/sparxie/games` rows in `catalog` MAY carry two lists of described items. The page draws exactly what is listed; an item the host does not list is not shown. A host that sends neither gets the items of Sparxie's profile that the title has (no frame-rate tiers).
 
@@ -281,8 +279,6 @@ open, or an unreadable rate, leaves the last resolved number in place.
   "version": "",
   "protocol": "",
   "runtime": { "hoyo": "", "zzz": "" },
-  "capabilities": [],
-  "touchUiSwitch": false,
   "generation": "legacy",
   "endfield": { "support": "builtin", "state": "ready", "message": "", "plugin": { "id": "ext.skyhua0224.endfield", "installed": false, "trusted": false, "version": "" } },
   "dataDir": "C:\\Users\\me\\AppData\\Local\\Sparxie",
@@ -615,6 +611,18 @@ when set, otherwise the writable directory that contains `Sparxie.exe` (the
 portable root, not an `app-<version>` subdirectory), otherwise
 `%LOCALAPPDATA%\Sparxie`. `dataDirProvisional` stays true until upstream
 documents a data-directory command.
+
+自定义启动参数 (`customArgs`, also offered for Endfield) of a title that starts through Sparxie goes into the same `launch.extraArguments`, on one line and as one run of words: the host takes out only a run it put there (`sparxie.sparxieCustomArguments`), whole, and a longer earlier run before a shorter one. A run the profile already holds as the person typed it is not written again and is not recorded. Arguments written against each other (`"-a""-b"`) are set apart. The Web UI does not save a 图形 API choice (`dxVersion`; `graphicsApi` for Zenless Zone Zero and Honkai Impact 3rd) together with a custom argument that asks for the other DirectX (`-force-d3d11`, `-force-d3d12`, `-use-d3d12`): it asks whether to let the choice go or to remove the argument. The host takes both as sent. The Endfield plugin hands them to the game from `0.1.1-args.1` of the ShadowLemoon fork; one without `needsArgs` ignores them.
+
+图形 API (`dxVersion`; `graphicsApi` for Zenless Zone Zero) reaches a game that starts through Sparxie in the profile's `launch.extraArguments`: `-force-d3d11` or `-force-d3d12`, and `-use-d3d12` for Zenless Zone Zero. The host appends it and leaves the person's other arguments as typed; another API argument there gives way to the chosen one. What stands between quotes is never taken for an argument of its own. An argument the profile already holds as chosen is the person's and is not recorded. With no choice, only the argument the host put there before goes (`sparxie.sparxieArguments` in `apps.json` records it). It is written when the application is saved and again before a launch if needed, never while Sparxie is open. A save whose arguments would pass Sparxie's 512 characters (counted with what the profile already holds, as UTF-16) is 400 `arguments_too_long` and writes nothing. When `apps.json` cannot be saved (500 `apps_write_failed`), the profile's extra launch arguments are put back as they were.
+
+### Versions
+
+The host is made for Sparxie 0.2.1 and newer. The built-in checksum list holds the official 0.2.1, 0.2.0 and 0.1.0 packages; the last two are marked `outdated` in the manifest, and no other package is known (any other imports only after the person confirms it). Nothing is done to keep an outdated release working. The status has `outdatedVersion` (the installed release when it is older than `latestVersion`, else empty) and the install answer `outdated`; the pages then say so in a dialog and ask for a newer one.
+
+### Applications that ask nothing of Sparxie
+
+Sparxie does two things to a game: its touch interface and its frame-rate unlock (Zenless Zone Zero has none). An application with keyboard, mouse and gamepad and the unlock off asks for neither: it starts the game directly (`mode: "pc"`). This holds when an application is created, saved or imported, and applications saved earlier are changed at host start; their Sparxie profile stays for when the unlock or the touch interface is turned on again. `sparxie-launch` follows the same rule for a profile that says both are off: it starts the game directly without a Broker, and a retry never turns the unlock on for a profile that turned the touch interface off.
 
 The touch command is the host-owned launcher template `"{sparxie-launch}" --sparxie "{sparxie}" --profile {profile}`.
 `{sparxie-launch}` is installed in the host `tools` directory; it loads the profile and speaks the Broker contract. `{sparxie}` is replaced by the component executable path. The helper follows source record `sparxie-broker-contract-031efe2`.
@@ -975,7 +983,7 @@ that starts the game directly (`mode: pc`) never has it.
 
 ## The input of an application, the badge and Endfield (2026-11-12)
 
-* **Effective input.** An application's input is `sparxie.options.input` when it is stored, else what its launch was: `pc` (a direct launch of the first builds) is `kbm`, `touch` is `touch`. A save stores it. With a Sparxie that reports `touch-ui-switch`, a Genshin or Star Rail application with the `kbm` input starts through the launcher with the PC interface (`touchUiEnabled: false`); at host start such an application that was made as a direct launch (`mode: pc`, no profile) is moved to the launcher route, keeping its options. Zenless Zone Zero has no PC-interface session: its `kbm` application starts the game directly, with or without the switch. An open Sparxie postpones the move to the next start.
+* **Effective input.** An application's input is `sparxie.options.input` when it is stored, else what its launch was: `pc` (a direct launch of the first builds) is `kbm`, `touch` is `touch`. A save stores it. With Sparxie installed, a Genshin or Star Rail application with the `kbm` input and the frame-rate unlock on starts through the launcher without the touch interface (top-level `disableTouchUi: true`); at host start such an application that was made as a direct launch (`mode: pc`, no profile) is moved to the launcher route, keeping its options. One without the unlock, and every Zenless Zone Zero `kbm` application, starts the game directly. An open Sparxie postpones the move to the next start.
 * **Badge.** The poster carries the Sparxie mark only for an application with the `touch` input that starts through Sparxie; `kbm` (also through Sparxie's PC session) and Endfield's `auto` have the plain posters. The person's own `badge` on/off wins for the touch input. The rule is applied at host start and at every save.
 * **Migrated covers.** The installer's `migrate-images.ps1` used to copy every poster that is not a bare file name to `covers/app_<hash>_<time>.png`, the official covers of game applications included. It now skips the host's posters of a game application, and at host start an `app_*` file whose bytes equal one of the install's official covers (`covers/sparxie-<install>-*.png`) is the official cover again; a custom cover and a picture of the person's own stay.
 * **Catalog.** Every row has `settingsManaged`: true when the host reads and writes some of the title's own settings. Endfield has none (`settings` is empty, `settingsManaged` false): the page says once that its in-game settings are not changed, it does not list items as unavailable. Endfield's Sparxie items are `input` (`auto` by the client's device, `touch`, `kbm`), `resolution` (`auto` follows the stream, or `WxH`), the target frame rate (tiers up to 240 and `display`), and the launch options (background limit, priority). The profile's `game` for Endfield is `endfield`.
@@ -999,9 +1007,10 @@ every Sparxie application fail with "profile not found" on 2026-11-23. The host 
 The detection looks at the app folder `version.ini` names (else the newest `app-*`), never at a version string. With no installed build to look at the host keeps the
 first spelling, since nothing reads the file yet.
 
-The plugin's `settings` for an Endfield application, limited to the keys its `settingsSchema` declares: `inputMode` (`touch`, or `pc` for the `kbm` input), `autoResolution`
+The plugin's `settings` for an Endfield application, limited to the keys its `settingsSchema` declares: `autoResolution`
 (false for a fixed size), `width`, `height` (the last accepted size, 1920x1080 by default, while the size follows the stream), `refreshRate` (the streamed display's rate,
 24-1000), `fpsUnlock` and `targetFps` (10-1000). A write changes these keys and leaves the others (`uiScalePercent`, the safe area, a key a newer plugin adds) as they are.
+Input (`touch` vs `kbm`) is stored universally as top-level `disableTouchUi: true` (omitted when `touch`), and stale `settings.inputMode` from earlier builds is cleaned up on update/repair.
 
 * **Own writes are checked first.** Every write is judged against the installed build's rules (the id syntax, `settings` being one JSON object, the game being one the
   build reads, the first generation's value ranges) before it replaces the file; a document the build would reject is not written and the file stays as it was.
@@ -1013,8 +1022,21 @@ The plugin's `settings` for an Endfield application, limited to the keys its `se
   the stream's size and rate first, as the first generation's Endfield session was. The second generation lists no capabilities, so the launcher does not hold a plugin
   profile back for a missing `endfield` capability: the Broker answers the session, and when it refuses (plugin missing or not enabled) the launcher retries once and then
   starts the game directly under the decoy parent, with the usual notice.
-* **Keyboard, mouse and gamepad.** Endfield's input is the plugin's `inputMode`, so an Endfield `kbm` application runs through Sparxie without the touch-interface switch the
-  Hoyo titles need.
+* **Keyboard, mouse and gamepad.** A plugin-era Endfield `kbm` application uses the same universal top-level `disableTouchUi: true` (`ProfileSnapshot.disable_touch_ui = 8`) as the built-in titles; `sparxie-launch` sends field 8 alongside `settings_json` (field 7). Importing an older plugin profile that still carries `settings.inputMode: "pc"` without `disableTouchUi` still reads as `kbm`.
+
+## Official Sparxie launch settings
+
+Official Sparxie ([sparxie-dev/Sparxie](https://github.com/sparxie-dev/Sparxie), 0.2.0) belongs to the second generation above. It ships no `capabilities.json`, its
+`Ping` lists nothing, and field 6 of `ProfileSnapshot` is `LaunchSettings launch { width 1, height 2, fullscreen 3 (0 unchanged, 1 full screen, 2 window),
+extra_arguments 4, borderless 5 }`, not `ScreenArgs`. `sparxie-launch` detects it as `launch-settings` and sends that message; a Broker is sent one of the two, never both.
+
+* The profile's `launch` block (`width`, `height`, `fullscreen`, `borderless`, `extraArguments`, edited in Sparxie) is sent. Of this block the host writes `extraArguments` alone: the 图形 API argument and the custom launch arguments of an application (see above), keeping what the person typed there; an API argument there gives way to a chosen 图形 API.
+* The host's screen plan (`--screen-width`, `--screen-height`, `--window-mode`) wins over the block's size and window mode; the extra arguments stay. `windowed` and
+  `borderless` are `fullscreen: 2`, and `borderless` also sets `borderless`.
+* Sparxie writes 1920x1080 as soon as full screen is set without a size, so full screen is only sent together with a size. A size outside Sparxie's 640x480 - 16384x16384
+  is not sent (its Broker would refuse the session).
+* Sparxie writes the size and window mode into the game's settings and restores them when the game quits; its command line gets `-popupwindow` and the extra arguments
+  (a plugin game gets them only when its manifest has `needsArgs`). A direct start by `sparxie-launch` gets the screen arguments and the extra arguments.
 
 ## Warning
 

@@ -22,6 +22,8 @@
 import { onBeforeUnmount, ref } from 'vue'
 import { MComponentStatus } from 'foundation-ui/vue'
 import VersionCard from '../components/common/VersionCard.vue'
+import { useOutdatedWarning } from '../composables/useOutdatedWarning.js'
+import { refreshSparxie } from '../composables/useSparxie.js'
 import { useUpdateStatus } from '../composables/useUpdateStatus.js'
 import { useComponentStatus } from '../composables/useComponentStatus.js'
 
@@ -30,6 +32,8 @@ import { useComponentStatus } from '../composables/useComponentStatus.js'
 const update = useUpdateStatus()
 const sheet = ref(false)
 const status = useComponentStatus()
+useOutdatedWarning()
+refreshSparxie()
 status.hooks.openUpdate = () => { sheet.value = true }
 onBeforeUnmount(() => { status.hooks.openUpdate = null })
 </script>

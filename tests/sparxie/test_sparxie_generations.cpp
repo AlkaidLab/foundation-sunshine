@@ -50,7 +50,7 @@ namespace {
     write(dir / "Sparxie.exe", "x");
     write(dir / "version.ini", "exe_path=app-0.1.0-test\\Sparxie.Desktop.exe\n");
     write(dir / "app-0.1.0-test" / "Sparxie.Contracts.dll", std::string("MZ\0\0", 4) + "ScreenArgs" + std::string(1, '\0') + "TouchUiEnabled" + std::string(1, '\0'));
-    write(dir / "app-0.1.0-test" / "capabilities.json", with_endfield ? R"({"schema":1,"capabilities":["endfield","screen-args","touch-ui-switch"]})" : R"({"schema":1,"capabilities":["screen-args"]})");
+    write(dir / "app-0.1.0-test" / "capabilities.json", with_endfield ? R"({"schema":1,"capabilities":["endfield","screen-args"]})" : R"({"schema":1,"capabilities":["screen-args"]})");
   }
   void
   endfield_plugin(const fs::path &dir, bool trusted, const std::string &plugin_json = kPluginJson) {
@@ -164,8 +164,9 @@ TEST(SparxieGenerations, TheSecondGenerationGetsThePluginsIdAndSettings) {
   const json &profile = doc["profiles"][0];
   EXPECT_EQ(profile["game"], "ext.skyhua0224.endfield");
   EXPECT_FALSE(profile.contains("hoyo")) << "a plugin game has no hoyo block";
+  EXPECT_EQ(profile["disableTouchUi"], true) << "kbm uses universal top-level disableTouchUi";
   ASSERT_TRUE(profile["settings"].is_object());
-  EXPECT_EQ(profile["settings"]["inputMode"], "pc");
+  EXPECT_FALSE(profile["settings"].contains("inputMode"));
   EXPECT_EQ(profile["settings"]["autoResolution"], false);
   EXPECT_EQ(profile["settings"]["width"], 1920);
   EXPECT_EQ(profile["settings"]["height"], 1080);
@@ -180,14 +181,18 @@ TEST(SparxieGenerations, TheSecondGenerationGetsThePluginsIdAndSettings) {
   EXPECT_EQ(options["resolution"], "1920×1080");
   EXPECT_EQ(options["fps"], 144);
   EXPECT_EQ(options["fpsUnlock"], true);
+  // legacy plugin profile with settings.inputMode="pc" and no disableTouchUi still imports as kbm
+  EXPECT_EQ(sparxie::options_from_profile(json { { "game", "ext.skyhua0224.endfield" }, { "settings", { { "inputMode", "pc" } } } })["input"], "kbm");
   // the stream's size: the profile follows it and keeps a size Sparxie would accept
   sparxie::ProfileDraft follow = endfield_draft("auto", "touch");
   ASSERT_TRUE(sparxie::update_profile(dir, "endfield-cn-1", follow, {}).status.ok);
   const json auto_doc = stored(dir);
   const json &auto_profile = auto_doc["profiles"][0];
+  EXPECT_FALSE(auto_profile.contains("disableTouchUi"));
   EXPECT_EQ(auto_profile["settings"]["autoResolution"], true);
   EXPECT_EQ(auto_profile["settings"]["width"], 1920) << "the size that was there stays while the size follows the stream";
-  EXPECT_EQ(auto_profile["settings"]["inputMode"], "touch");
+  EXPECT_FALSE(auto_profile["settings"].contains("inputMode"));
+  EXPECT_EQ(sparxie::options_from_profile(auto_profile)["input"], "touch");
   EXPECT_FALSE(sparxie::options_from_profile(auto_profile).contains("resolution"));
 }
 
@@ -198,6 +203,7 @@ TEST(SparxieGenerations, TheSettingsTheHostDoesNotManageSurviveAnUpdate) {
   ASSERT_TRUE(sparxie::add_profile(dir, endfield_draft(), {}).status.ok);
   json doc = stored(dir);
   doc["profiles"][0]["settings"]["uiScalePercent"] = 165;  // the person's own, set in Sparxie
+  doc["profiles"][0]["settings"]["inputMode"] = "pc";      // stale legacy key from an earlier host build
   doc["profiles"][0]["future"] = 1;
   write(dir / "config.json", doc.dump());
   sparxie::ProfileDraft draft = endfield_draft("auto", "kbm");
@@ -207,7 +213,8 @@ TEST(SparxieGenerations, TheSettingsTheHostDoesNotManageSurviveAnUpdate) {
   const json &profile = kept_doc["profiles"][0];
   EXPECT_EQ(profile["settings"]["uiScalePercent"], 165);
   EXPECT_EQ(profile["future"], 1);
-  EXPECT_EQ(profile["settings"]["inputMode"], "pc");
+  EXPECT_EQ(profile["disableTouchUi"], true);
+  EXPECT_FALSE(profile["settings"].contains("inputMode")) << "stale settings.inputMode is cleaned up";
   EXPECT_EQ(profile["settings"]["targetFps"], 90);
 }
 
@@ -220,8 +227,9 @@ TEST(SparxieGenerations, OnlyTheKeysThePluginDeclaresAreWritten) {
   ASSERT_TRUE(sparxie::add_profile(dir, endfield_draft(), {}).status.ok);
   const json keys_doc = stored(dir);
   const json &settings = keys_doc["profiles"][0]["settings"];
-  EXPECT_EQ(settings.size(), 2u) << settings.dump();
-  EXPECT_TRUE(settings.contains("inputMode") && settings.contains("targetFps"));
+  EXPECT_EQ(settings.size(), 1u) << settings.dump();
+  EXPECT_TRUE(settings.contains("targetFps"));
+  EXPECT_FALSE(settings.contains("inputMode"));
 }
 
 TEST(SparxieGenerations, WithoutThePluginNoEndfieldProfileIsMadeAndNothingIsTouched) {
@@ -313,12 +321,14 @@ TEST(SparxieGenerations, AnEndfieldProfileOfTheFirstSpellingIsRepairedWhenThePlu
   const json &touch = after["profiles"][0];
   EXPECT_EQ(touch["game"], "ext.skyhua0224.endfield");
   EXPECT_FALSE(touch.contains("hoyo"));
-  EXPECT_EQ(touch["settings"]["inputMode"], "touch");
+  EXPECT_FALSE(touch.contains("disableTouchUi"));
+  EXPECT_FALSE(touch["settings"].contains("inputMode"));
   EXPECT_EQ(touch["settings"]["autoResolution"], true);
   EXPECT_EQ(touch["settings"]["fpsUnlock"], true);
   EXPECT_EQ(touch["settings"]["targetFps"], 120);
   const json &pad = after["profiles"][1];
-  EXPECT_EQ(pad["settings"]["inputMode"], "pc");
+  EXPECT_EQ(pad["disableTouchUi"], true);
+  EXPECT_FALSE(pad["settings"].contains("inputMode"));
   EXPECT_EQ(pad["settings"]["autoResolution"], false);
   EXPECT_EQ(pad["settings"]["width"], 2560);
   EXPECT_EQ(pad["settings"]["height"], 1440);
@@ -443,7 +453,6 @@ TEST(SparxieGenerations, EndfieldKeyboardAndMouseGoesThroughThePluginWithoutATou
   sparxie::HostEnv env = endfield_env(root);
   plugin_era_install(env.component_dir);
   endfield_plugin(env.component_dir, true);
-  ASSERT_FALSE(sparxie::component_status(env).body["touchUiSwitch"]) << "the second generation lists no capabilities";
   auto pad = sparxie::create_app(env, { { "path", (root / "game" / "Endfield.exe").string() }, { "region", "cn" }, { "mode", "touch" }, { "name", "终末地键鼠" }, { "options", { { "input", "kbm" }, { "fpsUnlock", true }, { "fps", 144 } } } });
   ASSERT_TRUE(pad.status.ok) << pad.status.error;
   EXPECT_EQ(pad.body["app"]["sparxie"]["mode"], "touch") << "the plugin's own input is the keyboard, mouse and gamepad; no direct start";
@@ -451,7 +460,8 @@ TEST(SparxieGenerations, EndfieldKeyboardAndMouseGoesThroughThePluginWithoutATou
   const json doc = stored(env.data_dir);
   ASSERT_EQ(doc["profiles"].size(), 1u);
   EXPECT_EQ(doc["profiles"][0]["game"], "ext.skyhua0224.endfield");
-  EXPECT_EQ(doc["profiles"][0]["settings"]["inputMode"], "pc");
+  EXPECT_EQ(doc["profiles"][0]["disableTouchUi"], true);
+  EXPECT_FALSE(doc["profiles"][0]["settings"].contains("inputMode"));
   EXPECT_EQ(doc["profiles"][0]["settings"]["targetFps"], 144);
   EXPECT_EQ(sparxie::read_store(env.data_dir).state, "data");
 }
@@ -521,7 +531,7 @@ TEST(SparxieGenerations, ASchemaThatDeclaresNoKeysGetsNoSettings) {
   hooks.build = build;
   const fs::path other = fresh("sparxie-gen-unread-schema");
   ASSERT_TRUE(sparxie::add_profile(other, endfield_draft(), hooks).status.ok);
-  EXPECT_EQ(stored(other)["profiles"][0]["settings"].size(), 7u);
+  EXPECT_EQ(stored(other)["profiles"][0]["settings"].size(), 6u);
 }
 
 TEST(SparxieGenerations, RepairingAnOldEndfieldProfileKeepsTheSettingsTheHostDoesNotManage) {
@@ -542,9 +552,10 @@ TEST(SparxieGenerations, RepairingAnOldEndfieldProfileKeepsTheSettingsTheHostDoe
   const json &settings = after["profiles"][0]["settings"];
   EXPECT_EQ(after["profiles"][0]["game"], "ext.skyhua0224.endfield");
   EXPECT_FALSE(after["profiles"][0].contains("hoyo"));
+  EXPECT_EQ(after["profiles"][0]["disableTouchUi"], true) << "pc input moves to universal top-level disableTouchUi";
   EXPECT_EQ(settings["uiScalePercent"], 165) << "the person's own";
   EXPECT_EQ(settings["safeAreaMode"], "manual");
-  EXPECT_EQ(settings["inputMode"], "pc") << "the host's keys come from the old profile's options";
+  EXPECT_FALSE(settings.contains("inputMode")) << "stale settings.inputMode is cleaned up";
   EXPECT_EQ(settings["refreshRate"], 90);
   EXPECT_EQ(settings["targetFps"], 120);
 }

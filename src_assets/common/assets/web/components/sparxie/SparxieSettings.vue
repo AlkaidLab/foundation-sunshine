@@ -1,9 +1,10 @@
 <template>
-  <MSection v-if="row && row.settingsManaged === false" :title="C.secGameSettings">
+  <MSection v-if="unmanaged && !groups.length" :title="C.secGameSettings">
     <!-- a title the host manages no game settings of: said once, and it is not a limit of the game version -->
     <MBanner tone="info" icon="info">{{ C.gsNotManaged(gameName) }}</MBanner>
   </MSection>
   <MSection v-else :title="C.secGameSettings">
+      <MBanner v-if="unmanaged" tone="info" icon="info">{{ C.gsNotManaged(gameName) }}</MBanner>
       <MBanner v-if="running" tone="info" icon="lock">{{ C.gsRunning }}</MBanner>
       <MBanner v-if="unsupportedText" tone="info" icon="info">{{ unsupportedText }}</MBanner>
 
@@ -18,14 +19,15 @@
         <MFooter v-if="fpsHint && g.hasFps">{{ fpsHint }}</MFooter>
       </section>
 
-      <MGroup>
+      <!-- nothing of the game is written for such a title, so there is nothing to restore or to follow -->
+      <MGroup v-if="!unmanaged">
         <MItem v-if="heldKeys.length" stack>
           <template #title>{{ C.restoreAfter }}</template>
           <template #control><MSeg v-model="block.restore" block :label="C.restoreAfter" :options="Object.entries(C.restoreOpts).map(([value, label]) => ({ value, label }))" /></template>
         </MItem>
         <MItem action icon="undo" :title="C.gsAllFollow" :disabled="!heldKeys.length" @click="followAll" />
       </MGroup>
-      <MFooter v-if="heldKeys.length && block.restore !== 'keep'">{{ C.restoreNote }}</MFooter>
+      <MFooter v-if="!unmanaged && heldKeys.length && block.restore !== 'keep'">{{ C.restoreNote }}</MFooter>
   </MSection>
 </template>
 
@@ -46,7 +48,7 @@ import './gameSettings.css'
 // editing it makes it this application's own value (marked 已更改, with a way back, and 全部跟随游戏 for all of them). The host writes only the held items at launch and puts them back when the session ends.
 // Nothing is held when the page opens, so opening never changes anything. While the game runs the host refuses a write.
 // The game's frame rate is taken over while Sparxie unlocks the frame rate (`fpsBySparxie`): the item is off, says so, and the value is not written.
-const props = defineProps({
+const props = defineProps({ throughSparxie: { type: Boolean, default: false },
   /** { game, settings, restore }: changed in place; settings holds only the items the person changed */
   block: { type: Object, required: true },
   /** the catalog row of the title: the host's description of its items */
@@ -74,7 +76,10 @@ const unavailable = ref(props.initial?.unavailable || [])
 const gameName = computed(() => (zh.value ? props.row?.name || props.row?.nameEn : props.row?.nameEn || props.row?.name) || props.block.game)
 const screen = ref(props.initial?.screen || null)
 
-const split = computed(() => splitUnavailable(gameFieldsOf(props.row, props.block.game, Object.keys(C.value.presetOpts)).filter((f) => !isHidden(props.block.game, f.key)), unavailable.value))
+// a title the host manages no game settings of can still have launch items; they reach the game through Sparxie alone
+const unmanaged = computed(() => props.row?.settingsManaged === false)
+const offered = computed(() => (unmanaged.value && !props.throughSparxie ? [] : gameFieldsOf(props.row, props.block.game, Object.keys(C.value.presetOpts))))
+const split = computed(() => splitUnavailable(offered.value.filter((f) => !isHidden(props.block.game, f.key)), unavailable.value))
 const fields = computed(() => split.value.shown)
 const unsupportedText = computed(() => (split.value.hidden.length ? C.value.gsUnsupported(split.value.hidden.map((f) => names.value[f.key] || (zh.value ? f.label || f.labelEn : f.labelEn || f.label) || f.key).join(C.value.listSep)) : ''))
 // the game's own frame-rate tiers end below what people look for (Genshin Impact: 60): say where the higher rates are

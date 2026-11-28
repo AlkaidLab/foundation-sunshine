@@ -69,14 +69,13 @@
            the input (touch, or keyboard, mouse and gamepad) is one of these settings and hides only what is for touch alone -->
       <template v-if="reach(4) && touch">
         <SparxieOptions :block="optBlock" :fields="sparxieFields" />
-        <MBanner v-if="!viaSparxie && !kbmThroughSparxie && KBM_SPARXIE_GAMES.includes(game)" tone="info" icon="info">{{ C.kbmNeedsTouch }}</MBanner>
         <MFooter>{{ C.noticeFoot }}</MFooter>
       </template>
 
       <!-- 5 · the game's own settings: they follow the game's current values until one is changed -->
       <template v-if="reach(5)">
         <SparxieDisplay :block="gameBlock" :install-id="install?.id || ''" :exe="install ? fullPath(install) : ''" :region="region" />
-        <SparxieSettings :block="gameBlock" :row="catalog?.[game]" :install-id="install?.id || ''" :exe="install ? fullPath(install) : ''" :region="region" :fps-by-sparxie="fpsBySparxie" :sparxie-fps="sparxieFpsAvailable" @problem="settingsProblem = $event" />
+        <SparxieSettings :block="gameBlock" :row="catalog?.[game]" :install-id="install?.id || ''" :exe="install ? fullPath(install) : ''" :region="region" :through-sparxie="viaSparxie" :fps-by-sparxie="fpsBySparxie" :sparxie-fps="sparxieFpsAvailable" @problem="settingsProblem = $event" />
       </template>
 
       <!-- 6 · name and cover: the official poster, kept up to date, or a cover of the person's own -->
@@ -133,9 +132,11 @@ import SparxieSettings from './SparxieSettings.vue'
 import SparxieDisplay from './SparxieDisplay.vue'
 import SparxieOptions from './SparxieOptions.vue'
 import SparxieNotice from './SparxieNotice.vue'
+import { useOutdatedWarning } from '../../composables/useOutdatedWarning.js'
+import { askGraphicsConflict, graphicsConflict, resolveGraphicsConflict } from '../../utils/sparxie/graphicsConflict.js'
 import { useSparxie } from '../../composables/useSparxie.js'
 import { useSparxieCopy } from '../../composables/useSparxieCopy.js'
-import { GAME_IDS, KBM_SPARXIE_GAMES, SPARXIE_MARK, artUrl, badgeApplies, badgeOf, createBlock, defaultName, exesOf, fitsRegion, fullPath, gameArtId, matchTitle, mergeInstalls, needsWriteBack, regionsOf, withDefaults, SPARXIE_DEFAULTS, sparxieFieldsOf, stableJson } from '../../utils/sparxie/model.js'
+import { GAME_IDS, SPARXIE_MARK, artUrl, badgeApplies, badgeOf, createBlock, defaultName, exesOf, fitsRegion, fullPath, gameArtId, matchTitle, mergeInstalls, needsWriteBack, regionsOf, withDefaults, SPARXIE_DEFAULTS, sparxieFieldsOf, stableJson, usesSparxie } from '../../utils/sparxie/model.js'
 import { nativePicker } from '../../utils/sparxie/pick.js'
 import { displayBody, displayState, hasDisplay, normalizeDisplay } from '../../utils/sparxie/display.js'
 import { failureText } from '../../utils/sparxie/copy.js'
@@ -175,6 +176,7 @@ const imageError = ref('')
 const gameBlock = reactive({ game: '', settings: {}, restore: 'restore', profile: '', options: { ...SPARXIE_DEFAULTS }, display: { mode: 'follow' } })
 const query = ref('')
 const pendingPrefill = ref(null)
+useOutdatedWarning()
 const editBlock = isEdit ? reactive(withDefaults(props.edit.sparxie)) : null
 const editOptions = isEdit ? JSON.stringify(editBlock.options) : ''
 // the Sparxie settings of this page: the app's own when it is edited, the new app's otherwise
@@ -196,10 +198,8 @@ const copyForNames = computed(() => ({ games: names.value, regions: C.value.regi
 // an app of a Sparxie title starts through Sparxie whenever the component is installed (no launch choice); without it the game starts directly
 const touchAllowed = computed(() => !!status.installed && !!catalog.value?.[game.value]?.touch)
 const touch = computed(() => touchAllowed.value)
-// keyboard, mouse and gamepad runs a Sparxie session without the touch interface: a Sparxie build without that switch cannot serve it, and the host then starts the game directly
-// Endfield of a plugin-based Sparxie has its own keyboard, mouse and gamepad input (the plugin's inputMode), so it needs no touch-interface switch
-const kbmThroughSparxie = computed(() => KBM_SPARXIE_GAMES.includes(game.value) && (!!status.touchUiSwitch || (game.value === 'endfield' && !!status.endfieldPlugin)))
-const viaSparxie = computed(() => touch.value && (optBlock.options.input !== 'kbm' || kbmThroughSparxie.value))
+// an application that asks nothing of Sparxie (keyboard, mouse and gamepad without the frame-rate unlock) starts the game directly
+const viaSparxie = computed(() => touch.value && usesSparxie(game.value, optBlock.options))
 // how the app starts: an app that is saved as a direct launch (mode pc) stays one when it is edited, whatever the Sparxie items on this page show; creating follows the component
 const launchMode = computed(() => (viaSparxie.value ? 'touch' : 'pc'))
 // the poster carries the Sparxie mark only for an application that runs Sparxie's touch interface; keyboard, mouse and gamepad (through Sparxie's PC session too) have the plain poster
@@ -434,10 +434,21 @@ async function recheck() { await refresh() }
 
 // the game's frame rate is Sparxie's while the unlock is on: it is not written
 const settingsBody = () => { const out = { ...gameBlock.settings }; if (fpsBySparxie.value) delete out.fps; return out }
+// the graphics API chosen in the menu against one typed among the custom arguments: the person says which one goes; false when the dialog was closed
+async function settleGraphicsApi() {
+  const conflict = graphicsConflict(game.value, gameBlock.settings)
+  if (!conflict) return true
+  const option = catalog.value?.[game.value]?.settings?.find((f) => f.key === conflict.key)?.options?.find((o) => o.value === conflict.value)
+  const api = (locale.value.toLowerCase().startsWith('zh') ? option?.label : option?.labelEn) || String(conflict.value)
+  const choice = await askGraphicsConflict(conflict, api, C.value)
+  if (choice) resolveGraphicsConflict(gameBlock.settings, conflict, choice)
+  return !!choice
+}
 async function create() {
   if (!install.value || missing.value || creating.value || unchanged.value) return
   creating.value = true; createError.value = ''
   try {
+    if (!await settleGraphicsApi()) return
     if (isEdit) {
       const body = { name: name.value || props.edit.name, mode: launchMode.value, settings: settingsBody(), display: displayBody(gameBlock.display), restore: gameBlock.restore, cover: coverForm.sparxie.cover, 'image-path': coverForm['image-path'], hero: coverForm.hero }
       if (badgeOn.value) body.badge = coverForm.sparxie.badge

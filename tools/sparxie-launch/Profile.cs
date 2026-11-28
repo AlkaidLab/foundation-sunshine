@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace Sparxie.Launch;
 
 internal sealed record HoyoSettings(bool FpsUnlock, int TargetFps, bool BackgroundLimit, int BackgroundFps,
-    string Priority, bool FollowPreset, int Preset30, int Preset60, bool ScaleOverride, int Scale, bool TouchUi = true,
+    string Priority, bool FollowPreset, int Preset30, int Preset60, bool ScaleOverride, int Scale,
     string EndfieldInput = "", bool EndfieldAutoResolution = true, int EndfieldWidth = 0, int EndfieldHeight = 0, int EndfieldRefresh = 0)
 {
     public static HoyoSettings FromJson(JsonElement h) => new(
@@ -12,7 +12,6 @@ internal sealed record HoyoSettings(bool FpsUnlock, int TargetFps, bool Backgrou
         h.TryGetProperty("processPriority", out var p) && p.ValueKind == JsonValueKind.String ? p.GetString() ?? "normal" : "normal",
         GetBool(h, "genshinFollowInGamePreset", false), GetInt(h, "genshinPreset30Fps", 60), GetInt(h, "genshinPreset60Fps", 1000),
         GetBool(h, "genshinTouchUiScaleOverrideEnabled", false), GetInt(h, "genshinTouchUiScalePercent", 400),
-        GetBool(h, "touchUiEnabled", true),
         h.TryGetProperty("endfieldInputMode", out var m) && m.ValueKind == JsonValueKind.String ? m.GetString() ?? "" : "",
         GetBool(h, "endfieldAutoResolution", true), GetInt(h, "endfieldWidth", 0), GetInt(h, "endfieldHeight", 0), GetInt(h, "endfieldRefreshRate", 0));
 
@@ -24,7 +23,7 @@ internal sealed record HoyoSettings(bool FpsUnlock, int TargetFps, bool Backgrou
 
     public string Describe() =>
         $"fpsUnlock={FpsUnlock} targetFps={TargetFps} bgLimit={BackgroundLimit} bgFps={BackgroundFps} priority={Priority} followPreset={FollowPreset} " +
-        $"preset30={Preset30} preset60={Preset60} scaleOverride={ScaleOverride} scale={Scale} touchUi={TouchUi}" +
+        $"preset30={Preset30} preset60={Preset60} scaleOverride={ScaleOverride} scale={Scale}" +
         (EndfieldInput.Length > 0 ? $" endfieldInput={EndfieldInput} endfieldAutoResolution={EndfieldAutoResolution} endfieldSize={EndfieldWidth}x{EndfieldHeight} endfieldRefresh={EndfieldRefresh}" : "");
 }
 
@@ -75,8 +74,24 @@ internal static class EndfieldSession
 }
 
 /// <param name="PluginSettings">The "settings" object of a plugin game's profile as JSON text (the plugin's own options, Sparxie.Contracts GameProfile.Settings); null for the built-in games.</param>
-internal sealed record Profile(string Id, string DisplayName, string Game, string ExecutablePath, HoyoSettings? Hoyo, ScreenArgs? Screen = null, string? PluginSettings = null)
+/// <param name="Launch">The profile's launch settings (official Sparxie); null when it has none.</param>
+/// <param name="DisableTouchUi">Top-level disableTouchUi (false = touch UI enabled; true = disable touch UI for built-in games and plugin games).</param>
+internal sealed record Profile(string Id, string DisplayName, string Game, string ExecutablePath, HoyoSettings? Hoyo, ScreenArgs? Screen = null, string? PluginSettings = null,
+    LaunchSettings? Launch = null, bool DisableTouchUi = false)
 {
+    /// <summary>
+    /// The touch interface is off and so is the frame-rate unlock (Zenless Zone Zero has none): there is nothing of Sparxie to run, and its Broker refuses such a
+    /// session of a miHoYo title. The game is started directly. A plugin that does not say about its unlock is taken to use it, as its own default does.
+    /// </summary>
+    public bool UsesNothingOfSparxie => DisableTouchUi && Game switch
+    {
+        "zenlessZoneZero" => true,
+        "genshin" or "starRail" or "endfield" => Hoyo is not { FpsUnlock: true },
+        GameIds.EndfieldPlugin => PluginSettings is { } text && System.Text.Json.Nodes.JsonNode.Parse(text) is System.Text.Json.Nodes.JsonObject settings
+            && settings["fpsUnlock"] is System.Text.Json.Nodes.JsonValue unlock && unlock.TryGetValue<bool>(out var on) && !on,
+        _ => false,
+    };
+
     public static Profile FromJson(JsonElement value)
     {
         string Str(string key) => value.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";
@@ -86,7 +101,9 @@ internal sealed record Profile(string Id, string DisplayName, string Game, strin
         if (value.TryGetProperty("hoyo", out var h) && h.ValueKind == JsonValueKind.Object) hoyo = HoyoSettings.FromJson(h);
         string? pluginSettings = null;
         if (GameIds.IsPlugin(game) && value.TryGetProperty("settings", out var s) && s.ValueKind == JsonValueKind.Object) pluginSettings = s.GetRawText();
-        return new Profile(Str("id"), Str("displayName"), game, Str("executablePath"), hoyo, null, pluginSettings);
+        var launch = value.TryGetProperty("launch", out var l) && l.ValueKind == JsonValueKind.Object ? LaunchSettings.FromJson(l) : null;
+        var disableTouchUi = value.TryGetProperty("disableTouchUi", out var d) && d.ValueKind == JsonValueKind.True;
+        return new Profile(Str("id"), Str("displayName"), game, Str("executablePath"), hoyo, null, pluginSettings, launch, disableTouchUi);
     }
 }
 

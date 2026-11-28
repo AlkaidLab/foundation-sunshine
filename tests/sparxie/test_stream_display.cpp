@@ -232,7 +232,8 @@ TEST(StreamDisplay, OwnerStarRailDisplayTierUsesNative120AndDisablesVsync) {
   EXPECT_FALSE(values.vsync);
   const json saved = sparxie::read_store(env.data_dir).document;
   ASSERT_EQ(saved["profiles"].size(), 1u);
-  EXPECT_FALSE(saved["profiles"][0]["hoyo"]["fpsUnlockEnabled"].get<bool>());
+  // a keyboard application has no touch interface, so the profile keeps the unlock on (Sparxie refuses both off); the game's own tier is still written
+  EXPECT_TRUE(saved["profiles"][0]["hoyo"]["fpsUnlockEnabled"].get<bool>());
   EXPECT_EQ(saved["profiles"][0]["hoyo"]["targetFps"], 120);
 
   block["options"]["fps"] = 144;

@@ -890,9 +890,9 @@ TEST(HostApi, OptionsCarryInputAndTheDisplayTierResolvesThroughTheHost) {
   EXPECT_EQ(made.body["app"]["sparxie"]["options"]["fps"], "display");
   const auto store = sparxie::read_store(env.data_dir);
   ASSERT_EQ(store.state, "data");
-  // input is the application's own setting: Sparxie's profile file has no field of that name, it says touchUiEnabled=false for kbm
+  // input is the application's own setting: Sparxie's profile file has no field of that name, it says disableTouchUi=true for kbm
   EXPECT_FALSE(store.document["profiles"][0]["hoyo"].contains("input"));
-  EXPECT_EQ(store.document["profiles"][0]["hoyo"]["touchUiEnabled"], false);
+  EXPECT_EQ(store.document["profiles"][0]["disableTouchUi"], true);
   EXPECT_EQ(store.document["profiles"][0]["hoyo"]["targetFps"], 165) << "the display tier resolves to the streamed display's rate";
   // a new application starts the way Sparxie's own editor starts: the unlock on, 120 as the target
   auto plain = sparxie::create_app(env, { { "path", exe }, { "region", "cn" }, { "mode", "touch" }, { "name", "G2" } });

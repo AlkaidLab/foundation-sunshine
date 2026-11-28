@@ -25,18 +25,20 @@ internal static partial class Tests
             ProfileWire();
             NamesAndStages();
             PureTouchRules(scratch);
+            NothingOfSparxieRules();
             SparxieLogCopy(scratch);
             NoticeFile(scratch);
             PlanRules();
             AdoptRunningGame(scratch);
             DirectStart(scratch);
             DecoyParentChecks(scratch);
-            TouchUiSwitch(scratch);
+            TouchUiField(scratch);
             BrokerCapabilityRules(scratch);
             PackagedBrokerReports(scratch);
             EndfieldFields();
             PluginGames(scratch);
             ScreenArguments(scratch);
+            LaunchSettingsSession(scratch);
             StageReports(scratch);
             CrashReports(scratch);
         }
@@ -282,38 +284,67 @@ internal static partial class Tests
         Check(!RunLog.CandidateDirectories(@"C:\elsewhere", Env).Any(d => d.EndsWith(@"config\logs", StringComparison.Ordinal)), "outside a tools folder there is no config\\logs guess");
     }
 
-    // ---- a session without the touch interface (HoyoSettings.touch_ui_enabled) ----
-    private static void TouchUiSwitch(string scratch)
+    // ---- a session without the touch interface (ProfileSnapshot.disable_touch_ui = 8) ----
+    private static void TouchUiField(string scratch)
     {
-        foreach (var touch in new[] { true, false })
+        foreach (var disableTouchUi in new[] { false, true })
         {
-            var hoyo = new HoyoSettings(true, 120, true, 10, "normal", false, 60, 1000, false, 400, touch);
-            var payload = BrokerRpc.StartSessionPayload(new Profile("p", "n", "starRail", @"C:\S\StarRail.exe", hoyo), "r");
+            var hoyo = new HoyoSettings(true, 120, true, 10, "normal", false, 60, 1000, false, 400);
+            var payload = BrokerRpc.StartSessionPayload(new Profile("p", "n", "starRail", @"C:\S\StarRail.exe", hoyo, DisableTouchUi: disableTouchUi), "r");
             var profile = Proto.Parse(Proto.Parse(payload).First(x => x.Number == 3).Bytes);
-            var fields = Proto.Parse(profile.First(x => x.Number == 5).Bytes);
-            var sent = fields.FirstOrDefault(x => x.Number == 11);
-            Check(sent.Number == 11 && sent.Wire == 0, $"touch_ui_enabled (field 11) is always sent (touch={touch})");
-            Same(touch, Proto.Bool(fields, 11), $"touch_ui_enabled value on the wire (touch={touch})");
+            var hoyoFields = Proto.Parse(profile.First(x => x.Number == 5).Bytes);
+            Check(hoyoFields.All(x => x.Number != 11), "HoyoSettings no longer sends legacy field 11");
+            var f8 = profile.FirstOrDefault(x => x.Number == 8);
+            if (disableTouchUi)
+            {
+                Check(f8.Number == 8 && f8.Wire == 0, "disable_touch_ui (field 8) is sent when true");
+                Same(true, Proto.Bool(profile, 8), "disable_touch_ui value on the wire");
+            }
+            else
+            {
+                Check(f8.Number == 0, "disable_touch_ui (field 8) is omitted when false (proto3 default)");
+            }
         }
 
-        // the profile file: absent means on; false means a PC-interface session
+        // the profile file: absent or false means touch interface on; true means PC interface (Hoyo) / skip DLL injection (ZZZ)
         var config = Path.Combine(scratch, "touchui.json");
         File.WriteAllText(config, """
             { "schemaVersion": 1, "profiles": [
               { "id": "old", "displayName": "old", "game": "starRail", "executablePath": "C:\\S\\StarRail.exe", "hoyo": { "fpsUnlockEnabled": true, "targetFps": 120 } },
-              { "id": "touch", "displayName": "touch", "game": "starRail", "executablePath": "C:\\S\\StarRail.exe", "hoyo": { "fpsUnlockEnabled": true, "targetFps": 120, "touchUiEnabled": true } },
-              { "id": "pc", "displayName": "pc", "game": "genshin", "executablePath": "C:\\G\\YuanShen.exe", "hoyo": { "fpsUnlockEnabled": true, "targetFps": 144, "touchUiEnabled": false } } ] }
+              { "id": "touch", "displayName": "touch", "game": "starRail", "executablePath": "C:\\S\\StarRail.exe", "disableTouchUi": false, "hoyo": { "fpsUnlockEnabled": true, "targetFps": 120 } },
+              { "id": "pc", "displayName": "pc", "game": "genshin", "executablePath": "C:\\G\\YuanShen.exe", "disableTouchUi": true, "hoyo": { "fpsUnlockEnabled": true, "targetFps": 144 } },
+              { "id": "zzz-old", "displayName": "zzz-old", "game": "zenlessZoneZero", "executablePath": "C:\\Z\\ZenlessZoneZero.exe" },
+              { "id": "zzz-touch", "displayName": "zzz-touch", "game": "zenlessZoneZero", "executablePath": "C:\\Z\\ZenlessZoneZero.exe", "disableTouchUi": false },
+              { "id": "zzz-pc", "displayName": "zzz-pc", "game": "zenlessZoneZero", "executablePath": "C:\\Z\\ZenlessZoneZero.exe", "disableTouchUi": true } ] }
             """);
-        Same(true, SparxieConfig.Load(config, "old").Hoyo!.TouchUi, "a profile without the field keeps the touch interface");
-        Same(true, SparxieConfig.Load(config, "touch").Hoyo!.TouchUi, "touchUiEnabled true");
-        Same(false, SparxieConfig.Load(config, "pc").Hoyo!.TouchUi, "touchUiEnabled false");
-        Check(SparxieConfig.Load(config, "pc").Hoyo!.Describe().Contains("touchUi=False"), "the log line names the interface");
+        Same(false, SparxieConfig.Load(config, "old").DisableTouchUi, "a profile without the field keeps the touch interface");
+        Same(false, SparxieConfig.Load(config, "touch").DisableTouchUi, "disableTouchUi false");
+        Same(true, SparxieConfig.Load(config, "pc").DisableTouchUi, "disableTouchUi true");
+        Same(false, SparxieConfig.Load(config, "zzz-old").DisableTouchUi, "ZZZ without disableTouchUi defaults to false");
+        Same(false, SparxieConfig.Load(config, "zzz-touch").DisableTouchUi, "ZZZ disableTouchUi false");
+        Same(true, SparxieConfig.Load(config, "zzz-pc").DisableTouchUi, "ZZZ disableTouchUi true");
+        foreach (var (id, expected) in new (string, bool)[] { ("zzz-old", false), ("zzz-touch", false), ("zzz-pc", true) })
+        {
+            var zzzProfile = SparxieConfig.Load(config, id);
+            var snapFields = Proto.Parse(Proto.Parse(BrokerRpc.StartSessionPayload(zzzProfile, "r")).First(x => x.Number == 3).Bytes);
+            Check(snapFields.All(x => x.Number != 5), $"ZZZ {id} sends no hoyo block");
+            var f8 = snapFields.FirstOrDefault(x => x.Number == 8);
+            if (expected)
+            {
+                Check(f8.Number == 8 && f8.Wire == 0, $"ZZZ {id} sends ProfileSnapshot.disable_touch_ui (field 8)");
+                Same(true, Proto.Bool(snapFields, 8), $"ZZZ {id} disable_touch_ui value on the wire");
+            }
+            else
+            {
+                Check(f8.Number == 0, $"ZZZ {id} omits field 8 when false");
+            }
+        }
 
         // the Ping answer lists the Broker's features (field 3, repeated)
-        var withCap = PingInfo.Parse(Proto.Message((1, Proto.Int(1)), (2, Proto.String("0.2.0")), (3, Proto.String("touch-ui-switch")), (3, Proto.String("other"))));
-        Check(withCap.Has(PingInfo.TouchUiSwitch) && withCap.Capabilities.Count == 2, "Ping lists capabilities");
+        var withCap = PingInfo.Parse(Proto.Message((1, Proto.Int(1)), (2, Proto.String("0.2.0")), (3, Proto.String("endfield")), (3, Proto.String("other"))));
+        Check(withCap.Has(PingInfo.Endfield) && withCap.Capabilities.Count == 2, "Ping lists capabilities");
         var bare = PingInfo.Parse(Proto.Message((1, Proto.Int(1)), (2, Proto.String("0.2.0"))));
-        Check(!bare.Has(PingInfo.TouchUiSwitch) && bare.ToString().Contains("capabilities none"), "an older Broker lists none");
+        Check(!bare.Has(PingInfo.Endfield) && bare.ToString().Contains("capabilities none"), "an older Broker lists none");
         Same(11, ExitCodes.Unsupported, "exit code for an unsupported feature");
     }
 
@@ -364,7 +395,7 @@ internal static partial class Tests
 
         // the Ping lists the Broker's Endfield support
         var ping = PingInfo.Parse(Proto.Message((1, Proto.Int(1)), (2, Proto.String("0.1.0-preview.9-test.1")), (3, Proto.String("touch-ui-switch")), (3, Proto.String("endfield"))));
-        Check(ping.Has(PingInfo.Endfield) && ping.Has(PingInfo.TouchUiSwitch), "the build's capabilities are read");
+        Check(ping.Has(PingInfo.Endfield), "the build's capabilities are read");
     }
 
     // ---- the StartSession request carries every setting ----

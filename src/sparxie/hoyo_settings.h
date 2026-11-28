@@ -26,6 +26,15 @@ namespace sparxie {
   game_launch_options(const json &settings, std::string_view game);
   std::string
   game_launch_command(std::string command, const Install &install, const json &options);
+  // The command line argument of the chosen 图形 API for a title that starts through Sparxie; empty when nothing (or something Sparxie's titles take no argument for) is chosen.
+  std::string
+  graphics_api_argument(std::string_view game, const json &settings);
+  // The 自定义启动参数 of a title that starts through Sparxie, on one line (Sparxie refuses line breaks); empty when there are none or they hold what the host refuses.
+  std::string
+  sparxie_custom_arguments(std::string_view game, const json &settings);
+  // The 自定义启动参数 item.
+  json
+  custom_arguments_field();
   // 提升游戏优先级 (Collapse's UseGameBoost) is kept by the host, not written to the game: the host raises the priority of the game process after it starts.
   // It counts only when the application holds it as one of its changed items (an application keeps only the items the person changed).
   bool

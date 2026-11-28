@@ -132,24 +132,30 @@ TEST(Store, TheInputChoiceIsWrittenAsTouchUiEnabledAndReadBack) {
   ASSERT_TRUE(touch.status.ok) << touch.status.error;
   auto view = sparxie::read_store(dir);
   ASSERT_TRUE(view.status.ok) << view.status.error;
-  EXPECT_EQ(view.document["profiles"][0]["hoyo"]["touchUiEnabled"], false);
+  EXPECT_EQ(view.document["profiles"][0]["disableTouchUi"], true);
+  EXPECT_FALSE(view.document["profiles"][0]["hoyo"].contains("touchUiEnabled"));
   EXPECT_EQ(view.document["profiles"][0]["hoyo"]["fpsUnlockEnabled"], true);
-  EXPECT_EQ(view.document["profiles"][1]["hoyo"]["touchUiEnabled"], true);
+  EXPECT_FALSE(view.document["profiles"][1].contains("disableTouchUi"));
   // the editor changes the input of an existing profile: the same profile now says the other thing
   draft.display_name = "Star Rail pad";
   draft.options = sparxie::json { { "input", "kbm" }, { "fpsUnlock", true }, { "fps", 144 } };
   auto again = sparxie::update_profile(dir, touch.profile, draft, hooks);
   ASSERT_TRUE(again.status.ok) << again.status.error;
   view = sparxie::read_store(dir);
-  EXPECT_EQ(view.document["profiles"][1]["hoyo"]["touchUiEnabled"], false);
-  // and the stored value is the input of an imported application; a profile from an older Sparxie (no field) is a touch one
-  EXPECT_EQ(sparxie::options_from_hoyo(view.document["profiles"][1]["hoyo"])["input"], "kbm");
-  EXPECT_EQ(sparxie::options_from_hoyo(sparxie::json { { "fpsUnlockEnabled", true } })["input"], "touch");
+  EXPECT_EQ(view.document["profiles"][1]["disableTouchUi"], true);
+  // and the stored value is the input of an imported application; a profile without disableTouchUi is a touch one
+  EXPECT_EQ(sparxie::options_from_profile(view.document["profiles"][1])["input"], "kbm");
+  EXPECT_EQ(sparxie::options_from_profile(sparxie::json { { "game", "starRail" }, { "hoyo", { { "fpsUnlockEnabled", true } } } })["input"], "touch");
+  // switching back to touch removes disableTouchUi
+  draft.options = sparxie::json { { "input", "touch" }, { "fpsUnlock", true }, { "fps", 144 } };
+  ASSERT_TRUE(sparxie::update_profile(dir, touch.profile, draft, hooks).status.ok);
+  view = sparxie::read_store(dir);
+  EXPECT_FALSE(view.document["profiles"][1].contains("disableTouchUi"));
   // a file whose value is not a boolean is refused like any other bad field
   sparxie::json bad = view.document;
-  bad["profiles"][0]["hoyo"]["touchUiEnabled"] = "no";
+  bad["profiles"][0]["disableTouchUi"] = "yes";
   EXPECT_FALSE(sparxie::validate_document(bad).ok);
-  // Zenless Zone Zero has no hoyo block, so there is nothing to say
+  // Zenless Zone Zero has no hoyo block and uses the same top-level disableTouchUi (true skips DLL injection)
   sparxie::ProfileDraft zzz;
   zzz.display_name = "ZZZ";
   zzz.game = "zzz";
@@ -159,4 +165,16 @@ TEST(Store, TheInputChoiceIsWrittenAsTouchUiEnabledAndReadBack) {
   ASSERT_TRUE(written.status.ok) << written.status.error;
   view = sparxie::read_store(dir);
   EXPECT_FALSE(view.document["profiles"][2].contains("hoyo"));
+  EXPECT_EQ(view.document["profiles"][2]["disableTouchUi"], true);
+  EXPECT_EQ(sparxie::options_from_profile(view.document["profiles"][2])["input"], "kbm");
+  zzz.options = sparxie::json { { "input", "touch" } };
+  ASSERT_TRUE(sparxie::update_profile(dir, written.profile, zzz, hooks).status.ok);
+  view = sparxie::read_store(dir);
+  EXPECT_FALSE(view.document["profiles"][2].contains("disableTouchUi"));
+  EXPECT_EQ(sparxie::options_from_profile(view.document["profiles"][2])["input"], "touch");
+  // an older ZZZ profile without disableTouchUi reads as touch; a non-boolean disableTouchUi is refused
+  EXPECT_EQ(sparxie::options_from_profile(sparxie::json { { "game", "zenlessZoneZero" } })["input"], "touch");
+  sparxie::json bad_zzz = view.document;
+  bad_zzz["profiles"][2]["disableTouchUi"] = "yes";
+  EXPECT_FALSE(sparxie::validate_document(bad_zzz).ok);
 }
