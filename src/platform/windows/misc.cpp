@@ -1977,18 +1977,62 @@ namespace platf {
   // IP changes during a stream (DHCP renewal, Wi-Fi reconnect, VPN toggle, sleep/wake,
   // energy-efficient-ethernet blips, etc.), that pinned source address becomes invalid
   // and WSASendMsg() fails with WSAEINVAL on every send, flooding the log and dropping
-  // all video traffic until the client gives up.
+  // all media traffic until the client gives up.
   //
-  // To stay resilient we detect that failure, stop pinning the (now invalid) source
-  // address so the OS picks one by routing, and re-enable pinning when the host's
-  // address table changes (i.e. the network has stabilized).
-  static std::atomic<bool> source_pin_disabled { false };
+  // To stay resilient we remember the source address that WSASendMsg() rejected and stop
+  // pinning it, so the OS picks one by routing. The record is kept per address rather than
+  // as one process-wide switch: a session established before the network change keeps its
+  // stale localAddress and keeps falling back, while a session established after it pins its
+  // fresh address normally. The address-change notification usually arrives before the first
+  // rejected send, so it cannot be what re-enables pinning; instead the records are dropped
+  // on every later address table change, and an address that came back is pinned again after
+  // at most one more rejected send.
+  //
+  // The records live in a small table of atomic slots, so the per-packet check never takes a
+  // lock. An IPv4 address is stored as its 32 bits, an IPv6 address as a 64-bit hash of its
+  // 16 bytes with the top bit set (a collision only costs one address the pinning); zero is
+  // an empty slot. A streaming host never has more stale addresses than slots. If it had,
+  // pinning is given up for every session until the next address table change: evicting a
+  // recorded address would make two stale addresses alternate on one slot and fail every send.
+  static constexpr std::size_t invalid_source_slot_count = 4;
+  static std::atomic<std::uint64_t> invalid_source_slots[invalid_source_slot_count] {};
+  static std::atomic<bool> invalid_source_overflow { false };
+  // Readers never take this lock; every mutation of the table and of the flag does, which
+  // makes their interleavings benign. Readers use relaxed loads and can act on a moment-old
+  // view, which never breaks anything: an address is recorded because its sends already fail,
+  // so pinning it a little longer loses nothing, and staying unpinned a little longer only
+  // forgoes source selection that OS routing handles anyway.
+  static std::mutex invalid_sources_mutex;
+
+  static std::uint64_t
+  source_key(const boost::asio::ip::address &address) {
+    if (address.is_v4()) {
+      const auto bytes = address.to_v4().to_bytes();
+      return (std::uint64_t { bytes[0] } << 24) | (std::uint64_t { bytes[1] } << 16) |
+             (std::uint64_t { bytes[2] } << 8) | std::uint64_t { bytes[3] };
+    }
+
+    std::uint64_t hash = 0xcbf29ce484222325ull;  // FNV-1a
+    for (const auto byte : address.to_v6().to_bytes()) {
+      hash = (hash ^ byte) * 0x100000001b3ull;
+    }
+    return hash | (std::uint64_t { 1 } << 63);
+  }
+
+  static bool
+  is_recorded_source(std::uint64_t key) {
+    for (const auto &slot : invalid_source_slots) {
+      if (slot.load(std::memory_order_relaxed) == key) return true;
+    }
+    return false;
+  }
 
   // Whether to add the PKTINFO control message. Skipped when pinning is disabled or
-  // the source address is unspecified (in which case the OS chooses the source).
+  // the source address is unspecified or known to be invalid (the OS chooses the source).
   static bool
   should_pin_source_address(const boost::asio::ip::address &addr) {
-    return !addr.is_unspecified() && !source_pin_disabled.load(std::memory_order_relaxed);
+    return !addr.is_unspecified() && !invalid_source_overflow.load(std::memory_order_relaxed) &&
+           !is_recorded_source(source_key(addr));
   }
 
   // Writes an IP_PKTINFO / IPV6_PKTINFO control message into cm that pins the source
@@ -2052,24 +2096,57 @@ namespace platf {
   }
 
   // Called when WSASendMsg() fails. If the pinned source address is no longer valid
-  // (WSAEINVAL), disable source pinning so subsequent sends fall back to OS routing.
+  // (WSAEINVAL), record it so subsequent sends from it fall back to OS routing.
   static void
-  handle_wsasendmsg_failure(int winerr) {
-    if (winerr == WSAEINVAL && !source_pin_disabled.exchange(true)) {
-      BOOST_LOG(warning) << "Pinned source address is no longer valid (likely a host network change); "
-                            "disabling source address pinning and letting the OS choose the source interface"sv;
+  handle_wsasendmsg_failure(int winerr, const boost::asio::ip::address &source) {
+    if (winerr == WSAEINVAL && !source.is_unspecified()) {
+      const auto key = source_key(source);
+      bool recorded = false;
+      bool give_up = false;
+      {
+        std::lock_guard lock { invalid_sources_mutex };
+        if (!is_recorded_source(key)) {
+          for (auto &slot : invalid_source_slots) {
+            if (slot.load(std::memory_order_relaxed) == 0) {
+              slot.store(key, std::memory_order_relaxed);
+              recorded = true;
+              break;
+            }
+          }
+          // Every slot holds a stale address. Evicting one would make two stale addresses
+          // alternate on its slot and fail every send, so stop pinning for every session
+          // until the next address table change empties the table again.
+          give_up = !recorded && !invalid_source_overflow.exchange(true, std::memory_order_relaxed);
+        }
+      }
+      if (recorded) {
+        BOOST_LOG(warning) << "Pinned source address "sv << source << " is no longer valid (likely a host network change); "
+                                                                      "letting the OS choose the source address for it"sv;
+      }
+      else if (give_up) {
+        BOOST_LOG(warning) << "Source address pinning gave up after "sv << invalid_source_slot_count
+                           << " rejected source addresses; letting the OS choose for every session"sv;
+      }
     }
     log_wsasendmsg_failure(winerr);
   }
 
   // Network address change watcher: when the host's unicast address table changes,
-  // re-enable source pinning so a healthy/multi-homed configuration can resume pinning
-  // (new sessions resolve a fresh, valid source address from their control connection).
+  // forget the rejected source addresses so pinning is retried once the network has
+  // stabilized (an address that is still invalid is recorded again by the next send).
   static void NETIOAPI_API_
   on_unicast_address_change(PVOID, PMIB_UNICASTIPADDRESS_ROW, MIB_NOTIFICATION_TYPE) {
-    if (source_pin_disabled.exchange(false)) {
-      BOOST_LOG(info) << "Host network address change detected; re-enabling source address pinning"sv;
+    bool any = false;
+    {
+      std::lock_guard lock { invalid_sources_mutex };
+      any = invalid_source_overflow.exchange(false, std::memory_order_relaxed);
+      for (auto &slot : invalid_source_slots) {
+        any = slot.exchange(0, std::memory_order_relaxed) != 0 || any;
+      }
     }
+    if (!any) return;
+
+    BOOST_LOG(info) << "Host network address change detected; retrying source address pinning"sv;
   }
 
   // Lazily register the address-change watcher on first send. The notification handle
@@ -2239,7 +2316,7 @@ namespace platf {
     const bool sent = WSASendMsg((SOCKET) send_info.native_socket, &msg, 0, &bytes_sent, nullptr, nullptr) != SOCKET_ERROR;
     const auto error = sent ? 0 : WSAGetLastError();
     send_info.would_block = error == WSAEWOULDBLOCK;
-    if (!sent && !send_info.would_block) handle_wsasendmsg_failure(error);
+    if (!sent && !send_info.would_block) handle_wsasendmsg_failure(error, send_info.source_address);
     return sent;
   }
 
