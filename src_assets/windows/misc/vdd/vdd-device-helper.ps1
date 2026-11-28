@@ -412,8 +412,16 @@ function Get-VddState([string] $InfPath) {
 function Wait-Until([scriptblock] $Condition, [int] $WaitSeconds) {
     $deadline = [DateTime]::UtcNow.AddSeconds($WaitSeconds)
     do {
-        if (& $Condition) {
-            return $true
+        try {
+            if (& $Condition) {
+                return $true
+            }
+        }
+        catch {
+            # A device that is still being configured can make a check throw
+            # (registry values or interfaces not queryable yet, for example).
+            # Treat that as not-ready and keep waiting; the deadline still bounds
+            # the wait, and the diagnosis after it reads the state directly.
         }
         Start-Sleep -Milliseconds 250
     } while ([DateTime]::UtcNow -lt $deadline)
@@ -961,6 +969,9 @@ function Invoke-VddInstall(
         (Test-VddVersionAtLeast $decision.CurrentVersion $state.BundledVersion)) {
         Write-Output 'A healthy same-or-newer VDD is already active; deferring the bundled driver update.'
         Write-Output 'VDD_DRIVER_UPDATE_DEFERRED=1'
+        # The deferred run is a completed installation (the active VDD stays); without this
+        # completed marker a polluted process exit code would read as a failure.
+        Write-Output 'VDD installation completed.'
         return
     }
 
@@ -1080,6 +1091,7 @@ if ($MyInvocation.InvocationName -ne '.') {
         exit 0
     }
     catch {
+        Write-Output 'VDD_INSTALL_FAILED=1'
         Write-Error $_
         exit 1
     }
