@@ -259,7 +259,7 @@ namespace sparxie {
     }
     return {
       { "name", "sparxie" },
-      { "publisher", "暗檬" },
+      { "publisher", "ShadowLemoon" },
       { "online", false },
       { "minOsBuild", kMinBuild },
       { "arch", "x64" },
@@ -374,7 +374,7 @@ namespace sparxie {
     const std::string version = pin ? pin->version : std::string("未经验证的版本");
     json component = {
       { "name", "sparxie" },
-      { "publisher", "暗檬" },
+      { "publisher", "ShadowLemoon" },
       { "version", version },
       { "sha256", hash },
       { "verified", pin != nullptr },

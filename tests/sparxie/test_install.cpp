@@ -144,7 +144,7 @@ namespace {
 TEST(InstallManifest, PinsTheKnownPackagesAndHasNoDownload) {
   const auto manifest = sparxie::manifest_json();
   EXPECT_FALSE(manifest["online"].get<bool>());
-  EXPECT_EQ(manifest["publisher"], "暗檬");
+  EXPECT_EQ(manifest["publisher"], "ShadowLemoon");
   EXPECT_EQ(manifest["minOsBuild"], 19041);
   EXPECT_FALSE(manifest["requiresAdmin"].get<bool>());
   ASSERT_EQ(manifest["assets"].size(), 4u);
