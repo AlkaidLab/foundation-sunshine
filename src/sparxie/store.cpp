@@ -1,6 +1,8 @@
 #include "src/sparxie/store.h"
+#include "src/sparxie/hoyo_settings.h"
 #include "src/sparxie/sha256.h"
 #include <algorithm>
+#include <cstring>
 #include <chrono>
 #include <ctime>
 #include <fstream>
@@ -729,41 +731,31 @@ namespace sparxie {
       return Status::success();
     });
   }
-  std::string
-  with_graphics_argument(const std::string &arguments, const std::string &wanted, const std::vector<std::string> &ours) {
-    static const char *const kApiArguments[] = { "-force-d3d11", "-force-d3d12", "-use-d3d12" };
-    auto goes = [&](const std::string &token) {
-      if (token == wanted) return false;
-      if (std::find(ours.begin(), ours.end(), token) != ours.end()) return true;
-      return !wanted.empty() && std::find(std::begin(kApiArguments), std::end(kApiArguments), token) != std::end(kApiArguments);
-    };
-    std::string out;
-    bool present = false;
-    std::size_t at = 0;
-    while (at < arguments.size()) {
-      // a token with the blanks before it, so that what stays keeps its spacing
-      const std::size_t start = arguments.find_first_not_of(' ', at);
-      if (start == std::string::npos) break;
-      std::size_t end = arguments.find(' ', start);
-      if (end == std::string::npos) end = arguments.size();
-      const std::string token = arguments.substr(start, end - start);
-      if (!goes(token)) {
-        out += out.empty() ? token : arguments.substr(at, end - at);
-        present = present || token == wanted;
-      }
-      at = end;
-    }
-    if (!wanted.empty() && !present) out += out.empty() ? wanted : " " + wanted;
-    return out;
-  }
   namespace {
+    constexpr const char *kBlanks = " \t\r\n";
+    // The words of a command line as [begin, end): blanks separate them, except between a pair of quotes (a quote after an odd number of backslashes is a plain
+    // character, and so is one that nothing closes, so that what the host appends after it can still be found again).
     std::vector<std::pair<std::size_t, std::size_t>>
     words_of(const std::string &text) {
+      auto is_quote = [&text](std::size_t i) {
+        if (text[i] != '"') return false;
+        std::size_t slashes = 0;
+        while (slashes < i && text[i - slashes - 1] == '\\') ++slashes;
+        return slashes % 2 == 0;
+      };
+      auto is_blank = [](char c) { return c != '\0' && std::strchr(kBlanks, c) != nullptr; };
       std::vector<std::pair<std::size_t, std::size_t>> out;
       std::size_t at = 0;
-      while ((at = text.find_first_not_of(' ', at)) != std::string::npos) {
-        std::size_t end = text.find(' ', at);
-        if (end == std::string::npos) end = text.size();
+      while ((at = text.find_first_not_of(kBlanks, at)) != std::string::npos) {
+        std::size_t end = at;
+        while (end < text.size() && !is_blank(text[end])) {
+          if (is_quote(end)) {
+            std::size_t close = end + 1;
+            while (close < text.size() && !is_quote(close)) ++close;
+            if (close < text.size()) end = close;
+          }
+          ++end;
+        }
         out.push_back({ at, end });
         at = end;
       }
@@ -791,6 +783,28 @@ namespace sparxie {
       return false;
     }
   }  // namespace
+  std::string
+  with_graphics_argument(const std::string &arguments, const std::string &wanted, const std::vector<std::string> &ours, bool *added) {
+    std::string out;
+    bool present = false;
+    std::size_t at = 0;
+    for (const auto &[start, end] : words_of(arguments)) {
+      const std::string token = arguments.substr(start, end - start);
+      const std::string value = unquoted_argument(token);
+      const bool is_wanted = !wanted.empty() && value == wanted;
+      const bool goes = !is_wanted && (std::find(ours.begin(), ours.end(), token) != ours.end() || (!wanted.empty() && is_graphics_argument(value)));
+      if (!goes) {
+        // a word with the blanks before it, so that what stays keeps its spacing
+        out += out.empty() ? token : arguments.substr(at, end - at);
+        present = present || is_wanted;
+      }
+      at = end;
+    }
+    const bool append = !wanted.empty() && !present;
+    if (append) out += out.empty() ? wanted : " " + wanted;
+    if (added) *added = append;
+    return out;
+  }
   std::size_t
   launch_arguments_length(const std::string &utf8) {
     std::size_t units = 0;
@@ -808,31 +822,57 @@ namespace sparxie {
     return launch.contains("extraArguments") && launch["extraArguments"].is_string() ? launch["extraArguments"].get<std::string>() : std::string();
   }
   std::string
-  with_launch_arguments(const std::string &arguments, const std::string &api, const std::vector<std::string> &our_api, const std::string &run, const std::vector<std::string> &our_runs) {
-    // already as chosen: nothing is moved around
+  with_launch_arguments(const std::string &arguments, const std::string &api, const std::vector<std::string> &our_api, const std::string &run, const std::vector<std::string> &our_runs, LaunchOwnership *owned) {
+    auto among = [](const std::vector<std::string> &list, const std::string &value) { return std::find(list.begin(), list.end(), value) != list.end(); };
+    // Only what the host put there is taken out, a longer run before a shorter one: "-a" of an earlier save must not leave the "-b" of "-a -b" behind.
+    std::vector<std::string> runs = our_runs;
+    std::stable_sort(runs.begin(), runs.end(), [](const std::string &a, const std::string &b) { return words_of(a).size() > words_of(b).size(); });
     std::string rest = arguments;
-    bool settled = run.empty() || take_run(rest, run);
-    for (const auto &old : our_runs) {
-      std::string probe = rest;
-      if (old != run && take_run(probe, old)) settled = false;
+    std::vector<std::string> taken;
+    for (const auto &old : runs)
+      if (take_run(rest, old)) taken.push_back(old);
+    bool added_api = false;
+    // already as chosen (the host's own run, or one the person typed, and no other run of the host's): nothing is moved around
+    std::string untouched = rest;
+    const bool host_run = !run.empty() && taken.size() == 1 && taken.front() == run;
+    const bool typed_run = !run.empty() && taken.empty() && take_run(untouched, run);
+    if (host_run || typed_run || (run.empty() && taken.empty())) {
+      const std::string &others = typed_run ? untouched : rest;
+      if (with_graphics_argument(others, api, our_api, &added_api) == others) {
+        if (owned) *owned = { !api.empty() && among(our_api, api), host_run };
+        return arguments;
+      }
     }
-    if (settled && with_graphics_argument(rest, api, our_api) == rest) return arguments;
-    std::string out = arguments;
-    take_run(out, run);
-    for (const auto &old : our_runs)
-      if (old != run) take_run(out, old);
-    out = with_graphics_argument(out, api, our_api);
-    if (!run.empty()) out += out.empty() ? run : " " + run;
+    std::string out = with_graphics_argument(rest, api, our_api, &added_api);
+    // a run that is still there is one the person typed: it is not written a second time, and it is not the host's
+    std::string probe = out;
+    const bool append = !run.empty() && !take_run(probe, run);
+    if (append) out += out.empty() ? run : " " + run;
+    // an API argument that stayed in place is the host's when the host had put it there
+    if (owned) *owned = { !api.empty() && (added_api || among(our_api, api)), append };
     return out;
   }
+  namespace {
+    // `arguments` as the profile's launch.extraArguments, and nothing else of the profile
+    void
+    put_launch_arguments(json &profile, const std::string &arguments) {
+      if (!profile.contains("launch") || !profile["launch"].is_object()) profile["launch"] = json::object();
+      if (arguments.empty())
+        profile["launch"].erase("extraArguments");
+      else
+        profile["launch"]["extraArguments"] = arguments;
+      if (profile["launch"].empty()) profile.erase("launch");
+    }
+  }  // namespace
   WriteResult
-  set_launch_arguments(const fs::path &dir, const std::string &id, const std::string &api, const std::vector<std::string> &our_api, const std::string &run, const std::vector<std::string> &our_runs, StoreHooks hooks) {
+  set_launch_arguments(const fs::path &dir, const std::string &id, const std::string &api, const std::vector<std::string> &our_api, const std::string &run, const std::vector<std::string> &our_runs, StoreHooks hooks, LaunchOwnership *owned, std::string *before) {
     const ConfigView view = read_store(dir);
     if (view.status.ok && view.document.contains("profiles") && view.document["profiles"].is_array()) {
       for (const auto &profile : view.document["profiles"]) {
         if (!profile.is_object() || profile.value("id", std::string()) != id) continue;
         const std::string now = launch_arguments_of(profile);
-        if (with_launch_arguments(now, api, our_api, run, our_runs) == now) {
+        // `owned` is filled here too: what a refused write (Sparxie is open) would own once it is made
+        if (with_launch_arguments(now, api, our_api, run, our_runs, owned) == now) {
           WriteResult same;
           same.state = "unchanged";
           same.profile = id;
@@ -844,14 +884,23 @@ namespace sparxie {
       profile_id = id;
       for (auto &profile : document["profiles"]) {
         if (profile.value("id", std::string()) != id) continue;
-        const std::string next = with_launch_arguments(launch_arguments_of(profile), api, our_api, run, our_runs);
+        const std::string now = launch_arguments_of(profile);
+        const std::string next = with_launch_arguments(now, api, our_api, run, our_runs, owned);
         if (launch_arguments_length(next) > kMaxLaunchArguments) return Status::fail(400, "arguments_too_long", "Sparxie's extra launch arguments would be longer than 512 characters");
-        if (!profile.contains("launch") || !profile["launch"].is_object()) profile["launch"] = json::object();
-        if (next.empty())
-          profile["launch"].erase("extraArguments");
-        else
-          profile["launch"]["extraArguments"] = next;
-        if (profile["launch"].empty()) profile.erase("launch");
+        if (before) *before = now;
+        put_launch_arguments(profile, next);
+        return Status::success();
+      }
+      return Status::fail(404, "not_found", "That Sparxie profile does not exist");
+    });
+  }
+  WriteResult
+  restore_launch_arguments(const fs::path &dir, const std::string &id, const std::string &arguments, StoreHooks hooks) {
+    return edit_store(dir, hooks, [&](json &document, std::string &profile_id, const SparxieBuild &) {
+      profile_id = id;
+      for (auto &profile : document["profiles"]) {
+        if (profile.value("id", std::string()) != id) continue;
+        put_launch_arguments(profile, arguments);
         return Status::success();
       }
       return Status::fail(404, "not_found", "That Sparxie profile does not exist");

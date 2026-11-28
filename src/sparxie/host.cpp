@@ -1073,22 +1073,31 @@ namespace sparxie {
           if (item.is_string()) out.push_back(item.get<std::string>());
       return out;
     }
-    // true when the profile now reads as chosen (also when there was never anything to do); a Sparxie that is open leaves it for the next save or launch
-    bool
+    // How writing the choice into a profile went. A Sparxie that is open leaves it for the next save or launch.
+    struct ArgumentSync {
+      bool written = true;  // the profile now reads as chosen (also when there was never anything to do)
+      LaunchOwnership owned;
+      std::optional<std::string> before;  // what the profile's arguments were, when they were changed
+    };
+    ArgumentSync
     sync_launch_arguments(HostEnv &env, const json &block, const std::string &profile) {
       const std::string game = block.value("game", std::string());
       const std::string api = graphics_api_argument(game, chosen_settings(block));
       const std::string custom = sparxie_custom_arguments(game, chosen_settings(block));
       const std::vector<std::string> our_api = host_arguments(block, "sparxieArguments");
       const std::vector<std::string> our_custom = host_arguments(block, "sparxieCustomArguments");
-      if (profile.empty() || (api.empty() && our_api.empty() && custom.empty() && our_custom.empty())) return true;
+      ArgumentSync sync;
+      if (profile.empty() || (api.empty() && our_api.empty() && custom.empty() && our_custom.empty())) return sync;
       StoreHooks hooks = env.store_hooks;
       hooks.running = sparxie_open(env);
-      const WriteResult stored = set_launch_arguments(config_dir(env), profile, api, our_api, custom, our_custom, hooks);
+      std::string before;
+      const WriteResult stored = set_launch_arguments(config_dir(env), profile, api, our_api, custom, our_custom, hooks, &sync.owned, &before);
       if (!stored.status.ok && env.warn) env.warn("the launch arguments were not written to the Sparxie profile: " + stored.status.error);
-      return stored.status.ok;
+      sync.written = stored.status.ok;
+      if (stored.status.ok && stored.state != "unchanged") sync.before = before;
+      return sync;
     }
-    // after a save: what the host may have left in the profile is the choice alone when it was written, else also what was there before
+    // after a save: what the host may have left in the profile is its own part of the choice when it was written, else also what was there before
     void
     keep_argument(json &block, const char *key, const std::string &wanted, bool written) {
       std::vector<std::string> ours = written ? std::vector<std::string> {} : host_arguments(block, key);
@@ -1099,12 +1108,41 @@ namespace sparxie {
         block[key] = ours;
     }
     void
-    keep_launch_arguments(json &block, bool written) {
+    keep_launch_arguments(json &block, const ArgumentSync &sync) {
       const std::string game = block.value("game", std::string());
       const json settings = chosen_settings(block);
-      keep_argument(block, "sparxieArguments", graphics_api_argument(game, settings), written);
-      keep_argument(block, "sparxieCustomArguments", sparxie_custom_arguments(game, settings), written);
+      keep_argument(block, "sparxieArguments", sync.owned.api ? graphics_api_argument(game, settings) : std::string(), sync.written);
+      keep_argument(block, "sparxieCustomArguments", sync.owned.run ? sparxie_custom_arguments(game, settings) : std::string(), sync.written);
     }
+    // Puts a profile's arguments back as they were before a save, unless the application list is saved too: it records what the host left in the profile.
+    class ArgumentsUndo {
+    public:
+      explicit ArgumentsUndo(HostEnv &env):
+          env_(env) {}
+      ~ArgumentsUndo() {
+        if (!before_) return;
+        try {
+          StoreHooks hooks = env_.store_hooks;
+          hooks.running = false;
+          const WriteResult restored = restore_launch_arguments(config_dir(env_), profile_, *before_, hooks);
+          if (!restored.status.ok && env_.warn) env_.warn("the launch arguments of the Sparxie profile were not put back: " + restored.status.error);
+        }
+        catch (const std::exception &) {
+        }
+      }
+      void
+      arm(const std::string &profile, std::optional<std::string> before) {
+        profile_ = profile;
+        before_ = std::move(before);
+      }
+      void
+      keep() { before_.reset(); }
+
+    private:
+      HostEnv &env_;
+      std::string profile_;
+      std::optional<std::string> before_;
+    };
     // what the save would put into Sparxie's extra launch arguments must fit: said before anything is written, so the page can show it
     Status
     check_launch_arguments(HostEnv &env, const json &block, const std::string &profile) {
@@ -1384,6 +1422,7 @@ namespace sparxie {
         hooks.running = false;
         update_profile(config_dir(env), profile_id, draft, hooks);
       }
+      ArgumentsUndo arguments_undo(env);
       app["name"] = name;
       const std::string templ = env.launch_template.empty() ? std::string(kDefaultLaunchTemplate) : env.launch_template;
       json launch_options = launch_options_of(request.value("settings", json::object()), install.game);
@@ -1407,7 +1446,11 @@ namespace sparxie {
       if (request.contains("restore")) block["restore"] = request.value("restore", std::string("restore")) == "keep" ? "keep" : "restore";
       if (request.contains("settings")) block["settings"] = settings_without_game_fps(mode, block.value("options", json::object()), sparse_settings(request.value("settings", json::object())));
       block.erase("settingsMode");  // the two-mode switch is gone: no changed items means the game's own settings stay
-      if (mode == "touch") keep_launch_arguments(block, sync_launch_arguments(env, block, profile_id));
+      if (mode == "touch") {
+        const ArgumentSync sync = sync_launch_arguments(env, block, profile_id);
+        arguments_undo.arm(profile_id, sync.before);
+        keep_launch_arguments(block, sync);
+      }
       if (request.contains("badge") && request["badge"].is_boolean()) block["badge"] = request["badge"].get<bool>();
       if (request.contains("cover")) {
         const bool custom = request.value("cover", std::string("official")) == "custom";
@@ -1437,6 +1480,7 @@ namespace sparxie {
           reconcile_official(env, app, true);
       }
       if (!commit_apps(env, apps)) return failure(Status::fail(500, "apps_write_failed", "The application list could not be saved"));
+      arguments_undo.keep();
       result.body = { { "ok", true }, { "app", app }, { "saved", true }, { "index", index }, { "wrote", wrote }, { "write_back", write_back } };
       return result;
     }

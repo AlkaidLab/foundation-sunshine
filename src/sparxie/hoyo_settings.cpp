@@ -1006,6 +1006,28 @@ namespace sparxie {
     return out;
   }
 
+  bool
+  is_graphics_argument(std::string_view argument) {
+    return argument == "-force-d3d11" || argument == "-force-d3d12" || argument == "-use-d3d12";
+  }
+
+  std::string
+  unquoted_argument(std::string_view word) {
+    if (word.size() >= 2 && word.front() == '"' && word.back() == '"') word = word.substr(1, word.size() - 2);
+    return std::string(word);
+  }
+
+  namespace {
+    // whether the graphics API menu holds a choice other than "follow the game": Zenless Zone Zero has its own item, whose every value is a choice
+    bool
+    graphics_api_chosen(std::string_view game, const json &settings) {
+      auto text = [&](const char *key) { return settings.contains(key) && settings[key].is_string() ? settings[key].get<std::string>() : std::string(); };
+      if (game == "zzz" && !text("graphicsApi").empty()) return true;
+      const std::string dx = text("dxVersion");
+      return (game == "genshin" || game == "starrail" || game == "zzz") && (dx == "dx11" || dx == "dx12");
+    }
+  }  // namespace
+
   std::string
   sparxie_custom_arguments(std::string_view game, const json &settings) {
     if (game != "genshin" && game != "starrail" && game != "zzz" && game != "endfield") return {};
@@ -1013,17 +1035,19 @@ namespace sparxie {
     const std::string raw = settings["customArgs"].get<std::string>();
     std::string checked;
     if (!quote_args(raw, checked)) return {};
+    const bool api_chosen = graphics_api_chosen(game, settings);
+    // the arguments as quote_args tells them apart ("-a""-b" is two), each spelled as it was typed
+    constexpr std::string_view blanks = " \t\r\n";
     std::string out;
-    std::string word;
-    for (const char c : raw + " ") {
-      if (c != ' ' && c != '\t' && c != '\r' && c != '\n') {
-        word.push_back(c);
-        continue;
-      }
-      if (word.empty()) continue;
+    for (std::size_t at = 0; (at = raw.find_first_not_of(blanks, at)) != std::string::npos;) {
+      std::size_t end = raw[at] == '"' ? raw.find('"', at + 1) + 1 : raw.find_first_of(blanks, at);
+      if (end == std::string::npos) end = raw.size();
+      const std::string word = raw.substr(at, end - at);
+      at = end;
+      // the graphics API menu wins over an API argument typed here
+      if (api_chosen && is_graphics_argument(unquoted_argument(word))) continue;
       if (!out.empty()) out.push_back(' ');
       out += word;
-      word.clear();
     }
     return out;
   }

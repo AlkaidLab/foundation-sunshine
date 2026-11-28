@@ -1854,6 +1854,108 @@ TEST(CustomArguments, ASparxieApplicationCarriesThemInItsProfile) {
   fs::remove_all(root);
 }
 
+TEST(CustomArguments, AShorterChoiceTakesTheWholeEarlierRunOut) {
+  using sparxie::with_launch_arguments;
+  EXPECT_EQ(with_launch_arguments("-quality 3 -windowed", "", {}, "-quality 3", { "-quality 3 -windowed" }), "-quality 3");
+  EXPECT_EQ(with_launch_arguments("-mine -a -b", "", {}, "-a", { "-a -b" }), "-mine -a");
+  // a record of two (the second was never written): the longer run that is there goes whole, whichever comes first in the record
+  EXPECT_EQ(with_launch_arguments("-a -b", "", {}, "-c", { "-a", "-a -b" }), "-c");
+  EXPECT_EQ(with_launch_arguments("-a -b", "", {}, "", { "-a -b", "-a" }), "");
+}
+
+TEST(CustomArguments, WhatThePersonTypedAlreadyIsNotTheHosts) {
+  using sparxie::LaunchOwnership;
+  using sparxie::with_launch_arguments;
+  LaunchOwnership owned;
+  EXPECT_EQ(with_launch_arguments("-quality 3 -force-d3d12", "-force-d3d12", {}, "-quality 3", {}, &owned), "-quality 3 -force-d3d12");
+  EXPECT_FALSE(owned.api);
+  EXPECT_FALSE(owned.run);
+  EXPECT_EQ(with_launch_arguments("-mine", "-force-d3d12", {}, "-quality 3", {}, &owned), "-mine -force-d3d12 -quality 3");
+  EXPECT_TRUE(owned.api);
+  EXPECT_TRUE(owned.run);
+  EXPECT_EQ(with_launch_arguments("-mine -force-d3d12 -quality 3", "-force-d3d12", { "-force-d3d12" }, "-quality 3", { "-quality 3" }, &owned), "-mine -force-d3d12 -quality 3");
+  EXPECT_TRUE(owned.api);
+  EXPECT_TRUE(owned.run);
+  // a change from the host's own run to one the person typed
+  EXPECT_EQ(with_launch_arguments("-typed -old", "", {}, "-typed", { "-old" }, &owned), "-typed");
+  EXPECT_FALSE(owned.run);
+
+  const fs::path root = fs::temp_directory_path() / "sparxie-arguments-typed";
+  sparxie::HostEnv env = kbm_env(root);
+  ASSERT_TRUE(sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin" } }).status.ok);
+  type_arguments(env.data_dir, "-force-d3d12 -quality 3");
+  ASSERT_TRUE(sparxie::update_app(env, 0, { { "settings", { { "customArgs", "-quality 3" }, { "dxVersion", "dx12" } } } }).status.ok);
+  EXPECT_FALSE(first_app(env)["sparxie"].contains("sparxieArguments"));
+  EXPECT_FALSE(first_app(env)["sparxie"].contains("sparxieCustomArguments"));
+  ASSERT_TRUE(sparxie::update_app(env, 0, { { "settings", sparxie::json::object() } }).status.ok);
+  EXPECT_EQ(profile_arguments(env.data_dir), "-force-d3d12 -quality 3");
+  // the same while Sparxie is open, written at the next launch
+  env.process_running = [](const std::vector<std::string> &names) { return std::find(names.begin(), names.end(), "Sparxie.exe") != names.end(); };
+  ASSERT_TRUE(sparxie::update_app(env, 0, { { "settings", { { "customArgs", "-quality 3" } } } }).status.ok);
+  EXPECT_FALSE(first_app(env)["sparxie"].contains("sparxieCustomArguments"));
+  fs::remove_all(root);
+}
+
+TEST(CustomArguments, WhatStandsBetweenQuotesIsLeftAsTyped) {
+  using sparxie::with_graphics_argument;
+  using sparxie::with_launch_arguments;
+  const std::string typed = "-log \"a -force-d3d11 b\"";
+  EXPECT_EQ(with_graphics_argument(typed, "-force-d3d12", { "-force-d3d11" }), typed + " -force-d3d12");
+  EXPECT_EQ(with_launch_arguments(typed + " -old", "", {}, "", { "-old" }), typed);
+  EXPECT_EQ(with_launch_arguments("-log \"x -a y\" -a", "", {}, "", { "-a" }), "-log \"x -a y\"");
+  EXPECT_EQ(with_launch_arguments("-dir=\"c d\" -force-d3d11", "-force-d3d12", {}, "", {}), "-dir=\"c d\" -force-d3d12");
+  // a quoted API argument is the same argument
+  EXPECT_EQ(with_graphics_argument("\"-force-d3d11\" -mine", "-force-d3d12", {}), "-mine -force-d3d12");
+  EXPECT_EQ(with_graphics_argument("\"-force-d3d12\"", "-force-d3d12", {}), "\"-force-d3d12\"");
+  // a quote nothing closes does not swallow what the host appends: it comes out again
+  const std::string open = with_launch_arguments("-x \"y", "", {}, "-a", {});
+  EXPECT_EQ(open, "-x \"y -a");
+  EXPECT_EQ(with_launch_arguments(open, "", {}, "", { "-a" }), "-x \"y");
+}
+
+TEST(CustomArguments, TheGraphicsApiMenuWinsOverAnApiArgumentAmongThem) {
+  using sparxie::sparxie_custom_arguments;
+  for (const char *game : { "genshin", "starrail", "zzz" })
+    EXPECT_EQ(sparxie_custom_arguments(game, { { "dxVersion", "dx12" }, { "customArgs", "-a -force-d3d11 \"-use-d3d12\" -b" } }), "-a -b") << game;
+  EXPECT_EQ(sparxie_custom_arguments("genshin", { { "dxVersion", "dx11" }, { "customArgs", "-force-d3d11" } }), "");
+  // with "auto" what was typed stays
+  EXPECT_EQ(sparxie_custom_arguments("genshin", { { "dxVersion", "auto" }, { "customArgs", "-force-d3d11" } }), "-force-d3d11");
+  EXPECT_EQ(sparxie_custom_arguments("starrail", { { "customArgs", "-force-d3d12" } }), "-force-d3d12");
+  // Zenless Zone Zero: any value of its own item is a choice, also one that needs no argument
+  EXPECT_EQ(sparxie_custom_arguments("zzz", { { "graphicsApi", "11.0" }, { "customArgs", "-use-d3d12 -a" } }), "-a");
+  // Endfield has no such menu
+  EXPECT_EQ(sparxie_custom_arguments("endfield", { { "dxVersion", "dx12" }, { "customArgs", "-force-d3d11" } }), "-force-d3d11");
+
+  const fs::path root = fs::temp_directory_path() / "sparxie-arguments-api-wins";
+  sparxie::HostEnv env = kbm_env(root);
+  ASSERT_TRUE(sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin" }, { "settings", { { "customArgs", "-force-d3d11" } } } }).status.ok);
+  EXPECT_EQ(profile_arguments(env.data_dir), "-force-d3d11");
+  ASSERT_TRUE(sparxie::update_app(env, 0, { { "settings", { { "customArgs", "-force-d3d11" }, { "dxVersion", "dx12" } } } }).status.ok);
+  EXPECT_EQ(profile_arguments(env.data_dir), "-force-d3d12");
+  fs::remove_all(root);
+}
+
+TEST(CustomArguments, ArgumentsWrittenAgainstEachOtherAreSetApart) {
+  using sparxie::sparxie_custom_arguments;
+  EXPECT_EQ(sparxie_custom_arguments("genshin", { { "customArgs", "\"-a\"\"-b\"" } }), "\"-a\" \"-b\"");
+  EXPECT_EQ(sparxie_custom_arguments("genshin", { { "customArgs", "\"-a\"-b  -c" } }), "\"-a\" -b -c");
+}
+
+TEST(CustomArguments, AnApplicationListThatCannotBeSavedLeavesTheProfileAsItWas) {
+  const fs::path root = fs::temp_directory_path() / "sparxie-arguments-undo";
+  sparxie::HostEnv env = kbm_env(root);
+  ASSERT_TRUE(sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin" }, { "settings", { { "customArgs", "-old" } } } }).status.ok);
+  const auto write_bits = fs::perms::owner_write | fs::perms::group_write | fs::perms::others_write;
+  fs::permissions(env.apps_file, write_bits, fs::perm_options::remove);
+  const auto failed = sparxie::update_app(env, 0, { { "settings", { { "customArgs", "-other" } } } });
+  fs::permissions(env.apps_file, write_bits, fs::perm_options::add);
+  EXPECT_EQ(failed.status.error_code, "apps_write_failed") << failed.status.error;
+  EXPECT_EQ(profile_arguments(env.data_dir), "-old");
+  ASSERT_TRUE(sparxie::update_app(env, 0, { { "settings", sparxie::json::object() } }).status.ok);
+  EXPECT_EQ(profile_arguments(env.data_dir), "");
+  fs::remove_all(root);
+}
+
 TEST(NothingOfSparxie, KeyboardWithTheUnlockOffStartsDirectlyAndKeyboardWithItGoesThroughSparxie) {
   const fs::path root = fs::temp_directory_path() / "sparxie-nothing-create";
   sparxie::HostEnv env = kbm_env(root);
