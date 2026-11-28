@@ -11,5 +11,13 @@ for %%A in (%*) do (
     if /i "%%~A"=="--preserve-healthy-existing" set "PRESERVE_HEALTHY_EXISTING=-PreserveHealthyExisting"
 )
 
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0vdd-device-helper.ps1" -Action Install -Mode "%INSTALL_MODE%" %PRESERVE_HEALTHY_EXISTING%
-exit /b %ERRORLEVEL%
+rem The helper's answer is the only place a failure names its reason. Keep the full
+rem output next to this script when the scripts folder is writable, and in the
+rem caller's temp folder when it is not, then echo it for the console.
+set "HELPER_LOG=%~dp0vdd-install-last.log"
+2>nul copy /y nul "%HELPER_LOG%" >nul
+if errorlevel 1 set "HELPER_LOG=%TEMP%\vdd-install-last.log"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0vdd-device-helper.ps1" -Action Install -Mode "%INSTALL_MODE%" %PRESERVE_HEALTHY_EXISTING% > "%HELPER_LOG%" 2>&1
+set "HELPER_EXIT=%ERRORLEVEL%"
+type "%HELPER_LOG%"
+exit /b %HELPER_EXIT%

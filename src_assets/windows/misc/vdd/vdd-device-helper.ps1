@@ -412,8 +412,16 @@ function Get-VddState([string] $InfPath) {
 function Wait-Until([scriptblock] $Condition, [int] $WaitSeconds) {
     $deadline = [DateTime]::UtcNow.AddSeconds($WaitSeconds)
     do {
-        if (& $Condition) {
-            return $true
+        try {
+            if (& $Condition) {
+                return $true
+            }
+        }
+        catch {
+            # A device that is still being configured can make a check throw
+            # (registry values or interfaces not queryable yet, for example).
+            # Treat that as not-ready and keep waiting; the deadline still bounds
+            # the wait, and the diagnosis after it reads the state directly.
         }
         Start-Sleep -Milliseconds 250
     } while ([DateTime]::UtcNow -lt $deadline)

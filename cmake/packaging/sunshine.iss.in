@@ -139,7 +139,7 @@ english.MsgOldNSISStaleRegistry=The previous installation files appear to be gon
 english.MsgOldNSISCleanupFailed=Failed to clean up the previous installation registry entries.%nPlease remove HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine manually and try again.
 english.MsgUpdateBlocked=Sunshine cannot be updated while something is still using its files. The existing installation has not been changed.%n%n%1%n%nClose what is using them and run the installer again.
 english.MsgServiceInstallFailed=Sunshine service could not be installed or verified.%n%nThe files were installed and are kept. Reboot and run "{app}\scripts\install-service.bat" as administrator, or use the repair action in the Sunshine GUI. The installer log in your TEMP folder has the details.
-english.MsgServiceAutostartFailed=Sunshine was installed, but its automatic startup could not be configured or verified. Check the installer log or configure the service in the Sunshine panel.
+english.MsgServiceAutostartFailed=Sunshine was installed, but its automatic startup could not be configured - security software often blocks this change.%n%nThe service is running; you can enable automatic startup later in the Sunshine panel. The installer log has the details.
 english.MsgServiceStartFailed=The Sunshine service was registered, but could not start now. Setup will still apply your automatic startup choice. Check the installer log and try starting the service again from the Sunshine panel.
 english.MsgDirProtectFailed=The install folder could not be protected from changes by other users, so nothing was installed.%n%nThe service runs the programs in this folder as SYSTEM. Pick a folder on a local NTFS or ReFS drive and run setup again. The installer log in your TEMP folder has the details.
 english.MsgVDDInstallFailed=The virtual display driver could not be installed or verified.%n%nSunshine was installed but has not been started. Review the installer log in your TEMP folder, then use the repair action in the Sunshine GUI.
@@ -190,7 +190,7 @@ chinesesimplified.MsgOldNSISStaleRegistry=旧版本的文件已经不存在，�
 chinesesimplified.MsgOldNSISCleanupFailed=清理旧版注册表项失败。%n请手动删除 HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\Sunshine 后重试。
 chinesesimplified.MsgUpdateBlocked=Sunshine 的文件仍被占用，无法更新。现有安装没有被改动。%n%n%1%n%n请关闭占用它们的程序后重新运行安装程序。
 chinesesimplified.MsgServiceInstallFailed=无法安装或验证 Sunshine 服务。%n%n程序文件已经装好并会保留。请重启后以管理员身份运行 "{app}\scripts\install-service.bat"，或在 Sunshine 管理界面里使用修复功能。详细信息见 TEMP 目录下的安装日志。
-chinesesimplified.MsgServiceAutostartFailed=Sunshine 已安装，但无法配置或验证开机自动启动。请查看安装日志，或在 Sunshine 管理界面中配置服务。
+chinesesimplified.MsgServiceAutostartFailed=Sunshine 已安装成功，但开机自启动设置失败——通常是安全软件拦截了该修改。%n%n服务正在运行，不影响使用；可稍后在 Sunshine 管理界面中手动开启自启动，详情见安装日志。
 chinesesimplified.MsgServiceStartFailed=Sunshine 服务已注册，但本次启动失败。安装程序仍会应用您选择的开机启动设置。请查看安装日志，并在 Sunshine 管理界面中重试启动服务。
 chinesesimplified.MsgDirProtectFailed=无法保护安装目录不被其他用户修改，所以没有安装任何文件。%n%n后台服务以 SYSTEM 身份运行这个目录里的程序。请选择本机 NTFS 或 ReFS 磁盘上的文件夹，再运行一次安装程序。详细信息见 TEMP 目录下的安装日志。
 chinesesimplified.MsgVDDInstallFailed=无法安装或验证基地虚拟显示器。%n%nSunshine 已安装但尚未启动。请检查 TEMP 目录中的安装日志，然后在 Sunshine 管理界面中使用修复功能。
@@ -490,6 +490,10 @@ var
   // callers still see a failure — the GUI updater runs us with /VERYSILENT
   // and treats exit code 0 as "update installed successfully".
   ServiceVerifyFailed: Boolean;
+  // Autostart could not be configured (most often security software refusing the change).
+  // Not fatal: the service is installed and running, so the install finishes successfully and
+  // the done page carries the warning instead of a failure exit code (#1511).
+  AutostartFailed: Boolean;
   // Starting now is independent of registration and the user's boot setting.
   ServiceStartFailed: Boolean;
   PermissionsRepairInProgress: Boolean;
@@ -814,6 +818,31 @@ begin
   Result := (VDDResultCode <> 101) and (not ServiceVerifyFailed);
 end;
 
+// The helper's output is the only place a VDD failure names its reason (the exit code alone is
+// just 101). install-vdd.bat keeps it next to the script and echoes it; mirror it into the setup
+// log and the run directory either way, so a failure is diagnosable from the files a person can
+// send us.
+procedure SurfaceVddHelperLog();
+var
+  HelperLog: String;
+  Lines: TArrayOfString;
+  Joined: String;
+  I: LongInt;
+begin
+  HelperLog := ExpandConstant('{app}\scripts\vdd-install-last.log');
+  if not LoadStringsFromFile(HelperLog, Lines) then begin
+    Log('VDD helper output is unavailable; the helper either was not run or wrote nothing.');
+    Exit;
+  end;
+  Joined := '';
+  for I := 0 to GetArrayLength(Lines) - 1 do begin
+    Log('VDD helper: ' + Lines[I]);
+    Joined := Joined + Lines[I] + #13#10;
+  end;
+  if InstallRunDir <> '' then
+    SaveStringToFile(AddBackslash(InstallRunDir) + 'vdd-install.log', AnsiString(Joined), False);
+end;
+
 procedure InstallAndVerifyVDD();
 var
   ResultCode: Integer;
@@ -853,6 +882,8 @@ begin
     Log('VDD installation or verification failed with exit code ' + IntToStr(ResultCode) + '.');
     EmitInstallerEvent('install-vdd', 'failed', 'StatusInstallVDD', 101);
   end;
+
+  SurfaceVddHelperLog;
 
   // the exit code of the helper itself (-1: it could not be started), not the 101 this script maps it to
   JournalComponent('vdd', 'install', ResultCode);
@@ -1510,11 +1541,14 @@ begin
     Detail := 'Start: <missing>';
   Detail := 'Autostart script exit: ' + IntToStr(ResultCode) + #13#10 + Detail;
   Log('Service autostart verification failed. ' + Detail);
-  ServiceVerifyFailed := True;
+  // Non-fatal by design (#1511): the service itself is installed and running; only the boot
+  // choice failed - most often security software refusing ChangeServiceConfig. The install
+  // finishes (exit code 0) and the warning below tells the person how to recover.
+  AutostartFailed := True;
   EmitInstallerEvent('autostart', 'failed', 'StatusAutostart', 100);
   JournalComponent('autostart', 'verify', 100);
   if not WizardSilent then
-    InstallerMessageBox(CustomMessage('MsgServiceAutostartFailed') + #13#10 + #13#10 + Detail, mbError, MB_OK, IDOK);
+    InstallerMessageBox(CustomMessage('MsgServiceAutostartFailed') + #13#10 + #13#10 + Detail, mbConfirmation, MB_OK, IDOK);
 end;
 
 // Report a nonzero exit code when the service could not be verified. Inno
