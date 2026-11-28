@@ -4997,10 +4997,13 @@ namespace video {
         channel_data,
       });
 
-      // Wait for join signal or session shutdown
+      // Wait for the sync worker to take ownership of the shared queue and finish.
+      // On shutdown, still hold the ref briefly so captureThreadSync can ref()
+      // before the queue is destroyed (avoids a second idle capture thread).
       auto shutdown_evt = mail->event<bool>(mail::shutdown);
       while (!join_event->view(100ms)) {
         if (shutdown_evt->peek()) {
+          join_event->view(2s);
           break;
         }
       }
@@ -5611,8 +5614,9 @@ namespace video {
 #ifdef _WIN32
     fingerprint.gpus = platf::gpu_signature();
 #elif defined(__APPLE__)
-    const auto adapters = platf::adapter_names();
-    fingerprint.gpus = adapters.empty() ? "Apple Display Engine" : adapters.front();
+    // No reliable per-adapter identity on macOS yet. Leave empty so decide_reuse
+    // returns unknown_gpu and does not reuse a probe across GPU changes.
+    fingerprint.gpus.clear();
 #endif
     fingerprint.options = probe_options_digest();
     fingerprint.capture_backend = config::video.capture;
