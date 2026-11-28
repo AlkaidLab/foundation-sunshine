@@ -295,6 +295,19 @@ TEST(DefaultAppNames, TheIdOfAnApplicationDoesNotChangeWithTheLanguage) {
   EXPECT_EQ(default_apps::id_name(renamed, "My Xbox"), "My Xbox");
 }
 
+TEST(DefaultAppNames, AClientSeesTheEnglishNameWhileTheFileFollowsTheLanguage) {
+  // the protocol list of a Chinese host shows the English names again (the AppTitle of Moonlight)
+  EXPECT_EQ(default_apps::client_name("desktop", "桌面"), "Desktop");
+  EXPECT_EQ(default_apps::client_name("big-screen", "大屏"), "Big Screen");
+  EXPECT_EQ(default_apps::client_name("steam", "Steam Big Picture 模式"), "Steam Big Picture");
+  EXPECT_EQ(default_apps::client_menu_name("kcENAT5r9P", "触摸键盘"), "Touch Keyboard");
+  EXPECT_EQ(default_apps::client_menu_name("rjeOKHmcdL", "桌宠"), "Desktop Pet");
+  // a name the person wrote stays, with and without a mark
+  EXPECT_EQ(default_apps::client_name("xbox", "My Xbox"), "My Xbox");
+  EXPECT_EQ(default_apps::client_name("", "桌面"), "桌面");
+  EXPECT_EQ(default_apps::client_menu_name("person-cmd", "我的命令"), "我的命令");
+}
+
 TEST(DefaultAppNames, AnOldFileIsMarkedOnceAndOnlyWhereTheNameIsADefaultName) {
   auto tree = parse(R"({"apps":[{"name":"Desktop","image-path":"desktop"},{"name":"桌面","image-path":"desktop"},{"name":"Steam","cmd":"steam://open/bigpicture"},{"name":"Xbox 游戏","cmd":"cmd /c \"start xbox:\"","image-path":"box.png"},{"name":"Notepad","cmd":"notepad.exe"}]})");
   ASSERT_TRUE(default_apps::stamp_defaults(tree));

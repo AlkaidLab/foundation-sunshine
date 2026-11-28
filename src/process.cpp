@@ -1229,6 +1229,7 @@ namespace proc {
           };
         }
 
+        ctx.default_id = app_node.get<std::string>(std::string { default_apps::default_id_key }, "");
         auto possible_ids = calculate_app_id(default_apps::id_name(app_node, name), ctx.image_path, i++);
         if (ids.count(std::get<0>(possible_ids)) == 0) {
           // Avoid using index to generate id if possible
