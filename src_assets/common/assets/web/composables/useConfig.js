@@ -817,7 +817,13 @@ export function useConfig() {
     const original = snapshots.value.config
     const out = []
     for (const key of new Set([...Object.keys(current), ...Object.keys(original)])) {
-      if (!isEqual(current[key], original[key])) out.push({ key, before: original[key], after: current[key] })
+      // A field the host config never wrote is "not configured": the page's empty serialized
+      // list is the same as missing, so a fresh install does not show phantom edits for the
+      // fps/resolutions lists. Clearing a list the host has is still a real change.
+      const before = original[key]
+      const after = current[key]
+      if (before === undefined && (after === '[]' || after === '' || (Array.isArray(after) && after.length === 0))) continue
+      if (!isEqual(after, before)) out.push({ key, before, after })
     }
     return out
   }
