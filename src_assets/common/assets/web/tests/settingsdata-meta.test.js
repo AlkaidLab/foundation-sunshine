@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import './helpers/foundationUi.mjs'
 const { SEARCH_INDEX, LABELS } = await import('../config/settingsData/index.js')
-const { SETTING_META } = await import('foundation-ui/settings/index.js')
+const { SETTING_META } = await import('../config/settingsData/hostSettings.js')
 
 test('every setting of the search index has a tier and a control, and nothing else is in the registry', () => {
   const ids = SEARCH_INDEX.map((e) => e.id)

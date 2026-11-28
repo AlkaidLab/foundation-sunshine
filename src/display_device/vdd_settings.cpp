@@ -37,6 +37,19 @@ namespace display_device::vdd_settings {
 
   }  // namespace
 
+#ifdef SUNSHINE_TESTS
+  namespace {
+    std::optional<fs::path> test_settings_path;
+  }
+  namespace test_support {
+    /** @brief Restrict test XML access to a fixture path; configure before starting requests. */
+    void
+    set_settings_path(const std::optional<fs::path> &path) {
+      test_settings_path = path;
+    }
+  }  // namespace test_support
+#endif
+
   bool
   save(std::string resArray, std::string fpsArray, std::string gpu_name) {
     pt::ptree iddOptionTree;
@@ -66,7 +79,12 @@ namespace display_device::vdd_settings {
     }
 
     // 类似于 config.cpp 中的 path_f 函数逻辑，使用相对路径
+#ifdef SUNSHINE_TESTS
+    if (!test_settings_path) return false;
+    const auto idd_option_path = *test_settings_path;
+#else
     std::filesystem::path idd_option_path = platf::appdata() / "vdd_settings.xml";
+#endif
 
     BOOST_LOG(info) << "VDD配置文件路径: " << file_handler::path_to_utf8(idd_option_path);
 

@@ -1,21 +1,26 @@
 <script setup>
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MGroup, MItem, MSection, MSwitchItem, MVddDevice, displayTreeTexts, vddOn } from 'foundation-ui/vue'
+import { MExpander, MFooter, MGroup, MItem, MSection, MSwitchItem, MVddDevice, displayTreeTexts, vddOn } from 'foundation-ui/vue'
 import { settingsHash } from 'foundation-ui/settings/index.js'
 import CfgSwitch from '../../../components/cfg/CfgSwitch.vue'
 import { useVddSettings } from '../../../composables/useVddSettings.js'
 import { useVddStatus } from '../../../composables/useVddStatus.js'
 import { writeTrayVddAction } from '../../../composables/trayVddAction.js'
+import { edidResolutionOptions } from '../../../utils/vddEdidResolution.js'
 
 // 基地虚拟显示器: the device card (the driver, whether the display exists, keep enabled) and the way to the settings that belong to it. Nothing here is a second copy of a setting: headless is
 // the same switch as on 显示器, and the modes, the calibration and the scaling are links.
-const props = defineProps({ config: { type: Object, required: true }, platform: { type: String, default: 'windows' } })
+const props = defineProps({ config: { type: Object, required: true }, platform: { type: String, default: 'windows' }, resolutions: { type: Array, required: true }, fps: { type: Array, required: true }, focus: { type: String, default: '' } })
 const { locale } = useI18n()
 const x = computed(() => displayTreeTexts(locale.value))
 const store = useVddSettings()
 const status = useVddStatus()
 const busy = ref(false)
+const advancedOpen = ref(props.focus === 'vdd_edid_native_resolution')
+watch(() => props.focus, value => { if (value === 'vdd_edid_native_resolution') advancedOpen.value = true })
+const edidOptions = computed(() => edidResolutionOptions(props.resolutions, props.fps, props.config.vdd_edid_native_resolution))
+const invalidEdidSelection = computed(() => edidOptions.value.some(option => option.value === props.config.vdd_edid_native_resolution && option.reason))
 const state = computed(() => {
   if (status.vddStatusLoading.value && status.vddStatus.value.state === 'unknown') return 'checking'
   const s = status.vddStatus.value.state
@@ -53,4 +58,24 @@ const go = (sub) => { window.location.hash = settingsHash({ tab: 'display', sub 
       <MItem action icon="format_size" :title="x.device.links.scaling" @click="go('output')" />
     </MGroup>
   </MSection>
+  <MExpander v-model:open="advancedOpen" :title="$t('shell.display_advanced')">
+    <MGroup>
+      <MItem data-cfg="vdd_edid_native_resolution" :title="$t('config.vdd_edid_native_resolution')" :text="$t('config.vdd_edid_native_resolution_desc')" stack>
+        <template #control>
+          <select id="vdd_edid_native_resolution" v-model="config.vdd_edid_native_resolution" class="edid-native-select" :aria-label="$t('config.vdd_edid_native_resolution')" aria-describedby="vdd_edid_native_resolution_hint">
+            <option v-for="option in edidOptions" :key="option.value" :value="option.value" :disabled="!!option.reason">
+              {{ option.value === 'default' ? $t('config.vdd_edid_native_resolution_default') : option.value.replace('x', '×') }}{{ option.reason ? ' — ' + $t('config.vdd_edid_native_resolution_' + option.reason) : '' }}
+            </option>
+          </select>
+        </template>
+      </MItem>
+    </MGroup>
+    <MFooter id="vdd_edid_native_resolution_hint">{{ $t('config.vdd_edid_native_resolution_hint') }}</MFooter>
+    <MFooter v-if="invalidEdidSelection" class="edid-native-error" role="alert">{{ $t('config.vdd_edid_native_resolution_invalid') }}</MFooter>
+  </MExpander>
 </template>
+
+<style scoped>
+.edid-native-select { width: 100%; font: inherit; padding: .7rem; border: 1px solid var(--md-sys-color-outline); border-radius: 12px; color: var(--md-sys-color-on-surface); background: var(--md-sys-color-surface-container); }
+.edid-native-error { color: var(--md-sys-color-error); }
+</style>

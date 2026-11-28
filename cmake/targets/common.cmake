@@ -36,7 +36,7 @@ set(SUNSHINE_SHARED_HOST_OBJECTS_ENABLED OFF)
 if(WIN32 AND SUNSHINE_SHARE_HOST_OBJECTS AND (BUILD_TESTS OR BUILD_TRAY_TESTS) AND NOT SUNSHINE_TESTS_ENABLE_COVERAGE)
     set(SUNSHINE_SHARED_HOST_OBJECTS_ENABLED ON)
     set(_sunshine_seam_regex
-        ".*/src/(input|logging|nvhttp/pairing|nvhttp/pairing_pending|webhook/webhook|nvenc/win/nvenc_dynamic_factory|nvenc/win/impl/nvenc_dynamic_factory_1301|platform/windows/display_vram|platform/windows/pre_encode_filter)\\.cpp$")
+        ".*/src/(config|display_device/vdd_settings|input|logging|nvhttp/pairing|nvhttp/pairing_pending|webhook/webhook|nvenc/win/nvenc_dynamic_factory|nvenc/win/impl/nvenc_dynamic_factory_1301|platform/windows/display_vram|platform/windows/pre_encode_filter)\\.cpp$")
     set(_sunshine_host_all ${SUNSHINE_HOST_SOURCES} ${PLATFORM_TARGET_FILES})
     set(SUNSHINE_SEAM_SOURCES ${_sunshine_host_all})
     list(FILTER SUNSHINE_SEAM_SOURCES INCLUDE REGEX "${_sunshine_seam_regex}")

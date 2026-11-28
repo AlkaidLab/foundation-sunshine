@@ -41,7 +41,7 @@ useApplyNow()
   </CfgSub>
 
   <CfgSub v-if="platform === 'windows'" id="virtual" :title="$t('shell.virtual_display')">
-    <DisplayVirtual :config="config" :platform="platform" />
+    <DisplayVirtual :config="config" :platform="platform" :resolutions="resolutions" :fps="fps" :focus="focus" />
   </CfgSub>
 
   <CfgSub id="advanced" :title="$t('shell.display_advanced')">
