@@ -919,6 +919,25 @@ wWinMain(HINSTANCE, HINSTANCE, PWSTR, int) {
     while (!dir.empty() && (dir.back() == L' ' || dir.back() == L'"')) dir.pop_back();
     return preview_main(dir);
   }
+  // One setup window per sign-in session: a double click that starts the package twice would put a
+  // second window beside the first, and a person clicking Install in both would set two engines
+  // racing (the engines are still serialized by the worker's mutex; the window is the visible part
+  // of that mistake). A second instance brings the running one to the front and exits. Worker,
+  // silent and CI modes returned above and are not affected; the handle is kept for the process's
+  // whole life, which is the lifetime of the window.
+  HANDLE setup_window_mutex = CreateMutexW(nullptr, FALSE, L"Local\\FoundationSunshine-setup-window");
+  if (setup_window_mutex && GetLastError() == ERROR_ALREADY_EXISTS) {
+    CloseHandle(setup_window_mutex);
+    if (HWND window = FindWindowW(kWindowClass, nullptr)) {
+      ShowWindow(window, SW_RESTORE);
+      SetForegroundWindow(window);
+      return 0;
+    }
+    const bool zh = PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_CHINESE;
+    MessageBoxW(nullptr, zh ? L"Foundation Sunshine 安装程序已在运行。" : L"The Foundation Sunshine installer is already running.",
+      L"Foundation Sunshine", MB_OK | MB_ICONINFORMATION);
+    return 0;
+  }
   if (!has_argument(L"--native")) {
     const int code = web_main();
     if (code != kWebFallback) return code;
