@@ -13,6 +13,8 @@ namespace sparxie {
     std::string sha256;
     std::uint64_t bytes = 0;
     std::string note;
+    // a release older than kCurrentVersion: it still installs, and the person is told to use a newer one
+    bool outdated = false;
   };
 
   struct Probes {
@@ -65,6 +67,11 @@ namespace sparxie {
     bool delete_config = false;
   };
 
+  // The oldest Sparxie this host is made for. Older releases are outdated: nothing is done to keep them working.
+  inline constexpr const char *kCurrentVersion = "0.2.1";
+  // True for a version number below kCurrentVersion ("0.2.0", "0.1.0-preview.9"); false when the text does not start with one.
+  bool
+  outdated_version(const std::string &version);
   std::vector<Pin>
   builtin_pins();
   json

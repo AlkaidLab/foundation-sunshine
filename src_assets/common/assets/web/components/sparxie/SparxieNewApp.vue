@@ -132,9 +132,10 @@ import SparxieSettings from './SparxieSettings.vue'
 import SparxieDisplay from './SparxieDisplay.vue'
 import SparxieOptions from './SparxieOptions.vue'
 import SparxieNotice from './SparxieNotice.vue'
+import { useOutdatedWarning } from '../../composables/useOutdatedWarning.js'
 import { useSparxie } from '../../composables/useSparxie.js'
 import { useSparxieCopy } from '../../composables/useSparxieCopy.js'
-import { GAME_IDS, KBM_SPARXIE_GAMES, SPARXIE_MARK, artUrl, badgeApplies, badgeOf, createBlock, defaultName, exesOf, fitsRegion, fullPath, gameArtId, matchTitle, mergeInstalls, needsWriteBack, regionsOf, withDefaults, SPARXIE_DEFAULTS, sparxieFieldsOf, stableJson } from '../../utils/sparxie/model.js'
+import { GAME_IDS, SPARXIE_MARK, artUrl, badgeApplies, badgeOf, createBlock, defaultName, exesOf, fitsRegion, fullPath, gameArtId, matchTitle, mergeInstalls, needsWriteBack, regionsOf, withDefaults, SPARXIE_DEFAULTS, sparxieFieldsOf, stableJson, usesSparxie } from '../../utils/sparxie/model.js'
 import { nativePicker } from '../../utils/sparxie/pick.js'
 import { displayBody, displayState, hasDisplay, normalizeDisplay } from '../../utils/sparxie/display.js'
 import { failureText } from '../../utils/sparxie/copy.js'
@@ -174,6 +175,7 @@ const imageError = ref('')
 const gameBlock = reactive({ game: '', settings: {}, restore: 'restore', profile: '', options: { ...SPARXIE_DEFAULTS }, display: { mode: 'follow' } })
 const query = ref('')
 const pendingPrefill = ref(null)
+useOutdatedWarning()
 const editBlock = isEdit ? reactive(withDefaults(props.edit.sparxie)) : null
 const editOptions = isEdit ? JSON.stringify(editBlock.options) : ''
 // the Sparxie settings of this page: the app's own when it is edited, the new app's otherwise
@@ -195,9 +197,8 @@ const copyForNames = computed(() => ({ games: names.value, regions: C.value.regi
 // an app of a Sparxie title starts through Sparxie whenever the component is installed (no launch choice); without it the game starts directly
 const touchAllowed = computed(() => !!status.installed && !!catalog.value?.[game.value]?.touch)
 const touch = computed(() => touchAllowed.value)
-// keyboard, mouse and gamepad runs a Sparxie session without the touch interface; the other titles start the game directly
-const kbmThroughSparxie = computed(() => KBM_SPARXIE_GAMES.includes(game.value))
-const viaSparxie = computed(() => touch.value && (optBlock.options.input !== 'kbm' || kbmThroughSparxie.value))
+// an application that asks nothing of Sparxie (keyboard, mouse and gamepad without the frame-rate unlock) starts the game directly
+const viaSparxie = computed(() => touch.value && usesSparxie(game.value, optBlock.options))
 // how the app starts: an app that is saved as a direct launch (mode pc) stays one when it is edited, whatever the Sparxie items on this page show; creating follows the component
 const launchMode = computed(() => (viaSparxie.value ? 'touch' : 'pc'))
 // the poster carries the Sparxie mark only for an application that runs Sparxie's touch interface; keyboard, mouse and gamepad (through Sparxie's PC session too) have the plain poster

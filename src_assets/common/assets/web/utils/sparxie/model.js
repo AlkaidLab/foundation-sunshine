@@ -135,8 +135,12 @@ export const sparxieOf = (app) => (app && typeof app.sparxie === 'object' && app
 /** Whether the poster of a touch application shows the Sparxie mark: what the block says, else on for the official cover and off for a cover of the person's own */
 export const badgeOf = (block) => (typeof block?.badge === 'boolean' ? block.badge : block?.cover !== 'custom')
 
-/** The titles whose Sparxie session can run with keyboard, mouse and gamepad (the PC-interface switch of Genshin and Star Rail, Zenless Zone Zero without DLL injection, Endfield's PC input) */
-export const KBM_SPARXIE_GAMES = ['genshin', 'starrail', 'zzz', 'endfield']
+/** The titles Sparxie has a frame-rate unlock for */
+const UNLOCK_GAMES = ['genshin', 'starrail', 'endfield']
+
+/** Whether an application asks anything of Sparxie: its touch interface or its frame-rate unlock. With keyboard, mouse and gamepad and no unlock it asks nothing and
+ *  starts the game directly (the host's rule, uses_sparxie). */
+export const usesSparxie = (game, options) => options?.input !== 'kbm' || (UNLOCK_GAMES.includes(game) && options?.fpsUnlock === true)
 
 /** The input of an application: the stored one, else what its launch was (an application of the first builds that starts the game directly is keyboard, mouse and gamepad) */
 export const inputOf = (block) => (block?.options?.input === 'auto' ? 'touch' : block?.options?.input) || (block?.mode === 'pc' ? 'kbm' : 'touch') // the removed automatic input reads as touch
@@ -154,7 +158,8 @@ export function withDefaults(block) {
     display: normalizeDisplay(b.display),
     // only the items the person changed; every other item follows the game
     settings: heldSettings(b.settings),
-    options: { ...SPARXIE_DEFAULTS, ...(b.options || {}), input: inputOf(b) },
+    // an application that starts the game directly and never chose the unlock has it off: the default of a new application would send it through Sparxie on save
+    options: { ...SPARXIE_DEFAULTS, ...(b.mode === 'pc' ? { fpsUnlock: false } : {}), ...(b.options || {}), input: inputOf(b) },
   }
 }
 

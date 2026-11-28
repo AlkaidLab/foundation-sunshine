@@ -484,21 +484,47 @@ namespace sparxie {
       }
       return {};
     }
+    // The version number of the installed release when it is an outdated one, else empty. A package this host knows says it by its checksum (component_version);
+    // any other by the name of its app-<version> folder.
+    std::string
+    outdated_release(const fs::path &exe) {
+      if (exe.empty()) return {};
+      const std::string version = component_version(exe);
+      for (const auto &pin : builtin_pins())
+        if (pin.version == version) return pin.outdated ? version : std::string();
+      fs::path root = exe.parent_path();
+      if (root.filename().string().rfind("app-", 0) == 0) root = root.parent_path();
+      std::string app;
+      const std::string ini = read_text(root / "version.ini");
+      if (const auto at = ini.find("app-"); at != std::string::npos) app = ini.substr(at + 4, ini.find_first_of("\\/\r\n", at) - at - 4);
+      if (app.empty()) {
+        std::error_code ec;
+        for (const auto &entry : fs::directory_iterator(root, ec)) {
+          const std::string name = entry.path().filename().string();
+          if (name.rfind("app-", 0) == 0 && entry.is_directory(ec) && name.substr(4) > app) app = name.substr(4);
+        }
+      }
+      const std::string &number = app.empty() ? version : app;
+      return outdated_version(number) ? number : std::string();
+    }
     bool
     sparxie_installed(HostEnv &env) {
       if (env.sparxie_exe.empty() && !env.component_dir.empty()) env.sparxie_exe = find_sparxie_exe(env.component_dir);
       if (env.sparxie_exe.empty()) env.sparxie_exe = find_sparxie_exe(env.install_root);
       return !env.sparxie_exe.empty() && fs::is_regular_file(env.sparxie_exe);
     }
-    // Keyboard, mouse and gamepad is a Sparxie session without the touch interface (top-level disableTouchUi=true for built-in and plugin titles; legacy first-generation Endfield uses endfieldInputMode).
+    // Sparxie does two things to a game: its touch interface, and its frame-rate unlock (Zenless Zone Zero has none). An application that asks for neither (keyboard,
+    // mouse and gamepad with the unlock off) uses nothing of Sparxie and starts the game directly; Sparxie itself refuses such a session of a miHoYo title.
     bool
-    kbm_through_sparxie(const std::string &game) {
-      return game == "genshin" || game == "starrail" || game == "zzz" || game == "endfield";
+    uses_sparxie(const std::string &game, const json &options) {
+      if (!options.is_object() || options.value("input", std::string("touch")) != "kbm") return true;
+      if (game != "genshin" && game != "starrail" && game != "endfield") return false;
+      return options.contains("fpsUnlock") && options["fpsUnlock"].is_boolean() && options["fpsUnlock"].get<bool>();
     }
+    // Without the component at all the caller's mode stands (the pages send a direct start then).
     std::string
     mode_for_input(HostEnv &env, const std::string &mode, const json &options, const std::string &game) {
-      if (mode == "touch" && options.is_object() && options.value("input", std::string("touch")) == "kbm" && sparxie_installed(env) && !kbm_through_sparxie(game))
-        return "pc";
+      if (mode == "touch" && !uses_sparxie(game, options) && sparxie_installed(env)) return "pc";
       return mode;
     }
     // What the Endfield profile of this install will be: the first generation's own title, the plugin (installed, enabled or not) or nothing yet.
@@ -832,6 +858,9 @@ namespace sparxie {
     result.body = {
       { "ok", true },
       { "installed", installed },
+      // set when the installed release is older than the one this host is made for: the pages tell the person to use a newer one
+      { "outdatedVersion", installed ? outdated_release(env.sparxie_exe) : std::string() },
+      { "latestVersion", kCurrentVersion },
       { "running", installed && sparxie_open(env) },
       { "version", component_version(env.sparxie_exe) },
       { "protocol", "" },
@@ -1076,6 +1105,24 @@ namespace sparxie {
       keep_argument(block, "sparxieArguments", graphics_api_argument(game, settings), written);
       keep_argument(block, "sparxieCustomArguments", sparxie_custom_arguments(game, settings), written);
     }
+    // what the save would put into Sparxie's extra launch arguments must fit: said before anything is written, so the page can show it
+    Status
+    check_launch_arguments(HostEnv &env, const json &block, const std::string &profile) {
+      const std::string game = block.value("game", std::string());
+      const std::string api = graphics_api_argument(game, chosen_settings(block));
+      const std::string custom = sparxie_custom_arguments(game, chosen_settings(block));
+      if (api.empty() && custom.empty()) return Status::success();
+      std::string now;
+      if (!profile.empty()) {
+        const ConfigView view = read_store(config_dir(env));
+        if (view.status.ok && view.document.contains("profiles") && view.document["profiles"].is_array())
+          for (const auto &entry : view.document["profiles"])
+            if (entry.is_object() && entry.value("id", std::string()) == profile) now = launch_arguments_of(entry);
+      }
+      const std::string next = with_launch_arguments(now, api, host_arguments(block, "sparxieArguments"), custom, host_arguments(block, "sparxieCustomArguments"));
+      if (launch_arguments_length(next) <= kMaxLaunchArguments) return Status::success();
+      return Status::fail(400, "arguments_too_long", "Sparxie's extra launch arguments would be longer than 512 characters");
+    }
     // A profile this request added to Sparxie's config goes again when the request does not end well: the profile and the application list are one change.
     void
     take_back_profile(HostEnv &env, const std::string &id) {
@@ -1172,6 +1219,8 @@ namespace sparxie {
       std::string profile_id;
       bool wrote = false;
       if (mode == "touch") {
+        const json wanted = { { "game", found.install.game }, { "settings", sparse_settings(request.value("settings", json::object())) } };
+        if (const Status fits = check_launch_arguments(env, wanted, ""); !fits.ok) return failure(fits);
         if (sparxie_open(env)) {
           result.status = Status::fail(409, "sparxie_running", "Sparxie is running, close it before writing");
           result.body = { { "ok", false }, { "error", result.status.error }, { "error_code", result.status.error_code }, { "write_back", { { "state", "refused_running" } } } };
@@ -1271,6 +1320,14 @@ namespace sparxie {
       // 提升游戏优先级 of what this save stores: Sparxie's own priority follows it, or Sparxie's runtime would put the game back to normal
       const bool settings_sent = request.contains("settings");
       const bool boost = game_boost_on(settings_sent ? request.value("settings", json::object()) : block.value("settings", json::object()));
+      if (mode == "touch") {
+        json wanted = block;
+        if (settings_sent) {
+          wanted["settings"] = sparse_settings(request.value("settings", json::object()));
+          wanted.erase("settingsMode");
+        }
+        if (const Status fits = check_launch_arguments(env, wanted, profile_id); !fits.ok) return failure(fits);
+      }
       // touch launch needs the game in Sparxie's storage: a game app that was launched directly until now gets its profile here
       if (mode == "touch" && profile_id.empty()) {
         if (sparxie_open(env)) return failure(Status::fail(409, "sparxie_running", "Sparxie is running, close it before writing"));
@@ -1333,7 +1390,10 @@ namespace sparxie {
       // the display choice: the request's, else the stored one, else the default (follow the stream)
       const json display = request.contains("display") ? normalized_display(request["display"]) : normalized_display(block.contains("display") ? block["display"] : json());
       apply_display_to_launch_options(launch_options, display, install.game);
+      const bool had_launcher = app.value("cmd", std::string()).find("sparxie-launch") != std::string::npos;
       app["cmd"] = mode == "touch" ? touch_command(env, profile_id, install, name) : direct_command(env, install, launch_options);
+      // "wait-all": false belongs to the launcher; a game that starts directly goes back to the host's own way of following it
+      if (had_launcher && app.value("cmd", std::string()).find("sparxie-launch") == std::string::npos) app.erase("wait-all");
       app["elevated"] = true;
       block["mode"] = mode;
       block["profile"] = profile_id;
@@ -1419,11 +1479,12 @@ namespace sparxie {
       json options = options_from_profile(*profile);
       normalize_options(options);
       const std::string name = profile->value("displayName", id);
-      json block = app_block(found.install, id, "touch", options, templ);
-      block["badge"] = true;
-      const std::string cmd = touch_command(env, id, found.install, name);
+      const std::string mode = mode_for_input(env, "touch", options, found.install.game);
+      json block = app_block(found.install, id, mode, options, templ);
+      block["badge"] = mode == "touch";
+      const std::string cmd = mode == "touch" ? touch_command(env, id, found.install, name) : direct_command(env, found.install, json::object());
       json made = make_app(name, cmd, true, found.install, block);
-      const Posters posters = official_posters(env, found.install.id, true);
+      const Posters posters = official_posters(env, found.install.id, mode == "touch");
       if (!posters.cover.empty()) made["image-path"] = posters.cover.string();
       if (!posters.hero.empty()) made["hero"] = posters.hero.string();
       created.push_back(std::move(made));
@@ -1757,6 +1818,32 @@ namespace sparxie {
       block["launchTemplate"] = templ;
       ++attached;
     }
+    // An application saved before the rule (see uses_sparxie) that goes through Sparxie while it uses nothing of it starts its game directly from now on. Its
+    // Sparxie profile stays: it is used again when the unlock or the touch interface is turned back on.
+    for (auto &app : apps["apps"]) {
+      if (!app.contains("sparxie") || !app["sparxie"].is_object()) continue;
+      json &block = app["sparxie"];
+      const std::string game = block.value("game", std::string());
+      if (block.value("mode", std::string()) != "touch" || block.value("exe", std::string()).empty() || !block.contains("options") || uses_sparxie(game, block["options"])) continue;
+      Install install;
+      install.id = block.value("install", std::string());
+      install.game = game;
+      install.region = block.value("region", std::string());
+      install.dir = block.value("dir", std::string());
+      install.exe_path = block.value("exe", std::string());
+      install.exe = fs::path(install.exe_path).filename().string();
+      install.source = block.value("source", std::string());
+      json launch_options = launch_options_of(chosen_settings(block), game);
+      apply_display_to_launch_options(launch_options, normalized_display(block.contains("display") ? block["display"] : json()), game);
+      const bool had_launcher = app.value("cmd", std::string()).find("sparxie-launch") != std::string::npos;
+      app["cmd"] = direct_command(env, install, launch_options);
+      if (had_launcher && app.value("cmd", std::string()).find("sparxie-launch") == std::string::npos) app.erase("wait-all");
+      app["elevated"] = true;
+      block["mode"] = "pc";
+      block["launchOptions"] = launch_options;
+      reconcile_official(env, app, true);
+      ++attached;
+    }
     // With Sparxie installed, a Genshin, Star Rail or Zenless Zone Zero application that was made as a direct launch (keyboard, mouse and gamepad, no profile yet)
     // goes the launcher route like every other application of a Sparxie title: its Sparxie options (frame-rate unlock, target frame rate, background frame rate, priority, launch settings) then apply. It
     // keeps its options and gets the input it always had. An open Sparxie cannot be written to: the application waits for the next start.
@@ -1783,7 +1870,7 @@ namespace sparxie {
         install.exe = fs::path(install.exe_path).filename().string();
         json options = block.contains("options") && block["options"].is_object() ? block["options"] : default_options();
         if (!options.contains("input")) options["input"] = "kbm";
-        if (!normalize_options(options).ok) continue;
+        if (!normalize_options(options).ok || !uses_sparxie(game, options)) continue;
         ProfileDraft draft;
         draft.game = install.game;
         draft.display_name = app.value("name", std::string());

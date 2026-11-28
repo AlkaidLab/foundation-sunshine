@@ -46,6 +46,13 @@ namespace sparxie {
   // Takes the profiles with these ids out of Sparxie's config (backed up first). An id that is not there is ignored; the result's profile is the number removed as text.
   WriteResult
   remove_profiles(const fs::path &dir, const std::vector<std::string> &ids, StoreHooks hooks);
+  // Sparxie's limit on a profile's extra launch arguments (LaunchSettingsRules), counted the way it counts: UTF-16 code units.
+  inline constexpr std::size_t kMaxLaunchArguments = 512;
+  std::size_t
+  launch_arguments_length(const std::string &utf8);
+  // The extra launch arguments a profile holds; empty when it holds none.
+  std::string
+  launch_arguments_of(const json &profile);
   // Sparxie's extra launch arguments with the graphics API argument the host wants: `wanted` is appended (once), the other API arguments give way to it, and every
   // one of `ours` (what the host put there before) that is not wanted any more goes. Everything else stays as it was typed.
   std::string

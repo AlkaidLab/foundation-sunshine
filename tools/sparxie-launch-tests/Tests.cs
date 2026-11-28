@@ -25,6 +25,7 @@ internal static partial class Tests
             ProfileWire();
             NamesAndStages();
             PureTouchRules(scratch);
+            NothingOfSparxieRules();
             SparxieLogCopy(scratch);
             NoticeFile(scratch);
             PlanRules();

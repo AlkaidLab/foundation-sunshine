@@ -210,8 +210,7 @@ test('there is no launch choice: a Sparxie title starts through Sparxie while th
 })
 
 test('keyboard, mouse and gamepad run through Sparxie for the titles that have such a session, whatever the installed build reports', () => {
-  assert.ok(create.includes("const viaSparxie = computed(() => touch.value && (optBlock.options.input !== 'kbm' || kbmThroughSparxie.value))"), 'the input decides only when the title cannot do kbm')
-  assert.ok(create.includes("const kbmThroughSparxie = computed(() => KBM_SPARXIE_GAMES.includes(game.value))"), 'the title alone decides')
+  assert.ok(create.includes("const viaSparxie = computed(() => touch.value && usesSparxie(game.value, optBlock.options))"), 'what is asked of Sparxie decides')
   assert.ok(create.includes("mode: viaSparxie.value ? 'touch' : 'pc'"), 'the mode follows what the host will do (it applies the same rule)')
   assert.ok(!create.includes("mode: touch.value ? 'touch' : 'pc'"), 'no mode is sent from the bare component presence any more')
   assert.ok(!/直接启动/.test(COPYZH.inputKbm + COPYZH.inputTouch), 'the input names say no launch path')

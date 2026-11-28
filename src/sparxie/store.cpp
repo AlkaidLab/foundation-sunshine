@@ -791,6 +791,22 @@ namespace sparxie {
       return false;
     }
   }  // namespace
+  std::size_t
+  launch_arguments_length(const std::string &utf8) {
+    std::size_t units = 0;
+    for (const char c : utf8) {
+      const auto byte = static_cast<unsigned char>(c);
+      if ((byte & 0xC0) == 0x80) continue;
+      units += byte >= 0xF0 ? 2 : 1;
+    }
+    return units;
+  }
+  std::string
+  launch_arguments_of(const json &profile) {
+    if (!profile.is_object() || !profile.contains("launch") || !profile["launch"].is_object()) return {};
+    const json &launch = profile["launch"];
+    return launch.contains("extraArguments") && launch["extraArguments"].is_string() ? launch["extraArguments"].get<std::string>() : std::string();
+  }
   std::string
   with_launch_arguments(const std::string &arguments, const std::string &api, const std::vector<std::string> &our_api, const std::string &run, const std::vector<std::string> &our_runs) {
     // already as chosen: nothing is moved around
@@ -811,18 +827,11 @@ namespace sparxie {
   }
   WriteResult
   set_launch_arguments(const fs::path &dir, const std::string &id, const std::string &api, const std::vector<std::string> &our_api, const std::string &run, const std::vector<std::string> &our_runs, StoreHooks hooks) {
-    // Sparxie's limit (LaunchSettingsRules): a longer text would make it refuse the profile
-    constexpr std::size_t kMaxExtraArguments = 512;
-    auto arguments_of = [](const json &profile) {
-      if (!profile.contains("launch") || !profile["launch"].is_object()) return std::string();
-      const json &launch = profile["launch"];
-      return launch.contains("extraArguments") && launch["extraArguments"].is_string() ? launch["extraArguments"].get<std::string>() : std::string();
-    };
     const ConfigView view = read_store(dir);
     if (view.status.ok && view.document.contains("profiles") && view.document["profiles"].is_array()) {
       for (const auto &profile : view.document["profiles"]) {
         if (!profile.is_object() || profile.value("id", std::string()) != id) continue;
-        const std::string now = arguments_of(profile);
+        const std::string now = launch_arguments_of(profile);
         if (with_launch_arguments(now, api, our_api, run, our_runs) == now) {
           WriteResult same;
           same.state = "unchanged";
@@ -835,8 +844,8 @@ namespace sparxie {
       profile_id = id;
       for (auto &profile : document["profiles"]) {
         if (profile.value("id", std::string()) != id) continue;
-        const std::string next = with_launch_arguments(arguments_of(profile), api, our_api, run, our_runs);
-        if (next.size() > kMaxExtraArguments) return Status::fail(400, "invalid_input", "Sparxie's extra launch arguments would be too long");
+        const std::string next = with_launch_arguments(launch_arguments_of(profile), api, our_api, run, our_runs);
+        if (launch_arguments_length(next) > kMaxLaunchArguments) return Status::fail(400, "arguments_too_long", "Sparxie's extra launch arguments would be longer than 512 characters");
         if (!profile.contains("launch") || !profile["launch"].is_object()) profile["launch"] = json::object();
         if (next.empty())
           profile["launch"].erase("extraArguments");

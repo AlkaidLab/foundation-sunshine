@@ -79,6 +79,19 @@ internal static class EndfieldSession
 internal sealed record Profile(string Id, string DisplayName, string Game, string ExecutablePath, HoyoSettings? Hoyo, ScreenArgs? Screen = null, string? PluginSettings = null,
     LaunchSettings? Launch = null, bool DisableTouchUi = false)
 {
+    /// <summary>
+    /// The touch interface is off and so is the frame-rate unlock (Zenless Zone Zero has none): there is nothing of Sparxie to run, and its Broker refuses such a
+    /// session of a miHoYo title. The game is started directly. A plugin that does not say about its unlock is taken to use it, as its own default does.
+    /// </summary>
+    public bool UsesNothingOfSparxie => DisableTouchUi && Game switch
+    {
+        "zenlessZoneZero" => true,
+        "genshin" or "starRail" or "endfield" => Hoyo is not { FpsUnlock: true },
+        GameIds.EndfieldPlugin => PluginSettings is { } text && System.Text.Json.Nodes.JsonNode.Parse(text) is System.Text.Json.Nodes.JsonObject settings
+            && settings["fpsUnlock"] is System.Text.Json.Nodes.JsonValue unlock && unlock.TryGetValue<bool>(out var on) && !on,
+        _ => false,
+    };
+
     public static Profile FromJson(JsonElement value)
     {
         string Str(string key) => value.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";

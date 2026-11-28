@@ -178,7 +178,6 @@
                 "vsync": true
               }
             },
-            "wait-all": false,
             "working-dir": "C:\\Games\\mihoyo\\Genshin"
           },
           {
@@ -322,8 +321,8 @@
             "working-dir": "C:\\Games\\mihoyo\\ZZZ"
           },
           {
-            "cmd": "\"C:\\Program Files\\Sunshine\\config\\install\\tools\\sparxie-launch.exe\" --sparxie \"C:\\Program Files\\Sunshine\\config\\install\\components\\sparxie\\Sparxie.exe\" --profile zzz-cn-2",
-            "elevated": true,
+            "cmd": "\"C:\\Games\\mihoyo\\ZZZ\\ZenlessZoneZero.exe\"",
+            "elevated": "false",
             "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\zzz-cn\\hero.jpg",
             "image-path": "C:\\Program Files\\Sunshine\\config\\covers\\sparxie-zzz-cn-v1.png",
             "name": "绝区零",
@@ -339,33 +338,31 @@
               "exe": "C:\\Games\\mihoyo\\ZZZ\\ZenlessZoneZero.exe",
               "game": "zzz",
               "install": "zzz-cn",
-              "launchTemplate": "\"{sparxie-launch}\" --sparxie \"{sparxie}\" --profile {profile}",
+              "launchTemplate": "\"{sparxie}\" --profile {profile}",
               "launchTemplateProvisional": true,
               "markers": [
                 "exe",
                 "dir",
                 "registry"
               ],
-              "mode": "touch",
+              "mode": "pc",
               "options": {
                 "bgFps": 10,
                 "bgLimit": true,
                 "followPreset": false,
                 "fps": 120,
                 "fpsUnlock": false,
-                "input": "kbm",
                 "preset30": 60,
                 "preset60": 1000,
                 "priority": "normal",
                 "scale": 400,
                 "scaleOverride": false
               },
-              "profile": "zzz-cn-2",
+              "profile": "",
               "region": "cn",
               "restore": "restore",
               "settings": {}
             },
-            "wait-all": false,
             "working-dir": "C:\\Games\\mihoyo\\ZZZ"
           }
         ],
@@ -420,14 +417,13 @@
                 "vsync": true
               }
             },
-            "wait-all": false,
             "working-dir": "C:\\Games\\mihoyo\\Genshin"
           },
           "index": 6,
           "ok": true,
           "saved": true,
           "write_back": {
-            "backup": "config.backup-20261126T075339Z-3.json",
+            "backup": "config.backup-20261128T071148Z.json",
             "profile": "genshin-cn-2",
             "state": "written"
           },
@@ -516,7 +512,7 @@
             "wait-all": "true"
           },
           {
-            "cmd": "\"C:\\Program Files\\Sunshine\\config\\install\\tools\\sparxie-launch.exe\" --sparxie \"C:\\Program Files\\Sunshine\\config\\install\\components\\sparxie\\Sparxie.exe\" --profile genshin-cn-1",
+            "cmd": "\"C:/Games/mihoyo/Genshin/YuanShen.exe\"",
             "elevated": true,
             "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\genshin-cn\\hero.jpg",
             "image-path": "C:\\Program Files\\Sunshine\\config\\covers\\sparxie-genshin-cn-v1.png",
@@ -541,7 +537,7 @@
                 "dir",
                 "registry"
               ],
-              "mode": "touch",
+              "mode": "pc",
               "options": {
                 "bgFps": 10,
                 "bgLimit": true,
@@ -561,12 +557,11 @@
               "restore": "restore",
               "settings": {}
             },
-            "wait-all": false,
             "working-dir": "C:\\Games\\mihoyo\\Genshin"
           },
           {
-            "cmd": "\"C:\\Program Files\\Sunshine\\config\\install\\tools\\sparxie-launch.exe\" --sparxie \"C:\\Program Files\\Sunshine\\config\\install\\components\\sparxie\\Sparxie.exe\" --profile genshin-cn-2",
-            "elevated": true,
+            "cmd": "\"C:\\Games\\mihoyo\\Genshin\\YuanShen.exe\"",
+            "elevated": "false",
             "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\genshin-cn\\hero.jpg",
             "image-path": "C:\\Program Files\\Sunshine\\config\\covers\\sparxie-genshin-cn-v1.png",
             "name": "原神",
@@ -582,28 +577,27 @@
               "exe": "C:\\Games\\mihoyo\\Genshin\\YuanShen.exe",
               "game": "genshin",
               "install": "genshin-cn",
-              "launchTemplate": "\"{sparxie-launch}\" --sparxie \"{sparxie}\" --profile {profile}",
+              "launchTemplate": "\"{sparxie}\" --profile {profile}",
               "launchTemplateProvisional": true,
               "markers": [
                 "exe",
                 "dir",
                 "registry"
               ],
-              "mode": "touch",
+              "mode": "pc",
               "options": {
                 "bgFps": 10,
                 "bgLimit": true,
                 "followPreset": false,
                 "fps": 120,
                 "fpsUnlock": false,
-                "input": "kbm",
                 "preset30": 60,
                 "preset60": 1000,
                 "priority": "normal",
                 "scale": 400,
                 "scaleOverride": false
               },
-              "profile": "genshin-cn-2",
+              "profile": "",
               "region": "cn",
               "restore": "restore",
               "settings": {
@@ -611,7 +605,6 @@
                 "vsync": true
               }
             },
-            "wait-all": false,
             "working-dir": "C:\\Games\\mihoyo\\Genshin"
           },
           {
@@ -755,8 +748,8 @@
             "working-dir": "C:\\Games\\mihoyo\\ZZZ"
           },
           {
-            "cmd": "\"C:\\Program Files\\Sunshine\\config\\install\\tools\\sparxie-launch.exe\" --sparxie \"C:\\Program Files\\Sunshine\\config\\install\\components\\sparxie\\Sparxie.exe\" --profile zzz-cn-2",
-            "elevated": true,
+            "cmd": "\"C:\\Games\\mihoyo\\ZZZ\\ZenlessZoneZero.exe\"",
+            "elevated": "false",
             "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\zzz-cn\\hero.jpg",
             "image-path": "C:\\Program Files\\Sunshine\\config\\covers\\sparxie-zzz-cn-v1.png",
             "name": "绝区零",
@@ -772,39 +765,37 @@
               "exe": "C:\\Games\\mihoyo\\ZZZ\\ZenlessZoneZero.exe",
               "game": "zzz",
               "install": "zzz-cn",
-              "launchTemplate": "\"{sparxie-launch}\" --sparxie \"{sparxie}\" --profile {profile}",
+              "launchTemplate": "\"{sparxie}\" --profile {profile}",
               "launchTemplateProvisional": true,
               "markers": [
                 "exe",
                 "dir",
                 "registry"
               ],
-              "mode": "touch",
+              "mode": "pc",
               "options": {
                 "bgFps": 10,
                 "bgLimit": true,
                 "followPreset": false,
                 "fps": 120,
                 "fpsUnlock": false,
-                "input": "kbm",
                 "preset30": 60,
                 "preset60": 1000,
                 "priority": "normal",
                 "scale": 400,
                 "scaleOverride": false
               },
-              "profile": "zzz-cn-2",
+              "profile": "",
               "region": "cn",
               "restore": "restore",
               "settings": {}
             },
-            "wait-all": false,
             "working-dir": "C:\\Games\\mihoyo\\ZZZ"
           }
         ],
         "result": {
           "app": {
-            "cmd": "\"C:\\Program Files\\Sunshine\\config\\install\\tools\\sparxie-launch.exe\" --sparxie \"C:\\Program Files\\Sunshine\\config\\install\\components\\sparxie\\Sparxie.exe\" --profile genshin-cn-1",
+            "cmd": "\"C:/Games/mihoyo/Genshin/YuanShen.exe\"",
             "elevated": true,
             "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\genshin-cn\\hero.jpg",
             "image-path": "C:\\Program Files\\Sunshine\\config\\covers\\sparxie-genshin-cn-v1.png",
@@ -829,7 +820,7 @@
                 "dir",
                 "registry"
               ],
-              "mode": "touch",
+              "mode": "pc",
               "options": {
                 "bgFps": 10,
                 "bgLimit": true,
@@ -849,18 +840,15 @@
               "restore": "restore",
               "settings": {}
             },
-            "wait-all": false,
             "working-dir": "C:\\Games\\mihoyo\\Genshin"
           },
           "index": 5,
           "ok": true,
           "saved": true,
           "write_back": {
-            "backup": "config.backup-20261126T075339Z-3.json",
-            "profile": "genshin-cn-1",
-            "state": "written"
+            "state": "skipped"
           },
-          "wrote": true
+          "wrote": false
         }
       },
       "星穹铁道": {
@@ -991,8 +979,8 @@
             "working-dir": "C:\\Games\\mihoyo\\Genshin"
           },
           {
-            "cmd": "\"C:\\Program Files\\Sunshine\\config\\install\\tools\\sparxie-launch.exe\" --sparxie \"C:\\Program Files\\Sunshine\\config\\install\\components\\sparxie\\Sparxie.exe\" --profile genshin-cn-2",
-            "elevated": true,
+            "cmd": "\"C:\\Games\\mihoyo\\Genshin\\YuanShen.exe\"",
+            "elevated": "false",
             "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\genshin-cn\\hero.jpg",
             "image-path": "C:\\Program Files\\Sunshine\\config\\covers\\sparxie-genshin-cn-v1.png",
             "name": "原神",
@@ -1008,28 +996,27 @@
               "exe": "C:\\Games\\mihoyo\\Genshin\\YuanShen.exe",
               "game": "genshin",
               "install": "genshin-cn",
-              "launchTemplate": "\"{sparxie-launch}\" --sparxie \"{sparxie}\" --profile {profile}",
+              "launchTemplate": "\"{sparxie}\" --profile {profile}",
               "launchTemplateProvisional": true,
               "markers": [
                 "exe",
                 "dir",
                 "registry"
               ],
-              "mode": "touch",
+              "mode": "pc",
               "options": {
                 "bgFps": 10,
                 "bgLimit": true,
                 "followPreset": false,
                 "fps": 120,
                 "fpsUnlock": false,
-                "input": "kbm",
                 "preset30": 60,
                 "preset60": 1000,
                 "priority": "normal",
                 "scale": 400,
                 "scaleOverride": false
               },
-              "profile": "genshin-cn-2",
+              "profile": "",
               "region": "cn",
               "restore": "restore",
               "settings": {
@@ -1037,7 +1024,6 @@
                 "vsync": true
               }
             },
-            "wait-all": false,
             "working-dir": "C:\\Games\\mihoyo\\Genshin"
           },
           {
@@ -1183,8 +1169,8 @@
             "working-dir": "C:\\Games\\mihoyo\\ZZZ"
           },
           {
-            "cmd": "\"C:\\Program Files\\Sunshine\\config\\install\\tools\\sparxie-launch.exe\" --sparxie \"C:\\Program Files\\Sunshine\\config\\install\\components\\sparxie\\Sparxie.exe\" --profile zzz-cn-2",
-            "elevated": true,
+            "cmd": "\"C:\\Games\\mihoyo\\ZZZ\\ZenlessZoneZero.exe\"",
+            "elevated": "false",
             "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\zzz-cn\\hero.jpg",
             "image-path": "C:\\Program Files\\Sunshine\\config\\covers\\sparxie-zzz-cn-v1.png",
             "name": "绝区零",
@@ -1200,33 +1186,31 @@
               "exe": "C:\\Games\\mihoyo\\ZZZ\\ZenlessZoneZero.exe",
               "game": "zzz",
               "install": "zzz-cn",
-              "launchTemplate": "\"{sparxie-launch}\" --sparxie \"{sparxie}\" --profile {profile}",
+              "launchTemplate": "\"{sparxie}\" --profile {profile}",
               "launchTemplateProvisional": true,
               "markers": [
                 "exe",
                 "dir",
                 "registry"
               ],
-              "mode": "touch",
+              "mode": "pc",
               "options": {
                 "bgFps": 10,
                 "bgLimit": true,
                 "followPreset": false,
                 "fps": 120,
                 "fpsUnlock": false,
-                "input": "kbm",
                 "preset30": 60,
                 "preset60": 1000,
                 "priority": "normal",
                 "scale": 400,
                 "scaleOverride": false
               },
-              "profile": "zzz-cn-2",
+              "profile": "",
               "region": "cn",
               "restore": "restore",
               "settings": {}
             },
-            "wait-all": false,
             "working-dir": "C:\\Games\\mihoyo\\ZZZ"
           }
         ],
@@ -1285,7 +1269,7 @@
           "ok": true,
           "saved": true,
           "write_back": {
-            "backup": "config.backup-20261126T075339Z-3.json",
+            "backup": "config.backup-20261128T071148Z.json",
             "profile": "starrail-cn-2",
             "state": "written"
           },
@@ -1420,8 +1404,8 @@
             "working-dir": "C:\\Games\\mihoyo\\Genshin"
           },
           {
-            "cmd": "\"C:\\Program Files\\Sunshine\\config\\install\\tools\\sparxie-launch.exe\" --sparxie \"C:\\Program Files\\Sunshine\\config\\install\\components\\sparxie\\Sparxie.exe\" --profile genshin-cn-2",
-            "elevated": true,
+            "cmd": "\"C:\\Games\\mihoyo\\Genshin\\YuanShen.exe\"",
+            "elevated": "false",
             "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\genshin-cn\\hero.jpg",
             "image-path": "C:\\Program Files\\Sunshine\\config\\covers\\sparxie-genshin-cn-v1.png",
             "name": "原神",
@@ -1437,28 +1421,27 @@
               "exe": "C:\\Games\\mihoyo\\Genshin\\YuanShen.exe",
               "game": "genshin",
               "install": "genshin-cn",
-              "launchTemplate": "\"{sparxie-launch}\" --sparxie \"{sparxie}\" --profile {profile}",
+              "launchTemplate": "\"{sparxie}\" --profile {profile}",
               "launchTemplateProvisional": true,
               "markers": [
                 "exe",
                 "dir",
                 "registry"
               ],
-              "mode": "touch",
+              "mode": "pc",
               "options": {
                 "bgFps": 10,
                 "bgLimit": true,
                 "followPreset": false,
                 "fps": 120,
                 "fpsUnlock": false,
-                "input": "kbm",
                 "preset30": 60,
                 "preset60": 1000,
                 "priority": "normal",
                 "scale": 400,
                 "scaleOverride": false
               },
-              "profile": "genshin-cn-2",
+              "profile": "",
               "region": "cn",
               "restore": "restore",
               "settings": {
@@ -1466,11 +1449,10 @@
                 "vsync": true
               }
             },
-            "wait-all": false,
             "working-dir": "C:\\Games\\mihoyo\\Genshin"
           },
           {
-            "cmd": "\"C:\\Program Files\\Sunshine\\config\\install\\tools\\sparxie-launch.exe\" --sparxie \"C:\\Program Files\\Sunshine\\config\\install\\components\\sparxie\\Sparxie.exe\" --profile starrail-cn-1",
+            "cmd": "\"C:/Games/mihoyo/StarRail/StarRail.exe\"",
             "elevated": true,
             "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\starrail-cn\\hero.jpg",
             "image-path": "C:\\Program Files\\Sunshine\\config\\covers\\sparxie-starrail-cn-v1.png",
@@ -1495,7 +1477,7 @@
                 "dir",
                 "registry"
               ],
-              "mode": "touch",
+              "mode": "pc",
               "options": {
                 "bgFps": 10,
                 "bgLimit": true,
@@ -1515,7 +1497,6 @@
               "restore": "restore",
               "settings": {}
             },
-            "wait-all": false,
             "working-dir": "C:\\Games\\mihoyo\\StarRail"
           },
           {
@@ -1613,8 +1594,8 @@
             "working-dir": "C:\\Games\\mihoyo\\ZZZ"
           },
           {
-            "cmd": "\"C:\\Program Files\\Sunshine\\config\\install\\tools\\sparxie-launch.exe\" --sparxie \"C:\\Program Files\\Sunshine\\config\\install\\components\\sparxie\\Sparxie.exe\" --profile zzz-cn-2",
-            "elevated": true,
+            "cmd": "\"C:\\Games\\mihoyo\\ZZZ\\ZenlessZoneZero.exe\"",
+            "elevated": "false",
             "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\zzz-cn\\hero.jpg",
             "image-path": "C:\\Program Files\\Sunshine\\config\\covers\\sparxie-zzz-cn-v1.png",
             "name": "绝区零",
@@ -1630,39 +1611,37 @@
               "exe": "C:\\Games\\mihoyo\\ZZZ\\ZenlessZoneZero.exe",
               "game": "zzz",
               "install": "zzz-cn",
-              "launchTemplate": "\"{sparxie-launch}\" --sparxie \"{sparxie}\" --profile {profile}",
+              "launchTemplate": "\"{sparxie}\" --profile {profile}",
               "launchTemplateProvisional": true,
               "markers": [
                 "exe",
                 "dir",
                 "registry"
               ],
-              "mode": "touch",
+              "mode": "pc",
               "options": {
                 "bgFps": 10,
                 "bgLimit": true,
                 "followPreset": false,
                 "fps": 120,
                 "fpsUnlock": false,
-                "input": "kbm",
                 "preset30": 60,
                 "preset60": 1000,
                 "priority": "normal",
                 "scale": 400,
                 "scaleOverride": false
               },
-              "profile": "zzz-cn-2",
+              "profile": "",
               "region": "cn",
               "restore": "restore",
               "settings": {}
             },
-            "wait-all": false,
             "working-dir": "C:\\Games\\mihoyo\\ZZZ"
           }
         ],
         "result": {
           "app": {
-            "cmd": "\"C:\\Program Files\\Sunshine\\config\\install\\tools\\sparxie-launch.exe\" --sparxie \"C:\\Program Files\\Sunshine\\config\\install\\components\\sparxie\\Sparxie.exe\" --profile starrail-cn-1",
+            "cmd": "\"C:/Games/mihoyo/StarRail/StarRail.exe\"",
             "elevated": true,
             "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\starrail-cn\\hero.jpg",
             "image-path": "C:\\Program Files\\Sunshine\\config\\covers\\sparxie-starrail-cn-v1.png",
@@ -1687,7 +1666,7 @@
                 "dir",
                 "registry"
               ],
-              "mode": "touch",
+              "mode": "pc",
               "options": {
                 "bgFps": 10,
                 "bgLimit": true,
@@ -1707,18 +1686,15 @@
               "restore": "restore",
               "settings": {}
             },
-            "wait-all": false,
             "working-dir": "C:\\Games\\mihoyo\\StarRail"
           },
           "index": 7,
           "ok": true,
           "saved": true,
           "write_back": {
-            "backup": "config.backup-20261126T075339Z-3.json",
-            "profile": "starrail-cn-1",
-            "state": "written"
+            "state": "skipped"
           },
-          "wrote": true
+          "wrote": false
         }
       },
       "绝区零": {
@@ -1849,8 +1825,8 @@
             "working-dir": "C:\\Games\\mihoyo\\Genshin"
           },
           {
-            "cmd": "\"C:\\Program Files\\Sunshine\\config\\install\\tools\\sparxie-launch.exe\" --sparxie \"C:\\Program Files\\Sunshine\\config\\install\\components\\sparxie\\Sparxie.exe\" --profile genshin-cn-2",
-            "elevated": true,
+            "cmd": "\"C:\\Games\\mihoyo\\Genshin\\YuanShen.exe\"",
+            "elevated": "false",
             "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\genshin-cn\\hero.jpg",
             "image-path": "C:\\Program Files\\Sunshine\\config\\covers\\sparxie-genshin-cn-v1.png",
             "name": "原神",
@@ -1866,28 +1842,27 @@
               "exe": "C:\\Games\\mihoyo\\Genshin\\YuanShen.exe",
               "game": "genshin",
               "install": "genshin-cn",
-              "launchTemplate": "\"{sparxie-launch}\" --sparxie \"{sparxie}\" --profile {profile}",
+              "launchTemplate": "\"{sparxie}\" --profile {profile}",
               "launchTemplateProvisional": true,
               "markers": [
                 "exe",
                 "dir",
                 "registry"
               ],
-              "mode": "touch",
+              "mode": "pc",
               "options": {
                 "bgFps": 10,
                 "bgLimit": true,
                 "followPreset": false,
                 "fps": 120,
                 "fpsUnlock": false,
-                "input": "kbm",
                 "preset30": 60,
                 "preset60": 1000,
                 "priority": "normal",
                 "scale": 400,
                 "scaleOverride": false
               },
-              "profile": "genshin-cn-2",
+              "profile": "",
               "region": "cn",
               "restore": "restore",
               "settings": {
@@ -1895,7 +1870,6 @@
                 "vsync": true
               }
             },
-            "wait-all": false,
             "working-dir": "C:\\Games\\mihoyo\\Genshin"
           },
           {
@@ -2085,7 +2059,6 @@
               "restore": "restore",
               "settings": {}
             },
-            "wait-all": false,
             "working-dir": "C:\\Games\\mihoyo\\ZZZ"
           }
         ],
@@ -2137,14 +2110,13 @@
               "restore": "restore",
               "settings": {}
             },
-            "wait-all": false,
             "working-dir": "C:\\Games\\mihoyo\\ZZZ"
           },
           "index": 10,
           "ok": true,
           "saved": true,
           "write_back": {
-            "backup": "config.backup-20261126T075339Z-3.json",
+            "backup": "config.backup-20261128T071148Z.json",
             "profile": "zzz-cn-2",
             "state": "written"
           },
@@ -2279,8 +2251,8 @@
             "working-dir": "C:\\Games\\mihoyo\\Genshin"
           },
           {
-            "cmd": "\"C:\\Program Files\\Sunshine\\config\\install\\tools\\sparxie-launch.exe\" --sparxie \"C:\\Program Files\\Sunshine\\config\\install\\components\\sparxie\\Sparxie.exe\" --profile genshin-cn-2",
-            "elevated": true,
+            "cmd": "\"C:\\Games\\mihoyo\\Genshin\\YuanShen.exe\"",
+            "elevated": "false",
             "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\genshin-cn\\hero.jpg",
             "image-path": "C:\\Program Files\\Sunshine\\config\\covers\\sparxie-genshin-cn-v1.png",
             "name": "原神",
@@ -2296,28 +2268,27 @@
               "exe": "C:\\Games\\mihoyo\\Genshin\\YuanShen.exe",
               "game": "genshin",
               "install": "genshin-cn",
-              "launchTemplate": "\"{sparxie-launch}\" --sparxie \"{sparxie}\" --profile {profile}",
+              "launchTemplate": "\"{sparxie}\" --profile {profile}",
               "launchTemplateProvisional": true,
               "markers": [
                 "exe",
                 "dir",
                 "registry"
               ],
-              "mode": "touch",
+              "mode": "pc",
               "options": {
                 "bgFps": 10,
                 "bgLimit": true,
                 "followPreset": false,
                 "fps": 120,
                 "fpsUnlock": false,
-                "input": "kbm",
                 "preset30": 60,
                 "preset60": 1000,
                 "priority": "normal",
                 "scale": 400,
                 "scaleOverride": false
               },
-              "profile": "genshin-cn-2",
+              "profile": "",
               "region": "cn",
               "restore": "restore",
               "settings": {
@@ -2325,7 +2296,6 @@
                 "vsync": true
               }
             },
-            "wait-all": false,
             "working-dir": "C:\\Games\\mihoyo\\Genshin"
           },
           {
@@ -2423,7 +2393,7 @@
             "working-dir": "C:\\Games\\mihoyo\\StarRail"
           },
           {
-            "cmd": "\"C:\\Program Files\\Sunshine\\config\\install\\tools\\sparxie-launch.exe\" --sparxie \"C:\\Program Files\\Sunshine\\config\\install\\components\\sparxie\\Sparxie.exe\" --profile zzz-cn-1",
+            "cmd": "\"C:/Games/mihoyo/ZZZ/ZenlessZoneZero.exe\"",
             "elevated": true,
             "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\zzz-cn\\hero.jpg",
             "image-path": "C:\\Program Files\\Sunshine\\config\\covers\\sparxie-zzz-cn-v1.png",
@@ -2448,7 +2418,7 @@
                 "dir",
                 "registry"
               ],
-              "mode": "touch",
+              "mode": "pc",
               "options": {
                 "bgFps": 10,
                 "bgLimit": true,
@@ -2468,12 +2438,11 @@
               "restore": "restore",
               "settings": {}
             },
-            "wait-all": false,
             "working-dir": "C:\\Games\\mihoyo\\ZZZ"
           },
           {
-            "cmd": "\"C:\\Program Files\\Sunshine\\config\\install\\tools\\sparxie-launch.exe\" --sparxie \"C:\\Program Files\\Sunshine\\config\\install\\components\\sparxie\\Sparxie.exe\" --profile zzz-cn-2",
-            "elevated": true,
+            "cmd": "\"C:\\Games\\mihoyo\\ZZZ\\ZenlessZoneZero.exe\"",
+            "elevated": "false",
             "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\zzz-cn\\hero.jpg",
             "image-path": "C:\\Program Files\\Sunshine\\config\\covers\\sparxie-zzz-cn-v1.png",
             "name": "绝区零",
@@ -2489,39 +2458,37 @@
               "exe": "C:\\Games\\mihoyo\\ZZZ\\ZenlessZoneZero.exe",
               "game": "zzz",
               "install": "zzz-cn",
-              "launchTemplate": "\"{sparxie-launch}\" --sparxie \"{sparxie}\" --profile {profile}",
+              "launchTemplate": "\"{sparxie}\" --profile {profile}",
               "launchTemplateProvisional": true,
               "markers": [
                 "exe",
                 "dir",
                 "registry"
               ],
-              "mode": "touch",
+              "mode": "pc",
               "options": {
                 "bgFps": 10,
                 "bgLimit": true,
                 "followPreset": false,
                 "fps": 120,
                 "fpsUnlock": false,
-                "input": "kbm",
                 "preset30": 60,
                 "preset60": 1000,
                 "priority": "normal",
                 "scale": 400,
                 "scaleOverride": false
               },
-              "profile": "zzz-cn-2",
+              "profile": "",
               "region": "cn",
               "restore": "restore",
               "settings": {}
             },
-            "wait-all": false,
             "working-dir": "C:\\Games\\mihoyo\\ZZZ"
           }
         ],
         "result": {
           "app": {
-            "cmd": "\"C:\\Program Files\\Sunshine\\config\\install\\tools\\sparxie-launch.exe\" --sparxie \"C:\\Program Files\\Sunshine\\config\\install\\components\\sparxie\\Sparxie.exe\" --profile zzz-cn-1",
+            "cmd": "\"C:/Games/mihoyo/ZZZ/ZenlessZoneZero.exe\"",
             "elevated": true,
             "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\zzz-cn\\hero.jpg",
             "image-path": "C:\\Program Files\\Sunshine\\config\\covers\\sparxie-zzz-cn-v1.png",
@@ -2546,7 +2513,7 @@
                 "dir",
                 "registry"
               ],
-              "mode": "touch",
+              "mode": "pc",
               "options": {
                 "bgFps": 10,
                 "bgLimit": true,
@@ -2566,18 +2533,15 @@
               "restore": "restore",
               "settings": {}
             },
-            "wait-all": false,
             "working-dir": "C:\\Games\\mihoyo\\ZZZ"
           },
           "index": 9,
           "ok": true,
           "saved": true,
           "write_back": {
-            "backup": "config.backup-20261126T075340Z.json",
-            "profile": "zzz-cn-1",
-            "state": "written"
+            "state": "skipped"
           },
-          "wrote": true
+          "wrote": false
         }
       }
     },
@@ -2708,8 +2672,8 @@
         "working-dir": "C:\\Games\\mihoyo\\Genshin"
       },
       {
-        "cmd": "\"C:\\Program Files\\Sunshine\\config\\install\\tools\\sparxie-launch.exe\" --sparxie \"C:\\Program Files\\Sunshine\\config\\install\\components\\sparxie\\Sparxie.exe\" --profile genshin-cn-2",
-        "elevated": true,
+        "cmd": "\"C:\\Games\\mihoyo\\Genshin\\YuanShen.exe\"",
+        "elevated": "false",
         "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\genshin-cn\\hero.jpg",
         "image-path": "C:\\Program Files\\Sunshine\\config\\covers\\sparxie-genshin-cn-v1.png",
         "name": "原神",
@@ -2725,28 +2689,27 @@
           "exe": "C:\\Games\\mihoyo\\Genshin\\YuanShen.exe",
           "game": "genshin",
           "install": "genshin-cn",
-          "launchTemplate": "\"{sparxie-launch}\" --sparxie \"{sparxie}\" --profile {profile}",
+          "launchTemplate": "\"{sparxie}\" --profile {profile}",
           "launchTemplateProvisional": true,
           "markers": [
             "exe",
             "dir",
             "registry"
           ],
-          "mode": "touch",
+          "mode": "pc",
           "options": {
             "bgFps": 10,
             "bgLimit": true,
             "followPreset": false,
             "fps": 120,
             "fpsUnlock": false,
-            "input": "kbm",
             "preset30": 60,
             "preset60": 1000,
             "priority": "normal",
             "scale": 400,
             "scaleOverride": false
           },
-          "profile": "genshin-cn-2",
+          "profile": "",
           "region": "cn",
           "restore": "restore",
           "settings": {
@@ -2754,7 +2717,6 @@
             "vsync": true
           }
         },
-        "wait-all": false,
         "working-dir": "C:\\Games\\mihoyo\\Genshin"
       },
       {
@@ -2898,8 +2860,8 @@
         "working-dir": "C:\\Games\\mihoyo\\ZZZ"
       },
       {
-        "cmd": "\"C:\\Program Files\\Sunshine\\config\\install\\tools\\sparxie-launch.exe\" --sparxie \"C:\\Program Files\\Sunshine\\config\\install\\components\\sparxie\\Sparxie.exe\" --profile zzz-cn-2",
-        "elevated": true,
+        "cmd": "\"C:\\Games\\mihoyo\\ZZZ\\ZenlessZoneZero.exe\"",
+        "elevated": "false",
         "hero": "C:\\Program Files\\Sunshine\\config\\sparxie\\posters\\zzz-cn\\hero.jpg",
         "image-path": "C:\\Program Files\\Sunshine\\config\\covers\\sparxie-zzz-cn-v1.png",
         "name": "绝区零",
@@ -2915,33 +2877,31 @@
           "exe": "C:\\Games\\mihoyo\\ZZZ\\ZenlessZoneZero.exe",
           "game": "zzz",
           "install": "zzz-cn",
-          "launchTemplate": "\"{sparxie-launch}\" --sparxie \"{sparxie}\" --profile {profile}",
+          "launchTemplate": "\"{sparxie}\" --profile {profile}",
           "launchTemplateProvisional": true,
           "markers": [
             "exe",
             "dir",
             "registry"
           ],
-          "mode": "touch",
+          "mode": "pc",
           "options": {
             "bgFps": 10,
             "bgLimit": true,
             "followPreset": false,
             "fps": 120,
             "fpsUnlock": false,
-            "input": "kbm",
             "preset30": 60,
             "preset60": 1000,
             "priority": "normal",
             "scale": 400,
             "scaleOverride": false
           },
-          "profile": "zzz-cn-2",
+          "profile": "",
           "region": "cn",
           "restore": "restore",
           "settings": {}
         },
-        "wait-all": false,
         "working-dir": "C:\\Games\\mihoyo\\ZZZ"
       }
     ],
@@ -7344,7 +7304,16 @@
                 "region": "global"
               }
             ],
-            "settings": [],
+            "settings": [
+              {
+                "def": "",
+                "key": "customArgs",
+                "kind": "text",
+                "label": "自定义启动参数",
+                "labelEn": "Custom launch arguments",
+                "section": "launch"
+              }
+            ],
             "settingsManaged": false,
             "sparxie": {
               "fields": [
@@ -12320,7 +12289,16 @@
               "region": "global"
             }
           ],
-          "settings": [],
+          "settings": [
+            {
+              "def": "",
+              "key": "customArgs",
+              "kind": "text",
+              "label": "自定义启动参数",
+              "labelEn": "Custom launch arguments",
+              "section": "launch"
+            }
+          ],
           "settingsManaged": false,
           "sparxie": {
             "fields": [
@@ -12790,7 +12768,7 @@
       "ok": true,
       "stored": []
     },
-    "startChanged": 18,
+    "startChanged": 16,
     "status": {
       "componentDir": "C:\\Program Files\\Sunshine\\config\\sparxie\\components\\sparxie",
       "dataDir": "C:\\Program Files\\Sunshine\\config\\sparxie-data",
@@ -12809,7 +12787,7 @@
           "result": "skip"
         },
         {
-          "detail": "158.0.4370.33",
+          "detail": "158.0.4370.45",
           "id": "webview2",
           "required": true,
           "result": "ok"
@@ -12849,6 +12827,7 @@
       "installHint": "请自行取得 Sparxie 的安装包，然后在这里选择它。",
       "installHintEn": "Get the Sparxie package yourself, then choose it here.",
       "installed": true,
+      "latestVersion": "0.2.1",
       "launchNotice": null,
       "launchTemplate": "\"{sparxie-launch}\" --sparxie \"{sparxie}\" --profile {profile}",
       "launchTemplateProvisional": true,
@@ -12856,25 +12835,28 @@
         "arch": "x64",
         "assets": [
           {
+            "bytes": 86295160,
+            "file": "Sparxie-desktop-0.2.1-win-x64.zip",
+            "note": "official release v0.2.1",
+            "outdated": false,
+            "sha256": "53bc95771fb0f8883605b33aae4acb19f66fac0d81323359488d57028763062a",
+            "version": "0.2.1"
+          },
+          {
             "bytes": 83473484,
             "file": "Sparxie-desktop-0.2.0-win-x64.zip",
             "note": "official release v0.2.0",
+            "outdated": true,
             "sha256": "fad15aed3d516fdd76c2c093c4c6c2c615dc05ba8e81b40b66a815143ddb1a7b",
             "version": "0.2.0"
           },
           {
-            "bytes": 100832503,
-            "file": "Sparxie-desktop-0.1.0-preview.9-win-x64.zip",
-            "note": "collaborator package",
-            "sha256": "3e5591d7126aeb63972f30aaaf3f6649d695271312803454f7d217d79e903c7c",
-            "version": "0.1.0-preview.9"
-          },
-          {
-            "bytes": 103911941,
-            "file": "Sparxie-desktop-ci-4438b663e-win-x64.zip",
-            "note": "build-test artifact main 4438b663e run 42796922646; not a download address",
-            "sha256": "5053db25f803c1637eda1ccdb156266210d38c185e1180dea7e976be7799db77",
-            "version": "ci-4438b663e"
+            "bytes": 101308674,
+            "file": "Sparxie-desktop-0.1.0-win-x64.zip",
+            "note": "official release v0.1.0",
+            "outdated": true,
+            "sha256": "b317a4e0b66a98c9c0183e3090d9a736fe26e4b72f870cc2e4362e86cc7738ac",
+            "version": "0.1.0"
           }
         ],
         "hint": "请自行取得 Sparxie 的安装包，然后在这里选择它。",
@@ -12888,6 +12870,7 @@
       },
       "noticeAck": false,
       "ok": true,
+      "outdatedVersion": "",
       "protocol": "",
       "running": false,
       "runtime": {
@@ -12897,10 +12880,10 @@
       "statement": "Sparxie 会在游戏运行时向游戏进程注入代码并修改其内存，这可能违反游戏的用户协议，由此带来的账号风险由你自行承担。",
       "statement_en": "Sparxie injects code into the running game and changes its memory. This may break the game's terms of service, and any risk to your account is yours.",
       "store": {
-        "profiles": 6,
+        "profiles": 4,
         "state": "data"
       },
-      "version": "app-0.1.0-test.1\\Sparxie.Desktop.exe",
+      "version": "app-0.2.1\\Sparxie.Desktop.exe",
       "warned": false
     }
   }

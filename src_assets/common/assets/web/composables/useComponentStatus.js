@@ -3,6 +3,8 @@ import { apiFetch, apiJson, parseJsonResponse } from '../utils/apiFetch.js'
 import { askConfirm } from './askDialog.js'
 import { installFromFile, uninstallChoice } from '../utils/sparxie/componentInstall.js'
 import { useShellLive } from './useShellLive.js'
+import { copyFor } from '../utils/sparxie/copy.js'
+import { warnOutdated } from '../utils/sparxie/outdated.js'
 import { useUpdateStatus } from './useUpdateStatus.js'
 
 // The component status of the Web UI: the external components, as far as the host reports them through its own routes (the virtual display, the Vulkan HDR component, the microphone). The
@@ -68,7 +70,14 @@ export function useComponentStatus({ locale, openPage, openAbout } = {}) {
               post: (body) => sparxieCall('/api/sparxie/install', { ...body, wait: true }),
               texts,
             })
-            if (result && result.ok) notify.snack(texts.done)
+            if (result && result.ok) {
+              notify.snack(texts.done)
+              // an old package installs, and the person is told to use a newer one
+              if (result.outdated) {
+                const release = String(result.app || '').replace(/^app-/, '') || result.version
+                await warnOutdated({ outdatedVersion: release, latestVersion: result.latestVersion }, copyFor(String(locale?.value ?? locale ?? 'zh')), { always: true })
+              }
+            }
             else if (result && result.error_code && result.error_code !== 'cancelled') notify.snack(texts.failed + ' ' + (result.error || result.error_code))
             await controller.check('sparxie')
           },

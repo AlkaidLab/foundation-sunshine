@@ -101,6 +101,14 @@ internal static class Launcher
         if (Plan.AtStart(GameRunning(profile)) == Start.AdoptRunningGame)
             return await AdoptAsync(profile, log, noticeDirs).ConfigureAwait(false);
 
+        if (profile.UsesNothingOfSparxie)
+        {
+            log.Info("the profile turns the touch interface and the frame-rate unlock off: nothing of Sparxie to run, the game is started directly");
+            LaunchNotice.Clear(noticeDirs);  // what was asked for: nothing to tell the person
+            var direct = await DirectLaunch.RunAsync(profile, log, elevated, Environment.CurrentDirectory).ConfigureAwait(false);
+            return Finish(log, direct, "direct start: the game ended");
+        }
+
         var brokerPath = BrokerProcess.Locate(options.SparxiePath);
         if (brokerPath is null)
         {

@@ -135,7 +135,7 @@ namespace {
       const fs::path component = env.install_root / "components" / "sparxie";
       touch_file(component / "Sparxie.exe");
       env.sparxie_exe = component / "Sparxie.exe";  // the host resolves it once at start, like runtime.cpp
-      touch_file(component / "version.ini", "exe_path=app-0.1.0-test.1\\Sparxie.Desktop.exe\n");
+      touch_file(component / "version.ini", "exe_path=app-0.2.1\\Sparxie.Desktop.exe\n");
       touch_file(env.install_root / "tools" / "sparxie-launch.exe");
       // official art of the three installs (plain and badged covers, heroes), then the captured files: its apps.json and Sparxie config
       for (const std::pair<const char *, int> &install : { std::pair<const char *, int> { "genshin-cn", 10 }, { "starrail-cn", 60 }, { "zzz-cn", 110 } }) {
@@ -220,13 +220,12 @@ TEST(CapturedGate, HostStartSettlesTheCapturedApplicationsAndIsStableAfterwards)
     EXPECT_EQ(sr["image-path"].get<std::string>().find("app_"), std::string::npos);
     EXPECT_NE(sr["hero"].get<std::string>().find("hero.jpg"), std::string::npos);
     EXPECT_EQ(sr["hero"].get<std::string>().find("hero-badge"), std::string::npos);
-    // the direct 原神 / 绝区零: both go through the launcher with kbm input (disableTouchUi=true)
+    // the direct 原神 / 绝区零 hold no frame-rate unlock of their own: keyboard and mouse with nothing of Sparxie, so they stay direct
     for (const char *name : { "原神", "绝区零" }) {
       const json &app = named(name);
-      EXPECT_EQ(app["sparxie"]["mode"], "touch") << variant << " " << name;
-      EXPECT_EQ(app["sparxie"]["options"]["input"], "kbm") << variant << " " << name;
-      EXPECT_NE(app["cmd"].get<std::string>().find("sparxie-launch"), std::string::npos) << variant << " " << name;
-      EXPECT_FALSE(app["sparxie"]["profile"].get<std::string>().empty()) << variant << " " << name;
+      EXPECT_EQ(app["sparxie"]["mode"], "pc") << variant << " " << name;
+      EXPECT_EQ(app["cmd"].get<std::string>().find("sparxie-launch"), std::string::npos) << variant << " " << name;
+      EXPECT_TRUE(app["sparxie"].value("profile", std::string()).empty()) << variant << " " << name;
     }
 
     json v = json::object();

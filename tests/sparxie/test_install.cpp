@@ -147,18 +147,20 @@ TEST(InstallManifest, PinsTheKnownPackagesAndHasNoDownload) {
   EXPECT_EQ(manifest["publisher"], "ShadowLemoon");
   EXPECT_EQ(manifest["minOsBuild"], 19041);
   EXPECT_FALSE(manifest["requiresAdmin"].get<bool>());
-  ASSERT_EQ(manifest["assets"].size(), 4u);
+  // the current release and the two outdated official ones; no package from anywhere else
+  ASSERT_EQ(manifest["assets"].size(), 3u);
   EXPECT_EQ(manifest["assets"][0]["version"], "0.2.1");
   EXPECT_EQ(manifest["assets"][0]["sha256"], "53bc95771fb0f8883605b33aae4acb19f66fac0d81323359488d57028763062a");
   EXPECT_EQ(manifest["assets"][0]["bytes"], 86295160u);
+  EXPECT_EQ(manifest["assets"][0]["outdated"], false);
   EXPECT_EQ(manifest["assets"][1]["version"], "0.2.0");
   EXPECT_EQ(manifest["assets"][1]["sha256"], "fad15aed3d516fdd76c2c093c4c6c2c615dc05ba8e81b40b66a815143ddb1a7b");
   EXPECT_EQ(manifest["assets"][1]["bytes"], 83473484u);
-  EXPECT_EQ(manifest["assets"][2]["version"], "0.1.0-preview.9");
-  EXPECT_EQ(manifest["assets"][2]["sha256"], "3e5591d7126aeb63972f30aaaf3f6649d695271312803454f7d217d79e903c7c");
-  EXPECT_EQ(manifest["assets"][2]["bytes"], 100832503u);
-  EXPECT_EQ(manifest["assets"][3]["sha256"], "5053db25f803c1637eda1ccdb156266210d38c185e1180dea7e976be7799db77");
-  EXPECT_EQ(manifest["assets"][3]["bytes"], 103911941u);
+  EXPECT_EQ(manifest["assets"][1]["outdated"], true);
+  EXPECT_EQ(manifest["assets"][2]["version"], "0.1.0");
+  EXPECT_EQ(manifest["assets"][2]["sha256"], "b317a4e0b66a98c9c0183e3090d9a736fe26e4b72f870cc2e4362e86cc7738ac");
+  EXPECT_EQ(manifest["assets"][2]["bytes"], 101308674u);
+  EXPECT_EQ(manifest["assets"][2]["outdated"], true);
   for (const auto &asset : manifest["assets"]) {
     EXPECT_FALSE(asset.contains("url"));
     EXPECT_FALSE(asset.contains("download"));
