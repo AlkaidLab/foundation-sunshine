@@ -98,8 +98,13 @@ namespace display_device {
   }
 
   settings_t::apply_result_t
-  settings_t::apply_config(const parsed_config_t &) {
-    // Not implemented
+  settings_t::apply_config(
+    const parsed_config_t &config,
+    const rtsp_stream::launch_session_t &session,
+    const boost::optional<active_topology_t> &pre_saved_initial_topology) {
+    (void) config;
+    (void) session;
+    (void) pre_saved_initial_topology;
     return { apply_result_t::result_e::success };
   }
 
@@ -116,4 +121,29 @@ namespace display_device {
     // Not implemented
   }
 
+  std::string
+  find_device_by_friendlyname(const std::string &friendly_name) {
+    (void) friendly_name;
+    return {};
+  }
+
+  std::string
+  find_one_of_the_available_devices(const std::string &device_id) {
+    (void) device_id;
+    return {};
+  }
+
+  std::string
+  get_display_friendly_name(const std::string &device_id) {
+    (void) device_id;
+    return {};
+  }
+
 }  // namespace display_device
+
+namespace platf {
+  std::vector<std::string>
+  adapter_names() {
+    return {};
+  }
+}  // namespace platf
