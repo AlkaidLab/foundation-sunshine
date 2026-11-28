@@ -282,7 +282,9 @@ TEST(Catalog, EndfieldHasNoGameSettingsAndSaysSoInsteadOfAnUnavailableList) {
   ASSERT_NE(endfield, nullptr);
   ASSERT_NE(genshin, nullptr);
   EXPECT_EQ((*endfield)["settingsManaged"], false);
-  EXPECT_TRUE((*endfield)["settings"].empty()) << "no items that come back unavailable";
+  // one item, which the host keeps itself and never reads from the game: nothing can come back unavailable
+  ASSERT_EQ((*endfield)["settings"].size(), 1u);
+  EXPECT_EQ((*endfield)["settings"][0]["key"], "customArgs");
   EXPECT_EQ((*genshin)["settingsManaged"], true);
   // Sparxie's own items for Endfield: the input (touch, keyboard/mouse; there is no automatic choice), the resolution (the stream's by default), the target frame rate, the launch options
   std::vector<std::string> keys;

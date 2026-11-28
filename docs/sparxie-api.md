@@ -612,6 +612,8 @@ portable root, not an `app-<version>` subdirectory), otherwise
 `%LOCALAPPDATA%\Sparxie`. `dataDirProvisional` stays true until upstream
 documents a data-directory command.
 
+自定义启动参数 (`customArgs`, also offered for Endfield) of a title that starts through Sparxie goes into the same `launch.extraArguments`, on one line and as one run of words: the host takes out only a run it put there (`sparxie.sparxieCustomArguments`). The Endfield plugin hands them to the game from `0.1.1-args.1` of the ShadowLemoon fork; one without `needsArgs` ignores them.
+
 图形 API (`dxVersion`; `graphicsApi` for Zenless Zone Zero) reaches a game that starts through Sparxie in the profile's `launch.extraArguments`: `-force-d3d11` or `-force-d3d12`, and `-use-d3d12` for Zenless Zone Zero. The host appends it and leaves the person's other arguments as typed; another API argument there gives way to the chosen one. With no choice, only the argument the host put there before goes (`sparxie.sparxieArguments` in `apps.json` records it). It is written when the application is saved and again before a launch if needed, never while Sparxie is open. A Sparxie without launch settings (before official 0.2.0) does not get the argument.
 
 The touch command is the host-owned launcher template `"{sparxie-launch}" --sparxie "{sparxie}" --profile {profile}`.

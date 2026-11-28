@@ -50,9 +50,13 @@ namespace sparxie {
   // one of `ours` (what the host put there before) that is not wanted any more goes. Everything else stays as it was typed.
   std::string
   with_graphics_argument(const std::string &arguments, const std::string &wanted, const std::vector<std::string> &ours);
-  // The same on a profile's launch.extraArguments, and nothing else of the profile. A profile that already reads that way is not written (state "unchanged").
+  // Both things the host puts into those arguments: the graphics API argument (as above) and the person's custom arguments from the application, which go in and
+  // out as one run of words (`our_runs` are the runs the host put there before), so that a value like the 3 of "-quality 3" never leaves on its own.
+  std::string
+  with_launch_arguments(const std::string &arguments, const std::string &api, const std::vector<std::string> &our_api, const std::string &run, const std::vector<std::string> &our_runs);
+  // with_launch_arguments on a profile's launch.extraArguments, and nothing else of the profile. A profile that already reads that way is not written (state "unchanged").
   WriteResult
-  set_graphics_argument(const fs::path &dir, const std::string &id, const std::string &wanted, const std::vector<std::string> &ours, StoreHooks hooks);
+  set_launch_arguments(const fs::path &dir, const std::string &id, const std::string &api, const std::vector<std::string> &our_api, const std::string &run, const std::vector<std::string> &our_runs, StoreHooks hooks);
   std::string
   next_profile_id(const json &document, const std::string &prefix);
   // The per-application Sparxie options as the host stores them: the profile

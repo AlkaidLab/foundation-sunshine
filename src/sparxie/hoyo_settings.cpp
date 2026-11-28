@@ -7,6 +7,11 @@
 #include <optional>
 
 namespace sparxie {
+  json
+  custom_arguments_field() {
+    return { { "key", "customArgs" }, { "kind", "text" }, { "section", "launch" }, { "label", "自定义启动参数" }, { "labelEn", "Custom launch arguments" }, { "def", "" } };
+  }
+
   namespace {
     char
     sep() { return static_cast<char>(92); }
@@ -218,8 +223,7 @@ namespace sparxie {
       out.push_back(slider_field("customHeight", "display", "自定义高度", "Custom height", 480, 4320, 1080, " px", "customResolution"));
       out.push_back(choice_field("graphicsApi", "launch", "图形 API", "Graphics API", "11.1ns", kApi, 5));
       out.push_back(toggle_field("gameBoost", "launch", "提升游戏优先级", "Raise game priority", false));
-      json args = { { "key", "customArgs" }, { "kind", "text" }, { "section", "launch" }, { "label", "自定义启动参数" }, { "labelEn", "Custom launch arguments" }, { "def", "" } };
-      out.push_back(std::move(args));
+      out.push_back(custom_arguments_field());
       return out;
     }
 
@@ -999,6 +1003,28 @@ namespace sparxie {
     };
     for (const auto &key : launch_fields(game)) take(key);
     for (const char *key : { "resolution", "exclusiveFullscreen", "borderless", "customResolution", "customWidth", "customHeight", "graphicsApi", "customArgs" }) take(key);
+    return out;
+  }
+
+  std::string
+  sparxie_custom_arguments(std::string_view game, const json &settings) {
+    if (game != "genshin" && game != "starrail" && game != "zzz" && game != "endfield") return {};
+    if (!settings.is_object() || !settings.contains("customArgs") || !settings["customArgs"].is_string()) return {};
+    const std::string raw = settings["customArgs"].get<std::string>();
+    std::string checked;
+    if (!quote_args(raw, checked)) return {};
+    std::string out;
+    std::string word;
+    for (const char c : raw + " ") {
+      if (c != ' ' && c != '\t' && c != '\r' && c != '\n') {
+        word.push_back(c);
+        continue;
+      }
+      if (word.empty()) continue;
+      if (!out.empty()) out.push_back(' ');
+      out += word;
+      word.clear();
+    }
     return out;
   }
 

@@ -75,7 +75,7 @@
       <!-- 5 · the game's own settings: they follow the game's current values until one is changed -->
       <template v-if="reach(5)">
         <SparxieDisplay :block="gameBlock" :install-id="install?.id || ''" :exe="install ? fullPath(install) : ''" :region="region" />
-        <SparxieSettings :block="gameBlock" :row="catalog?.[game]" :install-id="install?.id || ''" :exe="install ? fullPath(install) : ''" :region="region" :fps-by-sparxie="fpsBySparxie" :sparxie-fps="sparxieFpsAvailable" @problem="settingsProblem = $event" />
+        <SparxieSettings :block="gameBlock" :row="catalog?.[game]" :install-id="install?.id || ''" :exe="install ? fullPath(install) : ''" :region="region" :through-sparxie="viaSparxie" :fps-by-sparxie="fpsBySparxie" :sparxie-fps="sparxieFpsAvailable" @problem="settingsProblem = $event" />
       </template>
 
       <!-- 6 · name and cover: the official poster, kept up to date, or a cover of the person's own -->

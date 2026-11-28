@@ -1,5 +1,6 @@
 #include "src/sparxie/host.h"
 #include "src/sparxie/hoyo_settings.h"
+#include "src/sparxie/region.h"
 #include "tests/sparxie/pe_fixture.h"
 #include "src/sparxie/platform.h"
 #include "src/sparxie/art_refresh_job.h"
@@ -1820,5 +1821,46 @@ TEST(GraphicsApi, AChoiceSavedWhileSparxieWasOpenReachesTheProfileAtTheNextLaunc
   const auto app = first_app(env);
   sparxie::prepare_launch(env, "Genshin", app["cmd"].get<std::string>(), {}, nullptr);
   EXPECT_EQ(profile_arguments(env.data_dir), "");
+  fs::remove_all(root);
+}
+
+TEST(CustomArguments, TheyGoInAndOutAsOneRunBesideWhatThePersonTyped) {
+  using sparxie::with_launch_arguments;
+  EXPECT_EQ(with_launch_arguments("-mine 3", "", {}, "-quality 3", {}), "-mine 3 -quality 3");
+  EXPECT_EQ(with_launch_arguments("-mine 3 -quality 3", "", {}, "-quality 3", { "-quality 3" }), "-mine 3 -quality 3");
+  EXPECT_EQ(with_launch_arguments("-mine 3 -quality 3 -later", "", {}, "-quality 2", { "-quality 3" }), "-mine 3 -later -quality 2");
+  EXPECT_EQ(with_launch_arguments("-quality 3 -mine 3", "", {}, "", { "-quality 3" }), "-mine 3");
+  EXPECT_EQ(with_launch_arguments("-force-d3d11 -a", "-force-d3d12", { "-force-d3d11" }, "-b", {}), "-a -force-d3d12 -b");
+  // what already reads as chosen is not moved around
+  EXPECT_EQ(with_launch_arguments("-b -force-d3d12 -a", "-force-d3d12", {}, "-b", { "-b" }), "-b -force-d3d12 -a");
+}
+
+TEST(CustomArguments, EverySparxieTitleHasThemOnOneLine) {
+  using sparxie::sparxie_custom_arguments;
+  for (const char *game : { "genshin", "starrail", "zzz", "endfield" })
+    EXPECT_EQ(sparxie_custom_arguments(game, { { "customArgs", " -a  1\n-b\t" } }), "-a 1 -b") << game;
+  EXPECT_EQ(sparxie_custom_arguments("hi3", { { "customArgs", "-a" } }), "");
+  EXPECT_EQ(sparxie_custom_arguments("endfield", { { "customArgs", "-a & calc" } }), "");
+  const auto catalog = sparxie::catalog_json(false);
+  for (const auto &game : catalog) {
+    if (game["game"] != "endfield") continue;
+    ASSERT_EQ(game["settings"].size(), 1u);
+    EXPECT_EQ(game["settings"][0]["key"], "customArgs");
+    EXPECT_EQ(game["settingsManaged"], false);
+  }
+}
+
+TEST(CustomArguments, ASparxieApplicationCarriesThemInItsProfile) {
+  const fs::path root = fs::temp_directory_path() / "sparxie-custom-arguments";
+  sparxie::HostEnv env = kbm_env(root);
+  const auto made = sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin" }, { "settings", { { "customArgs", "-quality 3" }, { "dxVersion", "dx12" } } } });
+  ASSERT_TRUE(made.status.ok) << made.status.error;
+  EXPECT_EQ(profile_arguments(env.data_dir), "-force-d3d12 -quality 3");
+  type_arguments(env.data_dir, "-mine -force-d3d12 -quality 3");
+  ASSERT_TRUE(sparxie::update_app(env, 0, { { "settings", { { "customArgs", "-other" } } } }).status.ok);
+  EXPECT_EQ(profile_arguments(env.data_dir), "-mine -other");
+  ASSERT_TRUE(sparxie::update_app(env, 0, { { "settings", sparxie::json::object() } }).status.ok);
+  EXPECT_EQ(profile_arguments(env.data_dir), "-mine");
+  EXPECT_FALSE(first_app(env)["sparxie"].contains("sparxieCustomArguments"));
   fs::remove_all(root);
 }

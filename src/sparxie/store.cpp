@@ -756,8 +756,61 @@ namespace sparxie {
     if (!wanted.empty() && !present) out += out.empty() ? wanted : " " + wanted;
     return out;
   }
+  namespace {
+    std::vector<std::pair<std::size_t, std::size_t>>
+    words_of(const std::string &text) {
+      std::vector<std::pair<std::size_t, std::size_t>> out;
+      std::size_t at = 0;
+      while ((at = text.find_first_not_of(' ', at)) != std::string::npos) {
+        std::size_t end = text.find(' ', at);
+        if (end == std::string::npos) end = text.size();
+        out.push_back({ at, end });
+        at = end;
+      }
+      return out;
+    }
+    // `text` without the first place where the words of `run` stand one after another; false when they do not
+    bool
+    take_run(std::string &text, const std::string &run) {
+      const auto have = words_of(text);
+      const auto want = words_of(run);
+      if (want.empty() || want.size() > have.size()) return false;
+      for (std::size_t first = 0; first + want.size() <= have.size(); ++first) {
+        bool same = true;
+        for (std::size_t i = 0; same && i < want.size(); ++i)
+          same = text.compare(have[first + i].first, have[first + i].second - have[first + i].first, run, want[i].first, want[i].second - want[i].first) == 0;
+        if (!same) continue;
+        const std::size_t last = first + want.size() - 1;
+        // with the blanks before the run; the first words of the text give up the blanks after it instead
+        if (first > 0)
+          text.erase(have[first - 1].second, have[last].second - have[first - 1].second);
+        else
+          text.erase(0, last + 1 < have.size() ? have[last + 1].first : text.size());
+        return true;
+      }
+      return false;
+    }
+  }  // namespace
+  std::string
+  with_launch_arguments(const std::string &arguments, const std::string &api, const std::vector<std::string> &our_api, const std::string &run, const std::vector<std::string> &our_runs) {
+    // already as chosen: nothing is moved around
+    std::string rest = arguments;
+    bool settled = run.empty() || take_run(rest, run);
+    for (const auto &old : our_runs) {
+      std::string probe = rest;
+      if (old != run && take_run(probe, old)) settled = false;
+    }
+    if (settled && with_graphics_argument(rest, api, our_api) == rest) return arguments;
+    std::string out = arguments;
+    take_run(out, run);
+    for (const auto &old : our_runs)
+      if (old != run) take_run(out, old);
+    out = with_graphics_argument(out, api, our_api);
+    if (!run.empty()) out += out.empty() ? run : " " + run;
+    return out;
+  }
   WriteResult
-  set_graphics_argument(const fs::path &dir, const std::string &id, const std::string &wanted, const std::vector<std::string> &ours, StoreHooks hooks) {
+  set_launch_arguments(const fs::path &dir, const std::string &id, const std::string &api, const std::vector<std::string> &our_api, const std::string &run, const std::vector<std::string> &our_runs, StoreHooks hooks) {
     // Sparxie's limit (LaunchSettingsRules): a longer text would make it refuse the profile
     constexpr std::size_t kMaxExtraArguments = 512;
     auto arguments_of = [](const json &profile) {
@@ -770,7 +823,7 @@ namespace sparxie {
       for (const auto &profile : view.document["profiles"]) {
         if (!profile.is_object() || profile.value("id", std::string()) != id) continue;
         const std::string now = arguments_of(profile);
-        if (with_graphics_argument(now, wanted, ours) == now) {
+        if (with_launch_arguments(now, api, our_api, run, our_runs) == now) {
           WriteResult same;
           same.state = "unchanged";
           same.profile = id;
@@ -782,7 +835,7 @@ namespace sparxie {
       profile_id = id;
       for (auto &profile : document["profiles"]) {
         if (profile.value("id", std::string()) != id) continue;
-        const std::string next = with_graphics_argument(arguments_of(profile), wanted, ours);
+        const std::string next = with_launch_arguments(arguments_of(profile), api, our_api, run, our_runs);
         if (next.size() > kMaxExtraArguments) return Status::fail(400, "invalid_input", "Sparxie's extra launch arguments would be too long");
         if (!profile.contains("launch") || !profile["launch"].is_object()) profile["launch"] = json::object();
         if (next.empty())
