@@ -84,6 +84,20 @@ set(SUNSHINE_HOST_SOURCES
     src/default_apps.cpp src/default_apps.h
     src/settings_reset.cpp src/settings_reset.h
     src/network.cpp src/network.h
+    src/nvhttp/url_utils.cpp src/nvhttp/url_utils.h
+    src/remote_connect/api.cpp src/remote_connect/api.h
+    src/remote_connect/strict_policy.cpp src/remote_connect/strict_policy.h
+    src/remote_connect/easytier.cpp src/remote_connect/easytier.h
+    src/remote_connect/enrollment_token.cpp src/remote_connect/enrollment_token.h
+    src/remote_connect/enrollment_proof.cpp src/remote_connect/enrollment_proof.h src/remote_connect/enrollment_proof_internal.h
+    src/remote_connect/enrollment_session.cpp src/remote_connect/enrollment_session.h
+    src/remote_connect/credential_transaction.cpp src/remote_connect/credential_transaction.h
+    src/remote_connect/device_authorization.cpp src/remote_connect/device_authorization.h
+    src/remote_connect/device_record_store.cpp src/remote_connect/device_record_store.h
+    src/remote_connect/invite.cpp src/remote_connect/invite.h
+    src/remote_connect/pairing.cpp src/remote_connect/pairing.h
+    src/remote_connect/service.cpp src/remote_connect/service.h
+    src/remote_connect/types.h
     src/network_reachability.cpp src/network_reachability.h
     src/network_reachability_probe.cpp
     src/network_check.cpp src/network_check.h

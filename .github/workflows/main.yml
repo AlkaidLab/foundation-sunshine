@@ -480,6 +480,11 @@ jobs:
           & .\src_assets\windows\misc\vdd\smoke-test-vdd-device-helper.ps1
           & .\src_assets\windows\misc\vdd\smoke-test-install-vdd-selection.ps1
 
+      - name: Run process cleanup smoke tests
+        shell: pwsh
+        run: |
+          & .\src_assets\windows\misc\service\smoke-test-stop-process-tree.ps1
+
       - name: Run USB/IP package and root-hub guard regressions
         shell: pwsh
         run: |

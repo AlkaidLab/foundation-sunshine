@@ -119,7 +119,7 @@ namespace confighttp::configuration {
       auto vars = config::parse_config(file_handler::read_file(config::sunshine.config_file.c_str()));
       for (auto &[name, value] : vars) {
         // Omit credentials and use the live values for status keys left in older files.
-        if (name == "widget_token" || name == "mat_live_pipe" || name == "mat_live_producer" ||
+        if (name == "widget_token" || name == "remote_connect_network_secret" || name == "mat_live_pipe" || name == "mat_live_producer" ||
             name == "windows_build" || name == "widget_token_configured") {
           continue;
         }

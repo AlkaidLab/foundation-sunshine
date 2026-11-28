@@ -1,0 +1,55 @@
+# EasyTier direct connection: implementation gates
+
+This document records the verification needed for the Sunshine and VPlus direct-connection work. The existing shared-secret invitation in PR #1014 is a prototype and must not be treated as per-device authorization.
+
+## Evidence and constraints
+
+- EasyTier Secure Mode supports separate credentials and revocation. Its management RPC generates and stores credential secrets on the host; it is not an existing public-key-only registration interface. Credential storage and delivery therefore need an explicit security design. See [Secure Mode](https://easytier.cn/guide/network/secure-mode.html) and the [v2.7.1 credential RPC definitions](https://github.com/EasyTier/EasyTier/blob/v2.7.1/easytier-proto/proto/api_instance.proto).
+- VPlus currently embeds EasyTier 2.6.4. [Issue #2489](https://github.com/EasyTier/EasyTier/issues/2489) documents a credential-identity bug when loading TOML; [PR #2451](https://github.com/EasyTier/EasyTier/pull/2451) contains the fix. A compatible Android JNI build containing that fix must be pinned, built and tested before relying on credentials.
+- In a local Windows 2.7.1 test, a separate no-TUN instance joined using a generated per-device credential and disappeared from the peer list after revocation. This used a local TCP connection and does not establish Android compatibility, expiry behavior, internet NAT traversal or streaming.
+- A second 2.7.1 local test removed the private secret from the host's stored credential entry, restarted the host with a loopback RPC address and a whitelist excluding loopback, and observed the client join. After the entry was removed and the host restarted, the client disconnected and did not rejoin during the observation period. This is a candidate for public-key-only storage, not a stable upstream registration API: the credential file format is an implementation detail, changes require a core restart, and crash recovery, Android-generated keys, version compatibility and a secure enrollment channel remain unverified.
+- A separate 2.6.4 Windows test generated the X25519 key outside the core and loaded only its public key from the host credential file. With management RPC denied, a no-TUN client joined and exchanged TCP and UDP application data. Removing the entry and restarting disconnected the client; restoring the entry and restarting allowed it to reconnect. This does not validate other versions or uninterrupted revocation.
+- On one Android 13 arm64 phone and a Windows 2.6.4 host on the same Wi-Fi, a pinned Android JNI build containing #2451 joined using a disposable X25519 credential and exchanged TCP and UDP through application-local forwards, with no VPN or relay node. On that phone, forwarding on `127.0.0.1` failed with a permission error; `127.0.0.2` worked. This does not validate a mobile-network path or Sunshine streaming.
+- A Windows test of 2.6.4 and 2.7.1 showed `rpc_portal` in TOML was ignored. The default listener accepted unauthenticated local CLI access to the test configuration. The command-line loopback option constrained the address, but did not authenticate local users. An IP whitelist denying loopback blocked the test CLI but also prevents Sunshine from using the management RPC; it has not been validated as a working end-to-end solution.
+- The tested 2.6.4 and pinned Android core log a handshake result at info level whose debug representation includes session key material. Managed host console/file logging is disabled, and the Android JNI logger must be disabled until upstream redacts sensitive values. Treat logs from an unpatched build as sensitive; disabling logs is not a replacement for upstream redaction or a security review.
+- The Android app's no-TUN path avoids `VpnService` for that path, but a configuration flag or displayed peer status alone does not prove that all session traffic remains direct. If a direct route cannot be established and maintained, the session must fail closed.
+- A three-node local 2.6.4 experiment observed TCP and UDP data stop when the direct test link was removed with `p2p_only` enabled, while the potential relay's data counters remained zero. The test uses a local fault-injection proxy and does not prove race-free switching or a mobile or internet data path.
+
+## RPC diagnostic
+
+On a test machine, run `tools/easytier-rpc-probe.ps1` with paths to an official, verified `easytier-core.exe` and matching `easytier-cli.exe`. Supply `-Mode toml`, `-Mode loopback`, or `-Mode deny`. The script starts a temporary no-TUN instance with no peer or transport listener and a disposable test secret; it reports listener and unauthenticated CLI behavior, then stops its processes and removes its temporary files. It refuses inherited `ET_*` variables.
+
+An unanswered CLI request does not prove local-user isolation or working streaming. The diagnostic does not replace tests of network connectivity, version compatibility, process identity or the actual authorization boundary.
+
+`tools/easytier-offline-credential-probe.py --core <path> --cli <path>` exercises the public-only file approach with two disposable Windows instances. It uses a temporary network secret and an ephemeral TCP listener on the host's selected local interface, and briefly exposes a test-only RPC during initial credential generation. It stops both processes and removes their temporary credential file on exit. Run it only on a test machine; successful output does not validate a secure enrollment protocol.
+
+`tools/easytier-direct-check/three_node.py --core <path> --cli <path>` uses the verified 2.6.4 Windows binaries to test bidirectional TCP and UDP through a relay-only topology, with an A-B peer connection, and after that connection is cut. It checks relay counters under permissive and P2P-only endpoint policies and with the center's `disable_relay_data` flag. The center flag prevented TCP/UDP transit in this local test while a direct peer link still carried traffic. Sunshine sets the same flag to avoid acting as a relay for other nodes. It does not prevent Sunshine's own packets from being relayed by another node, and control traffic is not covered by the transit restriction. The local TCP splice is a fault injector; the test does not prove a physical direct path or rule out transient relay during route changes.
+
+## Candidate accountless enrollment
+
+This is a design to validate, not an implemented or reviewed protocol. A phone-generated public key needs to reach the host before the phone can join the permanent Secure Mode network. A short-lived, isolated bootstrap network is one candidate for resolving that ordering:
+
+1. The host starts a separate bootstrap instance with a random network identity, an expiring one-use token and an enrollment endpoint. The QR code carries the bootstrap connection parameters, token, expiry and a pinned host identity; it must not contain the permanent network secret or another device's credential. The bootstrap instance must deny all application access except the enrollment endpoint and must not proxy host subnets.
+2. The phone creates its own X25519 credential and protects its private bytes at rest with an Android Keystore-backed key. It connects without a TUN device, verifies the host identity and proves possession of the credential private key over the authenticated channel. The host atomically consumes the token, binding it to that public key. Expired or already-consumed tokens must fail server-side. A copied token can be redeemed first by an attacker; prevent or detect that race with explicit device confirmation or another authenticated binding.
+3. The host atomically updates a protected public-key credential file, applies the change to the permanent instance, and tells the phone the result over the authenticated channel. With the currently investigated core this may require a restart and interrupt existing sessions; do not report success until the replacement is running. The bootstrap instance and token are then destroyed. Roll back safely on write or restart failure.
+4. The phone connects to the permanent network with its own credential. Removing a paired device must revoke only that credential and terminate its access. Neither route status nor `p2p_only` alone establishes a per-packet no-relay guarantee, so enforcement and a failure-closed path still need independent verification.
+
+Before implementation, verify that the bootstrap endpoint can be isolated on Windows, that both sides can reach it directly without carrying payload through a relay, and that the temporary and permanent EasyTier instances do not collide. Specify the authenticated transcript, proof of possession, token replay state, file ACLs, crash recovery and concurrent enrollment behavior. Discovery services may see source addresses and metadata. If no direct route can be formed, enrollment must fail rather than fall back to a relay.
+
+The current in-memory enrollment token store is a tested primitive only; it is
+not exposed by the QR or network API. It cannot verify a host identity, prove
+possession of a client key, or revoke an already claimed transaction. The old
+remote QR flow is disabled until secure enrollment is available; LAN QR
+generation remains available when remote connect is disabled. Existing remote
+QR codes and any previously exposed shared secret remain valid until the user
+explicitly resets the network, which can interrupt existing connections. PIN
+generation now protects a newer PIN from cleanup by a failed older request,
+but the existing cancel and PIN-consumption APIs are not bound to an invitation
+generation.
+
+## Implementation order
+
+1. Reproduce credential creation, connection, expiry, revocation and reconnection with a pinned upstream core and Android JNI. Verify private key storage, transport and deletion, plus a defensible Windows RPC boundary. Evaluate the public-key-only file path and its restart and compatibility costs; do not assume it is a supported public API. Do not ship a shared-secret fallback as per-device access.
+2. Implement short-lived, single-use enrollment bound to the intended Sunshine host and client, followed by individually revocable device authorization. Protect the host credential store and the Android credential with platform mechanisms. Review bootstrap authentication and replay resistance before exposing issuance.
+3. Complete application-level no-TUN forwarding with per-instance lifecycle and port isolation. Verify the actual path before and during streaming and fail closed if it is relayed or unknown.
+4. Test audio, video, input, network changes, authorization failure and revocation on a phone using mobile data. Confirm no VPN prompt and no relayed media. Record direct-connect failures as failures, including double symmetric NAT where there is no reachable IPv6 or mapped endpoint.

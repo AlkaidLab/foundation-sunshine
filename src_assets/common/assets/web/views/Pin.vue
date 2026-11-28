@@ -82,13 +82,30 @@
         </div>
 
         <div v-show="pairMode === 'qr'" id="pair-qr-panel" role="tabpanel" class="pin-pair__qr">
+          <MGroup class="pin-remote" style="width: 100%; text-align: left">
+            <MSwitchItem
+              :model-value="remoteConnectEnabled"
+              :title="$t('pin.remote_connect')"
+              :text="$t('pin.remote_connect_desc')"
+              :disabled="remoteConnectBusy || !remoteConnectAvailable"
+              @update:model-value="handleRemoteConnectToggle"
+            />
+            <MItem v-if="remoteConnectEnabled" icon="lan" :title="remoteConnectRunning ? $t('pin.remote_connect_ready') : $t('pin.remote_connect_starting')" :text="$t('pin.remote_connect_persistent_warning')" />
+            <MItem v-if="remoteConnectEnabled || remoteConnectError" icon="restart_alt" :title="$t('pin.remote_connect_reset')">
+              <template #trail><MButton variant="danger" size="sm" :disabled="remoteConnectBusy" @click="handleRemoteConnectReset">{{ $t('pin.remote_connect_reset') }}</MButton></template>
+            </MItem>
+          </MGroup>
+          <MBanner v-if="remoteConnectError" tone="warn" role="alert">
+            {{ remoteConnectError }}
+            <a v-if="!remoteConnectAvailable" href="https://github.com/EasyTier/EasyTier#installation" target="_blank" rel="noopener noreferrer">{{ $t('pin.remote_connect_install') }}</a>
+          </MBanner>
           <template v-if="qrActive">
             <img :src="qrDataUrl" class="pair-qr-image" alt="QR Code" data-redact="pin" />
             <p class="pin-pair__qrpin" data-redact="pin">PIN <b>{{ qrPin }}</b></p>
             <p class="pin-pair__hint">{{ $t('pin.qr_expires_in', { seconds: qrRemaining }) }}</p>
           </template>
           <p v-if="qrError" class="pin-pair__error" role="alert">{{ qrError }}</p>
-          <MButton variant="tonal" icon="qr_code_2" :disabled="qrLoading" @click="generateQrCode">{{ $t(qrActive ? 'pin.qr_refresh' : 'pin.qr_generate') }}</MButton>
+          <MButton variant="tonal" icon="qr_code_2" :disabled="remoteConnectBusy" @click="generateQrCode">{{ $t(qrActive ? 'pin.qr_refresh' : 'pin.qr_generate') }}</MButton>
           <MBanner tone="warn">{{ $t('pin.qr_pairing_warning') }}</MBanner>
         </div>
       </div>
@@ -173,10 +190,11 @@
 <script setup>
 import { computed, inject, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { MBanner, MButton, MChoiceItem, MEmpty, MField, MFieldItem, MFooter, MGroup, MIcon, MItem, MPage, MPinPad, MPromo, MScallop, MSection, MSeg, MSheet, MSkeleton, MSnackbar, usePageFilter, contextTexts } from 'foundation-ui/vue'
+import { MBanner, MButton, MChoiceItem, MEmpty, MField, MFieldItem, MFooter, MGroup, MIcon, MItem, MPage, MPinPad, MPromo, MScallop, MSection, MSeg, MSheet, MSkeleton, MSnackbar, MSwitchItem, usePageFilter, contextTexts } from 'foundation-ui/vue'
 import ConfirmDialog from '../components/common/ConfirmDialog.vue'
 import { formatHdrNits, usePin } from '../composables/usePin.js'
 import { useQrPair } from '../composables/useQrPair.js'
+import { useRemoteConnect } from '../composables/useRemoteConnect.js'
 import { deviceIconFor } from '../utils/homeData.js'
 import { clientTexts, filterClients, groupClients, kindOptions } from '../utils/clientList.js'
 import { PIN_LENGTH, brightnessErrors, canSaveDevice, canSubmitPairing, clientState } from '../utils/pairing.js'
@@ -190,6 +208,13 @@ const {
 // the page opens on the list skeleton and stays on it until the first list has come back (before that `loading` is still false and the empty state would show for a moment)
 const listed = ref(false)
 const { qrDataUrl, qrPin, qrRemaining, qrLoading, qrError, qrPaired, qrActive, generateQrCode, cancelQrCode } = useQrPair()
+const {
+  enabled: remoteConnectEnabled, running: remoteConnectRunning, available: remoteConnectAvailable,
+  busy: remoteConnectRequestBusy, error: remoteConnectError, loadStatus: loadRemoteConnectStatus,
+  setEnabled: setRemoteConnectEnabled, reset: resetRemoteConnect,
+} = useRemoteConnect()
+const remoteConnectTransitioning = ref(false)
+const remoteConnectBusy = computed(() => remoteConnectRequestBusy.value || remoteConnectTransitioning.value || qrLoading.value)
 
 const tx = computed(() => clientTexts(locale.value))
 // 30 clients are not one column: grouped by the kind of device, filtered by kind and by name
@@ -252,13 +277,39 @@ const openPairing = (mode = 'pin') => {
   if (pairMode.value === 'qr' && !qrActive.value) void generateQrCode()
 }
 const closePairing = async () => {
+  if (remoteConnectTransitioning.value || qrLoading.value) return
   showPairing.value = false
   pinValue.value = ''
   if (qrActive.value) await cancelQrCode()
 }
 const setPairMode = async (mode) => {
+  if (remoteConnectBusy.value) return
   if (mode === 'pin' && qrActive.value) await cancelQrCode()
   pairMode.value = mode
+}
+
+const handleRemoteConnectToggle = async (enabled) => {
+  if (remoteConnectBusy.value || (enabled && !confirm(t('pin.remote_connect_enable_confirm')))) return
+  remoteConnectTransitioning.value = true
+  try {
+    const regenerateQr = qrActive.value
+    if (regenerateQr) await cancelQrCode()
+    const success = await setRemoteConnectEnabled(enabled)
+    if (success && regenerateQr && showPairing.value && pairMode.value === 'qr') await generateQrCode()
+  } finally {
+    remoteConnectTransitioning.value = false
+  }
+}
+
+const handleRemoteConnectReset = async () => {
+  if (remoteConnectBusy.value || !confirm(t('pin.remote_connect_reset_confirm'))) return
+  remoteConnectTransitioning.value = true
+  try {
+    if (qrActive.value) await cancelQrCode()
+    await resetRemoteConnect()
+  } finally {
+    remoteConnectTransitioning.value = false
+  }
 }
 const submitPairing = async () => {
   if (!pairReady.value || pairingBusy.value) return
@@ -368,6 +419,7 @@ watch(qrPaired, async (paired) => {
   }
 })
 onMounted(async () => {
+  void loadRemoteConnectStatus()
   await loadConfig()
   const clientsLoaded = await refreshClients()
   listed.value = true

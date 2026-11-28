@@ -223,6 +223,12 @@ Name: "tools"; Description: "{cm:ComponentTools} — {cm:ComponentToolsDesc}"; T
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [InstallDelete]
+; Remove only the legacy EasyTier components previously shipped by Sunshine.
+Type: files; Name: "{app}\tools\easytier\easytier-core.exe"
+Type: files; Name: "{app}\tools\easytier\Packet.dll"
+Type: files; Name: "{app}\tools\easytier\WinDivert64.sys"
+Type: files; Name: "{app}\tools\easytier\wintun.dll"
+Type: files; Name: "{app}\tools\easytier\LICENSE-EasyTier.txt"
 ; The old hashed Web UI bundles are not deleted here: [InstallDelete] runs as the first step of
 ; the installation and is not undone when Setup is rolled back, so a failed update would leave
 ; the folder missing. BackUpWebUi() moves it aside instead, and removes it once the update has
@@ -248,6 +254,8 @@ Type: dirifempty; Name: "{app}\tools\library"
 ; Embedded only for PrepareToInstall; it is not part of the installed layout.
 Source: "{#MySourceDir}\scripts\cleanup-legacy-ds5.ps1"; DestDir: "{tmp}"; Flags: dontcopy
 Source: "{#MySourceDir}\scripts\update-quiesce.ps1"; DestDir: "{tmp}"; Flags: dontcopy
+Source: "{#MySourceDir}\scripts\stop-process-tree.ps1"; DestDir: "{app}\scripts"; Flags: ignoreversion; Components: application
+Source: "{#MySourceDir}\scripts\stop-process-tree.ps1"; Flags: dontcopy
 ; Main application
 Source: "{#MySourceDir}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion; Components: application
 Source: "{#MySourceDir}\zlib1.dll"; DestDir: "{app}"; Flags: ignoreversion; Components: application
@@ -427,12 +435,10 @@ Filename: "{cmd}"; Parameters: "/c start """" ""{app}\assets\gui\{#MyAppGUIExeNa
 [UninstallRun]
 ; Remove the per-user GUI startup entry before terminating the agent.
 Filename: "{app}\assets\gui\{#MyAppGUIExeName}"; Parameters: "--remove-autostart"; Flags: runhidden waituntilterminated; RunOnceId: "RemoveGUIAutoStart"; Check: FileExists(ExpandConstant('{app}\assets\gui\{#MyAppGUIExeName}'))
-; Stop running processes first. We force-kill the service binary
-; (sunshinesvc.exe) here as well, otherwise `sc stop` later may block waiting
-; on its stop handler — which is the typical "uninstaller appears frozen" symptom.
-Filename: "{sys}\taskkill.exe"; Parameters: "/f /im sunshine-gui.exe"; Flags: runhidden; RunOnceId: "KillGUI"
-Filename: "{sys}\taskkill.exe"; Parameters: "/f /im sunshine.exe"; Flags: runhidden; RunOnceId: "KillSunshine"
-Filename: "{sys}\taskkill.exe"; Parameters: "/f /im sunshinesvc.exe"; Flags: runhidden; RunOnceId: "KillSunshineSvc"
+; Match this installation's paths, including descendants of the host and service.
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{app}\scripts\stop-process-tree.ps1"" -ExecutablePath ""{app}\assets\gui\{#MyAppGUIExeName}"""; Flags: runhidden waituntilterminated; RunOnceId: "KillGUI"
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{app}\scripts\stop-process-tree.ps1"" -ExecutablePath ""{app}\{#MyAppExeName}"" -IncludeDescendants"; Flags: runhidden waituntilterminated; RunOnceId: "KillSunshine"
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{app}\scripts\stop-process-tree.ps1"" -ExecutablePath ""{app}\tools\sunshinesvc.exe"" -IncludeDescendants"; Flags: runhidden waituntilterminated; RunOnceId: "KillSunshineSvc"
 ; Stop the GUI first so it cannot recreate the verbs while they are removed.
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\scripts\remove-shell-menus.ps1"" -InstallRoot ""{app}"""; Flags: runhidden waituntilterminated logoutput; RunOnceId: "RemoveOwnedShellMenus"; Check: FileExists(ExpandConstant('{app}\scripts\remove-shell-menus.ps1'))
 Filename: "{app}\tools\mat-capture\sunshine-plugin-mat-capture.exe"; Parameters: "--wait-for-stop"; Flags: runhidden waituntilterminated; RunOnceId: "WaitMatCapture"; Check: FileExists(ExpandConstant('{app}\tools\mat-capture\sunshine-plugin-mat-capture.exe'))
@@ -2110,9 +2116,21 @@ begin
     end;
 end;
 
+procedure StopProcessAtPath(ProcessStopScript, ExecutablePath: String; IncludeDescendants: Boolean);
+var
+  ResultCode: Integer;
+  Params: String;
+begin
+  Params := '-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ' +
+    AddQuotes(ProcessStopScript) + ' -ExecutablePath ' + AddQuotes(ExecutablePath);
+  if IncludeDescendants then Params := Params + ' -IncludeDescendants';
+  Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'), Params,
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
-  CleanupScript, CleanupRoot, CleanupParameters, Report: String;
+  CleanupScript, CleanupRoot, CleanupParameters, Report, ProcessStopScript: String;
   ResultCode, QuiesceCode: Integer;
 begin
   Result := '';
@@ -2160,12 +2178,14 @@ begin
   end;
   if QuiesceCode < 0 then
   begin
-    // Without the script, stop the service and end the programs by name as earlier versions did.
+    // If quiesce cannot start, restrict the fallback to this installation.
     if Exec(ExpandConstant('{sys}\net.exe'), 'stop SunshineService', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) and (ResultCode = 0) then
       ServiceStoppedForUpdate := True;
-    Exec(ExpandConstant('{sys}\taskkill.exe'), SunshineKillParameters(), '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    Exec(ExpandConstant('{sys}\taskkill.exe'), '/f /im sunshine-gui.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    Exec(ExpandConstant('{sys}\taskkill.exe'), '/f /im sunshinesvc.exe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    ExtractTemporaryFile('stop-process-tree.ps1');
+    ProcessStopScript := ExpandConstant('{tmp}\stop-process-tree.ps1');
+    StopProcessAtPath(ProcessStopScript, ExpandConstant('{app}\{#MyAppExeName}'), True);
+    StopProcessAtPath(ProcessStopScript, ExpandConstant('{app}\assets\gui\{#MyAppGUIExeName}'), False);
+    StopProcessAtPath(ProcessStopScript, ExpandConstant('{app}\tools\sunshinesvc.exe'), True);
   end;
   // The old Web UI folder is moved aside now, while a refusal still costs nothing; if it cannot be
   // moved, nothing could be put back after a failed copy, so the update stops here.

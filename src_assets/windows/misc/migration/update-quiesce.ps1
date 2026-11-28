@@ -180,7 +180,13 @@ if (-not $VerifyOnly) {
       # The Control Panel's updater stops the service before it starts the installer and, once it is
       # ended here, nobody starts the service again after a refusal: say so, so the installer does.
       if ($process.CommandLine -and $process.CommandLine.Contains('--updater-helper')) { Add-Line 'updater: ended (it had stopped the service)' }
-      Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+      if ($process.Name -in @('sunshine.exe', 'sunshinesvc.exe')) {
+        # This exact installation's host can own an EasyTier child outside the
+        # install folder. Get-FolderProcesses excludes the installer's ancestors.
+        & (Join-Path $env:SystemRoot 'System32\taskkill.exe') /f /t /pid $process.ProcessId 2>&1 | Out-Null
+      } else {
+        Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+      }
     }
     Start-Sleep -Milliseconds 300
   }

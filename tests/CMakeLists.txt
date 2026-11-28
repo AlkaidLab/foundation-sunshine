@@ -939,6 +939,142 @@ if (WIN32)
 endif ()
 add_test(NAME video_probe_unit_tests COMMAND video_probe_unit_tests)
 
+add_executable(remote_connect_invite_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/nvhttp/url_utils.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/invite.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/pairing.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_connect_invite.cpp)
+target_include_directories(remote_connect_invite_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(remote_connect_invite_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+target_compile_options(remote_connect_invite_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(remote_connect_invite_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(remote_connect_invite_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME remote_connect_invite_unit_tests COMMAND remote_connect_invite_unit_tests)
+
+set(REMOTE_CONNECT_STRICT_POLICY_TEST_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_connect_strict_policy.cpp)
+add_executable(remote_connect_strict_policy_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/strict_policy.cpp
+        ${REMOTE_CONNECT_STRICT_POLICY_TEST_SOURCE})
+target_include_directories(remote_connect_strict_policy_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(remote_connect_strict_policy_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+target_compile_options(remote_connect_strict_policy_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(remote_connect_strict_policy_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(remote_connect_strict_policy_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME remote_connect_strict_policy_unit_tests COMMAND remote_connect_strict_policy_unit_tests)
+
+set(REMOTE_CONNECT_ENROLLMENT_TOKEN_TEST_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_connect_enrollment_token.cpp)
+add_executable(remote_connect_enrollment_token_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/enrollment_token.cpp
+        ${REMOTE_CONNECT_ENROLLMENT_TOKEN_TEST_SOURCE})
+target_include_directories(remote_connect_enrollment_token_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(remote_connect_enrollment_token_unit_tests PRIVATE OpenSSL::Crypto gtest_main sunshine_project_options sunshine_coverage)
+target_compile_options(remote_connect_enrollment_token_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(remote_connect_enrollment_token_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(remote_connect_enrollment_token_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME remote_connect_enrollment_token_unit_tests COMMAND remote_connect_enrollment_token_unit_tests)
+
+set(REMOTE_CONNECT_ENROLLMENT_PROOF_TEST_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_connect_enrollment_proof.cpp)
+add_executable(remote_connect_enrollment_proof_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/enrollment_proof.cpp
+        ${REMOTE_CONNECT_ENROLLMENT_PROOF_TEST_SOURCE})
+target_include_directories(remote_connect_enrollment_proof_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_compile_definitions(remote_connect_enrollment_proof_unit_tests PRIVATE ENROLLMENT_V1_VECTOR_PATH="${CMAKE_SOURCE_DIR}/tests/fixtures/remote-connect/enrollment-v1.json")
+target_link_libraries(remote_connect_enrollment_proof_unit_tests PRIVATE OpenSSL::Crypto nlohmann_json::nlohmann_json gtest_main sunshine_project_options sunshine_coverage)
+target_compile_options(remote_connect_enrollment_proof_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(remote_connect_enrollment_proof_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(remote_connect_enrollment_proof_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME remote_connect_enrollment_proof_unit_tests COMMAND remote_connect_enrollment_proof_unit_tests)
+
+set(REMOTE_CONNECT_ENROLLMENT_SESSION_TEST_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_connect_enrollment_session.cpp)
+add_executable(remote_connect_enrollment_session_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/enrollment_token.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/enrollment_proof.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/enrollment_session.cpp
+        ${REMOTE_CONNECT_ENROLLMENT_SESSION_TEST_SOURCE})
+target_include_directories(remote_connect_enrollment_session_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(remote_connect_enrollment_session_unit_tests PRIVATE OpenSSL::Crypto gtest_main sunshine_project_options sunshine_coverage)
+target_compile_options(remote_connect_enrollment_session_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(remote_connect_enrollment_session_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(remote_connect_enrollment_session_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME remote_connect_enrollment_session_unit_tests COMMAND remote_connect_enrollment_session_unit_tests)
+
+set(REMOTE_CONNECT_CREDENTIAL_TRANSACTION_TEST_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_connect_credential_transaction.cpp)
+add_executable(remote_connect_credential_transaction_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/credential_transaction.cpp
+        ${REMOTE_CONNECT_CREDENTIAL_TRANSACTION_TEST_SOURCE})
+target_include_directories(remote_connect_credential_transaction_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(remote_connect_credential_transaction_unit_tests PRIVATE gtest_main sunshine_project_options sunshine_coverage)
+target_compile_options(remote_connect_credential_transaction_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(remote_connect_credential_transaction_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(remote_connect_credential_transaction_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME remote_connect_credential_transaction_unit_tests COMMAND remote_connect_credential_transaction_unit_tests)
+
+set(REMOTE_CONNECT_DEVICE_RECORD_STORE_TEST_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_connect_device_record_store.cpp)
+add_executable(remote_connect_device_record_store_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/credential_transaction.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/device_record_store.cpp
+        ${REMOTE_CONNECT_DEVICE_RECORD_STORE_TEST_SOURCE})
+target_include_directories(remote_connect_device_record_store_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(remote_connect_device_record_store_unit_tests PRIVATE nlohmann_json::nlohmann_json gtest_main sunshine_project_options sunshine_coverage)
+target_compile_options(remote_connect_device_record_store_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(remote_connect_device_record_store_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(remote_connect_device_record_store_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+    target_link_libraries(remote_connect_device_record_store_unit_tests PRIVATE advapi32)
+endif ()
+add_test(NAME remote_connect_device_record_store_unit_tests COMMAND remote_connect_device_record_store_unit_tests)
+
+set(REMOTE_CONNECT_DEVICE_AUTHORIZATION_TEST_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_connect_device_authorization.cpp)
+add_executable(remote_connect_device_authorization_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/credential_transaction.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/strict_policy.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/device_authorization.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/enrollment_token.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/enrollment_proof.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/enrollment_session.cpp
+        ${REMOTE_CONNECT_DEVICE_AUTHORIZATION_TEST_SOURCE})
+target_include_directories(remote_connect_device_authorization_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(remote_connect_device_authorization_unit_tests PRIVATE OpenSSL::Crypto gtest_main sunshine_project_options sunshine_coverage)
+target_compile_options(remote_connect_device_authorization_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(remote_connect_device_authorization_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(remote_connect_device_authorization_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+endif ()
+add_test(NAME remote_connect_device_authorization_unit_tests COMMAND remote_connect_device_authorization_unit_tests)
+
+set(REMOTE_CONNECT_SERVICE_TEST_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_connect_service.cpp)
+add_executable(remote_connect_service_unit_tests
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/service.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/strict_policy.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/device_record_store.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/device_authorization.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/credential_transaction.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/enrollment_token.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/enrollment_proof.cpp
+        ${CMAKE_SOURCE_DIR}/src/remote_connect/enrollment_session.cpp
+        ${REMOTE_CONNECT_SERVICE_TEST_SOURCE})
+target_include_directories(remote_connect_service_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
+target_link_libraries(remote_connect_service_unit_tests PRIVATE Boost::format Boost::log OpenSSL::Crypto nlohmann_json::nlohmann_json gtest_main sunshine_project_options sunshine_coverage)
+target_compile_options(remote_connect_service_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+set_target_properties(remote_connect_service_unit_tests PROPERTIES CXX_STANDARD 23)
+if (WIN32)
+    set_target_properties(remote_connect_service_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
+    target_link_libraries(remote_connect_service_unit_tests PRIVATE advapi32)
+endif ()
+add_test(NAME remote_connect_service_unit_tests COMMAND remote_connect_service_unit_tests)
+
 add_executable(frame_contract_unit_tests
         ${CMAKE_SOURCE_DIR}/src/platform/frame_contract.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_frame_contract.cpp)
@@ -1574,6 +1710,7 @@ list(APPEND TEST_DEFINITIONS SUNSHINE_TESTS)
 add_executable(pairing_pending_unit_tests
         ${CMAKE_SOURCE_DIR}/tests/tests_main.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/test_pairing_pending.cpp
+        ${CMAKE_SOURCE_DIR}/tests/unit/test_preset_pin_generation.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/pairing_pending_platform_stubs.cpp
         ${CMAKE_SOURCE_DIR}/src/client_family.cpp
         ${CMAKE_SOURCE_DIR}/src/nvhttp/pairing.cpp
@@ -1699,6 +1836,7 @@ list(REMOVE_ITEM TEST_SOURCES ${CMAKE_SOURCE_DIR}/tests/usbip/external_readonly_
         ${CMAKE_SOURCE_DIR}/tests/unit/test_poster.cpp
         ${CMAKE_SOURCE_DIR}/tests/unit/poster_platform_stubs.cpp)
 
+list(REMOVE_ITEM TEST_SOURCES ${REMOTE_CONNECT_SERVICE_TEST_SOURCE} ${REMOTE_CONNECT_DEVICE_RECORD_STORE_TEST_SOURCE} ${REMOTE_CONNECT_ENROLLMENT_TOKEN_TEST_SOURCE} ${REMOTE_CONNECT_ENROLLMENT_PROOF_TEST_SOURCE} ${REMOTE_CONNECT_ENROLLMENT_SESSION_TEST_SOURCE} ${REMOTE_CONNECT_CREDENTIAL_TRANSACTION_TEST_SOURCE} ${REMOTE_CONNECT_DEVICE_AUTHORIZATION_TEST_SOURCE} ${CMAKE_SOURCE_DIR}/tests/unit/test_remote_connect_invite.cpp ${REMOTE_CONNECT_STRICT_POLICY_TEST_SOURCE} ${CMAKE_SOURCE_DIR}/tests/unit/test_preset_pin_generation.cpp)
 set(ABR_TEST_STUB_SOURCE ${CMAKE_SOURCE_DIR}/tests/unit/abr_test_stubs.cpp)
 list(REMOVE_ITEM TEST_SOURCES ${ABR_TEST_STUB_SOURCE})
 if (WIN32)

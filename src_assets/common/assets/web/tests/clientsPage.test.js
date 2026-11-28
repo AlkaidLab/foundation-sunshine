@@ -14,7 +14,8 @@ const NEW_KEYS = ['stopped', 'restore', 'unpair_named', 'sheet_stopped', 'disabl
 const OBSOLETE_KEYS = ['disabled', 'allow_device', 'blocked', 'allowed', 'disable_disconnect', 'disable_note', 'unpair_device', 'confirm_unpair']
 
 test('a device row has no switch: cancel pairing is a red icon button beside the gear, a stopped device says so and is restored from its row', () => {
-  assert.doesNotMatch(page, /MSwitch|pin-row__switch|requestToggle/)
+  const deviceList = page.slice(page.indexOf('<div class="pin-list"'), page.indexOf('<!-- Pairing: PIN pad or QR code -->'))
+  assert.doesNotMatch(deviceList, /MSwitch|pin-row__switch|requestToggle/)
   assert.match(page, /<button type="button" class="pin-row__unpair"[^>]*:aria-label="\$t\('connections\.unpair_named', \{ name: client\.name \}\)"[^>]*:data-tip="\$t\('connections\.unpair_named', \{ name: client\.name \}\)"[^>]*@click="requestUnpair\(client\)"><MIcon name="link_off" \/><\/button>/)
   assert.match(page, /<i class="m-split-item__divider"[^>]*\/>\s*<button type="button" class="m-split-item__gear"/, 'the red button and the gear are two controls with a divider between them')
   assert.match(page, /v-if="client\.enabled === false" class="pin-row__stopped"[\s\S]*connections\.stopped[\s\S]*@click="restoreClient\(client\)"[\s\S]*connections\.restore/)

@@ -14,6 +14,17 @@ contained within Sunshine. If you plan to sell access to Sunshine as part of the
 for obtaining the necessary licenses to do so. This may include obtaining a license from the
 Motion Picture Experts Group (MPEG-LA) and/or any other necessary licensing requirements.
 
+## Optional Remote Connection Runtime
+
+The remote connection feature can launch a separately installed
+[EasyTier](https://github.com/EasyTier/EasyTier) runtime. EasyTier and its Windows networking dependencies are not part
+of Sunshine and must not be copied into a Sunshine package without independently verifying and satisfying every
+applicable redistribution license. The Windows integration only discovers a complete EasyTier installation in the
+official installer's default, administrator-protected location.
+
+When the default remote connection peer is used, encrypted traffic may be relayed by an EasyTier community public
+node. Users are informed before enabling the feature and can configure a self-hosted peer instead.
+
 In summary, while Sunshine is free to use, it is the user's responsibility to ensure compliance with all applicable
 licensing requirements when redistributing the software as part of a commercial offering. If you have any questions or
 concerns about using Sunshine in a commercial setting, we recommend consulting with a lawyer.

@@ -19,6 +19,8 @@
 #include "src/nvhttp.h"
 #include "src/process.h"
 #include "src/public_address.h"
+#include "src/remote_connect/api.h"
+#include "src/remote_connect/pairing.h"
 #include "src/rtsp.h"
 #include "src/stream.h"
 #include "src/utility.h"
@@ -26,6 +28,7 @@
 #include <boost/property_tree/json_parser.hpp>
 #include <cctype>
 #include <cmath>
+#include <ctime>
 #include <filesystem>
 #include <set>
 #include <sstream>
@@ -242,6 +245,27 @@ namespace confighttp::clients {
     }
 
     void
+    getRemoteConnectStatus(resp_https_t response, req_https_t request) {
+      if (!authenticate(response, request)) return;
+      print_req(request);
+      remote_connect::api::get_status(std::move(response));
+    }
+
+    void
+    setRemoteConnectEnabled(resp_https_t response, req_https_t request) {
+      if (!authenticate(response, request)) return;
+      print_req(request);
+      remote_connect::api::set_enabled(std::move(response), std::move(request));
+    }
+
+    void
+    resetRemoteConnect(resp_https_t response, req_https_t request) {
+      if (!authenticate(response, request)) return;
+      print_req(request);
+      remote_connect::api::reset_enrollment(std::move(response));
+    }
+
+    void
     generateQrPairInfo(resp_https_t response, req_https_t request) {
       if (!authenticate(response, request)) return;
 
@@ -271,7 +295,8 @@ namespace confighttp::clients {
 
       // Set the preset PIN in nvhttp (valid for 120 seconds)
       std::string server_name = config::nvhttp.sunshine_name;
-      if (!nvhttp::set_preset_pin(pin, server_name, 120)) {
+      const auto pin_generation = nvhttp::set_preset_pin_with_generation(pin, server_name, 120);
+      if (!pin_generation) {
         outputTree.put("status", false);
         outputTree.put("error", "Failed to set preset PIN");
         return;
@@ -300,23 +325,28 @@ namespace confighttp::clients {
       link.default_route_address = pair_link::default_route_address();
 
       const auto target = pair_link::select_target(link);
-      const auto url = pair_link::pair_url(target, pin, server_name);
-      if (url.empty()) {
-        nvhttp::clear_preset_pin();
+      const auto pairing = remote_connect::create_pairing_invite({
+        target.host, static_cast<std::uint16_t>(target.port), pin, server_name, std::time(nullptr) + 120,
+        static_cast<std::uint16_t>(link.http_port),
+      });
+      if (!pairing.success) {
+        nvhttp::clear_preset_pin_if_generation(*pin_generation);
         outputTree.put("status", false);
-        outputTree.put("error", "No reachable address for the pairing link");
+        outputTree.put("error", pairing.error);
         BOOST_LOG(warning) << "QR pair: no reachable address (socket "sv << link.socket_address << ")"sv;
         return;
       }
 
-      BOOST_LOG(info) << "QR pair: host "sv << target.host << " port "sv << target.port;
+      const auto pairing_port = static_cast<std::uint16_t>(pairing.remote ? link.http_port : target.port);
+      BOOST_LOG(info) << "QR pair: host "sv << pairing.host << " port "sv << pairing_port;
       outputTree.put("status", true);
       outputTree.put("pin", pin);
-      outputTree.put("host", target.host);
-      outputTree.put("port", target.port);
+      outputTree.put("host", pairing.host);
+      outputTree.put("port", pairing_port);
       outputTree.put("name", server_name);
-      outputTree.put("url", url);
+      outputTree.put("url", pairing.url);
       outputTree.put("expires_in", 120);
+      outputTree.put("remote_connect", pairing.remote);
     }
 
     void
@@ -574,6 +604,9 @@ namespace confighttp::clients {
     server.resource["^/api/qr-pair$"]["POST"] = generateQrPairInfo;
     server.resource["^/api/qr-pair/cancel$"]["POST"] = cancelQrPair;
     server.resource["^/api/qr-pair$"]["GET"] = getQrPairStatus;
+    server.resource["^/api/remote-connect$"]["GET"] = getRemoteConnectStatus;
+    server.resource["^/api/remote-connect$"]["POST"] = setRemoteConnectEnabled;
+    server.resource["^/api/remote-connect/reset$"]["POST"] = resetRemoteConnect;
     server.resource["^/api/clients/unpair-all$"]["POST"] = unpairAll;
     server.resource["^/api/clients/list$"]["GET"] = listClients;
     server.resource["^/api/clients/list$"]["POST"] = saveClients;

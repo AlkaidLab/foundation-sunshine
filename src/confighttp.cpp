@@ -13,6 +13,7 @@
 #include "file_handler.h"
 #include "logging.h"
 #include "network.h"
+#include "remote_connect/service.h"
 #include "sparxie/runtime.h"
 #include "src/confighttp/web_install.h"
 #include <atomic>
@@ -25,6 +26,7 @@ using namespace std::literals;
 namespace confighttp {
   void
   start() {
+    remote_connect::start_if_enabled();
     auto shutdown_event = mail::man->event<bool>(mail::shutdown);
 
     // An update that was stopped between moving the Web UI folder aside and finishing leaves the
@@ -184,6 +186,7 @@ namespace confighttp {
     image_enhancement::api::shutdown();
     ::sparxie::stop_art_refresh();
     server.stop();
+    remote_connect::stop();
     if (loopback_server) {
       loopback_server->stop();
     }

@@ -93,8 +93,13 @@ class TheFolderIsMadeSafeBeforeAnythingIsCopied(unittest.TestCase):
 
     def test_programs_are_no_longer_ended_by_name_alone(self):
         prepare = procedure("PrepareToInstall")
-        # the name-based kill is only the fallback when the script could not run at all
-        self.assertRegex(prepare, r"if QuiesceCode < 0 then\s+begin\s+// Without the script")
+        # Even if quiesce cannot start, the fallback targets this installation's paths.
+        fallback = prepare.split("if QuiesceCode < 0 then", 1)[1]
+        self.assertIn("ExtractTemporaryFile('stop-process-tree.ps1')", fallback)
+        for executable in ("{app}\\{#MyAppExeName}", "{app}\\assets\\gui\\{#MyAppGUIExeName}", "{app}\\tools\\sunshinesvc.exe"):
+            self.assertIn("StopProcessAtPath(ProcessStopScript, ExpandConstant('" + executable + "')", fallback)
+        self.assertNotIn("SunshineKillParameters()", fallback)
+        self.assertNotIn("/f /im ", fallback)
 
     def test_programs_are_moved_aside_so_nothing_can_start_them_and_put_back_on_failure(self):
         self.assertIn("-Park", procedure("RunUpdateQuiesce"))

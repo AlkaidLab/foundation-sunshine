@@ -323,6 +323,11 @@ namespace nvhttp {
   bool
   set_preset_pin(const std::string &pin, const std::string &name, int timeout_seconds = 120);
 
+  // Sets a PIN and returns its in-process generation, for conditional cleanup
+  // of a failed QR request. This generation is not a security credential.
+  std::optional<std::uint64_t>
+  set_preset_pin_with_generation(const std::string &pin, const std::string &name, int timeout_seconds = 120);
+
   /**
    * @brief Atomically get and clear the preset PIN if it's still valid.
    * @return The preset PIN string, or empty string if expired/not set.
@@ -335,6 +340,11 @@ namespace nvhttp {
    */
   void
   clear_preset_pin();
+
+  // Clears only the PIN belonging to the specified generation. This does not
+  // change the legacy unconditional user-cancel or PIN-consumption protocol.
+  bool
+  clear_preset_pin_if_generation(std::uint64_t generation);
 
   /**
    * @brief Get the current QR pair status.
