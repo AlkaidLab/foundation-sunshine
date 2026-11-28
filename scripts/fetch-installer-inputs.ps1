@@ -2,10 +2,10 @@
 #   gui      the Panel bundle (sunshine-gui.exe + its native plugin), a release asset of the Panel tag pinned in
 #            installer-inputs.json; the pinned commit must be the committed Panel submodule, so the GUI and the setup UI
 #            built from that submodule (build-setup-ui.ps1) are one Panel build boundary
-#   wv2      Microsoft's Evergreen WebView2 bootstrapper from the official download URL, pinned by sha256 and checked for
-#            Microsoft's Authenticode signature (the worker runs it when the Runtime is missing)
 # A changed hash fails the step: bump installer-inputs.json deliberately, never fetch "latest".
-# usage: fetch-installer-inputs.ps1 -Destination <new dir>   -> <dir>/gui/, <dir>/MicrosoftEdgeWebview2Setup.exe
+# The WebView2 bootstrapper is not an input: the installer worker downloads it from Microsoft when the Runtime is missing
+# (tools/installer_webview2.h), so nothing of Microsoft's is pinned or shipped.
+# usage: fetch-installer-inputs.ps1 -Destination <new dir>   -> <dir>/gui/
 
 param([Parameter(Mandatory)][string]$Destination)
 
@@ -38,11 +38,4 @@ foreach ($name in @('sunshine-gui.exe', 'alkaidlab-plugin-stylus.dll')) {
     if ($file.Length -eq 0) { throw "Empty required GUI file: $name" }
 }
 
-$wv2 = Join-Path $Destination 'MicrosoftEdgeWebview2Setup.exe'
-Get-Pinned $pins.webview2.url $wv2 $pins.webview2.sha256
-$signature = Get-AuthenticodeSignature -LiteralPath $wv2
-if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch "O=$([regex]::Escape($pins.webview2.signer))") {
-    throw "The WebView2 bootstrapper is not validly signed by $($pins.webview2.signer): $($signature.Status)"
-}
-
-Write-Output "GUI $($pins.gui.tag) ($($pins.gui.commit)) and the WebView2 bootstrapper verified in $Destination"
+Write-Output "GUI $($pins.gui.tag) ($($pins.gui.commit)) verified in $Destination"

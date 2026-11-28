@@ -80,11 +80,15 @@
 #include "rtsp.h"
 #include "startup_gate.h"
 #include "stream.h"
+#include "touch_keyboard_session.h"
 #include "tray/system_tray.h"
 #include "utility.h"
 #include "uuid.h"
 #include "video.h"
 #include "webhook/webhook.h"
+#ifdef _WIN32
+  #include "usb_stream_tunnel.h"
+#endif
 
 using json = nlohmann::json;
 
@@ -166,6 +170,41 @@ namespace nvhttp {
     session.client_name = client_family::session_client_name(session.client_name, paired ? std::string_view { paired->name } : std::string_view {});
   }
 
+#ifdef _WIN32
+  bool
+  bind_direct_usb_video(const req_https_t &request, rtsp_stream::launch_session_t &session, pt::ptree &tree) {
+    if (!config::nvhttp.usb_wired_streaming_enabled) return true;
+    const auto [first, last] = request->header.equal_range(std::string(usb_stream_tunnel::video_launch_header));
+    if (first == last) return true;
+
+    if (session.client_cert_uuid.empty() || !is_client_enabled(session.client_cert_uuid)) {
+      tree.put("root.<xmlattr>.status_code", 403);
+      tree.put("root.<xmlattr>.status_message", "Direct USB video requires an enabled paired client");
+      return false;
+    }
+    if (std::next(first) == last) session.direct_usb_video = usb_stream_tunnel::claim_video(first->second);
+    if (!session.direct_usb_video) {
+      tree.put("root.<xmlattr>.status_code", 400);
+      tree.put("root.<xmlattr>.status_message", "Direct USB video token is invalid or expired");
+      return false;
+    }
+    return true;
+  }
+#endif
+
+#ifdef _WIN32
+  int
+  prepare_touch_keyboard(rtsp_stream::launch_session_t &session) {
+    int intent = session.touch_keyboard;
+    if (intent < 0 && config::get_client_touch_keyboard_enabled(session.client_cert_uuid)) {
+      intent = 1;
+    }
+    const bool touch_client = intent == 1 || (session.touch_keyboard < 0 && session.touch_family);
+    session.env["SUNSHINE_CLIENT_TOUCH"] = touch_client ? "true" : "false";
+    return intent;
+  }
+#endif
+
   std::shared_ptr<rtsp_stream::launch_session_t>
   make_launch_session(bool host_audio, const args_t &args) {
     auto launch_session = std::make_shared<rtsp_stream::launch_session_t>();
@@ -205,7 +244,6 @@ namespace nvhttp {
     }
     if (const auto defaults = image_enhancement::load_nr_defaults()) {
       const auto &f = defaults->filter;
-      launch_session->dlssnr_params.enabled = defaults->enabled;
       launch_session->dlssnr_params.intensity = f.nr_intensity;
       launch_session->dlssnr_params.style = f.nr_style;
       launch_session->dlssnr_params.skin_structure_strength = f.nr_skin_structure_strength;
@@ -214,21 +252,18 @@ namespace nvhttp {
       launch_session->dlssnr_params.motion_quality = f.nr_motion_quality;
       launch_session->dlssnr_scale_percent = f.nr_scale_percent;
     }
-    // Explicit per-app on/off settings take precedence; inherit uses the saved
-    // stream defaults. The overlay processing scale is currently global.
-    if (const auto app_dlssnr = proc::proc.get_app_dlssnr_config(launch_session->appid)) {
-      launch_session->dlssnr_params = *app_dlssnr;
-    }
+    const auto app_nr = proc::proc.get_app_dlssnr_config(launch_session->appid);
+    if (app_nr) launch_session->dlssnr_params = *app_nr;
+    // App Off opts out. Both Auto and On require the global switch, including on resume.
+    launch_session->dlssnr_params.enabled = !app_nr || app_nr->enabled;
     if (launch_session->dlssnr_params.enabled) {
-      // Reserve both enabled backends until RTSP knows the final wire format.
-      // It selects RTX HDR only for PQ and releases the unused backend;
-      // HLG/SDR must retain NR even when launch initially requested RTX HDR.
       launch_session->dlssnr_backend = image_enhancement::manager().acquire_selected(image_enhancement::backend_capability_e::nr);
     }
     launch_session->use_vdd = util::from_view(get_arg(args, "useVdd", "0"));
     launch_session->custom_screen_mode = util::from_view(get_arg(args, "customScreenMode", "-1"));
     // Client-declared touch-keyboard intent (Sunshine protocol extension).
-    // -1 undeclared: fall back to the per-client server profile.
+    // -1 undeclared: fall back to the per-client server profile; 0 and 1
+    // request that the GUI suppress or enable auto-invoke for the session.
     launch_session->touch_keyboard = util::from_view(get_arg(args, "touchKeyboard", "-1"));
     // Client-declared controller emulation type (Sunshine protocol extension
     // carried on the /launch and /resume query string). Values outside the
@@ -697,6 +732,15 @@ namespace nvhttp {
       observe_client_family(client_cert_uuid, make_family_observation(args, request->header));
     }
     launch_session->touch_family = request_is_touch_family(args, request->header);
+#ifdef _WIN32
+    if (!bind_direct_usb_video(request, *launch_session, tree)) {
+      tree.put("root.gamesession", 0);
+      return;
+    }
+#endif
+#ifdef _WIN32
+    const auto touch_keyboard_intent = prepare_touch_keyboard(*launch_session);
+#endif
     hdr::resolve_session_target(*launch_session);
     if (launch_session->highly_suspected_unknown_client) {
       BOOST_LOG(warning) << "Launch request highly resembles a known unauthorized client fork"
@@ -737,6 +781,7 @@ namespace nvhttp {
     }
 
 #ifdef _WIN32
+    launch_session->touch_keyboard_lease = touch_kb::acquire(touch_keyboard_intent);
     if (display_device::resolve_display_intent(config::video, *launch_session).target ==
         display_device::display_intent_t::target_e::vdd) {
       launch_session->nvidia_vsync_lease = nvprefs_instance.acquire_vsync();
@@ -890,6 +935,11 @@ namespace nvhttp {
     if (no_active_sessions && args.find("localAudioPlayMode"s) != std::end(args)) {
       host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     }
+    // Resume requests need not include an appid. Resolve per-app enhancement
+    // settings against the running app rather than treating it as Auto.
+    if (args.find("appid"s) == std::end(args)) {
+      args.emplace("appid", std::to_string(current_appid));
+    }
     const auto launch_session = make_launch_session(host_audio, args);
     if (!launch_session) {
       tree.put("root.resume", 0);
@@ -915,6 +965,15 @@ namespace nvhttp {
       observe_client_family(client_cert_uuid, make_family_observation(args, request->header));
     }
     launch_session->touch_family = request_is_touch_family(args, request->header);
+#ifdef _WIN32
+    if (!bind_direct_usb_video(request, *launch_session, tree)) {
+      tree.put("root.resume", 0);
+      return;
+    }
+#endif
+#ifdef _WIN32
+    const auto touch_keyboard_intent = prepare_touch_keyboard(*launch_session);
+#endif
     hdr::resolve_session_target(*launch_session);
     if (launch_session->highly_suspected_unknown_client) {
       BOOST_LOG(warning) << "Resume request highly resembles a known unauthorized client fork"
@@ -947,6 +1006,7 @@ namespace nvhttp {
     }
 
 #ifdef _WIN32
+    launch_session->touch_keyboard_lease = touch_kb::acquire(touch_keyboard_intent);
     if (display_device::resolve_display_intent(config::video, *launch_session).target ==
         display_device::display_intent_t::target_e::vdd) {
       launch_session->nvidia_vsync_lease = nvprefs_instance.acquire_vsync();
@@ -1127,6 +1187,26 @@ namespace nvhttp {
     file_mapping_config.mappings_json = config::nvhttp.file_mappings;
     file_mapping_config.authorize_client = is_client_paired;
     file_mapping_service.start(std::move(file_mapping_config));
+
+#ifdef _WIN32
+    std::jthread usb_stream_tunnel_worker;
+    if (config::nvhttp.usb_wired_streaming_enabled) {
+      auto tunnel_address = bind_address;
+      if (tunnel_address.empty() || tunnel_address == "0.0.0.0") tunnel_address = "127.0.0.1";
+      if (tunnel_address == "::") tunnel_address = "::1";
+      usb_stream_tunnel_worker = std::jthread {
+        usb_stream_tunnel::run,
+        http::unique_id,
+        config::nvhttp.sunshine_name,
+        tunnel_address,
+        usb_stream_tunnel::ports_t { port_http, port_https, net::map_port(rtsp_stream::RTSP_SETUP_PORT),
+          net::map_port(stream::VIDEO_STREAM_PORT), net::map_port(stream::CONTROL_PORT),
+          net::map_port(stream::AUDIO_STREAM_PORT), net::map_port(stream::MIC_STREAM_PORT) },
+        [] { return uuid_util::uuid_t::generate().string(); }
+      };
+      BOOST_LOG(info) << "VoidLink USB streaming enabled"sv;
+    }
+#endif
 
     // USB forwarding requires explicit host opt-in. Credentials are generated
     // per service lifetime and delivered only over the paired HTTPS connection.
@@ -1350,6 +1430,14 @@ namespace nvhttp {
         shutdown_event->raise(true);
         return;
       }
+      catch (const std::exception &err) {
+        if (shutdown_event->peek()) {
+          return;
+        }
+        BOOST_LOG(fatal) << "nvhttps server stopped on ports ["sv << server->config.port << "]: "sv << err.what();
+        shutdown_event->raise(true);
+        return;
+      }
     };
 
     auto accept_and_run_http = [&](nvhttp::http_server_t *server) {
@@ -1364,6 +1452,14 @@ namespace nvhttp {
         }
 
         BOOST_LOG(fatal) << "Couldn't start nvhttp server on ports ["sv << server->config.port << "]: "sv << err.what();
+        shutdown_event->raise(true);
+        return;
+      }
+      catch (const std::exception &err) {
+        if (shutdown_event->peek()) {
+          return;
+        }
+        BOOST_LOG(fatal) << "nvhttp server stopped on ports ["sv << server->config.port << "]: "sv << err.what();
         shutdown_event->raise(true);
         return;
       }

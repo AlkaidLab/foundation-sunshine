@@ -87,79 +87,17 @@ float3 SampleCatmullRom5Tap(float2 uv_norm, float2 src_size_f)
     return sum / max(weight_sum, 1e-5);
 }
 
-[numthreads(CS_TILE, CS_TILE, 1)]
-void main_cs(uint3 DTid : SV_DispatchThreadID,
-             uint3 GTid : SV_GroupThreadID)
+float3 WriteScaledPixel(uint2 rect_pos)
 {
-    int2 rect_pos = int2(DTid.xy);
-    bool inside_rect = (rect_pos.x < out_rect_size.x && rect_pos.y < out_rect_size.y);
-
     float2 src_size_f = float2(src_size);
-    float3 src_rgb = float3(0.0, 0.0, 0.0);
-    if (inside_rect) {
-        float2 uv_norm = (float2(rect_pos) + 0.5) / float2(out_rect_size);
-        src_rgb = SampleCatmullRom5Tap(uv_norm, src_size_f);
-    }
-
-#ifdef HDR_ANALYSIS_SNAPSHOT
-    // Analyze the same Catmull-Rom output samples that feed the encoded Y plane.
-    // The capped snapshot stores exact per-cell scalar statistics, not one point sample.
-    uint2 analysis_position;
-    uint2 cell_begin;
-    uint2 cell_end;
-    if (inside_rect &&
-        GetHdrAnalysisCell(rect_pos, out_rect_size, analysis_position, cell_begin, cell_end)) {
-        float min_maxrgb_nits = 10000.0;
-        float max_maxrgb_nits = 0.0;
-        float sum_maxrgb_nits = 0.0;
-        // Accumulated here rather than derived from the linear average: PQ is concave,
-        // so mean(PQ(nits)) is not PQ(mean(nits)). HDR Vivid needs the former.
-        float sum_maxrgb_pq = 0.0;
-        uint pixel_count = 0;
-
-        for (uint y = cell_begin.y; y < cell_end.y; ++y) {
-            for (uint x = cell_begin.x; x < cell_end.x; ++x) {
-                float3 cell_rgb = src_rgb;
-                if (x != uint(rect_pos.x) || y != uint(rect_pos.y)) {
-                    float2 cell_uv = (float2(x, y) + 0.5) / float2(out_rect_size);
-                    cell_rgb = SampleCatmullRom5Tap(cell_uv, src_size_f);
-                }
-                float maxrgb_nits = HdrAnalysisMaxRgbNits(cell_rgb);
-                min_maxrgb_nits = min(min_maxrgb_nits, maxrgb_nits);
-                max_maxrgb_nits = max(max_maxrgb_nits, maxrgb_nits);
-                sum_maxrgb_nits += maxrgb_nits;
-                sum_maxrgb_pq += NitsToPQ(maxrgb_nits.xxx).x;
-                ++pixel_count;
-            }
-        }
-
-        StoreHdrAnalysisCellStats(
-            analysis_position,
-            min_maxrgb_nits,
-            max_maxrgb_nits,
-            sum_maxrgb_nits,
-            sum_maxrgb_pq,
-            pixel_count,
-            HdrAnalysisMaxRgbNits(src_rgb)
-        );
-    }
-#endif
-
-    // ---- Y plane (per pixel) ----
-    if (inside_rect) {
-        float3 rgb_y = CONVERT_FUNCTION(src_rgb);
-        float y = dot(color_vec_y.xyz, rgb_y) + color_vec_y.w;
-        y = y * range_y.x + range_y.y;
-
-        int2 y_dst = rect_pos + out_rect_offset;
-        y_plane_uav[uint2(y_dst)] = y;
-    }
+    float2 uv_norm = (float2(rect_pos) + 0.5) / float2(out_rect_size);
+    float3 src_rgb = SampleCatmullRom5Tap(uv_norm, src_size_f);
+    float3 rgb_y = CONVERT_FUNCTION(src_rgb);
+    float y = dot(color_vec_y.xyz, rgb_y) + color_vec_y.w;
+    y_plane_uav[rect_pos + out_rect_offset] = y * range_y.x + range_y.y;
 
     // ---- UV plane (one thread per 2x2 block) ----
-    if ((GTid.x & 1u) == 0u && (GTid.y & 1u) == 0u) {
-        if (!inside_rect) {
-            return;
-        }
+    if (all((rect_pos & 1u) == 0u)) {
         // Type-0 chroma siting: horizontally co-sited with the left luma column,
         // vertically centred between the two luma rows. Six bilinear taps at output
         // pixel centres, weighted [1, 2, 1] / 8 per row across both rows -- the same
@@ -193,4 +131,38 @@ void main_cs(uint3 DTid : SV_DispatchThreadID,
         int2 uv_dst = (rect_pos + out_rect_offset) >> 1;
         uv_plane_uav[uint2(uv_dst)] = float2(u, v);
     }
+    return src_rgb;
+}
+
+[numthreads(CS_TILE, CS_TILE, 1)]
+void main_cs(uint3 DTid : SV_DispatchThreadID)
+{
+#ifdef HDR_ANALYSIS_SNAPSHOT
+    // One thread owns a whole analysis cell, including its Y/UV writes. A cell
+    // can straddle a 16-pixel output tile at non-integer scaling ratios.
+    uint2 cell = DTid.xy;
+    if (any(cell >= hdr_analysis_snapshot_size)) return;
+    uint2 begin, end, representative;
+    GetHdrAnalysisCellGeometry(cell, uint2(out_rect_size), begin, end, representative);
+    float min_nits = 10000.0;
+    float max_nits = 0.0;
+    float sum_nits = 0.0;
+    float sum_pq = 0.0;
+    float representative_nits = 0.0;
+    for (uint y = begin.y; y < end.y; ++y) {
+        for (uint x = begin.x; x < end.x; ++x) {
+            uint2 pixel = uint2(x, y);
+            float nits = HdrAnalysisMaxRgbNits(WriteScaledPixel(pixel));
+            min_nits = min(min_nits, nits);
+            max_nits = max(max_nits, nits);
+            sum_nits += nits;
+            sum_pq += NitsToPQ(nits.xxx).x;
+            if (all(pixel == representative)) representative_nits = nits;
+        }
+    }
+    StoreHdrAnalysisCellStats(cell, min_nits, max_nits, sum_nits, sum_pq,
+        (end.x - begin.x) * (end.y - begin.y), representative_nits);
+#else
+    if (all(DTid.xy < uint2(out_rect_size))) WriteScaledPixel(DTid.xy);
+#endif
 }

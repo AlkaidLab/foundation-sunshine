@@ -58,7 +58,7 @@ set(SUNSHINE_HOST_SOURCES
     src/launch_session_manager.cpp src/launch_session_manager.h
     src/confighttp.cpp src/confighttp.h
     src/widget_http.cpp src/widget_http.h
-    src/rtsp.cpp src/rtsp.h
+    src/rtsp.cpp src/rtsp.h src/rtsp_limits.h
     src/session_info.cpp src/session_info.h
     src/system_load.cpp src/system_load.h src/system_load_stub.cpp
     src/stream.cpp src/stream.h
@@ -77,21 +77,25 @@ set(SUNSHINE_HOST_SOURCES
     src/audio_default_wait.h
     src/audio_devices.cpp src/audio_devices.h
     src/audio_sink_plan.cpp src/audio_sink_plan.h
-    src/audio_vb_cable.cpp src/audio_vb_cable.h
+    src/audio_sink_switch.h
     src/mic_mixer.cpp src/mic_mixer.h
     src/process.cpp src/process.h
     src/client_interface.cpp src/client_interface.h
     src/default_apps.cpp src/default_apps.h
+    src/settings_reset.cpp src/settings_reset.h
     src/network.cpp src/network.h
     src/network_reachability.cpp src/network_reachability.h
     src/network_reachability_probe.cpp
+    src/network_check.cpp src/network_check.h
+    src/network_external.cpp src/network_external.h
+    src/network_pin.cpp src/network_pin.h
     src/nat_discovery.cpp src/nat_discovery.h
     src/nat_discovery_probe.cpp
     src/public_address.cpp src/public_address.h
     src/system_info.cpp src/system_info.h
     src/build_info.cpp src/build_info.h
     src/crash/crash.h src/crash/crash_core.cpp src/crash/crash_core.h src/crash/crash_state.h
-    src/crash/crash_common.cpp src/crash/crash_win.cpp src/crash/crash_posix.cpp src/crash/crash_upload.cpp src/crash/log_scrub.cpp src/crash/log_scrub.h src/crash/crash_log.cpp src/crash/crash_log.h src/crash/crash_env.cpp src/crash/crash_env_text.cpp src/crash/crash_env.h src/crash/crash_context.h
+    src/crash/crash_common.cpp src/crash/crash_win.cpp src/crash/crash_posix.cpp src/crash/crash_upload.cpp src/crash/log_scrub.cpp src/crash/log_scrub.h src/crash/crash_log.cpp src/crash/crash_log.h src/crash/crash_env.cpp src/crash/crash_env_text.cpp src/crash/crash_env.h src/crash/crash_context.h src/crash/gpu_driver.h
     src/system_info_cache.cpp
     src/system_info_probe.cpp
     src/stat_trackers.cpp src/stat_trackers.h
@@ -175,13 +179,14 @@ set(SUNSHINE_HOST_SOURCES
     src/telemetry/events.cpp src/telemetry/events.h
     src/telemetry/install_journal.cpp src/telemetry/install_journal.h
     src/telemetry/queue.cpp src/telemetry/queue.h
+    src/telemetry/report_slot.cpp src/telemetry/report_slot.h
     src/telemetry/error_report.cpp src/telemetry/error_report.h
     src/telemetry/self_baseline.cpp src/telemetry/self_baseline.h
     src/telemetry/opt_out.cpp src/telemetry/opt_out.h
     src/telemetry/service_lifecycle.cpp src/telemetry/service_lifecycle.h
     src/telemetry/stream_health.cpp src/telemetry/stream_health.h
     src/telemetry/stream_stats.cpp src/telemetry/stream_stats.h
-    src/telemetry/service.cpp src/telemetry/service.h
+    src/telemetry/service.cpp src/telemetry/service.h src/telemetry/service_log.cpp
     src/telemetry/transport.cpp src/telemetry/transport.h
     src/telemetry/telemetry.cpp src/telemetry/telemetry.h
     src/telemetry/wer_event.cpp src/telemetry/wer_event.h
@@ -192,6 +197,7 @@ set(SUNSHINE_HOST_SOURCES
     src/nvhttp/ai_api.cpp src/nvhttp/ai_api.h
     src/nvhttp/apps.cpp src/nvhttp/apps.h
     src/nvhttp/poster.cpp src/nvhttp/poster.h
+    src/generated_cover.cpp src/generated_cover.h
     src/nvhttp/clipboard_api.cpp src/nvhttp/clipboard_api.h
     src/nvhttp/display_control.cpp src/nvhttp/display_control.h
     src/nvhttp/display_scale.cpp src/nvhttp/display_scale.h
@@ -225,6 +231,8 @@ set(SUNSHINE_HOST_SOURCES
     src/confighttp/pair_link.cpp src/confighttp/pair_link.h
     src/confighttp/diagnostics.cpp src/confighttp/diagnostics.h
     src/confighttp/doctor.cpp src/confighttp/doctor.h
+    src/confighttp/gpu_driver_guard.cpp src/confighttp/gpu_driver_guard.h
+    src/gpu_driver_guard.h src/gpu_driver_text.h src/background_probe.h
     src/confighttp/network.cpp src/confighttp/network.h
     src/confighttp/systeminfo.cpp src/confighttp/systeminfo.h
     src/confighttp/runtime.cpp src/confighttp/runtime.h
@@ -267,6 +275,7 @@ set(SUNSHINE_HOST_SOURCES
     src/sparxie/vendors.cpp src/sparxie/vendors.h
     src/sparxie/scan.cpp src/sparxie/scan.h
     src/sparxie/store.cpp src/sparxie/store.h
+    src/sparxie/sparxie_build.cpp src/sparxie/sparxie_build.h
     src/sparxie/settings.cpp src/sparxie/settings.h src/sparxie/hoyo_settings.cpp src/sparxie/hoyo_settings.h src/sparxie/ini_settings.cpp src/sparxie/ini_settings.h
     src/sparxie/zzz_file.cpp src/sparxie/zzz_file.h src/sparxie/zzz_extra.cpp
     src/sparxie/art.cpp src/sparxie/art.h
@@ -292,4 +301,8 @@ set(SUNSHINE_HOST_SOURCES
     src/confighttp/sparxie.cpp src/confighttp/sparxie.h
     src/confighttp/telemetry.cpp src/confighttp/telemetry.h
 )
+if(WIN32)
+    list(APPEND SUNSHINE_HOST_SOURCES
+        src/usb_stream_tunnel.cpp src/usb_stream_tunnel.h)
+endif()
 list(TRANSFORM SUNSHINE_HOST_SOURCES PREPEND "${CMAKE_SOURCE_DIR}/")

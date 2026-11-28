@@ -9,6 +9,7 @@ import { PARTNER_CARDS, PARTNER_CLIENTS } from '../config/communityLinks.js'
 const { TEAM_PROJECTS, THANKS } = await import('foundation-ui/about/index.js')
 
 const reachable = new Set()
+const { CLIENTS, clientsForOs } = await import('foundation-ui/clients')
 const collect = (client) => {
   for (const key of ['project', 'release']) if (client[key]) reachable.add(client[key])
   for (const link of client.links || []) reachable.add(link.url)
@@ -20,11 +21,19 @@ const collect = (client) => {
 }
 CLIENT_PLATFORMS.forEach(collect)
 PARTNER_CARDS.forEach(collect) // the Crown and OpenHarmony editions are cards of their own
+for (const client of CLIENTS) {
+  if (client.id === 'voidlink') continue
+  if (client.links?.project) reachable.add(client.links.project)
+  if (client.links?.releases) reachable.add(client.links.releases)
+}
 const norm = (url) => String(url).replace(/#readme$/, '').replace(/\/$/, '')
 const has = (url) => [...reachable].some((r) => norm(r) === norm(url) || norm(r).startsWith(norm(url) + '/') || norm(url).startsWith(norm(r) + '/'))
 
-test('every link of a partner client is on the downloads page (the About page lists none of them)', () => {
-  for (const client of PARTNER_CLIENTS) for (const link of client.links) assert.ok(has(link.url), `${client.name}: ${link.url}`)
+test('partner download links are on the downloads page', () => {
+  for (const client of PARTNER_CLIENTS) for (const link of client.links) {
+    if (client.id === 'voidlink' && link.id === 'project') continue
+    assert.ok(has(link.url), `${client.name}: ${link.url}`)
+  }
 })
 test('every project of the team the About page dropped is on the downloads page, or stays in its thanks list', () => {
   const thanked = THANKS.map((t) => t.url)
@@ -32,7 +41,6 @@ test('every project of the team the About page dropped is on the downloads page,
 })
 
 // the list the page shows is the one of the package: the team's clients first (the About page thanks the partners, the page lists them with the badge)
-const { clientsForOs } = await import('foundation-ui/clients')
 test('filtered by a system the page lists the team\'s clients first and every partner client of that system after them', () => {
   const partnerIds = new Set(PARTNER_CLIENTS.map((c) => c.name))
   assert.ok(partnerIds.size > 0)

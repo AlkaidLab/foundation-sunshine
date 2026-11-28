@@ -101,8 +101,6 @@ namespace remote_usb {
     constexpr std::size_t kDeviceSize = 312;
     constexpr std::size_t kInterfaceSize = 4;
     constexpr std::size_t kPduHeaderSize = 48;
-    constexpr std::size_t kBasicHeaderSize = 20;
-    constexpr std::size_t kSubmitTailSize = kPduHeaderSize - kBasicHeaderSize;
     constexpr std::size_t kMaxTransferSize = (1024u * 1024u) - kPduHeaderSize;
     constexpr std::size_t kMaxPduSize = kPduHeaderSize + kMaxTransferSize;
     constexpr std::size_t kMaxQueuedReplies = 256;
@@ -712,10 +710,19 @@ namespace remote_usb {
       if (!is_current_session(session_generation)) {
         return;
       }
+      /* Both commands have the same 48 byte header: one read takes all of it (every URB used to
+       * cost two small reads of 20 and 28 bytes). */
+      try {
+        pending_pdu.assign(kPduHeaderSize, 0);
+      }
+      catch (...) {
+        close_session(close_reason::internal_error);
+        return;
+      }
       const auto self = shared_from_this();
       asio::async_read(
         socket,
-        asio::buffer(data_header),
+        asio::buffer(pending_pdu.data(), kPduHeaderSize),
         [self, session_generation](const boost::system::error_code &error, std::size_t) {
           self->handle_data_header(session_generation, error);
         });
@@ -732,27 +739,12 @@ namespace remote_usb {
         return;
       }
 
-      const auto command = read_u32_be(data_header.data());
+      const auto command = read_u32_be(pending_pdu.data());
       if (command != kCmdSubmit && command != kCmdUnlink) {
         close_session(close_reason::protocol_error);
         return;
       }
-
-      try {
-        pending_pdu.assign(data_header.begin(), data_header.end());
-        pending_pdu.resize(kPduHeaderSize);
-      }
-      catch (...) {
-        close_session(close_reason::internal_error);
-        return;
-      }
-      const auto self = shared_from_this();
-      asio::async_read(
-        socket,
-        asio::buffer(pending_pdu.data() + kBasicHeaderSize, kSubmitTailSize),
-        [self, session_generation, command](const boost::system::error_code &read_error, std::size_t) {
-          self->handle_data_tail(session_generation, command, read_error);
-        });
+      handle_data_tail(session_generation, command, {});
     }
 
     void
@@ -1277,7 +1269,6 @@ namespace remote_usb {
 
     std::array<std::uint8_t, 8> control_header {};
     std::array<std::uint8_t, kImportBodySize> import_body {};
-    std::array<std::uint8_t, kBasicHeaderSize> data_header {};
     std::vector<std::uint8_t> pending_pdu;
   };
 

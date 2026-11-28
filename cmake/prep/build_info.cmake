@@ -7,7 +7,7 @@
 #   SUNSHINE_BUILD_COMMIT    full 40-hex commit           default: git rev-parse HEAD, else $COMMIT
 #   SUNSHINE_BUILD_BRANCH    branch                       default: git, else $BRANCH
 #   SUNSHINE_BUILD_DIRTY     0/1                          default: git diff --quiet HEAD
-#   SUNSHINE_BUILD_CHANNEL   stable|beta|dev|local        default: local (CI passes beta or dev)
+#   SUNSHINE_BUILD_CHANNEL   stable|beta|dev|local        default: local (CI passes stable, beta or dev)
 #   SUNSHINE_BUILD_VARIANT   product line                 default: foundation-sunshine
 #   SUNSHINE_BUILD_PACKAGE   installer|portable|auto      default: auto (one build makes both packages;
 #                                                        the running host decides from its install layout)

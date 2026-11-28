@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """End-to-end check of crash capture against a local mock of POST /v1/crash.
 
-  crash_e2e.py --exe <program> --config-dir <dir> [--arg X ...] [--expect-dump] [--modes null-deref,abort,throw,terminate,hang]
+  crash_e2e.py --exe <program> --config-dir <dir> [--arg X ...] [--expect-dump] [--modes null-deref,null-call,abort,throw,terminate,hang] [--driver-vendor intel|nvidia|amd]
 
 For each mode the program is started with SUNSHINE_TEST_CRASH=<mode> (it must fail or, for hang, report and exit), the pending folder
 <config-dir>/crashes/pending is checked for a meta (and a minidump on Windows), then the program is started again with the uploader
 pointed at an in-process mock endpoint and the pending folder must empty out, with the mock having received meta (+ dump) for it.
+With --driver-vendor the program is started with SUNSHINE_TEST_DRIVER_MODULE=<its file name>=<vendor>, which stands its own code in for a graphics driver module: a crash or an abort
+must then leave <config-dir>/crashes/gpu_driver_mark.json (vendor, module file name, phase; also with error reports off) and a hang or a throw on a worker thread need not.
 Never touches an installed service: it only runs the program it is given, with the config directory it is given.
 """
 import argparse, http.server, json, os, shutil, subprocess, sys, threading, time
@@ -26,6 +28,7 @@ p.add_argument('--second-mode', default='', help='SUNSHINE_TEST_CRASH value of t
 p.add_argument('--server-error-mode', default='abort', help='crash mode used for the "server answers 500" check (sparxie-launch has no abort: throw)')
 p.add_argument('--stay', type=int, default=14, help='seconds the second run stays alive for the upload pass')
 p.add_argument('--crash-timeout', type=int, default=90)
+p.add_argument('--driver-vendor', default='', help='intel|nvidia|amd: stand the program in for a driver module and check the driver mark (tests only)')
 a = p.parse_args()
 
 received = []
@@ -61,6 +64,7 @@ def run(mode, upload_delay, endpoint_url, timeout):
     env['SUNSHINE_TELEMETRY_ENDPOINT'] = endpoint_url
     if mode: env['SUNSHINE_TEST_CRASH'] = mode
     else: env.pop('SUNSHINE_TEST_CRASH', None)
+    if a.driver_vendor: env['SUNSHINE_TEST_DRIVER_MODULE'] = f'{os.path.basename(a.exe)}={a.driver_vendor}'
     t0 = time.time()
     try:
         r = subprocess.run([a.exe] + a.arg, env=env, timeout=timeout, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -82,15 +86,27 @@ for mode in a.modes.split(','):
     if mode not in a.live_modes.split(','): check(rc not in (0, None), f'{mode}: non-zero exit {rc}')
     names = reports()
     check(len(names) == 1, f'{mode}: one meta in pending ({names})')
+    if a.driver_vendor and mode in ('null-deref', 'null-call', 'abort', 'terminate'):
+        mark = os.path.join(a.config_dir, 'crashes', 'gpu_driver_mark.json')
+        try: m = json.load(open(mark, encoding='utf-8'))
+        except Exception: m = None
+        check(bool(m) and m.get('vendor') == a.driver_vendor and m.get('kind') == 'crash' and m.get('module', '').lower() == os.path.basename(a.exe).lower(),
+              f'{mode}: driver mark {m}')
+        check(not m or ('/' not in m.get('module', '') and '\\' not in m.get('module', '')), f'{mode}: the mark names the file, not a path')
     if not names: continue
     meta = json.load(open(os.path.join(pending, names[0]), encoding='utf-8'))
-    want_kind = {'null-deref': 'crash', 'abort': 'abort', 'throw': 'abort', 'terminate': 'abort', 'hang': 'hang', 'panic': 'panic', 'task': 'unhandled-dotnet'}[mode]
+    want_kind = {'null-deref': 'crash', 'null-call': 'crash', 'abort': 'abort', 'throw': 'abort', 'terminate': 'abort', 'hang': 'hang', 'panic': 'panic', 'task': 'unhandled-dotnet'}[mode]
     want_kind = dict(kv.split('=') for kv in a.kinds.split(',') if kv).get(mode, want_kind)
     check(meta.get('kind') == want_kind, f'{mode}: kind {meta.get("kind")} == {want_kind}')
     check(meta.get('v') == 1 and meta.get('product') and meta.get('version') is not None, f'{mode}: v/product/version present')
     check(len(meta.get('signature', '')) == 64, f'{mode}: signature {meta.get("signature", "")[:12]}...')
     check(bool(meta.get('frames')) and 'module' in meta and 'module_offset' in meta, f'{mode}: {len(meta.get("frames", []))} frames, module {meta.get("module")} {meta.get("module_offset")}')
     if mode == 'null-deref' and a.expect_dump: check(meta.get('exception_code') == '0xC0000005', f'null-deref: exception_code {meta.get("exception_code")}')
+    if mode == 'null-call' and a.expect_dump:
+        # a call through a null pointer faults where there is no code: the walk must start at the caller, not end with an empty (shared) signature
+        check(meta.get('exception_code') == '0xC0000005', f'null-call: exception_code {meta.get("exception_code")}')
+        check(meta.get('module') not in (None, '', 'unknown') and meta.get('signature') != 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+              f'null-call: caller frame {meta.get("module")} {meta.get("module_offset")}, signature {meta.get("signature", "")[:12]}')
     dump = os.path.join(pending, names[0][:-5] + '.dmp')
     if a.expect_dump and mode not in a.no_dump_modes.split(','):
         ok = os.path.isfile(dump) and open(dump, 'rb').read(4) == b'MDMP'
@@ -115,8 +131,13 @@ conf = os.path.join(a.config_dir, 'sunshine.conf')
 old = open(conf, encoding='utf-8').read() if os.path.exists(conf) else None
 os.makedirs(a.config_dir, exist_ok=True)
 open(conf, 'w', encoding='utf-8').write('telemetry_errors = off\n')
+if a.driver_vendor:
+    try: os.remove(os.path.join(a.config_dir, 'crashes', 'gpu_driver_mark.json'))  # only this run may have written it
+    except OSError: pass
 rc, took = run('abort', 100000, endpoint, a.crash_timeout)
 check(not reports(), 'consent off: a crash leaves nothing on disk')
+if a.driver_vendor:
+    check(os.path.isfile(os.path.join(a.config_dir, 'crashes', 'gpu_driver_mark.json')), 'consent off: the driver mark is still written (it never leaves the computer)')
 check(not [1 for (pth, _) in received], 'consent off: nothing sent')
 if old is None: os.remove(conf)
 else: open(conf, 'w', encoding='utf-8').write(old)

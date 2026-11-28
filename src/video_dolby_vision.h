@@ -25,6 +25,7 @@
 #include "video_hdr_metadata.h"
 
 #include <array>
+#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <span>
@@ -235,15 +236,25 @@ namespace video::dolby_vision {
    * submitted to the encoder and splices it when that frame's access unit
    * surfaces, keyed strictly by frame index (docs §3.5).
    *
-   * stage() reuses the last valid analysis when the current stats are absent
-   * — conservative metadata beats none once the stream has started carrying
-   * RPUs, and frames before the first analysis ship without one, mirroring
-   * how the HDR10+ path skips its SEI on a cold analyzer. When the in-flight
-   * queue overflows the session disables itself: a stale RPU on a newer
-   * picture reads as brightness pumping, which is worse than no RPU.
+   * prepare_frame() holds startup until an RPU can be generated, while the
+   * caller keeps converting capture frames to advance the asynchronous analyzer.
+   * stage() reuses the last valid analysis when the current stats are absent.
+   * A startup timeout or in-flight queue overflow disables DV for this encoder
+   * session; only configure() enables it again.
    */
   class rpu_injector_t {
   public:
+    enum class startup_action_e {
+      emit,
+      hold,
+      idr,
+      timed_out,
+    };
+
+    // Match the existing analyzer cold-start budget, without requiring Vivid's
+    // multiple stable samples. The first usable DV sample releases startup.
+    static constexpr auto STARTUP_TIMEOUT = std::chrono::milliseconds { 1500 };
+
     /// Build the frame templates. Returns false — and leaves the injector
     /// disabled — when the config is out of range.
     bool
@@ -253,6 +264,17 @@ namespace video::dolby_vision {
     enabled() const {
       return enabled_;
     }
+
+    bool
+    startup_pending() const {
+      return enabled_ && !output_started_;
+    }
+
+    /// Check before staging or submitting a frame. Does not consume metadata,
+    /// queue entries, or scene refresh; other startup gates may still hold.
+    /// Both idr and timed_out require the caller to request an IDR.
+    startup_action_e
+    prepare_frame(const platf::hdr_frame_luminance_stats_t &stats, std::chrono::steady_clock::time_point now);
 
     void
     stage(uint64_t frame_index, const platf::hdr_frame_luminance_stats_t &stats);
@@ -273,7 +295,9 @@ namespace video::dolby_vision {
     hdr_metadata::scene_change_detector_t scene_detector_;
     level1_temporal_filter_t level1_filter_;
     std::optional<frame_metadata_t> last_metadata_;
+    std::optional<std::chrono::steady_clock::time_point> startup_started_;
     bool pending_scene_refresh_ = false;
+    bool output_started_ = false;
     bool enabled_ = false;
   };
 

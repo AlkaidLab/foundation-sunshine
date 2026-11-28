@@ -88,11 +88,11 @@ namespace reachability {
       const auto bytes = value.to_bytes();
       if (is_unspecified(value)) return false;
       if (value.is_loopback()) return false;
-      if (prefix_match(bytes, v6_link_local, 10)) return false;
-      if (prefix_match(bytes, v6_unique_local, 7)) return false;
-      if (prefix_match(bytes, v6_multicast, 8)) return false;
       if (value.is_v4_mapped()) return is_public_v4(boost::asio::ip::make_address_v4(boost::asio::ip::v4_mapped, value));
-      return true;
+      // Only global unicast is public: 2000::/3 (RFC 4291 section 2.4, IANA IPv6 Global Unicast Address Assignments). Site-local fec0::/10 (deprecated by RFC 3879, still handed out
+      // by some virtual switches), unique local fc00::/7, link-local fe80::/10, multicast and the rest are not addresses the internet reaches: reporting one as public made a host that
+      // had only a site-local address "verified".
+      return (bytes[0] & 0xe0) == 0x20;
     }
 
     /// Mirror of src/network.cpp address classification for the Web UI origin policy.
@@ -341,6 +341,27 @@ namespace reachability {
     return scope_e::unknown;
   }
 
+  bool
+  router_proxy_suspected(const router_status_t &router, const outside_t &outside) {
+    if (outside.state != "unavailable" || (outside.reason != "ip_mismatch" && outside.reason != "dns_mismatch")) return false;
+    if (outside.caller.empty() || router.wan_ip.empty() || router.wan_ip_class != ip_class_e::public_address) return false;
+    boost::system::error_code seen_error;
+    boost::system::error_code wan_error;
+    const auto seen = boost::asio::ip::make_address(outside.caller, seen_error);
+    const auto wan = boost::asio::ip::make_address(router.wan_ip, wan_error);
+    if (seen_error || wan_error) return outside.caller != router.wan_ip;
+    // the service may have been reached over IPv6 while the router's address is IPv4 (or the other way round): they are not comparable, and that says nothing about a proxy
+    if (seen.is_v4() != wan.is_v4()) return false;
+    return seen != wan;
+  }
+
+  bool
+  is_inconclusive_failure(std::string_view error) {
+    // A refusal and a timeout are what a router without NAT loopback answers to its own outside address; "unreachable" is a route this computer lacks
+    // (an IPv6 address on an IPv4-only host, a proxy that swallows the packet); "failed" is a local error. None of them is about the internet.
+    return error == "refused" || error == "timeout" || error == "unreachable" || error == "failed";
+  }
+
   namespace {
     constexpr std::size_t MAX_ADDRESSES_PER_ENDPOINT = 4;
 
@@ -356,14 +377,18 @@ namespace reachability {
     }
 
     endpoint_result_t
-    probe_one_endpoint(const public_address::endpoint_t &endpoint, std::uint16_t default_http_port, const std::string &wan_ip, const endpoint_prober_t &prober) {
+    probe_one_endpoint(const public_address::endpoint_t &endpoint, std::uint16_t default_http_port, const std::string &wan_ip, const endpoint_prober_t &prober,
+      const std::vector<port_status_t> *table) {
       endpoint_result_t result;
       result.input = public_address::format_endpoint(endpoint);
       result.host = endpoint.host;
       result.kind = endpoint.kind;
       result.port_explicit = endpoint.port != 0;
       result.port = public_address::http_port_of(endpoint, default_http_port);
-      result.https_port = public_address::https_port_of(result.port);
+      result.ports = external_tcp_ports(result.port, table);
+      for (const auto &entry : result.ports) {
+        if (entry.role == port_role::https) result.https_port = entry.port;
+      }
 
       std::vector<std::string> raw;
       if (endpoint.kind == public_address::kind_e::ip) {
@@ -440,18 +465,44 @@ namespace reachability {
       result.tested_address = decisive->address;
       result.latency_ms = decisive->handshake.latency_ms;
       if (!result.reached) result.error = answered_by_other ? "identity_mismatch" : worst_error.empty() ? "failed" : worst_error;
+      // The handshake from inside is inconclusive for a public address, unless a connection from outside answered: then that answer is the evidence.
+      result.inconclusive = !result.reached && result.scope == scope_e::public_address && is_inconclusive_failure(result.error);
       return result;
     }
   }  // namespace
 
+  std::vector<external_port_t>
+  external_tcp_ports(std::uint16_t http_port, const std::vector<port_status_t> *table) {
+    std::vector<external_port_t> result;
+    // The offsets of the host's own port family: the port the person entered stands for the HTTP port, and each other TCP port keeps its distance from it.
+    std::int32_t http_internal = 0;
+    std::vector<std::pair<std::string, std::int32_t>> internal;
+    if (table) {
+      for (const auto &entry : *table) {
+        if (entry.proto != "tcp") continue;
+        if (entry.role == port_role::http) http_internal = entry.port;
+        if (entry.role == port_role::http || entry.role == port_role::https || entry.role == port_role::rtsp) internal.emplace_back(entry.role, entry.port);
+      }
+    }
+    if (http_internal == 0) {
+      internal = { { std::string(port_role::https), 47984 }, { std::string(port_role::http), 47989 }, { std::string(port_role::rtsp), 48010 } };
+      http_internal = 47989;
+    }
+    for (const auto &[role, port] : internal) {
+      const auto moved = static_cast<std::int32_t>(http_port) + (port - http_internal);
+      if (moved >= 1 && moved <= 65535) result.push_back({ role, static_cast<std::uint16_t>(moved) });
+    }
+    return result;
+  }
+
   std::vector<endpoint_result_t>
   probe_endpoints(const std::vector<public_address::endpoint_t> &endpoints, std::uint16_t default_http_port,
-    std::string_view wan_ip, const endpoint_prober_t &prober) {
+    std::string_view wan_ip, const endpoint_prober_t &prober, const std::vector<port_status_t> *table) {
     const std::string wan { wan_ip };
     std::vector<std::future<endpoint_result_t>> jobs;
     const auto count = std::min(endpoints.size(), public_address::MAX_ENDPOINTS);
     for (std::size_t index = 0; index < count; ++index) {
-      jobs.push_back(std::async(std::launch::async, [&, index]() { return probe_one_endpoint(endpoints[index], default_http_port, wan, prober); }));
+      jobs.push_back(std::async(std::launch::async, [&, index]() { return probe_one_endpoint(endpoints[index], default_http_port, wan, prober, table); }));
     }
     std::vector<endpoint_result_t> results;
     for (auto &job : jobs) results.push_back(job.get());
@@ -502,10 +553,41 @@ namespace reachability {
 
     bool evidence_public = !result.evidence.empty();
 
+    // A completed handshake through our own certificate is a connection that was made: it proves the HTTPS listener exists and the firewall let it
+    // in, so it outranks every local guess (the listener table, the firewall policy) that says otherwise.
+    const bool endpoint_reached = std::any_of(inputs.endpoints.begin(), inputs.endpoints.end(), [](const endpoint_result_t &endpoint) {
+      return endpoint.scope == scope_e::public_address && (endpoint.reached || endpoint.outside.state == "reachable");
+    });
+    const bool legacy_reached = inputs.endpoints.empty() && inputs.hairpin.tried && inputs.hairpin.ok && inputs.hairpin.identity_match &&
+                                inputs.configured.kind != public_address::kind_e::empty && !inputs.configured.is_private;
+    if (!evidence_public && (endpoint_reached || legacy_reached)) {
+      result.reasons.clear();
+      const bool outside_verified = std::any_of(inputs.endpoints.begin(), inputs.endpoints.end(), [](const endpoint_result_t &endpoint) { return endpoint.outside.state == "reachable"; });
+      result.reasons.push_back(outside_verified ? "outside_verified" : "hairpin_verified");
+      result.verdict = verdict_e::verified;
+      return result;
+    }
+
     if (evidence_public) {
       result.verdict = verdict_e::verified;
       result.reasons.insert(result.reasons.begin(), "session_evidence");
       return result;
+    }
+    // A connection from the internet that found nothing (and no handshake from inside got through): the address does not lead to this host from outside.
+    // That is said only when every public address has such a result: one address that failed from outside does not condemn another that nothing has tried from outside.
+    const auto is_public = [](const endpoint_result_t &endpoint) { return endpoint.scope == scope_e::public_address; };
+    const auto failed_from_outside = [](const endpoint_result_t &endpoint) {
+      return endpoint.outside.state == "closed" || endpoint.outside.state == "timeout" || endpoint.outside.state == "another_host";
+    };
+    if (std::any_of(inputs.endpoints.begin(), inputs.endpoints.end(), is_public) &&
+        std::all_of(inputs.endpoints.begin(), inputs.endpoints.end(), [&](const endpoint_result_t &endpoint) { return !is_public(endpoint) || failed_from_outside(endpoint); })) {
+      result.reasons.push_back("not_reached_from_outside");
+      result.verdict = verdict_e::unreachable;
+      return result;
+    }
+    // A proxy on the router: the outside check saw its exit, not this network. Said once, as a note; the verdict stays what this computer's own evidence says.
+    if (std::any_of(inputs.endpoints.begin(), inputs.endpoints.end(), [](const endpoint_result_t &endpoint) { return endpoint.outside.reason == "router_proxy"; })) {
+      result.reasons.push_back("outside_router_proxy");
     }
     if (!all_listening) {
       result.verdict = verdict_e::unreachable;
@@ -797,11 +879,17 @@ namespace reachability {
         { "port", endpoint.port },
         { "port_explicit", endpoint.port_explicit },
         { "https_port", endpoint.https_port },
+        { "ports", [&]() { auto list = nlohmann::json::array(); for (const auto &entry : endpoint.ports) list.push_back({ { "role", entry.role }, { "port", entry.port } }); return list; }() },
         { "resolved", endpoint.resolved },
         { "scope", to_string(endpoint.scope) },
         { "matches_wan", endpoint.matches_wan },
         { "state", endpoint.reached ? "reached" : "failed" },
         { "error", endpoint.error.empty() ? nlohmann::json(nullptr) : nlohmann::json(endpoint.error) },
+        { "inconclusive", endpoint.inconclusive },
+        { "outside", endpoint.outside.asked ? nlohmann::json({ { "state", endpoint.outside.state },
+                                                               { "reason", endpoint.outside.reason.empty() ? nlohmann::json(nullptr) : nlohmann::json(endpoint.outside.reason) },
+                                                               { "caller", endpoint.outside.caller.empty() ? nlohmann::json(nullptr) : nlohmann::json(endpoint.outside.caller) } }) :
+                                                nlohmann::json(nullptr) },
         { "tested", std::move(tested) },
         { "attempts", std::move(attempts) },
         { "reasons", endpoint.reasons },

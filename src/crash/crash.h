@@ -9,9 +9,12 @@
  */
 #pragma once
 
+#include "crash_log.h"
+
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <chrono>
 #include <optional>
 #include <string>
 
@@ -41,6 +44,11 @@ namespace crash {
   enabled();
 
   // --- hang watchdog -------------------------------------------------------------------------------------------------------------------
+  /// Monotonic milliseconds that stand still while the system sleeps or hibernates. The watchdog counts a thread's busy time on this clock: on the one
+  /// that does not stop (std::chrono::steady_clock on Windows) a start that was running when the machine went to sleep is a "hang" the moment it wakes.
+  std::uint64_t
+  awake_ms();
+
   /// Registers the calling thread under `name`; the slot is "hung" when it stays busy for `timeout_ms`. Returns the slot, -1 when full.
   int
   watch_register(const char *name, std::uint32_t timeout_ms);
@@ -124,17 +132,41 @@ namespace crash {
   std::optional<std::string>
   upload_session_shot(const std::string &endpoint, const std::string &install_id, const std::string &version, const std::string &image);
 
+  /**
+   * One deadline for the uploads of one feedback report on this thread (the screenshot, then the log with its collection and packing): each upload gets at most 20 s of what is left and none starts with
+   * less than 2 s left, so the host answers the page within its wait. The log's collection and packing get at most 10 s of what is left and leave 5 s for its upload: with less than that left the log
+   * is not collected at all, and a log that is not packed in time is left out (unreachable). end_feedback_budget() lifts it; without a budget an upload keeps the fixed 20 s and the log's steps are not timed.
+   */
+  void
+  begin_feedback_budget(std::chrono::seconds total);
+  void
+  end_feedback_budget();
+  /// The timeout the next feedback upload would get (0: it would not start). For the tests.
+  long
+  feedback_upload_timeout_for_tests();
+
   /// Why the latest upload_session_shot() gave no reference (a fixed word: uploaded | none | too_large | rejected | unreachable | refused | bad_answer | unavailable).
   const char *
   session_shot_state();
 
-  /// upload_session_log() for a given config directory, without the consent check (the caller has made it): the tests and tools.
+  /// The two slow steps in front of the log's upload, replaceable so that the tests can make them slow. `expired` says when the report's deadline for them has passed; a step that
+  /// notices it stops early (the packing answers nullopt).
+  struct log_stages_t {
+    std::function<std::string(const std::filesystem::path &log_file, std::size_t max_bytes)> collect;
+    std::function<std::optional<logfile::packed_t>(std::string_view text, const std::function<bool()> &expired)> pack;
+  };
+
+  /// upload_session_log() for a given config directory, without the consent check (the caller has made it): the tests and tools. `stages` replaces the collecting and the packing (null: the real ones).
   std::optional<std::string>
-  upload_session_log_from(const std::filesystem::path &config_dir, const std::string &endpoint, const std::string &install_id, const std::string &version);
+  upload_session_log_from(const std::filesystem::path &config_dir, const std::string &endpoint, const std::string &install_id, const std::string &version, const log_stages_t *stages = nullptr);
 
   /// Seconds the uploader waits before the next pass after a 429/503 (Retry-After) or a failure; 0 after a success. For the tests.
   long
   upload_wait_hint_s();
+
+  /// The random share that spreads the waits and the start delay of the uploader (a number in [0, 1)); an empty function restores the random generator. For the tests.
+  void
+  set_upload_jitter_source(std::function<double()> source);
 
   // --- writing, used by the handlers and by other tools that share the folder -------------------------------------------------------------
   /// Writes a report from outside a crash (tests, tools): meta text and an optional dump file already on disk.

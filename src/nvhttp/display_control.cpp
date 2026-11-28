@@ -1,5 +1,7 @@
 #include "display_control.h"
 
+#include <chrono>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -15,7 +17,7 @@
 #include "src/platform/common.h"
 
 #ifdef _WIN32
-#include "src/platform/windows/display_device/windows_utils.h"
+  #include "src/platform/windows/display_device/windows_utils.h"
 #endif
 
 using json = nlohmann::json;
@@ -23,6 +25,17 @@ using json = nlohmann::json;
 namespace nvhttp::display_control {
 
   namespace {
+
+#ifdef _WIN32
+    struct display_cache_t {
+      std::mutex mutex;
+      json displays;
+      std::chrono::steady_clock::time_point updated_at {};
+      bool valid { false };
+    };
+
+    display_cache_t display_cache;
+#endif
 
     void
     log_request(const req_https_t &request) {
@@ -68,10 +81,26 @@ namespace nvhttp::display_control {
     auto response_status = web::StatusCode::ok;
 
     try {
+      json displays_array = json::array();
+
+#ifndef _WIN32
       std::vector<std::string> display_names;
+#endif
 
 #ifdef _WIN32
-      display_names = platf::display_names(platf::mem_type_e::dxgi);
+      {
+        std::lock_guard lock { display_cache.mutex };
+        const auto now = std::chrono::steady_clock::now();
+        if (display_cache.valid && now - display_cache.updated_at < std::chrono::seconds { 3 }) {
+          displays_array = display_cache.displays;
+        }
+        else {
+          displays_array = display_scale::build_windows_displays(platf::display_names(platf::mem_type_e::dxgi));
+          display_cache.displays = displays_array;
+          display_cache.updated_at = now;
+          display_cache.valid = true;
+        }
+      }
 #elif defined(__linux__)
       for (auto mem_type : { platf::mem_type_e::vaapi, platf::mem_type_e::cuda, platf::mem_type_e::system }) {
         display_names = platf::display_names(mem_type);
@@ -83,11 +112,7 @@ namespace nvhttp::display_control {
       display_names = platf::display_names(platf::mem_type_e::system);
 #endif
 
-      json displays_array = json::array();
-
-#ifdef _WIN32
-      displays_array = display_scale::build_windows_displays(display_names);
-#else
+#ifndef _WIN32
       for (size_t i = 0; i < display_names.size(); ++i) {
         const auto &name = display_names[i];
         displays_array.push_back({ { "index", static_cast<int>(i) },
@@ -102,8 +127,8 @@ namespace nvhttp::display_control {
       }
 #endif
 
+      response_json["count"] = static_cast<int>(displays_array.size());
       response_json["displays"] = std::move(displays_array);
-      response_json["count"] = static_cast<int>(display_names.size());
 
       const auto vdd_state = display_device::vdd_capability::query_state();
       response_json["vdd"] = {

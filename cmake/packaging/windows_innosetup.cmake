@@ -64,6 +64,15 @@ add_custom_target(innosetup
     COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/inno_staging/tools/sunshinesvc.exe"
     COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/inno_staging/tools/dxgi-info.exe"
     COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/inno_staging/tools/audio-info.exe"
+    COMMAND strip --strip-debug "${CMAKE_BINARY_DIR}/inno_staging/tools/alkaidlab_pyrowave_probe.exe"
+
+    # The COFF symbol table is not part of a loaded image and is not the crash-symbol source. The runtime image keeps
+    # its CodeView GUID, so the symbol zip still matches a dump; a signed module is left byte for byte as it is.
+    COMMAND "${INSTALLER_PAYLOAD_PYTHON_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tools/pe_symbols.py"
+            "${CMAKE_BINARY_DIR}/tools/sunshine-installer-shell.exe"
+    COMMAND "${INSTALLER_PAYLOAD_PYTHON_EXECUTABLE}"
+            "${CMAKE_SOURCE_DIR}/tools/pe_symbols.py" --recursive "${CMAKE_BINARY_DIR}/inno_staging"
     
     # Run Inno Setup compiler
     COMMAND "${ISCC_EXECUTABLE}" "${CMAKE_BINARY_DIR}/sunshine_installer.iss"

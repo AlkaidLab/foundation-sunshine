@@ -58,6 +58,15 @@ utf8(const std::wstring &w) {
   return out;
 }
 
+std::wstring
+wide(const std::string &u) {
+  if (u.empty()) return {};
+  const int n = MultiByteToWideChar(CP_UTF8, 0, u.data(), static_cast<int>(u.size()), nullptr, 0);
+  std::wstring out(static_cast<size_t>(n), L'\0');
+  MultiByteToWideChar(CP_UTF8, 0, u.data(), static_cast<int>(u.size()), out.data(), n);
+  return out;
+}
+
 std::string
 json_text(const std::string &s) {
   std::string out = "\"";
@@ -132,7 +141,7 @@ view_json() {
   bool all = true;
   j += ",\"components\":{";
   for (int i = 0; i < kTileCount; ++i) {
-    all = all && v.tiles[i];
+    if (component_min_build(i) <= windows_build()) all = all && v.tiles[i];
     j += std::string(i ? "," : "") + "\"" + kComponentIds[i] + "\":" + b(v.tiles[i]);
   }
   j += std::string("},\"allSelected\":") + b(all);
@@ -149,6 +158,13 @@ view_json() {
   j += "}";
   j += std::string(",\"windowsBuild\":") + std::to_string(windows_build());
   j += std::string(",\"uacCancelled\":") + b(v.uac_cancelled);
+  const auto code_or_null = [](const std::string &code) { return code.empty() ? std::string("null") : json_text(code); };
+  j += ",\"installDir\":{\"path\":" + json_text(utf8(v.dir)) + ",\"editable\":" + b(v.dir_editable) + ",\"freeBytes\":" +
+       (v.dir_free >= 0 ? std::to_string(v.dir_free) : std::string("null")) + ",\"neededBytes\":" + std::to_string(installer_dir::kNeededBytes) +
+       ",\"maxLength\":" + std::to_string(installer_dir::kMaxLength) + ",\"error\":" + code_or_null(v.dir_error) + ",\"warning\":" + code_or_null(v.dir_warning) +
+       ",\"safePath\":" + (v.dir_safe.empty() ? std::string("null") : json_text(utf8(v.dir_safe))) +
+       ",\"pickedPath\":" + (v.dir_picked.empty() ? std::string("null") : json_text(utf8(v.dir_picked))) + ",\"note\":" + code_or_null(v.dir_note) +
+       ",\"confirm\":" + b(v.dir_confirm) + ",\"confirmSeconds\":" + std::to_string(installer_dir::kConfirmSeconds) + "}";
   j += ",\"progress\":{\"groups\":[";
   static const char *groups[kGroups] = { "prepare", "files", "drivers", "system" };
   for (int g = 0; g < kGroups; ++g)
@@ -289,8 +305,47 @@ web_action(const std::string &line) {
   else if (type == "select-all") {
     if (page == pg::components) click(kSelectAll);
   }
-  else if (type == "install" || type == "retry") {
-    const bool allowed = type == "install" ? (page == pg::welcome || page == pg::maintenance || page == pg::components) : page == pg::failed;
+  else if (type == "choose-dir") {
+    // the system folder picker over the setup window; the page shows its Change button busy until this answer, so a cancelled picker answers too
+    choose_install_dir();
+    web_push(true);
+    return;
+  }
+  else if (type == "set-dir") {
+    // the path as typed in the page's text box: the folder as it stands (nothing added); answered with the verdict
+    set_install_dir(wide(installer_json::string_value(action, "path")));
+    web_push(true);
+    return;
+  }
+  else if (type == "use-picked-dir" || type == "use-safe-dir") {
+    if (type == "use-picked-dir") use_picked_dir();
+    else use_safe_dir();
+    web_push(true);
+    return;
+  }
+  else if (type == "cancel-dir-risk") {
+    cancel_dir_risk();
+    web_push(true);
+    return;
+  }
+  else if (type == "install" || type == "retry" || type == "confirm-dir-risk") {
+    if (type == "confirm-dir-risk" && !confirm_dir_risk()) {
+      web_push(true);  // not open, or asked too early: the question stays as it is
+      return;
+    }
+    // the question about a folder warning was answered: the install goes on as the press of Install would have
+    const std::string kind = type == "confirm-dir-risk" ? std::string("install") : type;
+    const bool allowed = kind == "install" ? (page == pg::welcome || page == pg::maintenance || page == pg::components) : page == pg::failed;
+    if (allowed && g_choosing_dir) {
+      web_push(true);  // the folder picker is open: nothing starts until it is closed
+      return;
+    }
+    if (allowed && kind == "install" && S.v.dir_editable && !dir_gate()) {
+      // a refused folder never reaches the UAC prompt: the page already has Install off, and this is the check behind it. A warning opens the question and waits for the answer.
+      if (!S.v.dir_error.empty()) S.v.page = pg::welcome;
+      web_push(true);
+      return;
+    }
     if (allowed) {
       // The page sees the wait for Windows' consent at once: ShellExecuteEx(runas) below does not return before the
       // person answers the UAC prompt, and this thread sends nothing meanwhile.
@@ -522,6 +577,10 @@ web_main() {
     web_log("no WebView2 Runtime: native window");
     return kWebFallback;
   }
+  if (vnc_server_running()) {
+    web_log("a VNC server is running: native window (the transparent web window is not seen by every VNC capture)");
+    return kWebFallback;
+  }
   g_run.self = module_path();
   uint64_t offset = 0, size = 0;
   if (!read_named_payload(g_run.self, "ui", &offset, &size)) {
@@ -543,6 +602,7 @@ web_main() {
     const std::wstring dir = install_dir();
     S.v.upgrade = !dir.empty() && GetFileAttributesW((dir + L"\\sunshine.exe").c_str()) != INVALID_FILE_ATTRIBUTES;
   }
+  init_install_dir();
   apply_os_limits(S.v);
   S.v.zh = PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_CHINESE;
   WNDCLASSW window_class {};

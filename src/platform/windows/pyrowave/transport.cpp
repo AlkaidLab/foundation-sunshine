@@ -2,6 +2,7 @@
 
 #include "src/pyrowave/packetizer.h"
 #include "src/pyrowave/dynamic_hdr.h"
+#include "src/streaming/fec.h"
 #include "src/logging.h"
 
 extern "C" {
@@ -53,19 +54,33 @@ namespace platf::pyrowave_windows {
     }
   }
 
+  std::optional<std::size_t>
+  detail::transport_packet_count(std::size_t image_bytes, std::size_t metadata_bytes,
+                                 std::size_t payload_boundary) noexcept {
+    constexpr auto group_size = static_cast<std::size_t>(LI_PYROWAVE_FEC_DATA_PER_GROUP);
+    constexpr auto size_max = std::numeric_limits<std::size_t>::max();
+    static_assert(group_size > 1);
+    if (payload_boundary == 0 || image_bytes > size_max - metadata_bytes) return std::nullopt;
+    const auto protected_bytes = image_bytes + metadata_bytes;
+    const auto data_count = protected_bytes / payload_boundary + (protected_bytes % payload_boundary != 0);
+    const auto parity_count = data_count / group_size + (data_count % group_size != 0);
+    if (data_count > size_max - parity_count - 1) return std::nullopt;
+    return 1 + data_count + parity_count;
+  }
+
   transport_publish_result_t
   publish_transport_frame(
     std::int64_t frame_number,
-    std::shared_ptr<const std::vector<std::uint8_t>> bitstream,
+    std::span<const std::uint8_t> bitstream,
     std::size_t packet_boundary,
     std::uint32_t rtp_timestamp,
     safe::mail_raw_t::queue_t<video::packet_t> &packets,
-    void *channel_data,
+    std::uint64_t channel_data,
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
     std::optional<platf::frame_pipeline_trace_t> pipeline_trace,
     const pyrowave::hdr_frame_metadata_t *dynamic_metadata) noexcept {
     transport_publish_result_t result;
-    const auto input_bytes = bitstream ? bitstream->size() : 0u;
+    const auto input_bytes = bitstream.size();
     const auto boundary_overflow = packet_boundary >
       std::numeric_limits<std::size_t>::max() - LI_PYROWAVE_WIRE_FEC_HEADER_SIZE;
     const auto boundary_invalid = packet_boundary == 0 ||
@@ -78,7 +93,7 @@ namespace platf::pyrowave_windows {
                         << (boundary_overflow ? 0u : packet_boundary + LI_PYROWAVE_WIRE_FEC_HEADER_SIZE)
                         << ", rtp_timestamp=" << rtp_timestamp
                         << ", block_aware_fec=1";
-    if (frame_number <= 0 || !bitstream || bitstream->empty() ||
+    if (frame_number <= 0 || bitstream.empty() ||
         boundary_overflow || boundary_invalid) {
       BOOST_LOG(warning) << "[PyroWaveTransport] rejected frame before packetizer"
                          << ", frame=" << frame_number
@@ -97,7 +112,6 @@ namespace platf::pyrowave_windows {
           std::chrono::steady_clock::now(),
           std::chrono::milliseconds(100),
         },
-        .bitstream = { std::move(bitstream) },
       };
       auto metadata = build_runtime_metadata(frame_timestamp);
       auto metadata_flags = static_cast<std::uint16_t>(metadata.empty() ? 0 : runtime_metadata_flags);
@@ -124,7 +138,25 @@ namespace platf::pyrowave_windows {
         metadata_flags = LI_PYROWAVE_METADATA_FLAG_PROTECTED |
           (frame_timestamp ? LI_PYROWAVE_METADATA_FLAG_RUNTIME : 0);
       }
-      auto packetized = pyrowave::make_transport_packetizer()->packetize(frame, {
+
+      // One frame-header packet precedes N data packets and ceil(N/16)
+      // parity packets. Check this before the inner packetizer: its 16-bit
+      // block limit can otherwise report a failure before the outer RTP limit
+      // is checked, incorrectly treating one oversize frame as an encoder fault.
+      static_assert(LI_PYROWAVE_WIRE_FEC_HEADER_SIZE == LI_PYROWAVE_WIRE_HEADER_SIZE);
+      const auto packet_count = detail::transport_packet_count(input_bytes, metadata.size(), packet_boundary);
+      if (!packet_count || *packet_count > video_fec::max_data_shards_per_frame) {
+        const auto reported_count = packet_count.value_or(std::numeric_limits<std::size_t>::max());
+        BOOST_LOG(warning) << "[PyroWaveTransport] frame exceeds RTP packet limit"
+                           << ", frame=" << frame_number
+                           << ", blocks=" << reported_count
+                           << ", limit=" << video_fec::max_data_shards_per_frame;
+        result.blocks = reported_count;
+        result.status = transport_publish_status_e::dropped_oversize;
+        return result;
+      }
+
+      auto packetized = pyrowave::make_transport_packetizer()->packetize_borrowed(frame, bitstream, {
         .packet_boundary = packet_boundary + LI_PYROWAVE_WIRE_FEC_HEADER_SIZE,
         .rtp_timestamp = rtp_timestamp,
         .block_aware_fec = true,
@@ -153,18 +185,39 @@ namespace platf::pyrowave_windows {
         return result;
       }
 
-      auto output = std::make_unique<video::packet_raw_generic>(
-        std::vector<std::uint8_t>(packetized.bitstream.view().begin(), packetized.bitstream.view().end()),
+      // Each PYRF packet occupies one outer RTP payload. The encoder's size
+      // target is not a hard guarantee, so check the actual packet count too.
+      if (packetized.packets.size() > video_fec::max_data_shards_per_frame) {
+        BOOST_LOG(warning) << "[PyroWaveTransport] frame exceeds RTP packet limit"
+                           << ", frame=" << frame_number
+                           << ", blocks=" << packetized.packets.size()
+                           << ", limit=" << video_fec::max_data_shards_per_frame;
+        result.status = transport_publish_status_e::dropped_oversize;
+        return result;
+      }
+
+      auto output = std::make_unique<video::packet_raw_shared>(
+        std::move(packetized.bitstream.storage),
         frame_number,
         true);
       output->channel_data = channel_data;
+      output->pyrowave_pending_replace = true;
       output->frame_timestamp = frame_timestamp;
       if (pipeline_trace) {
         pipeline_trace->packet_ready = std::chrono::steady_clock::now();
       }
       output->pipeline_trace = std::move(pipeline_trace);
-      packets->raise(std::move(output));
-      result.success = true;
+      using queue_result = safe::queue_t<video::packet_t>::replace_result_e;
+      const auto queue_status = packets->raise_or_replace(std::move(output), [channel_data](const video::packet_t &pending) {
+        return pending && pending->pyrowave_pending_replace && pending->channel_data == channel_data;
+      });
+      if (queue_status == queue_result::full || queue_status == queue_result::stopped) {
+        result.status = queue_status == queue_result::stopped
+          ? transport_publish_status_e::stopped : transport_publish_status_e::dropped_full;
+        return result;
+      }
+      result.status = queue_status == queue_result::replaced
+        ? transport_publish_status_e::replaced : transport_publish_status_e::queued;
       return result;
     }
     catch (const std::exception &) {
@@ -176,5 +229,4 @@ namespace platf::pyrowave_windows {
       return result;
     }
   }
-
 }  // namespace platf::pyrowave_windows

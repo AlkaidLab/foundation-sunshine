@@ -111,8 +111,12 @@ Vulkan 的 `VkHdrMetadataEXT` 没有独立的 `maxFullFrameLuminance` 字段；�
 
 ## 探针与失败边界
 
-`is_server_runtime_available()` 缓存默认 Vulkan 设备、API 版本和基础互操作结果，
-用于避免在 SDP 生成阶段反复初始化运行库。它不会验证：
+`is_server_runtime_available()` 把默认 Vulkan 设备、API 版本和基础互操作的检查放进
+`tools/alkaidlab_pyrowave_probe.exe` 子进程执行一次并缓存结果：主机进程不再在 RTSP 线程
+内初始化 Vulkan，第三方隐式层的崩溃或挂死最多让 PyroWave
+广告消失。DESCRIBE 的广告在探测失败前保持乐观（客户端能力要到 ANNOUNCE 才对主机
+可见），探测只在客户端实际选择 PyroWave 时触发；探测失败后本进程内停止广告，客户端
+下一次连接回落传统格式。探测子进程有 5 秒等待上限，超时被终止。它不会验证：
 
 - 当前捕获显示器对应的 GPU LUID；
 - 当前 D3D11 共享纹理、三个 Y/U/V 平面和 fence；

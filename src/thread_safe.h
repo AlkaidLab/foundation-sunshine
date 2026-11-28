@@ -24,7 +24,7 @@ namespace safe {
     void
     raise(Args &&...args) {
       std::lock_guard lg { _lock };
-      if (!_continue) {
+      if (!_continue.load(std::memory_order_acquire)) {
         return;
       }
 
@@ -35,6 +35,7 @@ namespace safe {
         _status = status_t { std::forward<Args>(args)... };
       }
 
+      _has_status.store(static_cast<bool>(_status), std::memory_order_release);
       _cv.notify_all();
     }
 
@@ -43,20 +44,21 @@ namespace safe {
     pop() {
       std::unique_lock ul { _lock };
 
-      if (!_continue) {
+      if (!_continue.load(std::memory_order_acquire)) {
         return util::false_v<status_t>;
       }
 
       while (!_status) {
         _cv.wait(ul);
 
-        if (!_continue) {
+        if (!_continue.load(std::memory_order_acquire)) {
           return util::false_v<status_t>;
         }
       }
 
       auto val = std::move(_status);
       _status = util::false_v<status_t>;
+      _has_status.store(false, std::memory_order_release);
       return val;
     }
 
@@ -66,18 +68,19 @@ namespace safe {
     pop(std::chrono::duration<Rep, Period> delay) {
       std::unique_lock ul { _lock };
 
-      if (!_continue) {
+      if (!_continue.load(std::memory_order_acquire)) {
         return util::false_v<status_t>;
       }
 
       while (!_status) {
-        if (!_continue || _cv.wait_for(ul, delay) == std::cv_status::timeout) {
+        if (!_continue.load(std::memory_order_acquire) || _cv.wait_for(ul, delay) == std::cv_status::timeout) {
           return util::false_v<status_t>;
         }
       }
 
       auto val = std::move(_status);
       _status = util::false_v<status_t>;
+      _has_status.store(false, std::memory_order_release);
       return val;
     }
 
@@ -86,14 +89,14 @@ namespace safe {
     view() {
       std::unique_lock ul { _lock };
 
-      if (!_continue) {
+      if (!_continue.load(std::memory_order_acquire)) {
         return util::false_v<status_t>;
       }
 
       while (!_status) {
         _cv.wait(ul);
 
-        if (!_continue) {
+        if (!_continue.load(std::memory_order_acquire)) {
           return util::false_v<status_t>;
         }
       }
@@ -107,12 +110,12 @@ namespace safe {
     view(std::chrono::duration<Rep, Period> delay) {
       std::unique_lock ul { _lock };
 
-      if (!_continue) {
+      if (!_continue.load(std::memory_order_acquire)) {
         return util::false_v<status_t>;
       }
 
       while (!_status) {
-        if (!_continue || _cv.wait_for(ul, delay) == std::cv_status::timeout) {
+        if (!_continue.load(std::memory_order_acquire) || _cv.wait_for(ul, delay) == std::cv_status::timeout) {
           return util::false_v<status_t>;
         }
       }
@@ -122,14 +125,14 @@ namespace safe {
 
     bool
     peek() {
-      return _continue && (bool) _status;
+      return _continue.load(std::memory_order_acquire) && _has_status.load(std::memory_order_acquire);
     }
 
     void
     stop() {
       std::lock_guard lg { _lock };
 
-      _continue = false;
+      _continue.store(false, std::memory_order_release);
 
       _cv.notify_all();
     }
@@ -138,18 +141,20 @@ namespace safe {
     reset() {
       std::lock_guard lg { _lock };
 
-      _continue = true;
+      _continue.store(true, std::memory_order_release);
 
       _status = util::false_v<status_t>;
+      _has_status.store(false, std::memory_order_release);
     }
 
     [[nodiscard]] bool
     running() const {
-      return _continue;
+      return _continue.load(std::memory_order_acquire);
     }
 
   private:
-    bool _continue { true };
+    std::atomic_bool _continue { true };
+    std::atomic_bool _has_status { false };
     status_t _status { util::false_v<status_t> };
 
     std::condition_variable _cv;
@@ -262,8 +267,34 @@ namespace safe {
   public:
     using status_t = util::optional_t<T>;
 
+    enum class replace_result_e { inserted, replaced, full, stopped };
+
     queue_t(std::uint32_t max_elements = 32):
         _max_elements { max_elements } {}
+
+    // Replace a matching waiting item in place, preserving other producers'
+    // order. When no item matches, never clear the queue on overflow.
+    // The caller's predicate is evaluated while the queue lock is held.
+    template <class Predicate>
+    replace_result_e
+    raise_or_replace(T value, Predicate &&matches) {
+      std::unique_lock ul { _lock };
+      if (!_continue) return replace_result_e::stopped;
+      for (auto &item : _queue) {
+        if (matches(item)) {
+          [[maybe_unused]] auto old = std::move(item);
+          item = std::move(value);
+          ul.unlock();
+          _cv.notify_all();
+          return replace_result_e::replaced;
+        }
+      }
+      if (_queue.size() >= _max_elements) return replace_result_e::full;
+      _queue.emplace_back(std::move(value));
+      ul.unlock();
+      _cv.notify_all();
+      return replace_result_e::inserted;
+    }
 
     // Loss-intolerant producers must not invoke raise()'s legacy clear-on-full.
     // Failure is explicit; existing producers retain their original behavior.

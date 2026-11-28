@@ -16,6 +16,8 @@ namespace video_fec {
   constexpr int automatic_preference = -1;
   constexpr unsigned max_client_percentage = 100;
   constexpr std::size_t max_blocks = 4;  // Two-bit FEC block count on the wire.
+  constexpr std::size_t max_data_shards_per_block = 1023;  // Ten-bit packet index.
+  constexpr std::size_t max_data_shards_per_frame = max_blocks * max_data_shards_per_block;
 
   std::optional<int>
   parse_preference(std::string_view text) noexcept;
@@ -67,11 +69,14 @@ namespace video_fec {
     set_mode(mode_e mode, unsigned percentage);
     bool
     report(std::uint32_t sequence, std::uint32_t data, std::uint32_t missing, std::int64_t now_ms);
+    // Ratio for a frame of `data` packets. While loss is reported it follows the loss estimate.
+    // Once the loss history expires, the protection that silenced the loss is kept for any extra
+    // clean time that earlier premature releases earned, then released.
     unsigned
-    percentage(std::size_t data, unsigned minimum_parity, std::int64_t now_ms) const;
+    percentage(std::size_t data, unsigned minimum_parity, std::int64_t now_ms);
 
   private:
-    mutable std::mutex mutex_;
+    std::mutex mutex_;
     mode_e mode_ = mode_e::host;
     unsigned host_percentage_ = 20;
     unsigned fixed_percentage_ = 20;
@@ -81,5 +86,11 @@ namespace video_fec {
     std::int64_t last_report_ms_ = -1;
     std::int64_t resume_since_ms_ = -1;
     loss_window_t loss_window_;
+    std::int64_t clean_since_ms_ = -1;  // When the loss history first expired after a loss.
+    std::int64_t released_ms_ = -1;  // Negative while protected, the release time afterwards.
+    std::int64_t decay_at_ms_ = -1;  // A release clean until then halves the extra wait.
+    std::int64_t release_delay_ms_ = 0;  // Extra clean time demanded before the next release.
+    double epoch_loss_ = 0;  // Highest estimate of the current protected period.
+    double released_loss_ = 0;  // The estimate the released protection was selected for.
   };
 }  // namespace video_fec

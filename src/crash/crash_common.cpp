@@ -101,7 +101,7 @@ namespace crash {
         ++ticks;
         platform_tick();
         if (ticks % 30 == 0) refresh_config();
-        const auto now = now_ms();
+        const auto now = awake_ms();
         for (int i = 0; i < max_slots; ++i) {
           auto &slot = g.slots[i];
           if (!slot.used.load(std::memory_order_acquire)) continue;
@@ -110,9 +110,9 @@ namespace crash {
             slot.reported.store(false, std::memory_order_relaxed);
             continue;
           }
-          if (now - since < slot.timeout_ms || slot.reported.load(std::memory_order_relaxed)) continue;
+          if (!hang_overdue(since, now, slot.timeout_ms) || slot.reported.load(std::memory_order_relaxed)) continue;
           slot.reported.store(true, std::memory_order_relaxed);
-          if (g.enabled.load()) platform_report_hang(i);
+          platform_report_hang(i);  // writes its report only while reports are on; a hang inside a graphics driver is marked either way
         }
       }
     }
@@ -125,6 +125,16 @@ namespace crash {
     copy_to(g.version, sizeof(g.version), options.version);
     copy_to(g.os_version, sizeof(g.os_version), options.os_version);
     copy_to(g.pending_utf8, sizeof(g.pending_utf8), pending_dir(options.config_dir).string());
+    copy_to(g.mark_utf8, sizeof(g.mark_utf8), (options.config_dir / "crashes" / gpu_driver::mark_file_name).string());
+    if (const char *test = std::getenv("SUNSHINE_TEST_DRIVER_MODULE"); test && *test) {
+      // tests and the end-to-end tool only: "<module file name>=<intel|nvidia|amd>" stands a module of the host in for a driver
+      const std::string_view spec { test };
+      if (const auto eq = spec.find('='); eq != std::string_view::npos) {
+        if (const auto vendor = gpu_driver::vendor_from_word(spec.substr(eq + 1)); vendor != gpu_driver::vendor_e::none) {
+          gpu_driver::set_test_module(spec.substr(0, eq), vendor);
+        }
+      }
+    }
     g.start_unix = now_unix();
     g.start_ms = now_ms();
     {
@@ -200,9 +210,15 @@ namespace crash {
     s.used.store(false, std::memory_order_release);
   }
 
+  std::uint64_t
+  awake_ms() {
+    return detail::platform_awake_ms();
+  }
+
   void
   watch_busy(int slot) {
-    if (slot >= 0 && slot < max_slots) g.slots[slot].busy_since_ms.store(now_ms(), std::memory_order_release);
+    // 0 means idle: the clock starts well above it, and the floor keeps a clock that reads 0 from marking the slot idle
+    if (slot >= 0 && slot < max_slots) g.slots[slot].busy_since_ms.store(std::max<std::uint64_t>(awake_ms(), 1), std::memory_order_release);
   }
 
   void

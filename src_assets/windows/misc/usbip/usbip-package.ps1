@@ -1,7 +1,7 @@
 #requires -version 5.1
 [CmdletBinding()]
 param(
-  [ValidateSet('install', 'uninstall', 'remove', 'status', 'verify')][string]$Action = 'install',
+  [ValidateSet('install', 'uninstall', 'remove', 'status', 'verify', 'replace')][string]$Action = 'install',
   [string]$Payload,
   [string]$InstallRoot,
   [string]$State,
@@ -10,22 +10,37 @@ param(
   [int]$SimulateHubProblem = 0
 )
 Set-StrictMode -Version Latest
+# The Panel and the registered uninstaller can launch this script directly,
+# bypassing install-usbip.bat. Windows PowerShell needs .EXE in PATHEXT for
+# native commands in a pipeline, including the guard and pnputil.
+if (($env:PATHEXT -split ';') -notcontains '.EXE') {
+  $env:PATHEXT = '.EXE;' + $env:PATHEXT
+}
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'usbip-package-functions.psm1') -Force -DisableNameChecking
 if (-not $Payload) { $Payload = Join-Path $PSScriptRoot 'usbip' }
 if (-not $InstallRoot) { $InstallRoot = Join-Path $env:ProgramFiles 'USBip' }
 if (-not $HostRoot) { $HostRoot = Split-Path -Parent $PSScriptRoot }
 Import-Module (Join-Path $PSScriptRoot 'usbip-package-ownership.psm1') -Force -DisableNameChecking
+# `replace` is the one action that may touch an install we did not prove to be ours: the person asked for it in the
+# panel and confirmed what it does. It then runs as an install that takes over the registered upstream package.
+# Refused (107, nothing changed) unless exactly one upstream registration with its own uninstaller is there.
+$confirmed = $Action -eq 'replace'
+if ($confirmed) { $Action = 'install' }
 # Decide before creating state/log files, taking the lifecycle mutex or invoking
 # any guard. External ownership overrides every install and removal action.
-$ownership = Get-UsbipOwnership $InstallRoot $HostRoot
+$ownership = Get-UsbipOwnership $InstallRoot $HostRoot -ConfirmedReplace:$confirmed
+if ($confirmed -and $ownership.ownership -ne 'legacy-owned') {
+  Write-Output 'USB/IP cannot be replaced from here; no changes were made.'
+  exit 107
+}
 if ($Action -ne 'verify' -and $ownership.ownership -eq 'external') {
   if ($Action -eq 'status') {
     $ready = $ownership.compatible -and (Test-UsbipExternalReady $InstallRoot)
-    [pscustomobject]@{ ownership = 'external'; compatible = $ownership.compatible; reason = $ownership.reason; ready = $ready } | ConvertTo-Json -Compress
+    [pscustomobject]@{ ownership = 'external'; compatible = $ownership.compatible; reason = $ownership.reason; ready = $ready; replaceable = $ownership.replaceable; version = $ownership.version } | ConvertTo-Json -Compress
     exit 0
   }
-  Write-Output 'USB/IP is externally managed; no changes were made.'
+  Write-Output "USB/IP is externally managed; no changes were made. reason=$($ownership.reason)"
   if ($Action -eq 'install' -and -not $ownership.compatible) { exit 106 }
   exit 0
 }
@@ -59,7 +74,7 @@ try {
   if ($Action -eq 'status') {
     $ready = $false
     try { $manifest = Read-UsbipManifest $InstallRoot; $ready = Test-UsbipReady $InstallRoot $manifest } catch { }
-    [pscustomobject]@{ ownership = $ownership.ownership; compatible = $ownership.compatible; layout = 'usbip-slim-v1'; ready = $ready; legacy = @(Get-UsbipLegacyEntries).Count -gt 0 } | ConvertTo-Json -Compress
+    [pscustomobject]@{ ownership = $ownership.ownership; compatible = $ownership.compatible; layout = 'usbip-slim-v1'; ready = $ready; legacy = @(Get-UsbipLegacyEntries).Count -gt 0; replaceable = $false; version = $ownership.version } | ConvertTo-Json -Compress
     exit 0
   }
   # Internal rollback is called by a child guard while this process owns the
@@ -70,9 +85,10 @@ try {
   if (-not $locked) { throw 'Another USB/IP install or uninstall is running' }
   # Ownership read before the lock can be stale: another lifecycle process may have changed the installation while this
   # one waited. Decide again under the lock and apply the same external/absent rules before anything is touched.
-  $ownership = Get-UsbipOwnership $InstallRoot $HostRoot
+  $ownership = Get-UsbipOwnership $InstallRoot $HostRoot -ConfirmedReplace:$confirmed
+  if ($confirmed -and $ownership.ownership -ne 'legacy-owned') { Write-Output 'USB/IP cannot be replaced from here; no changes were made.'; $rc = 107; exit 107 }
   if ($ownership.ownership -eq 'external') {
-    Write-Output 'USB/IP is externally managed; no changes were made.'
+    Write-Output "USB/IP is externally managed; no changes were made. reason=$($ownership.reason)"
     if ($Action -eq 'install' -and -not $ownership.compatible) { $rc = 106; exit 106 }
     $rc = 0; exit 0
   }
@@ -88,7 +104,7 @@ try {
   if ((Invoke-Guard snapshot) -ne 0) { exit 105 }
   $operationFailed = $false
   try {
-    if ($Action -eq 'install') { Install-UsbipPackage $Payload $InstallRoot $PSScriptRoot $HostRoot }
+    if ($Action -eq 'install') { Install-UsbipPackage $Payload $InstallRoot $PSScriptRoot $HostRoot -ConfirmedReplace:$confirmed }
     else {
       Remove-UsbipLegacy $InstallRoot $HostRoot
       if ($ownership.ownership -eq 'managed') { Remove-UsbipPackage $InstallRoot -KeepFiles }

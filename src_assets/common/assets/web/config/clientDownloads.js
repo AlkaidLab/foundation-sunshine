@@ -8,6 +8,11 @@ const voidLinkStoreDownloads = (locale) => ({
     : 'https://apps.apple.com/us/app/voidlink-extreme/id6755103808',
 })
 
+const voidLinkLinks = [
+  { id: 'store-cn', title: 'App Store', detail: 'CN', icon: 'download', url: 'https://apps.apple.com/cn/app/voidlink/id6747717070' },
+  { id: 'store-global', title: 'App Store', detail: 'US', icon: 'download', url: 'https://apps.apple.com/us/app/voidlink-extreme/id6755103808' },
+]
+
 export const CLIENT_FEATURE_ICONS = {
   android: ['sports_esports', 'sensors', 'light_mode', 'mic'],
   windows: ['light_mode', 'content_paste', 'mic', 'folder_open'],
@@ -80,12 +85,7 @@ export const CLIENT_PLATFORMS = [
     friendLink: true,
     icon: 'mobile',
     getDownloadUrls: voidLinkStoreDownloads,
-    // the project page and both stores (the sheet's button opens the one of the interface language)
-    links: [
-      { id: 'voidlink-project', title: 'VoidLink', detail: 'GitHub The-Fried-Fish/VoidLink-previously-moonlight-zwm', icon: 'code', url: 'https://github.com/The-Fried-Fish/VoidLink-previously-moonlight-zwm#readme' },
-      { id: 'store-cn', title: 'App Store', detail: 'CN · KR · VN', icon: 'download', url: 'https://apps.apple.com/app/voidlink/id6747717070' },
-      { id: 'store-global', title: 'App Store', detail: 'Global', icon: 'download', url: 'https://apps.apple.com/app/voidlink-extreme/id6755103808' },
-    ],
+    links: voidLinkLinks,
   },
   {
     id: 'macos',
@@ -141,6 +141,6 @@ export const CLIENT_PLATFORMS = [
     friendLink: true,
     icon: 'tv',
     getDownloadUrls: voidLinkStoreDownloads,
-    links: [{ id: 'testflight', title: 'TestFlight', detail: 'VoidLink beta · Apple TV', icon: 'science', url: 'https://testflight.apple.com/join/k7gs61mZ' }],
+    links: voidLinkLinks,
   },
 ]

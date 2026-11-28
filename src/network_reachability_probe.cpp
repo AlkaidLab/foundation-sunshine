@@ -6,7 +6,9 @@
  * own listening sockets, the local Windows firewall policy, the gateway's UPnP
  * IGD service and a TLS handshake against the host's own WAN address.
  */
+#include "network_pin.h"
 #include "network_reachability.h"
+#include "single_flight.h"
 
 #include <algorithm>
 #include <array>
@@ -16,6 +18,7 @@
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
+#include <future>
 #include <fstream>
 #include <map>
 #include <memory>
@@ -916,13 +919,11 @@ namespace reachability {
     // One TLS handshake against an address and port, bounded to 2.5 seconds in total. The certificate is
     // not verified; `identity_match` says whether it is this host's own. `error` tells a refusal (a host
     // answered) from a timeout (nothing did) and from an address the network cannot route.
+    //
+    // `pin`: leave through this adapter (network_pin.h); `pin_failed` is set when the system refused it and the socket ran on the system route.
     handshake_t
-    handshake_to(const std::string &address, std::uint16_t port, const std::string &certificate_path) {
+    handshake_once(const std::string &address, std::uint16_t port, const std::string &certificate_path, const network_pin::pin_t *pin, bool &pin_failed) {
       handshake_t result;
-      if (address.empty() || port == 0) {
-        result.error = "failed";
-        return result;
-      }
       const auto started = std::chrono::steady_clock::now();
 
       try {
@@ -937,6 +938,8 @@ namespace reachability {
         bool connected = false;
         bool timed_out = false;
         std::string error;
+        std::vector<boost::asio::ip::tcp::endpoint> candidates;
+        std::function<void(std::size_t)> connect_next;
         const auto stop_timer = [&]() {
           timer.cancel();
         };
@@ -957,18 +960,41 @@ namespace reachability {
             stop_timer();
             return;
           }
-          boost::asio::async_connect(stream.next_layer(), endpoints, [&](const boost::system::error_code &connect_error, const boost::asio::ip::tcp::endpoint &) {
-            if (connect_error) {
-              error = connect_error == boost::asio::error::connection_refused ? "refused" : "unreachable";
+          // One endpoint after the other; each socket is opened here so that it can be pinned before it connects (a range connect closes and reopens it).
+          for (const auto &entry : endpoints) candidates.push_back(entry.endpoint());
+          connect_next = [&](std::size_t position) {
+            if (position >= candidates.size()) {
+              error = "unreachable";
               stop_timer();
               return;
             }
-            stream.async_handshake(boost::asio::ssl::stream_base::client, [&](const boost::system::error_code &handshake_error) {
-              connected = !handshake_error;
-              if (handshake_error) error = "tls_failed";
-              stop_timer();
+            boost::system::error_code socket_error;
+            stream.next_layer().close(socket_error);
+            stream.next_layer().open(candidates[position].protocol(), socket_error);
+            if (socket_error) {
+              connect_next(position + 1);
+              return;
+            }
+            if (pin && !network_pin::pin_socket(stream.next_layer().native_handle(), candidates[position].protocol() == boost::asio::ip::tcp::v6() ? 6 : 4, *pin)) pin_failed = true;
+            stream.next_layer().async_connect(candidates[position], [&, position](const boost::system::error_code &connect_error) {
+              if (connect_error) {
+                if (timed_out) return;
+                if (position + 1 < candidates.size()) {
+                  connect_next(position + 1);
+                  return;
+                }
+                error = connect_error == boost::asio::error::connection_refused ? "refused" : "unreachable";
+                stop_timer();
+                return;
+              }
+              stream.async_handshake(boost::asio::ssl::stream_base::client, [&](const boost::system::error_code &handshake_error) {
+                connected = !handshake_error;
+                if (handshake_error) error = "tls_failed";
+                stop_timer();
+              });
             });
-          });
+          };
+          connect_next(0);
         });
 
         context.run();
@@ -988,13 +1014,32 @@ namespace reachability {
       return result;
     }
 
+    // One handshake, pinned to the physical adapter when `bypass` is on and the destination is a public one; when nothing answers through the adapter, once more on the system route (network_pin.h).
+    handshake_t
+    handshake_to(const std::string &address, std::uint16_t port, const std::string &certificate_path, bool bypass) {
+      if (address.empty() || port == 0) {
+        handshake_t result;
+        result.error = "failed";
+        return result;
+      }
+      handshake_t result;
+      network_pin::attempt(bypass && network_pin::pinnable_host(address), [&](const network_pin::pin_t *pin) {
+        bool pin_failed = false;
+        result = handshake_once(address, port, certificate_path, pin, pin_failed);
+        // a refusal and a failed TLS handshake are answers of a host; a timeout or an unreachable address is not
+        const bool answered = result.connected || result.error == "refused" || result.error == "tls_failed";
+        return network_pin::attempt_t { answered, pin_failed };
+      });
+      return result;
+    }
+
     hairpin_status_t
-    test_hairpin(const std::string &wan_ip, std::uint16_t port, const std::string &certificate_path) {
+    test_hairpin(const std::string &wan_ip, std::uint16_t port, const std::string &certificate_path, bool bypass) {
       hairpin_status_t result;
       result.port = port;
       if (wan_ip.empty() || port == 0) return result;
       result.tried = true;
-      const auto attempt = handshake_to(wan_ip, port, certificate_path);
+      const auto attempt = handshake_to(wan_ip, port, certificate_path, bypass);
       result.ok = attempt.connected;
       result.identity_match = attempt.identity_match;
       return result;
@@ -1008,8 +1053,15 @@ namespace reachability {
       snapshot.checked_at = format_utc_iso(now);
       snapshot.ports = options.ports;
 
+      const auto stage = [&options](std::string_view name, bool finished) {
+        if (options.progress) options.progress(name, finished);
+      };
+      stage("listening", false);
       apply_sockets(snapshot.ports, own_sockets(options.process_id));
+      stage("listening", true);
+      stage("firewall", false);
       apply_windows_firewall(snapshot.ports);
+      stage("firewall", true);
 
       const auto adapters = enumerate_adapters();
       std::string host_public_ip;
@@ -1026,7 +1078,7 @@ namespace reachability {
           if (classify_wan_ip(address) != ip_class_e::public_address) continue;
           const auto parsed = boost::asio::ip::make_address(address);
           if (host_public_ip.empty() || (parsed.is_v4() && boost::asio::ip::make_address(host_public_ip).is_v6())) {
-            host_public_ip = address;
+            host_public_ip = address.substr(0, address.find('%'));  // an address, not its zone
           }
         }
       }
@@ -1067,16 +1119,40 @@ namespace reachability {
       public_inputs.web_ui_exposed_to_wan = origin == "wan";
       public_inputs.evidence = evidence;
 
+      stage("router", false);
       const auto router = query_router(snapshot.ports);
       router_status_t router_status = router;
+      stage("router", true);
 
       // The endpoints in force (external_endpoints, or the legacy external_ip), probed in parallel.
       const auto endpoint_list = public_address::effective_endpoints(options.external_endpoints, options.external_ip);
       const auto default_http_port = options.default_http_port != 0 ? options.default_http_port : static_cast<std::uint16_t>(options.hairpin_port + public_address::HTTPS_PORT_OFFSET);
       endpoint_prober_t prober;
       prober.resolve = [](const std::string &host) { return resolve_host(host, std::chrono::seconds { 2 }); };
-      prober.handshake = [&options](const std::string &address, std::uint16_t port) { return handshake_to(address, port, options.certificate_path); };
-      public_inputs.endpoints = probe_endpoints(endpoint_list.endpoints, default_http_port, router_status.wan_ip, prober);
+      prober.handshake = [&options](const std::string &address, std::uint16_t port) { return handshake_to(address, port, options.certificate_path, options.bypass); };
+      stage("endpoints", false);
+      public_inputs.endpoints = probe_endpoints(endpoint_list.endpoints, default_http_port, router_status.wan_ip, prober, &snapshot.ports);
+      // The outside check of the public endpoints (when it is on): in parallel, bounded by the service's own timeouts.
+      if (options.outside) {
+        std::vector<std::future<outside_t>> asks;
+        std::vector<std::size_t> which;
+        for (std::size_t index = 0; index < public_inputs.endpoints.size(); ++index) {
+          const auto &endpoint = public_inputs.endpoints[index];
+          if (endpoint.scope != scope_e::public_address || which.size() >= 2) continue;
+          which.push_back(index);
+          asks.push_back(std::async(std::launch::async, [&options, endpoint]() { return options.outside(endpoint); }));
+        }
+        for (std::size_t n = 0; n < asks.size(); ++n) {
+          auto answer = asks[n].get();
+          auto &endpoint = public_inputs.endpoints[which[n]];
+          endpoint.outside = answer;
+          if (router_proxy_suspected(router_status, endpoint.outside)) endpoint.outside.reason = "router_proxy";
+          // an answer from outside settles what the handshake from inside could not: a failure is a failure, a connection that reached another device is a finding
+          if (answer.state == "closed" || answer.state == "timeout" || answer.state == "another_host") endpoint.inconclusive = false;
+          if (answer.state == "reachable") endpoint.inconclusive = false;
+        }
+      }
+      stage("endpoints", true);
 
       // The first endpoint also fills the single-address fields older clients of the API read.
       configured_address_t configured;
@@ -1105,7 +1181,7 @@ namespace reachability {
         hairpin.target = attempt.address;
       }
       else if (classify_wan_ip(router_status.wan_ip) == ip_class_e::public_address) {
-        hairpin = test_hairpin(router_status.wan_ip, hairpin_port, options.certificate_path);
+        hairpin = test_hairpin(router_status.wan_ip, hairpin_port, options.certificate_path, options.bypass);
         hairpin.target = router_status.wan_ip;
       }
       else {
@@ -1120,10 +1196,7 @@ namespace reachability {
       return snapshot;
     }
 
-    std::mutex cache_mutex;
-    snapshot_t cached_snapshot;
-    std::int64_t cached_at = 0;
-    std::string cache_key;
+    single_flight::cell_t<snapshot_t> probe_cell;
 
     std::string
     options_key(const probe_options_t &options) {
@@ -1132,22 +1205,15 @@ namespace reachability {
         key << port.proto << '/' << port.port << '/' << port.role << ';';
       }
       key << options.certificate_path << '|' << options.origin_web_ui_allowed << '|' << options.hairpin_port << '|' << options.process_id;
-      key << '|' << options.external_ip << '|' << options.external_endpoints << '|' << options.default_http_port;
+      key << '|' << options.external_ip << '|' << options.external_endpoints << '|' << options.default_http_port << '|' << options.bypass;
       return key.str();
     }
   }  // namespace
 
   snapshot_t
   probe(const probe_options_t &options, bool refresh) {
-    std::lock_guard lock { cache_mutex };
+    // One probe at a time per set of options; a caller that asks while it runs waits for it (single_flight.h), and a refresh right after a finished run is answered by that run.
     const auto now = now_epoch_seconds();
-    const auto key = options_key(options);
-    if (!refresh && cached_at != 0 && key == cache_key && now - cached_at < CACHE_TTL_SECONDS) {
-      return cached_snapshot;
-    }
-    cached_snapshot = collect_snapshot(options, now);
-    cached_at = now;
-    cache_key = key;
-    return cached_snapshot;
+    return probe_cell.get(options_key(options), refresh, now, CACHE_TTL_SECONDS, REFRESH_REUSE_SECONDS, [&]() { return collect_snapshot(options, now); });
   }
 }  // namespace reachability

@@ -4,6 +4,7 @@ import { useI18n } from 'vue-i18n'
 import { MBanner, MButton, MChoiceCards, MExpander, MFooter, MGroup, MIcon, MInfo, MPageLoading, MSection, displayTreeTexts } from 'foundation-ui/vue'
 import { lazyPane } from '../../../utils/lazyPane.js'
 import BitrateControl from '../audiovideo/BitrateControl.vue'
+import CfgExpert from '../../../components/cfg/CfgExpert.vue'
 import EncoderMatrix from '../encoders/EncoderMatrix.vue'
 import { useSettingsLive } from '../../../composables/useSettingsLive.js'
 import { useCodecFormat } from '../../../composables/useCodecFormat.js'
@@ -94,6 +95,12 @@ const vendorName = computed(() => (shown.value ? NAME[shown.value] || encoderLab
     <component :is="COMPONENTS[shown]" :key="shown" :platform="platform" :config="config" />
   </MExpander>
   <MFooter v-else-if="!chosenTab">{{ $t('config.encoder_auto_none') }}</MFooter>
+
+  <MSection v-if="platform === 'linux'" :title="$t('config.vaapi_strict_rc_buffer')">
+    <MGroup>
+      <CfgExpert control="switch" :config="config" k="vaapi_strict_rc_buffer" :on="true" :off="false" def="false" help="config.vaapi_strict_rc_buffer_desc" />
+    </MGroup>
+  </MSection>
 </template>
 
 <style>

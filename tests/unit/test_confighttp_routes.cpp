@@ -770,3 +770,36 @@ TEST_F(ConfigHttpRoutes, FullLogDownloadStreamsFilesBeyondTheResponseBufferLimit
   file.read(bytes.data(), bytes.size());
   EXPECT_EQ(bytes, "end");
 }
+
+// 恢复默认设置: both POST routes end in a restart of the host, so what these tests cover is every way a request is refused before anything is touched. The state-changing routes use the
+// same authenticate() as the rest (a session cookie needs the X-CSRF-Token header: CookieAuthenticatedStateChangeRequiresCsrfHeader in test_session_auth_routes.cpp).
+TEST_F(ConfigHttpRoutes, SettingsResetRoutesRefuseARequestThatIsNotAuthenticatedJsonFromThisSite) {
+  auto client = connect();
+  const web::CaseInsensitiveMultimap json_type { { "Content-Type", "application/json" } };
+  for (const auto *path : { "/api/config/reset", "/api/config/reset/restore" }) {
+    SCOPED_TRACE(path);
+    const auto no_type = client->request("POST", path, "{}", { { "Authorization", authorization() } });
+    EXPECT_EQ(no_type->status_code, "400 Bad Request");
+    const auto anonymous = client->request("POST", path, "{}", json_type);
+    EXPECT_EQ(anonymous->status_code, "401 Unauthorized");
+    EXPECT_EQ(nlohmann::json::parse(anonymous->content.string())["code"], "unauthenticated");
+    const auto cross_site = client->request("POST", path, "{}", { { "Content-Type", "application/json" }, { "Origin", "https://evil.example" }, { "Authorization", authorization() } });
+    EXPECT_EQ(cross_site->status_code, "403 Forbidden");
+  }
+  const auto listing = client->request("GET", "/api/config/reset");
+  EXPECT_EQ(listing->status_code, "401 Unauthorized");
+  EXPECT_EQ(client->request("GET", "/api/config/reset", "", { { "Origin", "https://evil.example" } })->status_code, "403 Forbidden");
+}
+
+TEST_F(ConfigHttpRoutes, SettingsResetRefusesABodyThatIsNotABooleanChoiceBeforeTouchingAnything) {
+  auto client = connect();
+  for (const auto *body : { R"({"clear_apps":"yes"})", R"({"clear_apps":1})", "[]", R"("reset")" }) {
+    SCOPED_TRACE(body);
+    const auto response = client->request("POST", "/api/config/reset", body, { { "Content-Type", "application/json" }, { "Authorization", authorization() } });
+    EXPECT_EQ(response->status_code, "400 Bad Request");
+    const auto answer = nlohmann::json::parse(response->content.string());
+    EXPECT_EQ(answer["status"], false);
+    EXPECT_EQ(answer["code"], "bad_request");
+  }
+  EXPECT_EQ(client->request("POST", "/api/config/reset", "{not json", { { "Content-Type", "application/json" }, { "Authorization", authorization() } })->status_code, "400 Bad Request");
+}

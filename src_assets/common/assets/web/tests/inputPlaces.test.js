@@ -2,16 +2,16 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 
-// 输入与外设 is four pages in the Web UI: /config#tab=input&sub=gamepad|keyboard|mouse|usb, a list like 音频; there is no 高级 section and no drivers page
+// 输入与外设 has four rail places: /config#tab=input&sub=gamepad|keyboard|mouse|usb; there is no 高级 section and no drivers page
 const read = (p) => readFile(new URL(p, import.meta.url), 'utf8')
 
-test('the input tab is four places and nothing else: 手柄, 键盘, 鼠标与触控, USB 转发', async () => {
+test('the input tab has four rail places and the clipboard sync switch lives in the keyboard page', async () => {
   const inputs = await read('../configs/tabs/Inputs.vue')
   assert.deepEqual([...inputs.matchAll(/<CfgSub (?:v-if="[^"]*" )?id="(\w[\w-]*)"/g)].map((m) => m[1]), ['gamepad', 'keyboard', 'mouse', 'usb'])
   assert.ok(!/<CfgSub[^>]*id="(expert|drivers)"/.test(inputs) && !/<CfgTop/.test(inputs), 'no 高级 page, no drivers page: the items are at the bottom of their own page')
   assert.match(inputs, /<CfgSub v-if="platform === 'windows'" id="usb"/, 'USB forwarding is a Windows host setting')
   const keyboard = inputs.slice(inputs.indexOf('<CfgSub id="keyboard"'), inputs.indexOf('<CfgSub id="mouse"'))
-  for (const key of ['keyboard', 'always_send_scancodes', 'key_rightalt_to_key_win', 'key_repeat_delay', 'key_repeat_frequency']) assert.ok(keyboard.includes(`k="${key}"`), key)
+  for (const key of ['keyboard', 'clipboard_sync', 'always_send_scancodes', 'key_rightalt_to_key_win', 'key_repeat_delay', 'key_repeat_frequency']) assert.ok(keyboard.includes(`k="${key}"`), key)
 })
 
 test('the shell has the four pages as a list of the rail, the way audio has', async () => {

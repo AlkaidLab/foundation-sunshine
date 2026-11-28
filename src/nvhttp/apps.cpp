@@ -1,12 +1,14 @@
 #include "apps.h"
 #include "../startup_gate.h"
 #include "poster.h"
+#include "src/generated_cover.h"
 #include <algorithm>
 #include <array>
 #include <cctype>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -17,8 +19,11 @@
 #include <nlohmann/json.hpp>
 
 #include "src/client_interface.h"
+#include "src/config.h"
+#include "src/default_apps.h"
 #include "src/file_handler.h"
 #include "src/logging.h"
+#include "src/platform/common.h"
 #include "src/process.h"
 #include "src/utility.h"
 #include "src/video.h"
@@ -79,7 +84,7 @@ namespace nvhttp::apps {
 
     // Hero, logo and icon keep the art-version validator. Only posters are tiered.
     void
-    serve_other_art(resp_https_t response, req_https_t request, const args_t &args, const proc::ctx_t &app, const std::filesystem::path &served, const std::string &type) {
+    serve_other_art(resp_https_t response, req_https_t request, const args_t &args, const proc::ctx_t &app, const std::filesystem::path &served, const std::string &type, const std::string &cover_style) {
       std::error_code time_error;
       const auto written = std::filesystem::last_write_time(served, time_error);
       // fs-n4950-20261111 [time.point.cast]: a file time becomes the system clock's, for the seconds an HTTP-date carries.
@@ -87,7 +92,8 @@ namespace nvhttp::apps {
 
       web::CaseInsensitiveMultimap validators;
       // fs-rfc9110-http-20261110 section 8.8.3: one tag per art kind.
-      const auto etag = "\"" + proc::app_art_version(app) + "-" + type + "\"";
+      // the tag of the style the file was chosen with: a style saved in between must not give the old picture the new tag
+      const auto etag = "\"" + proc::app_art_version(app, false, cover_style) + "-" + type + "\"";
       validators.emplace("ETag", etag);
       // fs-rfc9110-cond-20261111 section 8.8.2: the file's own time.
       if (last_modified >= 0) validators.emplace("Last-Modified", client_interface::format_http_date(last_modified));
@@ -147,7 +153,7 @@ namespace nvhttp::apps {
       pt::ptree app;
 
       app.put("IsHdrSupported"s, video::active_hevc_mode == 3 ? 1 : 0);
-      app.put("AppTitle"s, proc.name);
+      app.put("AppTitle"s, default_apps::client_name(proc.default_id, proc.name));
       app.put("ID"s, proc.id);
       app.put("FsKind"s, client_interface::to_string(proc.fs_facts.kind));
       app.put("FsDefault"s, proc.fs_facts.is_default ? 1 : 0);
@@ -171,7 +177,7 @@ namespace nvhttp::apps {
       for (auto &cmd : proc.menu_cmds) {
         json json_cmd;
         json_cmd["id"] = cmd.id;
-        json_cmd["name"] = cmd.name;
+        json_cmd["name"] = default_apps::client_menu_name(cmd.id, cmd.name);
 
         json_cmds.push_back(json_cmd);
       }
@@ -200,7 +206,18 @@ namespace nvhttp::apps {
         response->write(web::StatusCode::not_found, "App asset not found");
         return;
       }
-      const auto app_image = proc::app_art_asset_path(*app, type);
+      const auto cover_style = config::generated_cover_style();
+      const auto cover = generated_cover::describe(proc::cover_app(*app), cover_style, platf::appdata());
+      std::string app_image;
+      if (type == "poster" && cover.source == generated_cover::source_e::generated && !cover.portrait.path.empty()) {
+        app_image = file_handler::path_to_utf8(cover.portrait.path);
+      }
+      else if (type == "hero" && cover.source == generated_cover::source_e::generated && !cover.landscape.path.empty()) {
+        app_image = file_handler::path_to_utf8(cover.landscape.path);
+      }
+      else {
+        app_image = proc::app_art_asset_path(*app, type);
+      }
       if (app_image.empty()) {
         response->write(web::StatusCode::not_found, "App asset not found");
         return;
@@ -208,7 +225,7 @@ namespace nvhttp::apps {
 
       const auto source = file_handler::path_from_utf8(app_image);
       if (type != "poster") {
-        serve_other_art(response, request, args, *app, source, type);
+        serve_other_art(response, request, args, *app, source, type, cover_style);
         return;
       }
       poster::schedule(source);
@@ -217,8 +234,23 @@ namespace nvhttp::apps {
         response->write(web::StatusCode::not_found, "App asset not found");
         return;
       }
-      const auto preview_requested = type == "poster" && args.find("fsVariant") != args.end() && args.find("fsVariant")->second == "preview";
-      const auto selected = preview_requested ? poster::preview(source).value_or(*full) : *full;
+      // Desktop wallpaper posters and explicit preview requests use the preview representation. Large sources wait
+      // briefly for generation, then return an uncached default cover when it is still pending.
+      const auto preview_only = type == "poster" && (app->image_path == "desktop" || (args.find("fsVariant") != args.end() && args.find("fsVariant")->second == "preview"));
+      std::optional<poster::representation_t> preview;
+      bool default_cover = false;
+      if (preview_only) {
+        preview = poster::preview_when_ready(source);
+        if (!preview) {
+          preview = poster::full(file_handler::path_from_utf8(proc::default_app_image_path()));
+          default_cover = true;
+        }
+        if (!preview) {
+          response->write(web::StatusCode::not_found, "App asset not found");
+          return;
+        }
+      }
+      const auto &selected = preview_only ? *preview : *full;
 
       web::CaseInsensitiveMultimap headers;
       // fs-rfc9110-ranges-20261112 sections 8.8.3, 13.1.2, 14.2-14.4:
@@ -227,12 +259,19 @@ namespace nvhttp::apps {
       headers.emplace("ETag", selected.etag);
       headers.emplace("Accept-Ranges", "bytes");
       headers.emplace("Content-Type", selected.content_type);
-      if (preview_requested) {
-        headers.emplace("X-FS-Poster-Variant", "preview");
+      if (preview_only) {
+        // Identify whether the response body is the preview or the fallback cover.
+        headers.emplace("X-FS-Poster-Variant", default_cover ? "default" : "preview");
         headers.emplace("X-FS-Poster-Full-ETag", full->etag);
         headers.emplace("X-FS-Poster-Full-Length", std::to_string(full->length));
       }
-      if (args.find("v") != args.end()) headers.emplace("Cache-Control", "public, immutable");
+      // Do not let the fallback cover become the immutable representation for this art version.
+      if (default_cover) {
+        headers.emplace("Cache-Control", "no-store");
+      }
+      else if (args.find("v") != args.end()) {
+        headers.emplace("Cache-Control", "public, immutable");
+      }
 
       std::string if_none_match;
       for (auto [it, end] = request->header.equal_range("If-None-Match"); it != end; ++it) {

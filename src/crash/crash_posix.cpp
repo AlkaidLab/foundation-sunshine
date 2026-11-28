@@ -21,6 +21,7 @@
   #include <string_view>
   #include <sys/stat.h>
   #include <thread>
+  #include <time.h>
   #include <unistd.h>
 
 namespace crash::detail {
@@ -110,9 +111,26 @@ namespace crash::detail {
       if (written == (ssize_t) len) rename(tmp, path);
     }
 
+    /// The top frame lies in a graphics driver: leave the mark (gpu_driver.h) for the next start, whether or not error reports are on.
+    void
+    mark_driver(const frame_t *frames, std::size_t count, const char *kind) {
+      const auto hit = driver_frame(frames, count);
+      if (hit.vendor == gpu_driver::vendor_e::none || !g.mark_utf8[0]) return;
+      const auto mark = gpu_driver::make_mark(hit.vendor, frames[hit.index].module, kind, now_unix());
+      char text[gpu_driver::mark_buffer_size];
+      const auto len = gpu_driver::render_mark(mark, text, sizeof(text));
+      if (!len) return;
+      char tmp[path_cap + 8];
+      std::snprintf(tmp, sizeof(tmp), "%s.tmp", g.mark_utf8);
+      const int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+      if (fd < 0) return;
+      const auto written = write(fd, text, len);
+      close(fd);
+      if (written == (ssize_t) len) rename(tmp, g.mark_utf8);
+    }
+
     void
     capture_and_write(const char *kind, const char *code, int skip) {
-      if (!g.enabled.load()) return;
       void *raw[max_frames + 8];
       int n = backtrace(raw, (int) (max_frames + 8));
       frame_t frames[max_frames];
@@ -122,7 +140,8 @@ namespace crash::detail {
         std::memcpy(frames[0].module, "unknown", 8);
         count = 1;
       }
-      write_meta_file(kind, code, frames, count);
+      mark_driver(frames, count, kind);
+      if (g.enabled.load()) write_meta_file(kind, code, frames, count);
     }
 
     const char *
@@ -180,6 +199,17 @@ namespace crash::detail {
     if (++g_tick % 30 == 0) refresh_modules();
   }
 
+  std::uint64_t
+  platform_awake_ms() {
+  #ifdef __APPLE__
+    // CLOCK_UPTIME_RAW does not count the time the system sleeps; read directly, so it does not depend on the clock the C++ library picks for steady_clock
+    return clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1000000ull;
+  #else
+    // CLOCK_MONOTONIC does not count the time the system sleeps
+    return now_ms();
+  #endif
+  }
+
   void
   platform_bind_thread(slot_t &) {}
 
@@ -188,6 +218,7 @@ namespace crash::detail {
 
   void
   platform_report_hang(int index) {
+    if (!g.enabled.load()) return;
     // another thread's stack is not readable from here without stopping it; the slot's name stands in for the frames
     frame_t frame;
     std::strncpy(frame.module, "hang-", sizeof(frame.module) - 1);

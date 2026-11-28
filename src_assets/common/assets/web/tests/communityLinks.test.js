@@ -9,12 +9,12 @@ const { CLIENTS, clientSections, clientsForOs } = await import('foundation-ui/cl
 const FROM_ABOUT = [
   'https://www.alkaidlab.com/', 'https://www.alkaidlab.cn/', 'https://www.alkaidlab.com/docs/', 'https://www.alkaidlab.cn/docs/',
   'https://github.com/AlkaidLab/foundation-sunshine', 'https://github.com/AlkaidLab/foundation-sunshine/releases', 'https://github.com/AlkaidLab/foundation-sunshine/blob/master/LICENSE',
-  'https://qm.qq.com/cgi-bin/qm/qr?k=5qnkzSaLIrIaU4FvumftZH_6Hg7fUuLD&jump_from=webapi', 'https://github.com/AlkaidLab/foundation-sunshine/issues',
-  'https://github.com/The-Fried-Fish/VoidLink-previously-moonlight-zwm#readme', 'https://apps.apple.com/app/voidlink/id6747717070', 'https://apps.apple.com/app/voidlink-extreme/id6755103808',
-  'https://testflight.apple.com/join/k7gs61mZ', 'https://github.com/WACrown/moonlight-android/releases', 'https://github.com/WACrown/moonlight-android#readme', 'https://gitee.com/smdsbz/moonlight-ohos',
+  'https://qm.qq.com/q/AfMQoyKrkc', 'https://github.com/AlkaidLab/foundation-sunshine/issues',
+  'https://github.com/The-Fried-Fish/VoidLink-previously-moonlight-zwm#readme', 'https://apps.apple.com/cn/app/voidlink/id6747717070', 'https://apps.apple.com/us/app/voidlink-extreme/id6755103808',
+  'https://github.com/WACrown/moonlight-android/releases', 'https://github.com/WACrown/moonlight-android#readme', 'https://gitee.com/smdsbz/moonlight-ohos',
 ]
 
-test('the download page keeps every link the About page had', () => {
+test('the download page keeps the project and community links', () => {
   const have = new Set([...PROJECT_LINKS.flatMap((l) => [l.url, l.zh]), ...PARTNER_CLIENTS.flatMap((c) => c.links.map((l) => l.url))].filter(Boolean))
   for (const url of FROM_ABOUT) assert.ok(have.has(url), `missing ${url}`)
 })
@@ -26,6 +26,15 @@ test('every link has a label in both languages and the Chinese mirror is used in
   }
   assert.equal(resolveLink(PROJECT_LINKS[0], 'zh-CN'), 'https://www.alkaidlab.cn/')
   assert.equal(resolveLink(PROJECT_LINKS[0], 'en'), 'https://www.alkaidlab.com/')
+})
+
+test('the QQ link uses the existing community group distribution', () => {
+  const qq = PROJECT_LINKS.find((link) => link.id === 'qq')
+  assert.equal(resolveLink(qq, 'zh', 0.09), 'https://qm.qq.com/q/AfMQoyKrkc')
+  assert.equal(resolveLink(qq, 'zh', 0.1), 'https://qm.qq.com/q/vIVhpjDMic')
+  assert.equal(resolveLink(qq, 'zh', 0.549), 'https://qm.qq.com/q/vIVhpjDMic')
+  assert.equal(resolveLink(qq, 'zh', 0.55), 'https://qm.qq.com/q/p0quekk7QI')
+  assert.equal(resolveLink(qq, 'zh', 0.999), 'https://qm.qq.com/q/p0quekk7QI')
 })
 
 test('the partner tag follows the one client list: the team\'s four clients (HarmonyOS V+ is official) are not partners, every other client is', () => {

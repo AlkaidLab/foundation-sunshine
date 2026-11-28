@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -26,6 +27,7 @@
 // local includes
 #include "src/config.h"
 #include "src/logging.h"
+#include "src/platform/datagram_send.h"
 #include "src/platform/frame_contract.h"
 #include "src/thread_safe.h"
 #include "src/utility.h"
@@ -630,6 +632,23 @@ namespace platf {
     virtual int
     convert(platf::img_t &img) = 0;
 
+    // Poll completed analysis on the encode thread without waiting for the GPU.
+    // Returns whether a valid sample is available, including the cached sample.
+    virtual bool
+    collect_hdr_luminance_stats() {
+      return hdr_luminance_stats.valid;
+    }
+
+    // Runtime image-enhancement changes are delivered to the owning encode
+    // thread. The default implementation keeps non-D3D devices unchanged.
+    virtual std::shared_ptr<safe::signal_t>
+    nr_change_event() {
+      return {};
+    }
+
+    virtual void
+    apply_nr_change() {}
+
     // Packet-level confirmation, independent of the PQ/HLG transfer function.
     virtual void
     report_dolby_vision_output(bool injected, bool enabled) {}
@@ -650,7 +669,7 @@ namespace platf {
 
     /**
      * @brief Per-frame HDR luminance statistics from GPU analysis.
-     * Updated during convert() with 1-frame delay (async GPU readback).
+     * Updated by convert() or collect_hdr_luminance_stats() via async GPU readback.
      * Used by video.cpp to generate per-frame HDR dynamic metadata.
      */
     hdr_frame_luminance_stats_t hdr_luminance_stats;
@@ -762,7 +781,9 @@ namespace platf {
 
     display_t() noexcept:
         offset_x { 0 },
-        offset_y { 0 } {
+        offset_y { 0 },
+        global_offset_x { 0 },
+        global_offset_y { 0 } {
     }
 
     /**
@@ -854,6 +875,10 @@ namespace platf {
 
     // Offsets for when streaming a specific monitor. By default, they are 0.
     int offset_x, offset_y;
+    // The selected display's origin in Windows/global screen coordinates. This
+    // is separate from offset_x/offset_y, which may be virtual-desktop-relative
+    // for absolute pointer injection.
+    int global_offset_x, global_offset_y;
     int env_width, env_height;
 
     int width, height;
@@ -1108,85 +1133,6 @@ namespace platf {
    */
   int
   unset_env(const std::string &name);
-
-  struct buffer_descriptor_t {
-    const char *buffer;
-    size_t size;
-
-    // Constructors required for emplace_back() prior to C++20
-    buffer_descriptor_t(const char *buffer, size_t size):
-        buffer(buffer),
-        size(size) {
-    }
-
-    buffer_descriptor_t():
-        buffer(nullptr),
-        size(0) {
-    }
-  };
-
-  struct batched_send_info_t {
-    // Optional headers to be prepended to each packet
-    const char *headers;
-    size_t header_size;
-
-    // One or more data buffers to use for the payloads
-    //
-    // NB: Data buffers must be aligned to payload size!
-    std::vector<buffer_descriptor_t> &payload_buffers;
-    size_t payload_size;
-
-    // The offset (in header+payload message blocks) in the header and payload
-    // buffers to begin sending messages from
-    size_t block_offset;
-
-    // The number of header+payload message blocks to send
-    size_t block_count;
-
-    std::uintptr_t native_socket;
-    boost::asio::ip::address &target_address;
-    uint16_t target_port;
-    boost::asio::ip::address &source_address;
-
-    /**
-     * @brief Returns a payload buffer descriptor for the given payload offset.
-     * @param offset The offset in the total payload data (bytes).
-     * @return Buffer descriptor describing the region at the given offset.
-     */
-    buffer_descriptor_t
-    buffer_for_payload_offset(ptrdiff_t offset) {
-      for (const auto &desc : payload_buffers) {
-        if (offset < desc.size) {
-          return {
-            desc.buffer + offset,
-            desc.size - offset,
-          };
-        }
-        else {
-          offset -= desc.size;
-        }
-      }
-      return {};
-    }
-  };
-
-  bool
-  send_batch(batched_send_info_t &send_info);
-
-  struct send_info_t {
-    const char *header;
-    size_t header_size;
-    const char *payload;
-    size_t payload_size;
-
-    std::uintptr_t native_socket;
-    boost::asio::ip::address &target_address;
-    uint16_t target_port;
-    boost::asio::ip::address &source_address;
-  };
-
-  bool
-  send(send_info_t &send_info);
 
   enum class qos_data_type_e : int {
     audio,  ///< Audio

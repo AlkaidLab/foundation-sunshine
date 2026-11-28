@@ -35,6 +35,7 @@ internal static partial class Tests
             BrokerCapabilityRules(scratch);
             PackagedBrokerReports(scratch);
             EndfieldFields();
+            PluginGames(scratch);
             ScreenArguments(scratch);
             StageReports(scratch);
             CrashReports(scratch);

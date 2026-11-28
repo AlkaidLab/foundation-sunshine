@@ -256,21 +256,31 @@ map + `MAX_TRACKED_FRAMES` 上限）已经是这个模式；NVENC 用
 
 ```text
 make_nvenc/amf_encode_session
-    └─ 协商为 DV 且 分析器可用 且 最终色彩空间为 PQ 时
+    └─ 协商为 DV 且 分析器可用 且 最终色彩空间符合协商 profile 时
        从主机显示的【原始】mastering 元数据（未经客户端峰值调整）配置 L6
 encode_frame(frame_index)            提交侧
+    └─ device.collect_hdr_luminance_stats()
+       启动期间非阻塞收取已完成的 GPU 统计，无新捕获画面时也能推进；每份在途分析最多主动提交一次
+    └─ prepare_frame(hdr_luminance_stats, now)
+       冷启动继续转换/分析，但在能生成合法 RPU 前暂缓编码；首次实际带 RPU 输出前持续请求 IDR
+       等待上限 1500 ms，超时则关闭当前编码会话的 DV、以基础层 IDR 开播，不自动中途恢复 RPU
     └─ stage(frame_index, hdr_luminance_stats)
-       统计缺失时复用上次有效值；首帧前无统计则不发 RPU（与 HDR10+ 冷启动一致）
+       统计缺失时复用上次有效值；首次实际输出前保留初始 scene refresh，避免首提交丢失时消耗它
 encode_nvenc/amf 输出侧
     └─ inject(encoded_frame.frame_index, data)
        按编码器自己的输出帧号取回 RPU，追加为 AU 最后一个 NAL
+       首次输出必须为 IDR；若该 IDR 注入失败，明确关闭当前编码会话 DV 后发送兼容基础层
 在途队列溢出
     └─ 停止本会话 DV（清空队列，宁可无 RPU 也不错位）
 ```
 
+启动保护共用于原生 NVENC/AMF 的 DV 8.1/8.4，会与 HLG/Vivid 的等待同时计时，
+不叠加两次超时。后续新连接或编码器重建会重新配置 DV。此保护不增加稳态视频缓存，
+也不将异步统计的样本序号解释为捕获帧号：首帧元数据新鲜度与设备实际进入 DV 的行为仍需实机验证。
+
 范围限定：**仅 NVENC 与 AMF 原生路径**。avcodec 路径（软件/QSV）的 AVPacket
 无法原地扩容，注入不可行 —— 协商为 DV 却落到 avcodec 编码器时记录警告并继续
-发 HDR10（基础层本就兼容）。分析器不可用或最终色彩空间非 PQ 时同样跳过。
+发兼容基础层。分析器不可用或最终色彩空间与协商 profile 不匹配时同样跳过。
 
 ---
 

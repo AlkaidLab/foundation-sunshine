@@ -8,6 +8,8 @@
  */
 #pragma once
 
+#include "gpu_driver.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -20,8 +22,20 @@ namespace crash {
   constexpr std::size_t signature_frames = 8;
   constexpr std::size_t max_pending = 20;
   constexpr std::uint64_t max_dump_bytes = 20ull * 1024 * 1024;
+  /// All the pending reports together (meta and dumps): the oldest go first, the newest report always stays.
+  constexpr std::uint64_t max_pending_bytes = 200ull * 1024 * 1024;
   constexpr std::size_t module_name_size = 64;
   constexpr std::size_t meta_buffer_size = 16 * 1024;
+
+  /**
+   * @brief Whether a thread that went busy at `busy_since` has been busy for `timeout_ms` at `now`.
+   * Both readings are crash::awake_ms (the clock that does not count the time the system sleeps); 0 as `busy_since` is an idle thread.
+   * A `now` before `busy_since` (a reading from before the thread went busy, from another clock) is never overdue instead of wrapping around.
+   */
+  inline bool
+  hang_overdue(std::uint64_t busy_since, std::uint64_t now, std::uint32_t timeout_ms) {
+    return busy_since != 0 && now >= busy_since && now - busy_since >= timeout_ms;
+  }
 
   struct frame_t {
     char module[module_name_size] {};  ///< file name of the module, no directory (a person's user name can be in a path)
@@ -52,6 +66,17 @@ namespace crash {
   /// Index of the first frame that is not a runtime/system frame (0 when every frame is one).
   std::size_t
   first_caller_frame(const frame_t *frames, std::size_t count);
+
+  /**
+   * The graphics driver the stack ends in: the vendor of the first frame that is not a runtime/system frame, when that frame lies in a driver module
+   * (gpu_driver.h); `none` otherwise. `index` is that frame. A crash inside d3d11.dll or the host itself is not a driver crash, whatever lies below it.
+   */
+  struct driver_frame_t {
+    gpu_driver::vendor_e vendor = gpu_driver::vendor_e::none;
+    std::size_t index = 0;
+  };
+  driver_frame_t
+  driver_frame(const frame_t *frames, std::size_t count);
 
   /**
    * Signature: SHA-256 over the first 8 frames from the first caller frame on, each normalised as "<module lower case>+0x<offset lower hex>"
@@ -94,9 +119,9 @@ namespace crash {
   std::vector<pending_report_t>
   list_pending(const std::filesystem::path &dir);
 
-  /// Keep the newest `keep` reports, remove the rest (and everything older than `max_age_days`); returns how many went.
+  /// Keep the newest `keep` reports, remove the rest (and everything older than `max_age_days`, and the oldest while all of them together are over `max_bytes`; the newest always stays); returns how many went.
   std::size_t
-  trim_pending(const std::filesystem::path &dir, std::size_t keep = max_pending, int max_age_days = 30);
+  trim_pending(const std::filesystem::path &dir, std::size_t keep = max_pending, int max_age_days = 30, std::uint64_t max_bytes = max_pending_bytes);
 
   /// Removes every pending report.
   void

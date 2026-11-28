@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { countLogLevels, deviceIconFor, formatBitrate, formatUptime, pickPerf, tileAvailable } from '../utils/homeData.js'
 import { DEFAULT_TILES, HOME_TILES } from '../config/homeTiles.js'
-import { SPONSORS } from '../config/sponsors.js'
+import { SPONSORS, sponsorUrl } from '../config/sponsors.js'
 
 test('device icons come from the keyword table and fall back to the neutral icon', () => {
   const cases = { 'linux-test-host MacBook': 'laptop_mac', 'iPhone 15 Pro': 'mobile', 'Steam Deck': 'sports_esports', 'Living room TV': 'tv', 'Pixel 9': 'mobile', 'vivo X100': 'mobile', 'Xiaomi Pad 6': 'tablet', 'iMac': 'desktop_mac', 'iPad Air': 'tablet', 'DESKTOP-4K2L': 'desktop_windows', 'Android TV': 'tv', 'Quest 3': 'view_in_ar', 'Unnamed device': 'devices', '': 'devices' }
@@ -92,5 +92,12 @@ test('sponsor targets are https links with a label', () => {
 test('sponsor targets are the team\'s own 爱发电 pages in team order, the same list as the about page', async () => {
   const { SPONSORS: ABOUT } = await import('foundation-ui/about')
   assert.deepEqual(SPONSORS.map((s) => [s.label, s.url]), ABOUT.map((s) => [s.login, s.url]))
-  assert.deepEqual(SPONSORS.map((s) => s.label), ['qiin2333', 'Yundi339', 'skyhua0224'])
+  assert.deepEqual(SPONSORS.map((s) => s.label), ['qiin2333', 'Yundi339', 'skyhua0224', '微信赞赏 / WeChat', 'GitHub Sponsors'])
+})
+
+test('wechat sponsor follows the current language', () => {
+  const wechat = SPONSORS.find((s) => s.id === 'wechat')
+  assert.equal(sponsorUrl(wechat, 'zh-CN'), 'https://www.alkaidlab.cn/#sponsors')
+  assert.equal(sponsorUrl(wechat, 'zh-TW'), 'https://www.alkaidlab.cn/#sponsors')
+  assert.equal(sponsorUrl(wechat, 'en'), 'https://www.alkaidlab.com/en/#sponsors')
 })

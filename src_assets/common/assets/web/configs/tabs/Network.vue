@@ -2,7 +2,7 @@
 import { computed, inject, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import QRCode from 'qrcode'
-import { MBanner, MButton, MDialog, MFooter, MGroup, MItem, MReachOverview, MRemoteWindow, MSection, MWebAccess, endpointsOfConfig, lanView, reachTexts, remoteTexts, webAccessTexts } from 'foundation-ui/vue'
+import { MBanner, MButton, MDialog, MFooter, MGroup, MItem, MNotice, MReachOverview, MRemoteWindow, MSection, MWebAccess, endpointsOfConfig, lanView, reachTexts, remoteTexts, webAccessTexts } from 'foundation-ui/vue'
 import { useReach } from '../../composables/useReach.js'
 import { useGuide } from '../../composables/useGuide.js'
 import CfgChoice from '../../components/cfg/CfgChoice.vue'
@@ -49,11 +49,15 @@ const tutorial = ref(false)
 const tutorialMode = ref('')
 const openTutorial = (action) => { tutorialMode.value = action === 'mesh' ? 'mesh' : 'public'; tutorial.value = true }
 const platform = computed(() => String(props.config?.platform || 'windows').toLowerCase())
+// The App Store page of the VoidLink client: the only client that speaks the USB wired streaming today.
+const VOIDLINK_APP_STORE_URL = 'https://apps.apple.com/cn/app/voidlink/id6747717070'
+const openVoidLink = () => window.open(VOIDLINK_APP_STORE_URL, '_blank', 'noopener,noreferrer')
 onMounted(() => { void reach.refresh() })
 const defaultMoonlightPort = 47989
 const config = ref(props.config)
 const scope = computed({ get: () => config.value.origin_web_ui_allowed ?? 'lan', set: (value) => { config.value.origin_web_ui_allowed = value } })
 const bind = computed({ get: () => config.value.bind_address ?? '', set: (value) => { config.value.bind_address = value } })
+const fingerprintRules = computed(() => String(config.value.client_fingerprint_remote_rules ?? true) !== 'false')
 const qrMatrix = (text) => QRCode.create(text, { errorCorrectionLevel: 'M' }).modules
 const copyText = (text) => navigator.clipboard.writeText(text)
 const goPassword = () => { window.location.href = '/password' }
@@ -127,7 +131,7 @@ const portRows = computed(() => {
       <MWebAccess v-model:scope="scope" v-model:bind="bind" :locale="String(locale)" :port="+effectivePort" :listeners="listenerInfo" :password="true" :pending="!!listenerPending" :qr="qrMatrix" :copy="copyText" :open="openBind" @restart="restartAsk = true" @password="goPassword" />
     </MSection>
     <MSection :title="rc.overview.label">
-      <MReachOverview address-editable data-cfg="external_endpoints" :label="$t('config.external_endpoints')" :endpoints="endpointsOfConfig(config).join(', ')" :address-busy="addressBusy" :report="reach.view.report" :status="reach.view.status" :http="reach.view.http" :cause="reach.view.cause" :lan="lan" :locale="String(locale)" :platform="platform" @recheck="reach.refresh(true)" @fix="reachFix" @save-address="saveAddress" />
+      <MReachOverview address-editable data-cfg="external_endpoints" :label="$t('config.external_endpoints')" :endpoints="endpointsOfConfig(config).join(', ')" :address-busy="addressBusy" :report="reach.view.report" :status="reach.view.status" :http="reach.view.http" :cause="reach.view.cause" :progress="reach.view.progress" :lan="lan" :locale="String(locale)" :platform="platform" @recheck="reach.refresh(true)" @fix="reachFix" @save-address="saveAddress" />
       <MButton variant="text" icon="help" @click="openTutorial('')">{{ rc.tutorial }}</MButton>
     </MSection>
     <MSection :title="$t('config.network_port_details')">
@@ -178,11 +182,39 @@ const portRows = computed(() => {
         <CfgExpert :config="config" k="pair_max_attempts" />
         <CfgExpert :config="config" k="ping_timeout" />
         <CfgExpert :config="config" k="close_verify_safe" />
+        <CfgSwitch :config="config" k="client_fingerprint_remote_rules" :on="true" :off="false" def="true" help="config.client_fingerprint_remote_rules_desc" />
+        <CfgExpert v-if="fingerprintRules" :config="config" k="client_fingerprint_rules_url" help="config.client_fingerprint_rules_url_desc" />
+        <CfgExpert v-if="fingerprintRules" :config="config" k="client_fingerprint_rules_refresh_hours" type="number" placeholder="24" min="1" max="168" help="config.client_fingerprint_rules_refresh_hours_desc" />
+        <CfgExpert v-if="fingerprintRules" :config="config" k="client_fingerprint_rules_certificate" help="config.client_fingerprint_rules_certificate_desc" />
+      </MGroup>
+    </MSection>
+    <MSection :title="$t('config.network_external_title')">
+      <MGroup>
+        <CfgSwitch :config="config" k="network_external_check" def="enabled" help="config.network_external_check_desc" />
+        <CfgExpert :config="config" k="network_external_endpoint" help="config.network_external_endpoint_desc" />
+        <CfgSwitch :config="config" k="network_bypass_proxy" def="enabled" help="config.network_bypass_proxy_desc" />
+        <CfgExpert :config="config" k="stun_servers" help="config.stun_servers_desc" />
       </MGroup>
     </MSection>
   </CfgSub>
 
   <CfgSub id="webhook" title="Webhook"><WebhookCard /></CfgSub>
+
+  <!-- USB 有线串流: the VoidLink host opt-in, which client platforms have it and where to get that client -->
+  <MSection v-if="platform === 'windows'" :title="$t('shell.usb_wired_streaming')" :description="$t('config.usb_wired_streaming_description')">
+    <MGroup>
+      <CfgSwitch :config="config" k="usb_wired_streaming_enabled" :on="true" :off="false" def="false" />
+      <MItem icon="mobile" :title="$t('config.usb_wired_platform_ios')" :value="$t('config.usb_wired_platform_ios_status')" />
+      <MItem icon="android" :title="$t('config.usb_wired_platform_android')" :value="$t('config.usb_wired_platform_wip')" />
+      <MItem icon="desktop_windows" :title="$t('config.usb_wired_platform_pc')" :value="$t('config.usb_wired_platform_wip')" />
+    </MGroup>
+    <MNotice>
+      <span>{{ $t('config.usb_wired_ios_notice') }}</span>
+      <template #action>
+        <MButton variant="text" size="sm" @click="openVoidLink">{{ $t('config.usb_wired_get_voidlink') }}</MButton>
+      </template>
+    </MNotice>
+  </MSection>
 
   <MDialog v-model="upnpAsk" :title="rm.confirmTitle" icon="warning" tone="warning">
     <p>{{ rm.confirmText }}</p>

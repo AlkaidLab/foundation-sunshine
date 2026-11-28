@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { SEARCH_INDEX } from '../config/settingsData/index.js'
 import { DISPLAY_TREE, LEGACY_DISPLAY_KEYS, homeOf } from 'foundation-ui/settings/index.js'
 import { FORMATS, formatOf, hdrOf, modesFor } from '../composables/useCodecFormat.js'
-import { gdiNameOf, SCALES } from '../composables/useDisplayLive.js'
+import { gdiNameOf, modeTargetOf, SCALES } from '../composables/useDisplayLive.js'
 
 const WEB = join(dirname(fileURLToPath(import.meta.url)), '..')
 const read = (file) => readFileSync(join(WEB, file), 'utf8')
@@ -51,6 +51,13 @@ test('the display mode card: the scaling stops are 100 to 300 in steps of 25 and
   assert.ok(SCALES.every((v, i) => i === 0 || v - SCALES[i - 1] === 25))
   assert.equal(gdiNameOf('DISPLAY NAME: \\\\.\\DISPLAY3\nFRIENDLY NAME: F32'), '\\\\.\\DISPLAY3')
   assert.equal(gdiNameOf('FRIENDLY NAME: F32'), '')
+})
+
+test('the virtual display mode card targets the primary physical display', () => {
+  const physical = [{ id: 'display-1', name: 'Main monitor', gdi: '\\\\.\\DISPLAY1', primary: true }, { id: 'display-2', name: 'Side monitor', gdi: '\\\\.\\DISPLAY2', primary: false }]
+  assert.equal(modeTargetOf('virtual', physical), physical[0])
+  assert.equal(modeTargetOf('display-2', physical), physical[1])
+  assert.equal(modeTargetOf('auto', physical), null)
 })
 
 test('the HDR calibration and the display mode use the control panel commands that exist, and a browser gets no sliders (live = false)', () => {

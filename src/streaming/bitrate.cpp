@@ -93,12 +93,17 @@ namespace streaming {
     std::lock_guard lock(mutex_);
     if (!automatic_ || now < 0) return;
     percentage = std::min(percentage, 255U);
-    if (window_ms_ < 0) {
+    if (window_ms_ >= 0 && now < window_ms_) return;
+    // Arming protection is urgent: while unprotected, the first request is adopted at once
+    // instead of waiting for a completed window. The encoder target still has to be lowered
+    // and accepted before any frame carries the new allowance (pending()/commit()).
+    const bool arming = requested_fec_ == 0 && percentage > 0;
+    if (window_ms_ < 0 || arming) {
       window_ms_ = now;
       window_fec_ = percentage;
+      if (arming) requested_fec_ = percentage;
       return;
     }
-    if (now < window_ms_) return;
     // Use the highest requested ratio in a completed window, so a small or
     // unusually large frame does not repeatedly reconfigure the encoder.
     if (now - window_ms_ >= update_interval_ms) {
@@ -117,8 +122,16 @@ namespace streaming {
     auto next = allocate();
     if (next == applied_ || now < 0) return {};
     // Ignore one-point oscillations, but always allow enabling/disabling protection.
-    if (next.total_kbps == applied_.total_kbps && next.fec_percentage != 0 && applied_.fec_percentage != 0 &&
-        std::abs(static_cast<int>(next.fec_percentage) - static_cast<int>(applied_.fec_percentage)) < 2) return {};
+    if (next.total_kbps == applied_.total_kbps && next.fec_percentage != 0 && applied_.fec_percentage != 0) {
+      const auto applied = static_cast<int>(applied_.fec_percentage);
+      const auto delta = static_cast<int>(next.fec_percentage) - applied;
+      // A raise reconfigures the encoder and, on NVENC HEVC, forces a keyframe. The request is
+      // re-evaluated per frame against that frame's packet count, so its equilibrium jitters by
+      // several points on streams with varying frame sizes. Genuine escalation jumps far more
+      // than this, so hold raises to a clear step while drops stay immediate.
+      const auto minimum_raise = std::max(5, (applied + 4) / 5);
+      if (delta > 0 ? delta < minimum_raise : delta > -2) return {};
+    }
     if (attempted_ == next && (now < attempt_ms_ || now - attempt_ms_ < update_interval_ms)) return {};
     attempted_ = next;
     attempt_ms_ = now;

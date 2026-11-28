@@ -8,6 +8,7 @@
 #include <bitset>
 #include <cctype>
 #include <chrono>
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -188,6 +189,7 @@ namespace config {
 
     std::string sunshine_name;
     std::string fs_host_icon;  ///< Optional specialised-client host icon token.
+    std::string generated_cover_style;  ///< Default style for applications that follow the generated-cover setting.
     std::string clients;
 
     std::string file_state;
@@ -195,10 +197,14 @@ namespace config {
     std::uint16_t file_mapping_port;
     bool usb_forwarding_enabled;
     std::uint16_t usb_forwarding_port;  // 0: main port + 7; otherwise explicit override
+    bool usb_wired_streaming_enabled;  // Windows VoidLink usbmux streaming
 
     std::string external_ip;  ///< legacy single public address; external_endpoints wins when both are set
     std::string external_endpoints;  ///< public endpoints, `host[:port]` separated by commas
     std::string stun_servers;  ///< STUN servers of the network overview; empty: built-in list, "none": off
+    std::string network_external_check;  ///< "enabled" (default): the network check asks a service on the internet to connect to the public addresses (network_external.h); anything else: off
+    std::string network_external_endpoint;  ///< base URL of that service; empty: the built-in one
+    std::string network_bypass_proxy;  ///< "enabled" (default): the probes of the network check leave through the physical adapter, not through a tunnel adapter of a proxy (network_pin.h); anything else: the system route
     std::vector<std::string> resolutions;
     std::vector<std::string> fps;  // 支持小数刷新率，如 "119.88"
 
@@ -299,6 +305,8 @@ namespace config {
     int max_log_size_mb;  // 日志文件最大大小（MB），超过后自动轮转，0=不限制
     bool notify_pre_releases;
     bool system_tray;
+    // Where a pairing request asks for its PIN: "fullscreen" (the control panel's full-screen entry, the default) or "panel" (the control panel's own pairing page).
+    std::string pin_prompt;
     // Web UI session lifetimes. Defaults follow OWASP ASVS 4.0.3 V3.3.2.
     int session_idle_minutes;
     int session_absolute_hours;
@@ -331,6 +339,13 @@ namespace config {
   bool
   update_config(const std::map<std::string, std::string> &updates);
 
+  /**
+   * Run `work` while no other save of the settings file runs (the lock of update_config and update_full_config), so that a reset of the settings file does not
+   * interleave with a save. `work` must not call back into the functions of this header that save.
+   */
+  void
+  with_config_file_locked(const std::function<void()> &work);
+
   std::optional<std::map<std::string, std::string>>
   get_config_snapshot();
 
@@ -361,6 +376,13 @@ namespace config {
   host_max_bitrate_kbps();
   void
   set_host_max_bitrate_kbps(int kbps);
+
+  /**
+   * The style the generated covers follow (the `generated_cover_style` setting). It is read by the HTTP handlers while the configuration can be saved, so every reader asks here:
+   * a saved value is in force at once, without a restart, and a value the host does not know is the default (tonal).
+   */
+  std::string
+  generated_cover_style();
 
   /**
    * Return a synchronized snapshot of the serialized per-client settings.

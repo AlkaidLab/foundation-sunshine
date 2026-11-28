@@ -1024,3 +1024,326 @@ TEST(ReachabilityTestEndpoints, IsBoundedBeforeParsingAndKeepsAtMostTheLimit) {
   const auto kept = test_endpoints_option(many);
   EXPECT_EQ(static_cast<std::size_t>(std::count(kept.begin(), kept.end(), ',')) + 1, public_address::MAX_ENDPOINTS);
 }
+
+// ---- network-check redo (net-check-1118) ----
+
+TEST(NetworkReachabilityPublic, AHandshakeThatWasMadeOutranksTheListenerAndFirewallGuesses) {
+  fake_network_t network;
+  network.tls["203.0.113.9|47984"] = ours(12);
+  public_inputs_t inputs;
+  inputs.ports = healthy_ports(false, firewall_e::blocked);
+  inputs.endpoints = probe_endpoints({ endpoint_of("203.0.113.9") }, 47989, "", network.prober());
+  const auto result = evaluate_public(inputs, NOW);
+  EXPECT_EQ(result.verdict, verdict_e::verified);
+  EXPECT_TRUE(has_reason(result.reasons, "hairpin_verified"));
+  for (const auto &reason : result.reasons) {
+    EXPECT_EQ(reason.rfind("not_listening", 0), std::string::npos) << reason;
+    EXPECT_EQ(reason.rfind("firewall_blocked", 0), std::string::npos) << reason;
+  }
+}
+
+TEST(NetworkReachabilityPublic, AReachedLanEndpointDoesNotOutrankAFailingListener) {
+  fake_network_t network;
+  network.tls["10.0.1.10|47984"] = ours(1);
+  public_inputs_t inputs;
+  inputs.ports = healthy_ports(false);
+  inputs.endpoints = probe_endpoints({ endpoint_of("10.0.1.10") }, 47989, "203.0.113.9", network.prober());
+  EXPECT_EQ(evaluate_public(inputs, NOW).verdict, verdict_e::unreachable);
+}
+
+TEST(NetworkReachabilityPublic, ALegacyHairpinThroughTheConfiguredAddressOutranksAFirewallGuess) {
+  public_inputs_t inputs;
+  inputs.ports = healthy_ports(true, firewall_e::blocked);
+  inputs.configured = evaluate_configured_address("203.0.113.9", {}, "203.0.113.9");
+  inputs.hairpin = { true, true, 47984, true, "203.0.113.9" };
+  EXPECT_EQ(evaluate_public(inputs, NOW).verdict, verdict_e::verified);
+}
+
+TEST(NetworkReachabilityEndpoints, SilenceFromAPublicEndpointIsInconclusiveNotAFailure) {
+  fake_network_t network;
+  network.tls["203.0.113.9|47984"] = failed("timeout", 2500);
+  network.tls["198.51.100.7|47984"] = failed("refused", 4);
+  network.tls["192.0.2.55|47984"] = failed("unreachable", 1);
+  const auto results = probe_endpoints({ endpoint_of("203.0.113.9"), endpoint_of("198.51.100.7"), endpoint_of("192.0.2.55") }, 47989, "203.0.113.9", network.prober());
+  ASSERT_EQ(results.size(), 3U);
+  for (const auto &result : results) {
+    EXPECT_FALSE(result.reached);
+    EXPECT_TRUE(result.inconclusive) << result.input << " " << result.error;
+  }
+}
+
+TEST(NetworkReachabilityEndpoints, AnotherDeviceAnsweringOrANameThatDoesNotResolveIsAFinding) {
+  fake_network_t network;
+  network.dns["gone.example.net"] = {};
+  handshake_t other;
+  other.connected = true;
+  other.identity_match = false;
+  other.latency_ms = 9;
+  network.tls["203.0.113.9|47984"] = other;
+  const auto results = probe_endpoints({ endpoint_of("gone.example.net"), endpoint_of("203.0.113.9") }, 47989, "203.0.113.9", network.prober());
+  ASSERT_EQ(results.size(), 2U);
+  EXPECT_EQ(results[0].error, "dns_failed");
+  EXPECT_FALSE(results[0].inconclusive);
+  EXPECT_EQ(results[1].error, "identity_mismatch");
+  EXPECT_FALSE(results[1].inconclusive);
+}
+
+TEST(NetworkReachabilityEndpoints, SilenceFromALanEndpointIsNotMarkedInconclusive) {
+  fake_network_t network;
+  network.tls["10.0.1.10|47984"] = failed("timeout", 2500);
+  const auto results = probe_endpoints({ endpoint_of("10.0.1.10") }, 47989, "203.0.113.9", network.prober());
+  ASSERT_EQ(results.size(), 1U);
+  EXPECT_FALSE(results[0].inconclusive);
+}
+
+TEST(NetworkReachabilityJson, EndpointsSayWhenTheFailureIsInconclusive) {
+  fake_network_t network;
+  network.tls["203.0.113.9|47984"] = failed("timeout", 2500);
+  snapshot_t snapshot;
+  snapshot.checked_at = format_utc_iso(NOW);
+  snapshot.public_reachability.endpoints = probe_endpoints({ endpoint_of("203.0.113.9") }, 47989, "203.0.113.9", network.prober());
+  const auto json = to_json(snapshot);
+  const auto &endpoint = json["public"]["endpoints"].at(0);
+  EXPECT_EQ(endpoint["state"], "failed");
+  EXPECT_EQ(endpoint["error"], "timeout");
+  EXPECT_TRUE(endpoint["inconclusive"].get<bool>());
+}
+
+// ---- ports from the host's own table, no guessing (net-check-1118) ----
+
+TEST(NetworkReachabilityPorts, EveryTcpPortKeepsItsDistanceFromTheHttpPortOfTheHostsOwnTable) {
+  const auto table = healthy_ports();
+  const auto ports = external_tcp_ports(60000, &table);
+  std::map<std::string, std::uint16_t> by_role;
+  for (const auto &entry : ports) by_role[entry.role] = entry.port;
+  EXPECT_EQ(by_role["http"], 60000);
+  EXPECT_EQ(by_role["https"], 59995);
+  EXPECT_EQ(by_role["rtsp"], 60021);
+  EXPECT_EQ(by_role.count("web"), 0U);  // the Web UI is not a streaming port
+}
+
+TEST(NetworkReachabilityPorts, ADifferentPortFamilyMovesTheHttpsPortByItsOwnOffset) {
+  // a host whose HTTPS port is not five below its HTTP port: the table says so, and nothing subtracts five
+  std::vector<port_status_t> table = { make_port("tcp", 47979, "https"), make_port("tcp", 47989, "http"), make_port("tcp", 48010, "rtsp") };
+  const auto ports = external_tcp_ports(60000, &table);
+  std::map<std::string, std::uint16_t> by_role;
+  for (const auto &entry : ports) by_role[entry.role] = entry.port;
+  EXPECT_EQ(by_role["https"], 59990);
+  fake_network_t network;
+  network.tls["203.0.113.9|59990"] = ours(5);
+  const auto results = probe_endpoints({ endpoint_of("203.0.113.9:60000") }, 47989, "", network.prober(), &table);
+  ASSERT_EQ(results.size(), 1U);
+  EXPECT_TRUE(results[0].reached);
+  EXPECT_EQ(results[0].https_port, 59990);
+}
+
+TEST(NetworkReachabilityPorts, WithoutATableTheDefaultFamilyAppliesAndPortsOutsideTheRangeAreLeftOut) {
+  const auto defaults = external_tcp_ports(47989, nullptr);
+  ASSERT_EQ(defaults.size(), 3U);
+  const auto low = external_tcp_ports(10, nullptr);
+  for (const auto &entry : low) EXPECT_GE(entry.port, 1);
+  const auto high = external_tcp_ports(65530, nullptr);
+  for (const auto &entry : high) EXPECT_NE(entry.role, "rtsp");  // 65551 does not exist
+}
+
+TEST(NetworkReachabilityJson, EndpointsListTheirTcpPorts) {
+  fake_network_t network;
+  network.tls["203.0.113.9|59995"] = ours(5);
+  const auto table = healthy_ports();
+  snapshot_t snapshot;
+  snapshot.checked_at = format_utc_iso(NOW);
+  snapshot.public_reachability.endpoints = probe_endpoints({ endpoint_of("203.0.113.9:60000") }, 47989, "", network.prober(), &table);
+  const auto json = to_json(snapshot);
+  const auto &ports = json["public"]["endpoints"].at(0)["ports"];
+  ASSERT_EQ(ports.size(), 3U);
+  EXPECT_EQ(ports.at(0)["role"], "https");
+  EXPECT_EQ(ports.at(0)["port"], 59995);
+}
+
+TEST(PublicEndpointSyntax, AWildcardAddressIsNoAddress) {
+  const auto error_of = [](const char *text) { return public_address::parse_endpoint(text).error; };
+  for (const char *text : { "0.0.0.0", "0.0.0.0:57989", "0.1.2.3", "::", "[::]:57989", "0:0:0:0:0:0:0:0", "[0:0:0:0:0:0:0:0]" }) EXPECT_EQ(error_of(text), endpoint_error_e::unspecified) << text;
+  EXPECT_TRUE(public_address::parse_endpoint("127.0.0.1").ok());
+  EXPECT_TRUE(public_address::parse_endpoint("[::1]:57989").ok());
+  EXPECT_EQ(public_address::parse_endpoint("home.example.net:57989").error, endpoint_error_e::none);
+  EXPECT_EQ(public_address::parse_endpoint("203.0.113.9").error, endpoint_error_e::none);
+  // a list drops it and keeps the rest; the rejected text is reported
+  const auto list = public_address::parse_endpoint_list("0.0.0.0, home.example.net");
+  ASSERT_EQ(list.endpoints.size(), 1U);
+  ASSERT_EQ(list.rejected.size(), 1U);
+  EXPECT_EQ(list.rejected[0], "0.0.0.0");
+}
+
+// ---- the outside check (net-check-1118) ----
+
+namespace {
+  endpoint_result_t
+  failing_from_inside(const std::string &input, const std::string &outside_state, const std::string &reason = {}) {
+    fake_network_t network;
+    network.tls["203.0.113.9|59995"] = failed("timeout", 2500);
+    auto results = probe_endpoints({ endpoint_of(input) }, 47989, "203.0.113.9", network.prober());
+    auto endpoint = results.at(0);
+    endpoint.outside.asked = true;
+    endpoint.outside.state = outside_state;
+    endpoint.outside.reason = reason;
+    if (outside_state == "closed" || outside_state == "timeout" || outside_state == "another_host" || outside_state == "reachable") endpoint.inconclusive = false;
+    return endpoint;
+  }
+}  // namespace
+
+TEST(NetworkReachabilityOutside, AConnectionFromTheInternetThatReachedThisHostVerifiesWhateverTheHandshakeFromInsideSaid) {
+  public_inputs_t inputs;
+  inputs.ports = healthy_ports(false, firewall_e::blocked);
+  inputs.endpoints = { failing_from_inside("203.0.113.9:60000", "reachable") };
+  const auto result = evaluate_public(inputs, NOW);
+  EXPECT_EQ(result.verdict, verdict_e::verified);
+  EXPECT_TRUE(has_reason(result.reasons, "outside_verified"));
+  EXPECT_FALSE(has_reason(result.reasons, "hairpin_verified"));
+}
+
+TEST(NetworkReachabilityOutside, ABlockedConnectionFromTheInternetIsAFindingNotASilence) {
+  for (const char *state : { "closed", "timeout", "another_host" }) {
+    public_inputs_t inputs;
+    inputs.ports = healthy_ports();
+    inputs.endpoints = { failing_from_inside("203.0.113.9:60000", state) };
+    const auto result = evaluate_public(inputs, NOW);
+    EXPECT_EQ(result.verdict, verdict_e::unreachable) << state;
+    EXPECT_TRUE(has_reason(result.reasons, "not_reached_from_outside")) << state;
+    EXPECT_FALSE(result.endpoints.at(0).inconclusive) << state;
+  }
+}
+
+TEST(NetworkReachabilityOutside, AServiceThatDidNotAnswerChangesNothing) {
+  public_inputs_t inputs;
+  inputs.ports = healthy_ports();
+  inputs.router = public_router(true);
+  inputs.endpoints = { failing_from_inside("203.0.113.9:60000", "unavailable", "no_answer") };
+  inputs.endpoints[0].inconclusive = true;
+  const auto result = evaluate_public(inputs, NOW);
+  EXPECT_NE(result.verdict, verdict_e::unreachable);
+  EXPECT_TRUE(result.endpoints.at(0).inconclusive);
+}
+
+TEST(NetworkReachabilityOutside, OneAddressThatFailedFromOutsideDoesNotCondemnAnotherThatNothingHasTriedFromOutside) {
+  public_inputs_t inputs;
+  inputs.ports = healthy_ports();
+  inputs.router = public_router(true);
+  inputs.endpoints = { failing_from_inside("203.0.113.9:60000", "closed"), failing_from_inside("198.51.100.7:60000", "unavailable", "no_answer") };
+  inputs.endpoints[1].inconclusive = true;
+  const auto result = evaluate_public(inputs, NOW);
+  EXPECT_NE(result.verdict, verdict_e::unreachable) << "the second address may well work: this computer cannot reach it and the service did not answer";
+  EXPECT_FALSE(has_reason(result.reasons, "not_reached_from_outside"));
+  // every public address failing from outside is a finding
+  inputs.endpoints = { failing_from_inside("203.0.113.9:60000", "closed"), failing_from_inside("198.51.100.7:60000", "timeout") };
+  const auto both = evaluate_public(inputs, NOW);
+  EXPECT_EQ(both.verdict, verdict_e::unreachable);
+  EXPECT_TRUE(has_reason(both.reasons, "not_reached_from_outside"));
+  // and one that did reach outranks the rest
+  inputs.endpoints = { failing_from_inside("203.0.113.9:60000", "closed"), failing_from_inside("198.51.100.7:60000", "reachable") };
+  EXPECT_EQ(evaluate_public(inputs, NOW).verdict, verdict_e::verified);
+}
+
+TEST(NetworkReachabilityOutside, TheJsonCarriesTheStateAndTheReasonOrNullWhenItWasNotAsked) {
+  snapshot_t snapshot;
+  snapshot.checked_at = format_utc_iso(NOW);
+  snapshot.public_reachability.endpoints = { failing_from_inside("203.0.113.9:60000", "unavailable", "rate_limited") };
+  fake_network_t network;
+  auto plain = probe_endpoints({ endpoint_of("203.0.113.9") }, 47989, "", network.prober());
+  snapshot.public_reachability.endpoints.push_back(plain.at(0));
+  const auto json = to_json(snapshot);
+  EXPECT_EQ(json["public"]["endpoints"].at(0)["outside"]["state"], "unavailable");
+  EXPECT_EQ(json["public"]["endpoints"].at(0)["outside"]["reason"], "rate_limited");
+  EXPECT_TRUE(json["public"]["endpoints"].at(1)["outside"].is_null());
+}
+
+TEST(NetworkReachabilityClassification, OnlyGlobalUnicastIsAPublicIpv6Address) {
+  for (const char *text : { "2001:db8::10", "2a00:1450:4001::1", "240e:b8f::1", "2600::1" }) EXPECT_EQ(classify_wan_ip(text), ip_class_e::public_address) << text;
+  // what a virtual switch or a LAN hands out is not an address the internet reaches
+  for (const char *text : { "fec0::caa2:ff71:164e:c0db", "fec0::1%1", "fd12:3456::1", "fe80::1", "::1", "ff02::1", "64:ff9b::808:808", "100::1", "::ffff:10.0.0.1" }) {
+    EXPECT_NE(classify_wan_ip(text), ip_class_e::public_address) << text;
+  }
+  EXPECT_EQ(classify_wan_ip("::ffff:203.0.113.9"), ip_class_e::public_address);
+  EXPECT_EQ(scope_of("fec0::1"), scope_e::lan);
+}
+
+TEST(NetworkReachabilityPublic, AHostWithOnlyASiteLocalAddressIsNotVerified) {
+  public_inputs_t inputs;
+  inputs.ports = healthy_ports();
+  inputs.host_public_ip = "";  // what the probe now finds: fec0::/10 is not a public address
+  inputs.router.protocol = "none";
+  const auto result = evaluate_public(inputs, NOW);
+  EXPECT_NE(result.verdict, verdict_e::verified);
+}
+
+TEST(NetworkReachabilityOutside, AProxyOnTheRouterIsToldApartFromAnAddressThatIsNotThisComputers) {
+  router_status_t router;
+  router.protocol = "upnp-igd";
+  router.wan_ip = "203.0.113.9";
+  router.wan_ip_class = ip_class_e::public_address;
+  outside_t refused;
+  refused.asked = true;
+  refused.state = "unavailable";
+  refused.reason = "ip_mismatch";
+  refused.caller = "198.51.100.7";  // the exit of the proxy, not the router's address
+  EXPECT_TRUE(router_proxy_suspected(router, refused));
+  refused.reason = "dns_mismatch";
+  EXPECT_TRUE(router_proxy_suspected(router, refused));
+  // the service saw the router's own address: the target is just another address
+  refused.caller = "203.0.113.9";
+  EXPECT_FALSE(router_proxy_suspected(router, refused));
+  refused.caller = "198.51.100.7";
+  // no public router address to compare with, or no address from the service, or another kind of answer
+  auto no_wan = router;
+  no_wan.wan_ip.clear();
+  EXPECT_FALSE(router_proxy_suspected(no_wan, refused));
+  auto shared = router;
+  shared.wan_ip_class = ip_class_e::cgnat;
+  EXPECT_FALSE(router_proxy_suspected(shared, refused));
+  auto silent = refused;
+  silent.caller.clear();
+  EXPECT_FALSE(router_proxy_suspected(router, silent));
+  auto other = refused;
+  other.reason = "no_answer";
+  EXPECT_FALSE(router_proxy_suspected(router, other));
+  other.state = "closed";
+  other.reason = "ip_mismatch";
+  EXPECT_FALSE(router_proxy_suspected(router, other));
+}
+
+TEST(NetworkReachabilityOutside, TheProxyIsANoteAndNeverMakesTheAddressUnreachable) {
+  public_inputs_t inputs;
+  inputs.ports = healthy_ports();
+  inputs.router = public_router(true);
+  inputs.endpoints = { failing_from_inside("203.0.113.9:60000", "unavailable", "router_proxy") };
+  inputs.endpoints[0].inconclusive = true;
+  const auto result = evaluate_public(inputs, NOW);
+  EXPECT_NE(result.verdict, verdict_e::unreachable);
+  EXPECT_TRUE(has_reason(result.reasons, "outside_router_proxy"));
+  EXPECT_FALSE(has_reason(result.reasons, "not_reached_from_outside"));
+}
+
+TEST(NetworkReachabilityOutside, TheJsonCarriesTheAddressTheServiceSaw) {
+  snapshot_t snapshot;
+  snapshot.checked_at = format_utc_iso(NOW);
+  auto endpoint = failing_from_inside("203.0.113.9:60000", "unavailable", "router_proxy");
+  endpoint.outside.caller = "198.51.100.7";
+  snapshot.public_reachability.endpoints = { endpoint };
+  const auto json = to_json(snapshot);
+  EXPECT_EQ(json["public"]["endpoints"].at(0)["outside"]["caller"], "198.51.100.7");
+  EXPECT_EQ(json["public"]["endpoints"].at(0)["outside"]["reason"], "router_proxy");
+}
+
+TEST(NetworkReachabilityOutside, AnAddressOfAnotherFamilyThanTheRoutersSaysNothingAboutAProxy) {
+  router_status_t router;
+  router.protocol = "upnp-igd";
+  router.wan_ip = "203.0.113.9";
+  router.wan_ip_class = ip_class_e::public_address;
+  outside_t refused;
+  refused.asked = true;
+  refused.state = "unavailable";
+  refused.reason = "ip_mismatch";
+  refused.caller = "2001:db8::10";  // the service was reached over IPv6; the router's address is IPv4
+  EXPECT_FALSE(router_proxy_suspected(router, refused));
+  refused.caller = "198.51.100.7";
+  EXPECT_TRUE(router_proxy_suspected(router, refused));
+}

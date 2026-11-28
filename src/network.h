@@ -4,6 +4,7 @@
  */
 #pragma once
 
+#include <string_view>
 #include <tuple>
 #include <utility>
 #include <vector>
@@ -105,6 +106,10 @@ namespace net {
    */
   boost::asio::ip::address
   normalize_address(boost::asio::ip::address address);
+
+  /// Compare a socket peer with a stored numeric address, including IPv4-mapped IPv6.
+  bool
+  peer_address_matches(const boost::asio::ip::address &peer, std::string_view stored_address);
 
   /**
    * @brief Get the given address in normalized string form.

@@ -41,6 +41,8 @@
   在自己 fork 里运行这个工作流时，fork 里的 pull request 也保存，因为 fork 没有上游 master 的缓存可恢复。
 - 恢复：除夜间构建外，所有运行按前缀 `ccache-windows-<配置指纹>-` 恢复最近的一份（指纹见下一节）；夜间构建不恢复，从冷缓存开始编译
   （在 8 个并行运行器上，见下一节）。
+  前缀匹配不到时再退到 `ccache-windows-`（任何指纹里最近的一份）：ccache 条目按编译命令行寻址，退回来的条目要么命中要么各自未命中，
+  不会错，所以新指纹（清理掉了旧条目，或指纹外的改动）是热启动而不是冷启动（源 `actions-cache-readme-20261122`，`restore-keys`）。
   pull request 能读到 master 的缓存
   （缓存按分支隔离，pull request 可读基础分支，源 `github-docs-dependency-caching-20261115`）。
 - 命中的前提是编译器路径和系统头文件路径一致：MSYS2 由 setup-msys2 装在 runner 的临时目录（`D:\a\_temp\msys64`），不要改用镜像自带的
@@ -90,6 +92,9 @@ libcrypto 需要链接 bcrypt、主机名校验不再回退 CN），修复见 PR
   `CI_TOOLCHAIN=gcc` 或手动运行的 `toolchain=gcc` 可切到 GCC。
 - GCC 是回退，由 `.github/workflows/gcc-fallback.yml` 每晚（UTC 21:47，合并到 master 后生效）派发一次 GCC 的完整构建（8 个分片冷编译、全部原生测试、发布门禁、打包）并等它结束；
   失败就打开或更新唯一一个带 `gcc-fallback` 标签的 issue，成功后自动关闭。GCC 构建不保存也不修剪编译缓存（只有主工具链才保存），所以不会挤掉 Clang 的缓存。
+- GCC 回退的 Release 编译使用 `-Os`。2026-11-20 同一提交的 GCC 夜间构建安装器为 46,583,321 字节，超过 46,000,000 字节的发布预算；Clang 为 43,172,884 字节。
+  `-Os` 保留除“经常增大代码”之外的 `-O2` 优化（GCC 16.2 手册，Optimize Options，源 `gcc-optimize-options-16.2.0`），只作用于回退工具链；Clang 发布构建仍用 `-O3`。
+  GCC 16.2 在 `-Os` 下会保留对 `std::basic_string` C4（base object）移动构造函数的调用，而固定的 `libstdc++.a` 只导出 C1（complete object）；`basic_string` 没有虚基类，两者是同一构造函数，所以 GNU 链接统一用 `--defsym` 把 C4 指向 C1（源 `itanium-cxx-abi-20261121`）。
 - Clang 的编译缓存比 GCC 大：同一棵树，热缓存 Clang 约 680 MB，GCC 约 235 MB。多出来的部分是预编译头：每个目标一份，Clang 的 `.pch` 约 25 MB，ccache 把它们当作普通条目保存；
   GCC 的 `.gch` 不进缓存。ccache 只保留一条（见下一节），远低于 GitHub 的 10 GB 配额；热构建在 99% 命中下，Windows 作业约 9 分钟，不比 GCC 慢。
 - Clang、LLD 和与它们版本锁定的 `clang-libs`、`llvm-libs` 固定在 `scripts/ci/msys2-pins-clang.txt`，格式与升级方式同 `msys2-pins.txt`（`msys2-pins.py check/bump` 两个文件一并处理）；只有 Clang 构建才装它们并把它们写进 `IgnorePkg`，GCC 构建不受影响，配置指纹也只在 Clang 构建时计入这个文件。
@@ -108,6 +113,9 @@ libcrypto 需要链接 bcrypt、主机名校验不再回退 CN），修复见 PR
    定义、目标、依赖的模块（不含 `packaging`、`sources` 和 Linux/macOS/Unix 专用文件）、`build_win` 里 `Configure Windows` 步骤、工具链 action，
   以及固定清单 `scripts/ci/msys2-pins.txt`（Windows 作业用 pacman 装的就是这些固定版本的编译器、CRT 和依赖库）。指纹是缓存键的一部分，
   所以运行只会恢复同一配置的缓存，`cold_plan` 也只看这个前缀（默认分支和当前引用）；上游仓库的更新不进指纹，不会让固定工具链的缓存失效。
+  只枚举源文件的语句（变量名以 `_TARGET_FILES` 或 `_SOURCES` 结尾的 `set()`/`list()` 整句）不进指纹：增删一个编译单元不会让别的
+  编译单元的缓存失效（2026-11-21 两次只改了 `PLATFORM_TARGET_FILES` 的提交都把 8 个分片的冷构建强加了上来，却没有任何编译命令行变化）；
+  `file(GLOB ...)` 的模式和参数、定义、依赖语句仍然进指纹。
 3. 这次改动碰到**被广泛包含的头文件**。`scripts/ci/hot-headers.txt` 列出对应目标文件的编译时间占全部编译时间 30% 以上的仓库头文件
    （依据 `ninja -t deps` 和 `shard-weights.ninja_log` 的耗时；`src/thread_safe.h` 占 35%，`src/config.h`、`src/logging.h` 约 45%）。
    改动其中一个，这些目标文件全部未命中，约等于冷编译三分之一以上，超过分片的开销。只有能列出改动文件的事件（pull request、push）才会触发这条规则，
@@ -126,12 +134,24 @@ hosted runner 的 CPU 型号不统一，同样的工作在慢机器上要多花�
 每个分片把 ccache 目录（十几 MB）作为工件上传；`build_win` 下载全部分片缓存解到同一个目录（ccache 条目按内容寻址，合并就是拷贝），
 然后照常 `ninja`，此时编译约 100% 命中，再链接、测试、打包。合并之后 `build_win` 只统计这一步的缓存查询，
 未命中超过 5% 时发出警告，提示分片的配置与 `Configure Windows` 已经不一致。
+两侧的 configure 之后各打印一行 `compile commands: <sha256>`（`ninja -t commands` 排序后的哈希）：两行相同是分片缓存能在 `build_win`
+命中的前提，不相同就是配置已经分叉，直接对着两份 `build.ninja` 查。`build_info_defs.h` 由 configure 时的 `string(TIMESTAMP)` 生成
+（该命令遵守 `SOURCE_DATE_EPOCH`，源 `cmake-string-timestamp-20261122`），分片和 `build_win` 各配置一次，时间戳不同则读它的缓存条目
+全部失效；三个 Windows configure 都把 `SOURCE_DATE_EPOCH` 固定为提交时间（也是 reproducible-builds 规范给这个变量定的值，
+源 `source-date-epoch-spec-20261122`）。分片的 configure 同样把 dotnet 加进 PATH，让 `find_program()` 的结果两侧一致。
+同配置并发不再用并发组：GitHub 的组默认只保留一个等待中的作业，第三个运行会顶掉正在等待的第二个
+（源 `github-docs-concurrency-20261122`），`cancel-in-progress: false` 只保护运行中的那个；被顶掉的分片在
+`build_win` 眼里是 cancelled，检查直接红。分片改为先做有界等待（最多 5 分钟，30 秒一轮，已有同指纹条目或没有别的
+运行在跑就立刻结束），再恢复编译缓存（精确指纹、同指纹分片键、最近血缘三档前缀），编译完还把分片自己的 ccache 存成
+`ccache-windows-shard-<指纹>-<run>-<分片号>`——`build_win` 只在末尾且只在 master 上保存，在那之前别的运行能恢复的
+只有分片键；修剪步骤的匹配模式同时覆盖分片键和旧键，仍只留最新一份（夜间构建例外地保持纯冷启动，验证从零构建）。
 
 与分片并行的两个作业把原来排在 `build_win` 里的步骤挪了出来：`setup_ui`（安装器 setup UI；上游用固定的下载件时不到 10 秒，
 没有匹配的下载件时要从 Panel 子模块构建约 3.5 分钟）和 `adapter_config`（不带 SDK 的适配器配置测试，约 2.5 分钟）。
 
-- 分片不构建 MAT 采集包和 dotnet 发布（`-DSUNSHINE_BUILD_MAT_CAPTURE=OFF`）：它们只是目标文件的前置依赖，不改变任何一条编译命令，
-  但每个分片都会各跑一遍（各约 50–70 秒）。
+- 分片不构建 MAT 采集包，驱动依赖下载失败也不致命（`-DSUNSHINE_BUILD_MAT_CAPTURE=OFF -DDRIVER_DEPS_REQUIRED=OFF`）：
+  前者只是加一个自定义目标，后者只填打包变量，都不改变任何一条编译命令（2026-11-21 的两侧日志对比：CMake 输出完全一致），
+  但每个分片都会各跑一遍（各约 50–70 秒）。dotnet 发布目标没有任何块依赖它，不会被分片构建。
 - 分片数 `SHARDS: 8` 和块数 `SHARD_CHUNKS`（默认 32）写在 `cold_plan` 作业里。公开仓库免费计划同时最多 20 个作业
   （源 `github-docs-actions-limits-20261115`），一次分片构建占 8 个。
 - 权重文件过期只会让块变得不等重，不会出错；分片的 `.ninja_log` 作为工件 `ninja-log-shard-*` 保留 14 天，
@@ -158,7 +178,19 @@ hosted runner 的 CPU 型号不统一，同样的工作在慢机器上要多花�
   标签与 push 路径相同（`v年.月日.时分秒`，由提交者时间算出，见 `scripts/ci/release-info.py`），资产挂在发布上。
   只有 `publish` 作业持有 `contents: write`。
 - 恢复每次 master push 自动发布：把仓库变量 `AUTO_PRERELEASE` 设为 `true`（默认未设置）。
-- 稳定版由人把预发布发布为正式版，`sign-and-repackage.yml` 在 `release: published` 时签名，规则不变。
+- 发布稳定版：在 master 上勾选 `publish_stable`（不要同时勾选 `publish`）。二进制按渠道 `stable` 编译（版本资源、`--version --json` 和
+  `GET /api/version` 的 `channel` 都是 `stable`），构建成功后 `publish` 作业用 `scripts/ci/publish-stable.sh` 直接创建正式发布并标为 Latest，
+  不经过预发布，所以发布中继和镜像从一开始就按稳定版收到它。标签和版本与 push 路径相同，由提交者时间算出：该标签已有任何发布
+  （预发布也算）时脚本直接失败，不替换资产也不升级预发布，所以稳定版要在一个还没有发布的提交上做；先把仓库变量 `AUTO_PRERELEASE` 关掉
+  再合并最后一个 PR，push 只构建、不发布。在 master 以外的分支上勾选 `publish_stable` 是演练：编译出渠道为 `stable` 的二进制并上传工件，
+  不创建任何发布。
+- 渠道由构建时的 `SUNSHINE_BUILD_CHANNEL` 记录：预发布 `beta`，稳定版 `stable`，其余运行 `dev`。把预发布改成正式版（`gh release edit`）
+  不会改变二进制里的渠道，所以不要用这个办法发布稳定版。
+- 稳定版用机器人令牌（`GH_BOT_TOKEN`，和自动预发布同一个凭据）创建：用工作流自带的令牌创建的发布不会触发别的工作流，
+  `sign-and-repackage.yml` 的 `release: published` 就不会启动。令牌为空时 `publish-stable.sh` 直接失败，不会悄悄改用工作流令牌。
+- `sign-and-repackage.yml` 在正式发布时签名，规则不变，另有两点跟稳定版有关：最后一步读取发布当前的状态，已有的正式发布保持正式发布，
+  不会被改回预发布（没有发布的标签仍建一个草稿预发布）；重新编译时 `SUNSHINE_BUILD_CHANNEL` 按发布的类型设置（正式发布 `stable`，预发布 `beta`），
+  签名后的二进制不会记成 `local`。
 
 ## 崩溃符号
 
@@ -166,9 +198,13 @@ MinGW 构建不产生 PDB。Windows 构建加了 `-g1` 和 `-Wl,--build-id`（`c
 strip 和签名都不会改变它，崩溃转储（minidump）靠它找到符号。
 
 - 打包时 `scripts/ci/make-symbols.py` 用 `dump_syms`（固定版本和 SHA-256）读未 strip 的模块里的 DWARF，生成 Breakpad 符号，
-  存成 `<模块名>/<调试 ID>/<模块名>.sym`，连同 `symbols-manifest.json` 打成 `Sunshine.<版本>.Symbols-x64.zip`，作为发布资产和工件上传；
-  随后把安装包和便携包里仍带 DWARF 的模块 `strip` 掉，所以安装包不带 DWARF：没有符号的模块也会被 strip，并记进 `symbols-manifest.json` 的 `stripped_without_symbols`；带数字签名的模块不动（strip 会破坏签名），记进 `kept_signed_with_debug_info`，打包日志里有一条警告。安装器外壳在链接时就去掉调试信息。
+  存成 `<模块名>/<调试 ID>/<模块名>.sym`，连同 `symbols-manifest.json` 打成 `Sunshine.<版本>.Symbols-x64.zip`，作为发布资产和工件上传。
+- 符号打包后，安装器与便携包各自清掉不再需要的调试数据：安装器在 inno_staging 上由 scripts/ci/make-symbols.py 用 tools/pe_symbols.py 截掉 COFF 符号表，再用 strip --strip-debug 去掉 DWARF；便携包由 CPack 安装到自己的 staging 树，cmake/packaging/strip-cpack-symbols.cmake 作为 CPACK_PRE_BUILD_SCRIPTS 在 ZIP 写出前对同一棵树运行 tools/pe_symbols.py --recursive（只处理未签名 PE，CodeView GUID 保留）。CI 还会解压便携包，用 tools/pe_symbols.py --check 确认没有未签名 PE 仍带 COFF 表。
+- 没有符号的模块也会被清掉，记进 symbols-manifest.json 的 stripped_without_symbols 与 stripped_coff_symbols；带数字签名的模块不动（改一个字节就会使签名失效），记进 kept_signed_with_debug_info / kept_signed_with_coff_symbols，打包日志里有一条警告。安装器外壳和 setup UI 也在写入 append_installer_payload.py 的页脚之前按同一规则去掉 COFF 符号表。
 - `sunshine.exe` 或 `sunshinesvc.exe` 没有符号时打包失败。
+- 发布里的符号包活不长：自动预发布只保留最新两个（`LizardByte/create-release-action` 的 `keepPreReleaseCount`），旧的连同资产一起删除，一天构建好几次，
+  多数版本的 `Symbols-x64.zip` 几小时后就没了，崩溃转储只能显示模块加偏移。所以每次构建把这个包再单独上传一次，工件名 `sunshine-symbols-<版本号>`
+  （例如 `sunshine-symbols-v2026.1118.144543`），保留 90 天，可以按名字单独下载，不必下载 100 多 MB 的整包。反馈仓库的符号库自动从这里复制，由反馈仓库里的对应改动接入，合并前只能手动下载。
 - 解析崩溃：`minidump-stackwalk --symbols-path <解压目录> x.dmp`。
 - 符号文件格式与目录布局见 Breakpad 文档，`--build-id` 见 GNU ld 手册，二者登记在 `docs/authority/source-index.tsv`（`breakpad-symbol-files-20261115`、`gnu-ld-options-20261115`）。
 

@@ -4,6 +4,8 @@
  */
 #include "crash_env.h"
 
+#include "gpu_driver.h"
+
 #include "src/system_info.h"
 
 #include <algorithm>
@@ -21,6 +23,21 @@
 #endif
 
 namespace crash::env {
+  void
+  publish_gpu_driver_versions() {
+    try {
+      const auto snap = system_info::sample("", false);
+      for (const auto &g : snap.gpus) {
+        const auto vendor = gpu_driver::vendor_from_word(gpu_vendor_word(g.vendor.empty() ? g.name : g.vendor));
+        if (vendor == gpu_driver::vendor_e::none) continue;
+        if (*gpu_driver::driver_version_of(vendor)) continue;  // the first adapter of a vendor stands for it
+        gpu_driver::set_driver_version(vendor, sanitize_version(g.driver_version));
+      }
+    }
+    catch (...) {
+    }
+  }
+
   std::string
   describe_machine() {
     nlohmann::json env = nlohmann::json::object();

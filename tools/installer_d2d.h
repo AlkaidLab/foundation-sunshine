@@ -572,6 +572,18 @@ namespace ui {
     bool webview2_missing = false;  // done: the Panel's WebView2 Runtime is absent (offline, bootstrapper failed)
     std::string planned;  // the engine's 'plan' event: comma list of step ids (installer_web.inc names)
     int permille[d_count] = {};  // own progress of a step, 0..1000 ('permille' of its events); -1 = none
+    // where the program goes (installer_dir.h): the default folder, the picked one, or the folder of the installed copy
+    std::wstring dir = L"C:\\Program Files\\Sunshine";
+    bool dir_editable = true;  // a fresh install on its first page; an installed copy keeps its place
+    long long dir_free = -1;  // free bytes on the drive of `dir`, -1 = unknown
+    std::string dir_error;  // installer_dir::code of the reason the folder is refused, empty = usable
+    std::string dir_warning;  // installer_dir::code (parent, user) of a reason that is only a warning: usable after the person confirmed it; empty = none
+    std::wstring dir_safe;  // the safe place offered for a warning (installer_dir::safe_alternative)
+    std::wstring dir_picked;  // the folder that was picked when `dir` is that folder with the product's name added: one click uses it as it is; empty = none
+    std::string dir_note;  // "redirected": the picked folder has files in it, so a folder inside it is used
+    bool dir_confirm = false;  // the question about a warning is open: the install waits for the person's answer (and for kConfirmSeconds)
+    bool dir_live_edit = false;  // the shell's edit window shows the path: the page does not draw it too (false in the previews and the snapshots of a page change)
+    int dir_confirm_left = 0;  // seconds until "Install anyway" can be pressed (the native window draws it; the web page counts its own)
   };
 
   inline int

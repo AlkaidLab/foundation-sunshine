@@ -3,10 +3,12 @@
  * @brief Uploads the pending crash reports to POST <endpoint>/v1/crash (multipart: "meta" JSON + optional "dump" + the anonymised session log of the run).
  *
  * Runs on its own thread and only ever waits on the network, never on anything the host needs to start. A report is deleted after a 2xx and
- * after a 4xx the server will never accept (except 408/429); a network failure or 5xx leaves it for the next pass. At most 20 stay on disk.
+ * after an answer that says the body will never be accepted (upload_policy.h); everything else, a network failure, a 5xx, a limit, a proxy's refusal, leaves it for a later pass, spread by a random share.
+ * At most 20 stay on disk (and a byte cap), none older than 30 days.
  */
 #include "crash_log.h"
 #include "crash_state.h"
+#include "upload_policy.h"
 
 #include <algorithm>
 #include <chrono>
@@ -14,6 +16,7 @@
 #include <condition_variable>
 #include <functional>
 #include <optional>
+#include <random>
 #include <curl/curl.h>
 #include <cstdio>
 #include <cstdlib>
@@ -107,7 +110,7 @@ namespace crash {
 
     /// One multipart POST. `dump`, `log` and `image` (the screenshot of a feedback report) are optional.
     answer_t
-    post(const std::string &url, const std::string &meta, const std::string &dump, const logfile::packed_t *log = nullptr, const std::string *image = nullptr) {
+    post(const std::string &url, const std::string &meta, const std::string &dump, const logfile::packed_t *log = nullptr, const std::string *image = nullptr, long timeout_s = 120) {
       answer_t answer;
       CURL *curl = curl_easy_init();
       if (!curl) return answer;
@@ -138,7 +141,7 @@ namespace crash {
       curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, header_line);
       curl_easy_setopt(curl, CURLOPT_HEADERDATA, &answer.retry_after);
       curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
-      curl_easy_setopt(curl, CURLOPT_TIMEOUT, 120L);
+      curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout_s);
       curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
       curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
       curl_easy_setopt(curl, CURLOPT_SSLVERSION, CURL_SSLVERSION_TLSv1_2);
@@ -165,9 +168,20 @@ namespace crash {
 
     std::mutex g_env_mutex;
     std::function<std::string()> g_environment;
-    /// After a 429/503 or a network failure the uploader waits longer (Retry-After, else 15 minutes doubling up to 4 hours: the numbers Crashpad uses for its retries).
+    /// After a 429/503 or a network failure the uploader waits longer (Retry-After, else 15 minutes doubling up to 4 hours: the numbers Crashpad uses for its retries), each spread by a random share.
     std::atomic<long> g_wait_hint_s { 0 };
     std::atomic<int> g_failures { 0 };
+    std::mutex g_jitter_mutex;
+    std::function<double()> g_jitter;
+
+    /// A number in [0, 1): the random share of a wait or of the start delay.
+    double
+    jitter01() {
+      std::lock_guard lock(g_jitter_mutex);
+      if (g_jitter) return g_jitter();
+      static std::mt19937_64 engine { std::random_device {}() };
+      return std::uniform_real_distribution<double>(0.0, 1.0)(engine);
+    }
 
     /// What names this account and this computer, for the privacy pass over a dump (redact_private_names).
     std::vector<std::string>
@@ -193,12 +207,6 @@ namespace crash {
       return names;
     }
 
-    bool
-    settled(long status) {
-      if (status >= 200 && status < 300) return true;
-      return status >= 400 && status < 500 && status != 408 && status != 429;  // it will not be accepted later either
-    }
-
     void
     uploader_main() {
       using namespace std::chrono_literals;
@@ -206,7 +214,8 @@ namespace crash {
         std::unique_lock lock(g_wait_mutex);
         return !g_wait_cv.wait_for(lock, s, [] { return g_stop_upload.load(); });
       };
-      std::chrono::seconds delay = 20s;
+      // 20 s after the start and up to two minutes more, so the computers that were started together (a power cut, a morning) do not all knock at once
+      std::chrono::seconds delay = 20s + std::chrono::seconds(static_cast<long>(jitter01() * 120.0));
       if (const char *env = std::getenv("SUNSHINE_CRASH_UPLOAD_DELAY_S"); env && *env) delay = std::chrono::seconds(std::max(0, std::atoi(env)));
       if (!wait(delay)) return;
       do {
@@ -214,7 +223,12 @@ namespace crash {
           const auto dir = current_config_dir();
           upload_pending_once(dir, endpoint_from(current_conf_text()), read_or_create_install_id(dir, true));
         }
-      } while (wait(std::chrono::seconds(std::max<long>(30 * 60, g_wait_hint_s.load()))));
+        // a pass that found nothing to wait for comes back in ten minutes (a report written by a hang is not left for half an hour); after a failure the wait the policy chose
+      } while (wait(std::chrono::seconds([] {
+        // after a failure the wait the policy chose (the service's Retry-After or the backoff, each spread by the random share); with nothing to wait for, ten minutes
+        const auto hint = g_wait_hint_s.load();
+        return hint > 0 ? hint : 10L * 60;
+      }())));
     }
   }  // namespace
 
@@ -293,24 +307,34 @@ namespace crash {
         catch (...) {
         }
       }
-      const auto answer = post(url, body, dump, log ? &*log : nullptr);
-      const long status = answer.status;
-      // 429 (a limit; wait Retry-After) and 503 (storage failed, nothing counted): keep everything and stop this pass; so does a network failure or a server error
-      if (status == 429 || status == 503 || status == 0 || status >= 500) {
+      auto answer = post(url, body, dump, log ? &*log : nullptr);
+      auto verdict = upload_policy::judge(answer.status, !dump.empty());
+      // 413: the dump is too large for the service, the report is not: it goes again without the dump (the log stays with it)
+      if (verdict == upload_policy::verdict_e::send_without_dump) {
+        answer = post(url, body, {}, log ? &*log : nullptr);
+        verdict = upload_policy::judge(answer.status, false);
+      }
+      // a limit (429, wait Retry-After), a service that could not store it (503), no answer, any other answer that is not about this report: keep everything and stop this pass
+      if (verdict == upload_policy::verdict_e::wait) {
         const long failures = g_failures.fetch_add(1) + 1;
-        const long backoff = std::min<long>(4 * 3600, 15 * 60L << std::min<long>(failures - 1, 5));
-        g_wait_hint_s.store(answer.retry_after > 0 ? std::clamp<long>(answer.retry_after, 30, 4 * 3600) : (status == 0 || status >= 500 ? backoff : 0));
+        g_wait_hint_s.store(upload_policy::wait_seconds(failures, answer.retry_after, jitter01()));
         break;
       }
       g_failures.store(0);
       g_wait_hint_s.store(0);
-      if (!settled(status)) continue;
+      if (verdict == upload_policy::verdict_e::keep_going) continue;
       std::error_code ec;
       fs::remove(report.meta, ec);
       if (!report.dump.empty()) fs::remove(report.dump, ec);
       ++done;
     }
     return done;
+  }
+
+  void
+  set_upload_jitter_source(std::function<double()> source) {
+    std::lock_guard lock(g_jitter_mutex);
+    g_jitter = std::move(source);
   }
 
   // lives here, not in crash_common.cpp: the service wrapper links the capture without the uploader
@@ -357,6 +381,40 @@ namespace crash {
 
   namespace {
     std::atomic<const char *> g_session_log_state { "no_log" };
+    /// The Panel and the Web UI wait for the host's answer to a feedback report while the screenshot and the log are uploaded, one after the other (the page gives up at 45 s):
+    /// the two uploads and the log's collection and packing between them share one deadline (begin_feedback_budget), each upload gets at most 20 s of what is left,
+    /// and an upload that would start with less than kFeedbackMinUploadSeconds left is not started: the report goes without it and says why (unreachable).
+    constexpr long kFeedbackUploadTimeoutSeconds = 20;
+    constexpr long kFeedbackMinUploadSeconds = 2;
+    /// The log's collection and packing take at most this long, and what they leave must still be enough for the upload to have a chance (kFeedbackUploadReserveSeconds).
+    constexpr long kFeedbackPrepareSeconds = 10;
+    constexpr long kFeedbackUploadReserveSeconds = 5;
+    /// No deadline: an upload outside a feedback report (the tests, the tools) keeps the fixed 20 s.
+    thread_local std::optional<std::chrono::steady_clock::time_point> t_feedback_deadline;
+
+    /// Seconds the next feedback upload may take, or 0 when it should not start.
+    long
+    feedback_upload_timeout_s() {
+      if (!t_feedback_deadline) return kFeedbackUploadTimeoutSeconds;
+      const auto left = std::chrono::duration_cast<std::chrono::seconds>(*t_feedback_deadline - std::chrono::steady_clock::now()).count();
+      if (left < kFeedbackMinUploadSeconds) return 0;
+      return left < kFeedbackUploadTimeoutSeconds ? static_cast<long>(left) : kFeedbackUploadTimeoutSeconds;
+    }
+  }
+
+  void
+  begin_feedback_budget(std::chrono::seconds total) {
+    t_feedback_deadline = std::chrono::steady_clock::now() + total;
+  }
+
+  void
+  end_feedback_budget() {
+    t_feedback_deadline.reset();
+  }
+
+  long
+  feedback_upload_timeout_for_tests() {
+    return feedback_upload_timeout_s();
   }
 
   const char *
@@ -388,7 +446,12 @@ namespace crash {
       std::string base = endpoint;
       while (!base.empty() && base.back() == '/') base.pop_back();
       const nlohmann::json meta { { "v", 1 }, { "install_id", install_id }, { "version", version } };
-      const auto answer = post(base + "/v1/user-screenshot", meta.dump(), {}, nullptr, &image);
+      const long timeout_s = feedback_upload_timeout_s();
+      if (timeout_s <= 0) {
+        g_session_shot_state.store("unreachable");  // the report's deadline is spent: it goes without the picture rather than past the page's wait
+        return std::nullopt;
+      }
+      const auto answer = post(base + "/v1/user-screenshot", meta.dump(), {}, nullptr, &image, timeout_s);
       if (answer.status == 0) {
         g_session_shot_state.store("unreachable");
         return std::nullopt;
@@ -416,20 +479,54 @@ namespace crash {
   }
 
   std::optional<std::string>
-  upload_session_log_from(const fs::path &config_dir, const std::string &endpoint, const std::string &install_id, const std::string &version) {
+  upload_session_log_from(const fs::path &config_dir, const std::string &endpoint, const std::string &install_id, const std::string &version, const log_stages_t *stages) {
     g_session_log_state.store("no_log");
     try {
       std::call_once(g_curl_once, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
-      const auto text = logfile::collect_current(log_path_of(config_dir));
+      // Inside a feedback report the collecting and the packing run on the report's deadline too: with too little left the log is not even read, a big file is read from its end only, and
+      // the work stops where its own share has passed (the upload keeps kFeedbackUploadReserveSeconds of the rest).
+      std::size_t read_bytes = logfile::max_read_bytes;
+      std::function<bool()> expired;
+      if (t_feedback_deadline) {
+        const auto now = std::chrono::steady_clock::now();
+        const auto spare = std::chrono::duration_cast<std::chrono::milliseconds>(*t_feedback_deadline - now) - std::chrono::seconds(kFeedbackUploadReserveSeconds);
+        if (spare < std::chrono::seconds(1)) {
+          g_session_log_state.store("unreachable");
+          return std::nullopt;
+        }
+        const auto until = now + std::min<std::chrono::milliseconds>(spare, std::chrono::seconds(kFeedbackPrepareSeconds));
+        expired = [until] { return std::chrono::steady_clock::now() >= until; };
+        read_bytes = logfile::bounded_read_bytes;
+      }
+      const auto prepare_spent = [&] { return expired && expired(); };
+      const auto text = stages && stages->collect ? stages->collect(log_path_of(config_dir), read_bytes) : logfile::collect_current(log_path_of(config_dir), read_bytes);
       if (text.empty()) return std::nullopt;
+      if (prepare_spent()) {
+        g_session_log_state.store("unreachable");
+        return std::nullopt;
+      }
       g_session_log_state.store("pack_failed");
-      const auto packed = logfile::pack(text);
-      if (!packed) return std::nullopt;
+      const auto packed = stages && stages->pack ? stages->pack(text, expired) : logfile::pack(text, logfile::max_gz_bytes, expired);
+      if (!packed) {
+        if (prepare_spent()) g_session_log_state.store("unreachable");  // stopped by the deadline, not by the log
+        return std::nullopt;
+      }
+      // a packing that finished after its share ended is not used either: the upload keeps the time it was promised
+      if (prepare_spent()) {
+        g_session_log_state.store("unreachable");
+        return std::nullopt;
+      }
       std::string base = endpoint;
       while (!base.empty() && base.back() == '/') base.pop_back();
       const nlohmann::json meta { { "v", 1 }, { "install_id", install_id }, { "version", version } };
+      // what is left of the report's deadline is measured after them
+      const long timeout_s = feedback_upload_timeout_s();
+      if (timeout_s <= 0) {
+        g_session_log_state.store("unreachable");
+        return std::nullopt;
+      }
       // a service without the endpoint (404), a limit (429), a refusal: the report goes without the log
-      const auto answer = post(base + "/v1/user-log", meta.dump(), {}, &*packed);
+      const auto answer = post(base + "/v1/user-log", meta.dump(), {}, &*packed, nullptr, timeout_s);
       if (answer.status == 0) {
         g_session_log_state.store("unreachable");
         return std::nullopt;

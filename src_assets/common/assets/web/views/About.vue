@@ -59,7 +59,9 @@ const telemetry = inject('telemetryConsent', null)
 const shell = inject('webShell', null)
 // 隐私 › 查看将发送的内容: the records the host would send next, with the fields every batch carries
 const loadTelemetryPreview = () => apiJson('/api/telemetry/preview')
-const sheet = ref(false)
+// the tile of 软件更新 on 帮助与关于 opens this page with the update sheet open (`openUpdate`); the ordinary way in leaves it closed
+const props = defineProps({ params: { type: Object, default: null } })
+const sheet = ref(!!props.params?.openUpdate)
 const hostVersion = ref('')
 const build = ref(null) // the build identity the host recorded (GET /api/version of a host that has it); an older host answers without it and the page guesses as before
 const installed = computed(() => update.version.value?.version || hostVersion.value)

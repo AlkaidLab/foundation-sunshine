@@ -144,6 +144,18 @@ namespace telemetry::health {
     last_done_ns_ = steady_ns;
   }
 
+  std::string
+  stream_health_t::encoder() const {
+    std::lock_guard lock { encoder_mutex_ };
+    return late_encoder_.empty() ? dims_.encoder : late_encoder_;
+  }
+
+  void
+  stream_health_t::set_encoder(std::string encoder) {
+    std::lock_guard lock { encoder_mutex_ };
+    late_encoder_ = std::move(encoder);
+  }
+
   std::optional<window_t>
   stream_health_t::tick(std::int64_t now_ms, const probe_t &probe) {
     std::lock_guard window { window_mutex_ };
@@ -299,6 +311,8 @@ namespace telemetry::health {
   stream_health_t::add_to_chunk(const window_t &w) {
     if (w.idle) {
       ++chunk_idle_;
+      const auto blocked = idx(counter_e::send_would_block_packets);
+      chunk_counters_[blocked] += w.counters[blocked];
       return;
     }
     ++chunk_windows_;
@@ -344,7 +358,8 @@ namespace telemetry::health {
   bool
   stream_health_t::chunk_due(std::int64_t now_ms) const {
     std::lock_guard window { window_mutex_ };
-    return chunk_windows_ > 0 && now_ms - chunk_start_ms_ >= CHUNK_MAX_MS;
+    const bool has_data = chunk_windows_ > 0 || chunk_counters_[idx(counter_e::send_would_block_packets)] > 0;
+    return has_data && now_ms - chunk_start_ms_ >= CHUNK_MAX_MS;
   }
 
   nlohmann::json
@@ -372,6 +387,7 @@ namespace telemetry::health {
     props["submitted"] = chunk_counters_[idx(counter_e::submitted)];
     props["queue_flushes"] = chunk_counters_[idx(counter_e::queue_flushes)];
     props["queue_frames_dropped"] = chunk_counters_[idx(counter_e::queue_frames_dropped)];
+    props["send_would_block_packets"] = chunk_counters_[idx(counter_e::send_would_block_packets)];
     props["idr_requests"] = chunk_counters_[idx(counter_e::idr_requests)];
     props["rfi_requests"] = chunk_counters_[idx(counter_e::rfi_requests)];
     props["anomalies"] = chunk_anomalies_;
@@ -397,7 +413,7 @@ namespace telemetry::health {
     props["client_kind"] = dims_.client_kind;
     props["client_os"] = dims_.client_os;
     if (target_n_ > 0) props["bitrate_band"] = bitrate_band(static_cast<int>(target_sum_ / static_cast<double>(target_n_)));
-    if (!dims_.encoder.empty()) props["encoder"] = dims_.encoder;
+    if (const auto enc = encoder(); !enc.empty()) props["encoder"] = enc;
     if (!dims_.capture_backend.empty()) props["capture_backend"] = dims_.capture_backend;
     if (!dims_.gpu_driver.empty()) props["gpu_driver"] = dims_.gpu_driver;
 

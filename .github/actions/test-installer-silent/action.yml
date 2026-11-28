@@ -1,0 +1,18 @@
+name: Test unattended installer
+description: Round-trip the packaged Inno engine with both silent switches on a clean Windows runner.
+runs:
+  using: composite
+  steps:
+    - name: Install and uninstall without desktop prompts
+      shell: pwsh
+      run: >-
+        ./scripts/ci/test-installer-silent.ps1
+        -Installer build/cpack_artifacts/Sunshine-engine.exe
+        -EvidenceDirectory "${{ runner.temp }}/installer-silent-evidence"
+    - name: Keep installer smoke evidence
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: installer-silent-evidence
+        path: ${{ runner.temp }}/installer-silent-evidence
+        if-no-files-found: warn

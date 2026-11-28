@@ -113,6 +113,10 @@ namespace telemetry {
     health::stream_health_t &
     health() noexcept { return health_; }
 
+    /** The encoder family: what the stream began with, or what was learnt since (see stream_health_t::encoder). */
+    std::string encoder() const { return health_.encoder(); }
+    void set_encoder(std::string encoder) { health_.set_encoder(std::move(encoder)); }
+
     std::uint32_t session_id() const noexcept { return session_id_; }
     const stream_dims_t &dims() const noexcept { return dims_; }
     std::int64_t start_ms() const noexcept { return start_ms_; }

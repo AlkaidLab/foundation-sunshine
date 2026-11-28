@@ -2,6 +2,22 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { nextTick } from 'vue'
 import { useTroubleshooting } from '../composables/useTroubleshooting.js'
+import { fetchLogTail } from '../composables/useLogs.js'
+
+test('the shell and overview share an in-flight tail read and can retry a failed read', async (t) => {
+  const offsets = []
+  t.mock.method(globalThis, 'fetch', async (url, { headers }) => {
+    assert.equal(url, '/api/logs')
+    offsets.push(headers.get('X-Log-Offset'))
+    return offsets.length === 1 ? new Response(null, { status: 503 }) : new Response('latest line')
+  })
+
+  const first = fetchLogTail()
+  assert.equal(fetchLogTail(), first)
+  await assert.rejects(first, /503/)
+  assert.equal(await fetchLogTail(), 'latest line')
+  assert.deepEqual(offsets, ['0', '0'])
+})
 
 const liveResponse = (text, size, range = 'full') => ({
   ok: true,

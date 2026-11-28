@@ -144,7 +144,13 @@ namespace public_address {
       endpoint.kind = kind;
       if (kind == kind_e::ip) {
         boost::system::error_code ignored;
-        endpoint.host = boost::asio::ip::make_address(normalized, ignored).to_string();
+        const auto address = boost::asio::ip::make_address(normalized, ignored);
+        // 0.0.0.0, 0.x.x.x and :: are what a listener binds to, not an address a client can reach
+        if (address.is_unspecified() || (address.is_v4() && address.to_v4().to_bytes()[0] == 0)) {
+          error = endpoint_error_e::unspecified;
+          return false;
+        }
+        endpoint.host = address.to_string();
       }
       else {
         endpoint.host = normalized;
@@ -200,10 +206,11 @@ namespace public_address {
         return result;
       }
       const auto host = text.substr(1, close - 1);
-      if (!is_ipv6_literal(host) || !set_host(result.endpoint, host, result.error)) {
+      if (!is_ipv6_literal(host)) {
         result.error = endpoint_error_e::host;
         return result;
       }
+      if (!set_host(result.endpoint, host, result.error)) return result;
       const auto rest = std::string_view(text).substr(close + 1);
       if (rest.empty()) return result;
       if (rest.front() != ':') {
@@ -248,8 +255,9 @@ namespace public_address {
   }
 
   std::uint16_t
-  https_port_of(std::uint16_t http_port) {
-    return http_port > HTTPS_PORT_OFFSET ? static_cast<std::uint16_t>(http_port - HTTPS_PORT_OFFSET) : 0;
+  https_port_of(std::uint16_t http_port, std::int32_t delta) {
+    const auto port = static_cast<std::int32_t>(http_port) - delta;
+    return port >= 1 && port <= 65535 ? static_cast<std::uint16_t>(port) : 0;
   }
 
   namespace {

@@ -11,10 +11,27 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     foreach(lang C CXX)
         string(APPEND CMAKE_${lang}_FLAGS_RELEASE " -g1")
     endforeach()
+    # On 2026-11-20 the GCC nightly built a 46,583,321-byte installer against the 46,000,000-byte release
+    # budget; the same commit built with Clang produced 43,172,884 bytes. The GCC build is the fallback, so
+    # it builds for size: appending after the -O3 of CMAKE_<LANG>_FLAGS_RELEASE keeps -Os in effect (CMake
+    # documentation, CMAKE_<LANG>_FLAGS_<CONFIG>, source fs-cmake-flags-config-20261121). Clang keeps -O3.
+    sunshine_gcc_release_size_flag(_sunshine_gcc_release_size_flag "${CMAKE_CXX_COMPILER_ID}")
+    if(_sunshine_gcc_release_size_flag)
+        foreach(lang C CXX)
+            string(APPEND CMAKE_${lang}_FLAGS_RELEASE " ${_sunshine_gcc_release_size_flag}")
+        endforeach()
+    endif()
     foreach(kind EXE SHARED MODULE)
         string(APPEND CMAKE_${kind}_LINKER_FLAGS " -Wl,--build-id")
     endforeach()
 endif()
+
+sunshine_gcc_string_constructor_aliases(_sunshine_gcc_string_constructor_aliases "${CMAKE_CXX_COMPILER_ID}")
+foreach(kind EXE SHARED MODULE)
+    foreach(alias IN LISTS _sunshine_gcc_string_constructor_aliases)
+        string(APPEND CMAKE_${kind}_LINKER_FLAGS " ${alias}")
+    endforeach()
+endforeach()
 
 # gcc complains about misleading indentation in some mingw includes
 list(APPEND SUNSHINE_COMPILE_OPTIONS -Wno-misleading-indentation)
@@ -171,6 +188,7 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/windows/win_dark_mode.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/win_dark_mode.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/input.cpp"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_attach_policy.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_native_client.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_native_client.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/ds5/ds5_pad_audio.h"
@@ -222,7 +240,6 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/windows/vulkan_hdr_bridge_session.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/audio.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/audio_devices.cpp"
-        "${CMAKE_SOURCE_DIR}/src/platform/windows/audio_vb_cable_win.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/mic_write.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/mic_redirect.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/virtual_microphone.h"
@@ -232,6 +249,7 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/windows/usbip_device_transport.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/usbip_device_transport.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/paced_reply_queue.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/unicode_input.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/audio_default_guard.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/audio_default_guard.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/capture_endpoint_recorder.h"
@@ -244,6 +262,7 @@ set(PLATFORM_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/general_functions.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/settings_topology.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/settings_topology.h"
+        "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/settings_restore.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/settings.cpp"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/windows_utils.h"
         "${CMAKE_SOURCE_DIR}/src/platform/windows/display_device/windows_utils.cpp"

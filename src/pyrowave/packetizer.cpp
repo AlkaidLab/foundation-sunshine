@@ -55,9 +55,15 @@ namespace pyrowave {
   public:
     [[nodiscard]] packetization_result_t
     packetize(const encoded_frame_t &frame, const packetization_request_t &request) noexcept override {
-      const auto frame_valid = validate(frame);
+      return packetize_borrowed(frame, frame.bitstream.view(), request);
+    }
+
+    [[nodiscard]] packetization_result_t
+    packetize_borrowed(const encoded_frame_t &frame, std::span<const std::uint8_t> input,
+                       const packetization_request_t &request) noexcept override {
+      const auto frame_valid = frame.frame_id != 0 && frame.kind == frame_kind_e::intra &&
+                               !input.empty() && validate(frame.deadline);
       const auto request_valid = validate(request);
-      const auto input = frame.bitstream.view();
       const auto metadata_length = request.metadata.size();
       const auto metadata_valid = validate_metadata(request.metadata);
       if (!frame_valid || !request_valid || !metadata_valid ||

@@ -63,8 +63,9 @@ const STATIC_DEFAULT_KEYS = new Set([
 // Values are the host's effective value when the key is absent. Optional AMF values use null: the driver
 // receives no property. The visible Web UI uses an empty option for that state.
 const HOST_DEFAULTS = Object.freeze({
-  locale: 'en', sunshine_name: null, min_log_level: 2, sleep_mode: '0', notify_pre_releases: false, system_tray: true,
+  locale: 'en', sunshine_name: null, min_log_level: 2, sleep_mode: '0', notify_pre_releases: false, pin_prompt: 'fullscreen', system_tray: true,
   stop_on_last_video_session: false, launch_splash: true, controller: true, gamepad: 'auto', usb_forwarding_enabled: false,
+  usb_wired_streaming_enabled: false,
   usb_forwarding_port: 0, ds4_back_as_touchpad_click: true, motion_as_ds4: true, touchpad_as_ds4: true,
   enable_dsu_server: false, dsu_server_port: 26760, back_button_timeout: -1, keyboard: true, key_repeat_delay: 500,
   key_repeat_frequency: 24.9, always_send_scancodes: true, key_rightalt_to_key_win: false, mouse: true,
@@ -90,6 +91,11 @@ const HOST_DEFAULTS = Object.freeze({
   amd_preanalysis: null, amd_vbaq: null, amd_coder: 'auto', amd_hevc_gop_size: -1, amd_high_motion_qb: null,
   amd_lowlatency_mode: null, amd_multi_hw_instance: null, amd_input_queue_size: null, amd_av1_latency_mode: null,
   vt_coder: 'auto', vt_software: 'auto', vt_realtime: true, sw_preset: 'superfast', sw_tune: 'zerolatency', min_threads: 2,
+  input_activity_boost: true, input_activity_boost_fps: 60, input_activity_boost_window_ms: 150, downscaling_quality: 'balanced',
+  vaapi_strict_rc_buffer: false, max_log_size_mb: 50, restore_log: false, fs_host_icon: null,
+  client_gamepad_override: true, clipboard_sync: true,
+  client_fingerprint_remote_rules: true, client_fingerprint_rules_url: null, client_fingerprint_rules_refresh_hours: 24, client_fingerprint_rules_certificate: null,
+  network_external_check: true, network_external_endpoint: null, network_bypass_proxy: true, stun_servers: null,
 })
 
 const normalize = (value) => {
@@ -129,6 +135,7 @@ test('host-default table is anchored to the current C++ defaults', () => {
   assert.match(NVENC_HEADER, /int quality_preset = 4;/)
   assert.match(NVENC_HEADER, /bool adaptive_quantization = true;/)
   assert.match(CONFIG_CPP, /true,\s*\/\/ dynamic_resolution_follow_display/)
+  assert.match(CONFIG_CPP, /"fullscreen",\s*\/\/ pin_prompt/)
   assert.match(CONFIG_CPP, /qsv::medium,\s*\/\/ preset/)
   assert.match(CONFIG_CPP, /"superfast"s,\s*\/\/ preset/)
   assert.match(CONFIG_CPP, /std::nullopt,\s*\/\/ enforce_hrd/)

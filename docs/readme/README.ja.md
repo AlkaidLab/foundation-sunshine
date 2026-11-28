@@ -11,7 +11,7 @@
 
 [简体中文](../../README.md) · [English](README.en.md) · [Deutsch](README.de.md) · [Français](README.fr.md) · 日本語
 
-[公式サイト](https://www.alkaidlab.com/) · [公式サイト（中国）](https://www.alkaidlab.cn/) · [QQ コミュニティ（中国語）](https://qm.qq.com/cgi-bin/qm/qr?k=5qnkzSaLIrIaU4FvumftZH_6Hg7fUuLD&jump_from=webapi) · [問題を報告](https://github.com/AlkaidLab/foundation-sunshine/issues)
+[公式サイト](https://www.alkaidlab.com/) · [公式サイト（中国）](https://www.alkaidlab.cn/) · [QQ コミュニティ（中国語）](https://qm.qq.com/q/vIVhpjDMic) · [問題を報告](https://github.com/AlkaidLab/foundation-sunshine/issues)
 
 </div>
 
@@ -132,10 +132,13 @@ macOS では [Moonlight V+ for PC](https://github.com/qiin2333/moonlight-qt/rele
 
 #### パートナー クライアント
 
-- **VoidLink · iOS / iPadOS：** [紹介](https://github.com/The-Fried-Fish/VoidLink-previously-moonlight-zwm#readme) · [App Store（中国・韓国・ベトナム）](https://apps.apple.com/app/voidlink/id6747717070) · [App Store（その他の地域）](https://apps.apple.com/app/voidlink-extreme/id6755103808)（ストア配信は有料）
-- **VoidLink TestFlight Beta · Apple TV：** [TestFlight に参加](https://testflight.apple.com/join/k7gs61mZ)
+- **VoidLink · iOS / iPadOS / Apple TV（おすすめ）：** [紹介](https://github.com/The-Fried-Fish/VoidLink-previously-moonlight-zwm#readme) · [App Store（中国）](https://apps.apple.com/cn/app/voidlink/id6747717070) · [App Store（米国）](https://apps.apple.com/us/app/voidlink-extreme/id6755103808)（ストア配信は有料）
 - **Crown Edition · Android：** [ダウンロード](https://github.com/WACrown/moonlight-android/releases) · [紹介](https://github.com/WACrown/moonlight-android#readme)
 - **Baozi Edition · HarmonyOS：** [プロジェクトとダウンロード](https://gitee.com/smdsbz/moonlight-ohos)
+
+#### パートナーツール
+
+- **皎月连（Natpierce）：** [ネットワーク接続ツール](https://docs.qq.com/aio/DRFVhWERDaFhKd1ZE)
 
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/h-start-dark.webp"><img src="../../assets/readme/h-start.webp" height="50" alt=""></picture>&nbsp;クイック スタート
 
@@ -193,7 +196,7 @@ macOS では [Moonlight V+ for PC](https://github.com/qiin2333/moonlight-qt/rele
 
 - [ドキュメント（英語）](../en/README.md)：インストール、機能、FAQ、開発をタスク別に整理。
 - [FAQ（英語）](../en/faq.md)：カクつき、接続、オーディオの問題。
-- [公式サイト](https://www.alkaidlab.com/) · [公式サイト（中国）](https://www.alkaidlab.cn/) · [QQ コミュニティ（中国語）](https://qm.qq.com/cgi-bin/qm/qr?k=5qnkzSaLIrIaU4FvumftZH_6Hg7fUuLD&jump_from=webapi)。
+- [公式サイト](https://www.alkaidlab.com/) · [公式サイト（中国）](https://www.alkaidlab.cn/) · [QQ コミュニティ（中国語）](https://qm.qq.com/q/vIVhpjDMic)。
 - [問題を報告](https://github.com/AlkaidLab/foundation-sunshine/issues) · [ディスカッション](https://github.com/AlkaidLab/foundation-sunshine/discussions) · [コントリビュート](../contributing.en.md)。
 
 [LizardByte/Sunshine](https://github.com/LizardByte/Sunshine)、[Moonlight](https://moonlight-stream.org/)、[ZakoDisplay](https://github.com/qiin2333/zako-vdd) とすべてのコントリビューターに感謝します。ライセンス：[GPL-3.0](https://github.com/AlkaidLab/foundation-sunshine/blob/master/LICENSE)。

@@ -19,6 +19,7 @@ const invoke = typeof window !== 'undefined' ? window.__TAURI__?.core?.invoke : 
 const isWGC = computed(() => props.platform === 'windows' && props.config.capture === 'wgc')
 const isAMD = computed(() => props.platform === 'windows' && props.config.capture === 'amd')
 const isVDD = computed(() => props.platform === 'windows' && props.config.capture === 'vdd')
+const boostOn = computed(() => String(props.config.input_activity_boost ?? true) !== 'false')
 const captureOptions = computed(() => {
   const list = [{ value: '', label: t('_common.autodetect') }]
   if (props.platform === 'linux') list.push({ value: 'nvfbc', label: 'NvFBC' }, { value: 'wlr', label: 'wlroots' }, { value: 'kms', label: 'KMS' }, { value: 'x11', label: 'X11' })
@@ -26,6 +27,7 @@ const captureOptions = computed(() => {
   return list
 })
 const shaders = computed(() => ['auto', 'on', 'off'].map((value) => ({ value, label: t(`config.capture_compute_shader_${value}`) })))
+const downscaleOptions = computed(() => ['fast', 'balanced', 'high_quality'].map((value) => ({ value, label: t(`config.downscaling_quality_${value}`) })))
 
 // WGC runs in the user's session or as a service; the control panel reports which and switches it
 const userMode = ref(false)
@@ -68,6 +70,10 @@ const openApps = () => { window.location.href = '/apps' }
         <template #trail><span class="m-item__count">{{ x.advanced.wgcSwitch }}</span></template>
       </MItem>
       <CfgExpert :config="config" k="minimum_fps_target" min="0" max="1000" />
+      <CfgExpert control="switch" :config="config" k="input_activity_boost" :on="true" :off="false" def="true" help="config.input_activity_boost_desc" />
+      <CfgExpert v-if="boostOn" :config="config" k="input_activity_boost_fps" type="number" placeholder="60" min="0" max="1000" help="config.input_activity_boost_fps_desc" />
+      <CfgExpert v-if="boostOn" :config="config" k="input_activity_boost_window_ms" type="number" placeholder="150" min="0" max="5000" help="config.input_activity_boost_window_ms_desc" />
+      <CfgExpert control="seg" :config="config" k="downscaling_quality" :options="downscaleOptions" def="balanced" help="config.downscaling_quality_desc" />
     </MGroup>
     <MFooter v-if="isVDD">{{ $t('config.capture_vdd_direct_desc') }}</MFooter>
     <VddPrerequisiteNotice :active="isVDD" />

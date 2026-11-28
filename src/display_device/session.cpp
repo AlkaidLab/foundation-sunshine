@@ -6,6 +6,7 @@
 #include <utility>
 
 // local includes
+#include "bounded_call.h"
 #include "parsed_config.h"
 #include "session.h"
 #include "src/globals.h"
@@ -156,7 +157,7 @@ namespace display_device {
   }
 
   std::unique_ptr<session_t::deinit_t>
-  session_t::init() {
+  session_t::init(bool skip_recovery) {
 #ifdef _WIN32
     // Remove a registration left behind by a terminated Sunshine process
     // before recovering display state or accepting a new stream.
@@ -167,7 +168,18 @@ namespace display_device {
     // 初始化会话事件监听器（用于检测解锁事件）
     SessionEventListener::init();
 
-    session_t::get().restore_state();
+    // The recovery reads the display stack (CCD), and DisplayConfigGetDeviceInfo can block for minutes in the graphics driver: most "host hangs at start"
+    // reports (hang:main-startup) stand in get_monitor_device_path_wstr, with the web UI not yet bound and no way to read the log. Start-up waits for the
+    // recovery a bounded time; a call that does not return runs on by itself and holds the session lock, so a stream that starts later waits behind it
+    // instead of changing the display under a recovery that has not finished.
+    constexpr std::chrono::seconds recovery_wait { 20 };
+    if (skip_recovery) {
+      BOOST_LOG(warning) << "Safe mode: the display recovery of the start is skipped";
+    }
+    else if (!run_bounded([] { session_t::get().restore_state(); }, recovery_wait)) {
+      BOOST_LOG(error) << "The display recovery did not finish within " << recovery_wait.count()
+                       << " s (the display driver does not answer); the host starts without waiting for it";
+    }
     return std::make_unique<deinit_t>();
   }
 

@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Build the self-contained installer: the shell exe, then the optional sections, then the Inno engine.
 
-usage: append_installer_payload.py shell engine output [--ui setup-ui.exe] [--wv2 MicrosoftEdgeWebview2Setup.exe]
+usage: append_installer_payload.py shell engine output [--ui setup-ui.exe]
 
-Layout: [shell][ui][wv2][engine][footer]. The footer keeps the V1 keys first (offset=, size=, sha256= of the engine), so
+Layout: [shell][ui][engine][footer]. The footer keeps the V1 keys first (offset=, size=, sha256= of the engine), so
 a shell that only knows V1 still finds the engine; <name>-offset=, <name>-size=, <name>-sha256= follow for each section.
   ui   the setup UI (Panel repo installer-ui), the web front end of the shell
-  wv2  the WebView2 Evergreen bootstrapper, run by the elevated worker when the Runtime is missing
+The WebView2 bootstrapper is not part of the package: the worker downloads it from Microsoft when the Runtime is missing
+(tools/installer_webview2.h).
 """
 
 import hashlib
@@ -28,10 +29,10 @@ def take(args, flag):
 
 def main() -> int:
     args = sys.argv[1:]
-    sections = [(name, take(args, "--" + name)) for name in ("ui", "wv2")]
+    sections = [(name, take(args, "--" + name)) for name in ("ui",)]
     sections = [(name, path.read_bytes()) for name, path in sections if path]
     if len(args) != 3:
-        raise SystemExit("usage: append_installer_payload.py shell engine output [--ui setup-ui.exe] [--wv2 MicrosoftEdgeWebview2Setup.exe]")
+        raise SystemExit("usage: append_installer_payload.py shell engine output [--ui setup-ui.exe]")
     shell, engine, output = map(pathlib.Path, args)
     payload = engine.read_bytes()
     at = shell.stat().st_size

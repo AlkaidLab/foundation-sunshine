@@ -140,6 +140,10 @@
     "method": "POST"
   },
   {
+    "pattern": "^/api/dualsense/pad-test$",
+    "method": "POST"
+  },
+  {
     "pattern": "^/api/configLocale$",
     "method": "GET"
   },
@@ -162,6 +166,18 @@
   {
     "pattern": "^/api/boom$",
     "method": "GET"
+  },
+  {
+    "pattern": "^/api/config/reset$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/config/reset$",
+    "method": "POST"
+  },
+  {
+    "pattern": "^/api/config/reset/restore$",
+    "method": "POST"
   },
   {
     "pattern": "^/api/reset-display-device-persistence$",
@@ -211,6 +227,10 @@
   {
     "pattern": "^/api/apps/batch-delete$",
     "method": "POST"
+  },
+  {
+    "pattern": "^/api/apps/cover-preview$",
+    "method": "GET"
   },
   {
     "pattern": "^/api/clients/unpair-all$",
@@ -425,8 +445,24 @@
     "method": "GET"
   },
   {
+    "pattern": "^/api/network/check$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/network/check$",
+    "method": "POST"
+  },
+  {
     "pattern": "^/api/doctor$",
     "method": "GET"
+  },
+  {
+    "pattern": "^/api/gpu-driver-guard$",
+    "method": "GET"
+  },
+  {
+    "pattern": "^/api/gpu-driver-guard$",
+    "method": "POST"
   },
   {
     "pattern": "^/api/system/info$",
@@ -495,14 +531,6 @@
   {
     "pattern": "^/api/audio/devices$",
     "method": "GET"
-  },
-  {
-    "pattern": "^/api/audio/vb-cable/enable$",
-    "method": "POST"
-  },
-  {
-    "pattern": "^/api/audio/vb-cable/install$",
-    "method": "POST"
   },
   {
     "pattern": "^/api/runtime/audio$",

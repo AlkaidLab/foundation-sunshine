@@ -51,6 +51,11 @@ extern "C" {
 #include "spatial_transport/mat_live_session.h"
 #include "src/log_text.h"
 #include "stream.h"
+#ifdef _WIN32
+  #include "usb_stream_tunnel.h"
+#endif
+#include "streaming/client_framerate.h"
+#include "streaming/expected_failures.h"
 #include "streaming/fec.h"
 #include "sync.h"
 #include "text_context/bridge.h"
@@ -347,7 +352,7 @@ namespace rtsp_stream {
     void
     read() {
       if (begin == std::end(msg_buf) || (session->rtsp_cipher && begin + sizeof(encrypted_rtsp_header_t) >= std::end(msg_buf))) {
-        BOOST_LOG(error) << "RTSP: read(): Exceeded maximum rtsp packet size: "sv << msg_buf.size();
+        BOOST_LOG(error) << describe_oversized_rtsp_message("read()"sv, remote_address, static_cast<std::uint64_t>(begin - msg_buf.data()), msg_buf.size(), false);
 
         respond(sock, *session, nullptr, 400, "BAD REQUEST", 0, {});
 
@@ -415,9 +420,9 @@ namespace rtsp_stream {
 
       auto payload_length = header->payload_length();
 
-      // Check if we have enough space to read this message
-      if (socket->begin + sizeof(*header) + payload_length >= std::end(socket->msg_buf)) {
-        BOOST_LOG(error) << "RTSP: handle_read_encrypted_header(): Exceeded maximum rtsp packet size: "sv << socket->msg_buf.size();
+      // Check if we have enough space to read this message (the length is the peer's: it is checked without adding to it)
+      if (!rtsp_message_fits(socket->msg_buf.size(), static_cast<std::size_t>(socket->begin - socket->msg_buf.data()), sizeof(*header), payload_length)) {
+        BOOST_LOG(error) << describe_oversized_rtsp_message("handle_read_encrypted_header()"sv, socket->remote_address, std::uint64_t { sizeof(*header) } + payload_length, socket->msg_buf.size());
 
         if (socket->session) {
           respond(socket->sock, *socket->session, nullptr, 400, "BAD REQUEST", 0, {});
@@ -516,7 +521,7 @@ namespace rtsp_stream {
     void
     read_plaintext_payload() {
       if (begin == std::end(msg_buf)) {
-        BOOST_LOG(error) << "RTSP: read_plaintext_payload(): Exceeded maximum rtsp packet size: "sv << msg_buf.size();
+        BOOST_LOG(error) << describe_oversized_rtsp_message("read_plaintext_payload()"sv, remote_address, static_cast<std::uint64_t>(begin - msg_buf.data()), msg_buf.size(), false);
 
         respond(sock, *session, nullptr, 400, "BAD REQUEST", 0, {});
 
@@ -672,7 +677,7 @@ namespace rtsp_stream {
     tcp::socket sock;
     boost::asio::steady_timer handshake_timer;
 
-    std::array<char, 2048> msg_buf;
+    std::array<char, RTSP_MAX_MESSAGE_SIZE> msg_buf;
 
     char *crlf;
     char *begin = msg_buf.data();
@@ -777,6 +782,12 @@ namespace rtsp_stream {
 
     void
     handle_accept(const boost::system::error_code &ec) {
+      if (streaming::accept_was_cancelled(ec)) {
+        // stop() closes the acceptor, which cancels the pending accept: this is the normal shutdown, not a failure
+        BOOST_LOG(debug) << "RTSP accept cancelled: "sv << ec.message();
+        return;
+      }
+
       if (ec) {
         BOOST_LOG(error) << "Couldn't accept incoming connections: "sv << ec.message();
 
@@ -1236,8 +1247,19 @@ namespace rtsp_stream {
       // Advertise clipboard sync only when the user opted in AND a user-session
       // GUI agent is currently subscribed; otherwise the client would attempt
       // sync into a black hole.
-      if (config::input.clipboard_sync && clipboard_bridge::bridge_t::instance().gui_alive()) {
-        caps |= platf::platform_caps::clipboard_text | platf::platform_caps::clipboard_image;
+      {
+        // The decision is made once per session, here, so a client that reports "clipboard does not work" can be answered from the log: say why it was not offered.
+        auto &clipboard = clipboard_bridge::bridge_t::instance();
+        std::int64_t agent_age_ms = -1;
+        const auto offer = config::input.clipboard_sync ? clipboard.agent_state(&agent_age_ms) : clipboard_bridge::offer_e::off_config;
+        clipboard.note_offer(session.id, offer);
+        if (offer == clipboard_bridge::offer_e::offered) {
+          caps |= platf::platform_caps::clipboard_text | platf::platform_caps::clipboard_image;
+        }
+        else {
+          BOOST_LOG(info) << "Clipboard sync is not offered to this client: "sv << clipboard_bridge::offer_name(offer)
+                          << (agent_age_ms >= 0 ? ", the Panel agent was last heard "s + std::to_string(agent_age_ms / 1000) + " s ago"s : ", the Panel agent has not checked in since the service started"s);
+        }
       }
       if (cursor_channel::producer_available()) {
         caps |= platf::platform_caps::cursor_shape;
@@ -1335,11 +1357,13 @@ namespace rtsp_stream {
 
 #ifdef _WIN32
     // Clients that do not advertise CAPABILITY_PYROWAVE ignore this Windows
-    // extension and negotiate one of the legacy formats below. Do not
-    // advertise it if this host cannot create the Vulkan runtime device; that
-    // lets clients fall back before ANNOUNCE instead of failing on the first
-    // encoded frame.
-    if (pyrowave::is_server_runtime_available()) {
+    // extension and negotiate one of the legacy formats below. The advertisement
+    // is optimistic: the client's capability is not visible until ANNOUNCE, so
+    // the runtime probe runs (in its own process, once) only when a client
+    // actually selects the format there. A host whose probe fails stops
+    // advertising for the rest of the process, and the client falls back to a
+    // legacy format on its next connection.
+    if (pyrowave::may_advertise()) {
       // Select PyroWave only through the versioned x-ss-pyrowave contract.
       // Do not put its out-of-range numeric ID in the legacy bitStreamFormat
       // attribute, which older clients may parse.
@@ -1576,9 +1600,25 @@ namespace rtsp_stream {
     }
   };
 
+#ifdef _WIN32
+  static void
+  attach_direct_usb_video_header(OPTION_ITEM &head, OPTION_ITEM &video,
+    const launch_session_t &session) {
+    if (!session.direct_usb_video) return;
+    video.option = const_cast<char *>("X-SS-USB-Video-Version");
+    video.content = const_cast<char *>("1");
+    auto tail = &head;
+    while (tail->next) tail = tail->next;
+    tail->next = &video;
+  }
+#endif
+
   void
   cmd_announce(rtsp_server_t *server, tcp::socket &sock, launch_session_t &session, msg_t &&req) {
     OPTION_ITEM option {};
+#ifdef _WIN32
+    OPTION_ITEM usb_video_option {};
+#endif
 
     // I know these string literals will not be modified
     option.option = const_cast<char *>("CSeq");
@@ -1600,6 +1640,9 @@ namespace rtsp_stream {
         dynamic_hdr_headers.attach(option);
         mat_live_response_headers_t mat_headers(session);
         mat_headers.attach(option);
+#ifdef _WIN32
+        attach_direct_usb_video_header(option, usb_video_option, session);
+#endif
         respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
       }
       else {
@@ -1653,8 +1696,8 @@ namespace rtsp_stream {
         if (!val.empty() && val.back() == ' ') {
           val = val.substr(0, val.size() - 1);
         }
-        if (name == "x-ml-general.endpointAutoRefreshVersion"sv && args.contains(name)) {
-          respond(sock, session, &option, 400, "Duplicate endpoint refresh version", req->sequenceNumber, {});
+        if ((name == "x-ml-general.endpointAutoRefreshVersion"sv || name == "x-ml-video.usbStreamVersion"sv) && args.contains(name)) {
+          respond(sock, session, &option, 400, "Duplicate transport version", req->sequenceNumber, {});
           return;
         }
         auto [entry, inserted] = args.emplace(name, val);
@@ -1880,6 +1923,11 @@ namespace rtsp_stream {
       monitor.width = getArg("x-nv-video[0].clientViewportWd"sv);
       BOOST_LOG(info) << "Client requested stream resolution (clientViewport): " << monitor.width << "x" << monitor.height;
       monitor.framerate = getArg("x-nv-video[0].maxFPS"sv);
+      if (const auto usable = streaming::usable_client_framerate(monitor.framerate); usable != monitor.framerate) {
+        // the capture pacing divides by this rate: a client that announces 0 would crash the host at its first frame
+        BOOST_LOG(warning) << "Client announced an unusable frame rate ("sv << monitor.framerate << "), streaming at "sv << usable << " fps"sv;
+        monitor.framerate = usable;
+      }
       monitor.bitrate = getArg("x-nv-vqos[0].bw.maximumBitrateKbps"sv);
       monitor.slicesPerFrame = getArg("x-nv-video[0].videoEncoderSlicesPerFrame"sv);
       monitor.numRefFrames = getArg("x-nv-video[0].maxNumReferenceFrames"sv);
@@ -2029,6 +2077,7 @@ namespace rtsp_stream {
         monitor.pre_encode_filter = platf::pre_encode_filter_e::external_neural_enhancement;
         monitor.enhancement_backend = session.dlssnr_backend;
       }
+      monitor.nr_app_allowed = session.dlssnr_params.enabled;
       auto &nr_config = monitor.pre_encode_filter_config;
       nr_config.nr_scale_percent = session.dlssnr_scale_percent;
       nr_config.nr_intensity = session.dlssnr_params.intensity;
@@ -2061,25 +2110,15 @@ namespace rtsp_stream {
 
       int clientRefreshRateX100 = getArg("x-nv-video[0].clientRefreshRateX100"sv);
 
-      // Only use clientRefreshRateX100 if it's within 2% of maxFPS
-      bool useClientRefreshRate = false;
-      if (clientRefreshRateX100 > 0 && monitor.framerate > 0) {
-        double ratio = (clientRefreshRateX100 / 100.0) / monitor.framerate;
-        useClientRefreshRate = (ratio > 0.98 && ratio < 1.02);
-      }
+      // The fractional refresh (the client's display rate times 100) may only refine the effective rate,
+      // never exceed it: the fallback and the cap that replaced an unusable maxFPS bind this path too,
+      // or capture pacing and the encoder would run above the rate the announcement allows.
+      const auto frame_rate = streaming::effective_frame_rate(clientRefreshRateX100, monitor.framerate);
+      monitor.frameRateNum = frame_rate.num;
+      monitor.frameRateDen = frame_rate.den;
 
-      if (useClientRefreshRate) {
-        int remainder = clientRefreshRateX100 % 100;
-        monitor.frameRateNum = (remainder == 0) ? clientRefreshRateX100 / 100 : clientRefreshRateX100;
-        monitor.frameRateDen = (remainder == 0) ? 1 : 100;
-
-        BOOST_LOG(info) << "Client framerate: " << clientRefreshRateX100 / 100.0 << " fps ("
-                        << monitor.frameRateNum << "/" << monitor.frameRateDen << ")";
-      }
-      else {
-        monitor.frameRateNum = monitor.framerate;
-        monitor.frameRateDen = 1;
-      }
+      BOOST_LOG(info) << "Client framerate: " << monitor.get_effective_framerate() << " fps ("
+                      << monitor.frameRateNum << "/" << monitor.frameRateDen << ")";
 
       configuredBitrateKbps = getArg("x-ml-video.configuredBitrateKbps"sv);
 
@@ -2229,6 +2268,31 @@ namespace rtsp_stream {
       BOOST_LOG(info) << "Control-only session detected: client "sv << logging::quoted_name(session.client_name) << " will only provide input control"sv;
     }
 
+#ifdef _WIN32
+    const auto usb_video = args.find("x-ml-video.usbStreamVersion"sv);
+    if (session.direct_usb_video || usb_video != args.end()) {
+      // videoBroadcastThread drops every frame above stream::max_encodable_frame_bytes(packetsize), and
+      // the regular path leaves that ceiling to the client's packet size. Direct USB holds it to the
+      // ceiling of the smallest packet size Moonlight clients negotiate (1024 bytes, moonlight-common-c's
+      // remote IPv4 cap), so a smaller request is refused here instead of dropping frames once the
+      // session runs.
+      constexpr int moonlight_min_packetsize = 1024;
+      const auto usb_min_frame_bytes = stream::max_encodable_frame_bytes(moonlight_min_packetsize);
+      const bool usb_packet_size_ok = config.packetsize <= 65000 &&
+                                      stream::max_encodable_frame_bytes(config.packetsize) >= usb_min_frame_bytes;
+      if (!usb_packet_size_ok) {
+        BOOST_LOG(warning) << "Rejecting direct USB video: packet size "sv << config.packetsize
+                           << " cannot carry a "sv << usb_min_frame_bytes << "-byte frame"sv;
+      }
+      if (!session.direct_usb_video || !session.direct_usb_video->active() || usb_video == args.end() ||
+          usb_video->second != "1" || !session.setup_video || session.control_only ||
+          !usb_packet_size_ok) {
+        respond(sock, session, &option, 461, "Direct USB Video Unavailable", req->sequenceNumber, {});
+        return;
+      }
+    }
+#endif
+
     // Check that any required encryption is enabled
     // 对于仅控制流会话，跳过视频/音频加密检查
     if (!session.control_only) {
@@ -2265,6 +2329,7 @@ namespace rtsp_stream {
     session.mat_live_selected = config.audio.codec == audio::CODEC_MAT_LIVE;
     if (session.mat_live_selected) BOOST_LOG(info) << "Native live MAT negotiated: AEAD counter64; no finite replay";
     session.nvidia_vsync_lease.reset();
+    session.touch_keyboard_lease.reset();
 
     if (!session.client_cert_uuid.empty()) {
       family_observation.now = client_family::unix_now();
@@ -2277,6 +2342,9 @@ namespace rtsp_stream {
     dynamic_hdr_headers.attach(option);
     mat_live_response_headers_t mat_headers(session);
     mat_headers.attach(option);
+#ifdef _WIN32
+    attach_direct_usb_video_header(option, usb_video_option, session);
+#endif
 
     respond(sock, session, &option, 200, "OK", req->sequenceNumber, {});
   }

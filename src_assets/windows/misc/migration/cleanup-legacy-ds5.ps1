@@ -3,6 +3,11 @@ param(
   [string] $Root
 )
 
+# This entry point can run directly from Setup with an incomplete PATHEXT.
+if (($env:PATHEXT -split ';') -notcontains '.EXE') {
+  $env:PATHEXT = '.EXE;' + $env:PATHEXT
+}
+
 # Authority: [installer-inno-script-functions-20261107] for temporary extraction;
 # [installer-ms-terminateprocess-20261113] for process termination boundaries.
 # The root scope is the old component directory. Do not uninstall the shared
@@ -35,7 +40,7 @@ Get-CimInstance Win32_Service |
   Where-Object { Test-OwnedPath (Get-ExecutablePathFromCommand $_.PathName) } |
   ForEach-Object {
     Stop-Service -Name $_.Name -Force -ErrorAction SilentlyContinue
-    & sc.exe delete $_.Name | Out-Null
+    & (Join-Path $env:SystemRoot 'System32\sc.exe') delete $_.Name | Out-Null
   }
 
 Get-ScheduledTask -ErrorAction SilentlyContinue |

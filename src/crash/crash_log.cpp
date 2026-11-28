@@ -17,7 +17,7 @@ namespace crash::logfile {
 
   namespace {
     std::string
-    read_all(const fs::path &path, std::size_t max_bytes = 64u * 1024 * 1024) {
+    read_all(const fs::path &path, std::size_t max_bytes = max_read_bytes) {
       std::ifstream in(path, std::ios::binary);
       if (!in) return {};
       in.seekg(0, std::ios::end);
@@ -73,8 +73,9 @@ namespace crash::logfile {
   }
 
   std::optional<packed_t>
-  pack(std::string_view raw, std::size_t max_gz) {
-    auto scrubbed = logscrub::scrub(raw);
+  pack(std::string_view raw, std::size_t max_gz, const std::function<bool()> &expired) {
+    auto scrubbed = logscrub::scrub(raw, 2'000'000, 600, expired);
+    if (scrubbed.cancelled) return std::nullopt;
     if (scrubbed.text.find_first_not_of(" \t\r\n") == std::string::npos) return std::nullopt;
     packed_t p;
     p.truncated = scrubbed.truncated;
@@ -82,6 +83,7 @@ namespace crash::logfile {
     p.gz = gzip(text);
     // over the limit: drop the oldest half of the lines until it fits
     for (int i = 0; i < 12 && p.gz.size() > max_gz && text.size() > 1024; ++i) {
+      if (expired && expired()) return std::nullopt;
       const auto nl = text.find('\n', text.size() / 2);
       text = nl == std::string::npos ? text.substr(text.size() / 2) : text.substr(nl + 1);
       text.erase(0, char_start(text, 0));
@@ -157,8 +159,8 @@ namespace crash::logfile {
   }
 
   std::string
-  collect_current(const fs::path &log_file) {
+  collect_current(const fs::path &log_file, std::size_t max_bytes) {
     std::error_code ec;
-    return fs::is_regular_file(log_file, ec) ? read_all(log_file) : std::string();
+    return fs::is_regular_file(log_file, ec) ? read_all(log_file, max_bytes) : std::string();
   }
 }  // namespace crash::logfile

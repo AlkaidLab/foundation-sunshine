@@ -35,11 +35,23 @@ try {
     npm ci --no-audit --no-fund
     $env:FOUNDATION_UI_DIR = $ui
     npm run build:installer-pages
+    # The pages import the whole foundation-ui stylesheet, which includes the clock components and their four fonts;
+    # the installer page has no clock. The pruner removes those rules and files before cargo embeds the pages. It refuses
+    # to delete anything the remaining CSS, JavaScript or HTML still names.
+    python (Join-Path $repo 'scripts/ci/prune-setup-ui.py') --dist (Join-Path $work 'dist-installer')
+    # $PSNativeCommandUseErrorActionPreference is PowerShell 7.4+ only; 5.1
+    # hosts ignore it, so a refused prune must be caught by its exit code.
+    if ($LASTEXITCODE -ne 0) { throw "prune-setup-ui.py failed with exit code $LASTEXITCODE" }
     cargo build --release --locked --manifest-path installer-ui/Cargo.toml
     $built = Join-Path $work 'installer-ui/target/release/foundation-setup-ui.exe'
     if (-not (Test-Path -LiteralPath $built) -or (Get-Item -LiteralPath $built).Length -eq 0) { throw 'foundation-setup-ui.exe was not produced' }
     New-Item -ItemType Directory -Force -Path (Split-Path $Output -Parent) | Out-Null
     Copy-Item -LiteralPath $built -Destination $Output -Force
+    # The setup UI is a linked PE like any other module: its COFF symbol table is not needed at run time and is not
+    # part of the crash-symbol flow (the symbol zip is built from the Panel and the host modules). The two jobs and the
+    # packaging step run this again; the tool leaves a signed file alone.
+    python (Join-Path $repo 'tools/pe_symbols.py') $Output
+    if ($LASTEXITCODE -ne 0) { throw "pe_symbols.py failed with exit code $LASTEXITCODE" }
 } finally {
     Pop-Location
 }

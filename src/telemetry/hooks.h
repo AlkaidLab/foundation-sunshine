@@ -32,6 +32,7 @@ namespace telemetry::hooks {
     rfi_requests,  ///< reference frame invalidations the client asked for
     queue_flushes,  ///< times the packet queue was full and cleared as a whole
     queue_frames_dropped,  ///< frames lost in those clears
+    send_would_block_packets,  ///< media datagrams discarded on local send backpressure
     count_
   };
 

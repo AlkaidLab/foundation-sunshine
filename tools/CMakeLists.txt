@@ -117,6 +117,18 @@ if(MINGW)
     )
 endif()
 
+# The out-of-process Vulkan probe of the PyroWave runtime: the host runs it once
+# when a client actually selects the format, and its exit code is the whole answer. A third-party
+# implicit layer that crashes or hangs ends only this process.
+add_executable(alkaidlab_pyrowave_probe alkaidlab_pyrowave_probe.cpp)
+set_target_properties(alkaidlab_pyrowave_probe PROPERTIES CXX_STANDARD 23)
+target_link_libraries(alkaidlab_pyrowave_probe
+        PRIVATE Pyrowave::Runtime
+        Threads::Threads
+        ${PLATFORM_LIBRARIES}
+        sunshine_project_options)
+target_compile_options(alkaidlab_pyrowave_probe PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
+
 if(WIN32)
     # The package version comes from PROJECT_VERSION here: CPACK_PACKAGE_VERSION is set by packaging/common.cmake,
     # which is included after this directory, so it is still empty at this point.
@@ -132,11 +144,15 @@ if(WIN32)
         installer_web.inc
         installer_json.h
         installer_d2d.h
+        installer_dir.h
+        installer_dir_win.h
         installer_failure.h
         installer_guide.h
         installer_state.h
         installer_maintenance.h
+        installer_remote_capture.h
         installer_ui.h
+        installer_webview2.h
         installer_icon.inc)
     set_target_properties(sunshine-installer-shell PROPERTIES
         CXX_STANDARD 23
@@ -144,7 +160,7 @@ if(WIN32)
     target_compile_definitions(sunshine-installer-shell PRIVATE UNICODE _UNICODE)
     target_include_directories(sunshine-installer-shell PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
     target_link_libraries(sunshine-installer-shell
-        PRIVATE d2d1 dwrite windowscodecs dwmapi shell32 advapi32 user32 ole32 uuid)
+        PRIVATE d2d1 dwrite windowscodecs dwmapi shell32 advapi32 user32 ole32 uuid winhttp wintrust crypt32)
     target_compile_options(sunshine-installer-shell PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
     if(MINGW)
         # static: the installer must start on a PC that has none of the MSYS2 runtime DLLs

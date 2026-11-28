@@ -9,6 +9,7 @@
 
 #include <boost/atomic.hpp>
 
+#include "src/ds5/pad_test.h"
 #include "src/platform/common.h"
 
 namespace platf::ds5 {
@@ -34,6 +35,10 @@ namespace platf::ds5 {
     void submit_status(const gamepad_ds5_status_t &status);
     /** @brief Send the saved lightbar state and extension values once to every active pad (after a tuning save). */
     void push_tuning_state();
+    /** @brief Hand the client microphone block (mono, 48 kHz, S16) to the capture endpoint of every pad (key 96, route controller). */
+    void feed_microphone(const std::int16_t *samples, std::size_t frames);
+    /** @brief One step of a pad test (identify, trigger) on every live pad; returns the pads that took it. */
+    unsigned test_step(::ds5::pad_test::step_e step);
     /** @brief One short test rumble (restore false) or its end (restore true) on every live pad; returns the pads that took it. */
     unsigned test_rumble(std::uint8_t left, std::uint8_t right, bool restore);
     /** @brief Test hook: the time source of motion samples in microseconds; nullptr restores the system clock. */

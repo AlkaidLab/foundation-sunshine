@@ -15,9 +15,11 @@
 #include <mutex>
 
 #include "mic_write.h"
+#include "src/ds5/mic_route.h"
 #include "src/config.h"
 #include "src/logging.h"
 #include "src/platform/windows/virtual_microphone.h"
+#include "src/telemetry/telemetry.h"
 #include "src/platform/windows/virtual_microphone_selftest.h"
 
 namespace platf::audio {
@@ -189,6 +191,8 @@ namespace platf::audio {
         BOOST_LOG(info) << "Using the USB/IP virtual microphone backend"sv;
         return 0;
       }
+      // the code names the step that failed (MIC_USBIP_*); it is reported whether or not the VB-Cable path below takes over
+      telemetry::driver_failed("microphone", "create", usbip_fallback_reason);
       if (backend == "usbip_experimental") {
         report_mic_redirect_backend({}, usbip_fallback_reason);
         BOOST_LOG(error) << "The USB/IP virtual microphone backend failed: "sv << usbip_fallback_reason;
@@ -204,6 +208,7 @@ namespace platf::audio {
     }
     if (mic_redirect_device->init() != 0) {
       BOOST_LOG(warning) << "Failed to initialize client mic redirection device";
+      telemetry::driver_failed("microphone", "start", "MIC_DEVICE_INIT_FAILED");
       mic_redirect_device.reset();
       report_mic_redirect_backend({}, backend == "auto" && !usbip_fallback_reason.empty() ? usbip_fallback_reason : "MIC_TEST_DEVICE_UNAVAILABLE");
       release_owner();
@@ -242,6 +247,8 @@ namespace platf::audio {
       while (peak > known && !mic_input_peak.compare_exchange_weak(known, static_cast<std::uint32_t>(peak), std::memory_order_relaxed)) {}
       mic_input_last_ns.store(steady_now_ns(), std::memory_order_relaxed);
       mic_input_frames.fetch_add(frame_count, std::memory_order_relaxed);
+      /* The same block also goes to the capture endpoint of a virtual DualSense (ds5.audio.micRoute = controller). */
+      ::ds5::mic_route::feed(samples, frame_count);
     }
     if (usbip_session) return usbip_session->write_pcm(samples, frame_count);
     if (!mic_redirect_device || mic_redirect_device->is_cleaning_up.load()) {

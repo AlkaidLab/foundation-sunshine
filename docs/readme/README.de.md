@@ -11,7 +11,7 @@
 
 [简体中文](../../README.md) · [English](README.en.md) · Deutsch · [Français](README.fr.md) · [日本語](README.ja.md)
 
-[Website](https://www.alkaidlab.com/) · [Website (China)](https://www.alkaidlab.cn/) · [QQ-Community (Chinesisch)](https://qm.qq.com/cgi-bin/qm/qr?k=5qnkzSaLIrIaU4FvumftZH_6Hg7fUuLD&jump_from=webapi) · [Problem melden](https://github.com/AlkaidLab/foundation-sunshine/issues)
+[Website](https://www.alkaidlab.com/) · [Website (China)](https://www.alkaidlab.cn/) · [QQ-Community (Chinesisch)](https://qm.qq.com/q/vIVhpjDMic) · [Problem melden](https://github.com/AlkaidLab/foundation-sunshine/issues)
 
 </div>
 
@@ -132,10 +132,13 @@ Unter macOS lässt sich auch [Moonlight V+ for PC](https://github.com/qiin2333/m
 
 #### Partner-Clients
 
-- **VoidLink · iOS / iPadOS:** [Info](https://github.com/The-Fried-Fish/VoidLink-previously-moonlight-zwm#readme) · [App Store (China, Südkorea, Vietnam)](https://apps.apple.com/app/voidlink/id6747717070) · [App Store (andere Regionen)](https://apps.apple.com/app/voidlink-extreme/id6755103808) (kostenpflichtige Store-Verteilung)
-- **VoidLink TestFlight Beta · Apple TV:** [TestFlight beitreten](https://testflight.apple.com/join/k7gs61mZ)
+- **VoidLink · iOS / iPadOS / Apple TV (empfohlen):** [Info](https://github.com/The-Fried-Fish/VoidLink-previously-moonlight-zwm#readme) · [App Store (China)](https://apps.apple.com/cn/app/voidlink/id6747717070) · [App Store (USA)](https://apps.apple.com/us/app/voidlink-extreme/id6755103808) (kostenpflichtige Store-Verteilung)
 - **Crown Edition · Android:** [Download](https://github.com/WACrown/moonlight-android/releases) · [Info](https://github.com/WACrown/moonlight-android#readme)
 - **Baozi Edition · HarmonyOS:** [Projekt und Downloads](https://gitee.com/smdsbz/moonlight-ohos)
+
+#### Partner-Tools
+
+- **Natpierce (Jiaoyuelian):** [Netzwerk-Tunneling-Tool](https://docs.qq.com/aio/DRFVhWERDaFhKd1ZE)
 
 ## <picture><source media="(prefers-color-scheme: dark)" srcset="../../assets/readme/h-start-dark.webp"><img src="../../assets/readme/h-start.webp" height="50" alt=""></picture>&nbsp;Schnellstart
 
@@ -193,7 +196,7 @@ Unter macOS lässt sich auch [Moonlight V+ for PC](https://github.com/qiin2333/m
 
 - [Dokumentation (Englisch)](../en/README.md): Installation, Funktionen, FAQ und Entwicklung nach Aufgabe sortiert.
 - [FAQ (Englisch)](../en/faq.md): Ruckeln, Verbindungs- und Audioprobleme.
-- [Website](https://www.alkaidlab.com/) · [Website (China)](https://www.alkaidlab.cn/) · [QQ-Community (Chinesisch)](https://qm.qq.com/cgi-bin/qm/qr?k=5qnkzSaLIrIaU4FvumftZH_6Hg7fUuLD&jump_from=webapi).
+- [Website](https://www.alkaidlab.com/) · [Website (China)](https://www.alkaidlab.cn/) · [QQ-Community (Chinesisch)](https://qm.qq.com/q/vIVhpjDMic).
 - [Probleme melden](https://github.com/AlkaidLab/foundation-sunshine/issues) · [Diskussionen](https://github.com/AlkaidLab/foundation-sunshine/discussions) · [Mitwirken](../contributing.en.md).
 
 Dank an [LizardByte/Sunshine](https://github.com/LizardByte/Sunshine), [Moonlight](https://moonlight-stream.org/), [ZakoDisplay](https://github.com/qiin2333/zako-vdd) und alle Beitragenden. Lizenz: [GPL-3.0](https://github.com/AlkaidLab/foundation-sunshine/blob/master/LICENSE).

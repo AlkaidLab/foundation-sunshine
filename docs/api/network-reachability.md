@@ -82,6 +82,11 @@ Each entry has:
 | `configured_address` | Deprecated. The first endpoint in the single-address form older clients read, see below |
 | `evidence` | recent sessions that arrived from a public address, masked |
 
+A completed handshake through this host's own certificate outranks the listener table and the firewall policy: those are inferences, the handshake is a
+connection that was made. It makes the verdict `verified` whatever they say.
+
+The step-by-step run of the same check is described in [network-check.md](network-check.md).
+
 Verdict rules:
 
 - `verified`: a session arrived from a public address within the last 7 days,
@@ -106,7 +111,7 @@ The Web UI port is only required when `origin_web_ui_allowed=wan`.
 
 The public address a client gives to Moonlight is `host:HTTP-port`. The HTTP
 port is the base port (`port` in the configuration, 47989 by default); the HTTPS
-pairing port is five below it. The internal and the public port need not match:
+pairing port is moved from it by the host's own offset (five below in the default port family). The internal and the public port need not match:
 port forwarding can map any external port to the base port. The operator
 therefore enters the public address the way a host is added in Moonlight, with
 the port the router exposes, and may enter several.
@@ -124,7 +129,7 @@ new lines also work). Each entry is one of:
 
 - The port is optional. Without it the entry stands for the configured base
   port. With it, the entry stands for exactly that external HTTP port.
-- A port is 6 to 65535 (the HTTPS port is five below it and must exist).
+- A port is 6 to 65535 (the HTTPS port is the HTTP port moved by the host's offset between the two, and must exist).
 - An IPv6 literal with a port is written in brackets (RFC 3986 section 3.2.2).
 - No scheme, path, user name or zone identifier.
 - At most 8 entries are kept; duplicates are dropped.
@@ -147,7 +152,8 @@ save. The pairing QR code uses the first endpoint, with its port.
 | `input` | Canonical text as configured |
 | `host`, `kind` | Host without brackets; `ip` or `hostname` |
 | `port`, `port_explicit` | HTTP port the endpoint stands for, and whether the entry gave it |
-| `https_port` | The port that is tested: `port` minus 5 |
+| `https_port` | The port that is tested: the HTTPS port as the internet reaches it, the HTTP port moved by the host's own offset between its HTTPS and HTTP ports |
+| `ports` | The TCP ports of this endpoint (`http`, `https`, `rtsp`) as the internet reaches them, each keeping its distance from the HTTP port as in the host's port table |
 | `resolved` | Resolver answers for a host name, or the IP literal itself |
 | `scope` | `public`, `lan`, `mesh`, `loopback` or `unknown`. `public` when any address is public, else `mesh`, `lan`, `loopback` |
 | `matches_wan` | An address of the router's family equals the router WAN address |
@@ -156,6 +162,8 @@ save. The pairing QR code uses the first endpoint, with its port.
 | `tested` | `{address, port, latency_ms}` of the attempt that decided the state, or `null` when none was made |
 | `attempts` | Every attempt: `address`, `port`, `connected`, `identity_match`, `error`, `latency_ms`; at most 4 addresses per entry, in parallel |
 | `reasons` | `address_mismatch`, `scope_lan`, `scope_mesh`, `scope_loopback` |
+| `outside` | The outside check of this endpoint (`network_external_check = enabled`), or `null` when it was off: `{ "state", "reason" }`. `state`: `reachable` (a connection from the internet reached this host: the HTTP port answered `serverinfo` with this host's unique id), `another_host` (the port answers, with another unique id), `closed`, `timeout`, `unknown` (something answers that is not a GameStream host) or `unavailable` (the service did not answer, or refused the target: `reason` says `no_answer`, `rate_limited`, `disabled`, `ip_mismatch`, `dns_mismatch`, `dns_failed`...). `reachable` makes the verdict `verified` (`outside_verified`); `closed`, `timeout` and `another_host` make it `unreachable` (`not_reached_from_outside`); `unavailable` changes nothing `caller` is the address the service saw the request come from (`null` when it did not say). `reason` `router_proxy`: the service refused the address because it saw another address than the one entered, and the router says its outside address is a public one that is neither: a proxy on the router sits on the path (the check shows the reason `outside_router_proxy`, and never calls the host unreachable for it); `budget`: the service has used up its day. |
+| `inconclusive` | `true` when the failure says nothing about the internet: a public address this computer cannot reach itself (a router without NAT loopback, a missing route) is not an address nobody can reach. Set for `refused`, `timeout`, `unreachable` and `failed` on a public endpoint; never for `dns_failed`, `identity_mismatch` or `tls_failed` |
 
 `state` is `reached` when a TLS handshake against `address:https_port`
 completed and the certificate is this host's own (the hairpin). `error` is:
@@ -187,7 +195,7 @@ public endpoint is another address than the router's, it is `unknown` with
 
 Kept for clients written against the first version of this API. It describes the
 first endpoint (`value` is the host without its port). New clients read
-`endpoints`. `external_ip` accepts an IP literal or a DNS host name (a dynamic DNS name, for
+`endpoints`. `external_ip` accepts an IP literal or a DNS host name (not `0.0.0.0` or `::`, which a listener binds to and no client can reach) (a dynamic DNS name, for
 example). The value is validated when the configuration is read and when it is
 saved; a malformed value is not persisted and is dropped from the running
 configuration with a warning.
@@ -292,7 +300,7 @@ relevant setting (enable UPnP, add a firewall rule, change
 | own listeners | `GetExtendedTcpTable` / `GetExtendedUdpTable` | `/proc/net/*` plus `/proc/self/fd` inodes | `libproc` `PROC_PIDFDSOCKETINFO` |
 | firewall | `INetFwPolicy2` rules and active profiles | `unknown` | `unknown` |
 | router | UPnP IGD (`miniupnpc`) | UPnP IGD | UPnP IGD |
-| hairpin | TLS against each endpoint's `address:HTTP port - 5` | same | same |
+| hairpin | TLS against each endpoint's `address:HTTPS port` (from the host's port table) | same | same |
 
 NAT-PMP and PCP are reported as `none`: no small, already vendored library
 implements them in this tree.

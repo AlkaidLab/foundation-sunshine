@@ -494,6 +494,13 @@ TEST(ImageEnhancementSettingsTest, RejectsPathsAndUnregisteredBackends) {
                                                 { "selected", { { "hdr", nullptr }, { "nr", "alkaidlab.nvidia_dlssnr" } } },
                                                 { "backends", { { "alkaidlab.nvidia_dlssnr", { { "version", "310-8" }, { "runtime_sha256", "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" } } } } } },
     settings));
+  EXPECT_FALSE(settings.nr_enabled);
+  auto document = image_enhancement::settings_json(settings);
+  document["nr_enabled"] = "yes";
+  EXPECT_FALSE(image_enhancement::parse_settings(document, settings));
+  document["nr_enabled"] = true;
+  ASSERT_TRUE(image_enhancement::parse_settings(document, settings));
+  EXPECT_TRUE(settings.nr_enabled);
 }
 
 TEST_F(ImageEnhancementConfigTest, V1ConfigurationMigratesToSchemaV2OnNextWrite) {
@@ -516,11 +523,13 @@ TEST_F(ImageEnhancementConfigTest, V1ConfigurationMigratesToSchemaV2OnNextWrite)
   EXPECT_EQ(document.at("schema_version"), 2);
   EXPECT_TRUE(document.contains("selected"));
   EXPECT_EQ(document.at("selected").at("hdr"), nullptr);
+  EXPECT_EQ(document.at("nr_enabled"), false);
 }
 
 TEST_F(ImageEnhancementConfigTest, NrComponentValidatesAgainstTheSettingsPinnedRuntime) {
   create_nr_fixture();
   image_enhancement::settings_t settings;
+  settings.nr_enabled = true;
   settings.selected_nr_backend = image_enhancement::NVIDIA_DLSSNR_BACKEND;
   settings.versions["alkaidlab.nvidia_dlssnr"] = "310-8";
   settings.runtime_pins["alkaidlab.nvidia_dlssnr"] = FIXTURE_DIGEST;
@@ -532,9 +541,30 @@ TEST_F(ImageEnhancementConfigTest, NrComponentValidatesAgainstTheSettingsPinnedR
   EXPECT_FALSE(store->acquire_selected(image_enhancement::backend_capability_e::hdr));
 }
 
+TEST_F(ImageEnhancementConfigTest, LegacyNrSelectionRequiresExplicitGlobalEnable) {
+  create_nr_fixture();
+  const auto id = std::string { image_enhancement::NVIDIA_DLSSNR_BACKEND };
+  auto document = image_enhancement::settings_json({});
+  document["selected"]["nr"] = id;
+  document["backends"][id] = { { "version", "310-8" }, { "runtime_sha256", FIXTURE_DIGEST } };
+  document.erase("nr_enabled");
+  std::ofstream(root / "hdr.json") << document;
+  ASSERT_TRUE(store->initialize());
+  EXPECT_FALSE(store->acquire_selected(image_enhancement::backend_capability_e::nr));
+  auto state = store->query();
+  state.settings.nr_enabled = true;
+  ASSERT_EQ(store->update(state.settings, state.etag).status, 200);
+  EXPECT_TRUE(store->acquire_selected(image_enhancement::backend_capability_e::nr));
+  state = store->query();
+  state.settings.nr_enabled = false;
+  ASSERT_EQ(store->update(state.settings, state.etag).status, 200);
+  EXPECT_FALSE(store->acquire_selected(image_enhancement::backend_capability_e::nr));
+}
+
 TEST_F(ImageEnhancementConfigTest, NrComponentRejectsAWrongPinnedRuntimeDigest) {
   create_nr_fixture();
   image_enhancement::settings_t settings;
+  settings.nr_enabled = true;
   settings.selected_nr_backend = image_enhancement::NVIDIA_DLSSNR_BACKEND;
   settings.versions["alkaidlab.nvidia_dlssnr"] = "310-8";
   settings.runtime_pins["alkaidlab.nvidia_dlssnr"] = std::string(64, 'a');
@@ -545,6 +575,7 @@ TEST_F(ImageEnhancementConfigTest, NrComponentRejectsAWrongPinnedRuntimeDigest) 
 TEST_F(ImageEnhancementConfigTest, NrComponentAcceptsAnUnpinnedRuntimeForTheRecord) {
   create_nr_fixture();
   image_enhancement::settings_t settings;
+  settings.nr_enabled = true;
   settings.selected_nr_backend = image_enhancement::NVIDIA_DLSSNR_BACKEND;
   settings.versions["alkaidlab.nvidia_dlssnr"] = "310-8";
   ASSERT_EQ(store->update(settings, store->query().etag).status, 200);
@@ -558,6 +589,7 @@ TEST_F(ImageEnhancementConfigTest, BothCapabilitySlotsCanHoldSelectionsAtOnce) {
   ASSERT_EQ(store->update(trusted_fixture(), store->query().etag).status, 200);
   create_nr_fixture();
   auto state = store->query();
+  state.settings.nr_enabled = true;
   state.settings.selected_nr_backend = image_enhancement::NVIDIA_DLSSNR_BACKEND;
   state.settings.versions["alkaidlab.nvidia_dlssnr"] = "310-8";
   state.settings.runtime_pins["alkaidlab.nvidia_dlssnr"] = FIXTURE_DIGEST;

@@ -19,6 +19,13 @@ namespace pyrowave {
       const encoded_frame_t &frame,
       const packetization_request_t &request) noexcept = 0;
 
+    // Input is consumed synchronously; the result owns its output storage.
+    [[nodiscard]] virtual packetization_result_t
+    packetize_borrowed(
+      const encoded_frame_t &frame,
+      std::span<const std::uint8_t> input,
+      const packetization_request_t &request) noexcept = 0;
+
     virtual void
     reset() noexcept = 0;
   };

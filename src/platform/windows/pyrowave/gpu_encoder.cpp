@@ -40,6 +40,7 @@ extern "C" {
 #include "pyrowave.h"
 #include "color_metadata.h"
 #include "rate_control.h"
+#include "encoded_packet_view.h"
 #include "src/logging.h"
 
 #include <string_view>
@@ -88,8 +89,6 @@ namespace platf::pyrowave_windows {
 
     class gpu_encoder_session_t final: public video::encode_session_t {
     public:
-      static constexpr std::size_t maximum_bitstream_size = 16u * 1024u * 1024u;
-
       gpu_encoder_session_t(
         std::shared_ptr<dxgi::display_vram_t> display,
         const video::config_t &config,
@@ -276,9 +275,8 @@ namespace platf::pyrowave_windows {
                           << config.dynamic_hdr_format << ", target_peak_nits=" << target_peak;
         }
 
-        bitstream_.resize(maximum_bitstream_size);
-        const auto initial_frame_budget = pyrowave_frame_budget(
-          bitrate_kbps_, frame_rate_num_, frame_rate_den_);
+        bitstream_.resize(pyrowave_max_bitstream_size);
+        const auto initial_frame_budget = frame_budget();
         BOOST_LOG(info) << "[PyroWaveEncoder][GPU] rate-control budget="
                         << initial_frame_budget << " bytes/frame"
                         << ", bits_per_pixel="
@@ -311,6 +309,16 @@ namespace platf::pyrowave_windows {
         return 0;
       }
 
+      std::shared_ptr<safe::signal_t>
+      nr_change_event() override {
+        return conversion_ ? conversion_->nr_change_event() : nullptr;
+      }
+
+      void
+      apply_nr_change() override {
+        if (conversion_) conversion_->apply_nr_change();
+      }
+
       void request_idr_frame() override {}
       void request_normal_frame() override {}
       void invalidate_ref_frames(int64_t, int64_t) override {}
@@ -319,8 +327,7 @@ namespace platf::pyrowave_windows {
       set_bitrate(int bitrate_kbps) override {
         if (bitrate_kbps <= 0) return false;
         bitrate_kbps_ = bitrate_kbps;
-        const auto frame_budget = pyrowave_frame_budget(
-          bitrate_kbps_, frame_rate_num_, frame_rate_den_);
+        const auto frame_budget = this->frame_budget();
         BOOST_LOG(debug) << "[PyroWaveEncoder][GPU] rate-control update: bitrate="
                          << bitrate_kbps_ << " Kbps"
                          << ", budget=" << frame_budget << " bytes/frame"
@@ -341,7 +348,7 @@ namespace platf::pyrowave_windows {
       encode(
         int64_t frame_number,
         safe::mail_raw_t::queue_t<video::packet_t> &packets,
-        void *channel_data,
+        std::uint64_t channel_data,
         std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
         std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
         if (!ready() || !has_frame_) {
@@ -389,8 +396,7 @@ namespace platf::pyrowave_windows {
           pipeline_trace->encode_submit = std::chrono::steady_clock::now();
         }
 
-        const auto frame_budget = pyrowave_frame_budget(
-          bitrate_kbps_, frame_rate_num_, frame_rate_den_);
+        const auto frame_budget = this->frame_budget();
         const pyrowave_rate_control rate_control {
           .maximum_bitstream_size = frame_budget,
         };
@@ -452,33 +458,19 @@ namespace platf::pyrowave_windows {
           return encode_failure(frame_number, "pyrowave-packetize", static_cast<int>(packetize_result), 0, written_packets, true);
         }
 
-        std::vector<std::uint8_t> encoded;
-        std::size_t encoded_size = 0;
-        for (std::size_t index = 0; index < written_packets; ++index) {
-          const auto &packet = source_packets_[index];
-          if (packet.offset > bitstream_.size() ||
-              packet.size > bitstream_.size() - packet.offset ||
-              packet.size > maximum_bitstream_size - encoded_size) {
-            return encode_failure(frame_number, "packet-bounds", 0, packet.size, written_packets, true);
-          }
-          encoded_size += packet.size;
+        std::vector<std::uint8_t> scratch;
+        std::span<const std::uint8_t> encoded;
+        if (!collect_encoded_packets(std::span<const std::uint8_t>(bitstream_),
+              std::span<const pyrowave_packet>(source_packets_.data(), written_packets),
+              scratch, encoded)) {
+          return encode_failure(frame_number, "packet-bounds", 0, 0, written_packets, true);
         }
-        encoded.reserve(encoded_size);
-        for (std::size_t index = 0; index < written_packets; ++index) {
-          const auto &packet = source_packets_[index];
-          encoded.insert(
-            encoded.end(),
-            bitstream_.begin() + packet.offset,
-            bitstream_.begin() + packet.offset + packet.size);
-        }
-
-        auto storage = std::make_shared<const std::vector<std::uint8_t>>(std::move(encoded));
         BOOST_LOG(verbose) << "[PyroWaveEncoder][GPU] encoded frame=" << frame_number
                             << ", source_packets=" << written_packets
-                            << ", encoded_bytes=" << storage->size();
+                            << ", encoded_bytes=" << encoded.size();
         const auto publish_result = publish_transport_frame(
           frame_number,
-          std::move(storage),
+          encoded,
           packet_boundary_,
           rtp_timestamp(frame_number),
           packets,
@@ -486,7 +478,21 @@ namespace platf::pyrowave_windows {
           frame_timestamp,
           std::move(pipeline_trace),
           dynamic_metadata);
-        if (!publish_result.success) {
+        if (publish_result.status == transport_publish_status_e::dropped_oversize) {
+          perf::record_pyrowave_failure(perf_session_id_, perf::pyrowave_failure_stage_e::packetize);
+          return 0;
+        }
+        if (publish_result.status == transport_publish_status_e::dropped_full) {
+          perf::record_pyrowave_queue_event(perf_session_id_, perf::pyrowave_queue_event_e::dropped_full);
+          return 0;
+        }
+        if (publish_result.status == transport_publish_status_e::stopped) {
+          return 0;
+        }
+        if (publish_result.status == transport_publish_status_e::replaced) {
+          perf::record_pyrowave_queue_event(perf_session_id_, perf::pyrowave_queue_event_e::replaced_pending);
+        }
+        if (publish_result.status == transport_publish_status_e::failure) {
           return encode_failure(
             frame_number,
             "transport-packetize",
@@ -500,6 +506,12 @@ namespace platf::pyrowave_windows {
       }
 
     private:
+      [[nodiscard]] std::size_t frame_budget() const noexcept {
+        return pyrowave_bounded_frame_budget(
+          bitrate_kbps_, frame_rate_num_, frame_rate_den_, packet_boundary_,
+          hdr_producer_.enabled() ? LI_PYROWAVE_MAX_METADATA_SIZE : pyrowave_runtime_metadata_reserve);
+      }
+
       bool
       verify_fence_interop() {
         // Verify the real shared payload before queueing GPU work that waits
@@ -651,7 +663,7 @@ namespace platf::pyrowave_windows {
     int64_t frame_number,
     video::encode_session_t &base_session,
     safe::mail_raw_t::queue_t<video::packet_t> &packets,
-    void *channel_data,
+    std::uint64_t channel_data,
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp,
     std::optional<platf::frame_pipeline_trace_t> pipeline_trace) {
     auto *session = dynamic_cast<gpu_encoder_session_t *>(&base_session);

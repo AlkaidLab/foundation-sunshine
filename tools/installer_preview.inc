@@ -66,6 +66,29 @@ preview_main(const std::wstring &out_dir) {
     { "welcome-tab", pg::welcome, "", nullptr },  // the same page after a Tab: the focus ring is shown
     { "welcome-upgrade", pg::welcome, "", [](view &v) { v.upgrade = true; } },
     { "welcome-uac-cancelled", pg::welcome, "", [](view &v) { v.uac_cancelled = true; } },
+    // the install location (installer_dir.h): a folder that was picked (the product's name added, "use the selected folder" offered), one that was typed, a long one,
+    // the problems that refuse a folder (their reason under the row), and the warnings that only ask (a banner, the safe place one press away, the question with its countdown)
+    { "welcome-dir-picked", pg::welcome, "", [](view &v) { v.dir = L"D:\\Games\\Foundation Sunshine"; v.dir_picked = L"D:\\Games"; v.dir_free = 412LL << 30; } },
+    { "welcome-dir-redirected", pg::welcome, "", [](view &v) { v.dir = L"D:\\Games\\Foundation Sunshine"; v.dir_picked = L"D:\\Games"; v.dir_note = "redirected"; v.dir_free = 412LL << 30; } },
+    { "welcome-dir-typed", pg::welcome, "", [](view &v) { v.dir = L"D:\\串流基地\\安装"; v.dir_free = 412LL << 30; } },
+    { "welcome-dir-long", pg::welcome, "", [](view &v) { v.dir = L"D:\\Programs and Games\\Streaming Host\\Foundation Sunshine Game Streaming Server"; v.dir_free = 412LL << 30; } },
+    { "welcome-dir-not-empty", pg::welcome, "", [](view &v) { v.dir = L"D:\\Games"; v.dir_picked = L"D:\\Games"; v.dir_free = 412LL << 30; v.dir_error = "not-empty"; } },
+    { "welcome-dir-root", pg::welcome, "", [](view &v) { v.dir = L"D:\\"; v.dir_free = 412LL << 30; v.dir_error = "root"; } },
+    { "welcome-dir-fs", pg::welcome, "", [](view &v) { v.dir = L"F:\\Sunshine"; v.dir_free = 58LL << 30; v.dir_error = "fs"; } },
+    { "welcome-dir-no-space", pg::welcome, "", [](view &v) { v.dir = L"E:\\Sunshine"; v.dir_free = 400LL << 20; v.dir_error = "no-space"; } },
+    { "welcome-dir-system", pg::welcome, "", [](view &v) { v.dir = L"C:\\Windows\\Foundation Sunshine"; v.dir_error = "system"; } },
+    { "welcome-dir-warning-parent", pg::welcome, "", [](view &v) {
+        v.dir = L"D:\\Games\\Foundation Sunshine"; v.dir_picked = L"D:\\Games"; v.dir_free = 412LL << 30; v.dir_warning = "parent"; v.dir_safe = L"D:\\Foundation Sunshine";
+      } },
+    { "welcome-dir-warning-user", pg::welcome, "", [](view &v) {
+        v.dir = L"C:\\Users\\Alice\\Foundation Sunshine"; v.dir_free = 238LL << 30; v.dir_warning = "user"; v.dir_safe = L"C:\\Program Files\\Sunshine";
+      } },
+    { "welcome-dir-confirm", pg::welcome, "", [](view &v) {
+        v.dir = L"D:\\Games\\Foundation Sunshine"; v.dir_warning = "parent"; v.dir_safe = L"D:\\Foundation Sunshine"; v.dir_confirm = true; v.dir_confirm_left = 5;
+      } },
+    { "welcome-dir-confirm-ready", pg::welcome, "", [](view &v) {
+        v.dir = L"C:\\Users\\Alice\\Foundation Sunshine"; v.dir_warning = "user"; v.dir_safe = L"C:\\Program Files\\Sunshine"; v.dir_confirm = true; v.dir_confirm_left = 0;
+      } },
     { "maintenance-newer", pg::maintenance, "", [](view &v) {
         v.maintenance = true; v.has_uninstaller = true; v.package_version = L"2026.1109.120000"; v.installed_version = L"2026.1107.120000";
       } },
@@ -119,7 +142,13 @@ preview_main(const std::wstring &out_dir) {
     apply_events(v, sc.events);
     v.finished = sc.page == pg::failed || sc.page == pg::done;
     if (sc.page == pg::failed && sc.events.find("\"installer\"") == std::string::npos) v.finished = true;
+    v.dir_free = 238LL << 30;
     if (sc.tweak) sc.tweak(v);
+    if (v.maintenance) {  // an installed copy keeps its place: shown, not editable
+      v.dir = L"D:\\Programs\\Foundation Sunshine";
+      v.dir_editable = false;
+      v.dir_free = 311LL << 30;
+    }
     IWICBitmap *bitmap = nullptr;
     ID2D1RenderTarget *target = nullptr;
     ID2D1Bitmap *brand = nullptr;
@@ -146,7 +175,7 @@ preview_main(const std::wstring &out_dir) {
       c.translate(b.x * sc.scale, b.y * sc.scale);
       btn_state st;
       if (sc.page != pg::components && b.id == kBtnPrimary && b.enabled && std::string(sc.name) == "welcome-tab") st.focus = true;
-      draw_button(c, b, st, pal.card);
+      draw_button(c, b, st, under_color(pal, v, b.id));
       c.restore();
     }
     target->EndDraw();

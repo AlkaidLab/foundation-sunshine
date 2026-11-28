@@ -10,7 +10,7 @@
     <MPinHost ref="pinHost" storage-key="web-home" :locale="String(uiLocale)">
     <MAnnouncementPopup v-if="!hideList" :item="announcements.popup.value" :locale="String(uiLocale)" @shown="announcements.markShown" @acknowledge="announcements.acknowledge" @hide="announcements.hide" @open-url="(u) => openExternalUrl(u).catch(() => {})" />
     <MCoachMarks v-if="!hideList" :locale="String(uiLocale)" storage-key="foundation.coach.web" guide-key="foundation.guide.web" />
-    <MCaption v-if="!hideList" bem="web-caption"><template v-if="backButton" #back><MCaptionBack :page="backPage" :locale="String(uiLocale)" @back="jumps.back()" /></template><template #version><MCaptionVersion :version="shellVersion" :build="buildInfo" :os="osName()" :locale="String(uiLocale)" :update="notice.version" @copied="onVersionCopied" @open-update="nav.go('about')" /></template><template #brand><MBrand class="web-caption__brand" :size="20" /></template><template #announcements><MStatusBell :locale="String(uiLocale)" /><MFeedbackButton :locale="String(uiLocale)" /><MAnnouncementButton :unread="announcements.unread.value" :locale="String(uiLocale)" @open="nav.go('announcements')" /></template><template #search><div class="web-caption__search"><MUnifiedSearch :search="uni" :texts="searchT" :compact="compactSearch || caption.tight.value" :height="38" /></div></template><template v-if="compactSearch" #account><ShellUtils placement="bar" /></template><template #connect><button type="button" class="m-caption-connect" :aria-label="connectT.title" :data-tip="connectT.title" @click="connect.show('pair')"><MIcon name="person_add" /><span>{{ connectT.title }}</span></button></template></MCaption>
+    <MCaption v-if="!hideList" bem="web-caption" more :more-label="captionTexts(String(uiLocale)).more" @more="moreOpen = true"><template v-if="backButton" #back><MCaptionBack :page="backPage" :locale="String(uiLocale)" @back="jumps.back()" /></template><template #version><MCaptionVersion :version="shellVersion" :build="buildInfo" :os="osName()" :locale="String(uiLocale)" :update="notice.version" @copied="onVersionCopied" @open-update="nav.go('about')" /></template><template #brand><MBrand class="web-caption__brand" :size="20" /></template><template #announcements><MStatusBell :locale="String(uiLocale)" /><MFeedbackButton :locale="String(uiLocale)" /><MAnnouncementButton :unread="announcements.unread.value" :locale="String(uiLocale)" @open="nav.go('announcements')" /></template><template #search><div class="web-caption__search"><MUnifiedSearch :search="uni" :texts="searchT" :compact="compactSearch || caption.tight.value" :height="38" /></div></template><template v-if="compactSearch" #account><ShellUtils placement="bar" /></template><template #connect><button type="button" class="m-caption-connect" :aria-label="connectT.title" :data-tip="connectT.title" @click="connect.show('pair')"><MIcon name="person_add" /><span>{{ connectT.title }}</span></button></template></MCaption>
     <MScene v-if="!hideList" :nav="nav" :caption-height="48" :jumps="jumps" :chip="backChip" :rail-items="railItems" :texts="sceneTexts" :bar-items="barItems" :bar-current="barCurrent" :overlay="hostUnusable" :status="hostUnusable" storage-key="foundation-ui.web.list" @rail="onRail">
       <template #back-chip><MBackChip :page="backPage" :locale="String(uiLocale)" @back="jumps.back()" /></template>
       <template #rail-foot><ShellUtils placement="rail" /></template>
@@ -31,6 +31,15 @@
       <template #supporting="{ entry }"><component :is="SUPPORTING[entry.id]" :params="entry.params" /></template>
     </MScene>
     <template v-else><div v-show="!hostUnusable" :inert="hostUnusable ? '' : undefined"><component :is="VIEWS[nav.current.value || 'home']" /></div><MHostOffline v-if="hostUnusable" :state="hostConn.state" :locale="String(uiLocale)" @retry="hostConn.retry" /></template>
+    <!-- 更多 of the caption bar: what the bar has no room for at this width (its tier, MCaption), in the order it has there -->
+    <MSheet v-model="moreOpen" :title="captionTexts(String(uiLocale)).more" side="end" :close-label="$t('_common.close')">
+      <div v-if="caption.tier.value >= 1 && shellVersion" class="m-more-version"><MCaptionVersion :version="shellVersion" :build="buildInfo" :os="osName()" :locale="String(uiLocale)" :update="notice.version" @copied="onVersionCopied" @open-update="moreGo(() => nav.go('about'))" /></div>
+      <MGroup>
+        <MItem v-if="caption.tier.value >= 5" action icon="person_add" :title="connectT.title" @click="moreGo(() => connect.show('pair'))" />
+        <MItem v-if="caption.tier.value >= 4" action icon="notifications" :title="announcementTexts(String(uiLocale)).button" @click="moreGo(() => nav.go('announcements'))" />
+        <MItem v-if="caption.tier.value >= 4" action icon="feedback" :title="feedbackTexts(String(uiLocale)).button" @click="moreGo(() => openFeedbackHere({}))" />
+      </MGroup>
+    </MSheet>
     <MContextMenu ref="contextMenu" @select="onContextSelect" />
     <MContextProvider :locale="String(uiLocale)" :callbacks="ctxCallbacks" :capabilities="{ product: 'web', print: true, developer: developerMode.enabled.value }" />
     <DevReportHost v-if="!embedded" :locale="String(uiLocale)" />
@@ -50,7 +59,7 @@
         <MButton variant="danger" icon="logout" @click="confirmLogout">{{ $t('troubleshooting.logout') }}</MButton>
       </template>
     </ConfirmDialog>
-    <MConnectDialog v-model="connect.open.value" v-model:tab="connect.tab.value" v-model:os="connect.os.value" :assets-of="connect.assetsOf" :version-of="connect.versionOf" :locale="String(uiLocale)" :qr="connect.matrix" :pair-qr="connect.pairQr" :count="hostClients.length" :latest="hostClients.length ? hostClients[hostClients.length - 1].name : ''" :close-label="$t('_common.close')"
+    <MConnectDialog v-if="showConnectDialog" v-model="connect.open.value" v-model:tab="connect.tab.value" v-model:os="connect.os.value" :assets-of="connect.assetsOf" :version-of="connect.versionOf" :locale="String(uiLocale)" :qr="connect.matrix" :pair-qr="connect.pairQr" :count="hostClients.length" :latest="hostClients.length ? hostClients[hostClients.length - 1].name : ''" :close-label="$t('_common.close')"
       @pair-pin="(e) => connect.pairPin(e.pin)" @pair-qr-begin="connect.qrBegin()" @pair-qr-stop="connect.qrStop()" @open-url="(u) => openExternalUrl(u).catch(() => {})" @open-downloads="() => { connect.open.value = false; jumpNav.go('downloads') }" />
     <MPairPrompt :requests="pairing.requests.value" :locale="String(uiLocale)" @submit="onPairSubmit" @reject="(id) => pairing.reject(id)" @install="connect.show('install')" />
     <PendingHosts />
@@ -64,7 +73,7 @@ import { computed, defineAsyncComponent, defineComponent, getCurrentInstance, h,
 import { useI18n } from 'vue-i18n'
 import QRCode from 'qrcode'
 import { trackEvents, setTelemetryContext } from '../config/telemetry.js'
-import { answerRedactRequests, MFeedbackButton, openFeedbackHere, homeTexts, MContextProvider, useTelemetryConsent, MErrorHost, installErrorHandlers, setErrorContext, startAutoReport, MPageLoading, useNotify, useSystemNotices, MStatusBell, MPage, MGroup, MItem, MSection, MIcon, MBrand, MCaption, MCaptionVersion, MCaptionBack, MBackChip, useCaptionRoom, createJumpHistory, useBackVariant, showsButton, showsChip, captionTexts, MCoachMarks, MConnectDialog, MPairPrompt, MPinHost, pinSpecForPage, pinTexts, pinToHome, isPinnedOnHome, createPairingPending, MSnackbar, connectTexts, useConnectDialog, MUnifiedSearch, useUnifiedSearch, requestPageFilter, searchTexts, actionDocs, settingDocs, clientDocs, appDocs, tileDocs, addTileToHome, MHostOffline, useHostConnection, MButton, MContextMenu, MNavList, MScene, aboutTexts, latencyClockTexts, statusTexts, networkOverviewTexts, doctorTexts, testToolTexts, createNav, announcementTexts, useAnnouncements, MAnnouncementButton, MAnnouncementPage, MAnnouncementPopup, ackedAt, useAppearance, useSettingsList, useErrors, useDeveloperMode, DevReportHost, registerDevReport } from 'foundation-ui/vue'
+import { answerRedactRequests, announcementTexts, feedbackTexts, isCompactNav, MSheet, MFeedbackButton, openFeedbackHere, homeTexts, MContextProvider, useTelemetryConsent, MErrorHost, installErrorHandlers, setErrorContext, startAutoReport, MPageLoading, useNotify, useSystemNotices, useFeedbackReplies, MStatusBell, MPage, MGroup, MItem, MSection, MIcon, MBrand, MCaption, MCaptionVersion, MCaptionBack, MBackChip, useCaptionRoom, createJumpHistory, useBackVariant, showsButton, showsChip, captionTexts, MCoachMarks, MPairPrompt, MPinHost, pinSpecForPage, pinTexts, pinToHome, isPinnedOnHome, createPairingPending, MSnackbar, connectTexts, useConnectDialog, MUnifiedSearch, useUnifiedSearch, requestPageFilter, searchTexts, actionDocs, settingDocs, clientDocs, appDocs, tileDocs, addTileToHome, MHostOffline, useHostConnection, MButton, MContextMenu, MNavList, MScene, resetTexts, aboutTexts, latencyClockTexts, statusTexts, networkOverviewTexts, doctorTexts, testToolTexts, createNav, useAnnouncements, MAnnouncementButton, MAnnouncementPopup, ackedAt, useAppearance, useSettingsList, useErrors, useDeveloperMode, DevReportHost, registerDevReport } from 'foundation-ui/vue'
 import { afterCheck, afterOpened, noticeView, readNotice, writeNotice } from 'foundation-ui/update'
 import { SEARCH_INDEX } from '../config/settingsData/index.js'
 import { categoryOfRow, labelOf, parseSettingsHash, rowIdOf, settingsHash } from 'foundation-ui/settings/index.js'
@@ -76,6 +85,7 @@ import WebDialogHost from '../components/layout/WebDialogHost.vue'
 import { registerPending } from '../composables/pendingSources.js'
 import ConfirmDialog from '../components/common/ConfirmDialog.vue'
 import { useLogout } from '../composables/useLogout.js'
+import { fetchLogTail } from '../composables/useLogs.js'
 import { useAudioDevices } from '../composables/useAudioDevices.js'
 import { useShellLive } from '../composables/useShellLive.js'
 import { useUpdateStatus } from '../composables/useUpdateStatus.js'
@@ -85,7 +95,7 @@ import { openExternalUrl } from '../utils/helpers.js'
 import { rowKeywords } from 'foundation-ui/settings/index.js'
 import { hostData } from '../composables/hostData.js'
 import { apiFetch, apiJson } from '../utils/apiFetch.js'
-import { lazyPane } from '../utils/lazyPane.js'
+import { hasOpened, lazyPane } from '../utils/lazyPane.js'
 import { createFramedBack } from '../utils/framedBack.js'
 
 const { t, te, locale: uiLocale } = useI18n()
@@ -108,6 +118,8 @@ watch(hostUnusable, (off) => { frozenId.value = off ? String(nav.current.value |
 // A page that is not loaded yet shows the one loading state in the content area (after a short delay), never a blank.
 const LoadingView = defineComponent({ name: 'PageLoadingView', setup: () => () => h('div', { class: 'm-page' }, [h('div', { class: 'm-page__column', style: 'padding-top: 80px' }, [h(MPageLoading)])]) })
 const lazy = (loader) => lazyPane(loader, { loading: LoadingView })
+const MConnectDialog = lazyPane(() => import('foundation-ui/vue/MConnectDialog.vue'), { loading: () => null })
+const MAnnouncementPage = lazy(() => import('foundation-ui/vue/MAnnouncementPage.vue'))
 const VIEWS = {
   home: lazy(() => import('./Home.vue')),
   pin: lazy(() => import('./Pin.vue')),
@@ -116,6 +128,7 @@ const VIEWS = {
   downloads: lazy(() => import('./Downloads.vue')),
   troubleshooting: lazy(() => import('./Troubleshooting.vue')),
   password: lazy(() => import('./SecurityLogin.vue')),
+  'help-page': lazy(() => import('./Help.vue')),
   about: lazy(() => import('./About.vue')),
   appearance: lazy(() => import('./Appearance.vue')),
   'latency-clock': lazy(() => import('./LatencyClock.vue')),
@@ -123,6 +136,7 @@ const VIEWS = {
   'stream-timer': lazy(() => import('./StreamTimer.vue')),
   components: lazy(() => import('./ComponentStatus.vue')),
   doctor: lazy(() => import('./Doctor.vue')),
+  reset: lazy(() => import('./Reset.vue')),
   network: lazy(() => import('./NetworkOverview.vue')),
 }
 // the destinations of 输入与外设 and 显示 that are the configuration opened at a place (the panel has a page for each: here it is the same page of the settings)
@@ -196,6 +210,8 @@ const PAGES = {
   network: { rail: 'system', path: null, hash: 'network-overview', icon: 'lan', tone: 'primary', text: (locale) => networkOverviewTexts(locale).title },
   troubleshooting: { rail: 'system', path: '/troubleshooting', icon: 'stethoscope', tone: 'warn', label: 'shell.logs_diagnostics' },
   doctor: { rail: 'system', path: null, hash: 'doctor', icon: 'health_and_safety', tone: 'success', text: (locale) => doctorTexts(locale).title },
+  // 恢复默认设置: the search finds it as an action (resetSettings below), so the page is not a second result of the same name
+  reset: { rail: 'system', path: null, hash: 'reset', icon: 'restart_alt', tone: 'warn', text: (locale) => resetTexts(locale).title },
   'settings-hub': { rail: 'config', list: false, path: null, hash: 'settings' },
   // 串流 of a narrow window: the pages of the stream rail as one page of grouped rows, like 设置 (the rail's list page does not exist on a phone)
   'stream-hub': { rail: 'stream', list: false, hub: true, path: null, hash: 'streaming' },
@@ -204,6 +220,8 @@ const PAGES = {
   'latency-clock': { rail: 'system', path: null, hash: 'latency-clock', icon: 'speed', tone: 'tertiary', text: (locale) => latencyClockTexts(locale).title },
   'stream-timer': { rail: 'system', path: null, hash: 'stream-timer', icon: 'timer', tone: 'tertiary', text: (locale) => streamTimerTexts(locale).title },
   appearance: { rail: 'appearance', list: false, path: null, hash: 'appearance', icon: 'palette', tone: 'primary', text: (locale) => labelOf(locale, 'shell.appearance') },
+  // 帮助与关于: the four tiles and the way to 关于 (the About page opens over it, from the list)
+  'help-page': { rail: 'help', list: false, path: null, hash: 'help', icon: 'help', tone: 'primary', label: 'shell.help_about' },
   about: { rail: 'help', rootRail: 'about', list: false, push: true, path: null, hash: 'about', icon: 'info', tone: 'primary', text: (locale) => aboutTexts(locale).title },
 }
 // the rail of the control panel, without what only the control panel can do (the local USB/IP, the picture enhancement, the toolbox, 米塔 AI, the panel's own settings): see docs/parity.md of foundation-ui
@@ -240,7 +258,8 @@ const placeOf = (params) => Object.keys(PLACES).find((id) => Object.entries(PLAC
 const hashPage = (hash) => HASH_PAGES[String(hash || '').replace(/^#/, '')]
 // a phone has no list pages of the rails: 串流 is the stream hub, every other category is in the 设置 hub; Back from a page is that hub, whatever way the page was reached
 const HUB_OF = { stream: 'stream-hub', config: 'settings-hub', input: 'settings-hub', audio: 'settings-hub', display: 'settings-hub', system: 'settings-hub' }
-const isPhone = () => window.innerWidth < 600
+// the compact navigation (the bar at the bottom, or beside the content in a short window) keeps the phone's flow: one pane, the hubs
+const isPhone = () => isCompactNav(window.innerWidth, window.innerHeight)
 const nav = createNav({
   routes,
   home: 'home',
@@ -331,7 +350,16 @@ registerDevReport({
 })
 let removeErrorHandlers = null
 const recentLogText = ref('')
-const refreshLogs = async () => { try { const r = await apiFetch('/api/logs'); if (r.ok) recentLogText.value = (await r.text()).split('\n').slice(-60).join('\n') } catch { /* a report without log lines */ } }
+const refreshLogs = async () => {
+  try {
+    const tail = await fetchLogTail()
+    let start = tail.length
+    for (let i = 0; i < 60 && start >= 0; i++) {
+      start = start === 0 ? -1 : tail.lastIndexOf('\n', start - 1)
+    }
+    recentLogText.value = tail.slice(start + 1)
+  } catch { /* a report without log lines */ }
+}
 const shellApp = getCurrentInstance()?.appContext.app
 // in the Panel's frame: the page around it asks for the marked boxes before it takes a screenshot (rectangles only)
 onMounted(async () => { if (embedded) { answerRedactRequests(); return }; removeErrorHandlers = installErrorHandlers({ app: shellApp }); startAutoReport({ context: errorContext }); void refreshLogs(); await telemetry.refresh() })
@@ -414,6 +442,8 @@ useSystemNotices({
   go: { components: () => jumpNav.go('components'), microphone: () => jumpNav.go('microphone'), vdd: () => jumpNav.go('vdd'), update: () => jumpNav.go('about') },
   update: () => ({ state: update.available.value ? 'available' : '', next: '' }),
 })
+// the developers' answers to the feedback this page sent go to the same status button (the sheet of an answer is drawn by DevReportHost); a frame embedded in the Panel leaves it to the Panel
+if (!embedded) useFeedbackReplies({ locale: uiLocale })
 const railItems = computed(() => RAIL.map((r) => ({ ...r, label: t(r.label), ...(r.id === 'overview' && announcementsUnread.value ? { badge: announcementsUnread.value } : {}), ...(r.id === 'help' && notice.value.dot ? { badge: 'dot' } : {}) })))
 // the bottom bar: four destinations with their full labels, the four settings categories behind one
 const BAR_GROUP = { overview: 'overview', stream: 'stream', config: 'settings-hub', input: 'settings-hub', audio: 'settings-hub', display: 'settings-hub', system: 'settings-hub', help: 'help' }
@@ -427,7 +457,7 @@ const railLabel = (rail) => t(RAIL.find((r) => r.id === rail)?.label || 'navbar.
 const settingsList = useSettingsList({ locale: uiLocale, config: live.config, dualsenseKeys: live.dualsenseKeys, sources: { clients: computed(() => live.clients.value?.list), apps: live.apps, components: computed(() => componentStatus.rows.value), ds: live.ds, mic: live.mic, audio: audioDevices.render } })
 watchEffect(() => { hubLines.value = settingsList.lines.value })
 // the row ids of foundation-ui's rowLines for the pages of the list panes
-const ROW_OF_PAGE = { pin: 'clients', apps: 'apps', downloads: 'downloads', gamepad: 'gamepad', keyboard: 'keyboard', mouse: 'mouse', usb: 'usb', microphone: 'microphone', 'display-output': 'display-output', 'display-modes': 'display-modes', 'display-encoders': 'display-encoders', 'display-hdr': 'display-hdr', 'display-advanced': 'display-advanced', 'audio-output': 'audio-output', vdd: 'vdd', components: 'components', network: 'network', 'latency-clock': 'latency-clock', 'test-tools': 'test-tools', 'stream-timer': 'stream-timer', troubleshooting: 'diagnostics', about: 'help' }
+const ROW_OF_PAGE = { pin: 'clients', apps: 'apps', downloads: 'downloads', gamepad: 'gamepad', keyboard: 'keyboard', mouse: 'mouse', usb: 'usb', microphone: 'microphone', 'display-output': 'display-output', 'display-modes': 'display-modes', 'display-encoders': 'display-encoders', 'display-hdr': 'display-hdr', 'display-advanced': 'display-advanced', 'audio-output': 'audio-output', vdd: 'vdd', components: 'components', network: 'network', 'latency-clock': 'latency-clock', 'test-tools': 'test-tools', 'stream-timer': 'stream-timer', troubleshooting: 'diagnostics', about: 'help', 'help-page': 'help' }
 // the pages of a host: the Windows-only ones (HDR, the virtual display) are not offered on another system
 const hostPlatform = computed(() => live.config.value?.platform || 'windows')
 const onThisHost = ([, p]) => !p.windows || hostPlatform.value === 'windows'
@@ -467,7 +497,7 @@ async function onContextSelect(entry, item) {
   if (menuHandler) { menuHandler(entry, item); return }
   if (entry.id === 'open') nav.go(item.route || item.id, item.params)
   else if (entry.id === 'pin') pinHost.value.toggle(rowPinSpec(item))
-  else if (entry.id === 'copy') { try { await navigator.clipboard.writeText(new URL(PAGES[item.route || item.id].path, location.origin).href) } catch { /* clipboard unavailable */ } }
+  else if (entry.id === 'copy') { try { const page = PAGES[item.route || item.id]; await navigator.clipboard.writeText(new URL(page.hash ? `${normalise(location.pathname)}#${page.hash}` : page.path, location.origin).href) } catch { /* clipboard unavailable */ } }
   else { nav.go(item.route || item.id, item.params); pending.value = entry.id }
 }
 const sceneTexts = computed(() => ({ resize: t('shell.resize'), main: t('navbar.home'), expand: t('shell.expand_nav'), collapse: t('shell.collapse_nav'), shortcuts: t('shell.shortcuts'), back: t('shell.back'), search: t('shell.search'), help: t('shell.shortcut_help'), section: t('shell.section'), close: t('shell.clear') }))
@@ -477,11 +507,13 @@ const onRail = (item) => (item.id === 'settings-hub' ? nav.go('settings-hub') : 
 const settingsPlace = (e) => (e.params?.tab === 'display' || e.params?.tab === 'audio' || e.params?.tab === 'input' ? '' : railLabel('config'))
 const onNavigate = (item) => (item.route === 'config' ? openConfig(item.params) : nav.go(item.route || item.id, item.params))
 // ---- the unified search: one bar over everything a person can look for (an icon and a full-screen view on a narrow window) ----
-const compactSearch = ref(window.innerWidth < 600)
+const compactSearch = ref(isPhone())
 // the version sits beside the name: when what is left of the bar cannot show the search field with its hint, the search is its icon (as on a phone) instead of being cut
 const caption = useCaptionRoom()
+const moreOpen = ref(false)
+const moreGo = (action) => { moreOpen.value = false; setTimeout(action, 120) }
 let wasPhone = isPhone()
-const onSearchResize = () => { compactSearch.value = window.innerWidth < 600; const now = isPhone(); if (now !== wasPhone) { wasPhone = now; if (now) nav.narrow(); else nav.widen() } }
+const onSearchResize = () => { compactSearch.value = isPhone(); const now = isPhone(); if (now !== wasPhone) { wasPhone = now; if (now) nav.narrow(); else nav.widen() } }
 const hostClients = ref([])
 const hostApps = ref([])
 async function loadSearchData() {
@@ -505,6 +537,7 @@ const connect = useConnectDialog({
   },
   defaultName: String(uiLocale.value).startsWith('zh') ? '新客户端' : 'New client',
 })
+const showConnectDialog = hasOpened(connect.open)
 // a device waits for its PIN: the prompt comes forward on any page (the host's long poll, docs/api/pairing-pending.md); a host without the API leaves it off
 const failing = (r) => Object.assign(new Error(`HTTP ${r.status}`), { status: r.status })
 const pairingApi = {
@@ -547,15 +580,18 @@ const actionHandlers = computed(() => ({
   stopApp: async () => snackDone(await postOk('/api/apps/close'), 'troubleshooting.force_close_success', 'troubleshooting.force_close_error'),
   ...(hostPlatform.value === 'windows' ? { resetDisplay: async () => snackDone(await postOk('/api/reset-display-device-persistence'), 'troubleshooting.reset_display_device_success_windows', 'troubleshooting.reset_display_device_error_windows') } : {}),
   doctor: () => jumpNav.go('doctor', { autostart: true }),
+  resetSettings: () => jumpNav.go('reset'),
   // 反馈: the form of MErrorHost, which this shell mounts (an embedded frame has no such shell); 帮助与关于 has the same row
   feedback: () => { useErrors().reportFeedback() },
   setupGuide: reopenGuide,
   quitHost: async () => { try { await apiFetch('/api/boom') } catch { /* the host stops before it answers */ } },
   openDesktop: () => openBigScreenOnHost().catch((e) => { connectNotice.value = `${homeTexts(String(uiLocale.value)).openDesktopFailed}${e?.message ? `: ${e.message}` : ''}` }),
 }))
-const pageDocsOf = computed(() => Object.entries(PAGES).filter(([id, p]) => p.icon && p.rail !== 'config').filter(onThisHost).map(([id, p]) => ({ id, title: pageLabel(p), icon: p.icon, route: id, path: railLabel(p.rail), keywords: rowKeywords(ROW_OF_PAGE[id]) })))
+const pageDocsOf = computed(() => Object.entries(PAGES).filter(([id, p]) => p.icon && p.rail !== 'config' && id !== 'reset').filter(onThisHost).map(([id, p]) => ({ id, title: pageLabel(p), icon: p.icon, route: id, path: railLabel(p.rail), keywords: rowKeywords(ROW_OF_PAGE[id]) })))
+// the navigation bar itself: 音频, 显示与视频 ... open their list like the rail does (search for what the bar is called)
+const railDocsOf = computed(() => RAIL.map((r) => ({ id: `rail-${r.id}`, title: t(r.label), icon: r.icon, route: r.id, path: '', keywords: labelOf(String(uiLocale.value).startsWith('zh') ? 'en' : 'zh', r.label), railId: r.id })))
 const searchDocs = computed(() => [
-  ...settingDocs([...pageDocsOf.value, ...settingsList.searchItems.value], { prefix: settingsPlace, locale: String(uiLocale.value) }),
+  ...settingDocs([...railDocsOf.value, ...pageDocsOf.value, ...settingsList.searchItems.value], { prefix: settingsPlace, locale: String(uiLocale.value) }),
   // the big screen opens on the host's own machine: a page anywhere else does not offer the action
   ...actionDocs(String(uiLocale.value), actionHandlers.value, searchT.value.types.action).filter((d) => d.id !== 'action:openDesktop' || bigScreenHere.value),
   ...clientDocs(hostClients.value, { place: railLabel('stream') }),
@@ -569,7 +605,8 @@ const uni = useUnifiedSearch({
   isPinned: (doc) => isPinnedOnHome('web-home', doc.pin),
   recentSettings: recentSettingDocs,
   onChoose: (doc) => {
-    if (doc.type === 'setting' || doc.type === 'page') { settingsList.remember(doc.entry?.keyName); onNavigate(doc.entry) }
+    if (doc.type === 'page' && doc.entry?.railId) onRail({ id: doc.entry.railId })
+    else if (doc.type === 'setting' || doc.type === 'page') { settingsList.remember(doc.entry?.keyName); onNavigate(doc.entry) }
     else if (doc.type === 'client') { requestPageFilter('pin', doc.client?.name || doc.title); nav.go('pin') }
     else if (doc.type === 'app') { requestPageFilter('apps', doc.app?.name || doc.title); nav.go('apps') }
     else if (doc.type === 'tile') { addTileToHome('web-home', doc.tile); nav.go('home') }
@@ -597,5 +634,4 @@ onBeforeUnmount(() => { window.removeEventListener('resize', onSearchResize); na
 .web-caption { position: absolute; top: 0; left: var(--m-rail-w, 0px); right: 0; z-index: 40; height: 48px; display: grid; grid-template-columns: minmax(max-content, 1fr) minmax(0, 560px) minmax(max-content, 1fr); align-items: center; transition: left var(--m-spring-default-spatial-duration, .4s) var(--m-spring-default-spatial, ease); }
 .web-caption__brand { padding-inline-start: 16px; pointer-events: none; }
 .web-caption__search { display: flex; align-items: center; justify-content: center; min-width: 0; padding: 0 12px; }
-@media (max-width: 599.98px) { .web-caption { grid-template-columns: minmax(max-content, 1fr) auto auto; } .web-caption__search { padding: 0 8px; } }
 </style>

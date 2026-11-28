@@ -8,19 +8,30 @@ namespace display_device::vdd_capability {
 
   state_e
   query_state() {
+    return query_detail().state;
+  }
+
+  detail_t
+  query_detail() {
+    detail_t detail;
 #ifndef _WIN32
-    return state_e::unsupported_platform;
+    detail.state = state_e::unsupported_platform;
 #else
     const auto status = vdd_utils::get_vdd_status();
+    detail.control_available = status.control_available;
     if (!status.installed) {
-      return state_e::driver_missing;
+      detail.state = state_e::driver_missing;
     }
     // is_usable() already requires control_available.
-    if (status.is_usable()) {
-      return state_e::ready;
+    else if (status.is_usable()) {
+      detail.state = state_e::ready;
     }
-    return state_e::driver_unreachable;
+    else {
+      detail.state = state_e::driver_unreachable;
+      detail.unreachable = classify_unreachable(status.running, status.problem_code_valid, status.problem_code);
+    }
 #endif
+    return detail;
   }
 
   std::string_view

@@ -183,7 +183,13 @@ namespace nvenc {
         return equal_guids(init_params.encodeGUID, guid);
       };
       if (std::find_if(encode_guids.begin(), encode_guids.end(), search_predicate) == encode_guids.end()) {
-        BOOST_LOG(error) << "NvEnc: encoding format is not supported by the gpu, NVENCAPI_VERSION: " << NVENCAPI_VERSION;
+        if (is_probe) {
+          // the probe asks every GPU for every codec: a GPU without HEVC or AV1 is the expected answer, not an error
+          BOOST_LOG(info) << "NvEnc: encoding format is not supported by the gpu, NVENCAPI_VERSION: " << NVENCAPI_VERSION;
+        }
+        else {
+          BOOST_LOG(error) << "NvEnc: encoding format is not supported by the gpu, NVENCAPI_VERSION: " << NVENCAPI_VERSION;
+        }
         return false;
       }
     }
@@ -691,6 +697,7 @@ namespace nvenc {
         BOOST_LOG(error) << "NvEnc: NvEncRegisterAsyncEvent() failed: " << last_nvenc_error_string;
         return false;
       }
+      async_event_registered = true;
     }
 
     NV_ENC_CREATE_BITSTREAM_BUFFER create_bitstream_buffer = { NV_ENC_CREATE_BITSTREAM_BUFFER_VER };
@@ -768,13 +775,17 @@ namespace nvenc {
       }
       output_bitstream = nullptr;
     }
-    if (encoder && async_event_handle) {
+    // Only an event that was registered can be unregistered: every failure of create_encoder() before the registration
+    // (an unsupported format, a resolution the GPU cannot encode, ...) ends here, and asking the session to drop an event
+    // it never had made a second, misleading error out of each of them.
+    if (encoder && async_event_handle && async_event_registered) {
       NV_ENC_EVENT_PARAMS event_params = { NV_ENC_EVENT_PARAMS_VER };
       event_params.completionEvent = async_event_handle;
       if (nvenc_failed(nvenc->nvEncUnregisterAsyncEvent(encoder, &event_params))) {
         BOOST_LOG(error) << "NvEnc: NvEncUnregisterAsyncEvent() failed: " << last_nvenc_error_string;
       }
     }
+    async_event_registered = false;
     if (registered_input_buffer) {
       if (nvenc_failed(nvenc->nvEncUnregisterResource(encoder, registered_input_buffer))) {
         BOOST_LOG(error) << "NvEnc: NvEncUnregisterResource() failed: " << last_nvenc_error_string;
@@ -850,8 +861,6 @@ namespace nvenc {
       mastering_display.b.y = hdr_metadata->displayPrimaries[2].y;
       mastering_display.whitePoint.x = hdr_metadata->whitePoint.x;
       mastering_display.whitePoint.y = hdr_metadata->whitePoint.y;
-      // maxLuma is in nits, NVENC expects candelas per square meter (same as nits)
-      mastering_display.maxLuma = hdr_metadata->maxDisplayLuminance;
       // minLuma is in 1/10000th of a nit in SS_HDR_METADATA, NVENC expects same unit
       mastering_display.minLuma = hdr_metadata->minDisplayLuminance;
 
@@ -860,12 +869,15 @@ namespace nvenc {
 
       // Set HDR metadata for HEVC
       if (video_format == 1) {
+        // HEVC mastering-display SEI expresses both luminances in 0.0001 cd/m².
+        mastering_display.maxLuma = static_cast<uint32_t>(hdr_metadata->maxDisplayLuminance) * 10000u;
         pic_params.codecPicParams.hevcPicParams.pMasteringDisplay = &mastering_display;
         pic_params.codecPicParams.hevcPicParams.pMaxCll = &content_light_level;
       }
 #if NVENCAPI_MAJOR_VERSION >= 12
       // Set HDR metadata for AV1 (AV1 encoding support added in NVENC SDK 12.0)
       else if (video_format == 2) {
+        mastering_display.maxLuma = hdr_metadata->maxDisplayLuminance;
         pic_params.codecPicParams.av1PicParams.pMasteringDisplay = &mastering_display;
         pic_params.codecPicParams.av1PicParams.pMaxCll = &content_light_level;
       }

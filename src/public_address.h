@@ -46,13 +46,13 @@ namespace public_address {
   // A public endpoint is written the way a host is added in Moonlight: a host
   // name, an IPv4 address or an IPv6 address, with an optional port. The port is
   // the HTTP port the client is given (the base port as the router sees it); the
-  // HTTPS pairing port is five below it. IPv6 literals with a port are bracketed
+  // HTTPS pairing port is the host's own offset below it (five in the default port family). IPv6 literals with a port are bracketed
   // (RFC 3986 section 3.2.2): [2001:db8::1]:57989.
 
   /// At most this many endpoints are kept and probed.
   constexpr std::size_t MAX_ENDPOINTS = 8;
 
-  /// The HTTPS port is the HTTP port minus this offset.
+  /// The HTTPS port is the HTTP port minus this offset in the default port family; the probe uses the offset of the host's own port table.
   constexpr std::uint16_t HTTPS_PORT_OFFSET = 5;
 
   enum class endpoint_error_e {
@@ -62,6 +62,7 @@ namespace public_address {
     format,  ///< a path, a space or anything else that is not host[:port]
     host,  ///< the host part is neither an IP literal nor a valid host name
     port,  ///< not a number from HTTPS_PORT_OFFSET + 1 to 65535
+    unspecified,  ///< 0.0.0.0, 0.x.x.x or ::: no client can connect to it
   };
 
   struct endpoint_t {
@@ -91,9 +92,9 @@ namespace public_address {
   std::uint16_t
   http_port_of(const endpoint_t &endpoint, std::uint16_t default_port);
 
-  /// HTTPS port of an HTTP port (five below); 0 when that is not a valid port.
+  /// HTTPS port of an HTTP port, `delta` below it (the host's configured offset; five in the default port family); 0 when that is not a valid port.
   std::uint16_t
-  https_port_of(std::uint16_t http_port);
+  https_port_of(std::uint16_t http_port, std::int32_t delta = HTTPS_PORT_OFFSET);
 
   struct endpoint_list_t {
     std::vector<endpoint_t> endpoints;  ///< valid, de-duplicated, at most MAX_ENDPOINTS

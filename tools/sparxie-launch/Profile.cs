@@ -38,6 +38,7 @@ internal static class EndfieldSession
 {
     public static Profile Resolve(Profile profile, Func<string, string?> env)
     {
+        if (profile.Game == GameIds.EndfieldPlugin) return ResolvePlugin(profile, env);
         if (profile.Game != "endfield" || profile.Hoyo is not { } h) return profile;
         var input = h.EndfieldInput == "pc" ? "pc" : "touch";
         var auto = h.EndfieldAutoResolution;
@@ -51,10 +52,30 @@ internal static class EndfieldSession
         return profile with { Hoyo = h with { EndfieldInput = input, EndfieldAutoResolution = auto, EndfieldWidth = width, EndfieldHeight = height, EndfieldRefresh = refresh } };
     }
 
+    /// <summary>
+    /// The second generation: the same rule, on the plugin's settings. A profile that follows the main display (autoResolution on) is told the stream's size and refresh
+    /// rate when the host gave them; the plugin reads the result as it declares it (width 320-7680, height 240-4320, refreshRate 24-1000; it clamps anyway).
+    /// A profile without settings is left as it is: the plugin then runs on its own defaults.
+    /// </summary>
+    private static Profile ResolvePlugin(Profile profile, Func<string, string?> env)
+    {
+        if (profile.PluginSettings is null || System.Text.Json.Nodes.JsonNode.Parse(profile.PluginSettings) is not System.Text.Json.Nodes.JsonObject settings) return profile;
+        var auto = settings["autoResolution"] is System.Text.Json.Nodes.JsonValue a && a.TryGetValue<bool>(out var flag) ? flag : true;
+        if (!auto || Positive(env("SUNSHINE_CLIENT_WIDTH")) is not { } width || Positive(env("SUNSHINE_CLIENT_HEIGHT")) is not { } height) return profile;
+        var stored = settings["refreshRate"] is System.Text.Json.Nodes.JsonValue r && r.TryGetValue<int>(out var rate) && rate > 0 ? rate : 0;
+        var refresh = stored > 0 ? stored : Positive(env("SUNSHINE_CLIENT_FPS")) ?? 0;
+        settings["autoResolution"] = false;
+        settings["width"] = Math.Clamp(width, 320, 7680);
+        settings["height"] = Math.Clamp(height, 240, 4320);
+        if (refresh > 0) settings["refreshRate"] = Math.Clamp(refresh, 24, 1000);
+        return profile with { PluginSettings = settings.ToJsonString() };
+    }
+
     private static int? Positive(string? text) => int.TryParse(text, out var n) && n > 0 ? n : null;
 }
 
-internal sealed record Profile(string Id, string DisplayName, string Game, string ExecutablePath, HoyoSettings? Hoyo, ScreenArgs? Screen = null)
+/// <param name="PluginSettings">The "settings" object of a plugin game's profile as JSON text (the plugin's own options, Sparxie.Contracts GameProfile.Settings); null for the built-in games.</param>
+internal sealed record Profile(string Id, string DisplayName, string Game, string ExecutablePath, HoyoSettings? Hoyo, ScreenArgs? Screen = null, string? PluginSettings = null)
 {
     public static Profile FromJson(JsonElement value)
     {
@@ -63,7 +84,9 @@ internal sealed record Profile(string Id, string DisplayName, string Game, strin
         if (game.Length == 0) throw new InvalidDataException("the profile has no game");
         HoyoSettings? hoyo = null;
         if (value.TryGetProperty("hoyo", out var h) && h.ValueKind == JsonValueKind.Object) hoyo = HoyoSettings.FromJson(h);
-        return new Profile(Str("id"), Str("displayName"), game, Str("executablePath"), hoyo);
+        string? pluginSettings = null;
+        if (GameIds.IsPlugin(game) && value.TryGetProperty("settings", out var s) && s.ValueKind == JsonValueKind.Object) pluginSettings = s.GetRawText();
+        return new Profile(Str("id"), Str("displayName"), game, Str("executablePath"), hoyo, null, pluginSettings);
     }
 }
 

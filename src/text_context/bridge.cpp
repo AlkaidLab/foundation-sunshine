@@ -5,6 +5,7 @@
 #include "bridge.h"
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -55,8 +56,8 @@ namespace text_context {
       std::int32_t down_y {};
       std::int32_t screen_x {};
       std::int32_t screen_y {};
-      std::int32_t capture_left {};
-      std::int32_t capture_top {};
+      std::int32_t capture_global_left {};
+      std::int32_t capture_global_top {};
       std::uint32_t capture_width {};
       std::uint32_t capture_height {};
       bool moved {false};
@@ -105,8 +106,8 @@ namespace text_context {
       put_u64(payload, 16, candidate.token);
       payload[24] = static_cast<std::uint8_t>(observation.source);
       payload[25] = static_cast<std::uint8_t>(candidate.cause);
-      put_i32(payload, 28, candidate.screen_x - candidate.capture_left);
-      put_i32(payload, 32, candidate.screen_y - candidate.capture_top);
+      put_i32(payload, 28, candidate.screen_x - candidate.capture_global_left);
+      put_i32(payload, 32, candidate.screen_y - candidate.capture_global_top);
       if (observation.element_rect) {
         const auto rect = to_capture_rect(*observation.element_rect, candidate);
         put_i32(payload, 36, rect.left); put_i32(payload, 40, rect.top);
@@ -129,10 +130,10 @@ namespace text_context {
 
     screen_rect_t to_capture_rect(const screen_rect_t &rect, const candidate_t &candidate) {
       return {
-        rect.left - candidate.capture_left,
-        rect.top - candidate.capture_top,
-        rect.right - candidate.capture_left,
-        rect.bottom - candidate.capture_top,
+        rect.left - candidate.capture_global_left,
+        rect.top - candidate.capture_global_top,
+        rect.right - candidate.capture_global_left,
+        rect.bottom - candidate.capture_global_top,
       };
     }
   }  // namespace
@@ -140,6 +141,7 @@ namespace text_context {
   struct bridge_t::impl_t {
     mutable std::mutex mu;
     std::unordered_map<session_id, session_state_t> sessions;
+    std::atomic_bool input_tracking_active {false};
     std::unordered_map<pointer_key_t, candidate_t, pointer_key_hash_t> active_touches;
     std::unordered_map<session_id, candidate_t> active_mice;
     std::deque<candidate_t> recent;
@@ -166,6 +168,7 @@ namespace text_context {
   void bridge_t::session_started(session_id sid) {
     std::lock_guard lock(_impl->mu);
     _impl->sessions.try_emplace(sid);
+    _impl->input_tracking_active.store(true, std::memory_order_relaxed);
   }
 
   void bridge_t::session_stopped(session_id sid) {
@@ -176,11 +179,19 @@ namespace text_context {
     _impl->active_contexts.erase(sid);
     std::erase_if(_impl->recent, [sid](const candidate_t &candidate) { return candidate.sid == sid; });
     std::erase_if(_impl->outbox, [sid](const outbound_msg_t &msg) { return msg.target == sid; });
+    if (_impl->sessions.empty()) {
+      _impl->current_uia.reset();
+    }
+    _impl->input_tracking_active.store(!_impl->sessions.empty(), std::memory_order_relaxed);
+  }
+
+  bool bridge_t::input_tracking_active() const noexcept {
+    return _impl->input_tracking_active.load(std::memory_order_relaxed);
   }
 
   void bridge_t::record_touch(session_id sid, std::uint8_t event_type, std::uint32_t pointer_id,
                               std::int32_t screen_x, std::int32_t screen_y,
-                              std::int32_t capture_left, std::int32_t capture_top,
+                               std::int32_t capture_global_left, std::int32_t capture_global_top,
                               std::uint32_t capture_width, std::uint32_t capture_height) {
     // Moonlight touch event values: hover/hover-leave/down/up/move/cancel/cancel-all.
     constexpr std::uint8_t kDown = 1;
@@ -188,6 +199,7 @@ namespace text_context {
     constexpr std::uint8_t kMove = 3;
     constexpr std::uint8_t kCancel = 4;
     constexpr std::uint8_t kCancelAll = 7;
+    if (!input_tracking_active()) return;
     std::lock_guard lock(_impl->mu);
     const auto now = clock_t::now();
     const pointer_key_t key {sid, pointer_id};
@@ -210,7 +222,7 @@ namespace text_context {
       if (session_touch_count >= kMaxActiveTouchesPerSession) return;
       _impl->active_touches.emplace(key, candidate_t {
         sid, session->second.next_token++, cause_e::remote_touch, now,
-        screen_x, screen_y, screen_x, screen_y, capture_left, capture_top,
+        screen_x, screen_y, screen_x, screen_y, capture_global_left, capture_global_top,
         capture_width, capture_height, false, false,
       });
       return;
@@ -250,15 +262,16 @@ namespace text_context {
 
   void bridge_t::record_mouse_button(session_id sid, bool release,
                                      std::int32_t screen_x, std::int32_t screen_y,
-                                     std::int32_t capture_left, std::int32_t capture_top,
+                                     std::int32_t capture_global_left, std::int32_t capture_global_top,
                                      std::uint32_t capture_width, std::uint32_t capture_height) {
+    if (!input_tracking_active()) return;
     std::lock_guard lock(_impl->mu);
     if (!release) {
       auto session = _impl->sessions.find(sid);
       if (session == _impl->sessions.end()) return;
       _impl->active_mice[sid] = candidate_t {
         sid, session->second.next_token++, cause_e::remote_mouse, clock_t::now(),
-        screen_x, screen_y, screen_x, screen_y, capture_left, capture_top,
+        screen_x, screen_y, screen_x, screen_y, capture_global_left, capture_global_top,
         capture_width, capture_height, false, false,
       };
     }
@@ -285,6 +298,7 @@ namespace text_context {
   }
 
   void bridge_t::cancel_mouse(session_id sid) {
+    if (!input_tracking_active()) return;
     std::lock_guard lock(_impl->mu);
     // Drop the in-flight candidate without finalizing it: a right-click or
     // scroll during a left-button gesture must never become a text activation.

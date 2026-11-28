@@ -1,38 +1,24 @@
 /**
  * @file src/touch_keyboard_session.h
- * @brief Session-scoped enablement of the Windows touch keyboard
- *        auto-invoke registry key group.
- *
- * When a client declares a touch-keyboard intent (or its server profile
- * opts in), the host writes the TabletTip AutoInvoke registry key group
- * for the duration of the stream session and restores the previous values
- * when the session ends.  A full-variable-isolation ablation on the host
- * (2026-09-02) confirmed the keyboard auto-invocation depends on these
- * values; no public API or Settings surface exists to toggle them
- * programmatically.
- *
- * Non-Windows platforms are no-ops.
+ * @brief Session-scoped Windows touch keyboard auto-invoke settings.
  */
 #pragma once
+
+#include <memory>
 
 namespace touch_kb {
 
 /**
- * Apply the AutoInvoke key group for the active console user.
+ * Acquire the client preference for the lifetime of a launch ticket and its
+ * stream. 0 requests suppression, 1 requests enablement, and other values
+ * leave the user preference alone. The first active preference owns the
+ * shared desktop; if it ends, the next active preference takes over.
  *
- * @param effective when false, this is a no-op (client did not opt in).
- * @return true when the key group was written (or already in the desired
- *         state); false when the write failed or the platform is
- *         non-Windows.
+ * The preference is published to the GUI for the matching Windows session.
+ * A null result means no preference or that publication failed; the stream
+ * must continue in either case.
  */
-bool
-start_session(bool effective);
-
-/**
- * Restore the values captured by start_session().  Safe to call even when
- * start_session() was skipped or failed; a missing undo file is a no-op.
- */
-void
-end_session();
+std::shared_ptr<void>
+acquire(int intent) noexcept;
 
 }  // namespace touch_kb

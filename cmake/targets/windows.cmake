@@ -13,6 +13,14 @@ find_program(CARGO cargo)
 find_program(POWERSHELL_EXECUTABLE NAMES pwsh powershell powershell.exe)
 
 if(NPM AND CARGO AND POWERSHELL_EXECUTABLE)
+  # Match the Web UI's configured source when explicitly set in CMake. Without
+  # it, inherit FOUNDATION_UI_DIR from the build environment if present.
+  set(_panel_frontend_command ${NPM} run build:renderer)
+  if(DEFINED FOUNDATION_UI_DIR AND NOT "${FOUNDATION_UI_DIR}" STREQUAL "")
+    get_filename_component(_panel_ui_dir "${FOUNDATION_UI_DIR}" ABSOLUTE BASE_DIR "${PROJECT_SOURCE_DIR}")
+    set(_panel_frontend_command ${CMAKE_COMMAND} -E env "FOUNDATION_UI_DIR=${_panel_ui_dir}"
+            cmd /D /C call ${NPM} run build:renderer)
+  endif()
   add_custom_target(sunshine-control-panel
           WORKING_DIRECTORY "${SUNSHINE_SOURCE_ASSETS_DIR}/common/sunshine-control-panel"
           COMMENT "Building Sunshine Control Panel (Tauri GUI)"
@@ -23,7 +31,7 @@ if(NPM AND CARGO AND POWERSHELL_EXECUTABLE)
                   -File "${SUNSHINE_SOURCE_ASSETS_DIR}/common/sunshine-control-panel/scripts/build-native-plugins.ps1"
                   -Configuration Release
           COMMAND ${CMAKE_COMMAND} -E echo "Building frontend with Vite..."
-          COMMAND ${NPM} run build:renderer
+          COMMAND ${_panel_frontend_command}
           COMMAND ${CMAKE_COMMAND} -E echo "Building Tauri backend with Cargo..."
           COMMAND ${CARGO} build --manifest-path src-tauri/Cargo.toml --release
           USES_TERMINAL

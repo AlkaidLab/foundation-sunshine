@@ -3,7 +3,6 @@
  * @brief The telemetry sender: buffer, queue, retry, consent, identity and stream trackers.
  */
 #include "service.h"
-#include "error_code.h"
 #include "opt_out.h"
 
 #include "src/crash/crash_context.h"
@@ -15,6 +14,7 @@
 #include <cstdio>
 #include <fstream>
 #include <random>
+#include <tuple>
 
 using json = nlohmann::json;
 using namespace std::literals;
@@ -23,24 +23,6 @@ namespace fs = std::filesystem;
 namespace telemetry {
 
   namespace {
-    /** The build identity as an allow-list token: lower-case ASCII letters and digits with `.`, `_` and `-`, at most 40 characters
-     *  (`v2026.1114.173055.杂鱼` becomes `v2026.1114.173055`). An error event carries it so a report names the build that raised it. */
-    std::string
-    build_token(std::string_view version) {
-      std::string out;
-      for (const unsigned char c : version) {
-        if (out.size() >= 40) break;
-        if (c < 0x80 && std::isalnum(c))
-          out.push_back(static_cast<char>(std::tolower(c)));
-        else if (!out.empty() && (c == '.' || c == '-') && out.back() != '.' && out.back() != '-')
-          out.push_back(static_cast<char>(c));
-        else if (!out.empty() && out.back() != '_' && out.back() != '.' && out.back() != '-')
-          out.push_back('_');
-      }
-      while (!out.empty() && !std::isalnum(static_cast<unsigned char>(out.back()))) out.pop_back();
-      return out;
-    }
-
     bool
     truthy(const std::string &v) {
       return v == "on" || v == "true" || v == "1" || v == "enabled" || v == "yes";
@@ -69,6 +51,30 @@ namespace telemetry {
     }
   }  // namespace
 
+  namespace {
+    /** Writes `text` to `path` through a temporary file and a rename, so a crash leaves the old content or the new, never half of it. */
+    bool
+    write_file_atomic(const fs::path &path, const std::string &text) {
+      try {
+        std::error_code ec;
+        fs::create_directories(path.parent_path(), ec);
+        auto temp = path;
+        temp += ".tmp";
+        {
+          std::ofstream out(temp, std::ios::binary | std::ios::trunc);
+          out << text;
+          out.flush();
+          if (!out) return false;
+        }
+        fs::rename(temp, path, ec);
+        return !ec;
+      }
+      catch (...) {
+        return false;
+      }
+    }
+  }  // namespace
+
   std::string
   new_uuid_v4() {
     std::array<std::uint8_t, 16> b {};
@@ -92,7 +98,8 @@ namespace telemetry {
     c.usage = !(usage_key_present && falsy(usage_value));
     if (errors_key_present && (truthy(errors_value) || falsy(errors_value))) c.errors = truthy(errors_value);
     // a person who answered "off" to the old single question said no to everything that left the computer: that stays no for error reports until they turn it on
-    else c.errors = !(usage_key_present && usage_value == "off");
+    else
+      c.errors = !(usage_key_present && usage_value == "off");
     return c;
   }
 
@@ -128,6 +135,19 @@ namespace telemetry {
     }
     last_flush_ms_ = deps_.now_ms();
     last_aggregate_flush_ms_ = last_flush_ms_;
+    started_ms_ = last_flush_ms_;
+    try {
+      // the day whose routine batches were all sent, and what the error reporter sent in full today: both survive a restart, so a restart neither sends a day twice nor repeats an error in full
+      std::ifstream day(options_.dir / "routine_day");
+      std::int64_t done = 0;
+      if (day >> done) routine_day_done_ = done;
+      if (options_.routine_slot || options_.error_aggregate_ms > 0) reporter_.set_aggregate_ms(options_.error_aggregate_ms > 0 ? options_.error_aggregate_ms : slot::DAY_MS);
+      std::ifstream errors(options_.dir / "error_days.json");
+      const auto stored = errors ? json::parse(errors, nullptr, false) : json();
+      if (!stored.is_discarded() && consent_now().errors) reporter_.restore(stored, deps_.now_ms());
+    }
+    catch (...) {
+    }
     try {
       std::ifstream seen(options_.dir / "products_seen.json");
       const auto stored = seen ? json::parse(seen, nullptr, false) : json();
@@ -229,6 +249,22 @@ namespace telemetry {
   // ---- events ----
 
   namespace {
+    /** The shape of a session id (8-4-4-4-12 hex digits), so a record about an earlier run can only carry an id this host wrote. */
+    bool
+    new_uuid_valid(std::string_view id) {
+      if (id.size() != 36) return false;
+      for (std::size_t i = 0; i < id.size(); ++i) {
+        const auto c = id[i];
+        if (i == 8 || i == 13 || i == 18 || i == 23) {
+          if (c != '-') return false;
+        }
+        else if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) {
+          return false;
+        }
+      }
+      return true;
+    }
+
     /** Standard base64 (RFC 4648 section 4), padded; an empty string when the text is not that. */
     std::string
     base64_decode(std::string_view text) {
@@ -236,7 +272,8 @@ namespace telemetry {
         if (c >= 'A' && c <= 'Z') return c - 'A';
         if (c >= 'a' && c <= 'z') return c - 'a' + 26;
         if (c >= '0' && c <= '9') return c - '0' + 52;
-        return c == '+' ? 62 : c == '/' ? 63 : -1;
+        return c == '+' ? 62 : c == '/' ? 63 :
+                                          -1;
       };
       if (text.empty() || text.size() % 4 != 0) return {};
       std::string out;
@@ -250,8 +287,10 @@ namespace telemetry {
             v[k] = 0;
             ++pad;
           }
-          else if (pad == 0 && value(c) >= 0) v[k] = value(c);
-          else return {};
+          else if (pad == 0 && value(c) >= 0)
+            v[k] = value(c);
+          else
+            return {};
         }
         const auto n = (v[0] << 18) | (v[1] << 12) | (v[2] << 6) | v[3];
         out.push_back(static_cast<char>((n >> 16) & 0xff));
@@ -298,7 +337,7 @@ namespace telemetry {
   }  // namespace
 
   bool
-  service_t::emit(kind_e kind, std::string_view name, const json &props, std::string_view product, std::string_view version, int priority, std::string_view report_id) {
+  service_t::emit(kind_e kind, std::string_view name, const json &props, std::string_view product, std::string_view version, int priority, std::string_view report_id, std::string_view session_id) {
     try {
       if (!known_product(product)) return false;
       // a report the person pressed 发送 for is their consent for that one send: it does not wait for the error-report switch
@@ -312,6 +351,7 @@ namespace telemetry {
       shaped->product = std::string { product };
       shaped->version = sanitize_version(version);
       shaped->priority = priority;
+      if (!session_id.empty() && new_uuid_valid(session_id)) shaped->session_id = std::string { session_id };
       if (is_user_report(kind, name)) shaped->report_id = std::string { report_id };
       bool wake = false;
       {
@@ -332,6 +372,17 @@ namespace telemetry {
     }
   }
 
+  namespace {
+    // the category of a feedback report in the Worker's words (feedback_submit); the page's own words map to four
+    json
+    feedback_submit_props(const json &report_props) {
+      const auto category = report_props.is_object() && report_props.contains("category") && report_props["category"].is_string() ? report_props["category"].get<std::string>() : std::string {};
+      return json { { "category", category == "bug" ? "bug" : category == "suggestion"                        ? "feature" :
+                                                            category == "performance" || category == "compat" ? "improvement" :
+                                                                                                                "other" } };
+    }
+  }  // namespace
+
   bool
   service_t::persist_report(const event_t &event) {
     try {
@@ -344,7 +395,7 @@ namespace telemetry {
       for (auto envelope : build_envelopes(ctx, event.product, { event })) {
         if (alone) envelope["report_only"] = true;
         std::lock_guard lock { queue_mutex_ };
-        if (!queue_.push(envelope, 0)) return false;
+        if (!queue_.push(envelope, 0, delivery_e::feedback)) return false;
       }
       return true;
     }
@@ -372,6 +423,7 @@ namespace telemetry {
         if (id.rfind(prefix, 0) != 0) continue;
       }
       auto props = e.contains("props") ? e["props"] : json::object();
+      if (name == "error" && props.is_object()) props.erase("site");  // only the native host logger supplies this location
       // both switches off: there is no install id (it is neither recovered nor created for this). The report gets a one-time random id of its own, used for its log and its batch, and the Worker takes it as a report without an install.
       // the identity of the report is fixed here, once: the install id when there is one, else a one-time id. The log is uploaded under it and the batch is written with it, whatever the switches say a moment later.
       std::string report_id, report_install;
@@ -387,6 +439,14 @@ namespace telemetry {
         // the screenshot rides in the report as base64 (the page made it fit: at most 700 KB); it is taken out here, whatever happens to it, so the picture is never queued, shaped or sent as an event prop
         const auto shot_text = props.contains("shot") && props["shot"].is_string() ? props["shot"].get<std::string>() : std::string {};
         props.erase("shot");
+        // the screenshot, the log and the packing between them share one deadline inside the page's wait; it is lifted however this block ends
+        if (deps_.feedback_budget_begin) deps_.feedback_budget_begin();
+        struct budget_end_t {
+          const std::function<void()> &end;
+          ~budget_end_t() {
+            if (end) end();
+          }
+        } budget_end { deps_.feedback_budget_end };
         if (!shot_text.empty()) {
           const auto state = attach_screenshot(deps_, endpoint(), report_id.empty() ? report_install : report_id, safe_version(version), shot_text, props);
           if (report) report->shot = state;
@@ -396,8 +456,10 @@ namespace telemetry {
           try {
             const auto safe = safe_version(version);
             if (!safe.empty()) {
-              if (const auto ref = deps_.session_log(endpoint(), report_id.empty() ? report_install : report_id, safe)) props["log_ref"] = *ref;
-              else if (deps_.session_log_state) props["log_state"] = deps_.session_log_state();  // the report goes without its log: the word says why
+              if (const auto ref = deps_.session_log(endpoint(), report_id.empty() ? report_install : report_id, safe))
+                props["log_ref"] = *ref;
+              else if (deps_.session_log_state)
+                props["log_state"] = deps_.session_log_state();  // the report goes without its log: the word says why
             }
           }
           catch (...) {
@@ -414,9 +476,14 @@ namespace telemetry {
         shaped->report_id = report_id;
         shaped->report_install = report_install;
         if (persist_report(*shaped)) {
-          std::lock_guard lock { mutex_ };
-          ++counts_.emitted;
-          ++kept;
+          {
+            std::lock_guard lock { mutex_ };
+            ++counts_.emitted;
+            ++kept;
+          }
+          if (report) ++report->queued;
+          // the count of feedback reports that survives the daily limit of issues of the Worker (a report is only an issue until the limit): one small event, the category in the Worker's words
+          emit(kind_e::error, "feedback_submit", feedback_submit_props(props));
         }
         else {
           std::lock_guard lock { mutex_ };
@@ -428,6 +495,32 @@ namespace telemetry {
           }
         }
         continue;
+      }
+      // the error report of a page: the first of a fingerprint each day goes in full, the repeats are only counted (the aggregate leaves later, under the product that raised them)
+      if (*kind == kind_e::error && name == "error_report") {
+        try {
+          auto shaped = shape_event(*kind, name, props, deps_.now_ms());
+          if (!shaped) continue;
+          std::optional<json> admitted;
+          {
+            std::lock_guard lock { errors_mutex_ };
+            if (!consent_now().errors) {
+              std::lock_guard counts_lock { mutex_ };
+              ++counts_.refused;
+              continue;
+            }
+            admitted = reporter_.admit(product, safe_version(version), shaped->props, deps_.now_ms());
+          }
+          // counted: the page is told it was accepted, the repeat is not lost
+          if (!admitted) {
+            ++kept;
+            continue;
+          }
+          props = *admitted;
+        }
+        catch (...) {
+          continue;
+        }
       }
       if (emit(*kind, name, props, product, version, -1, report_id)) ++kept;
     }
@@ -473,6 +566,8 @@ namespace telemetry {
     out.health = !cfg.contains("health") || !cfg["health"].is_boolean() || cfg["health"].get<bool>();
     out.backoff_s = static_cast<std::int64_t>(std::clamp(num("backoff_s", 0), 0.0, 21600.0));
     out.paused = cfg.contains("paused") && cfg["paused"].is_boolean() && cfg["paused"].get<bool>();
+    // the share of installs that send sampled records: a number in (0, 1] is believed (kept inside the lowest rate), anything else is "not given"
+    if (const auto rate = num("sample_rate", 0.0); rate > 0.0) out.sample_rate = slot::clamp_rate(rate);
     if (cfg.contains("debug") && cfg["debug"].is_array()) {
       for (const auto &c : cfg["debug"]) {
         if (!c.is_object() || !c.contains("until") || !c["until"].is_number() || c["until"].get<double>() <= static_cast<double>(now_ms)) continue;
@@ -488,6 +583,52 @@ namespace telemetry {
       }
     }
     return out;
+  }
+
+  double
+  service_t::effective_sample_rate() const {
+    std::lock_guard lock { mutex_ };
+    return slot::clamp_rate(config_.sample_rate > 0.0 ? config_.sample_rate : options_.sample_rate);
+  }
+
+  report_plan_t
+  service_t::plan() {
+    report_plan_t out;
+    out.sample_rate = effective_sample_rate();
+    const auto id = install_id();
+    out.sampled_in = id.empty() || slot::sampled_in(id, out.sample_rate);
+    out.weight = out.sample_rate < 1.0 ? slot::sample_weight(out.sample_rate) : 1.0;
+    out.slot_offset_ms = id.empty() ? 0 : slot::offset_ms(id);
+    out.routine_day_done = routine_day_done_;
+    return out;
+  }
+
+  bool
+  service_t::routine_due() {
+    if (!options_.routine_slot) return true;
+    const auto now = deps_.now_ms();
+    const auto id = install_id();
+    if (id.empty()) return false;  // nothing routine exists without an install id
+    const auto today = slot::day_of(now);
+    if (routine_day_done_ == today || now < routine_not_before_ms_) return false;
+    return now >= slot::due_ms(id, today, started_ms_);
+  }
+
+  void
+  service_t::save_error_state() {
+    try {
+      json state;
+      {
+        std::lock_guard lock { errors_mutex_ };
+        state = reporter_.state(deps_.now_ms());
+      }
+      const auto text = state.dump();
+      std::lock_guard lock { error_state_mutex_ };
+      if (text == error_state_written_) return;  // nothing new since the last write: no write every flush
+      if (write_file_atomic(options_.dir / "error_days.json", text)) error_state_written_ = text;
+    }
+    catch (...) {
+    }
   }
 
   remote_config_t
@@ -626,7 +767,7 @@ namespace telemetry {
     }
     const bool detail = stats.detail() && !backing_off() && remote_config().tier1_rate > 0;
     auto props = stats.health().take_chunk(now, detail);
-    if (props.value("windows", 0) == 0) return;  // only idle windows: nothing to say about a stream that sent no frames
+    if (props.value("windows", 0) == 0 && props.value("send_would_block_packets", 0) == 0) return;
     emit(kind_e::experience, "stream_health", props);
   }
 
@@ -652,7 +793,7 @@ namespace telemetry {
       props["client_kind"] = d.client_kind;
       props["client_os"] = d.client_os;
       if (window.probe.target_kbps > 0) props["bitrate_band"] = health::bitrate_band(window.probe.target_kbps);
-      if (!d.encoder.empty()) props["encoder"] = d.encoder;
+      if (const auto enc = stats.health().encoder(); !enc.empty()) props["encoder"] = enc;
       if (!d.capture_backend.empty()) props["capture_backend"] = d.capture_backend;
       if (!d.gpu_driver.empty()) props["gpu_driver"] = d.gpu_driver;
       // a severe anomaly sends an anonymized excerpt of the host log around it, at most a few times per install and day
@@ -700,7 +841,7 @@ namespace telemetry {
           { "client_os", d.client_os },
         };
         if (window.probe.target_kbps > 0) props["bitrate_band"] = health::bitrate_band(window.probe.target_kbps);
-        if (!d.encoder.empty()) props["encoder"] = d.encoder;
+        if (const auto enc = stats.health().encoder(); !enc.empty()) props["encoder"] = enc;
         if (!d.capture_backend.empty()) props["capture_backend"] = d.capture_backend;
         if (!d.gpu_driver.empty()) props["gpu_driver"] = d.gpu_driver;
         emit(kind_e::experience, "stream_regress", props);
@@ -857,7 +998,7 @@ namespace telemetry {
   }
 
   void
-  service_t::stream_end(std::uint32_t session_id, std::string_view stop_reason) {
+  service_t::stream_end(std::uint32_t session_id, std::string_view stop_reason, std::string_view clip_offer, std::string_view clip_flow) {
     try {
       std::shared_ptr<stream_stats_t> stats;
       const auto now = deps_.now_ms();
@@ -877,12 +1018,18 @@ namespace telemetry {
           client_of_.erase(client);
         }
       }
-      if (stats->take_first_frame_report() && stats->first_frame_ms()) emit(kind_e::experience, "startup", json { { "first_frame_ms", *stats->first_frame_ms() } });
+      if (stats->encoder().empty() && encoder_resolver_) stats->set_encoder(encoder_resolver_());
+      if (stats->take_first_frame_report() && stats->first_frame_ms()) {
+        emit(kind_e::experience, "startup", json { { "first_frame_ms", *stats->first_frame_ms() } });
+        stream_stage("first_frame", *stats->first_frame_ms());
+      }
       if (const auto w = stats->health().finish(now, health::probe_t {})) on_window(*stats, *w, now);
       emit_health_chunk(*stats, now);
       auto props = dims_to_props(stats->dims());
       props["duration_s"] = std::max<std::int64_t>(0, (now - stats->start_ms()) / 1000);
       props["result"] = result_of_stop_reason(stop_reason);
+      if (!clip_offer.empty()) props["clip_offer"] = std::string { clip_offer };
+      if (!clip_flow.empty()) props["clip_flow"] = std::string { clip_flow };
       emit(kind_e::usage, "stream_end", props);
       quality_event(*stats, now);
     }
@@ -959,8 +1106,12 @@ namespace telemetry {
           if (const auto w = stats->health().tick(now, hp)) on_window(*stats, *w, now);
           if (stats->health().chunk_due(now)) emit_health_chunk(*stats, now);
         }
+        if (stats->encoder().empty() && encoder_resolver_) stats->set_encoder(encoder_resolver_());
         if (stats->take_first_frame_report()) {
-          if (const auto first = stats->first_frame_ms()) emit(kind_e::experience, "startup", json { { "first_frame_ms", *first } });
+          if (const auto first = stats->first_frame_ms()) {
+            emit(kind_e::experience, "startup", json { { "first_frame_ms", *first } });
+            stream_stage("first_frame", *first);
+          }
         }
       }
     }
@@ -968,75 +1119,98 @@ namespace telemetry {
     }
   }
 
-  // ---- the log ----
+  // ---- where a stream start was slow or failed, and driver failures ----
 
   void
-  service_t::note_log(int severity, const char *message, std::size_t length, std::string_view component, std::string_view site) noexcept {
-    if (severity < 3) return;
+  service_t::stream_stage(std::string_view stage, std::int64_t ms) {
     try {
-      const auto hour = deps_.now_ms() / 3'600'000;
-      std::lock_guard lock { log_mutex_ };
-      auto &window = log_windows_[std::string { component }];
-      if (window.hour != hour && window.hour >= 0 && (window.fatal | window.error | window.warning) == 0) window.hour = hour;
-      if (window.hour < 0) window.hour = hour;
-      if (severity >= 5) ++window.fatal;
-      else if (severity == 4) ++window.error;
-      else ++window.warning;
-      if (severity < 4 || !message) return;
-      const auto raw = std::string { message, std::min<std::size_t>(length, 400) };
-      auto key = std::string { component } + '\n' + raw.substr(0, 60);
-      auto found = raw_errors_.find(key);
-      if (found == raw_errors_.end()) {
-        if (raw_errors_.size() >= MAX_RAW_ERRORS) {
-          // the table is full: further distinct messages of an hour are only counted in the tally above
-          return;
-        }
-        found = raw_errors_.emplace(key, raw_error_t { std::string { component }, raw, severity >= 5 ? 5 : 4, 0, std::string { site.substr(0, 200) } }).first;
-      }
-      ++found->second.count;
-      if (severity >= 5) found->second.severity = 5;
+      if (!stage_is_slow(stage, ms)) return;
+      if (stage_events_.fetch_add(1, std::memory_order_relaxed) >= MAX_STAGE_EVENTS_PER_RUN) return;
+      emit(kind_e::experience, "stream_stage", json { { "stage", std::string { stage } }, { "ms", ms } });
     }
     catch (...) {
     }
   }
 
   void
-  service_t::collect_logs(std::int64_t now, bool close_hour) {
-    std::map<std::string, log_window_t> windows;
-    std::map<std::string, raw_error_t> raws;
-    const auto hour = now / 3'600'000;
-    {
-      std::lock_guard lock { log_mutex_ };
-      for (auto it = log_windows_.begin(); it != log_windows_.end();) {
-        auto &w = it->second;
-        const bool over = w.hour >= 0 && w.hour != hour;
-        if ((over || close_hour) && (w.fatal | w.error | w.warning)) {
-          windows[it->first] = w;
-          w = log_window_t { hour, 0, 0, 0 };
+  service_t::stream_failed(std::string_view stage, std::string_view code) {
+    try {
+      if (stage_events_.fetch_add(1, std::memory_order_relaxed) >= MAX_STAGE_EVENTS_PER_RUN) return;
+      emit(kind_e::experience, "stream_failed", json { { "stage", std::string { stage } }, { "code", std::string { code } } });
+    }
+    catch (...) {
+    }
+  }
+
+  void
+  service_t::driver_failed(std::string_view driver, std::string_view op, std::string_view code) {
+    try {
+      if (driver_events_.fetch_add(1, std::memory_order_relaxed) >= MAX_DRIVER_EVENTS_PER_RUN) return;
+      json props { { "driver", std::string { driver } }, { "op", std::string { op } }, { "result", "failed" } };
+      // the code is a result code (letters, digits and _ . : + -), never text: a value with anything else in it is not a code and is left out whole (cutting the other characters out would keep the rest of a path or a name)
+      const bool is_code = !code.empty() && code.size() <= 64 && std::all_of(code.begin(), code.end(), [](const char c) {
+        return (c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || c == '_' || c == '.' || c == ':' || c == '+' || c == '-';
+      });
+      if (is_code) props["hresult"] = std::string { code };
+      emit(kind_e::error, "driver_event", props);
+    }
+    catch (...) {
+    }
+  }
+
+  // ---- the run marker: was the previous run of the host ended by itself ----
+
+  void
+  service_t::begin_run_marker() {
+    try {
+      const auto path = options_.dir / "run_marker.json";
+      std::error_code ec;
+      std::ifstream in(path);
+      const auto previous = in ? json::parse(in, nullptr, false) : json();
+      in.close();
+      const auto boot = deps_.boot_ms ? deps_.boot_ms() : 0;
+      if (previous.is_object() && previous.value("status", "") == "running" && previous.contains("session_id") && previous["session_id"].is_string()) {
+        // the previous run left no sign that it ended by itself. Another boot since then: the computer was shut down or restarted, which is not the program's doing.
+        bool rebooted = false;
+        if (deps_.boot_id) {
+          // the boot word is what tells the boots apart; a start time worked out from the wall clock moves with every clock that is set, so it is never the proof: without both words the answer is "unknown"
+          const auto now_word = deps_.boot_id();
+          const auto before_word = previous.value("boot_id", std::string {});
+          rebooted = !now_word.empty() && !before_word.empty() && now_word != before_word;
         }
-        ++it;
+        else {
+          const auto before = previous.value("boot_ms", std::int64_t { 0 });
+          rebooted = boot > 0 && before > 0 && std::llabs(boot - before) > 120'000;
+        }
+        emit(kind_e::error, "session_abnormal", json { { "abnormal_mechanism", rebooted ? "shutdown" : "unknown" } }, "host", {}, -1, {}, previous["session_id"].get<std::string>());
       }
-      raws.swap(raw_errors_);
+      write_run_marker("running", boot);
     }
-    for (const auto &[component, w] : windows) {
-      emit(kind_e::error, "log_summary", json { { "component", catalogue_id(component, 32).empty() ? "host" : catalogue_id(component, 32) }, { "fatal", w.fatal }, { "error", w.error }, { "warning", w.warning } });
+    catch (...) {
     }
-    const auto build = build_token(context().version);
-    for (const auto &[key, raw] : raws) {
-      // The line itself is not sent. Its code is a hash of the fixed words it starts with (src/telemetry/error_code.h): the same error is one code and what a person chose is not in it.
-      const auto code = error_code_of(scrub_log_message(raw.raw, MAX_MESSAGE_CHARS));
-      emit(kind_e::error, "error", json { { "component", catalogue_id(raw.component, 32).empty() ? "host" : catalogue_id(raw.component, 32) }, { "code", code }, { "severity", raw.severity >= 5 ? "fatal" : "error" }, { "count", raw.count }, { "build", build } });
-      // Every error and fatal log line has a site, so every code can be told where it comes from: the first line of a code in the hour becomes an error report with that site (the group of the
-      // Worker then has a place in the source, which the count alone never had). No text of the line goes with it. The reporter keeps its own hourly and per-install limits.
-      if (!raw.site.empty()) {
-        error_input_t input;
-        input.component = catalogue_id(raw.component, 32).empty() ? "host" : catalogue_id(raw.component, 32);
-        input.code = code;
-        input.severity = raw.severity >= 5 ? "fatal" : "error";
-        input.loc = clean_frame(raw.site);
-        if (!input.loc.empty()) input.frames.push_back(input.loc);
-        report_error(input);
+  }
+
+  void
+  service_t::end_run_marker() {
+    write_run_marker("exited", deps_.boot_ms ? deps_.boot_ms() : 0);
+  }
+
+  void
+  service_t::write_run_marker(std::string_view status, std::int64_t boot) {
+    try {
+      std::error_code ec;
+      fs::create_directories(options_.dir, ec);
+      const auto path = options_.dir / "run_marker.json";
+      const auto tmp = options_.dir / "run_marker.json.tmp";
+      {
+        std::ofstream out(tmp, std::ios::trunc);
+        std::string boot_word;
+        if (deps_.boot_id) boot_word = deps_.boot_id();
+        out << json { { "session_id", session_id_ }, { "status", std::string { status } }, { "boot_ms", boot }, { "boot_id", boot_word }, { "t", deps_.now_ms() } }.dump();
       }
+      fs::rename(tmp, path, ec);
+    }
+    catch (...) {
     }
   }
 
@@ -1049,17 +1223,17 @@ namespace telemetry {
   }
 
   void
-  service_t::flush(bool final) {
+  service_t::flush(bool final, bool release_held) {
     try {
       const auto now = deps_.now_ms();
       collect_logs(now, final);
       // errors held back by the rate limit leave as one aggregate per fingerprint
-      std::vector<json> held;
+      std::vector<error_aggregate_t> held;
       {
         std::lock_guard errors_lock { errors_mutex_ };
-        if (consent_now().errors) held = reporter_.flush(final ? now + error_reporter_t::AGGREGATE_MS : now);
+        if (consent_now().errors) held = reporter_.flush_groups(now, final);
       }
-      for (const auto &props : held) emit(kind_e::error, "error_report", props, "host", {}, 1);  // the counts of known errors: priority 1
+      for (const auto &aggregate : held) emit(kind_e::error, "error_report", aggregate.props, aggregate.product, aggregate.version, 1);  // the counts of known errors: priority 1
       std::deque<event_t> taken;
       consent_marks_t marks_at_take;
       {
@@ -1081,7 +1255,7 @@ namespace telemetry {
             aggregate_ring_.pop_front();
             ++counts_.dropped;
           }
-          if (final || now - last_aggregate_flush_ms_ >= options_.aggregate_interval_ms) {
+          if (final || release_held || now - last_aggregate_flush_ms_ >= options_.aggregate_interval_ms) {
             for (auto &e : aggregate_ring_) taken.push_back(std::move(e));
             aggregate_ring_.clear();
             last_aggregate_flush_ms_ = now;
@@ -1090,11 +1264,21 @@ namespace telemetry {
         marks_at_take = consent_marks_;
         last_flush_ms_ = now;
       }
-      if (taken.empty()) return;
+      if (taken.empty()) {
+        save_error_state();
+        return;
+      }
       const auto c = consent_now();
       // a batch holds events of one product and one priority, so the queue can drop, hold and send by priority
-      std::map<std::pair<std::string, int>, std::vector<event_t>> by_product;
+      // (a record about an earlier run, session_abnormal, has the session id of that run and goes out in an envelope of its own)
+      // (product, priority, session, delivery class, weighted): a batch holds events of one of each, so the queue keeps its own order and bounds and the envelope can carry one sample weight
+      std::map<std::tuple<std::string, int, std::string, int, bool>, std::vector<event_t>> by_product;
       std::vector<event_t> alone;  // reports with an id of their own (both switches off): one batch each, with no install id and no session of the host
+      // the sample: an install that is not in it sends no sampled record, one that is carries the weight (errors, feedback and the failures of priority 0 are never sampled)
+      const auto sample_rate = effective_sample_rate();
+      const bool sampling = sample_rate < 1.0;
+      const bool in_sample = !sampling || slot::sampled_in(install_id(), sample_rate);
+      std::uint64_t sampled_out = 0;
       for (auto &e : taken) {
         if (!c.allows(e.kind) && !is_user_report(e.kind, e.name)) continue;
         // a feedback report that reached the buffer without an identity (emitted directly, kept through a change of the switches): it gets one now, from the install id when there is one and a one-time id when there is not,
@@ -1108,16 +1292,34 @@ namespace telemetry {
           continue;
         }
         const auto priority = event_priority(e);
-        by_product[{ e.product, priority }].push_back(std::move(e));
+        const bool weighted = sampling && sampled_family(e);
+        if (weighted && !in_sample) {
+          ++sampled_out;
+          continue;
+        }
+        by_product[{ e.product, priority, e.session_id, static_cast<int>(delivery_of(e)), weighted }].push_back(std::move(e));
+      }
+      if (sampled_out > 0) {
+        std::lock_guard lock { mutex_ };
+        counts_.sampled_out += sampled_out;
       }
       std::vector<event_t> failed;  // what could not be written: it goes back to the buffer, never lost to a failed write
-      for (const auto &e : alone)
-        if (!persist_report(e)) failed.push_back(e);
+      for (const auto &e : alone) {
+        if (!persist_report(e)) {
+          failed.push_back(e);
+          continue;
+        }
+        // a report whose first write failed in ingest() is written here, and is counted here (ingest counted only the writes that went through): no lock is held
+        if (is_user_report(e.kind, e.name)) emit(kind_e::error, "feedback_submit", feedback_submit_props(e.props));
+      }
       if (!by_product.empty()) {
         auto ctx = context();
         ctx.install_id = install_id();
         ctx.session_id = session_id_;
         for (auto &[key, events] : by_product) {
+          auto group_ctx = ctx;
+          if (!std::get<2>(key).empty()) group_ctx.session_id = std::get<2>(key);
+          if (std::get<4>(key)) group_ctx.sample_weight = slot::sample_weight(sample_rate);
           // no install id (both switches went off since): nothing to write for these, they are the automatic events of a choice that was turned off
           if (ctx.install_id.empty()) continue;
           std::vector<std::vector<std::size_t>> origin;
@@ -1128,7 +1330,7 @@ namespace telemetry {
           bool complete = false;
           try {
             std::vector<std::vector<std::size_t>> members;
-            const auto envelopes = build_envelopes(ctx, key.first, outgoing, members);
+            const auto envelopes = build_envelopes(group_ctx, std::get<0>(key), outgoing, members);
             complete = true;
             for (std::size_t at = 0; at < envelopes.size(); ++at) {
               if (deps_.before_queue_write) deps_.before_queue_write();
@@ -1149,7 +1351,7 @@ namespace telemetry {
                 else {
                   envelope["events"] = std::move(kept);
                   std::lock_guard lock { queue_mutex_ };
-                  pushed = queue_.push(envelope, key.second);
+                  pushed = queue_.push(envelope, std::get<1>(key), static_cast<delivery_e>(std::get<3>(key)));
                 }
               }
               catch (...) {
@@ -1159,7 +1361,8 @@ namespace telemetry {
                 break;
               }
               for (const auto member : members[at]) {
-                if (origin.empty()) written[member] = true;
+                if (origin.empty())
+                  written[member] = true;
                 else
                   for (const auto from : origin[member]) written[from] = true;
               }
@@ -1191,6 +1394,8 @@ namespace telemetry {
           ++counts_.dropped;
         }
       }
+      // what was sent in full today survives a restart; only when every write of this flush went through (a full report that is still in the buffer must not be marked as sent)
+      if (failed.empty()) save_error_state();
     }
     catch (...) {
     }
@@ -1203,7 +1408,10 @@ namespace telemetry {
     if (status >= 200 && status < 300) {
       {
         std::lock_guard lock { queue_mutex_ };
-        for (const auto &p : paths) queue_.remove(p);
+        for (const auto &p : paths) {
+          queue_.remove(p);
+          proxy_refusals_.erase(p.string());
+        }
       }
       failures_ = 0;
       not_before_ms_ = 0;
@@ -1213,11 +1421,30 @@ namespace telemetry {
       counts_.sent_events += count;
       return true;
     }
+    // an answer that a proxy, a firewall or a service without the route yet gives is not about the batch: the batch is kept and tried again with the backoff, but not for ever (it would stop the ones behind it)
+    if (status == 401 || status == 403 || status == 404 || status == 405 || status == 410 || status == 421) {
+      bool give_up = false;
+      for (const auto &p : paths)
+        if (++proxy_refusals_[p.string()] >= MAX_PROXY_REFUSALS) give_up = true;
+      if (give_up) {
+        {
+          std::lock_guard lock { queue_mutex_ };
+          for (const auto &p : paths) {
+            queue_.remove(p);
+            proxy_refusals_.erase(p.string());
+          }
+        }
+        std::lock_guard lock { mutex_ };
+        ++counts_.rejected_batches;
+        return true;
+      }
+    }
     if (status_retryable(status)) {
       ++failures_;
-      // a 429 or 503 that says how long to wait is believed (up to an hour); otherwise the backoff decides
-      const auto asked = std::min<std::int64_t>(answer.retry_after_s, options_.max_backoff_ms / 1000) * 1000;
-      not_before_ms_ = now + std::max<std::int64_t>(asked, backoff_seconds(failures_, deps_.random01()) * 1000);
+      // a 429 or 503 that says how long to wait is believed (up to an hour); otherwise the backoff decides. Both are spread by a random share, so the installs that were told the same number do not return together
+      const auto jitter = deps_.random01();
+      const auto asked = retry_after_ms(answer.retry_after_s, jitter, options_.max_backoff_ms / 1000);
+      not_before_ms_ = now + std::max<std::int64_t>(asked, backoff_seconds(failures_, jitter) * 1000);
       std::lock_guard lock { mutex_ };
       ++counts_.failed_posts;
       return false;
@@ -1252,8 +1479,10 @@ namespace telemetry {
             continue;
           }
           std::string key = name + "|" + p.value("component", std::string {}) + "|" + p.value("code", std::string {}) + "|" + p.value("fingerprint", std::string {}) + "|" + p.value("metric", std::string {});
-          const auto found = seen.find(key);
-          if (found == seen.end()) {
+          if (name == "error") key += "|" + p.value("site", std::string {});
+          // a driver fault is told apart by driver, operation, result and code: a failed virtual display must not hide a failed microphone start
+          if (name == "driver_event") key += "|" + p.value("driver", std::string {}) + "|" + p.value("op", std::string {}) + "|" + p.value("result", std::string {}) + "|" + p.value("hresult", std::string {});
+          if (const auto found = seen.find(key); found == seen.end()) {
             seen[key] = events.size();
             events.push_back(e);
           }
@@ -1309,7 +1538,12 @@ namespace telemetry {
           if (handle_answer(answer, report->batch["events"].size(), { report->path }) && answer.status >= 200 && answer.status < 300) ++sent;
           return sent;
         }
-        const auto group_of = [](const disk_queue_t::entry_t &e) { return e.batch.value("product", std::string {}) + "\n" + e.batch.value("version", std::string {}); };
+        // the session id belongs to the group: a record about an earlier run (session_abnormal) goes out under that run's id, never merged into the envelope of this run
+        // errors and the rest never share a request: a refusal of the ordinary records must not reach the errors that travel with them
+        const auto group_of = [](const disk_queue_t::entry_t &e) {
+          const auto urgent = disk_queue_t::delivery_of_name(e.path) != delivery_e::routine;
+          return e.batch.value("product", std::string {}) + "\n" + e.batch.value("version", std::string {}) + "\n" + e.batch.value("session_id", std::string {}) + (urgent ? "\nu" : "\nr") + "\n" + e.batch.value("sample_weight", json(1)).dump();
+        };
         const auto now = deps_.now_ms();
         const auto first = std::find_if(entries.begin(), entries.end(), [&](const auto &e) {
           const auto sent = p0_group_sent_at_.find(group_of(e));
@@ -1349,36 +1583,76 @@ namespace telemetry {
         if (handle_answer(answer, count, paths)) ++sent;
         return sent;
       }
-      for (int i = 0; i < options_.max_batches_per_pump; ++i) {
-        std::optional<disk_queue_t::entry_t> entry;
-        {
-          std::lock_guard lock { queue_mutex_ };
-          entry = queue_.front();
+      // Two lanes. What must arrive (feedback, errors) goes first and does not wait for anything but a failure's backoff. Routine batches follow when the install's share of the day has begun (routine_due) and only
+      // once today's share is not yet done; a day is done when the routine lane is empty.
+      enum class lane_result_e { empty,
+        more,
+        failed,
+        paced };
+      const auto drain = [&](lane_e lane) {
+        for (int i = 0; i < options_.max_batches_per_pump; ++i) {
+          std::optional<disk_queue_t::entry_t> entry;
+          {
+            std::lock_guard lock { queue_mutex_ };
+            entry = queue_.front(2, lane);
+          }
+          if (!entry) return lane_result_e::empty;
+          const auto count = filter_by_consent(entry->batch, c.usage, c.errors);
+          if (count == 0) {
+            std::lock_guard lock { queue_mutex_ };
+            queue_.remove(entry->path);
+            continue;
+          }
+          // pace: the Worker takes 20 requests a minute per install, a backlog after a long offline time must not run into that
+          {
+            const auto at = deps_.now_ms();
+            while (!post_times_.empty() && at - post_times_.front() >= 60'000) post_times_.pop_front();
+            if (static_cast<int>(post_times_.size()) >= options_.max_posts_per_minute) return lane_result_e::paced;
+            post_times_.push_back(at);
+          }
+          post_result_t answer;
+          try {
+            if (deps_.post) answer = deps_.post(events_url(), entry->batch.dump());
+          }
+          catch (...) {
+            answer = {};
+          }
+          if (!handle_answer(answer, count, { entry->path })) return lane_result_e::failed;
+          if (answer.status >= 200 && answer.status < 300) {
+            ++sent;
+            if (lane == lane_e::routine) routine_failures_ = 0;  // three failures in a row, not three in a day
+          }
+          if (backing_off()) return lane_result_e::paced;  // the answer asked for a wait: the rest goes through the priority 0 path from now on
         }
-        if (!entry) break;
-        const auto count = filter_by_consent(entry->batch, c.usage, c.errors);
-        if (count == 0) {
-          std::lock_guard lock { queue_mutex_ };
-          queue_.remove(entry->path);
-          continue;
+        return lane_result_e::more;
+      };
+      // the routine lane waits until the lane of what must arrive is empty
+      auto urgent = drain(lane_e::urgent);
+      if (urgent != lane_result_e::empty) return sent;
+      if (!routine_due()) return sent;
+      const auto today = slot::day_of(deps_.now_ms());
+      if (options_.routine_slot && routine_flushed_day_ != today) {
+        // the share of the day begins: what the buffer holds (also what waits for the aggregate interval) goes to the disk first, so it leaves with this share; an error that this flush wrote is sent before the routine batches
+        routine_flushed_day_ = today;
+        flush(false, true);
+        urgent = drain(lane_e::urgent);
+        if (urgent != lane_result_e::empty) return sent;
+      }
+      const auto routine = drain(lane_e::routine);
+      if (routine == lane_result_e::empty) {
+        routine_failures_ = 0;
+        routine_not_before_ms_ = 0;
+        if (options_.routine_slot) {
+          routine_day_done_ = today;
+          write_file_atomic(options_.dir / "routine_day", std::to_string(today) + "\n");
         }
-        // pace: the Worker takes 20 requests a minute per install, a backlog after a long offline time must not run into that
-        {
-          const auto at = deps_.now_ms();
-          while (!post_times_.empty() && at - post_times_.front() >= 60'000) post_times_.pop_front();
-          if (static_cast<int>(post_times_.size()) >= options_.max_posts_per_minute) break;
-          post_times_.push_back(at);
+      }
+      else if (routine == lane_result_e::failed && options_.routine_slot) {
+        // a failed share is tried again with the backoff; after three failures in a row the server is not well, and the rest waits for the next day's share instead of coming back every hour
+        if (++routine_failures_ >= 3) {
+          routine_failures_ = 0;
+          routine_not_before_ms_ = slot::due_ms(install_id(), today + 1, started_ms_);
         }
-        post_result_t answer;
-        try {
-          if (deps_.post) answer = deps_.post(events_url(), entry->batch.dump());
-        }
-        catch (...) {
-          answer = {};
-        }
-        if (!handle_answer(answer, count, { entry->path })) break;
-        if (answer.status >= 200 && answer.status < 300) ++sent;
-        if (backing_off()) break;  // the answer asked for a wait: the rest goes through the priority 0 path from now on
       }
     }
     catch (...) {
@@ -1405,13 +1679,18 @@ namespace telemetry {
       if (!c.errors) {
         {
           std::lock_guard lock { log_mutex_ };
-          raw_errors_.clear();
+          log_errors_.clear();
           log_windows_.clear();
         }
         // the actions of the person and the errors held back for an aggregate: gone with the choice, so turning it on again does not send them
         std::lock_guard lock { errors_mutex_ };
         crumbs_.clear();
         reporter_.clear();
+        // what was sent in full today is gone with the choice too (turned on again, an error is sent in full again), also from the disk
+        std::error_code ec;
+        fs::remove(options_.dir / "error_days.json", ec);
+        std::lock_guard state_lock { error_state_mutex_ };
+        error_state_written_.clear();
       }
       std::lock_guard queue_lock { queue_mutex_ };
       if (!c.any()) {
@@ -1432,32 +1711,7 @@ namespace telemetry {
     }
   }
 
-
   // ---- the record that a choice was turned off (opt_out.h) ----
-
-  namespace {
-    /** Writes `text` to `path` through a temporary file and a rename, so a crash leaves the old content or the new, never half of it. */
-    bool
-    write_file_atomic(const fs::path &path, const std::string &text) {
-      try {
-        std::error_code ec;
-        fs::create_directories(path.parent_path(), ec);
-        auto temp = path;
-        temp += ".tmp";
-        {
-          std::ofstream out(temp, std::ios::binary | std::ios::trunc);
-          out << text;
-          out.flush();
-          if (!out) return false;
-        }
-        fs::rename(temp, path, ec);
-        return !ec;
-      }
-      catch (...) {
-        return false;
-      }
-    }
-  }  // namespace
 
   std::string
   service_t::peek_install_id() {
@@ -1570,7 +1824,8 @@ namespace telemetry {
           answer = {};
         }
         // delivered, or refused for good (a 4xx other than 408/429): the record is done; anything else is tried again later
-        if ((answer.status >= 200 && answer.status < 300) || (answer.status >= 400 && answer.status < 500 && answer.status != 408 && answer.status != 429)) done_or_dropped.push_back(r);
+        if ((answer.status >= 200 && answer.status < 300) || (answer.status >= 400 && answer.status < 500 && answer.status != 408 && answer.status != 429))
+          done_or_dropped.push_back(r);
         else {
           opt_out::failed(r, deps_.now_ms());
           failed_now.push_back(r);
@@ -1593,7 +1848,10 @@ namespace telemetry {
   }
 
   json
-  service_t::preview(std::size_t max) const {
+  service_t::preview(std::size_t max) {
+    // an install outside the sample sends no sampled record: it is not shown as if it would leave
+    const auto sample_rate = effective_sample_rate();
+    const bool hide_sampled = sample_rate < 1.0 && !slot::sampled_in(install_id(), sample_rate);
     std::lock_guard lock { mutex_ };
     std::vector<event_t> shown { ring_.begin(), ring_.end() };
     // what waits for the aggregate interval is shown the way it will leave: merged
@@ -1601,6 +1859,7 @@ namespace telemetry {
       std::vector<std::vector<std::size_t>> origin;
       for (auto &m : aggregate_events(std::vector<event_t> { aggregate_ring_.begin(), aggregate_ring_.end() }, origin)) shown.push_back(std::move(m));
     }
+    if (hide_sampled) shown.erase(std::remove_if(shown.begin(), shown.end(), [](const event_t &e) { return sampled_family(e); }), shown.end());
     json out = json::array();
     const auto start = shown.size() > max ? shown.size() - max : 0;
     for (std::size_t i = start; i < shown.size(); ++i) {

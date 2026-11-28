@@ -65,6 +65,21 @@ using namespace std::literals;
 namespace config {
 
   namespace {
+    std::mutex generated_cover_style_mutex;
+    std::optional<std::string> generated_cover_style_live;  ///< set when the configuration is saved; unset until then (the startup value is nvhttp.generated_cover_style)
+
+    /// The value of a style key as the configuration file writes it: without the spaces around it ("glass # note" reads "glass ").
+    std::string
+    trimmed_cover_style(std::string value) {
+      const auto first = value.find_first_not_of(" \t\r\n");
+      if (first == std::string::npos) return {};
+      return value.substr(first, value.find_last_not_of(" \t\r\n") - first + 1);
+    }
+
+    bool
+    is_cover_style_name(std::string_view value) {
+      return value == "tonal" || value == "monogram" || value == "icon" || value == "editorial" || value == "glass" || value == "geometric";
+    }
     std::mutex config_file_mutex;
 #ifdef SUNSHINE_TESTS
     std::mutex save_hook_mutex;
@@ -573,15 +588,20 @@ namespace config {
 
     platf::get_host_name(),  // sunshine_name,
     {},  // fs_host_icon
+    "tonal"s,  // generated_cover_style
     "[]",
     "sunshine_state.json"s,  // file_state
     "[]"s,  // file_mappings
     48020,  // file_mapping_port
     false,  // usb_forwarding_enabled: explicit host opt-in
     0,  // usb_forwarding_port: automatic (main port + 7)
+    false,  // usb_wired_streaming_enabled: explicit host opt-in
     {},  // external_ip
     {},  // external_endpoints
     {},  // stun_servers
+    "enabled",  // network_external_check
+    {},  // network_external_endpoint
+    "enabled",  // network_bypass_proxy
     {
       "1280x720"s,
       "1920x1080"s,
@@ -661,6 +681,7 @@ namespace config {
     50,  // max_log_size_mb - 默认50MB，超过自动轮转
     false,  // notify_pre_releases
     true,  // system_tray
+    "fullscreen",  // pin_prompt
     30,  // session_idle_minutes
     12,  // session_absolute_hours
     7 * 24 * 60,  // session_remember_idle_minutes
@@ -1011,6 +1032,18 @@ namespace config {
     }
 
     input = to_bool(tmp);
+  }
+
+  /// The covers of the applications without a picture follow the saved style at once (a key that is gone from the file, or a value that is not one of the six, is tonal).
+  template <class Map>
+  void
+  apply_live_generated_cover_style(const Map &saved) {
+    std::string value = "tonal";
+    if (const auto found = saved.find("generated_cover_style"); found != saved.end() && is_cover_style_name(trimmed_cover_style(found->second))) {
+      value = trimmed_cover_style(found->second);
+    }
+    std::lock_guard lock { generated_cover_style_mutex };
+    generated_cover_style_live = std::move(value);
   }
 
   /// 启动画面 takes effect at the next launch: a saved value is in force at once, the way the bitrate ceiling is (a key that is gone from the file is the default, on).
@@ -1502,6 +1535,12 @@ namespace config {
     path_f(vars, "cert", nvhttp.cert);
     string_f(vars, "sunshine_name", nvhttp.sunshine_name);
     string_f(vars, "fs_host_icon", nvhttp.fs_host_icon);
+    string_f(vars, "generated_cover_style", nvhttp.generated_cover_style);
+    nvhttp.generated_cover_style = trimmed_cover_style(std::move(nvhttp.generated_cover_style));
+    if (!is_cover_style_name(nvhttp.generated_cover_style)) {
+      BOOST_LOG(warning) << "Invalid generated_cover_style: [" << nvhttp.generated_cover_style << "] defaulting to tonal";
+      nvhttp.generated_cover_style = "tonal";
+    }
     string_f(vars, "clients", nvhttp.clients);
     path_f(vars, "log_path", config::sunshine.log_file);
     path_f(vars, "file_state", nvhttp.file_state);
@@ -1518,6 +1557,7 @@ namespace config {
     else {
       BOOST_LOG(warning) << "Ignoring invalid usb_forwarding_port: expected 0 or 1024-65535";
     }
+    bool_f(vars, "usb_wired_streaming_enabled", nvhttp.usb_wired_streaming_enabled);
 
     // Must be run after "file_state"
     config::sunshine.credentials_file = config::nvhttp.file_state;
@@ -1554,6 +1594,9 @@ namespace config {
       nvhttp.external_endpoints = public_address::join_endpoints(list.endpoints);
     }
     string_f(vars, "stun_servers", nvhttp.stun_servers);
+    string_f(vars, "network_external_check", nvhttp.network_external_check);
+    string_f(vars, "network_external_endpoint", nvhttp.network_external_endpoint);
+    string_f(vars, "network_bypass_proxy", nvhttp.network_bypass_proxy);
     {
       const auto list = nat_discovery::parse_server_list(nvhttp.stun_servers);
       if (!list.rejected.empty()) {
@@ -1687,6 +1730,9 @@ namespace config {
     bool_f(vars, "notify_pre_releases", sunshine.notify_pre_releases);
 
     bool_f(vars, "system_tray", sunshine.system_tray);
+
+    // Read by the control panel from the saved file when a pairing request comes (no restart); a value that is not one of the two keeps the default.
+    string_restricted_f(vars, "pin_prompt", sunshine.pin_prompt, { "fullscreen"sv, "panel"sv });
 
     int port = sunshine.port;
     int_between_f(vars, "port"s, port, { 1024 + nvhttp::PORT_HTTPS, 65535 - rtsp_stream::RTSP_SETUP_PORT });
@@ -2028,6 +2074,8 @@ namespace config {
 
       if (!hasChanged) {
         if (updates.contains("clients")) sync_clients_config_locked(configMap, deleted);
+        // the file already has the style that was asked for, and the host may still be showing another one (the file was edited by hand): the style that was asked for is put in force
+        if (updates.contains("generated_cover_style")) apply_live_generated_cover_style(configMap);
         BOOST_LOG(info) << "Config unchanged, skip writing";
         return true;
       }
@@ -2050,6 +2098,7 @@ namespace config {
         platf::set_global_gamepad_mode(gamepad == configMap.end() ? "auto"sv : std::string_view { gamepad->second });
       }
       if (updates.contains("launch_splash")) apply_live_launch_splash(configMap);
+      if (updates.contains("generated_cover_style")) apply_live_generated_cover_style(configMap);
       BOOST_LOG(info) << "Config updated successfully";
       return true;
     }
@@ -2057,6 +2106,12 @@ namespace config {
       BOOST_LOG(warning) << "Failed to update config: " << e.what();
       return false;
     }
+  }
+
+  void
+  with_config_file_locked(const std::function<void()> &work) {
+    std::lock_guard lock { config_file_mutex };
+    work();
   }
 
   std::optional<std::map<std::string, std::string>>
@@ -2094,6 +2149,12 @@ namespace config {
   void
   set_host_max_bitrate_kbps(int kbps) {
     std::atomic_ref<int>(video.max_bitrate).store(std::max(0, kbps), std::memory_order_relaxed);
+  }
+
+  std::string
+  generated_cover_style() {
+    std::lock_guard lock { generated_cover_style_mutex };
+    return generated_cover_style_live ? *generated_cover_style_live : nvhttp.generated_cover_style;
   }
 
 #ifdef SUNSHINE_TESTS
@@ -2262,6 +2323,7 @@ namespace config {
       const auto gamepad = resultMap.find("gamepad");
       platf::set_global_gamepad_mode(gamepad == resultMap.end() ? "auto"sv : std::string_view { gamepad->second });
       apply_live_launch_splash(resultMap);
+      apply_live_generated_cover_style(resultMap);
 
       return true;
     }

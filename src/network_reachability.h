@@ -29,6 +29,9 @@ namespace reachability {
   /// Interval during which a cached snapshot is reused without probing again.
   constexpr std::int64_t CACHE_TTL_SECONDS = 60;
 
+  /// A refresh asked for within this many seconds of a finished probe with the same options is answered by that probe: it is what the refresh would find.
+  constexpr std::int64_t REFRESH_REUSE_SECONDS = 2;
+
   /// Port offsets from a public method so the route module can name them.
   namespace port_role {
     constexpr std::string_view http = "http";
@@ -144,6 +147,21 @@ namespace reachability {
     handshake_t handshake;
   };
 
+  /// A TCP port as the internet reaches it: the port the person entered, moved by the host's own offsets between its ports.
+  struct external_port_t {
+    std::string role;  ///< "http", "https" or "rtsp"
+    std::uint16_t port = 0;
+  };
+
+  /// What an outside check said about one public endpoint: a connection made from the internet to its TCP ports.
+  struct outside_t {
+    bool asked = false;  ///< the check was on and was tried
+    /// `reachable` (the HTTP port answered with this host's uniqueid), `another_host`, `closed`, `timeout`, `unknown` (something answered that is not a GameStream host) or `unavailable` (the service did not answer: nothing is known)
+    std::string state;
+    std::string reason;  ///< why `unavailable`, or why the service refused the target (`ip_mismatch`, `dns_mismatch`, `dns_failed`, `router_proxy`)
+    std::string caller;  ///< the address the service saw the request come from (its own answer), empty when it did not say
+  };
+
   /// What the host found out about one public endpoint of the configuration.
   struct endpoint_result_t {
     std::string input;  ///< canonical text as configured
@@ -151,12 +169,18 @@ namespace reachability {
     public_address::kind_e kind = public_address::kind_e::empty;
     std::uint16_t port = 0;  ///< HTTP port: the given one, or the default
     bool port_explicit = false;
-    std::uint16_t https_port = 0;  ///< port - 5; the port that was tested
+    std::uint16_t https_port = 0;  ///< the HTTPS port as the internet reaches it: the HTTP port moved by the host's configured offset between them; the port that was tested
+    outside_t outside;  ///< the outside check of this endpoint; `asked` is false when it was off
+    std::vector<external_port_t> ports;  ///< the TCP ports of this endpoint (http, https, rtsp), from the host's port table
     std::vector<std::string> resolved;  ///< addresses of a host name, or the IP literal itself
     scope_e scope = scope_e::unknown;
     bool matches_wan = false;
     bool reached = false;  ///< a handshake completed and the certificate is this host's own
     std::string error;  ///< why it failed: dns_failed, refused, timeout, unreachable, tls_failed, identity_mismatch or not_tried
+    /// The failure says nothing about the internet: a public address that this computer cannot reach itself (a router without NAT loopback,
+    /// a route that leaves through another interface) looks the same as one that nobody can reach. Set for a refusal, a timeout, a missing
+    /// route and a local failure on a public endpoint; never for a name that does not resolve or for another device that answered.
+    bool inconclusive = false;
     std::string tested_address;  ///< address of the attempt that decided the result; empty when none was made
     std::int64_t latency_ms = 0;  ///< latency of that attempt
     std::vector<endpoint_attempt_t> attempts;
@@ -240,7 +264,23 @@ namespace reachability {
     std::uint16_t default_http_port = 0;  ///< HTTP port an endpoint without a port stands for.
     std::uint16_t hairpin_port = 0;
     std::uint32_t process_id = 0;  ///< Process whose listeners are inspected; 0 means this process.
+    bool bypass = false;  ///< the handshakes leave through the physical adapter, not a proxy tunnel (network_pin.h); the host sets it from `network_bypass_proxy`
+    /// The outside check of one public endpoint (network_external.h); empty: not asked. Called from the probing thread for the endpoints that are public.
+    std::function<outside_t(const endpoint_result_t &)> outside;
+    /// Called when a stage of the probe starts and ends (listeners, firewall, interface, router, endpoints), from the probing thread; a step list that shows progress uses it.
+    std::function<void(std::string_view stage, bool finished)> progress;
   };
+
+  /**
+   * @brief True when a proxy on the router (a transparent proxy or a gateway mode) is the likely reason that the outside check could not verify an address: the service refused the target
+   *        because the request came from another address than the target, the router says its outside address is a public one, and the service saw neither of them: it saw the exit of the proxy.
+   */
+  bool
+  router_proxy_suspected(const router_status_t &router, const outside_t &outside);
+
+  /// True for the failures of an attempt that a public endpoint's own computer cannot judge (see endpoint_result_t::inconclusive).
+  bool
+  is_inconclusive_failure(std::string_view error);
 
   /// True for the UDP stream ports, which this process binds when the first session starts.
   bool
@@ -256,12 +296,19 @@ namespace reachability {
 
   /**
    * @brief Probe every endpoint: resolve host names, then a TLS handshake against each address on the
-   *        endpoint's HTTPS port (its HTTP port minus five). Endpoints run in parallel, so the time is
+   *        endpoint's HTTPS port (its HTTP port moved by the host's configured offset between the two). Endpoints run in parallel, so the time is
    *        bounded by one resolve plus one handshake, not by their number.
    */
   std::vector<endpoint_result_t>
   probe_endpoints(const std::vector<public_address::endpoint_t> &endpoints, std::uint16_t default_http_port,
-    std::string_view wan_ip, const endpoint_prober_t &prober);
+    std::string_view wan_ip, const endpoint_prober_t &prober, const std::vector<port_status_t> *table = nullptr);
+
+  /**
+   * @brief The TCP ports a client needs at an endpoint whose HTTP port is `http_port`: every TCP port of the host's own table (https, http, rtsp)
+   *        keeps its distance from the HTTP port. Without a table, the default port family (https 5 below, rtsp 21 above). A port that falls outside 1..65535 is left out.
+   */
+  std::vector<external_port_t>
+  external_tcp_ports(std::uint16_t http_port, const std::vector<port_status_t> *table);
 
   /**
    * @brief The addresses of a one-off test (`GET /api/network/reachability?test=host[:port],...`) as the canonical list the probe takes:
@@ -334,6 +381,7 @@ namespace reachability {
   /// Collect a snapshot from the host, reusing the cached result unless refresh is requested.
   snapshot_t
   probe(const probe_options_t &options, bool refresh);
+
 
   /// Record a client address observed on a completed session launch or resume.
   void

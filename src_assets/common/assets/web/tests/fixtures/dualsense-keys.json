@@ -860,7 +860,7 @@
 "group": 9,
 "tier": "advanced",
 "label": "Audio mic Route",
-"implemented": false,
+"implemented": true,
 "authority": "host"
 },
 {
@@ -905,7 +905,7 @@
 "group": 10,
 "tier": "advanced",
 "label": "Compat report Rate Cap Hz",
-"implemented": false,
+"implemented": true,
 "authority": "client"
 },
 {
@@ -950,6 +950,15 @@
 "group": 10,
 "tier": "advanced",
 "label": "Identity profile",
+"implemented": true,
+"authority": "host"
+},
+{
+"id": 107,
+"key": "ds5.compat.inputReportRate",
+"group": 10,
+"tier": "advanced",
+"label": "Input report rate",
 "implemented": true,
 "authority": "host"
 }

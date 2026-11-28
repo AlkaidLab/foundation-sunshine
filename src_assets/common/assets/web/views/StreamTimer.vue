@@ -40,11 +40,22 @@ const tag = computed(() => (/^zh/i.test(String(locale.value)) ? 'zh-CN' : String
 const now = ref(new Date())
 const scale = ref(1)
 let ticker = 0
-const fmt = (o) => { try { return new Intl.DateTimeFormat(tag.value, o).format(now.value) } catch { return new Intl.DateTimeFormat('en', o).format(now.value) } }
-const time = computed(() => fmt({ hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }))
-const date = computed(() => fmt({ weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }))
-onMounted(() => { ticker = window.setInterval(() => { now.value = new Date() }, 100) })
-onBeforeUnmount(() => window.clearInterval(ticker))
+function formatter(options) {
+  return computed(() => {
+    try { return new Intl.DateTimeFormat(tag.value, options) }
+    catch { return new Intl.DateTimeFormat('en', options) }
+  })
+}
+const clockFormat = formatter({ hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false })
+const dateFormat = formatter({ weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+const time = computed(() => clockFormat.value.format(now.value))
+const date = computed(() => dateFormat.value.format(now.value))
+function tick() {
+  now.value = new Date()
+  ticker = window.setTimeout(tick, 1000 - now.value.getMilliseconds())
+}
+onMounted(tick)
+onBeforeUnmount(() => window.clearTimeout(ticker))
 </script>
 
 <style scoped>
