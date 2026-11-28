@@ -156,7 +156,13 @@ function goToValidation() {
 }
 
 // Land on the section and the setting of a search hit: find the row, scroll the pane that holds the page (not the document) and pulse it
-const landOn = (focus) => { if (focus) window.dispatchEvent(new CustomEvent('foundation-focus', { detail: { focus } })); if (focus) void jumpToRow({ selector: `.cfg-tab [data-cfg="${CSS.escape(focus)}"]` }) }
+const landOn = (focus) => {
+  if (!focus) return
+  window.dispatchEvent(new CustomEvent('foundation-focus', { detail: { focus } }))
+  void jumpToRow({ selector: `.cfg-tab [data-cfg="${CSS.escape(focus)}"]` })
+  // a target whose card mounts together with the sub page (the webhook sheet) is not listening yet at this first dispatch: say it again once the page is there
+  nextTick(() => nextTick(() => window.dispatchEvent(new CustomEvent('foundation-focus', { detail: { focus } }))))
+}
 
 const onHash = () => {
   const target = parseSettingsHash(window.location.hash, SEARCH_INDEX)

@@ -41,9 +41,12 @@ let copyGeneration = 0
 // A search hit for a webhook field lands on this card: open the sheet so the field exists, and the caller's
 // row jump (Config.vue retries the selector for a moment) finds it once the config has loaded.
 const WEBHOOK_FOCUS_IDS = new Set(['webhook_enabled', 'webhook_url', 'webhook_events', 'webhook_skip_ssl_verify', 'webhook_timeout'])
+let focusAutoOpen = false
 const onFoundationFocus = (event) => {
   if (!WEBHOOK_FOCUS_IDS.has(event.detail?.focus)) return
-  if (!modalOpen.value) void open()
+  if (modalOpen.value) return
+  focusAutoOpen = true
+  void open()
 }
 onMounted(() => window.addEventListener('foundation-focus', onFoundationFocus))
 onUnmounted(() => window.removeEventListener('foundation-focus', onFoundationFocus))
@@ -290,6 +293,11 @@ const load = async () => {
     loaded.value = true
   } catch (error) {
     if (generation !== loadGeneration.value) return
+    if (focusAutoOpen) {
+      // a search jump that cannot load just lands on the network page: no sheet, no error text
+      close()
+      return
+    }
     loaded.value = false
     savedEnabled.value = null
     errorMessage.value = error.code === 'webhook_config_invalid'
@@ -298,6 +306,7 @@ const load = async () => {
   } finally {
     if (generation === loadGeneration.value) {
       loading.value = false
+      focusAutoOpen = false
     }
   }
 }
@@ -315,6 +324,7 @@ const close = () => {
   ++loadGeneration.value
   ++copyGeneration
   loading.value = false
+  focusAutoOpen = false
   modalOpen.value = false
   clearMessages()
   showWebhookUrl.value = false
