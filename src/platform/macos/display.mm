@@ -216,13 +216,27 @@ namespace platf {
       last_displays.clear();
       return true;
     }
-    std::vector<CGDirectDisplayID> current_displays(count);
-    if (CGGetActiveDisplayList(count, current_displays.data(), &count) != kCGErrorSuccess) {
-      last_displays.clear();
-      return true;
+    std::vector<CGDirectDisplayID> current_displays;
+    // Retry once if capacity was saturated (display may have been added between queries).
+    for (int attempt = 0; attempt < 2; ++attempt) {
+      current_displays.assign(count, 0);
+      uint32_t filled = count;
+      if (CGGetActiveDisplayList(count, current_displays.data(), &filled) != kCGErrorSuccess) {
+        last_displays.clear();
+        return true;
+      }
+      // Second query may shrink filled if a display was removed; drop trailing slots.
+      current_displays.resize(filled);
+      if (filled < count) {
+        break;
+      }
+      // filled == capacity: may be truncated. Re-count and retry once if larger.
+      uint32_t recount = 0;
+      if (CGGetActiveDisplayList(0, nullptr, &recount) != kCGErrorSuccess || recount <= count) {
+        break;
+      }
+      count = recount;
     }
-    // Second query may shrink count if a display was removed mid-call; drop trailing zeros.
-    current_displays.resize(count);
     std::sort(current_displays.begin(), current_displays.end());
     if (last_displays.empty() || current_displays != last_displays) {
       last_displays = current_displays;

@@ -113,12 +113,24 @@ namespace video {
       if (CGGetActiveDisplayList(0, nullptr, &count) != kCGErrorSuccess || count == 0) {
         return "";
       }
-      std::vector<CGDirectDisplayID> displays(count);
-      if (CGGetActiveDisplayList(count, displays.data(), &count) != kCGErrorSuccess) {
-        return "";
+      std::vector<CGDirectDisplayID> displays;
+      // Retry once if capacity was saturated (display may have been added between queries).
+      for (int attempt = 0; attempt < 2; ++attempt) {
+        displays.assign(count, 0);
+        uint32_t filled = count;
+        if (CGGetActiveDisplayList(count, displays.data(), &filled) != kCGErrorSuccess) {
+          return "";
+        }
+        displays.resize(filled);
+        if (filled < count) {
+          break;
+        }
+        uint32_t recount = 0;
+        if (CGGetActiveDisplayList(0, nullptr, &recount) != kCGErrorSuccess || recount <= count) {
+          break;
+        }
+        count = recount;
       }
-      // Second query may shrink count if a display was removed mid-call; drop trailing zeros.
-      displays.resize(count);
       std::sort(displays.begin(), displays.end());
       std::ostringstream out;
       for (auto id : displays) {
