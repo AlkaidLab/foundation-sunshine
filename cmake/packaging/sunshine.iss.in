@@ -819,12 +819,24 @@ begin
 end;
 
 // A log left by an earlier run must not pass for this run's diagnosis: both copies are cleared
-// right before the helper starts (a read-only scripts folder makes install-vdd.bat keep its
-// copy in {tmp}, which is where Setup points the child processes' TEMP).
-procedure ClearStaleHelperLogs();
+// right before the helper starts, and only the copies that were cleared count later (a locked
+// copy is skipped, because its content is from an earlier run). A read-only scripts folder
+// makes install-vdd.bat keep its copy in {tmp}, which is where Setup points the child
+// processes' TEMP.
+procedure ClearStaleHelperLogs(var ScriptsUsable, TempUsable: Boolean);
 begin
-  DeleteFile(ExpandConstant('{app}\scripts\vdd-install-last.log'));
-  DeleteFile(ExpandConstant('{tmp}\vdd-install-last.log'));
+  if FileExists(ExpandConstant('{app}\scripts\vdd-install-last.log')) then begin
+    ScriptsUsable := DeleteFile(ExpandConstant('{app}\scripts\vdd-install-last.log'));
+    if not ScriptsUsable then
+      Log('The old helper log in the scripts folder is locked; it will not be read.');
+  end else
+    ScriptsUsable := True;
+  if FileExists(ExpandConstant('{tmp}\vdd-install-last.log')) then begin
+    TempUsable := DeleteFile(ExpandConstant('{tmp}\vdd-install-last.log'));
+    if not TempUsable then
+      Log('The old helper log in the temporary folder is locked; it will not be read.');
+  end else
+    TempUsable := True;
 end;
 
 // The helper's output is the only place a VDD failure names its reason (the exit code alone is
@@ -832,10 +844,9 @@ end;
 // is read-only; mirror whichever copy this run produced into the setup log and the run
 // directory, so a failure is diagnosable from the files a person can send us.
 // Returns the verdict the log carries: 0 completed, 3010 restart required, 1 failed,
-// -1 when this run produced no log.
-function SurfaceVddHelperLog(): Integer;
+// -1 when this run produced no readable log.
+function SurfaceVddHelperLog(ScriptsUsable, TempUsable: Boolean): Integer;
 var
-  Candidates: array[0..1] of String;
   HelperLog: String;
   Lines: TArrayOfString;
   Joined: String;
@@ -843,19 +854,19 @@ var
   Found: Boolean;
 begin
   Result := -1;
-  Candidates[0] := ExpandConstant('{app}\scripts\vdd-install-last.log');
-  Candidates[1] := ExpandConstant('{tmp}\vdd-install-last.log');
   HelperLog := '';
   Found := False;
-  for I := 0 to 1 do begin
-    if LoadStringsFromFile(Candidates[I], Lines) then begin
-      HelperLog := Candidates[I];
-      Found := True;
-      Break;
-    end;
+  // only copies that were cleared before the run are this run's output; a locked one is skipped
+  if ScriptsUsable and LoadStringsFromFile(ExpandConstant('{app}\scripts\vdd-install-last.log'), Lines) then begin
+    HelperLog := ExpandConstant('{app}\scripts\vdd-install-last.log');
+    Found := True;
+  end;
+  if (not Found) and TempUsable and LoadStringsFromFile(ExpandConstant('{tmp}\vdd-install-last.log'), Lines) then begin
+    HelperLog := ExpandConstant('{tmp}\vdd-install-last.log');
+    Found := True;
   end;
   if not Found then begin
-    Log('VDD helper output is unavailable; the helper either did not run or wrote nothing this run.');
+    Log('VDD helper output is unavailable; nothing this run wrote a readable log.');
     Exit;
   end;
   Log('VDD helper output taken from ' + HelperLog + '.');
@@ -870,17 +881,18 @@ begin
   // The markers the helper and the batch write into the log are the authority: 3010 first,
   // then the failure marker; a completed line with neither is a successful run.
   for I := 0 to GetArrayLength(Lines) - 1 do begin
-    if Pos('VDD_RESTART_REQUIRED=1', Lines[I]) > 0 then begin
+    // whole-line compares: a path or text that merely contains a marker must not match
+    if Lines[I] = 'VDD_RESTART_REQUIRED=1' then begin
       Result := 3010;
       Exit;
     end;
-    if Pos('VDD_INSTALL_FAILED=1', Lines[I]) > 0 then begin
+    if Lines[I] = 'VDD_INSTALL_FAILED=1' then begin
       Result := 1;
       Exit;
     end;
   end;
   for I := 0 to GetArrayLength(Lines) - 1 do begin
-    if Pos('VDD installation completed.', Lines[I]) > 0 then begin
+    if Lines[I] = 'VDD installation completed.' then begin
       Result := 0;
       Exit;
     end;
@@ -892,6 +904,7 @@ var
   ResultCode: Integer;
   Params, Detail: String;
   Verdict: Integer;
+  ScriptsUsable, TempUsable: Boolean;
 begin
   if not VDDComponentSelected() then
     Exit;
@@ -899,7 +912,7 @@ begin
   WizardForm.StatusLabel.Caption := CustomMessage('StatusInstallVDD');
   EmitInstallerEvent('install-vdd', 'running', 'StatusInstallVDD', 0);
   Params := '--preserve-healthy-existing';
-  ClearStaleHelperLogs;
+  ClearStaleHelperLogs(ScriptsUsable, TempUsable);
   ResultCode := -1;
   if not Exec(ExpandConstant('{app}\scripts\install-vdd.bat'), Params, '',
               SW_HIDE, ewWaitUntilTerminated, ResultCode) then
@@ -907,44 +920,47 @@ begin
     VDDResultCode := 101;
     Log('Could not launch the VDD installer helper.');
   end
-  else if ResultCode = 0 then
-  begin
-    Log('VDD installation and control-interface verification succeeded.');
-    EmitInstallerEvent('install-vdd', 'done', 'StatusInstallVDD', 0);
-  end
-  // 3010 only comes with a real Windows restart signal (vdd-device-helper.ps1 Get-VddWindowsRestartSignal:
-  // ERROR_SUCCESS_REBOOT_REQUIRED from the bind or staging, CM_PROB_NEED_RESTART, DEVPKEY_Device_IsRebootRequired).
-  // A device that is bound but not ready in time without one makes the helper exit 1: VDDResultCode 101 below, the
-  // engine exits 101 and the shell shows the driver failure page with 修复安装.
-  else if ResultCode = 3010 then
-  begin
-    VDDResultCode := 3010;
-    Log('VDD installation requires a Windows restart; Sunshine will not start in this boot.');
-    EmitInstallerEvent('install-vdd', 'needs-reboot', 'StatusInstallVDD', 3010);
-  end
   else
   begin
-    VDDResultCode := 101;
-    Log('VDD installation or verification failed with exit code ' + IntToStr(ResultCode) + '.');
-    EmitInstallerEvent('install-vdd', 'failed', 'StatusInstallVDD', 101);
-  end;
+    // The markers the helper and the batch write into the log are the authority over the
+    // process exit code: a failing cmd AutoRun hook (a leftover registry entry whose script
+    // is gone) fails on every cmd start and hands back a polluted code even for a completed
+    // run.
+    Verdict := SurfaceVddHelperLog(ScriptsUsable, TempUsable);
+    if Verdict = 0 then
+      VDDResultCode := 0
+    else if Verdict = 3010 then
+      VDDResultCode := 3010
+    else if Verdict = 1 then
+      VDDResultCode := 101
+    else begin
+      // no readable log this run: the process exit code decides (0 success, 3010 reboot, else failed)
+      if ResultCode = 0 then
+        VDDResultCode := 0
+      else if ResultCode = 3010 then
+        VDDResultCode := 3010
+      else
+        VDDResultCode := 101;
+      Log('VDD helper log unavailable; the exit code ' + IntToStr(ResultCode) + ' decides.');
+    end;
 
-  Verdict := SurfaceVddHelperLog;
-
-  // A failing cmd AutoRun hook (a leftover registry entry whose script is gone) fails on every
-  // cmd start and hands back a polluted process exit code even for a completed run; the log's
-  // own verdict is the authority over it.
-  if (Verdict = 0) and (VDDResultCode = 101) then begin
-    Log('The helper log reports a completed install while the exit code is ' + IntToStr(ResultCode) + '; a failing cmd AutoRun hook can pollute it. Treating the install as successful.');
-    VDDResultCode := 0;
-  end
-  else if (Verdict = 3010) and (VDDResultCode <> 3010) then begin
-    Log('The helper log reports a restart requirement while the exit code is ' + IntToStr(ResultCode) + '; treating the install as needs-reboot.');
-    VDDResultCode := 3010;
-  end
-  else if (Verdict = 1) and (VDDResultCode = 0) then begin
-    Log('The helper log reports a failed install while the exit code is 0; treating the install as failed.');
-    VDDResultCode := 101;
+    // one result event, matching the final verdict
+    if VDDResultCode = 0 then begin
+      Log('VDD installation and control-interface verification succeeded.');
+      EmitInstallerEvent('install-vdd', 'done', 'StatusInstallVDD', 0);
+    end
+    else if VDDResultCode = 3010 then begin
+      // 3010 only comes with a real Windows restart signal (vdd-device-helper.ps1 Get-VddWindowsRestartSignal:
+      // ERROR_SUCCESS_REBOOT_REQUIRED from the bind or staging, CM_PROB_NEED_RESTART, DEVPKEY_Device_IsRebootRequired).
+      // A device that is bound but not ready in time without one makes the helper exit 1: the engine exits 101
+      // and the shell shows the driver failure page with 修复安装.
+      Log('VDD installation requires a Windows restart; Sunshine will not start in this boot.');
+      EmitInstallerEvent('install-vdd', 'needs-reboot', 'StatusInstallVDD', 3010);
+    end
+    else begin
+      Log('VDD installation or verification failed with exit code ' + IntToStr(ResultCode) + '.');
+      EmitInstallerEvent('install-vdd', 'failed', 'StatusInstallVDD', 101);
+    end;
   end;
 
   // the exit code of the helper itself (-1: it could not be started), not the 101 this script maps it to

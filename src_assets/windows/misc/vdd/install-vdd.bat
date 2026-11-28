@@ -23,10 +23,10 @@ type "%HELPER_LOG%"
 rem The helper's stdout carries the verdict: some environments (service sessions, redirected
 rem consoles) hand back a polluted process exit code even for a completed run, so the log is
 rem the authority. 3010 first, then the success marker; anything else is a failure.
-findstr /C:"VDD_RESTART_REQUIRED=1" "%HELPER_LOG%" >nul
+findstr /X /C:"VDD_RESTART_REQUIRED=1" "%HELPER_LOG%" >nul
 if not errorlevel 1 exit /b 3010
-findstr /C:"VDD installation completed." "%HELPER_LOG%" >nul
+findstr /X /C:"VDD installation completed." "%HELPER_LOG%" >nul
 if not errorlevel 1 exit /b 0
-findstr /C:"VDD_INSTALL_FAILED=1" "%HELPER_LOG%" >nul
+findstr /X /C:"VDD_INSTALL_FAILED=1" "%HELPER_LOG%" >nul
 if not errorlevel 1 exit /b 1
 exit /b %HELPER_EXIT%
