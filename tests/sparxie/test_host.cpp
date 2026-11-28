@@ -1913,28 +1913,6 @@ TEST(CustomArguments, WhatStandsBetweenQuotesIsLeftAsTyped) {
   EXPECT_EQ(with_launch_arguments(open, "", {}, "", { "-a" }), "-x \"y");
 }
 
-TEST(CustomArguments, TheGraphicsApiMenuWinsOverAnApiArgumentAmongThem) {
-  using sparxie::sparxie_custom_arguments;
-  for (const char *game : { "genshin", "starrail", "zzz" })
-    EXPECT_EQ(sparxie_custom_arguments(game, { { "dxVersion", "dx12" }, { "customArgs", "-a -force-d3d11 \"-use-d3d12\" -b" } }), "-a -b") << game;
-  EXPECT_EQ(sparxie_custom_arguments("genshin", { { "dxVersion", "dx11" }, { "customArgs", "-force-d3d11" } }), "");
-  // with "auto" what was typed stays
-  EXPECT_EQ(sparxie_custom_arguments("genshin", { { "dxVersion", "auto" }, { "customArgs", "-force-d3d11" } }), "-force-d3d11");
-  EXPECT_EQ(sparxie_custom_arguments("starrail", { { "customArgs", "-force-d3d12" } }), "-force-d3d12");
-  // Zenless Zone Zero: any value of its own item is a choice, also one that needs no argument
-  EXPECT_EQ(sparxie_custom_arguments("zzz", { { "graphicsApi", "11.0" }, { "customArgs", "-use-d3d12 -a" } }), "-a");
-  // Endfield has no such menu
-  EXPECT_EQ(sparxie_custom_arguments("endfield", { { "dxVersion", "dx12" }, { "customArgs", "-force-d3d11" } }), "-force-d3d11");
-
-  const fs::path root = fs::temp_directory_path() / "sparxie-arguments-api-wins";
-  sparxie::HostEnv env = kbm_env(root);
-  ASSERT_TRUE(sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin" }, { "settings", { { "customArgs", "-force-d3d11" } } } }).status.ok);
-  EXPECT_EQ(profile_arguments(env.data_dir), "-force-d3d11");
-  ASSERT_TRUE(sparxie::update_app(env, 0, { { "settings", { { "customArgs", "-force-d3d11" }, { "dxVersion", "dx12" } } } }).status.ok);
-  EXPECT_EQ(profile_arguments(env.data_dir), "-force-d3d12");
-  fs::remove_all(root);
-}
-
 TEST(CustomArguments, ArgumentsWrittenAgainstEachOtherAreSetApart) {
   using sparxie::sparxie_custom_arguments;
   EXPECT_EQ(sparxie_custom_arguments("genshin", { { "customArgs", "\"-a\"\"-b\"" } }), "\"-a\" \"-b\"");

@@ -114,7 +114,8 @@ test('no Sparxie text talks about the program behind it: no API, interface, retu
   const flat = (value, out = []) => { if (typeof value === 'string') out.push(value); else if (typeof value === 'function') out.push(String(value(2, 'x'))); else if (value && typeof value === 'object') Object.values(value).forEach((v) => flat(v, out)); return out }
   const meta = /接口|API|返回(的|值|数据|内容|结果|给)|字段|主机回答|主机会|控制器|这段说明|endpoint|payload|JSON|returned|the host (answers|returns|sends)|this statement/i
   for (const lang of ['zh', 'en']) {
-    const bad = flat(COPY[lang]).filter((t) => meta.test(t))
+    // the name of the 图形 API setting is what the person sees on the page
+    const bad = flat(COPY[lang]).filter((t) => meta.test(t.replace(/图形 API|Graphics API/g, '')))
     assert.deepEqual(bad, [], `${lang}: developer talk in user copy`)
   }
   assert.equal(COPY.zh.notice, COPY.zh.noticeFoot, 'one statement, said the same everywhere')

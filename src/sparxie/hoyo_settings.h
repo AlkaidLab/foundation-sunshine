@@ -29,12 +29,7 @@ namespace sparxie {
   // The command line argument of the chosen 图形 API for a title that starts through Sparxie; empty when nothing (or something Sparxie's titles take no argument for) is chosen.
   std::string
   graphics_api_argument(std::string_view game, const json &settings);
-  // Whether an argument (without its quotes) picks the graphics API, and a command line word without the pair of quotes around it.
-  bool
-  is_graphics_argument(std::string_view argument);
-  std::string
-  unquoted_argument(std::string_view word);
-  // The 自定义启动参数 of a title that starts through Sparxie, on one line (Sparxie refuses line breaks); empty when there are none or they hold what the host refuses. An API argument among them is left out when the 图形 API menu holds a choice.
+  // The 自定义启动参数 of a title that starts through Sparxie, on one line (Sparxie refuses line breaks); empty when there are none or they hold what the host refuses.
   std::string
   sparxie_custom_arguments(std::string_view game, const json &settings);
   // The 自定义启动参数 item.

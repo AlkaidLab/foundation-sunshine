@@ -23,6 +23,7 @@ const ZH = {
   appName: '应用名称',
   // the browse list of the Web UI (the host lists its own drives and folders; a browser cannot give the host a path)
   outdatedTitle: 'Sparxie 版本已过时', outdatedText: (version, latest) => `Sparxie ${version} 已过时，请换用 ${latest} 或更新版本`, outdatedOk: '知道了',
+  apiConflictTitle: '图形 API 冲突', apiConflictText: (api, args) => `图形 API 选了「${api}」，自定义启动参数里又有 ${args}。停用图形 API 选项，还是删除参数？`, apiConflictMenu: '停用图形 API 选项', apiConflictArgs: '删除参数',
   browseTitleFile: '选择游戏主程序', browseTitleFolder: '选择游戏文件夹', browseRoot: '这台电脑', browseUp: '上一级', browseHere: '选择此文件夹', browseEmpty: '这里没有可显示的内容', browseMore: (n) => `只显示前 ${n} 项`, browseFailed: '无法读取这个位置', browseClose: '返回',
   coverFollow: '跟随官方海报', coverFollowText: '随版本更新', coverUpdated: (t) => `已更新 ${t}`, coverNone: '尚未取得官方海报', coverCustom: '自定义封面', coverRestore: '恢复官方海报',
   posterBadge: '海报显示 Sparxie 标志', posterBadgeOfficial: '画在海报右上角', posterBadgeCustom: '画在你的封面右上角（本地 PNG / JPEG）',
@@ -83,6 +84,7 @@ const EN = {
   region: 'Region', coverAuto: 'Official poster, updated with each version', coverChange: 'Change cover',
   appName: 'Application name',
   outdatedTitle: 'This Sparxie is outdated', outdatedText: (version, latest) => `Sparxie ${version} is outdated. Use ${latest} or newer`, outdatedOk: 'OK',
+  apiConflictTitle: 'Graphics API conflict', apiConflictText: (api, args) => `Graphics API is set to “${api}”, and the custom launch arguments hold ${args}. Turn off the Graphics API setting, or remove the arguments?`, apiConflictMenu: 'Turn off the setting', apiConflictArgs: 'Remove arguments',
   browseTitleFile: 'Choose the game executable', browseTitleFolder: 'Choose the game folder', browseRoot: 'This PC', browseUp: 'Up', browseHere: 'Choose this folder', browseEmpty: 'Nothing to show here', browseMore: (n) => `Showing the first ${n}`, browseFailed: 'This location cannot be read', browseClose: 'Back',
   coverFollow: 'Follow the official poster', coverFollowText: 'Updates with each version', coverUpdated: (t) => `Updated ${t}`, coverNone: 'No official poster yet', coverCustom: 'Custom cover', coverRestore: 'Restore the official poster',
   posterBadge: 'Show the Sparxie mark on the poster', posterBadgeOfficial: 'Drawn in the top-right corner of the poster', posterBadgeCustom: 'Drawn in the top-right corner of your cover (a local PNG or JPEG)',

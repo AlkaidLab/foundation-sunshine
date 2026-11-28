@@ -1,5 +1,4 @@
 #include "src/sparxie/store.h"
-#include "src/sparxie/hoyo_settings.h"
 #include "src/sparxie/sha256.h"
 #include <algorithm>
 #include <cstring>
@@ -733,6 +732,15 @@ namespace sparxie {
   }
   namespace {
     constexpr const char *kBlanks = " \t\r\n";
+    bool
+    is_graphics_argument(const std::string &argument) {
+      return argument == "-force-d3d11" || argument == "-force-d3d12" || argument == "-use-d3d12";
+    }
+    // a command line word without the pair of quotes around it
+    std::string
+    unquoted_argument(const std::string &word) {
+      return word.size() >= 2 && word.front() == '"' && word.back() == '"' ? word.substr(1, word.size() - 2) : word;
+    }
     // The words of a command line as [begin, end): blanks separate them, except between a pair of quotes (a quote after an odd number of backslashes is a plain
     // character, and so is one that nothing closes, so that what the host appends after it can still be found again).
     std::vector<std::pair<std::size_t, std::size_t>>
