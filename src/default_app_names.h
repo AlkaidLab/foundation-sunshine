@@ -90,6 +90,21 @@ namespace default_apps::names {
     return name_in(id, "en");
   }
 
+  /// The ids that name a command of a default entry's menu (the Desktop entry's Touch Keyboard and Desktop Pet).
+  /// The other ids of the table name entries; a command the person gave one of those ids keeps its name.
+  inline constexpr std::array<std::string_view, 2> menu_command_ids {
+    "kcENAT5r9P"sv, "rjeOKHmcdL"sv
+  };
+
+  /// Whether the id names a command of a default entry's menu.
+  inline bool
+  is_menu_command(std::string_view id) {
+    for (const auto candidate : menu_command_ids) {
+      if (candidate == id) return true;
+    }
+    return false;
+  }
+
   /// Whether the text is the name of the entry in any language.
   inline bool
   is_known(std::string_view id, std::string_view text) {

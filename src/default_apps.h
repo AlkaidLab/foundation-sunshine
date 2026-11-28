@@ -263,7 +263,9 @@ namespace default_apps {
   /// The name of a menu command that a protocol client sees: the English name of a known command that still has one of its names.
   inline std::string
   client_menu_name(const std::string &command_id, const std::string &name) {
-    if (names::find(command_id) && names::is_known(command_id, name)) {
+    // only the commands of the default entries are retitled: a command the person gave an entry's
+    // id (and one of its names) keeps the name the person wrote
+    if (names::is_menu_command(command_id) && names::is_known(command_id, name)) {
       return names::canonical_name(command_id);
     }
     return name;

@@ -302,6 +302,9 @@ TEST(DefaultAppNames, AClientSeesTheEnglishNameWhileTheFileFollowsTheLanguage) {
   EXPECT_EQ(default_apps::client_name("steam", "Steam Big Picture 模式"), "Steam Big Picture");
   EXPECT_EQ(default_apps::client_menu_name("kcENAT5r9P", "触摸键盘"), "Touch Keyboard");
   EXPECT_EQ(default_apps::client_menu_name("rjeOKHmcdL", "桌宠"), "Desktop Pet");
+  // a command the person gave an entry's id keeps its name (only menu-command ids are retitled)
+  EXPECT_EQ(default_apps::client_menu_name("desktop", "桌面"), "桌面");
+  EXPECT_EQ(default_apps::client_menu_name("big-screen", "大屏"), "大屏");
   // a name the person wrote stays, with and without a mark
   EXPECT_EQ(default_apps::client_name("xbox", "My Xbox"), "My Xbox");
   EXPECT_EQ(default_apps::client_name("", "桌面"), "桌面");
