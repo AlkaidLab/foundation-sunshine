@@ -360,8 +360,13 @@ namespace config {
   std::optional<std::map<std::string, std::string>>
   get_effective_config_snapshot();
 
+  /**
+   * @brief Persist host configuration, optionally staging legacy VDD modes/GPU under the same lock.
+   * @param previous_locale Receive the previous saved locale for the caller's application-title update.
+   * @param save_vdd Restore original XML bytes if host persistence fails; missing XML is a no-op.
+   */
   bool
-  update_full_config(const std::map<std::string, std::string> &fullConfig, std::string *previous_locale = nullptr);
+  update_full_config(const std::map<std::string, std::string> &fullConfig, std::string *previous_locale = nullptr, bool save_vdd = false);
 
   /**
    * The host's bitrate ceiling in Kbps (the `max_bitrate` setting, 0 = none). It is read while streams run and written when the configuration is saved (update_full_config), so every reader asks here and
