@@ -969,6 +969,9 @@ function Invoke-VddInstall(
         (Test-VddVersionAtLeast $decision.CurrentVersion $state.BundledVersion)) {
         Write-Output 'A healthy same-or-newer VDD is already active; deferring the bundled driver update.'
         Write-Output 'VDD_DRIVER_UPDATE_DEFERRED=1'
+        # The deferred run is a completed installation (the active VDD stays); without this
+        # completed marker a polluted process exit code would read as a failure.
+        Write-Output 'VDD installation completed.'
         return
     }
 
