@@ -20,6 +20,7 @@
 
 #include "src/client_interface.h"
 #include "src/config.h"
+#include "src/default_apps.h"
 #include "src/file_handler.h"
 #include "src/logging.h"
 #include "src/platform/common.h"
@@ -152,7 +153,7 @@ namespace nvhttp::apps {
       pt::ptree app;
 
       app.put("IsHdrSupported"s, video::active_hevc_mode == 3 ? 1 : 0);
-      app.put("AppTitle"s, proc.name);
+      app.put("AppTitle"s, default_apps::client_name(proc.default_id, proc.name));
       app.put("ID"s, proc.id);
       app.put("FsKind"s, client_interface::to_string(proc.fs_facts.kind));
       app.put("FsDefault"s, proc.fs_facts.is_default ? 1 : 0);
@@ -176,7 +177,7 @@ namespace nvhttp::apps {
       for (auto &cmd : proc.menu_cmds) {
         json json_cmd;
         json_cmd["id"] = cmd.id;
-        json_cmd["name"] = cmd.name;
+        json_cmd["name"] = default_apps::client_menu_name(cmd.id, cmd.name);
 
         json_cmds.push_back(json_cmd);
       }
