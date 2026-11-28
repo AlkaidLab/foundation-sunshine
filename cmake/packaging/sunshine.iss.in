@@ -142,7 +142,7 @@ english.MsgServiceInstallFailed=Sunshine service could not be installed or verif
 english.MsgServiceAutostartFailed=Sunshine was installed, but its automatic startup could not be configured - security software often blocks this change.%n%nYou can enable automatic startup later in the Sunshine panel. The installer log has the details.
 english.MsgServiceStartFailed=The Sunshine service was registered, but could not start now. Setup will still apply your automatic startup choice. Check the installer log and try starting the service again from the Sunshine panel.
 english.MsgDirProtectFailed=The install folder could not be protected from changes by other users, so nothing was installed.%n%nThe service runs the programs in this folder as SYSTEM. Pick a folder on a local NTFS or ReFS drive and run setup again. The installer log in your TEMP folder has the details.
-english.MsgVDDInstallFailed=The virtual display driver could not be installed or verified.%n%nSunshine was installed but has not been started. Review the installer log in your TEMP folder, then use the repair action in the Sunshine GUI.
+english.MsgVDDInstallFailed=The virtual display driver could not be installed or verified.%n%nEverything else is installed and the service is running; virtual displays stay unavailable until the driver is repaired (Windows 10 22H2 or newer is required). Use the repair action in the Sunshine panel. The installer log in your TEMP folder has the details.
 english.MsgUninstallGamepad=Do you want to remove Virtual Gamepad?
 english.MsgUninstallData=Do you want to remove all data in %1?%n(This includes configuration, cover images, and settings)
 english.StatusStoppingService=Stopping Sunshine service...
@@ -193,7 +193,7 @@ chinesesimplified.MsgServiceInstallFailed=无法安装或验证 Sunshine 服务�
 chinesesimplified.MsgServiceAutostartFailed=Sunshine 已安装成功，但开机自启动设置失败——通常是安全软件拦截了该修改。%n%n可稍后在 Sunshine 管理界面中手动开启自启动，详情见安装日志。
 chinesesimplified.MsgServiceStartFailed=Sunshine 服务已注册，但本次启动失败。安装程序仍会应用您选择的开机启动设置。请查看安装日志，并在 Sunshine 管理界面中重试启动服务。
 chinesesimplified.MsgDirProtectFailed=无法保护安装目录不被其他用户修改，所以没有安装任何文件。%n%n后台服务以 SYSTEM 身份运行这个目录里的程序。请选择本机 NTFS 或 ReFS 磁盘上的文件夹，再运行一次安装程序。详细信息见 TEMP 目录下的安装日志。
-chinesesimplified.MsgVDDInstallFailed=无法安装或验证基地虚拟显示器。%n%nSunshine 已安装但尚未启动。请检查 TEMP 目录中的安装日志，然后在 Sunshine 管理界面中使用修复功能。
+chinesesimplified.MsgVDDInstallFailed=无法安装或验证基地虚拟显示器。%n%nSunshine 已安装、服务正在运行；驱动修复前虚拟显示器暂不可用（需要 Windows 10 22H2 或更新）。请在 Sunshine 管理界面中使用修复功能，原因见 TEMP 目录下的安装日志。
 chinesesimplified.MsgUninstallGamepad=是否移除虚拟手柄（ViGEmBus）？
 chinesesimplified.MsgUninstallData=是否删除 %1 中的所有数据？%n（包括配置文件、封面图片和设置）
 chinesesimplified.StatusStoppingService=正在停止 Sunshine 服务...
@@ -807,15 +807,19 @@ end;
 
 function GetServiceInstallParameters(Param: String): String;
 begin
-  if VDDResultCode = 0 then
-    Result := ''
+  // Non-fatal by design: a host whose VDD cannot be installed (below Windows 10 22H2, or a
+  // driver blocked by security software) still gets a running service and panel; the VDD page
+  // carries its state and the repair action. Only the reboot-required case starts nothing,
+  // because the half-installed driver needs the restart first.
+  if VDDResultCode = 3010 then
+    Result := '--no-start'
   else
-    Result := '--no-start';
+    Result := '';
 end;
 
 function ShouldConfigureServiceAutostart(): Boolean;
 begin
-  Result := (VDDResultCode <> 101) and (not ServiceVerifyFailed);
+  Result := (not ServiceVerifyFailed);
 end;
 
 // A log left by an earlier run must not pass for this run's diagnosis: both copies are cleared
@@ -952,8 +956,8 @@ begin
     else if VDDResultCode = 3010 then begin
       // 3010 only comes with a real Windows restart signal (vdd-device-helper.ps1 Get-VddWindowsRestartSignal:
       // ERROR_SUCCESS_REBOOT_REQUIRED from the bind or staging, CM_PROB_NEED_RESTART, DEVPKEY_Device_IsRebootRequired).
-      // A device that is bound but not ready in time without one makes the helper exit 1: the engine exits 101
-      // and the shell shows the driver failure page with 修复安装.
+  // A device that is bound but not ready in time without one makes the helper exit 1: a non-fatal
+  // failure below, carried by the warning box and the VDD page of the panel (修复安装).
       Log('VDD installation requires a Windows restart; Sunshine will not start in this boot.');
       EmitInstallerEvent('install-vdd', 'needs-reboot', 'StatusInstallVDD', 3010);
     end
@@ -970,7 +974,8 @@ begin
   begin
     Detail := CustomMessage('MsgVDDInstallFailed') + #13#10 + #13#10 +
               'Exit code: ' + IntToStr(ResultCode);
-    InstallerMessageBox(Detail, mbError, MB_OK, IDOK);
+    // non-fatal: everything else is installed and the service runs; the box says how to repair
+    InstallerMessageBox(Detail, mbConfirmation, MB_OK, IDOK);
   end;
 end;
 
@@ -1712,9 +1717,9 @@ end;
 function GetCustomSetupExitCode(): Integer;
 begin
   DecideRestart();
-  if VDDResultCode = 101 then
-    Result := 101
-  else if ServiceVerifyFailed or ServiceStartFailed then
+  // A VDD failure is not fatal (the service, the panel and the rest run without it): the run
+  // ends successfully and the warning plus the VDD page carry the repair path.
+  if ServiceVerifyFailed or ServiceStartFailed then
     Result := 100
   else if RebootReasons <> '' then
     Result := 3010
