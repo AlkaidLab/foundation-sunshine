@@ -2176,6 +2176,11 @@ namespace platf {
       *((DWORD *) WSA_CMSG_DATA(cm)) = send_info.header_size + send_info.payload_size;
     }
 
+    // WSASendMsg() rejects a non-null Control.buf with a zero Control.len (WSAEFAULT, verified
+    // on Windows 11 with a dual-stack and an IPv4-only socket), so "no control message" is
+    // expressed as a null buffer. With pinning disabled and a single block this is the
+    // fallback shape of every send.
+    msg.Control.buf = cmbuflen > 0 ? cmbuf : nullptr;
     msg.Control.len = cmbuflen;
 
     // If USO is not supported, this will fail and the caller will fall back to unbatched sends.
@@ -2226,6 +2231,8 @@ namespace platf {
       cmbuflen += write_source_pktinfo(WSA_CMSG_FIRSTHDR(&msg), send_info.source_address);
     }
 
+    // See send_batch(): a zero-length control message must carry a null buffer.
+    msg.Control.buf = cmbuflen > 0 ? cmbuf : nullptr;
     msg.Control.len = cmbuflen;
 
     DWORD bytes_sent;
