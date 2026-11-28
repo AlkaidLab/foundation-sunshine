@@ -699,6 +699,10 @@ namespace sparxie {
     view.state = view.profile_count == 0 ? "empty" : "data";
     return view;
   }
+  namespace {
+    Status
+    change_launch_arguments(json &profile, LaunchChange &change);
+  }  // namespace
   WriteResult
   add_profile(const fs::path &dir, ProfileDraft draft, StoreHooks hooks) {
     return edit_store(dir, hooks, [&](json &document, std::string &profile_id, const SparxieBuild &build) {
@@ -708,7 +712,10 @@ namespace sparxie {
       profile_id = draft.id;
       if (!document["selectedProfileId"].is_string() || document["selectedProfileId"].get<std::string>().empty())
         document["selectedProfileId"] = draft.id;
-      document["profiles"].push_back(make_profile(draft, build));
+      json made = make_profile(draft, build);
+      if (draft.launch)
+        if (const Status changed = change_launch_arguments(made, *draft.launch); !changed.ok) return changed;
+      document["profiles"].push_back(std::move(made));
       return Status::success();
     });
   }
@@ -723,6 +730,8 @@ namespace sparxie {
       for (auto &profile : document["profiles"]) {
         if (profile.value("id", std::string()) == id) {
           merge_profile(profile, draft, build);
+          if (draft.launch)
+            if (const Status changed = change_launch_arguments(profile, *draft.launch); !changed.ok) return changed;
           found = true;
         }
       }
@@ -870,6 +879,19 @@ namespace sparxie {
       else
         profile["launch"]["extraArguments"] = arguments;
       if (profile["launch"].empty()) profile.erase("launch");
+    }
+    Status
+    change_launch_arguments(json &profile, LaunchChange &change) {
+      change.owned = {};
+      change.before.reset();
+      if (change.empty()) return Status::success();
+      const std::string now = launch_arguments_of(profile);
+      const std::string next = with_launch_arguments(now, change.api, change.our_api, change.run, change.our_runs, &change.owned);
+      if (next == now) return Status::success();
+      if (launch_arguments_length(next) > kMaxLaunchArguments) return Status::fail(400, "arguments_too_long", "Sparxie's extra launch arguments would be longer than 512 characters");
+      change.before = now;
+      put_launch_arguments(profile, next);
+      return Status::success();
     }
   }  // namespace
   WriteResult

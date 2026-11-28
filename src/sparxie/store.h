@@ -2,6 +2,7 @@
 #include "src/sparxie/model.h"
 #include "src/sparxie/sparxie_build.h"
 #include <functional>
+#include <optional>
 namespace sparxie {
   struct StoreHooks {
     bool running = false;
@@ -10,6 +11,22 @@ namespace sparxie {
     std::function<void(const fs::path &)> after_replace;
     // The Sparxie build the write is checked against (tests; unset: the host looks at the install around the data folder, see detect_build)
     std::optional<SparxieBuild> build;
+  };
+  // Whether the chosen API argument and custom run in the result are the host's to take out again. One the person had typed already is not.
+  struct LaunchOwnership {
+    bool api = true;
+    bool run = true;
+  };
+  // What the host wants in a profile's extra launch arguments and what it may have left there (see with_launch_arguments), and what making that change did.
+  struct LaunchChange {
+    std::string api;
+    std::vector<std::string> our_api;
+    std::string run;
+    std::vector<std::string> our_runs;
+    LaunchOwnership owned;
+    std::optional<std::string> before;  // the arguments as they were, when they were changed
+    bool
+    empty() const { return api.empty() && our_api.empty() && run.empty() && our_runs.empty(); }
   };
   struct ProfileDraft {
     std::string id;
@@ -21,6 +38,8 @@ namespace sparxie {
     // resolved by the caller (the refresh rate of the streamed display); 0 keeps
     // the profile editor's own default while the tier itself stays "display".
     int display_fps = 0;
+    // made in the same write as the profile; filled in with what it did, which counts when the write succeeds
+    LaunchChange *launch = nullptr;
   };
   struct ConfigView {
     Status status;
@@ -58,11 +77,6 @@ namespace sparxie {
   // stands between quotes is never an argument of its own), and everything else stays as it was typed. `added`: whether `wanted` was appended.
   std::string
   with_graphics_argument(const std::string &arguments, const std::string &wanted, const std::vector<std::string> &ours, bool *added = nullptr);
-  // Whether the chosen API argument and custom run in the result are the host's to take out again. One the person had typed already is not.
-  struct LaunchOwnership {
-    bool api = true;
-    bool run = true;
-  };
   // Both things the host puts into those arguments: the graphics API argument (as above) and the person's custom arguments from the application, which go in and
   // out as one run of words (`our_runs` are the runs the host put there before), so that a value like the 3 of "-quality 3" never leaves on its own.
   std::string

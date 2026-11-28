@@ -1030,7 +1030,7 @@ Official Sparxie ([sparxie-dev/Sparxie](https://github.com/sparxie-dev/Sparxie),
 `Ping` lists nothing, and field 6 of `ProfileSnapshot` is `LaunchSettings launch { width 1, height 2, fullscreen 3 (0 unchanged, 1 full screen, 2 window),
 extra_arguments 4, borderless 5 }`, not `ScreenArgs`. `sparxie-launch` detects it as `launch-settings` and sends that message; a Broker is sent one of the two, never both.
 
-* The profile's `launch` block (`width`, `height`, `fullscreen`, `borderless`, `extraArguments`, edited in Sparxie) is sent. The host never writes or removes it.
+* The profile's `launch` block (`width`, `height`, `fullscreen`, `borderless`, `extraArguments`, edited in Sparxie) is sent. Of this block the host writes `extraArguments` alone: the 图形 API argument and the custom launch arguments of an application (see above), keeping what the person typed there; an API argument there gives way to a chosen 图形 API.
 * The host's screen plan (`--screen-width`, `--screen-height`, `--window-mode`) wins over the block's size and window mode; the extra arguments stay. `windowed` and
   `borderless` are `fullscreen: 2`, and `borderless` also sets `borderless`.
 * Sparxie writes 1920x1080 as soon as full screen is set without a size, so full screen is only sent together with a size. A size outside Sparxie's 640x480 - 16384x16384

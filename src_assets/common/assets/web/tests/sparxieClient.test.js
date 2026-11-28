@@ -25,9 +25,6 @@ test('the status carries whether Sparxie is open, the state of its storage and w
   assert.equal((await clientOf({ scene: 'data', running: true }).client.status()).running, true)
 })
 
-test('the status says whether the installed Sparxie can run a session without its touch interface (keyboard, mouse and gamepad)', async () => {
-})
-
 test('the status says whether Endfield is taken by a plugin of Sparxie (its keyboard, mouse and gamepad input is the plugin\'s own)', () => {
   assert.equal(ABSENT.endfieldPlugin, false)
   assert.equal(normalizeStatus({ installed: true }).endfieldPlugin, false, 'a host that says nothing about Endfield')

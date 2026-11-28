@@ -501,7 +501,7 @@ namespace sparxie {
         std::error_code ec;
         for (const auto &entry : fs::directory_iterator(root, ec)) {
           const std::string name = entry.path().filename().string();
-          if (name.rfind("app-", 0) == 0 && entry.is_directory(ec) && name.substr(4) > app) app = name.substr(4);
+          if (name.rfind("app-", 0) == 0 && entry.is_directory(ec) && (app.empty() || later_release(name.substr(4), app))) app = name.substr(4);
         }
       }
       const std::string &number = app.empty() ? version : app;
@@ -1079,19 +1079,28 @@ namespace sparxie {
       LaunchOwnership owned;
       std::optional<std::string> before;  // what the profile's arguments were, when they were changed
     };
+    LaunchChange
+    launch_change(const json &block) {
+      const std::string game = block.value("game", std::string());
+      LaunchChange change;
+      change.api = graphics_api_argument(game, chosen_settings(block));
+      change.our_api = host_arguments(block, "sparxieArguments");
+      change.run = sparxie_custom_arguments(game, chosen_settings(block));
+      change.our_runs = host_arguments(block, "sparxieCustomArguments");
+      return change;
+    }
+    // the change was made in the same write as the profile
+    ArgumentSync
+    synced_with_profile(const LaunchChange &change) { return { true, change.owned, change.before }; }
     ArgumentSync
     sync_launch_arguments(HostEnv &env, const json &block, const std::string &profile) {
-      const std::string game = block.value("game", std::string());
-      const std::string api = graphics_api_argument(game, chosen_settings(block));
-      const std::string custom = sparxie_custom_arguments(game, chosen_settings(block));
-      const std::vector<std::string> our_api = host_arguments(block, "sparxieArguments");
-      const std::vector<std::string> our_custom = host_arguments(block, "sparxieCustomArguments");
+      const LaunchChange change = launch_change(block);
       ArgumentSync sync;
-      if (profile.empty() || (api.empty() && our_api.empty() && custom.empty() && our_custom.empty())) return sync;
+      if (profile.empty() || change.empty()) return sync;
       StoreHooks hooks = env.store_hooks;
       hooks.running = sparxie_open(env);
       std::string before;
-      const WriteResult stored = set_launch_arguments(config_dir(env), profile, api, our_api, custom, our_custom, hooks, &sync.owned, &before);
+      const WriteResult stored = set_launch_arguments(config_dir(env), profile, change.api, change.our_api, change.run, change.our_runs, hooks, &sync.owned, &before);
       if (!stored.status.ok && env.warn) env.warn("the launch arguments were not written to the Sparxie profile: " + stored.status.error);
       sync.written = stored.status.ok;
       if (stored.status.ok && stored.state != "unchanged") sync.before = before;
@@ -1256,6 +1265,7 @@ namespace sparxie {
       json write_back = { { "dataDir", config_dir(env).string() }, { "dataDirProvisional", true }, { "launchTemplateProvisional", true }, { "profile", "" }, { "backup", "" } };
       std::string profile_id;
       bool wrote = false;
+      std::optional<ArgumentSync> synced;
       if (mode == "touch") {
         const json wanted = { { "game", found.install.game }, { "settings", sparse_settings(request.value("settings", json::object())) } };
         if (const Status fits = check_launch_arguments(env, wanted, ""); !fits.ok) return failure(fits);
@@ -1275,6 +1285,8 @@ namespace sparxie {
           draft.id = next_profile_id(existing.document, found.install.game + "-" + found.install.region + "-");
         else
           draft.id = found.install.game + "-" + found.install.region + "-1";
+        LaunchChange change = launch_change(wanted);
+        draft.launch = &change;
         StoreHooks hooks = env.store_hooks;
         hooks.running = false;
         const WriteResult stored = add_profile(config_dir(env), draft, hooks);
@@ -1283,6 +1295,7 @@ namespace sparxie {
           result.body = { { "ok", false }, { "error", stored.status.error }, { "error_code", stored.status.error_code }, { "write_back", { { "state", stored.state } } } };
           return result;
         }
+        synced = synced_with_profile(change);
         profile_id = stored.profile;
         made = stored.profile;
         wrote = true;
@@ -1307,7 +1320,7 @@ namespace sparxie {
       block["display"] = display;
       block["game"] = found.install.game;
       mirror_display_to_options(block);
-      if (mode == "touch") keep_launch_arguments(block, sync_launch_arguments(env, block, profile_id));
+      if (mode == "touch") keep_launch_arguments(block, synced ? *synced : sync_launch_arguments(env, block, profile_id));
       // the Sparxie badge on the posters of a touch application: on for the official cover, off for a cover of the person's own unless they ask for it
       if (mode == "touch") block["badge"] = request.contains("badge") && request["badge"].is_boolean() ? request["badge"].get<bool>() : !custom_cover;
       // the games ask for administrator rights in their manifest, so a direct start is elevated too (else Windows refuses it: 740)
@@ -1358,14 +1371,21 @@ namespace sparxie {
       // 提升游戏优先级 of what this save stores: Sparxie's own priority follows it, or Sparxie's runtime would put the game back to normal
       const bool settings_sent = request.contains("settings");
       const bool boost = game_boost_on(settings_sent ? request.value("settings", json::object()) : block.value("settings", json::object()));
+      // the block as this save will leave it, as far as the launch arguments go
+      json wanted = block;
+      if (settings_sent) wanted["settings"] = sparse_settings(request.value("settings", json::object()));
+      wanted.erase("settingsMode");
       if (mode == "touch") {
-        json wanted = block;
-        if (settings_sent) {
-          wanted["settings"] = sparse_settings(request.value("settings", json::object()));
-          wanted.erase("settingsMode");
-        }
         if (const Status fits = check_launch_arguments(env, wanted, profile_id); !fits.ok) return failure(fits);
       }
+      // the arguments go into the same write as the profile when this save writes it
+      ArgumentsUndo arguments_undo(env);
+      std::optional<ArgumentSync> synced;
+      LaunchChange change = launch_change(wanted);
+      auto written_with_profile = [&](const std::string &profile) {
+        synced = synced_with_profile(change);
+        arguments_undo.arm(profile, synced->before);
+      };
       // touch launch needs the game in Sparxie's storage: a game app that was launched directly until now gets its profile here
       if (mode == "touch" && profile_id.empty()) {
         if (sparxie_open(env)) return failure(Status::fail(409, "sparxie_running", "Sparxie is running, close it before writing"));
@@ -1373,17 +1393,17 @@ namespace sparxie {
         draft.game = install.game;
         draft.display_name = name;
         draft.executable = install.exe_path;
-        draft.options = block.contains("options") && block["options"].is_object() ? block["options"] : default_options();
-        if (!draft.options.contains("input")) draft.options["input"] = wanted_options.value("input", std::string("touch"));
-        if (const Status normalized = normalize_options(draft.options); !normalized.ok) return failure(normalized);
-        draft.options = options_with_boost(draft.options, boost);
+        // the options this save asks for (the stored ones when it sends none)
+        draft.options = options_with_boost(wanted_options, boost);
         draft.display_fps = resolve_target_fps(draft.options, display_refresh_of(env));
         const ConfigView existing = read_store(config_dir(env));
         draft.id = existing.status.ok ? next_profile_id(existing.document, install.game + "-" + install.region + "-") : install.game + "-" + install.region + "-1";
+        draft.launch = &change;
         StoreHooks hooks = env.store_hooks;
         hooks.running = false;
         const WriteResult stored = add_profile(config_dir(env), draft, hooks);
         if (!stored.status.ok) return failure(stored.status, { { "write_back", { { "state", stored.state } } } });
+        written_with_profile(stored.profile);
         profile_id = stored.profile;
         made = stored.profile;
         wrote = true;
@@ -1404,8 +1424,10 @@ namespace sparxie {
           StoreHooks hooks = env.store_hooks;
           hooks.running = sparxie_open(env);
           if (hooks.running) return failure(Status::fail(409, "sparxie_running", "Sparxie is running, close it before writing"));
+          draft.launch = &change;
           const WriteResult stored = update_profile(config_dir(env), profile_id, draft, hooks);
           if (!stored.status.ok) return failure(stored.status, { { "write_back", { { "state", stored.state } } } });
+          written_with_profile(profile_id);
           write_back = { { "state", stored.state }, { "profile", profile_id }, { "backup", stored.backup } };
           wrote = true;
         }
@@ -1418,11 +1440,11 @@ namespace sparxie {
         draft.game = install.game;
         draft.options = options_with_boost(block["options"], boost);
         draft.display_fps = resolve_target_fps(block["options"], display_refresh_of(env));
+        draft.launch = &change;
         StoreHooks hooks = env.store_hooks;
         hooks.running = false;
-        update_profile(config_dir(env), profile_id, draft, hooks);
+        if (update_profile(config_dir(env), profile_id, draft, hooks).status.ok) written_with_profile(profile_id);
       }
-      ArgumentsUndo arguments_undo(env);
       app["name"] = name;
       const std::string templ = env.launch_template.empty() ? std::string(kDefaultLaunchTemplate) : env.launch_template;
       json launch_options = launch_options_of(request.value("settings", json::object()), install.game);
@@ -1447,9 +1469,11 @@ namespace sparxie {
       if (request.contains("settings")) block["settings"] = settings_without_game_fps(mode, block.value("options", json::object()), sparse_settings(request.value("settings", json::object())));
       block.erase("settingsMode");  // the two-mode switch is gone: no changed items means the game's own settings stay
       if (mode == "touch") {
-        const ArgumentSync sync = sync_launch_arguments(env, block, profile_id);
-        arguments_undo.arm(profile_id, sync.before);
-        keep_launch_arguments(block, sync);
+        if (!synced) {
+          synced = sync_launch_arguments(env, block, profile_id);
+          arguments_undo.arm(profile_id, synced->before);
+        }
+        keep_launch_arguments(block, *synced);
       }
       if (request.contains("badge") && request["badge"].is_boolean()) block["badge"] = request["badge"].get<bool>();
       if (request.contains("cover")) {
@@ -1888,9 +1912,9 @@ namespace sparxie {
       reconcile_official(env, app, true);
       ++attached;
     }
-    // With Sparxie installed, a Genshin, Star Rail or Zenless Zone Zero application that was made as a direct launch (keyboard, mouse and gamepad, no profile yet)
-    // goes the launcher route like every other application of a Sparxie title: its Sparxie options (frame-rate unlock, target frame rate, background frame rate, priority, launch settings) then apply. It
-    // keeps its options and gets the input it always had. An open Sparxie cannot be written to: the application waits for the next start.
+    // With Sparxie installed, a Genshin, Star Rail or Zenless Zone Zero application that was made as a direct launch (no profile yet) and uses Sparxie (see
+    // uses_sparxie) goes the launcher route: its Sparxie options (frame-rate unlock, target frame rate, background frame rate, priority, launch settings) then apply. It
+    // keeps its options; one that stores no input gets what a direct launch was (keyboard, mouse and gamepad). An open Sparxie cannot be written to: the application waits for the next start.
     if (sparxie_installed(env) && launcher_shipped) {
       bool open_checked = false;
       bool open = false;

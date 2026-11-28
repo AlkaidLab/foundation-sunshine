@@ -238,6 +238,31 @@ namespace sparxie {
   }  // namespace
 
   bool
+  later_release(const std::string &a, const std::string &b) {
+    auto digit = [](char c) { return c >= '0' && c <= '9'; };
+    std::size_t i = 0, j = 0;
+    while (i < a.size() && j < b.size()) {
+      if (digit(a[i]) && digit(b[j])) {
+        auto number = [&digit](const std::string &text, std::size_t &at) {
+          while (at < text.size() && text[at] == '0') ++at;
+          const std::size_t from = at;
+          while (at < text.size() && digit(text[at])) ++at;
+          return text.substr(from, at - from);
+        };
+        const std::string x = number(a, i), y = number(b, j);
+        if (x.size() != y.size()) return x.size() > y.size();
+        if (x != y) return x > y;
+      }
+      else {
+        if (a[i] != b[j]) return a[i] > b[j];
+        ++i;
+        ++j;
+      }
+    }
+    return a.size() - i > b.size() - j;
+  }
+
+  bool
   outdated_version(const std::string &version) {
     int parts[3] = { 0, 0, 0 };
     std::size_t at = 0;

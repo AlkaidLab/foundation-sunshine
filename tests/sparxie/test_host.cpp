@@ -1934,6 +1934,55 @@ TEST(CustomArguments, AnApplicationListThatCannotBeSavedLeavesTheProfileAsItWas)
   fs::remove_all(root);
 }
 
+TEST(NothingOfSparxie, ADirectApplicationThatTurnsTheUnlockOnGetsAProfileWithTheNewOptions) {
+  const fs::path root = fs::temp_directory_path() / "sparxie-nothing-new-profile";
+  sparxie::HostEnv env = kbm_env(root);
+  ASSERT_TRUE(sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin" }, { "options", { { "input", "kbm" }, { "fpsUnlock", false } } } }).status.ok);
+  ASSERT_EQ(first_app(env)["sparxie"]["mode"], "pc");
+  ASSERT_TRUE(sparxie::update_app(env, 0, { { "mode", "touch" }, { "options", { { "input", "kbm" }, { "fpsUnlock", true } } } }).status.ok);
+  const auto profile = sparxie::read_store(env.data_dir).document["profiles"].at(0);
+  EXPECT_EQ(profile["hoyo"]["fpsUnlockEnabled"], true) << profile.dump();
+  EXPECT_EQ(profile["disableTouchUi"], true);
+  fs::remove_all(root);
+}
+
+TEST(CustomArguments, ASaveThatChangesOptionsAndArgumentsWritesSparxieOnce) {
+  const fs::path root = fs::temp_directory_path() / "sparxie-arguments-one-write";
+  sparxie::HostEnv env = kbm_env(root);
+  ASSERT_TRUE(sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin" }, { "settings", { { "customArgs", "-old" } } } }).status.ok);
+  const auto backups = [&env]() {
+    int count = 0;
+    for (const auto &entry : fs::directory_iterator(env.data_dir))
+      if (entry.path().filename().string().rfind("config.backup-", 0) == 0) ++count;
+    return count;
+  };
+  const int before = backups();
+  ASSERT_TRUE(sparxie::update_app(env, 0, { { "options", { { "input", "touch" }, { "fpsUnlock", false } } }, { "settings", { { "customArgs", "-new" } } } }).status.ok);
+  EXPECT_EQ(backups(), before + 1);
+  EXPECT_EQ(profile_arguments(env.data_dir), "-new");
+  EXPECT_EQ(first_app(env)["sparxie"]["sparxieCustomArguments"], sparxie::json::array({ "-new" }));
+  // a change of the settings alone, which writes the profile for the priority
+  ASSERT_TRUE(sparxie::update_app(env, 0, { { "settings", { { "customArgs", "-later" } } } }).status.ok);
+  EXPECT_EQ(backups(), before + 2);
+  EXPECT_EQ(profile_arguments(env.data_dir), "-later");
+  // and the arguments still go back when the application list cannot be saved
+  const auto write_bits = fs::perms::owner_write | fs::perms::group_write | fs::perms::others_write;
+  fs::permissions(env.apps_file, write_bits, fs::perm_options::remove);
+  const auto failed = sparxie::update_app(env, 0, { { "options", { { "input", "touch" }, { "fpsUnlock", true } } }, { "settings", { { "customArgs", "-never" } } } });
+  fs::permissions(env.apps_file, write_bits, fs::perm_options::add);
+  EXPECT_EQ(failed.status.error_code, "apps_write_failed") << failed.status.error;
+  EXPECT_EQ(profile_arguments(env.data_dir), "-later");
+  fs::remove_all(root);
+}
+
+TEST(Outdated, ReleasesAreOrderedByTheirNumbers) {
+  EXPECT_TRUE(sparxie::later_release("0.10.0", "0.2.0"));
+  EXPECT_FALSE(sparxie::later_release("0.2.0", "0.10.0"));
+  EXPECT_TRUE(sparxie::later_release("0.2.1", "0.2.0"));
+  EXPECT_FALSE(sparxie::later_release("0.2.1", "0.2.1"));
+  EXPECT_TRUE(sparxie::later_release("0.1.0-preview.10", "0.1.0-preview.9"));
+}
+
 TEST(NothingOfSparxie, KeyboardWithTheUnlockOffStartsDirectlyAndKeyboardWithItGoesThroughSparxie) {
   const fs::path root = fs::temp_directory_path() / "sparxie-nothing-create";
   sparxie::HostEnv env = kbm_env(root);

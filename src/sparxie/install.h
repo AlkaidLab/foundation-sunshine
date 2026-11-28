@@ -72,6 +72,9 @@ namespace sparxie {
   // True for a version number below kCurrentVersion ("0.2.0", "0.1.0-preview.9"); false when the text does not start with one.
   bool
   outdated_version(const std::string &version);
+  // Whether release `a` comes after release `b`: runs of digits are compared as numbers (0.10.0 after 0.2.0), the rest as it is spelled.
+  bool
+  later_release(const std::string &a, const std::string &b);
   std::vector<Pin>
   builtin_pins();
   json
