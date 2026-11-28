@@ -591,6 +591,9 @@ namespace telemetry {
       deps.session_log_state = [] { return std::string { crash::session_log_state() }; };
       deps.session_shot = [](const std::string &endpoint, const std::string &install_id, const std::string &version, const std::string &image) { return crash::upload_session_shot(endpoint, install_id, version, image); };
       deps.session_shot_state = [] { return std::string { crash::session_shot_state() }; };
+      // the page waits 45 s for the answer to a feedback report: the uploads and the log's packing get 35 s of it, the rest is the report's own writing and the answer
+      deps.feedback_budget_begin = [] { crash::begin_feedback_budget(std::chrono::seconds { 35 }); };
+      deps.feedback_budget_end = [] { crash::end_feedback_budget(); };
       deps.boot_ms = [] {
         const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 #ifdef _WIN32

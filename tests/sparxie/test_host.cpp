@@ -1,4 +1,7 @@
 #include "src/sparxie/host.h"
+#include "src/sparxie/hoyo_settings.h"
+#include "src/sparxie/install.h"
+#include "src/sparxie/region.h"
 #include "tests/sparxie/pe_fixture.h"
 #include "src/sparxie/platform.h"
 #include "src/sparxie/art_refresh_job.h"
@@ -1367,9 +1370,9 @@ TEST(Host, ABlankDecodeIsAFailedDecodeForEveryTitleAndABlankHeroIsHealedForEvery
 }
 
 namespace {
-  // a Genshin install (bili marker) and a Sparxie component beside the host; the component may list capabilities
+  // a Genshin install (bili marker) and a Sparxie component beside the host
   sparxie::HostEnv
-  kbm_env(const fs::path &root, bool with_switch, bool with_file) {
+  kbm_env(const fs::path &root) {
     fs::remove_all(root);
     fs::create_directories(root / "game" / "YuanShen_Data" / "Plugins");
     std::ofstream(root / "game" / "YuanShen.exe") << "x";
@@ -1379,20 +1382,14 @@ namespace {
     fs::create_directories(component / "app-0.1.0-test");
     std::ofstream(component / "Sparxie.exe") << "x";
     std::ofstream(component / "version.ini") << "exe_path=app-0.1.0-test\\Sparxie.Desktop.exe\n";
-    if (with_file) {
-      sparxie::json body = { { "schema", 1 }, { "capabilities", with_switch ? sparxie::json::array({ "touch-ui-switch" }) : sparxie::json::array() } };
-      std::ofstream(component / "app-0.1.0-test" / "capabilities.json") << body.dump();
-    }
     env.process_running = [](const std::vector<std::string> &) { return false; };
     return env;
   }
 }  // namespace
-TEST(Host, ASparxieWithTheSwitchServesKeyboardMouseAndGamepadThroughItself) {
+TEST(Host, SparxieServesKeyboardMouseAndGamepadThroughItself) {
   const fs::path root = fs::temp_directory_path() / "sparxie-host-kbm-switch";
-  sparxie::HostEnv env = kbm_env(root, true, true);
+  sparxie::HostEnv env = kbm_env(root);
   const auto status = sparxie::component_status(env);
-  EXPECT_TRUE(status.body["touchUiSwitch"]);
-  EXPECT_EQ(status.body["capabilities"], sparxie::json::array({ "touch-ui-switch" }));
   auto kbm = sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin pad" }, { "options", { { "input", "kbm" }, { "fpsUnlock", true }, { "fps", 144 } } } });
   ASSERT_TRUE(kbm.status.ok) << kbm.status.error;
   // still a Sparxie launch (the launcher), with the profile saying: no touch interface
@@ -1401,12 +1398,12 @@ TEST(Host, ASparxieWithTheSwitchServesKeyboardMouseAndGamepadThroughItself) {
   EXPECT_EQ(kbm.body["app"]["sparxie"]["options"]["input"], "kbm");
   const auto stored = sparxie::read_store(env.data_dir);
   ASSERT_TRUE(stored.status.ok);
-  EXPECT_EQ(stored.document["profiles"][0]["hoyo"]["touchUiEnabled"], false);
+  EXPECT_EQ(stored.document["profiles"][0]["disableTouchUi"], true);
   EXPECT_EQ(stored.document["profiles"][0]["hoyo"]["fpsUnlockEnabled"], true);
-  // the same title with touch: the profile has the touch interface
+  // the same title with touch: the profile has the touch interface (disableTouchUi omitted)
   auto touch = sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin touch" }, { "options", { { "input", "touch" } } } });
   ASSERT_TRUE(touch.status.ok) << touch.status.error;
-  EXPECT_EQ(sparxie::read_store(env.data_dir).document["profiles"][1]["hoyo"]["touchUiEnabled"], true);
+  EXPECT_FALSE(sparxie::read_store(env.data_dir).document["profiles"][1].contains("disableTouchUi"));
   // editing the pad application back to touch turns the interface on in its own profile and leaves the other one alone
   sparxie::json apps;
   {
@@ -1417,39 +1414,18 @@ TEST(Host, ASparxieWithTheSwitchServesKeyboardMouseAndGamepadThroughItself) {
   auto edit = sparxie::update_app(env, pad_index, { { "options", { { "input", "touch" }, { "fpsUnlock", true }, { "fps", 144 } } } });
   ASSERT_TRUE(edit.status.ok) << edit.status.error;
   const auto after = sparxie::read_store(env.data_dir);
-  EXPECT_EQ(after.document["profiles"][0]["hoyo"]["touchUiEnabled"], true);
-  EXPECT_EQ(after.document["profiles"][1]["hoyo"]["touchUiEnabled"], true);
-}
-TEST(Host, ASparxieWithoutTheSwitchStartsAKeyboardMouseApplicationDirectly) {
-  for (const bool with_file : { false, true }) {
-    // no capabilities.json (preview.9 and older) and a file that lists nothing both mean: no switch
-    const fs::path root = fs::temp_directory_path() / (with_file ? "sparxie-host-kbm-empty" : "sparxie-host-kbm-old");
-    sparxie::HostEnv env = kbm_env(root, false, with_file);
-    const auto status = sparxie::component_status(env);
-    EXPECT_TRUE(status.body["installed"]);
-    EXPECT_FALSE(status.body["touchUiSwitch"]);
-    auto kbm = sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin pad" }, { "options", { { "input", "kbm" } } } });
-    ASSERT_TRUE(kbm.status.ok) << kbm.status.error;
-    EXPECT_EQ(kbm.body["app"]["sparxie"]["mode"], "pc");
-    EXPECT_EQ(kbm.body["app"]["cmd"].get<std::string>().find("--profile"), std::string::npos);
-    EXPECT_NE(kbm.body["app"]["cmd"].get<std::string>().find("YuanShen.exe"), std::string::npos);
-    EXPECT_FALSE(kbm.body["wrote"]);
-    // touch still goes through Sparxie
-    auto touch = sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin touch" }, { "options", { { "input", "touch" } } } });
-    ASSERT_TRUE(touch.status.ok) << touch.status.error;
-    EXPECT_EQ(touch.body["app"]["sparxie"]["mode"], "touch");
-  }
+  EXPECT_FALSE(after.document["profiles"][0].contains("disableTouchUi"));
+  EXPECT_FALSE(after.document["profiles"][1].contains("disableTouchUi"));
 }
 TEST(Host, ALaunchBringsAnOlderKeyboardMouseProfileInLineWithTheApplication) {
   const fs::path root = fs::temp_directory_path() / "sparxie-host-kbm-launch";
-  sparxie::HostEnv env = kbm_env(root, true, true);
-  ASSERT_TRUE(sparxie::component_status(env).body["touchUiSwitch"]);
-  auto made = sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin pad" }, { "options", { { "input", "kbm" } } } });
+  sparxie::HostEnv env = kbm_env(root);
+  auto made = sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin pad" }, { "options", { { "input", "kbm" }, { "fpsUnlock", true }, { "fps", 120 } } } });
   ASSERT_TRUE(made.status.ok) << made.status.error;
   const std::string cmd = made.body["app"]["cmd"];
-  // an application made before the switch existed: its profile has no touchUiEnabled (Sparxie reads that as the touch interface)
+  // an application made before the switch existed: its profile has no disableTouchUi (Sparxie reads that as the touch interface)
   sparxie::json doc = sparxie::read_store(env.data_dir).document;
-  doc["profiles"][0]["hoyo"].erase("touchUiEnabled");
+  doc["profiles"][0].erase("disableTouchUi");
   {
     std::ofstream out(env.data_dir / "config.json");
     out << doc.dump(2);
@@ -1457,12 +1433,12 @@ TEST(Host, ALaunchBringsAnOlderKeyboardMouseProfileInLineWithTheApplication) {
   // Sparxie open: nothing is written
   env.process_running = [](const std::vector<std::string> &names) { return std::find(names.begin(), names.end(), "Sparxie.exe") != names.end(); };
   EXPECT_TRUE(sparxie::prepare_launch(env, "Genshin pad", cmd).ok);
-  EXPECT_FALSE(sparxie::read_store(env.data_dir).document["profiles"][0]["hoyo"].contains("touchUiEnabled"));
+  EXPECT_FALSE(sparxie::read_store(env.data_dir).document["profiles"][0].contains("disableTouchUi"));
   // Sparxie closed: the profile says no touch interface, and nothing else in it changed
   env.process_running = [](const std::vector<std::string> &) { return false; };
   EXPECT_TRUE(sparxie::prepare_launch(env, "Genshin pad", cmd).ok);
   const auto after = sparxie::read_store(env.data_dir).document;
-  EXPECT_EQ(after["profiles"][0]["hoyo"]["touchUiEnabled"], false);
+  EXPECT_EQ(after["profiles"][0]["disableTouchUi"], true);
   EXPECT_EQ(after["profiles"][0]["hoyo"]["targetFps"], 120);
   EXPECT_EQ(after["profiles"].size(), 1u);
 }
@@ -1479,7 +1455,7 @@ namespace {
 }  // namespace
 TEST(AppsOfTheFirstBuilds, ADirectLaunchIsKeyboardMouseAndGamepadAndGoesThroughASparxieThatCanKeepThePcInterface) {
   const fs::path root = fs::temp_directory_path() / "sparxie-pc-legacy";
-  sparxie::HostEnv env = kbm_env(root, true, true);
+  sparxie::HostEnv env = kbm_env(root);
   fs::create_directories(env.install_root / "tools");
   std::ofstream(env.install_root / "tools" / "sparxie-launch.exe") << "x";
   // made as a direct launch, with options but no input (the first builds)
@@ -1507,44 +1483,26 @@ TEST(AppsOfTheFirstBuilds, ADirectLaunchIsKeyboardMouseAndGamepadAndGoesThroughA
   EXPECT_EQ(app["elevated"], true);
   const auto store = sparxie::read_store(env.data_dir).document;
   ASSERT_EQ(store["profiles"].size(), 1u);
-  EXPECT_EQ(store["profiles"][0]["hoyo"]["touchUiEnabled"], false) << "a session with the PC interface";
+  EXPECT_EQ(store["profiles"][0]["disableTouchUi"], true) << "a session with the PC interface";
   EXPECT_EQ(store["profiles"][0]["hoyo"]["fpsUnlockEnabled"], true);
   EXPECT_EQ(sparxie::attach_official_covers(env), 0) << "the next start changes nothing";
 }
 
-TEST(AppsOfTheFirstBuilds, WithoutTheSwitchADirectLaunchStaysDirectAndTheEditStoresItsInput) {
-  const fs::path root = fs::temp_directory_path() / "sparxie-pc-legacy-noswitch";
-  sparxie::HostEnv env = kbm_env(root, false, true);
-  fs::create_directories(env.install_root / "tools");
-  std::ofstream(env.install_root / "tools" / "sparxie-launch.exe") << "x";
-  auto made = sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "pc" }, { "name", "Genshin direct" } });
-  ASSERT_TRUE(made.status.ok) << made.status.error;
-  {
-    auto apps = read_apps(env.apps_file);
-    apps["apps"][0]["sparxie"]["options"].erase("input");  // the first builds stored no input
-    std::ofstream(env.apps_file) << apps.dump();
-  }
-  EXPECT_EQ(sparxie::attach_official_covers(env), 0);
-  EXPECT_EQ(read_apps(env.apps_file)["apps"][0]["sparxie"]["mode"], "pc") << "an installed Sparxie that cannot keep the PC interface keeps the direct launch";
-  // saving the application stores the input it had implicitly (kbm) and does not turn it into a touch application
-  const auto saved = sparxie::update_app(env, 0, { { "name", "Genshin direct" } });
-  ASSERT_TRUE(saved.status.ok) << saved.status.error;
-  const auto app = read_apps(env.apps_file)["apps"][0];
-  EXPECT_EQ(app["sparxie"]["mode"], "pc");
-  EXPECT_EQ(app["sparxie"]["options"]["input"], "kbm");
-}
-
-TEST(AppsOfTheFirstBuilds, ZenlessZoneZeroHasNoPcInterfaceSessionSoItsKeyboardAppStartsTheGameDirectly) {
+TEST(AppsOfTheFirstBuilds, ZenlessZoneZeroKeyboardMouseAndGamepadUsesNothingOfSparxieAndStartsDirectly) {
   const fs::path root = fs::temp_directory_path() / "sparxie-zzz-kbm";
-  sparxie::HostEnv env = kbm_env(root, true, true);
+  sparxie::HostEnv env = kbm_env(root);
   fs::create_directories(root / "zzz");
   std::ofstream(root / "zzz" / "ZenlessZoneZero.exe") << "x";
   auto made = sparxie::create_app(env, { { "path", (root / "zzz" / "ZenlessZoneZero.exe").string() }, { "region", "cn" }, { "mode", "touch" }, { "name", "ZZZ pad" }, { "options", { { "input", "kbm" } } } });
   ASSERT_TRUE(made.status.ok) << made.status.error;
-  EXPECT_EQ(made.body["app"]["sparxie"]["mode"], "pc") << "the patched Sparxie keeps the PC interface of Genshin and Star Rail only";
+  EXPECT_EQ(made.body["app"]["sparxie"]["mode"], "pc") << "Zenless Zone Zero has no unlock: keyboard and mouse asks nothing of Sparxie";
+  EXPECT_EQ(made.body["app"]["cmd"].get<std::string>().find("sparxie-launch"), std::string::npos);
+  EXPECT_EQ(made.body["app"]["sparxie"]["options"]["input"], "kbm");
+  EXPECT_FALSE(fs::exists(env.data_dir / "config.json")) << "no Sparxie profile for it";
   auto touch = sparxie::create_app(env, { { "path", (root / "zzz" / "ZenlessZoneZero.exe").string() }, { "region", "cn" }, { "mode", "touch" }, { "name", "ZZZ touch" }, { "options", { { "input", "touch" } } } });
   ASSERT_TRUE(touch.status.ok) << touch.status.error;
   EXPECT_EQ(touch.body["app"]["sparxie"]["mode"], "touch");
+  EXPECT_FALSE(sparxie::read_store(env.data_dir).document["profiles"][0].contains("disableTouchUi"));
 }
 
 TEST(Store, AnEndfieldProfileIsAcceptedAndItsResolutionRoundTrips) {
@@ -1735,4 +1693,396 @@ TEST(Host, AComposedCoverOfAnOlderCompositionIsMadeAgainFromTheCacheAndACapsuleI
   EXPECT_EQ(kind_of("nte-cn")["coverRev"], 1);
   EXPECT_EQ(read(capsule), capsule_before) << "a finished capsule is never recomposed";
   EXPECT_EQ(net.pictures, quiet_pictures) << "the recomposition fetches nothing more than a quiet run";
+}
+
+// Without the touch interface the unlock is all Sparxie installs (it refuses a profile with both off), so a Star Rail keyboard application keeps it at the native tiers too.
+TEST(Host, AStarRailKeyboardProfileKeepsTheUnlockAtTheNativeTiers) {
+  const fs::path dir = fs::temp_directory_path() / "sparxie-starrail-kbm-unlock";
+  fs::remove_all(dir);
+  int n = 0;
+  for (const char *input : { "kbm", "touch" }) {
+    for (const int fps : { 30, 60, 120 }) {
+      sparxie::ProfileDraft draft;
+      draft.game = "starrail";
+      draft.display_name = "star";
+      draft.executable = "C:\\S\\StarRail.exe";
+      draft.options = sparxie::default_options();
+      draft.options["input"] = input;
+      draft.options["fps"] = fps;
+      ASSERT_TRUE(sparxie::add_profile(dir, draft, {}).status.ok);
+      const auto profile = sparxie::read_store(dir).document["profiles"][n++];
+      const auto &hoyo = profile["hoyo"];
+      const bool kbm = std::string(input) == "kbm";
+      EXPECT_EQ(profile.value("disableTouchUi", false), kbm) << input << " " << fps;
+      EXPECT_EQ(hoyo["fpsUnlockEnabled"], kbm) << input << " " << fps;
+    }
+  }
+}
+
+TEST(InstallVersion, APackageImportedBeforeItsReleaseWasKnownShowsTheRelease) {
+  const fs::path root = fs::temp_directory_path() / "sparxie-version-relabel";
+  sparxie::HostEnv env = kbm_env(root);
+  {
+    std::ofstream seed(env.install_root / "components" / "sparxie" / "component.json");
+    seed << R"x({"version":"unknown","verified":false,"sha256":"53bc95771fb0f8883605b33aae4acb19f66fac0d81323359488d57028763062a"})x";
+  }
+  EXPECT_EQ(sparxie::component_status(env).body["version"], "0.2.1");
+  fs::remove_all(root);
+}
+
+TEST(GraphicsApi, TheArgumentJoinsTheOnesThePersonTypedAndLeavesAgain) {
+  using sparxie::with_graphics_argument;
+  EXPECT_EQ(with_graphics_argument("", "-force-d3d12", {}), "-force-d3d12");
+  EXPECT_EQ(with_graphics_argument("-foo  \"a b\"", "-force-d3d12", {}), "-foo  \"a b\" -force-d3d12");
+  EXPECT_EQ(with_graphics_argument("-force-d3d12 -foo", "-force-d3d12", {}), "-force-d3d12 -foo");
+  EXPECT_EQ(with_graphics_argument("-force-d3d11 -foo", "-force-d3d12", { "-force-d3d11" }), "-foo -force-d3d12");
+  EXPECT_EQ(with_graphics_argument("-foo -force-d3d12 -bar", "", { "-force-d3d12" }), "-foo -bar");
+  // with no choice, an argument the host never put there stays
+  EXPECT_EQ(with_graphics_argument("-force-d3d11 -foo", "", {}), "-force-d3d11 -foo");
+  EXPECT_EQ(with_graphics_argument("-force-d3d12", "", { "-force-d3d12" }), "");
+}
+
+TEST(GraphicsApi, EachTitleTakesItsOwnItemAndSpelling) {
+  using sparxie::graphics_api_argument;
+  EXPECT_EQ(graphics_api_argument("genshin", { { "dxVersion", "dx12" } }), "-force-d3d12");
+  EXPECT_EQ(graphics_api_argument("starrail", { { "dxVersion", "dx11" } }), "-force-d3d11");
+  EXPECT_EQ(graphics_api_argument("starrail", { { "dxVersion", "auto" } }), "");
+  EXPECT_EQ(graphics_api_argument("zzz", { { "graphicsApi", "12" } }), "-use-d3d12");
+  EXPECT_EQ(graphics_api_argument("zzz", { { "graphicsApi", "11.0" } }), "");
+  EXPECT_EQ(graphics_api_argument("endfield", { { "dxVersion", "dx12" } }), "");
+  EXPECT_EQ(graphics_api_argument("genshin", sparxie::json::object()), "");
+}
+
+namespace {
+  std::string
+  profile_arguments(const fs::path &data) {
+    const auto store = sparxie::read_store(data);
+    const auto &profile = store.document.at("profiles").at(0);
+    return profile.contains("launch") ? profile.at("launch").value("extraArguments", std::string()) : std::string();
+  }
+  void
+  type_arguments(const fs::path &data, const std::string &arguments) {
+    sparxie::json document = sparxie::read_store(data).document;
+    document["profiles"][0]["launch"] = { { "borderless", true }, { "extraArguments", arguments } };
+    std::ofstream out(data / "config.json", std::ios::binary | std::ios::trunc);
+    out << document.dump(2);
+  }
+  sparxie::json
+  first_app(const sparxie::HostEnv &env) {
+    std::ifstream in(env.apps_file);
+    return sparxie::json::parse(in)["apps"][0];
+  }
+}  // namespace
+
+TEST(GraphicsApi, ASparxieApplicationCarriesTheChoiceInItsProfile) {
+  const fs::path root = fs::temp_directory_path() / "sparxie-graphics-api";
+  sparxie::HostEnv env = kbm_env(root);
+  const auto made = sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin" }, { "settings", { { "dxVersion", "dx12" } } } });
+  ASSERT_TRUE(made.status.ok) << made.status.error;
+  EXPECT_EQ(profile_arguments(env.data_dir), "-force-d3d12");
+  EXPECT_EQ(first_app(env)["cmd"].get<std::string>().find("-force-d3d12"), std::string::npos) << "the argument is Sparxie's, not the launcher's";
+
+  type_arguments(env.data_dir, "-force-d3d12 -mine");
+  ASSERT_TRUE(sparxie::update_app(env, 0, { { "settings", { { "dxVersion", "dx11" } } } }).status.ok);
+  EXPECT_EQ(profile_arguments(env.data_dir), "-mine -force-d3d11");
+  EXPECT_EQ(sparxie::read_store(env.data_dir).document["profiles"][0]["launch"]["borderless"], true) << "the rest of the launch settings stays";
+
+  ASSERT_TRUE(sparxie::update_app(env, 0, { { "settings", sparxie::json::object() } }).status.ok);
+  EXPECT_EQ(profile_arguments(env.data_dir), "-mine");
+  EXPECT_FALSE(first_app(env)["sparxie"].contains("sparxieArguments"));
+
+  // with no choice the host leaves what the person types alone, also at a launch
+  type_arguments(env.data_dir, "-force-d3d12");
+  const auto app = first_app(env);
+  sparxie::prepare_launch(env, "Genshin", app["cmd"].get<std::string>(), {}, nullptr);
+  EXPECT_EQ(profile_arguments(env.data_dir), "-force-d3d12");
+  fs::remove_all(root);
+}
+
+TEST(GraphicsApi, AChoiceSavedWhileSparxieWasOpenReachesTheProfileAtTheNextLaunch) {
+  const fs::path root = fs::temp_directory_path() / "sparxie-graphics-api-open";
+  sparxie::HostEnv env = kbm_env(root);
+  ASSERT_TRUE(sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin" }, { "settings", { { "dxVersion", "dx12" } } } }).status.ok);
+  env.process_running = [](const std::vector<std::string> &names) { return std::find(names.begin(), names.end(), "Sparxie.exe") != names.end(); };
+  ASSERT_TRUE(sparxie::update_app(env, 0, { { "settings", sparxie::json::object() } }).status.ok);
+  EXPECT_EQ(profile_arguments(env.data_dir), "-force-d3d12");
+  env.process_running = [](const std::vector<std::string> &) { return false; };
+  const auto app = first_app(env);
+  sparxie::prepare_launch(env, "Genshin", app["cmd"].get<std::string>(), {}, nullptr);
+  EXPECT_EQ(profile_arguments(env.data_dir), "");
+  fs::remove_all(root);
+}
+
+TEST(CustomArguments, TheyGoInAndOutAsOneRunBesideWhatThePersonTyped) {
+  using sparxie::with_launch_arguments;
+  EXPECT_EQ(with_launch_arguments("-mine 3", "", {}, "-quality 3", {}), "-mine 3 -quality 3");
+  EXPECT_EQ(with_launch_arguments("-mine 3 -quality 3", "", {}, "-quality 3", { "-quality 3" }), "-mine 3 -quality 3");
+  EXPECT_EQ(with_launch_arguments("-mine 3 -quality 3 -later", "", {}, "-quality 2", { "-quality 3" }), "-mine 3 -later -quality 2");
+  EXPECT_EQ(with_launch_arguments("-quality 3 -mine 3", "", {}, "", { "-quality 3" }), "-mine 3");
+  EXPECT_EQ(with_launch_arguments("-force-d3d11 -a", "-force-d3d12", { "-force-d3d11" }, "-b", {}), "-a -force-d3d12 -b");
+  // what already reads as chosen is not moved around
+  EXPECT_EQ(with_launch_arguments("-b -force-d3d12 -a", "-force-d3d12", {}, "-b", { "-b" }), "-b -force-d3d12 -a");
+}
+
+TEST(CustomArguments, EverySparxieTitleHasThemOnOneLine) {
+  using sparxie::sparxie_custom_arguments;
+  for (const char *game : { "genshin", "starrail", "zzz", "endfield" })
+    EXPECT_EQ(sparxie_custom_arguments(game, { { "customArgs", " -a  1\n-b\t" } }), "-a 1 -b") << game;
+  EXPECT_EQ(sparxie_custom_arguments("hi3", { { "customArgs", "-a" } }), "");
+  EXPECT_EQ(sparxie_custom_arguments("endfield", { { "customArgs", "-a & calc" } }), "");
+  const auto catalog = sparxie::catalog_json(false);
+  for (const auto &game : catalog) {
+    if (game["game"] != "endfield") continue;
+    ASSERT_EQ(game["settings"].size(), 1u);
+    EXPECT_EQ(game["settings"][0]["key"], "customArgs");
+    EXPECT_EQ(game["settingsManaged"], false);
+  }
+}
+
+TEST(CustomArguments, ASparxieApplicationCarriesThemInItsProfile) {
+  const fs::path root = fs::temp_directory_path() / "sparxie-custom-arguments";
+  sparxie::HostEnv env = kbm_env(root);
+  const auto made = sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin" }, { "settings", { { "customArgs", "-quality 3" }, { "dxVersion", "dx12" } } } });
+  ASSERT_TRUE(made.status.ok) << made.status.error;
+  EXPECT_EQ(profile_arguments(env.data_dir), "-force-d3d12 -quality 3");
+  type_arguments(env.data_dir, "-mine -force-d3d12 -quality 3");
+  ASSERT_TRUE(sparxie::update_app(env, 0, { { "settings", { { "customArgs", "-other" } } } }).status.ok);
+  EXPECT_EQ(profile_arguments(env.data_dir), "-mine -other");
+  ASSERT_TRUE(sparxie::update_app(env, 0, { { "settings", sparxie::json::object() } }).status.ok);
+  EXPECT_EQ(profile_arguments(env.data_dir), "-mine");
+  EXPECT_FALSE(first_app(env)["sparxie"].contains("sparxieCustomArguments"));
+  fs::remove_all(root);
+}
+
+TEST(CustomArguments, AShorterChoiceTakesTheWholeEarlierRunOut) {
+  using sparxie::with_launch_arguments;
+  EXPECT_EQ(with_launch_arguments("-quality 3 -windowed", "", {}, "-quality 3", { "-quality 3 -windowed" }), "-quality 3");
+  EXPECT_EQ(with_launch_arguments("-mine -a -b", "", {}, "-a", { "-a -b" }), "-mine -a");
+  // a record of two (the second was never written): the longer run that is there goes whole, whichever comes first in the record
+  EXPECT_EQ(with_launch_arguments("-a -b", "", {}, "-c", { "-a", "-a -b" }), "-c");
+  EXPECT_EQ(with_launch_arguments("-a -b", "", {}, "", { "-a -b", "-a" }), "");
+}
+
+TEST(CustomArguments, WhatThePersonTypedAlreadyIsNotTheHosts) {
+  using sparxie::LaunchOwnership;
+  using sparxie::with_launch_arguments;
+  LaunchOwnership owned;
+  EXPECT_EQ(with_launch_arguments("-quality 3 -force-d3d12", "-force-d3d12", {}, "-quality 3", {}, &owned), "-quality 3 -force-d3d12");
+  EXPECT_FALSE(owned.api);
+  EXPECT_FALSE(owned.run);
+  EXPECT_EQ(with_launch_arguments("-mine", "-force-d3d12", {}, "-quality 3", {}, &owned), "-mine -force-d3d12 -quality 3");
+  EXPECT_TRUE(owned.api);
+  EXPECT_TRUE(owned.run);
+  EXPECT_EQ(with_launch_arguments("-mine -force-d3d12 -quality 3", "-force-d3d12", { "-force-d3d12" }, "-quality 3", { "-quality 3" }, &owned), "-mine -force-d3d12 -quality 3");
+  EXPECT_TRUE(owned.api);
+  EXPECT_TRUE(owned.run);
+  // a change from the host's own run to one the person typed
+  EXPECT_EQ(with_launch_arguments("-typed -old", "", {}, "-typed", { "-old" }, &owned), "-typed");
+  EXPECT_FALSE(owned.run);
+
+  const fs::path root = fs::temp_directory_path() / "sparxie-arguments-typed";
+  sparxie::HostEnv env = kbm_env(root);
+  ASSERT_TRUE(sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin" } }).status.ok);
+  type_arguments(env.data_dir, "-force-d3d12 -quality 3");
+  ASSERT_TRUE(sparxie::update_app(env, 0, { { "settings", { { "customArgs", "-quality 3" }, { "dxVersion", "dx12" } } } }).status.ok);
+  EXPECT_FALSE(first_app(env)["sparxie"].contains("sparxieArguments"));
+  EXPECT_FALSE(first_app(env)["sparxie"].contains("sparxieCustomArguments"));
+  ASSERT_TRUE(sparxie::update_app(env, 0, { { "settings", sparxie::json::object() } }).status.ok);
+  EXPECT_EQ(profile_arguments(env.data_dir), "-force-d3d12 -quality 3");
+  // the same while Sparxie is open, written at the next launch
+  env.process_running = [](const std::vector<std::string> &names) { return std::find(names.begin(), names.end(), "Sparxie.exe") != names.end(); };
+  ASSERT_TRUE(sparxie::update_app(env, 0, { { "settings", { { "customArgs", "-quality 3" } } } }).status.ok);
+  EXPECT_FALSE(first_app(env)["sparxie"].contains("sparxieCustomArguments"));
+  fs::remove_all(root);
+}
+
+TEST(CustomArguments, WhatStandsBetweenQuotesIsLeftAsTyped) {
+  using sparxie::with_graphics_argument;
+  using sparxie::with_launch_arguments;
+  const std::string typed = "-log \"a -force-d3d11 b\"";
+  EXPECT_EQ(with_graphics_argument(typed, "-force-d3d12", { "-force-d3d11" }), typed + " -force-d3d12");
+  EXPECT_EQ(with_launch_arguments(typed + " -old", "", {}, "", { "-old" }), typed);
+  EXPECT_EQ(with_launch_arguments("-log \"x -a y\" -a", "", {}, "", { "-a" }), "-log \"x -a y\"");
+  EXPECT_EQ(with_launch_arguments("-dir=\"c d\" -force-d3d11", "-force-d3d12", {}, "", {}), "-dir=\"c d\" -force-d3d12");
+  // a quoted API argument is the same argument
+  EXPECT_EQ(with_graphics_argument("\"-force-d3d11\" -mine", "-force-d3d12", {}), "-mine -force-d3d12");
+  EXPECT_EQ(with_graphics_argument("\"-force-d3d12\"", "-force-d3d12", {}), "\"-force-d3d12\"");
+  // a quote nothing closes does not swallow what the host appends: it comes out again
+  const std::string open = with_launch_arguments("-x \"y", "", {}, "-a", {});
+  EXPECT_EQ(open, "-x \"y -a");
+  EXPECT_EQ(with_launch_arguments(open, "", {}, "", { "-a" }), "-x \"y");
+}
+
+TEST(CustomArguments, ArgumentsWrittenAgainstEachOtherAreSetApart) {
+  using sparxie::sparxie_custom_arguments;
+  EXPECT_EQ(sparxie_custom_arguments("genshin", { { "customArgs", "\"-a\"\"-b\"" } }), "\"-a\" \"-b\"");
+  EXPECT_EQ(sparxie_custom_arguments("genshin", { { "customArgs", "\"-a\"-b  -c" } }), "\"-a\" -b -c");
+}
+
+TEST(CustomArguments, AnApplicationListThatCannotBeSavedLeavesTheProfileAsItWas) {
+  const fs::path root = fs::temp_directory_path() / "sparxie-arguments-undo";
+  sparxie::HostEnv env = kbm_env(root);
+  ASSERT_TRUE(sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin" }, { "settings", { { "customArgs", "-old" } } } }).status.ok);
+  const auto write_bits = fs::perms::owner_write | fs::perms::group_write | fs::perms::others_write;
+  fs::permissions(env.apps_file, write_bits, fs::perm_options::remove);
+  const auto failed = sparxie::update_app(env, 0, { { "settings", { { "customArgs", "-other" } } } });
+  fs::permissions(env.apps_file, write_bits, fs::perm_options::add);
+  EXPECT_EQ(failed.status.error_code, "apps_write_failed") << failed.status.error;
+  EXPECT_EQ(profile_arguments(env.data_dir), "-old");
+  ASSERT_TRUE(sparxie::update_app(env, 0, { { "settings", sparxie::json::object() } }).status.ok);
+  EXPECT_EQ(profile_arguments(env.data_dir), "");
+  fs::remove_all(root);
+}
+
+TEST(NothingOfSparxie, ADirectApplicationThatTurnsTheUnlockOnGetsAProfileWithTheNewOptions) {
+  const fs::path root = fs::temp_directory_path() / "sparxie-nothing-new-profile";
+  sparxie::HostEnv env = kbm_env(root);
+  ASSERT_TRUE(sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin" }, { "options", { { "input", "kbm" }, { "fpsUnlock", false } } } }).status.ok);
+  ASSERT_EQ(first_app(env)["sparxie"]["mode"], "pc");
+  ASSERT_TRUE(sparxie::update_app(env, 0, { { "mode", "touch" }, { "options", { { "input", "kbm" }, { "fpsUnlock", true } } } }).status.ok);
+  const auto profile = sparxie::read_store(env.data_dir).document["profiles"].at(0);
+  EXPECT_EQ(profile["hoyo"]["fpsUnlockEnabled"], true) << profile.dump();
+  EXPECT_EQ(profile["disableTouchUi"], true);
+  fs::remove_all(root);
+}
+
+TEST(CustomArguments, ASaveThatChangesOptionsAndArgumentsWritesSparxieOnce) {
+  const fs::path root = fs::temp_directory_path() / "sparxie-arguments-one-write";
+  sparxie::HostEnv env = kbm_env(root);
+  ASSERT_TRUE(sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin" }, { "settings", { { "customArgs", "-old" } } } }).status.ok);
+  const auto backups = [&env]() {
+    int count = 0;
+    for (const auto &entry : fs::directory_iterator(env.data_dir))
+      if (entry.path().filename().string().rfind("config.backup-", 0) == 0) ++count;
+    return count;
+  };
+  const int before = backups();
+  ASSERT_TRUE(sparxie::update_app(env, 0, { { "options", { { "input", "touch" }, { "fpsUnlock", false } } }, { "settings", { { "customArgs", "-new" } } } }).status.ok);
+  EXPECT_EQ(backups(), before + 1);
+  EXPECT_EQ(profile_arguments(env.data_dir), "-new");
+  EXPECT_EQ(first_app(env)["sparxie"]["sparxieCustomArguments"], sparxie::json::array({ "-new" }));
+  // a change of the settings alone, which writes the profile for the priority
+  ASSERT_TRUE(sparxie::update_app(env, 0, { { "settings", { { "customArgs", "-later" } } } }).status.ok);
+  EXPECT_EQ(backups(), before + 2);
+  EXPECT_EQ(profile_arguments(env.data_dir), "-later");
+  // and the arguments still go back when the application list cannot be saved
+  const auto write_bits = fs::perms::owner_write | fs::perms::group_write | fs::perms::others_write;
+  fs::permissions(env.apps_file, write_bits, fs::perm_options::remove);
+  const auto failed = sparxie::update_app(env, 0, { { "options", { { "input", "touch" }, { "fpsUnlock", true } } }, { "settings", { { "customArgs", "-never" } } } });
+  fs::permissions(env.apps_file, write_bits, fs::perm_options::add);
+  EXPECT_EQ(failed.status.error_code, "apps_write_failed") << failed.status.error;
+  EXPECT_EQ(profile_arguments(env.data_dir), "-later");
+  fs::remove_all(root);
+}
+
+TEST(Outdated, ReleasesAreOrderedByTheirNumbers) {
+  EXPECT_TRUE(sparxie::later_release("0.10.0", "0.2.0"));
+  EXPECT_FALSE(sparxie::later_release("0.2.0", "0.10.0"));
+  EXPECT_TRUE(sparxie::later_release("0.2.1", "0.2.0"));
+  EXPECT_FALSE(sparxie::later_release("0.2.1", "0.2.1"));
+  EXPECT_TRUE(sparxie::later_release("0.1.0-preview.10", "0.1.0-preview.9"));
+}
+
+TEST(NothingOfSparxie, KeyboardWithTheUnlockOffStartsDirectlyAndKeyboardWithItGoesThroughSparxie) {
+  const fs::path root = fs::temp_directory_path() / "sparxie-nothing-create";
+  sparxie::HostEnv env = kbm_env(root);
+  const std::string game = (root / "game" / "YuanShen.exe").string();
+  const auto direct = sparxie::create_app(env, { { "path", game }, { "mode", "touch" }, { "name", "Direct" }, { "options", { { "input", "kbm" }, { "fpsUnlock", false } } }, { "settings", { { "customArgs", "-mine" } } } });
+  ASSERT_TRUE(direct.status.ok) << direct.status.error;
+  EXPECT_EQ(direct.body["app"]["sparxie"]["mode"], "pc");
+  const std::string cmd = direct.body["app"]["cmd"].get<std::string>();
+  EXPECT_EQ(cmd.find("sparxie-launch"), std::string::npos) << cmd;
+  EXPECT_NE(cmd.find("-mine"), std::string::npos) << "a direct start carries the launch arguments itself: " << cmd;
+  EXPECT_FALSE(fs::exists(env.data_dir / "config.json"));
+  const auto unlocked = sparxie::create_app(env, { { "path", game }, { "mode", "touch" }, { "name", "Unlocked" }, { "options", { { "input", "kbm" }, { "fpsUnlock", true } } } });
+  ASSERT_TRUE(unlocked.status.ok) << unlocked.status.error;
+  EXPECT_EQ(unlocked.body["app"]["sparxie"]["mode"], "touch");
+  const auto touch = sparxie::create_app(env, { { "path", game }, { "mode", "touch" }, { "name", "Touch" }, { "options", { { "input", "touch" }, { "fpsUnlock", false } } } });
+  ASSERT_TRUE(touch.status.ok) << touch.status.error;
+  EXPECT_EQ(touch.body["app"]["sparxie"]["mode"], "touch") << "the touch interface is a Sparxie feature";
+  fs::remove_all(root);
+}
+
+TEST(NothingOfSparxie, ASavedApplicationFollowsTheRuleBothWaysAndAnOlderOneAtHostStart) {
+  const fs::path root = fs::temp_directory_path() / "sparxie-nothing-switch";
+  sparxie::HostEnv env = kbm_env(root);
+  fs::create_directories(env.install_root / "tools");
+  { std::ofstream out(env.install_root / "tools" / "sparxie-launch.exe"); out << "x"; }
+  const sparxie::json on = { { "input", "kbm" }, { "fpsUnlock", true } };
+  const sparxie::json off = { { "input", "kbm" }, { "fpsUnlock", false } };
+  ASSERT_TRUE(sparxie::create_app(env, { { "path", (root / "game" / "YuanShen.exe").string() }, { "mode", "touch" }, { "name", "Genshin" }, { "options", on } }).status.ok);
+  EXPECT_EQ(first_app(env)["wait-all"], false);
+  ASSERT_TRUE(sparxie::update_app(env, 0, { { "mode", "touch" }, { "options", off } }).status.ok);
+  EXPECT_EQ(first_app(env)["sparxie"]["mode"], "pc");
+  EXPECT_EQ(first_app(env)["cmd"].get<std::string>().find("sparxie-launch"), std::string::npos);
+  EXPECT_FALSE(first_app(env).contains("wait-all"));
+  ASSERT_TRUE(sparxie::update_app(env, 0, { { "mode", "touch" }, { "options", on } }).status.ok);
+  EXPECT_EQ(first_app(env)["sparxie"]["mode"], "touch");
+  EXPECT_EQ(sparxie::read_store(env.data_dir).document["profiles"].size(), 1u) << "the profile is used again";
+  // an application of an earlier build: through the launcher with the unlock off
+  sparxie::json apps;
+  { std::ifstream in(env.apps_file); apps = sparxie::json::parse(in); }
+  apps["apps"][0]["sparxie"]["options"]["fpsUnlock"] = false;
+  { std::ofstream out(env.apps_file, std::ios::trunc); out << apps.dump(2); }
+  EXPECT_GT(sparxie::attach_official_covers(env), 0);
+  EXPECT_EQ(first_app(env)["sparxie"]["mode"], "pc");
+  EXPECT_EQ(first_app(env)["cmd"].get<std::string>().find("sparxie-launch"), std::string::npos);
+  EXPECT_FALSE(first_app(env).contains("wait-all"));
+  const sparxie::json settled = first_app(env);
+  sparxie::attach_official_covers(env);
+  EXPECT_EQ(first_app(env), settled) << "a second start leaves it";
+  fs::remove_all(root);
+}
+
+TEST(Outdated, OnlyReleasesBelowTheCurrentOneAreOutdated) {
+  for (const char *old : { "0.2.0", "0.1.0", "0.1.0-preview.9", "0.0.9" }) EXPECT_TRUE(sparxie::outdated_version(old)) << old;
+  for (const char *current : { "0.2.1", "0.2.1-hotfix", "0.2.10", "0.3.0", "1.0.0", "", "unknown", "ci-4438b663e", "0.2" }) EXPECT_FALSE(sparxie::outdated_version(current)) << current;
+}
+
+TEST(Outdated, TheStatusNamesAnOutdatedInstallByItsPackageOrItsAppFolder) {
+  const fs::path root = fs::temp_directory_path() / "sparxie-outdated-status";
+  sparxie::HostEnv env = kbm_env(root);
+  const fs::path component = env.install_root / "components" / "sparxie";
+  const auto outdated = [&env]() {
+    sparxie::HostEnv fresh = env;
+    fresh.sparxie_exe.clear();
+    return sparxie::component_status(fresh).body["outdatedVersion"].get<std::string>();
+  };
+  const auto record = [&component](const char *text) {
+    std::ofstream out(component / "component.json", std::ios::trunc);
+    out << text;
+  };
+  record(R"x({"version":"0.2.0","sha256":"fad15aed3d516fdd76c2c093c4c6c2c615dc05ba8e81b40b66a815143ddb1a7b"})x");
+  EXPECT_EQ(outdated(), "0.2.0");
+  record(R"x({"version":"unknown","sha256":"53bc95771fb0f8883605b33aae4acb19f66fac0d81323359488d57028763062a"})x");
+  EXPECT_EQ(outdated(), "") << "the pinned current release, whatever its folder is called";
+  // a package this host does not know says it by its app folder
+  record(R"x({"version":"unknown","sha256":"00"})x");
+  { std::ofstream out(component / "version.ini", std::ios::trunc); out << "exe_path=app-0.1.0-preview.9\\Sparxie.Desktop.exe\n"; }
+  EXPECT_EQ(outdated(), "0.1.0-preview.9");
+  { std::ofstream out(component / "version.ini", std::ios::trunc); out << "exe_path=app-0.3.0\\Sparxie.Desktop.exe\n"; }
+  EXPECT_EQ(outdated(), "");
+  EXPECT_EQ(sparxie::component_status(env).body["latestVersion"], "0.2.1");
+  fs::remove_all(root);
+}
+
+TEST(CustomArguments, TooLongIsAnErrorOfTheSaveAndNothingIsWritten) {
+  const fs::path root = fs::temp_directory_path() / "sparxie-arguments-long";
+  sparxie::HostEnv env = kbm_env(root);
+  const std::string game = (root / "game" / "YuanShen.exe").string();
+  const std::string longest(600, 'a');
+  const auto refused = sparxie::create_app(env, { { "path", game }, { "mode", "touch" }, { "name", "Genshin" }, { "settings", { { "customArgs", longest } } } });
+  EXPECT_EQ(refused.status.error_code, "arguments_too_long") << refused.status.error;
+  EXPECT_FALSE(fs::exists(env.data_dir / "config.json"));
+  EXPECT_FALSE(fs::exists(env.apps_file));
+  ASSERT_TRUE(sparxie::create_app(env, { { "path", game }, { "mode", "touch" }, { "name", "Genshin" } }).status.ok);
+  // what the person typed in Sparxie counts into the same limit
+  type_arguments(env.data_dir, std::string(500, 'b'));
+  const auto over = sparxie::update_app(env, 0, { { "name", "Renamed" }, { "settings", { { "customArgs", std::string(20, 'a') } } } });
+  EXPECT_EQ(over.status.error_code, "arguments_too_long") << over.status.error;
+  EXPECT_EQ(first_app(env)["name"], "Genshin");
+  EXPECT_EQ(profile_arguments(env.data_dir), std::string(500, 'b'));
+  // counted as Sparxie counts: a Chinese character is one, though it is three bytes
+  EXPECT_EQ(sparxie::launch_arguments_length("\xE4\xB8\xAD-a"), 3u);
+  fs::remove_all(root);
 }

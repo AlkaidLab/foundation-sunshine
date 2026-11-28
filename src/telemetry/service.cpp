@@ -439,6 +439,14 @@ namespace telemetry {
         // the screenshot rides in the report as base64 (the page made it fit: at most 700 KB); it is taken out here, whatever happens to it, so the picture is never queued, shaped or sent as an event prop
         const auto shot_text = props.contains("shot") && props["shot"].is_string() ? props["shot"].get<std::string>() : std::string {};
         props.erase("shot");
+        // the screenshot, the log and the packing between them share one deadline inside the page's wait; it is lifted however this block ends
+        if (deps_.feedback_budget_begin) deps_.feedback_budget_begin();
+        struct budget_end_t {
+          const std::function<void()> &end;
+          ~budget_end_t() {
+            if (end) end();
+          }
+        } budget_end { deps_.feedback_budget_end };
         if (!shot_text.empty()) {
           const auto state = attach_screenshot(deps_, endpoint(), report_id.empty() ? report_install : report_id, safe_version(version), shot_text, props);
           if (report) report->shot = state;

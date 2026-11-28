@@ -577,6 +577,10 @@ web_main() {
     web_log("no WebView2 Runtime: native window");
     return kWebFallback;
   }
+  if (vnc_server_running()) {
+    web_log("a VNC server is running: native window (the transparent web window is not seen by every VNC capture)");
+    return kWebFallback;
+  }
   g_run.self = module_path();
   uint64_t offset = 0, size = 0;
   if (!read_named_payload(g_run.self, "ui", &offset, &size)) {

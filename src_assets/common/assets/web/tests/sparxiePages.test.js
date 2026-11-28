@@ -209,16 +209,12 @@ test('there is no launch choice: a Sparxie title starts through Sparxie while th
   assert.ok(!/disabled[^\n]*inputs|inputs[^\n]*disabled/.test(rows + row), 'an item for touch only is hidden for the other inputs, never greyed')
 })
 
-test('keyboard, mouse and gamepad run through Sparxie when the installed build has the touch-interface switch; otherwise the application starts directly and the page says so once', () => {
-  assert.ok(create.includes("const viaSparxie = computed(() => touch.value && (optBlock.options.input !== 'kbm' || kbmThroughSparxie.value))"), 'the input decides only when the build or the title cannot do kbm')
-  assert.ok(create.includes("const kbmThroughSparxie = computed(() => KBM_SPARXIE_GAMES.includes(game.value) && (!!status.touchUiSwitch || (game.value === 'endfield' && !!status.endfieldPlugin)))"), 'the switch of the build, or Endfield of a plugin-based Sparxie, whose input is the plugin\'s own')
+test('keyboard, mouse and gamepad run through Sparxie for the titles that have such a session, whatever the installed build reports', () => {
+  assert.ok(create.includes("const viaSparxie = computed(() => touch.value && usesSparxie(game.value, optBlock.options))"), 'what is asked of Sparxie decides')
   assert.ok(create.includes("mode: viaSparxie.value ? 'touch' : 'pc'"), 'the mode follows what the host will do (it applies the same rule)')
   assert.ok(!create.includes("mode: touch.value ? 'touch' : 'pc'"), 'no mode is sent from the bare component presence any more')
-  assert.ok(create.includes('<MBanner v-if="!viaSparxie && !kbmThroughSparxie && KBM_SPARXIE_GAMES.includes(game)" tone="info" icon="info">{{ C.kbmNeedsTouch }}</MBanner>'), 'one line under the Sparxie items, only when the build lacks the switch and the title has no input of its own')
-  assert.equal(COPYZH.kbmNeedsTouch, '已安装的 Sparxie 无法在键鼠与手柄下保留 PC 界面，所以这些 Sparxie 选项对键鼠与手柄不生效，游戏会由我们直接启动。更新 Sparxie 后即可生效')
   assert.ok(!/直接启动/.test(COPYZH.inputKbm + COPYZH.inputTouch), 'the input names say no launch path')
   assert.ok(create.includes('v-if="reach(4) && touch"'), 'the Sparxie items stay visible under both inputs')
-  assert.ok(copy.includes("kbmNeedsTouch: '已安装的 Sparxie 无法在键鼠与手柄下保留 PC 界面") && copy.includes("kbmNeedsTouch: 'The installed Sparxie cannot keep the PC interface"), 'zh and en')
 })
 
 test('the game\'s own frame rate is Sparxie\'s while its unlock is on, whichever input is chosen: the item says so and is not written', () => {

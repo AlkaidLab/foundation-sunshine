@@ -586,6 +586,7 @@ namespace config {
     48020,  // file_mapping_port
     false,  // usb_forwarding_enabled: explicit host opt-in
     0,  // usb_forwarding_port: automatic (main port + 7)
+    false,  // usb_wired_streaming_enabled: explicit host opt-in
     {},  // external_ip
     {},  // external_endpoints
     {},  // stun_servers
@@ -1555,6 +1556,7 @@ namespace config {
     else {
       BOOST_LOG(warning) << "Ignoring invalid usb_forwarding_port: expected 0 or 1024-65535";
     }
+    bool_f(vars, "usb_wired_streaming_enabled", nvhttp.usb_wired_streaming_enabled);
 
     // Must be run after "file_state"
     config::sunshine.credentials_file = config::nvhttp.file_state;
@@ -2169,6 +2171,8 @@ namespace config {
         "status",  // API响应状态，不是配置项
         "platform",  // 平台信息，编译时确定，只读
         "version",  // 版本号，只读
+        "windows_build",
+        "widget_token_configured",
         "active_encoder",  // 运行时探测后实际使用的编码器，只读
         "active_hevc_mode",  // 探测后 HEVC 实际提供的模式，只读
         "active_av1_mode",  // 探测后 AV1 实际提供的模式，只读

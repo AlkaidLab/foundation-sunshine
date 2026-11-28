@@ -19,8 +19,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 120,
-        "touchUiEnabled": true
+        "targetFps": 120
       },
       "id": "genshin-defaults"
     },
@@ -43,8 +42,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 144,
-        "touchUiEnabled": true
+        "targetFps": 144
       },
       "id": "genshin-auto-144"
     },
@@ -67,8 +65,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 60,
-        "touchUiEnabled": true
+        "targetFps": 60
       },
       "id": "genshin-empty-resolution"
     },
@@ -91,8 +88,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 120,
-        "touchUiEnabled": true
+        "targetFps": 120
       },
       "id": "genshin-fixed-2560"
     },
@@ -115,8 +111,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 60,
-        "touchUiEnabled": true
+        "targetFps": 60
       },
       "id": "genshin-fixed-ascii"
     },
@@ -139,8 +134,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 60,
-        "touchUiEnabled": true
+        "targetFps": 60
       },
       "id": "genshin-fixed-zero"
     },
@@ -163,8 +157,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 60,
-        "touchUiEnabled": true
+        "targetFps": 60
       },
       "id": "genshin-fixed-huge"
     },
@@ -187,8 +180,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 60,
-        "touchUiEnabled": true
+        "targetFps": 60
       },
       "id": "genshin-fixed-tiny"
     },
@@ -211,12 +203,12 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 60,
-        "touchUiEnabled": true
+        "targetFps": 60
       },
       "id": "genshin-garbage-resolution"
     },
     {
+      "disableTouchUi": true,
       "displayName": "genshin-kbm-low",
       "executablePath": "C:\\Games\\YuanShen.exe",
       "game": "genshin",
@@ -235,8 +227,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 100,
         "processPriority": "normal",
-        "targetFps": 10,
-        "touchUiEnabled": false
+        "targetFps": 10
       },
       "id": "genshin-kbm-low"
     },
@@ -259,8 +250,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 500,
         "processPriority": "high",
-        "targetFps": 1000,
-        "touchUiEnabled": true
+        "targetFps": 1000
       },
       "id": "genshin-high-values"
     },
@@ -283,8 +273,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 1000,
-        "touchUiEnabled": true
+        "targetFps": 1000
       },
       "id": "genshin-fps-display"
     },
@@ -307,8 +296,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 10,
-        "touchUiEnabled": true
+        "targetFps": 10
       },
       "id": "genshin-refresh-tiny"
     },
@@ -331,8 +319,7 @@
         "genshinTouchUiScaleOverrideEnabled": true,
         "genshinTouchUiScalePercent": 250,
         "processPriority": "belowNormal",
-        "targetFps": 240,
-        "touchUiEnabled": true
+        "targetFps": 240
       },
       "id": "genshin-priorities"
     },
@@ -355,8 +342,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "aboveNormal",
-        "targetFps": 90,
-        "touchUiEnabled": true
+        "targetFps": 90
       },
       "id": "genshin-above-normal"
     },
@@ -379,8 +365,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 120,
-        "touchUiEnabled": true
+        "targetFps": 120
       },
       "id": "starrail-defaults"
     },
@@ -403,8 +388,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 144,
-        "touchUiEnabled": true
+        "targetFps": 144
       },
       "id": "starrail-auto-144"
     },
@@ -427,8 +411,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 60,
-        "touchUiEnabled": true
+        "targetFps": 60
       },
       "id": "starrail-empty-resolution"
     },
@@ -451,8 +434,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 120,
-        "touchUiEnabled": true
+        "targetFps": 120
       },
       "id": "starrail-fixed-2560"
     },
@@ -475,8 +457,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 60,
-        "touchUiEnabled": true
+        "targetFps": 60
       },
       "id": "starrail-fixed-ascii"
     },
@@ -499,8 +480,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 60,
-        "touchUiEnabled": true
+        "targetFps": 60
       },
       "id": "starrail-fixed-zero"
     },
@@ -523,8 +503,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 60,
-        "touchUiEnabled": true
+        "targetFps": 60
       },
       "id": "starrail-fixed-huge"
     },
@@ -547,8 +526,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 60,
-        "touchUiEnabled": true
+        "targetFps": 60
       },
       "id": "starrail-fixed-tiny"
     },
@@ -571,12 +549,12 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 60,
-        "touchUiEnabled": true
+        "targetFps": 60
       },
       "id": "starrail-garbage-resolution"
     },
     {
+      "disableTouchUi": true,
       "displayName": "starrail-kbm-low",
       "executablePath": "C:\\Games\\StarRail.exe",
       "game": "starRail",
@@ -595,8 +573,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 100,
         "processPriority": "normal",
-        "targetFps": 10,
-        "touchUiEnabled": false
+        "targetFps": 10
       },
       "id": "starrail-kbm-low"
     },
@@ -619,8 +596,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 500,
         "processPriority": "high",
-        "targetFps": 1000,
-        "touchUiEnabled": true
+        "targetFps": 1000
       },
       "id": "starrail-high-values"
     },
@@ -643,8 +619,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 1000,
-        "touchUiEnabled": true
+        "targetFps": 1000
       },
       "id": "starrail-fps-display"
     },
@@ -667,8 +642,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 10,
-        "touchUiEnabled": true
+        "targetFps": 10
       },
       "id": "starrail-refresh-tiny"
     },
@@ -691,8 +665,7 @@
         "genshinTouchUiScaleOverrideEnabled": true,
         "genshinTouchUiScalePercent": 250,
         "processPriority": "belowNormal",
-        "targetFps": 240,
-        "touchUiEnabled": true
+        "targetFps": 240
       },
       "id": "starrail-priorities"
     },
@@ -715,8 +688,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "aboveNormal",
-        "targetFps": 90,
-        "touchUiEnabled": true
+        "targetFps": 90
       },
       "id": "starrail-above-normal"
     },
@@ -775,6 +747,7 @@
       "id": "zzz-garbage-resolution"
     },
     {
+      "disableTouchUi": true,
       "displayName": "zzz-kbm-low",
       "executablePath": "C:\\Games\\ZenlessZoneZero.exe",
       "game": "zenlessZoneZero",
@@ -829,8 +802,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 120,
-        "touchUiEnabled": true
+        "targetFps": 120
       },
       "id": "endfield-defaults"
     },
@@ -853,8 +825,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 144,
-        "touchUiEnabled": true
+        "targetFps": 144
       },
       "id": "endfield-auto-144"
     },
@@ -877,8 +848,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 60,
-        "touchUiEnabled": true
+        "targetFps": 60
       },
       "id": "endfield-empty-resolution"
     },
@@ -901,8 +871,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 120,
-        "touchUiEnabled": true
+        "targetFps": 120
       },
       "id": "endfield-fixed-2560"
     },
@@ -925,8 +894,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 60,
-        "touchUiEnabled": true
+        "targetFps": 60
       },
       "id": "endfield-fixed-ascii"
     },
@@ -949,8 +917,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 60,
-        "touchUiEnabled": true
+        "targetFps": 60
       },
       "id": "endfield-fixed-zero"
     },
@@ -973,8 +940,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 60,
-        "touchUiEnabled": true
+        "targetFps": 60
       },
       "id": "endfield-fixed-huge"
     },
@@ -997,8 +963,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 60,
-        "touchUiEnabled": true
+        "targetFps": 60
       },
       "id": "endfield-fixed-tiny"
     },
@@ -1021,8 +986,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 60,
-        "touchUiEnabled": true
+        "targetFps": 60
       },
       "id": "endfield-garbage-resolution"
     },
@@ -1045,8 +1009,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 100,
         "processPriority": "normal",
-        "targetFps": 10,
-        "touchUiEnabled": false
+        "targetFps": 10
       },
       "id": "endfield-kbm-low"
     },
@@ -1069,8 +1032,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 500,
         "processPriority": "high",
-        "targetFps": 1000,
-        "touchUiEnabled": true
+        "targetFps": 1000
       },
       "id": "endfield-high-values"
     },
@@ -1093,8 +1055,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 1000,
-        "touchUiEnabled": true
+        "targetFps": 1000
       },
       "id": "endfield-fps-display"
     },
@@ -1117,8 +1078,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "normal",
-        "targetFps": 10,
-        "touchUiEnabled": true
+        "targetFps": 10
       },
       "id": "endfield-refresh-tiny"
     },
@@ -1141,8 +1101,7 @@
         "genshinTouchUiScaleOverrideEnabled": true,
         "genshinTouchUiScalePercent": 250,
         "processPriority": "belowNormal",
-        "targetFps": 240,
-        "touchUiEnabled": true
+        "targetFps": 240
       },
       "id": "endfield-priorities"
     },
@@ -1165,8 +1124,7 @@
         "genshinTouchUiScaleOverrideEnabled": false,
         "genshinTouchUiScalePercent": 400,
         "processPriority": "aboveNormal",
-        "targetFps": 90,
-        "touchUiEnabled": true
+        "targetFps": 90
       },
       "id": "endfield-above-normal"
     }

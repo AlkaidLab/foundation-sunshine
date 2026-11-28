@@ -1,6 +1,7 @@
 #include "src/sparxie/store.h"
 #include "src/sparxie/sha256.h"
 #include <algorithm>
+#include <cstring>
 #include <chrono>
 #include <ctime>
 #include <fstream>
@@ -129,7 +130,6 @@ namespace sparxie {
       const std::pair<int, int> size = fixed_size ? fixed : kept;
       const bool unlock = options.contains("fpsUnlock") && options["fpsUnlock"].is_boolean() ? options["fpsUnlock"].get<bool>() : false;
       const json all = {
-        { "inputMode", options.value("input", std::string("touch")) == "kbm" ? "pc" : "touch" },
         { "autoResolution", !fixed_size },
         { "width", size.first },
         { "height", size.second },
@@ -156,7 +156,9 @@ namespace sparxie {
       // Star Rail accepts 30/60/120 in its own GraphicsSettings model. Keep
       // HoyoTouchCore for rates above that cap; the native path is more stable
       // and also makes the game's saved setting agree with the stream.
-      const bool native_starrail_fps = game == "starrail" && (target_fps == 30 || target_fps == 60 || target_fps == 120);
+      // Not without the touch interface (kbm): the unlock is then all Sparxie installs, and it refuses a profile with both off.
+      const bool native_starrail_fps = game == "starrail" && options.value("input", std::string("touch")) != "kbm" &&
+                                       (target_fps == 30 || target_fps == 60 || target_fps == 120);
       const std::string priority = known_priority(options.value("priority", std::string("normal")));
       const std::string input = options.value("input", std::string("touch"));
       const std::string resolution = options.value("resolution", std::string("auto"));
@@ -164,8 +166,6 @@ namespace sparxie {
       const bool fixed_size = fixed.first > 0;
       const std::pair<int, int> size = fixed_size ? fixed : kept_endfield_size(existing);
       return json {
-        // keyboard, mouse and gamepad (kbm) is a Sparxie session without the touch interface: HoyoSettings.touch_ui_enabled
-        { "touchUiEnabled", options.value("input", std::string("touch")) != "kbm" },
         { "fpsUnlockEnabled", flag("fpsUnlock", false) && !native_starrail_fps },
         { "targetFps", num("fps", target_fps, kFpsMin, kFpsMax) },
         { "backgroundFpsLimitEnabled", flag("bgLimit", true) },
@@ -196,12 +196,18 @@ namespace sparxie {
         { "executablePath", draft.executable },
       };
       if (plugin_endfield) {
-        // a plugin game has no hoyo block: its options are the plugin's settings
+        // a plugin game has no hoyo block: its options are the plugin's settings, and kbm uses the universal top-level disableTouchUi field (ProfileSnapshot.disable_touch_ui = 8).
+        if (draft.options.value("input", std::string("touch")) == "kbm")
+          profile["disableTouchUi"] = true;
         profile["settings"] = endfield_plugin_settings(draft.options, draft.display_fps, build.endfield, existing);
         return profile;
       }
       const json *existing_hoyo = existing && existing->is_object() && existing->contains("hoyo") && (*existing)["hoyo"].is_object() ? &(*existing)["hoyo"] : nullptr;
-      if (draft.game != "zzz") profile["hoyo"] = hoyo_object(draft.options, draft.display_fps, draft.game, existing_hoyo);
+      // keyboard, mouse and gamepad (kbm) disables the touch interface: top-level disableTouchUi (ProfileSnapshot.disable_touch_ui = 8), omitted when false.
+      if (draft.game != "endfield" && draft.options.value("input", std::string("touch")) == "kbm")
+        profile["disableTouchUi"] = true;
+      if (draft.game != "zzz")
+        profile["hoyo"] = hoyo_object(draft.options, draft.display_fps, draft.game, existing_hoyo);
       return profile;
     }
     void
@@ -216,8 +222,15 @@ namespace sparxie {
           profile[it.key()] = it.value();
         }
       }
+      if (!fresh.contains("disableTouchUi") && profile.contains("disableTouchUi")) profile.erase("disableTouchUi");
+      if (profile.contains("touchUiEnabled")) profile.erase("touchUiEnabled");
+      if (profile.contains("hoyo") && profile["hoyo"].is_object() && profile["hoyo"].contains("touchUiEnabled")) profile["hoyo"].erase("touchUiEnabled");
       if (draft.game == "zzz" && profile.contains("hoyo")) profile.erase("hoyo");
-      if (profile.value("game", std::string()) == kEndfieldPluginId && profile.contains("hoyo")) profile.erase("hoyo");
+      if (profile.value("game", std::string()) == kEndfieldPluginId) {
+        if (profile.contains("hoyo")) profile.erase("hoyo");
+        if (profile.contains("settings") && profile["settings"].is_object() && profile["settings"].contains("inputMode"))
+          profile["settings"].erase("inputMode");
+      }
     }
     void
     prune_backups(const fs::path &dir) {
@@ -323,9 +336,14 @@ namespace sparxie {
           profile["game"] = kEndfieldPluginId;
           // what the profile already holds as plugin settings (a key of the plugin's own, such as the interface scale) stays; the host's keys are set over it
           json settings = profile.contains("settings") && profile["settings"].is_object() ? profile["settings"] : json::object();
+          settings.erase("inputMode");
           const json managed = endfield_plugin_settings(options, hoyo.value("endfieldRefreshRate", 0), build.endfield, &size_of);
           for (auto field = managed.begin(); field != managed.end(); ++field) settings[field.key()] = field.value();
           profile["settings"] = settings;
+          if (options.value("input", std::string("touch")) == "kbm")
+            profile["disableTouchUi"] = true;
+          else
+            profile.erase("disableTouchUi");
           profile.erase("hoyo");
           changed = true;
           continue;
@@ -520,7 +538,7 @@ namespace sparxie {
   options_from_hoyo(const json &hoyo) {
     if (!hoyo.is_object()) return json::object();
     json options = json {
-      { "input", hoyo.value("touchUiEnabled", true) ? "touch" : "kbm" },
+      { "input", "touch" },
       { "fpsUnlock", hoyo.value("fpsUnlockEnabled", false) },
       { "fps", hoyo.value("targetFps", 120) },
       { "bgLimit", hoyo.value("backgroundFpsLimitEnabled", true) },
@@ -556,8 +574,18 @@ namespace sparxie {
   json
   options_from_profile(const json &profile) {
     if (!profile.is_object()) return default_options();
-    if (is_plugin_game_id(profile.value("game", std::string()))) return options_from_settings(profile.contains("settings") ? profile["settings"] : json::object());
-    return profile.contains("hoyo") ? options_from_hoyo(profile["hoyo"]) : default_options();
+    if (is_plugin_game_id(profile.value("game", std::string()))) {
+      json options = options_from_settings(profile.contains("settings") ? profile["settings"] : json::object());
+      if (profile.contains("disableTouchUi") && profile["disableTouchUi"].is_boolean())
+        options["input"] = profile["disableTouchUi"].get<bool>() ? "kbm" : "touch";
+      return options;
+    }
+    json options = profile.contains("hoyo") ? options_from_hoyo(profile["hoyo"]) : default_options();
+    if (profile.value("game", std::string()) != "endfield") {
+      const bool disable_touch = profile.contains("disableTouchUi") && profile["disableTouchUi"].is_boolean() && profile["disableTouchUi"].get<bool>();
+      options["input"] = disable_touch ? "kbm" : "touch";
+    }
+    return options;
   }
   std::string
   next_profile_id(const json &document, const std::string &prefix) {
@@ -600,10 +628,12 @@ namespace sparxie {
       const bool zzz = game == "zenlessZoneZero";
       if (zzz && profile.contains("hoyo") && !profile["hoyo"].is_null())
         return Status::fail(409, "config_unreadable", "Zenless Zone Zero profiles cannot contain hoyo settings");
+      if (profile.contains("disableTouchUi") && !profile["disableTouchUi"].is_null() && !profile["disableTouchUi"].is_boolean())
+        return Status::fail(409, "config_unreadable", "disableTouchUi is not true or false");
       if (!zzz && !is_plugin_game_id(game) && profile.contains("hoyo") && profile["hoyo"].is_object()) {
         const json &hoyo = profile["hoyo"];
         // the same rules as Sparxie's AppConfigValidator (and the types its JSON reader needs: a wrong type makes the whole file unreadable for it)
-        const char *flags[] = { "touchUiEnabled", "fpsUnlockEnabled", "backgroundFpsLimitEnabled", "genshinFollowInGamePreset", "genshinTouchUiScaleOverrideEnabled", "endfieldAutoResolution" };
+        const char *flags[] = { "fpsUnlockEnabled", "backgroundFpsLimitEnabled", "genshinFollowInGamePreset", "genshinTouchUiScaleOverrideEnabled", "endfieldAutoResolution" };
         for (const char *field : flags) {
           if (hoyo.contains(field) && !hoyo[field].is_boolean()) return Status::fail(409, "config_unreadable", std::string(field) + " is not true or false");
         }
@@ -669,6 +699,10 @@ namespace sparxie {
     view.state = view.profile_count == 0 ? "empty" : "data";
     return view;
   }
+  namespace {
+    Status
+    change_launch_arguments(json &profile, LaunchChange &change);
+  }  // namespace
   WriteResult
   add_profile(const fs::path &dir, ProfileDraft draft, StoreHooks hooks) {
     return edit_store(dir, hooks, [&](json &document, std::string &profile_id, const SparxieBuild &build) {
@@ -678,7 +712,10 @@ namespace sparxie {
       profile_id = draft.id;
       if (!document["selectedProfileId"].is_string() || document["selectedProfileId"].get<std::string>().empty())
         document["selectedProfileId"] = draft.id;
-      document["profiles"].push_back(make_profile(draft, build));
+      json made = make_profile(draft, build);
+      if (draft.launch)
+        if (const Status changed = change_launch_arguments(made, *draft.launch); !changed.ok) return changed;
+      document["profiles"].push_back(std::move(made));
       return Status::success();
     });
   }
@@ -693,11 +730,210 @@ namespace sparxie {
       for (auto &profile : document["profiles"]) {
         if (profile.value("id", std::string()) == id) {
           merge_profile(profile, draft, build);
+          if (draft.launch)
+            if (const Status changed = change_launch_arguments(profile, *draft.launch); !changed.ok) return changed;
           found = true;
         }
       }
       if (!found) return Status::fail(404, "not_found", "That Sparxie profile does not exist");
       return Status::success();
+    });
+  }
+  namespace {
+    constexpr const char *kBlanks = " \t\r\n";
+    bool
+    is_graphics_argument(const std::string &argument) {
+      return argument == "-force-d3d11" || argument == "-force-d3d12" || argument == "-use-d3d12";
+    }
+    // a command line word without the pair of quotes around it
+    std::string
+    unquoted_argument(const std::string &word) {
+      return word.size() >= 2 && word.front() == '"' && word.back() == '"' ? word.substr(1, word.size() - 2) : word;
+    }
+    // The words of a command line as [begin, end): blanks separate them, except between a pair of quotes (a quote after an odd number of backslashes is a plain
+    // character, and so is one that nothing closes, so that what the host appends after it can still be found again).
+    std::vector<std::pair<std::size_t, std::size_t>>
+    words_of(const std::string &text) {
+      auto is_quote = [&text](std::size_t i) {
+        if (text[i] != '"') return false;
+        std::size_t slashes = 0;
+        while (slashes < i && text[i - slashes - 1] == '\\') ++slashes;
+        return slashes % 2 == 0;
+      };
+      auto is_blank = [](char c) { return c != '\0' && std::strchr(kBlanks, c) != nullptr; };
+      std::vector<std::pair<std::size_t, std::size_t>> out;
+      std::size_t at = 0;
+      while ((at = text.find_first_not_of(kBlanks, at)) != std::string::npos) {
+        std::size_t end = at;
+        while (end < text.size() && !is_blank(text[end])) {
+          if (is_quote(end)) {
+            std::size_t close = end + 1;
+            while (close < text.size() && !is_quote(close)) ++close;
+            if (close < text.size()) end = close;
+          }
+          ++end;
+        }
+        out.push_back({ at, end });
+        at = end;
+      }
+      return out;
+    }
+    // `text` without the first place where the words of `run` stand one after another; false when they do not
+    bool
+    take_run(std::string &text, const std::string &run) {
+      const auto have = words_of(text);
+      const auto want = words_of(run);
+      if (want.empty() || want.size() > have.size()) return false;
+      for (std::size_t first = 0; first + want.size() <= have.size(); ++first) {
+        bool same = true;
+        for (std::size_t i = 0; same && i < want.size(); ++i)
+          same = text.compare(have[first + i].first, have[first + i].second - have[first + i].first, run, want[i].first, want[i].second - want[i].first) == 0;
+        if (!same) continue;
+        const std::size_t last = first + want.size() - 1;
+        // with the blanks before the run; the first words of the text give up the blanks after it instead
+        if (first > 0)
+          text.erase(have[first - 1].second, have[last].second - have[first - 1].second);
+        else
+          text.erase(0, last + 1 < have.size() ? have[last + 1].first : text.size());
+        return true;
+      }
+      return false;
+    }
+  }  // namespace
+  std::string
+  with_graphics_argument(const std::string &arguments, const std::string &wanted, const std::vector<std::string> &ours, bool *added) {
+    std::string out;
+    bool present = false;
+    std::size_t at = 0;
+    for (const auto &[start, end] : words_of(arguments)) {
+      const std::string token = arguments.substr(start, end - start);
+      const std::string value = unquoted_argument(token);
+      const bool is_wanted = !wanted.empty() && value == wanted;
+      const bool goes = !is_wanted && (std::find(ours.begin(), ours.end(), token) != ours.end() || (!wanted.empty() && is_graphics_argument(value)));
+      if (!goes) {
+        // a word with the blanks before it, so that what stays keeps its spacing
+        out += out.empty() ? token : arguments.substr(at, end - at);
+        present = present || is_wanted;
+      }
+      at = end;
+    }
+    const bool append = !wanted.empty() && !present;
+    if (append) out += out.empty() ? wanted : " " + wanted;
+    if (added) *added = append;
+    return out;
+  }
+  std::size_t
+  launch_arguments_length(const std::string &utf8) {
+    std::size_t units = 0;
+    for (const char c : utf8) {
+      const auto byte = static_cast<unsigned char>(c);
+      if ((byte & 0xC0) == 0x80) continue;
+      units += byte >= 0xF0 ? 2 : 1;
+    }
+    return units;
+  }
+  std::string
+  launch_arguments_of(const json &profile) {
+    if (!profile.is_object() || !profile.contains("launch") || !profile["launch"].is_object()) return {};
+    const json &launch = profile["launch"];
+    return launch.contains("extraArguments") && launch["extraArguments"].is_string() ? launch["extraArguments"].get<std::string>() : std::string();
+  }
+  std::string
+  with_launch_arguments(const std::string &arguments, const std::string &api, const std::vector<std::string> &our_api, const std::string &run, const std::vector<std::string> &our_runs, LaunchOwnership *owned) {
+    auto among = [](const std::vector<std::string> &list, const std::string &value) { return std::find(list.begin(), list.end(), value) != list.end(); };
+    // Only what the host put there is taken out, a longer run before a shorter one: "-a" of an earlier save must not leave the "-b" of "-a -b" behind.
+    std::vector<std::string> runs = our_runs;
+    std::stable_sort(runs.begin(), runs.end(), [](const std::string &a, const std::string &b) { return words_of(a).size() > words_of(b).size(); });
+    std::string rest = arguments;
+    std::vector<std::string> taken;
+    for (const auto &old : runs)
+      if (take_run(rest, old)) taken.push_back(old);
+    bool added_api = false;
+    // already as chosen (the host's own run, or one the person typed, and no other run of the host's): nothing is moved around
+    std::string untouched = rest;
+    const bool host_run = !run.empty() && taken.size() == 1 && taken.front() == run;
+    const bool typed_run = !run.empty() && taken.empty() && take_run(untouched, run);
+    if (host_run || typed_run || (run.empty() && taken.empty())) {
+      const std::string &others = typed_run ? untouched : rest;
+      if (with_graphics_argument(others, api, our_api, &added_api) == others) {
+        if (owned) *owned = { !api.empty() && among(our_api, api), host_run };
+        return arguments;
+      }
+    }
+    std::string out = with_graphics_argument(rest, api, our_api, &added_api);
+    // a run that is still there is one the person typed: it is not written a second time, and it is not the host's
+    std::string probe = out;
+    const bool append = !run.empty() && !take_run(probe, run);
+    if (append) out += out.empty() ? run : " " + run;
+    // an API argument that stayed in place is the host's when the host had put it there
+    if (owned) *owned = { !api.empty() && (added_api || among(our_api, api)), append };
+    return out;
+  }
+  namespace {
+    // `arguments` as the profile's launch.extraArguments, and nothing else of the profile
+    void
+    put_launch_arguments(json &profile, const std::string &arguments) {
+      if (!profile.contains("launch") || !profile["launch"].is_object()) profile["launch"] = json::object();
+      if (arguments.empty())
+        profile["launch"].erase("extraArguments");
+      else
+        profile["launch"]["extraArguments"] = arguments;
+      if (profile["launch"].empty()) profile.erase("launch");
+    }
+    Status
+    change_launch_arguments(json &profile, LaunchChange &change) {
+      change.owned = {};
+      change.before.reset();
+      if (change.empty()) return Status::success();
+      const std::string now = launch_arguments_of(profile);
+      const std::string next = with_launch_arguments(now, change.api, change.our_api, change.run, change.our_runs, &change.owned);
+      if (next == now) return Status::success();
+      if (launch_arguments_length(next) > kMaxLaunchArguments) return Status::fail(400, "arguments_too_long", "Sparxie's extra launch arguments would be longer than 512 characters");
+      change.before = now;
+      put_launch_arguments(profile, next);
+      return Status::success();
+    }
+  }  // namespace
+  WriteResult
+  set_launch_arguments(const fs::path &dir, const std::string &id, const std::string &api, const std::vector<std::string> &our_api, const std::string &run, const std::vector<std::string> &our_runs, StoreHooks hooks, LaunchOwnership *owned, std::string *before) {
+    const ConfigView view = read_store(dir);
+    if (view.status.ok && view.document.contains("profiles") && view.document["profiles"].is_array()) {
+      for (const auto &profile : view.document["profiles"]) {
+        if (!profile.is_object() || profile.value("id", std::string()) != id) continue;
+        const std::string now = launch_arguments_of(profile);
+        // `owned` is filled here too: what a refused write (Sparxie is open) would own once it is made
+        if (with_launch_arguments(now, api, our_api, run, our_runs, owned) == now) {
+          WriteResult same;
+          same.state = "unchanged";
+          same.profile = id;
+          return same;
+        }
+      }
+    }
+    return edit_store(dir, hooks, [&](json &document, std::string &profile_id, const SparxieBuild &) {
+      profile_id = id;
+      for (auto &profile : document["profiles"]) {
+        if (profile.value("id", std::string()) != id) continue;
+        const std::string now = launch_arguments_of(profile);
+        const std::string next = with_launch_arguments(now, api, our_api, run, our_runs, owned);
+        if (launch_arguments_length(next) > kMaxLaunchArguments) return Status::fail(400, "arguments_too_long", "Sparxie's extra launch arguments would be longer than 512 characters");
+        if (before) *before = now;
+        put_launch_arguments(profile, next);
+        return Status::success();
+      }
+      return Status::fail(404, "not_found", "That Sparxie profile does not exist");
+    });
+  }
+  WriteResult
+  restore_launch_arguments(const fs::path &dir, const std::string &id, const std::string &arguments, StoreHooks hooks) {
+    return edit_store(dir, hooks, [&](json &document, std::string &profile_id, const SparxieBuild &) {
+      profile_id = id;
+      for (auto &profile : document["profiles"]) {
+        if (profile.value("id", std::string()) != id) continue;
+        put_launch_arguments(profile, arguments);
+        return Status::success();
+      }
+      return Status::fail(404, "not_found", "That Sparxie profile does not exist");
     });
   }
   WriteResult

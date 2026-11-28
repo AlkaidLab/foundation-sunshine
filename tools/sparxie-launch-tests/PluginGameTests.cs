@@ -20,25 +20,29 @@ internal static partial class Tests
         var config = Path.Combine(scratch, "plugin-config.json");
         File.WriteAllText(config, """
             { "schemaVersion": 1, "selectedProfileId": "endfield-cn-1", "profiles": [
-              { "id": "endfield-cn-1", "displayName": "终末地", "game": "ext.skyhua0224.endfield", "executablePath": "C:\\E\\Endfield.exe",
-                "settings": { "inputMode": "pc", "autoResolution": true, "width": 1920, "height": 1080, "refreshRate": 60, "fpsUnlock": true, "targetFps": 120, "uiScalePercent": 150 } },
+              { "id": "endfield-cn-1", "displayName": "终末地", "game": "ext.skyhua0224.endfield", "executablePath": "C:\\E\\Endfield.exe", "disableTouchUi": true,
+                "settings": { "autoResolution": true, "width": 1920, "height": 1080, "refreshRate": 60, "fpsUnlock": true, "targetFps": 120, "uiScalePercent": 150 } },
               { "id": "bare", "displayName": "无设置", "game": "ext.skyhua0224.endfield", "executablePath": "C:\\E\\Endfield.exe" },
               { "id": "star", "displayName": "星铁", "game": "starRail", "executablePath": "C:\\S\\StarRail.exe", "hoyo": { "fpsUnlockEnabled": true, "targetFps": 120 } } ] }
             """);
         var plugin = SparxieConfig.Load(config, "endfield-cn-1");
         Same(GameIds.EndfieldPlugin, plugin.Game, "the plugin game id is read");
         Check(plugin.Hoyo is null, "a plugin profile has no hoyo block");
+        Check(plugin.DisableTouchUi, "a plugin profile reads top-level disableTouchUi");
         Check(plugin.PluginSettings is not null && JsonNode.Parse(plugin.PluginSettings)!["uiScalePercent"]!.GetValue<int>() == 150, "the plugin's own settings are kept whole, the ones the host does not manage too");
         Check(SparxieConfig.Load(config, "bare").PluginSettings is null, "a plugin profile without settings has none");
+        Check(!SparxieConfig.Load(config, "bare").DisableTouchUi, "a plugin profile without disableTouchUi defaults to false");
         Check(SparxieConfig.Load(config, "star").PluginSettings is null, "a built-in game carries no plugin settings");
 
-        // the request: settings_json = 7 in the profile snapshot, no hoyo (5)
+        // the request: settings_json = 7 and disable_touch_ui = 8 in the profile snapshot, no hoyo (5)
         List<ProtoField> Snapshot(Profile p) => Proto.Parse(Proto.Parse(BrokerRpc.StartSessionPayload(p, "r")).First(x => x.Number == 3).Bytes);
         var wire = Snapshot(plugin);
         Same(GameIds.EndfieldPlugin, Proto.String(wire, 3), "the game id on the wire");
         Check(!wire.Any(x => x.Number == 5), "a plugin session has no hoyo settings");
         Same(plugin.PluginSettings, Proto.String(wire, 7), "settings_json is the profile's settings as they are");
+        Same(true, Proto.Bool(wire, 8), "disable_touch_ui is sent on field 8 for plugin profiles too");
         Check(!Snapshot(SparxieConfig.Load(config, "bare")).Any(x => x.Number == 7), "no settings, no field: the plugin runs on its defaults");
+        Check(!Snapshot(SparxieConfig.Load(config, "bare")).Any(x => x.Number == 8), "disableTouchUi false omits field 8");
         Check(!Snapshot(SparxieConfig.Load(config, "star")).Any(x => x.Number == 7), "a built-in game never sends settings_json");
         Check(!Snapshot(new Profile("x", "x", "starRail", @"C:\S\StarRail.exe", null, null, "{\"a\":1}")).Any(x => x.Number == 7), "settings on a built-in game id are not sent");
 
@@ -50,7 +54,6 @@ internal static partial class Tests
         Same(2388, auto["width"]!.GetValue<int>(), "stream width");
         Same(1668, auto["height"]!.GetValue<int>(), "stream height");
         Same(60, auto["refreshRate"]!.GetValue<int>(), "the stored refresh rate (the host's value of the streamed display) is kept");
-        Same("pc", auto["inputMode"]!.GetValue<string>(), "the input is the person's");
         Same(150, auto["uiScalePercent"]!.GetValue<int>(), "the settings the host does not manage are untouched");
         var noRate = Resolved(plugin with { PluginSettings = """{ "autoResolution": true, "refreshRate": 0 }""" }, Stream);
         Same(120, noRate["refreshRate"]!.GetValue<int>(), "no stored rate: the stream's");

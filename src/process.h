@@ -65,6 +65,7 @@ namespace proc {
     std::vector<std::string> detached;
 
     std::string name;
+    std::string default_id;  ///< the "default-id" of a shipped entry, "" otherwise (protocol clients use it to keep the English name)
     std::string cmd;
     std::string working_dir;
     std::string output;

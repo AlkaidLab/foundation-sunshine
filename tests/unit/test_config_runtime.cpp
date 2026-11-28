@@ -75,6 +75,40 @@ namespace {
   };
 }  // namespace
 
+TEST(ConfigRuntime, FullSettingsSaveDropsReadOnlyStatusAndKeepsWidgetToken) {
+  temporary_clients_config_t temporary_config;
+  ASSERT_TRUE(config::update_config({ { "widget_token", "local-token" } }));
+
+  ASSERT_TRUE(config::update_full_config({
+    { "sunshine_name", "updated" },
+    { "windows_build", "26300" },
+    { "widget_token_configured", "false" },
+    { "widget_token", "submitted-token" },
+  }));
+
+  const auto saved = config::parse_config(temporary_config.read());
+  EXPECT_EQ(saved.at("sunshine_name"), "updated");
+  EXPECT_EQ(saved.at("widget_token"), "local-token");
+  EXPECT_FALSE(saved.contains("windows_build"));
+  EXPECT_FALSE(saved.contains("widget_token_configured"));
+}
+
+TEST(ConfigRuntime, FullSettingsSaveRemovesReadOnlyStatusAlreadyOnDisk) {
+  temporary_clients_config_t temporary_config;
+  std::ofstream(config::sunshine.config_file, std::ios::app)
+    << "windows_build = 26300\nwidget_token_configured = false\n";
+  const auto before = config::parse_config(temporary_config.read());
+  ASSERT_EQ(before.at("windows_build"), "26300");
+  ASSERT_EQ(before.at("widget_token_configured"), "false");
+
+  ASSERT_TRUE(config::update_full_config({ { "sunshine_name", "retained" } }));
+
+  const auto saved = config::parse_config(temporary_config.read());
+  EXPECT_EQ(saved.at("sunshine_name"), "retained");
+  EXPECT_FALSE(saved.contains("windows_build"));
+  EXPECT_FALSE(saved.contains("widget_token_configured"));
+}
+
 TEST(ConfigRuntime, VpeSwitchPersistsAndCanBeDisabledWithoutChangingOtherAmdSettings) {
   temporary_clients_config_t temporary_config;
   const auto original_amd = config::video.amd;

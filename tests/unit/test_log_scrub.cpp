@@ -156,6 +156,55 @@ TEST(CrashLogPick, TheFileClosestToTheReportWins) {
 }
 
 // ---- the machine description keeps to the service's format rules -------------------------------------------------------------------------------
+TEST(CrashLogPack, AnExpiredDeadlineStopsTheAnonymisingAndThePackingAnswersNothing) {
+  std::string raw;
+  for (int i = 0; i < 20000; ++i) raw += "[2026-11-14 21:03:11.482]: Info: frame " + std::to_string(i) + " client 203.0.113." + std::to_string(i % 200) + ".7\n";
+  EXPECT_FALSE(crash::logfile::pack(raw, crash::logfile::max_gz_bytes, [] { return true; }));
+  // gone after some lines: the scrubber reports it and holds back what it has
+  int asked = 0;
+  const auto scrubbed = crash::logscrub::scrub(raw, 2'000'000, 600, [&] { return ++asked > 3; });
+  EXPECT_TRUE(scrubbed.cancelled);
+  EXPECT_LT(scrubbed.lines, 20000u);
+  EXPECT_TRUE(crash::logfile::pack(raw, crash::logfile::max_gz_bytes, [] { return false; }));  // a deadline that does not come changes nothing
+  EXPECT_FALSE(crash::logscrub::scrub(raw).cancelled);
+}
+
+TEST(CrashLogPack, AnExpiredDeadlineAlsoStopsTheRoundsOfDroppingLines) {
+  std::string raw;
+  unsigned x = 777;
+  for (int i = 0; i < 40000; ++i) {
+    x = x * 1664525u + 1013904223u;
+    raw += "line " + std::to_string(i) + " token " + std::to_string(x) + " " + std::to_string(x >> 7) + "\n";
+  }
+  int scrub_asks = 0;
+  crash::logscrub::scrub(raw, 2'000'000, 600, [&] { return ++scrub_asks < 0; });
+  int total_asks = 0;
+  const auto whole = crash::logfile::pack(raw, 100 * 1024, [&] { return ++total_asks < 0; });
+  ASSERT_TRUE(whole);
+  ASSERT_TRUE(whole->truncated);
+  ASSERT_GT(total_asks, scrub_asks);  // the rounds ask too
+  // the deadline comes at the last question, which a round of dropping lines asks: the anonymising was done by then
+  int asked = 0;
+  EXPECT_FALSE(crash::logfile::pack(raw, 100 * 1024, [&] { return ++asked >= total_asks; }));
+}
+
+TEST(CrashLogPick, ABigLogIsReadFromItsEndWhenTheReadIsBounded) {
+  namespace fs = std::filesystem;
+  const auto dir = fs::temp_directory_path() / ("crash-log-bounded-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  fs::create_directories(dir);
+  {
+    std::ofstream out(dir / "sunshine.log", std::ios::binary);
+    for (int i = 0; i < 2000; ++i) out << "line " << i << " of the log\n";
+  }
+  const auto text = crash::logfile::collect_current(dir / "sunshine.log", 1000);
+  EXPECT_LE(text.size(), 1000u);
+  EXPECT_NE(text.find("line 1999 of the log"), std::string::npos);  // the end is kept
+  EXPECT_EQ(text.find("line 0 of"), std::string::npos);
+  EXPECT_EQ(text.rfind("line ", 0), 0u);  // from a line start
+  EXPECT_EQ(crash::logfile::collect_current(dir / "sunshine.log").find("line 0 of"), 0u);  // not bounded: all of it
+  fs::remove_all(dir);
+}
+
 #include <src/crash/crash_env.h>
 
 TEST(CrashEnv, ModelsAndVersionsKeepToTheFormatRulesOfTheService) {

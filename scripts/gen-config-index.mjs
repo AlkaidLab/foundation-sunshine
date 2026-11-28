@@ -3,7 +3,7 @@
 //
 // A setting is a row of a tab that carries its configuration key: a Cfg* row (`k="..."`), or any element with
 // `data-cfg="..."` and a `:title`/`:label` made of one locale key. Its place is the tab (file) and the section
-// (`<CfgSub id>` page, or the tab page itself). Components of configs/tabs that a template uses are read in place.
+// (`<CfgSub id>` page, or the tab page itself). Components of configs that a template uses are read in place.
 //
 //   node scripts/gen-config-index.mjs            writes config/settingsData/searchIndex.js and labels.js of the Web UI
 //   node scripts/gen-config-index.mjs --check    exits 1 when a file is not up to date
@@ -15,6 +15,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const WEB = resolve(dirname(fileURLToPath(import.meta.url)), '../src_assets/common/assets/web')
+const CONFIGS_DIR = join(WEB, 'configs')
 const TABS_DIR = join(WEB, 'configs/tabs')
 // The shared settings model (not its data) lives in the foundation-ui package (the sibling checkout `../ds5-ui-m3e`, or FOUNDATION_UI_DIR / FOUNDATION_UI)
 const PACKAGE = process.env.FOUNDATION_UI_DIR || process.env.FOUNDATION_UI || resolve(dirname(fileURLToPath(import.meta.url)), '../../ds5-ui-m3e')
@@ -145,7 +146,7 @@ export function buildConfigIndex(tabsDir = TABS_DIR) {
       const target = NOT_READ_IN_PLACE.has(tag.name) ? '' : imports[tag.name]
       if (target && /^\.\.?\//.test(target) && !stack.includes(target)) {
         const path = resolve(dirname(file), target)
-        if (path.startsWith(tabsDir)) scan(path, ctx, [...stack, target])
+        if (path.startsWith(CONFIGS_DIR)) scan(path, ctx, [...stack, target])
       }
     }
   }
@@ -173,6 +174,11 @@ export function buildConfigIndex(tabsDir = TABS_DIR) {
 const SEARCH_WORDS = {
   origin_web_ui_allowed: '访问范围 局域网 公网 外网 本机 手机 平板 访问 远程 权限 lan wan remote phone mobile access scope web ui',
   bind_address: '绑定地址 绑定 监听 局域网 手机 访问 IP 地址 网卡 bind listen lan remote phone ip address',
+  webhook_enabled: '回调 通知 webhook callback 事件 推送 开关 启用',
+  webhook_url: '回调 地址 webhook url 接口 推送 地址栏',
+  webhook_events: '回调 事件 webhook 触发 通知 推送',
+  webhook_skip_ssl_verify: '证书 https ssl 校验 验证 回调 跳过',
+  webhook_timeout: '回调 超时 webhook timeout 秒',
 }
 
 export function renderIndexFile(index) {

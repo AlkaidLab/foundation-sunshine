@@ -356,7 +356,7 @@ namespace crash::logscrub {
   }
 
   result_t
-  scrub(std::string_view raw, std::size_t max_chars, std::size_t max_line) {
+  scrub(std::string_view raw, std::size_t max_chars, std::size_t max_line, const std::function<bool()> &expired) {
     result_t result;
     std::string text = sanitize_utf8(raw);
     // CRLF and lone CR become LF
@@ -422,7 +422,11 @@ namespace crash::logscrub {
     out.reserve(text.size());
     bool in_pem = in_pem_at_start;
     std::size_t lines = 0;
-    for (std::size_t pos = 0; pos <= text.size();) {
+    for (std::size_t pos = 0, seen = 0; pos <= text.size(); ++seen) {
+      if (expired && seen % 64 == 0 && expired()) {
+        result.cancelled = true;
+        break;
+      }
       auto end = text.find('\n', pos);
       const bool last = end == std::string::npos;
       if (last) end = text.size();

@@ -75,6 +75,9 @@ extern "C" {
 #include "rtsp.h"
 #include "src/log_text.h"
 #include "stream.h"
+#ifdef _WIN32
+  #include "usb_stream_tunnel.h"
+#endif
 #include "streaming/broadcast_send.h"
 #include "streaming/display_recovery.h"
 #include "streaming/dynamic_param_protocol.h"
@@ -666,6 +669,10 @@ namespace stream {
 
     struct {
       std::string ping_payload;
+#ifdef _WIN32
+      std::shared_ptr<usb_stream_tunnel::video_channel> direct_usb;
+      std::atomic_bool direct_usb_waiting_idr { false };
+#endif
 
       int lowseq;
       udp::endpoint peer;
@@ -1408,6 +1415,21 @@ namespace stream {
     }
 
     return result;
+  }
+
+  std::size_t
+  max_encodable_frame_bytes(int packetsize) noexcept {
+    static_assert(sizeof(video_packet_raw_t) == 32, "Video packet header must be 32 bytes");
+    // Mirrors videoBroadcastThread: one RS block is packetsize + MAX_RTP_HEADER_SIZE bytes and
+    // holds a video_packet_raw_t followed by packetsize - sizeof(NV_VIDEO_PACKET) encoded bytes;
+    // the short frame header leads the first block. Each data packet therefore fills exactly one
+    // block whether or not the per-packet headers are counted, so the frame needs
+    // ceil((frame + header) / payload_blocksize) data packets and no more than
+    // video_fec::max_data_shards_per_frame of them.
+    const auto payload_blocksize = packetsize - static_cast<int>(sizeof(NV_VIDEO_PACKET));
+    if (payload_blocksize <= 0) return 0;
+    return video_fec::max_data_shards_per_frame * static_cast<std::size_t>(payload_blocksize) -
+           sizeof(video_short_frame_header_t);
   }
 
   std::vector<uint8_t>
@@ -3722,6 +3744,18 @@ namespace stream {
         BOOST_LOG(debug) << "Dropping a video packet of a session that has ended"sv;
         continue;
       }
+#ifdef _WIN32
+      if (session->video.direct_usb && !session->video.direct_usb->active()) {
+        session::stop(*session, session::stop_reason_e::video_ended);
+        continue;
+      }
+      if (session->video.direct_usb && session->video.direct_usb_waiting_idr.load(std::memory_order_acquire) && !packet->is_idr()) {
+        continue;
+      }
+      if (session->video.direct_usb && packet->is_idr()) {
+        session->video.direct_usb_waiting_idr.store(false, std::memory_order_release);
+      }
+#endif
       session->last_video_activity_ms.store(steady_now_ms(), std::memory_order_relaxed);
       {
         // the queue is shared by all video sessions: a clear is counted for the session whose packet is handled next (exact with one stream, which is the usual case)
@@ -3957,11 +3991,13 @@ namespace stream {
         const auto timestamp = video_rtp_timestamp(presentation_time, video_epoch);
 
         std::size_t frame_sent_packets = 0;  // packets of this frame that reached the socket: a frame that could not be sent is not a sent frame
+        bool direct_usb_frame_failed = false;
         auto blockIndex = 0;
         std::for_each(fec_blocks_begin, fec_blocks_end, [&](std::string_view &current_payload) {
+          if (direct_usb_frame_failed) return;
           auto packets = (current_payload.size() + (blocksize - 1)) / blocksize;
 
-          for (int x = 0; x < packets; ++x) {
+          for (int x = 0; x < packets && !direct_usb_frame_failed; ++x) {
             auto *inspect = (video_packet_raw_t *) &current_payload[x * blocksize];
 
             inspect->packet.frameIndex = packet->frame_index();
@@ -4002,7 +4038,7 @@ namespace stream {
           size_t next_shard_to_send = 0;
 
           // set FEC info now that we know for sure what our percentage will be for this frame
-          for (auto x = 0; x < shards.size(); ++x) {
+          for (auto x = 0; x < shards.size() && !direct_usb_frame_failed; ++x) {
             auto *inspect = (video_packet_raw_t *) shards.data(x);
 
             inspect->packet.fecInfo =
@@ -4056,7 +4092,40 @@ namespace stream {
               batch_info.block_count = current_batch_size;
 
               frame_send_batch_latency_logger.first_point_now();
-              const auto [sent_packets, dropped_packets] = streaming::submit_video_batch(batch_info, [&] { return session->lifecycle.state() == session::state_e::RUNNING; }, platf::send_batch, platf::send);
+              std::size_t sent_packets = 0;
+              std::size_t dropped_packets = 0;
+#ifdef _WIN32
+              if (session->video.direct_usb) {
+                std::vector<char> batch;
+                batch.reserve(current_batch_size * (shards.blocksize + shards.prefixsize + 2));
+                bool batch_valid = true;
+                for (size_t y = next_shard_to_send; y <= static_cast<size_t>(x); ++y) {
+                  const auto prefix = shards.prefixsize ? std::string_view(shards.prefix(y), shards.prefixsize) : std::string_view {};
+                  if (!usb_stream_tunnel::append_video_datagram(batch, prefix, { shards.data(y), shards.blocksize })) {
+                    batch_valid = false;
+                    break;
+                  }
+                }
+                if (batch_valid && session->video.direct_usb->enqueue(std::move(batch))) {
+                  sent_packets = current_batch_size;
+                }
+                else {
+                  if (!session->video.direct_usb_waiting_idr.exchange(true, std::memory_order_acq_rel)) {
+                    session->video.idr_events->raise(true);
+                  }
+                  direct_usb_frame_failed = true;
+                  if (!session->video.direct_usb->active()) {
+                    session::stop(*session, session::stop_reason_e::video_ended);
+                  }
+                }
+              }
+              else
+#endif
+              {
+                const auto result = streaming::submit_video_batch(batch_info, [&] { return session->lifecycle.state() == session::state_e::RUNNING; }, platf::send_batch, platf::send);
+                sent_packets = result.sent;
+                dropped_packets = result.dropped_for_backpressure;
+              }
               if (dropped_packets) telemetry::hooks::count(session->launch_session_id, telemetry::hooks::counter_e::send_would_block_packets, dropped_packets);
               frame_sent_packets += sent_packets;
               if (sent_packets != 0) {
@@ -4541,16 +4610,27 @@ namespace stream {
     while_starting_do_nothing(session->lifecycle);
 
     auto ref = broadcast_shared.ref();
-    auto error = recv_ping(session, ref, socket_e::video, session->video.ping_payload, session->video.peer, config::stream.ping_timeout);
-    if (error < 0) {
+#ifdef _WIN32
+    if (!session->video.direct_usb) {
+#endif
+      auto error = recv_ping(session, ref, socket_e::video, session->video.ping_payload, session->video.peer, config::stream.ping_timeout);
+      if (error < 0) return;
+#ifdef _WIN32
+    }
+    else if (!session->video.direct_usb->wait_for_reader(config::stream.ping_timeout)) {
+      BOOST_LOG(warning) << "Direct USB video reader did not start";
       return;
     }
+#endif
 
     auto refresh_cleanup = util::fail_guard([&]() {
       if (auto refresh = session->video.endpoint_refresh.load(std::memory_order_acquire)) {
         log_endpoint_refresh_summary(*session, "video", refresh->stats());
       }
       session->video.endpoint_refresh.store(endpoint_refresh_ptr {}, std::memory_order_release);
+#ifdef _WIN32
+    if (!session->video.direct_usb)
+#endif
       ref->message_queue_queue->raise(socket_e::video, av_session_id_t { session->video.ping_payload }, nullptr, nullptr);
     });
 
@@ -4743,6 +4823,9 @@ namespace stream {
                       << " [client_uuid="sv << session.client_cert_uuid
                       << ", reason="sv << stop_reason_name(reason) << ']';
 
+#ifdef _WIN32
+      if (session.video.direct_usb) session.video.direct_usb->close();
+#endif
       session.shutdown_event->raise(true);
     }
 
@@ -5261,6 +5344,9 @@ namespace stream {
       session->video.dynamic_param_change_events = mail->event<video::dynamic_param_t>(mail::dynamic_param_change);
       session->video.lowseq = 0;
       session->video.ping_payload = launch_session.av_ping_payload;
+#ifdef _WIN32
+      session->video.direct_usb = launch_session.direct_usb_video;
+#endif
       if (config.encryptionFlagsEnabled & SS_ENC_VIDEO) {
         BOOST_LOG(info) << "Video encryption enabled"sv;
         session->video.cipher = crypto::cipher::gcm_t {

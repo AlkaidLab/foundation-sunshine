@@ -84,7 +84,9 @@ internal static class Launcher
             profile = profile with { Screen = requested };
             log.Info($"screen arguments: {requested.Arguments()}");
         }
-        log.Info("settings: " + (profile.Hoyo?.Describe() ?? (profile.PluginSettings is { } plugin ? $"plugin {profile.Game}: {plugin}" : "none (the profile carries no hoyo block)")));
+        if (profile.Launch is { } stored) log.Info("launch settings of the profile: " + stored.Describe());
+        var disableTag = profile.DisableTouchUi ? " disableTouchUi=True" : "";
+        log.Info("settings: " + (profile.Hoyo is { } hDesc ? hDesc.Describe() + disableTag : profile.PluginSettings is { } plugin ? $"plugin {profile.Game}: {plugin}{disableTag}" : profile.DisableTouchUi ? "disableTouchUi=True" : "none (the profile carries no hoyo block)"));
         if (!File.Exists(profile.ExecutablePath)) log.Warn($"the game executable does not exist: {profile.ExecutablePath}");
 
         var noticeDirs = LaunchNotice.CandidateDirectories(exeDirectory, env).ToList();
@@ -98,6 +100,14 @@ internal static class Launcher
 
         if (Plan.AtStart(GameRunning(profile)) == Start.AdoptRunningGame)
             return await AdoptAsync(profile, log, noticeDirs).ConfigureAwait(false);
+
+        if (profile.UsesNothingOfSparxie)
+        {
+            log.Info("the profile turns the touch interface and the frame-rate unlock off: nothing of Sparxie to run, the game is started directly");
+            LaunchNotice.Clear(noticeDirs);  // what was asked for: nothing to tell the person
+            var direct = await DirectLaunch.RunAsync(profile, log, elevated, Environment.CurrentDirectory).ConfigureAwait(false);
+            return Finish(log, direct, "direct start: the game ended");
+        }
 
         var brokerPath = BrokerProcess.Locate(options.SparxiePath);
         if (brokerPath is null)
@@ -257,15 +267,21 @@ internal static class Launcher
     /// </summary>
     internal static string? CheckSupport(ref Profile profile, BrokerCapabilities capabilities, Action<string> warn)
     {
-        // A session without the touch interface needs a Broker that knows the field; an older one would start the touch interface anyway.
-        if (profile.Hoyo is { TouchUi: false } && !capabilities.Has(PingInfo.TouchUiSwitch))
-            return "this profile asks for a session without the touch interface, but the installed Sparxie does not support that (no touch-ui-switch capability)";
-
-        // the screen arguments need a Broker that carries them; an older one would drop them silently, so the log says so and the registry stays the only lever
-        if (profile.Screen is { IsEmpty: false } && !capabilities.Has(PingInfo.ScreenArgsCapability))
+        // Field 6 of the snapshot is ScreenArgs in a build with screen-args and LaunchSettings in official Sparxie: only what the build reads is left on the profile.
+        // Without either, the screen arguments would be dropped silently, so the log says so and the registry stays the only lever.
+        if (capabilities.Has(PingInfo.ScreenArgsCapability))
         {
-            warn("the installed Sparxie has no screen-args capability: the game starts without screen arguments (the host's registry write still applies)");
-            profile = profile with { Screen = null };
+            profile = profile with { Launch = null };
+        }
+        else if (capabilities.Has(PingInfo.LaunchSettingsCapability))
+        {
+            profile = profile with { Launch = LaunchSettings.Merge(profile.Launch, profile.Screen), Screen = null };
+        }
+        else
+        {
+            if (profile.Screen is { IsEmpty: false })
+                warn("the installed Sparxie has no screen-args or launch-settings capability: the game starts without screen arguments (the host's registry write still applies)");
+            profile = profile with { Screen = null, Launch = null };
         }
 
         // an Endfield session of the first generation needs a Broker that knows the title; an older one would refuse it or start something else.
@@ -327,6 +343,7 @@ internal static class Launcher
         log.Info($"capabilities: {capabilities}");
         var refusal = CheckSupport(ref profile, capabilities, log.Warn);
         if (refusal is not null) return Not(ExitCodes.Unsupported, refusal);
+        if (profile.Launch is { } launching) log.Info("launch settings sent: " + launching.Describe());
 
         // the event stream first, then the session
         var events = rpc.OpenEvents(stop.Token);
@@ -355,7 +372,7 @@ internal static class Launcher
         });
 
         StartResponse answer;
-        log.Info($"StartSession: profile={profile.Id} game={profile.Game} exe={profile.ExecutablePath} {(profile.Hoyo is { } h ? h.Describe() : profile.PluginSettings is { } plugin ? "settings_json=" + plugin : "")}");
+        log.Info($"StartSession: profile={profile.Id} game={profile.Game} exe={profile.ExecutablePath} {(profile.Hoyo is { } h ? h.Describe() + (profile.DisableTouchUi ? " disableTouchUi=True" : "") : profile.PluginSettings is { } plugin ? "settings_json=" + plugin + (profile.DisableTouchUi ? " disableTouchUi=True" : "") : profile.DisableTouchUi ? "disableTouchUi=True" : "")}");
         try { answer = await rpc.StartSessionAsync(profile, StartSessionLimit).ConfigureAwait(false); }
         catch (Exception ex) when (ex is HttpRequestException or IOException or OperationCanceledException or GrpcStatusException or InvalidDataException)
         { return Not(ExitCodes.Rpc, $"StartSession failed: {Short(ex)}"); }

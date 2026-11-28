@@ -252,6 +252,13 @@ namespace net {
     return normalize_address(address).to_string();
   }
 
+  bool
+  peer_address_matches(const boost::asio::ip::address &peer, std::string_view stored_address) {
+    boost::system::error_code ec;
+    const auto address = ip::make_address(stored_address, ec);
+    return !ec && normalize_address(peer) == normalize_address(address);
+  }
+
   std::string
   addr_to_url_escaped_string(boost::asio::ip::address address) {
     address = normalize_address(address);

@@ -5,10 +5,12 @@ import test from 'node:test'
 import './helpers/foundationUi.mjs'
 const { SEARCH_INDEX, LABELS } = await import('../config/settingsData/index.js')
 const { SETTING_META } = await import('foundation-ui/settings/index.js')
+const { OWN_SAVE } = await import('../composables/settingsBinding.js')
 
 test('every setting of the search index has a tier and a control, and nothing else is in the registry', () => {
   const ids = SEARCH_INDEX.map((e) => e.id)
-  const missing = ids.filter((id) => !SETTING_META[id])
+  // a card that saves on its own (the webhook card) is not a row of the model: it renders itself, so it has no tier, and it never pins
+  const missing = ids.filter((id) => !SETTING_META[id] && !OWN_SAVE.has(id))
   assert.deepEqual(missing, [], `settings without a registry entry: ${missing.join(', ')}`)
   const stray = Object.keys(SETTING_META).filter((id) => !ids.includes(id))
   assert.deepEqual(stray, [], `registry entries without a setting: ${stray.join(', ')}`)

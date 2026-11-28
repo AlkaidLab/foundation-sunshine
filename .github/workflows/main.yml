@@ -1365,6 +1365,10 @@ jobs:
           for tool in dxgi-info audio-info sunshinesvc; do
             python scripts/ci/check-windows-release.py "build/tools/$tool.exe" --max-code-bytes 1600000
           done
+          # The PyroWave probe statically links the Vulkan framework, so it is larger than the display helpers and
+          # has no size limit. Its imports are still checked: they are resolved before main runs, so a missing DLL
+          # would bring up a loader dialog before the tool can answer with its exit code.
+          python scripts/ci/check-windows-release.py build/tools/alkaidlab_pyrowave_probe.exe
 
       # The installer shell is also the elevated worker and the updater. LLD gives an executable a 1 MiB stack by default, and the
       # worker's inlined 1 MiB buffer overflowed it before the first event (issue #1326): the reserve is a release property.
@@ -1875,7 +1879,9 @@ jobs:
   publish:
     name: Publish release
     needs: [setup_release, build_win]
-    if: needs.setup_release.outputs.publish_release == 'true' && github.event_name == 'workflow_dispatch'
+    # A status function is required: without one this job is skipped whenever any job upstream of build_win was
+    # skipped (for example the compile shards on a warm cache), even though build_win itself succeeded.
+    if: ${{ !cancelled() && needs.build_win.result == 'success' && needs.setup_release.result == 'success' && needs.setup_release.outputs.publish_release == 'true' && github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

@@ -105,7 +105,7 @@ internal static class ExitCodes
     public const int Lost = 8;            // event stream ended without a terminal event
     public const int TimedOut = 9;        // the game never reached Running
     public const int Internal = 10;       // anything unexpected
-    public const int Unsupported = 11;    // the profile needs a Sparxie feature the installed build lacks (a session without the touch interface)
+    public const int Unsupported = 11;    // the profile needs a Sparxie feature the installed build lacks (Endfield)
 
     public static int ForState(string state) => state switch
     {

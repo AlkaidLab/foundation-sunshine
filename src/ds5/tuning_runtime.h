@@ -527,7 +527,9 @@ namespace ds5::tuning::runtime {
     const auto route = value.audio_route.load(std::memory_order_acquire);
     if (route != 0u) {
       fields.valid_mask |= ext::out_audio_routing;
-      fields.audio_routing = audio_output_path(route, headset_detected);
+      // The raw audio_control byte carries the output selector in bits 5:4.
+      fields.audio_routing = static_cast<std::uint8_t>(
+        (fields.audio_routing & ~0x30u) | (audio_output_path(route, headset_detected) << 4));
     }
   }
 

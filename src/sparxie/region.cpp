@@ -511,6 +511,10 @@ namespace sparxie {
         // Endfield has no game-settings items (this host writes none of its settings) but it has Sparxie's own: input, frame rate, priority
         if (game == "endfield") sparxie_fields = sparxie_fields_of(game);
       }
+      // Endfield takes custom launch arguments through its Sparxie session; its plugin is what hands them to the game
+      if (game == "endfield") {
+        settings.push_back(custom_arguments_field());
+      }
       // the launch items (graphics API, arguments, priority) of the titles that have settings
       if (game != "endfield")
         for (const auto &item : launch_settings_of(game)) settings.push_back(item);

@@ -632,6 +632,13 @@ namespace platf {
     virtual int
     convert(platf::img_t &img) = 0;
 
+    // Poll completed analysis on the encode thread without waiting for the GPU.
+    // Returns whether a valid sample is available, including the cached sample.
+    virtual bool
+    collect_hdr_luminance_stats() {
+      return hdr_luminance_stats.valid;
+    }
+
     // Runtime image-enhancement changes are delivered to the owning encode
     // thread. The default implementation keeps non-D3D devices unchanged.
     virtual std::shared_ptr<safe::signal_t>
@@ -662,7 +669,7 @@ namespace platf {
 
     /**
      * @brief Per-frame HDR luminance statistics from GPU analysis.
-     * Updated during convert() with 1-frame delay (async GPU readback).
+     * Updated by convert() or collect_hdr_luminance_stats() via async GPU readback.
      * Used by video.cpp to generate per-frame HDR dynamic metadata.
      */
     hdr_frame_luminance_stats_t hdr_luminance_stats;

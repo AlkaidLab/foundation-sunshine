@@ -51,6 +51,7 @@ namespace {
       if (game != "genshin" && game != "starRail" && game != "zenlessZoneZero" && game != "endfield") bad("game " + game);
       const std::string exe = profile.value("executablePath", std::string());
       if (!exe.empty() && !exe_allowed(game, exe)) bad("exe not on the whitelist: " + exe);
+      if (profile.contains("disableTouchUi") && !profile["disableTouchUi"].is_null() && !profile["disableTouchUi"].is_boolean()) bad("disableTouchUi is not a boolean");
       if (game == "zenlessZoneZero") {
         if (profile.contains("hoyo") && !profile["hoyo"].is_null()) bad("zzz has hoyo");
         continue;
@@ -61,7 +62,7 @@ namespace {
         bad("hoyo is not an object");
         continue;
       }
-      for (const char *field : { "touchUiEnabled", "fpsUnlockEnabled", "backgroundFpsLimitEnabled", "genshinFollowInGamePreset", "genshinTouchUiScaleOverrideEnabled", "endfieldAutoResolution" })
+      for (const char *field : { "fpsUnlockEnabled", "backgroundFpsLimitEnabled", "genshinFollowInGamePreset", "genshinTouchUiScaleOverrideEnabled", "endfieldAutoResolution" })
         if (hoyo.contains(field) && !hoyo[field].is_boolean()) bad(std::string(field) + " is not a boolean");
       for (const char *field : { "targetFps", "backgroundFps", "genshinPreset30Fps", "genshinPreset60Fps", "genshinTouchUiScalePercent", "endfieldWidth", "endfieldHeight", "endfieldRefreshRate" })
         if (hoyo.contains(field) && !hoyo[field].is_number_integer()) bad(std::string(field) + " is not an integer");

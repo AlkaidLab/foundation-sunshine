@@ -60,11 +60,14 @@ internal static class Proto
         return output.ToArray();
     }
 
-    public static byte[] Append(byte[] message, int field, byte[] nested)
+    public static byte[] Append(byte[] message, int field, byte[] nested) =>
+        Append(message, field, new Value(nested, true));
+
+    public static byte[] Append(byte[] message, int field, Value value)
     {
         using var output = new MemoryStream();
         output.Write(message);
-        Write(output, field, new Value(nested, true));
+        Write(output, field, value);
         return output.ToArray();
     }
 

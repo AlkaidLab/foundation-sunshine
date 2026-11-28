@@ -5,6 +5,7 @@
 #pragma once
 #include <atomic>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -44,6 +45,16 @@ namespace stream {
   video_rtp_timestamp(
     std::chrono::steady_clock::time_point presentation_time,
     std::chrono::steady_clock::time_point epoch);
+
+  /**
+   * @brief Largest encoded frame, in bytes, that the RS wire layout can plan at this packet size.
+   *
+   * videoBroadcastThread drops a frame whose data packets exceed
+   * video_fec::max_data_shards_per_frame, and that count is
+   * ceil((frame + short frame header) / (packetsize - sizeof(NV_VIDEO_PACKET))).
+   */
+  std::size_t
+  max_encodable_frame_bytes(int packetsize) noexcept;
 
   struct session_t;
   struct config_t {

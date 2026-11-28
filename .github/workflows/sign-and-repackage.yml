@@ -401,6 +401,7 @@ jobs:
           cp -fv "$SIGNED_SRC/tools/setreg.exe"             "$STAGING_DIR/tools/setreg.exe"
           cp -fv "$SIGNED_SRC/tools/audio-info.exe"         "$STAGING_DIR/tools/audio-info.exe"
           cp -fv "$SIGNED_SRC/tools/dxgi-info.exe"          "$STAGING_DIR/tools/dxgi-info.exe"
+          cp -fv "$SIGNED_SRC/tools/alkaidlab_pyrowave_probe.exe" "$STAGING_DIR/tools/alkaidlab_pyrowave_probe.exe"
           cp -fv "$SIGNED_SRC/tools/mat-capture/sunshine-plugin-mat-capture.exe" \
             "$STAGING_DIR/tools/mat-capture/sunshine-plugin-mat-capture.exe"
           cp -fv "$SIGNED_SRC/assets/gui/sunshine-gui.exe"  "$STAGING_DIR/assets/gui/sunshine-gui.exe"

@@ -32,10 +32,10 @@ before(async () => {
   const { renderToString } = require('vue/server-renderer')
   const { createI18n } = require('vue-i18n')
   const Settings = (await server.ssrLoadModule('/components/sparxie/SparxieSettings.vue')).default
-  render = async ({ app, game, read, locale = 'zh', onProblem, fpsBySparxie = false }) => {
+  render = async ({ app, game, read, locale = 'zh', onProblem, fpsBySparxie = false, row, throughSparxie = false }) => {
     const block = reactive({ game, restore: 'restore', settings: { ...app.settings } })
     const i18n = createI18n({ legacy: false, locale, messages: { zh: {}, en: {} } })
-    const vm = createSSRApp(Settings, { block, row: catalog[game], installId: app.install, region: app.region, fpsBySparxie, initial: read, ...(onProblem ? { onProblem } : {}) })
+    const vm = createSSRApp(Settings, { block, throughSparxie, row: row || catalog[game], installId: app.install, region: app.region, fpsBySparxie, initial: read, ...(onProblem ? { onProblem } : {}) })
     vm.use(i18n)
     return renderToString(vm)
   }
@@ -250,4 +250,21 @@ test('the sample Zenless application after the conversion holds nothing: its ite
   assert.equal(checked(changedHtml, 'switch', '垂直同步'), 'false', 'the application\'s own value, not the game\'s')
   assert.ok(changedHtml.includes(COPY.zh.gsChanged) && changedHtml.includes(COPY.zh.gsBack), 'marked changed, with the way back')
   assert.ok(changedHtml.includes(COPY.zh.gsAllFollow), '全部跟随游戏')
+})
+
+test('Endfield through Sparxie: the page says the in-game settings stay and draws the box for custom launch arguments; a direct start has no box', async () => {
+  // the host's catalog row of Endfield (catalog_json): one launch item, which the host keeps itself
+  const host = { ...fx.games.catalog.find((g) => g.game === 'endfield'), settingsManaged: false, settings: [{ key: 'customArgs', kind: 'text', section: 'launch', label: '自定义启动参数', labelEn: 'Custom launch arguments', def: '' }] }
+  const row = normalizeCatalog([host]).endfield
+  const app = { settings: {}, install: 'endfield-cn', region: 'cn' }
+  const through = await render({ app, game: 'endfield', row, throughSparxie: true })
+  const lines = text(through)
+  // the box carries its name as the label of the field
+  assert.match(through, /<md-outlined-text-field[^>]*label="自定义启动参数"[^>]*type="textarea"/)
+  assert.ok(lines.some((l) => l.includes(COPY.zh.gsNotManaged('明日方舟：终末地'))), lines.join(' | '))
+  assert.ok(!lines.includes(COPY.zh.gsAllFollow), 'nothing of the game is written: nothing to follow or restore')
+  const directHtml = await render({ app, game: 'endfield', row, throughSparxie: false })
+  assert.ok(!directHtml.includes('自定义启动参数'), directHtml)
+  const direct = text(directHtml)
+  assert.ok(direct.some((l) => l.includes(COPY.zh.gsNotManaged('明日方舟：终末地'))))
 })

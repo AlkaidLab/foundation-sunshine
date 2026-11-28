@@ -18,7 +18,8 @@ internal static class PureTouch
         "1A0897A111CF35AB07EB34A2B9A2BE8D072221FA2F10A38923308EF89A0FB0A4",
     };
 
-    public static bool IsTouchOnly(Profile profile) => profile.Game is "genshin" or "starRail" && profile.Hoyo is { FpsUnlock: false };
+    /// <summary>The touch interface without the unlock. A profile that turned the touch interface off is not one: the unlock is never turned on for it.</summary>
+    public static bool IsTouchOnly(Profile profile) => profile.Game is "genshin" or "starRail" && profile.Hoyo is { FpsUnlock: false } && !profile.DisableTouchUi;
 
     public static Profile WithUnlock(Profile profile) =>
         IsTouchOnly(profile) ? profile with { Hoyo = profile.Hoyo! with { FpsUnlock = true, TargetFps = GameOwnCap } } : profile;

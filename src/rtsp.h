@@ -27,6 +27,12 @@ namespace spatial_transport {
   struct LiveSession;
 }
 
+#ifdef _WIN32
+namespace usb_stream_tunnel {
+  class video_channel;
+}
+#endif
+
 namespace rtsp_stream {
   constexpr auto RTSP_SETUP_PORT = 21;
 
@@ -150,6 +156,9 @@ namespace rtsp_stream {
     bool mat_live_described { false };
     bool mat_live_selected { false };
     std::shared_ptr<spatial_transport::LiveSession> mat_live;
+#ifdef _WIN32
+    std::shared_ptr<usb_stream_tunnel::video_channel> direct_usb_video;
+#endif
   };
 
   launch_ticket_register_e

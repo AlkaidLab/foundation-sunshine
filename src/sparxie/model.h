@@ -25,8 +25,6 @@ namespace sparxie {
   // [sparxie-broker-contract-031efe2] The Desktop shell does not consume
   // command-line profile arguments. The host therefore invokes the small
   // protocol launcher shipped with the host and passes the component path.
-  // The optional Sparxie feature the host looks for in the installed build (see docs/sparxie-api.md, "touchUiSwitch").
-  inline constexpr const char *kCapTouchUiSwitch = "touch-ui-switch";
   inline const char *kDefaultLaunchTemplate =
     "\"{sparxie-launch}\" --sparxie \"{sparxie}\" --profile {profile}";
 

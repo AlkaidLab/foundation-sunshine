@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { SEARCH_INDEX } from '../config/settingsData/index.js'
 import { CLIENT_KEYS, HOT_KEYS, needsRestart, setRestartPlatform } from '../composables/restartKeys.js'
-import { keysOf } from '../composables/settingsBinding.js'
+import { keysOf, OWN_SAVE } from '../composables/settingsBinding.js'
 
 // the list is checked against the host source it was derived from, so it cannot drift from it
 const host = readFileSync(new URL('../../../../../src/config.cpp', import.meta.url), 'utf8')
@@ -12,7 +12,8 @@ const read = new Set([...body.matchAll(/"([a-z0-9_]+)"/g)].map((m) => m[1]))
 for (const m of host.matchAll(/_f\(\s*vars,\s*"([a-z0-9_]+)"/g)) read.add(m[1])
 
 // the keys the controls of the page write (a control such as the codec strategy writes two modes, not a key of its own name)
-const keys = [...new Set(SEARCH_INDEX.flatMap((e) => keysOf(e.id)))]
+// a control that saves through an action of its own (the webhook card) is never a pending change, so the restart question never reaches it
+const keys = [...new Set(SEARCH_INDEX.flatMap((e) => keysOf(e.id)))].filter((id) => !OWN_SAVE.has(id))
 
 test('a key of the page that apply_config does not read is hot: the host has nothing to restart for it', () => {
   const unread = keys.filter((key) => !read.has(key))

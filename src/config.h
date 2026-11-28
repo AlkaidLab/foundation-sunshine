@@ -197,6 +197,7 @@ namespace config {
     std::uint16_t file_mapping_port;
     bool usb_forwarding_enabled;
     std::uint16_t usb_forwarding_port;  // 0: main port + 7; otherwise explicit override
+    bool usb_wired_streaming_enabled;  // Windows VoidLink usbmux streaming
 
     std::string external_ip;  ///< legacy single public address; external_endpoints wins when both are set
     std::string external_endpoints;  ///< public endpoints, `host[:port]` separated by commas

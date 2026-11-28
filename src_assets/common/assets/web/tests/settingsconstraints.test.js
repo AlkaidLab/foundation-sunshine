@@ -5,6 +5,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SEARCH_INDEX } from '../config/settingsData/index.js'
 import { CONSTRAINTS, SETTING_META, validateSetting } from 'foundation-ui/settings/index.js'
+import { OWN_SAVE } from '../composables/settingsBinding.js'
 import { tokenize } from '../../../../../scripts/gen-config-index.mjs'
 
 // What the host takes for a setting is in src/config.cpp. This walks the host's ranges and the settings schema (the search index and SETTING_META) and checks that a page can not offer a value
@@ -70,7 +71,8 @@ test('every number field of the settings is a key with a rule, and its component
     }
   }
   assert.ok(numeric.has('port') && numeric.has('usb_forwarding_port') && numeric.has('dsu_server_port'))
-  for (const id of numeric) assert.ok(CONSTRAINTS[id], `${id} is a number field and the page has no rule for it`)
+  // a field of an OWN_SAVE card (the webhook timeout) is bounded by its own card, not by a rule of the host
+  for (const id of numeric) if (!OWN_SAVE.has(id)) assert.ok(CONSTRAINTS[id], `${id} is a number field and the page has no rule for it`)
   for (const name of ['CfgField', 'CfgExpert']) assert.match(readFileSync(join(WEB, `components/cfg/${name}.vue`), 'utf8'), /validateSetting\(/, `${name} does not show the rule`)
 })
 
